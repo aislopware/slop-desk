@@ -95,7 +95,11 @@ public actor MuxClientTransport: ClientTransporting, InitialCwdConfigurableTrans
         handshakeTimeout _: Duration,
     ) async throws {
         let id = resume == WireMessage.newSessionID ? UUID() : resume
-        let cwdHint = (resume == WireMessage.newSessionID) ? initialCwd : nil
+        // Send the cwd hint on EVERY (re)connect. The host ignores it on a reattach (PATH A — the live
+        // shell's cwd is preserved) and honors it only on a fresh respawn (PATH B/C), where the pane's
+        // project dir is exactly what we want (else the new shell lands in the daemon's `$HOME` and the
+        // cwd-derived title collapses to "Terminal"). See `SlopDeskClient.connect`.
+        let cwdHint = initialCwd
         let acquisition = try await acquire(host, port, id, lastReceivedSeq, cwdHint)
         sessionID = id
         // S1/mux: `channelOpenAck` carries only `accepted: Bool` — no host-authoritative

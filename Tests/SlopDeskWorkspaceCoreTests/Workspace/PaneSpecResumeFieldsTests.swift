@@ -324,6 +324,64 @@ final class PaneSpecResumeFieldsTests: XCTestCase {
         XCTAssertTrue(promoted.isInvariantHeld())
     }
 
+    /// A pane the user deliberately renamed TO `"Terminal"` (``PaneSpec/userRenamed`` = true) must survive
+    /// the load-time promotion — the old `title == "Terminal"` gate alone would clobber that chosen label
+    /// with the promoted `lastKnownTitle`. Gating on `!userRenamed` (B2) preserves the user's intent. FAILS
+    /// on the pre-fix transform (it promoted any `title == "Terminal"` pane).
+    func testPromotingLastKnownTitlesRespectsUserRenamedToTerminal() {
+        let pane = PaneID()
+        let spec = PaneSpec(
+            kind: .terminal, title: "Terminal", lastKnownTitle: "ssh prod", userRenamed: true,
+        )
+        let session = Session(
+            name: "S", tabs: [Tab(root: .leaf(pane), activePane: pane)], activeTabIndex: 0, specs: [pane: spec],
+        )
+        let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)
+        let promoted = WorkspacePersistence.promotingLastKnownTitles(in: tree)
+        XCTAssertEqual(
+            promoted.spec(for: pane)?.title, "Terminal",
+            "an explicit rename to \"Terminal\" is not clobbered by the promoted lastKnownTitle",
+        )
+    }
+
+    // MARK: - sanitizingTransientPluginCwds — pure value transform (no disk I/O)
+
+    func testSanitizingTransientPluginCwdsDropsPoisonKeepsReal() {
+        let pPoison = PaneID()
+        let pReal = PaneID()
+        let pNil = PaneID()
+
+        let session = Session(
+            name: "S",
+            tabs: [Tab(root: .split(
+                id: SplitNodeID(),
+                axis: .horizontal,
+                children: [
+                    WeightedChild(weight: .flex(1), node: .leaf(pPoison)),
+                    WeightedChild(weight: .flex(1), node: .leaf(pReal)),
+                    WeightedChild(weight: .flex(1), node: .leaf(pNil)),
+                ],
+            ), activePane: pPoison)],
+            activeTabIndex: 0,
+            specs: [
+                // A PRE-fix session's poisoned cwd (zinit's `user---repo` turbo-`cd` capture).
+                pPoison: PaneSpec(
+                    kind: .terminal, title: "Terminal",
+                    lastKnownCwd: "/Users/me/.local/share/zinit/plugins/zsh-users---zsh-autosuggestions",
+                ),
+                pReal: PaneSpec(kind: .terminal, title: "Terminal", lastKnownCwd: "/Users/me/project"),
+                pNil: PaneSpec(kind: .terminal, title: "Terminal"),
+            ],
+        )
+        let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)
+        let cleaned = WorkspacePersistence.sanitizingTransientPluginCwds(in: tree)
+
+        XCTAssertNil(cleaned.spec(for: pPoison)?.lastKnownCwd, "a persisted plugin-cache-dir is dropped on load")
+        XCTAssertEqual(cleaned.spec(for: pReal)?.lastKnownCwd, "/Users/me/project", "a real cwd is kept")
+        XCTAssertNil(cleaned.spec(for: pNil)?.lastKnownCwd, "a nil cwd stays nil")
+        XCTAssertTrue(cleaned.isInvariantHeld())
+    }
+
     // MARK: - Helpers
 
     private func tempURL() throws -> URL {

@@ -108,14 +108,13 @@ public enum TabOrderingEngine {
         var order: [String?] = []
         var buckets: [String?: [Tab]] = [:]
         for tab in tabs {
-            let key = normalizedKey(tab.activePane.flatMap { projectKey($0) })
+            let key = normalizedProjectKey(tab.activePane.flatMap { projectKey($0) })
             if buckets[key] == nil { order.append(key) }
             buckets[key, default: []].append(tab)
         }
         return order.map { key in
             let ordered = sortWithinGroup(buckets[key] ?? [], sort: sort, lastActiveAt: lastActiveAt)
-            let header = key.map { projectHeader(for: $0) } ?? "Other"
-            return OrderedTabGroup(header: header, tabIDs: ordered.map(\.id))
+            return OrderedTabGroup(header: projectSectionHeader(for: key), tabIDs: ordered.map(\.id))
         }
     }
 
@@ -202,20 +201,30 @@ public enum TabOrderingEngine {
 
     // MARK: Key helpers
 
-    /// Normalize a raw project key: trim, and treat an empty result as absent (`nil` ⇒ the "Other" bucket).
-    private static func normalizedKey(_ key: String?) -> String? {
+    /// Normalize a raw project key for BUCKETING: trim whitespace, strip trailing slashes (but keep root
+    /// `/`), and treat an empty result as absent (`nil` ⇒ the "Other" bucket). The trailing-slash strip is
+    /// load-bearing — a pane's cwd (`/work/alpha`) and its git toplevel (`/work/alpha/`, or vice-versa) or a
+    /// `cd foo/` differ only by a trailing `/` yet name the SAME project; without normalizing they would
+    /// split one directory into two identically-titled sections. Public so the PER-PANE By-Project
+    /// sectioning (``RailRowsBuilder/sectionedByProject(_:tabOrder:query:)``) buckets by the SAME normalized
+    /// key this tab-level engine uses — one grouping rule, no drift.
+    public static func normalizedProjectKey(_ key: String?) -> String? {
         guard let key else { return nil }
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        var trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.count > 1, trimmed.hasSuffix("/") { trimmed.removeLast() }
         return trimmed.isEmpty ? nil : trimmed
     }
 
     /// The section header for a project key — its last path component (`/Users/me/proj/foo` → `foo`),
-    /// falling back to the whole (trimmed) key when there is no `/`-delimited component. Mirrors the
-    /// basename helper in ``TabBadgeResolver`` (split on `/`, last non-empty component).
-    private static func projectHeader(for key: String) -> String {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// falling back to the whole (trimmed) key when there is no `/`-delimited component; a `nil`/blank key is
+    /// the "Other" bucket. Mirrors the basename helper in ``TabBadgeResolver`` (split on `/`, last non-empty
+    /// component). Public so the tab-level engine AND the per-pane By-Project sectioning derive identical
+    /// headers from a key.
+    public static func projectSectionHeader(for key: String?) -> String {
+        guard let key, case let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty
+        else { return "Other" }
         guard let last = trimmed.split(separator: "/", omittingEmptySubsequences: true).last else {
-            return trimmed.isEmpty ? "Other" : trimmed
+            return trimmed
         }
         return String(last)
     }

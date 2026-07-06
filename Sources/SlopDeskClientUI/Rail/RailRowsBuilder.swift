@@ -47,6 +47,13 @@ struct RailRow: Identifiable, Equatable {
     /// fallback. `nil` for a non-repo cwd or a video pane. Default keeps the direct-construction call sites
     /// (the Equatable pins) source-compatible.
     var gitSummary: PaneGitSummary?
+    /// The pane's OWN By-Project key (``WorkspaceStore/paneProjectKey(_:)`` — its cached git toplevel else
+    /// cwd, plugin-dirs guarded out), carried per-ROW so ``RailRowsBuilder/sectionedByProject(_:tabOrder:query:)``
+    /// buckets each pane by ITS project, not its tab's active-pane project. This is what makes a SPLIT tab's
+    /// two panes land in their respective project sections AND stops the section header from flickering with
+    /// focus. `nil` for a keyless / video pane (⇒ the "Other" bucket). Defaulted so the Equatable pins /
+    /// completion-title call sites stay source-compatible.
+    var projectKey: String?
 
     /// A copy of this row with a new `title` (C3 BUG A collision disambiguation) — every other field is
     /// carried verbatim. Kept here so ``RailRowsBuilder/disambiguated(_:)`` need not restate the memberwise init.
@@ -54,7 +61,7 @@ struct RailRow: Identifiable, Equatable {
         Self(
             id: id, tabID: tabID, kind: kind, title: newTitle, subtitle: subtitle, status: status,
             tabNumber: tabNumber, badge: badge, processLabel: processLabel, readOnly: readOnly, cwd: cwd,
-            isEditing: isEditing, isSelected: isSelected, gitSummary: gitSummary,
+            isEditing: isEditing, isSelected: isSelected, gitSummary: gitSummary, projectKey: projectKey,
         )
     }
 }
@@ -85,9 +92,13 @@ enum RailRowsBuilder {
             for paneID in tab.allPaneIDs() {
                 let spec = session.specs[paneID]
                 let kind = spec?.kind ?? .terminal
+                // The host's coarse foreground-process name (wire type 26): the trailing row label, a
+                // badge-resolver input, AND (A4) the pane-title fallback when the cwd is not known yet.
+                let processLabel = store.paneForegroundProcess[paneID]
                 // A TERMINAL row's line 1 is its cwd's FOLDER NAME (`slopdesk`), not the generic
-                // "Terminal" / raw shell title — an explicit user rename still wins (see `rowTitle`).
-                let title = Self.rowTitle(kind: kind, spec: spec)
+                // "Terminal" / raw shell title — an explicit user rename still wins (see `rowTitle`); a
+                // cwd-less pane falls back to its foreground program (A4) before the generic chain.
+                let title = Self.rowTitle(kind: kind, spec: spec, processLabel: processLabel)
                 // Line 2: a terminal shows its git line (branch ↑/↓ · N changed) when the store has a
                 // summary for a repo cwd, else the kind-generic ``PaneSpec/railSubtitle`` — a terminal's
                 // plain cwd, or (for a `.remoteGUI`/`.systemDialog` video pane, which has no shell cwd)
@@ -103,8 +114,8 @@ enum RailRowsBuilder {
                 let status = store.paneAgentStatus[paneID] ?? .none
                 let isSelected = tabIsActive && tab.activePane == paneID
                 // E6 WI-2: the `⌘N` is the TAB shortcut number (1-based), the trailing label is the host's
-                // coarse foreground process, and the row carries ONE fused badge from the pure resolver.
-                let processLabel = store.paneForegroundProcess[paneID]
+                // coarse foreground process (`processLabel`, resolved above), and the row carries ONE fused
+                // badge from the pure resolver.
                 // E13 WI-3 + Progress cluster: the SOURCE-AWARE gating masks the resolver inputs by source so
                 // the agent toggles (per-pane override beats the global default) and the command "TAB BADGE"
                 // toggles gate their OWN badge families independently — a program's busy / OSC 9;4 progress
@@ -142,6 +153,9 @@ enum RailRowsBuilder {
                     isEditing: isEditing,
                     isSelected: isSelected,
                     gitSummary: gitSummary,
+                    // The pane's OWN project key (guarded git toplevel / cwd) drives per-pane By-Project
+                    // sectioning; a video pane has no project (⇒ "Other").
+                    projectKey: kind == .terminal ? store.paneProjectKey(paneID) : nil,
                 ))
             }
         }
@@ -179,35 +193,59 @@ enum RailRowsBuilder {
     }
 
     /// The row's LINE-1 title. A `.terminal` pane titles itself by its working directory's FOLDER NAME
-    /// (`/Volumes/…/slopdesk` → `slopdesk`) — the identity a coding tool actually navigates by — with
-    /// two escapes: an EXPLICIT user rename always wins (a custom `title` that is neither the registry
-    /// default nor the shell-title auto-promotion), and a pane with no known cwd yet falls back to the
-    /// old shell-title chain. Non-terminal kinds keep the E21 chain (`lastKnownTitle ?? title`)
-    /// unchanged. Pure + static so the mapping is unit-pinned without a view.
-    static func rowTitle(kind: PaneKind, spec: PaneSpec?) -> String {
+    /// (`/Volumes/…/slopdesk` → `slopdesk`) — the identity a coding tool actually navigates by — with two
+    /// escapes: an EXPLICIT user rename always wins (B2: gated on ``PaneSpec/userRenamed``), and a pane
+    /// with no known cwd yet falls back to the host FOREGROUND-PROCESS name (A4: `processLabel`, wire type
+    /// 26 — a real program like `vim`/`npm`, a bare login shell suppressed) before the old shell-title
+    /// chain. Non-terminal kinds keep the E21 chain (`lastKnownTitle ?? title`) unchanged. Pure + static so
+    /// the mapping is unit-pinned without a view.
+    ///
+    /// - Parameter processLabel: the pane's host-reported foreground process (``WorkspaceStore/paneForegroundProcess``),
+    ///   used ONLY as the no-cwd fallback (A4). Optional so the completion-title / test call sites that do not
+    ///   thread the store's process map still resolve the cwd/rename precedence.
+    static func rowTitle(kind: PaneKind, spec: PaneSpec?, processLabel: String? = nil) -> String {
         let fallback = spec?.lastKnownTitle ?? spec?.title ?? ""
         guard kind == .terminal, let spec else { return fallback }
-        // Renamed = a non-empty custom title that is neither the registry default ("Terminal") nor the
-        // load-time auto-promotion of the shell title (`title == lastKnownTitle`, see
-        // `WorkspacePersistence.loadTree()`).
-        let defaultTitle = PaneChooserRegistry.option(for: .terminal).title
-        if !spec.title.isEmpty, spec.title != defaultTitle, spec.title != spec.lastKnownTitle {
+        // B2: an EXPLICIT user rename (⌘R / palette / inline field) always wins — gated on the unambiguous
+        // `userRenamed` flag, NOT the old `title != lastKnownTitle` heuristic, which latched a stale
+        // load-time-promoted title as a phantom "rename" the moment a shell emitted a SECOND OSC title.
+        if spec.userRenamed, !spec.title.isEmpty {
             return spec.title
         }
-        return cwdFolderName(spec.lastKnownCwd) ?? fallback
+        // Folder name is the primary identity; when the cwd is not known yet (no OSC-7, host pull not
+        // landed) A4 titles the pane by its live foreground program before the generic "Terminal" chain.
+        return cwdFolderName(spec.lastKnownCwd)
+            ?? processDisplayName(processLabel)
+            ?? fallback
     }
+
+    /// A4: the host foreground-process name (wire type 26) as a pane-TITLE fallback, or `nil` to skip it.
+    /// Basenames the label and drops the leading `-` of a login-shell argv0, then SUPPRESSES a bare
+    /// interactive shell (`zsh`/`bash`/`fish`/…) — titling a pane "zsh" is no more useful than "Terminal",
+    /// so those fall through to the generic chain, while a real foreground program (`vim`, `npm`, `ssh`)
+    /// titles the pane. Pure + static so the fallback is unit-pinned.
+    static func processDisplayName(_ label: String?) -> String? {
+        guard let label else { return nil }
+        var name = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.hasPrefix("-") { name.removeFirst() } // login-shell argv0 convention (`-zsh`)
+        name = name.split(separator: "/").last.map(String.init) ?? name
+        guard !name.isEmpty, !loginShellNames.contains(name.lowercased()) else { return nil }
+        return name
+    }
+
+    /// Bare interactive-shell basenames that must NOT title a pane (A4) — titling by the shell is no more
+    /// informative than the generic default, so the row keeps the cwd/generic chain instead.
+    private static let loginShellNames: Set<String> = [
+        "zsh", "bash", "sh", "fish", "tcsh", "csh", "ksh", "dash", "login",
+    ]
 
     /// The display folder name of a cwd: its last path component (`/a/b/repo` → `repo`, trailing-slash
     /// tolerant), the root as `/`, a bare `~` kept as-is. `nil` for `nil`/blank so the caller falls back
-    /// — never an empty title.
+    /// — never an empty title. Delegates to ``PaneSpec/cwdDisplayName(_:)`` (WorkspaceCore, the single
+    /// source of truth) so the rail row and ``PaneSpec/completionNotificationTitle`` derive the same
+    /// folder name; kept here as the builder's local name so the existing call sites + tests are stable.
     static func cwdFolderName(_ cwd: String?) -> String? {
-        guard let cwd else { return nil }
-        var path = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !path.isEmpty else { return nil }
-        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
-        if path == "/" { return "/" }
-        let leaf = path.split(separator: "/").last.map(String.init) ?? path
-        return leaf.isEmpty ? nil : leaf
+        PaneSpec.cwdDisplayName(cwd)
     }
 
     /// Filter rows by a lower-cased search query (empty query ⇒ all). Matches the visible title + subtitle AND
@@ -242,6 +280,49 @@ enum RailRowsBuilder {
             out.append(RailRowGroup(header: group.header, rows: groupRows))
         }
         return out
+    }
+
+    /// The PER-PANE By-Project sectioning — the render path for ``TabGrouping/byProject`` (bug: a SPLIT tab's
+    /// group name flickered with focus). Where ``sectioned(_:groups:query:)`` buckets WHOLE TABS by their
+    /// active pane's project (so a split tab spanning two projects flips its whole section as focus moves
+    /// between its panes), this buckets each PANE ROW by ITS OWN ``RailRow/projectKey``. Consequences:
+    ///   • a split tab's two panes land in their RESPECTIVE project sections (the user's "group correctly"),
+    ///   • the section a pane sits in no longer depends on which pane is focused (the flicker is gone —
+    ///     `projectKey` is a per-pane value, not `tab.activePane`),
+    ///   • a single-pane tab is unchanged (its one pane == the tab's project, as before).
+    /// Section ORDER is STABLE: first appearance of each project key while walking rows in their natural
+    /// CREATION order (`rows` are emitted in `session.tabs` order then pane pre-order) — so a section never
+    /// jumps position when you switch tabs, even under ``TabSort/updated`` (matching the old tab-level
+    /// By-Project, which bucketed in array order). WITHIN each section rows follow `tabOrder` (the
+    /// sorted-but-ungrouped order, ``WorkspaceStore/flatOrderedTabIDs(now:)``) then pane pre-order, so
+    /// ``TabSort/updated`` still floats a recently-active tab's panes up inside their project without
+    /// reordering the sections themselves. The keyless "Other" bucket (video / cwd-less panes) takes its
+    /// first-appearance slot too. Query filter composes first; an all-filtered section is DROPPED. Pure +
+    /// static so the per-pane grouping rule is unit-pinned without a SwiftUI view.
+    static func sectionedByProject(_ rows: [RailRow], tabOrder: [TabID], query: String) -> [RailRowGroup] {
+        let survivors = filtered(rows, query: query)
+        // Pass 1 — bucket in CREATION order; `order` fixes the (stable) section sequence.
+        var order: [String?] = []
+        var buckets: [String?: [RailRow]] = [:]
+        for row in survivors {
+            let key = TabOrderingEngine.normalizedProjectKey(row.projectKey)
+            if buckets[key] == nil { order.append(key) }
+            buckets[key, default: []].append(row)
+        }
+        // Pass 2 — order rows WITHIN each section by the sorted tab order (respects "Sort By"), pane pre-order
+        // as the stable tiebreak. A row whose tab isn't in `tabOrder` (shouldn't happen) sorts last, stably.
+        let rank = Dictionary(tabOrder.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { a, _ in a })
+        return order.map { key in
+            let sorted = (buckets[key] ?? []).enumerated()
+                .sorted { lhs, rhs in
+                    let lRank = rank[lhs.element.tabID] ?? Int.max
+                    let rRank = rank[rhs.element.tabID] ?? Int.max
+                    if lRank != rRank { return lRank < rRank }
+                    return lhs.offset < rhs.offset
+                }
+                .map(\.element)
+            return RailRowGroup(header: TabOrderingEngine.projectSectionHeader(for: key), rows: sorted)
+        }
     }
 }
 

@@ -2250,7 +2250,7 @@ public final class WorkspaceStore {
         // A26 cwd-inheritance: resolve the new pane's initial cwd from the NEW-SPLIT working-directory policy
         // against the active pane's last-known cwd and stamp it on the new spec. The live session factory
         // sends that cwd in the mux `channelOpen`, so the host spawns the PTY there directly.
-        let activeCwd = tree.spec(for: active)?.lastKnownCwd
+        let activeCwd = inheritableCwd(of: active)
         let inheritedCwd = SettingsKey.workingDirectoryNewSplit.resolve(activePaneCwd: activeCwd)
         var spec = PaneSpec(kind: kind, title: defaultTitle(for: kind))
         spec.lastKnownCwd = inheritedCwd
@@ -2369,7 +2369,7 @@ public final class WorkspaceStore {
         // A26 cwd-inheritance: resolve the new tab's initial cwd from the NEW-TAB working-directory policy
         // against the active pane's last-known cwd (none when there is no active pane) and stamp it on the
         // new spec. The host starts the PTY in that cwd; no visible startup `cd` is sent.
-        let activeCwd = tree.activeSession?.activeTab?.activePane.flatMap { tree.spec(for: $0)?.lastKnownCwd }
+        let activeCwd = inheritableCwd(of: tree.activeSession?.activeTab?.activePane)
         let inheritedCwd = SettingsKey.workingDirectoryNewTab.resolve(activePaneCwd: activeCwd)
         var spec = PaneSpec(kind: kind, title: defaultTitle(for: kind))
         spec.lastKnownCwd = inheritedCwd
@@ -2380,6 +2380,18 @@ public final class WorkspaceStore {
         // opened sorts LAST under `.updated` (nil recency) and lands in "Earlier" under By-Date.
         if let newTabID = tree.activeSession?.activeTab?.id { stampTabActivity(newTabID) }
         reconcileTree()
+    }
+
+    /// The `lastKnownCwd` of pane `id` sanitized as an INHERIT SOURCE for a new tab / split / window: a
+    /// transient plugin-cache dir (``PaneSpec/looksLikeTransientPluginCwd(_:)`` — `…/owner---repo`) is
+    /// dropped to `nil`. Without this a racing `cwd`/`gitStatus` probe that caught the shell mid zinit
+    /// turbo `builtin cd` could seed the NEW pane's cwd — poisoning its spawn dir, its folder-name title,
+    /// AND its By-Project group (the "new pane lands in zsh-users---zsh-autosuggestions" bug). Mirrors the
+    /// spawn-seed guard in `LivePaneSession.initialCwd` and the write guard in ``setLastKnownCwd(_:for:)``.
+    /// `nil` pane / no cwd ⇒ `nil` (the policy then resolves the host default).
+    private func inheritableCwd(of id: PaneID?) -> String? {
+        id.flatMap { tree.spec(for: $0)?.lastKnownCwd }
+            .flatMap { PaneSpec.looksLikeTransientPluginCwd($0) ? nil : $0 }
     }
 
     /// Closes tab `tabID` (dropping its panes) and cascades like ``closePaneTree(_:)``.
@@ -2446,7 +2458,7 @@ public final class WorkspaceStore {
         // resolve the new window's initial cwd from the NEW-WINDOW policy against the active pane's last-known
         // cwd (none when there is no active pane), stamp it on the new spec, and let the host spawn the PTY
         // directly in that cwd. Mirrors `newTab` / `splitActivePane`.
-        let activeCwd = tree.activeSession?.activeTab?.activePane.flatMap { tree.spec(for: $0)?.lastKnownCwd }
+        let activeCwd = inheritableCwd(of: tree.activeSession?.activeTab?.activePane)
         let inheritedCwd = SettingsKey.workingDirectoryNewWindow.resolve(activePaneCwd: activeCwd)
         var spec = PaneSpec(kind: kind, title: defaultTitle(for: kind))
         spec.lastKnownCwd = inheritedCwd
@@ -2532,10 +2544,17 @@ public final class WorkspaceStore {
     /// folder name). A blank/whitespace title is a no-op — clearing back to the folder name is done by not
     /// renaming, never by storing an empty title (which the row would then have to special-case). Live-model
     /// aware via ``updateSpecLive(_:_:)``, so the rename persists in whichever model is current.
+    ///
+    /// B2: also sets ``PaneSpec/userRenamed`` — the unambiguous "this title is a custom user identity" flag
+    /// that ``RailRowsBuilder/rowTitle(kind:spec:processLabel:)`` gates the rename branch on (replacing the
+    /// old `title != lastKnownTitle` heuristic, which misfired for shells that emit changing OSC titles).
     public func renamePane(_ id: PaneID, to title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        updateSpecLive(id) { $0.title = trimmed }
+        updateSpecLive(id) {
+            $0.title = trimmed
+            $0.userRenamed = true
+        }
     }
 
     /// Renames session `sessionID`. Pure metadata — the leaf set is unchanged.
@@ -2815,8 +2834,10 @@ public final class WorkspaceStore {
     /// How the sidebar buckets tabs into sections (the sidebar hamburger's "Group By"). The SINGLE source of truth
     /// for the rendered section order (the rail is a pure derivation via ``orderedTabGroups(now:)``).
     /// Hydrated from ``SettingsKey/tabGrouping`` on init and persisted by ``setTabGrouping(_:)``. Default
-    /// ``TabGrouping/none`` ⇒ one flat list, byte-identical to the pre-E6 rail.
-    public internal(set) var tabGrouping: TabGrouping = .none
+    /// ``TabGrouping/byProject`` ⇒ panes bucket by their project (a coding tool navigates by project); a user
+    /// can pick ``TabGrouping/none`` (one flat list) in the hamburger. This pre-hydrate value is overwritten by
+    /// ``hydrateTabPreferences()`` on init, but matches the persisted default so an un-hydrated store agrees.
+    public internal(set) var tabGrouping: TabGrouping = .byProject
 
     /// How tabs are ordered WITHIN a section (the sidebar hamburger's "Sort By"). Hydrated from ``SettingsKey/tabSort``
     /// on init, persisted by ``setTabSort(_:)``, and flipped to ``TabSort/manual`` by a drag (``moveTab(from:to:)``).
@@ -3109,13 +3130,34 @@ public final class WorkspaceStore {
             if shouldRefreshGitOnSnapshot(id) {
                 refreshGitSummary(for: id, from: connection)
             }
+            // A1 (host-authoritative cwd on ATTACH): a shell that emits no OSC-7 (Starship / hookless) never
+            // reports its cwd until a command completes, so a freshly-connected pane's title sits at the
+            // "Terminal" fallback. The snapshot edge is the earliest recurring post-connect signal — pull the
+            // host cwd ONCE here (populate-once gate) so the folder-name title lands without waiting for a
+            // command. The gate closes the moment `lastKnownCwd` is set, so this never becomes a cwd poll.
+            // `retries` collapses the up-to-3 s wait for the FIRST landing into ~1 s when the metadata client
+            // is briefly not ready at the first snapshot (it self-heals via the cadence regardless).
+            if shouldRefreshCwdOnAttach(id) {
+                refreshCwd(for: id, from: connection, retries: 3)
+            }
         }
         // RECONNECT git-line refresh (C3 BUG C a): a REAL reconnect edge (distinct from the steady-state RTT
         // snapshot above) spawns a fresh host shell and may have missed sibling-pane commits / detached drift
         // while the link was down — ALWAYS re-fetch this pane's git line. Fires once per reconnect, so it is
         // not a poll.
         connection?.onReconnected = { [weak self, weak connection] in
-            self?.refreshGitSummary(for: id, from: connection)
+            guard let self else { return }
+            refreshGitSummary(for: id, from: connection)
+            // A1 (host-authoritative cwd on RECONNECT): a mux reconnect may have RESPAWNED a fresh host
+            // shell (no server-side resume), so this pane's live cwd is only knowable from the host. Pull
+            // it via the `proc_pidinfo` `cwd` RPC (shell-agnostic — needs no OSC-7) so the cwd-derived
+            // title re-lands immediately instead of collapsing to "Terminal" until the next command
+            // completes. Paired with the unconditional `initialCwd` hint (SlopDeskClient.connect) that
+            // puts the respawned shell back in the project dir, so this reads the RIGHT cwd, not `$HOME`.
+            // `retries` matters MOST here: the reconnect edge has no populate-once cadence to fall back on
+            // (`lastKnownCwd` is already non-nil), so a single-shot pull that raced the control plane would
+            // never re-fire — the bounded retry guarantees the fresh-shell cwd re-lands.
+            refreshCwd(for: id, from: connection, retries: 3)
         }
         // SYNC-INPUT (tree path, Zellij ToggleActiveSyncTab): when the per-tab sync flag is on, mirror this
         // pane's keystrokes into every other pane in its tab via the same broadcastTap seam the canvas
@@ -4133,6 +4175,14 @@ public extension WorkspaceStore {
         updateSpecLive(paneID) { spec in
             spec.kind = kind
             spec.title = title
+            // A chooser INHERITS the focused terminal's cwd (ES-E3-2) so a Terminal pick spawns its PTY
+            // there. A NON-terminal pick (remote window / system dialog) has NO shell — that inherited cwd
+            // would then linger on a video pane and mislabel it: `railSubtitle` shows the cwd instead of the
+            // host app, the raw cwd rides as a hidden search key, and `paneProjectKey` files the pane under
+            // that project's By-Project section instead of "Other". The value is non-plugin so it even
+            // survives a persistence round-trip. Clear it on a non-terminal resolve so a video pane carries
+            // no phantom working directory.
+            if kind != .terminal { spec.lastKnownCwd = nil }
         }
         focusPaneTree(paneID)
     }
@@ -4141,12 +4191,33 @@ public extension WorkspaceStore {
     /// Details-Panel Info tab writes the `cwd` verb's result here so the titlebar / rail / palette mirror
     /// the focused pane's remote cwd. Live-model-aware (routes through the same `updateSpecLive` wire as
     /// `lastKnownTitle`); guarded against an unchanged value so a re-focus does NOT spend a reconcile.
+    /// Model-agnostic read of pane `id`'s persisted ``PaneSpec/lastKnownCwd`` (from the tree or canvas
+    /// spec, whichever backs ``liveModel``). Shared by ``setLastKnownCwd(_:for:)``'s dirty guard and the
+    /// attach-edge cwd-pull gate ``shouldRefreshCwdOnAttach(_:)``.
+    func lastKnownCwd(for paneID: PaneID) -> String? {
+        switch liveModel {
+        case .tree: tree.spec(for: paneID)?.lastKnownCwd
+        case .canvas: workspace.canvas.spec(for: paneID)?.lastKnownCwd
+        }
+    }
+
+    /// Whether the connect/reconnect snapshot edge should pull pane `id`'s cwd from the host (A1). TRUE
+    /// only while ``PaneSpec/lastKnownCwd`` is still empty — a POPULATE-ONCE gate so the ~3 s RTT-snapshot
+    /// cadence never becomes a cwd poll. A shell that emits no OSC-7 (Starship / hookless) would otherwise
+    /// sit at the "Terminal" fallback until its first command completes; one host `proc_pidinfo` pull on
+    /// attach lands the folder-name title. Once any source populates the cwd this returns false and stops.
+    func shouldRefreshCwdOnAttach(_ id: PaneID) -> Bool {
+        lastKnownCwd(for: id) == nil
+    }
+
     func setLastKnownCwd(_ cwd: String, for paneID: PaneID) {
-        let current: String? =
-            switch liveModel {
-            case .tree: tree.spec(for: paneID)?.lastKnownCwd
-            case .canvas: workspace.canvas.spec(for: paneID)?.lastKnownCwd
-            }
+        // Drop a TRANSIENT plugin-cache-dir reading before it can poison the inherit source (see
+        // ``PaneSpec/looksLikeTransientPluginCwd(_:)``). The live-cwd sources are `proc_pidinfo`-based
+        // (`refreshCwd` on command completion, the palette's `cwd()` resolver), which race a plugin
+        // manager's turbo `builtin cd`; without this a later new-tab / split / relaunch spawns its PTY in
+        // e.g. `…/zsh-users---zsh-autosuggestions` instead of the real project cwd.
+        guard !PaneSpec.looksLikeTransientPluginCwd(cwd) else { return }
+        let current = lastKnownCwd(for: paneID)
         guard current != cwd else { return }
         updateSpecLive(paneID) { $0.lastKnownCwd = cwd }
         // E11 WI-2: the cwd just CHANGED (the guard above proves it differs from the stored value), so this is a
@@ -4168,16 +4239,34 @@ public extension WorkspaceStore {
         refreshGitSummary(for: paneID, from: (handle(for: paneID) as? LivePaneSession)?.connection)
     }
 
-    /// A26 cwd-freshness fallback: after a command completes (OSC 133;D) pull pane `id`'s
-    /// current working directory from the host `cwd` RPC and persist it via the dirty-guarded
+    /// A26 cwd-freshness fallback: pull pane `id`'s current working directory from the host `cwd` RPC
+    /// (`proc_pidinfo` — shell-agnostic, needs no OSC-7) and persist it via the dirty-guarded
     /// ``setLastKnownCwd(_:for:)``, so a `cd` in this pane becomes the inherit source for the NEXT new tab /
-    /// split. A `nil` connection / failed RPC is a silent no-op (validate-then-drop); the metadata client's
-    /// 5 s timeout bounds the await. Fired from ``wireMaterializedLeaf(id:handle:)``'s `onCommandCompleted`.
-    private func refreshCwd(for id: PaneID, from connection: ConnectionViewModel?) {
+    /// split AND the folder-name title lands without waiting for the shell to emit anything. A `nil`
+    /// connection / failed RPC is a silent no-op (validate-then-drop); the metadata client's 5 s timeout
+    /// bounds the await.
+    ///
+    /// **Attach-edge retry (A1 hardening).** On a fresh (re)connect the pane's `activeMetadataClient` can
+    /// briefly be `nil` — the control plane is still being (re)established — so a single-shot pull can MISS
+    /// and leave the title at "Terminal" until the next ~3 s RTT-snapshot retry (and the RECONNECT caller,
+    /// whose `lastKnownCwd` is already non-nil, has NO populate-once retry at all). `retries > 0` re-arms a
+    /// short-delayed retry up to `retries` times, stopping the instant the RPC answers — so the cwd lands in
+    /// ~1 RTT on connect and a reconnect that respawned a fresh shell reliably re-reads the host cwd.
+    /// `retries == 0` (the command-completion caller, where the client is long-since live) keeps the
+    /// original single-shot behaviour. The bounded retry holds `connection` strongly only for its ~1 s
+    /// window; a torn-down connection just answers `nil` and exhausts the budget.
+    private func refreshCwd(for id: PaneID, from connection: ConnectionViewModel?, retries: Int = 0) {
         guard let connection else { return }
         Task { @MainActor [weak self] in
-            guard let cwd = await connection.activeMetadataClient?.cwd() else { return }
-            self?.setLastKnownCwd(cwd, for: id)
+            if let cwd = await connection.activeMetadataClient?.cwd() {
+                self?.setLastKnownCwd(cwd, for: id)
+                return
+            }
+            // Metadata client not ready yet (or the RPC failed): re-arm a bounded, short-delayed retry so
+            // the attach-edge pull is not a one-shot. Stops as soon as `self`/the budget is gone.
+            guard let self, retries > 0 else { return }
+            try? await Task.sleep(for: .milliseconds(300))
+            refreshCwd(for: id, from: connection, retries: retries - 1)
         }
     }
 
@@ -4231,7 +4320,15 @@ public extension WorkspaceStore {
     /// ``paneGitToplevel`` re-derives the By-Project sections. An empty `root` (a non-repo cwd) still marks
     /// the pane resolved so the debounced sweep won't re-probe it; ``paneProjectKey(_:)`` keeps the cwd
     /// fallback. Internal so a unit test (or the arrival task) can seed it without a live socket.
+    ///
+    /// A TRANSIENT plugin-cache toplevel (``PaneSpec/looksLikeTransientPluginCwd(_:)`` — `…/owner---repo`)
+    /// is DROPPED, not cached: a `gitStatus` RPC that raced a zinit turbo `builtin cd` resolved the PLUGIN's
+    /// repo root, not the user's project. Caching it would file the pane under a phantom
+    /// `zsh-users---zsh-autosuggestions` By-Project section (the same poison the `setLastKnownCwd` guard
+    /// blocks for cwd). Leaving no entry lets the debounced sweep re-probe once the shell settles at the
+    /// real prompt — self-healing, never a stuck plugin group.
     func cacheGitToplevel(_ root: String, for id: PaneID) {
+        guard !PaneSpec.looksLikeTransientPluginCwd(root) else { return }
         paneGitToplevel[id] = root
     }
 
@@ -4271,6 +4368,12 @@ public extension WorkspaceStore {
     /// own dirty guard so a quiet sibling never churns the `@Observable` rail. An EMPTY toplevel is "no repo",
     /// not a shared key, so it never fans out. `now` is injectable for a deterministic staleness test.
     func applyGitSummary(_ summary: PaneGitSummary, toplevel: String, for id: PaneID, at now: Date = Date()) {
+        // Validate-then-drop a reading taken while the shell was transiently inside a plugin-cache dir (a
+        // zinit turbo `builtin cd` the `gitStatus` RPC raced): its `toplevel` is the PLUGIN's repo and its
+        // branch/changed counts are that plugin's, not the user's project. Discard the WHOLE reading (no
+        // summary write, no toplevel cache, no sibling fan-out) so neither the git line nor the By-Project
+        // section is poisoned; the next completion edge re-probes at the settled cwd.
+        guard !PaneSpec.looksLikeTransientPluginCwd(toplevel) else { return }
         if paneGitSummary[id] != summary { paneGitSummary[id] = summary }
         paneGitFetchedAt[id] = now
         cacheGitToplevel(toplevel, for: id)

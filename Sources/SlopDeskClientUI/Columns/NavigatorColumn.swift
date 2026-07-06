@@ -44,11 +44,11 @@ struct NavigatorColumn: View {
     /// provides its own toggle) omits the button.
     var chrome: WorkspaceChromeState?
 
-    /// The app-global connection — the SIDEBAR TOP is the connection cluster's resting home (leading-aligned
-    /// in a fixed-width column, so the ticking telemetry numbers can't layout-shift anything; trailing-aligned
-    /// in the titlebar they wiggled the cluster every second). While the sidebar is COLLAPSED the titlebar
-    /// hosts the fallback (`SlateTitlebar`) so the state never vanishes. Threaded in like `preferences`; `nil`
-    /// (previews / iOS) omits the cluster.
+    /// The app-global connection — the SIDEBAR BOTTOM is the connection cluster's resting home (a status
+    /// footer; leading-aligned in a fixed-width column, so the ticking telemetry numbers can't layout-shift
+    /// anything; trailing-aligned in the titlebar they wiggled the cluster every second). While the sidebar is
+    /// COLLAPSED the titlebar hosts the fallback (`SlateTitlebar`) so the state never vanishes. Threaded in
+    /// like `preferences`; `nil` (previews / iOS) omits the cluster.
     var connection: AppConnection?
     /// Tapping the cluster opens the Connect-to-Host editor (``OverlayCoordinator/openConnect()``).
     var onConnect: () -> Void = {}
@@ -96,11 +96,17 @@ struct NavigatorColumn: View {
         let rows: [RailRow]
     }
 
-    /// Map the store's ordered tab groups (``WorkspaceStore/orderedTabGroups(now:)``) onto the FILTERED rail
-    /// rows via the pure ``RailRowsBuilder/sectioned(_:groups:query:)`` (search × grouping composition, unit-
-    /// pinned), then attach a stable `ForEach` identity to each surviving section.
+    /// Map the store's grouping onto the FILTERED rail rows, then attach a stable `ForEach` identity to each
+    /// surviving section. ``TabGrouping/byProject`` renders via the PER-PANE sectioning
+    /// (``RailRowsBuilder/sectionedByProject(_:tabOrder:query:)``) so a split tab's panes bucket into their
+    /// OWN projects and the section header can't flicker with focus; ``TabGrouping/none`` /
+    /// ``TabGrouping/byDate`` (tab-centric — a flat list / per-tab recency) keep the tab-level
+    /// ``RailRowsBuilder/sectioned(_:groups:query:)``.
     private func buildSections(_ rows: [RailRow], query: String) -> [RowSection] {
-        RailRowsBuilder.sectioned(rows, groups: store.orderedTabGroups(), query: query)
+        let groups: [RailRowGroup] = store.tabGrouping == .byProject
+            ? RailRowsBuilder.sectionedByProject(rows, tabOrder: store.flatOrderedTabIDs(), query: query)
+            : RailRowsBuilder.sectioned(rows, groups: store.orderedTabGroups(), query: query)
+        return groups
             .enumerated()
             .map { index, group in
                 RowSection(id: "\(index)|\(group.header ?? "")", header: group.header, rows: group.rows)
@@ -238,22 +244,6 @@ struct NavigatorColumn: View {
                 }
             }
             .frame(height: Slate.Metric.titlebarHeight)
-            // The connection cluster's RESTING HOME (its titlebar mount is the collapsed-sidebar fallback):
-            // monogram plate + live telemetry, leading-aligned above the TABS header. The outer `space2`
-            // plus the cluster's own inner `space2` lands the plate's left edge on the header text's 16pt
-            // margin. Fixed-width column + leading alignment ⇒ the ticking numbers shift nothing.
-            if let connection {
-                ConnectionCluster(
-                    connection: connection,
-                    pingMS: ConnectionTelemetry.pingMS(store),
-                    fps: ConnectionTelemetry.fps(store),
-                    kbps: ConnectionTelemetry.kbps(store),
-                    onConnect: onConnect,
-                    fillWidth: true,
-                )
-                .padding(.horizontal, Slate.Metric.space2)
-                .padding(.bottom, Slate.Metric.space2)
-            }
             HStack(spacing: 0) {
                 // MERIDIAN L2: the panel label speaks the INSTRUMENT voice (mono + wide tracking) — same
                 // register as `SlateSectionHeader`, one size up for the panel-level label.
@@ -303,6 +293,29 @@ struct NavigatorColumn: View {
             }
             .scrollIndicators(.hidden) // scrollbars stay invisible for the flat sidebar look
             .frame(maxHeight: .infinity)
+
+            // The connection cluster's RESTING HOME — the SIDEBAR BOTTOM (moved down from above the TABS
+            // header per user request): a live-telemetry status FOOTER pinned below the scrolling tab list
+            // (the ScrollView's `maxHeight: .infinity` pushes this to the bottom edge). A faint top hairline
+            // sets it off from the list; the titlebar mount stays the collapsed-sidebar fallback. `fillWidth`
+            // makes it read as one full-width sidebar item; the fixed-width leading-aligned column keeps the
+            // ticking telemetry numbers from shifting anything.
+            if let connection {
+                Rectangle()
+                    .fill(Slate.Line.subtle)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: Slate.Metric.hairline)
+                ConnectionCluster(
+                    connection: connection,
+                    pingMS: ConnectionTelemetry.pingMS(store),
+                    fps: ConnectionTelemetry.fps(store),
+                    kbps: ConnectionTelemetry.kbps(store),
+                    onConnect: onConnect,
+                    fillWidth: true,
+                )
+                .padding(.horizontal, Slate.Metric.space2)
+                .padding(.vertical, Slate.Metric.space2)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Slate.Surface.ground)

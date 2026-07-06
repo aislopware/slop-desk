@@ -293,7 +293,11 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         // byte-identical.
         let detachEnabled = EnvConfig.boolDefaultOn("SLOPDESK_DETACH_ENABLED")
         let savedResumeID = detachEnabled ? spec.resumeSessionID : nil
-        let initialCwd = spec.lastKnownCwd
+        // A persisted `lastKnownCwd` poisoned in a prior session (a plugin manager's transient turbo `cd`
+        // captured via the host `cwd` RPC — see ``PaneSpec/looksLikeTransientPluginCwd(_:)``) would re-spawn
+        // this PTY in the plugin cache dir via `channelOpen`. Sanitize it to `nil` so the host falls back to
+        // its default (home) instead — the poison self-heals on the next launch.
+        let initialCwd = spec.lastKnownCwd.flatMap { PaneSpec.looksLikeTransientPluginCwd($0) ? nil : $0 }
         // COLD LAUNCH: always seed seq=0 even when spec.resumeLastReceivedSeq is non-nil. This is a COLD
         // path — the client actor is brand-new (process relaunch), so highestContiguousSeq starts at 0
         // regardless. Seeding a non-zero seq would present lastReceivedSeq=N to the host, replaying only

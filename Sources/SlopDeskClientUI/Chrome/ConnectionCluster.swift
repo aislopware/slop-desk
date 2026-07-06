@@ -1,5 +1,5 @@
-// ConnectionCluster — the connection-status cluster. Resting home: the SIDEBAR TOP (full-width row);
-// the titlebar hosts it only while the sidebar is collapsed. One whisper-quiet line: the host's
+// ConnectionCluster — the connection-status cluster. Resting home: the SIDEBAR BOTTOM (a full-width status
+// footer); the titlebar hosts it only while the sidebar is collapsed. One whisper-quiet line: the host's
 // identity MONOGRAM whose plate colour IS the network health at a glance (gray offline · green good ·
 // yellow slow · red bad — classified from the live ping) + the live telemetry ("9 ms · 30 fps") in
 // tertiary monospaced digits — or, when not connected, the status word ("Connecting…", "Unreachable")

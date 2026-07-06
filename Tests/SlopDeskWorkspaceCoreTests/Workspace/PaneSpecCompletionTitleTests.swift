@@ -23,11 +23,35 @@ final class PaneSpecCompletionTitleTests: XCTestCase {
         )
     }
 
-    func testFallsBackToStaticTitleWhenNoLastKnownTitle() {
-        let spec = PaneSpec(kind: .terminal, title: "Terminal") // never reported a live title
+    func testFallsBackToStaticTitleWhenNoLastKnownTitleAndNoCwd() {
+        let spec = PaneSpec(kind: .terminal, title: "Terminal") // never reported a live title, no cwd
         XCTAssertEqual(
             spec.completionNotificationTitle, "Terminal",
-            "with no live title yet, the static spec title is the only thing to show",
+            "with no live title AND no known cwd, the static spec title is the only thing to show",
+        )
+    }
+
+    /// B1 (host-authoritative-metadata audit): a shell that emits NO OSC-0/2 title (Starship / hookless)
+    /// but whose host cwd IS known must NOT surface the generic "Terminal" in the completion banner — the
+    /// cwd's folder name is the same identity the sidebar/tab/window title already show, so the banner
+    /// stays consistent with them. Revert-to-confirm-fail: before B1 `completionNotificationTitle` was
+    /// `lastKnownTitle ?? title`, so this resolved to "Terminal" and this assertion fails.
+    func testFallsBackToCwdFolderNameWhenNoLastKnownTitle() {
+        let spec = PaneSpec(kind: .terminal, title: "Terminal", lastKnownCwd: "/Users/me/slop-desk")
+        XCTAssertEqual(
+            spec.completionNotificationTitle, "slop-desk",
+            "with no live title but a known cwd, the folder name identifies the pane (not \"Terminal\")",
+        )
+    }
+
+    func testLiveTitleStillWinsOverCwdFolderName() {
+        let spec = PaneSpec(
+            kind: .terminal, title: "Terminal",
+            lastKnownCwd: "/Users/me/slop-desk", lastKnownTitle: "~/slop-desk — make check",
+        )
+        XCTAssertEqual(
+            spec.completionNotificationTitle, "~/slop-desk — make check",
+            "a live shell title is more specific than the folder name and still wins",
         )
     }
 

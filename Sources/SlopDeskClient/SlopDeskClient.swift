@@ -339,8 +339,10 @@ public actor SlopDeskClient {
         highestSeqFed = seq
     }
 
-    /// Provides the transport with a startup cwd for the next brand-new PTY. Existing/resumed sessions
-    /// ignore this hint so reconnect never changes the working directory of a live shell.
+    /// Provides the transport with a startup cwd for the next PTY spawn. A host-side reattach IGNORES it
+    /// (the live shell's cwd is preserved — `performReattach` never reads `channelOpen.initialCwd`); only a
+    /// FRESH respawn honors it. It is therefore passed on every (re)connect (see `connect(...)`), so a pane
+    /// whose host shell had to be respawned lands back in its project directory, not the daemon's `$HOME`.
     public func setInitialCwd(_ cwd: String?) {
         let trimmed = cwd?.trimmingCharacters(in: .whitespacesAndNewlines)
         initialCwd = (trimmed?.isEmpty ?? true) ? nil : trimmed
@@ -378,7 +380,14 @@ public actor SlopDeskClient {
         let resume = sessionID ?? WireMessage.newSessionID
         let lastSeq = highestContiguousSeq
         if let configurable = transport as? any InitialCwdConfigurableTransport {
-            await configurable.setInitialCwd(resume == WireMessage.newSessionID ? initialCwd : nil)
+            // Pass the startup cwd on EVERY (re)connect, not only the first. On the host a RETURNING
+            // reattach (PATH A, `performReattach`) never reads `channelOpen.initialCwd` — it rebinds the
+            // live shell, so the hint is ignored and the shell's real cwd is preserved. Only a FRESH
+            // respawn (PATH B/C, `spawnFreshShell`, taken when the detached session is gone / TTL-expired)
+            // reads it — and there we WANT the pane's project dir. Nil-ing it on reconnect (the old
+            // behavior) made every fresh respawn land in `$HOME`, losing the working directory and
+            // collapsing the cwd-derived pane/tab title to "Terminal".
+            await configurable.setInitialCwd(initialCwd)
         }
         do {
             try await transport.connect(

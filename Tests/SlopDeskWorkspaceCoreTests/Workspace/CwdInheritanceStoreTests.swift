@@ -158,6 +158,103 @@ final class CwdInheritanceStoreTests: XCTestCase {
         XCTAssertNil(store.tree.spec(for: newPane)?.lastKnownCwd, "nothing to inherit → nil")
     }
 
+    // MARK: - Transient plugin-cache-dir poison guard (zinit turbo `wait lucid` race)
+
+    // The live-cwd source on a hookless shell is the host `cwd` RPC (`proc_pidinfo` of the shell), fired by
+    // `refreshCwd` on every command completion. A zsh plugin manager in turbo mode transiently `builtin cd`s
+    // into a plugin's cache dir to source it; racing that returns e.g.
+    // `…/plugins/zsh-users---zsh-autosuggestions`, which — un-guarded — poisons `lastKnownCwd` and thus the
+    // inherit source for the next tab / split. `setLastKnownCwd` must DROP such a reading.
+
+    func testSetLastKnownCwdDropsTransientPluginDir() {
+        let pane = PaneID()
+        let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
+
+        // A racing turbo-`cd` reading (zinit flattens `zsh-users/zsh-autosuggestions` → `---`).
+        store.setLastKnownCwd("/Users/me/.local/share/zinit/plugins/zsh-users---zsh-autosuggestions", for: pane)
+        XCTAssertEqual(
+            store.tree.spec(for: pane)?.lastKnownCwd, "/Users/me/project",
+            "a plugin-cache-dir reading is dropped; the real cwd is preserved",
+        )
+
+        // A genuine cwd still lands (the guard is tight, not a blanket refusal).
+        store.setLastKnownCwd("/Users/me/other", for: pane)
+        XCTAssertEqual(store.tree.spec(for: pane)?.lastKnownCwd, "/Users/me/other")
+    }
+
+    func testPluginDirRefreshDoesNotPoisonNewTabInherit() throws {
+        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        let pane = PaneID()
+        let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
+
+        // What `refreshCwd` would push mid-plugin-load — dropped, so the inherit source stays clean.
+        store.setLastKnownCwd("/opt/zinit/plugins/owner---repo", for: pane)
+        let before = allPaneIDs(store)
+
+        store.newTab(kind: .terminal)
+
+        let newPane = try XCTUnwrap(allPaneIDs(store).subtracting(before).first)
+        XCTAssertEqual(
+            store.tree.spec(for: newPane)?.lastKnownCwd, "/Users/me/project",
+            "the new tab inherits the real cwd, not the transient plugin dir",
+        )
+    }
+
+    /// The inherit-source backstop: a plugin-cache dir that is ALREADY on the active pane's spec (a PERSISTED
+    /// poison written before the `setLastKnownCwd` guard existed — no live sink re-sanitizes it) must not
+    /// propagate to a new tab. `inheritableCwd` drops it so the new pane resolves the host default (nil),
+    /// not a shell spawned in the plugin dir titled `zsh-users---zsh-autosuggestions`. FAILS on the un-fixed
+    /// `newTab` (it read `tree.spec(for:)?.lastKnownCwd` directly ⇒ inherited the poison).
+    func testNewTabDoesNotInheritPersistedPluginCwd() throws {
+        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        let pane = PaneID()
+        let poison = "/Users/me/.local/share/zinit/plugins/zsh-users---zsh-autosuggestions"
+        let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: poison))
+        let before = allPaneIDs(store)
+
+        store.newTab(kind: .terminal)
+
+        let newPane = try XCTUnwrap(allPaneIDs(store).subtracting(before).first)
+        XCTAssertNil(
+            store.tree.spec(for: newPane)?.lastKnownCwd,
+            "a persisted plugin-cache cwd is not inherited → the new tab resolves the host default",
+        )
+    }
+
+    /// Same backstop on the split path (`inheritableCwd` covers `splitActivePane` too).
+    func testSplitDoesNotInheritPersistedPluginCwd() throws {
+        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewSplitKey)
+        let pane = PaneID()
+        let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/opt/zinit/plugins/owner---repo"))
+        let before = allPaneIDs(store)
+
+        store.splitActivePane(axis: .horizontal, kind: .terminal)
+
+        let newPane = try XCTUnwrap(allPaneIDs(store).subtracting(before).first)
+        XCTAssertNil(
+            store.tree.spec(for: newPane)?.lastKnownCwd,
+            "a persisted plugin-cache cwd is not inherited by a split either",
+        )
+    }
+
+    // MARK: - Host-authoritative cwd pull on attach (A1 populate-once gate)
+
+    // A shell that emits no OSC-7 (Starship / hookless) never reports its cwd until a command completes, so a
+    // freshly-connected pane's title sits at the "Terminal" fallback. `shouldRefreshCwdOnAttach` gates a
+    // one-shot host `cwd` pull on the connect/reconnect snapshot edge: fire while `lastKnownCwd` is empty,
+    // then STOP once populated so the ~3 s RTT-snapshot cadence never becomes a cwd poll.
+
+    func testShouldRefreshCwdOnAttachIsPopulateOnce() {
+        let pane = PaneID()
+        // Empty cwd (a brand-new pane / a no-OSC-7 shell) → pull the host cwd on attach.
+        let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: nil))
+        XCTAssertTrue(store.shouldRefreshCwdOnAttach(pane), "empty lastKnownCwd → pull host cwd on attach")
+
+        // Once any source populates the cwd, the gate closes — no further pull (not a poll).
+        store.setLastKnownCwd("/Users/me/project", for: pane)
+        XCTAssertFalse(store.shouldRefreshCwdOnAttach(pane), "populated lastKnownCwd → gate closed")
+    }
+
     // MARK: - No startup `cd` bytes
 
     func testSplitInheritSendsNoStartupCdToTheNewPane() async throws {
@@ -303,6 +400,51 @@ final class CwdInheritanceStoreTests: XCTestCase {
         let newFake = store.handle(for: chooser) as? FakePaneSession
         await settleDeferredSends()
         XCTAssertEqual(newFake?.sentBytes ?? [], [], "a remote-GUI pane takes no `cd`")
+    }
+
+    // MARK: - A non-terminal chooser resolve CLEARS the inherited cwd (video pane carries no working dir)
+
+    /// A chooser inherits the focused terminal's cwd (for a Terminal pick's spawn dir). Resolving it to a
+    /// VIDEO kind (remote window) instead must CLEAR that cwd — a video pane has no shell, so a lingering cwd
+    /// would mislabel its rail subtitle (a directory instead of the host app), ride as a hidden search key,
+    /// and file the whole tab under that project under By-Project grouping. FAILS on the pre-fix
+    /// `choosePaneKind` (it flipped only kind + title, leaving the inherited cwd on the video spec — a
+    /// non-plugin value that even survives a relaunch).
+    func testChooserResolvedToRemoteGuiClearsInheritedCwd() throws {
+        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        let pane = PaneID()
+        let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
+        let before = allPaneIDs(store)
+
+        store.openChooserPane(.newTab)
+        let chooser = try XCTUnwrap(allPaneIDs(store).subtracting(before).first)
+        XCTAssertEqual(
+            store.tree.spec(for: chooser)?.lastKnownCwd, "/Users/me/project",
+            "the chooser inherits the active pane's cwd (would be the Terminal spawn dir)",
+        )
+
+        store.choosePaneKind(chooser, kind: .remoteGUI, launchGrace: .zero)
+        XCTAssertEqual(store.tree.spec(for: chooser)?.kind, .remoteGUI, "the chooser resolved to a video pane")
+        XCTAssertNil(
+            store.tree.spec(for: chooser)?.lastKnownCwd,
+            "a non-terminal resolve clears the inherited cwd → no stale subtitle/search/By-Project bucket",
+        )
+    }
+
+    /// The clear is NON-terminal-only: a Terminal pick KEEPS the inherited cwd (it is the PTY spawn dir).
+    func testChooserResolvedToTerminalKeepsInheritedCwd() throws {
+        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        let pane = PaneID()
+        let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
+        let before = allPaneIDs(store)
+
+        store.openChooserPane(.newTab)
+        let chooser = try XCTUnwrap(allPaneIDs(store).subtracting(before).first)
+        store.choosePaneKind(chooser, kind: .terminal, launchGrace: .zero)
+        XCTAssertEqual(
+            store.tree.spec(for: chooser)?.lastKnownCwd, "/Users/me/project",
+            "a Terminal pick keeps the inherited cwd (the host spawns the PTY there)",
+        )
     }
 
     // MARK: - New session ("New Window") working-directory policy (E7 carry-over #7)

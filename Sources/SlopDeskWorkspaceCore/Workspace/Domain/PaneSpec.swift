@@ -164,12 +164,71 @@ public struct PaneSpec: Sendable, Equatable {
     /// ``WorkspacePersistence/loadTree()``). Read-only from the client perspective.
     public var lastKnownTitle: String?
 
+    /// True when the user has EXPLICITLY renamed this pane (⌘R / the palette / the inline rail field →
+    /// ``WorkspaceStore/renamePane(_:to:)``). The single, unambiguous signal that ``title`` is a custom
+    /// user identity that must win over the cwd-folder / shell-title auto-derivations.
+    ///
+    /// B2 (host-authoritative-metadata audit): the rail's OLD "is this a rename?" heuristic —
+    /// `title != defaultTitle && title != lastKnownTitle` — MISFIRES the moment a shell emits a SECOND OSC
+    /// title: the load-time promotion set `title == lastKnownTitle₀`, then `lastKnownTitle` advances to
+    /// `title₁` while `title` stays `title₀`, so `title != lastKnownTitle` flips true and the stale promoted
+    /// title latches as if the user had renamed it. An explicit flag removes the ambiguity (only a real
+    /// rename sets it). Additive persisted field (encoded only when `true`); an older file without it decodes
+    /// to `false` (no-backcompat: a pane renamed before B2 falls back to its cwd-folder title until re-named).
+    public var userRenamed: Bool = false
+
     /// The title to surface in a command-completion notification/toast — the live OSC 0/2 shell title
     /// (``lastKnownTitle``, often the running command line) when the shell has reported one, else the
-    /// static ``title`` (e.g. "Terminal"). Distinct from ``title`` itself, which stays the pane's
-    /// persisted/renamable identity — this is only for the completion sink, which historically read
-    /// `title` directly and so always showed the generic default.
-    public var completionNotificationTitle: String { lastKnownTitle ?? title }
+    /// host cwd's FOLDER NAME (``cwdDisplayName(_:)`` of ``lastKnownCwd`` — the same identity the
+    /// sidebar/tab/window title show), else the static ``title`` (e.g. "Terminal"). Distinct from
+    /// ``title`` itself, which stays the pane's persisted/renamable identity — this is only for the
+    /// completion sink, which historically read `title` directly and so always showed the generic default.
+    ///
+    /// B1 (host-authoritative-metadata audit): the cwd fallback keeps the banner consistent with the
+    /// visible pane title for a shell that emits NO OSC-0/2 title (Starship / hookless) — without it the
+    /// banner said "Terminal" while every other surface showed the folder name.
+    public var completionNotificationTitle: String {
+        lastKnownTitle ?? Self.cwdDisplayName(lastKnownCwd) ?? title
+    }
+
+    /// The display FOLDER NAME of a working directory: its last path component (`/a/b/repo` → `repo`,
+    /// trailing-slash tolerant), the root as `/`, a bare `~` kept as-is. `nil` for `nil`/blank so a caller
+    /// falls back cleanly — never an empty title. Lifted into ``PaneSpec`` (WorkspaceCore) as the single
+    /// source of truth so BOTH the pure completion title above and the client-UI rail row
+    /// (``RailRowsBuilder`` delegates here) derive the same folder name from a cwd.
+    public static func cwdDisplayName(_ cwd: String?) -> String? {
+        guard let cwd else { return nil }
+        var path = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return nil }
+        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
+        if path == "/" { return "/" }
+        let leaf = path.split(separator: "/").last.map(String.init) ?? path
+        return leaf.isEmpty ? nil : leaf
+    }
+
+    /// True when `path` is almost certainly a plugin-manager's TRANSIENT cache dir — not a directory the
+    /// user navigated to — so it must never become a pane's ``lastKnownCwd`` (the inherit source for new
+    /// panes + the sidebar/title label).
+    ///
+    /// On a shell WITHOUT an OSC-7 chpwd hook, `lastKnownCwd` is fed only by the host `cwd` RPC
+    /// (`proc_pidinfo` of the shell), which reads the KERNEL cwd and so observes every transient `chdir`
+    /// the shell makes internally. A zsh plugin manager in TURBO / deferred mode (zinit `wait lucid`,
+    /// antidote, …) `builtin cd`s into a plugin's cache dir to SOURCE it — synchronously inside a precmd,
+    /// or async via `zsh/sched` while the shell sits idle at the prompt. `WorkspaceStore.refreshCwd` fires
+    /// the RPC on every command completion (OSC 133;D); racing that transient `cd` returns e.g.
+    /// `…/plugins/zsh-users---zsh-autosuggestions`, poisoning the inherit source so a later new-tab /
+    /// split / relaunch spawns its PTY THERE (the "cwd sometimes becomes zsh-users---zsh-autosuggestions"
+    /// bug). OSC 7 itself is immune — zinit uses `cd -q`, which suppresses the chpwd hooks OSC 7 rides —
+    /// but a hookless shell has ONLY the RPC, so the guard lives at the cwd sink instead.
+    ///
+    /// Signature: a `/`-component of the form `owner---repo` — zinit's `user/repo → user---repo`
+    /// flattening. A triple-dash component is vanishingly unlikely in a real project path, so this is a
+    /// tight, low-false-positive drop. Applied at BOTH the write sink (``WorkspaceStore/setLastKnownCwd``,
+    /// blocks new poison) and the spawn seed (`LivePaneSession`'s `initialCwd`, so a persisted poison
+    /// self-heals to the host default on the next launch).
+    public static func looksLikeTransientPluginCwd(_ path: String) -> Bool {
+        path.split(separator: "/").contains { $0.contains("---") }
+    }
 
     public init(
         kind: PaneKind,
@@ -179,6 +238,7 @@ public struct PaneSpec: Sendable, Equatable {
         resumeLastReceivedSeq: Int64? = nil,
         lastKnownCwd: String? = nil,
         lastKnownTitle: String? = nil,
+        userRenamed: Bool = false,
     ) {
         self.kind = kind
         self.title = title
@@ -187,6 +247,7 @@ public struct PaneSpec: Sendable, Equatable {
         self.resumeLastReceivedSeq = resumeLastReceivedSeq
         self.lastKnownCwd = lastKnownCwd
         self.lastKnownTitle = lastKnownTitle
+        self.userRenamed = userRenamed
     }
 }
 
@@ -203,6 +264,7 @@ extension PaneSpec: Codable {
         case resumeLastReceivedSeq
         case lastKnownCwd
         case lastKnownTitle
+        case userRenamed
     }
 
     public init(from decoder: any Decoder) throws {
@@ -214,6 +276,8 @@ extension PaneSpec: Codable {
         resumeLastReceivedSeq = try c.decodeIfPresent(Int64.self, forKey: .resumeLastReceivedSeq)
         lastKnownCwd = try c.decodeIfPresent(String.self, forKey: .lastKnownCwd)
         lastKnownTitle = try c.decodeIfPresent(String.self, forKey: .lastKnownTitle)
+        // Additive (B2): an older file without the key decodes to `false` (validate-then-default).
+        userRenamed = try c.decodeIfPresent(Bool.self, forKey: .userRenamed) ?? false
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -225,6 +289,8 @@ extension PaneSpec: Codable {
         try c.encodeIfPresent(resumeLastReceivedSeq, forKey: .resumeLastReceivedSeq)
         try c.encodeIfPresent(lastKnownCwd, forKey: .lastKnownCwd)
         try c.encodeIfPresent(lastKnownTitle, forKey: .lastKnownTitle)
+        // Encoded only when set, so a never-renamed pane's JSON is unchanged (additive-minimal).
+        if userRenamed { try c.encode(userRenamed, forKey: .userRenamed) }
     }
 }
 

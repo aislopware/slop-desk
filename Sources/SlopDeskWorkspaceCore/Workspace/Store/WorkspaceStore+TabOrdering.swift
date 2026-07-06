@@ -84,12 +84,43 @@ public extension WorkspaceStore {
         )
     }
 
+    /// The active session's tab ids in the SORTED-BUT-UNGROUPED order — the current ``tabSort`` applied with
+    /// no bucketing (as if ``TabGrouping/none``). This is the within-section order basis for the PER-PANE
+    /// By-Project sectioning (``RailRowsBuilder/sectionedByProject(_:tabOrder:query:)``): a project section's
+    /// pane rows follow their tabs' sort position (so ``TabSort/updated`` still floats a recently-active
+    /// tab's panes up WITHIN their project), independent of the project bucketing. Empty with no session.
+    func flatOrderedTabIDs(now: Date = Date()) -> [TabID] {
+        guard let session = tree.activeSession else { return [] }
+        let recency = tabLastActiveAt
+        return TabOrderingEngine.groups(
+            tabs: session.tabs,
+            grouping: .none,
+            sort: tabSort,
+            projectKey: { _ in nil },
+            lastActiveAt: { recency[$0] },
+            now: now,
+        ).first?.tabIDs ?? []
+    }
+
     /// The ``TabGrouping/byProject`` key for pane `id`: the cached git toplevel when present
     /// (``paneGitToplevel``, populated by E6 WI-7; empty until then), else the pane's last-known cwd from
     /// the active session's spec side table. `nil` ⇒ the pane lands in the "Other" bucket.
+    ///
+    /// A transient plugin-cache dir (``PaneSpec/looksLikeTransientPluginCwd(_:)`` — `…/owner---repo`) is
+    /// NEVER a project key: a `gitStatus` RPC racing a zinit turbo `builtin cd` can cache the PLUGIN's repo
+    /// root as this pane's toplevel, and a persisted-poison `lastKnownCwd` (from before the write guard) can
+    /// linger — either would file a real project's pane under a phantom `zsh-users---zsh-autosuggestions`
+    /// section. The write sinks (``cacheGitToplevel``, ``setLastKnownCwd``) already drop such readings; this
+    /// is the read-side backstop so grouping stays clean even if one slips through. A guarded-out source
+    /// falls through to the next (toplevel → cwd → `nil`/"Other") — self-healing once the shell settles.
     func paneProjectKey(_ id: PaneID) -> String? {
-        if let root = paneGitToplevel[id], !root.isEmpty { return root }
-        return tree.activeSession?.specs[id]?.lastKnownCwd
+        if let root = paneGitToplevel[id], !root.isEmpty, !PaneSpec.looksLikeTransientPluginCwd(root) {
+            return root
+        }
+        guard let cwd = tree.activeSession?.specs[id]?.lastKnownCwd,
+              !PaneSpec.looksLikeTransientPluginCwd(cwd)
+        else { return nil }
+        return cwd
     }
 
     /// Stamps `tabID` as just-active in the runtime ``tabLastActiveAt`` recency mirror (E6 WI-3) so the

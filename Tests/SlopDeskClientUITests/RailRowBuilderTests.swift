@@ -14,6 +14,25 @@ import XCTest
 
 @MainActor
 final class RailRowBuilderTests: XCTestCase {
+    // The By-Project sectioning tests drive `setTabGrouping` / `setTabSort`, which PERSIST through
+    // Defaults-backed `SettingsKey`. Clear those keys around every test so a persisted `.updated` sort (or a
+    // grouping choice) can't leak into a sibling test's `makeThreeProjectStore` — or, worse, across into
+    // another suite — and silently reorder its rows by recency (the isolation idiom `TabSortStoreTests` uses).
+    override func setUp() {
+        super.setUp()
+        clearGroupingKeys()
+    }
+
+    override func tearDown() {
+        clearGroupingKeys()
+        super.tearDown()
+    }
+
+    private nonisolated func clearGroupingKeys() {
+        UserDefaults.standard.removeObject(forKey: SettingsKey.tabGroupingKey)
+        UserDefaults.standard.removeObject(forKey: SettingsKey.tabSortKey)
+    }
+
     /// A headless tree-model store over the fake session (mirrors `OverlayCoordinatorMountTests`).
     private func makeStore() -> WorkspaceStore {
         WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
@@ -314,7 +333,9 @@ final class RailRowBuilderTests: XCTestCase {
     /// The title precedence for a terminal row: an EXPLICIT rename beats the folder name, the folder
     /// name beats the shell-title chain, and a cwd-less pane keeps the old fallback ("Terminal").
     func testRowTitlePrecedence() {
-        let renamed = PaneSpec(kind: .terminal, title: "build box", lastKnownCwd: "/srv/app")
+        // B2: a rename now rides the explicit `userRenamed` flag (set by `renamePane`), not a title-vs-cwd
+        // heuristic — so the folder name is overridden only for a genuinely user-renamed pane.
+        let renamed = PaneSpec(kind: .terminal, title: "build box", lastKnownCwd: "/srv/app", userRenamed: true)
         XCTAssertEqual(RailRowsBuilder.rowTitle(kind: .terminal, spec: renamed), "build box")
 
         let unnamed = PaneSpec(kind: .terminal, title: "Terminal", lastKnownCwd: "/srv/app")
@@ -333,6 +354,46 @@ final class RailRowBuilderTests: XCTestCase {
         // Non-terminal kinds keep the E21 chain untouched.
         let video = PaneSpec(kind: .remoteGUI, title: "Docs", lastKnownTitle: "Docs — Safari")
         XCTAssertEqual(RailRowsBuilder.rowTitle(kind: .remoteGUI, spec: video), "Docs — Safari")
+    }
+
+    /// B2 regression: the OLD heuristic (`title != lastKnownTitle`) MISFIRED once a shell emitted a SECOND
+    /// OSC title — `title` stayed the load-time-promoted first title while `lastKnownTitle` advanced, so the
+    /// stale promoted title latched as a phantom "rename". With the explicit `userRenamed` flag (false here),
+    /// the FOLDER NAME wins. Revert-to-confirm-fail: the pre-B2 code returned "zsh — proj-v1" for this spec.
+    func testRowTitleDoesNotMisfireAsRenameWhenShellEmitsSecondOSCTitle() {
+        let secondTitle = PaneSpec(
+            kind: .terminal, title: "zsh — proj-v1", lastKnownCwd: "/srv/app",
+            lastKnownTitle: "zsh — proj-v2", userRenamed: false,
+        )
+        XCTAssertEqual(
+            RailRowsBuilder.rowTitle(kind: .terminal, spec: secondTitle), "app",
+            "a shell's changing OSC title is NOT a user rename — the folder name still titles the pane",
+        )
+    }
+
+    /// A4: a cwd-less pane running a real foreground program titles itself by that program (host wire type
+    /// 26), while a bare login shell is suppressed (titling a pane "zsh" is no better than "Terminal").
+    func testRowTitleFallsBackToForegroundProcessWhenNoCwd() {
+        let spec = PaneSpec(kind: .terminal, title: "Terminal") // no cwd, no live title
+
+        XCTAssertEqual(
+            RailRowsBuilder.rowTitle(kind: .terminal, spec: spec, processLabel: "vim"), "vim",
+            "a real foreground program names the pane when the cwd is not known yet",
+        )
+        XCTAssertEqual(
+            RailRowsBuilder.rowTitle(kind: .terminal, spec: spec, processLabel: "/usr/local/bin/npm"), "npm",
+            "the process label is basenamed",
+        )
+        XCTAssertEqual(
+            RailRowsBuilder.rowTitle(kind: .terminal, spec: spec, processLabel: "-zsh"), "Terminal",
+            "a bare login shell is suppressed — it falls through to the generic chain, not \"zsh\"",
+        )
+        // A known cwd still beats the process fallback.
+        let withCwd = PaneSpec(kind: .terminal, title: "Terminal", lastKnownCwd: "/srv/app")
+        XCTAssertEqual(
+            RailRowsBuilder.rowTitle(kind: .terminal, spec: withCwd, processLabel: "vim"), "app",
+            "the cwd folder name is the primary identity; the process fallback is only for a cwd-less pane",
+        )
     }
 
     /// The folder-name helper: leaf extraction, trailing-slash tolerance, root, blank → nil.
@@ -456,6 +517,115 @@ final class RailRowBuilderTests: XCTestCase {
         )
         XCTAssertEqual(sections.map(\.header), ["beta"], "the alpha section filters out entirely → dropped")
         XCTAssertEqual(sections[0].rows.map(\.tabNumber), [3])
+    }
+
+    // MARK: - Per-pane By-Project sectioning (the split-tab "group name flickers with focus" bug)
+
+    /// A SPLIT tab whose two panes are in DIFFERENT projects must land its panes in their RESPECTIVE project
+    /// sections — and that placement must be FOCUS-INDEPENDENT. The old tab-level grouping keyed the WHOLE
+    /// tab by `tab.activePane`, so focusing pane A titled the section by A's cwd and focusing pane B flipped
+    /// it to B's cwd (the reported flicker). `sectionedByProject` buckets each pane by ITS OWN `projectKey`,
+    /// so both the membership and the headers are identical regardless of which pane is focused. FAILS on any
+    /// tab-level implementation (both panes collapse into one focus-dependent section).
+    func testByProjectSectioningIsPerPaneAndFocusIndependent() {
+        let store = makeStore()
+        store.splitActivePane(axis: .horizontal, kind: .terminal, leading: false, launchGrace: .zero)
+        let rows0 = RailRowsBuilder.rows(for: store)
+        XCTAssertEqual(rows0.count, 2, "one split tab → two pane rows in one tab")
+        let paneA = rows0[0].id
+        let paneB = rows0[1].id
+        store.setLastKnownCwd("/Users/me/alpha", for: paneA)
+        store.setLastKnownCwd("/Users/me/beta", for: paneB)
+
+        func sections() -> [RailRowGroup] {
+            RailRowsBuilder.sectionedByProject(
+                RailRowsBuilder.rows(for: store), tabOrder: store.flatOrderedTabIDs(), query: "",
+            )
+        }
+
+        store.focusPaneTree(paneA)
+        let withA = sections()
+        XCTAssertEqual(withA.map(\.header), ["alpha", "beta"], "each pane buckets into its OWN project section")
+        XCTAssertEqual(withA.first { $0.header == "alpha" }?.rows.map(\.id), [paneA], "pane A → alpha section")
+        XCTAssertEqual(withA.first { $0.header == "beta" }?.rows.map(\.id), [paneB], "pane B → beta section")
+
+        store.focusPaneTree(paneB)
+        let withB = sections()
+        XCTAssertEqual(withB.map(\.header), withA.map(\.header), "section headers do NOT flicker with focus")
+        XCTAssertEqual(withB.first { $0.header == "alpha" }?.rows.map(\.id), [paneA], "pane A stays in alpha")
+        XCTAssertEqual(withB.first { $0.header == "beta" }?.rows.map(\.id), [paneB], "pane B stays in beta")
+    }
+
+    /// A single-pane tab is UNCHANGED by the per-pane path (its one pane == the tab's project): three
+    /// single-pane tabs across two projects yield the same two sections the tab-level path produced.
+    func testByProjectSectioningSinglePaneTabsMatchTabLevel() {
+        let store = makeThreeProjectStore()
+        let sections = RailRowsBuilder.sectionedByProject(
+            RailRowsBuilder.rows(for: store), tabOrder: store.flatOrderedTabIDs(), query: "",
+        )
+        XCTAssertEqual(sections.map(\.header), ["alpha", "beta"], "single-pane tabs group exactly as before")
+        XCTAssertEqual(sections[0].rows.map(\.tabNumber), [1, 2], "both alpha tabs in section 1")
+        XCTAssertEqual(sections[1].rows.map(\.tabNumber), [3], "the lone beta tab in section 2")
+    }
+
+    /// A pane with no project key (a video pane, or a cwd-less terminal) lands in the deterministic "Other"
+    /// bucket, ordered by first appearance; the query filter still composes and drops an all-filtered section.
+    func testByProjectSectioningKeylessPaneGoesToOther() {
+        let store = makeThreeProjectStore()
+        // Blank tab-3's cwd so its pane is keyless → "Other" (tab 3 is the third single-pane row).
+        let beta = RailRowsBuilder.rows(for: store)[2].id
+        store.setLastKnownCwd("", for: beta)
+        let sections = RailRowsBuilder.sectionedByProject(
+            RailRowsBuilder.rows(for: store), tabOrder: store.flatOrderedTabIDs(), query: "",
+        )
+        XCTAssertEqual(sections.map(\.header), ["alpha", "Other"], "the keyless pane falls into Other, last")
+        XCTAssertEqual(sections.last?.rows.map(\.id), [beta])
+    }
+
+    /// By-Project SECTION order must be STABLE across a tab switch under Sort = Most Recent (`.updated`):
+    /// selecting a tab stamps recency (floating that tab's rows up WITHIN their project), but must NOT
+    /// reorder the sections themselves. Two single-pane tabs in different projects keep their creation-order
+    /// section layout regardless of which is focused. FAILS on a section order derived from the recency-
+    /// SORTED tab order (which flips [alpha, beta] → [beta, alpha] the moment you click the beta tab) — the
+    /// case the split-tab focus test can't reach (a pane focus never stamps TAB recency).
+    func testByProjectSectionOrderStableAcrossTabSwitchUnderUpdated() {
+        let store = makeStore()
+        store.newTab(kind: .terminal, launchGrace: .zero) // two single-pane tabs
+        let rows0 = RailRowsBuilder.rows(for: store)
+        store.setLastKnownCwd("/work/alpha", for: rows0[0].id)
+        store.setLastKnownCwd("/work/beta", for: rows0[1].id)
+        store.setTabSort(.updated)
+
+        func headers() -> [String?] {
+            RailRowsBuilder.sectionedByProject(
+                RailRowsBuilder.rows(for: store), tabOrder: store.flatOrderedTabIDs(), query: "",
+            ).map(\.header)
+        }
+
+        store.selectTab(0)
+        XCTAssertEqual(headers(), ["alpha", "beta"], "creation-order section layout")
+        store.selectTab(1) // stamps tab 2 most-recent under .updated
+        XCTAssertEqual(
+            headers(), ["alpha", "beta"],
+            "section order stays put across a tab switch — recency floats rows WITHIN a section, not sections",
+        )
+    }
+
+    /// Two panes in the SAME directory reported with an inconsistent trailing slash (`/work/api` vs
+    /// `/work/api/` — e.g. a git toplevel vs an OSC-7 `$PWD`, or a `.path` policy) must land in ONE section,
+    /// not two identically-titled "api" sections. `normalizedProjectKey` strips the trailing slash before
+    /// bucketing. FAILS on the un-normalized key (two distinct dictionary keys → two "api" sections).
+    func testByProjectMergesTrailingSlashKeys() {
+        let store = makeStore()
+        store.newTab(kind: .terminal, launchGrace: .zero)
+        let rows0 = RailRowsBuilder.rows(for: store)
+        store.setLastKnownCwd("/work/api", for: rows0[0].id)
+        store.setLastKnownCwd("/work/api/", for: rows0[1].id)
+        let sections = RailRowsBuilder.sectionedByProject(
+            RailRowsBuilder.rows(for: store), tabOrder: store.flatOrderedTabIDs(), query: "",
+        )
+        XCTAssertEqual(sections.map(\.header), ["api"], "trailing-slash variants merge into one section")
+        XCTAssertEqual(sections[0].rows.count, 2, "both panes land in the single api section")
     }
 
     // MARK: - C3 BUG A: path-searchable row + collision disambiguation

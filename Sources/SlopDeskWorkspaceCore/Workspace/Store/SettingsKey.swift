@@ -522,8 +522,9 @@ public enum SettingsKey {
     /// to `.auto` via the `RawRepresentableBridge`. Read at the ⌘T fire-site.
     public static var newTabPosition: NewTabPosition { Defaults[.newTabPosition] }
 
-    /// The persisted sidebar tab grouping ("Group By", E6), default ``TabGrouping/none``. A stale /
-    /// invalid persisted raw value repairs to `.none` via the `RawRepresentableBridge`. Read at store init.
+    /// The persisted sidebar tab grouping ("Group By", E6), default ``TabGrouping/byProject`` (group panes by
+    /// their project). A stale / invalid persisted raw value repairs to `.byProject` via the
+    /// `RawRepresentableBridge`. Read at store init.
     public static var tabGrouping: TabGrouping { Defaults[.tabGrouping] }
 
     /// The persisted within-section tab sort ("Sort By", E6), default ``TabSort/created``. A stale /
@@ -832,9 +833,10 @@ public extension Defaults.Keys {
     static let defaultPaneKind = Key<PaneKind>(SettingsKey.defaultPaneKindKey, default: .terminal)
     static let newTabPosition = Key<NewTabPosition>(SettingsKey.newTabPositionKey, default: .auto)
     // Sidebar tab grouping / sort (sort-hamburger, E6) stored as the bare enum rawValue. Group default
-    // `.none` (one flat list); sort default `.created` (= `session.tabs` array order) — both byte-identical
-    // to the pre-E6 rail. The WorkspaceStore owns the read/write; these are the persisted backing.
-    static let tabGrouping = Key<TabGrouping>(SettingsKey.tabGroupingKey, default: .none)
+    // `.byProject` (bucket panes by their project — a coding tool navigates by project); sort default
+    // `.created` (= `session.tabs` array order). A user can still pick `.none` (one flat list) in the
+    // hamburger. The WorkspaceStore owns the read/write; these are the persisted backing.
+    static let tabGrouping = Key<TabGrouping>(SettingsKey.tabGroupingKey, default: .byProject)
     static let tabSort = Key<TabSort>(SettingsKey.tabSortKey, default: .created)
     // E19/A18 vertical-sidebar auto-hide (`auto-hide-tabs-panel`). Stores the bare `AutoHideTabsPanelMode`
     // rawValue via the `RawRepresentableBridge` (the `PreferRawRepresentable` conformance below), repairing a

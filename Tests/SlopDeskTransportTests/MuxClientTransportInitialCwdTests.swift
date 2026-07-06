@@ -4,7 +4,12 @@ import XCTest
 @testable import SlopDeskTransport
 
 final class MuxClientTransportInitialCwdTests: XCTestCase {
-    func testInitialCwdSentOnlyForFreshSession() async throws {
+    /// The cwd hint rides EVERY (re)connect, not only the first. The host ignores it on a reattach (the
+    /// live shell's cwd is preserved) and honors it only on a fresh respawn — where the pane's project dir
+    /// is exactly what we want. Nil-ing it on reconnect (the prior behavior, pinned by the old assertion
+    /// `["/Users/me/project", nil]`) made every respawned shell land in `$HOME`, losing the working
+    /// directory and collapsing the cwd-derived pane/tab title to "Terminal".
+    func testInitialCwdSentOnEveryConnectSoRespawnKeepsProjectDir() async throws {
         final class Recorder: @unchecked Sendable {
             private let lock = NSLock()
             private var values: [String?] = []
@@ -34,6 +39,7 @@ final class MuxClientTransportInitialCwdTests: XCTestCase {
         )
 
         await transport.setInitialCwd("/Users/me/project")
+        // First connect: a brand-new session (zero sessionID).
         try await transport.connect(
             host: "host",
             port: 1,
@@ -41,6 +47,7 @@ final class MuxClientTransportInitialCwdTests: XCTestCase {
             lastReceivedSeq: 0,
             handshakeTimeout: .seconds(1),
         )
+        // Reconnect: a returning session (a learned, non-zero sessionID) — the hint must STILL be sent.
         try await transport.connect(
             host: "host",
             port: 1,
@@ -49,6 +56,6 @@ final class MuxClientTransportInitialCwdTests: XCTestCase {
             handshakeTimeout: .seconds(1),
         )
 
-        XCTAssertEqual(recorder.snapshot, ["/Users/me/project", nil])
+        XCTAssertEqual(recorder.snapshot, ["/Users/me/project", "/Users/me/project"])
     }
 }

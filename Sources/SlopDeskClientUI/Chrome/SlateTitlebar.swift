@@ -5,8 +5,8 @@
 //     the panel it hides; the titlebar hosts it only when that panel is gone.
 //   • centre— the active tab's title as a `⋯` menu (working dir / split / move / find / close pane)
 //   • right — the connection cluster (`ConnectionCluster`), ONLY while the sidebar is collapsed. Its
-//     resting home is the SIDEBAR TOP (fixed-width column, leading-aligned — the ticking telemetry
-//     numbers can't shift anything there; trailing-aligned in the titlebar they wiggled the whole
+//     resting home is the SIDEBAR BOTTOM (a status footer; fixed-width column, leading-aligned — the ticking
+//     telemetry numbers can't shift anything there; trailing-aligned in the titlebar they wiggled the whole
 //     cluster every second). Same host-the-fallback pattern as the reopen button beside it.
 // The reopen button flips the shared `WorkspaceChromeState` flag that the split representable reads
 // to collapse the matching `NSSplitViewItem` — same machinery the old toolbar drove.
@@ -35,7 +35,14 @@ struct SlateTitlebar: View {
     private var activeTitle: String {
         guard let id = activePane else { return "~" }
         let spec = store.tree.activeSession?.specs[id]
-        let title = spec?.lastKnownTitle ?? spec?.title ?? ""
+        // Same source as the sidebar rail row (`RailRowsBuilder.rowTitle`) and the macOS window title
+        // (`WorkspaceRootView.windowTitle`): the focused pane's cwd FOLDER NAME (an explicit rename wins,
+        // a cwd-less pane falls back to its foreground program), NOT the raw shell title — so the centre
+        // chip TRACKS the active pane instead of showing a static "Terminal". A `cd` / pane switch re-titles
+        // it reactively (both read observed `tree` state).
+        let title = RailRowsBuilder.rowTitle(
+            kind: spec?.kind ?? .terminal, spec: spec, processLabel: store.paneForegroundProcess[id],
+        )
         return title.isEmpty ? "~" : title
     }
 

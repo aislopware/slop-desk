@@ -173,18 +173,42 @@ public struct WorkspacePersistence: @unchecked Sendable {
               tree.launchPresets.count <= Self.maxItems,
               tree.sessionTemplates.count <= Self.maxItems else { return resetTreeToDefault() }
         let normalized = tree.normalized()
-        return Self.promotingLastKnownTitles(in: normalized)
+        return Self.sanitizingTransientPluginCwds(in: Self.promotingLastKnownTitles(in: normalized))
+    }
+
+    /// Pure value transform: drop a persisted ``PaneSpec/lastKnownCwd`` that is a plugin manager's
+    /// transient cache dir (see ``PaneSpec/looksLikeTransientPluginCwd(_:)``) — a value a PRE-fix session
+    /// could have captured via the racing `cwd` RPC. Restoring it would re-spawn the pane's PTY THERE
+    /// (`channelOpen` seeds from `lastKnownCwd`) and mislabel the sidebar/title, so nil it out: the host
+    /// falls back to its default (home) and the first real cwd re-populates the field. Called once on the
+    /// loaded + normalized tree, beside ``promotingLastKnownTitles(in:)``.
+    static func sanitizingTransientPluginCwds(in tree: TreeWorkspace) -> TreeWorkspace {
+        var result = tree
+        result.sessions = tree.sessions.map { session in
+            var s = session
+            for (paneID, spec) in s.specs {
+                guard let cwd = spec.lastKnownCwd, PaneSpec.looksLikeTransientPluginCwd(cwd) else { continue }
+                var updated = spec
+                updated.lastKnownCwd = nil
+                s.specs[paneID] = updated
+            }
+            return s
+        }
+        return result
     }
 
     /// Pure value transform: for each pane whose ``PaneSpec/title`` is still default `"Terminal"` AND
     /// whose ``PaneSpec/lastKnownTitle`` is non-nil, promote `lastKnownTitle` into `title`. User-renamed
-    /// panes (title ≠ `"Terminal"`) untouched. Called once on the loaded + normalized tree.
+    /// panes are untouched — gated on the explicit ``PaneSpec/userRenamed`` flag (B2), NOT `title !=
+    /// "Terminal"`, so a pane the user deliberately renamed TO `"Terminal"` keeps that chosen label instead
+    /// of being clobbered by a promoted shell title. Called once on the loaded + normalized tree.
     static func promotingLastKnownTitles(in tree: TreeWorkspace) -> TreeWorkspace {
         var result = tree
         result.sessions = tree.sessions.map { session in
             var s = session
             for (paneID, spec) in s.specs {
-                guard let knownTitle = spec.lastKnownTitle, spec.title == "Terminal" else { continue }
+                guard let knownTitle = spec.lastKnownTitle, spec.title == "Terminal", !spec.userRenamed
+                else { continue }
                 var updated = spec
                 updated.title = knownTitle
                 s.specs[paneID] = updated

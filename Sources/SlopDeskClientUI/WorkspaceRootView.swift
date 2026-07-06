@@ -143,6 +143,13 @@ public struct WorkspaceRootView: View {
         // persisted, so applying at launch is safe (the first application reads as a regime edge and actuates).
         .onChange(of: activeTabCount, initial: true) { applyAutoHidePolicy() }
         .onChange(of: autoHideTabsPanel) { applyAutoHidePolicy() }
+        // The macOS WINDOW title tracks the FOCUSED pane (user: the window stayed a static "Terminal"). With
+        // `.hiddenTitleBar` this text is not drawn in a titlebar, but it IS the window's name in the Window
+        // menu, Mission Control / Exposé, screenshot filenames and accessibility. `.navigationTitle` is the
+        // SwiftUI-native way to set `NSWindow.title` from WindowGroup content (no `NSApplication.windows`
+        // reach). `windowTitle(for:)` reads the active pane + its spec, so the `@Observable` store re-titles
+        // the window on a pane switch, a live OSC-0/2 title, or a `cd` (the cwd folder name).
+        .navigationTitle(Self.windowTitle(for: store))
         #else
         NavigationSplitView(
             columnVisibility: sidebarColumnVisibility,
@@ -312,6 +319,28 @@ public struct WorkspaceRootView: View {
     private func applyAutoHidePolicy() {
         Self.applyAutoHide(mode: autoHideTabsPanel, tabCount: activeTabCount, chrome: chrome)
     }
+
+    /// The macOS WINDOW title: the active pane's display label — the SAME ``RailRowsBuilder/rowTitle`` the
+    /// sidebar row + hover-reveal titlebar show — so the window's name (Window menu / Mission Control /
+    /// screenshot files / accessibility) tracks the FOCUSED pane instead of a static app name. Reading the
+    /// active pane + its spec here registers the `@Observable` store's dependencies, so a pane switch, a live
+    /// OSC-0/2 title, or a `cd` (which changes the cwd folder name) re-titles the window. Falls back to the
+    /// product name for an empty workspace (no active pane / session). Static + pure so the mapping is
+    /// unit-pinned without a live `NSWindow` (see `WindowTitleTests`).
+    @MainActor
+    static func windowTitle(for store: WorkspaceStore) -> String {
+        guard let session = store.tree.activeSession,
+              let paneID = session.activeTab?.activePane
+        else { return productName }
+        let spec = session.specs[paneID]
+        let title = RailRowsBuilder.rowTitle(
+            kind: spec?.kind ?? .terminal, spec: spec, processLabel: store.paneForegroundProcess[paneID],
+        )
+        return title.isEmpty ? productName : title
+    }
+
+    /// The window-title fallback (empty workspace / no active pane) — the product name.
+    static let productName = "SlopDesk"
 
     #if os(iOS)
     @ToolbarContentBuilder

@@ -34,7 +34,14 @@ final class TabSortStoreTests: XCTestCase {
 
     /// A one-session `.tree` store with three single-pane tabs carrying distinct cwds (so By-Project yields
     /// three sections). Returns the store + the tab ids in array order.
-    private func makeStore() -> (WorkspaceStore, [TabID]) {
+    ///
+    /// `applyFlatGrouping` (default `true`) forces ``TabGrouping/none`` directly on the fresh store so the
+    /// SORT tests below (which assert against `orderedTabGroups()[0].tabIDs` as ONE flat list) are isolated
+    /// from the app-wide default grouping (now ``TabGrouping/byProject`` — three distinct-project tabs would
+    /// otherwise split into three sections). Pass `false` for the persistence test, which must let the store
+    /// HYDRATE its grouping from Defaults instead of having it overwritten. The direct set does not persist,
+    /// so it never leaks through the Defaults seam the grouping tests exercise.
+    private func makeStore(applyFlatGrouping: Bool = true) -> (WorkspaceStore, [TabID]) {
         var tabs: [Tab] = []
         var specs: [PaneID: PaneSpec] = [:]
         let cwds = ["/Users/me/alpha", "/Users/me/beta", "/Users/me/gamma"]
@@ -54,6 +61,7 @@ final class TabSortStoreTests: XCTestCase {
             liveVideoCap: 2,
             persistence: nil,
         )
+        if applyFlatGrouping { store.tabGrouping = .none }
         return (store, tabs.map(\.id))
     }
 
@@ -97,12 +105,23 @@ final class TabSortStoreTests: XCTestCase {
     }
 
     func testSetTabGroupingIsIdempotentAndPersisted() {
-        let (store, _) = makeStore()
+        // Let the stores HYDRATE their grouping from Defaults (no forced-flat override) so this pins the
+        // persist→hydrate round-trip, not the fixture default.
+        let (store, _) = makeStore(applyFlatGrouping: false)
         store.setTabGrouping(.byDate)
         XCTAssertEqual(store.tabGrouping, .byDate)
         // Persisted: a fresh store hydrates the same choice from Defaults.
-        let (store2, _) = makeStore()
+        let (store2, _) = makeStore(applyFlatGrouping: false)
         XCTAssertEqual(store2.tabGrouping, .byDate, "the grouping choice persists + hydrates on a new store")
+    }
+
+    /// The app-wide DEFAULT grouping is ``TabGrouping/byProject`` (a coding tool groups by project): a fresh
+    /// store with no persisted choice hydrates By-Project, not the old flat `.none`. FAILS on the pre-change
+    /// default. (`clearKeys()` in setUp guarantees no persisted value, so this reads the key default.)
+    func testDefaultGroupingIsByProject() {
+        let (store, _) = makeStore(applyFlatGrouping: false)
+        XCTAssertEqual(store.tabGrouping, .byProject, "the default sidebar grouping is By-Project")
+        XCTAssertEqual(SettingsKey.tabGrouping, .byProject, "the persisted default resolves to By-Project")
     }
 
     // MARK: - By-Project git-toplevel cache invalidation on a cwd change (ES-E6-4)
@@ -161,6 +180,69 @@ final class TabSortStoreTests: XCTestCase {
             store.paneProjectKey(pane), "/repo/root",
             "an unchanged cwd write does not invalidate the cache (the dirty guard short-circuits)",
         )
+    }
+
+    // MARK: - Plugin-cache dir never becomes a By-Project key (the "new pane → zsh-users---zsh-autosuggestions" bug)
+
+    /// A `gitStatus` RPC that raced a zinit turbo `builtin cd` resolves the PLUGIN's repo root, not the
+    /// user's project. Caching that toplevel would file the pane under a phantom
+    /// `zsh-users---zsh-autosuggestions` By-Project section. `cacheGitToplevel` must DROP such a reading so
+    /// the pane keeps its real cwd fallback. FAILS on the un-fixed store (`cacheGitToplevel` stored any root
+    /// verbatim ⇒ `paneProjectKey` returned the plugin dir).
+    func testGitToplevelPluginCacheDirIsDroppedNotCached() {
+        let (store, _) = makeStore()
+        store.setTabGrouping(.byProject)
+        guard let pane = store.tree.activeSession?.tabs[0].activePane else {
+            XCTFail("tab 0 has an active pane")
+            return
+        }
+        let poison = "/Users/me/.local/share/zinit/plugins/zsh-users---zsh-autosuggestions"
+        store.cacheGitToplevel(poison, for: pane)
+        XCTAssertNil(store.paneGitToplevel[pane], "a plugin-cache toplevel is dropped, never cached")
+        XCTAssertEqual(
+            store.paneProjectKey(pane), "/Users/me/alpha",
+            "the pane keeps its real cwd key, not the raced plugin repo root",
+        )
+        XCTAssertEqual(
+            store.orderedTabGroups().map(\.header), ["alpha", "beta", "gamma"],
+            "no phantom zsh-users--- section appears",
+        )
+    }
+
+    /// The read-side backstop: even if a plugin-cache toplevel somehow lands in the cache (a persisted or
+    /// slipped-through value), `paneProjectKey` must not return it. Seeds the observable map DIRECTLY (past
+    /// the write guard) to prove the read guard stands on its own. FAILS on the un-fixed `paneProjectKey`
+    /// (returned any non-empty cached root).
+    func testPaneProjectKeySkipsPluginToplevelFromCache() {
+        let (store, _) = makeStore()
+        guard let pane = store.tree.activeSession?.tabs[0].activePane else {
+            XCTFail("tab 0 has an active pane")
+            return
+        }
+        store.paneGitToplevel[pane] = "/x/.zinit/plugins/romkatv---powerlevel10k"
+        XCTAssertEqual(
+            store.paneProjectKey(pane), "/Users/me/alpha",
+            "a plugin-cache toplevel is skipped ⇒ the cwd fallback wins",
+        )
+    }
+
+    /// The read-side backstop for a persisted-poison cwd (written before the `setLastKnownCwd` guard
+    /// existed, so no live sink can re-sanitize it): `paneProjectKey` must treat a plugin-looking
+    /// `lastKnownCwd` as absent → the "Other" bucket, never a phantom plugin section. FAILS on the un-fixed
+    /// `paneProjectKey` (returned the raw cwd).
+    func testPaneProjectKeySkipsPluginCwdFallback() {
+        let a = PaneID()
+        let poison = "/Users/me/.local/share/zinit/plugins/zsh-users---zsh-autosuggestions"
+        var spec = PaneSpec(kind: .terminal, title: "A")
+        spec.lastKnownCwd = poison
+        let session = Session(
+            name: "Local", tabs: [Tab(root: .leaf(a), activePane: a)], activeTabIndex: 0, specs: [a: spec],
+        )
+        let store = WorkspaceStore(
+            restoringTree: TreeWorkspace(sessions: [session], activeSessionID: session.id),
+            liveModel: .tree, makeSession: { FakePaneSession($0) }, liveVideoCap: 2, persistence: nil,
+        )
+        XCTAssertNil(store.paneProjectKey(a), "a plugin-looking cwd is not a project key ⇒ Other bucket")
     }
 
     // MARK: - selectTab stamps recency and flips Updated order (ES-E6-5)
