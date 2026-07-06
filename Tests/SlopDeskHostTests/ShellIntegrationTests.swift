@@ -11,6 +11,16 @@ final class ShellIntegrationTests: XCTestCase {
         return dir
     }
 
+    /// A fake user home (or ZDOTDIR) holding the given zsh startup files — the new-install guard
+    /// (kitty parity) skips the shim when NONE exist, so tests that expect a shim must provide one.
+    private func makeHome(rcFiles: [String] = [".zshrc"]) -> URL {
+        let dir = makeTempDir()
+        for name in rcFiles {
+            FileManager.default.createFile(atPath: dir.appendingPathComponent(name).path, contents: Data())
+        }
+        return dir
+    }
+
     // MARK: Opt-out gate
 
     func testEnabledByDefault() {
@@ -41,7 +51,7 @@ final class ShellIntegrationTests: XCTestCase {
 
     func testNoOverridesForNonZsh() {
         let overrides = ShellIntegration.makeEnvironmentOverrides(
-            parent: ["HOME": "/Users/x"],
+            parent: ["HOME": makeHome().path],
             shellPath: "/bin/bash",
             tmpDir: makeTempDir(),
         )
@@ -50,7 +60,7 @@ final class ShellIntegrationTests: XCTestCase {
 
     func testNoOverridesWhenOptedOut() {
         let overrides = ShellIntegration.makeEnvironmentOverrides(
-            parent: ["HOME": "/Users/x", "SLOPDESK_SHELL_INTEGRATION": "0"],
+            parent: ["HOME": makeHome().path, "SLOPDESK_SHELL_INTEGRATION": "0"],
             shellPath: "/bin/zsh",
             tmpDir: makeTempDir(),
         )
@@ -59,8 +69,9 @@ final class ShellIntegrationTests: XCTestCase {
 
     func testOverridesPointZDotDirAtFreshShimAndCarryRealZDotDir() {
         let tmp = makeTempDir()
+        let home = makeHome()
         let overrides = ShellIntegration.makeEnvironmentOverrides(
-            parent: ["HOME": "/Users/x"],
+            parent: ["HOME": home.path],
             shellPath: "/bin/zsh",
             tmpDir: tmp,
         )
@@ -69,22 +80,193 @@ final class ShellIntegrationTests: XCTestCase {
         XCTAssertNotNil(shim)
         // The shim is a fresh subdir of tmp, not the user's HOME.
         XCTAssertTrue(shim?.hasPrefix(tmp.path) ?? false, "ZDOTDIR must be the generated shim dir")
-        XCTAssertNotEqual(shim, "/Users/x")
+        XCTAssertNotEqual(shim, home.path)
         // The real ZDOTDIR defaults to HOME when the parent has no explicit ZDOTDIR.
-        XCTAssertEqual(env?["SLOPDESK_REAL_ZDOTDIR"], "/Users/x")
+        XCTAssertEqual(env?["SLOPDESK_REAL_ZDOTDIR"], home.path)
     }
 
     func testRealZDotDirHonoursInheritedZDotDir() {
+        let zdot = makeHome()
         let overrides = ShellIntegration.makeEnvironmentOverrides(
-            parent: ["HOME": "/Users/x", "ZDOTDIR": "/Users/x/.config/zsh"],
+            parent: ["HOME": makeTempDir().path, "ZDOTDIR": zdot.path],
             shellPath: "/bin/zsh",
             tmpDir: makeTempDir(),
         )
         XCTAssertEqual(
             overrides?["SLOPDESK_REAL_ZDOTDIR"],
-            "/Users/x/.config/zsh",
+            zdot.path,
             "an explicit inherited ZDOTDIR must win over HOME",
         )
+    }
+
+    // MARK: New-install guard (kitty parity)
+
+    /// kitty's `is_new_zsh_install` guard: when the user has NO zsh startup files at all
+    /// (`.zshrc`/`.zshenv`/`.zprofile`/`.zlogin` in the effective real ZDOTDIR), injecting the shim
+    /// would suppress `zsh-newuser-install` (zsh only offers it when no `.zshrc` resolves — and the
+    /// shim dir always has one). Skip the shim so a fresh install still gets zsh's first-run setup.
+    ///
+    /// Revert-to-confirm-fail: on the un-guarded code this fails (a shim is created for the empty home).
+    func testSkipsShimForFreshZshInstall() {
+        let emptyHome = makeTempDir()
+        let overrides = ShellIntegration.makeEnvironmentOverrides(
+            parent: ["HOME": emptyHome.path],
+            shellPath: "/bin/zsh",
+            tmpDir: makeTempDir(),
+        )
+        XCTAssertNil(overrides, "a home with zero zsh startup files must not be shimmed (zsh-newuser-install)")
+    }
+
+    /// ANY of the four startup files marks an established install — the shim must engage.
+    func testShimsWhenAnyStartupFileExists() {
+        for rc in [".zshrc", ".zshenv", ".zprofile", ".zlogin"] {
+            let overrides = ShellIntegration.makeEnvironmentOverrides(
+                parent: ["HOME": makeHome(rcFiles: [rc]).path],
+                shellPath: "/bin/zsh",
+                tmpDir: makeTempDir(),
+            )
+            XCTAssertNotNil(overrides, "a home with \(rc) is an established install — shim must engage")
+        }
+    }
+
+    /// The guard checks the EFFECTIVE real dir: an inherited ZDOTDIR holding the rc files must
+    /// count even when $HOME itself is empty.
+    func testNewInstallGuardHonoursInheritedZDotDir() {
+        let overrides = ShellIntegration.makeEnvironmentOverrides(
+            parent: ["HOME": makeTempDir().path, "ZDOTDIR": makeHome().path],
+            shellPath: "/bin/zsh",
+            tmpDir: makeTempDir(),
+        )
+        XCTAssertNotNil(overrides, "rc files in an inherited ZDOTDIR mark an established install")
+    }
+
+    // MARK: /etc/zshenv ZDOTDIR-override detection (kitty parity)
+
+    /// A system `/etc/zshenv` that reassigns `ZDOTDIR` runs BEFORE `$ZDOTDIR/.zshenv` is resolved,
+    /// so the injected shim would never load — integration silently dark. The survival probe must
+    /// detect the stomp and skip the shim with a warning instead of shipping dead weight.
+    ///
+    /// Revert-to-confirm-fail: on the un-guarded code this fails (a shim is created regardless).
+    func testEtcZshenvOverrideSkipsShimWithWarning() throws {
+        let etc = makeTempDir().appendingPathComponent("zshenv")
+        try Data().write(to: etc)
+        var warned: [String] = []
+        let overrides = ShellIntegration.makeEnvironmentOverrides(
+            parent: ["HOME": makeHome().path],
+            shellPath: "/bin/zsh",
+            tmpDir: makeTempDir(),
+            etcZshenvPath: etc.path,
+            probe: { _, _ in "/somewhere/else" }, // sentinel did NOT survive
+            warn: { warned.append($0) },
+        )
+        XCTAssertNil(overrides, "a stomped sentinel means the shim would never load — must skip")
+        XCTAssertEqual(warned.count, 1, "the skip must be surfaced, never silent")
+        XCTAssertTrue(warned[0].contains("ZDOTDIR"), "the warning must name the mechanism")
+    }
+
+    /// A benign `/etc/zshenv` (present but preserving `ZDOTDIR`) must keep the shim ON — the probe
+    /// echoes the sentinel back and injection proceeds exactly as with no `/etc/zshenv` at all.
+    func testEtcZshenvPreservingZDotDirKeepsShim() throws {
+        let etc = makeTempDir().appendingPathComponent("zshenv")
+        try Data().write(to: etc)
+        let overrides = ShellIntegration.makeEnvironmentOverrides(
+            parent: ["HOME": makeHome().path],
+            shellPath: "/bin/zsh",
+            tmpDir: makeTempDir(),
+            etcZshenvPath: etc.path,
+            probe: { _, env in env["ZDOTDIR"] }, // sentinel survives; unset-probe reports unset
+        )
+        XCTAssertNotNil(overrides, "a preserving /etc/zshenv must not disable the shim")
+    }
+
+    /// A probe FAILURE (spawn error / timeout → nil) must fail OPEN: shim on, status quo — a broken
+    /// probe must never degrade integration below today's behavior.
+    func testProbeFailureFailsOpen() throws {
+        let etc = makeTempDir().appendingPathComponent("zshenv")
+        try Data().write(to: etc)
+        let overrides = ShellIntegration.makeEnvironmentOverrides(
+            parent: ["HOME": makeHome().path],
+            shellPath: "/bin/zsh",
+            tmpDir: makeTempDir(),
+            etcZshenvPath: etc.path,
+            probe: { _, _ in nil },
+        )
+        XCTAssertNotNil(overrides, "a failed probe must fail open (shim on)")
+    }
+
+    /// An only-if-unset `/etc/zshenv` (`[ -z "$ZDOTDIR" ] && export ZDOTDIR=…`) leaves our injected
+    /// value alone — but for a NORMAL shell it picks the user's real config dir. The shim must
+    /// forward `SLOPDESK_REAL_ZDOTDIR` to THAT dir (discovered by the unset-env probe), not to a
+    /// bare `$HOME` whose rc files don't exist — otherwise the user's real config never loads.
+    func testOnlyIfUnsetEtcZshenvRedirectsRealZDotDirToDiscoveredDir() throws {
+        let etc = makeTempDir().appendingPathComponent("zshenv")
+        try Data().write(to: etc)
+        let configDir = makeHome() // the dir /etc/zshenv would pick; holds the rc files
+        let emptyHome = makeTempDir()
+        let overrides = ShellIntegration.makeEnvironmentOverrides(
+            parent: ["HOME": emptyHome.path],
+            shellPath: "/bin/zsh",
+            tmpDir: makeTempDir(),
+            etcZshenvPath: etc.path,
+            // Mimics only-if-unset: an injected ZDOTDIR survives; unset → the config dir.
+            probe: { _, env in env["ZDOTDIR"] ?? configDir.path },
+        )
+        XCTAssertEqual(
+            overrides?["SLOPDESK_REAL_ZDOTDIR"],
+            configDir.path,
+            "the discovered only-if-unset dir must become the forwarded real ZDOTDIR",
+        )
+    }
+
+    /// An explicit inherited ZDOTDIR must SKIP the discovery probe — the operator's value wins
+    /// (mirrors the realZDotDir precedence) and no second subprocess is spent.
+    func testInheritedZDotDirSkipsDiscoveryProbe() throws {
+        let etc = makeTempDir().appendingPathComponent("zshenv")
+        try Data().write(to: etc)
+        let zdot = makeHome()
+        var unsetProbes = 0
+        let overrides = ShellIntegration.makeEnvironmentOverrides(
+            parent: ["HOME": makeTempDir().path, "ZDOTDIR": zdot.path],
+            shellPath: "/bin/zsh",
+            tmpDir: makeTempDir(),
+            etcZshenvPath: etc.path,
+            probe: { _, env in
+                if env["ZDOTDIR"] == nil { unsetProbes += 1 }
+                return env["ZDOTDIR"]
+            },
+        )
+        XCTAssertEqual(overrides?["SLOPDESK_REAL_ZDOTDIR"], zdot.path)
+        XCTAssertEqual(unsetProbes, 0, "an explicit inherited ZDOTDIR must skip the discovery probe")
+    }
+
+    /// No `/etc/zshenv` (stock macOS) → ZERO probes: the common path must not spawn any subprocess.
+    func testNoProbeWhenEtcZshenvAbsent() {
+        let overrides = ShellIntegration.makeEnvironmentOverrides(
+            parent: ["HOME": makeHome().path],
+            shellPath: "/bin/zsh",
+            tmpDir: makeTempDir(),
+            etcZshenvPath: makeTempDir().appendingPathComponent("zshenv").path, // never written
+            probe: { _, _ in
+                XCTFail("no probe may run when /etc/zshenv is absent")
+                return nil
+            },
+        )
+        XCTAssertNotNil(overrides)
+    }
+
+    /// The REAL subprocess probe against the system zsh: an injected sentinel `ZDOTDIR` must echo
+    /// back verbatim. Skipped on hosts whose actual `/etc/zshenv` exists (it could legitimately
+    /// reassign and the assertion would be about that machine, not our code).
+    func testRealProbeEchoesInjectedZDotDir() throws {
+        try XCTSkipIf(
+            FileManager.default.fileExists(atPath: "/etc/zshenv"),
+            "host has a real /etc/zshenv — sentinel survival is machine-dependent here",
+        )
+        let out = ShellIntegration.probeZDotDir(
+            shellPath: "/bin/zsh",
+            environment: ["ZDOTDIR": "/nonexistent-slopdesk-probe-echo", "HOME": NSHomeDirectory()],
+        )
+        XCTAssertEqual(out, "/nonexistent-slopdesk-probe-echo", "the probe must echo $ZDOTDIR from a real zsh")
     }
 
     // MARK: Generated shim files
@@ -445,11 +627,12 @@ final class ShellIntegrationTests: XCTestCase {
 
     func testEachCallGeneratesAFreshShimDir() {
         let tmp = makeTempDir()
+        let home = makeHome().path
         let a = ShellIntegration.makeEnvironmentOverrides(
-            parent: ["HOME": "/Users/x"], shellPath: "/bin/zsh", tmpDir: tmp,
+            parent: ["HOME": home], shellPath: "/bin/zsh", tmpDir: tmp,
         )?["ZDOTDIR"]
         let b = ShellIntegration.makeEnvironmentOverrides(
-            parent: ["HOME": "/Users/x"], shellPath: "/bin/zsh", tmpDir: tmp,
+            parent: ["HOME": home], shellPath: "/bin/zsh", tmpDir: tmp,
         )?["ZDOTDIR"]
         XCTAssertNotNil(a)
         XCTAssertNotNil(b)

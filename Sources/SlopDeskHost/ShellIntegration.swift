@@ -76,25 +76,91 @@ public enum ShellIntegration {
     /// Generates the shim directory and returns the env mutations the caller must layer onto the
     /// child env: `ZDOTDIR` → the shim dir, and `SLOPDESK_REAL_ZDOTDIR` → the user's real ZDOTDIR
     /// (so the shim can find/forward the real startup files). Returns `nil` (no mutation) when the
-    /// shim is disabled or the shell is not zsh — the caller then spawns with the env unchanged.
+    /// shim is disabled, the shell is not zsh, `/etc/zshenv` would stomp the injected `ZDOTDIR`
+    /// (see below), or the home is a fresh zsh install — the caller then spawns with the env
+    /// unchanged.
+    ///
+    /// ## `/etc/zshenv` override detection (kitty parity)
+    /// zsh sources `/etc/zshenv` FIRST, unconditionally (even under `NO_RCS`), and only *then*
+    /// resolves `$ZDOTDIR/.zshenv` — so a system `/etc/zshenv` that reassigns `ZDOTDIR` (Nix,
+    /// managed fleets) silently defeats the injected shim: the spawned shell never reads our
+    /// startup files and integration goes dark with no error. When `/etc/zshenv` exists (it does
+    /// NOT on stock macOS, so the common path costs one `stat`), we probe the shell once with a
+    /// sentinel `ZDOTDIR` (`<shell> --norcs --interactive -c 'echo -n $ZDOTDIR'` — `--norcs`
+    /// suppresses every startup file EXCEPT `/etc/zshenv`, isolating exactly the file we care
+    /// about). Sentinel survives → our value will too, shim on. Sentinel stomped → the shim would
+    /// be dead weight: skip it (`nil`) and `warn` — the same graceful-fallback-not-workaround
+    /// answer kitty/ghostty document. A second probe with `ZDOTDIR` *unset* recovers the dir an
+    /// only-if-unset `/etc/zshenv` would pick for a NORMAL shell, so `SLOPDESK_REAL_ZDOTDIR`
+    /// forwards to where the user's rc files actually live instead of a bare `$HOME`. A probe
+    /// failure (spawn error / timeout) fails OPEN: shim on, status quo.
+    ///
+    /// ## New-install guard (kitty's `is_new_zsh_install`)
+    /// zsh offers `zsh-newuser-install` only when no `.zshrc` resolves — and the shim dir always
+    /// has one, so shimming a home with ZERO zsh startup files would suppress the first-run setup
+    /// forever. Such a home is left unshimmed.
     ///
     /// - Parameters:
     ///   - parent: the parent environment (read for the opt-out flag, `HOME`, and any inherited
     ///     `ZDOTDIR`).
     ///   - shellPath: the login shell that will be spawned (only `zsh` is shimmed).
     ///   - tmpDir: where the shim dir is created (defaults to the system temp dir).
+    ///   - etcZshenvPath: the system zshenv whose existence gates the probes (test seam;
+    ///     `/etc/zshenv` in production).
+    ///   - probe: `(shellPath, environment) → $ZDOTDIR-output` (test seam; `nil` → the real
+    ///     ``probeZDotDir(shellPath:environment:)`` subprocess probe).
+    ///   - warn: sink for the human-readable reason when the shim is skipped on a guard path.
     /// - Returns: env overrides to merge into the child env, or `nil` to leave it unchanged.
     public static func makeEnvironmentOverrides(
         parent: [String: String],
         shellPath: String,
         tmpDir: URL = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true),
+        etcZshenvPath: String = "/etc/zshenv",
+        probe: ((_ shellPath: String, _ environment: [String: String]) -> String?)? = nil,
+        warn: ((String) -> Void)? = nil,
     ) -> [String: String]? {
         guard isEnabled(parent: parent), isZsh(shellPath: shellPath) else { return nil }
 
         // The user's real ZDOTDIR: an explicit inherited ZDOTDIR wins, else $HOME (zsh's default).
-        let realZDotDir = parent["ZDOTDIR"].flatMap { $0.isEmpty ? nil : $0 }
+        let inheritedZDotDir = parent["ZDOTDIR"].flatMap { $0.isEmpty ? nil : $0 }
+        var realZDotDir = inheritedZDotDir
             ?? parent["HOME"]
             ?? NSHomeDirectory()
+
+        if FileManager.default.fileExists(atPath: etcZshenvPath) {
+            let runProbe = probe ?? { probeZDotDir(shellPath: $0, environment: $1) }
+            // Survival probe: does an injected ZDOTDIR make it past /etc/zshenv?
+            var sentinelEnv = parent
+            sentinelEnv["ZDOTDIR"] = zdotdirProbeSentinel
+            if let survived = runProbe(shellPath, sentinelEnv), survived != zdotdirProbeSentinel {
+                warn?(
+                    "shell-integration: \(etcZshenvPath) reassigns ZDOTDIR (→ \(survived)) — the injected "
+                        + "shim would never load; skipping it (resize reprint + OSC 133 marks + cursor shape "
+                        + "off for this shell). Source the integration manually or stop \(etcZshenvPath) "
+                        + "from overriding an existing ZDOTDIR.",
+                )
+                return nil
+            }
+            // Discovery probe: an only-if-unset /etc/zshenv picks the user's real config dir for a
+            // NORMAL shell (our spawn always sets ZDOTDIR, so the shim must forward there by hand).
+            if inheritedZDotDir == nil {
+                var unsetEnv = parent
+                unsetEnv["ZDOTDIR"] = nil
+                if let discovered = runProbe(shellPath, unsetEnv), !discovered.isEmpty {
+                    realZDotDir = discovered
+                }
+            }
+        }
+
+        // New-install guard: zero startup files in the effective real dir → leave unshimmed so
+        // zsh-newuser-install still fires.
+        if !hasAnyZshStartupFile(in: realZDotDir) {
+            warn?(
+                "shell-integration: no zsh startup files in \(realZDotDir) — skipping the shim so "
+                    + "zsh-newuser-install can run on this fresh install.",
+            )
+            return nil
+        }
 
         guard let shimDir = writeShimDirectory(into: tmpDir) else { return nil }
 
@@ -102,6 +168,52 @@ public enum ShellIntegration {
             "ZDOTDIR": shimDir.path,
             realZDotDirEnvKey: realZDotDir,
         ]
+    }
+
+    /// The sentinel `ZDOTDIR` injected for the survival probe — a path that exists nowhere and that
+    /// no `/etc/zshenv` would ever compute, so `output == sentinel` ⟺ "our value survives".
+    static let zdotdirProbeSentinel = "/nonexistent-slopdesk-zdotdir-probe"
+
+    /// The four files zsh reads from `$ZDOTDIR` — presence of ANY marks an established install
+    /// (kitty checks exactly this set).
+    static func hasAnyZshStartupFile(in dir: String) -> Bool {
+        let fm = FileManager.default
+        return [".zshrc", ".zshenv", ".zprofile", ".zlogin"]
+            .contains { fm.fileExists(atPath: dir + "/" + $0) }
+    }
+
+    /// Runs `<shellPath> --norcs --interactive -c 'echo -n $ZDOTDIR'` (kitty's exact probe) and
+    /// returns its stdout, or `nil` on spawn failure / non-zero exit / a 2s timeout (the caller
+    /// fails OPEN). `--norcs` suppresses every startup file EXCEPT `/etc/zshenv` — the one under
+    /// test; `--interactive` makes `[[ -o interactive ]]`-guarded code in it behave as in a real
+    /// session. stderr/stdin are nulled (an interactive `-c` zsh may grumble about job control).
+    static func probeZDotDir(shellPath: String, environment: [String: String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: shellPath)
+        process.arguments = ["--norcs", "--interactive", "-c", "echo -n $ZDOTDIR"]
+        process.environment = environment
+        let stdout = Pipe()
+        process.standardOutput = stdout
+        process.standardError = FileHandle.nullDevice
+        process.standardInput = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+        // Bounded wait: a hostile/hung /etc/zshenv must not wedge pane spawn. Polling is fine on
+        // this rare path (the probe only runs when /etc/zshenv exists).
+        let deadline = Date().addingTimeInterval(2)
+        while process.isRunning, Date() < deadline {
+            usleep(10000)
+        }
+        if process.isRunning {
+            process.terminate()
+            return nil
+        }
+        guard process.terminationStatus == 0 else { return nil }
+        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8)
     }
 
     // MARK: Shim generation

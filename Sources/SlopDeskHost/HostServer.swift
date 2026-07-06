@@ -578,6 +578,7 @@ public final class HostServer: @unchecked Sendable {
                 if let overrides = ShellIntegration.makeEnvironmentOverrides(
                     parent: ProcessInfo.processInfo.environment,
                     shellPath: shellPath,
+                    warn: { [weak self] in self?.onLog?($0) },
                 ) {
                     for (k, value) in overrides { env[k] = value }
                     // The shim's ZDOTDIR override IS the generated `slopdesk-zdotdir-*` dir — track it so the

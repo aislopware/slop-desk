@@ -56,6 +56,11 @@ SlopDesk injects small shell hooks that emit OSC 133 (FTCS) prompt marks, poweri
 
 **zsh:** SlopDesk points `ZDOTDIR` at its bundled `zsh/` directory for the launched session. That `.zshenv` immediately restores the user's real `ZDOTDIR`, runs their `.zshenv`, then loads SlopDesk's payload on the first prompt (so its marks win over plugin managers). `~/.zshrc` and other dotfiles are **not** edited.
 
+Two guard rails (kitty parity) run before injection:
+
+- **`/etc/zshenv` override detection** — zsh sources `/etc/zshenv` unconditionally *before* resolving `$ZDOTDIR/.zshenv`, so a system zshenv that reassigns `ZDOTDIR` (Nix, managed fleets) would silently defeat the shim. When `/etc/zshenv` exists (never on stock macOS), the host probes `zsh --norcs --interactive -c 'echo -n $ZDOTDIR'` with a sentinel: if the sentinel is stomped, the shim is skipped with a logged warning (graceful fallback — same answer kitty/ghostty document); if `/etc/zshenv` sets `ZDOTDIR` only-when-unset, a second probe discovers the dir it would pick so the shim forwards to the user's real config, not a bare `$HOME`. Probe failure fails open (shim on).
+- **New-install guard** — a home with zero zsh startup files (`.zshrc`/`.zshenv`/`.zprofile`/`.zlogin`) is left unshimmed so `zsh-newuser-install` (zsh's first-run setup, offered only when no `.zshrc` resolves) still fires.
+
 **fish:** SlopDesk prepends its bundled directory to `XDG_DATA_DIRS`, so fish auto-loads the `vendor_conf.d` entry, which then removes that dir so child processes don't inherit it. `config.fish` is **not** edited.
 
 **bash:** No clean per-spawn auto-load, so SlopDesk adds a small, clearly-marked block to `~/.bashrc` (and a `~/.bash_profile` shim) that sources the bundled payload only when launched by SlopDesk. The block is inert in other terminals and is removed when the toggle is turned off.
