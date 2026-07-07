@@ -51,6 +51,11 @@
 # acronyms               — would rewrite identifiers (userId->userID), touching wire/API names.
 # wrap*Bodies            — preserve the author's compact one-liner bodies (`{ x }`); the dense
 #                          codec/controller code reads better inline. `wrap` still breaks >120.
+#                          wrapIf{Statement,Expression}Bodies are the 0.62.0 additions to the same
+#                          family (they alone flagged 348/977 files of established one-line
+#                          `if x { return }` guards) — disabled for the same reason.
+# redundantSwiftUIGroup  — new in 0.62.0; deletes `Group { }` wrappers, but the client UI uses
+#                          Group deliberately (shared-modifier fan-out) — never auto-remove views.
 --disable wrapSingleLineComments
 --disable docComments
 --disable organizeDeclarations
@@ -59,6 +64,9 @@
 --disable wrapFunctionBodies
 --disable wrapLoopBodies
 --disable wrapPropertyBodies
+--disable wrapIfStatementBodies
+--disable wrapIfExpressionBodies
+--disable redundantSwiftUIGroup
 
 # ---- Never descend into generated / vendored trees ---------------------------
 --exclude .build,.build-*,DerivedData,**/.build,ThirdParty,**/*.generated.swift
