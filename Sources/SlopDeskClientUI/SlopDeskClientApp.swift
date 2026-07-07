@@ -439,7 +439,7 @@ public struct SlopDeskClientApp: App {
         // PASTE AS KEYSTROKES (C7): the LIVE local-clipboard reader for the ⌥⌘V chord + the remote-GUI pane's
         // paste menu. Reads the CURRENT pasteboard (not the up-to-1s-stale ring head), so it works even when
         // clipboard-history recording is off. Main-actor only (route()/currentLocalClipboard() are @MainActor).
-        store.clipboardTextProvider = { NSPasteboard.general.string(forType: .string) }
+        store.clipboardTextProvider = { ClientPasteboard.pasteboard.string(forType: .string) }
         _dockProgress = State(initialValue: dockProgress)
         // WS-B / B3: build the live keybinding dispatcher over the single store. A new-pane action (split /
         // new-tab / new-session) mints an in-pane `.chooser` pane via the store's routing, focused,

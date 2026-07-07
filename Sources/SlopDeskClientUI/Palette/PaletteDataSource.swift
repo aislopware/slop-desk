@@ -307,8 +307,7 @@ public struct ActionsPaletteSource: PaletteDataSource {
     /// write. Host-routed Reveal/Open land in E10.
     private static func copyToPasteboard(_ string: String) {
         #if canImport(AppKit)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(string, forType: .string)
+        ClientPasteboard.write(string)
         #elseif canImport(UIKit)
         UIPasteboard.general.string = string
         #endif

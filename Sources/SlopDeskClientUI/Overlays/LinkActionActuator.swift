@@ -90,8 +90,7 @@ enum LinkActionActuator {
     static func copyToPasteboard(_ text: String) {
         guard !text.isEmpty else { return }
         #if canImport(AppKit)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+        ClientPasteboard.write(text)
         #elseif canImport(UIKit)
         UIPasteboard.general.string = text
         #endif

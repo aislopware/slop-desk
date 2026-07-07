@@ -77,7 +77,7 @@ final class LinkActionActuatorTests: XCTestCase {
 
     /// `.copyPathClient` writes the CLIENT pasteboard.
     func testCopyActuationWritesClientPasteboard() {
-        let pb = NSPasteboard.general
+        let pb = ClientPasteboard.pasteboard
         pb.clearContents()
 
         LinkActionActuator.actuate(.copyPathClient("/a/b/c"), model: nil)
@@ -87,7 +87,7 @@ final class LinkActionActuatorTests: XCTestCase {
 
     /// `.nothing` is a TRUE no-op: it never sends input, never fires a host callback, never touches the clipboard.
     func testNothingActionIsATrueNoOp() {
-        let pb = NSPasteboard.general
+        let pb = ClientPasteboard.pasteboard
         pb.clearContents()
         pb.setString("sentinel", forType: .string)
 
@@ -132,7 +132,7 @@ final class LinkActionActuatorTests: XCTestCase {
     /// Running a URL row's "Copy URL" action writes the raw URL to the client pasteboard (full
     /// rowActions → `LinkActionPolicy` → `actuate` path).
     func testRowActionsURLCopyWritesPasteboard() {
-        let pb = NSPasteboard.general
+        let pb = ClientPasteboard.pasteboard
         pb.clearContents()
         let item = JumpToItem(
             id: "link:url:https://example.com", kind: .url, title: "https://example.com",
@@ -181,7 +181,7 @@ final class LinkActionActuatorTests: XCTestCase {
 
     /// A command BLOCK row offers Jump-to + Copy; running Copy writes the command text to the pasteboard.
     func testRowActionsForBlockOffersJumpAndCopy() {
-        let pb = NSPasteboard.general
+        let pb = ClientPasteboard.pasteboard
         pb.clearContents()
         let item = JumpToItem(
             id: "block:3", kind: .command, title: "make build", timestamp: nil, act: .block(index: 3),

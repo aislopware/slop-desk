@@ -182,8 +182,7 @@ private struct TitleMenuButton: View {
         show = false
         #if os(macOS)
         guard let path = cwd else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(path, forType: .string)
+        ClientPasteboard.write(path)
         #endif
     }
 }

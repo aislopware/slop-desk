@@ -363,9 +363,7 @@ public final class TerminalViewModel {
     /// override with a capturing closure. `@ObservationIgnored`: wiring, not view state.
     @ObservationIgnored public var copyToPasteboard: (String) -> Void = { text in
         #if canImport(AppKit)
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
+        ClientPasteboard.write(text)
         #endif
     }
 

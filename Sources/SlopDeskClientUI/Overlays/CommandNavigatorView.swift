@@ -474,8 +474,7 @@ struct CommandNavigatorView: View {
         store.copyBlockOutputInActivePane(index: block.index) { text in
             guard let text, !text.isEmpty else { return }
             #if canImport(AppKit)
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
+            ClientPasteboard.write(text)
             #elseif canImport(UIKit)
             UIPasteboard.general.string = text
             #endif
