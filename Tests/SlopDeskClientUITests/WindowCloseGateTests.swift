@@ -22,11 +22,11 @@ final class WindowCloseGateTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        UserDefaults.standard.removeObject(forKey: key)
+        SettingsKey.store.removeObject(forKey: key)
     }
 
     override func tearDown() {
-        UserDefaults.standard.removeObject(forKey: key)
+        SettingsKey.store.removeObject(forKey: key)
         super.tearDown()
     }
 
@@ -52,7 +52,7 @@ final class WindowCloseGateTests: XCTestCase {
     func testParkedCloseClosesWhenUserConfirms() {
         // `.always` parks every close; confirming MUST let the window close. The OLD delegate returned `false`
         // here unconditionally, with no resolution path — the window could never close. This is the bug pin.
-        UserDefaults.standard.set("always", forKey: key)
+        SettingsKey.store.set("always", forKey: key)
         let store = makeStore()
 
         let allowed = WindowCloseGate.resolve(store: store) { true }
@@ -62,7 +62,7 @@ final class WindowCloseGateTests: XCTestCase {
     }
 
     func testParkedCloseKeepsWindowOpenAndClearsParkWhenUserCancels() {
-        UserDefaults.standard.set("always", forKey: key)
+        SettingsKey.store.set("always", forKey: key)
         let store = makeStore()
 
         let allowed = WindowCloseGate.resolve(store: store) { false }
@@ -72,7 +72,7 @@ final class WindowCloseGateTests: XCTestCase {
     }
 
     func testConfirmIsPresentedExactlyOnceWhenParked() {
-        UserDefaults.standard.set("always", forKey: key)
+        SettingsKey.store.set("always", forKey: key)
         let store = makeStore()
         var calls = 0
         _ = WindowCloseGate.resolve(store: store) {

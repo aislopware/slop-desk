@@ -22,8 +22,8 @@ final class WindowSizeMathTests: XCTestCase {
         SettingsKey.windowHeightPxKey,
     ]
 
-    override func setUp() { windowKeys.forEach { UserDefaults.standard.removeObject(forKey: $0) } }
-    override func tearDown() { windowKeys.forEach { UserDefaults.standard.removeObject(forKey: $0) } }
+    override func setUp() { windowKeys.forEach { SettingsKey.store.removeObject(forKey: $0) } }
+    override func tearDown() { windowKeys.forEach { SettingsKey.store.removeObject(forKey: $0) } }
 
     // MARK: gridContentSize
 
@@ -229,14 +229,14 @@ final class WindowSizeMathTests: XCTestCase {
         XCTAssertEqual(SettingsKey.windowWidthPx, 1000)
         XCTAssertEqual(SettingsKey.windowHeightPx, 600)
         // Round-trip written values from their persisted form.
-        UserDefaults.standard.set("grid", forKey: SettingsKey.windowSizeKey)
-        UserDefaults.standard.set(120, forKey: SettingsKey.windowColsKey)
-        UserDefaults.standard.set(40, forKey: SettingsKey.windowRowsKey)
+        SettingsKey.store.set("grid", forKey: SettingsKey.windowSizeKey)
+        SettingsKey.store.set(120, forKey: SettingsKey.windowColsKey)
+        SettingsKey.store.set(40, forKey: SettingsKey.windowRowsKey)
         XCTAssertEqual(SettingsKey.windowSize, .grid)
         XCTAssertEqual(SettingsKey.windowCols, 120)
         XCTAssertEqual(SettingsKey.windowRows, 40)
         // A bogus persisted raw repairs to the default rather than trapping.
-        UserDefaults.standard.set("garbage-from-a-future-version", forKey: SettingsKey.windowSizeKey)
+        SettingsKey.store.set("garbage-from-a-future-version", forKey: SettingsKey.windowSizeKey)
         XCTAssertEqual(SettingsKey.windowSize, .remember, "an invalid raw value repairs to remember")
     }
 }

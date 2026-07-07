@@ -134,7 +134,8 @@ public final class AppConnection {
     /// re-saved on every successful connect.
     public private(set) var recentTargets: [ConnectionTarget] = []
 
-    /// Where the MRU persists. Injectable so tests use a scratch suite; the app uses `.standard`.
+    /// Where the MRU persists. Injectable so tests use a scratch suite; the app uses `SettingsKey.store`
+    /// (= `.standard` in the app; per-process under XCTest).
     private let defaults: UserDefaults
     private static let recentTargetsKey = "connection.recentTargets"
     static let recentTargetsLimit = 5
@@ -142,7 +143,7 @@ public final class AppConnection {
     public init(
         registry: ConnectionRegistry,
         seed: ConnectionTarget = .default,
-        defaults: UserDefaults = .standard,
+        defaults: UserDefaults = SettingsKey.store,
     ) {
         self.registry = registry
         target = seed

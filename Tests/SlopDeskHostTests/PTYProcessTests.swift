@@ -12,34 +12,41 @@ final class PTYProcessTests: XCTestCase {
     // MARK: read helpers
 
     /// Reads `fd` until `needle` appears or `timeout` passes; returns all output so far.
-    /// A background blocking read gives a hard timeout independent of the fd.
+    ///
+    /// `poll()`-gated on the CALLING thread — `read()` only runs after `POLLIN`, so it can never block
+    /// past the deadline and the helper leaves NO thread behind. The previous shape (a background
+    /// dispatch thread in a blocking `read()` + a semaphore timeout) abandoned that thread inside
+    /// `read()` on a missed needle — a PTY master never EOFs on child exit, so the read stayed pending
+    /// forever and the test-end `close(masterFD)` (PTYProcess.deinit) deadlocked against it in the
+    /// kernel: the "unkillable 40-min hang" the resize-burst test's doc describes, surfaced reliably
+    /// by `swift test --parallel` load.
     private func readUntil(
         fd: Int32,
         needle: String,
         timeout: TimeInterval = 5.0,
     ) -> String {
         let sink = ByteSink()
-        let done = DispatchSemaphore(value: 0)
         let needleData = Data(needle.utf8)
-
-        let queue = DispatchQueue(label: "test.pty.read")
-        queue.async {
-            var buf = [UInt8](repeating: 0, count: 4096)
-            while true {
-                let n = buf.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
-                if n > 0 {
-                    let hit = sink.append(buf[0..<n], contains: needleData)
-                    if hit { done.signal()
-                        return
-                    }
-                } else {
-                    done.signal()
-                    return
-                }
+        let deadline = Date().addingTimeInterval(timeout)
+        var buf = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let remainingMs = Int32((deadline.timeIntervalSinceNow * 1000).rounded(.up))
+            if remainingMs <= 0 { break }
+            var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            let ready = poll(&pfd, 1, min(remainingMs, 100))
+            if ready < 0 {
+                if errno == EINTR { continue }
+                break
+            }
+            if ready == 0 { continue } // tick: re-check the deadline
+            // Readable (or HUP/ERR — read() then returns <= 0 without blocking and we stop).
+            let n = buf.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
+            if n > 0 {
+                if sink.append(buf[0..<n], contains: needleData) { break }
+            } else {
+                break
             }
         }
-
-        _ = done.wait(timeout: .now() + timeout)
         return sink.string()
     }
 

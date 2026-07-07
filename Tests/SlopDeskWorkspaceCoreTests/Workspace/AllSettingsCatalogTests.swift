@@ -7,12 +7,12 @@ import XCTest
 /// ``PreferencesStore`` reset behaviour the Advanced "All Settings" panel drives. All headless — no view.
 @MainActor
 final class AllSettingsCatalogTests: XCTestCase {
-    // The global `Defaults.Keys` the reset tests flip live in `UserDefaults.standard`; clean them up so the
+    // The global `Defaults.Keys` the reset tests flip live in `SettingsKey.store`; clean them up so the
     // dev machine's real defaults are not polluted (the catalog/filter tests touch no defaults at all). The
     // reset-completeness tests flip keys across the whole settings catalog, so the cleanup resets BOTH
     // PreferencesStore reset sets (every tab-reachable + advanced-only key) plus the density string key.
     private nonisolated static func cleanDefaults() {
-        UserDefaults.standard.removeObject(forKey: SettingsKey.density)
+        SettingsKey.store.removeObject(forKey: SettingsKey.density)
         Defaults.reset(PreferencesStore.tabReachableDefaultsKeys)
         Defaults.reset(PreferencesStore.advancedOnlyDefaultsKeys)
     }
@@ -213,10 +213,10 @@ final class AllSettingsCatalogTests: XCTestCase {
         store.rawOverrides = ["SLOPDESK_X": "9"]
         // Flip a tab-reachable toggle on each non-Advanced section (Controls / General / Appearance / Agents).
         // These are NON-default values that a Reset-Advanced-Only must NOT destroy.
-        UserDefaults.standard.set(true, forKey: SettingsKey.copyOnSelect) // Controls (default Off)
-        UserDefaults.standard.set(false, forKey: SettingsKey.oscNotifications) // Shell (default On)
-        UserDefaults.standard.set(false, forKey: SettingsKey.showBlockDividers) // Appearance (default On)
-        UserDefaults.standard.set(false, forKey: SettingsKey.autoSwitchLayouts) // Agents (default On)
+        SettingsKey.store.set(true, forKey: SettingsKey.copyOnSelect) // Controls (default Off)
+        SettingsKey.store.set(false, forKey: SettingsKey.oscNotifications) // Shell (default On)
+        SettingsKey.store.set(false, forKey: SettingsKey.showBlockDividers) // Appearance (default On)
+        SettingsKey.store.set(false, forKey: SettingsKey.autoSwitchLayouts) // Agents (default On)
         XCTAssertTrue(SettingsKey.copyOnSelectEnabled)
         XCTAssertFalse(SettingsKey.oscNotificationsEnabled)
         XCTAssertFalse(SettingsKey.showBlockDividersEnabled)
@@ -246,7 +246,7 @@ final class AllSettingsCatalogTests: XCTestCase {
         let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil, applyOnInit: false)
         store.terminal = TerminalPreferences(fontSize: 18)
         store.appearance = AppearancePreferences(theme: .dark)
-        UserDefaults.standard.set(false, forKey: SettingsKey.showBlockDividers) // flip OFF the default-ON toggle
+        SettingsKey.store.set(false, forKey: SettingsKey.showBlockDividers) // flip OFF the default-ON toggle
         XCTAssertFalse(SettingsKey.showBlockDividersEnabled)
 
         store.resetAll()
@@ -333,7 +333,7 @@ final class AllSettingsCatalogTests: XCTestCase {
         Defaults[.ipcAllowSensitiveSessions] = true // default false
         Defaults[.autoProgressCommands] = [] // default the built-in list
         // A tab-reachable Controls toggle that MUST survive Reset-Advanced-Only.
-        UserDefaults.standard.set(true, forKey: SettingsKey.copyOnSelect) // default Off
+        SettingsKey.store.set(true, forKey: SettingsKey.copyOnSelect) // default Off
         XCTAssertTrue(SettingsKey.copyOnSelectEnabled)
 
         store.resetAdvancedOnly()

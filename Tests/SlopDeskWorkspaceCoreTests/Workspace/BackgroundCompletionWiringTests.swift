@@ -260,8 +260,8 @@ final class BackgroundCompletionWiringTests: XCTestCase {
     /// The `onLongCommandNotify` sink fires EXACTLY ONCE for a backgrounded LONG command and NEVER for a
     /// focused one (the focus gate, spied through the closure). No double-notify.
     func testNotifySinkFiresOnceForBackgroundLongAndNeverForFocused() throws {
-        UserDefaults.standard.set(true, forKey: SettingsKey.longCommandNotifications) // deterministic enabled
-        defer { UserDefaults.standard.removeObject(forKey: SettingsKey.longCommandNotifications) }
+        SettingsKey.store.set(true, forKey: SettingsKey.longCommandNotifications) // deterministic enabled
+        defer { SettingsKey.store.removeObject(forKey: SettingsKey.longCommandNotifications) }
         let store = makeStore()
         var calls: [(key: String, title: String, exit: Int32?, dur: UInt32)] = []
         store.onLongCommandNotify = { key, title, exit, dur in
@@ -309,8 +309,8 @@ final class BackgroundCompletionWiringTests: XCTestCase {
     /// the un-fixed store gates ONLY on `BackgroundCompletionPolicy.shouldNotify` (long + enabled), so a 500ms
     /// command with the master OFF never fires the sink — this asserts it now does.
     func testShortBackgroundedFailureNotifiesPerCommandEvenWithLongMasterOff() throws {
-        UserDefaults.standard.set(false, forKey: SettingsKey.longCommandNotifications) // master OFF
-        defer { UserDefaults.standard.removeObject(forKey: SettingsKey.longCommandNotifications) }
+        SettingsKey.store.set(false, forKey: SettingsKey.longCommandNotifications) // master OFF
+        defer { SettingsKey.store.removeObject(forKey: SettingsKey.longCommandNotifications) }
         let store = makeStore()
         var calls: [(key: String, exit: Int32?, dur: UInt32)] = []
         store.onLongCommandNotify = { key, _, exit, dur in calls.append((key, exit, dur)) }
@@ -332,8 +332,8 @@ final class BackgroundCompletionWiringTests: XCTestCase {
     /// stays silent for a quick `ls`. Pins that the new per-command authority is the toggle, not "fire on every
     /// completion" (guards against over-firing; not tautological — it exercises the notifyOnFinish branch).
     func testShortBackgroundedCleanExitDoesNotNotifyWhenNotifyOnFinishOff() throws {
-        UserDefaults.standard.set(false, forKey: SettingsKey.longCommandNotifications)
-        defer { UserDefaults.standard.removeObject(forKey: SettingsKey.longCommandNotifications) }
+        SettingsKey.store.set(false, forKey: SettingsKey.longCommandNotifications)
+        defer { SettingsKey.store.removeObject(forKey: SettingsKey.longCommandNotifications) }
         let store = makeStore()
         var fired = false
         store.onLongCommandNotify = { _, _, _, _ in fired = true }
@@ -347,8 +347,8 @@ final class BackgroundCompletionWiringTests: XCTestCase {
     /// M1: when BOTH authorities would fire (a backgrounded LONG failing command — per-command Notify-on-Error
     /// AND the Long-Command Completion master), the sink fires EXACTLY ONCE (no double-banner).
     func testLongBackgroundedFailureFiresExactlyOnceWhenBothAuthoritiesAgree() throws {
-        UserDefaults.standard.set(true, forKey: SettingsKey.longCommandNotifications) // master ON
-        defer { UserDefaults.standard.removeObject(forKey: SettingsKey.longCommandNotifications) }
+        SettingsKey.store.set(true, forKey: SettingsKey.longCommandNotifications) // master ON
+        defer { SettingsKey.store.removeObject(forKey: SettingsKey.longCommandNotifications) }
         let store = makeStore()
         var count = 0
         store.onLongCommandNotify = { _, _, _, _ in count += 1 }

@@ -29,8 +29,8 @@ final class RailRowBuilderTests: XCTestCase {
     }
 
     private nonisolated func clearGroupingKeys() {
-        UserDefaults.standard.removeObject(forKey: SettingsKey.tabGroupingKey)
-        UserDefaults.standard.removeObject(forKey: SettingsKey.tabSortKey)
+        SettingsKey.store.removeObject(forKey: SettingsKey.tabGroupingKey)
+        SettingsKey.store.removeObject(forKey: SettingsKey.tabSortKey)
     }
 
     /// A headless tree-model store over the fake session (mirrors `OverlayCoordinatorMountTests`).

@@ -11,8 +11,8 @@ import XCTest
 /// one. Pure value-type ops — no store, no `FakePaneSession`, no SwiftUI.
 @MainActor
 final class NewTabPositionTests: XCTestCase {
-    override func setUp() { UserDefaults.standard.removeObject(forKey: SettingsKey.newTabPositionKey) }
-    override func tearDown() { UserDefaults.standard.removeObject(forKey: SettingsKey.newTabPositionKey) }
+    override func setUp() { SettingsKey.store.removeObject(forKey: SettingsKey.newTabPositionKey) }
+    override func tearDown() { SettingsKey.store.removeObject(forKey: SettingsKey.newTabPositionKey) }
 
     // MARK: - Fixtures
 
@@ -154,12 +154,12 @@ final class NewTabPositionTests: XCTestCase {
     }
 
     func testNewTabPositionDefaultsBridgeRoundTrips() {
-        UserDefaults.standard.set(NewTabPosition.afterCurrent.rawValue, forKey: SettingsKey.newTabPositionKey)
+        SettingsKey.store.set(NewTabPosition.afterCurrent.rawValue, forKey: SettingsKey.newTabPositionKey)
         XCTAssertEqual(SettingsKey.newTabPosition, .afterCurrent)
-        UserDefaults.standard.set(NewTabPosition.end.rawValue, forKey: SettingsKey.newTabPositionKey)
+        SettingsKey.store.set(NewTabPosition.end.rawValue, forKey: SettingsKey.newTabPositionKey)
         XCTAssertEqual(SettingsKey.newTabPosition, .end)
         // A stale / invalid raw value falls back to the key default (.auto) via the RawRepresentableBridge.
-        UserDefaults.standard.set("garbage", forKey: SettingsKey.newTabPositionKey)
+        SettingsKey.store.set("garbage", forKey: SettingsKey.newTabPositionKey)
         XCTAssertEqual(SettingsKey.newTabPosition, .auto, "invalid raw value falls back to auto")
     }
 

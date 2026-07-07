@@ -85,8 +85,8 @@ final class AppLaunchSwitchTests: XCTestCase {
     /// disconnected → connected sequence via a stubbed discovery seam.
     func testReconnectAfterDisconnectReFiresAutoSwitch() async throws {
         // Force the feature on hermetically (default is ON, but don't depend on prior tests / user defaults).
-        UserDefaults.standard.set(true, forKey: SettingsKey.autoSwitchLayouts)
-        defer { UserDefaults.standard.removeObject(forKey: SettingsKey.autoSwitchLayouts) }
+        SettingsKey.store.set(true, forKey: SettingsKey.autoSwitchLayouts)
+        defer { SettingsKey.store.removeObject(forKey: SettingsKey.autoSwitchLayouts) }
 
         let store = twoPaneStore()
         // A 1-pane layout triggered by Grafana (a switch is observable as the pane count dropping to 1).

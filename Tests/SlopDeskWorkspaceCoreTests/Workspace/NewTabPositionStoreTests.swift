@@ -13,11 +13,11 @@ final class NewTabPositionStoreTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        UserDefaults.standard.removeObject(forKey: key)
+        SettingsKey.store.removeObject(forKey: key)
     }
 
     override func tearDown() {
-        UserDefaults.standard.removeObject(forKey: key)
+        SettingsKey.store.removeObject(forKey: key)
         super.tearDown()
     }
 
@@ -62,7 +62,7 @@ final class NewTabPositionStoreTests: XCTestCase {
     // MARK: - after-current: insert immediately after the active (middle) tab + select it
 
     func testNewTabAfterCurrentLandsAfterMiddleActiveTab() throws {
-        UserDefaults.standard.set("after-current", forKey: key)
+        SettingsKey.store.set("after-current", forKey: key)
         let (tree, _) = threeTabSession(activeIndex: 1) // MIDDLE tab active (index 1 of 0,1,2)
         let store = makeTreeStore(restoringTree: tree)
         let before = Set(store.tree.allPaneIDs())
@@ -80,7 +80,7 @@ final class NewTabPositionStoreTests: XCTestCase {
     /// honours `after-current` (a regression that hardcoded `.end` on the chooser path would slip past the
     /// direct-`newTab` test above).
     func testChooserNewTabAfterCurrentLandsAfterMiddleActiveTab() throws {
-        UserDefaults.standard.set("after-current", forKey: key)
+        SettingsKey.store.set("after-current", forKey: key)
         let (tree, _) = threeTabSession(activeIndex: 1)
         let store = makeTreeStore(restoringTree: tree)
         let before = Set(store.tree.allPaneIDs())
@@ -96,7 +96,7 @@ final class NewTabPositionStoreTests: XCTestCase {
     // MARK: - end: append even with a middle-active tab
 
     func testNewTabEndAppendsEvenWithMiddleActiveTab() throws {
-        UserDefaults.standard.set("end", forKey: key)
+        SettingsKey.store.set("end", forKey: key)
         let (tree, _) = threeTabSession(activeIndex: 1) // middle active, but `.end` ignores it
         let store = makeTreeStore(restoringTree: tree)
         let before = Set(store.tree.allPaneIDs())

@@ -117,7 +117,7 @@ public final class PreferencesStore {
     /// sidecar write). `applyOnInit` runs the apply paths once after load (default ON; a round-trip test
     /// can pass `false` to avoid mutating the process overlay).
     public init(
-        defaults: UserDefaults = .standard,
+        defaults: UserDefaults = SettingsKey.store,
         sidecarURL: URL? = EnvBridge.defaultSidecarURL(),
         applyOnInit: Bool = true,
     ) {
@@ -165,10 +165,10 @@ public final class PreferencesStore {
         // the resolved `ThemeStore.active` (GUI only; `nil` headless ⇒ the pref's own colours stand).
         let themeColors = AppearanceApplier.resolveTerminalColors?()
         // E8 WI-2: resolve the fire-time Controls bundle (`copy-on-select` / `clipboard-*` / `mouse-*` /
-        // ⇧+arrow select). The Controls toggles live in `Defaults.standard` (global `SettingsKey` namespace
-        // — NOT the per-instance injected `defaults`, which stays test-isolated for the typed models), so
-        // read from `.standard`; the builder maps an absent key to its declared default.
-        let controls = TerminalControls.from(defaults: .standard)
+        // ⇧+arrow select). The Controls toggles live in the global `SettingsKey.store` namespace (NOT the
+        // per-instance injected `defaults`, which stays test-isolated for the typed models), so read from
+        // `SettingsKey.store`; the builder maps an absent key to its declared default.
+        let controls = TerminalControls.from(defaults: SettingsKey.store)
         // E15 ES-E15-4: resolve the per-SCOPE font family. The Font → Light/Dark-Theme tabs persist a font
         // keyed by the slot's theme slug in `appearance.themeFonts`; that override never reached the live
         // terminal before (the builder read `terminal.fontFamily` raw). Resolve via the pure

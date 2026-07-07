@@ -46,11 +46,11 @@ final class ClipboardRingTests: XCTestCase {
     func testRecordClipRespectsTheHistoryToggle() {
         let store = makeStore()
         let key = SettingsKey.recordClipboardHistory
-        UserDefaults.standard.set(false, forKey: key)
-        defer { UserDefaults.standard.removeObject(forKey: key) } // restore default (ON) for other tests
+        SettingsKey.store.set(false, forKey: key)
+        defer { SettingsKey.store.removeObject(forKey: key) } // restore default (ON) for other tests
         store.recordClip("a copied secret")
         XCTAssertTrue(store.clipboardRing.isEmpty, "recording disabled → nothing is retained")
-        UserDefaults.standard.set(true, forKey: key)
+        SettingsKey.store.set(true, forKey: key)
         store.recordClip("ok")
         XCTAssertEqual(store.clipboardRing, ["ok"], "re-enabling resumes recording")
     }

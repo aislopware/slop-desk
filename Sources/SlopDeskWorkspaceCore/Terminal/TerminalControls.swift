@@ -425,9 +425,9 @@ public struct TerminalControls: Codable, Sendable, Equatable {
 
     /// Read the live control bundle from the persisted fire-time `Defaults.Keys` flags. Reading through the
     /// typed-key subscript (`defaults[.copyOnSelect]`) lets an injected suite isolate the factory in tests
-    /// while production passes `.standard`. Each missing key falls back to its `Defaults.Key` default
-    /// (mirrored by this struct's init defaults).
-    public static func from(defaults: UserDefaults = .standard) -> Self {
+    /// while production passes `SettingsKey.store` (`.standard` in the app). Each missing key falls back to
+    /// its `Defaults.Key` default (mirrored by this struct's init defaults).
+    public static func from(defaults: UserDefaults = SettingsKey.store) -> Self {
         // E14/K12: the "Clipboard — Shell Controlled" master switch (default ON) gates the WHOLE OSC-52 path
         // ahead of the per-direction Ask/Allow/Deny gate. When OFF, read + write resolve to `.deny`, so the
         // builder emits `clipboard-read/write = deny` and no remote OSC-52 reaches the gate.

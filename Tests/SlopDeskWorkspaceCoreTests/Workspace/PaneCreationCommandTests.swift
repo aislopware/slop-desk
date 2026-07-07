@@ -67,14 +67,14 @@ final class PaneCreationCommandTests: XCTestCase {
 
     func testNewPaneDefaultUsesSettingsKind() throws {
         let key = SettingsKey.defaultPaneKindKey
-        UserDefaults.standard.removeObject(forKey: key)
-        defer { UserDefaults.standard.removeObject(forKey: key) }
+        SettingsKey.store.removeObject(forKey: key)
+        defer { SettingsKey.store.removeObject(forKey: key) }
         let store = makeStore()
         let before = store.workspace.canvas.items.count
         apply(.newPaneDefault, to: store) // default → terminal
         XCTAssertEqual(try store.workspace.canvas.spec(for: XCTUnwrap(store.focusedPane))?.kind, .terminal)
 
-        UserDefaults.standard.set(PaneKind.remoteGUI.rawValue, forKey: key)
+        SettingsKey.store.set(PaneKind.remoteGUI.rawValue, forKey: key)
         apply(.newPaneDefault, to: store)
         XCTAssertEqual(
             try store.workspace.canvas.spec(for: XCTUnwrap(store.focusedPane))?.kind,

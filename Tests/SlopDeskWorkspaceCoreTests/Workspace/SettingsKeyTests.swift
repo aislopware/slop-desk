@@ -83,8 +83,8 @@ final class SettingsKeyTests: XCTestCase {
         ]
     }
 
-    override func setUp() { keys.forEach { UserDefaults.standard.removeObject(forKey: $0) } }
-    override func tearDown() { keys.forEach { UserDefaults.standard.removeObject(forKey: $0) } }
+    override func setUp() { keys.forEach { SettingsKey.store.removeObject(forKey: $0) } }
+    override func tearDown() { keys.forEach { SettingsKey.store.removeObject(forKey: $0) } }
 
     func testGatesDefaultOnWhenUnset() {
         XCTAssertTrue(SettingsKey.oscNotificationsEnabled)
@@ -93,8 +93,8 @@ final class SettingsKeyTests: XCTestCase {
     }
 
     func testGatesRespectAnExplicitFalse() {
-        UserDefaults.standard.set(false, forKey: SettingsKey.oscNotifications)
-        UserDefaults.standard.set(false, forKey: SettingsKey.systemDialogPanes)
+        SettingsKey.store.set(false, forKey: SettingsKey.oscNotifications)
+        SettingsKey.store.set(false, forKey: SettingsKey.systemDialogPanes)
         XCTAssertFalse(SettingsKey.oscNotificationsEnabled)
         XCTAssertFalse(SettingsKey.systemDialogPanesEnabled)
         XCTAssertTrue(SettingsKey.longCommandNotificationsEnabled, "an unset key stays default-ON")
@@ -104,9 +104,9 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertTrue(SettingsKey.redactSecretsEnabled)
         XCTAssertTrue(SettingsKey.recordClipboardHistoryEnabled)
         XCTAssertTrue(SettingsKey.autoSwitchLayoutsEnabled)
-        UserDefaults.standard.set(false, forKey: SettingsKey.redactSecrets)
-        UserDefaults.standard.set(false, forKey: SettingsKey.recordClipboardHistory)
-        UserDefaults.standard.set(false, forKey: SettingsKey.autoSwitchLayouts)
+        SettingsKey.store.set(false, forKey: SettingsKey.redactSecrets)
+        SettingsKey.store.set(false, forKey: SettingsKey.recordClipboardHistory)
+        SettingsKey.store.set(false, forKey: SettingsKey.autoSwitchLayouts)
         XCTAssertFalse(SettingsKey.redactSecretsEnabled)
         XCTAssertFalse(SettingsKey.recordClipboardHistoryEnabled)
         XCTAssertFalse(SettingsKey.autoSwitchLayoutsEnabled)
@@ -119,7 +119,7 @@ final class SettingsKeyTests: XCTestCase {
         // Default when unset.
         XCTAssertTrue(SettingsKey.showBlockDividersEnabled, "block dividers show by default")
         // An explicit persisted value is respected (the toggle persists across reads).
-        UserDefaults.standard.set(false, forKey: SettingsKey.showBlockDividers)
+        SettingsKey.store.set(false, forKey: SettingsKey.showBlockDividers)
         XCTAssertFalse(SettingsKey.showBlockDividersEnabled)
         // The wire keys are the single source of truth shared with the @AppStorage consumers.
         XCTAssertEqual(SettingsKey.showBlockDividers, "terminal.showBlockDividers")
@@ -128,13 +128,13 @@ final class SettingsKeyTests: XCTestCase {
 
     func testDefaultPaneKindDefaultsToTerminalAndRoundTrips() {
         XCTAssertEqual(SettingsKey.defaultPaneKind, .terminal)
-        UserDefaults.standard.set(PaneKind.remoteGUI.rawValue, forKey: SettingsKey.defaultPaneKindKey)
+        SettingsKey.store.set(PaneKind.remoteGUI.rawValue, forKey: SettingsKey.defaultPaneKindKey)
         XCTAssertEqual(SettingsKey.defaultPaneKind, .remoteGUI)
         // W11: a stale persisted `claudeCode` value (the retired kind) is no longer a valid raw value
         // here → falls back to `.terminal` (the safe default), like any other invalid raw value.
-        UserDefaults.standard.set("claudeCode", forKey: SettingsKey.defaultPaneKindKey)
+        SettingsKey.store.set("claudeCode", forKey: SettingsKey.defaultPaneKindKey)
         XCTAssertEqual(SettingsKey.defaultPaneKind, .terminal, "a retired/invalid raw value falls back to terminal")
-        UserDefaults.standard.set("garbage", forKey: SettingsKey.defaultPaneKindKey)
+        SettingsKey.store.set("garbage", forKey: SettingsKey.defaultPaneKindKey)
         XCTAssertEqual(SettingsKey.defaultPaneKind, .terminal, "an invalid raw value falls back to terminal")
     }
 
@@ -173,12 +173,12 @@ final class SettingsKeyTests: XCTestCase {
         // The resolved bundle the notifier reads equals the spec baseline (the two default sources agree).
         XCTAssertEqual(SettingsKey.notificationSettings, NotificationSettings())
         // Round-trip the enum from its persisted raw value + repair a stale value.
-        UserDefaults.standard.set("tab-unfocused", forKey: SettingsKey.notifyWhileForegroundKey)
+        SettingsKey.store.set("tab-unfocused", forKey: SettingsKey.notifyWhileForegroundKey)
         XCTAssertEqual(SettingsKey.notifyWhileForeground, .tabUnfocused)
-        UserDefaults.standard.set("garbage-from-a-future-version", forKey: SettingsKey.notifyWhileForegroundKey)
+        SettingsKey.store.set("garbage-from-a-future-version", forKey: SettingsKey.notifyWhileForegroundKey)
         XCTAssertEqual(SettingsKey.notifyWhileForeground, .off, "an invalid raw value repairs to off")
         // A flipped toggle flows into the resolved bundle (proves the resolver reads the live keys).
-        UserDefaults.standard.set(true, forKey: SettingsKey.notifyOnFinish)
+        SettingsKey.store.set(true, forKey: SettingsKey.notifyOnFinish)
         XCTAssertTrue(SettingsKey.notificationSettings.notifyOnFinish)
     }
 
@@ -271,13 +271,13 @@ final class SettingsKeyTests: XCTestCase {
         // Default when unset.
         XCTAssertEqual(SettingsKey.onLaunch, .restoreLastSession)
         // Round-trips the alternative case from its persisted raw value.
-        UserDefaults.standard.set("new-window", forKey: SettingsKey.onLaunchKey)
+        SettingsKey.store.set("new-window", forKey: SettingsKey.onLaunchKey)
         XCTAssertEqual(SettingsKey.onLaunch, .newWindow)
         // The case's raw value matches the declared config string.
         XCTAssertEqual(OnLaunchBehavior.newWindow.rawValue, "new-window")
         XCTAssertEqual(OnLaunchBehavior.restoreLastSession.rawValue, "restore-last-session")
         // A stale / hostile persisted raw value repairs to the default rather than trapping.
-        UserDefaults.standard.set("garbage-from-a-future-version", forKey: SettingsKey.onLaunchKey)
+        SettingsKey.store.set("garbage-from-a-future-version", forKey: SettingsKey.onLaunchKey)
         XCTAssertEqual(SettingsKey.onLaunch, .restoreLastSession, "an invalid raw value repairs to restore")
     }
 
@@ -294,9 +294,9 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertTrue(SettingsKey.scrollOnOutputEnabled, "scroll-on-output defaults ON")
         XCTAssertEqual(SettingsKey.scrollMultiplierValue, 1.0, "scroll multiplier defaults to 1.0")
         // An explicit persisted value is respected (the toggle persists across reads).
-        UserDefaults.standard.set(true, forKey: SettingsKey.copyOnSelect)
-        UserDefaults.standard.set(false, forKey: SettingsKey.scrollOnOutput)
-        UserDefaults.standard.set(2.5, forKey: SettingsKey.scrollMultiplier)
+        SettingsKey.store.set(true, forKey: SettingsKey.copyOnSelect)
+        SettingsKey.store.set(false, forKey: SettingsKey.scrollOnOutput)
+        SettingsKey.store.set(2.5, forKey: SettingsKey.scrollMultiplier)
         XCTAssertTrue(SettingsKey.copyOnSelectEnabled)
         XCTAssertFalse(SettingsKey.scrollOnOutputEnabled)
         XCTAssertEqual(SettingsKey.scrollMultiplierValue, 2.5)
@@ -334,9 +334,9 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertTrue(SettingsKey.smoothScrollEnabled, "smooth-scroll defaults ON")
         XCTAssertTrue(SettingsKey.undoAtPromptEnabled, "undo-at-prompt defaults ON")
         // An explicit persisted value is respected.
-        UserDefaults.standard.set(false, forKey: SettingsKey.clearSelectionOnTyping)
-        UserDefaults.standard.set(true, forKey: SettingsKey.clearSelectionOnCopy)
-        UserDefaults.standard.set(false, forKey: SettingsKey.smoothScroll)
+        SettingsKey.store.set(false, forKey: SettingsKey.clearSelectionOnTyping)
+        SettingsKey.store.set(true, forKey: SettingsKey.clearSelectionOnCopy)
+        SettingsKey.store.set(false, forKey: SettingsKey.smoothScroll)
         XCTAssertFalse(SettingsKey.clearSelectionOnTypingEnabled)
         XCTAssertTrue(SettingsKey.clearSelectionOnCopyEnabled)
         XCTAssertFalse(SettingsKey.smoothScrollEnabled)
@@ -356,11 +356,11 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(SettingsKey.scrollPastLastLine, .disabled, "scroll-past-last defaults Disabled")
         XCTAssertEqual(SettingsKey.scrollPastFirstLine, .disabled, "scroll-past-first defaults Disabled")
         // Round-trip the alternative case from its persisted raw value.
-        UserDefaults.standard.set(ClipboardAccess.deny.rawValue, forKey: SettingsKey.clipboardReadKey)
-        UserDefaults.standard.set(MouseShiftCapture.always.rawValue, forKey: SettingsKey.allowShiftClickKey)
-        UserDefaults.standard.set(RightClickAction.copyOrPaste.rawValue, forKey: SettingsKey.rightClickActionKey)
-        UserDefaults.standard.set(ScrollPastLast.cursorLine.rawValue, forKey: SettingsKey.scrollPastLastLineKey)
-        UserDefaults.standard.set(
+        SettingsKey.store.set(ClipboardAccess.deny.rawValue, forKey: SettingsKey.clipboardReadKey)
+        SettingsKey.store.set(MouseShiftCapture.always.rawValue, forKey: SettingsKey.allowShiftClickKey)
+        SettingsKey.store.set(RightClickAction.copyOrPaste.rawValue, forKey: SettingsKey.rightClickActionKey)
+        SettingsKey.store.set(ScrollPastLast.cursorLine.rawValue, forKey: SettingsKey.scrollPastLastLineKey)
+        SettingsKey.store.set(
             ScrollPastFirst.firstLineInMiddle.rawValue,
             forKey: SettingsKey.scrollPastFirstLineKey,
         )
@@ -370,8 +370,8 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(SettingsKey.scrollPastLastLine, .cursorLine)
         XCTAssertEqual(SettingsKey.scrollPastFirstLine, .firstLineInMiddle)
         // A stale / hostile persisted raw value repairs to the default rather than trapping.
-        UserDefaults.standard.set("garbage-from-a-future-version", forKey: SettingsKey.clipboardReadKey)
-        UserDefaults.standard.set("garbage", forKey: SettingsKey.rightClickActionKey)
+        SettingsKey.store.set("garbage-from-a-future-version", forKey: SettingsKey.clipboardReadKey)
+        SettingsKey.store.set("garbage", forKey: SettingsKey.rightClickActionKey)
         XCTAssertEqual(SettingsKey.clipboardRead, .ask, "an invalid raw value repairs to ask")
         XCTAssertEqual(SettingsKey.rightClickAction, .contextMenu, "an invalid raw value repairs to context menu")
     }
@@ -413,14 +413,14 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(SettingsKey.autoDetectLinkSchemes, .all, "auto-detect schemes defaults All")
         XCTAssertEqual(SettingsKey.linkSchemePolicy, .all, "the default scheme policy detects any scheme")
         // Round-trip the alternative case from its persisted raw value.
-        UserDefaults.standard.set(false, forKey: SettingsKey.linkDetection)
-        UserDefaults.standard.set(LinkCmdClick.copy.rawValue, forKey: SettingsKey.linkCmdClickKey)
-        UserDefaults.standard.set(
+        SettingsKey.store.set(false, forKey: SettingsKey.linkDetection)
+        SettingsKey.store.set(LinkCmdClick.copy.rawValue, forKey: SettingsKey.linkCmdClickKey)
+        SettingsKey.store.set(
             LinkCmdShiftClick.openSystemDefault.rawValue,
             forKey: SettingsKey.linkCmdShiftClickKey,
         )
-        UserDefaults.standard.set(AutoDetectLinkSchemes.custom.rawValue, forKey: SettingsKey.autoDetectLinkSchemesKey)
-        UserDefaults.standard.set(["codex", "ssh"], forKey: SettingsKey.customLinkSchemes)
+        SettingsKey.store.set(AutoDetectLinkSchemes.custom.rawValue, forKey: SettingsKey.autoDetectLinkSchemesKey)
+        SettingsKey.store.set(["codex", "ssh"], forKey: SettingsKey.customLinkSchemes)
         XCTAssertFalse(SettingsKey.linkDetectionEnabled)
         XCTAssertEqual(SettingsKey.linkCmdClick, .copy)
         XCTAssertEqual(SettingsKey.linkCmdShiftClick, .openSystemDefault)
@@ -429,8 +429,8 @@ final class SettingsKeyTests: XCTestCase {
         // by the detector itself, not by this policy value).
         XCTAssertEqual(SettingsKey.linkSchemePolicy, .custom(["codex", "ssh"]))
         // A stale / hostile persisted raw value repairs to the default rather than trapping.
-        UserDefaults.standard.set("garbage-from-a-future-version", forKey: SettingsKey.linkCmdClickKey)
-        UserDefaults.standard.set("nonsense", forKey: SettingsKey.autoDetectLinkSchemesKey)
+        SettingsKey.store.set("garbage-from-a-future-version", forKey: SettingsKey.linkCmdClickKey)
+        SettingsKey.store.set("nonsense", forKey: SettingsKey.autoDetectLinkSchemesKey)
         XCTAssertEqual(SettingsKey.linkCmdClick, .open, "an invalid raw value repairs to open")
         XCTAssertEqual(SettingsKey.autoDetectLinkSchemes, .all, "an invalid raw value repairs to all")
     }
@@ -467,9 +467,9 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertFalse(SettingsKey.titleReportEnabled, "Title Report defaults OFF")
         XCTAssertTrue(SettingsKey.clipboardShellControlledEnabled, "Clipboard — Shell Controlled defaults ON")
         // An explicit persisted value is respected (the toggle persists across reads).
-        UserDefaults.standard.set(false, forKey: SettingsKey.titleShellControlled)
-        UserDefaults.standard.set(true, forKey: SettingsKey.titleReport)
-        UserDefaults.standard.set(false, forKey: SettingsKey.clipboardShellControlled)
+        SettingsKey.store.set(false, forKey: SettingsKey.titleShellControlled)
+        SettingsKey.store.set(true, forKey: SettingsKey.titleReport)
+        SettingsKey.store.set(false, forKey: SettingsKey.clipboardShellControlled)
         XCTAssertFalse(SettingsKey.titleShellControlledEnabled)
         XCTAssertTrue(SettingsKey.titleReportEnabled)
         XCTAssertFalse(SettingsKey.clipboardShellControlledEnabled)
@@ -486,15 +486,15 @@ final class SettingsKeyTests: XCTestCase {
     /// raw per-direction value, so the two `.deny` asserts fail on the un-gated code.
     func testClipboardMasterSwitchGatesResolvedAccess() {
         // Set both directions to a permissive non-default value so the gate's effect is observable.
-        UserDefaults.standard.set(ClipboardAccess.allow.rawValue, forKey: SettingsKey.clipboardReadKey)
-        UserDefaults.standard.set(ClipboardAccess.allow.rawValue, forKey: SettingsKey.clipboardWriteKey)
+        SettingsKey.store.set(ClipboardAccess.allow.rawValue, forKey: SettingsKey.clipboardReadKey)
+        SettingsKey.store.set(ClipboardAccess.allow.rawValue, forKey: SettingsKey.clipboardWriteKey)
         // Master ON (the unset default) → the per-direction values pass through.
-        let onControls = TerminalControls.from(defaults: .standard)
+        let onControls = TerminalControls.from(defaults: SettingsKey.store)
         XCTAssertEqual(onControls.clipboardRead, .allow, "master ON passes the per-direction read value")
         XCTAssertEqual(onControls.clipboardWrite, .allow, "master ON passes the per-direction write value")
         // Master OFF → both resolve to deny regardless of the per-direction value.
-        UserDefaults.standard.set(false, forKey: SettingsKey.clipboardShellControlled)
-        let offControls = TerminalControls.from(defaults: .standard)
+        SettingsKey.store.set(false, forKey: SettingsKey.clipboardShellControlled)
+        let offControls = TerminalControls.from(defaults: SettingsKey.store)
         XCTAssertEqual(offControls.clipboardRead, .deny, "master OFF denies clipboard read")
         XCTAssertEqual(offControls.clipboardWrite, .deny, "master OFF denies clipboard write")
     }
@@ -510,8 +510,8 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertFalse(SettingsKey.ipcAllowSendKeysEnabled, "IPC — Allow Send Keys defaults OFF")
         XCTAssertFalse(SettingsKey.ipcAllowSensitiveSessionsEnabled, "IPC — Allow Sensitive Sessions defaults OFF")
         // An explicit persisted value is respected.
-        UserDefaults.standard.set(true, forKey: SettingsKey.ipcAllowSendKeys)
-        UserDefaults.standard.set(true, forKey: SettingsKey.ipcAllowSensitiveSessions)
+        SettingsKey.store.set(true, forKey: SettingsKey.ipcAllowSendKeys)
+        SettingsKey.store.set(true, forKey: SettingsKey.ipcAllowSensitiveSessions)
         XCTAssertTrue(SettingsKey.ipcAllowSendKeysEnabled)
         XCTAssertTrue(SettingsKey.ipcAllowSensitiveSessionsEnabled)
         // The wire key strings are the single source of truth.
@@ -537,12 +537,12 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(SettingsKey.windowHeightPx, 600, "window-height-px defaults to 600")
         XCTAssertEqual(SettingsKey.autoHideTabsPanel, .default, "auto-hide-tabs-panel defaults to Default")
         // Round-trip a written value.
-        UserDefaults.standard.set(WindowSizeMode.grid.rawValue, forKey: SettingsKey.windowSizeKey)
-        UserDefaults.standard.set(120, forKey: SettingsKey.windowColsKey)
-        UserDefaults.standard.set(40, forKey: SettingsKey.windowRowsKey)
-        UserDefaults.standard.set(1440, forKey: SettingsKey.windowWidthPxKey)
-        UserDefaults.standard.set(900, forKey: SettingsKey.windowHeightPxKey)
-        UserDefaults.standard.set(AutoHideTabsPanelMode.auto.rawValue, forKey: SettingsKey.autoHideTabsPanelKey)
+        SettingsKey.store.set(WindowSizeMode.grid.rawValue, forKey: SettingsKey.windowSizeKey)
+        SettingsKey.store.set(120, forKey: SettingsKey.windowColsKey)
+        SettingsKey.store.set(40, forKey: SettingsKey.windowRowsKey)
+        SettingsKey.store.set(1440, forKey: SettingsKey.windowWidthPxKey)
+        SettingsKey.store.set(900, forKey: SettingsKey.windowHeightPxKey)
+        SettingsKey.store.set(AutoHideTabsPanelMode.auto.rawValue, forKey: SettingsKey.autoHideTabsPanelKey)
         XCTAssertEqual(SettingsKey.windowSize, .grid)
         XCTAssertEqual(SettingsKey.windowCols, 120)
         XCTAssertEqual(SettingsKey.windowRows, 40)
@@ -550,8 +550,8 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(SettingsKey.windowHeightPx, 900)
         XCTAssertEqual(SettingsKey.autoHideTabsPanel, .auto)
         // A stale / hostile persisted enum raw repairs to the default rather than trapping.
-        UserDefaults.standard.set("garbage-from-a-future-version", forKey: SettingsKey.windowSizeKey)
-        UserDefaults.standard.set("nonsense", forKey: SettingsKey.autoHideTabsPanelKey)
+        SettingsKey.store.set("garbage-from-a-future-version", forKey: SettingsKey.windowSizeKey)
+        SettingsKey.store.set("nonsense", forKey: SettingsKey.autoHideTabsPanelKey)
         XCTAssertEqual(SettingsKey.windowSize, .remember, "an invalid raw value repairs to remember")
         XCTAssertEqual(SettingsKey.autoHideTabsPanel, .default, "an invalid raw value repairs to default")
     }

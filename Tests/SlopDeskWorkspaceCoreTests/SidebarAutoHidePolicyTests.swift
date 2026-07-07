@@ -10,8 +10,8 @@ import XCTest
 final class SidebarAutoHidePolicyTests: XCTestCase {
     private let autoHideKey = SettingsKey.autoHideTabsPanelKey
 
-    override func setUp() { UserDefaults.standard.removeObject(forKey: autoHideKey) }
-    override func tearDown() { UserDefaults.standard.removeObject(forKey: autoHideKey) }
+    override func setUp() { SettingsKey.store.removeObject(forKey: autoHideKey) }
+    override func tearDown() { SettingsKey.store.removeObject(forKey: autoHideKey) }
 
     // MARK: desiredCollapsed
 
@@ -60,9 +60,9 @@ final class SidebarAutoHidePolicyTests: XCTestCase {
     /// picker binds (the file's established no-`import Defaults` convention).
     func testAutoHideTabsPanelDefaultsRoundTripAndRepair() {
         XCTAssertEqual(SettingsKey.autoHideTabsPanel, .default)
-        UserDefaults.standard.set("auto", forKey: autoHideKey)
+        SettingsKey.store.set("auto", forKey: autoHideKey)
         XCTAssertEqual(SettingsKey.autoHideTabsPanel, .auto)
-        UserDefaults.standard.set("garbage-from-a-future-version", forKey: autoHideKey)
+        SettingsKey.store.set("garbage-from-a-future-version", forKey: autoHideKey)
         XCTAssertEqual(SettingsKey.autoHideTabsPanel, .default, "an invalid raw value repairs to default")
     }
 

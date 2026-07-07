@@ -537,7 +537,7 @@ final class TreeCommandRoutingTests: XCTestCase {
     @MainActor
     func testCloseWindowRoutesToRequestCloseWindow() throws {
         // Self-contained: the default `.process` policy + a busy pane must park the window close.
-        UserDefaults.standard.removeObject(forKey: SettingsKey.closeConfirmWindowKey)
+        SettingsKey.store.removeObject(forKey: SettingsKey.closeConfirmWindowKey)
         let store = makeTreeStore()
         let sessionID = try XCTUnwrap(store.tree.activeSessionID)
         let active = try XCTUnwrap(activePane(store))
@@ -565,7 +565,7 @@ final class TreeCommandRoutingTests: XCTestCase {
     func testCloseWindowActuatesCloseActuatorInsteadOfSilentPark() throws {
         // A busy pane under the default `.process` window policy is the case the OLD code PARKED (and nothing
         // observed the park) — so it sharpens the contrast: the actuator must fire and NOT park.
-        UserDefaults.standard.removeObject(forKey: SettingsKey.closeConfirmWindowKey)
+        SettingsKey.store.removeObject(forKey: SettingsKey.closeConfirmWindowKey)
         let store = makeTreeStore()
         let active = try XCTUnwrap(activePane(store))
         (store.handle(for: active) as? FakePaneSession)?.isShellBusy = true

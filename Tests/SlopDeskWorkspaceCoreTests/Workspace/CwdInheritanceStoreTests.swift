@@ -19,11 +19,11 @@ final class CwdInheritanceStoreTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        for key in policyKeys { UserDefaults.standard.removeObject(forKey: key) }
+        for key in policyKeys { SettingsKey.store.removeObject(forKey: key) }
     }
 
     override func tearDown() {
-        for key in policyKeys { UserDefaults.standard.removeObject(forKey: key) }
+        for key in policyKeys { SettingsKey.store.removeObject(forKey: key) }
         super.tearDown()
     }
 
@@ -74,7 +74,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     // MARK: - Stamp resolved cwd on the new spec
 
     func testSplitInheritStampsActiveCwdOnNewSpec() throws {
-        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewSplitKey)
+        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewSplitKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
         let before = allPaneIDs(store)
@@ -89,7 +89,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testNewTabInheritStampsActiveCwdOnNewSpec() throws {
-        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
         let before = allPaneIDs(store)
@@ -101,7 +101,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testHomeStampsNilEvenWithAnActiveCwd() throws {
-        UserDefaults.standard.set("home", forKey: SettingsKey.workingDirectoryNewTabKey)
+        SettingsKey.store.set("home", forKey: SettingsKey.workingDirectoryNewTabKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
         let before = allPaneIDs(store)
@@ -116,7 +116,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testPathStampsTheConfiguredPath() throws {
-        UserDefaults.standard.set("/opt/work", forKey: SettingsKey.workingDirectoryNewSplitKey)
+        SettingsKey.store.set("/opt/work", forKey: SettingsKey.workingDirectoryNewSplitKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
         let before = allPaneIDs(store)
@@ -131,7 +131,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
         // The freshness refresh (the `onCommandCompleted` OSC-7-equivalent) writes the pane's cwd via
         // `setLastKnownCwd`; `inherit` must read that SAME field — proving the single-source loop (the
         // "don't double-source cwd" invariant) rather than reading some stale alternate field.
-        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewSplitKey)
+        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewSplitKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: nil))
         store.setLastKnownCwd("/refreshed/dir", for: pane) // stands in for the post-command cwd refresh
@@ -147,7 +147,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testInheritWithNoActiveCwdStampsNil() throws {
-        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: nil))
         let before = allPaneIDs(store)
@@ -183,7 +183,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testPluginDirRefreshDoesNotPoisonNewTabInherit() throws {
-        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
 
@@ -206,7 +206,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     /// not a shell spawned in the plugin dir titled `zsh-users---zsh-autosuggestions`. FAILS on the un-fixed
     /// `newTab` (it read `tree.spec(for:)?.lastKnownCwd` directly ⇒ inherited the poison).
     func testNewTabDoesNotInheritPersistedPluginCwd() throws {
-        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
         let pane = PaneID()
         let poison = "/Users/me/.local/share/zinit/plugins/zsh-users---zsh-autosuggestions"
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: poison))
@@ -223,7 +223,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
 
     /// Same backstop on the split path (`inheritableCwd` covers `splitActivePane` too).
     func testSplitDoesNotInheritPersistedPluginCwd() throws {
-        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewSplitKey)
+        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewSplitKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/opt/zinit/plugins/owner---repo"))
         let before = allPaneIDs(store)
@@ -258,7 +258,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     // MARK: - No startup `cd` bytes
 
     func testSplitInheritSendsNoStartupCdToTheNewPane() async throws {
-        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewSplitKey)
+        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewSplitKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
         let before = allPaneIDs(store)
@@ -278,7 +278,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testNewTabInheritSendsNoStartupCdToTheNewPane() async throws {
-        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/srv/app"))
         let before = allPaneIDs(store)
@@ -293,7 +293,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testHomeSendsNoCd() async throws {
-        UserDefaults.standard.set("home", forKey: SettingsKey.workingDirectoryNewTabKey)
+        SettingsKey.store.set("home", forKey: SettingsKey.workingDirectoryNewTabKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
         let before = allPaneIDs(store)
@@ -307,7 +307,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testInheritWithNoActiveCwdSendsNothing() async throws {
-        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: nil))
         let before = allPaneIDs(store)
@@ -327,7 +327,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     // user picks Terminal (`choosePaneKind`), the host can spawn the terminal in that cwd directly.
 
     func testChooserNewTabThenPickTerminalSendsNoStartupCd() async throws {
-        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
         let before = allPaneIDs(store)
@@ -353,7 +353,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testChooserSplitThenPickTerminalSendsNoStartupCd() async throws {
-        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewSplitKey)
+        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewSplitKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/srv/app"))
         let before = allPaneIDs(store)
@@ -371,7 +371,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testChooserHomePolicyThenPickTerminalSendsNoCd() async throws {
-        UserDefaults.standard.set("home", forKey: SettingsKey.workingDirectoryNewTabKey)
+        SettingsKey.store.set("home", forKey: SettingsKey.workingDirectoryNewTabKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
         let before = allPaneIDs(store)
@@ -387,7 +387,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testChooserPickRemoteGuiSendsNoCd() async throws {
-        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
         let before = allPaneIDs(store)
@@ -411,7 +411,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     /// `choosePaneKind` (it flipped only kind + title, leaving the inherited cwd on the video spec — a
     /// non-plugin value that even survives a relaunch).
     func testChooserResolvedToRemoteGuiClearsInheritedCwd() throws {
-        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
         let before = allPaneIDs(store)
@@ -433,7 +433,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
 
     /// The clear is NON-terminal-only: a Terminal pick KEEPS the inherited cwd (it is the PTY spawn dir).
     func testChooserResolvedToTerminalKeepsInheritedCwd() throws {
-        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
+        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
         let before = allPaneIDs(store)
@@ -456,7 +456,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     // never reading the policy).
 
     func testNewSessionInheritStampsActiveCwdOnNewSessionLeaf() throws {
-        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewWindowKey)
+        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewWindowKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
         let before = allPaneIDs(store)
@@ -487,7 +487,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testNewSessionInheritSendsNoStartupCdToTheNewSessionLeaf() async throws {
-        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewWindowKey)
+        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewWindowKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/srv/app"))
         let before = allPaneIDs(store)
@@ -506,7 +506,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
     }
 
     func testNewSessionHomeSendsNoCd() async throws {
-        UserDefaults.standard.set("home", forKey: SettingsKey.workingDirectoryNewWindowKey)
+        SettingsKey.store.set("home", forKey: SettingsKey.workingDirectoryNewWindowKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
         let before = allPaneIDs(store)
@@ -521,7 +521,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
 
     func testNewSessionNonTerminalKindSendsNoCd() async throws {
         // The deferred `cd` fires for TERMINAL kind ONLY — a remote-GUI session leaf has no shell.
-        UserDefaults.standard.set("inherit", forKey: SettingsKey.workingDirectoryNewWindowKey)
+        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewWindowKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
         let before = allPaneIDs(store)

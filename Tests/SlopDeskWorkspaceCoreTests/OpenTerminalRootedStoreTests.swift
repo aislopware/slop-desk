@@ -33,8 +33,8 @@ final class OpenTerminalRootedStoreTests: XCTestCase {
     /// pinned. Revert-to-confirm-fail: on the un-fixed store `openTerminalRooted` does not exist (the test
     /// fails to compile); a `SendKeysParser` path would also yield different bytes.
     func testOpenTerminalRootedNewTabSendsParentFallbackCd() async throws {
-        UserDefaults.standard.set("home", forKey: SettingsKey.workingDirectoryNewTabKey)
-        defer { UserDefaults.standard.removeObject(forKey: SettingsKey.workingDirectoryNewTabKey) }
+        SettingsKey.store.set("home", forKey: SettingsKey.workingDirectoryNewTabKey)
+        defer { SettingsKey.store.removeObject(forKey: SettingsKey.workingDirectoryNewTabKey) }
 
         let store = makeStore()
         let before = Set(store.tree.allPaneIDs())
@@ -59,8 +59,8 @@ final class OpenTerminalRootedStoreTests: XCTestCase {
     /// The split sibling (`DropAction.splitInjectPath`): the dropped path opens beside the active pane and the
     /// NEW split pane (only it) receives the `cd … || cd <parent>` line; the original terminal gets nothing.
     func testOpenTerminalRootedSplitSendsCdToTheNewPaneOnly() async throws {
-        UserDefaults.standard.set("home", forKey: SettingsKey.workingDirectoryNewSplitKey)
-        defer { UserDefaults.standard.removeObject(forKey: SettingsKey.workingDirectoryNewSplitKey) }
+        SettingsKey.store.set("home", forKey: SettingsKey.workingDirectoryNewSplitKey)
+        defer { SettingsKey.store.removeObject(forKey: SettingsKey.workingDirectoryNewSplitKey) }
 
         let store = makeStore()
         let original = try XCTUnwrap(store.tree.allPaneIDs().first)

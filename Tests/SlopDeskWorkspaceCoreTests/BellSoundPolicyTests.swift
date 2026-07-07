@@ -36,8 +36,8 @@ final class BellSoundPolicyTests: XCTestCase {
 @MainActor
 final class BellSoundWiringTests: XCTestCase {
     private let touched = [SettingsKey.soundShellControlled, SettingsKey.soundOnErrorExit]
-    override func setUp() { touched.forEach { UserDefaults.standard.removeObject(forKey: $0) } }
-    override func tearDown() { touched.forEach { UserDefaults.standard.removeObject(forKey: $0) } }
+    override func setUp() { touched.forEach { SettingsKey.store.removeObject(forKey: $0) } }
+    override func tearDown() { touched.forEach { SettingsKey.store.removeObject(forKey: $0) } }
 
     /// A `.bell` rings the beep seam when Sound — Shell Controlled is on (the default).
     func testBellBeepsWhenSoundShellControlledOn() {
@@ -51,7 +51,7 @@ final class BellSoundWiringTests: XCTestCase {
 
     /// With Sound — Shell Controlled OFF, a `.bell` does NOT ring (the toggle gates the beep).
     func testBellSilentWhenSoundShellControlledOff() {
-        UserDefaults.standard.set(false, forKey: SettingsKey.soundShellControlled)
+        SettingsKey.store.set(false, forKey: SettingsKey.soundShellControlled)
         let model = TerminalViewModel()
         var beeps = 0
         model.beep = { beeps += 1 }
@@ -69,7 +69,7 @@ final class BellSoundWiringTests: XCTestCase {
         XCTAssertEqual(offBeeps, 0, "Sound on Error Exit is OFF by default → no beep")
 
         // Toggle ON → a non-zero exit beeps; a clean exit stays silent.
-        UserDefaults.standard.set(true, forKey: SettingsKey.soundOnErrorExit)
+        SettingsKey.store.set(true, forKey: SettingsKey.soundOnErrorExit)
         let on = TerminalViewModel()
         var onBeeps = 0
         on.beep = { onBeeps += 1 }

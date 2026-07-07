@@ -66,15 +66,15 @@ final class OnLaunchBehaviorWiringTests: XCTestCase {
         let marker = "Persisted-Key-Marker"
         let (persistence, dir) = try makeMarkedPersistence(marker: marker)
         let key = SettingsKey.onLaunchKey
-        let prior = UserDefaults.standard.string(forKey: key)
+        let prior = SettingsKey.store.string(forKey: key)
         defer {
             try? FileManager.default.removeItem(at: dir)
-            if let prior { UserDefaults.standard.set(prior, forKey: key) }
-            else { UserDefaults.standard.removeObject(forKey: key) }
+            if let prior { SettingsKey.store.set(prior, forKey: key) }
+            else { SettingsKey.store.removeObject(forKey: key) }
         }
 
         // Persisted "new-window" → the app-shaped read resolves to a fresh window (nil tree).
-        UserDefaults.standard.set("new-window", forKey: key)
+        SettingsKey.store.set("new-window", forKey: key)
         XCTAssertEqual(SettingsKey.onLaunch, .newWindow)
         XCTAssertNil(
             WorkspacePersistence.launchTree(behavior: SettingsKey.onLaunch, persistence: persistence),
@@ -82,7 +82,7 @@ final class OnLaunchBehaviorWiringTests: XCTestCase {
         )
 
         // Persisted "restore-last-session" → the app-shaped read restores the marked tree.
-        UserDefaults.standard.set("restore-last-session", forKey: key)
+        SettingsKey.store.set("restore-last-session", forKey: key)
         XCTAssertEqual(SettingsKey.onLaunch, .restoreLastSession)
         XCTAssertEqual(
             WorkspacePersistence.launchTree(behavior: SettingsKey.onLaunch, persistence: persistence)?
@@ -119,17 +119,17 @@ final class OnLaunchBehaviorWiringTests: XCTestCase {
         let marker = "Doomed-Session-Marker"
         let (persistence, dir) = try makeMarkedPersistence(marker: marker)
         let key = SettingsKey.onLaunchKey
-        let prior = UserDefaults.standard.string(forKey: key)
+        let prior = SettingsKey.store.string(forKey: key)
         defer {
             try? FileManager.default.removeItem(at: dir)
-            if let prior { UserDefaults.standard.set(prior, forKey: key) }
-            else { UserDefaults.standard.removeObject(forKey: key) }
+            if let prior { SettingsKey.store.set(prior, forKey: key) }
+            else { SettingsKey.store.removeObject(forKey: key) }
         }
 
         // Drive the launch off the PERSISTED key — the real app shape (`launchTree(behavior: SettingsKey.onLaunch,
         // persistence:)`). A persisted "new-window" choice resolves to a fresh window (nil → store seeds a fresh
         // default) and must FIRST snapshot the saved session aside.
-        UserDefaults.standard.set("new-window", forKey: key)
+        SettingsKey.store.set("new-window", forKey: key)
         XCTAssertEqual(SettingsKey.onLaunch, .newWindow)
         XCTAssertNil(
             WorkspacePersistence.launchTree(behavior: SettingsKey.onLaunch, persistence: persistence),

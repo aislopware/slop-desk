@@ -112,11 +112,14 @@ repos:
         files: '\.py$'
 
       # ===================== UNIT TESTS (pre-push only) ======================
-      # Slow → kept off the per-commit path. Incremental: cargo/swift reuse their
-      # build caches, so an unchanged tree re-runs in seconds.
+      # Slow → kept off the per-commit path. The script adds two speedups on top of the
+      # incremental build cache: a GREEN-TREE CACHE (a push of a HEAD^{tree} already tested
+      # green — by `make test`/`make check` or a previous push — skips the run entirely) and
+      # `--parallel` (per-class xctest workers, ~92s → ~60s; safe since `SettingsKey.store`
+      # isolates each worker's UserDefaults).
       - id: swift-test
-        name: swift test (native-Swift suite — no prerequisite post-Rust-removal)
-        entry: bash -c 'swift test'
+        name: swift test (green-tree cache + --parallel; scripts/pre-push-test.sh)
+        entry: bash scripts/pre-push-test.sh
         language: system
         files: '^(Sources|Tests|Apps)/.*\.swift$'
         pass_filenames: false

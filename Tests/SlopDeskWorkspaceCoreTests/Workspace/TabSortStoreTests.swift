@@ -26,8 +26,8 @@ final class TabSortStoreTests: XCTestCase {
     // nonisolated `setUp()` (a @MainActor helper call would force main-actor isolation on the override →
     // "sending self risks data races"). UserDefaults is thread-safe, so the keys clear off any actor.
     private nonisolated func clearKeys() {
-        UserDefaults.standard.removeObject(forKey: SettingsKey.tabGroupingKey)
-        UserDefaults.standard.removeObject(forKey: SettingsKey.tabSortKey)
+        SettingsKey.store.removeObject(forKey: SettingsKey.tabGroupingKey)
+        SettingsKey.store.removeObject(forKey: SettingsKey.tabSortKey)
     }
 
     // MARK: - Fixtures

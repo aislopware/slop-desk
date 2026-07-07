@@ -11,6 +11,30 @@ import SlopDeskVideoProtocol
 // names reuse them; `SettingsKeyTests` pins them, `@Default`/`@AppStorage` consumers share them). No SwiftUI
 // import — headless.
 public enum SettingsKey {
+    /// The ONE `UserDefaults` suite backing the whole global-flag namespace — every `Defaults.Keys`
+    /// entry below is pinned to it via `Defaults.Key.init(slopDesk:default:)`.
+    ///
+    /// In the app this IS `.standard` (the same domain the `@AppStorage(SettingsKey.…)` views bind),
+    /// so every consumer agrees on one store. Under XCTest it is a per-PROCESS suite, wiped at
+    /// creation and removed at exit: `swift test --parallel` runs many xctest processes that all
+    /// share ONE standard domain through cfprefsd, so a global toggle flipped in one worker races a
+    /// read in another, and a crashed run's mutations persist into the next run. Tests must mutate
+    /// global flags via `SettingsKey.store` — a write to `UserDefaults.standard` is invisible to the
+    /// keys in a test process.
+    /// `nonisolated(unsafe)`: `UserDefaults` is documented thread-safe; it just lacks a `Sendable` mark.
+    public nonisolated(unsafe) static let store: UserDefaults = {
+        guard let name = testProcessSuiteName, let suite = UserDefaults(suiteName: name) else {
+            return .standard
+        }
+        suite.removePersistentDomain(forName: name) // pid reuse: always start from a clean slate
+        atexit { // best-effort cleanup so ~/Library/Preferences doesn't accumulate per-run plists
+            if let name = testProcessSuiteName {
+                UserDefaults(suiteName: name)?.removePersistentDomain(forName: name)
+            }
+        }
+        return suite
+    }()
+
     // Canvas
     public static let defaultPaneKindKey = "canvas.defaultPaneKind" // PaneKind.rawValue
     // General / launch
@@ -774,162 +798,202 @@ public enum SettingsKey {
     }
 }
 
+/// Non-nil exactly when running under XCTest — file-scope (not a `SettingsKey` member) so the
+/// non-capturing `atexit` C hook inside ``SettingsKey/store`` can reference it as a global.
+private let testProcessSuiteName: String? =
+    NSClassFromString("XCTestCase") == nil
+        ? nil
+        : "slopdesk.tests.pid\(ProcessInfo.processInfo.processIdentifier)"
+
+private extension Defaults.Key {
+    /// Builds every SlopDesk global-flag key against ``SettingsKey/store`` (`.standard` in the app;
+    /// a per-process wiped suite under XCTest) so no key can silently bind a different suite.
+    convenience init(slopDesk name: String, default defaultValue: Value) {
+        self.init(name, default: defaultValue, suite: SettingsKey.store)
+    }
+}
+
 // MARK: - Typed Defaults keys (the single source the accessors + `@Default(.key)` views read)
 
 /// The typed ``Defaults`` keys for the global app-flag namespace. Names reuse the ``SettingsKey`` string
 /// constants so the wire strings stay the one source of truth (pinned by `SettingsKeyTests`, shared with
-/// every `@Default`/`@AppStorage` consumer). All `.standard`-backed — the per-instance-injectable
-/// ``PreferencesStore`` deliberately stays on its own `UserDefaults` (test isolation), not these.
+/// every `@Default`/`@AppStorage` consumer). All ``SettingsKey/store``-backed (`.standard` in the app; a
+/// per-process suite under XCTest) — the per-instance-injectable ``PreferencesStore`` deliberately stays
+/// on its own `UserDefaults`, not these.
 public extension Defaults.Keys {
-    static let oscNotifications = Key<Bool>(SettingsKey.oscNotifications, default: true)
-    static let longCommandNotifications = Key<Bool>(SettingsKey.longCommandNotifications, default: true)
+    static let oscNotifications = Key<Bool>(slopDesk: SettingsKey.oscNotifications, default: true)
+    static let longCommandNotifications = Key<Bool>(slopDesk: SettingsKey.longCommandNotifications, default: true)
     // E14/K9 notification policy (notification-setting.png). Fire-time flags → golden-safe. The enum-valued
     // `notifyWhileForeground` stores the bare rawValue via the `RawRepresentableBridge` (repairing a stale
     // value to `.off`).
-    static let notifyOnFinish = Key<Bool>(SettingsKey.notifyOnFinish, default: false)
-    static let notifyOnError = Key<Bool>(SettingsKey.notifyOnError, default: true)
-    static let notifyOnWatchFinish = Key<Bool>(SettingsKey.notifyOnWatchFinish, default: true)
+    static let notifyOnFinish = Key<Bool>(slopDesk: SettingsKey.notifyOnFinish, default: false)
+    static let notifyOnError = Key<Bool>(slopDesk: SettingsKey.notifyOnError, default: true)
+    static let notifyOnWatchFinish = Key<Bool>(slopDesk: SettingsKey.notifyOnWatchFinish, default: true)
     static let notifyWhileForeground = Key<NotifyWhileForeground>(
-        SettingsKey.notifyWhileForegroundKey,
+        slopDesk: SettingsKey.notifyWhileForegroundKey,
         default: .off,
     )
-    static let bounceDockIcon = Key<Bool>(SettingsKey.bounceDockIcon, default: true)
-    static let soundShellControlled = Key<Bool>(SettingsKey.soundShellControlled, default: true)
-    static let soundOnErrorExit = Key<Bool>(SettingsKey.soundOnErrorExit, default: false)
-    static let agentNotifyTaskComplete = Key<Bool>(SettingsKey.agentNotifyTaskComplete, default: true)
-    static let agentNotifyAwaitInput = Key<Bool>(SettingsKey.agentNotifyAwaitInput, default: true)
+    static let bounceDockIcon = Key<Bool>(slopDesk: SettingsKey.bounceDockIcon, default: true)
+    static let soundShellControlled = Key<Bool>(slopDesk: SettingsKey.soundShellControlled, default: true)
+    static let soundOnErrorExit = Key<Bool>(slopDesk: SettingsKey.soundOnErrorExit, default: false)
+    static let agentNotifyTaskComplete = Key<Bool>(slopDesk: SettingsKey.agentNotifyTaskComplete, default: true)
+    static let agentNotifyAwaitInput = Key<Bool>(slopDesk: SettingsKey.agentNotifyAwaitInput, default: true)
     // E13/WI-3 agent badge gates (agents__agents-overview.md "Agent Behaviour"). Fire-time flags → golden-safe.
     // Consumed via `SettingsKey.agentBadgeGates` → `TabBadgeGating.resolve`. `whileProcessing` defaults OFF
     // (progress-state.md "Claude Code — While Processing (off by default)"); the other two default ON.
-    static let agentBadgeWhileProcessing = Key<Bool>(SettingsKey.agentBadgeWhileProcessing, default: false)
-    static let agentBadgeWhenComplete = Key<Bool>(SettingsKey.agentBadgeWhenComplete, default: true)
-    static let agentBadgeWhenAwaitingInput = Key<Bool>(SettingsKey.agentBadgeWhenAwaitingInput, default: true)
+    static let agentBadgeWhileProcessing = Key<Bool>(slopDesk: SettingsKey.agentBadgeWhileProcessing, default: false)
+    static let agentBadgeWhenComplete = Key<Bool>(slopDesk: SettingsKey.agentBadgeWhenComplete, default: true)
+    static let agentBadgeWhenAwaitingInput = Key<Bool>(slopDesk: SettingsKey.agentBadgeWhenAwaitingInput, default: true)
     // Progress cluster (progress-state.md — Settings → Shell "TAB BADGE"). The three COMMAND-driven badge
     // toggles, DISTINCT from the agent set above. Fire-time flags → golden-safe. All default ON. Consumed via
     // `SettingsKey.commandBadgeGates` → `TabBadgeGating.resolve`.
-    static let tabBadgeOnCommandFinish = Key<Bool>(SettingsKey.tabBadgeOnCommandFinish, default: true)
-    static let tabBadgeOnCommandFail = Key<Bool>(SettingsKey.tabBadgeOnCommandFail, default: true)
-    static let tabBadgeOnCommandAwaitInput = Key<Bool>(SettingsKey.tabBadgeOnCommandAwaitInput, default: true)
-    static let systemDialogPanes = Key<Bool>(SettingsKey.systemDialogPanes, default: true)
-    static let autoSwitchLayouts = Key<Bool>(SettingsKey.autoSwitchLayouts, default: true)
-    static let redactSecrets = Key<Bool>(SettingsKey.redactSecrets, default: true)
-    static let recordClipboardHistory = Key<Bool>(SettingsKey.recordClipboardHistory, default: true)
+    static let tabBadgeOnCommandFinish = Key<Bool>(slopDesk: SettingsKey.tabBadgeOnCommandFinish, default: true)
+    static let tabBadgeOnCommandFail = Key<Bool>(slopDesk: SettingsKey.tabBadgeOnCommandFail, default: true)
+    static let tabBadgeOnCommandAwaitInput = Key<Bool>(slopDesk: SettingsKey.tabBadgeOnCommandAwaitInput, default: true)
+    static let systemDialogPanes = Key<Bool>(slopDesk: SettingsKey.systemDialogPanes, default: true)
+    static let autoSwitchLayouts = Key<Bool>(slopDesk: SettingsKey.autoSwitchLayouts, default: true)
+    static let redactSecrets = Key<Bool>(slopDesk: SettingsKey.redactSecrets, default: true)
+    static let recordClipboardHistory = Key<Bool>(slopDesk: SettingsKey.recordClipboardHistory, default: true)
     // E14/K2: the "Auto Progress-Bar Commands" list. Fire-time `[String]` key → golden-safe. Default = the
     // built-in slow-command list; the host enforces its own copy from `SLOPDESK_AUTO_PROGRESS_COMMANDS`.
     static let autoProgressCommands = Key<[String]>(
-        SettingsKey.autoProgressCommands,
+        slopDesk: SettingsKey.autoProgressCommands,
         default: SettingsKey.autoProgressCommandsBuiltIn,
     )
     // E14/K13: the IPC guards on the agent-control ctl socket. Fire-time flags → golden-safe. Both default OFF
     // (mutation/sensitive access is opt-in); the host enforces its own copy via SLOPDESK_IPC_ALLOW_SEND_KEYS /
     // _SENSITIVE on the next launch.
-    static let ipcAllowSendKeys = Key<Bool>(SettingsKey.ipcAllowSendKeys, default: false)
-    static let ipcAllowSensitiveSessions = Key<Bool>(SettingsKey.ipcAllowSensitiveSessions, default: false)
-    static let showBlockDividers = Key<Bool>(SettingsKey.showBlockDividers, default: true)
+    static let ipcAllowSendKeys = Key<Bool>(slopDesk: SettingsKey.ipcAllowSendKeys, default: false)
+    static let ipcAllowSensitiveSessions = Key<Bool>(slopDesk: SettingsKey.ipcAllowSensitiveSessions, default: false)
+    static let showBlockDividers = Key<Bool>(slopDesk: SettingsKey.showBlockDividers, default: true)
     // E14/K5/K8 Dock-icon toggles (macOS-only NSDockTile; the keys compile + round-trip on iOS, inert there).
     // Fire-time flags, never folded into a typed prefs model → golden-safe. Animate default OFF, error-tint ON.
-    static let dockIconAnimateProgress = Key<Bool>(SettingsKey.dockIconAnimateProgress, default: false)
-    static let dockIconErrorBadge = Key<Bool>(SettingsKey.dockIconErrorBadge, default: true)
-    static let defaultPaneKind = Key<PaneKind>(SettingsKey.defaultPaneKindKey, default: .terminal)
-    static let newTabPosition = Key<NewTabPosition>(SettingsKey.newTabPositionKey, default: .auto)
+    static let dockIconAnimateProgress = Key<Bool>(slopDesk: SettingsKey.dockIconAnimateProgress, default: false)
+    static let dockIconErrorBadge = Key<Bool>(slopDesk: SettingsKey.dockIconErrorBadge, default: true)
+    static let defaultPaneKind = Key<PaneKind>(slopDesk: SettingsKey.defaultPaneKindKey, default: .terminal)
+    static let newTabPosition = Key<NewTabPosition>(slopDesk: SettingsKey.newTabPositionKey, default: .auto)
     // Sidebar tab grouping / sort (sort-hamburger, E6) stored as the bare enum rawValue. Group default
     // `.byProject` (bucket panes by their project — a coding tool navigates by project); sort default
     // `.created` (= `session.tabs` array order). A user can still pick `.none` (one flat list) in the
     // hamburger. The WorkspaceStore owns the read/write; these are the persisted backing.
-    static let tabGrouping = Key<TabGrouping>(SettingsKey.tabGroupingKey, default: .byProject)
-    static let tabSort = Key<TabSort>(SettingsKey.tabSortKey, default: .created)
+    static let tabGrouping = Key<TabGrouping>(slopDesk: SettingsKey.tabGroupingKey, default: .byProject)
+    static let tabSort = Key<TabSort>(slopDesk: SettingsKey.tabSortKey, default: .created)
     // E19/A18 vertical-sidebar auto-hide (`auto-hide-tabs-panel`). Stores the bare `AutoHideTabsPanelMode`
     // rawValue via the `RawRepresentableBridge` (the `PreferRawRepresentable` conformance below), repairing a
     // stale value to `.default`. Default `.default` (always shown — byte-identical to the pre-E19 sidebar).
-    static let autoHideTabsPanel = Key<AutoHideTabsPanelMode>(SettingsKey.autoHideTabsPanelKey, default: .default)
+    static let autoHideTabsPanel = Key<AutoHideTabsPanelMode>(
+        slopDesk: SettingsKey.autoHideTabsPanelKey,
+        default: .default,
+    )
     // Working-directory policies stored as the `WorkingDirectoryPolicy.rawConfig` String (config value).
     // New window defaults to `home` (login cwd); new tab / split default to `inherit` (active pane's cwd).
-    static let workingDirectoryNewWindow = Key<String>(SettingsKey.workingDirectoryNewWindowKey, default: "home")
-    static let workingDirectoryNewTab = Key<String>(SettingsKey.workingDirectoryNewTabKey, default: "inherit")
-    static let workingDirectoryNewSplit = Key<String>(SettingsKey.workingDirectoryNewSplitKey, default: "inherit")
+    static let workingDirectoryNewWindow = Key<String>(
+        slopDesk: SettingsKey.workingDirectoryNewWindowKey,
+        default: "home",
+    )
+    static let workingDirectoryNewTab = Key<String>(slopDesk: SettingsKey.workingDirectoryNewTabKey, default: "inherit")
+    static let workingDirectoryNewSplit = Key<String>(
+        slopDesk: SettingsKey.workingDirectoryNewSplitKey,
+        default: "inherit",
+    )
     // Close-confirmation policies stored as the `CloseConfirmationPolicy` rawValue (config value). Both
     // default to `process` (confirm only on a running child process — the pre-E3 busy-shell guard).
-    static let closeConfirmTab = Key<CloseConfirmationPolicy>(SettingsKey.closeConfirmTabKey, default: .process)
-    static let closeConfirmWindow = Key<CloseConfirmationPolicy>(SettingsKey.closeConfirmWindowKey, default: .process)
+    static let closeConfirmTab = Key<CloseConfirmationPolicy>(
+        slopDesk: SettingsKey.closeConfirmTabKey,
+        default: .process,
+    )
+    static let closeConfirmWindow = Key<CloseConfirmationPolicy>(
+        slopDesk: SettingsKey.closeConfirmWindowKey,
+        default: .process,
+    )
     // On-Launch behaviour stored as the `OnLaunchBehavior` rawValue (`On Launch`); default
     // `.restoreLastSession` (the existing launch behaviour — the store already restores the persisted tree).
-    static let onLaunch = Key<OnLaunchBehavior>(SettingsKey.onLaunchKey, default: .restoreLastSession)
+    static let onLaunch = Key<OnLaunchBehavior>(slopDesk: SettingsKey.onLaunchKey, default: .restoreLastSession)
     // E19/A29 window-size (`window-size`). A new `window.*` namespace, CLIENT-side only (touchesWire:false).
     // The mode stores the bare `WindowSizeMode` rawValue via the `RawRepresentableBridge` (the
     // `PreferRawRepresentable` conformance below), repairing a stale value to `.remember`; the cols/rows/px
     // are native `Int`s. Defaults mirror the config values (80×24 grid, 1000×600 frame).
-    static let windowSize = Key<WindowSizeMode>(SettingsKey.windowSizeKey, default: .remember)
-    static let windowCols = Key<Int>(SettingsKey.windowColsKey, default: 80)
-    static let windowRows = Key<Int>(SettingsKey.windowRowsKey, default: 24)
-    static let windowWidthPx = Key<Int>(SettingsKey.windowWidthPxKey, default: 1000)
-    static let windowHeightPx = Key<Int>(SettingsKey.windowHeightPxKey, default: 600)
+    static let windowSize = Key<WindowSizeMode>(slopDesk: SettingsKey.windowSizeKey, default: .remember)
+    static let windowCols = Key<Int>(slopDesk: SettingsKey.windowColsKey, default: 80)
+    static let windowRows = Key<Int>(slopDesk: SettingsKey.windowRowsKey, default: 24)
+    static let windowWidthPx = Key<Int>(slopDesk: SettingsKey.windowWidthPxKey, default: 1000)
+    static let windowHeightPx = Key<Int>(slopDesk: SettingsKey.windowHeightPxKey, default: 600)
     // E20/WI-9 first-launch + SlopDesk CLI (getting-started__first-launch.md). Fire-time flags → golden-safe;
     // client-side. `hasCompletedFirstLaunch` gates the one-time sheet (default OFF — present once on a fresh
     // install); the three `shell.cli.*` toggles default OFF (CLI opt-in, prefix-less functions opt-in, never
     // clobber a user command unless Allow Overwrite is on). macOS surfaces the install toggles; inert on iOS.
-    static let hasCompletedFirstLaunch = Key<Bool>(SettingsKey.hasCompletedFirstLaunch, default: false)
-    static let cliInstalled = Key<Bool>(SettingsKey.cliInstalled, default: false)
-    static let omitCLIPrefix = Key<Bool>(SettingsKey.omitCLIPrefix, default: false)
-    static let allowPrefixOverwrite = Key<Bool>(SettingsKey.allowPrefixOverwrite, default: false)
+    static let hasCompletedFirstLaunch = Key<Bool>(slopDesk: SettingsKey.hasCompletedFirstLaunch, default: false)
+    static let cliInstalled = Key<Bool>(slopDesk: SettingsKey.cliInstalled, default: false)
+    static let omitCLIPrefix = Key<Bool>(slopDesk: SettingsKey.omitCLIPrefix, default: false)
+    static let allowPrefixOverwrite = Key<Bool>(slopDesk: SettingsKey.allowPrefixOverwrite, default: false)
     // Controls / scroll / copy (Controls). FIRE-TIME flags only — never folded into a typed prefs model → never
     // reach the env overlay / sidecar → golden-safe. E8 owns the behaviour; these persist + round-trip today.
-    static let copyOnSelect = Key<Bool>(SettingsKey.copyOnSelect, default: false)
-    static let trimTrailingSpacesOnCopy = Key<Bool>(SettingsKey.trimTrailingSpacesOnCopy, default: true)
-    static let pasteProtection = Key<Bool>(SettingsKey.pasteProtection, default: true)
-    static let mouseHideWhileTyping = Key<Bool>(SettingsKey.mouseHideWhileTyping, default: true)
-    static let focusFollowsMouse = Key<Bool>(SettingsKey.focusFollowsMouse, default: false)
-    static let scrollOnOutput = Key<Bool>(SettingsKey.scrollOnOutput, default: true)
-    static let scrollMultiplier = Key<Double>(SettingsKey.scrollMultiplier, default: 1.0)
+    static let copyOnSelect = Key<Bool>(slopDesk: SettingsKey.copyOnSelect, default: false)
+    static let trimTrailingSpacesOnCopy = Key<Bool>(slopDesk: SettingsKey.trimTrailingSpacesOnCopy, default: true)
+    static let pasteProtection = Key<Bool>(slopDesk: SettingsKey.pasteProtection, default: true)
+    static let mouseHideWhileTyping = Key<Bool>(slopDesk: SettingsKey.mouseHideWhileTyping, default: true)
+    static let focusFollowsMouse = Key<Bool>(slopDesk: SettingsKey.focusFollowsMouse, default: false)
+    static let scrollOnOutput = Key<Bool>(slopDesk: SettingsKey.scrollOnOutput, default: true)
+    static let scrollMultiplier = Key<Double>(slopDesk: SettingsKey.scrollMultiplier, default: 1.0)
     // E8 WI-1: the remaining Controls / Mouse / Scroll knobs. Same fire-time-only discipline → golden-safe. The
     // enum-valued keys store the bare enum rawValue via the `RawRepresentableBridge` (the
     // `Defaults.PreferRawRepresentable` conformances below), repairing a stale value to the default like
     // `closeConfirmTab` / `onLaunch`.
-    static let clearSelectionOnTyping = Key<Bool>(SettingsKey.clearSelectionOnTyping, default: true)
-    static let clearSelectionOnCopy = Key<Bool>(SettingsKey.clearSelectionOnCopy, default: false)
+    static let clearSelectionOnTyping = Key<Bool>(slopDesk: SettingsKey.clearSelectionOnTyping, default: true)
+    static let clearSelectionOnCopy = Key<Bool>(slopDesk: SettingsKey.clearSelectionOnCopy, default: false)
     // Default OFF — NOT YET FUNCTIONAL: the pinned libghostty fork exposes no set-selection / cursor-geometry
     // C API, so a faithful "Backspace deletes the whole selection wherever it sits" cannot be actuated (a blind
     // DEL run would delete the WRONG characters for a mid-line selection — default-on data loss). ON is
     // INDISTINGUISHABLE from OFF (one char deleted + selection cleared), so it ships OFF. See
     // `BackspaceSelectionPolicy` + docs/DECISIONS.md (E8 WI-10) — the policy stays wired for a future geometry API.
-    static let backspaceDeletesSelection = Key<Bool>(SettingsKey.backspaceDeletesSelection, default: false)
-    static let shiftArrowSelect = Key<Bool>(SettingsKey.shiftArrowSelect, default: true)
-    static let pasteBracketedSafe = Key<Bool>(SettingsKey.pasteBracketedSafe, default: true)
-    static let allowMouseCapture = Key<Bool>(SettingsKey.allowMouseCapture, default: true)
-    static let clickToMove = Key<Bool>(SettingsKey.clickToMove, default: true)
-    static let smoothScroll = Key<Bool>(SettingsKey.smoothScroll, default: true)
-    static let undoAtPrompt = Key<Bool>(SettingsKey.undoAtPrompt, default: true)
+    static let backspaceDeletesSelection = Key<Bool>(slopDesk: SettingsKey.backspaceDeletesSelection, default: false)
+    static let shiftArrowSelect = Key<Bool>(slopDesk: SettingsKey.shiftArrowSelect, default: true)
+    static let pasteBracketedSafe = Key<Bool>(slopDesk: SettingsKey.pasteBracketedSafe, default: true)
+    static let allowMouseCapture = Key<Bool>(slopDesk: SettingsKey.allowMouseCapture, default: true)
+    static let clickToMove = Key<Bool>(slopDesk: SettingsKey.clickToMove, default: true)
+    static let smoothScroll = Key<Bool>(slopDesk: SettingsKey.smoothScroll, default: true)
+    static let undoAtPrompt = Key<Bool>(slopDesk: SettingsKey.undoAtPrompt, default: true)
     // Secure input (E17 ES-E17-4 / WI-7) — both default ON (macOS-only behaviour; the keys still compile +
     // round-trip on iOS, where the feature is inert). Fire-time flags, never folded into the env overlay.
-    static let autoSecureInput = Key<Bool>(SettingsKey.autoSecureInput, default: true)
-    static let secureInputIndicator = Key<Bool>(SettingsKey.secureInputIndicator, default: true)
-    static let clipboardWrite = Key<ClipboardAccess>(SettingsKey.clipboardWriteKey, default: .allow)
-    static let clipboardRead = Key<ClipboardAccess>(SettingsKey.clipboardReadKey, default: .ask)
+    static let autoSecureInput = Key<Bool>(slopDesk: SettingsKey.autoSecureInput, default: true)
+    static let secureInputIndicator = Key<Bool>(slopDesk: SettingsKey.secureInputIndicator, default: true)
+    static let clipboardWrite = Key<ClipboardAccess>(slopDesk: SettingsKey.clipboardWriteKey, default: .allow)
+    static let clipboardRead = Key<ClipboardAccess>(slopDesk: SettingsKey.clipboardReadKey, default: .ask)
     // E14/K11-K12 privilege surface (terminal-features__notifications.md → Settings → Advanced). Fire-time
     // flags, never folded into a typed prefs model → golden-safe. Title — Shell Controlled + Clipboard —
     // Shell Controlled default ON; Title Report defaults OFF (the conservative exfiltration-safe default, and
     // it cannot yet actuate — see docs/DECISIONS.md E14 WI-7).
-    static let titleShellControlled = Key<Bool>(SettingsKey.titleShellControlled, default: true)
-    static let titleReport = Key<Bool>(SettingsKey.titleReport, default: false)
-    static let clipboardShellControlled = Key<Bool>(SettingsKey.clipboardShellControlled, default: true)
-    static let allowShiftClick = Key<MouseShiftCapture>(SettingsKey.allowShiftClickKey, default: .enabled)
-    static let rightClickAction = Key<RightClickAction>(SettingsKey.rightClickActionKey, default: .contextMenu)
-    static let optionAsAlt = Key<OptionAsAlt>(SettingsKey.optionAsAltKey, default: .off)
-    static let scrollPastLastLine = Key<ScrollPastLast>(SettingsKey.scrollPastLastLineKey, default: .disabled)
-    static let scrollPastFirstLine = Key<ScrollPastFirst>(SettingsKey.scrollPastFirstLineKey, default: .disabled)
+    static let titleShellControlled = Key<Bool>(slopDesk: SettingsKey.titleShellControlled, default: true)
+    static let titleReport = Key<Bool>(slopDesk: SettingsKey.titleReport, default: false)
+    static let clipboardShellControlled = Key<Bool>(slopDesk: SettingsKey.clipboardShellControlled, default: true)
+    static let allowShiftClick = Key<MouseShiftCapture>(slopDesk: SettingsKey.allowShiftClickKey, default: .enabled)
+    static let rightClickAction = Key<RightClickAction>(
+        slopDesk: SettingsKey.rightClickActionKey,
+        default: .contextMenu,
+    )
+    static let optionAsAlt = Key<OptionAsAlt>(slopDesk: SettingsKey.optionAsAltKey, default: .off)
+    static let scrollPastLastLine = Key<ScrollPastLast>(slopDesk: SettingsKey.scrollPastLastLineKey, default: .disabled)
+    static let scrollPastFirstLine = Key<ScrollPastFirst>(
+        slopDesk: SettingsKey.scrollPastFirstLineKey,
+        default: .disabled,
+    )
     // E10 (Path/link detection — Settings → Controls → Open With / Link Schemes). Fire-time flags, never
     // folded into a typed prefs model → golden-safe. The enum keys store the bare enum rawValue via the
     // `RawRepresentableBridge` (repairing a stale value to the default exactly like `rightClickAction`); the
     // list keys store a native `[String]` (like `customLinkSchemes`).
-    static let linkDetection = Key<Bool>(SettingsKey.linkDetection, default: true)
-    static let linkCmdClick = Key<LinkCmdClick>(SettingsKey.linkCmdClickKey, default: .open)
-    static let linkCmdShiftClick = Key<LinkCmdShiftClick>(SettingsKey.linkCmdShiftClickKey, default: .revealFinder)
+    static let linkDetection = Key<Bool>(slopDesk: SettingsKey.linkDetection, default: true)
+    static let linkCmdClick = Key<LinkCmdClick>(slopDesk: SettingsKey.linkCmdClickKey, default: .open)
+    static let linkCmdShiftClick = Key<LinkCmdShiftClick>(
+        slopDesk: SettingsKey.linkCmdShiftClickKey,
+        default: .revealFinder,
+    )
     static let autoDetectLinkSchemes = Key<AutoDetectLinkSchemes>(
-        SettingsKey.autoDetectLinkSchemesKey,
+        slopDesk: SettingsKey.autoDetectLinkSchemesKey,
         default: .all,
     )
-    static let customLinkSchemes = Key<[String]>(SettingsKey.customLinkSchemes, default: [])
-    static let hintPatterns = Key<[String]>(SettingsKey.hintPatterns, default: [])
-    static let hintPatternActions = Key<[String]>(SettingsKey.hintPatternActions, default: [])
+    static let customLinkSchemes = Key<[String]>(slopDesk: SettingsKey.customLinkSchemes, default: [])
+    static let hintPatterns = Key<[String]>(slopDesk: SettingsKey.hintPatterns, default: [])
+    static let hintPatternActions = Key<[String]>(slopDesk: SettingsKey.hintPatternActions, default: [])
 }
 
 /// Store ``PaneKind`` as its bare `String` rawValue (not JSON-wrapped) so it stays wire-compatible with the
