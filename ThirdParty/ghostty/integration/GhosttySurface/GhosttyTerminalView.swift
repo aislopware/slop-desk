@@ -1377,10 +1377,14 @@ final class GhosttyLayerBackedView: NSView {
             // BOTH marked-now and marked-before: a Backspace that only cancels/reshapes a
             // preedit must not ALSO encode a DEL to the PTY (upstream's Japanese-backspace
             // case — it clears the composing state, not the prior committed characters).
+            // `KeyEventTextPolicy` (headless-tested) strips AppKit's function-key PUA
+            // placeholders (arrows = U+F700… — upstream `ghosttyCharacters`); forwarding one
+            // makes ghostty's KITTY encoder write the raw PUA bytes to the PTY instead of the
+            // CSI sequence (arrows typed garbage into Claude Code).
             sendGhosttyKey(
                 action,
                 event: event,
-                text: event.characters,
+                text: KeyEventTextPolicy.encoderText(for: event.characters),
                 composing: markedText.length > 0 || markedTextBefore,
             )
         }
