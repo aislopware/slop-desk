@@ -98,6 +98,65 @@ final class TerminalModeTrackerTests: XCTestCase {
         XCTAssertFalse(t.bracketedPasteActive)
     }
 
+    // MARK: DECCKM application cursor keys (DECSET/DECRST 1) — docs/29 #6
+
+    /// `ESC[?1h` enables application cursor keys; `ESC[?1l` disables them. Passive flag (no event),
+    /// same contract as bracketed paste.
+    func testCursorKeysApplicationEnableDisable() {
+        let t = TerminalModeTracker()
+        XCTAssertFalse(t.cursorKeysApplication)
+
+        XCTAssertEqual(t.consume(Array("\(ESC)[?1h".utf8)), [])
+        XCTAssertTrue(t.cursorKeysApplication)
+        XCTAssertEqual(t.mode, .shellPrompt)
+
+        XCTAssertEqual(t.consume(Array("\(ESC)[?1l".utf8)), [])
+        XCTAssertFalse(t.cursorKeysApplication)
+    }
+
+    /// A single CSI can carry DECCKM alongside alt-screen (`?1049;1h` — vim's actual startup shape):
+    /// the alt-screen event still fires once AND the cursor-key flag flips. Also pins that param 1049
+    /// does NOT match param 1 (exact-integer, not substring, matching).
+    func testCursorKeysApplicationWithAltScreenInOneCSI() {
+        let t = TerminalModeTracker()
+        XCTAssertEqual(t.consume(Array("\(ESC)[?1049h".utf8)), [.enteredAltScreen])
+        XCTAssertFalse(t.cursorKeysApplication, "param 1049 must not flip DECCKM")
+
+        XCTAssertEqual(t.consume(Array("\(ESC)[?1049;1h".utf8)), [])
+        XCTAssertTrue(t.cursorKeysApplication)
+        XCTAssertEqual(t.mode, .altScreen)
+    }
+
+    /// `reset()` (session boundary) clears the DECCKM flag — a dropped session inside vim must not
+    /// leave application-mode arrows latched for the fresh shell.
+    func testCursorKeysApplicationClearedOnReset() {
+        let t = TerminalModeTracker()
+        t.consume(Array("\(ESC)[?1h".utf8))
+        XCTAssertTrue(t.cursorKeysApplication)
+        t.reset()
+        XCTAssertFalse(t.cursorKeysApplication)
+    }
+
+    /// The sequence split at every possible chunk boundary still flips the flag (the tracker's
+    /// byte-at-a-time invariant extends to the passive flags).
+    func testCursorKeysApplicationSplitAcrossChunks() {
+        let bytes = Array("\(ESC)[?1h".utf8)
+        for split in 1..<bytes.count {
+            let t = TerminalModeTracker()
+            t.consume(Array(bytes[..<split]))
+            t.consume(Array(bytes[split...]))
+            XCTAssertTrue(t.cursorKeysApplication, "split at \(split) must still set DECCKM")
+        }
+    }
+
+    /// A `?1h` embedded in a DCS string body is opaque content — it must NOT flip the flag (the same
+    /// string-consume rule that protects alt-screen tracking).
+    func testCursorKeysApplicationNotFlippedFromStringBody() {
+        let t = TerminalModeTracker()
+        t.consume(Array("\(ESC)P\(ESC)[?1h\(ESC)\\".utf8))
+        XCTAssertFalse(t.cursorKeysApplication)
+    }
+
     // MARK: OSC 133
 
     func testOSC133PromptCycleWithExitCode() {

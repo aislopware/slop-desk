@@ -57,4 +57,18 @@ final class TerminalAlternateScreenTests: XCTestCase {
         model.ingestOutput(Data(bytes[split...]))
         XCTAssertTrue(model.isAlternateScreen, "the completed sequence flips the flag")
     }
+
+    /// `isCursorKeysApplication` (docs/29 #6) is derived from the same unconditionally-fed tracker:
+    /// DECSET `?1h` in the ingested output flips it, `?1l` clears it — this is the live DECCKM state
+    /// the iOS key path threads into `KeyEncoding.encode` / `FloatingCursorMapping.bytes`.
+    func testCursorKeysApplicationTrackedFromIngest() {
+        let model = makeConnectedModel(glitchCaret: .off)
+        XCTAssertFalse(model.isCursorKeysApplication)
+
+        model.ingestOutput(Data("\u{1B}[?1h".utf8))
+        XCTAssertTrue(model.isCursorKeysApplication, "DECSET ?1 must flip the application-cursor flag")
+
+        model.ingestOutput(Data("\u{1B}[?1l".utf8))
+        XCTAssertFalse(model.isCursorKeysApplication, "DECRST ?1 must clear it")
+    }
 }

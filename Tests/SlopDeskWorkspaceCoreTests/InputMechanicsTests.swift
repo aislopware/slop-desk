@@ -239,4 +239,58 @@ final class InputMechanicsTests: XCTestCase {
         )
         XCTAssertEqual(KeyEncoding.encode(optUp, arrowFallback: fallback), [0x1B, 0x1B, 0x5B, 0x41])
     }
+
+    // MARK: DECCKM-aware arrows (docs/29 #6) — the pure tables, no iOS-layer fallback needed
+
+    private func arrowPress(_ characters: String, option: Bool = false) -> InputRouting.KeyPress {
+        InputRouting.KeyPress(characters: characters, option: option, isSpecial: true)
+    }
+
+    func testEncodeArrowsNormalModeAreCSI() {
+        // DECCKM reset (the default): arrows are CSI `ESC [ A…D` — resolved by the pure table,
+        // WITHOUT an injected fallback (pre-#6 these all returned nil and the key died).
+        XCTAssertEqual(KeyEncoding.encode(arrowPress("\u{F700}")), [0x1B, 0x5B, 0x41]) // Up
+        XCTAssertEqual(KeyEncoding.encode(arrowPress("\u{F701}")), [0x1B, 0x5B, 0x42]) // Down
+        XCTAssertEqual(KeyEncoding.encode(arrowPress("\u{F703}")), [0x1B, 0x5B, 0x43]) // Right
+        XCTAssertEqual(KeyEncoding.encode(arrowPress("\u{F702}")), [0x1B, 0x5B, 0x44]) // Left
+    }
+
+    func testEncodeArrowsApplicationModeAreSS3() {
+        // DECCKM set (vim/less/htop): arrows must switch to SS3 `ESC O A…D` — the #6 bug was
+        // emitting CSI unconditionally.
+        XCTAssertEqual(KeyEncoding.encode(arrowPress("\u{F700}"), applicationCursorKeys: true), [0x1B, 0x4F, 0x41])
+        XCTAssertEqual(KeyEncoding.encode(arrowPress("\u{F701}"), applicationCursorKeys: true), [0x1B, 0x4F, 0x42])
+        XCTAssertEqual(KeyEncoding.encode(arrowPress("\u{F703}"), applicationCursorKeys: true), [0x1B, 0x4F, 0x43])
+        XCTAssertEqual(KeyEncoding.encode(arrowPress("\u{F702}"), applicationCursorKeys: true), [0x1B, 0x4F, 0x44])
+    }
+
+    func testEncodeOptionArrowKeepsMetaPrefixInBothModes() {
+        // Option+arrow takes the same metaSendsEscape prefix as every special key (R12 #5), around
+        // whichever introducer the mode picked.
+        XCTAssertEqual(KeyEncoding.encode(arrowPress("\u{F700}", option: true)), [0x1B, 0x1B, 0x5B, 0x41])
+        XCTAssertEqual(
+            KeyEncoding.encode(arrowPress("\u{F700}", option: true), applicationCursorKeys: true),
+            [0x1B, 0x1B, 0x4F, 0x41],
+        )
+    }
+
+    func testEncodeNonArrowSpecialsIgnoreCursorKeyMode() {
+        // DECCKM steers ONLY arrows — Esc/Tab/Return/Backspace bytes are mode-independent.
+        let esc = InputRouting.KeyPress(characters: "\u{1B}", isSpecial: true)
+        XCTAssertEqual(KeyEncoding.encode(esc, applicationCursorKeys: true), [0x1B])
+        let tab = InputRouting.KeyPress(characters: "\t", isSpecial: true)
+        XCTAssertEqual(KeyEncoding.encode(tab, applicationCursorKeys: true), [0x09])
+    }
+
+    func testFloatingCursorBytesFollowCursorKeyMode() {
+        // The floating-cursor synthetic arrows follow the same DECCKM switch: CSI at the prompt,
+        // SS3 once the TUI set `?1h`. Default (no argument) stays the CSI shape.
+        XCTAssertEqual(FloatingCursorMapping.bytes(for: .right), [0x1B, 0x5B, 0x43])
+        XCTAssertEqual(FloatingCursorMapping.bytes(for: .right, applicationCursorKeys: true), [0x1B, 0x4F, 0x43])
+        XCTAssertEqual(FloatingCursorMapping.bytes(for: .left, applicationCursorKeys: true), [0x1B, 0x4F, 0x44])
+        XCTAssertEqual(
+            FloatingCursorMapping.bytes(for: [.left, .right], applicationCursorKeys: true),
+            [0x1B, 0x4F, 0x44, 0x1B, 0x4F, 0x43],
+        )
+    }
 }

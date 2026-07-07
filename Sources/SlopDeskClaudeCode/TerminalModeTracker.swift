@@ -47,6 +47,13 @@ public final class TerminalModeTracker {
     /// frames the paste as an inert bracketed block (matching libghostty's own `clipboard-paste-bracketed-safe`).
     public private(set) var bracketedPasteActive = false
 
+    /// TRUE while the foreground program has DECCKM (application cursor keys, DECSET `?1h`) enabled —
+    /// set on `ESC[?1h`, cleared on `ESC[?1l`. Same passive-flag contract as ``bracketedPasteActive``
+    /// (NO event, so the frozen differential oracle stays byte-exact). Read by the iOS hand-rolled key
+    /// encoder to pick SS3 (`ESC O A`) over CSI (`ESC [ A`) arrows — the macOS path never needs it
+    /// (libghostty's surface owns true DECCKM there). Docs/29 backlog #6.
+    public private(set) var cursorKeysApplication = false
+
     public init() {}
 
     // MARK: Parser state
@@ -112,6 +119,7 @@ public final class TerminalModeTracker {
         state = .ground
         mode = .shellPrompt
         bracketedPasteActive = false
+        cursorKeysApplication = false
         csiBuffer.removeAll(keepingCapacity: false)
         oscBuffer.removeAll(keepingCapacity: false)
     }
@@ -311,6 +319,8 @@ public final class TerminalModeTracker {
         // differential oracle (`LegacyTerminalModeTracker`, which compares events + `.mode`) stays exact.
         // Handled independently of alt-screen: a single CSI can carry both (e.g. `?1049;2004h`).
         if params.contains(2004) { bracketedPasteActive = isSet }
+        // DECSET/DECRST 1 — DECCKM application cursor keys. Passive flag, same oracle-exact contract.
+        if params.contains(1) { cursorKeysApplication = isSet }
         for param in params where param == 1049 || param == 47 || param == 1047 {
             if isSet {
                 if mode != .altScreen {

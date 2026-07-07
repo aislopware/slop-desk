@@ -201,7 +201,12 @@ fixable + verifiable on this hardware; deferred iOS-device-only with specs.
 The one-move fix for the encoder trio is **route the iOS hardware-key path through libghostty's
 `surface.key()`** (reads live DECCKM, encodes the full nav set, applies Meta correctly — canonical, vs the
 current custom encoder that bypasses libghostty):
-- **#6 arrows ignore DECCKM** (always `ESC[` never `ESC O`) — `KeyboardAccessoryBar`/`TerminalInputHost`/`FloatingCursorMapping`.
+- **#6 arrows ignore DECCKM** (always `ESC[` never `ESC O`) — ✅ **FIXED headlessly 2026-07-07**: the pure
+  cores are now DECCKM-aware end-to-end (`TerminalModeTracker` tracks DECSET/DECRST `?1` as a passive flag →
+  `TerminalViewModel.isCursorKeysApplication` → `KeyEncoding.arrowBytes(for:applicationCursorKeys:)` +
+  `FloatingCursorMapping.bytes(for:applicationCursorKeys:)` emit SS3 when set). The future iOS view layer
+  just threads `model.isCursorKeysApplication` through; routing via `surface.key()` stays the canonical
+  end-state for the trio.
 - **#7 nav keys dropped** (Home/End/PageUp/PageDown/Insert/Fn/Delete-forward) — `IMEProxyTextView.isSpecial`
   whitelist omits them → swallowed by IME proxy. Add to `isSpecial` + `specialBytes`, or route via libghostty.
 - **#8 Option-as-Meta** drops Meta on special keys + derives the meta byte from a layout-dependent string —

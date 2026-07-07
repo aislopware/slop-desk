@@ -5,10 +5,11 @@ import Foundation
 ///
 /// Deliberately kept OUT of the `#if os(iOS)` guard (like ``FloatingCursorMapping`` /
 /// ``KeyboardAccessoryDecision``) so the byte mappings are exercised by the headless test runner,
-/// not only by an iOS-triple build. The only genuinely UIKit-dependent bit — resolving the arrow
-/// keys, whose identity is the opaque `UIKeyCommand.input*Arrow` constants — is INJECTED by the iOS
-/// layer via `arrowFallback`, so this type imports no UIKit and the rest of the encoder is testable
-/// without a device.
+/// not only by an iOS-triple build. Arrows key on the stable `UIKeyCommand.input*Arrow` PUA scalars
+/// (matched literally, like ``InputRouting/keyChord(for:)``) and are DECCKM-aware via
+/// ``arrowBytes(for:applicationCursorKeys:)`` (docs/29 #6); `arrowFallback` remains an escape hatch
+/// for keys the pure tables don't model. No UIKit import — the whole encoder is testable without a
+/// device.
 public enum KeyEncoding {
     /// Pure mapping of a key to its ASCII control code. The full C0 range matters, not just letters:
     /// Ctrl-A…Ctrl-Z map to 1…26, Ctrl-[ is the canonical ESC (0x1B) vim/readline users press
@@ -37,9 +38,34 @@ public enum KeyEncoding {
         return (controlCode(for: first), rest)
     }
 
+    /// Arrow-key bytes, DECCKM-aware (docs/29 #6). Keys on the `UIKeyCommand.input*Arrow` scalars the
+    /// iOS layer normalizes into `characters` (the same PUA constants ``InputRouting/keyChord(for:)``
+    /// already matches — stable, documented AppKit/UIKit values, so no UIKit import is needed). The
+    /// mode decides the introducer: DECCKM reset → CSI (`ESC [ A…D`), DECCKM set (application cursor
+    /// keys, what vim/less/htop enable) → SS3 (`ESC O A…D`). The caller threads the live mode from
+    /// `TerminalViewModel.isCursorKeysApplication` (the client-side DECSET `?1` parse) — the old
+    /// always-CSI encoding made arrows dead or garbled in DECCKM-application TUIs.
+    public static func arrowBytes(
+        for press: InputRouting.KeyPress,
+        applicationCursorKeys: Bool,
+    ) -> [UInt8]? {
+        let final: UInt8? =
+            switch press.characters {
+            case "\u{F700}": 0x41 // UIKeyCommand.inputUpArrow → 'A'
+            case "\u{F701}": 0x42 // UIKeyCommand.inputDownArrow → 'B'
+            case "\u{F703}": 0x43 // UIKeyCommand.inputRightArrow → 'C'
+            case "\u{F702}": 0x44 // UIKeyCommand.inputLeftArrow → 'D'
+            default: nil
+            }
+        guard let final else { return nil }
+        // SS3 = ESC O, CSI = ESC [ — the final letter is shared.
+        return [0x1B, applicationCursorKeys ? 0x4F : 0x5B, final]
+    }
+
     /// Special-key bytes resolvable WITHOUT UIKit — the `characters`-keyed switch (Esc / Tab /
-    /// Shift+Tab / Return / Backspace). Arrows depend on the `UIKeyCommand.input*Arrow` constants and
-    /// are resolved by the iOS layer and threaded in through ``encode(_:arrowFallback:)``.
+    /// Shift+Tab / Return / Backspace). Arrows are mode-dependent and live in
+    /// ``arrowBytes(for:applicationCursorKeys:)``; a press neither resolves is offered to the caller's
+    /// `arrowFallback` through ``encode(_:applicationCursorKeys:arrowFallback:)``.
     public static func characterSpecialBytes(for press: InputRouting.KeyPress) -> [UInt8]? {
         switch press.characters {
         case "\u{1B}": [0x1B] // ESC
@@ -55,13 +81,20 @@ public enum KeyEncoding {
     }
 
     /// Encodes a classified key-path press into the raw terminal bytes for `sendInput`. Returns `nil`
-    /// for a press that carries nothing to send (e.g. a bare modifier). `arrowFallback` resolves the
-    /// UIKit-constant arrow keys; pure callers/tests that don't exercise arrows can omit it.
+    /// for a press that carries nothing to send (e.g. a bare modifier). `applicationCursorKeys` is the
+    /// live DECCKM state (`TerminalViewModel.isCursorKeysApplication`) steering the arrow introducer;
+    /// `arrowFallback` remains the escape hatch for special keys the pure tables don't model (the
+    /// pre-#6 shape where the iOS layer resolved arrows itself), consulted only after both tables miss.
     public static func encode(
         _ press: InputRouting.KeyPress,
+        applicationCursorKeys: Bool = false,
         arrowFallback: (InputRouting.KeyPress) -> [UInt8]? = { _ in nil },
     ) -> [UInt8]? {
-        if press.isSpecial, let bytes = characterSpecialBytes(for: press) ?? arrowFallback(press) {
+        if press.isSpecial,
+           let bytes = characterSpecialBytes(for: press)
+           ?? arrowBytes(for: press, applicationCursorKeys: applicationCursorKeys)
+           ?? arrowFallback(press)
+        {
             // Option held with a special key applies the same xterm metaSendsEscape prefix the letter
             // path uses below: Option+Backspace → ESC + DEL (readline/zsh delete-previous-word),
             // Option+Return → ESC + CR, Option+Arrow → ESC + CSI. Without this the Option modifier was

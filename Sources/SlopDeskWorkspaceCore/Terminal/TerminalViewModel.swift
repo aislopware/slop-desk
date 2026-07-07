@@ -1245,6 +1245,12 @@ public final class TerminalViewModel {
     /// sheet, matching libghostty's own `clipboard-paste-bracketed-safe` gate that the embedder preempts.
     public var isBracketedPasteActive: Bool { modeTracker.bracketedPasteActive }
 
+    /// TRUE while the foreground program has DECCKM (application cursor keys, DECSET `?1h`) enabled —
+    /// the real parse from the host output stream. The iOS hand-rolled key path reads this to emit SS3
+    /// arrows (`ESC O A`) instead of CSI (`ESC [ A`) while a full-screen app has switched cursor-key
+    /// mode (docs/29 backlog #6); macOS never consults it (libghostty's surface owns DECCKM there).
+    public var isCursorKeysApplication: Bool { modeTracker.cursorKeysApplication }
+
     private var glitchCaretArmed: Bool {
         guard connectionStatus == .connected, modeTracker.mode == .shellPrompt else { return false }
         switch glitchCaretMode {

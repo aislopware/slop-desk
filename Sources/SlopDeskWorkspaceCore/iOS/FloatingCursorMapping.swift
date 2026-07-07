@@ -68,19 +68,22 @@ public struct FloatingCursorMapping: Sendable, Equatable {
 
     // MARK: - Byte encoding
 
-    /// The DECCKM-normal (cursor-key mode reset) byte sequence for an arrow. The remote PTY's
-    /// libghostty owns true DECCKM state; for the floating-cursor synthetic-input path we emit
-    /// the standard `ESC [ C` / `ESC [ D` (CUF/CUB) which every line editor + the alt-screen
-    /// app interpret as right/left. Routed to `SlopDeskClient.sendInput`.
-    public static func bytes(for arrow: Arrow) -> [UInt8] {
-        switch arrow {
-        case .right: [0x1B, 0x5B, 0x43] // ESC [ C
-        case .left: [0x1B, 0x5B, 0x44] // ESC [ D
+    /// The byte sequence for an arrow, steered by the live DECCKM state (docs/29 #6). Cursor-key
+    /// mode reset (the default) emits the standard `ESC [ C` / `ESC [ D` (CUF/CUB) every line
+    /// editor interprets as right/left; an alt-screen app that set DECCKM (`?1h` — vim/less/htop)
+    /// expects the SS3 form `ESC O C` / `ESC O D`, and feeding it CSI made the floating cursor
+    /// dead or garbled there. The caller threads `TerminalViewModel.isCursorKeysApplication`
+    /// (the client-side DECSET `?1` parse). Routed to `SlopDeskClient.sendInput`.
+    public static func bytes(for arrow: Arrow, applicationCursorKeys: Bool = false) -> [UInt8] {
+        let introducer: UInt8 = applicationCursorKeys ? 0x4F : 0x5B // SS3 'O' vs CSI '['
+        return switch arrow {
+        case .right: [0x1B, introducer, 0x43] // ESC [/O C
+        case .left: [0x1B, introducer, 0x44] // ESC [/O D
         }
     }
 
     /// Encodes a run of arrows into a single byte buffer (for one `sendInput`).
-    public static func bytes(for arrows: [Arrow]) -> [UInt8] {
-        arrows.flatMap { bytes(for: $0) }
+    public static func bytes(for arrows: [Arrow], applicationCursorKeys: Bool = false) -> [UInt8] {
+        arrows.flatMap { bytes(for: $0, applicationCursorKeys: applicationCursorKeys) }
     }
 }
