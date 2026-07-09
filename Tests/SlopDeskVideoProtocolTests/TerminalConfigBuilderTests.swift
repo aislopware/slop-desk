@@ -166,10 +166,10 @@ final class TerminalConfigBuilderTests: XCTestCase {
     // MARK: - E15 WI-2: byte-identical pre-E15 guard
 
     /// The load-bearing regression guard: a default-constructed `TerminalPreferences` with NO E15 args
-    /// (palette / selection nil) reproduces the EXACT default builder output. The ONLY E15 key in the default
-    /// output is `font-feature = -calt,-liga,-dlig` — the ligature-DISABLING set (the `off` default truly
-    /// turns ligatures off, including for a font that ships them; item 7). No per-face / palette /
-    /// cell-height / thicken default leaks a line. FAILS if any other font-parity default emits.
+    /// (palette / selection-bg nil) reproduces the EXACT default builder output. Default extras:
+    /// `font-feature = -calt,-liga,-dlig` (ligatures off) and `selection-foreground = cell-foreground`
+    /// (libghostty token — keep cell colours under the highlight). No per-face / palette / cell-height /
+    /// thicken / selection-background default leaks a line.
     func testDefaultPathEmitsTheExpectedLinesExactly() {
         let expected = [
             "font-family = SF Mono",
@@ -179,6 +179,7 @@ final class TerminalConfigBuilderTests: XCTestCase {
             "theme = SlopDesk Dark",
             "background = FCFBF9",
             "foreground = 37352F",
+            "selection-foreground = cell-foreground",
             "cursor-style = block",
             "scrollback-limit = 2560000",
         ].joined(separator: "\n")
@@ -242,17 +243,30 @@ final class TerminalConfigBuilderTests: XCTestCase {
     }
 
     /// A valid selection colour emits `selection-background`; a malformed / nil one is dropped.
+    /// Every build emits `selection-foreground = cell-foreground` (libghostty: keep cell glyph colours).
     func testSelectionBackgroundOverrideEmitsWhenValidAndDropsOtherwise() {
         let valid = parse(TerminalConfigBuilder.string(
             for: TerminalPreferences(), selectionBackgroundOverride: "403E41",
         ))
         XCTAssertEqual(valid["selection-background"], "403E41")
+        XCTAssertEqual(
+            valid["selection-foreground"], "cell-foreground",
+            "keep original cell foregrounds under the selection fill",
+        )
+        // 8-digit alpha is NOT valid — libghostty Color is RGB-only (3/6 hex); must drop.
+        let alpha = parse(TerminalConfigBuilder.string(
+            for: TerminalPreferences(), selectionBackgroundOverride: "FFFFFF30",
+        ))
+        XCTAssertNil(alpha["selection-background"], "8-digit RRGGBBAA is dropped (no alpha in Color)")
+        XCTAssertEqual(alpha["selection-foreground"], "cell-foreground")
         let bad = parse(TerminalConfigBuilder.string(
             for: TerminalPreferences(), selectionBackgroundOverride: "nope",
         ))
         XCTAssertNil(bad["selection-background"], "a non-hex selection is dropped")
+        XCTAssertEqual(bad["selection-foreground"], "cell-foreground")
         let nilArg = parse(TerminalConfigBuilder.string(for: TerminalPreferences()))
         XCTAssertNil(nilArg["selection-background"], "nil selection emits nothing")
+        XCTAssertEqual(nilArg["selection-foreground"], "cell-foreground", "cell-foreground is unconditional")
     }
 
     // MARK: - E15 WI-2: font-parity keys

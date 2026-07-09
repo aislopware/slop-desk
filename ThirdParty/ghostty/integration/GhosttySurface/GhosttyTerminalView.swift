@@ -2369,6 +2369,11 @@ final class GhosttyLayerBackedView: NSView {
     /// `true` marks the equivalent handled so it does not propagate to the menu / beep. Other Cmd-combos
     /// (the workspace shortcuts) are left to `super` so the command table still sees them — via
     /// `unhandledKeyEquivalent`, which also arms the NSTextInputClient doCommand redispatch (see there).
+    ///
+    /// **First-responder gate:** AppKit walks the *whole* view tree for `performKeyEquivalent`, not just the
+    /// first responder. Without this guard a focused Search tabs / Find / Open Quickly field loses ⌘A/C/V/X
+    /// (and font-size chords) to every live terminal surface — the classic "⌘A highlights the pane, not the
+    /// search string" bug. Only THIS surface claims those chords when it actually owns the keyboard.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         // Only the bare Cmd-<letter> (no shift/ctrl/opt) is the copy/paste/select-all chord; a shifted
         // or otherwise-modified Cmd combo is left to the workspace command table / remote app.
@@ -2380,6 +2385,11 @@ final class GhosttyLayerBackedView: NSView {
               let chars = event.charactersIgnoringModifiers else {
             return unhandledKeyEquivalent(event)
         }
+        // Not the keyboard owner → leave the equivalent for the real first responder (NSTextField field
+        // editor, find bar, etc.) / menu / other panes.
+        guard window?.firstResponder === self else {
+            return unhandledKeyEquivalent(event)
+        }
         switch chars {
         case "c": copy(nil); return true
         case "x": cut(nil); return true   // audit fix `cut-cmdx-not-wired`: ⌘X copies (+prompt-zone delete)
@@ -2388,7 +2398,7 @@ final class GhosttyLayerBackedView: NSView {
         // Font sizing — the universal terminal chords (Terminal.app/iTerm/Ghostty): ⌘= grows, ⌘-
         // shrinks, ⌘0 resets. Routed to libghostty's font-size binding actions, which reflow the grid
         // (the resize path then propagates the new cols/rows to the host). None collide with the
-        // workspace command table (Cmd-T/W/D/1-9/R/]/[ + Opt-Cmd-arrows + Cmd-K) — Cmd-0 is unbound
+        // workspace command table (Cmd-T/W/D/1-9/R/\[\ + Opt-Cmd-arrows + Cmd-K) — Cmd-0 is unbound
         // (tabs use Cmd-1…9). "=" is the no-shift form of the +/= key, matching macOS convention.
         // `increase/decrease_font_size` take a points DELTA parameter (Binding.zig:369/375 —
         // `increase_font_size: f32`), so the action string MUST carry `:1` (Ghostty's own default

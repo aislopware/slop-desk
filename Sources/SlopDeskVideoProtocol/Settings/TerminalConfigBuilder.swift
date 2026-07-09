@@ -48,7 +48,9 @@ public enum TerminalConfigBuilder {
     /// `paletteOverride` (E15 WI-2) — the theme's 16-entry ANSI palette. Valid (exactly ``paletteCount``
     /// clean 6-hex entries) → `palette = N=hex` lines (0–15) AFTER `foreground`; `nil`/malformed emits none.
     /// `selectionBackgroundOverride` (E15 WI-2) — valid 6-hex → `selection-background` after the palette;
-    /// `nil` / malformed ⇒ no line.
+    /// `nil` / malformed ⇒ no line. Always pairs with `selection-foreground = cell-foreground` so each cell
+    /// keeps its original glyph colour under the highlight (libghostty v1.2+ token; NOT `auto` — that is
+    /// invalid and silently drops, restoring the default window fg↔bg invert).
     /// FONT-PARITY keys (E15 WI-2) read from `prefs`: all EXCEPT `font-feature` emit only for a non-default
     /// value; `font-feature` emits UNCONDITIONALLY (ligatures-off's `-calt,-liga,-dlig` must always be sent
     /// to un-ligate `calt`-on GSUB fonts — see ``appendFontParity``). So a default `prefs` gains exactly ONE
@@ -177,6 +179,8 @@ public enum TerminalConfigBuilder {
 
     /// `true` iff `value` is a 6-digit hex colour with NO leading `#` (case-insensitive). Rejects wrong
     /// length, `#`-prefix, or any non-hex char (validate-then-drop); embedded whitespace also fails.
+    /// Used for palette / background / foreground / selection-background (libghostty `Color` is RGB-only —
+    /// no alpha channel; 8-digit `#rrggbbaa` is rejected by `Color.fromHex`).
     static func isValidHex(_ value: String) -> Bool {
         guard value.count == 6 else { return false }
         for scalar in value.unicodeScalars {
@@ -189,9 +193,12 @@ public enum TerminalConfigBuilder {
         return true
     }
 
-    /// Append the E15 theme PALETTE lines (`palette = N=hex`, 0–15) + `selection-background`. Both
-    /// validate-then-drop: palette only when exactly ``paletteCount`` clean 6-hex entries, selection only
-    /// when a clean 6-hex; `nil`/malformed emits NOTHING. Hex matches the bare-hex `background`/`foreground` form.
+    /// Append the E15 theme PALETTE lines (`palette = N=hex`, 0–15) + selection highlight.
+    /// Palette validate-then-drop: only when exactly ``paletteCount`` clean 6-hex entries.
+    /// Selection: always emit `selection-foreground = cell-foreground` (libghostty v1.2+ — keep each
+    /// cell's original glyph colour under the highlight; the default null path uses the *window*
+    /// bg as fg which reads as an invert). When a valid 6-hex `selectionBackgroundOverride` is present,
+    /// emit `selection-background` (opaque RGB fill — true alpha wash is not in the cell path).
     private static func appendPalette(
         _ lines: inout [String],
         paletteOverride: [String]?,
@@ -205,6 +212,8 @@ public enum TerminalConfigBuilder {
                 lines.append("palette = \(index)=\(hex)")
             }
         }
+        // Keep original cell colours (ANSI red stays red, etc.) under the selection fill.
+        lines.append("selection-foreground = cell-foreground")
         if let selectionBackgroundOverride {
             let selection = selectionBackgroundOverride.trimmingCharacters(in: .whitespaces)
             if isValidHex(selection) { lines.append("selection-background = \(selection)") }

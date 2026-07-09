@@ -89,7 +89,9 @@ struct SlateTheme: Equatable {
     /// The 16 ANSI terminal colours (indices 0–15: 0=black … 7=white, 8–15 = bright). 6-hex, no `#`. Reaches
     /// the terminal CELLS via ``TerminalConfigBuilder`` `palette = N=<hex>`. Built-ins ship a canonical palette.
     let ansiPalette: [String]
-    /// Selection highlight background (`selection-background`), 6-hex no `#`; `nil` ⇒ let the renderer pick.
+    /// Selection highlight background (`selection-background`), bare 6-hex opaque RGB. Paired with
+    /// libghostty `selection-foreground = cell-foreground` so glyph colours stay under the fill (not an
+    /// invert). `nil` ⇒ no `selection-background` line. (libghostty `Color` is RGB-only — no alpha.)
     let selectionBackgroundHex: String?
     /// Cursor block colour (`cursor-color`), 6-hex no `#`; `nil` ⇒ follow the foreground.
     let cursorHex: String?
@@ -132,6 +134,7 @@ struct SlateTheme: Equatable {
             "37352F", "B23B3B", "2E6B3E", "C2731A", "3D7A99", "3C2E66", "2E7D6E", "C9C6BE",
             "8A8780", "C57A7A", "7FAE84", "D6A35C", "8AAAC2", "9387B5", "7FC4B5", "E8E6DE",
         ],
+        // Solid warm grey fill; glyph colours kept via selection-foreground=cell-foreground.
         selectionBackgroundHex: "E7E5DF",
         cursorHex: "37352F",
         cursorTextHex: nil,
@@ -174,7 +177,8 @@ struct SlateTheme: Equatable {
             "2A2A2A", "E06C75", "98C379", "E5C07B", "61AFEF", "C678DD", "56B6C2", "ABB2BF",
             "5C6370", "E06C75", "98C379", "E5C07B", "61AFEF", "C678DD", "56B6C2", "FFFFFF",
         ],
-        selectionBackgroundHex: "2A2A2A",
+        // One step above face (0x161616) — readable with light ANSI text kept via cell-foreground.
+        selectionBackgroundHex: "3A3A3A",
         cursorHex: "EEEEEE",
         cursorTextHex: nil,
     )
@@ -252,6 +256,8 @@ struct SlateTheme: Equatable {
                 hex6(s.tertiary), hex6(s.err), hex6(s.ok), hex6(s.warn),
                 hex6(s.orange), hex6(s.purple), hex6(s.accent), hex6(s.foreground),
             ],
+            // Solid elevated fill (opaque — libghostty Color is RGB-only). Glyph colours stay via
+            // selection-foreground=cell-foreground so this is a highlight, not an invert.
             selectionBackgroundHex: hex6(s.elevated),
             cursorHex: hex6(s.foreground),
             cursorTextHex: nil,

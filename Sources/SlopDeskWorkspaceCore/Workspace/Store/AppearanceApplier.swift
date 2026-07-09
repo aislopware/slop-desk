@@ -50,7 +50,8 @@ public struct ResolvedTerminalTheme: Sendable, Equatable {
     public var foreground: String
     /// The 16-entry ANSI palette (6-hex each); `nil` ⇒ no `palette` lines emitted.
     public var palette: [String]?
-    /// The `selection-background` colour (6-hex); `nil` ⇒ no `selection-background` line emitted.
+    /// The `selection-background` colour (bare 6-hex RGB); `nil` ⇒ no `selection-background` line.
+    /// Builder always pairs with `selection-foreground = cell-foreground` (keep original glyph colours).
     public var selectionBackground: String?
 
     public init(
