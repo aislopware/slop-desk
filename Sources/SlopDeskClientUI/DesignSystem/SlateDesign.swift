@@ -442,6 +442,9 @@ enum Slate {
         static let iconSize: CGFloat = 13
         /// The host-identity monogram plate (``SlateMonogram``) — sized to sit inside a control-height row.
         static let monogram: CGFloat = 18
+        /// Connection-status LED (``ConnectionCluster``) — smaller than a traffic light so it never
+        /// competes with the system window buttons.
+        static let statusLED: CGFloat = 6
     }
 
     /// Typography scale — one named role per size; UI = system, code = JetBrains Mono. A closed scale (no

@@ -1,13 +1,10 @@
 // SlateTitlebar — the full-width titlebar chrome. It floats as a top overlay over the content area (the
 // window runs `.hiddenTitleBar`, so there is NO system unified toolbar — this IS the chrome):
-//   • left  — the sidebar REOPEN button, shown ONLY while the sidebar is collapsed. The expanded-state
-//     toggle lives INSIDE the sidebar (`NavigatorColumn`'s traffic-light strip) — the button belongs to
-//     the panel it hides; the titlebar hosts it only when that panel is gone.
+//   • left  — sidebar REOPEN, only while the sidebar is collapsed (expanded toggle lives inside the
+//     sidebar traffic-light strip). Fixed lead 80 clears the system lights.
 //   • centre— the active tab's title as a `⋯` menu (working dir / split / move / find / close pane)
-//   • right — the connection cluster (`ConnectionCluster`), ONLY while the sidebar is collapsed. Its
-//     resting home is the SIDEBAR BOTTOM (a status footer; fixed-width column, leading-aligned — the ticking
-//     telemetry numbers can't shift anything there; trailing-aligned in the titlebar they wiggled the whole
-//     cluster every second). Same host-the-fallback pattern as the reopen button beside it.
+//   • right — connection cluster ONLY while the sidebar is collapsed (resting home is the sidebar FOOTER;
+//     trailing titlebar has room — never jammed next to the traffic lights).
 // The reopen button flips the shared `WorkspaceChromeState` flag that the split representable reads
 // to collapse the matching `NSSplitViewItem` — same machinery the old toolbar drove.
 
@@ -54,12 +51,9 @@ struct SlateTitlebar: View {
         // strip.
         let rowTop: CGFloat = 3
         return ZStack(alignment: .top) {
-            // Left: the sidebar REOPEN button, live only while the sidebar is collapsed (the expanded-state
-            // toggle sits inside the sidebar itself — `NavigatorColumn`'s traffic-light strip). Fixed lead 80
-            // clears the traffic lights. Each direction shows the button only in its SETTLED state: it fades
-            // in only AFTER the collapse slide settles (delay), and on expand it hides INSTANTLY (`nil`
-            // animation) the moment the flag flips — anchored to the sliding content, a fade-out would RIDE
-            // the expand slide rightward (x 80→300) and read as a flash.
+            // Left: sidebar REOPEN only while collapsed (expanded toggle sits in the sidebar strip). Fixed
+            // lead 80 clears traffic lights. Fade in after collapse settles; hide instantly on expand so it
+            // doesn't ride the slide (x 80→300).
             PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
                 .opacity(sidebarVisible ? 0 : 1)
                 .allowsHitTesting(!sidebarVisible)
@@ -72,9 +66,8 @@ struct SlateTitlebar: View {
             TitleMenuButton(title: activeTitle, store: store, activePane: activePane)
                 .padding(.top, rowTop)
 
-            // Right: the connection cluster — the COLLAPSED-SIDEBAR fallback only (its resting home is
-            // the sidebar top; the connection state must never vanish entirely, so the titlebar hosts it
-            // while that panel is gone — the same pattern as the reopen button on the left).
+            // Right: connection cluster — collapsed-sidebar fallback only (footer is the resting home).
+            // Trailing titlebar has room for host + metrics; never next to the traffic lights.
             if let connection, !sidebarVisible {
                 ConnectionCluster(
                     connection: connection,

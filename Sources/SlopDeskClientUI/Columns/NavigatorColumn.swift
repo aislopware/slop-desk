@@ -44,11 +44,10 @@ struct NavigatorColumn: View {
     /// provides its own toggle) omits the button.
     var chrome: WorkspaceChromeState?
 
-    /// The app-global connection — the SIDEBAR BOTTOM is the connection cluster's resting home (a status
-    /// footer; leading-aligned in a fixed-width column, so the ticking telemetry numbers can't layout-shift
-    /// anything; trailing-aligned in the titlebar they wiggled the cluster every second). While the sidebar is
-    /// COLLAPSED the titlebar hosts the fallback (`SlateTitlebar`) so the state never vanishes. Threaded in
-    /// like `preferences`; `nil` (previews / iOS) omits the cluster.
+    /// The app-global connection — resting home is the SIDEBAR FOOTER (full-width, leading monogram + host
+    /// + trailing metrics — room to breathe; never jammed into the traffic-light strip). While the sidebar
+    /// is COLLAPSED the titlebar hosts the trailing fallback (`SlateTitlebar`). Threaded in like
+    /// `preferences`; `nil` (previews / iOS) omits the cluster.
     var connection: AppConnection?
     /// Tapping the cluster opens the Connect-to-Host editor (``OverlayCoordinator/openConnect()``).
     var onConnect: () -> Void = {}
@@ -219,12 +218,11 @@ struct NavigatorColumn: View {
         let windows = windowRows(from: allRows)
         let sections = buildSections(tabRows, query: query)
         return VStack(alignment: .leading, spacing: 0) {
-            // The titlebar / traffic-light strip. The sidebar-collapse toggle sits INSIDE the sidebar,
-            // top-trailing on the traffic-light row (top 3 centres the 24pt plate's icon at y≈15, the row the
-            // titlebar plates sit on). The content titlebar carries only the collapsed-state reopen button
-            // (there is no sidebar to host it then).
+            // Traffic-light strip: ONLY the sidebar-collapse toggle (top-trailing). Connection lives in the
+            // footer below — the lights strip is too narrow for host + metrics and always looked jammed.
+            // Top 3 centres the 24pt plate on the traffic-light row (y≈15).
             //
-            // The button is anchored to the sidebar's TRAILING edge, which RIDES the collapse/expand slide —
+            // The toggle is anchored to the sidebar's TRAILING edge, which RIDES the collapse/expand slide —
             // visible mid-slide it glides with the moving edge and reads as a flash. So it shows only in the
             // SETTLED expanded state: hides INSTANTLY when the collapse flag flips (before the slide starts)
             // and, on expand, fades back only after the slide settles (0.25 clears the ~0.25s NSSplitView
@@ -294,12 +292,9 @@ struct NavigatorColumn: View {
             .scrollIndicators(.hidden) // scrollbars stay invisible for the flat sidebar look
             .frame(maxHeight: .infinity)
 
-            // The connection cluster's RESTING HOME — the SIDEBAR BOTTOM (moved down from above the TABS
-            // header per user request): a live-telemetry status FOOTER pinned below the scrolling tab list
-            // (the ScrollView's `maxHeight: .infinity` pushes this to the bottom edge). A faint top hairline
-            // sets it off from the list; the titlebar mount stays the collapsed-sidebar fallback. `fillWidth`
-            // makes it read as one full-width sidebar item; the fixed-width leading-aligned column keeps the
-            // ticking telemetry numbers from shifting anything.
+            // Connection footer — full-width status row under the tab list (ScrollView maxHeight: .infinity
+            // pins this to the bottom). Hairline separates list from chrome; fillWidth so hover/hit read as
+            // one sidebar item. Leading-aligned fixed column keeps ticking telemetry from shifting the host.
             if let connection {
                 Rectangle()
                     .fill(Slate.Line.subtle)
