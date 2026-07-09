@@ -10,7 +10,7 @@
 |---|-----|------|---------------------|
 | R1 | 🔴 | *(GUI only)* No reliable input into background windows; no `AXUIElement`↔`CGWindowID` map; window match is heuristic → clicks may hit the wrong same-titled window. | activate-then-control + prefer AX actions; match defensively. Fallback: control the whole app, or the whole desktop. |
 | R2 | 🔴 | *(GUI only)* Cooperative activation refuses activation from network/timer events — the remote-control case. | `AXRaise` (reorders even when app activation is throttled) + try deprecated `activateIgnoringOtherApps:`. Measure on macOS 26 target. |
-| R3 | 🟡 | *(GUI only)* Bursty Wi-Fi loss/jitter breaks the 30–50 ms target. | Plain UDP on a trusted private network; video path carries FEC + adaptive bitrate / congestion control (Rust core). |
+| R3 | 🟡 | *(GUI only)* Bursty Wi-Fi loss/jitter breaks the 30–50 ms target. | Plain UDP on a trusted private network; video path carries FEC + adaptive bitrate / congestion control. |
 | R4 | 🟡 | Keyboard layout / dead keys (´+e→é) are host-dependent. | Layout-independent Unicode injection for text; keycodes only for shortcuts (games ignoring Unicode → keycode fallback). |
 | R4b | 🟡 | 4:2:0 chroma → fringing on colored text (no HW 4:4:4; codec swap doesn't fix it). | 10-bit HEVC + higher capture res; optional SW 4:4:4 "ultra text" tier (latency cost). See [09 §2](09-codec-choice.md). |
 | R5 | 🟢 | AVSampleBufferDisplayLayer adds latency. | Behind a `VideoRenderer` protocol; switch to Metal. |

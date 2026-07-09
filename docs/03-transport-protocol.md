@@ -2,7 +2,7 @@
 
 > **STATUS: REFERENCE — GUI video-path design depth.** This path is shipped and co-equal with terminal panes. Current architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
-Three parts: discovery (Bonjour, same-LAN only), transport (plain UDP/TCP), and the packet format. The Swift shell owns the sockets (**Network.framework**, native — no libwebrtc) and the HW codec; the **Rust core** (`rust/slopdesk-core`, video-protocol namespace, behind the C-ABI) implements the wire codec, FEC, frame reassembly, loss handling, and the congestion/ABR controllers.
+Three parts: discovery (Bonjour, same-LAN only), transport (plain UDP/TCP), and the packet format. Sockets are **Network.framework** (no libwebrtc); HW codec is VideoToolbox. Wire codec, FEC, frame reassembly, loss handling, and congestion/ABR are native Swift (`SlopDeskVideoProtocol`).
 
 ---
 
@@ -67,7 +67,7 @@ TLS is redundant behind the mesh, and we run congestion control ourselves — QU
 - `NWConnection.maximumDatagramSize` ≈ 1472 (Ethernet) — the ceiling below which IP does **not** fragment.
 - **Never let IP fragment** a realtime datagram: losing one fragment loses the whole datagram with no recovery context.
 - Target payload **~1200 bytes** (margin for Wi-Fi/IPv6/VPN).
-- Keyframes are tens–hundreds of KB → **fragment at the app layer** into N datagrams, reassembled by `frameID` (Rust core).
+- Keyframes are tens–hundreds of KB → **fragment at the app layer** into N datagrams, reassembled by `frameID`.
 
 ---
 
@@ -91,7 +91,7 @@ controlParams.serviceClass = .signaling   // no-op through a WG tunnel; harmless
 
 ## 4. Packet format (Moonlight-style, simplified)
 
-Video datagram header, big-endian (encoded/decoded by the Rust core):
+Video datagram header, big-endian (encoded/decoded in Swift):
 
 ```
  0                   1                   2                   3
@@ -116,7 +116,7 @@ Video datagram header, big-endian (encoded/decoded by the Rust core):
 
 ## 5. Loss handling — no large jitter buffer
 
-Implemented in the Rust core (Moonlight `VideoDepacketizer.c`-style). The receiver tracks `nextFrameNumber` + `lastStreamSeq`:
+Implemented in Swift (Moonlight `VideoDepacketizer.c`-style). The receiver tracks `nextFrameNumber` + `lastStreamSeq`:
 
 1. **Gap in `streamSeq`** → corrupt frame → `dropFrame`, set `nextFrameNumber = frameID+1`, **request recovery** (do NOT retransmit).
 2. **Whole frame missing** (frameID jumps ahead) → drop the partial, wait for the next clean frame.
@@ -128,7 +128,7 @@ Recovery requests go over the **reliable control channel**. Buffer limited to ~1
 
 ### FEC vs retransmit
 
-The video path **ships FEC + ABR + congestion control** (Rust core), **FEC first** with a **selective-retransmit (NACK) backstop** for what FEC can't recover.
+The video path **ships FEC + ABR + congestion control**, **FEC first** with a **selective-retransmit (NACK) backstop** for what FEC can't recover.
 
 - **FEC (Reed–Solomon over GF(2⁸), NEON-accelerated):** recovers loss with **no added latency**, at a bandwidth cost — the primary mechanism. `m=1` is byte-identical to the original XOR parity; `m≥2` recovers multi-packet loss. **Adaptive tiering** (`FECScheme` + `AdaptiveFECPolicy`): low/none on a clean wired LAN (rely on drop-frame → request-recovery), ramping on Wi-Fi/lossy links. **Adaptive parity-`m`** (2026-06-18) steps `m` per-frame by measured loss (clean → m=2, burst → m=5) via the wire FEC-tier field — no format change.
 - **Retransmit (NACK / selective ARQ)** — *re-scoped 2026-06-18, `SLOPDESK_NACK`, default OFF.* The original rule ("ARQ costs 1 RTT → visible stutter; never for video") assumed the **naive** form — replay the lost frame and stall the stream. That premise does **not** hold with a jitter/**playout buffer ≫ RTT** (e.g. 80 ms buffer vs a ~21 ms WAN RTT): a NACK'd fragment retransmit lands *inside* the buffer window → fills the hole **before playout, no stutter** (the WebRTC model). So a frame FEC can't recover is **held** for a small retransmit grace, the client NACKs exactly the missing fragments, and the host re-sends them from a bounded send-history ring — far cheaper than the old recovery-IDR (and it recovers whole-frame losses FEC fundamentally cannot). The LTR-refresh / IDR path remains the fallback when the grace expires. Retransmit stays opt-in + deploy-together (adds wire recovery type 6).

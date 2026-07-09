@@ -4,7 +4,7 @@
 
 > ⚠️ **GUI video-path only.** The terminal path ([12](12-coding-profile.md)) has a different latency model: network RTT (~1–5ms LAN) + local echo, **no vsync/encode/decode**. Pacer, beam-racing etc. are over-engineering for the coding profile — see [12 §3.3](12-coding-profile.md).
 
-> Production techniques mapped onto the Apple stack. Moonlight/Sunshine are open source (code traced); Parsec publishes philosophy, not numbers. Realtime logic (pacer drop heuristics, FEC reassembly, speculative loss, LTR admission, congestion/ABR) lives in the Rust core (`slopdesk-core`) behind the C-ABI; the Swift shell owns the Apple pieces (ScreenCaptureKit, VideoToolbox, CVDisplayLink/Metal).
+> Production techniques mapped onto the Apple stack. Moonlight/Sunshine are open source (code traced); Parsec publishes philosophy, not numbers. Realtime logic (pacer, FEC reassembly, LTR admission, congestion/ABR) is native Swift; the shell owns ScreenCaptureKit, VideoToolbox, CVDisplayLink/Metal.
 
 ## 0. Core philosophy (Parsec)
 
@@ -65,7 +65,7 @@ Moonlight `RtpVideoQueue` + `VideoDepacketizer`:
 - **Whole-frame loss:** a new frame's packets arriving before the current completes → declare the current unrecoverable and jump. **Never stall for a stray packet.**
 - Depacketizer→decoder queue bounded **≤15**; overflow → request recovery.
 
-**Apple mapping:** `NWConnection` UDP → our FEC-block reassembler (Rust core). No time-based jitter buffer for LAN. Small bounded queue into `VTDecompressionSession`.
+**Apple mapping:** `NWConnection` UDP → FEC-block reassembler (Swift). No time-based jitter buffer for LAN. Small bounded queue into `VTDecompressionSession`.
 
 ---
 
@@ -73,7 +73,7 @@ Moonlight `RtpVideoQueue` + `VideoDepacketizer`:
 
 ### FEC
 - **Moonlight reference (Reed-Solomon):** `parity = ceil(data * fec%/100)`, default 20% (floor 2); per-frame host-driven (% in the frame header, client obeys); large frames split into ≤4 independently-recovering blocks; 4K uses lower FEC (5%).
-- **Built path:** Reed–Solomon over GF(2⁸) (NEON) + adaptive tiering (`FECScheme` + `AdaptiveFECPolicy`, Rust core) — host-driven per-frame %, scaled to link conditions. `m=1` is wire-identical to the old XOR parity; `m≥2` recovers multi-packet loss.
+- **Built path:** Reed–Solomon over GF(2⁸) (NEON) + adaptive tiering (`FECScheme` + `AdaptiveFECPolicy`) — host-driven per-frame %, scaled to link conditions. `m=1` is wire-identical to the old XOR parity; `m≥2` recovers multi-packet loss.
 
 ### Speculative loss detection
 Predict frame loss **before** the next frame arrives — once the shard count proves recovery impossible, fire the loss-notify immediately → saves one frame-time. Self-corrects if wrong.
@@ -127,7 +127,7 @@ Re-encoding the HW cursor into the video → the cursor lags the whole pipeline 
 
 ## 8. Adaptive bitrate
 
-Naive min/max ABR "bounces between min/max, never settles" (Moonlight) → avoid. The built path runs a delay-gradient + loss-driven congestion controller — **`LiveCongestionController` + `LiveBitratePolicy`** (Rust core) — that backs off bitrate on sustained loss / queue growth via `AverageBitRate` and recovers, prioritizing latency (Parsec's model: drop bitrate on loss). It settles at a generous cap on a clean LAN and, being driven by a delay-gradient trendline rather than raw single samples, does not oscillate.
+Naive min/max ABR "bounces between min/max, never settles" (Moonlight) → avoid. The built path runs a delay-gradient + loss-driven congestion controller — **`LiveCongestionController` + `LiveBitratePolicy`** — that backs off bitrate on sustained loss / queue growth via `AverageBitRate` and recovers, prioritizing latency (Parsec's model: drop bitrate on loss). It settles at a generous cap on a clean LAN and, being driven by a delay-gradient trendline rather than raw single samples, does not oscillate.
 
 ---
 

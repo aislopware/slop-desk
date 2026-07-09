@@ -1,10 +1,10 @@
 # 22 — Workspace UI Architecture (the SlopDesk multiplexer)
 
-Status: design, ready to implement.
-Floor: macOS 26 / iOS 26, Swift tools 6.2, Swift 6 language mode (strict concurrency).
-Scope: the APPLICATION layer only. The protocol, transport, terminal byte-pipeline, video pipeline, and inspector channel are PROVEN — this document wraps them, never reinvents them.
+> **STATUS: CURRENT architecture** for the client workspace shell (Session → Tab → n-ary split). Supersedes free-floating canvas ([30](30-infinite-canvas.md)). Some sections below still describe the pre-redesign tree/`LayoutSolver` era — prefer code + [ui-shell/current-state/](ui-shell/current-state/) when they disagree. Redesign plan: [42](42-implementation-plan.md).
 
-Base design: **domain-model-first** (tree-of-intent vs table-of-liveness), grafted with a SwiftUI-native shell, pure `LayoutSolver`/`FocusResolver` + virtual-clock `CommandInterpreter`, and a single-switch responsive projection (`CompactLayoutResolver`).
+Floor: macOS 26 / iOS 26. Scope: application layer only — protocol/transport/video/inspector are owned elsewhere.
+
+Base design: **domain-model-first** (tree-of-intent vs table-of-liveness), pure focus/layout resolvers, responsive compact projection.
 
 ---
 

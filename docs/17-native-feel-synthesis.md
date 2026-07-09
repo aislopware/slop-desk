@@ -34,7 +34,7 @@ Every claim verified back to source. **Corrections** (survey wrong → fixed) ar
 ### 2.1 Transport: raw TCP + `TCP_NODELAY` (mandatory) + dual channels
 
 - Raw PTY byte-stream over **plain TCP** (decided in [13]). **NEW: enable `TCP_NODELAY` right after `connect()`** on every socket. Nagle coalescing of 1-char writes adds **up to 200ms** to echo — the single omission in every terminal stack surveyed. One `setsockopt`, **high** impact.
-- **Dual channels**: data channel (PTY bytes) separated from control channel (`TIOCSWINSZ` resize + intent/disconnect). Lesson from Zellij: an output burst must not delay the resize-ack. Low effort. Wire framing + channel mux + per-channel flow control live in the Rust core's terminal namespace (behind the C-ABI), called by the Swift host/client.
+- **Dual channels**: data channel (PTY bytes) separated from control channel (`TIOCSWINSZ` resize + intent/disconnect). Lesson from Zellij: an output burst must not delay the resize-ack. Low effort. Wire framing + channel mux + per-channel flow control are native Swift (`SlopDeskProtocol` / `SlopDeskTransport`).
 - **No-buffer relay** (NoMachine NX): no ring buffer between `posix_spawn`→TCP write; lockless relay, relay thread at **`QOS_CLASS_USER_INTERACTIVE`**.
 
 ### 2.2 Renderer: libghostty external-IO — the truth about the forks
@@ -133,7 +133,7 @@ Solves "fast vs readable" for coding (extends "4:4:4 dropped, sharp text only vi
 
 ### 3.6 Transport + loss: UDP seq + FEC + LTR (refine)
 
-> Packet seq, FEC + frame reassembly, LTR/recovery admission, congestion/ABR live in the Rust core's video protocol (behind the C-ABI); the Swift video host/client own only capture, the socket, and the HW codec.
+> Packet seq, FEC + frame reassembly, LTR/recovery admission, congestion/ABR are native Swift (`SlopDeskVideoProtocol`); the video host/client own capture, the socket, and the HW codec.
 
 - Plain UDP over the trusted mesh (no DTLS/QUIC — WireGuard is already ChaCha20-Poly1305; inner crypto is pure overhead). A **4-byte sequence number/packet** for ordering/loss detection.
 - **Reed-Solomon FEC at ~20% parity/frame** (Sunshine's default).

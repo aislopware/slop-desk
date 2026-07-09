@@ -2,7 +2,7 @@
 
 > **STATUS: REFERENCE — GUI video-path design depth.** Shipped and co-equal with terminal panes; the old "Phase 4 / secondary" framing is retired. Current architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
-> The client is one unified infinite canvas of panes. A pane is either a **terminal pane** (host PTY → TCP → libghostty, pixel-perfect text) or a **GUI-window pane** (ScreenCaptureKit → VideoToolbox HEVC → UDP video) — two co-equal, both-shipped pane transports. This doc covers the **GUI video-path**; for the overall split — and why the terminal transport avoids input-injection — read **[12-coding-profile.md](12-coding-profile.md)** first.
+> A pane is either a **terminal** (host PTY → TCP → libghostty) or a **GUI window** (ScreenCaptureKit → HEVC → UDP) — co-equal transports. This doc is **GUI video-path design depth**; overall split → [12-coding-profile.md](12-coding-profile.md).
 
 ## 1. The big picture
 
@@ -57,36 +57,29 @@
 | **Renderer** | Low-latency display | `CAMetalLayer` or `AVSampleBufferDisplayLayer` |
 | **Input Capture** | Capture mouse/keyboard/touch → send to host | NSEvent / UIKit gestures |
 
-> The wire codec, packetization, **FEC** (Reed–Solomon over GF(2⁸), NEON-accelerated — `m=1` byte-identical to the original XOR parity, `m≥2` recovers multi-packet loss; with adaptive tiering), frame reassembly, and the realtime controllers — **ABR/congestion, FPS governor, LTR, decode gate/sequencer, jitter-depth pacer, delay-gradient trendline, coordinate mapping** — live in the Rust core (`slopdesk-core`, safe Rust, zero runtime deps) behind a C-ABI (`slopdesk-ffi`, header `slopdesk_ffi.h`). The Swift modules **SlopDeskVideoHost** (capture/encode) and **SlopDeskVideoClient** (decode/render/input) call it through the **CSlopDeskFFI** C target.
+> Wire codec, packetization, **FEC** (Reed–Solomon over GF(2⁸), NEON in `CSlopDeskSIMD` — `m=1` ≡ XOR, `m≥2` multi-loss; adaptive tiering), frame reassembly, and realtime controllers (ABR/congestion, FPS governor, LTR, decode gate/sequencer, pacer, trendline, coordinate mapping) are native Swift (`SlopDeskVideoProtocol`). **SlopDeskVideoHost** / **SlopDeskVideoClient** own capture/encode and decode/render/input.
 
 ## 3. Package structure
 
 ```
 slopdesk/
 ├── Package.swift
-├── rust/
-│   ├── slopdesk-core/   # safe Rust (no `unsafe`, 0 runtime deps): the
-│   │                      #   performance core — wire codecs, FEC + reassembly,
-│   │                      #   ABR/congestion, FPS governor, LTR, decode gate/
-│   │                      #   sequencer, jitter pacer, coordinate mapping
-│   └── slopdesk-ffi/    # C-ABI boundary (the only crate allowed `unsafe`)
-│                          #   → libslopdesk_ffi.a + slopdesk_ffi.h
 ├── Sources/
-│   ├── CSlopDeskFFI/           # C target; links libslopdesk_ffi.a
-│   ├── SlopDeskVideoProtocol/  # Swift surface over the core's video codec
+│   ├── CSlopDeskSIMD/          # only C: aarch64 NEON GF(2⁸) region multiply
+│   ├── SlopDeskVideoProtocol/  # wire codec, FEC, reassembly, controllers
 │   ├── SlopDeskVideoHost/      # macOS — capture, HW encode, send
 │   └── SlopDeskVideoClient/    # client — receive, HW decode, Metal render
 └── docs/
 ```
 
-**Principle:** the codecs / FEC / controllers are platform-independent Rust — the same core a future **Android client** consumes over the same C-ABI/JNI (the ALVR split: Rust owns reassembly/FEC/jitter/ABR/recovery; the platform shell owns capture, the socket, and the HW codec). The Swift shell owns ScreenCaptureKit capture, VideoToolbox, Metal rendering (shared macOS + iOS), and input.
+**Principle:** codecs / FEC / controllers are native Swift (golden-pinned). Shell owns ScreenCaptureKit, VideoToolbox, Metal (macOS + iOS), and input.
 
 ## 4. Data flow for one frame (happy path)
 
 1. A window on the host changes pixels → ScreenCaptureKit emits a `CMSampleBuffer` (status `.complete`).
 2. Take the `CVPixelBuffer` + PTS → push into `VTCompressionSession`.
 3. The encoder returns NALUs (AVCC). Keyframes include parameter sets (SPS/PPS or VPS/SPS/PPS).
-4. The Rust core packetizes the frame into datagrams ≤ MTU (header: frameID, fragIndex, fragCount, flags, streamSeq) + emits Reed–Solomon GF(2⁸) parity (NEON; `m=1`≡XOR, `m≥2` multi-loss) per the adaptive FEC tier.
+4. Packetize the frame into datagrams ≤ MTU (header: frameID, fragIndex, fragCount, flags, streamSeq) + emit Reed–Solomon GF(2⁸) parity (NEON; `m=1`≡XOR, `m≥2` multi-loss) per the adaptive FEC tier.
 5. Send over `NWConnection` UDP (`serviceClass = .interactiveVideo`).
 6. The client reassembles fragments by frameID; missing fragments are recovered from FEC parity where possible, otherwise the frame is dropped and recovery is driven by LTR / a keyframe request over the control channel.
 7. Assemble NALUs → `CMSampleBuffer` (AVCC) → `VTDecompressionSession`.

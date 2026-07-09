@@ -2,7 +2,7 @@
 
 > **STATUS: REFERENCE — GUI video-path design depth.** Shipped, co-equal with terminal panes (old "Phase 4 / secondary" framing retired). Architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
-Runs on **both macOS and iOS/iPadOS** (shared code). Floor: macOS 26 / iOS 26. Pipeline: NALU (reassembled + FEC-recovered by the Rust core) → `VTDecompressionSession` → `CVPixelBuffer` → Metal render. The core hands the shell decoded-ready access units; this doc covers the Swift shell's decode + present.
+Runs on **both macOS and iOS/iPadOS** (shared code). Floor: macOS 26 / iOS 26. Pipeline: NALU (reassembled + FEC-recovered in Swift) → `VTDecompressionSession` → `CVPixelBuffer` → Metal render. This doc covers decode + present.
 
 ---
 
@@ -119,7 +119,7 @@ metalLayer.maximumDrawableCount = 2     // 2 = lowest latency (VALID on iOS — 
 // Per frame: create 2 textures (Y plane .r8Unorm, UV plane .rg8Unorm) from NV12 → YCbCr→RGB shader → present
 ```
 
-NV12→RGB fragment shader uses BT.601/709 coefficients (the same coefficients the Rust core's YCbCr math is bit-checked against). iOS has no `displaySyncEnabled` (always presents at vsync; ProMotion 120Hz brings the worst case down to 8.3ms).
+NV12→RGB fragment shader uses BT.601/709 coefficients (same table as the Swift `YCbCrConversion` golden pin). iOS has no `displaySyncEnabled` (always presents at vsync; ProMotion 120Hz brings the worst case down to 8.3ms).
 
 ### Option B — AVSampleBufferDisplayLayer (simplest)
 
@@ -150,7 +150,7 @@ displayLayer.enqueue(sampleBuffer)   // displays when PTS <= timebase
 
 ## 4b. Frame pacing — render-on-arrival + Pacer
 
-The pacing **policy** (decode gate / sequencer / jitter-depth) lives in the Rust core; the Swift shell owns the vsync tick + present. On a low-loss link, **default to render-on-arrival, NO jitter buffer** (see [10 §2–3](10-latency-optimization.md)). If judder appears from vsync phase mismatch, add a Moonlight-style Pacer:
+The pacing **policy** (decode gate / sequencer / jitter-depth) is native Swift; the shell owns the vsync tick + present. On a low-loss link, **default to render-on-arrival, NO jitter buffer** (see [10 §2–3](10-latency-optimization.md)). If judder appears from vsync phase mismatch, add a Moonlight-style Pacer:
 - **2 queues + a dedicated render thread**, vsync tick via **`CVDisplayLink`** (macOS) / **`CADisplayLink`** (iOS) — replacing Windows' `WaitForVBlank`.
 - Cap render-ahead at **3 frames**; frame-drop on a 500ms window history (drop aggressively if the queue is *continuously* >1).
 - `AVSampleBufferDisplayLayer` self-paces via PTS → simple path; for Metal, build your own CVDisplayLink source.

@@ -4,12 +4,12 @@
 > Status: ✅ decided · 🔬 needs a measurement spike · ⏸️ deferred · ❓ open.
 
 ## Philosophy
-- ✅ **Commit to one good choice per problem.** Renderer = **libghostty** (full surface); structured view = the **read-only inspector**; one Rust core owns the wire. No fallback paths to maintain.
+- ✅ **Commit to one good choice per problem.** Renderer = **libghostty** (full surface); structured view = the **read-only inspector**; native Swift owns the wire. No fallback paths to maintain.
 - ✅ **Phase 0 — de-risk gate BEFORE building production.** Do NOT park "could kill the architecture" unknowns in a later phase (if they break, all prior-phase work is wasted). Every architecture-defining spike runs in Phase 0; only build once it passes. **Most of Phase 0 has already been measured on M1 Max/macOS 26.5** (harness: [research/spikes/vtbench]). → [18 §0]
 
 ## Scope & architecture
 - ✅ **Use-case = everyday coding** (running Claude Code), not game-streaming. → [12]
-- ✅ **Unified workspace, two co-equal pane transports + a companion:** terminal panes (PTY → TCP → libghostty) and GUI-window panes (ScreenCaptureKit → HEVC → UDP) coexist on one infinite canvas; the read-only inspector runs alongside. → [00], [12], [16], [22], [30]
+- ✅ **Unified workspace, two co-equal pane transports + a companion:** terminal panes (PTY → TCP → libghostty) and GUI-window panes (ScreenCaptureKit → HEVC → UDP) on one Session→Tab→split workspace; the read-only inspector runs alongside. (Early builds used a free-floating canvas — retired.) → [00], [12], [16], [22]
 - ✅ **Terminal was built first** (simpler, sidesteps the input-injection risk layer), but the GUI video path is now shipped and equally first-class — the old "terminal-first / GUI is Phase 4" framing is retired. → [12 roadmap], [00]
 
 ## Network / transport
@@ -70,7 +70,7 @@
 ## PATH 2 native-feel (GUI video) — from [17]
 - ✅ **Client-side cursor rendering (HIGHEST impact):** `showsCursor=false` strips the cursor from capture; the host samples `NSEvent` ~120Hz and sends position+shape over a **separate UDP socket, <64B** (do NOT multiplex with video); the client composites a Metal quad at display-refresh → **pointer latency = RTT**. (Parsec US 9,798,436 + Moonlight + Selkies.) → [17]
 - ✅ **Concrete idle-skip:** read `SCStreamFrameInfo.status==.idle` → return immediately; heartbeat IDR ~1s. → [17]
-- ✅ **Loss recovery = LTR-refresh + Reed–Solomon FEC with adaptive tiering** (`FECScheme` + `AdaptiveFECPolicy`) instead of forced-IDR (needs a client→host ACK, fallback IDR 2-RTT); 4B seq-number/packet. FEC is RS over GF(2⁸) (NEON-accelerated in `slopdesk-ffi`): `m=1` is byte-identical to the original XOR parity, `m≥2` recovers multi-packet loss. → [17], [03]
+- ✅ **Loss recovery = LTR-refresh + Reed–Solomon FEC with adaptive tiering** (`FECScheme` + `AdaptiveFECPolicy`) instead of forced-IDR (needs a client→host ACK, fallback IDR 2-RTT); 4B seq-number/packet. FEC is RS over GF(2⁸) (NEON-accelerated in `CSlopDeskSIMD`): `m=1` is byte-identical to the original XOR parity, `m≥2` recovers multi-packet loss. → [17], [03]
 - ✅ **Adaptive parity-`m`** (2026-06-18): the FEC parity count steps per-frame by measured loss (clean → m=2 lower overhead, burst → m=5 strong recovery) via the existing 3-bit wire FEC-tier field — **no wire-format change**, fast-attack on loss / slow-decay when clean. `SLOPDESK_ADAPTIVE_FEC_M`, deploy-together. → [03]
 - ✅ **RE-SCOPE: selective retransmit (NACK / ARQ) for video is now allowed** (2026-06-18) — supersedes the old "never retransmit video (1 RTT → stutter)" rule, whose premise (naive replay-and-stall) breaks once a **playout buffer ≫ RTT**: a NACK'd fragment retransmit lands *inside* the buffer → fills the hole before playout, **no stutter** (WebRTC model). FEC stays first; a FEC-unrecoverable frame is HELD a small grace, the client NACKs the missing fragments (wire recovery type 6), the host re-sends them from a bounded ring (cheaper than a recovery-IDR; recovers whole-frame losses FEC cannot). LTR-refresh/IDR is the fallback once the grace expires. `SLOPDESK_NACK`, default OFF, deploy-together. → [03 §FEC vs retransmit], [10 §LAN policy]
 - ✅ **Client frame pacing = `CADisplayLink`/VSync** (NOT decode-completion); show-last-frame when the queue is empty; `CVMetalTextureCache` zero-copy; `CAMetalLayer.maximumDrawableCount=2`. → [17]

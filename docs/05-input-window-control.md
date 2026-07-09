@@ -60,7 +60,7 @@ let target = CGPoint(x: windowBounds.origin.x + remotePoint.x,
 - **Retina:** `kCGWindowBounds` & CGEvent are both **points**; scale factor does NOT enter the math. ONLY divide by scale if the client sends **pixel** coordinates from a ScreenCaptureKit frame (frames are pixels). **Don't double-apply scale.**
 - The client should send **normalized (0–1)** coordinates → multiply by `windowBounds.width/height` → fully sidesteps the pixel/point ambiguity.
 
-> The normalize → window-rect mapping (and pixel/point scale handling) is computed by the Rust core's coordinate-mapping module behind the C-ABI; the Swift shell supplies the live window rect and posts the resulting CGEvent.
+> Normalize → window-rect mapping (and pixel/point scale) is native Swift coordinate mapping; the shell supplies the live window rect and posts the resulting CGEvent.
 
 ---
 

@@ -2,7 +2,7 @@
 
 > **STATUS: REFERENCE — GUI video-path design depth.** Shipped, co-equal with terminal panes (the old "Phase 4 / secondary" framing is retired). Architecture: [00-overview.md](00-overview.md) · [DECISIONS.md](DECISIONS.md).
 
-Host pipeline (Swift shell): **ScreenCaptureKit (capture one window)** → **VideoToolbox (low-latency HW encode)** → NALUs to the Rust core (`rust/slopdesk-core`, via C-ABI) for packetization + FEC + ABR → transport ([03](03-transport-protocol.md)). This doc covers only the capture + encode shell.
+Host pipeline: **ScreenCaptureKit (capture one window)** → **VideoToolbox (low-latency HW encode)** → NALUs to native Swift packetization + FEC + ABR (`SlopDeskVideoProtocol`) → transport ([03](03-transport-protocol.md)). This doc covers capture + encode.
 
 ---
 
@@ -148,7 +148,7 @@ VTSessionSetProperty(s, key: kVTCompressionPropertyKey_AllowFrameReordering, val
 VTSessionSetProperty(s, key: kVTCompressionPropertyKey_AllowOpenGOP, value: kCFBooleanFalse)
 // MaxFrameDelayCount=0 → force one-in-one-out (synchronous emit). NOT "no-limit" (that's -1):
 VTSessionSetProperty(s, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: 0 as CFNumber)
-// Note: low-latency mode has no VT-internal ABR — the Rust core's ABR/congestion controller drives AverageBitRate at runtime.
+// Note: low-latency mode has no VT-internal ABR — the Swift ABR/congestion controller drives AverageBitRate at runtime.
 ```
 
 HEVC HW encode is always available on Apple Silicon & Intel Macs with a T2.
@@ -206,7 +206,7 @@ func handleEncoded(_ sb: CMSampleBuffer) {
 ## 3. Gotchas (from research)
 
 - `EnableLowLatencyRateControl`: Apple Silicon supports H.264 **and** HEVC; Intel = H.264 only. **Feature-detect at session creation** (don't gate by OS version — Apple hasn't pinned one for HEVC).
-- Low-latency mode has no VT-internal ABR — the app drives `AverageBitRate` from the Rust core's ABR/congestion controller at runtime.
+- Low-latency mode has no VT-internal ABR — the app drives `AverageBitRate` from the Swift ABR/congestion controller at runtime.
 - `UsingHardwareAcceleratedVideoEncoder` returns `-12900` in low-latency mode — known quirk; the HW encoder still runs.
 - `AverageBitRate` is **bytes/second**, not bits. VideoToolbox emits **AVCC** — convert to Annex-B yourself if the protocol needs it.
 - Send parameter sets **before** the first IDR and **re-send on change** (e.g. resolution). Under packet loss, attach them to **every** keyframe so a recovering client can decode.

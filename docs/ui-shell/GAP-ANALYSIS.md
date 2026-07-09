@@ -1,5 +1,7 @@
 # SlopDesk UI-Shell — Design Gap Analysis
 
+> **STATUS: HISTORICAL snapshot.** Written as the planning matrix before / during E1–E21. Many rows marked **missing** / **partial** are now **done** — see [COVERAGE.md](COVERAGE.md) and [current-state/](current-state/). Do not treat this file as live status; re-verify against code before implementing “gaps.”
+
 Feature matrix: slopdesk's UI-shell design spec (UI + behavior) vs. the current client, extended with the user's **remote window** feature.
 
 **Out of scope** (directive): cloud-sync; non-Claude agents (Codex / OpenCode). Where the spec mixes agent-generic and Claude-specific behavior, only Claude Code is in scope.

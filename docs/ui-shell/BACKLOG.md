@@ -1,5 +1,7 @@
 # UI-Shell Design — Implementation Backlog (Epics)
 
+> **STATUS: HISTORICAL.** Epics E1–E21 are **shipped** (see [COVERAGE.md](COVERAGE.md) and git history). This file is the pre-implementation plan, not an open backlog. New UI work starts from product request + current code, not by re-opening these rows.
+
 Gaps from `GAP-ANALYSIS.md` clustered into shippable epics, topologically ordered by dependency: foundational epics (keybinding routing, overlay host, theming/settings, host RPC) precede the leaf features that consume them. Each epic sizes to one focused pass.
 
 - **Estimate**: S ≈ <0.5 day, M ≈ 1 day, L ≈ 2–3 days, XL ≈ 1 week.

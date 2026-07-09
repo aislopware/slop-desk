@@ -1,6 +1,8 @@
 # Pan-Only Infinite Canvas — Implementation Spec of Record
 
-Status: spec of record; shipped as written, except v2 persistence carries **no migration** (§4.3). Replaces the split-tiling workspace with a pan-only infinite canvas. Built against actual code (paths + line numbers verified). Two load-bearing constraints are preserved:
+> **STATUS: SUPERSEDED / HISTORICAL.** Free-floating canvas (drag / snap / camera / non-overlap) was **retired** for a coding-IDE layout: **Session → Tab → n-ary tiled split tree**. Binding decisions: [DECISIONS.md](DECISIONS.md) (“Retire the infinite canvas”), [41](41-redesign-research.md), [42](42-implementation-plan.md). Live architecture: [22-workspace-architecture.md](22-workspace-architecture.md). Kept below as the canvas-era design record only — do not implement from this doc.
+
+Status *(at time of writing)*: was the shipped canvas layout; no longer the product model. Two load-bearing constraints from that era (libghostty points-only sizing; tree-of-intent + `reconcile()`) still inform [22](22-workspace-architecture.md):
 
 - **Physical**: a libghostty surface sizes from its host view's `bounds × contentsScale` in **points** and pins `layer.bounds == view.bounds` (`GhosttyTerminalView.layout()`), mouse coords mapped 1:1 with a y-flip. So the camera is a **pure translate** — never a `scaleEffect`/`CGAffineTransform` on any surface ancestor — and a pane's on-screen size always equals its canvas-space size (resize = change the frame → existing reflow path).
 - **Architectural** (docs/22): tree-of-intent (pure value types) + table-of-liveness (`WorkspaceStore.registry` + `reconcile()`). Invariant unchanged:

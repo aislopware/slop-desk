@@ -1,6 +1,6 @@
 # 07 — Roadmap
 
-> **STATUS: SUPERSEDED.** Old *video-first* roadmap. The shipped plan reordered around the hybrid architecture: the **terminal PTY text-path was sequenced first** (simpler, sidesteps input injection), GUI video following. Both paths now ship, co-equal — the two pane kinds on one canvas. See [00-overview.md](00-overview.md) · [12 §"Revised phased roadmap"](12-coding-profile.md) · [DECISIONS.md](DECISIONS.md). Kept below as a detailed reference for the GUI video-path.
+> **STATUS: SUPERSEDED.** Old *video-first* roadmap. Terminal PTY was built first; GUI video followed — both shipped as co-equal panes. See [00-overview.md](00-overview.md) · [12-coding-profile.md](12-coding-profile.md) · [DECISIONS.md](DECISIONS.md).
 
 Principle: **validate risks first, polish later.** Phase 0 targets the two highest-risk areas (per-window input injection + encode/decode latency); don't invest in transport/UI before it passes.
 

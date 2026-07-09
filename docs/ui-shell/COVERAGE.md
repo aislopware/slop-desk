@@ -1,6 +1,8 @@
 # UI-shell spec coverage matrix
 
-**Source of truth:** the design spec under `docs/ui-shell/spec/` (47 pages) plus the reference screenshots under `docs/ui-shell/screenshots/`. This matrix is a **docs-driven coverage audit** (2026-06-29): it read every in-scope spec page and grepped the implementation for each documented feature — catching features the docs describe that the implementation audit (which only inspects what was built) cannot see.
+> **Live status for UI-shell.** Prefer this over [GAP-ANALYSIS.md](GAP-ANALYSIS.md) / [BACKLOG.md](BACKLOG.md) (both historical). Index: [README.md](README.md).
+
+**Source of truth:** `docs/ui-shell/spec/` + `docs/ui-shell/screenshots/`. This matrix is a **docs-driven coverage audit** (2026-06-29): every in-scope spec page vs implementation.
 
 Method: lean per-section sonnet agents read each spec page, cross-checked the reference screenshot, and reported only self-verified gaps. SlopDesk's terminal **emulation** is the embedded **libghostty** engine (the real ghostty), so the entire VT/Terminal-API section (C0/ESC/CSI/OSC *parsing*) comes from libghostty, not reimplemented — only the **app-level** OSC behaviours (7/8/9/52/133/9;4/1337) are slopdesk's own.
 

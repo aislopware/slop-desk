@@ -1,6 +1,8 @@
 # SlopDesk Rust→Native-Swift Reverse-Migration Plan
 
-**Goal:** Reabsorb the `slopdesk-core` + `slopdesk-ffi` Rust into optimized native Swift, delete the FFI boundary, and collapse the cross-language `golden_parity` proof into a single-implementation Swift pin — without breaking one bit on the wire.
+> **STATUS: SUPERSEDED / DONE.** The Rust tree (`rust/slopdesk-core`, `slopdesk-ffi`) is gone; the wire core is native Swift + `Sources/CSlopDeskSIMD`. Kept only as migration history. Current architecture: [00-overview.md](00-overview.md), [DECISIONS.md](DECISIONS.md) (“Single language: Swift”).
+
+**Goal (historical):** Reabsorb the `slopdesk-core` + `slopdesk-ffi` Rust into optimized native Swift, delete the FFI boundary, and collapse the cross-language `golden_parity` proof into a single-implementation Swift pin — without breaking one bit on the wire.
 
 **Verified against the tree (HEAD `a3508b5`):** 40 golden keys in `rust/slopdesk-core/tests/vectors/golden_vectors.json`; `ycbcr` is golden-pinned with f32 bit-patterns and its Swift site (`YCbCrConversion.swift`) is **clean/committed-delegation** (the real pilot); NEON kernels are exactly `gf_neon.rs` (318) + `frame_hash.rs` (375) = 693 LOC; the FFI link is `Package.swift` L57-58 `.unsafeFlags(["-L…/rust/target/release","-lslopdesk_ffi"])` on the `CSlopDeskFFI` target, consumed by `SlopDeskProtocol`, `SlopDeskVideoProtocol`, `SlopDeskVideoHost`, `SlopDeskVideoClient`.
 

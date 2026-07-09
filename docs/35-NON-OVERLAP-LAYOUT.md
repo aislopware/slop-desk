@@ -2,6 +2,8 @@
 
 > **Historical session log. Records work as of that date, not the current architecture. See [00-overview.md](00-overview.md) and [19-implementation-plan.md](19-implementation-plan.md) for current state.**
 
+> **STATUS: SUPERSEDED / HISTORICAL.** Canvas-era QoL for free-floating panes. Canvas layout retired → Session→Tab→split ([30](30-infinite-canvas.md), [DECISIONS.md](DECISIONS.md)).
+
 Default-ON QoL setting (`canvas.nonOverlap`): window/group boundaries never overlap on the infinite canvas. Dragging a window **slides flush** along neighbours instead of overlapping ("trượt theo boundary"); dropping into a cluster **parts the neighbours** to make room ("tự dịch ra"). Groups move/resize as a unit and shove other groups clear. Hold **⌘** while dragging to bypass (free-overlap stack). Toggle lives in Settings → Canvas, the View menu, and the pane pill.
 
 ## The core insight
