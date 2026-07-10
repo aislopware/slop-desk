@@ -154,20 +154,53 @@ final class TerminalViewModelBatchTests: XCTestCase {
 
     /// Surface whose ``feedBackpressure()`` suspends until the test releases it —
     /// models GhosttySurface's serial feed queue above high water.
+    ///
+    /// ALL mutable state is lock-guarded: the ingest pump touches it from the main actor while
+    /// the test body reads/releases from XCTest's async-test executor. The old unguarded
+    /// check-then-park had a LOST-WAKE window — `feedBackpressure` read `gateOpen == false`,
+    /// the test's `release()` interleaved (resuming an EMPTY parked list), THEN the
+    /// continuation was appended → parked forever → the whole xctest worker hung (the
+    /// intermittent 30-minute `make test --parallel` hang). The gate check and the park are
+    /// now one atomic section.
     private final class BackpressureSurface: TerminalSurface, FeedBackpressuring, @unchecked Sendable {
-        var writes: [Data] = []
-        var flushes = 0
-        var backpressureCalls = 0
+        private let lock = NSLock()
+        private var _writes: [Data] = []
+        private var _flushes = 0
+        private var _backpressureCalls = 0
         private var parked: [CheckedContinuation<Void, Never>] = []
-        var gateOpen = false
+        private var gateOpen = false
 
-        func feed(_ bytes: Data) { writes.append(bytes)
-            flushes += 1
+        var writes: [Data] { lock.lock()
+            defer { lock.unlock() }
+            return _writes
         }
 
-        func feedBatch(_ chunks: ArraySlice<Data>) {
-            writes.append(contentsOf: chunks)
-            flushes += 1
+        var flushes: Int { lock.lock()
+            defer { lock.unlock() }
+            return _flushes
+        }
+
+        var backpressureCalls: Int { lock.lock()
+            defer { lock.unlock() }
+            return _backpressureCalls
+        }
+
+        func clearWrites() { lock.lock()
+            _writes.removeAll()
+            _flushes = 0
+            lock.unlock()
+        }
+
+        func feed(_ bytes: Data) { lock.lock()
+            _writes.append(bytes)
+            _flushes += 1
+            lock.unlock()
+        }
+
+        func feedBatch(_ chunks: ArraySlice<Data>) { lock.lock()
+            _writes.append(contentsOf: chunks)
+            _flushes += 1
+            lock.unlock()
         }
 
         func setSize(cols _: UInt16, rows _: UInt16) {}
@@ -175,16 +208,39 @@ final class TerminalViewModelBatchTests: XCTestCase {
         var onWrite: ((Data) -> Void)?
 
         func feedBackpressure() async {
-            backpressureCalls += 1
-            if gateOpen { return }
-            await withCheckedContinuation { parked.append($0) }
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                lock.lock()
+                _backpressureCalls += 1
+                if gateOpen {
+                    lock.unlock()
+                    continuation.resume()
+                    return
+                }
+                parked.append(continuation)
+                lock.unlock()
+            }
         }
 
         func release() {
+            lock.lock()
             gateOpen = true
             let toResume = parked
             parked.removeAll()
+            lock.unlock()
             for continuation in toResume { continuation.resume() }
+        }
+    }
+
+    /// Polls (bounded) until `condition` — replaces the megaYield-and-hope scheduling gamble
+    /// for "the pump has reached the backpressure park" (under `--parallel` worker contention
+    /// a fixed yield count routinely loses the race).
+    private func waitUntil(
+        _ condition: () -> Bool, timeout: Duration = .seconds(5),
+    ) async {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while ContinuousClock.now < deadline {
+            if condition() { return }
+            try? await Task.sleep(for: .milliseconds(2))
         }
     }
 
@@ -197,7 +253,7 @@ final class TerminalViewModelBatchTests: XCTestCase {
         ]
         let ingest = Task { @MainActor in await model.ingestBatch(chunks) }
         // Parked before the FIRST pass: nothing fed while the surface is above water.
-        await Task.megaYield()
+        await waitUntil { surface.backpressureCalls == 1 }
         XCTAssertEqual(surface.flushes, 0, "no pass ran while backpressure parked")
         XCTAssertEqual(surface.backpressureCalls, 1)
 
@@ -225,13 +281,12 @@ final class TerminalViewModelBatchTests: XCTestCase {
         let model = TerminalViewModel(surface: surface)
         model.ingestOutput(Data("old".utf8))
         model.markReconnecting() // arm the one-shot wipe the dead pass must not consume
-        surface.writes.removeAll()
-        surface.flushes = 0
+        surface.clearWrites()
 
         let ingest = Task { @MainActor in
             await model.ingestBatch([Data("dead-session bytes".utf8)])
         }
-        await Task.megaYield()
+        await waitUntil { surface.backpressureCalls == 1 }
         XCTAssertEqual(surface.flushes, 0, "parked before the first pass")
 
         ingest.cancel() // teardown/reconnect replaced this pump

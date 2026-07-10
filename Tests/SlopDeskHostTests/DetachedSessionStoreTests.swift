@@ -70,16 +70,31 @@ final class DetachedSessionStoreTests: XCTestCase {
         }
     }
 
-    /// Cap resolution: default 256; env-shaped override honored; non-positive falls back.
+    /// Cap resolution: default UNBOUNDED (nil — tmux/zellij have no session cap and never
+    /// silently kill a live detached session); a positive value opts into capping.
     func testHostServerDetachCapResolution() {
         if ProcessInfo.processInfo.environment["SLOPDESK_DETACH_MAX_SESSIONS"] == nil {
-            XCTAssertEqual(HostServer(port: 0).detachMaxSessionsResolved, 256)
+            XCTAssertNil(HostServer(port: 0).detachMaxSessionsResolved, "default is no cap")
         }
         XCTAssertEqual(HostServer(port: 0, detachMaxSessions: 512).detachMaxSessionsResolved, 512)
-        XCTAssertEqual(
-            HostServer(port: 0, detachMaxSessions: 0).detachMaxSessionsResolved, 256,
-            "a non-positive cap must fall back to the default, not disable detach",
+        XCTAssertNil(
+            HostServer(port: 0, detachMaxSessions: 0).detachMaxSessionsResolved,
+            "a non-positive cap means unbounded, not instant eviction",
         )
+    }
+
+    /// No cap set → inserting past any would-be threshold never evicts (tmux semantics).
+    func testUnboundedStoreNeverEvictsOnOverflow() async {
+        let store = DetachedSessionStore() // default: no cap
+        var ids: [UUID] = []
+        for i in 0..<70 { // past the old 64 cap
+            let id = UUID()
+            ids.append(id)
+            let s = makeStubSession(sessionID: id)
+            await store.insert(s, key: MuxSessionKey(connectionID: UUID(), channelID: UInt32(i)), ttl: nil)
+        }
+        let oldest = await store.lookup(ids[0])
+        XCTAssertNotNil(oldest, "with no cap, the oldest detached session must never be evicted")
     }
 
     // MARK: TTL eviction

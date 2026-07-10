@@ -19,17 +19,17 @@ actor DetachedSessionStore {
 
     private var store: [UUID: Entry] = [:]
 
-    /// Maximum number of concurrently-detached sessions. The OLDEST by `detachedAt` is evicted
-    /// (killed) when a new insert would exceed this. Injected so tests can drive overflow headlessly.
-    ///
-    /// Default 256 (env `SLOPDESK_DETACH_MAX_SESSIONS` via ``HostServer``): host-side cost per
-    /// detached session is bounded (~≤9 MiB worst-case — 4 MiB offline drain gate + ≤4 MiB
-    /// scrollback ring + 64 KiB FIFO — and an idle shell is a few MB of its own RSS), so 256
-    /// costs at most a couple of GB in the pathological all-full case on a ≥32 GB host. The
-    /// matching fd headroom is raised at hostd start (each pane holds a PTY master + journal fd).
-    let maxSessions: Int
+    /// OPT-IN cap on concurrently-detached sessions, or `nil` for UNBOUNDED — the default and
+    /// the tmux/zellij semantics (verified against both sources: neither imposes any session
+    /// count limit, and neither ever silently kills a live detached session — their resource
+    /// bounds are per-pane scrollback limits, which SlopDesk already has, stricter: 4 MiB ring +
+    /// 4 MiB journal + 64 KiB FIFO + the offline drain gate per session; hostd raises the fd
+    /// soft limit toward 8192 at start for the PTY-master + journal fds). When a cap IS set
+    /// (env `SLOPDESK_DETACH_MAX_SESSIONS` > 0), the OLDEST by `detachedAt` is evicted (killed)
+    /// when a new insert would exceed it. Injected so tests can drive overflow headlessly.
+    let maxSessions: Int?
 
-    init(maxSessions: Int = 256) {
+    init(maxSessions: Int? = nil) {
         self.maxSessions = maxSessions
     }
 
@@ -45,8 +45,11 @@ actor DetachedSessionStore {
     func insert(_ session: MuxChannelSession, key: MuxSessionKey, ttl: Duration?) {
         let id = session.sessionID
 
-        // Cap enforcement: evict the oldest entry when full.
-        if store.count >= maxSessions, let oldest = store.values.min(by: { $0.detachedAt < $1.detachedAt }) {
+        // OPT-IN cap enforcement: evict the oldest entry when full (no cap set = unbounded,
+        // the tmux semantics — never silently kill a live detached session).
+        if let maxSessions, store.count >= maxSessions,
+           let oldest = store.values.min(by: { $0.detachedAt < $1.detachedAt })
+        {
             evict(oldest.session.sessionID)
         }
 
