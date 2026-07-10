@@ -10,16 +10,17 @@ import SlopDeskAgentDetect
 ///
 /// Each case maps to a badge described in `progress-state.md` → "The full badge set".
 public enum TabBadgeKind: Equatable, Sendable {
-    /// **Running (agent)** — a WORKING code agent (`ClaudeStatus.working`). The loud, animated "agent is
-    /// thinking" indicator (accent comet arc in the view layer). Split from a plain command's
-    /// ``commandRunning`` so the sidebar reads "the AGENT is working" distinctly from "a command is running"
-    /// (herdr's `Working` vs `Unknown` distinction). A busy PRIVILEGED shell still ranks here (above the
-    /// shield), so a running `sudo …` shows activity, not the privilege badge.
+    /// **Running (agent)** — a WORKING code agent (`ClaudeStatus.working`). The "agent is thinking"
+    /// indicator (the amber dot + spinner ring in the view layer). Split from a program's
+    /// ``commandRunning`` so the sidebar reads "the AGENT is working" distinctly from "a program reports
+    /// progress" (herdr's `Working` vs `Unknown` distinction).
     case running
-    /// **Running (command)** — a plain busy shell / a long-running watch command / an `OSC 9;4;1`/`3` progress
-    /// with NO agent working. The QUIET, muted marker (normal secondary text colour, no accent) — a running
-    /// command is not agent chatter, so it stays low-key (herdr renders a plain shell as a dim dot, never the
-    /// agent spinner). Ranks just below ``running`` and above the privilege badges.
+    /// **Running (command)** — an active `OSC 9;4;1`/`3` PROGRESS report with NO agent working: a program
+    /// explicitly says "I'm loading". The QUIET, muted marker (secondary text colour + spinner ring, no
+    /// accent). A merely-BUSY shell (`isBusy` with no progress report) deliberately shows NOTHING — a
+    /// running command is the terminal's normal state, so silence is the resting badge (2026-07-10 UI
+    /// feedback: the always-on busy dot was noise). Ranks just below ``running`` and above the privilege
+    /// badges.
     case commandRunning
     /// **Completed** — the green checkmark. The brief success flash a command shows on a clean exit
     /// (`OSC 133;D` exit 0) before it settles to ``finished``. This resolver emits ``completed`` for a
@@ -34,10 +35,10 @@ public enum TabBadgeKind: Equatable, Sendable {
     /// `.done` row — the persistent marker that holds until the tab is viewed (its badge is cleared on
     /// focus). No timestamp lives here; the settle decision is the store's.
     case finished
-    /// **Error** — the alert triangle. A command exited non-zero (`OSC 9;4;2` / a `.failure`
+    /// **Error** — the static red dot. A command exited non-zero (`OSC 9;4;2` / a `.failure`
     /// completion) or an agent reported an error.
     case error
-    /// **Awaiting input** — the hand icon. A code agent is blocked on approval/input
+    /// **Awaiting input** — the static red dot. A code agent is blocked on approval/input
     /// (`ClaudeStatus.needsPermission`) or a plain command is stopped at an interactive prompt. The
     /// most-urgent state — it wins the precedence.
     case awaitingInput
@@ -75,15 +76,16 @@ public enum TabBadgeKind: Equatable, Sendable {
 /// awaitingInput  >  error  >  running(agent)  >  commandRunning  >  sudo  >  caffeinate  >  completed/finished  >  nil
 /// ```
 ///
-/// A working AGENT (``running``) outranks a plain busy shell (``commandRunning``) — if a pane is somehow both,
-/// the agent signal wins. Caffeinate/sudo deliberately sit **below** the active states so a *running*
-/// privileged command still shows activity; the privilege badge only surfaces when the shell is at rest
-/// (i.e., not actively running a foreground command).
+/// A working AGENT (``running``) outranks a program's progress report (``commandRunning``) — if a pane is
+/// somehow both, the agent signal wins. A merely-busy shell (`isBusy`, no OSC 9;4 report) produces NO
+/// badge at all (2026-07-10: running a command is the terminal's normal state) — which also means a busy
+/// `sudo`/`caffeinate` session shows its privilege badge rather than an activity marker.
 ///
 /// Headless + deterministic: no SwiftUI, no clock, no I/O. The only inputs are the agent verdict, the
-/// stored completion badge, the busy bit, and the (untrusted) foreground-process string — which is
-/// classified by an **allow-set on its lowercased basename**, never `contains`, and defaults to "no
-/// privilege badge" for anything unknown / `nil` (validate-then-default; no force-unwrap).
+/// stored completion badge, the busy bit (kept for source-compat; no longer badge-bearing), and the
+/// (untrusted) foreground-process string — which is classified by an **allow-set on its lowercased
+/// basename**, never `contains`, and defaults to "no privilege badge" for anything unknown / `nil`
+/// (validate-then-default; no force-unwrap).
 public enum TabBadgeResolver {
     /// Whether a clean completion (`.success` exit / agent `.done`) is still showing its brief success
     /// FLASH or has SETTLED into the persistent unread marker. A pure, clock-free input the resolver
@@ -127,7 +129,7 @@ public enum TabBadgeResolver {
     public static func badge(
         agent: ClaudeStatus,
         completion: PaneCompletionBadge?,
-        isBusy: Bool,
+        isBusy _: Bool,
         foregroundProcess: String?,
         completionFreshness: CompletionFreshness = .settled,
         progress: PaneProgress? = nil,
@@ -141,12 +143,13 @@ public enum TabBadgeResolver {
         if completion == .failure { return .error }
         if let progress, case .error = progress { return .error }
 
-        // 3. Running — a WORKING agent gets the loud agent badge (``running``); a plain busy shell or an active
-        // OSC 9;4;1/3 progress with no working agent gets the QUIET ``commandRunning`` marker. Agent wins if
-        // both. (A progress `.error` already returned at the error tier above, so `isRunning` here is exactly
-        // the indeterminate/determinate "still going" states.)
+        // 3. Running — a WORKING agent gets the loud agent badge (``running``); an active OSC 9;4;1/3
+        // progress with no working agent gets the QUIET ``commandRunning`` marker. Agent wins if both. A
+        // merely-busy shell (`isBusy`, no progress report) shows NOTHING — running a command is the
+        // terminal's normal state (2026-07-10 UI feedback), so `isBusy` no longer produces a badge; it
+        // remains an input only for source-compat (and a future re-think). (A progress `.error` already
+        // returned at the error tier above, so `isRunning` here is exactly the "still going" states.)
         if agent == .working { return .running }
-        if isBusy { return .commandRunning }
         if let progress, progress.isRunning { return .commandRunning }
 
         // 4 + 5. Privilege badges, only when the shell is at rest: sudo (shield) > caffeinate (coffee).

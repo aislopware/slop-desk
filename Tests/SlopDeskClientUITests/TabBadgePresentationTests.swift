@@ -27,51 +27,36 @@ final class TabBadgePresentationTests: XCTestCase {
         return false
     }
 
-    private func isAttention(_ kind: TabBadgeKind) -> Bool {
-        if case .attention = StatusPresentation.tabBadge(kind) { return true }
-        return false
-    }
-
-    private func isAccentDot(_ kind: TabBadgeKind) -> Bool {
+    /// Whether the kind renders the STATIC dot (the settled vocabulary; no spinner, no symbol).
+    private func isStaticDot(_ kind: TabBadgeKind) -> Bool {
         if case .dot = StatusPresentation.tabBadge(kind) { return true }
         return false
     }
 
-    /// `.running` (a WORKING agent) ⇒ the bespoke comet-arc shape, not an SF-symbol.
-    func testRunningIsAgentComet() {
+    /// `.running` (a WORKING agent) ⇒ the live spinner-ring style, not an SF-symbol and not a static dot.
+    func testRunningIsLiveSpinner() {
         XCTAssertTrue(isWorking(.running))
-        XCTAssertNil(symbolName(of: .running), "the comet arc is a bespoke shape, not an SF-symbol")
+        XCTAssertNil(symbolName(of: .running), "the orbit dot is a bespoke shape, not an SF-symbol")
+        XCTAssertFalse(isStaticDot(.running), "working is live — never the static dot")
     }
 
-    /// `.commandRunning` (a plain busy shell) ⇒ the QUIET muted orbit-dot (core dot + orbiting arc),
-    /// distinct from the agent comet by tint — NOT a symbol, and NOT the loud `.working` arc.
-    func testCommandRunningIsMutedDot() {
+    /// `.commandRunning` (an OSC 9;4 progress load) ⇒ the QUIET muted spinner-ring, distinct from the
+    /// agent's `.working` style — NOT a symbol, NOT a static dot.
+    func testCommandRunningIsMutedSpinner() {
         XCTAssertTrue(isCommandBusy(.commandRunning))
-        XCTAssertFalse(isWorking(.commandRunning), "a plain command must not use the agent comet")
+        XCTAssertFalse(isWorking(.commandRunning), "a program's progress must not use the agent style")
         XCTAssertNil(symbolName(of: .commandRunning))
     }
 
-    /// `.finished` ⇒ the small filled accent dot (the settled "unread output" marker), not a symbol.
-    func testFinishedIsAccentDot() {
-        XCTAssertTrue(isAccentDot(.finished))
-        XCTAssertNil(symbolName(of: .finished))
-    }
-
-    /// `.completed` ⇒ the green filled checkmark circle (`OpenCode` row in `tab-badge.png`).
-    func testCompletedIsCheckmarkSymbol() {
-        XCTAssertEqual(symbolName(of: .completed), "checkmark.circle.fill")
-    }
-
-    /// `.error` ⇒ the alert triangle (`running build task` row in `tab-badge.png`).
-    func testErrorIsAlertTriangleSymbol() {
-        XCTAssertEqual(symbolName(of: .error), "exclamationmark.triangle.fill")
-    }
-
-    /// `.awaitingInput` ⇒ the bespoke attention shape (the RED orbit-dot, the most-urgent state), not an
-    /// SF-symbol.
-    func testAwaitingInputIsAttentionPing() {
-        XCTAssertTrue(isAttention(.awaitingInput))
-        XCTAssertNil(symbolName(of: .awaitingInput), "the orbit-dot is a bespoke shape, not an SF-symbol")
+    /// The settled vocabulary is ALL static dots (2026-07-10 UI feedback: no character glyphs next to
+    /// dots — the old checkmark/triangle/hand are gone): blocked/failed red, done-unread blue,
+    /// clean-finish flash green. Tints are left to the snapshot (Color equality is provider-fragile);
+    /// the SHAPE class is the load-bearing pin.
+    func testSettledKindsAreStaticDotsNotCharacterGlyphs() {
+        for kind in [TabBadgeKind.awaitingInput, .error, .finished, .completed] {
+            XCTAssertTrue(isStaticDot(kind), "\(kind): the settled vocabulary is a static dot")
+            XCTAssertNil(symbolName(of: kind), "\(kind): no character glyph in the dot vocabulary")
+        }
     }
 
     /// `.caffeinate` ⇒ the coffee cup (a sleep-blocking session at rest).

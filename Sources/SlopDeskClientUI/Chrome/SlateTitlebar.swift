@@ -46,15 +46,16 @@ struct SlateTitlebar: View {
     private var sidebarVisible: Bool { !chrome.sidebarCollapsed }
 
     /// The title pip's tint — the STATUS colour of the most-urgent waiting pane (the head of the
-    /// urgency-sorted ``WorkspaceStore/unseenAttentionPanes``), matching the sidebar badge tints: red for
-    /// a blocked agent / failed command, the OK green for unread finishes. Secondary when nothing waits
-    /// (the pip is hidden then anyway — this is just its resting value).
+    /// urgency-sorted ``WorkspaceStore/unseenAttentionPanes``), matching the sidebar badge dots: red for
+    /// a blocked agent / failed command, BLUE (the agent palette's done 🔵) for unread finishes, green
+    /// only during the brief clean-finish flash. Secondary when nothing waits (the pip is hidden then
+    /// anyway — this is just its resting value).
     private var attentionTint: Color {
         switch store.unseenAttentionPanes.first?.badge {
         case .awaitingInput,
              .error: Slate.Status.err
-        case .completed,
-             .finished: Slate.Status.ok
+        case .completed: Slate.Status.ok
+        case .finished: Slate.Status.info
         default: Slate.Text.secondary
         }
     }

@@ -81,25 +81,41 @@ struct SlatePingDot: View {
     }
 }
 
-/// The LIVE-dot indicator (the MERIDIAN L3 live-signal exception): a steady filled core dot with a comet
-/// arc ORBITING it — the dot keeps the state's colour identity (the shared dot language) while the orbit
-/// says "this is live / waiting on something now". Two wearers: a plain RUNNING command (muted tint,
-/// replacing the static busy dot) and a BLOCKED agent awaiting input (status tint, replacing the ping
-/// halo). Composes the existing ``SlateCometArc`` around a core fill, so the spin rides the WALL CLOCK
-/// (``TimelineView`` — a rail re-render can't reset it) and stays within `size` (no row shift). Pure
-/// SwiftUI; no video/capture (hang-safety #6).
+/// The LIVE-dot indicator (the MERIDIAN L3 live-signal exception): a steady filled core dot with a plain
+/// arc ring SPINNING around it. The core is EXACTLY the static ``SlateStatusDot`` size — the ring is
+/// added OUTSIDE, so a state flipping between live and settled never changes the dot the eye is tracking.
+/// The ring is a uniform 300° stroke with BUTT caps and no gradient — no comet tail, no bright cap blob —
+/// a state ring, not an ornament. Two wearers: a WORKING agent (status amber) and an OSC 9;4 progress
+/// load (muted). Spin rides the WALL CLOCK (``TimelineView`` — a rail re-render can't reset it) and stays
+/// within `ringSize`. Pure SwiftUI; no video/capture (hang-safety #6).
 struct SlateOrbitDot: View {
     let color: Color
-    var size: CGFloat = 13
+    /// The core dot — matches the static badge dot so live↔settled never resizes the dot itself.
+    var dotSize: CGFloat = 8
+    /// The spinner ring's outer diameter (the ring orbits OUTSIDE the core; must fit the badge box).
+    var ringSize: CGFloat = 14
+    var lineWidth: CGFloat = 1.2
+    /// Seconds per full revolution.
+    private let period: Double = 1.1
 
     var body: some View {
         ZStack {
             Circle()
                 .fill(color)
-                .frame(width: size * 0.42, height: size * 0.42)
-            SlateCometArc(color: color, size: size, lineWidth: 1.2)
+                .frame(width: dotSize, height: dotSize)
+            TimelineView(.animation) { timeline in
+                // A continuous 0…360° sweep from the wall clock (separate `/` then `*` — no fused
+                // multiply-add).
+                let t = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period)
+                let angle = t / period * 360
+                Circle()
+                    .trim(from: 0, to: 0.82)
+                    .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt))
+                    .frame(width: ringSize - lineWidth, height: ringSize - lineWidth)
+                    .rotationEffect(.degrees(angle))
+            }
         }
-        .frame(width: size, height: size)
+        .frame(width: ringSize, height: ringSize)
     }
 }
 

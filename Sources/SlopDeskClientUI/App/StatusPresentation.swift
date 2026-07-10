@@ -71,16 +71,23 @@ enum StatusPresentation {
     /// have a single source.
     static func tabBadge(_ kind: TabBadgeKind) -> TabBadgeStyle {
         switch kind {
-        // Agent WORKING — the loud, animated accent comet arc ("agent is thinking").
-        case .running: .working(tint: Slate.State.accent)
-        // A plain command running — the QUIET muted dot (normal secondary text colour, no accent, no spin).
+        // ONE dot language on the agent palette (docs/42: working🟡 done🔵 needs🔴 idle🟢) — the COLOUR
+        // carries the state, a spinner ring means "live right now", and no badge is ever a character glyph
+        // (the old checkmark/triangle/hand SF-symbols read as foreign next to the dots). Only the at-rest
+        // privilege markers stay symbols (a shield/cup IS their meaning).
+        //
+        // Agent WORKING — amber dot + spinner ring (live).
+        case .running: .working(tint: Slate.Status.warn)
+        // An OSC 9;4 progress load — the muted dot + spinner ring (live, but not the agent). A plain busy
+        // shell no longer badges at all (the resolver stopped emitting it — silence is the resting state).
         case .commandRunning: .commandBusy(tint: Slate.Text.secondary)
-        case .completed: .symbol(name: "checkmark.circle.fill", tint: Slate.Status.ok)
-        case .finished: .dot(Slate.Status.ok)
-        case .error: .symbol(name: "exclamationmark.triangle.fill", tint: Slate.Status.err)
-        // Awaiting input — the most-urgent state: a RED core dot with an orbiting arc (``SlateOrbitDot``).
-        // Red (not amber) keeps the dot language consistent — the colour IS the urgency, no bespoke glyph.
-        case .awaitingInput: .attention(tint: Slate.Status.err)
+        // Completed — the brief green flash of a clean finish (settles to the blue unread dot).
+        case .completed: .dot(Slate.Status.ok)
+        // Finished — the persistent BLUE "unread output" dot (done, not yet seen).
+        case .finished: .dot(Slate.Status.info)
+        // Error / blocked — the RED dot, static: it waits on YOU, nothing is spinning.
+        case .error: .dot(Slate.Status.err)
+        case .awaitingInput: .dot(Slate.Status.err)
         case .caffeinate: .symbol(name: "cup.and.saucer.fill", tint: Slate.Text.secondary)
         case .sudo: .symbol(name: "shield.lefthalf.filled", tint: Slate.Text.secondary)
         }
@@ -142,20 +149,17 @@ enum ProgressPresentation: Equatable {
 /// are bespoke shapes the view draws directly; `.symbol` is an SF-symbol name + its tint. A pure value (no
 /// view), so the badge map can be unit-tested without rendering.
 enum TabBadgeStyle {
-    /// The AGENT-working indicator — a smooth accent comet arc (``SlateCometArc``), the "agent is thinking"
-    /// pulse. A pure SwiftUI animation, never a video/capture session (CLAUDE.md hang-safety rule #6).
+    /// The AGENT-working indicator — the amber dot with a spinner ring (``SlateOrbitDot``): live, the
+    /// agent palette's 🟡. A pure SwiftUI animation, never a video/capture session (hang-safety rule #6).
     case working(tint: Color)
-    /// A plain COMMAND running — the quiet muted dot (normal secondary text colour) with an orbiting arc
-    /// (``SlateOrbitDot``). Distinct from ``working`` by TINT (muted, never accent) so the sidebar reads
-    /// "a command is running" apart from "the agent is thinking".
+    /// An OSC 9;4 progress load — the muted dot with a spinner ring (``SlateOrbitDot``). Distinct from
+    /// ``working`` by TINT (secondary, never a status colour) so the sidebar reads "a program reports
+    /// progress" apart from "the agent is thinking".
     case commandBusy(tint: Color)
-    /// The AWAITING-INPUT attention indicator — a RED core dot with an orbiting arc (``SlateOrbitDot``).
-    /// Draws the eye (the most-urgent state) while staying in the shared dot language; the orbit replaced
-    /// the old expanding ping halo.
-    case attention(tint: Color)
-    /// A small filled dot (the settled "unread output" `.finished` marker).
+    /// A small STATIC filled dot — the whole settled vocabulary: red = waits on you (blocked / failed),
+    /// blue = done unread, green = the brief clean-finish flash. No spinner: nothing is running.
     case dot(Color)
-    /// A tinted SF-symbol fill (completed / error / caffeinate / sudo).
+    /// A tinted SF-symbol fill (the at-rest privilege markers: caffeinate / sudo).
     case symbol(name: String, tint: Color)
 }
 #endif

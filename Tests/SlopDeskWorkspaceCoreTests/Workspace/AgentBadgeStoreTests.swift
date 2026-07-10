@@ -126,11 +126,12 @@ final class AgentBadgeStoreTests: XCTestCase {
         let id = try firstPane(store)
 
         store.setCompletionBadge(.failure, for: id)
-        // The hazard: a stale failure outranks the running spinner in the resolver (error > running), so a busy
-        // pane would keep showing the error triangle instead of the spinner.
+        // The hazard: a stale failure outranks the running spinner in the resolver (error > running), so a
+        // pane with live OSC 9;4 progress would keep showing the stale red dot instead of the spinner.
         XCTAssertEqual(
             TabBadgeResolver.badge(
                 agent: .none, completion: store.pendingCompletion(for: id), isBusy: true, foregroundProcess: nil,
+                progress: .indeterminate,
             ),
             .error,
             "a stale failure badge would hide the running spinner on a busy pane",
@@ -141,9 +142,10 @@ final class AgentBadgeStoreTests: XCTestCase {
         XCTAssertEqual(
             TabBadgeResolver.badge(
                 agent: .none, completion: store.pendingCompletion(for: id), isBusy: true, foregroundProcess: nil,
+                progress: .indeterminate,
             ),
             .commandRunning,
-            "with the stale badge cleared, the busy pane now shows the command-running marker",
+            "with the stale badge cleared, the progressing pane now shows the command-running marker",
         )
     }
 

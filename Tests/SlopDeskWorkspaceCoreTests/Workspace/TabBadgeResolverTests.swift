@@ -19,6 +19,7 @@ final class TabBadgeResolverTests: XCTestCase {
         isBusy: Bool = false,
         foregroundProcess: String? = nil,
         completionFreshness: TabBadgeResolver.CompletionFreshness = .settled,
+        progress: PaneProgress? = nil,
     ) -> TabBadgeKind? {
         TabBadgeResolver.badge(
             agent: agent,
@@ -26,6 +27,7 @@ final class TabBadgeResolverTests: XCTestCase {
             isBusy: isBusy,
             foregroundProcess: foregroundProcess,
             completionFreshness: completionFreshness,
+            progress: progress,
         )
     }
 
@@ -41,9 +43,12 @@ final class TabBadgeResolverTests: XCTestCase {
         XCTAssertEqual(badge(completion: .failure), .error)
     }
 
-    /// A busy shell with NO working agent ⇒ the QUIET command-running marker (not the loud agent badge).
-    func testBusyShellMapsToCommandRunning() {
-        XCTAssertEqual(badge(isBusy: true), .commandRunning)
+    /// A merely-busy shell with NO working agent and NO progress report ⇒ NO badge at all (2026-07-10:
+    /// running a command is the terminal's normal state — the always-on busy dot was noise). The quiet
+    /// `.commandRunning` marker is reserved for an explicit OSC 9;4 progress report.
+    func testBusyShellAloneShowsNoBadge() {
+        XCTAssertNil(badge(isBusy: true))
+        XCTAssertEqual(badge(isBusy: true, progress: .indeterminate), .commandRunning)
     }
 
     /// A working agent ⇒ the loud agent badge (`.running`), even with no shell-busy bit.
@@ -180,13 +185,14 @@ final class TabBadgeResolverTests: XCTestCase {
         XCTAssertEqual(badge(completion: .failure, foregroundProcess: "caffeinate"), .error)
     }
 
-    /// Running beats privilege + completed: a busy/working pane shows activity even while privileged. (This is
-    /// the load-bearing "a running privileged command still shows activity" rule from Design #5.) A plain busy
-    /// shell shows the QUIET command marker; a working agent shows the loud agent badge.
+    /// Running beats privilege + completed — for the LIVE signals (a working agent, an OSC 9;4 progress).
+    /// A merely-busy shell no longer counts as an active state (2026-07-10): a busy `sudo` shows its
+    /// shield, and a busy pane with a stale success shows the settled completion dot.
     func testRunningWinsOverPrivilegeAndCompleted() {
-        XCTAssertEqual(badge(isBusy: true, foregroundProcess: "sudo"), .commandRunning)
         XCTAssertEqual(badge(agent: .working, foregroundProcess: "caffeinate"), .running)
-        XCTAssertEqual(badge(completion: .success, isBusy: true), .commandRunning)
+        XCTAssertEqual(badge(isBusy: true, foregroundProcess: "sudo", progress: .indeterminate), .commandRunning)
+        XCTAssertEqual(badge(isBusy: true, foregroundProcess: "sudo"), .sudo, "busy alone no longer masks the shield")
+        XCTAssertEqual(badge(completion: .success, isBusy: true), .finished, "busy alone no longer masks a completion")
     }
 
     /// Sudo beats caffeinate and completed — but ONLY when the shell is at rest.
@@ -201,10 +207,11 @@ final class TabBadgeResolverTests: XCTestCase {
         XCTAssertEqual(badge(agent: .done, foregroundProcess: "caffeinate"), .caffeinate)
     }
 
-    /// The privilege badges sit BELOW the active states: a busy shell with a `caffeinate` foreground
-    /// still spins (it never collapses to the coffee cup while work is in flight).
-    func testPrivilegeBadgesSuppressedWhileBusy() {
-        XCTAssertEqual(badge(isBusy: true, foregroundProcess: "caffeinate"), .commandRunning)
-        XCTAssertEqual(badge(isBusy: true, foregroundProcess: "sudo"), .commandRunning)
+    /// The privilege badges sit below the LIVE states (an OSC 9;4 progress still outranks the cup/shield),
+    /// but a merely-busy shell no longer suppresses them (2026-07-10: busy alone carries no badge).
+    func testPrivilegeBadgesSuppressedOnlyByLiveProgress() {
+        XCTAssertEqual(badge(isBusy: true, foregroundProcess: "caffeinate", progress: .indeterminate), .commandRunning)
+        XCTAssertEqual(badge(isBusy: true, foregroundProcess: "caffeinate"), .caffeinate)
+        XCTAssertEqual(badge(isBusy: true, foregroundProcess: "sudo"), .sudo)
     }
 }
