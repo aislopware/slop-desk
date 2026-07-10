@@ -167,11 +167,14 @@ struct SlateTabRow: View {
         #endif
     }
 
-    /// LINE 1 trailing (right of the title): the read-only lock (if locked) then the foreground-process label
-    /// on the ACTIVE row ("zsh") — the running process now rides the FIRST line beside the tab name. A row with
-    /// no second line (no cwd/git subtitle) has nowhere else to put the status badge, so it also carries the
-    /// fused `badge` here; a two-line row moves the badge down to ``lineTwoTrailing`` instead. All muted,
-    /// right-aligned; the whole cluster fades out under the centered hover `×` (the row's ``trailingOverlay``).
+    /// LINE 1 trailing (right of the title): the read-only lock (if locked) then the RUNNING-COMMAND label —
+    /// on EVERY row, active or not (2026-07-10: a background tab's running command is exactly what you scan
+    /// the sidebar for). A bare interactive shell (`zsh`/`bash`/`fish`/…) is suppressed via
+    /// ``RailRowsBuilder/processDisplayName(_:)`` — "zsh" is not a running command, it is the resting state —
+    /// which also basenames a path label (`/usr/bin/sudo` → `sudo`). A row with no second line (no cwd/git
+    /// subtitle) has nowhere else to put the status badge, so it also carries the fused `badge` here; a
+    /// two-line row moves the badge down to ``lineTwoTrailing`` instead. All muted, right-aligned; the whole
+    /// cluster fades out under the centered hover `×` (the row's ``trailingOverlay``).
     /// (The persistent `⌘N` switch-shortcut chip is REMOVED per user feedback — the ⌘1…⌘9 chords still
     /// work; the row just no longer advertises them.)
     private func lineOneTrailing(hovering: Bool) -> some View {
@@ -183,8 +186,8 @@ struct SlateTabRow: View {
                     .accessibilityLabel("Read only")
                     .help("Read only")
             }
-            if active, let processLabel, !processLabel.isEmpty {
-                Text(processLabel)
+            if let command = RailRowsBuilder.processDisplayName(processLabel) {
+                Text(command)
                     .font(Slate.Typeface.instrument(Slate.Typeface.small))
                     .foregroundStyle(Slate.Text.secondary)
                     .lineLimit(1)

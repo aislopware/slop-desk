@@ -1,15 +1,17 @@
 // ConnectionCluster — connection status for the SIDEBAR FOOTER (resting home) and the titlebar TRAILING
 // edge while the sidebar is collapsed. Never jammed into the traffic-light strip.
 //
-// Layout (one quiet row — host name is the identity; no monogram plate next to it):
-//   ·  congs-mac-studio                    11 ms
-//   ↑  ↑                                   ↑
-//   LED full short hostname                instrument tertiary
-//   6pt (health / live)                    (warn/err when slow/bad)
+// Layout (one quiet row — host name is the identity; no monogram plate, no LED dot):
+//   congs-mac-studio                    11 ms
+//   ↑                                   ↑
+//   full short hostname                 instrument tertiary
+//   (secondary; err when offline)       (warn/err when slow/bad)
 //
-// Monogram + hostname was redundant (CM already *is* the host). Monogram alone felt empty in the
-// footer. So: LED for state colour, host string for identity, metrics for the number. Full target
-// (raw IP etc.) still in the tooltip. Tap → Connect editor; give-up → Retry.
+// Monogram + hostname was redundant (CM already *is* the host); the 6pt health LED went next
+// (2026-07-10: the attention dot owns the "dot" language now — a second always-on dot in the chrome was
+// noise). State lives in the TEXT: the metric digits carry the health colour (warn/err when degrading),
+// the trailing status word covers offline, and the hostname itself dims to tertiary when not connected.
+// Full target (raw IP etc.) still in the tooltip. Tap → Connect editor; give-up → Retry.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -60,16 +62,6 @@ struct ConnectionCluster: View {
         return .bad
     }
 
-    /// 6pt LED — health when live, quiet tertiary when offline. Never traffic-light sized.
-    private var ledColor: Color {
-        switch Self.health(isConnected: isConnected, pingMS: pingMS) {
-        case .offline: Slate.Text.tertiary
-        case .good: Slate.Status.ok
-        case .slow: Slate.Status.warn
-        case .bad: Slate.Status.err
-        }
-    }
-
     /// Metric digits: tertiary when healthy, warn/err only when degrading.
     private var metricColor: Color {
         switch Self.health(isConnected: isConnected, pingMS: pingMS) {
@@ -92,21 +84,12 @@ struct ConnectionCluster: View {
     var body: some View {
         HStack(spacing: Slate.Metric.space1) {
             Button(action: onConnect) {
-                // Explicit centre alignment: a bare 6pt Circle next to multi-size text otherwise sits off
-                // the optical midline (font metrics have asymmetric ascent/descent). LED and labels share
-                // the same control-height line box so midpoints match.
                 HStack(alignment: .center, spacing: Slate.Metric.space2) {
-                    // Status LED — colour is the only ornament; host name carries identity (no monogram
-                    // plate that would restate the same name as initials).
-                    Circle()
-                        .fill(ledColor)
-                        .frame(width: Slate.Metric.statusLED, height: Slate.Metric.statusLED)
-                        .frame(width: 10, height: Slate.Metric.heightControl, alignment: .center)
-                        .animation(isConnected ? Slate.Anim.needle : nil, value: isConnected)
-
+                    // Host name carries the identity; it DIMS to tertiary when not connected (state in
+                    // the text — the old 6pt health LED is gone, the metric digits carry health colour).
                     Text(displayHost)
                         .font(.system(size: Slate.Typeface.footnote, weight: .medium))
-                        .foregroundStyle(Slate.Text.secondary)
+                        .foregroundStyle(isConnected ? Slate.Text.secondary : Slate.Text.tertiary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .layoutPriority(1)
