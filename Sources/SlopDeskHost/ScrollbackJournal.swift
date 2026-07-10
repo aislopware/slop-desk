@@ -138,6 +138,22 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
         return restored
     }
 
+    /// Releases the writer for a NON-deliberate end of life — TTL eviction, overflow eviction,
+    /// shell death while parked (detached exit): flushes the coalescing buffer, closes the
+    /// FileHandle, and drops the map entry. The FILE STAYS — it is the scrollback-restore
+    /// source for a later cold client / the next daemon life (deleting the file remains
+    /// exclusive to the deliberate-close path, ``delete(sessionID:)``). Without this, every
+    /// non-deliberate pane end leaked one open fd + one map entry for the daemon's lifetime —
+    /// and, because ``sweep()`` exempts ids live in the map, made the file permanently
+    /// unsweepable too. A later ``journal(for:)`` for the same id transparently vends a fresh
+    /// writer whose `openIfNeeded` seeks to end (append semantics preserved across the release).
+    func release(sessionID: UUID) {
+        lock.lock()
+        let writer = journals.removeValue(forKey: sessionID)
+        lock.unlock()
+        writer?.closeKeepingFile()
+    }
+
     /// Removes the journal (deliberate end-of-pane only — see the type docs for the policy).
     func delete(sessionID: UUID) {
         lock.lock()
@@ -200,6 +216,15 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
     private func fileURL(for sessionID: UUID) -> URL {
         directory.appendingPathComponent("\(sessionID.uuidString).scrollback", isDirectory: false)
     }
+
+    // MARK: Test seams
+
+    /// Whether the store currently holds a vended writer (an open-or-openable FileHandle + map
+    /// entry) for `sessionID` — the fd-leak pin for the non-deliberate end-of-life paths
+    /// (testing only).
+    func hasLiveWriterForTesting(_ sessionID: UUID) -> Bool {
+        hasLiveWriter(for: sessionID)
+    }
 }
 
 // MARK: - ScrollbackJournal (one session's append-only file)
@@ -239,8 +264,11 @@ final class ScrollbackJournal: @unchecked Sendable {
     /// flush is always scheduled, so the journal cannot deallocate with unflushed bytes — the
     /// timer is the deinit/shutdown flush path.
     private var idleFlushScheduled = false
-    /// Set by ``closeAndDelete()``; a late `append` racing a delete must not resurrect the file.
-    private var deleted = false
+    /// Set by ``closeAndDelete()`` and ``closeKeepingFile()``; a late `append` racing either
+    /// close must not resurrect the file (delete) or reopen a handle nobody will ever close
+    /// again (release — the store has already dropped this instance, so a fresh writer owns
+    /// the file from here).
+    private var closed = false
 
     init(fileURL: URL, byteCap: Int) {
         self.fileURL = fileURL
@@ -254,7 +282,7 @@ final class ScrollbackJournal: @unchecked Sendable {
     func append(_ bytes: Data) {
         guard !bytes.isEmpty else { return }
         queue.async { [self] in
-            guard !deleted else { return }
+            guard !closed else { return }
             pending.append(bytes)
             if size + pending.count > byteCap * 2 {
                 // Cap check counts buffered bytes; compact() flushes first so it always runs
@@ -281,11 +309,26 @@ final class ScrollbackJournal: @unchecked Sendable {
     /// flush firing afterwards must not resurrect it.
     func closeAndDelete() {
         queue.sync {
-            deleted = true
+            closed = true
             pending.removeAll(keepingCapacity: false)
             try? handle?.close()
             handle = nil
             try? FileManager.default.removeItem(at: fileURL)
+        }
+    }
+
+    /// Flushes buffered appends and closes the handle, KEEPING the file — the non-deliberate
+    /// end-of-life release (TTL/overflow eviction, detached exit; see
+    /// ``ScrollbackJournalStore/release(sessionID:)``). Later appends on THIS instance are
+    /// dropped (`closed`): a straggling PTY chunk racing the teardown must not reopen a handle
+    /// this store no longer tracks. A returning session gets a FRESH instance via
+    /// `journal(for:)`, which reopens append-at-end.
+    func closeKeepingFile() {
+        queue.sync {
+            flushPending()
+            try? handle?.close()
+            handle = nil
+            closed = true
         }
     }
 
@@ -305,10 +348,11 @@ final class ScrollbackJournal: @unchecked Sendable {
 
     /// Writes every buffered byte in ONE contiguous write(2), preserving arrival order. On any
     /// failure (open, seek, disk full, revoked fd) the buffer is dropped — the same posture the
-    /// old per-chunk append had; the live stream is unaffected. No-op after `closeAndDelete()`.
+    /// old per-chunk append had; the live stream is unaffected. No-op once `closed`
+    /// (`closeAndDelete()` / `closeKeepingFile()`).
     private func flushPending() {
         guard !pending.isEmpty else { return }
-        guard !deleted, let handle = openIfNeeded() else {
+        guard !closed, let handle = openIfNeeded() else {
             pending.removeAll(keepingCapacity: false)
             return
         }

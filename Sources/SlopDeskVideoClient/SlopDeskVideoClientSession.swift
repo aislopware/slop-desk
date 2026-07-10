@@ -162,6 +162,11 @@ public actor SlopDeskVideoClientSession {
         /// videohostd restart self-heals instead of freezing the pane with dead input. `nil` ⇒ no
         /// rebuild owner (standalone/preview) — the session just stays stopped.
         public var notifySessionEnded: (@Sendable () -> Void)?
+        /// The host REFUSED this session (`helloAck(accepted: false)` — window gone / version
+        /// mismatch). TERMINAL, non-retrying: unlike ``notifySessionEnded`` the pipeline must NOT
+        /// rebuild + re-hello (that re-sends the same doomed request forever) — it tears down and
+        /// surfaces the failure to the pane (picker/error). `nil` ⇒ no owner (standalone/preview).
+        public var notifySessionRejected: (@Sendable () -> Void)?
         @preconcurrency
         public init(
             submitDecodedFrame: @escaping @Sendable (CVImageBuffer) -> Void,
@@ -179,6 +184,7 @@ public actor SlopDeskVideoClientSession {
             notifyDecodedPoints: (@Sendable (VideoSize) -> Void)? = nil,
             notifyDisplayMax: (@Sendable (VideoSize) -> Void)? = nil,
             notifySessionEnded: (@Sendable () -> Void)? = nil,
+            notifySessionRejected: (@Sendable () -> Void)? = nil,
         ) {
             self.submitDecodedFrame = submitDecodedFrame
             self.applyCursor = applyCursor
@@ -195,6 +201,7 @@ public actor SlopDeskVideoClientSession {
             self.notifyDecodedPoints = notifyDecodedPoints
             self.notifyDisplayMax = notifyDisplayMax
             self.notifySessionEnded = notifySessionEnded
+            self.notifySessionRejected = notifySessionRejected
         }
     }
 
@@ -1720,6 +1727,13 @@ public actor SlopDeskVideoClientSession {
             // deactivate → stop() then cancels them and closes the lane.
             dbg("session ended by HOST (bye) → notifying pipeline for a full rebuild")
             gui.notifySessionEnded?()
+        case .sessionRejectedByHost:
+            // TERMINAL REFUSAL (helloAck accepted:false — window gone / version mismatch): surface
+            // it so the pipeline tears down WITHOUT the rebuild the bye path runs (a rebuild would
+            // re-hello the same doomed request forever). The FSM is `.rejected`, so the hello-retry
+            // loop and the media gates have already quiesced.
+            dbg("session REJECTED by host (helloAck accepted=false) → notifying pipeline, no rebuild")
+            gui.notifySessionRejected?()
         }
     }
 

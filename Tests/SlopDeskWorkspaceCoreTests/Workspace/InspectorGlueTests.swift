@@ -445,7 +445,107 @@ final class InspectorGlueTests: XCTestCase {
         XCTAssertFalse(makeInspectorCalled, "a plain terminal must NOT open a second channel until claude is detected")
     }
 
-    // MARK: - 3. The real makeInspector wiring — pure port convention (no socket dialed)
+    // MARK: - 3. Reconnect edge re-arms the inspector second channel (wifi-flap fix)
+
+    /// WIFI-FLAP fix, the full store wiring: the inspector NWConnection (#2) dies with the link, but the
+    /// host's reattach re-assert re-emits the SAME type-27 status — `applyDetectedStatus`'s dedupe guard
+    /// eats it, so the status transition can never re-open the channel, and macOS never drives
+    /// `pause()`/`resume()`. The ONLY once-per-flap signal left is the reconnect edge: the store's
+    /// `onReconnected` hook must tear down the stale client and re-subscribe a FRESH one. Uses the real
+    /// `wireMaterializedLeaf` wiring (a tree store materializing genuine `LivePaneSession`s) and fires the
+    /// same `onReconnected` closure `ConnectionViewModel.foldEvent(.reconnected)` invokes.
+    func testStoreReconnectHookReSubscribesInspectorWhileClaudeActive() async throws {
+        var hostSides: [InspectorSource] = []
+        var makeInspectorCalls = 0
+        let store = WorkspaceStore(liveModel: .tree, makeSession: { spec in
+            LivePaneSession.make(
+                spec,
+                makeClient: { makeUnconnectedClient() },
+                makeInspector: { _ in
+                    makeInspectorCalls += 1
+                    let (host, client) = LoopbackByteChannel.pair()
+                    hostSides.append(InspectorSource(channel: host))
+                    return InspectorClient(channel: client)
+                },
+            )
+        })
+        store.reconcileTree()
+        let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
+        let session = try XCTUnwrap(store.handle(for: paneID) as? LivePaneSession)
+        let vm = try XCTUnwrap(session.inspector)
+
+        detectClaude(in: session)
+        await waitUntil({ makeInspectorCalls == 1 }, "detecting a claude must open the inspector once")
+
+        // The flap recovered: the host re-asserts the SAME type-27 (deduped — must NOT re-open) and the
+        // transport reports the reconnect edge (the store-wired closure the fold invokes on `.reconnected`).
+        session.feedAgentSignal(.claudeStatus(state: 1, kind: 0, label: ""))
+        XCTAssertEqual(makeInspectorCalls, 1, "a deduped identical status must not rebuild the inspector")
+        let onReconnected = try XCTUnwrap(session.connection?.onReconnected, "store wires the reconnect hook")
+        onReconnected()
+
+        await waitUntil({ makeInspectorCalls == 2 }, "the reconnect edge must rebuild + re-subscribe")
+
+        // The FRESH channel is live end-to-end: an event over the NEW loopback folds into the pane model.
+        let freshSource = try XCTUnwrap(hostSides.count == 2 ? hostSides[1] : nil, "no fresh channel was built")
+        try await freshSource.send(.toolCard(sampleCard(id: "fresh", status: .pending)))
+        await waitUntil({ vm.toolCards.contains { $0.id == "fresh" } }, "the fresh channel never folded")
+
+        for source in hostSides { await source.close() }
+    }
+
+    /// The pane-level half: `reestablishInspectorOnReconnect()` must CLOSE the stale client (the old
+    /// loopback's host side observes the finish — no strand, single-consumer rule preserved) and fold
+    /// only over the fresh one. Pins the teardown-then-resubscribe order without the store.
+    func testReestablishInspectorClosesStaleClientAndFoldsFreshOne() async throws {
+        var hostSides: [InspectorSource] = []
+        let session = LivePaneSession.make(
+            PaneSpec(kind: .terminal, title: "claude"),
+            makeClient: { makeUnconnectedClient() },
+            makeInspector: { _ in
+                let (host, client) = LoopbackByteChannel.pair()
+                hostSides.append(InspectorSource(channel: host))
+                return InspectorClient(channel: client)
+            },
+        )
+        let vm = try XCTUnwrap(session.inspector)
+        detectClaude(in: session)
+        await waitUntil({ hostSides.count == 1 }, "detect never opened the first channel")
+        try await hostSides[0].send(.toolCard(sampleCard(id: "old", status: .pending)))
+        await waitUntil({ vm.toolCards.count == 1 }, "the first channel never folded")
+
+        session.reestablishInspectorOnReconnect()
+        await waitUntil({ hostSides.count == 2 }, "the reconnect re-arm never rebuilt the client")
+
+        // Events over the FRESH channel fold (upsert keeps "old" — a full re-tail would dedupe by id).
+        try await hostSides[1].send(.toolCard(sampleCard(id: "new", status: .completed)))
+        await waitUntil({ vm.toolCards.map(\.id) == ["old", "new"] }, "the fresh channel never folded")
+
+        for source in hostSides { await source.close() }
+    }
+
+    /// The NEGATIVE pin: with NO claude detected (`claudeStatus == .none`) the reconnect edge must not
+    /// open an inspector socket — a plain terminal has no second channel to re-arm.
+    func testReestablishInspectorNoOpsWhileNoClaudeDetected() async {
+        var makeInspectorCalled = false
+        let session = LivePaneSession.make(
+            PaneSpec(kind: .terminal, title: "term"),
+            makeClient: { makeUnconnectedClient() },
+            makeInspector: { _ in
+                makeInspectorCalled = true
+                return nil
+            },
+        )
+        XCTAssertEqual(session.claudeStatus, .none)
+
+        session.reestablishInspectorOnReconnect()
+        // Give a (wrongly) spawned re-subscribe a chance to run before asserting it never did.
+        await Task.yield()
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertFalse(makeInspectorCalled, "a `.none` pane must not open a second channel on reconnect")
+    }
+
+    // MARK: - 4. The real makeInspector wiring — pure port convention (no socket dialed)
 
     /// Binds to the real production wiring (author note): the inspector second channel rides the
     /// terminal port **+ `inspectorPortOffset`**. Pure math — never opens a socket. Pins the

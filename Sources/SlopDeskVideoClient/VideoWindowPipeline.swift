@@ -59,6 +59,14 @@ final class VideoWindowPipeline {
     /// through the recovery rebuild (``StallScrimLatch``), so the scrim holds from "host went dark" until
     /// frames/heartbeats resume. Set by the view in `activate`.
     var onStreamStallChanged: ((Bool) -> Void)?
+    /// TERMINAL REFUSAL (2026-07-11): fired on the @MainActor after the host REJECTED the session
+    /// (`helloAck(accepted: false)` — the requested window is gone / version mismatch, incl. the
+    /// mux mint-failure refusal). By the time it fires the pipeline has already torn itself down
+    /// (``handleHostRejectedSession()`` — deactivate WITHOUT the bye path's auto-rebuild, which
+    /// would re-hello the same doomed request forever). The view forwards it to the pane model so
+    /// the pane leaves its live surface and falls back to the picker/error state. Set by the view
+    /// in `activate`; `nil` ⇒ standalone/preview (the pane just stays down).
+    var onSessionRejected: (() -> Void)?
     /// The ~1 s monitor Task evaluating ``StreamStallPolicy`` over the session's liveness snapshot.
     /// Started in `activate`, cancelled in `deactivate`. The LATCH deliberately lives on the
     /// pipeline (not the task): a host-ended rebuild replaces the session + monitor, and the scrim
@@ -503,6 +511,13 @@ final class VideoWindowPipeline {
                 // videohostd restart self-heals instead of freezing the pane with dead input.
                 Task { @MainActor in self?.rebuildAfterHostEndedSession() }
             },
+            notifySessionRejected: { [weak self] in
+                // TERMINAL REFUSAL: the host said NO (helloAck accepted:false — window gone /
+                // version mismatch). Hop to main and tear down WITHOUT rebuilding — rebuilding
+                // would re-hello the same doomed request forever (the mint-failure retry wedge,
+                // one layer up). The view surfaces it to the pane (picker/error state).
+                Task { @MainActor in self?.handleHostRejectedSession() }
+            },
         )
 
         let session = SlopDeskVideoClientSession(
@@ -597,6 +612,19 @@ final class VideoWindowPipeline {
         if stallLatch.noteReconnecting() != nil { onStreamStallChanged?(true) }
         deactivate()
         activate(view: view, videoLayer: layer, connection: connection, maxFrameRate: attachedMaxFrameRate)
+    }
+
+    /// TERMINAL REFUSAL: the host rejected the session's hello (`helloAck(accepted: false)` —
+    /// window gone / version mismatch, incl. the mux mint-failure refusal). Tear the pipeline down
+    /// and STAY down — deliberately NOT ``rebuildAfterHostEndedSession()``: a rebuild re-hellos the
+    /// SAME windowID against a host that just said no, recreating the forever-retry wedge one layer
+    /// up. The FSM is already `.rejected` (hello retry stopped); `deactivate` closes the lane and
+    /// sockets. Then surface the refusal to the pane (→ model leaves its live surface and falls
+    /// back to the picker with an error).
+    private func handleHostRejectedSession() {
+        log.info("host REJECTED the session (helloAck accepted=false) — tearing down, NO auto-rebuild")
+        deactivate()
+        onSessionRejected?()
     }
 
     /// Tears the pipeline + display link + sockets down (called on disappear/dismantle).

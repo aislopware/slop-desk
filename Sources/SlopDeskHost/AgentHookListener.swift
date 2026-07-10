@@ -359,4 +359,25 @@ public final class AgentHookListener: @unchecked Sendable {
         lock.unlock()
         sink?(json)
     }
+
+    // MARK: Test seams (hook-sink lifetime — never used in production)
+
+    /// Number of registered pane sinks (testing only — the leak pin for the stable-key
+    /// contract: one sink per live session, across any number of detach/reattach cycles).
+    var sinkCountForTesting: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return sinks.count
+    }
+
+    /// The registered pane ids (testing only).
+    var sinkPaneIDsForTesting: Set<String> {
+        lock.lock()
+        defer { lock.unlock() }
+        return Set(sinks.keys)
+    }
+
+    /// Drives the REAL record router without binding the socket (testing only — hang-safety:
+    /// the `UnixSocketAcceptor` is never bound in a unit test).
+    func routeRecordForTesting(_ record: Data) { route(record) }
 }

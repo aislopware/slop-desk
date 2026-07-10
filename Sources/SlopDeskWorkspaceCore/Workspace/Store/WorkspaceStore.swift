@@ -3109,6 +3109,15 @@ public final class WorkspaceStore {
             // (`lastKnownCwd` is already non-nil), so a single-shot pull that raced the control plane would
             // never re-fire — the bounded retry guarantees the fresh-shell cwd re-lands.
             refreshCwd(for: id, from: connection, retries: 3)
+            // INSPECTOR RE-ARM (wifi-flap fix): the inspector second channel (terminal port + 1) died
+            // with the same link drop, but the host's reattach re-assert re-emits the SAME type-27
+            // status — the `applyDetectedStatus` dedupe guard eats it, so the status transition can
+            // never re-open the channel (and macOS never drives pause()/resume()). This reconnect edge
+            // is the one once-per-flap signal left: tear down the stale client and re-subscribe fresh
+            // (full re-tail; the model's upsert/dedup makes the replay safe). Resolved from the registry
+            // at fire time (not captured) so a pane torn down mid-flap is a clean no-op; a `.none` pane
+            // no-ops inside the session.
+            (registry[id] as? LivePaneSession)?.reestablishInspectorOnReconnect()
         }
         // SYNC-INPUT (tree path, Zellij ToggleActiveSyncTab): when the per-tab sync flag is on, mirror this
         // pane's keystrokes into every other pane in its tab via the same broadcastTap seam the canvas

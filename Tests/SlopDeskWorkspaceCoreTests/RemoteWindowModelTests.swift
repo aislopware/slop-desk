@@ -81,6 +81,34 @@ final class RemoteWindowModelTests: XCTestCase {
         XCTAssertNil(m.active)
     }
 
+    // FINDING B end-state: the host REFUSED the session (helloAck accepted:false — window gone /
+    // mux mint-failure refusal). The pane must LEAVE `.active` (the black dead surface) and fall
+    // back to the picker with an error explaining why — mirroring the stale-binding revalidation's
+    // `.unresolved` fallback.
+    func testNoteSessionRejectedLeavesActiveAndFallsBackToPickerWithError() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
+        m.open()
+        XCTAssertNotNil(m.active)
+        m.noteSessionRejected()
+        XCTAssertNil(m.active, "a host refusal must leave .active — the pane falls back to the picker")
+        XCTAssertNotNil(m.loadError, "the picker explains WHY (the window is gone on the host)")
+    }
+
+    func testNoteSessionRejectedIsInertWhenNothingIsActive() {
+        // A late/duplicate refusal after the user already closed the pane must not stamp a stale
+        // error onto a fresh picker (or crash).
+        let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
+        m.noteSessionRejected()
+        XCTAssertNil(m.active)
+        XCTAssertNil(m.loadError, "no refusal error without a live session to refuse")
+
+        m.open()
+        m.close()
+        m.noteSessionRejected()
+        XCTAssertNil(m.active)
+        XCTAssertNil(m.loadError, "a refusal landing after close() is a no-op")
+    }
+
     // MARK: Host-window resize (numeric popover) — absolute resize sink + geometry mirror
 
     /// `resizeWindow(toWidth:height:)` drives the published resize sink with the ABSOLUTE point size (the

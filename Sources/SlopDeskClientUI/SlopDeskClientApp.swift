@@ -25,6 +25,13 @@ public struct SlopDeskClientApp: App {
     #if os(macOS)
     /// Retains the notification click-router (the `UNUserNotificationCenter` delegate is held weakly).
     @MainActor static var notificationRouter: PaneNotificationRouter?
+
+    /// QUIT-DRAIN (orphaned-session leak): the app delegate that parks ⌘Q behind a BOUNDED
+    /// ``WorkspaceStore/quiesce()`` so in-flight pane teardowns (the bye/channelClose of a just-closed
+    /// busy pane) reach the wire before the process dies — see ``SlopDeskAppTerminationDelegate``.
+    /// The store is threaded via the delegate's static seam in `init()` (SwiftUI instantiates the
+    /// adaptor delegate itself, so the property-wrapper instance is not reachable there).
+    @NSApplicationDelegateAdaptor(SlopDeskAppTerminationDelegate.self) private var terminationDelegate
     #endif
 
     @State private var store: WorkspaceStore
@@ -431,6 +438,11 @@ public struct SlopDeskClientApp: App {
         // `.introspect(.window)` closure reads the SAME `chrome.pinned` the titlebar / menu flip.
         _chrome = State(initialValue: WorkspaceChromeState())
         #if os(macOS)
+        // QUIT-DRAIN: hand the termination delegate the single live store (weak — the App's `@State`
+        // owns it) so `applicationShouldTerminate` can drain the in-flight pane teardowns via
+        // `quiesce()` before the process dies. Set here, before any window exists, so the seam is live
+        // for the very first ⌘Q.
+        SlopDeskAppTerminationDelegate.store = store
         // Held in a local so the keybinding dispatcher's `isWorkspaceWindowKey` closure below captures the SAME
         // `WeakWindowBox` the `.introspect(.window)` hook fills — mirroring the `overlay` local pattern.
         let windowBox = WeakWindowBox()
@@ -698,6 +710,9 @@ public struct SlopDeskClientApp: App {
                     Self.automationBringToFrontOnce(window)
                 }
                 // macOS delivers no reliable flush on ⌘Q; flush the tree synchronously on termination.
+                // (Fires AFTER ``SlopDeskAppTerminationDelegate`` has drained the in-flight pane
+                // teardowns and replied — termination proceeds only then — so this stays the LAST-word
+                // save; the delegate also saves up front in case the drain window is interrupted.)
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                     store.saveImmediately()
                     // E14/K5/K8: reset the process-global Dock tile on teardown so a quit never leaves a
@@ -1022,6 +1037,86 @@ private struct SettingsOpenerInstaller: ViewModifier {
 
     func body(content: Content) -> some View {
         content.onAppear { overlay.openSettingsAction = { openSettings() } }
+    }
+}
+
+/// QUIT-DRAIN (orphaned-session leak — the clean-quit twin of the 07-10 wifi-flap host fix): closing a
+/// busy pane (⌘W) drops it from the tree + registry SYNCHRONOUSLY, but the actual host disconnect
+/// (bye/channelClose) runs in a non-awaited background teardown task. A ⌘Q within that window killed the
+/// process before the bye reached the wire: the host soft-detached the just-closed session into
+/// `DetachedSessionStore` (default TTL: NEVER) while the client's persisted workspace no longer
+/// referenced it — a permanently orphaned session whose agent keeps running with no owner.
+/// ``WorkspaceStore/quiesce()`` exists exactly for this drain but previously had zero call sites.
+///
+/// `applicationShouldTerminate` parks the quit (`.terminateLater`), saves the tree immediately (the
+/// termination is now async — the existing `willTerminateNotification` flush still runs after the reply
+/// and stays the last word), drains via ``TerminationDrain`` (bounded — quit must NEVER hang on a wedged
+/// teardown), then replies so AppKit finishes terminating.
+///
+/// The store rides a static seam because SwiftUI's `@NSApplicationDelegateAdaptor` instantiates the
+/// delegate itself (`SlopDeskClientApp.init` cannot hand it instance state); weak — the App's `@State`
+/// owns the store. With no store (never happens in production) the quit proceeds untouched.
+@MainActor
+final class SlopDeskAppTerminationDelegate: NSObject, NSApplicationDelegate {
+    /// The single live store, injected by `SlopDeskClientApp.init()`.
+    weak static var store: WorkspaceStore?
+    /// The teardown-drain budget: generous for the in-flight bye/channelClose round trips, short enough
+    /// that quit never feels hung (the losing quiesce keeps draining until the process exits anyway).
+    static let drainTimeout: Duration = .seconds(2)
+    /// One-shot: a second ⌘Q while the drain is pending must not spawn a second drain (each
+    /// `.terminateLater` expects exactly one `reply`; the in-flight drain resolves the first request).
+    private var draining = false
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let store = Self.store else { return .terminateNow }
+        guard !draining else { return .terminateCancel } // drain in flight — its reply resolves the quit
+        draining = true
+        // Persist BEFORE the async drain so even an interrupted drain window keeps the layout; the
+        // willTerminate flush re-saves after the reply (idempotent, and the authoritative last word).
+        store.saveImmediately()
+        Task { @MainActor in
+            await TerminationDrain.drain(timeout: Self.drainTimeout) { await store.quiesce() }
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+}
+
+/// QUIT-DRAIN: races an async drain `operation` against a bounded `timeout` and returns when EITHER
+/// finishes — a clean teardown replies immediately, a wedged one never hangs the quit. Kept pure of
+/// AppKit so the bound is unit-pinned headlessly (`TerminationDrainTests`); the delegate passes
+/// `store.quiesce()`.
+///
+/// Shape: a continuation resumed exactly once by two racing `@MainActor` sibling tasks — deliberately
+/// NOT a task group (the Swift-6 `@MainActor`-capture-in-`addTask` sendability trap). The losing side
+/// runs to completion in the background: a timed-out quiesce keeps draining until the process dies
+/// (harmless, and strictly better than not trying); a won race leaves only a finite sleep behind.
+@MainActor
+enum TerminationDrain {
+    static func drain(timeout: Duration, operation: @escaping @MainActor () async -> Void) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let gate = ResumeOnce(continuation)
+            Task { @MainActor in
+                await operation()
+                gate.resume()
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: timeout)
+                gate.resume()
+            }
+        }
+    }
+
+    /// Resumes the wrapped continuation at most once — `@MainActor`, so the two racing tasks serialize
+    /// through it and a double-resume (both sides landing) is structurally impossible.
+    @MainActor
+    private final class ResumeOnce {
+        private var continuation: CheckedContinuation<Void, Never>?
+        init(_ continuation: CheckedContinuation<Void, Never>) { self.continuation = continuation }
+        func resume() {
+            continuation?.resume()
+            continuation = nil
+        }
     }
 }
 

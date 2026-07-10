@@ -220,6 +220,10 @@ struct GuiLeafView: View {
                     // STALL SCRIM: the live view pushes the stream's stall flips (host silent ↔ traffic
                     // resumed) so the overlay below shows/clears "Reconnecting…" (informational).
                     onStreamStall: { [weak model] stalled in model?.noteStreamStalled(stalled) },
+                    // TERMINAL REJECTION (audit 2026-07-11): the host refused the session (window gone /
+                    // version skew) — tear down to the picker with an error, NEVER the auto-rebuild loop
+                    // (a rejection re-hello would retry a doomed request forever).
+                    onSessionRejected: { [weak model] in model?.noteSessionRejected() },
                 ),
             )
             // STALL — MERIDIAN L1 "colour is live data, grayscale is the past": the DRAIN happens on the Metal

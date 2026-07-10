@@ -92,6 +92,9 @@ struct ClientAppMain {
                     onStreamCadenceReady: paneContext.onStreamCadenceChanged,
                     onStreamBitrateReady: paneContext.onStreamBitrateChanged,
                     onStreamStallChanged: paneContext.onStreamStallChanged,
+                    // TERMINAL REJECTION (audit 2026-07-11): host refused the session — the seam routes
+                    // it to `RemoteWindowModel.noteSessionRejected()` (picker + error, no rebuild loop).
+                    onSessionRejected: paneContext.onSessionRejected,
                 ))
             }
             return AnyView(VideoWindowView(title: descriptor.title))

@@ -572,6 +572,31 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         }
     }
 
+    /// TRANSPORT RECONNECT edge (wifi flap; macOS — where `pause()`/`resume()` never run). The inspector
+    /// second channel (terminal port + 1) died with the same link drop, but nothing re-armed it: the
+    /// host's reattach re-assert re-emits the SAME type-27 status verbatim, so ``applyDetectedStatus``'s
+    /// dedupe guard eats it and the `.none → active` transition that opens the channel never fires again —
+    /// the Inspector pane stayed dead until the agent's status happened to change. Called from the store's
+    /// once-per-reconnect `onReconnected` hook: while a claude is still detected, unconditionally tear
+    /// down any stale client (mirroring ``resume()``'s cancel-then-rebuild shape — the fire-and-forget
+    /// close is the same idiom as `applyDetectedStatus`'s close arm; this runs in the sync reconnect
+    /// closure, so the close cannot be awaited inline) and re-subscribe a FRESH one from seq 0. The full
+    /// re-tail is safe — the model upserts/dedupes by id. A `.none` pane holds no inspector socket and is
+    /// a no-op.
+    public func reestablishInspectorOnReconnect() {
+        guard claudeStatus != .none, inspector != nil else { return }
+        // Cancel the in-flight subscribe FIRST (its cancellation re-checks close the client it built),
+        // then drop + close the stale client so the fresh `subscribeInspector()` below passes its
+        // `inspectorClient == nil` idempotence gate instead of early-outing on the dead socket.
+        inspectorTask?.cancel()
+        if let client = inspectorClient {
+            let toClose = client
+            inspectorClient = nil
+            Task { await toClose.close() }
+        }
+        inspectorTask = Task { [weak self] in await self?.subscribeInspector() }
+    }
+
     /// The pane is closing for good. Delegates to the proven teardown order:
     /// - `ConnectionViewModel.disconnect()` (deliberate close: stops the supervisor, tears down the
     ///   ordered drain + events loop, closes the client — no reconnect).

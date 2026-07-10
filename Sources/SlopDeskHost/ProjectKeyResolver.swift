@@ -3,10 +3,13 @@ import Foundation
 /// Host-side derivation of the By-Project sidebar key (wire type 34): the nearest ancestor of a
 /// pane's cwd (the cwd itself included) that is a git worktree TOPLEVEL, else the cwd verbatim.
 ///
-/// A PURE upward filesystem walk — deliberately NOT `git rev-parse --show-toplevel`: the derivation
-/// runs on the PTY read-loop thread at prompt edges (``MuxChannelSession/deriveProjectKeyMessages``),
-/// where a subprocess is out of the question; a `.git` existence check per ancestor is a handful of
-/// `stat(2)` calls, bounded by the path depth. `.git` may be a DIRECTORY (an ordinary repo root) or a
+/// A PURE upward filesystem walk — deliberately NOT `git rev-parse --show-toplevel`: a `.git`
+/// existence check per ancestor is a handful of `stat(2)` calls, bounded by the path depth, with no
+/// subprocess. Even so, `stat(2)` can block indefinitely on a hung network mount (NFS/SMB/FUSE), so
+/// the walk runs on ``MuxChannelSession``'s `metadataQueue` (the home for all blocking filesystem
+/// work — ``MuxChannelSession/scheduleProjectKeyResolve(for:)``), NEVER on the PTY read-loop thread
+/// (which only scans the sniffed batch and does the one `proc_pidinfo` prompt-edge probe).
+/// `.git` may be a DIRECTORY (an ordinary repo root) or a
 /// FILE (a linked `git worktree` / submodule root) — `fileExists` covers both, so a linked worktree
 /// groups under its own checkout root (each worktree is its own project section, matching what
 /// `git rev-parse --show-toplevel` reports there).

@@ -59,12 +59,19 @@ struct NavigatorColumn: View {
     /// `@State` (NOT `@Observable`): its mutation during a body eval must not re-invalidate anything.
     @State private var rowsMemo = RailRowsMemo()
 
-    /// The rows the sidebar renders this eval. With an ACTIVE search query the memo is BYPASSED: `filtered`
-    /// matches the volatile subtitle (git line) + process label, so serving those from the stale cache could
-    /// filter against yesterday's git line — while searching, the body accepts today's per-tick rebuild
-    /// (exactly the pre-memo behavior; search is a transient mode and typing re-derives everything anyway).
+    /// The rows the sidebar renders this eval — ALWAYS the memoized structural rows. The query filter
+    /// (``RailRowsBuilder/filtered``) applies DOWNSTREAM over these same rows (`windowRows(from:)` +
+    /// `sectionedByProject(_:tabOrder:query:)`), so search composes over the memo rather than bypassing it.
+    /// The old non-empty-query arm called `RailRowsBuilder.rows(for: store)` directly, which re-registered
+    /// every volatile store dict as an Observation dependency of this body — while a query sat in the field
+    /// (it is never auto-cleared) EVERY agent/progress/git tick on ANY pane re-ran the full O(panes) build +
+    /// sectioning + list diff on the main thread: exactly the storm ``RailRowsMemo`` exists to kill.
+    /// Trade-off accepted: the filter now matches the CACHED copies of the volatile match fields (git-line
+    /// subtitle / process label), which can be one memo generation stale — same staleness contract as the
+    /// rest of the cached row chrome. The structural match fields (title / cwd) re-key the memo on every
+    /// change, so they are never stale. Parity + memo-hit pinned in `RailRowsMemoTests`.
     private var renderedRows: [RailRow] {
-        query.isEmpty ? rowsMemo.rows(for: store) : RailRowsBuilder.rows(for: store)
+        rowsMemo.rows(for: store)
     }
 
     /// The active tab's active pane — drives which row reads as selected.

@@ -805,6 +805,10 @@ Task {
         // (`VideoMuxChannelTransport`) wires the session's sink into the shared sink table.
         let registry = VideoMuxSessionRegistry(sinkTable: sinkTable, forgetLane: { id in
             mux.retire(id)
+        }, sendControl: { id, data in
+            // Mint-failure TERMINAL refusal (helloAck accepted:false): answered on the reply flow the
+            // bootstrap hello stamped — the registry sends this BEFORE forgetLane retires that stamp.
+            mux.send(data, on: .control, channelID: id)
         }) { channelID, hello in
             guard case let .hello(_, requestedWindowID, _) = hello else {
                 throw VideoHostdError.muxNoWindow(requestedWindowID: 0)

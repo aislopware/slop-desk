@@ -113,6 +113,17 @@ public final class HostServer: @unchecked Sendable {
     /// by `lock`.
     private var stopping = false
 
+    /// W10 — the ORIGINAL hook-routing pane id per live session, keyed by the session's stable
+    /// `sessionID`, guarded by `lock`. The pane id is exported ONCE into the child env as
+    /// `SLOPDESK_PANE_ID` at fresh spawn and is immutable for the shell's life — the agent's
+    /// hook POSTs are forever tagged with it, so the ``AgentHookListener`` sink key must stay
+    /// pinned to this original id across every detach/reattach cycle (a per-reattach
+    /// new-connection key both LEAKED one dead sink per cycle and could never route). Entries
+    /// are removed on every end of life: deliberate close (``removeMuxSession``), detached exit,
+    /// TTL/overflow eviction (``DetachedSessionStore/onEvicted``), and the failed-rebind
+    /// dead-child reap.
+    private var hookPaneIDsBySession: [UUID: String] = [:]
+
     /// Cache of the resolved effective TERM keyed by `requested|explicitOverride`, guarded by `lock`.
     /// The host's terminfo state doesn't change during a session, so the (possibly `infocmp`-spawning)
     /// probe runs at most ~once per key instead of on EVERY channel-open (new pane/tab), and the
@@ -244,6 +255,16 @@ public final class HostServer: @unchecked Sendable {
         self.scrollbackJournals = journals
         if let journals {
             Task.detached(priority: .utility) { journals.sweep() }
+        }
+
+        // Non-deliberate ends of life the store handles ITSELF (TTL + overflow eviction) never
+        // reach `removeMuxSession` — release the evictee's journal writer (fd + map entry; the
+        // FILE survives as the restore source) and drop its hook-sink key here, or both leak
+        // once per eviction for the daemon's lifetime. Fired outside the store lock; neither
+        // eviction path runs under `HostServer.lock` (see `DetachedSessionStore.onEvicted`).
+        detachedStore?.onEvicted = { [weak self] sessionID in
+            self?.scrollbackJournals?.release(sessionID: sessionID)
+            self?.unregisterHookSink(sessionID: sessionID)
         }
     }
 
@@ -422,9 +443,13 @@ public final class HostServer: @unchecked Sendable {
         if attachedElsewhere || parked { return }
         if session.isChildExited() {
             // Mirror `removeMuxSession`'s dead-child discipline: fan a final `.none` for the
-            // prevent-sleep strict balance, then the non-blocking reap (idempotent).
+            // prevent-sleep strict balance, then the non-blocking reap (idempotent). This is a
+            // non-deliberate end of life reached OUTSIDE `removeMuxSession`, so release the
+            // journal writer (file kept — a reconnect may still cold-restore) + hook-sink key.
             fanAgentTeardown(session)
             session.shutdownDetached()
+            scrollbackJournals?.release(sessionID: session.sessionID)
+            unregisterHookSink(sessionID: session.sessionID)
             return
         }
         // Re-park. Idempotent end-to-end even if `handleLinkDown` lands between the snapshot
@@ -618,13 +643,9 @@ public final class HostServer: @unchecked Sendable {
             return
         }
         emitConnectionCount()
-        // W10: re-register the hook sink for this pane under the new connection's pane ID.
-        if let agentHookListener {
-            let paneID = Self.paneID(connectionID: connectionID, channelID: open.channelID)
-            agentHookListener.register(paneID: paneID) { [weak session] bytes in
-                session?.ingestAgentHookRecord(bytes)
-            }
-        }
+        // W10: refresh the hook sink under the session's ORIGINAL (env-baked) pane id — never
+        // the new connection's key (see `refreshHookSinkOnReattach`).
+        refreshHookSinkOnReattach(session: session)
         Task { await connection.sendOpenAck(open.channelID, accepted: true) }
         onLog?("mux channel \(open.channelID) (conn \(connectionID)): reattached session \(open.sessionID)")
         // Nudge the PTY foreground process to repaint after reattach — the client terminal is
@@ -746,14 +767,56 @@ public final class HostServer: @unchecked Sendable {
         session.startRelay()
         // W10: register this pane's hook sink so an installed Claude hook POSTing to the host
         // socket (with this pane's id) routes into THIS channel's per-pane status handler.
-        if let agentHookListener {
-            let paneID = Self.paneID(connectionID: connectionID, channelID: open.channelID)
-            agentHookListener.register(paneID: paneID) { [weak session] bytes in
-                session?.ingestAgentHookRecord(bytes)
-            }
-        }
+        registerHookSink(session: session, connectionID: connectionID, channelID: open.channelID)
         Task { await connection.sendOpenAck(open.channelID, accepted: true) }
         onLog?("mux channel \(open.channelID) (conn \(connectionID)): shell \(shellPath) (pid \(pty.pid)) attached")
+    }
+
+    /// W10: registers the per-pane hook sink on the coordinator listener so a Claude hook POST
+    /// carrying this pane's id routes into the session's `ingestAgentHookRecord`.
+    ///
+    /// FRESH-SPAWN ONLY — `(connectionID, channelID)` here is the identity `spawnFreshShell`
+    /// also bakes into the child env as `SLOPDESK_PANE_ID`, which is immutable for the shell's
+    /// life. The key is therefore recorded in ``hookPaneIDsBySession`` as the session's ONE
+    /// routing key: reattach refreshes it (``refreshHookSinkOnReattach(session:)``), never
+    /// re-keys, and every end of life unregisters it (``unregisterHookSink(sessionID:)``).
+    private func registerHookSink(session: MuxChannelSession, connectionID: UUID, channelID: UInt32) {
+        guard let agentHookListener else { return }
+        let paneID = Self.paneID(connectionID: connectionID, channelID: channelID)
+        lock.lock()
+        hookPaneIDsBySession[session.sessionID] = paneID
+        lock.unlock()
+        agentHookListener.register(paneID: paneID) { [weak session] bytes in
+            session?.ingestAgentHookRecord(bytes)
+        }
+    }
+
+    /// W10 reattach edge: re-registers the session's ORIGINAL hook key (a harmless refresh of
+    /// the sink closure — same session object). It must NOT register the new connection's
+    /// composite key: the agent's hook POSTs carry the env-baked ORIGINAL pane id, so a
+    /// per-reattach key could never route AND leaked one dead sink per detach/reattach cycle
+    /// (one String key + closure per wifi flap, for the daemon's lifetime).
+    private func refreshHookSinkOnReattach(session: MuxChannelSession) {
+        guard let agentHookListener else { return }
+        lock.lock()
+        let paneID = hookPaneIDsBySession[session.sessionID]
+        lock.unlock()
+        guard let paneID else { return } // hooks were off at spawn — nothing routes to this pane
+        agentHookListener.register(paneID: paneID) { [weak session] bytes in
+            session?.ingestAgentHookRecord(bytes)
+        }
+    }
+
+    /// W10 teardown: drops the session's ORIGINAL hook key + its bookkeeping entry. Called from
+    /// EVERY end of life — deliberate close (``removeMuxSession``), detached exit, TTL/overflow
+    /// eviction (via ``DetachedSessionStore/onEvicted``), and the failed-rebind dead-child reap
+    /// — but NEVER on a mere detach: hook records must keep folding into the detector while the
+    /// session is parked (the detached-window status hole, closed 2026-07-10). Idempotent.
+    private func unregisterHookSink(sessionID: UUID) {
+        lock.lock()
+        let paneID = hookPaneIDsBySession.removeValue(forKey: sessionID)
+        lock.unlock()
+        if let paneID { agentHookListener?.unregister(paneID: paneID) }
     }
 
     /// Resolves the effective `TERM` for a new PTY against the host's terminfo database
@@ -851,6 +914,12 @@ public final class HostServer: @unchecked Sendable {
             if let session { self?.fanAgentTeardown(session) }
             // shutdownDetached is safe on an already-dead shell (idempotent fd close).
             session?.shutdownDetached()
+            // Non-deliberate end of life (never reaches `removeMuxSession`): RELEASE the disk
+            // journal — flush + close the fd, drop the map entry, KEEP the file (the restore
+            // source for a returning cold client) — and drop the hook-sink key. Without these,
+            // every parked death leaked one fd + one sink for the daemon's lifetime.
+            self?.scrollbackJournals?.release(sessionID: id)
+            self?.unregisterHookSink(sessionID: id)
             self?.onLog?("detached session \(id): shell exited while parked")
         }
         // SYNCHRONOUS insert (audit #9): the old `Task { await store.insert }` fire-and-forget
@@ -877,9 +946,9 @@ public final class HostServer: @unchecked Sendable {
             scrollbackJournals?.delete(sessionID: session.sessionID)
         }
         // W10: drop this pane's hook sink so a late hook POST for a closed pane is dropped.
-        if session != nil, let agentHookListener {
-            agentHookListener.unregister(paneID: Self.paneID(connectionID: key.connectionID, channelID: key.channelID))
-        }
+        // Keyed by the session's ORIGINAL pane id (not this close's composite key — after a
+        // reattach cycle they differ, and unregistering the current key leaked the original).
+        if let session { unregisterHookSink(sessionID: session.sessionID) }
         // Only re-count when a session was actually removed (the path is idempotent with the
         // peer-close / child-exit race, so a second remove of the same key is a no-op and must
         // not re-emit an unchanged count).
@@ -1212,6 +1281,34 @@ public final class HostServer: @unchecked Sendable {
     /// Drives the REAL failed-rebind recovery path `performReattach` takes (testing only).
     func recoverFailedRebindForTesting(session: MuxChannelSession, key: MuxSessionKey) {
         recoverFailedRebind(session: session, key: key)
+    }
+
+    /// Drives the REAL `removeMuxSession` — the deliberate-close (peer `channelClose` / attached
+    /// child exit) teardown path (testing only).
+    func removeMuxSessionForTesting(_ key: MuxSessionKey) {
+        removeMuxSession(key)
+    }
+
+    /// Drives the REAL hook-sink registration `spawnFreshShell` performs — the fresh-spawn edge,
+    /// where the pane id is also baked into the child env as `SLOPDESK_PANE_ID` (testing only).
+    func registerHookSinkForTesting(session: MuxChannelSession, connectionID: UUID, channelID: UInt32) {
+        registerHookSink(session: session, connectionID: connectionID, channelID: channelID)
+    }
+
+    /// Drives the REAL hook-sink step `performReattach` performs after a successful rebind
+    /// (testing only). Takes the NEW connection's identity — exactly what `performReattach`
+    /// has in hand at that point — and deliberately IGNORES it: the routing key is the
+    /// env-baked ORIGINAL pane id, stable for the session's life.
+    func reattachHookSinkForTesting(session: MuxChannelSession, connectionID _: UUID, channelID _: UInt32) {
+        refreshHookSinkOnReattach(session: session)
+    }
+
+    /// Count of tracked original hook pane ids (testing only — the bookkeeping-leak pin: every
+    /// end of life must remove its entry).
+    var hookPaneIDCountForTesting: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return hookPaneIDsBySession.count
     }
 }
 

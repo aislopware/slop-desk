@@ -132,6 +132,64 @@ final class RailRowsMemoTests: XCTestCase {
         XCTAssertEqual(after[0].title, "vim", "and the rebuilt row shows it")
     }
 
+    // MARK: - Search path (perf audit follow-up: an active query must NOT bypass the memo)
+
+    /// The sidebar's search path composes `filtered`/`sectionedByProject(query:)` over the MEMOIZED rows
+    /// (`NavigatorColumn.renderedRows` no longer falls back to a direct `RailRowsBuilder.rows(for:)` while
+    /// a query is active — that re-registered every volatile dict on the body and re-ran the full O(panes)
+    /// build per tick). Two pins: (1) a volatile tick while a query is up stays a cache HIT (`buildCount`
+    /// frozen, same array snapshot), and (2) a structural change while searching still rebuilds and the
+    /// new row is reachable through the filter.
+    func testActiveQueryVolatileTickIsCacheHitAndStructuralChangeStillRebuilds() throws {
+        let store = makeRichStore()
+        let memo = RailRowsMemo()
+        let query = "alpha"
+        let before = RailRowsBuilder.filtered(memo.rows(for: store), query: query)
+        XCTAssertEqual(memo.buildCount, 1)
+        XCTAssertFalse(before.isEmpty, "the query matches the /Users/me/alpha rows")
+
+        // Volatile ticks with the query active: NO rebuild — the exact storm the old bypass re-created.
+        store.setAgentStatus(.needsPermission, for: before[0].id)
+        store.handleProgress(.determinate(percent: 40), for: before[0].id)
+        store.paneGitSummary[before[0].id] = PaneGitSummary(
+            hasRepo: true, branch: "dev", ahead: 2, behind: 0, changedCount: 1, modified: 1,
+        )
+        let afterTicks = RailRowsBuilder.filtered(memo.rows(for: store), query: query)
+        XCTAssertEqual(memo.buildCount, 1, "volatile ticks during search must NOT rebuild the row model")
+        XCTAssertEqual(afterTicks, before, "the search filter serves the same cached snapshot")
+
+        // A structural change (new tab landing in the searched project) rebuilds and surfaces via the filter.
+        store.newTab(kind: .terminal, launchGrace: .zero)
+        let newPane = try XCTUnwrap(memo.rows(for: store).map(\.id).last)
+        XCTAssertEqual(memo.buildCount, 2, "a structural change during search still rebuilds")
+        store.setLastKnownCwd("/Users/me/alpha", for: newPane)
+        let afterStructural = RailRowsBuilder.filtered(memo.rows(for: store), query: query)
+        XCTAssertEqual(memo.buildCount, 3, "the cwd change re-keys the memo")
+        XCTAssertEqual(afterStructural.count, before.count + 1, "the new pane is reachable through the filter")
+    }
+
+    /// Behaviour parity for the search path: filtering + sectioning the memoized rows equals what the old
+    /// direct-builder arm produced, for a representative store (statuses, git lines, process labels, a
+    /// split tab) — including a subtitle (git line) match and a hidden cwd-key match.
+    func testFilteredAndSectionedOverMemoEqualsDirectBuilderOutput() {
+        let store = makeRichStore()
+        let memo = RailRowsMemo()
+        for query in ["", "alpha", "beta", "main", "caffeinate", "zzz-no-match"] {
+            let viaMemo = RailRowsBuilder.filtered(memo.rows(for: store), query: query)
+            let direct = RailRowsBuilder.filtered(RailRowsBuilder.rows(for: store), query: query)
+            XCTAssertEqual(viaMemo, direct, "filtered parity for query '\(query)'")
+            XCTAssertEqual(
+                RailRowsBuilder.sectionedByProject(
+                    memo.rows(for: store), tabOrder: store.flatOrderedTabIDs(), query: query,
+                ),
+                RailRowsBuilder.sectionedByProject(
+                    RailRowsBuilder.rows(for: store), tabOrder: store.flatOrderedTabIDs(), query: query,
+                ),
+                "sectioned parity for query '\(query)'",
+            )
+        }
+    }
+
     // MARK: - liveChrome (the row view's fresh read over the stale cached model)
 
     /// After a volatile tick the CACHED row is stale by design, but `liveChrome(for:store:)` — what the row

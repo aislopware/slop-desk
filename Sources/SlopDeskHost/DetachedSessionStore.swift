@@ -44,6 +44,22 @@ final class DetachedSessionStore: @unchecked Sendable {
     /// when a new insert would exceed it. Injected so tests can drive overflow headlessly.
     let maxSessions: Int?
 
+    /// Fired AFTER the store itself KILLS a stored session — TTL eviction (``evict(_:)``) and
+    /// overflow eviction (``insert(_:key:ttl:)`` past `maxSessions`). These are the
+    /// non-deliberate ends of life that never reach `HostServer.removeMuxSession`, so the
+    /// server uses this hook to release the session's per-id resources (the disk-journal
+    /// writer fd + the hook-sink key). Always invoked OUTSIDE the store lock, after
+    /// `shutdownDetached()`. Deliberately NOT fired for:
+    /// - ``claim(_:)``'s dead-child auto-evict — it runs under `HostServer.lock` (the hook
+    ///   re-takes it → deadlock), and the immediately-following fresh spawn for the SAME
+    ///   sessionID reuses the journal writer anyway;
+    /// - the displaced same-id duplicate in ``insert(_:key:ttl:)`` — the NEW entry shares the
+    ///   sessionID, so releasing would tear down the live entry's resources;
+    /// - ``remove(_:)`` / ``drainAll()`` — the caller owns those paths (detached exit wires its
+    ///   own cleanup; drain is daemon stop).
+    /// Set once by `HostServer.init` before any session can flow.
+    var onEvicted: (@Sendable (UUID) -> Void)?
+
     init(maxSessions: Int? = nil) {
         self.maxSessions = maxSessions
     }
@@ -111,6 +127,7 @@ final class DetachedSessionStore: @unchecked Sendable {
         if let overflowVictim {
             overflowVictim.ttlTask?.cancel()
             overflowVictim.session.shutdownDetached()
+            onEvicted?(overflowVictim.session.sessionID)
         }
     }
 
@@ -183,6 +200,7 @@ final class DetachedSessionStore: @unchecked Sendable {
         guard let entry else { return }
         entry.ttlTask?.cancel()
         entry.session.shutdownDetached()
+        onEvicted?(sessionID)
     }
 
     // MARK: drainAll

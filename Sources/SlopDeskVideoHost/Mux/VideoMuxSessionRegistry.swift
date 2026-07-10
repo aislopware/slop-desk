@@ -101,14 +101,25 @@ public actor VideoMuxSessionRegistry {
     /// `retire`; default no-op for tests that don't exercise it.
     private let forgetLane: @Sendable (UInt32) -> Void
 
+    /// Sends one encoded control datagram back to the lane's client (the daemon wires it to
+    /// `mux.send(_, on: .control, channelID:)`). Used by the mint-failure path to answer the
+    /// bootstrap hello with a TERMINAL refusal — a rejected `helloAck` — instead of dropping it
+    /// silently (which left the client hello-retrying a doomed mint every ≤5 s forever, black
+    /// pane, no scrim). Must be called BEFORE ``forgetLane`` for a failing lane: `forgetLane`
+    /// (transport `retire`) drops the reply-flow stamp the bootstrap hello left, after which
+    /// there is no flow to answer on. Default no-op for tests that don't exercise it.
+    private let sendControl: @Sendable (UInt32, Data) -> Void
+
     @preconcurrency
     public init(
         sinkTable: VideoMuxSinkTable = VideoMuxSinkTable(),
         forgetLane: @escaping @Sendable (UInt32) -> Void = { _ in },
+        sendControl: @escaping @Sendable (UInt32, Data) -> Void = { _, _ in },
         mintSession: @escaping @Sendable (UInt32, VideoControlMessage) async throws -> SlopDeskVideoHostSession,
     ) {
         self.sinkTable = sinkTable
         self.forgetLane = forgetLane
+        self.sendControl = sendControl
         self.mintSession = mintSession
     }
 
@@ -143,10 +154,26 @@ public actor VideoMuxSessionRegistry {
                 sinkTable.sink(channelID)?(channel, data)
             } catch {
                 minting.remove(channelID)
-                // Mint failed (window gone / malformed hello): the lane was never admitted, so the
-                // flow the transport remembered for the bootstrap hello would leak. Tell the
-                // transport to forget it. The client retries under a FRESH channelID, so retiring
-                // this dead one is safe.
+                // Mint failed (window gone / malformed hello). Answer the arrival flow with a
+                // TERMINAL refusal — the EXISTING `helloAck(accepted: false)` wire message (no new
+                // format; golden-pinned wire untouched) — so the client's FSM resolves `.rejected`
+                // and stops hello-retrying instead of re-driving this doomed mint every ≤5 s
+                // forever (black pane, no scrim: the old SILENT drop). Sent BEFORE forgetLane:
+                // `forgetLane` (transport retire) drops the reply-flow stamp the bootstrap hello
+                // left, after which there is no flow to answer on. Fire-and-forget UDP — a lost
+                // refusal is re-triggered by the client's next hello retry (which re-fails the
+                // mint and re-refuses).
+                sendControl(channelID, VideoControlMessage.helloAck(
+                    accepted: false,
+                    streamID: 0,
+                    captureWidth: 0,
+                    captureHeight: 0,
+                    windowBoundsCG: VideoRect(x: 0, y: 0, width: 0, height: 0),
+                    fullRange: false,
+                ).encode())
+                // The lane was never admitted, so the flow the transport remembered for the
+                // bootstrap hello would leak. Tell the transport to forget it. The client retries
+                // under a FRESH channelID, so retiring this dead one is safe.
                 forgetLane(channelID)
             }
         case .dropUnbound:

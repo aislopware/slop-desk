@@ -342,6 +342,101 @@ final class ScrollbackJournalTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: journalFileURL(for: sessionID).path))
     }
 
+    // MARK: - Release (non-deliberate end of life: fd + map entry reclaimed, FILE kept)
+
+    /// `release` must flush the coalescing buffer (no lost tail), drop the map entry, and KEEP
+    /// the file — nobody calls synchronize, so only the release's own flush can persist the
+    /// buffered bytes.
+    func testReleaseFlushesBufferDropsWriterAndKeepsFile() {
+        let sessionID = UUID()
+        let store = makeStore()
+        let tail = Data("buffered-tail\n".utf8) // far below the 32 KiB threshold — buffered
+        store.journal(for: sessionID).append(tail)
+
+        store.release(sessionID: sessionID)
+        XCTAssertFalse(
+            store.hasLiveWriterForTesting(sessionID),
+            "release must drop the map entry (the fd-leak half of the defect)",
+        )
+        let url = tempDir.appendingPathComponent("\(sessionID.uuidString).scrollback")
+        XCTAssertEqual(
+            try? Data(contentsOf: url), tail,
+            "release must flush the coalescing buffer into the SURVIVING file — losing the "
+                + "buffered tail would truncate the restore transcript",
+        )
+    }
+
+    /// A late append racing the release (a straggling PTY chunk) must not reopen the closed
+    /// handle — the store no longer tracks this instance, so a reopened fd would never close.
+    func testReleasedWriterDropsLateAppends() {
+        let sessionID = UUID()
+        let store = makeStore()
+        let kept = Data("kept\n".utf8)
+        let journal = store.journal(for: sessionID)
+        journal.append(kept)
+        store.release(sessionID: sessionID)
+
+        journal.append(Data("late-straggler\n".utf8))
+        journal.synchronize() // would flush the straggler if the instance were still open
+        let url = tempDir.appendingPathComponent("\(sessionID.uuidString).scrollback")
+        XCTAssertEqual(
+            try? Data(contentsOf: url), kept,
+            "a released writer must drop late appends instead of resurrecting its handle",
+        )
+    }
+
+    /// After a release the id must be SWEEPABLE again: the map entry is gone, so `sweep()`'s
+    /// live-writer exemption no longer pins the file forever (the on-disk half of the defect).
+    func testReleasedJournalIsSweepableByMtime() throws {
+        let sessionID = UUID()
+        let store = makeStore()
+        store.journal(for: sessionID).append(Data("x".utf8))
+        store.journal(for: sessionID).synchronize()
+        store.release(sessionID: sessionID)
+
+        let url = tempDir.appendingPathComponent("\(sessionID.uuidString).scrollback")
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: -30 * 24 * 3600)], ofItemAtPath: url.path,
+        )
+        store.sweep(maxAge: 14 * 24 * 3600, keepNewest: 256)
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: url.path),
+            "a released (no-live-writer) journal must age out via sweep like any orphan",
+        )
+    }
+
+    /// The re-vend shape: `journal(for:)` after a release yields a FRESH writer that appends
+    /// AT END of the surviving bytes (openIfNeeded's seekToEnd) — full restore round-trip.
+    func testJournalForAfterReleaseReopensAppendAtEnd() {
+        let sessionID = UUID()
+        let store = makeStore()
+        let old = Data("old\n".utf8)
+        let new = Data("new\n".utf8)
+        store.journal(for: sessionID).append(old)
+        store.release(sessionID: sessionID)
+
+        store.journal(for: sessionID).append(new) // transparently reopened
+        XCTAssertEqual(
+            store.restoredScrollback(for: sessionID),
+            old + new + ScrollbackJournalStore.sanitizeSuffix,
+            "a post-release journal(for:) must append after the released bytes, corrupting nothing",
+        )
+    }
+
+    /// The policy boundary: a deliberate close AFTER a release must still delete the file
+    /// (the no-writer-in-this-process delete path).
+    func testDeleteAfterReleaseRemovesFile() {
+        let sessionID = UUID()
+        let store = makeStore()
+        store.journal(for: sessionID).append(Data("x".utf8))
+        store.release(sessionID: sessionID)
+
+        store.delete(sessionID: sessionID)
+        let url = tempDir.appendingPathComponent("\(sessionID.uuidString).scrollback")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertNil(store.restoredScrollback(for: sessionID))
+    }
+
     // MARK: - Environment gates
 
     func testMakeFromEnvironmentGates() {

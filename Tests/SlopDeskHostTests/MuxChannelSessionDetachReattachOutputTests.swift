@@ -55,6 +55,30 @@ final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
             }
             return joined
         }
+
+        /// Snapshot of every decoded message, in send order (control-channel assertions).
+        var allMessages: [WireMessage] {
+            lock.lock()
+            defer { lock.unlock() }
+            return messages
+        }
+    }
+
+    /// A lock-guarded one-shot recording box (the finding-1 ordering probe's landing spot).
+    private final class ObservedBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: Bool?
+        func set(_ value: Bool) {
+            lock.lock()
+            stored = value
+            lock.unlock()
+        }
+
+        var value: Bool? {
+            lock.lock()
+            defer { lock.unlock() }
+            return stored
+        }
     }
 
     private final class PauseRec: @unchecked Sendable {
@@ -199,6 +223,72 @@ final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
         await waitUntil { recorder.outputBytes.count == 16 * 64 * 1024 && !rec.isPaused }
         XCTAssertEqual(recorder.outputBytes.count, 16 * 64 * 1024, "the whole away-backlog ships on reattach")
         XCTAssertFalse(rec.isPaused, "gate rebalances back below the restored attached bound")
+    }
+
+    // MARK: - Finding 1 (2026-07-11) — control wake must be installed before the output drain runs
+
+    /// The restarted output drain's first act on a detached backlog is `takeMergedFrame()` →
+    /// `enqueueControl(sniffed control)`. `detach()` nil'd `controlWakeContinuation`, so if the
+    /// drain is created + kicked BEFORE the new control wake is installed, a control message
+    /// sniffed from the detached backlog (e.g. an OSC-0/2 title change while away) can land in
+    /// `controlOut` with NO wake — and `.title` is not re-asserted by any reestablish call, so a
+    /// quiet reconnect never flushes it (title lost until the next live title edge).
+    ///
+    /// The race window itself (the drain Task getting scheduled inside the few rebind-thread
+    /// instructions between the backlog kick and the wake install) cannot be forced
+    /// deterministically from outside — the drain is an unstructured Task and the test has no way
+    /// to pause the rebind thread mid-method. So this pins the ORDER structurally via the
+    /// `onOutputDrainRestartedForTesting` seam: at the earliest instant the drain can be running,
+    /// the control wake must ALREADY be installed.
+    func testRebindInstallsControlWakeBeforeOutputDrainIsKicked() {
+        let session = makeSession()
+        session.installGateForTesting(PausableQueueGate(capacity: 1_000_000) { _ in })
+        session.detach(onDetachedExit: { _ in })
+        // A detached-era chunk whose sniffed control (a title change while away) rides the
+        // backlog — exactly what the restarted drain hands to enqueueControl.
+        session.enqueueChunkForTesting(
+            bytes: Data("away\n".utf8), control: [.title("away-title")],
+        )
+
+        let observed = ObservedBox()
+        session.onOutputDrainRestartedForTesting = { [weak session] in
+            observed.set(session?.hasControlWakeContinuationForTesting ?? false)
+        }
+        let newData = MuxSubChannel(channelID: 1, channel: .data) { _, _ in }
+        let newControl = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
+        XCTAssertTrue(session.rebindRelay(data: newData, control: newControl, onExit: nil))
+        session.onOutputDrainRestartedForTesting = nil
+        XCTAssertEqual(
+            observed.value, true,
+            "rebindRelay must install the control wake + sender BEFORE creating/kicking the "
+                + "output drain — otherwise the drain can enqueueControl onto a nil continuation "
+                + "and strand a detached-window title in controlOut with no wake",
+        )
+    }
+
+    /// End-to-end companion: the sniffed control riding a detached-backlog chunk must actually be
+    /// DELIVERED on the returning client's new control sub-channel (the user-visible contract the
+    /// ordering test above protects).
+    func testDetachedBacklogSniffedControlIsDeliveredAfterReattach() async {
+        let session = makeSession()
+        session.installGateForTesting(PausableQueueGate(capacity: 1_000_000) { _ in })
+        session.detach(onDetachedExit: { _ in })
+        session.enqueueChunkForTesting(
+            bytes: Data("away\n".utf8), control: [.title("away-title")],
+        )
+
+        let recorder = SendRecorder()
+        let newData = MuxSubChannel(channelID: 1, channel: .data) { _, _ in }
+        let newControl = MuxSubChannel(channelID: 1, channel: .control) { _, frame in
+            recorder.record(frame)
+        }
+        XCTAssertTrue(session.rebindRelay(data: newData, control: newControl, onExit: nil))
+
+        await waitUntil { recorder.allMessages.contains(.title("away-title")) }
+        XCTAssertTrue(
+            recorder.allMessages.contains(.title("away-title")),
+            "the detached-window title sniffed off the backlog must reach the new control channel",
+        )
     }
 
     // MARK: - Audit #3 — rebindRelay must NOT register a second PTY exit waiter

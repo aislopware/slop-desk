@@ -471,6 +471,20 @@ public final class RemoteWindowModel {
         if awaitingResizeReflow { awaitingResizeReflow = false }
     }
 
+    /// TERMINAL REFUSAL: the host REJECTED the live session (`helloAck(accepted: false)` — the window is
+    /// gone on the host / version mismatch, incl. the mux mint-failure refusal). The video pipeline has
+    /// already torn itself down WITHOUT the bye path's auto-rebuild (a rebuild would re-hello the same
+    /// doomed request forever), so the pane must not keep a dead black surface: leave ``active`` and fall
+    /// back to the picker with a ``loadError`` explaining why — the same fallback the stale-binding
+    /// revalidation's `.unresolved` arm takes. No-op when nothing is active (a late/duplicate refusal
+    /// after a user close must not stamp an error onto a fresh picker).
+    public func noteSessionRejected() {
+        guard active != nil else { return }
+        let name = title.isEmpty ? "That window" : "“\(title)”"
+        close()
+        loadError = "\(name) is no longer available on the host — pick a window."
+    }
+
     /// Closes the remote window (tears down the live view → its orchestrator `stop()`).
     public func close() {
         active = nil

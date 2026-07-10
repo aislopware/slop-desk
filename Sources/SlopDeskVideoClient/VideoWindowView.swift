@@ -117,6 +117,12 @@ public struct VideoWindowView: View {
     /// went silent past the stall threshold (show the pane's "Reconnecting…" scrim), `false` ⇒ traffic
     /// resumed (clear it). Sticky through the self-heal rebuild. `nil` ⇒ no canvas wired it.
     let onStreamStallChanged: ((_ stalled: Bool) -> Void)?
+    /// TERMINAL REFUSAL: the live view fires this once after the host REJECTED the session
+    /// (`helloAck(accepted: false)` — window gone / version mismatch, incl. the mux mint-failure
+    /// refusal). The pipeline has already torn down WITHOUT the bye path's auto-rebuild; the pane
+    /// model should leave its live surface and fall back to the picker/error state. `nil` ⇒ no
+    /// canvas wired it (the pane just stays down).
+    let onSessionRejected: (() -> Void)?
 
     /// The existing seam signature (title-only): renders the Metal-backed view chrome
     /// without a live connection. Kept so `VideoWindowFactory` callers compile.
@@ -136,6 +142,7 @@ public struct VideoWindowView: View {
         onStreamCadenceReady = nil
         onStreamBitrateReady = nil
         onStreamStallChanged = nil
+        onSessionRejected = nil
     }
 
     /// Live remote-window view: brings up the orchestrator against `connection`. `isActive` /
@@ -157,6 +164,7 @@ public struct VideoWindowView: View {
         onStreamCadenceReady: ((_ fps: Int) -> Void)? = nil,
         onStreamBitrateReady: ((_ kbps: Int) -> Void)? = nil,
         onStreamStallChanged: ((_ stalled: Bool) -> Void)? = nil,
+        onSessionRejected: (() -> Void)? = nil,
     ) {
         self.title = title
         self.connection = connection
@@ -173,6 +181,7 @@ public struct VideoWindowView: View {
         self.onStreamCadenceReady = onStreamCadenceReady
         self.onStreamBitrateReady = onStreamBitrateReady
         self.onStreamStallChanged = onStreamStallChanged
+        self.onSessionRejected = onSessionRejected
     }
 
     /// Owns the control bridge for this view's lifetime; the backing view wires its closures.
@@ -198,6 +207,7 @@ public struct VideoWindowView: View {
             onStreamCadenceReady: onStreamCadenceReady,
             onStreamBitrateReady: onStreamBitrateReady,
             onStreamStallChanged: onStreamStallChanged,
+            onSessionRejected: onSessionRejected,
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityLabel(Text("Remote GUI window: \(title)"))
@@ -232,6 +242,7 @@ struct MetalVideoLayerView: NSViewRepresentable {
     var onStreamCadenceReady: ((Int) -> Void)?
     var onStreamBitrateReady: ((Int) -> Void)?
     var onStreamStallChanged: ((Bool) -> Void)?
+    var onSessionRejected: (() -> Void)?
 
     func makeNSView(context _: Context) -> MetalLayerBackedView {
         let view = MetalLayerBackedView()
@@ -249,6 +260,8 @@ struct MetalVideoLayerView: NSViewRepresentable {
         view.onStreamBitrateReady = onStreamBitrateReady
         // STALL SCRIM: before activate so a stall detected on the very first monitor tick reaches the model.
         view.onStreamStallReady = onStreamStallChanged
+        // TERMINAL REFUSAL: before activate so a helloAck(accepted:false) landing immediately reaches the model.
+        view.onSessionRejectedReady = onSessionRejected
         view.activate(connection: connection)
         // PASTE AS KEYSTROKES: publish a key-injection sink routed to THIS view's pipeline (`pipeline.key`
         // no-ops until the session is up, so publishing now is safe). Cleared on `deactivate`.
@@ -295,6 +308,8 @@ struct MetalVideoLayerView: NSViewRepresentable {
         nsView.onStreamBitrateReady = onStreamBitrateReady
         // STALL SCRIM: keep the stall push current (model persists per pane).
         nsView.onStreamStallReady = onStreamStallChanged
+        // TERMINAL REFUSAL: keep the rejection push current (model persists per pane).
+        nsView.onSessionRejectedReady = onSessionRejected
         nsView.activate(connection: connection)
         if inputGateFlipped {
             nsView.onKeyInjectorReady = onKeyInjectorReady
@@ -416,6 +431,11 @@ final class MetalLayerBackedView: NSView {
     /// flips (`true` ⇒ host silent past threshold, show "Reconnecting…"; `false` ⇒ traffic resumed) so the
     /// pane can overlay/clear its scrim. Set by the representable.
     var onStreamStallReady: ((Bool) -> Void)?
+    /// TERMINAL REFUSAL: the canvas publishes a rejection SINK through this — the view fires it once
+    /// after the host rejected the session (`helloAck(accepted: false)`), the pipeline having already
+    /// torn down with NO auto-rebuild, so the pane model can fall back to the picker/error state.
+    /// Set by the representable.
+    var onSessionRejectedReady: (() -> Void)?
     /// VIEWPORT CONTROLS: the canvas publishes a client-viewport command sink through this (and `nil` on
     /// teardown), so the pane's bottom control bar drives zoom / pan-lock. The byte is `RemoteWindowModel.
     /// ViewportCommand` (0 zoom-in / 1 zoom-out / 2 reset / 3 toggle-lock). Set by the representable.
@@ -635,6 +655,11 @@ final class MetalLayerBackedView: NSView {
             self?.applyStallDrain(stalled)
             self?.onStreamStallReady?(stalled)
         }
+        // TERMINAL REFUSAL: forward the host's rejection to the pane model (→ picker/error state; no-op
+        // if unbound). The pipeline already tore itself down with NO auto-rebuild before firing. The
+        // closure reads the live `onSessionRejectedReady`, so updateNSView refreshing the seam closure
+        // is picked up.
+        pipeline.onSessionRejected = { [weak self] in self?.onSessionRejectedReady?() }
         // Wire the SwiftUI overlay's buttons to THIS view's pipeline (live connection only). The fit/fill
         // toggle was removed (the ACTUAL-SIZE viewport auto-drives content mode), so only the 1× reset wires.
         if connection != nil, let controls {
@@ -1313,6 +1338,9 @@ struct MetalVideoLayerView: UIViewRepresentable {
     // Signature parity with the macOS representable. The iOS pane has no scrim overlay wired yet, so the
     // stall push is accepted + ignored here.
     var onStreamStallChanged: ((Bool) -> Void)?
+    // Signature parity with the macOS representable. The iOS view layer has no picker fallback wired
+    // yet, so the terminal-refusal push is accepted + ignored here.
+    var onSessionRejected: (() -> Void)?
 
     func makeUIView(context _: Context) -> MetalLayerBackedView {
         let view = MetalLayerBackedView()

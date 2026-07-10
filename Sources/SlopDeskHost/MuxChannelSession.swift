@@ -138,16 +138,22 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// Host-authoritative By-Project key (type 34) — the reattach/dedupe latches. `lastCwdTruth` is
     /// the freshest cwd this session has observed (OSC-7 sniff, else the prompt-edge `proc_pidinfo`
-    /// probe); `lastProjectKey` is the last EMITTED type-34 (git toplevel containing that cwd, else
-    /// the cwd itself — ``ProjectKeyResolver``). Both are latched at the SNIFF point (like
-    /// `lastProgress` — sniffed control rides the out-FIFO, so a detached window's messages reach the
-    /// sender long after the reattach re-assert reads these) and re-asserted by
+    /// probe), latched at the SNIFF point on the read-loop thread (like `lastProgress` — a detached
+    /// window's change must be visible to the reattach re-assert immediately). `lastProjectKey` is
+    /// the last EMITTED type-34 (git toplevel containing that cwd, else the cwd itself —
+    /// ``ProjectKeyResolver``), latched at RESOLVE COMPLETION on `metadataQueue`: the resolver's
+    /// `stat(2)`-per-ancestor walk is blocking filesystem work (a hung network mount can park it
+    /// indefinitely), so ``deriveProjectKey(from:)`` dispatches it off the read-loop thread and the
+    /// emission goes straight to ``enqueueControl(_:)``. Both latches are re-asserted by
     /// ``reestablishActivityOnReattach()`` so a reconnecting client renders the FINAL sidebar
-    /// sections immediately, with zero client-side re-derivation. Guarded by `projectKeyLock`
-    /// (written on the read-loop thread; read by the reattach path).
+    /// sections immediately, with zero client-side re-derivation. `projectKeyWarmedUp` gates
+    /// OSC-7-only derivation until the first command edge (see ``deriveProjectKey(from:)``).
+    /// All guarded by `projectKeyLock` (written on the read-loop thread + `metadataQueue`; read by
+    /// the reattach path).
     private let projectKeyLock = NSLock()
     private var lastCwdTruth: String?
     private var lastProjectKey: String?
+    private var projectKeyWarmedUp = false
 
     /// Test seam for the prompt-edge cwd probe (the ``HostMetadataProbe`` `proc_pidinfo` read):
     /// unit tests drive ``ingestPTYChunkForTesting(_:)`` on an UNSPAWNED PTY (hang-safety rule), where
@@ -155,6 +161,13 @@ final class MuxChannelSession: @unchecked Sendable {
     /// lets them exercise the non-OSC-7 derivation path deterministically. `nil` (production) uses
     /// the real probe.
     var cwdProbeOverride: (() -> String?)?
+
+    /// Test seam for the async project-key resolve hop: production dispatches the
+    /// ``ProjectKeyResolver`` stat-walk onto the serial `metadataQueue` (resolves stay ordered);
+    /// tests inject a run-inline executor (deterministic emission) or a deferred one (pinning that
+    /// a slow/hung resolve never blocks ``ingestPTYChunk(_:)``). `nil` (production) uses
+    /// `metadataQueue.async`.
+    var projectKeyResolveExecutorOverride: ((_ resolve: @escaping @Sendable () -> Void) -> Void)?
 
     /// Observer closures registered by the agent-control `wait` and `subscribe` verbs. Each is
     /// called with the raw PTY chunk immediately after the sniffer pass (non-destructive, never
@@ -171,6 +184,22 @@ final class MuxChannelSession: @unchecked Sendable {
     /// pane's resize/ack/ping; ``enqueueControl`` (lock-guarded) carries the response back. Serial so
     /// concurrent metadata requests for one pane don't pile up subprocesses.
     private let metadataQueue = DispatchQueue(label: "slopdesk.host.metadata", qos: .userInitiated)
+
+    /// Finding 4 (2026-07-11) — the number of metadata work items currently admitted onto
+    /// `metadataQueue` for this session (guarded by `metadataInFlightLock`; incremented at
+    /// admission in ``serveMetadata(requestID:verb:payload:)``, decremented when the work item
+    /// finishes). The control sub-channel is deliberately unwindowed, so this counter is the ONLY
+    /// bound between a hostile/buggy peer streaming back-to-back tiny `.metadataRequest` frames
+    /// and an unbounded pile of queued closures (each retaining its payload + self) forking
+    /// `git`/`lsof` without limit.
+    private let metadataInFlightLock = NSLock()
+    private var metadataInFlight = 0
+
+    /// The per-session cap on admitted-not-yet-finished metadata work items. At/over the cap a
+    /// request is NOT enqueued — it is answered IMMEDIATELY with the builder's standard `.error`
+    /// status byte + empty payload (the same shape as any other failed verb), so the "ALWAYS
+    /// replies, the client never hangs" contract holds under a flood.
+    private static let maxMetadataInFlight = 32
 
     /// ONE fused non-destructive sniffer for the PTY chunk path (title/bell + OSC 133 command
     /// status — one pass, not two per-byte machines scanning the hot thread twice). Touched only
@@ -907,7 +936,33 @@ final class MuxChannelSession: @unchecked Sendable {
         // rebalance the C3 note above describes.
         outputGate?.setCapacity(MuxFlowControl.hostQueueCapacityBytes)
 
-        // Rebuild the output wake stream and restart the output drain task.
+        // Rebuild the control wake stream and restart the control sender FIRST — BEFORE the
+        // output drain below exists (2026-07-11 finding 1). The restarted drain pops the detached
+        // backlog and hands its sniffed control to `enqueueControl`, which reads
+        // `controlWakeContinuation` (nil'd by detach()); with the old order (output drain built +
+        // kicked first) the drain could run in the window before this reassignment and strand a
+        // detached-window control message (e.g. an OSC-0/2 title change) in `controlOut` with no
+        // wake — `.title` is not re-asserted by any reestablish call, so a quiet reconnect never
+        // flushed it. Starting the control sender this early is safe in the other direction: it
+        // simply parks on its fresh wake stream until the first enqueue.
+        let (controlWakeups, controlWake) =
+            AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+        controlOutLock.lock()
+        controlWakeContinuation = controlWake
+        controlOutLock.unlock()
+        controlSendTask = Task { [weak self] in
+            for await _ in controlWakeups {
+                while let batch = self?.takeControlBatch() {
+                    guard let self else { break }
+                    for message in batch {
+                        try? await control.send(message)
+                    }
+                }
+            }
+        }
+
+        // Rebuild the output wake stream and restart the output drain task (AFTER the control
+        // sender above — its enqueueControl hand-off needs the control wake already installed).
         let (outputWakeups, outputWake) =
             AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
         fifoLock.lock()
@@ -941,23 +996,13 @@ final class MuxChannelSession: @unchecked Sendable {
         let backlogWake = outputWakeContinuation
         fifoLock.unlock()
         if hasDetachedBacklog { backlogWake?.yield(()) }
-
-        // Rebuild the control wake stream and restart the control sender.
-        let (controlWakeups, controlWake) =
-            AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
-        controlOutLock.lock()
-        controlWakeContinuation = controlWake
-        controlOutLock.unlock()
-        controlSendTask = Task { [weak self] in
-            for await _ in controlWakeups {
-                while let batch = self?.takeControlBatch() {
-                    guard let self else { break }
-                    for message in batch {
-                        try? await control.send(message)
-                    }
-                }
-            }
-        }
+        // Race seam (2026-07-11 finding 1): fired at the EARLIEST instant the restarted output
+        // drain can be running — it has been created and its backlog kick delivered. The drain's
+        // first act on a detached backlog is takeMergedFrame → enqueueControl(sniffed control),
+        // which reads `controlWakeContinuation`; the ordering test pins that the control wake is
+        // ALREADY installed here (the race window itself — the drain Task getting scheduled inside
+        // a few rebind-thread instructions — cannot be forced deterministically from outside).
+        onOutputDrainRestartedForTesting?()
 
         // E17 / ES-E17-4 — RE-ESTABLISH the client's echo truth on reattach (mirrors how the PTY size is
         // re-asserted on reconnect): re-anchor the edge-triggered detector and re-emit a fresh type-31 for the
@@ -1322,11 +1367,14 @@ final class MuxChannelSession: @unchecked Sendable {
         // control drain — sniffed control rides the out-FIFO and a detached window's messages only
         // reach the sender after the backlog ships, long after the reattach re-assert reads this).
         latchProgress(controlMsgs)
-        // Host-authoritative By-Project key (type 34): derive from THIS chunk's cwd truth (the OSC-7
-        // sniff when present, else the prompt-edge probe) and append the change-edge emission so it
-        // rides the same FIFO slot as the bytes that produced it. Latched at the sniff point for the
-        // same reattach reason as the progress latch above.
-        controlMsgs.append(contentsOf: deriveProjectKeyMessages(from: controlMsgs))
+        // Host-authoritative By-Project key (type 34): scan THIS chunk's sniffed batch for a cwd
+        // change (the OSC-7 sniff when present, else the prompt-edge probe — cheap, sync) and, on
+        // a change, hand the resolver's blocking stat-walk to the metadataQueue; the emission
+        // lands on the CONTROL sender when the resolve completes. Never a filesystem touch on
+        // this read-loop thread — a cwd on a hung network mount must not freeze the pane's
+        // output. `lastCwdTruth` is still latched at the sniff point, for the same reattach
+        // reason as the progress latch above.
+        deriveProjectKey(from: controlMsgs)
         // Agent-control: fire output observers for the `wait` verb AFTER the sniffer
         // (so a wait-observer sees the same stream order as the client) and BEFORE the
         // FIFO append (non-destructive — observers only READ the chunk).
@@ -1612,34 +1660,99 @@ final class MuxChannelSession: @unchecked Sendable {
         if !messages.isEmpty { enqueueControl(messages) }
     }
 
-    /// Host-authoritative By-Project key (type 34) — the change-edge derivation. The freshest cwd
-    /// truth in `sniffed` is the LAST OSC-7 `.cwd` (shell-declared, exact); a shell that emits no
-    /// OSC-7 (Starship / hookless) is covered by the prompt-edge probe: a `.commandStatus(.idle)` in
-    /// the batch marks a prompt boundary (133;B/D) — exactly when a `cd` becomes observable — and
-    /// triggers ONE `proc_pidinfo` read (a single syscall; never a subprocess on this read-loop
-    /// thread). An unchanged cwd is dropped at the first anchor; a changed cwd re-resolves the
-    /// toplevel (pure filesystem walk-up, ``ProjectKeyResolver``) and only a CHANGED key emits.
-    /// Returns `[]` in the common case (no cwd signal at all — every mid-command chunk).
-    private func deriveProjectKeyMessages(from sniffed: [WireMessage]) -> [WireMessage] {
-        var cwd: String?
+    /// Host-authoritative By-Project key (type 34) — the change-edge derivation, split so the PTY
+    /// read-loop thread never touches the filesystem:
+    ///
+    /// **Sync (this method — the read-loop thread):** scan `sniffed` for the freshest cwd truth.
+    /// The LAST OSC-7 `.cwd` is the shell-declared value; a shell that emits no OSC-7 (Starship /
+    /// hookless) is covered by the prompt-edge probe: a `.commandStatus(.idle)` in the batch marks
+    /// a prompt boundary (133;B/D) — exactly when a `cd` becomes observable — and triggers ONE
+    /// `proc_pidinfo` read (a single syscall, the same class as the input path's `tcgetattr`;
+    /// never a subprocess and never a `stat` on this thread). At a prompt edge the PROBE is
+    /// preferred over a same-batch OSC-7 (finding 3b: the probe is ground truth at exactly that
+    /// moment; a possibly-stale OSC-7 loses), falling back to the batch's OSC-7 when the probe
+    /// fails (unspawned/gone shell). An unchanged cwd is dropped at the `lastCwdTruth` anchor,
+    /// which is latched HERE (sniff time) so a reattach re-assert always sees the newest cwd.
+    ///
+    /// **Warm-up gate (finding 3a — mirrors `echoWarmedUp`):** OSC-7-only batches are IGNORED
+    /// until the first command edge (`.commandStatus(.idle)` or `.running`) has been observed on
+    /// this session. A plugin manager that `cd`s into its git-cloned cache dir BEFORE the first
+    /// prompt emits OSC-7 for a directory the user was never in — latching it persisted a bogus
+    /// sidebar section client-side. The first prompt edge itself derives from the probe (ground
+    /// truth); after warm-up OSC-7 changes flow normally (a mid-command `cd` in a script still
+    /// re-groups, no prompt edge required).
+    ///
+    /// **Async (the resolver walk — `metadataQueue`):** a CHANGED cwd hands
+    /// ``ProjectKeyResolver/projectKey(forCwd:)`` — a `stat(2)`-per-ancestor filesystem walk that
+    /// can block INDEFINITELY on a hung network mount (NFS/SMB/FUSE) — to
+    /// ``scheduleProjectKeyResolve(for:)``, so a wedged mount can never freeze this pane's
+    /// terminal output. The type-34 emission happens there, straight onto the CONTROL sender.
+    private func deriveProjectKey(from sniffed: [WireMessage]) {
+        var oscCwd: String?
         var promptEdge = false
+        var commandEdge = false
         for message in sniffed {
             switch message {
-            case let .cwd(path): cwd = path
-            case let .commandStatus(status): if case .idle = status { promptEdge = true }
+            case let .cwd(path): oscCwd = path
+            case let .commandStatus(status):
+                commandEdge = true
+                if case .idle = status { promptEdge = true }
             default: break
             }
         }
-        if cwd == nil, promptEdge { cwd = probeCwd() }
-        guard let cwd, !cwd.isEmpty else { return [] }
+        // Common case first (every mid-command chunk): no cwd signal at all — zero probe cost.
+        guard oscCwd != nil || promptEdge else { return }
         projectKeyLock.lock()
-        defer { projectKeyLock.unlock() }
-        guard cwd != lastCwdTruth else { return [] }
+        if !projectKeyWarmedUp {
+            guard commandEdge else {
+                projectKeyLock.unlock()
+                return // pre-first-prompt OSC-7 (plugin-manager cd noise): do not latch, do not emit
+            }
+            projectKeyWarmedUp = true
+        }
+        projectKeyLock.unlock()
+        // At a prompt edge, ground truth (the probe) beats a possibly-stale same-batch OSC-7;
+        // a probe failure falls back to the OSC-7 value. Mid-command (no edge) only OSC-7 can
+        // speak — the probe is never consulted.
+        let freshest = promptEdge ? (probeCwd() ?? oscCwd) : oscCwd
+        guard let cwd = freshest, !cwd.isEmpty else { return }
+        projectKeyLock.lock()
+        guard cwd != lastCwdTruth else {
+            projectKeyLock.unlock()
+            return
+        }
         lastCwdTruth = cwd
-        let key = ProjectKeyResolver.projectKey(forCwd: cwd)
-        guard key != lastProjectKey else { return [] }
-        lastProjectKey = key
-        return [.projectKey(key)]
+        projectKeyLock.unlock()
+        scheduleProjectKeyResolve(for: cwd)
+    }
+
+    /// Runs the ``ProjectKeyResolver`` toplevel walk for `cwd` OFF the read-loop thread — on the
+    /// serial `metadataQueue` (the file's home for ALL blocking FileManager/git/lsof work; serial,
+    /// so resolves stay ordered), or the injected test executor. On completion, under
+    /// `projectKeyLock`, the resolve is DROPPED if a later `cd` superseded it (`cwd` is no longer
+    /// `lastCwdTruth` — the newer change's own resolve is already queued behind this one), deduped
+    /// against `lastProjectKey`, latched, and the type-34 enqueued directly on the CONTROL sender.
+    /// It no longer rides the out-FIFO alongside the producing bytes — FIFO ordering was never
+    /// load-bearing for this latest-state truth (the client folds the newest key it sees, and the
+    /// reattach re-assert reads the latches, not the stream).
+    private func scheduleProjectKeyResolve(for cwd: String) {
+        let resolve: @Sendable () -> Void = { [weak self] in
+            guard let self else { return }
+            let key = ProjectKeyResolver.projectKey(forCwd: cwd)
+            projectKeyLock.lock()
+            guard cwd == lastCwdTruth, key != lastProjectKey else {
+                projectKeyLock.unlock()
+                return
+            }
+            lastProjectKey = key
+            projectKeyLock.unlock()
+            enqueueControl([.projectKey(key)])
+        }
+        if let projectKeyResolveExecutorOverride {
+            projectKeyResolveExecutorOverride(resolve)
+        } else {
+            metadataQueue.async(execute: resolve)
+        }
     }
 
     /// The prompt-edge cwd read: the test seam when set, else the real ``HostMetadataProbe``
@@ -1697,11 +1810,37 @@ final class MuxChannelSession: @unchecked Sendable {
     /// failure — unknown verb / confinement rejection / missing cwd / query-nil — to a status byte +
     /// empty payload), so the client's ``MetadataRequestRegistry`` never hangs waiting. Orders against
     /// nothing (like a ping / blockOutput) — deliberately NO `flushPendingResize`.
+    ///
+    /// In-flight work is BOUNDED per session (``maxMetadataInFlight``): past the cap the request is
+    /// answered at once with the standard `.error` status instead of being enqueued — a request
+    /// flood on the unwindowed control channel must not grow `metadataQueue` (or fork subprocesses)
+    /// without limit. Each admitted work item releases its slot on completion (defer).
     private func serveMetadata(requestID: UInt32, verb: UInt8, payload: Data) {
+        // Finding 4 (2026-07-11) — bounded admission: the control sub-channel is deliberately
+        // unwindowed, so a hostile/buggy peer streaming back-to-back tiny metadataRequest frames
+        // would otherwise queue unbounded closures (each retaining its payload + self) and fork
+        // git/lsof without limit. At/over the cap, do NOT enqueue work — reply IMMEDIATELY with
+        // the builder's standard `.error` status + empty payload (the exact shape any failed verb
+        // replies with), so the "ALWAYS replies, the client never hangs" contract holds.
+        metadataInFlightLock.lock()
+        guard metadataInFlight < Self.maxMetadataInFlight else {
+            metadataInFlightLock.unlock()
+            enqueueControl([.metadataResponse(
+                requestID: requestID, status: MetadataStatus.error.rawValue, payload: Data(),
+            )])
+            return
+        }
+        metadataInFlight += 1
+        metadataInFlightLock.unlock()
         let masterFD = pty.masterFD
         let shellPID = pty.pid
         metadataQueue.async { [weak self] in
             guard let self else { return }
+            defer {
+                metadataInFlightLock.lock()
+                metadataInFlight -= 1
+                metadataInFlightLock.unlock()
+            }
             // E10 WI-7: the side-effecting path verbs (openPath = 9 / revealPath = 10) actuate on the
             // HOST's own Finder / Launch Services via `HostPathActionPerformer` and reply with an
             // empty-payload status. They are handled HERE — BEFORE, and never reach, the read-only
@@ -1948,6 +2087,21 @@ final class MuxChannelSession: @unchecked Sendable {
     func takeControlBatchForTesting() -> [WireMessage]? { takeControlBatch() }
     static var maxControlOutQueuedForTesting: Int { maxControlOutQueued }
 
+    /// Race seam (2026-07-11 finding 1) — invoked by ``rebindRelay(data:control:onExit:)``
+    /// immediately after the restarted output drain has been created and its detached-backlog
+    /// kick delivered (see the call site). `nil` in production; tests use it to pin that the
+    /// control wake continuation/sender are rebuilt BEFORE the output drain can run.
+    var onOutputDrainRestartedForTesting: (() -> Void)?
+
+    /// Whether the control sender's wake continuation is currently installed (finding 1). Read
+    /// under `controlOutLock` — the same lock `enqueueControl` reads it under, so this answers
+    /// exactly "would an enqueue right now be woken?".
+    var hasControlWakeContinuationForTesting: Bool {
+        controlOutLock.lock()
+        defer { controlOutLock.unlock() }
+        return controlWakeContinuation != nil
+    }
+
     /// E17 / ES-E17-4 echo seams — drive the pure echo fold and the reattach re-establishment with an
     /// INJECTED `echoOn` (no PTY probe), so the edge-trigger dedupe AND the reattach re-emit are provable
     /// headlessly via ``takeControlBatchForTesting()``. ``reestablishEchoOnReattachForTesting`` exercises the
@@ -1965,13 +2119,41 @@ final class MuxChannelSession: @unchecked Sendable {
 
     func reestablishActivityOnReattachForTesting() { reestablishActivityOnReattach() }
 
-    /// Exercises the type-34 change-edge derivation (``deriveProjectKeyMessages(from:)``) directly —
-    /// the live emission rides the out-FIFO (not the control queue), so the returned array is the
-    /// only headless way to pin WHAT a chunk's sniffed batch emits (and that an unchanged cwd/key
-    /// emits nothing). The latches it writes are the same ones the reattach re-assert reads.
-    func deriveProjectKeyMessagesForTesting(from sniffed: [WireMessage]) -> [WireMessage] {
-        deriveProjectKeyMessages(from: sniffed)
+    /// Exercises the type-34 change-edge derivation (``deriveProjectKey(from:)``) directly — the
+    /// exact code `ingestPTYChunk` runs over each chunk's sniffed batch. The sync part (warm-up
+    /// gate, cwd scan, probe preference, `lastCwdTruth` latch) runs inline; the resolver walk runs
+    /// via ``projectKeyResolveExecutorOverride`` (tests inject run-inline for deterministic
+    /// emission, or a deferred executor to pin that a slow resolve never blocks ingest) and its
+    /// emission lands on the control queue — read it with ``takeControlBatchForTesting()``. The
+    /// latches it writes are the same ones the reattach re-assert reads.
+    func deriveProjectKeyForTesting(from sniffed: [WireMessage]) {
+        deriveProjectKey(from: sniffed)
     }
+
+    /// E4 / finding 4 — drive the real ``serveMetadata(requestID:verb:payload:)`` glue (the exact
+    /// call both control loops make on an inbound `.metadataRequest`) WITHOUT a running relay, so
+    /// the always-replies + bounded-in-flight contracts are provable headlessly via
+    /// ``takeControlBatchForTesting()``.
+    func serveMetadataForTesting(requestID: UInt32, verb: UInt8, payload: Data) {
+        serveMetadata(requestID: requestID, verb: verb, payload: payload)
+    }
+
+    /// Finding 4 — the bounded-admission cap + live in-flight count, so the flood test can pin
+    /// "at most `cap` work items queued" and "every slot released when its work item finishes".
+    static var maxMetadataInFlightForTesting: Int { maxMetadataInFlight }
+    var metadataInFlightForTesting: Int {
+        metadataInFlightLock.lock()
+        defer { metadataInFlightLock.unlock() }
+        return metadataInFlight
+    }
+
+    /// Finding 4 — suspend/resume the serial `metadataQueue` so a flood test can hold admitted
+    /// work items in-flight deterministically (never spawn/park real probe subprocesses — the
+    /// flood uses an unknown verb, which the pure builder answers without a syscall). Tests MUST
+    /// balance every suspend with exactly one resume before the session is released (a suspended
+    /// dispatch queue traps on dealloc).
+    func suspendMetadataQueueForTesting() { metadataQueue.suspend() }
+    func resumeMetadataQueueForTesting() { metadataQueue.resume() }
 
     /// WB1 — drive the real `feedBlocks` glue (segmenter tap → enqueueControl) WITHOUT a PTY/read
     /// loop, so the type-28 emission + the byte-identical-when-off contract are provable headlessly.

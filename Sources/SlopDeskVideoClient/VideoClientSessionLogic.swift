@@ -88,6 +88,13 @@ public struct VideoClientStateMachine: Sendable {
         /// which rebuilds the WHOLE pipeline (fresh lane + hello + renderer/pacer/decoder) — the
         /// reconnect-wedge fix. Distinct from a LOCAL ``stop()`` (pane closed), which must NOT rebuild.
         case sessionEndedByHost
+        /// The host REFUSED this session (`helloAck(accepted: false)` — version mismatch, or the
+        /// requested window is gone: the mux mint-failure refusal). TERMINAL and NON-RETRYING —
+        /// deliberately distinct from ``sessionEndedByHost``, whose pipeline handler REBUILDS and
+        /// re-hellos: rebuilding on a refusal would re-send the same doomed hello forever (the
+        /// mint-failure retry wedge, one layer up). The GUI layer tears the pane down and falls
+        /// back to the picker/error state instead.
+        case sessionRejectedByHost
     }
 
     /// `start()` was called: send the hello, move to `.connecting`.
@@ -113,8 +120,14 @@ public struct VideoClientStateMachine: Sendable {
                 return []
             }
             guard accepted else {
+                // TERMINAL REFUSAL (window gone on the host — the mux mint-failure refusal — or a
+                // version mismatch). Surface `.sessionRejectedByHost` so the pane tears down and
+                // falls back to the picker; the `.connecting` guard above makes a duplicate refusal
+                // (UDP re-delivery / a re-refused retried hello) inert. Deliberately NOT
+                // `.sessionEndedByHost`: that path REBUILDS + re-hellos, which would re-send the
+                // same doomed request forever.
                 state = .rejected
-                return []
+                return [.sessionRejectedByHost]
             }
             self.streamID = streamID
             captureSize = VideoSize(width: Double(cw), height: Double(ch))

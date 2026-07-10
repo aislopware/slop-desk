@@ -57,7 +57,7 @@ final class VideoClientStateMachineTests: XCTestCase {
         )
     }
 
-    func testRejectedHelloAckGoesToRejectedNoPipeline() {
+    func testRejectedHelloAckGoesToRejectedAndSurfacesTerminalEffect() {
         var sm = makeSM()
         _ = sm.start()
         let reject = VideoControlMessage.helloAck(
@@ -71,7 +71,33 @@ final class VideoClientStateMachineTests: XCTestCase {
         let effects = sm.handleControl(reject)
         XCTAssertEqual(sm.state, .rejected)
         XCTAssertFalse(sm.mediaFlowing)
-        XCTAssertTrue(effects.isEmpty)
+        // FINDING B: `.rejected` used to be a DEAD END — zero effects, so nothing up the stack ever
+        // learned; retry correctly stopped but the pane froze on a black surface forever. The
+        // transition must surface `.sessionRejectedByHost` — a TERMINAL effect DISTINCT from
+        // `.sessionEndedByHost` (whose pipeline handler auto-rebuilds and re-hellos: a rejection
+        // entering that loop would re-send the same doomed hello forever). No decode pipeline was
+        // ever started, so no `.stopDecodePipeline` rides along.
+        XCTAssertEqual(effects, [.sessionRejectedByHost])
+    }
+
+    func testDuplicateRejectedAckAfterRejectionIsInert() {
+        // UDP can deliver the refusal more than once (and the host re-refuses each retried hello
+        // that raced the first refusal) — only the FIRST rejection may surface the terminal effect,
+        // or the pane model would be told to fall back repeatedly.
+        var sm = makeSM()
+        _ = sm.start()
+        let reject = VideoControlMessage.helloAck(
+            accepted: false,
+            streamID: 0,
+            captureWidth: 0,
+            captureHeight: 0,
+            windowBoundsCG: VideoRect(x: 0, y: 0, width: 0, height: 0),
+            fullRange: false,
+        )
+        _ = sm.handleControl(reject)
+        XCTAssertEqual(sm.state, .rejected)
+        XCTAssertTrue(sm.handleControl(reject).isEmpty, "a duplicate refusal emits nothing")
+        XCTAssertEqual(sm.state, .rejected)
     }
 
     func testDuplicateAckWhileStreamingIsIgnored() {

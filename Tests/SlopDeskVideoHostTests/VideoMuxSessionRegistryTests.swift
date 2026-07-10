@@ -88,27 +88,64 @@ final class VideoMuxSessionRegistryTests: XCTestCase {
         var all: [Data] { lock.withLock { data } }
     }
 
-    /// Lock-protected UInt32 recorder for the `@Sendable` forgetLane closure.
-    private final class IDRecorder: @unchecked Sendable {
-        private let lock = NSLock()
-        private var ids: [UInt32] = []
-        func append(_ id: UInt32) { lock.withLock { ids.append(id) } }
-        var all: [UInt32] { lock.withLock { ids } }
+    /// One ordered lane-lifecycle event a failing mint produces — REFUSAL must precede FORGET
+    /// (after `forgetLane` the transport has dropped the bootstrap hello's reply-flow stamp, so a
+    /// later send has no flow to ride).
+    private enum LaneEvent: Equatable {
+        case refusal(UInt32, Data)
+        case forgot(UInt32)
     }
 
-    func testMintFailureForgetsLane() async {
-        // When the mint factory THROWS (window gone / malformed hello), `dispatch` must call
-        // forgetLane(channelID) so the shared transport drops the flow it remembered for the
-        // bootstrap hello — otherwise that channelMediaConn/channelCursorConn entry leaks (the lane
-        // is never admitted, so no retire/bye ever cleans it). Regression guard for that MEDIUM.
+    /// Lock-protected ORDERED recorder shared by the `@Sendable` sendControl + forgetLane closures.
+    private final class LaneEventRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var events: [LaneEvent] = []
+        func append(_ e: LaneEvent) { lock.withLock { events.append(e) } }
+        var all: [LaneEvent] { lock.withLock { events } }
+    }
+
+    func testMintFailureSendsOneTerminalRefusalThenForgetsLane() async {
+        // FINDING A (mux mint failure was a SILENT drop): when the mint factory THROWS (window gone
+        // between sessions / malformed hello), the old catch only cleaned up host-side — the client
+        // got NOTHING back, so its FSM sat `.connecting` and resendHello() re-drove the same doomed
+        // mint every ≤5 s forever (black pane; the stall scrim never arms because `streaming` is
+        // false). `dispatch` must answer the arrival flow with a TERMINAL refusal — the EXISTING
+        // `helloAck(accepted: false)` message, no new wire format — exactly once, BEFORE
+        // forgetLane(channelID) drops the reply-flow stamp the bootstrap hello left (send-after-
+        // forget has no flow to ride). forgetLane still runs so the transport's
+        // channelMediaConn/channelCursorConn entries do not leak.
         let table = VideoMuxSinkTable()
-        let forgotten = IDRecorder()
-        let registry = VideoMuxSessionRegistry(sinkTable: table, forgetLane: { forgotten.append($0) }) { _, _ in
+        let events = LaneEventRecorder()
+        let registry = VideoMuxSessionRegistry(
+            sinkTable: table,
+            forgetLane: { events.append(.forgot($0)) },
+            sendControl: { id, data in events.append(.refusal(id, data)) },
+        ) { _, _ in
             throw MintNotExpected() // simulate the window-gone / malformed-hello mint failure
         }
         await registry.dispatch(channelID: 9, channel: .control, data: hello(windowID: 404))
-        XCTAssertEqual(forgotten.all, [9], "a failed mint must forget the lane so its flow does not leak")
-        // The lane is left clean (not half-minted): a fresh hello re-mints (reconnect path).
+
+        let refusals = events.all.compactMap { event -> Data? in
+            guard case let .refusal(id, payload) = event else { return nil }
+            XCTAssertEqual(id, 9, "the refusal answers the failing lane, not a sibling")
+            return payload
+        }
+        XCTAssertEqual(refusals.count, 1, "exactly ONE refusal datagram reaches the client flow")
+        guard let payload = refusals.first,
+              let message = try? VideoControlMessage.decode(payload),
+              case let .helloAck(accepted, streamID, _, _, _, _) = message
+        else {
+            XCTFail("the refusal must decode as an existing-wire helloAck, got \(refusals)")
+            return
+        }
+        XCTAssertFalse(accepted, "the refusal is TERMINAL: helloAck(accepted: false)")
+        XCTAssertEqual(streamID, 0, "a refused hello negotiates nothing")
+        XCTAssertEqual(
+            events.all, [.refusal(9, payload), .forgot(9)],
+            "refusal FIRST (while the reply flow is still stamped), forget-lane AFTER — and both exactly once",
+        )
+        // The lane is left clean (not half-minted): a fresh hello re-mints normally once the
+        // window is back (reconnect path).
         let redo = await registry.decide(channelID: 9, channel: .control, data: hello(windowID: 404))
         XCTAssertEqual(redo, .mint(channelID: 9))
     }

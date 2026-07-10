@@ -127,6 +127,13 @@ public struct RemotePaneContext {
     /// host silent past the stall threshold (pane overlays "Reconnecting…"), `false` ⇒ traffic resumed.
     /// Informational view→model push (never reaches the host), so NOT read-only-gated. `nil` ⇒ none.
     public var onStreamStallChanged: ((_ stalled: Bool) -> Void)?
+    /// TERMINAL REFUSAL: the live video view PUSHES this once after the host REJECTED the session
+    /// (`helloAck(accepted: false)` — the window is gone on the host / version mismatch, incl. the mux
+    /// mint-failure refusal). The pipeline has already torn down WITHOUT the bye path's auto-rebuild
+    /// (re-helloing the same doomed request forever); the pane model should leave its live surface and
+    /// fall back to the picker with an error (``RemoteWindowModel/noteSessionRejected()``).
+    /// Informational view→model push (never reaches the host), so NOT read-only-gated. `nil` ⇒ none.
+    public var onSessionRejected: (() -> Void)?
 
     public init(
         isActive: Bool = true,
@@ -142,6 +149,7 @@ public struct RemotePaneContext {
         onStreamCadenceChanged: ((_ fps: Int) -> Void)? = nil,
         onStreamBitrateChanged: ((_ kbps: Int) -> Void)? = nil,
         onStreamStallChanged: ((_ stalled: Bool) -> Void)? = nil,
+        onSessionRejected: (() -> Void)? = nil,
     ) {
         self.isActive = isActive
         self.inputEnabled = inputEnabled
@@ -156,6 +164,7 @@ public struct RemotePaneContext {
         self.onStreamCadenceChanged = onStreamCadenceChanged
         self.onStreamBitrateChanged = onStreamBitrateChanged
         self.onStreamStallChanged = onStreamStallChanged
+        self.onSessionRejected = onSessionRejected
     }
 
     /// The standalone default (no canvas around it): always active, INPUT-ENABLED, no-op callbacks — for
@@ -187,6 +196,7 @@ public struct RemotePaneContext {
         onStreamCadence: @escaping (_ fps: Int) -> Void = { _ in },
         onStreamBitrate: @escaping (_ kbps: Int) -> Void = { _ in },
         onStreamStall: @escaping (_ stalled: Bool) -> Void = { _ in },
+        onSessionRejected: @escaping () -> Void = {},
     ) -> Self {
         Self(
             isActive: isActive,
@@ -215,6 +225,9 @@ public struct RemotePaneContext {
             // STALL SCRIM: informational (never reaches the host) — stays live regardless of read-only, so
             // a locked pane still shows "Reconnecting…" when its host goes dark.
             onStreamStallChanged: onStreamStall,
+            // TERMINAL REFUSAL: informational (never reaches the host) — stays live regardless of
+            // read-only, so a locked pane still falls back to the picker when the host says no.
+            onSessionRejected: onSessionRejected,
         )
     }
 }
