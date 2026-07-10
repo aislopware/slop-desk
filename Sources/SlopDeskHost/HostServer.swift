@@ -152,9 +152,12 @@ public final class HostServer: @unchecked Sendable {
     /// every handler reads a single immutable Bool.
     public let detachEnabled: Bool
 
-    /// S3 — the TTL (seconds) for a detached session before the shell is killed (env
-    /// `SLOPDESK_DETACH_TTL_SECS`, default 3600 = 1 hour). Resolved once at init.
-    public let detachTTL: Duration
+    /// S3 — how long a detached session's shell survives before being killed, or `nil` for
+    /// INDEFINITELY (the tmux/zellij semantics — a detached session lives until the daemon dies,
+    /// the client explicitly ends it, or the ``DetachedSessionStore`` 64-session cap evicts the
+    /// oldest). Env `SLOPDESK_DETACH_TTL_SECS`: unset or `0` = never (the default); a positive
+    /// value opts back into timed eviction. Resolved once at init.
+    public let detachTTL: Duration?
 
     /// E13 WI-3 (ES-E13-6) — the "Resume Session on Recovery" host policy (client toggle
     /// ``AgentPreferences/resumeOnRecovery`` → `SLOPDESK_AGENT_RESUME_ON_RECOVERY`, default-ON `!= "0"`).
@@ -210,10 +213,14 @@ public final class HostServer: @unchecked Sendable {
         let effectiveDetach = (detachEnabled ?? (envDetach != "0")) && effectiveResume
         self.detachEnabled = effectiveDetach
 
+        // TTL default = NEVER (tmux/zellij semantics): a detached shell — often a running
+        // agent the user deliberately left working — is never reaped on a timer. `0` (or any
+        // non-positive value) also means never; a positive value opts into timed eviction.
+        // The DetachedSessionStore session cap stays as the resource bound.
         let envTTL = ProcessInfo.processInfo.environment["SLOPDESK_DETACH_TTL_SECS"]
             .flatMap { Int($0) }
-        let ttlSecs = detachTTLSecs ?? envTTL ?? 3600
-        detachTTL = .seconds(ttlSecs)
+        let ttlSecs = detachTTLSecs ?? envTTL ?? 0
+        detachTTL = ttlSecs > 0 ? .seconds(ttlSecs) : nil
 
         detachedStore = effectiveDetach ? DetachedSessionStore() : nil
 

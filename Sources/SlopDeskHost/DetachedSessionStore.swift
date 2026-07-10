@@ -32,9 +32,11 @@ actor DetachedSessionStore {
     /// Stores `session` under its `sessionID` (the UUID the client sent in the `channelOpen`)
     /// and arms a TTL eviction task. If the store is full the OLDEST entry is evicted first.
     ///
-    /// - Parameter ttl: number of seconds before the shell is automatically killed (env
-    ///   `SLOPDESK_DETACH_TTL_SECS`, default 3600). Pass `.milliseconds(10)` in tests.
-    func insert(_ session: MuxChannelSession, key: MuxSessionKey, ttl: Duration) {
+    /// - Parameter ttl: time until the shell is automatically killed, or `nil` to keep the
+    ///   detached session ALIVE INDEFINITELY — the tmux/zellij semantics and the default (env
+    ///   `SLOPDESK_DETACH_TTL_SECS`, unset/`0` = never; the `maxSessions` cap is the resource
+    ///   bound). Pass `.milliseconds(10)` in tests.
+    func insert(_ session: MuxChannelSession, key: MuxSessionKey, ttl: Duration?) {
         let id = session.sessionID
 
         // Cap enforcement: evict the oldest entry when full.
@@ -42,9 +44,11 @@ actor DetachedSessionStore {
             evict(oldest.session.sessionID)
         }
 
-        let ttlTask = Task { [weak self] in
-            do { try await Task.sleep(for: ttl) } catch { return }
-            await self?.evict(id)
+        let ttlTask: Task<Void, Never>? = ttl.map { ttl in
+            Task { [weak self] in
+                do { try await Task.sleep(for: ttl) } catch { return }
+                await self?.evict(id)
+            }
         }
 
         store[id] = Entry(session: session, key: key, detachedAt: Date(), ttlTask: ttlTask)

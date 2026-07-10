@@ -42,6 +42,34 @@ final class DetachedSessionStoreTests: XCTestCase {
         XCTAssertNil(result, "unknown sessionID must return nil")
     }
 
+    // MARK: TTL = nil (tmux/zellij semantics — never reaped on a timer)
+
+    /// `ttl: nil` arms NO eviction task: the detached session outlives any timer horizon —
+    /// paired with ``testTTLEvictsSessionAfterExpiry`` (10 ms TTL evicts) the wait below would
+    /// have evicted a timed entry many times over.
+    func testNilTTLNeverEvicts() async throws {
+        let store = DetachedSessionStore()
+        let id = UUID()
+        let session = makeStubSession(sessionID: id)
+        await store.insert(session, key: MuxSessionKey(connectionID: UUID(), channelID: 1), ttl: nil)
+        try await Task.sleep(for: .milliseconds(150))
+        let found = await store.lookup(id)
+        XCTAssertNotNil(found, "a nil-TTL detached session must never be timer-evicted")
+    }
+
+    /// The HostServer default is NEVER (nil), and `0` also resolves to never — only a positive
+    /// `SLOPDESK_DETACH_TTL_SECS`/`detachTTLSecs` opts into timed eviction.
+    func testHostServerTTLResolution() {
+        XCTAssertNil(
+            HostServer(port: 0, detachTTLSecs: 0).detachTTL,
+            "0 must mean never, not instant eviction",
+        )
+        XCTAssertEqual(HostServer(port: 0, detachTTLSecs: 7).detachTTL, .seconds(7))
+        if ProcessInfo.processInfo.environment["SLOPDESK_DETACH_TTL_SECS"] == nil {
+            XCTAssertNil(HostServer(port: 0).detachTTL, "the default is tmux semantics: never")
+        }
+    }
+
     // MARK: TTL eviction
 
     func testTTLEvictsSessionAfterExpiry() async throws {
