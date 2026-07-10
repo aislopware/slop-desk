@@ -1636,6 +1636,10 @@ final class MuxChannelSession: @unchecked Sendable {
     ///   (tab-completion menus, autosuggestions, per-keystroke redraws) to the committed OSC-133 command
     ///   line — the fresh terminal then re-renders a clean transcript instead of raw editing artifacts.
     ///   Set `"0"` to replay the raw scrollback bytes (the pre-distiller behaviour).
+    /// - `SLOPDESK_SCROLLBACK_STRIP_QUERIES` — default-ON (`env != "0"`). When ON, a
+    ///   ``TerminalQueryStripper`` pass removes terminal queries / echoed responses / stale color
+    ///   state from the replayed history, so the client terminal never re-answers a prior life's
+    ///   DA/XTVERSION/OSC-color probes into the shell's stdin (the reattach "garbage input" bug).
     static func makeReplayBuffer() -> ReplayBuffer {
         let env = ProcessInfo.processInfo.environment
         let persist = env["SLOPDESK_SCROLLBACK_PERSIST"] != "0"
@@ -1647,10 +1651,12 @@ final class MuxChannelSession: @unchecked Sendable {
             } else {
                 ReplayBuffer.defaultScrollbackBytes
             }
-        let distill = env["SLOPDESK_SCROLLBACK_DISTILL"] != "0"
-        let distiller: (@Sendable (Data) -> Data)? =
-            distill ? { @Sendable in ScrollbackDistiller.distill($0) } : nil
-        return ReplayBuffer(scrollbackBytes: scrollbackCap, scrollbackDistiller: distiller)
+        // Distill + query-strip composition — shared with the disk journal's restore so both
+        // replay paths stay behaviour-identical (see ``ScrollbackReplayTransform``).
+        return ReplayBuffer(
+            scrollbackBytes: scrollbackCap,
+            scrollbackDistiller: ScrollbackReplayTransform.make(environment: env),
+        )
     }
 
     // MARK: - Test seams (replay-backpressure wiring, R5 rank 2)

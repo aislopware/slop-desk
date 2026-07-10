@@ -103,10 +103,11 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
                 ReplayBuffer.defaultScrollbackBytes
             }
         guard cap > 0 else { return nil }
-        let distill = env["SLOPDESK_SCROLLBACK_DISTILL"] != "0"
-        let distiller: (@Sendable (Data) -> Data)? =
-            distill ? { @Sendable in ScrollbackDistiller.distill($0) } : nil
-        return ScrollbackJournalStore(directory: dir, byteCap: cap, distiller: distiller)
+        // Same distill + query-strip pipeline as the in-memory ring's cold replay.
+        return ScrollbackJournalStore(
+            directory: dir, byteCap: cap,
+            distiller: ScrollbackReplayTransform.make(environment: env),
+        )
     }
 
     // MARK: Journal handles
