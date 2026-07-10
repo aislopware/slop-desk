@@ -264,6 +264,15 @@ public actor SlopDeskClient {
     private var ackPending = false
     private var closed = false
     private var paused = false
+    /// Set when the remote child `.exit`s — TERMINAL for this client instance, like `closed`. The
+    /// wake stream (`outputWakeups`) is created once in init and permanently `finish()`ed on
+    /// `.exit`; its single consumer returns and is never restarted. Any later `connect()` on the
+    /// SAME client would therefore hand a fresh host shell to a consumer-less inbox:
+    /// `takeOutputBatch` never runs, no window credit is re-granted, and every reconnect strands up
+    /// to one mux window of bytes forever. So `connect()` refuses, `resume()` no-ops, the post-exit
+    /// stream end surfaces no `.disconnected`, and `ReconnectManager` gates on ``isExited`` beside
+    /// `isPaused`/`isClosed`. A respawn is an explicit re-dial, which builds a NEW client.
+    private var childExited = false
 
     /// Monotonic connect-attempt counter. Each ``connect(...)`` captures its value at entry; if a
     /// NEWER connect starts during this one's `await transport.connect(...)` suspension (the actor is
@@ -360,6 +369,7 @@ public actor SlopDeskClient {
         handshakeTimeout: Duration = .seconds(10),
     ) async throws {
         guard !closed else { throw ClientError.invalidState("connect after close") }
+        guard !childExited else { throw ClientError.invalidState("connect after child exit") }
         self.host = host
         self.port = port
 
@@ -532,6 +542,9 @@ public actor SlopDeskClient {
         case let .output(seq, bytes):
             await deliverOutput(seq: seq, bytes: bytes, wireBytes: message.wireByteCount)
         case let .exit(code):
+            // TERMINAL for this client (see `childExited`): the wake stream below cannot be
+            // re-armed, so no later connect may spawn a shell into the now consumer-less inbox.
+            childExited = true
             eventBroadcaster.yield(.exit(code: code))
             // The byte stream is over once the child exits. Finishing the wake stream ends
             // the consumer's wake loop; its final takeOutputBatch() drains any tail.
@@ -660,7 +673,11 @@ public actor SlopDeskClient {
         // tearing the old transport down to reconnect — in which case this end is
         // self-inflicted and a real `.disconnected` would queue a redundant reconnect).
         // ReconnectManager watches `events` / observes the thrown connect error.
-        guard !closed, !tearingDown else { return }
+        // `childExited`: the post-exit FIN is likewise an EXPECTED end — the `.exit` event already
+        // told the UI the session is over; a `.disconnected` here would flip the pane to a
+        // forever-"reconnecting" (and, before the ReconnectManager exit gate, launched a respawn
+        // campaign against a client whose output nothing can consume).
+        guard !closed, !tearingDown, !childExited else { return }
         let reason = if let error { String(describing: error) } else { "stream ended (FIN)" }
         eventBroadcaster.yield(.disconnected(reason: reason))
     }
@@ -785,7 +802,9 @@ public actor SlopDeskClient {
     /// App foregrounded: reconnect with the preserved `sessionID` + seq for a byte-exact
     /// resume. No-op if not paused / already closed.
     public func resume() async throws {
-        guard paused, !closed else { return }
+        // `childExited`: an exited pane must not come back on foreground — resume would spawn a
+        // fresh host shell into the finished wake stream's consumer-less inbox. No-op, like closed.
+        guard paused, !closed, !childExited else { return }
         paused = false
         guard let host, let port else { throw ClientError.invalidState("resume before first connect") }
         try await connect(host: host, port: port)
@@ -803,6 +822,12 @@ public actor SlopDeskClient {
     /// only on `isPaused` would pop the stale drop after close and run a doomed `connect`-after-close
     /// campaign. Gating on `isClosed` too closes that race.
     public var isClosed: Bool { closed }
+
+    /// True once the remote child has `.exit`ed — this client instance is permanently done (see
+    /// `childExited`). ``ReconnectManager`` consults this ALONGSIDE ``isPaused``/``isClosed``:
+    /// `.exit` sets neither of those, and the host's post-exit FIN would otherwise read as a real
+    /// drop and launch a reconnect campaign that respawns host shells into a consumer-less inbox.
+    public var isExited: Bool { childExited }
 
     /// Test-only: simulate a hard network loss — tear down the transport (cancelling the
     /// underlying NWConnections) WITHOUT sending a clean `bye`, exactly as an iOS TCP

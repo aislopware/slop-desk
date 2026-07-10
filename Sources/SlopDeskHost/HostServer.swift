@@ -396,14 +396,41 @@ public final class HostServer: @unchecked Sendable {
         hook(count)
     }
 
-    /// Unregisters `key` from the live map iff it still points at `session` — the defensive
-    /// failed-rebind path in ``performReattach`` (registration itself now happens inside
-    /// ``spawnMuxChannel``'s claim critical section). NSLock is unavailable from the async
+    /// Recovers a claimed session whose `rebindRelay` refused — the failed-rebind path in
+    /// ``performReattach``: unregisters `key` from the live map iff it still points at
+    /// `session` (registration itself happens inside ``spawnMuxChannel``'s claim critical
+    /// section), then re-parks or reaps the session. NSLock is unavailable from the async
     /// ``performReattach`` directly — same discipline as ``markStopping()`` / ``drainMuxSessions()``.
-    private func unregisterReattachedSession(_ session: MuxChannelSession, key: MuxSessionKey) {
+    ///
+    /// Recovery contract (audit 2026-07-10 round 2 #0 — CRITICAL): the claim removed the
+    /// session from the store, so merely unregistering the map key (the old behavior) left a
+    /// live shell + running agent in NO map and NO store — unreachable by `stop()`, TTL,
+    /// `killPaneForControl`, and every future reconnect, forever (PTY + master fd + read-loop/
+    /// reaper threads leaked per wifi flap, and the replacement fresh shell double-wrote the
+    /// same sessionID journal). One `lock` snapshot decides — atomic w.r.t. `spawnMuxChannel`'s
+    /// claim critical section, so no reconnect can claim mid-decision:
+    /// - attached under another key → a later reconnect owns it; leave it alone.
+    /// - already back in the store → `handleLinkDown` won the race and re-parked it; done.
+    /// - child exited → reap it (nothing left to park).
+    /// - otherwise → re-park it (tmux semantics: the running agent survives, claimable again).
+    private func recoverFailedRebind(session: MuxChannelSession, key: MuxSessionKey) {
         lock.lock()
         if muxSessions[key] === session { muxSessions[key] = nil }
+        let attachedElsewhere = muxSessions.contains { $0.value === session }
+        let parked = detachedStore?.contains(session.sessionID) ?? false
         lock.unlock()
+        if attachedElsewhere || parked { return }
+        if session.isChildExited() {
+            // Mirror `removeMuxSession`'s dead-child discipline: fan a final `.none` for the
+            // prevent-sleep strict balance, then the non-blocking reap (idempotent).
+            fanAgentTeardown(session)
+            session.shutdownDetached()
+            return
+        }
+        // Re-park. Idempotent end-to-end even if `handleLinkDown` lands between the snapshot
+        // above and here: `detach()` no-ops past its exit-handler refresh on an already-detached
+        // session, and `DetachedSessionStore.insert` keeps an existing entry for the same session.
+        detachMuxSession(key: key, session: session)
     }
 
     /// Snapshot of the live connection ids carrying channels (diagnostics / tests).
@@ -575,13 +602,17 @@ public final class HostServer: @unchecked Sendable {
             onExit: { [weak self] _ in self?.removeMuxSession(key) },
         )
         guard rebound else {
-            // Defensive (the exclusive claim should make this unreachable): the session was not
-            // in the detached state — refuse the channel rather than ack a pane whose relay is
-            // wired elsewhere. Unregister OUR key only; the session itself is not ours to kill.
-            unregisterReattachedSession(session, key: key)
+            // The new link can die MID-REPLAY: `finishLink` parks the sub-channels and
+            // `handleLinkDown` re-parks the session while `replayTail` is still iterating, and
+            // `rebindRelay` then refuses the finished channels (it also refuses a session that
+            // is not detached — the double-attach loser). Refuse the channel AND recover the
+            // claimed session: re-park it (or reap an exited child) so it is never stranded
+            // outside both the live map and the store.
+            recoverFailedRebind(session: session, key: key)
             onLog?(
                 "mux channel \(open.channelID) (conn \(connectionID)): refused — "
-                    + "session \(open.sessionID) was claimed but not rebindable (not detached)",
+                    + "session \(open.sessionID) was claimed but not rebindable "
+                    + "(link died mid-reattach or not detached); session recovered",
             )
             Task { await connection.sendOpenAck(open.channelID, accepted: false) }
             return
@@ -1139,6 +1170,48 @@ public final class HostServer: @unchecked Sendable {
     /// Errors thrown by the agent-control spawn path.
     public enum ControlError: Error, Sendable {
         case serverStopping
+    }
+
+    // MARK: - Test seams (reattach-orphan recovery — audit 2026-07-10 round 2 #0)
+
+    // These drive the REAL private detach/reattach state machine (`detachMuxSession`,
+    // `handleLinkDown`, `recoverFailedRebind`, the store, and the live map) headlessly —
+    // no NWListener, no connection, no spawned shell (hang-safety). `performReattach`
+    // itself needs a live `MuxNWConnection` for its ack, so tests reproduce its exact step
+    // sequence through these seams instead. Reached via `@testable import`; never used in
+    // production.
+
+    /// The detached-session store (testing only; `nil` when detach is disabled).
+    var detachedStoreForTesting: DetachedSessionStore? { detachedStore }
+
+    /// Registers `session` under `key` in the live map — the state `spawnMuxChannel`'s claim
+    /// critical section leaves behind for `performReattach` (testing only).
+    func registerMuxSessionForTesting(_ session: MuxChannelSession, key: MuxSessionKey) {
+        lock.lock()
+        muxSessions[key] = session
+        lock.unlock()
+    }
+
+    /// The live-map entry for `key`, if any (testing only).
+    func muxSessionForTesting(key: MuxSessionKey) -> MuxChannelSession? {
+        lock.lock()
+        defer { lock.unlock() }
+        return muxSessions[key]
+    }
+
+    /// Drives the REAL `detachMuxSession` — the handleLinkDown park path (testing only).
+    func detachMuxSessionForTesting(key: MuxSessionKey, session: MuxChannelSession) {
+        detachMuxSession(key: key, session: session)
+    }
+
+    /// Drives the REAL `handleLinkDown` — the whole-link-drop detach sweep (testing only).
+    func handleLinkDownForTesting(connectionID: UUID) {
+        handleLinkDown(connectionID: connectionID)
+    }
+
+    /// Drives the REAL failed-rebind recovery path `performReattach` takes (testing only).
+    func recoverFailedRebindForTesting(session: MuxChannelSession, key: MuxSessionKey) {
+        recoverFailedRebind(session: session, key: key)
     }
 }
 

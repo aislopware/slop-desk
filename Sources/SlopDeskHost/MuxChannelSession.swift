@@ -155,8 +155,11 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// The prior life's distilled transcript (fresh-spawn restore, `HostServer.spawnFreshShell`).
     /// Enqueued as the FIRST output frame(s) by ``startRelay()`` — before the read loop starts —
-    /// so it precedes every live shell byte. `nil`/empty = nothing to restore.
-    private let restoredScrollback: Data?
+    /// so it precedes every live shell byte. `nil`/empty = nothing to restore. RELEASED (nil'd)
+    /// by ``enqueueRestoredScrollback()`` once handed to the out-FIFO: a stored session-lifetime
+    /// copy pinned up to the journal cap of bytes per restored pane. Guarded by `fifoLock`
+    /// (written once post-init; the test seam reads it cross-thread).
+    private var restoredScrollback: Data?
 
     private let taskLock = NSLock()
     private var replay: ReplayBuffer
@@ -704,11 +707,21 @@ final class MuxChannelSession: @unchecked Sendable {
     /// `session.shutdownDetached()`.
     func detach(onDetachedExit: @escaping @Sendable (UUID) -> Void) {
         taskLock.lock()
+        let alreadyDetached = isDetached
         isDetached = true
         // Rewire onExit (C2): if the child exits while we are in the store, fire the
         // detached-exit handler instead of whatever the previous connection wired.
         let id = sessionID
         onExit = { _ in onDetachedExit(id) }
+        // Idempotence (audit 2026-07-10 round 2 #0): a second detach on an already-detached
+        // session — the failed-rebind re-park racing handleLinkDown's own detach — must be a
+        // no-op past the exit-handler refresh above. The relay tasks/continuations are already
+        // torn down, the offline gate engaged, and the queue bound already re-sized; re-running
+        // the teardown would only churn state another thread may be inspecting.
+        if alreadyDetached {
+            taskLock.unlock()
+            return
+        }
         // Cancel the relay tasks (input/output/control/controlSend). The exit task is NOT
         // cancelled — it must keep watching the child so onExit fires if the shell dies.
         fifoLock.lock()
@@ -776,6 +789,18 @@ final class MuxChannelSession: @unchecked Sendable {
     ) -> Bool {
         taskLock.lock()
         guard isDetached else { taskLock.unlock()
+            return false
+        }
+        // Refuse DEAD sub-channels (audit 2026-07-10 round 2 #0): `MuxNWConnection.finishLink`
+        // finishes every sub-channel BEFORE firing `linkDownHandler`, so already-finished
+        // targets mean the NEW connection died while the reattach was still replaying — and
+        // `handleLinkDown` has re-parked (or is about to re-park) this session in the
+        // DetachedSessionStore. Rebinding would flip `isDetached = false` onto channels every
+        // send throws on, leaving a stored session that reads as "attached" — the next claim
+        // then fails its rebind and the session is orphaned (live agent unreachable by every
+        // map, store, TTL, and stop()). Refusing keeps the session detached and claimable;
+        // the caller re-parks/reaps via its failed-rebind path.
+        guard !newData.isFinished, !newControl.isFinished else { taskLock.unlock()
             return false
         }
         // Swap the sub-channels.
@@ -1244,7 +1269,14 @@ final class MuxChannelSession: @unchecked Sendable {
     /// simply starts the read loop paused until the drain ships it) and BEFORE the read loop
     /// starts, so it precedes every live shell byte.
     private func enqueueRestoredScrollback() {
-        guard let restored = restoredScrollback, !restored.isEmpty else { return }
+        // One-shot: TAKE the stored preamble so the FIFO copy becomes the only owner. Without
+        // the release, the stored property pinned a second up-to-journal-cap copy for the
+        // session's entire life — per restored pane.
+        fifoLock.lock()
+        let restored = restoredScrollback
+        restoredScrollback = nil
+        fifoLock.unlock()
+        guard let restored, !restored.isEmpty else { return }
         enqueueOutput(restored.count)
         fifoLock.lock()
         outFIFO.append(.chunk(bytes: restored, control: []))
@@ -1751,6 +1783,15 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Drives the REAL fresh-spawn restore enqueue (the exact call ``startRelay()`` makes)
     /// without needing a spawned PTY's master fd.
     func enqueueRestoredScrollbackForTesting() { enqueueRestoredScrollback() }
+
+    /// Whether the fresh-spawn restore preamble is still pinned on the session. Must read
+    /// `false` after ``enqueueRestoredScrollback()`` — the out-FIFO copy is the only owner
+    /// from then on; a session-lifetime stored copy pinned up to the journal cap per pane.
+    var hasRestoredScrollbackForTesting: Bool {
+        fifoLock.lock()
+        defer { fifoLock.unlock() }
+        return restoredScrollback != nil
+    }
 
     func enqueueChunkForTesting(bytes: Data, control: [WireMessage] = []) {
         enqueueOutput(bytes.count)

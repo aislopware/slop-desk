@@ -52,6 +52,9 @@ final class DetachedSessionStore: @unchecked Sendable {
 
     /// Stores `session` under its `sessionID` (the UUID the client sent in the `channelOpen`)
     /// and arms a TTL eviction task. If the store is full the OLDEST entry is evicted first.
+    /// IDEMPOTENT per session: re-inserting a session that is already stored keeps the
+    /// original entry (detachedAt + armed TTL) — the failed-rebind re-park and
+    /// `handleLinkDown` may both park the same session on a mid-reattach link drop.
     ///
     /// Synchronous: when this returns, a reconnect's ``claim(_:)`` is guaranteed to find the
     /// entry — the caller (`detachMuxSession`) must invoke it inline, never fire-and-forget.
@@ -67,7 +70,24 @@ final class DetachedSessionStore: @unchecked Sendable {
         // the tmux semantics — never silently kill a live detached session). The victim is
         // taken out under the lock; its kill (an async dispatch) runs after unlock.
         var overflowVictim: Entry?
+        var displaced: Entry?
         lock.lock()
+        if let existing = store[id] {
+            if existing.session === session {
+                // Idempotent re-park (audit r2 #0: the failed-rebind recovery racing
+                // handleLinkDown's own insert): the session is already stored — keep the
+                // ORIGINAL entry (its detachedAt and armed TTL task). The old dictionary
+                // overwrite leaked the first entry's TTL task un-cancelled, and that stale
+                // timer later evicted (killed) whatever live entry held this id.
+                lock.unlock()
+                return
+            }
+            // Same id, DIFFERENT session (defensive — the attached-elsewhere refusal should
+            // make this unreachable): newest wins like the plain overwrite before it, but the
+            // displaced entry's TTL task is cancelled (it would evict the NEW entry later) and
+            // its now-unreachable session is reaped instead of leaking.
+            displaced = store.removeValue(forKey: id)
+        }
         if let maxSessions, store.count >= maxSessions,
            let oldest = store.values.min(by: { $0.detachedAt < $1.detachedAt })
         {
@@ -84,6 +104,10 @@ final class DetachedSessionStore: @unchecked Sendable {
         store[id] = Entry(session: session, key: key, detachedAt: Date(), ttlTask: ttlTask)
         lock.unlock()
 
+        if let displaced {
+            displaced.ttlTask?.cancel()
+            displaced.session.shutdownDetached()
+        }
         if let overflowVictim {
             overflowVictim.ttlTask?.cancel()
             overflowVictim.session.shutdownDetached()
@@ -121,6 +145,18 @@ final class DetachedSessionStore: @unchecked Sendable {
             return nil
         }
         return entry.session
+    }
+
+    // MARK: Contains
+
+    /// Whether a detached entry exists for `sessionID`. Used by `HostServer`'s failed-rebind
+    /// recovery to decide whether a refused reattach must re-park the session (`handleLinkDown`
+    /// may already have). Safe while holding `HostServer.lock` (one-way nesting — see the class
+    /// doc).
+    func contains(_ sessionID: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return store[sessionID] != nil
     }
 
     // MARK: Remove (clean exit while in store)

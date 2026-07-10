@@ -65,7 +65,43 @@ public actor MuxSubChannel: MessageChannel {
     /// ``grantCredit(_:)`` replenishes the window or ``finish()`` tears the channel down.
     private var blockedSenders: [CheckedContinuation<Void, Never>] = []
     /// Set once the channel is finished so a sender that suspends after close is not stranded.
-    private var finished = false
+    /// Backed by the lock-guarded ``FinishedBox`` (not a plain actor var) so ``isFinished`` can
+    /// read it synchronously without an actor hop — the host's `rebindRelay` must refuse a
+    /// reattach onto sub-channels whose link already died, and it runs under an `NSLock` that
+    /// cannot suspend into this actor.
+    private var finished: Bool {
+        get { finishedBox.value }
+        set { finishedBox.value = newValue }
+    }
+
+    private let finishedBox = FinishedBox()
+
+    /// Nonisolated synchronous read of the channel's finished state. `MuxNWConnection.finishLink`
+    /// finishes every sub-channel BEFORE it fires `linkDownHandler`, so "finished" reliably means
+    /// the carrying link is dead — every future `send` throws. The host reads this from inside its
+    /// session lock to refuse rebinding a detached session onto a dead channel pair.
+    public nonisolated var isFinished: Bool { finishedBox.value }
+
+    /// Minimal lock-guarded Bool so the actor-owned `finished` flag has a nonisolated read
+    /// (`isFinished`). Writes stay actor-serialised; the lock only publishes them safely.
+    private final class FinishedBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var flag = false
+
+        var value: Bool {
+            get {
+                lock.lock()
+                defer { lock.unlock() }
+                return flag
+            }
+            set {
+                lock.lock()
+                flag = newValue
+                lock.unlock()
+            }
+        }
+    }
+
     /// Send-serialisation gate (S2 chunking). Only ONE multi-chunk send may emit at a time: an
     /// `actor` does NOT hold isolation across the credit-park suspension, so without this a second
     /// concurrent `send` could interleave its `.channelData` chunks mid-frame and corrupt the

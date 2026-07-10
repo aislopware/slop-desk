@@ -61,6 +61,17 @@ public protocol VideoClientTransport: Sendable {
     /// The conformer prepends the 1-byte channel tag (media socket).
     func send(_ datagram: Data, on channel: VideoChannel)
 
+    /// Whether the underlying send path is currently viable. `false` = the media connection is
+    /// on a dead path (`.waiting`) where Network.framework would buffer every datagram
+    /// in-process indefinitely — the session's PERIODIC senders (NetworkStats, keepalive) skip
+    /// their fire while it holds. Sparse best-effort sends (input, hello, recovery) stay
+    /// ungated. Defaulted `true` (fakes / transports without path tracking send as today).
+    var sendPathViable: Bool { get }
+
     /// Tears the flows down.
     func stop() async
+}
+
+public extension VideoClientTransport {
+    var sendPathViable: Bool { true }
 }

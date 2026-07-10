@@ -254,6 +254,13 @@ public actor SlopDeskVideoClientSession {
     private let decodeQueue = DispatchQueue(label: "slopdesk.client.decode", qos: .userInteractive)
     /// Carries a (single-owner, value-type) ``ReassembledFrame`` across the decode-queue hop Sendable-clean.
     private struct DecodeWork: @unchecked Sendable { let frame: ReassembledFrame }
+    /// Bounds the compressed frames in flight on ``decodeQueue`` (each queued block retains its full
+    /// AVCC `Data`): a wedged synchronous VT decode must not accumulate frames at wire rate. A frame
+    /// past the budget is dropped BEFORE dispatch through the drop-until-anchor gate + IDR request —
+    /// the same recovery a wire loss takes, so the stream re-syncs on the next admitted anchor.
+    private var decodeBudget = DecodeAdmissionBudget()
+    /// Debug counter for budget drops (mirrors ``dbgGateDrops``).
+    private var dbgBudgetDrops: UInt64 = 0
     /// The decode result hopped back to the actor for bookkeeping. The error is carried as a string so the
     /// hop stays `Sendable`; `.failed` has already run `invalidateSession()` on the decode queue.
     private enum DecodeOutcome { case success, awaitingKeyframe, failed(String) }
@@ -558,9 +565,17 @@ public actor SlopDeskVideoClientSession {
         // .high: this pump sits between a received fragment and decode-submit; a bare Task's
         // inherited priority can queue it behind pool work (same rationale as the host pumps).
         inboundConsumer = Task(priority: .high) { [weak self] in
+            var reportedDrops = 0
             for await _ in wakeups {
                 guard let self else { break }
                 let batch = queue.drainAll()
+                // Overload-shed observability: report the drop-counter delta (bounded — one
+                // report per drain that saw new drops, never per datagram).
+                let drops = queue.droppedTotals()
+                if drops.items > reportedDrops {
+                    reportedDrops = drops.items
+                    await noteInboundOverload(droppedItems: drops.items, droppedBytes: drops.bytes)
+                }
                 if batch.isEmpty { continue } // a coalesced wakeup an earlier drain already emptied
                 await receiveBatch(batch)
             }
@@ -603,6 +618,16 @@ public actor SlopDeskVideoClientSession {
         dbg("hello retry #\(attempt + 1) — still connecting (no ack yet)")
         for effect in effects { await apply(effect) }
         return true
+    }
+
+    /// Logs the inbound queue's cumulative overload-shed totals (byte-budget tail-drops = wire
+    /// loss, already absorbed by FEC / NACK / IDR recovery). Rate-bounded by the caller.
+    private func noteInboundOverload(droppedItems: Int, droppedBytes: Int) {
+        log
+            .error(
+                "inbound queue overload: shed \(droppedItems) datagram(s) / \(droppedBytes)B total (consumer starved)",
+            )
+        dbg("inbound queue overload: \(droppedItems) datagrams / \(droppedBytes)B shed so far")
     }
 
     /// Drains one inbound batch in arrival order on the actor.
@@ -655,7 +680,10 @@ public actor SlopDeskVideoClientSession {
     /// pre-stream / torn-down session sends nothing — the heartbeat only matters while a flow is
     /// live. On mux the lane transport stamps the channelID automatically (no surface change).
     private func sendKeepaliveIfStreaming() {
-        guard stateMachine.mediaFlowing else { return }
+        // DEAD-PATH GATE (wifi-flap hardening): while the media connection reports a non-viable
+        // path (`.waiting`), Network.framework buffers every send in-process indefinitely — skip
+        // the periodic fire (the FSM is untouched; the tick resumes the instant the path returns).
+        guard stateMachine.mediaFlowing, transport.sendPathViable else { return }
         transport.send(VideoControlMessage.keepalive.encode(), on: .control)
     }
 
@@ -703,7 +731,9 @@ public actor SlopDeskVideoClientSession {
     /// clock with zero cross-machine skew. The hold is clamped non-negative + saturating so a long
     /// pause cannot trap the `UInt32(Double)` initializer.
     private func sendNetworkStatsIfStreaming() {
-        guard stateMachine.mediaFlowing, Self.telemetryEnabled else { return }
+        // DEAD-PATH GATE: same rationale as ``sendKeepaliveIfStreaming()`` — a skipped report just
+        // widens the next report's window (the win* counters keep accumulating, saturating math).
+        guard stateMachine.mediaFlowing, Self.telemetryEnabled, transport.sendPathViable else { return }
         let now = FramePacer.currentHostTimeSeconds()
         let holdMs: UInt32 = latestHostSendTs == 0 ? 0 : UInt32(min(
             Double(UInt32.max),
@@ -1145,6 +1175,21 @@ public actor SlopDeskVideoClientSession {
         // The decoded NV12 size becomes the cursor-scale denominator. Cheap, actor-only.
         updateDecodedSize(from: frame)
         if Self.decodeOffQueue {
+            // PENDING-DECODE BUDGET (wifi-flap hardening): a wedged synchronous VT decode (the iOS
+            // background-suspend hang class) would otherwise let queued blocks — each retaining its
+            // full AVCC Data — accumulate at wire rate. Past the budget, drop BEFORE dispatch and
+            // take the awaiting-keyframe recovery path (gate arms → later deltas drop on the actor
+            // at the escalation cadence; the IDR request guarantees an anchor comes even on a
+            // static screen). Identical semantics to losing the frame on the wire.
+            guard decodeBudget.admit(bytes: frame.avcc.count) else {
+                dbgBudgetDrops &+= 1
+                dbg(
+                    "decode budget: frame #\(frame.frameID) dropped pre-dispatch (pending \(decodeBudget.pendingCount) frames / \(decodeBudget.pendingBytes)B, total \(dbgBudgetDrops)) — decode stage saturated",
+                )
+                decodeGate.noteAwaitingKeyframe()
+                requestIDR()
+                return
+            }
             // OFF-QUEUE: run the blocking VT decode on the serial decode queue so it never blocks
             // fragment ingest; hop only the (cheap, order-insensitive) bookkeeping back to the actor.
             // `submitDecodedFrame` fires INSIDE decode() in serial order → the pacer still receives
@@ -1164,7 +1209,7 @@ public actor SlopDeskVideoClientSession {
                     outcome = .failed(String(describing: error))
                 }
                 guard let self else { return }
-                Task { await self.finishDecode(work.frame, outcome) }
+                Task { await self.finishOffQueueDecode(work.frame, outcome) }
             }
             return
         }
@@ -1179,6 +1224,13 @@ public actor SlopDeskVideoClientSession {
             decoder.invalidateSession() // FIX #3 — rebuild on the next (even byte-identical) keyframe
             outcome = .failed(String(describing: error))
         }
+        finishDecode(frame, outcome)
+    }
+
+    /// Off-queue completion hop: releases the pending-decode budget FIRST (the block left the queue —
+    /// success or failure alike, only admitted frames reach here), then the shared bookkeeping.
+    private func finishOffQueueDecode(_ frame: ReassembledFrame, _ outcome: DecodeOutcome) {
+        decodeBudget.complete(bytes: frame.avcc.count)
         finishDecode(frame, outcome)
     }
 
@@ -1866,20 +1918,54 @@ public struct LTREscalationTracker: Sendable, Equatable {
 /// batch-drain consumer. Same discipline as the host's `InboundQueue` / `EncodedFrameQueue`: the
 /// transport's serial receive queue appends synchronously (arrival order carried end-to-end), the
 /// consumer drains the whole backlog per coalesced wakeup. `@unchecked Sendable` + NSLock.
+///
+/// BYTE-BUDGETED (wifi-flap hardening): the queue is fed at wire rate ahead of the session actor;
+/// if the consumer is starved (whole-process pressure) the backlog must stop growing at the
+/// budget. An append past it is TAIL-DROPPED (O(1), never a `removeFirst`) — refusing the newest
+/// datagram is exactly a wire loss of that datagram, which the reassembler / FEC / NACK / decode
+/// gate already handle; the next 120 Hz cursor update supersedes a shed one. Drops are counted
+/// for the debug surface.
 final class ClientInboundQueue: @unchecked Sendable {
     enum Item {
         case media(VideoChannel, Data)
         case cursor(Data)
+
+        var byteCount: Int {
+            switch self {
+            case let .media(_, data): data.count
+            case let .cursor(data): data.count
+            }
+        }
     }
 
     private let lock = NSLock()
     private var items: [Item] = []
+    /// Payload bytes currently queued (each slice pins its ≤ MTU-sized parent datagram, so
+    /// payload bytes track real retention within a small constant factor).
+    private var queuedBytes = 0
+    private var droppedItems = 0
+    private var droppedBytes = 0
+    /// Backlog byte budget. At streaming wire rate (~1–4 MB/s) the default 8 MiB is seconds of
+    /// backlog — the healthy consumer drains in ms, so only genuine starvation ever hits it.
+    private let byteBudget: Int
 
-    /// Append one datagram. Called on the transport's serial receive queue; O(1), never blocks.
+    init(byteBudget: Int = 8 << 20) {
+        self.byteBudget = byteBudget
+    }
+
+    /// Append one datagram, tail-dropping past the byte budget (= wire loss, never corruption).
+    /// Called on the transport's serial receive queue; O(1), never blocks.
     func append(_ item: Item) {
+        let size = item.byteCount
         lock.lock()
+        defer { lock.unlock() }
+        guard queuedBytes + size <= byteBudget else {
+            droppedItems += 1
+            droppedBytes += size
+            return
+        }
+        queuedBytes += size
         items.append(item)
-        lock.unlock()
     }
 
     /// Atomically take and clear the whole backlog (arrival order). An empty result means a
@@ -1889,7 +1975,15 @@ final class ClientInboundQueue: @unchecked Sendable {
         defer { lock.unlock() }
         let out = items
         items = []
+        queuedBytes = 0
         return out
+    }
+
+    /// Cumulative overload-shed counters (monotonic; the consumer reports deltas).
+    func droppedTotals() -> (items: Int, bytes: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        return (droppedItems, droppedBytes)
     }
 }
 #endif

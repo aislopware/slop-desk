@@ -37,17 +37,15 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
     private var mediaListener: NWListener?
     private var cursorListener: NWListener?
 
-    /// All accepted client flows (UDP "connections" the listener pins per source endpoint).
-    /// MANY clients share the listener, so every accepted flow is kept; demux is per-datagram by
-    /// channelID. Keyed by an opaque token so a failed flow removes only itself.
+    /// All accepted client flows + the per-channel reply stamps, in ONE pure, unit-tested table
+    /// (``MuxFlowTable``): MANY clients share the listener, so every accepted flow is kept; demux
+    /// is per-datagram by channelID; a cursor datagram replies on the SAME flow the client primed,
+    /// media replies pick the flow that last carried the lane. The table also owns the idle-flow /
+    /// stale-stamp reap decisions (UDP has no FIN — a silently-vanished peer never fails its
+    /// host-side flow, so without the reap every client flow rebuild leaked a media + cursor
+    /// NWConnection forever). Guarded by `lock`.
     private let lock = NSLock()
-    private var mediaConns: [ObjectIdentifier: NWConnection] = [:]
-    private var cursorConns: [ObjectIdentifier: NWConnection] = [:]
-    /// channelID → the cursor flow that primed it, so a per-channel cursor datagram replies on the
-    /// SAME flow the client opened (the host learns a cursor endpoint only from an inbound prime).
-    /// Media replies pick the flow that last carried the lane.
-    private var channelMediaConn: [UInt32: NWConnection] = [:]
-    private var channelCursorConn: [UInt32: NWConnection] = [:]
+    private var flows = MuxFlowTable<NWConnection>(idleTimeout: KeepaliveTiming.idleTimeout)
     /// The reconnect-generation-safe admit/retire/route table (PURE; unit-tested).
     private var muxRouter = VideoMuxRouter()
     /// Rate-limits the unbound-lane `bye` replies (reconnect-wedge fix; PURE, unit-tested).
@@ -100,8 +98,7 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
     public func retire(_ channelID: UInt32) {
         lock.withLock {
             muxRouter.retire(channelID)
-            channelMediaConn.removeValue(forKey: channelID)
-            channelCursorConn.removeValue(forKey: channelID)
+            flows.retireLane(channelID)
             // Forget the reaper record too (clean bye OR reaper-driven) so a reconnect under the
             // same channelID starts a FRESH record.
             idleReaper.forget(id: channelID)
@@ -144,7 +141,7 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
                 conn.cancel()
                 return
             }
-            mediaConns[ObjectIdentifier(conn)] = conn
+            flows.accept(conn, isMedia: true, now: Self.nowSeconds())
             lock.unlock()
             let live = Liveness()
             installResetHandler(on: conn, isMedia: true, live: live)
@@ -170,7 +167,7 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
                 conn.cancel()
                 return
             }
-            cursorConns[ObjectIdentifier(conn)] = conn
+            flows.accept(conn, isMedia: false, now: Self.nowSeconds())
             lock.unlock()
             let live = Liveness()
             installResetHandler(on: conn, isMedia: false, live: live)
@@ -216,25 +213,33 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
     /// re-admit) + drop the conn-table. The session stop is the only async hop; it carries no datagram
     /// so it cannot reorder input.
     private func runReaperTick() {
-        let due: [UInt32] = lock.withLock { idleReaper.reap(now: Self.nowSeconds()) }
-        guard !due.isEmpty else { return }
-        lock.withLock {
-            for channelID in due {
-                muxRouter.beginDrain(channelID) // hold the lane — a racing reconnect now `.dropDraining`s
-                idleReaper.forget(id: channelID) // no re-schedule on the next tick
+        let now = Self.nowSeconds()
+        let due: [UInt32] = lock.withLock { idleReaper.reap(now: now) }
+        if !due.isEmpty {
+            lock.withLock {
+                for channelID in due {
+                    muxRouter.beginDrain(channelID) // hold the lane — a racing reconnect now `.dropDraining`s
+                    idleReaper.forget(id: channelID) // no re-schedule on the next tick
+                }
             }
-        }
-        for channelID in due {
-            Task { [weak self] in
-                await self?.onReapLane?(channelID) // registry.retireAndStop — unregister sink + stop session
-                guard let self else { return }
-                lock.withLock {
-                    self.muxRouter.endDrain(channelID) // draining → retired (a hello may now re-admit)
-                    self.channelMediaConn.removeValue(forKey: channelID)
-                    self.channelCursorConn.removeValue(forKey: channelID)
+            for channelID in due {
+                Task { [weak self] in
+                    await self?.onReapLane?(channelID) // registry.retireAndStop — unregister sink + stop session
+                    guard let self else { return }
+                    lock.withLock {
+                        self.muxRouter.endDrain(channelID) // draining → retired (a hello may now re-admit)
+                        self.flows.retireLane(channelID)
+                    }
                 }
             }
         }
+        // FLOW reap (audit B-videohost-flow-reap): sweep never-admitted reply stamps, then cancel
+        // idle UNREFERENCED flows (a vanished/rebuilt UDP peer never fails its host-side flow — the
+        // lane reaper above frees the session, but the pinned NWConnection pair leaked forever).
+        // The decisions are pure (``MuxFlowTable/reap(now:isAdmitted:)``); cancel() runs outside
+        // the lock, and each cancel re-enters `flowDidReset` via `.cancelled` idempotently.
+        let dead: [NWConnection] = lock.withLock { flows.reap(now: now) { muxRouter.isAdmitted($0) } }
+        for conn in dead { conn.cancel() }
     }
 
     // CONCURRENCY-HOST-1 mux analogue: a client that vanishes WITHOUT a bye (crash, or last-lane close
@@ -252,15 +257,7 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
             case .failed,
                  .cancelled:
                 live.markDead()
-                lock.lock()
-                if isMedia {
-                    mediaConns.removeValue(forKey: ObjectIdentifier(conn))
-                    channelMediaConn = channelMediaConn.filter { $0.value !== conn }
-                } else {
-                    cursorConns.removeValue(forKey: ObjectIdentifier(conn))
-                    channelCursorConn = channelCursorConn.filter { $0.value !== conn }
-                }
-                lock.unlock()
+                lock.withLock { flows.flowDidReset(conn, isMedia: isMedia) }
             default:
                 break
             }
@@ -340,16 +337,21 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
         // slice never outlives the dispatch — nothing pins the parent datagram buffer.
         let payload = rest[(rest.startIndex + 1)...]
         let outcome: MediaRouteOutcome = lock.withLock {
+            let now = Self.nowSeconds()
+            // Any decoded inbound datagram proves the 5-tuple is alive — refresh the FLOW's
+            // last-inbound stamp regardless of the routing decision (a wedged-but-talking client's
+            // flow must not be reaped out from under the `bye` replies that un-wedge it).
+            flows.noteInbound(conn, now: now)
             let decision = muxRouter.route(channelID: channelID, channel: channel, bytesCount: data.count)
             switch decision {
             case .route:
-                channelMediaConn[channelID] = conn
+                flows.stampMediaReply(channelID: channelID, flow: conn)
                 // Stamp liveness for the ADMITTED lane only (inline, no actor hop, under the route lock).
                 // Keepalive peek: a keepalive is a control datagram whose type byte == 6; `rest` is
                 // [tag][type][...], so the type byte is at startIndex+1. Symmetric with the single-pin
                 // transport's stamp.
                 let isKA = channel == .control && rest.count >= 2 && rest[rest.startIndex + 1] == 6
-                idleReaper.noteInbound(id: channelID, now: Self.nowSeconds(), isKeepalive: isKA)
+                idleReaper.noteInbound(id: channelID, now: now, isKeepalive: isKA)
                 return .deliver
             case .rejectUnadmitted,
                  .dropRetired:
@@ -370,7 +372,7 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
                     payloadIsListRequest: isList,
                 ) {
                 case .bootstrapDeliver:
-                    channelMediaConn[channelID] = conn
+                    flows.stampMediaBootstrap(channelID: channelID, flow: conn, now: now)
                     return .deliver
                 case .dropNoStamp:
                     // RECONNECT-WEDGE FIX (2026-07-03): a dropped datagram proving the sender still
@@ -380,7 +382,7 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
                     // of freezing forever. NO flow bookkeeping is stamped — the reply rides `conn`
                     // directly, so FIX #6's no-leak property holds.
                     if UnboundLaneByeDecider.warrantsBye(channel: channel, payload: payload),
-                       unboundByeLimiter.admit(channelID: channelID, now: Self.nowSeconds())
+                       unboundByeLimiter.admit(channelID: channelID, now: now)
                     {
                         return .dropAndBye
                     }
@@ -455,18 +457,25 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
             if let data, !data.isEmpty {
                 // The cursor flow's leading prime + any client→host bytes are channelID-prefixed so the
                 // host can bind the lane's reply flow. Inbound cursor payloads aren't delivered to the
-                // session (host→client only), but the host MUST learn the lane's flow. Remember it
-                // unconditionally — the prime can race AHEAD of the media hello, so the lane may not be
-                // admitted yet; the first cursor SEND after admission uses this flow.
+                // session (host→client only), but the host MUST learn the lane's flow. Remember it even
+                // for a not-yet-admitted lane — the prime can race AHEAD of the media hello; the first
+                // cursor SEND after admission uses this flow. The `isAdmitted` bit makes an unadmitted
+                // stamp TTL-tracked so a NEVER-admitted id (a discovery poll whose media-socket request
+                // was lost on a lossy link) is swept by the reaper instead of leaking forever — the
+                // cursor-side mirror of routeMedia's FIX #6 admission gate.
+                // Deliberately NOT stamped for the per-LANE reaper (`idleReaper`): keepalives ride the
+                // MEDIA socket's control channel, so the media `.route` stamp is the sole authoritative
+                // lane liveness; stamping never-admitted ids there would grow its flow map unboundedly.
                 if let (channelID, _) = try? VideoMuxHeaderCodec.decode(data) {
                     lock.withLock {
-                        self.channelCursorConn[channelID] = conn
-                        // Deliberately NOT stamped for the reaper: keepalives ride the MEDIA socket's
-                        // control channel, so the media `.route` stamp is the sole authoritative liveness.
-                        // The cursor prime races ahead of the media hello for not-yet-admitted lanes, so
-                        // stamping here would grow the decider's flow map for never-admitted channelIDs
-                        // (reviewer finding) — and is redundant for a live client, whose media keepalives
-                        // always refresh `lastInbound`.
+                        let now = Self.nowSeconds()
+                        self.flows.noteInbound(conn, now: now)
+                        self.flows.stampCursorReply(
+                            channelID: channelID,
+                            flow: conn,
+                            now: now,
+                            isAdmitted: self.muxRouter.isAdmitted(channelID),
+                        )
                     }
                 }
             }
@@ -497,7 +506,9 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
     /// drops (the client has not opened it) — never blocks, never errors out the shared flow.
     public func send(_ datagram: Data, on channel: VideoChannel, channelID: UInt32) {
         let isMedia = Self.mediaSocket(for: channel)
-        let conn: NWConnection? = lock.withLock { isMedia ? channelMediaConn[channelID] : channelCursorConn[channelID] }
+        let conn: NWConnection? = lock.withLock {
+            isMedia ? flows.mediaReplyFlow(for: channelID) : flows.cursorReplyFlow(for: channelID)
+        }
         guard let conn else { return }
         // Single-allocation framing (copy-elimination, 2026-07-10): the payload bytes are appended
         // exactly once — byte-identical to the old inner `[tag][payload]` + prefix-encode two-step
@@ -522,7 +533,7 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
         // R14 lock-domain fix: read+nil the listener refs UNDER the lock (their write moved under the lock
         // in start()), then cancel OUTSIDE the lock. cancel() is idempotent and the refs are read nowhere
         // else, so this is behavior-preserving — it just closes the lock-free read/nil hole.
-        let (media, cursor): (NWListener?, NWListener?) = lock.withLock {
+        let (media, cursor, conns): (NWListener?, NWListener?, [NWConnection]) = lock.withLock {
             let m = mediaListener, c = cursorListener
             mediaListener = nil
             cursorListener = nil
@@ -530,14 +541,9 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
             // Cancel the reaper timer BEFORE tearing down flows so a tick cannot fire mid-teardown.
             reaperTimer?.cancel()
             reaperTimer = nil
-            for conn in mediaConns.values { conn.cancel() }
-            for conn in cursorConns.values { conn.cancel() }
-            mediaConns.removeAll()
-            cursorConns.removeAll()
-            channelMediaConn.removeAll()
-            channelCursorConn.removeAll()
-            return (m, c)
+            return (m, c, flows.removeAll())
         }
+        for conn in conns { conn.cancel() }
         media?.cancel()
         cursor?.cancel()
     }

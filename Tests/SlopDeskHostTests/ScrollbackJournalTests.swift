@@ -480,4 +480,27 @@ final class MuxChannelSessionScrollbackJournalTests: XCTestCase {
             "the preamble must NOT be re-journaled — journaling it would double the transcript every restart",
         )
     }
+
+    /// The stored restore preamble must be RELEASED once enqueued: the enqueue copies it into
+    /// the out-FIFO (the drain owns it from there), and keeping the stored property pinned a
+    /// second up-to-journal-cap copy for the session's entire life — per pane.
+    func testRestoredScrollbackIsReleasedAfterEnqueue() {
+        let preamble = Data("OLD-LIFE\n".utf8)
+        let session = makeSession(restored: preamble)
+        session.installGateForTesting(PausableQueueGate(capacity: 1_000_000) { _ in })
+        XCTAssertTrue(session.hasRestoredScrollbackForTesting, "precondition: the preamble is held pre-enqueue")
+
+        session.enqueueRestoredScrollbackForTesting()
+        XCTAssertFalse(
+            session.hasRestoredScrollbackForTesting,
+            "the stored preamble must be nil'd after the FIFO enqueue — the session-lifetime "
+                + "copy pinned up to the journal cap of memory per restored pane",
+        )
+        // The FIFO copy is intact — the drain would ship exactly the preamble bytes.
+        guard case let .output(bytes, _, _)? = session.takeMergedFrame() else {
+            XCTFail("the enqueued preamble must be poppable off the FIFO")
+            return
+        }
+        XCTAssertEqual(bytes, preamble)
+    }
 }

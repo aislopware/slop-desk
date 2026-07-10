@@ -455,6 +455,11 @@ public final class PTYProcess: @unchecked Sendable {
         }
     }
 
+    /// Test seam: records an exit code exactly as the reaper thread would (``completeExit``),
+    /// so hang-safe unit tests can drive child-exited branches (`isChildExited() == true`)
+    /// on an UNSPAWNED process — no real child is ever forked or killed in a unit test.
+    func completeExitForTesting(code: Int32) { completeExit(code: code) }
+
     private func completeExit(code: Int32) {
         exitLock.lock()
         guard !reaped else { exitLock.unlock()

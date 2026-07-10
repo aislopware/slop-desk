@@ -423,15 +423,24 @@ Task {
     //    read(2) on stdin is a blocking syscall (raw mode: VMIN=1) — we must not block a
     //    cooperative-pool thread. The interactive disconnect key (Ctrl-]) is detected here.
     //
-    //    Ordering: each read chunk is YIELDED into a single ordered AsyncStream that one
-    //    consumer task drains sequentially (awaiting `sendInput` one at a time). A `Task`
-    //    per chunk would NOT preserve order — independent tasks hop onto the actor in
-    //    scheduler order, not creation order — which would scramble keystrokes. (Same
-    //    lesson as the WF-3 host output relay.)
+    //    Ordering: each read chunk goes into a single ordered hand-off that one consumer
+    //    task drains sequentially (awaiting `sendInput` one at a time). A `Task` per chunk
+    //    would NOT preserve order — independent tasks hop onto the actor in scheduler
+    //    order, not creation order — which would scramble keystrokes. (Same lesson as the
+    //    WF-3 host output relay.)
+    //
+    //    Backpressure: the hand-off is a BoundedInputPipe, not an unbounded AsyncStream.
+    //    When `sendInput` parks in the mux credit window (half-open link during a wifi
+    //    flap), a piped producer (`yes | slopdesk-client …`) would otherwise fill the
+    //    stream at pipe speed — multi-GB in seconds. Once the pipe holds 1 MiB the reader
+    //    thread blocks in `enqueue`, which stops draining stdin and stalls the upstream
+    //    writer in write(2) — the POSIX backpressure contract. No byte is ever dropped.
+    //    The disconnect key stays responsive: interactive typing never approaches the cap,
+    //    so the reader thread is never parked in interactive mode.
     let (stdinDone, stdinDoneCont) = AsyncStream.makeStream(of: Void.self)
-    let (inputChunks, inputChunksCont) = AsyncStream.makeStream(of: Data.self)
+    let inputPipe = BoundedInputPipe(capacityBytes: 1 << 20)
     let inputSenderTask = Task {
-        for await chunk in inputChunks {
+        while let chunk = await inputPipe.next() {
             try? await client.sendInput(chunk)
         }
     }
@@ -441,7 +450,7 @@ Task {
             // If a shutdown began (finish() closed STDIN), return without issuing another
             // read so we never touch the fd while the tty is being restored.
             if shutdown.shuttingDown != 0 {
-                inputChunksCont.finish()
+                inputPipe.finish()
                 stdinDoneCont.yield(())
                 stdinDoneCont.finish()
                 return
@@ -452,17 +461,19 @@ Task {
                 if interactive, let idx = slice.firstIndex(of: kDisconnectKey) {
                     // Send everything before the disconnect key, then stop.
                     let before = Data(slice[slice.startIndex..<idx])
-                    if !before.isEmpty { inputChunksCont.yield(before) }
-                    inputChunksCont.finish()
+                    if !before.isEmpty { inputPipe.enqueue(before) }
+                    inputPipe.finish()
                     stdinDoneCont.yield(())
                     stdinDoneCont.finish()
                     return
                 }
-                inputChunksCont.yield(slice)
+                // Blocks at the 1 MiB cap while the consumer is stalled (credit-starved
+                // link) — deliberate: stop reading stdin instead of buffering it.
+                inputPipe.enqueue(slice)
             } else if n == 0 {
                 // EOF on stdin (pipe closed): stop relaying input. In non-interactive
                 // mode this is the normal end of the piped script.
-                inputChunksCont.finish()
+                inputPipe.finish()
                 stdinDoneCont.yield(())
                 stdinDoneCont.finish()
                 return
@@ -471,7 +482,7 @@ Task {
                 // closed by finish()), the read will fail with EBADF/EINTR — re-check the
                 // flag and return rather than spinning or re-reading a closed/cooked fd.
                 if errno == EINTR, shutdown.shuttingDown == 0 { continue }
-                inputChunksCont.finish()
+                inputPipe.finish()
                 stdinDoneCont.yield(())
                 stdinDoneCont.finish()
                 return
@@ -513,6 +524,9 @@ Task {
     supervisor.cancel() // R16 CLI-1: stop the reconnect supervisor BEFORE close() so it can't dial during exit.
     eventsTask.cancel()
     resizeTask.cancel()
+    // Unpark a reader thread blocked at the pipe's capacity bound (piped mode ending while
+    // the link is credit-starved) so it can observe shutdown instead of sitting in enqueue.
+    inputPipe.finish()
     inputSenderTask.cancel()
     await client.close()
 

@@ -41,6 +41,12 @@ public final class NWVideoMuxClientFlow: @unchecked Sendable {
     private var dbgLastVideoRxAt: Double = 0
     private var mediaConn: NWConnection?
     private var cursorConn: NWConnection?
+    /// Send-path viability of the MEDIA connection (the only socket the client sends on), fed by
+    /// its `stateUpdateHandler` through ``UDPSendPathPolicy``. Optimistic `true` at bring-up so
+    /// pre-`.ready` sends (hello) behave exactly as before; `.waiting` (dead path — sends would
+    /// buffer in-process indefinitely) revokes it, `.ready` restores it. Consumed by the session's
+    /// PERIODIC senders only (stats/keepalive) — never a state-machine input.
+    private var mediaSendViable = true
     /// channelID → (onMedia, onCursor) for the lane. A datagram is delivered only to its lane.
     private var mediaSinks: [UInt32: @Sendable (VideoChannel, Data) -> Void] = [:]
     private var cursorSinks: [UInt32: @Sendable (Data) -> Void] = [:]
@@ -79,14 +85,18 @@ public final class NWVideoMuxClientFlow: @unchecked Sendable {
         let cursor = NWConnection(to: cursorEndpoint, using: params)
         mediaConn = media
         cursorConn = cursor
+        mediaSendViable = true
         lock.unlock()
 
         let mediaLive = Liveness()
         let cursorLive = Liveness()
-        media.stateUpdateHandler = { state in
+        media.stateUpdateHandler = { [weak self] state in
             switch state { case .failed,
                  .cancelled: mediaLive.markDead()
             default: break }
+            if let self, let viable = UDPSendPathPolicy.viability(after: Self.sendPathStateKind(state)) {
+                lock.withLock { self.mediaSendViable = viable }
+            }
         }
         cursor.stateUpdateHandler = { state in
             switch state { case .failed,
@@ -139,6 +149,27 @@ public final class NWVideoMuxClientFlow: @unchecked Sendable {
     public var laneCount: Int { lock.withLock { mediaSinks.count } }
 
     // MARK: - Send (client → host, per channelID)
+
+    /// Whether the media send path is currently viable (see ``UDPSendPathPolicy``). The session's
+    /// periodic senders (20 Hz NetworkStats, 5 s keepalive) skip their fire while this is false so
+    /// a dead path (`.waiting`) cannot accumulate datagrams in-process; sparse best-effort sends
+    /// (input, hello, recovery) are not gated.
+    public var isSendPathViable: Bool { lock.withLock { mediaSendViable } }
+
+    /// Maps `NWConnection.State` onto the pure policy's state kind (the policy itself has no
+    /// Network dependency so it stays headlessly testable). An unknown future state carries no
+    /// verdict (viability unchanged) — conservative both ways.
+    private static func sendPathStateKind(_ state: NWConnection.State) -> UDPSendPathPolicy.StateKind {
+        switch state {
+        case .setup: .setup
+        case .preparing: .preparing
+        case .ready: .ready
+        case .waiting: .waiting
+        case .failed: .failed
+        case .cancelled: .cancelled
+        @unknown default: .setup
+        }
+    }
 
     public func send(_ datagram: Data, on channel: VideoChannel, channelID: UInt32) {
         // The client sends on the media socket only (control + input). A stray cursor send is

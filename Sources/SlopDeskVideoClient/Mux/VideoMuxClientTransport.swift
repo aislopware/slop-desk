@@ -65,6 +65,13 @@ public final class VideoMuxClientTransport: VideoClientTransport, @unchecked Sen
         f.send(datagram, on: channel, channelID: id)
     }
 
+    /// The shared flow's media-path viability (dead-path gate for the session's periodic
+    /// senders). Optimistic `true` before `start` / after `stop` — sends are no-ops then anyway.
+    public var sendPathViable: Bool {
+        let f: VideoMuxClientFlowing? = stateLock.withLock { flow }
+        return f?.isSendPathViable ?? true
+    }
+
     public func stop() async {
         let id: UInt32? = stateLock.withLock {
             let captured = channelID

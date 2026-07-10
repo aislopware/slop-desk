@@ -21,6 +21,14 @@ public protocol VideoMuxClientFlowing: AnyObject, Sendable {
     func send(_ datagram: Data, on channel: VideoChannel, channelID: UInt32)
     /// Tears the shared connections down (only when the LAST lane releases).
     func close()
+    /// Whether the media send path is currently viable (dead-path gate for the session's
+    /// PERIODIC senders — see ``UDPSendPathPolicy``). Defaulted `true` for conformers
+    /// without path tracking (in-memory fakes keep today's always-send behaviour).
+    var isSendPathViable: Bool { get }
+}
+
+public extension VideoMuxClientFlowing {
+    var isSendPathViable: Bool { true }
 }
 
 #if canImport(Network)

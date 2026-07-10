@@ -192,6 +192,60 @@ final class DetachedSessionStoreTests: XCTestCase {
         XCTAssertTrue(stored.contains(id3), "newly-inserted session must be present")
     }
 
+    // MARK: Duplicate insert (failed-rebind re-park racing handleLinkDown — audit r2 #0)
+
+    /// Re-inserting the SAME session under its id must be idempotent: the ORIGINAL entry (and
+    /// its TTL arming) is kept. The old dictionary overwrite left the first entry's TTL task
+    /// running un-cancelled — a stale timer that later evicted (killed) whatever live entry
+    /// held the id. Here the kept entry has ttl nil (never), so surviving the second insert's
+    /// 10 ms TTL proves no stale timer owns the id.
+    func testDuplicateInsertOfSameSessionKeepsOriginalEntry() async throws {
+        let store = DetachedSessionStore()
+        let id = UUID()
+        let session = makeStubSession(sessionID: id)
+        store.insert(session, key: MuxSessionKey(connectionID: UUID(), channelID: 1), ttl: nil)
+        // The racing re-park (identical session, whatever ttl the config resolves to).
+        store.insert(session, key: MuxSessionKey(connectionID: UUID(), channelID: 2), ttl: .milliseconds(10))
+        XCTAssertEqual(store.countForTesting, 1, "one sessionID = one entry, ever")
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertTrue(
+            store.storedIDsForTesting.contains(id),
+            "the original never-evict entry must be kept — a duplicate insert must not arm a "
+                + "second TTL (nor leak the first) that kills the parked session",
+        )
+        XCTAssertIdentical(store.claim(id), session)
+    }
+
+    /// Defensive: a DIFFERENT session under the same id (should be unreachable — the
+    /// attached-elsewhere refusal guards it) replaces the old entry, and the displaced old
+    /// entry's TTL task is cancelled so it can never evict the NEW entry later.
+    func testDuplicateInsertOfDifferentSessionReplacesAndDisarmsOldTTL() async throws {
+        let store = DetachedSessionStore()
+        let id = UUID()
+        let old = makeStubSession(sessionID: id)
+        let new = makeStubSession(sessionID: id)
+        store.insert(old, key: MuxSessionKey(connectionID: UUID(), channelID: 1), ttl: .milliseconds(10))
+        store.insert(new, key: MuxSessionKey(connectionID: UUID(), channelID: 2), ttl: nil)
+        XCTAssertEqual(store.countForTesting, 1)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertTrue(
+            store.storedIDsForTesting.contains(id),
+            "the displaced entry's armed TTL must be cancelled — it must not evict the new entry",
+        )
+        XCTAssertIdentical(store.claim(id), new, "newest session wins the id")
+    }
+
+    /// `contains` — the failed-rebind recovery's "already re-parked?" probe.
+    func testContainsReflectsStoreState() {
+        let store = DetachedSessionStore()
+        let id = UUID()
+        XCTAssertFalse(store.contains(id))
+        store.insert(makeStubSession(sessionID: id), key: MuxSessionKey(connectionID: UUID(), channelID: 1), ttl: nil)
+        XCTAssertTrue(store.contains(id))
+        _ = store.claim(id)
+        XCTAssertFalse(store.contains(id), "a claimed session is no longer in the store")
+    }
+
     // MARK: Remove (clean exit)
 
     func testRemoveCancelsEntryWithoutKill() {

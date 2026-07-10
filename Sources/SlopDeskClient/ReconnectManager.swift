@@ -132,11 +132,17 @@ public final class ReconnectManager: Sendable {
                 // this subscription ahead of the finish and be popped here AFTER the client is closed —
                 // gating on `isPaused` alone would then launch a doomed `connect`-after-close campaign.
                 // Check `isClosed` too so a closed (or paused) client never triggers a reconnect.
-                // (Two awaits, not `||` with an autoclosure: an actor-isolated read can't sit in the
+                // And `isExited`: a remote-child `.exit` sets neither flag, yet it permanently
+                // finishes the client's output wake stream — reconnecting the SAME client would
+                // respawn host shells whose output strands in a consumer-less inbox (a per-flap
+                // memory ratchet plus a shell-respawn loop). A post-exit pane needs an explicit
+                // re-dial, which builds a NEW client.
+                // (Awaits, not `||` with an autoclosure: an actor-isolated read can't sit in the
                 // short-circuit operand's nonisolated autoclosure.)
                 let paused = await client.isPaused
                 let closed = await client.isClosed
-                if paused || closed { continue }
+                let exited = await client.isExited
+                if paused || closed || exited { continue }
                 onLog?("reconnect: transport dropped (\(reason)) — retrying")
                 await Self.reconnectLoop(
                     client: client, host: host, port: port, backoff: backoff,
@@ -180,10 +186,15 @@ public final class ReconnectManager: Sendable {
             // e.g. the user closed the pane mid-reconnect). Either way every `connect` would throw
             // `invalidState("connect after close")`, so without this guard the loop burns the full
             // maxReconnectAttempts of doomed retries and fires a spurious `onGaveUp` against a dead client.
-            // (Two awaits, not `||`: an actor-isolated read can't sit in a short-circuit autoclosure.)
+            // `isExited`: the remote child exited — TERMINAL for this client (its wake stream is
+            // permanently finished; `connect` refuses), so a campaign would likewise burn doomed
+            // retries; and mid-campaign, a freshly-respawned shell that exits instantly must stop
+            // the loop rather than respawn another. (Awaits, not `||`: an actor-isolated read
+            // can't sit in a short-circuit autoclosure.)
             let paused = await client.isPaused
             let closed = await client.isClosed
-            if paused || closed { return }
+            let exited = await client.isExited
+            if paused || closed || exited { return }
             attempt += 1
             // Cap: stop after maxReconnectAttempts so a permanently-gone host does not
             // keep the pane stuck in "reconnecting" forever. Surface a log line so
