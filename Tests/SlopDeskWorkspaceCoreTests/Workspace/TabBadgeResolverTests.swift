@@ -43,11 +43,11 @@ final class TabBadgeResolverTests: XCTestCase {
         XCTAssertEqual(badge(completion: .failure), .error)
     }
 
-    /// A merely-busy shell with NO working agent and NO progress report ⇒ NO badge at all (2026-07-10:
-    /// running a command is the terminal's normal state — the always-on busy dot was noise). The quiet
-    /// `.commandRunning` marker is reserved for an explicit OSC 9;4 progress report.
-    func testBusyShellAloneShowsNoBadge() {
-        XCTAssertNil(badge(isBusy: true))
+    /// A merely-busy shell ⇒ the bare static busy dot (`.commandBusy`, no spinner); an explicit OSC 9;4
+    /// progress report ⇒ the spinner marker (`.commandRunning`), which outranks the busy dot (2026-07-10
+    /// round 3: the ring is earned by an explicit progress report).
+    func testBusyShellIsBareDotProgressIsSpinner() {
+        XCTAssertEqual(badge(isBusy: true), .commandBusy)
         XCTAssertEqual(badge(isBusy: true, progress: .indeterminate), .commandRunning)
     }
 
@@ -185,14 +185,14 @@ final class TabBadgeResolverTests: XCTestCase {
         XCTAssertEqual(badge(completion: .failure, foregroundProcess: "caffeinate"), .error)
     }
 
-    /// Running beats privilege + completed — for the LIVE signals (a working agent, an OSC 9;4 progress).
-    /// A merely-busy shell no longer counts as an active state (2026-07-10): a busy `sudo` shows its
-    /// shield, and a busy pane with a stale success shows the settled completion dot.
-    func testRunningWinsOverPrivilegeAndCompleted() {
+    /// The activity tiers beat privilege + completed: a working agent, an OSC 9;4 progress, and the plain
+    /// busy dot all rank above the shield/cup and a stale completion (a running `sudo …` shows activity,
+    /// not the privilege badge — Design #5).
+    func testActivityWinsOverPrivilegeAndCompleted() {
         XCTAssertEqual(badge(agent: .working, foregroundProcess: "caffeinate"), .running)
         XCTAssertEqual(badge(isBusy: true, foregroundProcess: "sudo", progress: .indeterminate), .commandRunning)
-        XCTAssertEqual(badge(isBusy: true, foregroundProcess: "sudo"), .sudo, "busy alone no longer masks the shield")
-        XCTAssertEqual(badge(completion: .success, isBusy: true), .finished, "busy alone no longer masks a completion")
+        XCTAssertEqual(badge(isBusy: true, foregroundProcess: "sudo"), .commandBusy)
+        XCTAssertEqual(badge(completion: .success, isBusy: true), .commandBusy)
     }
 
     /// Sudo beats caffeinate and completed — but ONLY when the shell is at rest.
@@ -207,11 +207,12 @@ final class TabBadgeResolverTests: XCTestCase {
         XCTAssertEqual(badge(agent: .done, foregroundProcess: "caffeinate"), .caffeinate)
     }
 
-    /// The privilege badges sit below the LIVE states (an OSC 9;4 progress still outranks the cup/shield),
-    /// but a merely-busy shell no longer suppresses them (2026-07-10: busy alone carries no badge).
-    func testPrivilegeBadgesSuppressedOnlyByLiveProgress() {
+    /// The privilege badges sit BELOW every activity tier: a busy shell with a `caffeinate`/`sudo`
+    /// foreground shows the busy dot (or the progress spinner), never collapsing to the cup/shield while
+    /// work is in flight.
+    func testPrivilegeBadgesSuppressedWhileBusy() {
         XCTAssertEqual(badge(isBusy: true, foregroundProcess: "caffeinate", progress: .indeterminate), .commandRunning)
-        XCTAssertEqual(badge(isBusy: true, foregroundProcess: "caffeinate"), .caffeinate)
-        XCTAssertEqual(badge(isBusy: true, foregroundProcess: "sudo"), .sudo)
+        XCTAssertEqual(badge(isBusy: true, foregroundProcess: "caffeinate"), .commandBusy)
+        XCTAssertEqual(badge(isBusy: true, foregroundProcess: "sudo"), .commandBusy)
     }
 }

@@ -81,13 +81,17 @@ struct SlatePingDot: View {
     }
 }
 
-/// The LIVE-dot indicator (the MERIDIAN L3 live-signal exception): a steady filled core dot with a plain
-/// arc ring SPINNING around it. The core is EXACTLY the static ``SlateStatusDot`` size — the ring is
-/// added OUTSIDE, so a state flipping between live and settled never changes the dot the eye is tracking.
-/// The ring is a uniform 300° stroke with BUTT caps and no gradient — no comet tail, no bright cap blob —
-/// a state ring, not an ornament. Two wearers: a WORKING agent (status amber) and an OSC 9;4 progress
-/// load (muted). Spin rides the WALL CLOCK (``TimelineView`` — a rail re-render can't reset it) and stays
-/// within `ringSize`. Pure SwiftUI; no video/capture (hang-safety #6).
+/// The LIVE-dot indicator (the MERIDIAN L3 live-signal exception): a steady filled core dot with an arc
+/// ring spinning around it. The core is EXACTLY the static ``SlateStatusDot`` size — the ring is added
+/// OUTSIDE, so a state flipping between live and settled never changes the dot the eye is tracking.
+///
+/// The ring is the classic indeterminate motion: the HEAD advances at constant speed while the arc's
+/// length breathes between short and long on an incommensurate period — so the TAIL chases and falls
+/// back, and the ring never looks like a static wheel (2026-07-10: a fixed-length arc read as
+/// monotonous). Uniform colour, no gradient (a faded tail's end cap read as a detached dot). Two
+/// wearers: a WORKING agent (status amber) and an OSC 9;4 progress load (muted). Both phases ride the
+/// WALL CLOCK (``TimelineView`` — a rail re-render can't reset them) and stay within `ringSize`. Pure
+/// SwiftUI; no video/capture (hang-safety #6).
 struct SlateOrbitDot: View {
     let color: Color
     /// The core dot — matches the static badge dot so live↔settled never resizes the dot itself.
@@ -95,8 +99,13 @@ struct SlateOrbitDot: View {
     /// The spinner ring's outer diameter (the ring orbits OUTSIDE the core; must fit the badge box).
     var ringSize: CGFloat = 14
     var lineWidth: CGFloat = 1.2
-    /// Seconds per full revolution.
-    private let period: Double = 1.1
+    /// Seconds per full head revolution.
+    private let spinPeriod: Double = 1.2
+    /// Seconds per grow→shrink breath. Deliberately incommensurate with `spinPeriod` so the two phases
+    /// drift against each other and the motion never settles into a visible repeat.
+    private let breathePeriod: Double = 1.7
+    /// The arc length's range, as fractions of the full circle.
+    private let minSweep = 0.18, maxSweep = 0.72
 
     var body: some View {
         ZStack {
@@ -104,15 +113,21 @@ struct SlateOrbitDot: View {
                 .fill(color)
                 .frame(width: dotSize, height: dotSize)
             TimelineView(.animation) { timeline in
-                // A continuous 0…360° sweep from the wall clock (separate `/` then `*` — no fused
-                // multiply-add).
-                let t = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: period)
-                let angle = t / period * 360
+                // Two wall-clock phases (separate `/` `*` `+` ops throughout — no fused multiply-add):
+                // the head sweeps 0…360° uniformly; the sweep length breathes on a cosine.
+                let now = timeline.date.timeIntervalSinceReferenceDate
+                let spinT = now.truncatingRemainder(dividingBy: spinPeriod)
+                let head = spinT / spinPeriod * 360
+                let breatheT = now.truncatingRemainder(dividingBy: breathePeriod)
+                let breathe = (1 - cos(breatheT / breathePeriod * 2 * .pi)) / 2 // 0…1…0
+                let sweep = minSweep + (maxSweep - minSweep) * breathe
+                // Anchor the HEAD to the uniform sweep (arc spans [head − sweep, head]): growing extends
+                // the tail backwards, shrinking reels it in — the tail chases, the head never stutters.
                 Circle()
-                    .trim(from: 0, to: 0.82)
-                    .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .butt))
+                    .trim(from: 0, to: sweep)
+                    .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                     .frame(width: ringSize - lineWidth, height: ringSize - lineWidth)
-                    .rotationEffect(.degrees(angle))
+                    .rotationEffect(.degrees(head - sweep * 360))
             }
         }
         .frame(width: ringSize, height: ringSize)

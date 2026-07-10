@@ -104,6 +104,7 @@ public enum ClientControlProtocol {
         switch kind {
         case .running: "running"
         case .commandRunning: "command-running"
+        case .commandBusy: "command-busy"
         case .completed: "completed"
         case .finished: "finished"
         case .error: "error"

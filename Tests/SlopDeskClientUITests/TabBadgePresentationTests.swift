@@ -48,6 +48,14 @@ final class TabBadgePresentationTests: XCTestCase {
         XCTAssertNil(symbolName(of: .commandRunning))
     }
 
+    /// `.commandBusy` (a plain busy shell) ⇒ the bare STATIC muted dot — no spinner (the ring is earned
+    /// by an explicit progress report / a working agent), no symbol.
+    func testCommandBusyIsBareStaticDot() {
+        XCTAssertTrue(isStaticDot(.commandBusy))
+        XCTAssertFalse(isCommandBusy(.commandBusy), "a plain busy shell never spins")
+        XCTAssertNil(symbolName(of: .commandBusy))
+    }
+
     /// The settled vocabulary is ALL static dots (2026-07-10 UI feedback: no character glyphs next to
     /// dots — the old checkmark/triangle/hand are gone): blocked/failed red, done-unread blue,
     /// clean-finish flash green. Tints are left to the snapshot (Color equality is provider-fragile);
@@ -72,7 +80,8 @@ final class TabBadgePresentationTests: XCTestCase {
     /// Every kind carries a non-empty, distinct AX/tooltip label so the icon-only badge is legible/testable.
     func testEveryKindHasADistinctNonEmptyLabel() {
         let kinds: [TabBadgeKind] = [
-            .running, .commandRunning, .completed, .finished, .error, .awaitingInput, .caffeinate, .sudo,
+            .running, .commandRunning, .commandBusy, .completed, .finished, .error, .awaitingInput,
+            .caffeinate, .sudo,
         ]
         let labels = kinds.map { StatusPresentation.tabBadgeLabel($0) }
         XCTAssertTrue(labels.allSatisfy { !$0.isEmpty }, "no blank badge labels")

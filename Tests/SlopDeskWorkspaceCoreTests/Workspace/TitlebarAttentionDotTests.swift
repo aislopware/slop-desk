@@ -35,6 +35,7 @@ final class TitlebarAttentionDotTests: XCTestCase {
         XCTAssertTrue(TabBadgeKind.finished.needsAttention)
         XCTAssertFalse(TabBadgeKind.running.needsAttention)
         XCTAssertFalse(TabBadgeKind.commandRunning.needsAttention)
+        XCTAssertFalse(TabBadgeKind.commandBusy.needsAttention)
         XCTAssertFalse(TabBadgeKind.sudo.needsAttention)
         XCTAssertFalse(TabBadgeKind.caffeinate.needsAttention)
     }

@@ -78,9 +78,11 @@ enum StatusPresentation {
         //
         // Agent WORKING — amber dot + spinner ring (live).
         case .running: .working(tint: Slate.Status.warn)
-        // An OSC 9;4 progress load — the muted dot + spinner ring (live, but not the agent). A plain busy
-        // shell no longer badges at all (the resolver stopped emitting it — silence is the resting state).
+        // An OSC 9;4 progress load — the muted dot + spinner ring (live, but not the agent).
         case .commandRunning: .commandBusy(tint: Slate.Text.secondary)
+        // A plain busy shell — the bare static muted dot, NO ring (the ring is earned by an explicit
+        // progress report / a working agent).
+        case .commandBusy: .dot(Slate.Text.secondary)
         // Completed — the brief green flash of a clean finish (settles to the blue unread dot).
         case .completed: .dot(Slate.Status.ok)
         // Finished — the persistent BLUE "unread output" dot (done, not yet seen).
@@ -98,7 +100,8 @@ enum StatusPresentation {
     static func tabBadgeLabel(_ kind: TabBadgeKind) -> String {
         switch kind {
         case .running: "Agent working"
-        case .commandRunning: "Running"
+        case .commandRunning: "Loading"
+        case .commandBusy: "Running"
         case .completed: "Completed"
         case .finished: "Finished"
         case .error: "Error"

@@ -379,6 +379,7 @@ private extension TabBadgeKind {
         case .completed,
              .finished: 2
         case .caffeinate,
+             .commandBusy,
              .commandRunning,
              .running,
              .sudo: 3

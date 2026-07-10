@@ -16,12 +16,15 @@ public enum TabBadgeKind: Equatable, Sendable {
     /// progress" (herdr's `Working` vs `Unknown` distinction).
     case running
     /// **Running (command)** — an active `OSC 9;4;1`/`3` PROGRESS report with NO agent working: a program
-    /// explicitly says "I'm loading". The QUIET, muted marker (secondary text colour + spinner ring, no
-    /// accent). A merely-BUSY shell (`isBusy` with no progress report) deliberately shows NOTHING — a
-    /// running command is the terminal's normal state, so silence is the resting badge (2026-07-10 UI
-    /// feedback: the always-on busy dot was noise). Ranks just below ``running`` and above the privilege
-    /// badges.
+    /// explicitly says "I'm loading". The QUIET, muted marker WITH the spinner ring (secondary text
+    /// colour, no accent) — the ring is earned by the explicit progress report. Ranks just below
+    /// ``running`` and above ``commandBusy``.
     case commandRunning
+    /// **Busy (command)** — a plain busy shell (`isBusy`, no OSC 9;4 report): a foreground command is
+    /// running, nothing more is known. The static muted dot, NO spinner (2026-07-10 round 3: a bare busy
+    /// dot yes, an always-spinning ring no — the ring is reserved for an explicit progress report / a
+    /// working agent). Ranks just below ``commandRunning`` and above the privilege badges.
+    case commandBusy
     /// **Completed** — the green checkmark. The brief success flash a command shows on a clean exit
     /// (`OSC 133;D` exit 0) before it settles to ``finished``. This resolver emits ``completed`` for a
     /// `.success` completion / an agent that just finished its turn ONLY while the caller reports the
@@ -60,6 +63,7 @@ public enum TabBadgeKind: Equatable, Sendable {
              .error,
              .finished: true
         case .caffeinate,
+             .commandBusy,
              .commandRunning,
              .running,
              .sudo: false
@@ -73,19 +77,18 @@ public enum TabBadgeKind: Equatable, Sendable {
 /// **Fixed precedence** (E6 plan Design #5, distilled from `progress-state.md` + `parallel-tasks.md`):
 ///
 /// ```
-/// awaitingInput  >  error  >  running(agent)  >  commandRunning  >  sudo  >  caffeinate  >  completed/finished  >  nil
+/// awaitingInput  >  error  >  running(agent)  >  commandRunning  >  commandBusy  >  sudo  >  caffeinate  >  completed/finished  >  nil
 /// ```
 ///
-/// A working AGENT (``running``) outranks a program's progress report (``commandRunning``) — if a pane is
-/// somehow both, the agent signal wins. A merely-busy shell (`isBusy`, no OSC 9;4 report) produces NO
-/// badge at all (2026-07-10: running a command is the terminal's normal state) — which also means a busy
-/// `sudo`/`caffeinate` session shows its privilege badge rather than an activity marker.
+/// A working AGENT (``running``) outranks a program's progress report (``commandRunning``), which
+/// outranks the plain busy dot (``commandBusy``) — if a pane is somehow several, the most-informative
+/// signal wins. The activity tiers sit above the privilege badges (a running `sudo …` shows activity, not
+/// the shield).
 ///
 /// Headless + deterministic: no SwiftUI, no clock, no I/O. The only inputs are the agent verdict, the
-/// stored completion badge, the busy bit (kept for source-compat; no longer badge-bearing), and the
-/// (untrusted) foreground-process string — which is classified by an **allow-set on its lowercased
-/// basename**, never `contains`, and defaults to "no privilege badge" for anything unknown / `nil`
-/// (validate-then-default; no force-unwrap).
+/// stored completion badge, the busy bit, and the (untrusted) foreground-process string — which is
+/// classified by an **allow-set on its lowercased basename**, never `contains`, and defaults to "no
+/// privilege badge" for anything unknown / `nil` (validate-then-default; no force-unwrap).
 public enum TabBadgeResolver {
     /// Whether a clean completion (`.success` exit / agent `.done`) is still showing its brief success
     /// FLASH or has SETTLED into the persistent unread marker. A pure, clock-free input the resolver
@@ -129,7 +132,7 @@ public enum TabBadgeResolver {
     public static func badge(
         agent: ClaudeStatus,
         completion: PaneCompletionBadge?,
-        isBusy _: Bool,
+        isBusy: Bool,
         foregroundProcess: String?,
         completionFreshness: CompletionFreshness = .settled,
         progress: PaneProgress? = nil,
@@ -143,14 +146,14 @@ public enum TabBadgeResolver {
         if completion == .failure { return .error }
         if let progress, case .error = progress { return .error }
 
-        // 3. Running — a WORKING agent gets the loud agent badge (``running``); an active OSC 9;4;1/3
-        // progress with no working agent gets the QUIET ``commandRunning`` marker. Agent wins if both. A
-        // merely-busy shell (`isBusy`, no progress report) shows NOTHING — running a command is the
-        // terminal's normal state (2026-07-10 UI feedback), so `isBusy` no longer produces a badge; it
-        // remains an input only for source-compat (and a future re-think). (A progress `.error` already
-        // returned at the error tier above, so `isRunning` here is exactly the "still going" states.)
+        // 3. Activity — a WORKING agent gets the loud agent badge (``running``); an active OSC 9;4;1/3
+        // progress gets the QUIET spinner marker (``commandRunning``); a merely-busy shell gets the bare
+        // static busy dot (``commandBusy`` — 2026-07-10 round 3: a quiet dot yes, a spinner only for an
+        // explicit progress report). Most-informative wins. (A progress `.error` already returned at the
+        // error tier above, so `isRunning` here is exactly the "still going" states.)
         if agent == .working { return .running }
         if let progress, progress.isRunning { return .commandRunning }
+        if isBusy { return .commandBusy }
 
         // 4 + 5. Privilege badges, only when the shell is at rest: sudo (shield) > caffeinate (coffee).
         if let privilege = privilegeBadge(forProcess: foregroundProcess) { return privilege }
