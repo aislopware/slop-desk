@@ -436,10 +436,15 @@ final class CommandBlockSegmenterTests: XCTestCase {
             cycle(prompt: "$ ", command: "echo one", output: "one\n", exit: 0)
                 + cycle(prompt: "$ ", command: "echo two", output: "two\n", exit: 0)
         let raw = bytes(stream)
-        let whole = CommandBlockSegmenter.segment(raw)
+        // PIN the clock: `durationMS` is C→D WALL-CLOCK time, so with the real clock a
+        // byte-at-a-time ingest legitimately measures a few ms where the whole-buffer pass
+        // measures 0 — a load-dependent flake, not a chunking difference. A frozen clock
+        // makes the comparison purely about chunk boundaries.
+        let frozen = Date(timeIntervalSinceReferenceDate: 1_000_000)
+        let whole = CommandBlockSegmenter.segment(raw, clock: { frozen })
 
         // Feed one byte at a time (bypasses any batching) — must produce identical blocks.
-        var seg = CommandBlockSegmenter()
+        var seg = CommandBlockSegmenter(clock: { frozen })
         var chunked: [CommandBlockSegmenter.CommandBlock] = []
         for byte in raw {
             chunked.append(contentsOf: seg.ingest([byte]))
@@ -449,7 +454,7 @@ final class CommandBlockSegmenterTests: XCTestCase {
 
         // Also split the marks themselves across a boundary (mid-OSC).
         let half = raw.count / 2
-        var seg2 = CommandBlockSegmenter()
+        var seg2 = CommandBlockSegmenter(clock: { frozen })
         var twoChunk = seg2.ingest(Array(raw[0..<half]))
         twoChunk.append(contentsOf: seg2.ingest(Array(raw[half...])))
         twoChunk.append(contentsOf: seg2.finish())

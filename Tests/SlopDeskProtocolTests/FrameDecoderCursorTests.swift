@@ -188,6 +188,9 @@ final class FrameDecoderCursorTests: XCTestCase {
         )
     }
 
+    /// Warm-up ×2, then MIN of 3 measured runs: min is the standard noise-resistant estimator —
+    /// a single measured run can be descheduled under `swift test --parallel` worker contention,
+    /// inflating the scaling ratio past its threshold (a load flake, not a regression).
     private func muxDrainTime(_ make: () -> Data) throws -> Double {
         let bytes = make()
         for _ in 0..<2 {
@@ -196,11 +199,16 @@ final class FrameDecoderCursorTests: XCTestCase {
             while try d.nextFrame() != nil {}
         }
         let clock = ContinuousClock()
-        let start = clock.now
-        var d = MuxFrameDecoder()
-        d.append(bytes)
-        while try d.nextFrame() != nil {}
-        let elapsed = start.duration(to: clock.now)
-        return Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+        var best = Double.infinity
+        for _ in 0..<3 {
+            let start = clock.now
+            var d = MuxFrameDecoder()
+            d.append(bytes)
+            while try d.nextFrame() != nil {}
+            let elapsed = start.duration(to: clock.now)
+            let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+            best = Double.minimum(best, seconds)
+        }
+        return best
     }
 }

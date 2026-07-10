@@ -21,9 +21,15 @@ actor DetachedSessionStore {
 
     /// Maximum number of concurrently-detached sessions. The OLDEST by `detachedAt` is evicted
     /// (killed) when a new insert would exceed this. Injected so tests can drive overflow headlessly.
+    ///
+    /// Default 256 (env `SLOPDESK_DETACH_MAX_SESSIONS` via ``HostServer``): host-side cost per
+    /// detached session is bounded (~≤9 MiB worst-case — 4 MiB offline drain gate + ≤4 MiB
+    /// scrollback ring + 64 KiB FIFO — and an idle shell is a few MB of its own RSS), so 256
+    /// costs at most a couple of GB in the pathological all-full case on a ≥32 GB host. The
+    /// matching fd headroom is raised at hostd start (each pane holds a PTY master + journal fd).
     let maxSessions: Int
 
-    init(maxSessions: Int = 64) {
+    init(maxSessions: Int = 256) {
         self.maxSessions = maxSessions
     }
 

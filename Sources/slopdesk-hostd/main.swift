@@ -13,6 +13,20 @@ import SlopDeskVideoProtocol
 let arguments = CommandLine.arguments
 let programName = arguments.first.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "slopdesk-hostd"
 
+// Raise the soft fd limit toward 8192 (bounded by the hard limit) BEFORE anything opens files:
+// every live/detached pane holds a PTY master + scrollback-journal fd (+ per-connection sockets),
+// and the 256-session detach cap needs far more headroom than macOS's default soft limit (256).
+var fdLimit = rlimit()
+if getrlimit(RLIMIT_NOFILE, &fdLimit) == 0 {
+    let target: rlim_t = 8192
+    let raised = min(fdLimit.rlim_max, max(fdLimit.rlim_cur, target))
+    if raised > fdLimit.rlim_cur {
+        var newLimit = fdLimit
+        newLimit.rlim_cur = raised
+        _ = setrlimit(RLIMIT_NOFILE, &newLimit)
+    }
+}
+
 // W12 (decision #10): fold the `video-prefs.json` sidecar into `EnvConfig.overlay` at launch, BEFORE
 // any consumer reads a setting — here the agent-detection gates (`SLOPDESK_AGENT_DETECT`/`_HOOKS`,
 // read below) resolve ProcessInfo env → overlay → default, so a GUI toggle applies on the next launch.

@@ -167,6 +167,10 @@ public final class HostServer: @unchecked Sendable {
     /// and AND-ed into ``detachEnabled`` (the single reattach gate) so this flag actuates.
     public let resumeOnRecovery: Bool
 
+    /// S3 — resolved detached-session cap (env `SLOPDESK_DETACH_MAX_SESSIONS`, default 256 —
+    /// see ``DetachedSessionStore/maxSessions`` for the sizing rationale).
+    public let detachMaxSessionsResolved: Int
+
     /// S3 — the store for detached sessions. `nil` when `detachEnabled == false`.
     private let detachedStore: DetachedSessionStore?
 
@@ -189,6 +193,7 @@ public final class HostServer: @unchecked Sendable {
         blocksEnabled: Bool = true,
         detachEnabled: Bool? = nil,
         detachTTLSecs: Int? = nil,
+        detachMaxSessions: Int? = nil,
         resumeOnRecovery: Bool? = nil,
         scrollbackJournals: ScrollbackJournalStore? = nil,
     ) {
@@ -222,7 +227,13 @@ public final class HostServer: @unchecked Sendable {
         let ttlSecs = detachTTLSecs ?? envTTL ?? 0
         detachTTL = ttlSecs > 0 ? .seconds(ttlSecs) : nil
 
-        detachedStore = effectiveDetach ? DetachedSessionStore() : nil
+        // Detached-session cap: default 256 (see ``DetachedSessionStore/maxSessions``), tunable
+        // via SLOPDESK_DETACH_MAX_SESSIONS (positive integer; non-positive/garbage → default).
+        let envCap = ProcessInfo.processInfo.environment["SLOPDESK_DETACH_MAX_SESSIONS"]
+            .flatMap { Int($0) }
+        let cap = detachMaxSessions ?? envCap ?? 256
+        detachMaxSessionsResolved = cap > 0 ? cap : 256
+        detachedStore = effectiveDetach ? DetachedSessionStore(maxSessions: detachMaxSessionsResolved) : nil
 
         // Disk scrollback journals ride the same gate as detach (see the property docs). Sweep
         // orphans OFF the init path — a cold Application Support scan must never delay startup.

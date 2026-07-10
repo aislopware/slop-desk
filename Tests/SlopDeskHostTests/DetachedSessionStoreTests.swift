@@ -70,6 +70,18 @@ final class DetachedSessionStoreTests: XCTestCase {
         }
     }
 
+    /// Cap resolution: default 256; env-shaped override honored; non-positive falls back.
+    func testHostServerDetachCapResolution() {
+        if ProcessInfo.processInfo.environment["SLOPDESK_DETACH_MAX_SESSIONS"] == nil {
+            XCTAssertEqual(HostServer(port: 0).detachMaxSessionsResolved, 256)
+        }
+        XCTAssertEqual(HostServer(port: 0, detachMaxSessions: 512).detachMaxSessionsResolved, 512)
+        XCTAssertEqual(
+            HostServer(port: 0, detachMaxSessions: 0).detachMaxSessionsResolved, 256,
+            "a non-positive cap must fall back to the default, not disable detach",
+        )
+    }
+
     // MARK: TTL eviction
 
     func testTTLEvictsSessionAfterExpiry() async throws {
