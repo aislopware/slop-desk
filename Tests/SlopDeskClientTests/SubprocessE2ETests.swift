@@ -102,6 +102,114 @@ final class SubprocessE2ETests: XCTestCase {
         )
     }
 
+    // MARK: - Disk-scrollback restore across a hostd RESTART (the "reconnect mất history" case)
+
+    /// THE user scenario, end-to-end on the SHIPPED binaries: hostd #1 journals a marker to the
+    /// disk scrollback (`SLOPDESK_SCROLLBACK_DIR` → temp dir), dies; hostd #2 (a brand-new
+    /// process — every in-memory structure gone) restores the transcript to a COLD client
+    /// presenting the same `--session-id`. Before the journal, this printed an empty pane.
+    func testScrollbackSurvivesHostdRestart() throws {
+        guard let hostdURL = builtProductURL("slopdesk-hostd"),
+              let clientURL = builtProductURL("slopdesk-client")
+        else {
+            throw XCTSkip("built slopdesk-hostd / slopdesk-client not found next to test bundle")
+        }
+
+        let journalDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("e2e-scrollback-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: journalDir) }
+        var hostEnv = ProcessInfo.processInfo.environment
+        hostEnv["SLOPDESK_SCROLLBACK_DIR"] = journalDir.path
+
+        let sessionID = UUID()
+        let marker = "RESTART_SURVIVOR_\(UInt32.random(in: 0..<1_000_000))"
+
+        func launchHostd() -> (Process, UInt16)? {
+            let hostd = Process()
+            hostd.executableURL = hostdURL
+            hostd.arguments = ["--port", "0"]
+            hostd.environment = hostEnv
+            let err = Pipe()
+            hostd.standardError = err
+            hostd.standardOutput = Pipe()
+            do { try hostd.run() } catch { return nil }
+            guard let port = awaitBoundPort(from: err.fileHandleForReading, timeout: 10), port > 0 else {
+                if hostd.isRunning { hostd.terminate() }
+                return nil
+            }
+            return (hostd, port)
+        }
+
+        // Runs the shipped client against `port` with the pinned session ID; returns its
+        // collected stdout once `until` appears (or the timeout drains).
+        func runClient(
+            port: UInt16,
+            script: String?,
+            until: String,
+            timeout: TimeInterval,
+        ) throws -> (Process, OutputBox) {
+            let client = Process()
+            client.executableURL = clientURL
+            client.arguments = [
+                "--host", "127.0.0.1", "--port", String(port), "--no-raw",
+                "--session-id", sessionID.uuidString,
+            ]
+            let stdinPipe = Pipe()
+            let stdoutPipe = Pipe()
+            client.standardInput = stdinPipe
+            client.standardOutput = stdoutPipe
+            client.standardError = Pipe()
+            let collected = OutputBox()
+            stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if data.isEmpty { handle.readabilityHandler = nil } else { collected.append(data) }
+            }
+            try client.run()
+            if let script { stdinPipe.fileHandleForWriting.write(Data(script.utf8)) }
+            // NOTE: stdin stays OPEN (no `exit`) — a typed exit is a deliberate end and would
+            // DELETE the journal; this scenario is a link drop.
+            let deadline = Date().addingTimeInterval(timeout)
+            while Date() < deadline, !collected.string.contains(until) {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            return (client, collected)
+        }
+
+        // --- Life 1: journal the marker, then die without ceremony. ---
+        guard let (hostd1, port1) = launchHostd() else {
+            throw XCTSkip("could not launch hostd #1")
+        }
+        defer { if hostd1.isRunning { hostd1.terminate() } }
+        let (client1, out1) = try runClient(
+            port: port1, script: "echo \(marker)\n", until: marker, timeout: 15,
+        )
+        defer { if client1.isRunning { client1.terminate() } }
+        guard out1.string.contains(marker) else {
+            throw XCTSkip("client #1 never saw its own echo (sandboxed PTY?): \(out1.string.prefix(300))")
+        }
+        // The marker reached the client, so the host read the PTY chunk and queued the journal
+        // write; give the journal's utility queue a beat to flush before the kill.
+        Thread.sleep(forTimeInterval: 0.5)
+        client1.terminate() // link drop — NOT a channelClose; the journal must survive
+        _ = waitForExit(client1, timeout: 5)
+        hostd1.terminate()
+        _ = waitForExit(hostd1, timeout: 5)
+
+        // --- Life 2: a brand-new daemon; a COLD client returns with the same session ID. ---
+        guard let (hostd2, port2) = launchHostd() else {
+            throw XCTSkip("could not launch hostd #2")
+        }
+        defer { if hostd2.isRunning { hostd2.terminate() } }
+        let (client2, out2) = try runClient(port: port2, script: nil, until: marker, timeout: 15)
+        defer { if client2.isRunning { client2.terminate() } }
+
+        XCTAssertTrue(
+            out2.string.contains(marker),
+            "hostd #2 must restore the disk-journaled transcript to the returning cold client; got: "
+                + String(out2.string.prefix(600)),
+        )
+    }
+
     // MARK: - Helpers
 
     /// Reads hostd stderr until a "listening on …:<port>" line, returns the port.

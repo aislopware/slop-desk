@@ -49,6 +49,9 @@ struct Args {
     var host: String
     var port: UInt16
     var noRaw: Bool
+    /// Session UUID to present on connect (detach reattach / disk-scrollback restore). `nil` =
+    /// a fresh UUID per run (the transport replaces the zero sentinel).
+    var sessionID: UUID?
 }
 
 let programName = CommandLine.arguments.first
@@ -60,11 +63,13 @@ func stderrLine(_ s: String) {
 
 func usage() -> Never {
     FileHandle.standardError.write(Data("""
-    usage: \(programName) --host <h> --port <n> [--no-raw]
+    usage: \(programName) --host <h> --port <n> [--no-raw] [--session-id <uuid>]
 
       --host, -h <host>   host running slopdesk-hostd
       --port, -p <port>   TCP port slopdesk-hostd listens on
       --no-raw            do not put the local terminal in raw mode (pipe/scripting)
+      --session-id <uuid> present this session UUID on connect (reattach to a detached
+                          shell / restore the disk-journaled scrollback; E2E harness)
 
     Disconnect key (interactive mode): Ctrl-] cleanly disconnects and exits 0.
 
@@ -76,6 +81,7 @@ func parseArgs(_ argv: [String]) -> Args? {
     var host: String?
     var port: UInt16?
     var noRaw = false
+    var sessionID: UUID?
     var it = argv.dropFirst().makeIterator()
     while let arg = it.next() {
         switch arg {
@@ -89,6 +95,9 @@ func parseArgs(_ argv: [String]) -> Args? {
             port = p
         case "--no-raw":
             noRaw = true
+        case "--session-id":
+            guard let v = it.next(), let id = UUID(uuidString: v) else { return nil }
+            sessionID = id
         case "--help":
             return nil
         default:
@@ -96,7 +105,7 @@ func parseArgs(_ argv: [String]) -> Args? {
         }
     }
     guard let host, let port else { return nil }
-    return Args(host: host, port: port, noRaw: noRaw)
+    return Args(host: host, port: port, noRaw: noRaw, sessionID: sessionID)
 }
 
 guard let args = parseArgs(CommandLine.arguments) else { usage() }
@@ -287,7 +296,11 @@ winchSource.resume()
 
 // The main driver task: connect, wire the relay, and run until exit/disconnect.
 Task {
-    // 1. Connect.
+    // 1. Connect. A caller-pinned session UUID (seq 0 = cold: full scrollback-ring/journal
+    // replay) enables cross-run reattach — the GUI client's resume path, scriptable.
+    if let sessionID = args.sessionID {
+        await client.seedResumeIdentity(sessionID: sessionID, seq: 0)
+    }
     do {
         try await client.connect(host: args.host, port: args.port)
         let sid = await client.sessionID.map(\.uuidString) ?? "?"

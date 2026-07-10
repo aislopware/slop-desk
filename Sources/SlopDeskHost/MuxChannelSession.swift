@@ -143,6 +143,21 @@ final class MuxChannelSession: @unchecked Sendable {
     /// concurrent metadata requests for one pane don't pile up subprocesses.
     private let metadataQueue = DispatchQueue(label: "slopdesk.host.metadata", qos: .userInitiated)
 
+    /// ONE fused non-destructive sniffer for the PTY chunk path (title/bell + OSC 133 command
+    /// status — one pass, not two per-byte machines scanning the hot thread twice). Touched only
+    /// on the read-loop thread via ``ingestPTYChunk(_:)``.
+    private let sniffer = HostOutputSniffer()
+
+    /// Disk scrollback journal for this session (nil = disk persistence off). Fed ONLY by
+    /// ``ingestPTYChunk(_:)`` — genuine PTY output — so a restored preamble (which enters via the
+    /// out-FIFO) is never re-journaled and transcripts don't double across daemon restarts.
+    private let scrollbackJournal: ScrollbackJournal?
+
+    /// The prior life's distilled transcript (fresh-spawn restore, `HostServer.spawnFreshShell`).
+    /// Enqueued as the FIRST output frame(s) by ``startRelay()`` — before the read loop starts —
+    /// so it precedes every live shell byte. `nil`/empty = nothing to restore.
+    private let restoredScrollback: Data?
+
     private let taskLock = NSLock()
     private var replay: ReplayBuffer
     private let replayLock = NSLock()
@@ -326,6 +341,8 @@ final class MuxChannelSession: @unchecked Sendable {
         agentPollInterval: Duration = .seconds(1),
         agentHookListenerActive: @escaping @Sendable () -> Bool = { false },
         blocksEnabled: Bool = true,
+        scrollbackJournal: ScrollbackJournal? = nil,
+        restoredScrollback: Data? = nil,
     ) {
         self.channelID = channelID
         self.pty = pty
@@ -339,6 +356,8 @@ final class MuxChannelSession: @unchecked Sendable {
         self.agentPollInterval = agentPollInterval
         self.agentHookListenerActive = agentHookListenerActive
         self.blocksEnabled = blocksEnabled
+        self.scrollbackJournal = scrollbackJournal
+        self.restoredScrollback = restoredScrollback
         // WB1: instantiate the per-channel Blocks tracker only when enabled — otherwise the byte
         // pipeline + sniffer stay byte-identical (no segmenter touches the stream, no emit). E14/K2:
         // the tracker's segmenter carries the resolved auto-progress prefix list (from
@@ -414,51 +433,9 @@ final class MuxChannelSession: @unchecked Sendable {
             }
         }
 
-        let sniffer = HostOutputSniffer()
         let readLoop = PTYReadLoop(
             fd: masterFD,
-            onChunk: { [weak self] chunk in
-                guard let self else { return }
-                // ONE fused non-destructive sniffer pass over the chunk (title/bell + OSC 133
-                // command status — one pass, not two per-byte machines scanning this hot thread
-                // twice). It only OBSERVES; the bytes are forwarded unchanged below. Emission
-                // order is byte-faithful interleaved (consumers fold each type independently).
-                let controlMsgs = sniffer.observe(chunk)
-                // Agent-control: cache the latest title from any sniffed title message so
-                // `list-panes` can return it without an extra sniffer pass. Runs on the PTY
-                // read-loop thread (serial) — update under titleLock (read from control socket
-                // handler threads). O(N) over the tiny `controlMsgs` list; happens at most once
-                // per chunk (title dedup is inside HostOutputSniffer).
-                for msg in controlMsgs {
-                    if case let .title(t) = msg {
-                        titleLock.lock()
-                        _currentTitle = t
-                        titleLock.unlock()
-                    }
-                }
-                // Agent-control: fire output observers for the `wait` verb AFTER the sniffer
-                // (so a wait-observer sees the same stream order as the client) and BEFORE the
-                // FIFO append (non-destructive — observers only READ the chunk).
-                notifyOutputObservers(chunk)
-                // WB1: ADDITIVE PARALLEL tap — feed the SAME chunk to the per-channel Blocks
-                // segmenter and enqueue any type-28 `commandBlock` metadata on the CONTROL sender.
-                // Only OBSERVES; the bytes below are forwarded unchanged. `nil` when SLOPDESK_BLOCKS
-                // is off, so the pipeline stays byte-identical. Kept OFF the data drain (its own
-                // CONTROL FIFO) so block metadata never stalls data sends.
-                feedBlocks(chunk)
-                // Account the chunk in the bounded queue BEFORE enqueueing; if it pushes the FIFO
-                // to/over the bound, PAUSE the read loop so the kernel PTY buffer fills and
-                // backpressures the shell (the real flood fix).
-                enqueueOutput(chunk.count)
-                // Append-then-yield (no lost wake): the pending bufferingNewest(1) wake always
-                // observes a complete FIFO. The continuation is read under fifoLock (teardown
-                // nils it); yield happens OUTSIDE the lock (it may resume the drain inline).
-                fifoLock.lock()
-                outFIFO.append(.chunk(bytes: chunk, control: controlMsgs))
-                let wake = outputWakeContinuation
-                fifoLock.unlock()
-                wake?.yield(())
-            },
+            onChunk: { [weak self] chunk in self?.ingestPTYChunk(chunk) },
             onEOF: { [weak self] in self?.signalEOFReached() },
         )
         self.readLoop = readLoop
@@ -467,6 +444,9 @@ final class MuxChannelSession: @unchecked Sendable {
         outputGate = PausableQueueGate(capacity: MuxFlowControl.hostQueueCapacityBytes) { paused in
             readLoop.setPaused(paused)
         }
+        // Fresh-spawn history restore MUST land between the gate build (so its bytes are
+        // accounted) and the read-loop start (so it precedes every live shell byte).
+        enqueueRestoredScrollback()
         readLoop.start()
 
         // INPUT: the DATA sub-channel carries `input`. The blocking `write(2)` runs on a
@@ -1165,6 +1145,71 @@ final class MuxChannelSession: @unchecked Sendable {
 
     // MARK: - Output FIFO / control-out producers (append-then-yield; no lost wake)
 
+    /// The PTY read-loop chunk handler (runs on the read-loop thread, serial). Factored out of
+    /// the `onChunk` closure so the disk-journal + sniffer + FIFO path is drivable headlessly
+    /// (no PTY) via ``ingestPTYChunkForTesting(_:)``.
+    private func ingestPTYChunk(_ chunk: Data) {
+        // Disk journal FIRST (fire-and-forget onto the journal's serial queue — no file I/O on
+        // this hot thread). Only genuine PTY output lands here, so the restored preamble (which
+        // enters via ``enqueueRestoredScrollback()``) is never re-journaled.
+        scrollbackJournal?.append(chunk)
+        // ONE fused non-destructive sniffer pass over the chunk (title/bell + OSC 133
+        // command status — one pass, not two per-byte machines scanning this hot thread
+        // twice). It only OBSERVES; the bytes are forwarded unchanged below. Emission
+        // order is byte-faithful interleaved (consumers fold each type independently).
+        let controlMsgs = sniffer.observe(chunk)
+        // Agent-control: cache the latest title from any sniffed title message so
+        // `list-panes` can return it without an extra sniffer pass. Runs on the PTY
+        // read-loop thread (serial) — update under titleLock (read from control socket
+        // handler threads). O(N) over the tiny `controlMsgs` list; happens at most once
+        // per chunk (title dedup is inside HostOutputSniffer).
+        for msg in controlMsgs {
+            if case let .title(t) = msg {
+                titleLock.lock()
+                _currentTitle = t
+                titleLock.unlock()
+            }
+        }
+        // Agent-control: fire output observers for the `wait` verb AFTER the sniffer
+        // (so a wait-observer sees the same stream order as the client) and BEFORE the
+        // FIFO append (non-destructive — observers only READ the chunk).
+        notifyOutputObservers(chunk)
+        // WB1: ADDITIVE PARALLEL tap — feed the SAME chunk to the per-channel Blocks
+        // segmenter and enqueue any type-28 `commandBlock` metadata on the CONTROL sender.
+        // Only OBSERVES; the bytes below are forwarded unchanged. `nil` when SLOPDESK_BLOCKS
+        // is off, so the pipeline stays byte-identical. Kept OFF the data drain (its own
+        // CONTROL FIFO) so block metadata never stalls data sends.
+        feedBlocks(chunk)
+        // Account the chunk in the bounded queue BEFORE enqueueing; if it pushes the FIFO
+        // to/over the bound, PAUSE the read loop so the kernel PTY buffer fills and
+        // backpressures the shell (the real flood fix).
+        enqueueOutput(chunk.count)
+        // Append-then-yield (no lost wake): the pending bufferingNewest(1) wake always
+        // observes a complete FIFO. The continuation is read under fifoLock (teardown
+        // nils it); yield happens OUTSIDE the lock (it may resume the drain inline).
+        fifoLock.lock()
+        outFIFO.append(.chunk(bytes: chunk, control: controlMsgs))
+        let wake = outputWakeContinuation
+        fifoLock.unlock()
+        wake?.yield(())
+    }
+
+    /// Fresh-spawn history restore: enqueues the prior life's transcript as the FIRST output
+    /// frame, through the normal drain (so it is sequenced into the new ReplayBuffer and rides
+    /// ordinary `.output` messages — no wire change). Called by ``startRelay()`` AFTER the
+    /// bounded-queue gate exists (the bytes are accounted like any chunk; a >64 KiB preamble
+    /// simply starts the read loop paused until the drain ships it) and BEFORE the read loop
+    /// starts, so it precedes every live shell byte.
+    private func enqueueRestoredScrollback() {
+        guard let restored = restoredScrollback, !restored.isEmpty else { return }
+        enqueueOutput(restored.count)
+        fifoLock.lock()
+        outFIFO.append(.chunk(bytes: restored, control: []))
+        let wake = outputWakeContinuation
+        fifoLock.unlock()
+        wake?.yield(())
+    }
+
     /// Enqueues `.exit` on the output FIFO (the reaper path). `.exit` is a merge BARRIER in
     /// ``takeMergedFrame()`` — it never coalesces with chunks, so it stays strictly after the
     /// final output tail (the R5-rank-5 EOF-latch ordering).
@@ -1639,6 +1684,14 @@ final class MuxChannelSession: @unchecked Sendable {
     /// queue) WITHOUT a PTY or running drain, so merge/barrier/cap semantics are provable
     /// headlessly. The enqueue paths mirror the production producers exactly (append under
     /// the lock; the wake yield is a no-op pre-`startRelay` since the continuation is nil).
+    /// Drives the REAL PTY chunk handler (disk-journal hook + sniffer + FIFO append) without a
+    /// PTY or read loop — the production `onChunk` closure is exactly this call.
+    func ingestPTYChunkForTesting(_ chunk: Data) { ingestPTYChunk(chunk) }
+
+    /// Drives the REAL fresh-spawn restore enqueue (the exact call ``startRelay()`` makes)
+    /// without needing a spawned PTY's master fd.
+    func enqueueRestoredScrollbackForTesting() { enqueueRestoredScrollback() }
+
     func enqueueChunkForTesting(bytes: Data, control: [WireMessage] = []) {
         enqueueOutput(bytes.count)
         fifoLock.lock()

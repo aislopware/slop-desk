@@ -167,6 +167,13 @@ public final class HostServer: @unchecked Sendable {
     /// S3 — the store for detached sessions. `nil` when `detachEnabled == false`.
     private let detachedStore: DetachedSessionStore?
 
+    /// Disk scrollback journals (history that survives the daemon — see ``ScrollbackJournalStore``).
+    /// AND-ed with the detach gate: without detach the client never re-presents a session ID (so a
+    /// journal could never be restored) and a link drop routes through the journal-DELETING
+    /// `removeMuxSession` path. `nil` = disk persistence off (also the unit-test default, so tests
+    /// never touch the real Application Support dir — hostd main wires `makeFromEnvironment()`).
+    private let scrollbackJournals: ScrollbackJournalStore?
+
     public init(
         port: UInt16,
         shellPath: String? = nil,
@@ -180,6 +187,7 @@ public final class HostServer: @unchecked Sendable {
         detachEnabled: Bool? = nil,
         detachTTLSecs: Int? = nil,
         resumeOnRecovery: Bool? = nil,
+        scrollbackJournals: ScrollbackJournalStore? = nil,
     ) {
         self.port = port
         self.shellPath = shellPath ?? HostEnvironment.loginShell()
@@ -208,6 +216,14 @@ public final class HostServer: @unchecked Sendable {
         detachTTL = .seconds(ttlSecs)
 
         detachedStore = effectiveDetach ? DetachedSessionStore() : nil
+
+        // Disk scrollback journals ride the same gate as detach (see the property docs). Sweep
+        // orphans OFF the init path — a cold Application Support scan must never delay startup.
+        let journals = effectiveDetach ? scrollbackJournals : nil
+        self.scrollbackJournals = journals
+        if let journals {
+            Task.detached(priority: .utility) { journals.sweep() }
+        }
     }
 
     /// The stable pane id for a channel — the composite `(connectionID, channelID)` key, which
@@ -466,7 +482,10 @@ public final class HostServer: @unchecked Sendable {
 
         // S3 PATH A: reattach to an existing detached session.
         // `lookup` auto-evicts a child-exited entry and returns nil (PATH C → falls to B).
-        if let store = detachedStore, open.sessionID != UUID() {
+        // (The guard compares the ZERO sentinel `WireMessage.newSessionID` — a first-connect
+        // preamble from a raw/old client. Our mux client replaces the sentinel with a fresh
+        // real UUID before sending, so this arm is normally always taken.)
+        if let store = detachedStore, open.sessionID != WireMessage.newSessionID {
             Task { [weak self] in
                 guard let self else { return }
                 if let session = await store.lookup(open.sessionID) {
@@ -547,6 +566,19 @@ public final class HostServer: @unchecked Sendable {
         connectionID: UUID,
         key: MuxSessionKey,
     ) {
+        // Disk scrollback (journal + restore) applies only to a REAL client-owned session ID —
+        // the zero sentinel (a raw/old client) can never be re-presented, so journaling it would
+        // only produce an orphan file.
+        let hasResumableID = open.sessionID != WireMessage.newSessionID
+        // Restore gate: a fresh spawn for a RETURNING id whose client is COLD (`lastReceivedSeq
+        // == 0` — a brand-new terminal surface). A WARM client (non-zero seq: transport dropped
+        // but the app kept running) still holds its rendered grid; replaying the transcript there
+        // would double-print it. The read (≤ ring cap) + distill run once per fresh spawn.
+        let restoredScrollback: Data? = (hasResumableID && open.lastReceivedSeq == 0)
+            ? scrollbackJournals?.restoredScrollback(for: open.sessionID)
+            : nil
+        let journal = hasResumableID ? scrollbackJournals?.journal(for: open.sessionID) : nil
+
         let pty = PTYProcess()
         // R8 #3: the per-session ZDOTDIR shim dir (if the zsh shim is installed) — captured so the
         // session can delete it when the child exits, instead of leaking one temp dir per pane forever.
@@ -612,6 +644,8 @@ public final class HostServer: @unchecked Sendable {
             // reads honest-false, never a stale construction-time snapshot.
             agentHookListenerActive: { [weak listener = agentHookListener] in listener?.isListening ?? false },
             blocksEnabled: blocksEnabled,
+            scrollbackJournal: journal,
+            restoredScrollback: restoredScrollback,
         )
         // The shell-exit reaper closes over the SAME composite key so it only removes THIS
         // connection's session (idempotent with the peer-close `setHostCloseHandler` path).
@@ -751,7 +785,16 @@ public final class HostServer: @unchecked Sendable {
     private func removeMuxSession(_ key: MuxSessionKey) {
         lock.lock()
         let session = muxSessions.removeValue(forKey: key)
+        let isStopping = stopping
         lock.unlock()
+        // Disk-journal policy: a pane that ends DELIBERATELY (peer `channelClose` / attached
+        // child exit — exactly this method's callers) takes its transcript with it. Link-drop
+        // detach, TTL eviction, and daemon stop never come through here, and the `stopping`
+        // guard keeps a child-exit RACING `stop()` from wiping a journal the restart is
+        // supposed to restore.
+        if let session, !isStopping {
+            scrollbackJournals?.delete(sessionID: session.sessionID)
+        }
         // W10: drop this pane's hook sink so a late hook POST for a closed pane is dropped.
         if session != nil, let agentHookListener {
             agentHookListener.unregister(paneID: Self.paneID(connectionID: key.connectionID, channelID: key.channelID))

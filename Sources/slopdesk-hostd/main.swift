@@ -128,6 +128,10 @@ let server = HostServer(
     agentControlSocketPath: agentControlSocketPath,
     ctlBinaryPath: ctlBinaryPath,
     blocksEnabled: blocksEnabled,
+    // Disk scrollback journals (history survives hostd restarts / TTL evictions). `nil` when
+    // SLOPDESK_SCROLLBACK_PERSIST=0 or SLOPDESK_SCROLLBACK_DISK=0; HostServer additionally
+    // AND-s the detach gate.
+    scrollbackJournals: ScrollbackJournalStore.makeFromEnvironment(),
 )
 server.onLog = log
 
