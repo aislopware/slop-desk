@@ -43,8 +43,8 @@ final class TabBadgePresentationTests: XCTestCase {
         XCTAssertNil(symbolName(of: .running), "the comet arc is a bespoke shape, not an SF-symbol")
     }
 
-    /// `.commandRunning` (a plain busy shell) ⇒ the QUIET muted dot, distinct from the agent comet — NOT a
-    /// symbol, and NOT the loud `.working` arc.
+    /// `.commandRunning` (a plain busy shell) ⇒ the QUIET muted orbit-dot (core dot + orbiting arc),
+    /// distinct from the agent comet by tint — NOT a symbol, and NOT the loud `.working` arc.
     func testCommandRunningIsMutedDot() {
         XCTAssertTrue(isCommandBusy(.commandRunning))
         XCTAssertFalse(isWorking(.commandRunning), "a plain command must not use the agent comet")
@@ -67,10 +67,11 @@ final class TabBadgePresentationTests: XCTestCase {
         XCTAssertEqual(symbolName(of: .error), "exclamationmark.triangle.fill")
     }
 
-    /// `.awaitingInput` ⇒ the bespoke attention PING shape (the most-urgent state), not an SF-symbol.
+    /// `.awaitingInput` ⇒ the bespoke attention shape (the RED orbit-dot, the most-urgent state), not an
+    /// SF-symbol.
     func testAwaitingInputIsAttentionPing() {
         XCTAssertTrue(isAttention(.awaitingInput))
-        XCTAssertNil(symbolName(of: .awaitingInput), "the ping is a bespoke shape, not an SF-symbol")
+        XCTAssertNil(symbolName(of: .awaitingInput), "the orbit-dot is a bespoke shape, not an SF-symbol")
     }
 
     /// `.caffeinate` ⇒ the coffee cup (a sleep-blocking session at rest).

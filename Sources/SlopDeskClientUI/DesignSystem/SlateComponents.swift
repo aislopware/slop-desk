@@ -81,6 +81,28 @@ struct SlatePingDot: View {
     }
 }
 
+/// The LIVE-dot indicator (the MERIDIAN L3 live-signal exception): a steady filled core dot with a comet
+/// arc ORBITING it — the dot keeps the state's colour identity (the shared dot language) while the orbit
+/// says "this is live / waiting on something now". Two wearers: a plain RUNNING command (muted tint,
+/// replacing the static busy dot) and a BLOCKED agent awaiting input (status tint, replacing the ping
+/// halo). Composes the existing ``SlateCometArc`` around a core fill, so the spin rides the WALL CLOCK
+/// (``TimelineView`` — a rail re-render can't reset it) and stays within `size` (no row shift). Pure
+/// SwiftUI; no video/capture (hang-safety #6).
+struct SlateOrbitDot: View {
+    let color: Color
+    var size: CGFloat = 13
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(color)
+                .frame(width: size * 0.42, height: size * 0.42)
+            SlateCometArc(color: color, size: size, lineWidth: 1.2)
+        }
+        .frame(width: size, height: size)
+    }
+}
+
 /// A compact label/value row: a secondary label on the left, a trailing primary value.
 struct SlateKeyValueRow<Value: View>: View {
     let label: String

@@ -45,6 +45,20 @@ struct SlateTitlebar: View {
 
     private var sidebarVisible: Bool { !chrome.sidebarCollapsed }
 
+    /// The title pip's tint — the STATUS colour of the most-urgent waiting pane (the head of the
+    /// urgency-sorted ``WorkspaceStore/unseenAttentionPanes``), matching the sidebar badge tints: red for
+    /// a blocked agent / failed command, the OK green for unread finishes. Secondary when nothing waits
+    /// (the pip is hidden then anyway — this is just its resting value).
+    private var attentionTint: Color {
+        switch store.unseenAttentionPanes.first?.badge {
+        case .awaitingInput,
+             .error: Slate.Status.err
+        case .completed,
+             .finished: Slate.Status.ok
+        default: Slate.Text.secondary
+        }
+    }
+
     var body: some View {
         // Aligns the controls to the TRAFFIC-LIGHT row: top-anchored at `rowTop` so a 24pt plate's icon
         // centres at y≈15 (the row the red/yellow/green buttons sit on), NOT the vertical centre of the 40pt
@@ -64,7 +78,8 @@ struct SlateTitlebar: View {
 
             // Centre: the active title as a menu, on the traffic-light row.
             TitleMenuButton(
-                title: activeTitle, showDot: store.hasUnseenAttention, store: store, activePane: activePane,
+                title: activeTitle, showDot: store.hasUnseenAttention, dotTint: attentionTint,
+                store: store, activePane: activePane,
             )
             .padding(.top, rowTop)
 
@@ -101,14 +116,16 @@ struct SlateTitlebar: View {
 /// The centred active-title button. Hover shows a `⋯` + plate; click opens the pane menu (working dir /
 /// split / move / find / close pane). Wired to the live store.
 ///
-/// `showDot` is the bell-style unseen-attention indicator (``WorkspaceStore/hasUnseenAttention``): a plain
-/// dot in the TITLE'S OWN text colour — no accent, no count, no animation beyond a fade — that appears
-/// while some OTHER pane is blocked / finished unread, and vanishes when everything is seen (MERIDIAN
-/// zero-ornament at rest). Its slot is ALWAYS reserved (opacity, not insertion) so the centred title never
-/// shifts when it comes and goes — mirroring the trailing `⋯`, which reserves its slot the same way.
+/// `showDot` is the bell-style unseen-attention indicator (``WorkspaceStore/hasUnseenAttention``): a tiny
+/// SUPERSCRIPT pip riding the title's top-trailing corner — the notification-badge position, not an inline
+/// bullet — tinted `dotTint` (the most-urgent waiting pane's STATUS colour, same map as the sidebar
+/// badges). It appears while some OTHER pane is blocked / finished unread and vanishes when everything is
+/// seen (MERIDIAN zero-ornament at rest). Rendered as an OVERLAY, so it never affects layout — the centred
+/// title cannot shift when it comes and goes.
 private struct TitleMenuButton: View {
     let title: String
     let showDot: Bool
+    let dotTint: Color
     let store: WorkspaceStore
     let activePane: PaneID?
 
@@ -118,14 +135,17 @@ private struct TitleMenuButton: View {
     var body: some View {
         Button { show.toggle() } label: {
             HStack(spacing: 5) {
-                Circle()
-                    .fill(hover || show ? Slate.Text.primary : Slate.Text.secondary)
-                    .frame(width: 5, height: 5)
-                    .opacity(showDot ? 1 : 0)
                 Text(title)
                     .font(.system(size: Slate.Typeface.body, weight: .medium))
                     .foregroundStyle(hover || show ? Slate.Text.primary : Slate.Text.secondary)
                     .lineLimit(1)
+                    .overlay(alignment: .topTrailing) {
+                        Circle()
+                            .fill(dotTint)
+                            .frame(width: 4, height: 4)
+                            .offset(x: 5, y: -1.5)
+                            .opacity(showDot ? 1 : 0)
+                    }
                 Image(systemSymbol: .ellipsis)
                     .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
                     .foregroundStyle(Slate.Text.icon)
@@ -173,7 +193,9 @@ struct TitlePaneMenu: View {
             if !waiting.isEmpty {
                 SlatePopoverSection("NEEDS ATTENTION")
                 ForEach(waiting, id: \.pane) { entry in
-                    SlatePopoverRow(waitingTitle(entry.pane), icon: Self.waitingIcon(entry.badge)) {
+                    // The leading glyph IS the sidebar's badge view — one status vocabulary, rail ≡ menu
+                    // (the red orbit for blocked, the triangle for a failure, the dots for finishes).
+                    SlatePopoverRow(waitingTitle(entry.pane), leading: TabBadgeView(kind: entry.badge)) {
                         jump(to: entry.pane)
                     }
                 }
@@ -203,22 +225,6 @@ struct TitlePaneMenu: View {
             kind: spec?.kind ?? .terminal, spec: spec, processLabel: store.paneForegroundProcess[id],
         )
         return title.isEmpty ? "~" : title
-    }
-
-    /// The row glyph for a waiting pane's badge — the flat menu-weight rendering of the rail's badge
-    /// vocabulary (the hand / the triangle / the checkmark; outline, not the rail's tinted fills — a menu
-    /// row is not a status surface).
-    private static func waitingIcon(_ badge: TabBadgeKind) -> String {
-        switch badge {
-        case .awaitingInput: "hand.raised"
-        case .error: "exclamationmark.triangle"
-        case .caffeinate,
-             .commandRunning,
-             .completed,
-             .finished,
-             .running,
-             .sudo: "checkmark"
-        }
     }
 
     /// Focus a waiting pane from its NEEDS-ATTENTION row (switches session + tab as needed). Deferred one

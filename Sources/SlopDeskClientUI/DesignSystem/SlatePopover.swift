@@ -43,6 +43,9 @@ struct SlatePopoverDivider: View {
 /// (a checked row's state IS its trailing meaning). Flat hover plate, `heightBar` tall.
 struct SlatePopoverRow: View {
     var icon: String?
+    /// A bespoke leading glyph occupying the icon slot (e.g. a status-badge view) — wins over `icon`.
+    /// Type-erased so the row stays non-generic (menu rows, never a hot path).
+    var leading: AnyView?
     let title: String
     var shortcut: String?
     var checked: Bool
@@ -60,6 +63,26 @@ struct SlatePopoverRow: View {
     ) {
         self.title = title
         self.icon = icon
+        leading = nil
+        self.shortcut = shortcut
+        self.checked = checked
+        self.dim = dim
+        self.action = action
+    }
+
+    /// A row whose leading slot carries a bespoke VIEW (the NEEDS-ATTENTION rows reuse the sidebar's
+    /// ``TabBadgeView`` glyph here, so the menu and the rail speak one status vocabulary).
+    init(
+        _ title: String,
+        leading: some View,
+        shortcut: String? = nil,
+        checked: Bool = false,
+        dim: Bool = false,
+        action: @escaping () -> Void,
+    ) {
+        self.title = title
+        icon = nil
+        self.leading = AnyView(leading)
         self.shortcut = shortcut
         self.checked = checked
         self.dim = dim
@@ -71,7 +94,9 @@ struct SlatePopoverRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: Slate.Metric.space2) {
-                if let icon {
+                if let leading {
+                    leading.frame(width: 16)
+                } else if let icon {
                     Image(systemName: icon)
                         .font(.system(size: Slate.Typeface.footnote))
                         .foregroundStyle(Slate.Text.secondary)

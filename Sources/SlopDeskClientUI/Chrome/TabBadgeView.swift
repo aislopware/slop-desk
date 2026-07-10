@@ -2,8 +2,8 @@
 // ``TabBadgeKind`` to its glyph via ``StatusPresentation/tabBadge(_:)``. The vocabulary (herdr-inspired,
 // animation reserved for the two agent-active states):
 //   • agent WORKING → an accent comet arc (``SlateCometArc``, the "agent thinking" spinner);
-//   • agent AWAITING INPUT → an amber ping (``SlatePingDot``, the most-urgent state);
-//   • plain COMMAND running → a QUIET muted dot (normal secondary text colour, no animation);
+//   • agent AWAITING INPUT → a RED core dot with an orbiting arc (``SlateOrbitDot``, the most-urgent state);
+//   • plain COMMAND running → the same orbit in the QUIET muted tint (secondary text colour);
 //   • finished → a small filled dot; completed / error / caffeinate / sudo → a tinted SF-symbol fill.
 // One glyph, fixed ~16pt box, right-aligned. Every glyph stays within the box so a tab row never shifts
 // height as its state changes.
@@ -41,11 +41,13 @@ struct TabBadgeView: View {
             // uses the muted dot below), so a spinning arc always reads as "the agent is working".
             SlateCometArc(color: tint)
         case let .commandBusy(tint):
-            // A plain command running — the QUIET muted dot in normal secondary text colour, no animation.
-            SlateStatusDot(color: tint, size: 6)
+            // A plain command running — the QUIET muted dot, orbited by a spinner ring (still low-key by
+            // tint; the orbit is what says "live", the muted colour is what says "not the agent").
+            SlateOrbitDot(color: tint, size: 12)
         case let .attention(tint):
-            // Awaiting input — the gentle amber ping (the most-urgent state).
-            SlatePingDot(color: tint, size: 8)
+            // Awaiting input — the RED core dot with an orbiting ring (the most-urgent state). Same dot
+            // language as every other state; the orbit replaced the expanding ping halo.
+            SlateOrbitDot(color: tint, size: 13)
         case let .dot(color):
             SlateStatusDot(color: color, size: 8)
         case let .symbol(name, tint):

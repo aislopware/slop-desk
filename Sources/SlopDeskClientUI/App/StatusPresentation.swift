@@ -78,8 +78,9 @@ enum StatusPresentation {
         case .completed: .symbol(name: "checkmark.circle.fill", tint: Slate.Status.ok)
         case .finished: .dot(Slate.Status.ok)
         case .error: .symbol(name: "exclamationmark.triangle.fill", tint: Slate.Status.err)
-        // Awaiting input — the most-urgent state: a gentle amber attention PING (core dot + expanding halo).
-        case .awaitingInput: .attention(tint: Slate.Status.warn)
+        // Awaiting input — the most-urgent state: a RED core dot with an orbiting arc (``SlateOrbitDot``).
+        // Red (not amber) keeps the dot language consistent — the colour IS the urgency, no bespoke glyph.
+        case .awaitingInput: .attention(tint: Slate.Status.err)
         case .caffeinate: .symbol(name: "cup.and.saucer.fill", tint: Slate.Text.secondary)
         case .sudo: .symbol(name: "shield.lefthalf.filled", tint: Slate.Text.secondary)
         }
@@ -144,11 +145,13 @@ enum TabBadgeStyle {
     /// The AGENT-working indicator — a smooth accent comet arc (``SlateCometArc``), the "agent is thinking"
     /// pulse. A pure SwiftUI animation, never a video/capture session (CLAUDE.md hang-safety rule #6).
     case working(tint: Color)
-    /// A plain COMMAND running — a quiet muted dot (normal secondary text colour), no animation. Distinct from
-    /// ``working`` so the sidebar reads "a command is running" apart from "the agent is thinking".
+    /// A plain COMMAND running — the quiet muted dot (normal secondary text colour) with an orbiting arc
+    /// (``SlateOrbitDot``). Distinct from ``working`` by TINT (muted, never accent) so the sidebar reads
+    /// "a command is running" apart from "the agent is thinking".
     case commandBusy(tint: Color)
-    /// The AWAITING-INPUT attention indicator — a gentle ping (``SlatePingDot``): a filled core dot plus one
-    /// expanding, fading halo ring. Draws the eye (the most-urgent state) without spinning.
+    /// The AWAITING-INPUT attention indicator — a RED core dot with an orbiting arc (``SlateOrbitDot``).
+    /// Draws the eye (the most-urgent state) while staying in the shared dot language; the orbit replaced
+    /// the old expanding ping halo.
     case attention(tint: Color)
     /// A small filled dot (the settled "unread output" `.finished` marker).
     case dot(Color)
