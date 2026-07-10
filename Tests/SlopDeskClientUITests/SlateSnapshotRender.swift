@@ -79,6 +79,8 @@ final class SlateSnapshotRender: XCTestCase {
         }
         let panel = VStack(alignment: .leading, spacing: 2) {
             badgeRow("full-release.sh", badge: .running)
+            badgeRow("brew upgrade", badge: .commandRunning)
+            badgeRow("make check", badge: .commandBusy)
             badgeRow("running build task", badge: .error)
             badgeRow("plan next move", badge: .awaitingInput)
             badgeRow("OpenCode", badge: .completed)
