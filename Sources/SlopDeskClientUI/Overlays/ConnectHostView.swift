@@ -26,6 +26,11 @@ struct ConnectHostView: View {
     @State private var showAdvanced = false
     /// Pre-focuses the host field on appear (the first thing a user edits).
     @FocusState private var hostFocused: Bool
+    /// The in-flight connect Task (stability audit). Stored so Cancel / sheet teardown CANCEL it — the old
+    /// fire-and-forget `Task { await connect(); closeConnect() }` outlived the sheet and, when a slow
+    /// connect finally resolved, unconditionally dismissed a freshly REOPENED sheet mid-edit. Belt and
+    /// suspenders with the ``OverlayCoordinator/connectGeneration`` completion guard below.
+    @State private var connectTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -57,7 +62,7 @@ struct ConnectHostView: View {
             .formStyle(.grouped)
 
             SlateSheetFooter {
-                Button("Cancel") { coordinator.closeConnect() }
+                Button("Cancel") { cancelAndClose() }
                     .keyboardShortcut(.cancelAction)
                 Button("Connect") { connectAndClose() }
                     .keyboardShortcut(.defaultAction)
@@ -74,17 +79,36 @@ struct ConnectHostView: View {
             connection.fillForm(from: connection.target)
             DispatchQueue.main.async { hostFocused = true }
         }
+        .onDisappear {
+            // ANY dismissal (Esc / scrim / Cancel already did it) cancels the in-flight connect Task so it
+            // can't run its completion against a later presentation.
+            connectTask?.cancel()
+            connectTask = nil
+        }
     }
 
     /// Validate-then-connect: no-op unless the form parses (the button is also disabled then), then fire the
     /// app's `connect()` and close. Never force-unwraps — `canConnect` gates here and `connect()` re-guards
-    /// the parse internally.
+    /// the parse internally. The close is DOUBLE-guarded (stability audit): the Task is stored + cancelled on
+    /// Cancel/teardown, AND the completion only closes if the coordinator's `connectGeneration` still matches
+    /// the presentation this Task started under — a slow connect resolving after cancel + reopen must not
+    /// dismiss the fresh sheet.
     private func connectAndClose() {
         guard connection.canConnect else { return }
-        Task {
+        connectTask?.cancel()
+        let generation = coordinator.connectGeneration
+        connectTask = Task {
             await connection.connect()
-            coordinator.closeConnect()
+            guard !Task.isCancelled else { return }
+            coordinator.closeConnect(ifCurrent: generation)
         }
+    }
+
+    /// Cancel: kill the in-flight connect Task (its completion must never fire) and close the sheet.
+    private func cancelAndClose() {
+        connectTask?.cancel()
+        connectTask = nil
+        coordinator.closeConnect()
     }
 }
 #endif

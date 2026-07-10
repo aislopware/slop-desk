@@ -104,6 +104,86 @@ final class DecodeSequencerTests: XCTestCase {
         XCTAssertEqual(sq.nextExpected, 1)
     }
 
+    /// NACK/retransmit regression (2026-07-10 audit): with `SLOPDESK_NACK=1` the reassembler HOLDS a
+    /// FEC-unrecoverable frame N for `nackGraceFrames` (default 8) frame-ids — neither `.completed`
+    /// nor `.dropped`, so the sequencer is never notified about N — while newer completions pile into
+    /// `held`. The sequencer's patience must out-wait that grace: nothing may release before N
+    /// completes (retransmit lands) or the grace's worth of frames has passed. With the pre-fix wiring
+    /// (stock maxHeld=4 < grace=8) the overflow valve flushed at N+5, feeding VT frames that reference
+    /// the still-missing N → -12909 → invalidateSession/forced-IDR churn.
+    func testNackRetransmitHoldOutwaitsGraceWindow() {
+        let grace: Int32 = 8 // production default — SlopDeskVideoClientSession.nackGraceFrames
+        // EXACT production wiring for SLOPDESK_NACK=1 (the session's stored-property initializer).
+        var sq = SlopDeskVideoClientSession.makeSequencer(nackEnabled: true, nackGraceFrames: grace)
+        _ = sq.noteCompleted(frame(10, kf: true)) // expected = 11; frame 11 = N, held for retransmit
+        // Frames N+1..N+grace-1 complete in order while N pends. NONE may release out of order.
+        for id in UInt32(12)...UInt32(11 + UInt32(grace) - 1) {
+            XCTAssertEqual(
+                ids(sq.noteCompleted(frame(id))),
+                [],
+                "frame #\(id) released before missing #11 completed or the \(grace)-frame grace passed",
+            )
+        }
+        // The retransmit lands inside the grace: N completes → everything releases, in order.
+        XCTAssertEqual(
+            ids(sq.noteCompleted(frame(11))),
+            Array(UInt32(11)...UInt32(11 + UInt32(grace) - 1)),
+            "retransmitted #11 closes the gap → contiguous run releases in frameID order",
+        )
+        XCTAssertEqual(sq.nextExpected, 11 + UInt32(grace))
+    }
+
+    /// The NACK-derived patience is a FLOOR, not unbounded: a gap that never resolves (retransmit
+    /// lost too) still trips the overflow valve once past the grace-derived caps — the pane
+    /// degrades to the pre-sequencer flush instead of stalling.
+    func testNackPatienceStillBoundedPastGrace() {
+        var sq = SlopDeskVideoClientSession.makeSequencer(nackEnabled: true, nackGraceFrames: 8)
+        _ = sq.noteCompleted(frame(10, kf: true)) // expected = 11; 11 never completes NOR drops
+        for id in UInt32(12)...UInt32(21) { // 10 held = derived maxHeld — still waiting
+            XCTAssertEqual(ids(sq.noteCompleted(frame(id))), [], "frame #\(id) inside derived patience")
+        }
+        // The 11th held frame exceeds derived maxHeld=grace+2 → bounded flush, ascending order.
+        XCTAssertEqual(ids(sq.noteCompleted(frame(22))), Array(UInt32(12)...UInt32(22)))
+        XCTAssertEqual(sq.nextExpected, 23)
+    }
+
+    /// Pins the wiring derivation itself: NACK off = stock values (default path byte-identical);
+    /// NACK on = both valves floored to grace + 2 (maxHeld is a held-COUNT, maxGap an id-SPAN —
+    /// the grace is denominated in frame-ids, and up to `grace` newer frames can complete while
+    /// the hole pends, so both need the same floor); a tiny grace never LOWERS the stock values.
+    func testMakeSequencerPatienceDerivation() {
+        let stock = SlopDeskVideoClientSession.makeSequencer(nackEnabled: false, nackGraceFrames: 8)
+        XCTAssertEqual(stock.maxHeld, DecodeSequencer.defaultMaxHeld)
+        XCTAssertEqual(stock.maxGap, DecodeSequencer.defaultMaxGap)
+        XCTAssertEqual(stock.maxHeld, 4, "stock defaults moved — the non-NACK path must not change")
+        XCTAssertEqual(stock.maxGap, 6, "stock defaults moved — the non-NACK path must not change")
+
+        let nack = SlopDeskVideoClientSession.makeSequencer(nackEnabled: true, nackGraceFrames: 8)
+        XCTAssertEqual(nack.maxHeld, 10, "grace 8 + 2 margin")
+        XCTAssertEqual(nack.maxGap, 10, "grace 8 + 2 margin")
+
+        let bigGrace = SlopDeskVideoClientSession.makeSequencer(nackEnabled: true, nackGraceFrames: 20)
+        XCTAssertEqual(bigGrace.maxHeld, 22)
+        XCTAssertEqual(bigGrace.maxGap, 22)
+
+        let tinyGrace = SlopDeskVideoClientSession.makeSequencer(nackEnabled: true, nackGraceFrames: 1)
+        XCTAssertEqual(tinyGrace.maxHeld, 4, "floor never lowers the stock patience")
+        XCTAssertEqual(tinyGrace.maxGap, 6, "floor never lowers the stock patience")
+    }
+
+    /// Pins the DEFAULT (non-NACK) valve behaviour: stock patience still trips at 4 held frames —
+    /// the opt-in NACK floor provably did not change the default path.
+    func testDefaultPatienceValveStillTripsAtFourHeld() {
+        var sq = SlopDeskVideoClientSession.makeSequencer(nackEnabled: false, nackGraceFrames: 8)
+        _ = sq.noteCompleted(frame(10, kf: true)) // expected = 11
+        for id in UInt32(12)...UInt32(15) { // 4 held = stock maxHeld — no flush yet
+            XCTAssertEqual(ids(sq.noteCompleted(frame(id))), [])
+        }
+        // The 5th held frame exceeds stock maxHeld=4 → flush, exactly today's default behaviour.
+        XCTAssertEqual(ids(sq.noteCompleted(frame(16))), [12, 13, 14, 15, 16])
+        XCTAssertEqual(sq.nextExpected, 17)
+    }
+
     func testLostBehindExpectationIsNoOp() {
         var sq = DecodeSequencer()
         _ = sq.noteCompleted(frame(10, kf: true))

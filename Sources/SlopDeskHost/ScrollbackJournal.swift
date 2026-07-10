@@ -208,14 +208,37 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
 /// queue (the PTY read-loop thread only ENQUEUES — no file I/O on the hot path), compacting to
 /// the newest `byteCap` tail when the file doubles past the cap.
 ///
-/// `@unchecked Sendable`: all mutable state (`handle`, `size`) is touched only on `queue`.
+/// Appends COALESCE: chunks accumulate in an in-memory `pending` buffer and reach the file in
+/// one contiguous `write(2)` when the buffer crosses ``flushThresholdBytes`` or a short idle
+/// flush (``idleFlushInterval``) fires — interactive typing / line-buffered output otherwise
+/// costs one syscall per PTY chunk (hundreds-thousands/sec per session, attached AND detached).
+/// On-disk bytes and ordering are identical to unbuffered writes; every reader of the FILE
+/// (`synchronize()` → restore, compaction) flushes `pending` first, so no path can observe a
+/// file missing enqueued appends.
+///
+/// `@unchecked Sendable`: all mutable state (`handle`, `size`, `pending`, …) is touched only
+/// on `queue`.
 final class ScrollbackJournal: @unchecked Sendable {
     let fileURL: URL
     let byteCap: Int
 
+    /// Coalescing buffer bound: pending appends flush as one write once they reach this size.
+    static let flushThresholdBytes = 32 * 1024
+    /// Latency bound on the crash-loss window: buffered bytes never sit unflushed longer than
+    /// this once the buffer goes non-empty.
+    static let idleFlushInterval: DispatchTimeInterval = .milliseconds(25)
+
     private let queue: DispatchQueue
     private var handle: FileHandle?
+    /// ON-DISK size only. Cap accounting is `size + pending.count` (buffered bytes count too).
     private var size: Int = 0
+    /// Buffered-but-unflushed appends, in arrival order (flushed as one contiguous write).
+    private var pending = Data()
+    /// Whether an idle flush is already scheduled (one timer per non-empty transition, not per
+    /// append). The timer block captures `self` STRONGLY on purpose: while bytes are pending a
+    /// flush is always scheduled, so the journal cannot deallocate with unflushed bytes — the
+    /// timer is the deinit/shutdown flush path.
+    private var idleFlushScheduled = false
     /// Set by ``closeAndDelete()``; a late `append` racing a delete must not resurrect the file.
     private var deleted = false
 
@@ -225,33 +248,41 @@ final class ScrollbackJournal: @unchecked Sendable {
         queue = DispatchQueue(label: "slopdesk.scrollback-journal", qos: .utility)
     }
 
-    /// Appends one PTY output chunk. Non-blocking for the caller (read-loop thread): the write
-    /// happens on the journal's serial queue.
+    /// Appends one PTY output chunk. Non-blocking for the caller (read-loop thread): the bytes
+    /// are buffered on the journal's serial queue and flushed by size threshold / idle timer /
+    /// any reader (`synchronize()`, compaction).
     func append(_ bytes: Data) {
         guard !bytes.isEmpty else { return }
         queue.async { [self] in
-            guard !deleted, let handle = openIfNeeded() else { return }
-            do {
-                try handle.write(contentsOf: bytes)
-                size += bytes.count
-            } catch {
-                return // Disk full / revoked fd: drop the chunk; the live stream is unaffected.
+            guard !deleted else { return }
+            pending.append(bytes)
+            if size + pending.count > byteCap * 2 {
+                // Cap check counts buffered bytes; compact() flushes first so it always runs
+                // over a file that already holds every append.
+                compact()
+            } else if pending.count >= Self.flushThresholdBytes {
+                flushPending()
+            } else {
+                scheduleIdleFlushIfNeeded()
             }
-            if size > byteCap * 2 { compact() }
         }
     }
 
     /// Blocks until every append enqueued so far has hit the file (restore + tests).
     func synchronize() {
         queue.sync {
+            flushPending()
             try? handle?.synchronize()
         }
     }
 
-    /// Closes the handle and removes the file; later appends are no-ops.
+    /// Closes the handle and removes the file; later appends are no-ops. Buffered bytes are
+    /// deliberately DISCARDED with the file (this is the deliberate-close path) — a stale idle
+    /// flush firing afterwards must not resurrect it.
     func closeAndDelete() {
         queue.sync {
             deleted = true
+            pending.removeAll(keepingCapacity: false)
             try? handle?.close()
             handle = nil
             try? FileManager.default.removeItem(at: fileURL)
@@ -259,6 +290,36 @@ final class ScrollbackJournal: @unchecked Sendable {
     }
 
     // MARK: On-queue helpers
+
+    /// Arms the idle flush when the buffer goes non-empty. Strong `self` capture is the
+    /// guarantee that pending bytes reach disk even if every other reference is dropped before
+    /// the timer fires (see `idleFlushScheduled` docs).
+    private func scheduleIdleFlushIfNeeded() {
+        guard !idleFlushScheduled, !pending.isEmpty else { return }
+        idleFlushScheduled = true
+        queue.asyncAfter(deadline: .now() + Self.idleFlushInterval) { [self] in
+            idleFlushScheduled = false
+            flushPending()
+        }
+    }
+
+    /// Writes every buffered byte in ONE contiguous write(2), preserving arrival order. On any
+    /// failure (open, seek, disk full, revoked fd) the buffer is dropped — the same posture the
+    /// old per-chunk append had; the live stream is unaffected. No-op after `closeAndDelete()`.
+    private func flushPending() {
+        guard !pending.isEmpty else { return }
+        guard !deleted, let handle = openIfNeeded() else {
+            pending.removeAll(keepingCapacity: false)
+            return
+        }
+        do {
+            try handle.write(contentsOf: pending)
+            size += pending.count
+        } catch {
+            // Dropped, as one batch instead of chunk-by-chunk.
+        }
+        pending.removeAll(keepingCapacity: true)
+    }
 
     private func openIfNeeded() -> FileHandle? {
         if let handle { return handle }
@@ -285,6 +346,9 @@ final class ScrollbackJournal: @unchecked Sendable {
     /// Same acceptance as the in-memory ring's head trim: a mid-sequence cut is TOLERATED (the
     /// distiller/terminal absorb it); the newline alignment just makes it rare.
     private func compact() {
+        // Compaction reads the FILE — flush first so the tail computation (and the surviving
+        // bytes) include every buffered append, in order.
+        flushPending()
         guard let current = try? Data(contentsOf: fileURL), current.count > byteCap else { return }
         var cut = current.count - byteCap
         let scanEnd = min(current.count, cut + 4096)

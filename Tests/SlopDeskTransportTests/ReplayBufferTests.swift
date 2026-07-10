@@ -86,6 +86,10 @@ final class ReplayBufferTests: XCTestCase {
         for _ in 1...3 { buffer.append(bytes: Data(count: 7)) }
         buffer.ack(upTo: 100)
         XCTAssertEqual(buffer.retainedBytes, 0)
+        // NEW contract (audit 2026-07-10): the ack is CLAMPED to highestSeq — an over-ack still
+        // clears everything up to highestSeq, but ackedSeq never runs ahead of reality (an
+        // unclamped ackedSeq would silently swallow every later legitimate ack).
+        XCTAssertEqual(buffer.ackedSeq, 3, "ack past highestSeq clamps ackedSeq to highestSeq")
         // Un-acked tail is empty; acked history lives in the scrollback ring and IS returned
         // by messages(after: 0). Use scrollbackBytes: 0 to verify the no-ring contract.
         XCTAssertTrue(
@@ -100,6 +104,29 @@ final class ReplayBufferTests: XCTestCase {
             "with scrollback disabled, acking past highestSeq leaves nothing in messages(after:0)",
         )
         XCTAssertEqual(buffer.append(bytes: Data(count: 1)), 4, "seq still continues from highestSeq")
+    }
+
+    /// Audit 2026-07-10: a bogus far-future ack (buggy/corrupt peer sends e.g. `Int64.max`) must not
+    /// wedge the buffer forever. Unclamped, `ackedSeq` jumps past any seq a legitimate client can
+    /// ever send, so every later ack hits the `seq > ackedSeq` early-return and is silently dropped;
+    /// append() then accumulates until `maxBackupBytesCap` and `shouldPauseDrain` pauses the PTY
+    /// drain PERMANENTLY. Clamped to `highestSeq`, the bogus ack still clears the current backlog
+    /// (same observable effect as testAckPastHighestClearsAll) but later in-range acks keep working.
+    func testBogusFarFutureAckDoesNotWedgeLaterAcks() {
+        var buf = ReplayBuffer(maxBackupBytes: 100, offlineGateBytes: 40, scrollbackBytes: 0)
+        for _ in 1...3 { buf.append(bytes: Data(count: 10)) }
+        buf.ack(upTo: Int64.max) // hostile/corrupt peer ack, far past highestSeq (3)
+        XCTAssertEqual(buf.retainedBytes, 0, "over-ack still clears everything up to highestSeq")
+        // New output produced after the bogus ack…
+        buf.append(bytes: Data(count: 60)) // seq 4
+        let s5 = buf.append(bytes: Data(count: 60)) // seq 5 → retained 120 ≥ 100 cap
+        XCTAssertEqual(buf.retainedBytes, 120)
+        XCTAssertTrue(buf.shouldPauseDrain, "over the maxBackup cap → drain pauses")
+        // …must still be releasable by a normal in-range ack.
+        buf.ack(upTo: s5)
+        XCTAssertEqual(buf.ackedSeq, s5, "legitimate ack must advance ackedSeq after a bogus over-ack")
+        XCTAssertEqual(buf.retainedBytes, 0, "in-range ack after a bogus far-future ack must release entries")
+        XCTAssertFalse(buf.shouldPauseDrain, "drain must resume — not wedged permanently")
     }
 
     // MARK: messages(after:) tail boundaries
@@ -294,6 +321,51 @@ final class ReplayBufferTests: XCTestCase {
         let seqs = buf.scrollbackRingSeqsForTesting
         XCTAssertFalse(seqs.contains(s1), "oldest entry must be evicted to satisfy cap")
         XCTAssertTrue(seqs.contains(s3), "newest acked entry must survive")
+    }
+
+    // MARK: Scrollback ring — bulk eviction behavior pin (audit 2026-07-10 perf refactor)
+
+    /// Pins the EXACT ring contents after a multi-entry eviction — seqs, byte totals, and the
+    /// line-aligned head trim — so the O(k*n) `removeFirst()` loop can be refactored to one bulk
+    /// `removeFirst(dropCount)` with byte-identical semantics. Green pre-fix AND post-fix.
+    func testScrollbackBulkEvictionRingContentsBytePinned() {
+        // Scenario A: 6 entries × 5 B ("q<i>\nr<i>"), cap 12 → one ack moves 30 B into the ring,
+        // eviction drops seqs 1..4 (30→25→20→15→10 ≤ 12), then the line-align trim fires on the
+        // new head (seq 5 = "q4\nr4" → "r4").
+        var buf = ReplayBuffer(scrollbackBytes: 12)
+        for i in 0..<6 {
+            buf.append(bytes: Data("q\(i)\nr\(i)".utf8)) // 5 bytes each, seqs 1..6
+        }
+        buf.ack(upTo: 6)
+        XCTAssertEqual(buf.retainedBytes, 0)
+        XCTAssertEqual(buf.scrollbackRingSeqsForTesting, [5, 6], "eviction drops the oldest 4 entries")
+        XCTAssertEqual(buf.scrollbackRingCountForTesting, 2)
+        XCTAssertEqual(
+            buf.scrollbackRingOldestBytesForTesting,
+            Data("r4".utf8),
+            "new head is line-align-trimmed past its \\n",
+        )
+        XCTAssertEqual(buf.scrollbackRingBytesForTesting, 7, "5 + 5 - 3 trimmed head bytes")
+        XCTAssertEqual(
+            buf.messages(after: 0).map(\.bytes),
+            [Data("r4".utf8), Data("q5\nr5".utf8)],
+            "cold-replay bytes byte-identical",
+        )
+
+        // Scenario B: many small entries, no \n in the surviving head → bulk drop, head intact.
+        var big = ReplayBuffer(scrollbackBytes: 64)
+        var last: Int64 = 0
+        for _ in 0..<200 {
+            last = big.append(bytes: Data("abcdefgh".utf8)) // 8 bytes each, seqs 1..200
+        }
+        big.ack(upTo: last) // 1600 B into the ring → drop 192 oldest → 64 B exactly
+        XCTAssertEqual(big.scrollbackRingSeqsForTesting, Array(Int64(193)...200))
+        XCTAssertEqual(big.scrollbackRingBytesForTesting, 64)
+        XCTAssertEqual(
+            big.scrollbackRingOldestBytesForTesting,
+            Data("abcdefgh".utf8),
+            "no \\n in the new head → left intact",
+        )
     }
 
     // MARK: Scrollback ring — line-aligned eviction

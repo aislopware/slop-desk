@@ -170,6 +170,11 @@ public final class RemoteWindowModel {
     /// re-picks or the pane closes, so a stale query can't unbind a freshly re-picked window. Readable so a
     /// test can `await` its completion deterministically (the setter stays private).
     @ObservationIgnored private(set) var revalidationTask: Task<Void, Never>?
+    /// TEARDOWN GENERATION: bumped by every ``close()``. ``revalidateBinding()`` snapshots it before
+    /// suspending on the discovery query and drops its verdict if it changed — outer-task cancellation is
+    /// only cooperative, so without this a close() racing the await would let a stale `.rebind` verdict
+    /// silently re-open a torn-down pane's video stream.
+    @ObservationIgnored private var closeGeneration: UInt64 = 0
     /// Per-character pacing — slow enough that a secure field's focus/IME keeps up, fast enough to
     /// feel instant for a password. Injectable for deterministic tests (`.zero`).
     private let pasteInterval: Duration
@@ -391,7 +396,18 @@ public final class RemoteWindowModel {
     public func revalidateBinding() async -> RebindOutcome {
         guard let query = RemoteWindowDiscovery.shared, let wid = parsedWindowID else { return .skipped }
         let t = target()
+        // STALE-VERDICT GUARD (2026-07-10): snapshot liveness BEFORE suspending. The spawn sites cancel
+        // the outer task on teardown, but cancellation is cooperative and the discovery closure has no
+        // checkpoint — so a close() (or re-pick/re-open) racing the await must be caught HERE, after the
+        // query resumes, or the verdict below would act on a pane that no longer exists.
+        let generation = closeGeneration
+        let startedActive = active
         let windows = await query(t.host, t.mediaPort, t.cursorPort)
+        // Torn down / re-targeted while the query was in flight ⇒ the verdict is stale. Acting on it
+        // would silently REACTIVATE a closed pane (the `.rebind` arm re-open()s). Drop it as a no-op.
+        guard !Task.isCancelled, generation == closeGeneration, active == startedActive else {
+            return .skipped
+        }
         guard !windows.isEmpty else { return .skipped } // unreachable/empty: not evidence of staleness
         switch WindowRebind.resolve(windowID: wid, appName: appName, title: title, in: windows) {
         case .keep:
@@ -458,10 +474,14 @@ public final class RemoteWindowModel {
     /// Closes the remote window (tears down the live view → its orchestrator `stop()`).
     public func close() {
         active = nil
+        closeGeneration &+= 1 // invalidate any in-flight revalidateBinding() verdict (see its guard)
         pasteTask?.cancel() // a torn-down pane must not keep injecting a paste-in-flight into the host
-        // Cancel any in-flight post-pick revalidation. Safe against self-cancel from the `.rebound` path
-        // (which calls close() then re-open()s synchronously — cooperative cancellation has no checkpoint
-        // between them, so the rebind still completes); a genuine teardown stops a stale query re-opening.
+        // Cancel any in-flight post-pick revalidation. Cancellation alone is COOPERATIVE (the discovery
+        // await is not a reliable checkpoint), so the real teardown guarantee is `closeGeneration` above:
+        // revalidateBinding() snapshots it before suspending and drops a verdict that lands after this
+        // close — a stale query can never re-open a torn-down pane. Safe against self-cancel from the
+        // `.rebound` path (which calls close() then re-open()s synchronously — its guard already passed
+        // before that close, and there is no further suspension point).
         revalidationTask?.cancel()
         endAwaitingReflow() // a closed window will not re-capture — never leave the scrim hung
         isStreamStalled = false // a closed pane shows the picker, not a stale "Reconnecting…" scrim

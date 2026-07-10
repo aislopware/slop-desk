@@ -335,7 +335,10 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
         guard let (channelID, rest) = try? VideoMuxHeaderCodec.decode(data), rest.count >= 1 else { return }
         let tag = rest[rest.startIndex]
         guard let channel = VideoChannel(rawValue: tag) else { return }
-        let payload = Data(rest[(rest.startIndex + 1)...])
+        // Tag-stripped SLICE, not a copy (copy-elimination, 2026-07-10): every consumer decodes
+        // startIndex-relative (`VideoByteReader`) and copies durable bytes via `readBytes`, so the
+        // slice never outlives the dispatch — nothing pins the parent datagram buffer.
+        let payload = rest[(rest.startIndex + 1)...]
         let outcome: MediaRouteOutcome = lock.withLock {
             let decision = muxRouter.route(channelID: channelID, channel: channel, bytesCount: data.count)
             switch decision {
@@ -405,10 +408,11 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
     /// (no `channelMediaConn` stamp — the lane stays forgotten). Fire-and-forget UDP; the client's
     /// keepalive re-triggers it (rate-limited) if this one is lost.
     private func sendUnboundBye(_ channelID: UInt32, on conn: NWConnection) {
-        var inner = Data(capacity: 2)
-        inner.append(VideoChannel.control.rawValue)
-        inner.append(VideoControlMessage.bye.encode())
-        let framed = VideoMuxHeaderCodec.encode(channelID: channelID, payload: inner)
+        let framed = VideoMuxHeaderCodec.encodeMedia(
+            channelID: channelID,
+            tag: VideoChannel.control.rawValue,
+            payload: VideoControlMessage.bye.encode(),
+        )
         log.info("unbound lane chan=\(channelID) still talking (host restarted?) — answering bye")
         conn.send(content: framed, completion: .contentProcessed { [weak self] error in
             if let error {
@@ -495,15 +499,15 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
         let isMedia = Self.mediaSocket(for: channel)
         let conn: NWConnection? = lock.withLock { isMedia ? channelMediaConn[channelID] : channelCursorConn[channelID] }
         guard let conn else { return }
-        let framed: Data
-        if isMedia {
-            var inner = Data(capacity: datagram.count + 1)
-            inner.append(channel.rawValue)
-            inner.append(datagram)
-            framed = VideoMuxHeaderCodec.encode(channelID: channelID, payload: inner)
-        } else {
-            framed = VideoMuxHeaderCodec.encode(channelID: channelID, payload: datagram)
-        }
+        // Single-allocation framing (copy-elimination, 2026-07-10): the payload bytes are appended
+        // exactly once — byte-identical to the old inner `[tag][payload]` + prefix-encode two-step
+        // (pinned in `VideoMuxHeaderCodecTests.testMediaSendShapePinsManualWireBytes`).
+        let framed: Data =
+            if isMedia {
+                VideoMuxHeaderCodec.encodeMedia(channelID: channelID, tag: channel.rawValue, payload: datagram)
+            } else {
+                VideoMuxHeaderCodec.encode(channelID: channelID, payload: datagram)
+            }
         conn.send(content: framed, completion: .contentProcessed { [weak self] error in
             if let error {
                 self?.log

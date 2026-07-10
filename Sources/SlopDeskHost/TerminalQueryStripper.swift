@@ -103,36 +103,44 @@ enum TerminalQueryStripper {
 
     // MARK: CSI
 
+    /// Slices into the shared scan buffer (no per-CSI array allocs — this runs for EVERY CSI over
+    /// multi-hundred-MiB cold-reattach/journal blobs, and SGR-final `m` dominates).
     private struct CSISequence {
-        let params: [UInt8] // 0x30–0x3F (digits ; : < = > ?)
-        let intermediates: [UInt8] // 0x20–0x2F
+        let params: ArraySlice<UInt8> // 0x30–0x3F (digits ; : < = > ?)
+        let intermediates: ArraySlice<UInt8> // 0x20–0x2F
         let final: UInt8 // 0x40–0x7E
         let end: Int // index just past the final byte
     }
 
     private static func parseCSI(_ bytes: [UInt8], at start: Int) -> CSISequence? {
         var j = start + 2
-        var params: [UInt8] = []
-        var inters: [UInt8] = []
+        let paramsStart = j
         while j < bytes.count, (0x30...0x3F).contains(bytes[j]) {
-            params.append(bytes[j])
             j += 1
         }
+        let intersStart = j
         while j < bytes.count, (0x20...0x2F).contains(bytes[j]) {
-            inters.append(bytes[j])
             j += 1
         }
         guard j < bytes.count, (0x40...0x7E).contains(bytes[j]) else { return nil }
-        return CSISequence(params: params, intermediates: inters, final: bytes[j], end: j + 1)
+        return CSISequence(
+            params: bytes[paramsStart..<intersStart],
+            intermediates: bytes[intersStart..<j],
+            final: bytes[j],
+            end: j + 1,
+        )
     }
 
     /// Window-op report requests (`CSI Ps t` with these leading params) — the terminal replies
     /// with geometry/title reports. 22/23 (title push/pop) and 8 (resize) are NOT reports → kept.
     private static let windowReportOps: Set<String> = ["11", "13", "14", "15", "16", "18", "19", "20", "21"]
 
-    private static func shouldStripCSI(params: [UInt8], intermediates: [UInt8], final: UInt8) -> Bool {
-        let p = String(bytes: params, encoding: .utf8) ?? ""
-        let hasDollar = intermediates.contains(UInt8(ascii: "$"))
+    /// All work is per-branch and byte-wise (params/intermediates are always ASCII by the parseCSI
+    /// byte ranges): the overwhelmingly common SGR final `m` falls straight to `false` without
+    /// building a String or scanning intermediates — the hot path over huge replay blobs.
+    private static func shouldStripCSI(
+        params: ArraySlice<UInt8>, intermediates: ArraySlice<UInt8>, final: UInt8,
+    ) -> Bool {
         switch final {
         case UInt8(ascii: "c"): // DA1/DA2/DA3 query — and the `?`-prefixed echoed DA response
             return true
@@ -143,16 +151,16 @@ enum TerminalQueryStripper {
         case UInt8(ascii: "x"): // DECREQTPARM query + its `x`-final response
             return intermediates.isEmpty
         case UInt8(ascii: "p"): // DECRQM query (`$` intermediate); keep DECSTR `!p` etc.
-            return hasDollar
+            return intermediates.contains(UInt8(ascii: "$"))
         case UInt8(ascii: "y"): // echoed DECRPM response (`$` intermediate); keep DECTST
-            return hasDollar
+            return intermediates.contains(UInt8(ascii: "$"))
         case UInt8(ascii: "q"): // XTVERSION `CSI > Ps q`; keep DECSCUSR `SP q` / DECSCA `" q`
-            return intermediates.isEmpty && p.hasPrefix(">")
+            return intermediates.isEmpty && params.first == UInt8(ascii: ">")
         case UInt8(ascii: "u"): // kitty keyboard-flags query `CSI ? u`; keep push/pop/restore
-            return p.hasPrefix("?")
+            return params.first == UInt8(ascii: "?")
         case UInt8(ascii: "t"): // window-op REPORT requests only
-            let first = p.prefix(while: { $0 != ";" })
-            return windowReportOps.contains(String(first))
+            let first = params.prefix(while: { $0 != UInt8(ascii: ";") })
+            return windowReportOps.contains(String(bytes: first, encoding: .utf8) ?? "")
         default:
             return false
         }

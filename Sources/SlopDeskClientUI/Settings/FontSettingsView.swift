@@ -427,19 +427,38 @@ private enum LineHeightChoice: Hashable {
 /// a searchable popover of this device's monospaced faces, each shown as an "Aa" specimen in its own face.
 /// Free-text (not a closed Picker) because the terminal renders on the HOST — any host-installed family can be
 /// typed even if this device lacks it.
+///
+/// DRAFT-COMMIT (stability audit): the store-backed rows must NOT write `selection` per keystroke — every
+/// write rides `PreferencesStore.terminal`/`.appearance` `didSet` → persist + `TerminalConfigBroadcaster`
+/// → every live terminal reloads libghostty config + PTY-resizes. So keystrokes edit a LOCAL draft that is
+/// committed via ``DraftCommitDebouncer`` — after a short idle pause (live preview: one trailing commit per
+/// burst), and immediately on submit / focus loss / teardown. A specimen pick writes `selection` directly
+/// (one discrete, intentional commit). `draftCommit: false` keeps the old write-through for a binding that
+/// is itself a cheap local `@State` read synchronously by a sibling control (the Fallback "Add" row).
 private struct FontFamilyComboBox: View {
     @Binding var selection: String
     var placeholder: String
+    /// Whether keystrokes are held in a local draft and committed on idle/submit/blur (default — for the
+    /// store-backed rows). `false` = write-through (local-`@State` bindings only, e.g. the Fallback add row).
+    var draftCommit = true
 
     @State private var showingList = false
     @State private var query = ""
+    /// The local draft the text field edits in draft-commit mode (seeded from `selection`).
+    @State private var draft = ""
+    /// The trailing-edge idle committer (one commit per typing burst — see `DraftCommitDebouncerTests`).
+    @State private var debouncer = DraftCommitDebouncer()
+    /// Focus probe for the commit-on-blur edge.
+    @FocusState private var fieldFocused: Bool
 
     var body: some View {
         HStack(spacing: Slate.Metric.space1) {
-            TextField(placeholder, text: $selection)
+            TextField(placeholder, text: draftCommit ? $draft : $selection)
                 .textFieldStyle(.plain)
                 .font(.system(size: Slate.Typeface.body))
                 .frame(minWidth: 150, alignment: .leading)
+                .focused($fieldFocused)
+                .onSubmit { commitDraftNow() }
             Button {
                 showingList.toggle()
             } label: {
@@ -460,6 +479,34 @@ private struct FontFamilyComboBox: View {
             RoundedRectangle(cornerRadius: Slate.Metric.radiusControl, style: .continuous)
                 .strokeBorder(Slate.Line.subtle, lineWidth: 1),
         )
+        .onAppear { draft = selection }
+        .onChange(of: selection) { _, external in
+            // An external write (specimen pick / reset / another scope) resyncs the draft. Also the echo of
+            // our own commit — `external == draft` then, so the guarded assignment is a no-op.
+            if external != draft { draft = external }
+        }
+        .onChange(of: draft) { _, newValue in
+            guard draftCommit else { return }
+            guard newValue != selection else {
+                debouncer.cancel() // typed back to the committed value / resync echo — nothing to commit
+                return
+            }
+            // Reschedules per keystroke; only the LAST closure (latest draft) fires, once, after idle.
+            debouncer.schedule { selection = newValue }
+        }
+        .onChange(of: fieldFocused) { _, focused in
+            if !focused { commitDraftNow() } // commit-on-blur
+        }
+        .onDisappear { commitDraftNow() } // teardown (scope-tab switch / sheet close) never drops an edit
+    }
+
+    /// Submit / blur / teardown: commit the draft NOW, cancelling any pending idle commit (never double-fires;
+    /// an unchanged draft is a no-op so the store `didSet` isn't churned).
+    private func commitDraftNow() {
+        guard draftCommit else { return }
+        debouncer.flush {
+            if draft != selection { selection = draft }
+        }
     }
 
     /// The popover: a search field + a scrollable specimen list. A custom popover (not an `NSMenu`) so the
@@ -568,7 +615,10 @@ private struct FallbackListEditor: View {
                 }
             }
             HStack(spacing: Slate.Metric.space2) {
-                FontFamilyComboBox(selection: $draft, placeholder: "Add a fallback font")
+                // Write-through (`draftCommit: false`): this binding is the editor's own local `@State` —
+                // no store write per keystroke — and the Add button + its `.disabled` gate read it
+                // synchronously, so an inner idle-draft would make Add act on a stale value.
+                FontFamilyComboBox(selection: $draft, placeholder: "Add a fallback font", draftCommit: false)
                 Button("Add") { add() }
                     .disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
             }

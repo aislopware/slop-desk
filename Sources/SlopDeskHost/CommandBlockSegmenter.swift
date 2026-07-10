@@ -138,8 +138,12 @@ public struct CommandBlockSegmenter {
     /// Feeds a chunk of the OUTBOUND PTY byte stream. Returns the blocks that COMPLETED in
     /// this chunk (each closed by its `D` mark), in order. State persists across calls, so a
     /// sequence split at any byte boundary yields identical blocks to the whole stream.
+    ///
+    /// Generic over any byte sequence (`[UInt8]`, `Data`, a slice…) so the live tap can feed each
+    /// PTY chunk STRAIGHT through with zero copy — this runs per chunk on the read-loop hot path,
+    /// and the old `[UInt8]`-only signature forced an `Array(chunk)` alloc + memcpy per chunk.
     @discardableResult
-    public mutating func ingest(_ bytes: [UInt8]) -> [CommandBlock] {
+    public mutating func ingest(_ bytes: some Sequence<UInt8>) -> [CommandBlock] {
         var completed: [CommandBlock] = []
         for byte in bytes {
             step(byte, into: &completed)

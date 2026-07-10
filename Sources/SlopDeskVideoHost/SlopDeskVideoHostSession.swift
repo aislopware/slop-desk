@@ -517,6 +517,18 @@ public actor SlopDeskVideoHostSession {
             capturer?.onScrollOffset = { [weak self] dx, dy, bandTop, bandBottom in
                 Task { await self?.sendScrollOffset(dx: dx, dy: dy, bandTop: bandTop, bandBottom: bandBottom) }
             }
+            // CAPTURE-DEATH (stability audit 2026-07-10): wire every freshly-installed capturer to
+            // report its SCStream dying out from under us (window closed, display unplugged, TCC
+            // revoked, WindowServer reset). Fires on the capturer's frameQueue AFTER the capturer
+            // quiesced its own synthetic-frame machinery; hop onto the actor to decide. The closure
+            // captures THIS instance (weakly) so a stale (superseded-by-resize) capturer's death is
+            // distinguishable from the currently-installed one's — `onCaptureDied` ignores the former.
+            if let installed = capturer {
+                installed.onCaptureFailed = { [weak self, weak installed] in
+                    guard let self, let installed else { return }
+                    Task { await self.onCaptureDied(installed) }
+                }
+            }
         }
     }
 
@@ -2878,6 +2890,38 @@ public actor SlopDeskVideoHostSession {
         await apply(.sendControl(.bye))
         await apply(.sendControl(.bye))
         await stop()
+    }
+
+    /// CAPTURE-DEATH (stability audit 2026-07-10): the live capturer's SCStream died out from
+    /// under the session (`didStopWithError` — window closed, display unplugged, TCC revoked,
+    /// WindowServer/GPU reset). The capturer already quiesced its synthetic-frame machinery (IDR
+    /// timer cancelled, cached frame dropped), but the session is still `.streaming`: the 1 s
+    /// host heartbeat keeps the client's stall scrim disarmed, so without this teardown the pane
+    /// froze PERMANENTLY and silently on the last decoded frame (and every recovery request just
+    /// re-encoded that stale frame). Reuse the C6 last-rung teardown — `.bye` (twice, unacked
+    /// UDP) + `stop()` — so the client's disconnect/reconnect UI engages. Once-only: the teardown
+    /// flips `mediaFlowing` false, so a second callback (or a racing deliberate stop) is gated
+    /// out by the pure decision below.
+    private func onCaptureDied(_ failed: WindowCapturer) async {
+        guard Self.shouldDisconnectOnCaptureFailure(
+            mediaFlowing: stateMachine.mediaFlowing,
+            failedIsCurrent: failed === capturer,
+        ) else {
+            dbg("capture death ignored (session already torn down, or a superseded capturer died)")
+            return
+        }
+        log.error("SCStream capture died — sending bye + stopping session (visible disconnect beats silent freeze)")
+        await disconnectAfterCaptureRebuildFailure()
+    }
+
+    /// PURE decision for ``onCaptureDied`` (headlessly unit-tested — the session actor itself
+    /// needs a real `SCWindow`; the `CaptureRegionFailureRecovery` pattern): tear down ONLY when
+    /// the session still believes media is flowing AND the dead capturer is the CURRENTLY
+    /// installed one. `mediaFlowing == false` ⇒ a deliberate stop/bye teardown already ran
+    /// (double-teardown guard); `failedIsCurrent == false` ⇒ a resize/region rebuild superseded
+    /// the dead instance across a suspension point (a newer owner owns the session's fate).
+    static func shouldDisconnectOnCaptureFailure(mediaFlowing: Bool, failedIsCurrent: Bool) -> Bool {
+        mediaFlowing && failedIsCurrent
     }
 
     /// Converts the GLOBAL opaque content rects (window + popups) into capture-local PIXEL

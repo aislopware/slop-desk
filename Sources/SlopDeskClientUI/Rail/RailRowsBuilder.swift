@@ -92,67 +92,34 @@ enum RailRowsBuilder {
             for paneID in tab.allPaneIDs() {
                 let spec = session.specs[paneID]
                 let kind = spec?.kind ?? .terminal
-                // The host's coarse foreground-process name (wire type 26): the trailing row label, a
-                // badge-resolver input, AND (A4) the pane-title fallback when the cwd is not known yet.
-                let processLabel = store.paneForegroundProcess[paneID]
+                // The row's VOLATILE chrome (status / badge / git line / process / lock / rename mode) —
+                // resolved by the SAME `chrome(...)` the live row views read directly (perf audit: the
+                // sidebar body memoizes these rows and each row VIEW re-reads its own chrome fresh, so the
+                // resolution rule must have exactly one home or the two paths drift).
+                let chrome = Self.chrome(
+                    paneID: paneID, kind: kind, spec: spec, tabID: tab.id,
+                    representativePane: representativePane, manualBadge: manualBadge, store: store,
+                )
                 // A TERMINAL row's line 1 is its cwd's FOLDER NAME (`slopdesk`), not the generic
                 // "Terminal" / raw shell title — an explicit user rename still wins (see `rowTitle`); a
                 // cwd-less pane falls back to its foreground program (A4) before the generic chain.
-                let title = Self.rowTitle(kind: kind, spec: spec, processLabel: processLabel)
-                // Line 2: a terminal shows its git line (branch ↑/↓ · N changed) when the store has a
-                // summary for a repo cwd, else the kind-generic ``PaneSpec/railSubtitle`` — a terminal's
-                // plain cwd, or (for a `.remoteGUI`/`.systemDialog` video pane, which has no shell cwd)
-                // the host-side window's owning app name (falling back to the window title). So a remote
-                // window reads as a labelled WINDOW (title on line 1, host app on line 2) rather than a
-                // bare single line. (The coarse video-CONNECTION dot is deferred:
-                // `PaneConnectionStatus.from` returns `.none` for a video pane by design, and surfacing a live
-                // phase needs a `RemoteWindowModel`→store→row thread that would widen this WI past the gate;
-                // recorded as an E21 §7 follow-up.)
-                let gitSummary = kind == .terminal ? store.paneGitSummary[paneID] : nil
-                let gitLine = gitSummary?.compactLine
-                let subtitle = gitLine ?? spec?.railSubtitle
-                let status = store.paneAgentStatus[paneID] ?? .none
+                let title = Self.rowTitle(kind: kind, spec: spec, processLabel: chrome.processLabel)
                 let isSelected = tabIsActive && tab.activePane == paneID
-                // E6 WI-2: the `⌘N` is the TAB shortcut number (1-based), the trailing label is the host's
-                // coarse foreground process (`processLabel`, resolved above), and the row carries ONE fused
-                // badge from the pure resolver.
-                // E13 WI-3 + Progress cluster: the SOURCE-AWARE gating masks the resolver inputs by source so
-                // the agent toggles (per-pane override beats the global default) and the command "TAB BADGE"
-                // toggles gate their OWN badge families independently — a program's busy / OSC 9;4 progress
-                // spinner and an OSC 9;4;2 progress error are never silenced by an agent toggle. Freshness
-                // decays the clean-completion badge (store owns the clock); the resolver stays pure.
-                let gatedBadge = TabBadgeGating.resolve(
-                    agent: status,
-                    completion: store.panePendingCompletion[paneID],
-                    isBusy: store.paneIsBusy(paneID),
-                    foregroundProcess: processLabel,
-                    completionFreshness: store.completionFreshness(forPane: paneID),
-                    progress: store.progress(for: paneID),
-                    agentGates: store.agentBadgeGates(for: paneID),
-                    commandGates: store.commandBadgeGates,
-                )
-                // E20 ES-E20-3: an explicit `tab badge --kind` override wins for the representative row,
-                // bypassing the agent-badge gates (it is an explicit CLI affordance, not an agent signal).
-                let badge = (paneID == representativePane ? manualBadge : nil) ?? gatedBadge
-                // C3 BUG B: the row opens its inline rename field when the store's pending-rename names this
-                // TAB and this pane is the tab's representative (active) pane — one editing row per pending tab
-                // (a split tab does not open a field on every sibling).
-                let isEditing = store.pendingTabRename == tab.id && paneID == representativePane
                 out.append(RailRow(
                     id: paneID,
                     tabID: tab.id,
                     kind: kind,
                     title: title,
-                    subtitle: subtitle,
-                    status: status,
+                    subtitle: chrome.subtitle,
+                    status: chrome.status,
                     tabNumber: tabIndex + 1,
-                    badge: badge,
-                    processLabel: processLabel,
-                    readOnly: store.isReadOnly(for: paneID),
+                    badge: chrome.badge,
+                    processLabel: chrome.processLabel,
+                    readOnly: chrome.readOnly,
                     cwd: kind == .terminal ? spec?.lastKnownCwd : nil,
-                    isEditing: isEditing,
+                    isEditing: chrome.isEditing,
                     isSelected: isSelected,
-                    gitSummary: gitSummary,
+                    gitSummary: chrome.gitSummary,
                     // The pane's OWN project key (guarded git toplevel / cwd) drives per-pane By-Project
                     // sectioning; a video pane has no project (⇒ "Other").
                     projectKey: kind == .terminal ? store.paneProjectKey(paneID) : nil,
@@ -162,6 +129,88 @@ enum RailRowsBuilder {
         // C3 BUG A (3): disambiguate any two VISIBLE rows that collide on a folder-name title by prefixing the
         // parent path segment (`feature-a/myapp` vs `feature-b/myapp`) so same-named worktrees are told apart.
         return disambiguated(out)
+    }
+
+    /// The VOLATILE per-row chrome — every field of a rail row that ticks with pane activity rather than
+    /// with workspace STRUCTURE: agent status, the fused badge, the git line / subtitle, the foreground
+    /// process, the read-only lock, and the inline-rename mode. Split out (perf audit) so the row VIEW can
+    /// read its own pane's chrome fresh from the store while the sidebar body renders MEMOIZED structural
+    /// rows (``RailRowsMemo``) — a status tick then re-renders one cheap leaf row body instead of
+    /// rebuilding the whole rows/section model. `Equatable` so tests pin builder ↔ live parity.
+    struct RailRowChrome: Equatable {
+        let status: ClaudeStatus
+        let badge: TabBadgeKind?
+        let processLabel: String?
+        let gitSummary: PaneGitSummary?
+        let subtitle: String?
+        let readOnly: Bool
+        let isEditing: Bool
+    }
+
+    /// Resolve one pane's volatile chrome — the SINGLE resolution rule behind both ``rows(for:)`` (the full
+    /// model build) and ``liveChrome(for:store:)`` (the per-row view's fresh read), so the two can't drift.
+    ///
+    /// Line 2: a terminal shows its git line (branch ↑/↓ · N changed) when the store has a summary for a
+    /// repo cwd, else the kind-generic ``PaneSpec/railSubtitle`` — a terminal's plain cwd, or (for a
+    /// `.remoteGUI`/`.systemDialog` video pane, which has no shell cwd) the host-side window's owning app
+    /// name (falling back to the window title). So a remote window reads as a labelled WINDOW rather than a
+    /// bare single line. (The coarse video-CONNECTION dot is deferred — recorded as an E21 §7 follow-up.)
+    ///
+    /// Badge: E13 WI-3 + Progress cluster — the SOURCE-AWARE gating masks the resolver inputs by source so
+    /// the agent toggles (per-pane override beats the global default) and the command "TAB BADGE" toggles
+    /// gate their OWN badge families independently — a program's busy / OSC 9;4 progress spinner and an
+    /// OSC 9;4;2 progress error are never silenced by an agent toggle. Freshness decays the clean-completion
+    /// badge (store owns the clock); the resolver stays pure. E20 ES-E20-3: an explicit `tab badge --kind`
+    /// override wins for the tab's REPRESENTATIVE row, bypassing the agent-badge gates (it is an explicit
+    /// CLI affordance, not an agent signal).
+    ///
+    /// Rename mode (C3 BUG B): the row opens its inline rename field when the store's pending-rename names
+    /// this TAB and this pane is the tab's representative (active) pane — one editing row per pending tab.
+    @MainActor
+    static func chrome(
+        paneID: PaneID, kind: PaneKind, spec: PaneSpec?, tabID: TabID,
+        representativePane: PaneID?, manualBadge: TabBadgeKind?, store: WorkspaceStore,
+    ) -> RailRowChrome {
+        // The host's coarse foreground-process name (wire type 26): the trailing row label, a
+        // badge-resolver input, AND (A4) the pane-title fallback when the cwd is not known yet.
+        let processLabel = store.paneForegroundProcess[paneID]
+        let gitSummary = kind == .terminal ? store.paneGitSummary[paneID] : nil
+        let subtitle = gitSummary?.compactLine ?? spec?.railSubtitle
+        let status = store.paneAgentStatus[paneID] ?? .none
+        let gatedBadge = TabBadgeGating.resolve(
+            agent: status,
+            completion: store.panePendingCompletion[paneID],
+            isBusy: store.paneIsBusy(paneID),
+            foregroundProcess: processLabel,
+            completionFreshness: store.completionFreshness(forPane: paneID),
+            progress: store.progress(for: paneID),
+            agentGates: store.agentBadgeGates(for: paneID),
+            commandGates: store.commandBadgeGates,
+        )
+        return RailRowChrome(
+            status: status,
+            badge: (paneID == representativePane ? manualBadge : nil) ?? gatedBadge,
+            processLabel: processLabel,
+            gitSummary: gitSummary,
+            subtitle: subtitle,
+            readOnly: store.isReadOnly(for: paneID),
+            isEditing: store.pendingTabRename == tabID && paneID == representativePane,
+        )
+    }
+
+    /// The row VIEW's entry: resolve `row`'s CURRENT volatile chrome from the live store (the cached
+    /// ``RailRow`` a memoized sidebar carries is stale by design for these fields). Re-derives the tab's
+    /// representative pane + manual badge override from the store, then delegates to ``chrome(...)``.
+    @MainActor
+    static func liveChrome(for row: RailRow, store: WorkspaceStore) -> RailRowChrome {
+        let session = store.tree.activeSession
+        let tab = session?.tabs.first { $0.id == row.tabID }
+        let representativePane = tab.flatMap { $0.activePane ?? $0.allPaneIDs().first }
+        return chrome(
+            paneID: row.id, kind: row.kind, spec: session?.specs[row.id], tabID: row.tabID,
+            representativePane: representativePane,
+            manualBadge: store.tabBadgeOverride(for: row.tabID), store: store,
+        )
     }
 
     /// C3 BUG A (3): for any TITLE shared by more than one row, replace each colliding row's folder-name title

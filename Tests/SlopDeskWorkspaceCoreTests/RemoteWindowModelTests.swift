@@ -391,6 +391,58 @@ final class RemoteWindowModelTests: XCTestCase {
         XCTAssertNil(m.loadError)
     }
 
+    // MARK: Stale-verdict guard (2026-07-10): a close() racing the discovery await must stay closed
+
+    /// **THE BUG:** `revalidateBinding()` suspended on the discovery query and then acted on the verdict
+    /// UNCONDITIONALLY — closing the pane while the query was in flight let a `.rebind` verdict silently
+    /// re-open the video stream on a torn-down pane. The outer task is NOT cancelled here (the model's own
+    /// `revalidationTask` is unrelated to this direct call), isolating the IN-BODY liveness guard: the
+    /// generation snapshot taken before the await must invalidate the verdict landing after `close()`.
+    func testCloseDuringRevalidationLeavesModelClosed() async {
+        let (gateStream, gate) = AsyncStream<Void>.makeStream()
+        let entered = expectation(description: "discovery query suspended in flight")
+        RemoteWindowDiscovery.shared = { _, _, _ in
+            entered.fulfill()
+            var it = gateStream.makeAsyncIterator()
+            _ = await it.next() // held open until the test releases the gate
+            // A `.rebind`-shaped verdict: same app, recycled id — the poisonous case (it re-open()s).
+            return [RemoteWindowSummary(windowID: 77, appName: "Code", title: "main.swift", width: 100, height: 50)]
+        }
+        let m = RemoteWindowModel(target: { self.target }, windowID: "58", title: "main.swift", appName: "Code")
+        var commits = 0
+        m.onEndpointCommitted = { _ in commits += 1 }
+        m.open()
+        XCTAssertEqual(commits, 1)
+        let validation = Task { @MainActor in await m.revalidateBinding() }
+        await fulfillment(of: [entered], timeout: 5)
+        m.close() // the user tears the pane down while the query is suspended
+        gate.yield() // …then the stale verdict lands
+        let outcome = await validation.value
+        XCTAssertEqual(outcome, .skipped, "a verdict landing after close() is stale — dropped, not acted on")
+        XCTAssertNil(m.active, "the closed pane must NOT silently reactivate its video stream")
+        XCTAssertEqual(commits, 1, "no new endpoint is committed after teardown")
+    }
+
+    /// The same race through the REAL spawn site: `pickAndOpen` starts `revalidationTask`, `close()`
+    /// cancels it — but cancellation is cooperative and the discovery await isn't a reliable checkpoint
+    /// (a plain closure can complete normally under cancellation), so the body must ALSO check
+    /// `Task.isCancelled` / liveness after resuming instead of rebinding a torn-down pane.
+    func testCloseDuringPickAndOpenRevalidationStaysClosed() async {
+        let (gateStream, gate) = AsyncStream<Void>.makeStream()
+        RemoteWindowDiscovery.shared = { _, _, _ in
+            var it = gateStream.makeAsyncIterator()
+            _ = await it.next() // under cancellation next() returns nil immediately — the query still "lands"
+            return [RemoteWindowSummary(windowID: 77, appName: "Code", title: "main.swift", width: 100, height: 50)]
+        }
+        let m = RemoteWindowModel(target: { self.target })
+        m.pickAndOpen(RemoteWindowSummary(windowID: 58, appName: "Code", title: "main.swift", width: 100, height: 50))
+        XCTAssertEqual(m.active?.windowID, 58, "opens optimistically")
+        m.close() // cancels revalidationTask — but the query result still lands afterwards
+        gate.yield()
+        await m.revalidationTask?.value
+        XCTAssertNil(m.active, "close() during the post-pick revalidation must stay closed — no rebind revival")
+    }
+
     func testRevalidateSkipsOnUnreachableHostOrNoSeam() async {
         // Empty list (host unreachable / discovery timeout): NOT evidence of staleness.
         RemoteWindowDiscovery.shared = { _, _, _ in [] }

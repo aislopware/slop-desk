@@ -156,6 +156,75 @@ final class TerminalQueryStripperTests: XCTestCase {
         )
     }
 
+    // MARK: - Nasty-corpus exact-byte pin (allocation-refactor guard)
+
+    /// EXACT-BYTE pin over a representative nasty corpus: every piece is tagged kept/stripped at
+    /// construction time and the expected output is the concatenation of the KEPT pieces — so any
+    /// internal refactor (lazy String building, slice-based CSI parsing) that changes a single
+    /// output byte or a single strip decision fails here. Covers SGR-heavy colored output, CSI
+    /// with params + intermediates, the full query/response set incl. the 2026-07-10 additions
+    /// (DCS `$r`/`+r` responses, OSC 21), OSC/DCS/APC string bodies, raw multi-byte UTF-8, and a
+    /// truncated trailing escape.
+    func testNastyCorpusExactBytesPinned() {
+        // (piece, keep) — keep == true ⇒ the piece must appear VERBATIM in the output.
+        let pieces: [(String, Bool)] = [
+            ("plain ASCII text 123\r\n", true),
+            ("\u{1B}[c", false), // DA1 query
+            ("tiếng Việt — ✓ 日本語\n", true), // raw multi-byte UTF-8
+            ("\u{1B}[?62;22;52c", false), // echoed DA1 response
+            ("\u{1B}[1;38;5;196mR\u{1B}[0m\u{1B}[38;2;10;20;30mT\u{1B}[m", true), // SGR heavy
+            ("\u{1B}[>0c", false), // DA2 query
+            ("\u{1B}[?2004h\u{1B}[?2004l\u{1B}[?1049h", true), // mode set/reset
+            ("\u{1B}[5n", false), // DSR status query
+            ("\u{1B}[6n", false), // CPR request
+            ("\u{1B}[?6n", false), // DEC CPR request
+            ("\u{1B}[0n", false), // DSR response
+            ("\u{1B}[24;80R", false), // echoed CPR response
+            ("\u{1B}[2 q", true), // DECSCUSR (SP intermediate)
+            ("\u{1B}[x", false), // DECREQTPARM query
+            ("\u{1B}[2;1;1;120;120;1;0x", false), // DECREQTPARM response
+            ("\u{1B}[!p", true), // DECSTR (no $)
+            ("\u{1B}[?2026$p", false), // DECRQM query
+            ("\u{1B}[?2026;2$y", false), // echoed DECRPM response
+            ("\u{1B}[1;1;10;10$z", true), // DECERA — params AND $ intermediate, kept final
+            ("\u{1B}[>0q", false), // XTVERSION query
+            ("\u{1B}[>1u", true), // kitty keyboard push
+            ("\u{1B}[?u", false), // kitty keyboard-flags query
+            ("\u{1B}[8;24;80t", true), // resize — op 8 is not a report
+            ("\u{1B}[14t", false), // window pixel-size report request
+            ("\u{1B}[18t", false), // text-area size report request
+            ("\u{1B}[21;0t", false), // title report request (first param decides)
+            ("\u{1B}[22;0t\u{1B}[23;0t", true), // title push/pop
+            ("\u{1B}Z", false), // DECID
+            ("\u{1B}]0;title — nasty ;; body\u{07}", true), // OSC title
+            ("\u{1B}]11;?\u{07}", false), // OSC 11 query
+            ("\u{1B}]10;#ffffff\u{07}", false), // OSC 10 set
+            ("\u{1B}]4;1;?\u{07}", false), // palette query
+            ("\u{1B}]52;c;?\u{07}", false), // clipboard query
+            ("\u{1B}]104\u{07}", false), // palette reset
+            ("\u{1B}]112\u{07}", false), // cursor-color reset
+            ("\u{1B}]21;foreground=?\u{07}", false), // OSC 21 kitty color query
+            ("\u{1B}]21;foreground=rgb:aa/bb/cc\u{1B}\\", false), // OSC 21 response/set (ST)
+            ("\u{1B}]133;A\u{07}\u{1B}]133;B\u{07}", true), // OSC 133 marks
+            ("\u{1B}]8;;https://example.com\u{1B}\\link\u{1B}]8;;\u{1B}\\", true), // hyperlink
+            ("\u{1B}Pq#0;2;0;0;0~~\u{1B}[c~~\u{1B}\\", true), // sixel DCS, embedded CSI swallowed
+            ("\u{1B}P+q544e\u{1B}\\", false), // XTGETTCAP query
+            ("\u{1B}P$qm\u{1B}\\", false), // DECRQSS query
+            ("\u{1B}P>|ghostty 1.3.1\u{1B}\\", false), // echoed XTVERSION response
+            ("\u{1B}P1$rm\u{1B}\\", false), // DECRQSS hit response (214be586)
+            ("\u{1B}P0$r\u{1B}\\", false), // DECRQSS miss response (214be586)
+            ("\u{1B}P1+r524742=3838\u{1B}\\", false), // XTGETTCAP hit response (214be586)
+            ("\u{1B}P0+r\u{1B}\\", false), // XTGETTCAP miss response (214be586)
+            ("\u{1B}_Gf=100;payload\u{1B}\\", true), // APC kept whole
+            ("\u{1B}(B\u{1B}=\u{1B}M", true), // 2-byte ESC pairs
+            ("\u{1B}[1;5H\u{1B}[2J\u{1B}[0K", true), // cursor move / clears
+            ("tail\u{1B}[38;5", true), // truncated trailing CSI — passthrough (must be LAST)
+        ]
+        let input = pieces.map(\.0).joined()
+        let expected = pieces.filter(\.1).map(\.0).joined()
+        XCTAssertEqual(TerminalQueryStripper.strip(Data(input.utf8)), Data(expected.utf8))
+    }
+
     /// Env gates: `STRIP_QUERIES=0` disables only the stripper; both off → nil transform.
     func testTransformEnvGates() throws {
         let stripOff = ScrollbackReplayTransform.make(

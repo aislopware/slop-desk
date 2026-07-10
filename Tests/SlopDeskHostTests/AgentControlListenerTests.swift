@@ -372,6 +372,56 @@ final class AgentControlListenerTests: XCTestCase {
         XCTAssertTrue((obj?["error"] as? String)?.contains("not found") == true)
     }
 
+    // MARK: spawn verb — rows/cols validate-then-drop (pre-fix: UInt16(-1) TRAPPED hostd)
+
+    /// A negative `rows` from the ctl socket must produce an error response — pre-fix the
+    /// bare `UInt16(_:)` conversion trapped, aborting the ENTIRE hostd (every session for
+    /// every client) on one bad NDJSON line. Validation now fires before any conversion
+    /// (and before any pane is spawned), matching the `resize` verb.
+    func testDispatchSpawnNegativeRowsIsErrorNotCrash() {
+        let server = makeNullServer()
+        let resp = AgentControlHandler.dispatch(
+            id: "sp1", method: "spawn",
+            params: ["rows": -1, "cols": 80],
+            server: server,
+            // spawn is a mutating verb; opt in so the param-validation path is reached.
+            guards: IPCGuards(allowSendKeys: true, allowSensitiveSessions: true),
+        )
+        let obj = parseResponseObject(resp)
+        XCTAssertEqual(obj?["ok"] as? Bool, false)
+        XCTAssertTrue((obj?["error"] as? String)?.contains("rows") == true)
+    }
+
+    /// `rows` above 65535 likewise → error response, not a UInt16-overflow trap.
+    func testDispatchSpawnOversizedRowsIsErrorNotCrash() {
+        let server = makeNullServer()
+        let resp = AgentControlHandler.dispatch(
+            id: "sp2", method: "spawn",
+            params: ["rows": 70000, "cols": 80],
+            server: server,
+            guards: IPCGuards(allowSendKeys: true, allowSensitiveSessions: true),
+        )
+        let obj = parseResponseObject(resp)
+        XCTAssertEqual(obj?["ok"] as? Bool, false)
+        XCTAssertTrue((obj?["error"] as? String)?.contains("rows") == true)
+    }
+
+    /// `cols` gets the same validation (both edges, same error shape as `resize`).
+    func testDispatchSpawnOutOfRangeColsIsErrorNotCrash() {
+        let server = makeNullServer()
+        for badCols in [-5, 0, 65536] {
+            let resp = AgentControlHandler.dispatch(
+                id: "sp3", method: "spawn",
+                params: ["rows": 24, "cols": badCols],
+                server: server,
+                guards: IPCGuards(allowSendKeys: true, allowSensitiveSessions: true),
+            )
+            let obj = parseResponseObject(resp)
+            XCTAssertEqual(obj?["ok"] as? Bool, false, "cols=\(badCols) must be refused")
+            XCTAssertTrue((obj?["error"] as? String)?.contains("cols") == true)
+        }
+    }
+
     // MARK: subscribe — streaming event shape (fake observer, no real PTY/socket)
 
     /// Verifies the NDJSON shape of `output` and `closed` event lines that the `subscribe` pump

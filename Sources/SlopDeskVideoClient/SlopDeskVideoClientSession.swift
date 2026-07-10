@@ -400,8 +400,36 @@ public actor SlopDeskVideoClientSession {
     /// In-order decode admission (2026-06-12): frames release to the decoder strictly in frameID
     /// order — an out-of-order completion (small frame outrunning a big/FEC-recovering
     /// predecessor) is HELD until the gap completes or is declared lost, instead of hitting VT
-    /// with a missing reference (the measured `frontier = N−2` -12909 class).
-    private var sequencer = DecodeSequencer()
+    /// with a missing reference (the measured `frontier = N−2` -12909 class). Patience is derived
+    /// from the NACK config (``makeSequencer(nackEnabled:nackGraceFrames:)``): with retransmit
+    /// on, the sequencer must out-wait the reassembler's retransmit grace or its overflow valve
+    /// re-creates the very -12909 class it exists to prevent.
+    private var sequencer = SlopDeskVideoClientSession.makeSequencer(
+        nackEnabled: SlopDeskVideoClientSession.nackEnabled,
+        nackGraceFrames: SlopDeskVideoClientSession.nackGraceFrames,
+    )
+
+    /// Builds the decode sequencer with patience derived from the NACK config. WHY: when
+    /// retransmit is enabled the reassembler HOLDS a FEC-unrecoverable frame N for
+    /// ``nackGraceFrames`` frame-ids — during that window N is neither `.completed` nor
+    /// `.dropped`, so the sequencer never hears about it while every NEWER completion piles into
+    /// its held set. Both overflow valves must therefore out-wait the grace: `maxHeld` counts
+    /// HELD FRAMES (up to `grace` newer frames can complete while the hole pends) and `maxGap`
+    /// is a frameID SPAN (the same `grace` in frame-ids); `+2` is margin for the reassembler's
+    /// own reorder grace on the frame after the hole. With the stock values (maxHeld 4 < grace 8)
+    /// the valve flushed at ~N+5 — before the retransmit landed — submitting frames over the
+    /// missing reference with the gate still `.open`: -12909 → invalidateSession → forced-IDR
+    /// churn, the exact class sequencer + gate exist to prevent. NACK OFF (the default) returns
+    /// the stock ``DecodeSequencer`` values — the default path is unchanged.
+    static func makeSequencer(nackEnabled: Bool, nackGraceFrames: Int32) -> DecodeSequencer {
+        guard nackEnabled else { return DecodeSequencer() }
+        let floor = Int(nackGraceFrames) + 2
+        return DecodeSequencer(
+            maxHeld: max(DecodeSequencer.defaultMaxHeld, floor),
+            maxGap: max(DecodeSequencer.defaultMaxGap, floor),
+        )
+    }
+
     /// Debug-only counter: frames the gate dropped this session (visible in the periodic dbg line).
     private var dbgGateDrops: UInt64 = 0
     /// Smoothed RTT estimate gating the 2·RTT IDR-escalation timeout. 50 ms default

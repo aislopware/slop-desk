@@ -34,10 +34,17 @@ public struct DecodeSequencer: Sendable {
     private var lostAhead: Set<UInt32> = []
 
     /// Overflow valves (see header). Held-count and id-span caps both trip the flush.
-    private let maxHeld: Int
-    private let maxGap: Int
+    /// (Internal read: lets wiring tests verify the configured patience without behaviour probes.)
+    let maxHeld: Int
+    let maxGap: Int
 
-    public init(maxHeld: Int = 4, maxGap: Int = 6) {
+    /// Stock valve values, exposed so wiring code (e.g. the NACK-grace floor in
+    /// ``SlopDeskVideoClientSession``) can derive from them instead of duplicating magic numbers.
+    /// `defaultMaxHeld` is a held-frame COUNT; `defaultMaxGap` is a frameID SPAN past the expectation.
+    public static let defaultMaxHeld = 4
+    public static let defaultMaxGap = 6
+
+    public init(maxHeld: Int = defaultMaxHeld, maxGap: Int = defaultMaxGap) {
         self.maxHeld = max(1, maxHeld)
         self.maxGap = max(1, maxGap)
     }

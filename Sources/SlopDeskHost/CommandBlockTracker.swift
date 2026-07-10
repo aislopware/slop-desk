@@ -76,7 +76,10 @@ struct CommandBlockTracker {
     /// metadata did not change since the last emit produces nothing). Completed blocks AND the
     /// currently-running block are both surfaced, so the UI sees a RUNNING block as soon as it opens.
     mutating func ingest(_ chunk: Data) -> [WireMessage] {
-        let completed = segmenter.ingest(Array(chunk))
+        // Zero-copy hand-off: the segmenter's ingest is generic over a byte sequence, so the Data
+        // chunk feeds straight through — no per-chunk `Array(chunk)` alloc + memcpy on the
+        // read-loop hot path (blocks tracking is default-ON, this runs for EVERY PTY chunk).
+        let completed = segmenter.ingest(chunk)
         var messages: [WireMessage] = []
         // K2 auto-progress (E14/WI-3): drain any synthetic OSC-9;4 spinner/clear the segmenter queued at
         // the C / D marks for a configured slow command. These ride the SAME CONTROL FIFO as the type-28

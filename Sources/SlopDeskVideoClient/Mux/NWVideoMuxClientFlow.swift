@@ -148,10 +148,10 @@ public final class NWVideoMuxClientFlow: @unchecked Sendable {
         let conn = mediaConn
         lock.unlock()
         guard let conn else { return }
-        var inner = Data(capacity: datagram.count + 1)
-        inner.append(channel.rawValue)
-        inner.append(datagram)
-        let framed = VideoMuxHeaderCodec.encode(channelID: channelID, payload: inner)
+        // Single-allocation framing (copy-elimination, 2026-07-10): byte-identical to the old inner
+        // `[tag][payload]` + prefix-encode two-step (pinned in
+        // `VideoMuxHeaderCodecTests.testMediaSendShapePinsManualWireBytes`).
+        let framed = VideoMuxHeaderCodec.encodeMedia(channelID: channelID, tag: channel.rawValue, payload: datagram)
         conn.send(content: framed, completion: .contentProcessed { [weak self] error in
             if let error {
                 self?.log
@@ -185,7 +185,12 @@ public final class NWVideoMuxClientFlow: @unchecked Sendable {
                         }
                         dbgLastVideoRxAt = now
                     }
-                    let payload = Data(rest[(rest.startIndex + 1)...])
+                    // Tag-stripped SLICE, not a copy (copy-elimination, 2026-07-10): the sink
+                    // enqueues it briefly (session inbound queue — bounded by the one parent
+                    // datagram it pins) and every decode is startIndex-relative
+                    // (`VideoByteReader`); durable bytes (e.g. a fragment payload) come from
+                    // `readBytes` copies, so nothing retains the slice past decode.
+                    let payload = rest[(rest.startIndex + 1)...]
                     let sink = lock.withLock { self.mediaSinks[channelID] }
                     sink?(channel, payload) // a datagram for a closed/unknown lane is dropped (loss isolation)
                 }

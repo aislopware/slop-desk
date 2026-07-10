@@ -320,4 +320,38 @@ final class CommandBlockTrackerTests: XCTestCase {
         XCTAssertEqual(a, b)
         XCTAssertEqual(String(data: a, encoding: .utf8), "one\ntwo\n")
     }
+
+    // MARK: 8. Nasty-corpus exact-byte pin — Data chunks straight through the hot ingest path
+
+    /// EXACT-BYTE pin of the SERVED output through the live `ingest(Data)` hot path, chunked at
+    /// sizes that split mid-UTF-8 and mid-escape (the real PTY read-loop shape). Guards the
+    /// zero-copy segmenter hand-off: any change to how the tracker forwards the chunk bytes that
+    /// alters one captured byte, the completion metadata, or cross-chunk state fails here.
+    func testNastyCorpusServedOutputPinnedAcrossDataChunkSplits() {
+        let sgrOutput = "\u{1B}[1;38;5;196mRED\u{1B}[0m tiếng Việt ✓\u{1B}[38;2;1;2;3m…\u{1B}[m done\r\n"
+        let stream = bytes(
+            a() + "\u{1B}[1;32m❯\u{1B}[0m " + b() + "make check" + c() + sgrOutput + d(0),
+        )
+        for chunkSize in [1, 3, 8, stream.count] {
+            var tracker = CommandBlockTracker()
+            var emitted: [Meta] = []
+            var i = 0
+            while i < stream.count {
+                let end = min(i + chunkSize, stream.count)
+                emitted.append(contentsOf: commandBlocks(tracker.ingest(stream.subdata(in: i..<end))))
+                i = end
+            }
+            let complete = emitted.filter(\.complete)
+            XCTAssertEqual(complete.count, 1, "chunk \(chunkSize)")
+            XCTAssertEqual(complete[0].cmd, "make check", "chunk \(chunkSize)")
+            XCTAssertEqual(complete[0].exit, 0, "chunk \(chunkSize)")
+            XCTAssertEqual(complete[0].outLen, UInt32(sgrOutput.utf8.count), "chunk \(chunkSize)")
+            guard case let .blockOutput(index, output) = tracker.serveOutput(index: 0) else {
+                XCTFail("expected blockOutput for chunk \(chunkSize)")
+                return
+            }
+            XCTAssertEqual(index, 0, "chunk \(chunkSize)")
+            XCTAssertEqual(output, Data(sgrOutput.utf8), "chunk \(chunkSize)")
+        }
+    }
 }

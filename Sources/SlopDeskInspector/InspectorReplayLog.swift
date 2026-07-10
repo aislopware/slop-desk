@@ -47,6 +47,11 @@ public actor InspectorReplayLog {
     private let maxRetained: Int
     private let retainTarget: Int
 
+    /// Live-tail headroom for one subscriber's stream buffer beyond its replay snapshot:
+    /// a healthy consumer stays far below it; a stalled one drops its OLDEST buffered
+    /// events once this many queue up unconsumed (it resubscribes `fromSeq:` on the gap).
+    static let liveSubscriberBufferSlack = 1024
+
     /// Live subscribers, keyed by a per-subscription id so termination can detach the
     /// right one.
     private var subscribers: [UUID: AsyncStream<InspectorEvent>.Continuation] = [:]
@@ -171,7 +176,18 @@ public actor InspectorReplayLog {
         // Build the stream and attach the continuation in the SAME atomic actor step as
         // the snapshot above — between `snapshot` being read and `subscribers[id]` being
         // set, the actor does not suspend, so no `append` can interleave.
-        return AsyncStream<InspectorEvent> { continuation in
+        //
+        // BOUNDED per-subscriber buffer. The shared `history` is capped, but the default
+        // AsyncStream policy is `.unbounded`, so a stalled subscriber (backgrounded iOS
+        // peer, dead TCP whose FIN never arrived) made every `append`'s `yield` queue in
+        // that subscriber's buffer forever — a slow host OOM per dead connection. Events
+        // are seq-ordered and clients resubscribe `fromSeq:` on a detected gap (the
+        // `frameTooLarge` desync path is precedent), so dropping is safe: keep the NEWEST.
+        // The bound is `snapshot.count + slack` so the replay snapshot itself (yielded
+        // synchronously below, before the consumer has pulled anything) is NEVER dropped —
+        // only a subscriber that stops consuming can lose (old) live-tail events.
+        let bufferBound = snapshot.count + Self.liveSubscriberBufferSlack
+        return AsyncStream<InspectorEvent>(bufferingPolicy: .bufferingNewest(bufferBound)) { continuation in
             for event in snapshot {
                 continuation.yield(event)
             }

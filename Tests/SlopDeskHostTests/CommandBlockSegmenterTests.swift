@@ -532,4 +532,47 @@ final class CommandBlockSegmenterTests: XCTestCase {
         XCTAssertEqual(blocks.count, 1)
         XCTAssertEqual(blocks[0].promptOrdinal, 0, "no `A` seen ⇒ unknown ordinal (0), never a guess")
     }
+
+    // MARK: Nasty-corpus exact-byte pin across chunk splits (allocation-refactor guard)
+
+    /// EXACT-BYTE pin of the captured output over a representative nasty corpus, ingested at chunk
+    /// sizes that split mid-UTF-8 and mid-escape. Each output piece is tagged captured/consumed at
+    /// construction: CSI runs, plain/multi-byte text and 2-byte escapes are captured RAW; OSC and
+    /// DCS/SOS/PM/APC string sequences feed the mark-detection machine and are NOT content. Any
+    /// ingest refactor (generic byte-sequence / Data pass-through) that changes one captured byte
+    /// or breaks cross-chunk state fails here.
+    func testNastyCorpusOutputBytesPinnedAcrossChunkSplits() {
+        let outputPieces: [(String, Bool)] = [
+            ("\u{1B}[1;38;5;196mRED\u{1B}[0m ", true), // SGR heavy — preserved verbatim
+            ("\u{1B}]0;title with 133;C inside\u{07}", false), // OSC — consumed, never spoofs a mark
+            ("tiếng Việt ✓ 日本語 — the marker 133;D appears here\n", true), // raw UTF-8 + fake mark text
+            ("\u{1B}P+q544e\u{1B}\\", false), // DCS query — string body swallowed
+            ("\u{1B}[38;2;10;20;30mtruecolor\u{1B}[m\u{1B}(B\u{1B}=", true), // CSI + 2-byte escapes
+            ("\u{1B}[2J\u{1B}[1;5H", true), // clears / cursor motion
+            ("done\r\n", true),
+        ]
+        let outputRaw = outputPieces.map(\.0).joined()
+        let expectedOutput = outputPieces.filter(\.1).map(\.0).joined()
+        let churn = "g\u{1B}[90mit statu\u{1B}[0m\rgit status\u{1B}[K" // B→C editor churn (E overrides)
+        let stream = bytes(
+            a() + "\u{1B}[1;32m~/proj\u{1B}[0m ❯ " + b() + churn + e("git st\\x3batus")
+                + c() + outputRaw + d(0),
+        )
+        for chunkSize in [1, 2, 3, 7, stream.count] {
+            var seg = CommandBlockSegmenter()
+            var blocks: [CommandBlockSegmenter.CommandBlock] = []
+            var i = 0
+            while i < stream.count {
+                let end = min(i + chunkSize, stream.count)
+                blocks.append(contentsOf: seg.ingest(Array(stream[i..<end])))
+                i = end
+            }
+            blocks.append(contentsOf: seg.finish())
+            XCTAssertEqual(blocks.count, 1, "chunk \(chunkSize)")
+            XCTAssertEqual(blocks[0].commandText, "git st;atus", "chunk \(chunkSize)")
+            XCTAssertEqual(text(blocks[0].output), expectedOutput, "chunk \(chunkSize)")
+            XCTAssertEqual(blocks[0].exitCode, 0, "chunk \(chunkSize)")
+            XCTAssertTrue(blocks[0].complete, "chunk \(chunkSize)")
+        }
+    }
 }

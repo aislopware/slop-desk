@@ -225,6 +225,123 @@ final class ScrollbackJournalTests: XCTestCase {
         XCTAssertNotNil(store.restoredScrollback(for: live))
     }
 
+    // MARK: - Write coalescing (buffered appends must never be observable as missing bytes)
+
+    private func journalFileURL(for sessionID: UUID) -> URL {
+        tempDir.appendingPathComponent("\(sessionID.uuidString).scrollback", isDirectory: false)
+    }
+
+    /// Polls the on-disk journal file until it equals `expected` (or the deadline passes),
+    /// returning whatever the file last held. No `synchronize()` — this observes flushes the
+    /// journal performs on its own.
+    private func waitForDiskBytes(_ expected: Data, sessionID: UUID, timeout: TimeInterval = 3) -> Data? {
+        let url = journalFileURL(for: sessionID)
+        let deadline = Date().addingTimeInterval(timeout)
+        var last: Data?
+        while Date() < deadline {
+            last = try? Data(contentsOf: url)
+            if last == expected { return last }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        return last
+    }
+
+    /// (a) Appends smaller than any coalescing threshold must be restorable immediately:
+    /// `restoredScrollback` forces the writer's buffered bytes to disk before reading, so a
+    /// restore can never observe a file missing enqueued appends.
+    func testSmallAppendsRestorableViaRestoreWithoutExplicitSynchronize() {
+        let sessionID = UUID()
+        let store = makeStore()
+        let journal = store.journal(for: sessionID)
+        journal.append(Data("a".utf8))
+        journal.append(Data("b".utf8))
+        journal.append(Data("c\n".utf8))
+        XCTAssertEqual(
+            store.restoredScrollback(for: sessionID),
+            Data("abc\n".utf8) + ScrollbackJournalStore.sanitizeSuffix,
+            "restore must observe every append enqueued before it — buffered bytes included",
+        )
+    }
+
+    /// (b) Idle flush: one small append must reach the DISK file shortly after, with nobody
+    /// calling synchronize() — pins the crash-loss window of a coalescing buffer.
+    func testIdleFlushPersistsSmallAppendWithoutSynchronize() {
+        let sessionID = UUID()
+        let store = makeStore()
+        let bytes = Data("idle-flush\n".utf8)
+        store.journal(for: sessionID).append(bytes)
+        XCTAssertEqual(
+            waitForDiskBytes(bytes, sessionID: sessionID), bytes,
+            "buffered bytes must hit disk via the idle flush without an explicit synchronize",
+        )
+    }
+
+    /// Threshold flush: a burst crossing the coalescing threshold (32 KiB) must not wait for
+    /// idle — the file catches up promptly under a continuous small-chunk stream.
+    func testThresholdFlushPersistsLargeVolumeWithoutSynchronize() {
+        let sessionID = UUID()
+        let store = makeStore()
+        let journal = store.journal(for: sessionID)
+        let chunk = Data(repeating: UInt8(ascii: "x"), count: 4096)
+        var expected = Data()
+        for _ in 0..<9 { // 36 KiB — crosses a 32 KiB coalescing threshold
+            journal.append(chunk)
+            expected.append(chunk)
+        }
+        XCTAssertEqual(
+            waitForDiskBytes(expected, sessionID: sessionID)?.count, expected.count,
+            "crossing the coalescing threshold must flush without waiting for idle/synchronize",
+        )
+    }
+
+    /// (c) Cap/compaction with MANY small appends (each far below any flush threshold): the
+    /// cap accounting must count buffered-but-unflushed bytes, and compaction must run over a
+    /// file that already contains them — bounded file, newest line verbatim, line-aligned head.
+    func testCompactionAfterSmallBufferedAppendsYieldsCorrectFile() throws {
+        let cap = 512
+        let sessionID = UUID()
+        let store = makeStore(byteCap: cap)
+        let journal = store.journal(for: sessionID)
+
+        // 64 numbered 32-byte lines = 2 KiB = 4×cap; every chunk is tiny (buffered, never
+        // threshold-flushed), so ONLY the cap path can keep the file bounded.
+        var lines: [Data] = []
+        for i in 0..<64 {
+            let body = String(format: "line-%03d-", i)
+            let pad = String(repeating: "y", count: 32 - body.count - 1)
+            lines.append(Data((body + pad + "\n").utf8))
+        }
+        for line in lines { journal.append(line) }
+        journal.synchronize()
+
+        let file = try XCTUnwrap(try? Data(contentsOf: journalFileURL(for: sessionID)))
+        XCTAssertLessThanOrEqual(
+            file.count, cap * 2 + 64,
+            "cap accounting must include buffered bytes — the file stays bounded near 2×cap",
+        )
+        XCTAssertEqual(file.suffix(lines[63].count), lines[63], "the newest line must survive verbatim")
+        XCTAssertEqual(
+            file.prefix(5), Data("line-".utf8),
+            "the surviving head must start on a line boundary (cut advanced past the next \\n)",
+        )
+    }
+
+    /// A deliberate delete discards buffered bytes with the file: a pending (unflushed) append
+    /// must not resurrect the journal when a late idle flush fires after closeAndDelete.
+    func testDeleteDiscardsBufferedBytesWithoutResurrection() {
+        let sessionID = UUID()
+        let store = makeStore()
+        let journal = store.journal(for: sessionID)
+        journal.append(Data("buffered-then-deleted\n".utf8))
+        store.delete(sessionID: sessionID) // no synchronize — the append may still be buffered
+
+        // Give any stale idle-flush timer time to fire, then prove the file stayed gone.
+        Thread.sleep(forTimeInterval: 0.2)
+        journal.synchronize()
+        XCTAssertNil(store.restoredScrollback(for: sessionID), "deleted journal must stay deleted")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: journalFileURL(for: sessionID).path))
+    }
+
     // MARK: - Environment gates
 
     func testMakeFromEnvironmentGates() {

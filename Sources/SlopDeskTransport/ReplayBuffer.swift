@@ -194,22 +194,27 @@ public struct ReplayBuffer: Sendable {
     /// ``retainedBytes``.
     ///
     /// Idempotent and monotonic: a stale/duplicate ack (`seq <= ackedSeq`) is a no-op;
-    /// ``ackedSeq`` only advances. Acking past ``highestSeq`` clears everything and pins
-    /// `ackedSeq` to the requested value (harmless — the next `append` still produces
-    /// `highestSeq + 1`).
+    /// ``ackedSeq`` only advances. Acking past ``highestSeq`` clears everything but CLAMPS
+    /// `ackedSeq` to ``highestSeq`` (audit 2026-07-10): the ack seq arrives unvalidated off the
+    /// wire (WireMessage case 12 → MuxChannelSession → here), and an unclamped far-future value
+    /// (e.g. `Int64.max` from a buggy/corrupt peer) would make every later legitimate ack fall
+    /// into the `seq <= ackedSeq` no-op, so nothing is ever released again — append() accumulates
+    /// to ``maxBackupBytesCap`` and ``shouldPauseDrain`` wedges the PTY drain permanently.
     ///
     /// When ``scrollbackBytesCap`` > 0, the acked prefix is MOVED into ``scrollbackRing`` (for
     /// cold-reattach replay) rather than discarded; ``evictScrollbackToFit()`` trims the ring to
     /// the cap line-aligned. ``entries`` and ``retainedBytes`` update as in the pre-scrollback
     /// behaviour — the never-drop invariant on un-acked data is preserved.
     public mutating func ack(upTo seq: Int64) {
-        guard seq > ackedSeq else { return }
-        ackedSeq = seq
+        // Clamp untrusted wire input: an ack can never legitimately exceed what we produced.
+        let clamped = min(seq, highestSeq)
+        guard clamped > ackedSeq else { return }
+        ackedSeq = clamped
         // entries are ascending by seq; identify the released prefix.
         var dropCount = 0
         var releasedBytes = 0
         for entry in entries {
-            if entry.seq <= seq {
+            if entry.seq <= clamped {
                 dropCount += 1
                 releasedBytes += entry.bytes.count
             } else {
@@ -237,21 +242,29 @@ public struct ReplayBuffer: Sendable {
     /// If the new oldest has no `\n`, leave it intact (next cycle removes it if still over cap; a
     /// line longer than the cap can't be split usefully, and the following entry already starts clean).
     private mutating func evictScrollbackToFit() {
-        while scrollbackBytes > scrollbackBytesCap, !scrollbackRing.isEmpty {
-            let oldest = scrollbackRing.removeFirst()
-            scrollbackBytes -= oldest.bytes.count
-            // Landed at/under cap: line-align the new oldest so the ring never starts mid-escape-sequence.
-            if scrollbackBytes <= scrollbackBytesCap, !scrollbackRing.isEmpty {
-                let head = scrollbackRing[0]
-                if let nlIdx = head.bytes.firstIndex(of: UInt8(ascii: "\n")) {
-                    let afterNL = head.bytes.index(after: nlIdx)
-                    let trimmed = Data(head.bytes[afterNL...])
-                    let removed = head.bytes.count - trimmed.count
-                    scrollbackRing[0] = Entry(seq: head.seq, bytes: trimmed)
-                    scrollbackBytes -= removed
-                }
-                // No \n: leave intact — replay starts at this entry's beginning, a PTY-read chunk boundary.
+        guard scrollbackBytes > scrollbackBytesCap, !scrollbackRing.isEmpty else { return }
+        // Count the eviction prefix WITHOUT mutating, then remove it in ONE bulk removeFirst
+        // (audit 2026-07-10 perf): per-entry removeFirst() in the loop was O(k*n) memmoves under
+        // the shared replayLock. The mux FIFO in ack(upTo:) already uses the same bulk idiom.
+        var dropCount = 0
+        var droppedBytes = 0
+        while scrollbackBytes - droppedBytes > scrollbackBytesCap, dropCount < scrollbackRing.count {
+            droppedBytes += scrollbackRing[dropCount].bytes.count
+            dropCount += 1
+        }
+        scrollbackRing.removeFirst(dropCount)
+        scrollbackBytes -= droppedBytes
+        // Landed at/under cap: line-align the new oldest so the ring never starts mid-escape-sequence.
+        if scrollbackBytes <= scrollbackBytesCap, !scrollbackRing.isEmpty {
+            let head = scrollbackRing[0]
+            if let nlIdx = head.bytes.firstIndex(of: UInt8(ascii: "\n")) {
+                let afterNL = head.bytes.index(after: nlIdx)
+                let trimmed = Data(head.bytes[afterNL...])
+                let removed = head.bytes.count - trimmed.count
+                scrollbackRing[0] = Entry(seq: head.seq, bytes: trimmed)
+                scrollbackBytes -= removed
             }
+            // No \n: leave intact — replay starts at this entry's beginning, a PTY-read chunk boundary.
         }
     }
 

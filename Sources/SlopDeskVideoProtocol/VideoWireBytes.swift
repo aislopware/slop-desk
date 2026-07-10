@@ -104,10 +104,19 @@ struct VideoByteReader {
         return Data(slice)
     }
 
+    /// Consumes and returns everything after the current offset as a SLICE of the input
+    /// (no copy — the result may have a nonzero `startIndex` and retains the parent buffer).
+    ///
+    /// Copy-elimination contract (receive-path audit, 2026-07-10): every caller either
+    /// transforms the bytes immediately (`String(data:encoding:)` in the input/geometry
+    /// codecs) or hands them straight to a further decode whose durable fields come from
+    /// `readBytes` copies (`VideoMuxHeaderCodec.decode` → transports → per-message codecs).
+    /// A caller that needs to RETAIN the bytes beyond its decode must take its own copy —
+    /// a stored slice would pin the whole parent datagram buffer.
     mutating func remaining() -> Data {
         let slice = data[(data.startIndex + offset)...]
         offset = data.count
-        return Data(slice)
+        return slice
     }
 }
 

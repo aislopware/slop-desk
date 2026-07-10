@@ -178,6 +178,55 @@ final class InspectorReplayLogTests: XCTestCase {
         XCTAssertEqual(firstFew.count, 1, "fromSeq below baseSeq clamps to the oldest retained event")
     }
 
+    /// A STALLED subscriber (attached, never consuming — backgrounded iOS peer, dead TCP whose
+    /// FIN never arrived) must NOT buffer live events without bound. The shared `history` is
+    /// capped, but pre-fix the per-subscriber `AsyncStream` used the default `.unbounded`
+    /// policy, so `append()`'s `continuation.yield` queued every event forever in that
+    /// subscriber's buffer (slow host OOM). Post-fix the live stream is `.bufferingNewest`
+    /// bounded: the newest events are kept, the oldest dropped — the client detects the seq
+    /// gap and resubscribes `fromSeq:` (same recovery path as a framing desync).
+    func testStalledSubscriberLiveBufferIsBounded() async {
+        let log = InspectorReplayLog()
+        // Attach with an EMPTY replay (fromSeq 0, no history yet) and never consume.
+        let stream = await log.subscribe(fromSeq: 0)
+
+        let total = 10000
+        for i in 0..<total { await log.append(msg("e\(i)")) }
+        await log.markFinished() // finish so draining the buffer below terminates
+
+        // NOW drain whatever the stream actually retained for the stalled subscriber.
+        var got: [InspectorEvent] = []
+        for await event in stream { got.append(event) }
+
+        // Pre-fix this is 10000 (unbounded); post-fix at most the bounded window.
+        XCTAssertLessThanOrEqual(
+            got.count,
+            1024, // the live-subscriber buffer slack (empty snapshot → bound == slack)
+            "a non-consuming subscriber must retain at most the bounded buffer, not every event",
+        )
+        XCTAssertEqual(got.last, msg("e\(total - 1)"), "bufferingNewest keeps the NEWEST events")
+        XCTAssertNotEqual(got.first, msg("e0"), "the oldest queued events are dropped, not the newest")
+    }
+
+    /// The bounded per-subscriber buffer must NEVER drop the replay snapshot itself: the buffer
+    /// bound is `snapshot.count + slack`, so a healthy subscriber that asks for a large full
+    /// replay (`fromSeq: 0`) still receives every retained event even if it only starts
+    /// consuming after subscribe returned.
+    func testFullReplaySnapshotSurvivesBoundedBuffer() async {
+        let log = InspectorReplayLog()
+        let total = 5000 // well above the 1024 slack, below the retention cap
+        for i in 0..<total { await log.append(msg("e\(i)")) }
+
+        let stream = await log.subscribe(fromSeq: 0) // snapshot buffered before any consumption
+        await log.markFinished()
+
+        var got: [InspectorEvent] = []
+        for await event in stream { got.append(event) }
+        XCTAssertEqual(got.count, total, "the replay snapshot is never truncated by the buffer bound")
+        XCTAssertEqual(got.first, msg("e0"))
+        XCTAssertEqual(got.last, msg("e\(total - 1)"))
+    }
+
     /// R7 #6 regression: once `baseSeq` has advanced (events dropped), a hostile/unauthenticated
     /// `subscribe(fromSeq: Int64.min)` must NOT overflow-trap the host (`Int(fromSeq) - baseSeq`
     /// underflow) — it saturates to "everything retained". `Int64.max` (past the end) → empty replay.

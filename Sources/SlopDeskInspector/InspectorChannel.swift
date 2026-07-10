@@ -41,10 +41,18 @@ public actor InspectorSource {
         try await channel.send(InspectorCodec.encode(.keepAlive))
     }
 
-    /// Pumps an entire ``InspectorEvent`` stream to the client, in order.
+    /// Pumps an ``InspectorEvent`` stream to the client, in order, until the stream ends
+    /// **or a send fails**. A failed send means the peer is gone (dead TCP), so the pump
+    /// stops consuming immediately — same semantics as the hand-rolled pump in
+    /// `InspectorServer.serve`. (Pre-fix `try? await send` swallowed the failure and kept
+    /// draining a live stream forever for a peer that could never receive it.)
     public func stream(_ events: AsyncStream<InspectorEvent>) async {
         for await event in events {
-            try? await send(event)
+            do {
+                try await send(event)
+            } catch {
+                return
+            }
         }
     }
 

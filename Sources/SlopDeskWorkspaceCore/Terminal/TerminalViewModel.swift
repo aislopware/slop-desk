@@ -1097,7 +1097,22 @@ public final class TerminalViewModel {
     /// corrects it. The soft reset bounds the damage (cursor/SGR/charset back to defaults) but cannot
     /// reconstruct alt-screen contents the host never re-sends.
     @ObservationIgnored private var ring: [Data] = []
-    /// Running total of `ring`'s byte count, kept incrementally so eviction is O(evicted) not O(n) per ingest.
+    /// Index-cursor deque head for `ring` (the `MuxChannelSession.fifoHead` / `FrameDecoder.compactConsumed`
+    /// idiom). Ingest APPENDs only; eviction pops by advancing this cursor instead of `Array.removeFirst()` —
+    /// which is an O(count) memmove per pop, and interactive typing delivers 10–30-byte chunks so the ring
+    /// holds ~10k+ elements at steady state: every chunk would pay an O(ring.count) shift on the main actor
+    /// (and a big post-idle chunk an O(n²) burst) strictly BEFORE `feedBatch` — the keystroke-echo path.
+    /// ``compactRingIfNeeded()`` bulk-reclaims the consumed prefix (amortized O(1) per eviction). Evicted
+    /// slots are overwritten with an empty `Data` at pop time so their bytes release immediately, exactly as
+    /// `removeFirst()` did. Invariant: `0 <= ringStart <= ring.count`; the LIVE ring is `ring[ringStart...]`
+    /// — every reader iterates that slice, and every site that clears/reassigns `ring` resets this to 0.
+    @ObservationIgnored private var ringStart = 0
+    /// Threshold for bulk-compacting the evicted `ring` prefix: only once the dead prefix is both
+    /// non-trivial (≥ 64 slots) AND at least half the array does one `removeFirst(k)` memmove reclaim it —
+    /// amortized O(1) per eviction, bounded slack.
+    private static let ringCompactThresholdSlots = 64
+    /// Running total of the LIVE ring's (`ring[ringStart...]`) byte count, kept incrementally so eviction is
+    /// O(evicted) not O(n) per ingest.
     @ObservationIgnored private(set) var ringByteCount: Int = 0
     /// Soft cap on the replay ring; whole oldest chunks are evicted once exceeded. ~256 KB is a generous
     /// several-screens scrollback while staying small enough to replay synchronously.
@@ -1577,6 +1592,7 @@ public final class TerminalViewModel {
         if pendingFreshSessionReset {
             pendingFreshSessionReset = false
             ring.removeAll()
+            ringStart = 0
             ringByteCount = 0
             surface?.feed(Self.risHardReset)
         }
@@ -1592,9 +1608,15 @@ public final class TerminalViewModel {
             passBytes += chunk.count
             ring.append(chunk)
             ringByteCount += chunk.count
-            while ringByteCount > maxRingBytes, ring.count > 1 {
-                ringByteCount -= ring.removeFirst().count
+            // Evict by ADVANCING the head cursor (O(1) per evicted chunk — `removeFirst()` would memmove the
+            // whole tail on the main actor, right ahead of `feedBatch`). Overwriting the popped slot releases
+            // its bytes immediately; the dead prefix is bulk-reclaimed below.
+            while ringByteCount > maxRingBytes, ring.count - ringStart > 1 {
+                ringByteCount -= ring[ringStart].count
+                ring[ringStart] = Data()
+                ringStart += 1
             }
+            compactRingIfNeeded()
         }
         // ONE observable mutation per pass (SwiftUI change tracking is not free per chunk).
         bytesReceived += passBytes
@@ -1605,6 +1627,16 @@ public final class TerminalViewModel {
         // post-resize content, not only the SIGWINCH redraw — both repaint at the new grid, so either is a
         // faithful "the resized content has re-rendered". See ``awaitingResizeReflow``.
         if awaitingResizeReflow { endAwaitingReflow() }
+    }
+
+    /// Bulk-reclaims the evicted `ring` prefix once it is both non-trivial (≥ ``ringCompactThresholdSlots``)
+    /// AND at least half the array — ONE `removeFirst(k)` memmove, amortized O(1) per eviction. The evicted
+    /// slots hold empty `Data` (their bytes were released at pop time), so compaction only reclaims the
+    /// array's slot storage.
+    private func compactRingIfNeeded() {
+        guard ringStart >= Self.ringCompactThresholdSlots, ringStart >= ring.count / 2 else { return }
+        ring.removeFirst(ringStart)
+        ringStart = 0
     }
 
     // MARK: Surface attach / detach (replay across rebuild)
@@ -1631,10 +1663,11 @@ public final class TerminalViewModel {
     public func attachSurface(_ surface: any TerminalSurface) {
         let isDifferentInstance = (self.surface !== surface)
         self.surface = surface
-        guard isDifferentInstance, !ring.isEmpty else { return }
+        guard isDifferentInstance, ring.count > ringStart else { return }
         // One batch = one renderer flush for the whole replay (the view follows with its own requestPresent
-        // burst on attach).
-        surface.feedBatch(ArraySlice([Self.decstrSoftReset] + ring))
+        // burst on attach). Only the LIVE window (`ring[ringStart...]`) replays — slots below the head cursor
+        // were evicted.
+        surface.feedBatch(ArraySlice([Self.decstrSoftReset] + ring[ringStart...]))
     }
 
     /// Detaches the renderer surface (the representable was dismantled). Drops the `weak` reference; the
@@ -1869,6 +1902,7 @@ public final class TerminalViewModel {
         lastResumeSeq = 0
         lastSentSize = nil // a fresh session must re-assert its grid size
         ring.removeAll() // stale scrollback must not survive into a new session
+        ringStart = 0
         ringByteCount = 0
         // Arm the one-shot fresh-session wipe, like markReconnecting(). The surface is ALWAYS mounted
         // (TerminalScreenView is an overlay, never an if/else content swap), so a deliberate reconnect (⇧⌘R /

@@ -44,6 +44,22 @@ public enum VideoMuxHeaderCodec {
         return out
     }
 
+    /// Frames a MEDIA-socket datagram in ONE allocation:
+    /// `[UInt32 BE channelID][UInt8 tag][payload...]`.
+    ///
+    /// Byte-identical to `encode(channelID:payload:)` over an intermediate
+    /// `[tag][payload]` buffer (the shape both transports previously built by hand),
+    /// minus that intermediate copy — the `payload` bytes are appended exactly once.
+    /// Pinned against independent manual construction in
+    /// `VideoMuxHeaderCodecTests.testMediaSendShapePinsManualWireBytes`.
+    public static func encodeMedia(channelID: UInt32, tag: UInt8, payload: Data) -> Data {
+        var out = Data(capacity: channelIDLength + 1 + payload.count)
+        out.appendBE(channelID)
+        out.append(tag)
+        out.append(payload)
+        return out
+    }
+
     /// Splits a muxed datagram into its leading `channelID` and the opaque remainder.
     ///
     /// - Throws: ``VideoProtocolError/truncated`` if fewer than 4 bytes are present (a

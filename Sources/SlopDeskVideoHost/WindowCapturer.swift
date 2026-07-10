@@ -468,6 +468,13 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     private var staticIDRDecider: StaticIDRDecider
     private var idrTimer: DispatchSourceTimer?
     private var cachedPixelBuffer: CVPixelBuffer? // deep COPY, frameQueue-owned (see copyPixelBuffer)
+    /// CAPTURE-DEATH one-shot latches (frameQueue-owned). `captureFailed`: `didStopWithError` was
+    /// already handled — a duplicate delegate fire is a no-op (once-only `onCaptureFailed`).
+    /// `captureStopped`: a deliberate ``stop()`` already quiesced this capturer — a failure racing
+    /// (or trailing) it must NOT fire `onCaptureFailed` into a session that tore this capturer
+    /// down on purpose (bye teardown / resize supersede), which would double-teardown.
+    private var captureFailed = false
+    private var captureStopped = false
 
     // STATIC-FRAME SUPPRESSION (gated on `staticSuppressEnabled`). frameQueue-owned (only touched in
     // the SCStream callback). Inert when the gate is OFF (the hash is never computed).
@@ -500,6 +507,16 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// (`bandTop`/`bandBottom`, ten-thousandths of height; `0,0` ⇒ no band) when scrolling — the session
     /// sends it as a `ScrollOffset` control message. `nil` ⇒ no send. frameQueue-confined.
     var onScrollOffset: (@Sendable (Int16, Int16, UInt16, UInt16) -> Void)?
+    /// CAPTURE-DEATH callback (stability audit 2026-07-10): invoked exactly ONCE, on `frameQueue`,
+    /// after the SCStream stopped ITSELF with an error (`didStopWithError` — shared window/app
+    /// closed, display unplugged, Screen-Recording TCC revoked, WindowServer/GPU reset) and this
+    /// capturer's synthetic-frame machinery has been quiesced (IDR timer cancelled, cached frame
+    /// dropped). Without it the IDR timer kept re-encoding the LAST cached frame as heartbeat/crisp
+    /// IDRs forever — the client "decoded video" (a frozen frame), the host heartbeat kept its
+    /// stall scrim disarmed, and the pane froze permanently and silently. The session wires this
+    /// (like `onScrollOffset`, at install time, BEFORE `start()`) to a `bye` + session teardown.
+    /// NEVER invoked after a deliberate ``stop()`` (see `captureStopped`). `nil` ⇒ quiesce only.
+    var onCaptureFailed: (@Sendable () -> Void)?
     /// True while the last sent scroll offset was non-zero — so exactly one `(0,0)` is emitted when
     /// scroll stops (arming the client reprojector's decay) instead of spamming it on every static frame.
     private var lastScrollWasNonZero = false
@@ -1183,12 +1200,16 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     }
 
     public func stop() async {
-        guard let stream else { return }
         anchorLock.withLock { displayAnchor = nil }
         // VIDEO-HOST-1: cancel the timer + release the cached copy on `frameQueue` (the timer's
         // queue) BEFORE stopping capture, so no tick can race teardown. `cachedPixelBuffer = nil`
         // is sufficient — ARC releases the managed copy; no manual CVPixelBufferRelease.
+        // CAPTURE-DEATH: runs BEFORE the `stream` guard below, so even a never-started (or
+        // already-failed) capturer latches `captureStopped` — a late `didStopWithError` racing a
+        // deliberate stop must never fire `onCaptureFailed` afterwards (double-teardown guard);
+        // the `frameQueue.sync` serializes this latch against ``handleCaptureFailure()``'s hop.
         frameQueue.sync {
+            captureStopped = true
             idrTimer?.cancel()
             idrTimer = nil
             // GATED-TAIL FLUSH: cancel the one-shot inside the same frameQueue.sync, so no flush
@@ -1198,6 +1219,9 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             pendingGatedFlush = nil
             cachedPixelBuffer = nil
         }
+        guard let stream else { return }
+        // On the post-failure path the stream is already dead — `stopCapture` then just throws
+        // (swallowed) and the reference is released under the same actor discipline as always.
         try? await stream.stopCapture()
         self.stream = nil
     }
@@ -1636,7 +1660,43 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     // MARK: SCStreamDelegate
 
     public func stream(_: SCStream, didStopWithError error: Error) {
+        // CAPTURE-DEATH (stability audit 2026-07-10): the stream is DEAD (shared window/app closed,
+        // display unplugged, Screen-Recording TCC revoked, WindowServer/GPU reset). This used to
+        // ONLY log — the IDR timer then kept re-encoding the stale `cachedPixelBuffer` as periodic
+        // heartbeat/crisp IDRs, so the client "decoded video" (a frozen frame) with no error and
+        // its stall scrim never engaged. Quiesce + notify instead.
         log.error("SCStream stopped with error: \(error.localizedDescription)")
+        handleCaptureFailure()
+    }
+
+    /// CAPTURE-DEATH quiesce. The `SCStreamDelegate` callback fires on SCStream's own private
+    /// queue, NOT `frameQueue`, so hop onto `frameQueue` (async — never block SCK's delegate
+    /// queue) where the IDR timer / cached frame / gated flush all live; the hop also serializes
+    /// against ``stop()``'s `frameQueue.sync` teardown, so whichever side runs first wins and the
+    /// other no-ops via the one-shot latches. `onCaptureFailed` is then invoked ON `frameQueue`
+    /// (the `onScrollOffset` discipline — the session's closure hops onto its actor itself).
+    ///
+    /// The dead `SCStream` REFERENCE is deliberately NOT nil'd here: `stream` is confined to the
+    /// session-actor lifecycle paths (`start`/`stop`/resize), so a delegate-queue write would race
+    /// them. The wired session callback tears the session down through the existing bye path →
+    /// ``stop()``, which releases the reference under that discipline (`stopCapture` on an
+    /// already-dead stream just throws — swallowed).
+    ///
+    /// `internal` (not `private`) so the headless regression test can drive the failure path —
+    /// a real SCStream can never exist under XCTest (hang-safety) and `init` creates none.
+    func handleCaptureFailure() {
+        frameQueue.async { [weak self] in
+            guard let self else { return }
+            guard !captureFailed, !captureStopped else { return } // once-only; a deliberate stop wins
+            captureFailed = true
+            idrTimer?.cancel()
+            idrTimer = nil
+            pendingGatedFlush?.cancel()
+            pendingGatedFlush = nil
+            cachedPixelBuffer = nil // no more synthetic re-encodes of the stale last frame — ever
+            anchorLock.withLock { displayAnchor = nil }
+            onCaptureFailed?()
+        }
     }
 
     // MARK: VIDEO-HOST-1 pixel-buffer copy
@@ -1820,6 +1880,28 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             cbcr: cbcr,
             cbcrStride: cbcrStride,
         )
+    }
+}
+
+// MARK: - Headless test seams (CAPTURE-DEATH regression)
+
+/// A real SCStream can never exist under XCTest (hang-safety: no SCStream/VT/Metal in unit
+/// tests), so the capture-failure quiesce is proven through these `frameQueue`-confined seams:
+/// seed the cached `.complete`-frame copy exactly as a live delivery would, run one static-IDR
+/// timer tick body, and drain the queue after ``WindowCapturer/handleCaptureFailure()``'s async
+/// hop. All three run SYNC on `frameQueue`, preserving the single-owner discipline. Never called
+/// in production (`CaptureFailureTeardownTests` only).
+extension WindowCapturer {
+    func seedCachedPixelBufferForTesting(_ buffer: CVPixelBuffer) {
+        frameQueue.sync { cachedPixelBuffer = buffer }
+    }
+
+    func runIDRTimerTickForTesting() {
+        frameQueue.sync { onIDRTimerTick() }
+    }
+
+    func drainFrameQueueForTesting() {
+        frameQueue.sync {}
     }
 }
 #endif

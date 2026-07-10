@@ -147,6 +147,122 @@ final class VideoMuxHeaderCodecTests: XCTestCase {
         XCTAssertEqual(rest, inner, "peeling the channelID yields the byte-identical today [tag][payload]")
     }
 
+    // MARK: Send/receive framing pins (copy-elimination refactor, 2026-07-10)
+
+    // These pin the EXACT wire bytes both transports construct, against an INDEPENDENT manual
+    // construction (never the code under test called twice), so the single-allocation send path
+    // and the slice-through receive path stay byte-identical to the two-copy originals.
+
+    func testMediaSendShapePinsManualWireBytes() {
+        // Media-socket send (host ``NWVideoMuxDatagramTransport/send`` + client
+        // ``NWVideoMuxClientFlow/send``): `[UInt32 BE channelID][UInt8 tag][payload...]`.
+        let cases: [(channelID: UInt32, tag: UInt8, payload: Data)] = [
+            (0x0A0B_0C0D, 4, Data([0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x7F])), // input-shaped
+            (1, 0, Data([0x05])), // control bye-shaped
+            (.max, 1, Data((0..<1200).map { UInt8(truncatingIfNeeded: $0 &* 13 &+ 3) })), // video burst
+            (0, 2, Data()), // empty geometry payload
+        ]
+        for (channelID, tag, payload) in cases {
+            // Independent manual construction of the expected wire.
+            var expected = Data([
+                UInt8(truncatingIfNeeded: channelID >> 24),
+                UInt8(truncatingIfNeeded: channelID >> 16),
+                UInt8(truncatingIfNeeded: channelID >> 8),
+                UInt8(truncatingIfNeeded: channelID),
+                tag,
+            ])
+            expected.append(payload)
+            // The OLD two-copy call-site shape (inner = tag + payload, then prefix-encode).
+            var inner = Data(capacity: payload.count + 1)
+            inner.append(tag)
+            inner.append(payload)
+            XCTAssertEqual(
+                VideoMuxHeaderCodec.encode(channelID: channelID, payload: inner), expected,
+                "two-step media framing differs for channelID \(channelID) tag \(tag)",
+            )
+            // The single-allocation variant the transports now call is byte-identical to both
+            // the manual wire and the old two-step shape it replaced.
+            XCTAssertEqual(
+                VideoMuxHeaderCodec.encodeMedia(channelID: channelID, tag: tag, payload: payload), expected,
+                "encodeMedia framing differs for channelID \(channelID) tag \(tag)",
+            )
+        }
+    }
+
+    func testCursorSendShapePinsManualWireBytes() {
+        // Cursor-socket send (no tag): `[UInt32 BE channelID][payload...]`.
+        let payload = Data([0x00, 0x11, 0x22])
+        var expected = Data([0x00, 0x00, 0x00, 0x09])
+        expected.append(payload)
+        XCTAssertEqual(VideoMuxHeaderCodec.encode(channelID: 9, payload: payload), expected)
+        XCTAssertEqual(VideoMuxHeaderCodec.encode(channelID: 9, payload: Data()), Data([0, 0, 0, 9]))
+    }
+
+    func testDecodeAcceptsNonzeroStartIndexDatagramSlice() throws {
+        // A receive path handing the decoder a SLICE (startIndex > 0) must behave exactly like a
+        // freshly-allocated Data — catches any zero-based-index assumption in the reader.
+        let payload = Data([0x61, 0x62, 0x63, 0x64])
+        let datagram = VideoMuxHeaderCodec.encode(channelID: 7, payload: payload)
+        var padded = Data([0xFF, 0xEE, 0xDD])
+        padded.append(datagram)
+        let slice = padded[(padded.startIndex + 3)...]
+        XCTAssertGreaterThan(slice.startIndex, 0, "the fixture must actually exercise a nonzero startIndex")
+        let (channelID, rest) = try VideoMuxHeaderCodec.decode(slice)
+        XCTAssertEqual(channelID, 7)
+        XCTAssertEqual(rest, payload)
+    }
+
+    func testTagStrippedSliceFeedsControlDecodeWithoutCopy() throws {
+        // The transports' media receive shape: decode → peel the 1-byte tag as a SLICE (no
+        // intermediate Data copy) → inner codec decode. Pins that the inner decoders are
+        // startIndex-relative.
+        var inner = Data([0x00]) // control tag
+        inner.append(VideoControlMessage.bye.encode())
+        let framed = VideoMuxHeaderCodec.encode(channelID: 3, payload: inner)
+        let (channelID, rest) = try VideoMuxHeaderCodec.decode(framed)
+        XCTAssertEqual(channelID, 3)
+        XCTAssertEqual(rest[rest.startIndex], 0x00)
+        let stripped = rest[(rest.startIndex + 1)...]
+        XCTAssertEqual(try VideoControlMessage.decode(stripped), .bye)
+    }
+
+    func testFrameFragmentDecodeFromTagStrippedSliceKeepsDurablePayloadCopy() throws {
+        // Video-lane receive: `[channelID][tag=1][FrameFragment bytes]`. The fragment decoder must
+        // (a) be startIndex-relative over the tag-stripped slice, and (b) return a payload that is
+        // a DURABLE re-based copy — the one NECESSARY copy — so storing it in the reassembler
+        // never pins the whole parent datagram buffer.
+        let fragment = FrameFragment(
+            header: FrameFragmentHeader(
+                streamSeq: 11, frameID: 22, fragIndex: 1, fragCount: 3,
+                flags: [.keyframe], payloadLength: 5, hostSendTsMillis: 44,
+            ),
+            payload: Data([9, 8, 7, 6, 5]),
+        )
+        var inner = Data([0x01]) // video tag
+        inner.append(fragment.encode())
+        let framed = VideoMuxHeaderCodec.encode(channelID: 0xFEED_F00D, payload: inner)
+        let (channelID, rest) = try VideoMuxHeaderCodec.decode(framed)
+        XCTAssertEqual(channelID, 0xFEED_F00D)
+        let slice = rest[(rest.startIndex + 1)...]
+        XCTAssertGreaterThan(slice.startIndex, 0, "the fixture must actually exercise a nonzero startIndex")
+        let decoded = try FrameFragment.decode(slice)
+        XCTAssertEqual(decoded, fragment)
+        XCTAssertEqual(decoded.payload.startIndex, 0, "fragment payload must be a re-based durable copy")
+    }
+
+    func testVideoByteReaderRemainingOverSliceInput() throws {
+        // `remaining()` must be startIndex-relative (the reader is routinely constructed over a
+        // slice) and consume the reader.
+        let backing = Data([0xAA, 1, 2, 3, 4, 5, 6])
+        let slice = backing[(backing.startIndex + 1)...]
+        var reader = VideoByteReader(slice)
+        _ = try reader.readUInt16()
+        let rest = reader.remaining()
+        XCTAssertEqual(Array(rest), [3, 4, 5, 6])
+        XCTAssertEqual(reader.bytesRemaining, 0)
+        XCTAssertEqual(reader.remaining(), Data(), "a second remaining() is empty")
+    }
+
     // MARK: Differential — the Rust-routed codec is byte-identical to the prior native framing
 
     /// The OLD native framing, reproduced verbatim from the pre-port `VideoMuxHeaderCodec` body

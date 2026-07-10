@@ -187,4 +187,38 @@ final class ScrollbackDistillerTests: XCTestCase {
         let dcs = "\u{1B}Pcontrol-string-body\u{1B}\\"
         XCTAssertEqual(distill("before\(dcs)after"), "before\(dcs)after")
     }
+
+    // MARK: Nasty-corpus exact-byte pin (allocation-refactor guard)
+
+    /// EXACT-BYTE pin over a representative nasty corpus, expected output constructed by hand from
+    /// the documented semantics (idle verbatim, `A` re-emitted, B→C collapsed to the `E` command +
+    /// CRLF, C→D output verbatim incl. every control sequence, `B`/`E`/`C`/`D` marks zero-width, a
+    /// no-`E` span verbatim, trailing broken escape flushed). Any refactor of the byte loop that
+    /// changes a single output byte fails here. Covers SGR-heavy output, OSC/DCS query bytes riding
+    /// the OUTPUT span (the distiller must NOT strip them — that is the stripper's job), an APC body
+    /// with an embedded fake `133` mark, raw multi-byte UTF-8, and `\xNN` command unescaping.
+    func testNastyCorpusExactBytesPinned() {
+        let pre = "…mid-stream tail ✓ \u{1B}[31mred\u{1B}[0m\n"
+        let prompt = "\u{1B}[1;32m~/proj\u{1B}[0m ❯ "
+        let churn = "g\u{1B}[90mit statu\u{1B}[0m\rgit status\u{1B}[K\t\nmenu a b c\u{1B}[2A\u{1B}[J"
+        // Output span: SGR + hyperlink + DCS query + APC with an embedded fake mark + UTF-8. All verbatim.
+        let output = "\u{1B}[01;34mdir\u{1B}[0m tệp ✓\n"
+            + "\u{1B}]8;;http://x\u{1B}\\L\u{1B}]8;;\u{1B}\\"
+            + "\u{1B}P+q544e\u{1B}\\"
+            + "\u{1B}_G\u{1B}]133;B;fake\u{1B}\\real tail\n"
+        let post = "after\n"
+        let trailing = "\u{1B}]0;unterminated" // broken trailing OSC — flushed verbatim
+
+        // Cycle 1: full A→B→churn→E→C→output→D with an escaped `;` in the committed command.
+        // Cycle 2: no `E` → the raw B→C bytes pass through verbatim (fallback), then output.
+        let input = pre
+            + mark("A") + prompt + mark("B") + churn + mark("E;echo a\\x3bb") + mark("C") + output + mark("D;0")
+            + mark("A") + "$ " + mark("B") + "ls -l\r\n" + mark("C") + "total 0\n" + mark("D;1")
+            + post + trailing
+        let expected = pre
+            + mark("A") + prompt + "echo a;b\r\n" + output
+            + mark("A") + "$ " + "ls -l\r\n" + "total 0\n"
+            + post + trailing
+        XCTAssertEqual(ScrollbackDistiller.distill(Data(input.utf8)), Data(expected.utf8))
+    }
 }

@@ -71,7 +71,10 @@ public final class FrameReassembler {
     /// Per-frame reassembly buffer. Fields latch from the flags so a reordered/partial arrival still
     /// marks the frame keyframe/crisp/LTR/anchored.
     private struct Pending {
-        var fragCount: UInt16
+        /// PINNED from the first fragment seen (see the FRAGCOUNT PIN comment in `ingest`): the
+        /// data/parity boundary every completeness/assembly decision derives from. A later
+        /// disagreeing fragCount is dropped in `ingest`, so it is immutable per frame.
+        let fragCount: UInt16
         var keyframe: Bool = false
         var crisp: Bool = false
         /// WF-8: true once ANY fragment carries ``FrameFragmentHeader/Flags/isLTR`` (bit 6). Threaded
@@ -81,7 +84,7 @@ public final class FrameReassembler {
         /// WF-4: the FEC tier PINNED from the FIRST fragment seen. Every fragment carries the same
         /// tier; later disagreement (a corrupt fragment) is ignored so the data/parity split — and the
         /// per-frame parity multiplicity `m` — can't change mid-frame.
-        var fecTier: UInt8 = AdaptiveFECPolicy.defaultTier
+        let fecTier: UInt8
         /// Data-fragment payloads by `fragIndex` (the data range is `0 ..< dataCount`).
         var data: [UInt16: Data] = [:]
         /// Parity payloads keyed by flat group-major/parity-rank layout index `group * m + rank`
@@ -92,6 +95,169 @@ public final class FrameReassembler {
         /// The observed parity boundary (lowest parity `fragIndex` seen). Authoritative ONLY in the
         /// no-FEC fallback; with FEC the boundary comes from the unambiguous fragCount inversion.
         var dataCount: Int?
+
+        // MARK: pinned per-frame FEC geometry (audit perf fix)
+
+        // Because `fragCount`, `fecTier`, and the reassembler's scheme are all fixed for the life of
+        // a frame, the whole FEC geometry is resolved ONCE here instead of per received fragment.
+
+        /// The per-frame FEC group size (WF-4 tier → size), or `nil` for a no-FEC client OR an
+        /// OFF-tier frame — treated as no-parity. Was `parityGroupSize(_:)` per call.
+        let groupSize: Int?
+        /// The per-frame parity-shards-per-group count `m` (>= 1). Was `parityCount(_:)` per call.
+        let m: Int
+        /// The resolved data/parity boundary for the FEC case (`groupSize != nil`):
+        /// `invertedDataCount(fragCount, g, m) ?? fragCount` — the previously per-call descending
+        /// scan. Unused when `groupSize == nil` (the no-FEC boundary is the mutable observed
+        /// `dataCount` above).
+        let pinnedDataCount: Int
+
+        // MARK: incremental completeness counters (audit perf fix)
+
+        // `canEventuallyComplete` used to re-scan every data group (grouped dictionary probes over
+        // `0..<dataCount`) on EVERY fragment ingest — O(dataCount²) per frame, millions of probes on
+        // a multi-thousand-fragment IDR, serialized on the client receive path exactly at the
+        // keyframe latency spike. These counters keep the SAME decision available in O(1): per-group
+        // missing-data / surviving-parity counts, plus a three-way tally of not-yet-complete groups.
+        // Updated only on a FIRST-arrival fragment (duplicates never re-count — dictionary presence
+        // is checked before insert).
+
+        /// Missing data fragments per group (`0..<ceil(pinnedDataCount / g)`), FEC case only.
+        var missingPerGroup: [Int] = []
+        /// Surviving parity shards per group (distinct parity SLOTS present among the group's `m`),
+        /// FEC case only.
+        var survivingPerGroup: [Int] = []
+        /// Groups with `missing > m` — beyond the per-group erasure budget (the old
+        /// `groupIsHopeless`). Any such group makes the frame permanently unrecoverable by FEC.
+        var hopelessGroups = 0
+        /// Groups with `1 <= missing <= m` and `surviving >= missing` — repairable RIGHT NOW from
+        /// parity already held (the old `groupIsRecoverable`).
+        var recoverableNowGroups = 0
+        /// Groups with `1 <= missing <= m` but `surviving < missing` — within budget, still waiting
+        /// on not-yet-arrived parity (or data).
+        var awaitingGroups = 0
+        /// No-FEC case only: distinct data fragments present below the observed boundary
+        /// (`dataCount ?? fragCount`). Adjusted when the boundary shrinks (rare: a parity-flagged
+        /// fragment on a no-FEC/OFF frame), so the no-FEC completeness test is also O(1).
+        var dataPresentBelowBoundary = 0
+
+        /// Resolves the FEC geometry ONCE from the two pinned wire fields + the fixed scheme, and
+        /// starts every group at its all-missing tally (size > m ⇒ hopeless, else awaiting).
+        init(fragCount: UInt16, fecTier: UInt8, groupSize: Int?, parityShardsPerGroup: Int) {
+            self.fragCount = fragCount
+            self.fecTier = fecTier
+            // Defensive floors mirror `invertedDataCount`'s `g >= 1, m >= 1` guards.
+            let g: Int? = if let groupSize, groupSize >= 1 { groupSize } else { nil }
+            self.groupSize = g
+            m = max(1, parityShardsPerGroup)
+            let total = Int(fragCount)
+            if let g {
+                let d = FrameReassembler.invertedDataCount(fragCount: total, groupSize: g, m: m) ?? total
+                pinnedDataCount = d
+                let groups = (d + g - 1) / g
+                missingPerGroup = (0..<groups).map { min(g, d - $0 * g) }
+                survivingPerGroup = Array(repeating: 0, count: groups)
+                hopelessGroups = missingPerGroup.count(where: { $0 > m })
+                awaitingGroups = groups - hopelessGroups
+            } else {
+                pinnedDataCount = total // unused: the no-FEC boundary is the observed `dataCount`
+            }
+        }
+
+        /// How many of this frame's fragments are DATA (vs FEC parity). With FEC, always the
+        /// unambiguous fragCount inversion pinned at init (NEVER the observed parity boundary, which
+        /// a lost group-0 parity would shift — FIX #1); the inversion is m-aware and falls back to
+        /// `fragCount` on no solution (corrupt header, or a `fragCount` shaped for a different `m`).
+        /// With no FEC, the observed parity boundary (or the whole `fragCount`). O(1) — this was the
+        /// per-call descending-scan `resolvedDataCount(_:)`.
+        var resolvedDataCount: Int {
+            groupSize != nil ? pinnedDataCount : (dataCount ?? Int(fragCount))
+        }
+
+        /// O(1) mirror of the old full-scan `canEventuallyComplete`: all data present, or FEC could
+        /// fill the remaining holes from parity ALREADY HELD. m-aware — a group is hopeless when it
+        /// lost more than its budget `m`; a group still missing data needs as many surviving parity
+        /// shards as it has holes. For `m == 1` this is "no group with >= 2 holes, and any
+        /// single-hole group has its (one) parity present". Mirrors `reassembler::can_eventually_complete`.
+        var canEventuallyComplete: Bool {
+            let dc = resolvedDataCount
+            if dc == 0 { return data[0] != nil } // zero-data frame: single empty fragment at index 0
+            guard groupSize != nil else {
+                // No FEC (or OFF tier): ANY missing data fragment is terminal once "old".
+                return dataPresentBelowBoundary == dc
+            }
+            return hopelessGroups == 0 && awaitingGroups == 0
+        }
+
+        /// O(1) mirror of the old full-scan `awaitingRecoverableParity`: the ONLY obstacle is
+        /// not-yet-arrived FEC parity — every group with a hole is within its `m`-erasure budget but
+        /// none is repairable from parity already held, and at least one hole exists. Not permanently
+        /// hopeless, so the sweep grants the reorder grace. Mirrors `reassembler::awaiting_recoverable_parity`.
+        var isAwaitingRecoverableParity: Bool {
+            groupSize != nil && hopelessGroups == 0 && recoverableNowGroups == 0 && awaitingGroups > 0
+        }
+
+        /// O(1) bookkeeping for a FIRST-arrival data fragment (the caller checks dictionary presence
+        /// first; duplicates never re-count). A data-flagged index outside the pinned data range
+        /// (corrupt) is outside every completeness/assembly scan, so it is not counted either.
+        mutating func noteDataArrived(at index: Int) {
+            if let g = groupSize {
+                guard index < pinnedDataCount else { return }
+                let group = index / g
+                tally(group: group, delta: -1)
+                missingPerGroup[group] -= 1
+                tally(group: group, delta: +1)
+            } else if index < (dataCount ?? Int(fragCount)) {
+                dataPresentBelowBoundary += 1
+            }
+        }
+
+        /// O(1) bookkeeping for a FIRST-arrival parity shard at flat layout slot `slot`
+        /// (`group * m + rank`). No-op for a no-FEC/OFF frame (parity repairs nothing there).
+        mutating func noteParityArrived(atSlot slot: Int) {
+            guard groupSize != nil else { return }
+            let group = slot / m
+            // Slots are in-range by construction (`fragIndex < fragCount` + the boundary clamp);
+            // defensive for a hostile shape the inversion fallback produces.
+            guard group < survivingPerGroup.count else { return }
+            tally(group: group, delta: -1)
+            survivingPerGroup[group] += 1
+            tally(group: group, delta: +1)
+        }
+
+        /// Records the observed parity boundary (lowest parity `fragIndex` seen). On the no-FEC/OFF
+        /// path this IS the authoritative data boundary, so a shrink evicts previously-counted data
+        /// fragments at or past the new boundary from the completeness counter — O(shrink), and only
+        /// on a no-FEC parity arrival, never on the hot data path.
+        mutating func noteObservedParityBoundary(_ pIndex: Int) {
+            if groupSize == nil {
+                let oldBoundary = dataCount ?? Int(fragCount)
+                let newBoundary = min(oldBoundary, pIndex)
+                if newBoundary < oldBoundary {
+                    for i in newBoundary..<oldBoundary where data[UInt16(i)] != nil {
+                        dataPresentBelowBoundary -= 1
+                    }
+                }
+            }
+            dataCount = min(dataCount ?? pIndex, pIndex)
+        }
+
+        /// Moves `group`'s contribution in/out of the three-way tally (`delta` −1 before a counter
+        /// change, +1 after). The buckets partition the NOT-yet-complete groups; a hole-free group is
+        /// counted nowhere. `surviving <= m` always (a group has `m` parity slots), so `missing > m`
+        /// (hopeless) and `surviving >= missing` (recoverable now) are mutually exclusive — the same
+        /// classification the old `groupIsHopeless` / `groupIsRecoverable` scan applied per call.
+        private mutating func tally(group: Int, delta: Int) {
+            let missing = missingPerGroup[group]
+            guard missing >= 1 else { return }
+            if missing > m {
+                hopelessGroups += delta
+            } else if survivingPerGroup[group] >= missing {
+                recoverableNowGroups += delta
+            } else {
+                awaitingGroups += delta
+            }
+        }
     }
 
     private let fec: FECScheme?
@@ -216,8 +382,22 @@ public final class FrameReassembler {
             highestSeenFrameID = frameID
         }
 
-        var entry = pending[frameID] ?? Pending(fragCount: header.fragCount, fecTier: header.flags.fecTier)
-        entry.fragCount = header.fragCount
+        // FRAGCOUNT PIN (audit fix, the `fecTier` pin's companion): `fragCount` is pinned from the
+        // FIRST fragment seen for a frame. Every boundary decision — `resolvedDataCount`, the
+        // parity-slot mapping, `canEventuallyComplete`, `assemble`, the hopeless sweep — derives the
+        // data/parity split from it, so a later fragment carrying a DIFFERENT fragCount (corrupt or
+        // hostile; it passes the per-fragment `fragIndex < fragCount` guard against its OWN header)
+        // must be validate-then-DROPPED, never believed: a shrunk count would move the boundary below
+        // already-buffered data (frame declared "complete" while real data is missing — corrupted
+        // decoder input AND a suppressed loss-recovery signal); a grown count would wedge the frame.
+        // Equality also re-establishes `fragIndex < pinned fragCount` for the accepted fragment.
+        var entry: Pending
+        if let existing = pending[frameID] {
+            guard header.fragCount == existing.fragCount else { return .stale }
+            entry = existing
+        } else {
+            entry = makePending(fragCount: header.fragCount, fecTier: header.flags.fecTier)
+        }
         if header.flags.contains(.keyframe) { entry.keyframe = true }
         if header.flags.contains(.crisp) { entry.crisp = true }
         if header.flags.contains(.isLTR) { entry.isLTR = true } // WF-8 bit 6
@@ -225,28 +405,23 @@ public final class FrameReassembler {
 
         if header.flags.contains(.parity) {
             let pIndex = Int(header.fragIndex)
-            // Group size + m both need `fec` (the disjoint field) + this entry's pinned tier.
-            let gOpt = parityGroupSize(entry)
-            let m = parityCount(entry)
-            let total = Int(entry.fragCount)
-            // m-aware boundary; on no solution fall back to the TOTAL fragCount — matching
-            // `resolvedDataCount`, so the boundary the parity is keyed against and the boundary
+            // m-aware boundary, PINNED at first fragment (`Pending.init` — inversion with
+            // total-fragCount fallback), so the boundary the parity is keyed against and the boundary
             // `assemble`/`canEventuallyComplete` use never disagree. The OFF/no-FEC case
-            // (`gOpt == nil`) keeps the observed parity index `pIndex`.
-            let dataBoundary: Int =
-                if let g = gOpt {
-                    invertedDataCount(fragCount: total, groupSize: g, m: m) ?? total
-                } else {
-                    pIndex
-                }
-            entry.dataCount = min(entry.dataCount ?? pIndex, pIndex)
+            // (`groupSize == nil`) keeps the observed parity index `pIndex`.
+            let dataBoundary: Int = entry.groupSize != nil ? entry.pinnedDataCount : pIndex
+            entry.noteObservedParityBoundary(pIndex)
             // Parity is laid out group-major then parity-rank AFTER the data fragments, so
             // `fragIndex - dataBoundary` IS the flat layout index `group * m + rank`. For m == 1 it
             // collapses to the group order — byte-identical.
             let paritySlot = max(0, pIndex - dataBoundary)
-            entry.parity[paritySlot] = fragment.payload
+            let firstArrival = entry.parity[paritySlot] == nil
+            entry.parity[paritySlot] = fragment.payload // duplicates overwrite (last-write-wins)
+            if firstArrival { entry.noteParityArrived(atSlot: paritySlot) }
         } else {
-            entry.data[header.fragIndex] = fragment.payload
+            let firstArrival = entry.data[header.fragIndex] == nil
+            entry.data[header.fragIndex] = fragment.payload // duplicates overwrite (last-write-wins)
+            if firstArrival { entry.noteDataArrived(at: Int(header.fragIndex)) }
         }
         pending[frameID] = entry
 
@@ -273,10 +448,10 @@ public final class FrameReassembler {
         // CHEAP completeness precheck before the expensive `assemble` (which copies every present
         // payload and runs FEC recovery). `canEventuallyComplete` is OUTCOME-EQUIVALENT to "assemble
         // would succeed now" — true iff every group is hole-free or has enough ALREADY-PRESENT parity
-        // to cover its erasures — using only dictionary-presence lookups, no payload copy, no GF work.
-        // Without it, `tryComplete` ran the full copy + FEC-recover on EVERY fragment ingest of an
-        // in-flight frame (O(N²) churn). The Completed/Incomplete decision is unchanged.
-        guard canEventuallyComplete(frameID) else { return .incomplete }
+        // to cover its erasures. It reads the incremental per-group counters `ingest` maintains, so
+        // this precheck is O(1) per fragment (it used to re-scan every group per ingest — O(N²) on a
+        // multi-thousand-fragment IDR). The Completed/Incomplete decision is unchanged.
+        guard entry.canEventuallyComplete else { return .incomplete }
         guard let assembled = assemble(entry) else { return .incomplete }
         retire(frameID)
         return .completed(ReassembledFrame(
@@ -308,12 +483,12 @@ public final class FrameReassembler {
         for (fid, entry) in pending {
             // fid strictly OLDER than the frontier: frontier - fid > 0.
             let age = frontier.distanceWrapped(from: fid)
-            if age <= 0 || canEventuallyComplete(fid) {
+            if age <= 0 || entry.canEventuallyComplete {
                 continue // newer than the frontier, or completable now — not hopeless.
             }
             // Hole(s) only fillable by not-yet-arrived parity → keep within the grace window so
             // reordered parity (emitted last) still has a chance to land.
-            if awaitingRecoverableParity(entry), age <= grace { continue }
+            if entry.isAwaitingRecoverableParity, age <= grace { continue }
             // FEC cannot recover this frame from what is here. With NACK enabled (`rgrace > 0`) and the
             // loss SMALL enough, HOLD it for the retransmit-grace window so a host re-send can fill it
             // inside the client's playout buffer, and surface the request once. A loss too BIG to NACK
@@ -345,16 +520,26 @@ public final class FrameReassembler {
         }
     }
 
-    /// The PER-FRAME FEC group size for `entry` (WF-4): `nil` for a no-FEC client OR an OFF-tier frame
-    /// (``AdaptiveFECPolicy/groupSize(forTier:default:)`` returns `nil`) → treated as no-parity. Tier 0
-    /// routes to the configured `fec.groupSize`, matching the host.
-    private func parityGroupSize(_ entry: Pending) -> Int? {
-        guard let fec else { return nil }
-        return AdaptiveFECPolicy.groupSize(forTier: entry.fecTier, default: fec.groupSize)
+    /// Builds a frame's buffer with the whole per-frame FEC geometry resolved ONCE from the two
+    /// pinned wire fields (audit perf fix — this used to be re-derived per received fragment):
+    ///
+    ///  * group size (WF-4): `nil` for a no-FEC client OR an OFF-tier frame
+    ///    (``AdaptiveFECPolicy/groupSize(forTier:default:)`` returns `nil`) → treated as no-parity.
+    ///    Tier 0 routes to the configured `fec.groupSize`, matching the host;
+    ///  * parity multiplicity `m` (see ``parityCount(forTier:)``);
+    ///  * the data/parity boundary inversion + the per-group completeness counters.
+    private func makePending(fragCount: UInt16, fecTier: UInt8) -> Pending {
+        let groupSize = fec.flatMap { AdaptiveFECPolicy.groupSize(forTier: fecTier, default: $0.groupSize) }
+        return Pending(
+            fragCount: fragCount,
+            fecTier: fecTier,
+            groupSize: groupSize,
+            parityShardsPerGroup: parityCount(forTier: fecTier),
+        )
     }
 
-    /// The PER-FRAME parity-shards-per-group count (`m`) for `entry`, derived from the frame's pinned
-    /// FEC tier, floored to at least 1.
+    /// The PER-FRAME parity-shards-per-group count (`m`) for a frame's pinned FEC tier, floored to
+    /// at least 1.
     ///
     /// Mirrors `adaptive_fec::parity_count(tier, default_m)` exactly: `default_m` is the configured
     /// scheme's own `parityCount` (`1` for the production XOR / `m == 1` codec, so EVERY tier resolves
@@ -366,10 +551,10 @@ public final class FrameReassembler {
     /// production XOR host never emits tiers 5/6/7 (its ladder produces only the group-size tiers
     /// 0–4), so those slots are reached only by an adaptive-`m` host paired with an adaptive-`m`
     /// client. The OFF tier (1) sends no parity, so its `m` is pinned to the byte-identical 1.
-    private func parityCount(_ entry: Pending) -> Int {
+    private func parityCount(forTier tier: UInt8) -> Int {
         let defaultM = max(1, fec?.parityCount ?? 1)
         let m: Int =
-            switch entry.fecTier {
+            switch tier {
             case 1: 1 // OFF: no parity sent → m moot, pinned to the byte-identical 1.
             case AdaptiveFECPolicy.parityTierClean where defaultM >= 2: Self.parityMClean // 5 → 2
             case AdaptiveFECPolicy.parityTierNormal where defaultM >= 2: Self.parityMNormal // 6 → 3
@@ -386,19 +571,6 @@ public final class FrameReassembler {
     private static let parityMNormal = 3
     private static let parityMBurst = 5
 
-    /// Resolves how many of a frame's fragments are DATA (vs FEC parity). With FEC, always derive
-    /// `dataCount` from the unambiguous fragCount inversion (NEVER the observed parity boundary, which
-    /// a lost group-0 parity would shift — FIX #1). With no FEC, `dataCount == fragCount`.
-    ///
-    /// The inversion is m-aware: it solves `fragCount = data + m * ceil(data / g)` for the per-frame
-    /// `m`. On no solution (corrupt header, or a `fragCount` shaped for a different `m`) it falls back
-    /// to `fragCount` — byte-identical to the original `m == 1` total-on-no-solution fallback.
-    private func resolvedDataCount(_ entry: Pending) -> Int {
-        let total = Int(entry.fragCount)
-        guard let g = parityGroupSize(entry) else { return entry.dataCount ?? total }
-        return invertedDataCount(fragCount: total, groupSize: g, m: parityCount(entry)) ?? total
-    }
-
     /// Inverts `fragCount = dataCount + m * ceil(dataCount / groupSize)` for `dataCount`.
     ///
     /// `m` is the parity-shards-per-group multiplicity (`m == 1` is single-parity). The right-hand side
@@ -406,8 +578,9 @@ public final class FrameReassembler {
     /// exists) solution. Returns `nil` when no `dataCount` solves the equation (corrupt header, or a
     /// `fragCount` shaped for a different `m`); call sites apply `?? fragCount` for the
     /// total-on-no-solution fallback. A non-positive `groupSize` or `m` (defensive, off hostile input)
-    /// yields `nil`. Mirrors `reassembler::invert_data_count`.
-    private func invertedDataCount(fragCount total: Int, groupSize: Int, m: Int) -> Int? {
+    /// yields `nil`. Mirrors `reassembler::invert_data_count`. Static (pure) — called once per frame
+    /// from `Pending.init` (audit perf fix: it used to run per received fragment).
+    private static func invertedDataCount(fragCount total: Int, groupSize: Int, m: Int) -> Int? {
         guard groupSize >= 1, m >= 1 else { return nil }
         var d = total
         while d > 0 {
@@ -430,7 +603,7 @@ public final class FrameReassembler {
     /// ring holds the original data datagrams, and once enough DATA arrives the frame completes (with
     /// FEC for any residual hole). Mirrors `reassembler::missing_data_frags`.
     private func missingDataFrags(_ entry: Pending, maxFrags: Int) -> [UInt16]? {
-        let dataCount = resolvedDataCount(entry)
+        let dataCount = entry.resolvedDataCount
         if dataCount == 0 { return nil }
         var missing: [UInt16] = []
         // At most `dataCount` indices can be missing; reserve the worst case so the append loop never
@@ -441,35 +614,10 @@ public final class FrameReassembler {
         return missing
     }
 
-    /// Whether a group is unrecoverable: it lost more data fragments than its budget `m` repairs. With
-    /// `m == 1` this is the original `missing >= 2` test; an `[k + m, k]` code recovers up to `m`
-    /// erasures per group, so `missing > m` is terminal.
-    private func groupIsHopeless(missingInGroup: Int, m: Int) -> Bool {
-        missingInGroup > m
-    }
-
-    /// The flat index, within a frame's group-major/parity-rank parity array, of the parity shard at
-    /// `rank` (`0..<m`) of group `groupIndex`: `groupIndex * m + rank`. For `m == 1` this collapses to
-    /// `groupIndex` — byte-identical to the v1 layout. Mirrors `reassembler::parity_index`.
-    private func parityIndex(groupIndex: Int, rank: Int, m: Int) -> Int {
-        groupIndex * m + rank
-    }
-
-    /// Whether a group with `missingInGroup` lost data fragments can be repaired GIVEN how many of
-    /// that group's `m` parity shards have actually survived. Repairable iff it lost at least one
-    /// fragment, the loss is within the per-group budget `m`, AND enough of its `m` parity shards
-    /// survived (`survivingParity >= missingInGroup`). For `m == 1` this is "one hole AND that group's
-    /// single parity is present". Mirrors `reassembler::group_is_recoverable`.
-    private func groupIsRecoverable(missingInGroup: Int, survivingParity: Int, m: Int) -> Bool {
-        missingInGroup >= 1
-            && !groupIsHopeless(missingInGroup: missingInGroup, m: m)
-            && survivingParity >= missingInGroup
-    }
-
     /// Returns the reassembled AVCC bytes if all data fragments are present (after FEC recovery), else
     /// `nil`. `recoveredViaFEC` is true when a data hole existed and the FEC `recover` filled it.
     private func assemble(_ entry: Pending) -> (avcc: Data, recoveredViaFEC: Bool)? {
-        let dataCount = resolvedDataCount(entry)
+        let dataCount = entry.resolvedDataCount
         guard dataCount > 0 else {
             // A zero-data frame: only valid if it is a single empty fragment at index 0.
             if let only = entry.data[0] { return (only, false) }
@@ -485,7 +633,7 @@ public final class FrameReassembler {
         // attempt recovery with a real PER-FRAME group size (nil = no-FEC OR OFF tier → no parity, so a
         // hole stays a hole and the frame is left incomplete/dropped).
         let hadHole = dataFragments.contains { $0 == nil }
-        if hadHole, let fec, let g = parityGroupSize(entry) {
+        if hadHole, let fec, let g = entry.groupSize {
             // The full flat parity array in group-major then parity-rank order (`parity[group * m +
             // rank]`) — the layout the recover path indexes. A lost parity shard leaves its slot `nil`;
             // the codec recovers up to `m` data losses per group from the survivors.
@@ -499,7 +647,7 @@ public final class FrameReassembler {
             // configured m, so it is byte-identical to the pre-port `fec.recover`.
             dataFragments = recover(
                 with: fec, dataFragments: dataFragments, parityFragments: parityFragments, groupSize: g,
-                m: parityCount(entry),
+                m: entry.m,
             )
         }
 
@@ -534,73 +682,6 @@ public final class FrameReassembler {
         }
         let perFrameCodec = RustReedSolomonFEC(groupSize: g, parityCount: m)
         return perFrameCodec.recover(dataFragments: dataFragments, parityFragments: parityFragments, groupSize: g)
-    }
-
-    /// Whether a frame can still complete (all data present, or FEC could fill the remaining holes from
-    /// the parity it already holds). m-aware: a group is hopeless when it lost more than its budget `m`;
-    /// a group still missing data needs as many SURVIVING parity shards as it has holes. For `m == 1`
-    /// this is "no group with >=2 holes, and any single-hole group has its (one) parity present".
-    /// Mirrors `reassembler::can_eventually_complete`.
-    private func canEventuallyComplete(_ frameID: UInt32) -> Bool {
-        guard let entry = pending[frameID] else { return false }
-        let dataCount = resolvedDataCount(entry)
-        if dataCount == 0 { return entry.data[0] != nil }
-        guard let g = parityGroupSize(entry) else {
-            // No FEC (or OFF tier): ANY missing data fragment is terminal once "old".
-            return !(0..<dataCount).contains { entry.data[UInt16($0)] == nil }
-        }
-        let m = parityCount(entry)
-        var index = 0
-        var groupIndex = 0
-        while index < dataCount {
-            let upper = min(index + g, dataCount)
-            let missing = (index..<upper).count(where: { entry.data[UInt16($0)] == nil })
-            if groupIsHopeless(missingInGroup: missing, m: m) { return false }
-            if missing >= 1 {
-                // Parity shards already held (its `m` slots at groupIndex*m + rank).
-                let surviving = (0..<m).count(where: { rank in
-                    entry.parity[parityIndex(groupIndex: groupIndex, rank: rank, m: m)] != nil
-                })
-                if !groupIsRecoverable(missingInGroup: missing, survivingParity: surviving, m: m) { return false }
-            }
-            index += g
-            groupIndex += 1
-        }
-        return true
-    }
-
-    /// True when the only obstacle is not-yet-arrived FEC parity: every group with a missing data
-    /// fragment is within its `m`-erasure budget but does not YET hold enough surviving parity to
-    /// repair it. Not permanently hopeless — late, reordered parity could still complete it — so the
-    /// sweep grants it the reorder grace. m-aware: a group with `missing > m` is permanently hopeless →
-    /// not "awaiting"; a group already holding `surviving >= missing` is repairable NOW, not
-    /// "awaiting". For `m == 1` this is "exactly one hole and its single parity not yet ingested".
-    /// Mirrors `reassembler::awaiting_recoverable_parity`.
-    private func awaitingRecoverableParity(_ entry: Pending) -> Bool {
-        guard let g = parityGroupSize(entry) else { return false }
-        let dataCount = resolvedDataCount(entry)
-        guard dataCount > 0 else { return false }
-        let m = parityCount(entry)
-        var index = 0
-        var groupIndex = 0
-        var sawRepairableHole = false
-        while index < dataCount {
-            let upper = min(index + g, dataCount)
-            let missing = (index..<upper).count(where: { entry.data[UInt16($0)] == nil })
-            if groupIsHopeless(missingInGroup: missing, m: m) { return false } // beyond budget: hopeless
-            if missing >= 1 {
-                let surviving = (0..<m).count(where: { rank in
-                    entry.parity[parityIndex(groupIndex: groupIndex, rank: rank, m: m)] != nil
-                })
-                if groupIsRecoverable(missingInGroup: missing, survivingParity: surviving, m: m) {
-                    return false // enough parity already here → repairable now, not "awaiting"
-                }
-                sawRepairableHole = true // within budget but short of parity → awaiting more
-            }
-            index += g
-            groupIndex += 1
-        }
-        return sawRepairableHole
     }
 
     private func retire(_ frameID: UInt32) {

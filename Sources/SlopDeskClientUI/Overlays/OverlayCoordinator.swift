@@ -65,6 +65,12 @@ public final class OverlayCoordinator {
     /// host (the app-global ``AppConnection`` form is otherwise unbound by any view).
     public private(set) var connectVisible = false
 
+    /// Monotonic Connect-sheet PRESENTATION generation — bumped by every ``openConnect()`` AND
+    /// ``closeConnect()`` (stability audit). ``ConnectHostView``'s async connect Task captures it at start
+    /// and finishes through ``closeConnect(ifCurrent:)``, so a SLOW connect that resolves after the sheet
+    /// was cancelled and REOPENED can no longer dismiss the fresh sheet mid-edit.
+    public private(set) var connectGeneration = 0
+
     // MARK: Cheat-sheet state
 
     /// Whether the keyboard cheat sheet (⌘/) is presented. Its rows are generated from
@@ -441,8 +447,23 @@ public final class OverlayCoordinator {
 
     // MARK: Connect-to-Host
 
-    public func openConnect() { connectVisible = true }
-    public func closeConnect() { connectVisible = false }
+    public func openConnect() {
+        connectVisible = true
+        connectGeneration &+= 1
+    }
+
+    public func closeConnect() {
+        connectVisible = false
+        connectGeneration &+= 1
+    }
+
+    /// Close the Connect sheet ONLY if `generation` is still the current presentation — the completion guard
+    /// for ``ConnectHostView``'s async connect Task. A stale generation (the sheet was cancelled and/or
+    /// reopened since the Task started) is a no-op, so a slow connect never dismisses a fresh sheet.
+    public func closeConnect(ifCurrent generation: Int) {
+        guard generation == connectGeneration else { return }
+        closeConnect()
+    }
 
     // MARK: Cheat sheet (⌘/)
 

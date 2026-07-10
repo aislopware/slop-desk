@@ -180,6 +180,37 @@ final class MuxChannelSession: @unchecked Sendable {
     private let fifoLock = NSLock()
     private var outFIFO: [OutputItem] = []
 
+    /// Index-cursor deque head for `outFIFO` (guarded by `fifoLock`, like the array). Producers
+    /// APPEND only; the drain pops by advancing this cursor instead of `Array.removeFirst()` —
+    /// which is an O(count) memmove per pop, and a DETACHED session accumulates one entry per
+    /// PTY `read()` (nothing drains) up to the 64 MiB budget, so the reattach drain used to pay
+    /// O(n²) element shifts (~10^11 at a full kernel-chunk backlog — a huge reattach stall).
+    /// ``advanceFIFOHead()`` bulk-compacts the consumed prefix (amortized O(1) per pop).
+    /// Invariant: `0 <= fifoHead <= outFIFO.count`; entries below `fifoHead` are consumed.
+    /// `outFIFO` is never cleared/reassigned anywhere else, so no other reset site is needed.
+    private var fifoHead = 0
+
+    /// Threshold for bulk-compacting the consumed FIFO prefix: only once the dead prefix is
+    /// both non-trivial (≥ 64 slots) AND at least half the array does one `removeFirst(k)`
+    /// memmove reclaim it — amortized O(1) per pop, bounded slack. A fully-drained FIFO is
+    /// emptied outright in ``advanceFIFOHead()`` so consumed chunks' `Data` never lingers.
+    private static let fifoCompactThresholdSlots = 64
+
+    /// Advances the deque cursor past a consumed head entry and compacts when warranted.
+    /// MUST be called with `fifoLock` held.
+    private func advanceFIFOHead() {
+        fifoHead += 1
+        if fifoHead >= outFIFO.count {
+            // Fully drained (the interactive steady state lands here every pop): drop the
+            // storage so consumed chunks' Data is released promptly and the cursor resets.
+            outFIFO.removeAll(keepingCapacity: false)
+            fifoHead = 0
+        } else if fifoHead >= Self.fifoCompactThresholdSlots, fifoHead >= outFIFO.count / 2 {
+            outFIFO.removeFirst(fifoHead)
+            fifoHead = 0
+        }
+    }
+
     /// Sniffed control messages awaiting their own sender. Split from the data drain so a
     /// slow/stalled CONTROL socket (or per-redraw title churn) can never stall data sends —
     /// data waited on control before this split. Per-channel control FIFO is preserved
@@ -218,34 +249,38 @@ final class MuxChannelSession: @unchecked Sendable {
         fifoLock.lock()
         defer { fifoLock.unlock() }
         let cap = MuxFlowControl.maxOutputFramePayloadBytes
-        guard let head = outFIFO.first else { return nil }
+        guard fifoHead < outFIFO.count else { return nil }
+        let head = outFIFO[fifoHead]
         if case let .exit(code) = head {
-            outFIFO.removeFirst()
+            advanceFIFOHead()
             return .exit(code: code)
         }
         // Head is a chunk: pop it, then greedily absorb following chunks up to the cap.
         guard case var .chunk(bytes, control) = head else { return nil }
-        outFIFO.removeFirst()
         if bytes.count > cap {
             // SPLIT an over-cap head chunk: ship the prefix (with the chunk's sniffed
-            // control — per-channel control FIFO holds), reinsert the remainder at the
-            // head so the byte stream order is untouched.
+            // control — per-channel control FIFO holds), overwrite the unconsumed HEAD
+            // SLOT with the remainder (O(1); the old removeFirst + insert(at: 0) pair
+            // was two O(count) memmoves per emitted frame) so byte order is untouched.
             let prefix = Data(bytes.prefix(cap))
             let remainder = Data(bytes.dropFirst(cap))
-            outFIFO.insert(.chunk(bytes: remainder, control: []), at: 0)
+            outFIFO[fifoHead] = .chunk(bytes: remainder, control: [])
             return .output(bytes: prefix, byteCount: prefix.count, control: control)
         }
+        advanceFIFOHead()
         var byteCount = bytes.count
-        if case let .chunk(nextBytes, _)? = outFIFO.first,
+        if fifoHead < outFIFO.count,
+           case let .chunk(nextBytes, _) = outFIFO[fifoHead],
            byteCount + nextBytes.count <= cap
         {
             // Multi-chunk merge: one mutable accumulator, reserve once.
             var merged = Data(capacity: min(cap, byteCount + nextBytes.count))
             merged.append(bytes)
-            while case let .chunk(more, moreControl)? = outFIFO.first,
+            while fifoHead < outFIFO.count,
+                  case let .chunk(more, moreControl) = outFIFO[fifoHead],
                   byteCount + more.count <= cap
             {
-                outFIFO.removeFirst()
+                advanceFIFOHead()
                 merged.append(more)
                 byteCount += more.count
                 control.append(contentsOf: moreControl)
@@ -807,7 +842,7 @@ final class MuxChannelSession: @unchecked Sendable {
         // this the retained backlog (and its gate accounting) would sit undelivered until the next
         // PTY read. bufferingNewest(1) holds the yield until the drain task starts its for-await.
         fifoLock.lock()
-        let hasDetachedBacklog = !outFIFO.isEmpty
+        let hasDetachedBacklog = fifoHead < outFIFO.count // deque-aware "not empty"
         let backlogWake = outputWakeContinuation
         fifoLock.unlock()
         if hasDetachedBacklog { backlogWake?.yield(()) }

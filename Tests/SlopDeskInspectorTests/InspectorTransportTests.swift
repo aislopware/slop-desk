@@ -102,6 +102,81 @@ final class InspectorTransportTests: XCTestCase {
         XCTAssertEqual(got, .subscribe(fromSeq: 42))
     }
 
+    // MARK: - InspectorSource.stream — dead-peer pump termination
+
+    /// A ``ByteChannel`` whose `send` succeeds `failAfter` times, then throws forever
+    /// (a peer that died mid-stream). Counts every send attempt.
+    private final class FailingSendChannel: ByteChannel, @unchecked Sendable {
+        struct PeerGone: Error {}
+        private let lock = NSLock()
+        private var attempts = 0
+        private let failAfter: Int
+
+        init(failAfter: Int) { self.failAfter = failAfter }
+
+        var sendAttempts: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return attempts
+        }
+
+        /// Synchronous (non-async) so the locking is legal from the async `send`.
+        private func recordAttempt() -> Int {
+            lock.lock()
+            defer { lock.unlock() }
+            attempts += 1
+            return attempts
+        }
+
+        func send(_: Data) async throws {
+            // `await Task.yield()` satisfies the protocol's async signature (and the
+            // async_without_await strict-lint rule) — the repo's fake-channel idiom.
+            await Task.yield()
+            if recordAttempt() > failAfter { throw PeerGone() }
+        }
+
+        var inbound: AsyncThrowingStream<Data, Error> { AsyncThrowingStream { $0.finish() } }
+        func close() {}
+    }
+
+    /// `InspectorSource.stream(_:)` must STOP pumping when a send fails (dead peer),
+    /// matching the hand-rolled pump in `InspectorServer.serve` — not swallow the error
+    /// and keep draining (pre-fix: `try? await send(event)` consumed the entire upstream
+    /// forever, parking on a never-finishing live stream for a peer that is gone).
+    func testStreamStopsPumpingOnSendFailure() async throws {
+        let channel = FailingSendChannel(failAfter: 2)
+        let source = InspectorSource(channel: channel)
+
+        var continuation: AsyncStream<InspectorEvent>.Continuation!
+        let events = AsyncStream<InspectorEvent> { continuation = $0 }
+        for i in 0..<10 {
+            continuation.yield(.message(MessageEvent(role: .assistant, text: "e\(i)")))
+        }
+        // Deliberately NOT finished: a live tail never "ends" on its own — the pump must
+        // terminate on the send failure, not wait for upstream exhaustion.
+
+        let pump = Task { await source.stream(events) }
+        // Race the pump against a timeout so the pre-fix hang FAILS the test, not the suite.
+        struct PumpNeverReturned: Error {}
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { await pump.value }
+            group.addTask {
+                try await Task.sleep(for: .seconds(5))
+                pump.cancel()
+                throw PumpNeverReturned()
+            }
+            try await group.next()!
+            group.cancelAll()
+        }
+
+        XCTAssertEqual(
+            channel.sendAttempts,
+            3,
+            "2 successful sends + the 1 failing send, then the pump stops — the remaining 7 events are never sent",
+        )
+        continuation.finish()
+    }
+
     // MARK: - Codec-level framing (split / coalesced reads)
 
     func testFrameDecoderReassemblesAcrossArbitraryByteBoundaries() throws {

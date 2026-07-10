@@ -333,12 +333,25 @@ public struct AgentControlHandler: Sendable {
     }
 
     /// `spawn` — forks a new standalone pane. Returns `{paneId: "…"}`.
+    ///
+    /// `rows`/`cols` default to 24×80 when absent, but a PRESENT value is validated into
+    /// `1…65535` first (validate-then-drop, same as `resize`): pre-fix the bare
+    /// `UInt16(_:)` conversion TRAPPED on a negative or >65535 value from the socket,
+    /// aborting the entire hostd (every session, every client) on one bad NDJSON line.
     static func spawnPane(id: String, params: [String: Any], server: HostServer) -> String {
         let cmd = params["cmd"] as? [String]
         let cwd = params["cwd"] as? String
         let env = params["env"] as? [String: String]
-        let rows = UInt16((params["rows"] as? Int) ?? 24)
-        let cols = UInt16((params["cols"] as? Int) ?? 80)
+        let rowsRaw = (params["rows"] as? Int) ?? 24
+        guard rowsRaw >= 1, rowsRaw <= 65535 else {
+            return errorResponse(id: id, message: "rows must be 1..65535")
+        }
+        let colsRaw = (params["cols"] as? Int) ?? 80
+        guard colsRaw >= 1, colsRaw <= 65535 else {
+            return errorResponse(id: id, message: "cols must be 1..65535")
+        }
+        let rows = UInt16(rowsRaw)
+        let cols = UInt16(colsRaw)
 
         let paneId: String
         do {

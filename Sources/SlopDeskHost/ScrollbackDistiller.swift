@@ -80,8 +80,12 @@ enum ScrollbackDistiller {
     /// span is byte-for-byte the input). Empty input → empty output.
     static func distill(_ bytes: Data) -> Data {
         guard !bytes.isEmpty else { return Data() }
+        // One up-front copy to a contiguous array: iterating `Data` element-by-element goes through
+        // its slow enum-dispatch subscript, which dominates on multi-hundred-MiB cold-reattach /
+        // journal blobs (mirrors ``TerminalQueryStripper/strip``'s up-front conversion).
+        let input = [UInt8](bytes)
         var out: [UInt8] = []
-        out.reserveCapacity(bytes.count)
+        out.reserveCapacity(input.count)
 
         var state = State.ground
         var pending: [UInt8] = [] // the in-progress escape/OSC sequence (from ESC), decided at its end
@@ -236,7 +240,7 @@ enum ScrollbackDistiller {
             }
         }
 
-        for b in bytes {
+        for b in input {
             switch state {
             case .ground:
                 if b == esc {
