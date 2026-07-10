@@ -87,6 +87,21 @@ struct PaneContainer: View {
     /// The live session for this pane (terminal model / input bar), if materialized.
     private var live: LivePaneSession? { store.handle(for: paneID) as? LivePaneSession }
 
+    /// How many panes the tab CONTAINING this pane holds (1 = an unsplit tab). Defaults to 1 when the
+    /// pane is not in the active session's tabs (teardown race) — the marker then stays hidden.
+    private var tabPaneCount: Int {
+        store.tree.activeSession?.tabs
+            .first { $0.allPaneIDs().contains(paneID) }?
+            .allPaneIDs().count ?? 1
+    }
+
+    /// Whether the focus-corner marker shows: the pane is focused AND its tab actually has siblings to
+    /// disambiguate from (2026-07-10: a single-pane tab needs no "which pane is active" answer — the
+    /// marker there was pure ornament). Pure + static so the gate is unit-pinned.
+    static func showsFocusCorner(isFocused: Bool, tabPaneCount: Int) -> Bool {
+        isFocused && tabPaneCount > 1
+    }
+
     private var spec: PaneSpec? { store.tree.activeSession?.specs[paneID] }
 
     /// The pane's kind drives which leaf view renders. Reads the live handle's kind (falls back to spec).
@@ -211,13 +226,14 @@ struct PaneContainer: View {
             ))
             // FOCUS = a small FILLED accent triangle tucked into the active pane's TOP-LEFT corner (Warp-style,
             // the KEPT marker after the box/bracket/underline/dot/top-bar iterations). `Slate.State.accent`,
-            // faded in only while focused; the unfocused panes render at FULL opacity (no dim — it washed out
-            // live content). `allowsHitTesting(false)` so taps / the divider gesture pass through. OUTERMOST
-            // overlay → above the resize-scrim + drop-zone overlays (KEPT exactly as-is — re-render logic).
+            // faded in only while focused AND the tab is actually SPLIT (`showsFocusCorner` — a single-pane
+            // tab has no sibling to disambiguate, so it stays bare); the unfocused panes render at FULL
+            // opacity (no dim — it washed out live content). `allowsHitTesting(false)` so taps / the divider
+            // gesture pass through. OUTERMOST overlay → above the resize-scrim + drop-zone overlays.
             .overlay(alignment: .topLeading) {
                 PaneFocusCorner(size: Slate.Metric.focusCornerSize)
                     .fill(Slate.State.accent)
-                    .opacity(isFocused ? 1 : 0)
+                    .opacity(Self.showsFocusCorner(isFocused: isFocused, tabPaneCount: tabPaneCount) ? 1 : 0)
                     .allowsHitTesting(false)
             }
             .animation(Slate.Anim.standard, value: isFocused)
