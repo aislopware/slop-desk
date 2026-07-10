@@ -117,12 +117,15 @@ struct SlateTitlebar: View {
 /// The centred active-title button. Hover shows a `⋯` + plate; click opens the pane menu (working dir /
 /// split / move / find / close pane). Wired to the live store.
 ///
-/// `showDot` is the bell-style unseen-attention indicator (``WorkspaceStore/hasUnseenAttention``): a tiny
-/// SUPERSCRIPT pip riding the title's top-trailing corner — the notification-badge position, not an inline
-/// bullet — tinted `dotTint` (the most-urgent waiting pane's STATUS colour, same map as the sidebar
-/// badges). It appears while some OTHER pane is blocked / finished unread and vanishes when everything is
-/// seen (MERIDIAN zero-ornament at rest). Rendered as an OVERLAY, so it never affects layout — the centred
-/// title cannot shift when it comes and goes.
+/// `showDot` is the unseen-attention indicator (``WorkspaceStore/hasUnseenAttention``): the SAME static
+/// status dot the sidebar tab rows wear (one vocabulary — the user reads red/blue identically in both
+/// places), tinted `dotTint` (the most-urgent waiting pane). It lives in the trailing COMPLICATION SLOT
+/// the hover `⋯` already reserves — the one-trailing-complication anatomy every Slate row speaks
+/// (``SlateTabRow``/``SlatePopoverRow``) — so the centred title NEVER shifts, and at rest the titlebar
+/// reads `title ●` exactly like a tab row. On hover/press the dot yields to the `⋯` (you are about to
+/// open the menu, whose NEEDS-ATTENTION section is the dot's answer). Vanishes when everything is seen
+/// (MERIDIAN zero-ornament at rest). Superscript-pip and leading-bullet variants were tried and rejected
+/// (2026-07-10): a badge riding TEXT reads as dirt — badges belong on icons or in the row's trailing slot.
 private struct TitleMenuButton: View {
     let title: String
     let showDot: Bool
@@ -140,17 +143,16 @@ private struct TitleMenuButton: View {
                     .font(.system(size: Slate.Typeface.body, weight: .medium))
                     .foregroundStyle(hover || show ? Slate.Text.primary : Slate.Text.secondary)
                     .lineLimit(1)
-                    .overlay(alignment: .topTrailing) {
-                        Circle()
-                            .fill(dotTint)
-                            .frame(width: 4, height: 4)
-                            .offset(x: 5, y: -1.5)
-                            .opacity(showDot ? 1 : 0)
-                    }
-                Image(systemSymbol: .ellipsis)
-                    .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                    .foregroundStyle(Slate.Text.icon)
-                    .opacity(hover || show ? 1 : 0)
+                // The ONE trailing complication slot (always reserved): the attention dot at rest, the
+                // `⋯` menu hint on hover/press. A ZStack so the swap is a cross-fade in place.
+                ZStack {
+                    Image(systemSymbol: .ellipsis)
+                        .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+                        .foregroundStyle(Slate.Text.icon)
+                        .opacity(hover || show ? 1 : 0)
+                    SlateStatusDot(color: dotTint, size: 7)
+                        .opacity(showDot && !hover && !show ? 1 : 0)
+                }
             }
             .padding(.horizontal, Slate.Metric.space2)
             .frame(height: Slate.Metric.heightControl)
