@@ -154,6 +154,47 @@ public extension WorkspaceStore {
         return .none
     }
 
+    // MARK: The titlebar attention dot (bell-style "something needs you" rollup)
+
+    /// Whether ANY pane other than the focused leaf currently carries an ATTENTION-class badge
+    /// (``TabBadgeKind/needsAttention``: agent blocked / unread finish / failed command) — the bell-style
+    /// dot next to the titlebar's centre title. Spans ALL sessions (the dot is global; the rail only shows
+    /// the active one) and resolves each pane through the SAME gated pipeline the rail renders
+    /// (``TabBadgeGating/resolve(...)`` + the manual ``tabBadgeOverride(for:)`` on the tab's representative
+    /// pane), so the dot and the sidebar can never disagree — a badge the user silenced never lights it.
+    /// The focused leaf is excluded via the B3 gate (``isPaneFocused(_:)``): while the app is inactive
+    /// nothing is focused, so even the active leaf counts until the user returns. Freshness is pinned
+    /// ``TabBadgeResolver/CompletionFreshness/settled`` — `.completed` and `.finished` are BOTH
+    /// attention-class, so the flash clock cannot change the verdict (no `Date()` here; the derivation
+    /// stays deterministic).
+    var hasUnseenAttention: Bool {
+        for session in tree.sessions {
+            for tab in session.tabs {
+                let representative = tab.activePane ?? tab.allPaneIDs().first
+                let manual = tabBadgeOverride(for: tab.id)
+                for paneID in tab.allPaneIDs() where !isPaneFocused(paneID) {
+                    let badge: TabBadgeKind? =
+                        if paneID == representative, let manual {
+                            manual
+                        } else {
+                            TabBadgeGating.resolve(
+                                agent: agentStatus(for: paneID),
+                                completion: panePendingCompletion[paneID],
+                                isBusy: paneIsBusy(paneID),
+                                foregroundProcess: paneForegroundProcess[paneID],
+                                completionFreshness: .settled,
+                                progress: progress(for: paneID),
+                                agentGates: agentBadgeGates(for: paneID),
+                                commandGates: commandBadgeGates,
+                            )
+                        }
+                    if badge?.needsAttention == true { return true }
+                }
+            }
+        }
+        return false
+    }
+
     // MARK: Attention edge (the notification fire)
 
     /// The coalesced attention-EDGE handler called from ``setAgentStatus(_:for:)`` after it commits the

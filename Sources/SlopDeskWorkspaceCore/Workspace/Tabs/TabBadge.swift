@@ -47,6 +47,23 @@ public enum TabBadgeKind: Equatable, Sendable {
     /// **Sudo** — the shield. A privileged session (`sudo`/`su` foreground). Surfaces only when the
     /// shell is otherwise at rest (below the active states, above ``caffeinate``).
     case sudo
+
+    /// Whether this badge is ATTENTION-class — "finished or waiting on you", the states the titlebar's
+    /// bell-style dot (``WorkspaceStore/hasUnseenAttention``) rolls up. The live activity markers
+    /// (``running``/``commandRunning``) and the at-rest privilege badges (``sudo``/``caffeinate``) are
+    /// NOT attention: the dot means unread, not busy.
+    public var needsAttention: Bool {
+        switch self {
+        case .awaitingInput,
+             .completed,
+             .error,
+             .finished: true
+        case .caffeinate,
+             .commandRunning,
+             .running,
+             .sudo: false
+        }
+    }
 }
 
 /// The PURE fusion policy that collapses the four per-pane badge signals into the single

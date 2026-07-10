@@ -63,8 +63,10 @@ struct SlateTitlebar: View {
                 .padding(.top, rowTop)
 
             // Centre: the active title as a menu, on the traffic-light row.
-            TitleMenuButton(title: activeTitle, store: store, activePane: activePane)
-                .padding(.top, rowTop)
+            TitleMenuButton(
+                title: activeTitle, showDot: store.hasUnseenAttention, store: store, activePane: activePane,
+            )
+            .padding(.top, rowTop)
 
             // Right: connection cluster — collapsed-sidebar fallback only (footer is the resting home).
             // Trailing titlebar has room for host + metrics; never next to the traffic lights.
@@ -98,8 +100,15 @@ struct SlateTitlebar: View {
 
 /// The centred active-title button. Hover shows a `⋯` + plate; click opens the pane menu (working dir /
 /// split / move / find / close pane). Wired to the live store.
+///
+/// `showDot` is the bell-style unseen-attention indicator (``WorkspaceStore/hasUnseenAttention``): a plain
+/// dot in the TITLE'S OWN text colour — no accent, no count, no animation beyond a fade — that appears
+/// while some OTHER pane is blocked / finished unread, and vanishes when everything is seen (MERIDIAN
+/// zero-ornament at rest). Its slot is ALWAYS reserved (opacity, not insertion) so the centred title never
+/// shifts when it comes and goes — mirroring the trailing `⋯`, which reserves its slot the same way.
 private struct TitleMenuButton: View {
     let title: String
+    let showDot: Bool
     let store: WorkspaceStore
     let activePane: PaneID?
 
@@ -109,6 +118,10 @@ private struct TitleMenuButton: View {
     var body: some View {
         Button { show.toggle() } label: {
             HStack(spacing: 5) {
+                Circle()
+                    .fill(hover || show ? Slate.Text.primary : Slate.Text.secondary)
+                    .frame(width: 5, height: 5)
+                    .opacity(showDot ? 1 : 0)
                 Text(title)
                     .font(.system(size: Slate.Typeface.body, weight: .medium))
                     .foregroundStyle(hover || show ? Slate.Text.primary : Slate.Text.secondary)
@@ -126,6 +139,7 @@ private struct TitleMenuButton: View {
         .buttonStyle(.plain)
         .onHover { hover = $0 }
         .animation(Slate.Anim.smallFade, value: hover)
+        .animation(Slate.Anim.smallFade, value: showDot)
         .popover(isPresented: $show, arrowEdge: .bottom) { menu }
     }
 
