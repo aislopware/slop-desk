@@ -85,11 +85,13 @@ struct SlatePingDot: View {
 /// ring spinning around it. The core is EXACTLY the static ``SlateStatusDot`` size — the ring is added
 /// OUTSIDE, so a state flipping between live and settled never changes the dot the eye is tracking.
 ///
-/// The ring is the classic indeterminate motion: the HEAD advances at constant speed while the arc's
-/// length breathes between short and long on an incommensurate period — so the TAIL chases and falls
-/// back, and the ring never looks like a static wheel (2026-07-10: a fixed-length arc read as
-/// monotonous). Uniform colour, no gradient (a faded tail's end cap read as a detached dot). Two
-/// wearers: a WORKING agent (status amber) and an OSC 9;4 progress load (muted). Both phases ride the
+/// The ring is the Material-class indeterminate motion (the canonical circular spinner): a slow LINEAR
+/// container rotation, while within each ~1.35s cycle the HEAD lunges ahead with cubic ease-in-out over
+/// the first half and the TAIL chases with the same easing over the second — the arc grows to ~270°,
+/// then reels in, and the whole figure keeps gliding. At the cycle seam the arc length is ~0, which is
+/// exactly when a 270° re-anchor lands, so the loop is seamless. This replaced a cosine-breathing arc
+/// (2026-07-10: read as unnatural next to the familiar spinners). Uniform colour, no gradient. Two
+/// wearers: a WORKING agent (status amber) and an OSC 9;4 progress load (muted). All phases ride the
 /// WALL CLOCK (``TimelineView`` — a rail re-render can't reset them) and stay within `ringSize`. Pure
 /// SwiftUI; no video/capture (hang-safety #6).
 struct SlateOrbitDot: View {
@@ -99,13 +101,22 @@ struct SlateOrbitDot: View {
     /// The spinner ring's outer diameter (the ring orbits OUTSIDE the core; must fit the badge box).
     var ringSize: CGFloat = 14
     var lineWidth: CGFloat = 1.2
-    /// Seconds per full head revolution.
-    private let spinPeriod: Double = 1.2
-    /// Seconds per grow→shrink breath. Deliberately incommensurate with `spinPeriod` so the two phases
-    /// drift against each other and the motion never settles into a visible repeat.
-    private let breathePeriod: Double = 1.7
-    /// The arc length's range, as fractions of the full circle.
-    private let minSweep = 0.18, maxSweep = 0.72
+    /// Seconds per head-lunge + tail-chase cycle (Material's 1333ms, slightly relaxed).
+    private let cyclePeriod: Double = 1.35
+    /// Seconds per revolution of the underlying linear container rotation (Material's 1568ms).
+    private let containerPeriod: Double = 1.6
+    /// The arc's maximum sweep, as a fraction of the full circle (Material's ~270°).
+    private let maxSweep = 0.75
+
+    /// Cubic ease-in-out on 0…1 — the fast-out-slow-in profile both the head lunge and the tail chase
+    /// follow. Separate `*`/`-` ops (no fused multiply-add).
+    private func ease(_ u: Double) -> Double {
+        if u < 0.5 {
+            return 4 * u * u * u
+        }
+        let v = -2 * u + 2
+        return 1 - v * v * v / 2
+    }
 
     var body: some View {
         ZStack {
@@ -113,21 +124,22 @@ struct SlateOrbitDot: View {
                 .fill(color)
                 .frame(width: dotSize, height: dotSize)
             TimelineView(.animation) { timeline in
-                // Two wall-clock phases (separate `/` `*` `+` ops throughout — no fused multiply-add):
-                // the head sweeps 0…360° uniformly; the sweep length breathes on a cosine.
                 let now = timeline.date.timeIntervalSinceReferenceDate
-                let spinT = now.truncatingRemainder(dividingBy: spinPeriod)
-                let head = spinT / spinPeriod * 360
-                let breatheT = now.truncatingRemainder(dividingBy: breathePeriod)
-                let breathe = (1 - cos(breatheT / breathePeriod * 2 * .pi)) / 2 // 0…1…0
-                let sweep = minSweep + (maxSweep - minSweep) * breathe
-                // Anchor the HEAD to the uniform sweep (arc spans [head − sweep, head]): growing extends
-                // the tail backwards, shrinking reels it in — the tail chases, the head never stutters.
+                // Cycle phase: first half the head sweeps 0→maxSweep (eased), second half the tail
+                // chases 0→maxSweep (eased) — grow then reel in.
+                let cycles = (now / cyclePeriod).rounded(.down)
+                let u = now / cyclePeriod - cycles
+                let head = ease(Double.minimum(1, 2 * u)) * maxSweep
+                let tail = ease(Double.maximum(0, 2 * u - 1)) * maxSweep
+                // Container: continuous linear spin, plus one 270° re-anchor per cycle — applied exactly
+                // at the seam where the arc length is 0, so the jump is invisible and the figure never
+                // snaps back.
+                let container = now / containerPeriod * 360 + cycles * maxSweep * 360
                 Circle()
-                    .trim(from: 0, to: sweep)
+                    .trim(from: tail, to: Double.maximum(head, tail + 0.02))
                     .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                     .frame(width: ringSize - lineWidth, height: ringSize - lineWidth)
-                    .rotationEffect(.degrees(head - sweep * 360))
+                    .rotationEffect(.degrees(container))
             }
         }
         .frame(width: ringSize, height: ringSize)
