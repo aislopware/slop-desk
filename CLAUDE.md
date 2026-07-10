@@ -57,7 +57,7 @@ Separate transport, message set, version (`1` only — no negotiation).
 
 | Path | Notes that bite |
 |------|-----------------|
-| Terminal (TCP) | Dual `.data` + `.control`; `TCP_NODELAY` on **both**. ReplayBuffer 64 MiB cap, 4 MiB offline gate **pauses PTY drain**. Real smoke: `SubprocessE2ETests` (in-memory loopback misses open-order races). |
+| Terminal (TCP) | Dual `.data` + `.control`; `TCP_NODELAY` on **both**. ReplayBuffer 256 MiB cap, 64 MiB offline gate **pauses PTY drain**; queue gate 64 KiB attached (latency) ↔ 64 MiB detached (budget — agent keeps running while away). Real smoke: `SubprocessE2ETests` (in-memory loopback misses open-order races). |
 | GUI video (UDP) | Media socket (1-byte channel tags; recovery has its own tag) + dedicated cursor socket. FEC via `FECScheme` (RS GF(2⁸)). |
 | Inspector (TCP) | Read-only; client→host is only `subscribe(fromSeq:)`. |
 

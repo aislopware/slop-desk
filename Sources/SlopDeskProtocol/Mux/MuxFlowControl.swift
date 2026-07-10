@@ -53,6 +53,16 @@ public enum MuxFlowControl {
     public static let hostQueueCapacityBytes =
         envInt("SLOPDESK_MUX_HOST_QUEUE", 64 * 1024, min: 8 * 1024, max: 8 * 1024 * 1024)
 
+    /// The DETACHED-mode replacement for ``hostQueueCapacityBytes``: with no client consuming,
+    /// the queue bound is not a latency knob but the "output while away" budget — past it the
+    /// PTY pause chain stalls the pane's still-running process (an agent left working would
+    /// freeze mid-task at 64 KiB + a kernel buffer). 64 MiB ≈ an aggressive overnight agent's
+    /// output, bounded per detached session; `rebindRelay` restores the attached bound (the
+    /// backlog ships to the returning client, then normal latency sizing resumes). Host-local
+    /// only → unilaterally safe to tune via `SLOPDESK_MUX_DETACHED_QUEUE`.
+    public static let detachedHostQueueCapacityBytes =
+        envInt("SLOPDESK_MUX_DETACHED_QUEUE", 64 * 1024 * 1024, min: 64 * 1024, max: 1024 * 1024 * 1024)
+
     /// Cap on a MERGED host output frame (drain-side coalescing), in bytes. The host drain
     /// concatenates immediately-available FIFO chunks into one `.output` frame up to this
     /// cap, amortizing per-frame costs (seq, two encode copies, actor hops, one send) across

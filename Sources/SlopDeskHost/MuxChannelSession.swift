@@ -696,6 +696,12 @@ final class MuxChannelSession: @unchecked Sendable {
         // Engage the offline gate so the PTY drain pauses (C1): the read loop parks on its
         // NSCondition and the kernel PTY buffer backpressures the shell.
         setClientOnline(false)
+        // Re-size the queue bound for detached life: 64 KiB is a LATENCY bound (head-of-line
+        // delay to a consuming client) — with no client it would stall a still-working agent at
+        // 64 KiB + one kernel buffer. The detached bound is the "output while away" budget
+        // (``MuxFlowControl/detachedHostQueueCapacityBytes``, default 64 MiB); rebindRelay
+        // restores the attached sizing.
+        outputGate?.setCapacity(MuxFlowControl.detachedHostQueueCapacityBytes)
     }
 
     /// Rebinds the relay to a fresh pair of sub-channels from a returning client.
@@ -758,6 +764,12 @@ final class MuxChannelSession: @unchecked Sendable {
         controlOutLock.lock()
         controlOut.removeAll(keepingCapacity: false)
         controlOutLock.unlock()
+
+        // Restore the ATTACHED queue sizing (detach() raised it to the detached budget). With a
+        // >64 KiB detached backlog outstanding this immediately re-pauses the read loop; the
+        // restarted drain ships the backlog, dequeues its accounting, and resumes it — the exact
+        // rebalance the C3 note above describes.
+        outputGate?.setCapacity(MuxFlowControl.hostQueueCapacityBytes)
 
         // Rebuild the output wake stream and restart the output drain task.
         let (outputWakeups, outputWake) =

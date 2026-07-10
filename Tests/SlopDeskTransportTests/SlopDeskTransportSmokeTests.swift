@@ -6,8 +6,8 @@ import XCTest
 /// (framing over NWConnection, replay-after-drop, reconnect resume) lands in WF-2.
 final class SlopDeskTransportSmokeTests: XCTestCase {
     func testReplayBufferCapsAreContractValues() {
-        XCTAssertEqual(ReplayBuffer.maxBackupBytes, 64 * 1024 * 1024)
-        XCTAssertEqual(ReplayBuffer.offlineGateBytes, 4 * 1024 * 1024)
+        XCTAssertEqual(ReplayBuffer.maxBackupBytes, 256 * 1024 * 1024)
+        XCTAssertEqual(ReplayBuffer.offlineGateBytes, 64 * 1024 * 1024)
     }
 
     func testReplayBufferAssignsMonotonicSeqStartingAtOne() {

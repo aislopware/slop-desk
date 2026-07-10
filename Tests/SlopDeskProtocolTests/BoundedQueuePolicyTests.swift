@@ -63,4 +63,17 @@ final class BoundedQueuePolicyTests: XCTestCase {
         XCTAssertEqual(q.capacity, 0)
         XCTAssertTrue(q.isFull, "a zero-capacity queue is full from the start (pause immediately)")
     }
+
+    func testSetCapacityPreservesOutstandingAndRedefinesFull() {
+        var q = BoundedQueuePolicy(capacity: 100)
+        q.enqueue(150)
+        XCTAssertTrue(q.isFull)
+        q.setCapacity(1000) // detached re-sizing: same outstanding, bigger budget
+        XCTAssertEqual(q.outstanding, 150, "re-sizing must never touch the accounting")
+        XCTAssertFalse(q.isFull, "raising the bound above outstanding un-fulls the queue")
+        q.setCapacity(50) // reattach restores a smaller latency bound
+        XCTAssertTrue(q.isFull, "shrinking below outstanding re-fulls it")
+        q.setCapacity(-5)
+        XCTAssertEqual(q.capacity, 0, "negative re-size clamps to zero like init")
+    }
 }

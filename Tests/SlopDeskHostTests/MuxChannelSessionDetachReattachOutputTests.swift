@@ -1,7 +1,7 @@
 import SlopDeskProtocol
-import SlopDeskTransport
 import XCTest
 @testable import SlopDeskHost
+@testable import SlopDeskTransport
 
 /// Detach/reattach OUTPUT retention + gate rebalance (post-audit replay-core fixes).
 ///
@@ -141,8 +141,11 @@ final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
 
         session.detach(onDetachedExit: { _ in })
 
-        session.enqueueChunkForTesting(bytes: Data(repeating: 0x61, count: 40)) // 40 ≥ 32 → pause
-        XCTAssertTrue(rec.isPaused, "precondition: the detached-era backlog paused the read loop")
+        session.enqueueChunkForTesting(bytes: Data(repeating: 0x61, count: 40))
+        // (Since the detached-budget re-sizing, the 40-byte backlog no longer pauses the loop —
+        // detach() raised the bound. The leak this test guards against is now caught by the
+        // `gate.outstanding == 0` assert below: the old bug cleared the FIFO WITHOUT dequeuing
+        // its accounting, stranding `outstanding` forever.)
         XCTAssertEqual(gate.outstanding, 40, "precondition: the backlog is accounted in the gate")
 
         let recorder = SendRecorder()
@@ -159,5 +162,42 @@ final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
             rec.isPaused,
             "the read loop must RESUME after reattach (a leaked full gate froze the pane forever)",
         )
+    }
+
+    // MARK: - Detached queue budget (loosened caps: agent keeps running while away)
+
+    /// detach() re-sizes the gate from the attached LATENCY bound to the detached "output
+    /// while away" budget: a burst far past the attached bound must NOT pause the read loop
+    /// while detached (the old behaviour stalled a still-working agent at 64 KiB + one kernel
+    /// buffer). rebindRelay restores the attached bound — the backlog re-pauses the loop until
+    /// the restarted drain ships it, which is exactly the C3 rebalance the sibling tests pin.
+    func testDetachRaisesQueueBudgetSoAwayOutputDoesNotStallAgent() async {
+        let rec = PauseRec()
+        let session = makeSession()
+        let gate = PausableQueueGate(capacity: 64 * 1024) { rec.apply($0) } // attached sizing
+        session.installGateForTesting(gate)
+
+        session.detach(onDetachedExit: { _ in })
+        // 1 MiB of while-away output — 16× the attached bound.
+        for _ in 0..<16 {
+            session.enqueueChunkForTesting(bytes: Data(repeating: 0x61, count: 64 * 1024))
+        }
+        XCTAssertFalse(
+            rec.isPaused,
+            "detached output within the detached budget must never pause the read loop (agent stall)",
+        )
+
+        // Reattach: the attached bound returns; the >64 KiB backlog re-pauses the loop, the
+        // restarted drain ships it and the gate rebalances (loop resumes).
+        let recorder = SendRecorder()
+        let newData = MuxSubChannel(channelID: 1, channel: .data) { _, frame in recorder.record(frame) }
+        let newControl = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
+        // The recording channel has no real peer granting window updates — top up the send
+        // window so the whole 1 MiB backlog (+ frame overhead) can ship without suspending.
+        await newData.grantCredit(4 * 1024 * 1024)
+        session.rebindRelay(data: newData, control: newControl, onExit: nil)
+        await waitUntil { recorder.outputBytes.count == 16 * 64 * 1024 && !rec.isPaused }
+        XCTAssertEqual(recorder.outputBytes.count, 16 * 64 * 1024, "the whole away-backlog ships on reattach")
+        XCTAssertFalse(rec.isPaused, "gate rebalances back below the restored attached bound")
     }
 }

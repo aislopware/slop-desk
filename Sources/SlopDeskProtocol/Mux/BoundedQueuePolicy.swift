@@ -17,7 +17,7 @@ import Foundation
 public struct BoundedQueuePolicy: Sendable, Equatable {
     /// The high-water mark in bytes: once outstanding (enqueued-not-yet-sent) bytes reach
     /// this, the producer (PTY read) must PAUSE.
-    public let capacity: Int
+    public private(set) var capacity: Int
     /// Bytes currently enqueued and not yet sent. Never negative.
     public private(set) var outstanding: Int
 
@@ -25,6 +25,14 @@ public struct BoundedQueuePolicy: Sendable, Equatable {
     public init(capacity: Int) {
         self.capacity = max(0, capacity)
         outstanding = 0
+    }
+
+    /// Re-sizes the high-water mark IN PLACE, preserving `outstanding` (the attached ↔ detached
+    /// gate re-sizing: 64 KiB is a LATENCY bound while a client is consuming; with no client the
+    /// bound is capacity for "output while away", so a pane's agent keeps running instead of
+    /// stalling on a full PTY). The caller re-derives `isFull` after this.
+    public mutating func setCapacity(_ newCapacity: Int) {
+        capacity = max(0, newCapacity)
     }
 
     /// Whether the producer should be PAUSED right now (queue at/over capacity).

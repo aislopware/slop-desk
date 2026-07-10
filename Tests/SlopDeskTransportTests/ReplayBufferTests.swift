@@ -7,8 +7,8 @@ final class ReplayBufferTests: XCTestCase {
     // MARK: Constants / contract
 
     func testCapsAreContractValues() {
-        XCTAssertEqual(ReplayBuffer.maxBackupBytes, 64 * 1024 * 1024)
-        XCTAssertEqual(ReplayBuffer.offlineGateBytes, 4 * 1024 * 1024)
+        XCTAssertEqual(ReplayBuffer.maxBackupBytes, 256 * 1024 * 1024)
+        XCTAssertEqual(ReplayBuffer.offlineGateBytes, 64 * 1024 * 1024)
     }
 
     // MARK: Monotonic seq
@@ -200,16 +200,18 @@ final class ReplayBufferTests: XCTestCase {
     // MARK: Never-drop invariant
 
     func testUnackedDataIsNeverDroppedToSatisfyGate() {
-        var buffer = ReplayBuffer()
+        // Instance caps (tiny) — the invariant is cap-relative, and the production offline gate
+        // is now 64 MiB (heap-hostile to exceed in a unit test).
+        var buffer = ReplayBuffer(maxBackupBytes: 1000, offlineGateBytes: 400)
         buffer.isClientOnline = false
-        // Pile up well past the 4 MiB offline gate without any ack.
+        // Pile up well past the offline gate without any ack.
         for _ in 0..<6 {
-            buffer.append(bytes: Data(count: 1024 * 1024)) // 1 MiB each → 6 MiB
+            buffer.append(bytes: Data(count: 100)) // 600 total > 400 gate
         }
         XCTAssertTrue(buffer.shouldPauseDrain)
         // Every un-acked seq (1..6) must still be replayable — none silently dropped.
         XCTAssertEqual(buffer.messages(after: 0).map(\.seq), [1, 2, 3, 4, 5, 6])
-        XCTAssertEqual(buffer.retainedBytes, 6 * 1024 * 1024)
+        XCTAssertEqual(buffer.retainedBytes, 600)
     }
 
     // MARK: Instance-configurable caps (R5 rank 2 — lets the relay wiring be tested at a tiny cap)
@@ -230,13 +232,13 @@ final class ReplayBufferTests: XCTestCase {
         buf.ack(upTo: buf.highestSeq) // release all → retained 0
         XCTAssertFalse(buf.shouldPauseDrain, "ack released the backlog → resume")
         // The public statics remain the production contract values (unchanged by the instance caps).
-        XCTAssertEqual(ReplayBuffer.maxBackupBytes, 64 * 1024 * 1024)
+        XCTAssertEqual(ReplayBuffer.maxBackupBytes, 256 * 1024 * 1024)
     }
 
     // MARK: Scrollback ring — default constant
 
     func testDefaultScrollbackBytesIsCorrect() {
-        XCTAssertEqual(ReplayBuffer.defaultScrollbackBytes, 4 * 1024 * 1024)
+        XCTAssertEqual(ReplayBuffer.defaultScrollbackBytes, 64 * 1024 * 1024)
     }
 
     // MARK: Scrollback ring — retention up to cap

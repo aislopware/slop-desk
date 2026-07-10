@@ -82,6 +82,19 @@ final class PausableQueueGate: @unchecked Sendable {
         applyLocked()
     }
 
+    /// Re-sizes the queue bound and re-applies the pause state atomically — `detach()` raises it
+    /// to ``SlopDeskProtocol/MuxFlowControl/detachedHostQueueCapacityBytes`` (no client → latency
+    /// is meaningless; the bound becomes "output while away" capacity so the pane's agent keeps
+    /// running), and ``MuxChannelSession/rebindRelay(data:control:onExit:)`` restores the attached
+    /// latency bound. Raising above `outstanding` RESUMES a paused read loop; shrinking below it
+    /// pauses — both applied under the one lock (FIX #3 discipline).
+    func setCapacity(_ newCapacity: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        policy.setCapacity(newCapacity)
+        applyLocked()
+    }
+
     /// The current outstanding (enqueued-not-yet-sent) byte count. Test/inspection seam.
     var outstanding: Int { lock.lock()
         defer { lock.unlock() }

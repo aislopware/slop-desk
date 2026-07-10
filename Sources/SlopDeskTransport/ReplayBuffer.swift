@@ -21,13 +21,13 @@ import SlopDeskProtocol
 /// irreplaceable byte stream.
 ///
 /// ## Caps, gates, and the load-bearing invariant
-/// - **`maxBackupBytes` = 64 MiB** (ET `MAX_BACKUP_BYTES`): retained-byte ceiling we
+/// - **`maxBackupBytes` = 256 MiB** (4× ET `MAX_BACKUP_BYTES` — coding-tool hosts are ≥32 GB): retained-byte ceiling we
 ///   *aim* to stay under.
-/// - **`offlineGateBytes` = 4 MiB**: while offline, once retained bytes reach this gate
+/// - **`offlineGateBytes` = 64 MiB**: while offline, once retained bytes reach this gate
 ///   ``shouldPauseDrain`` flips `true` (ET `SKIPPED`); below it the host keeps buffering
 ///   (ET `BUFFERED_ONLY`).
 /// - **INVARIANT — never silently drop un-acked data.** Dropping un-acked output to meet
-///   the 64 MiB cap would break byte-exact resume (an unrecoverable client gap), so the
+///   the 256 MiB cap would break byte-exact resume (an unrecoverable client gap), so the
 ///   buffer **never evicts un-acked entries**. Offline memory is bounded *instead* by
 ///   ``shouldPauseDrain``: when asserted, the host relay (WF-3) stops reading the PTY, so
 ///   the kernel PTY buffer backpressures the shell and **no droppable output is produced**.
@@ -51,19 +51,19 @@ import SlopDeskProtocol
 /// PTY read-loop pause. The pure value type is what makes its invariants exhaustively testable
 /// without a socket.
 public struct ReplayBuffer: Sendable {
-    /// Retained-byte ceiling: 64 MiB (ET `MAX_BACKUP_BYTES`).
-    public static let maxBackupBytes = 64 * 1024 * 1024
+    /// Retained-byte ceiling: 256 MiB (4× ET `MAX_BACKUP_BYTES`).
+    public static let maxBackupBytes = 256 * 1024 * 1024
 
-    /// Offline buffering gate: 4 MiB. At/above this while offline, pause the PTY drain.
-    public static let offlineGateBytes = 4 * 1024 * 1024
+    /// Offline buffering gate: 64 MiB. At/above this while offline, pause the PTY drain.
+    public static let offlineGateBytes = 64 * 1024 * 1024
 
-    /// Default scrollback ring size: 4 MiB (override with `SLOPDESK_SCROLLBACK_BYTES`).
+    /// Default scrollback ring size: 64 MiB (override with `SLOPDESK_SCROLLBACK_BYTES`).
     ///
     /// Retains ACKED entries (history) separately from the un-acked live tail, so a cold-reattach
     /// replay can deliver the full visible scrollback to a fresh terminal — like `tmux attach-session`.
     /// Bounded, evicted line-aligned so a replay never starts mid-escape-sequence. Disable entirely
     /// with `SLOPDESK_SCROLLBACK_PERSIST=0`.
-    public static let defaultScrollbackBytes = 4 * 1024 * 1024
+    public static let defaultScrollbackBytes = 64 * 1024 * 1024
 
     /// Action signalled to the PTY relay as output is enqueued.
     ///
@@ -120,14 +120,14 @@ public struct ReplayBuffer: Sendable {
 
     /// Effective caps for THIS buffer. Default to the ET constants (``maxBackupBytes`` /
     /// ``offlineGateBytes``); injectable so the read-loop-pause wiring can be integration-tested
-    /// at a tiny cap (no 64 MiB allocation) and a deployment could tune them.
+    /// at a tiny cap (no 256 MiB allocation) and a deployment could tune them.
     public let maxBackupBytesCap: Int
     public let offlineGateBytesCap: Int
 
     /// Scrollback ring byte cap (0 = disabled). Injected from `SLOPDESK_SCROLLBACK_BYTES`
-    /// (default ``defaultScrollbackBytes`` = 4 MiB). Independent of ``maxBackupBytesCap`` — the
+    /// (default ``defaultScrollbackBytes`` = 64 MiB). Independent of ``maxBackupBytesCap`` — the
     /// ring holds ACKED history only, so it never contributes to ``retainedBytes`` or the
-    /// offline-gate / 64 MiB live-tail guarantees.
+    /// offline-gate / 256 MiB live-tail guarantees.
     public let scrollbackBytesCap: Int
 
     /// Optional COLD-reattach scrollback cleaner (host injects an OSC-133 distiller). When present,
@@ -156,9 +156,9 @@ public struct ReplayBuffer: Sendable {
     /// Whether the PTY relay should **pause draining** right now.
     ///
     /// `true` when either:
-    /// 1. the client is **offline** and retained bytes reached ``offlineGateBytes`` (4 MiB)
+    /// 1. the client is **offline** and retained bytes reached ``offlineGateBytes`` (64 MiB)
     ///    — the ET `SKIPPED` state; or
-    /// 2. retained bytes reached ``maxBackupBytes`` (64 MiB) regardless of online state — the
+    /// 2. retained bytes reached ``maxBackupBytes`` (256 MiB) regardless of online state — the
     ///    slow-consumer guard; still never drop un-acked data, hold the pause until acks drain.
     ///
     /// While `true` the host (WF-3) stops `read()`ing the PTY master, so the kernel PTY buffer

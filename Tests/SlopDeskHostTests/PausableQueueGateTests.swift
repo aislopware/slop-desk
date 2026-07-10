@@ -204,4 +204,23 @@ final class PausableQueueGateTests: XCTestCase {
             "both sources cleared ⇒ gate must NOT be left paused (no cross-source lost-wakeup)",
         )
     }
+
+    /// setCapacity re-applies the pause state atomically: raising past `outstanding` RESUMES a
+    /// gate-paused loop (the detach() re-sizing), shrinking below re-pauses (the reattach
+    /// restore) — and the replay source still OR-composes.
+    func testSetCapacityResumesAndRepausesAtomically() {
+        let rec = PauseRecorder()
+        let gate = PausableQueueGate(capacity: 100) { rec.apply($0) }
+        gate.enqueue(150)
+        XCTAssertTrue(rec.isPaused, "over the attached bound → paused")
+        gate.setCapacity(1_000_000) // detach: budget sizing
+        XCTAssertFalse(rec.isPaused, "raised bound un-pauses without any dequeue")
+        gate.setReplayPause(true)
+        gate.setCapacity(100) // reattach restore while replay also asserts
+        XCTAssertTrue(rec.isPaused)
+        gate.setReplayPause(false)
+        XCTAssertTrue(rec.isPaused, "queue is over the restored bound — must stay paused")
+        gate.dequeue(100)
+        XCTAssertFalse(rec.isPaused, "drain below the restored bound resumes")
+    }
 }
