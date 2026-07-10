@@ -150,8 +150,23 @@ private struct TitleMenuButton: View {
 
     // The menu speaks the shared ``SlatePopoverSection``/``SlatePopoverRow``/``SlatePopoverDivider``
     // vocabulary (MERIDIAN C3) — one menu chrome across the app, no per-popover drift.
+    //
+    // NEEDS ATTENTION (top, only while non-empty): the titlebar dot's per-pane breakdown
+    // (``WorkspaceStore/unseenAttentionPanes`` — blocked first, then failures, then unread finishes).
+    // Clicking a row FOCUSES that pane (session/tab switch included) — the dot points here, this answers
+    // it. The section vanishes with the dot, so the at-rest menu is unchanged (zero ornament at rest).
     private var menu: some View {
         VStack(alignment: .leading, spacing: 0) {
+            let waiting = store.unseenAttentionPanes
+            if !waiting.isEmpty {
+                SlatePopoverSection("NEEDS ATTENTION")
+                ForEach(waiting, id: \.pane) { entry in
+                    SlatePopoverRow(waitingTitle(entry.pane), icon: Self.waitingIcon(entry.badge)) {
+                        jump(to: entry.pane)
+                    }
+                }
+                SlatePopoverDivider()
+            }
             SlatePopoverSection("WORKING DIRECTORY")
             SlatePopoverRow(cwd ?? "~", icon: "folder", dim: true) {}
             SlatePopoverRow("Copy Path") { copyPath() }
@@ -165,6 +180,40 @@ private struct TitleMenuButton: View {
         }
         .padding(.vertical, 6)
         .frame(width: 260)
+    }
+
+    /// The display title for a WAITING pane row — the same cwd-folder/rename/process chain the sidebar rail
+    /// and the centre title speak (``RailRowsBuilder/rowTitle(kind:spec:processLabel:)``), resolved across
+    /// ALL sessions (the list is global; the entry's pane may live outside the active session).
+    private func waitingTitle(_ id: PaneID) -> String {
+        let spec = store.tree.sessions.lazy.compactMap { $0.specs[id] }.first
+        let title = RailRowsBuilder.rowTitle(
+            kind: spec?.kind ?? .terminal, spec: spec, processLabel: store.paneForegroundProcess[id],
+        )
+        return title.isEmpty ? "~" : title
+    }
+
+    /// The row glyph for a waiting pane's badge — the flat menu-weight rendering of the rail's badge
+    /// vocabulary (the hand / the triangle / the checkmark; outline, not the rail's tinted fills — a menu
+    /// row is not a status surface).
+    private static func waitingIcon(_ badge: TabBadgeKind) -> String {
+        switch badge {
+        case .awaitingInput: "hand.raised"
+        case .error: "exclamationmark.triangle"
+        case .caffeinate,
+             .commandRunning,
+             .completed,
+             .finished,
+             .running,
+             .sudo: "checkmark"
+        }
+    }
+
+    /// Focus a waiting pane from its NEEDS-ATTENTION row (switches session + tab as needed). Deferred one
+    /// runloop tick so dismissing the popover doesn't race the focus reconcile — same idiom as `split`.
+    private func jump(to id: PaneID) {
+        show = false
+        DispatchQueue.main.async { store.focusPaneTree(id) }
     }
 
     private func split(_ axis: SplitAxis) {

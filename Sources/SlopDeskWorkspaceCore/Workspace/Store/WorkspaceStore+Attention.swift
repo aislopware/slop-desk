@@ -156,18 +156,28 @@ public extension WorkspaceStore {
 
     // MARK: The titlebar attention dot (bell-style "something needs you" rollup)
 
-    /// Whether ANY pane other than the focused leaf currently carries an ATTENTION-class badge
-    /// (``TabBadgeKind/needsAttention``: agent blocked / unread finish / failed command) — the bell-style
-    /// dot next to the titlebar's centre title. Spans ALL sessions (the dot is global; the rail only shows
-    /// the active one) and resolves each pane through the SAME gated pipeline the rail renders
-    /// (``TabBadgeGating/resolve(...)`` + the manual ``tabBadgeOverride(for:)`` on the tab's representative
-    /// pane), so the dot and the sidebar can never disagree — a badge the user silenced never lights it.
-    /// The focused leaf is excluded via the B3 gate (``isPaneFocused(_:)``): while the app is inactive
-    /// nothing is focused, so even the active leaf counts until the user returns. Freshness is pinned
-    /// ``TabBadgeResolver/CompletionFreshness/settled`` — `.completed` and `.finished` are BOTH
-    /// attention-class, so the flash clock cannot change the verdict (no `Date()` here; the derivation
-    /// stays deterministic).
-    var hasUnseenAttention: Bool {
+    /// Whether ANY pane other than the focused leaf currently carries an ATTENTION-class badge — the
+    /// bell-style dot next to the titlebar's centre title. Derived from ``unseenAttentionPanes`` so the
+    /// dot and the title menu's NEEDS-ATTENTION section agree by construction.
+    var hasUnseenAttention: Bool { !unseenAttentionPanes.isEmpty }
+
+    /// Every pane other than the focused leaf that currently carries an ATTENTION-class badge
+    /// (``TabBadgeKind/needsAttention``: agent blocked / unread finish / failed command) — the titlebar
+    /// dot's per-pane breakdown, listed in the title menu. Spans ALL sessions (the dot is global; the
+    /// rail only shows the active one) and resolves each pane through the SAME gated pipeline the rail
+    /// renders (``TabBadgeGating/resolve(...)`` + the manual ``tabBadgeOverride(for:)`` on the tab's
+    /// representative pane), so this and the sidebar can never disagree — a badge the user silenced never
+    /// lights the dot or lists here. The focused leaf is excluded via the B3 gate (``isPaneFocused(_:)``):
+    /// while the app is inactive nothing is focused, so even the active leaf counts until the user
+    /// returns. Freshness is pinned ``TabBadgeResolver/CompletionFreshness/settled`` — `.completed` and
+    /// `.finished` are BOTH attention-class, so the flash clock cannot change the verdict (no `Date()`
+    /// here; the derivation stays deterministic).
+    ///
+    /// Order: BLOCKED-FIRST — awaitingInput, then error, then the unread finishes — traversal-stable
+    /// within each class (session → tab → pre-order DFS), the same "answer the blocked agent before
+    /// reading the finished one" philosophy as ``AttentionJump`` / ⌘⇧U.
+    var unseenAttentionPanes: [UnseenAttentionEntry] {
+        var found: [UnseenAttentionEntry] = []
         for session in tree.sessions {
             for tab in session.tabs {
                 let representative = tab.activePane ?? tab.allPaneIDs().first
@@ -188,11 +198,21 @@ public extension WorkspaceStore {
                                 commandGates: commandBadgeGates,
                             )
                         }
-                    if badge?.needsAttention == true { return true }
+                    if let badge, badge.needsAttention {
+                        found.append(UnseenAttentionEntry(pane: paneID, badge: badge))
+                    }
                 }
             }
         }
-        return false
+        // Stable urgency sort (Swift's sort is not guaranteed stable — the enumerated offset is the tie).
+        return found.enumerated()
+            .sorted { lhs, rhs in
+                let lRank = lhs.element.badge.attentionRank
+                let rRank = rhs.element.badge.attentionRank
+                if lRank != rRank { return lRank < rRank }
+                return lhs.offset < rhs.offset
+            }
+            .map(\.element)
     }
 
     // MARK: Attention edge (the notification fire)
@@ -334,6 +354,34 @@ public extension WorkspaceStore {
         case .none,
              .idle,
              .working: return nil
+        }
+    }
+}
+
+// MARK: - The titlebar dot's per-pane breakdown
+
+/// One pane currently WAITING on the user — an item of ``WorkspaceStore/unseenAttentionPanes`` (the
+/// titlebar dot's breakdown, listed in the title menu's NEEDS-ATTENTION section). Carries the RESOLVED
+/// gated badge so the menu row shows the same glyph vocabulary as the sidebar rail.
+public struct UnseenAttentionEntry: Equatable, Sendable {
+    public let pane: PaneID
+    public let badge: TabBadgeKind
+}
+
+private extension TabBadgeKind {
+    /// The urgency rank for the NEEDS-ATTENTION list: blocked (answer it) before a failure (read it)
+    /// before an unread finish (skim it) — the ``AttentionJump`` ordering philosophy. Non-attention kinds
+    /// never reach the list; their rank is the total-switch tail.
+    var attentionRank: Int {
+        switch self {
+        case .awaitingInput: 0
+        case .error: 1
+        case .completed,
+             .finished: 2
+        case .caffeinate,
+             .commandRunning,
+             .running,
+             .sudo: 3
         }
     }
 }

@@ -120,6 +120,46 @@ final class TitlebarAttentionDotTests: XCTestCase {
         XCTAssertTrue(store.hasUnseenAttention, "the awaiting-input gate is independent and still on")
     }
 
+    // MARK: - the per-pane breakdown (the title menu's NEEDS-ATTENTION section)
+
+    /// ``WorkspaceStore/unseenAttentionPanes`` lists the waiting panes BLOCKED-FIRST (awaitingInput, then
+    /// error, then the unread finishes), traversal-stable within each class — the ``AttentionJump``
+    /// philosophy — and carries each pane's resolved badge so the menu row can show the right glyph.
+    func testUnseenAttentionPanesRanksBlockedFirst() throws {
+        let (store, focused, second) = try makeStoreWithBackgroundPane()
+        store.splitActivePane(axis: .horizontal, kind: .terminal)
+        let third = try XCTUnwrap(store.tree.allPaneIDs().first { $0 != focused && $0 != second })
+        store.focusPaneTree(focused)
+
+        store.setAgentStatus(.done, for: second) // unread finish (→ .finished, freshness pinned settled)
+        store.setAgentStatus(.needsPermission, for: third) // blocked — outranks the earlier-traversal finish
+        XCTAssertEqual(
+            store.unseenAttentionPanes.map(\.pane), [third, second],
+            "blocked ranks above an unread finish regardless of traversal order",
+        )
+        XCTAssertEqual(store.unseenAttentionPanes.map(\.badge), [.awaitingInput, .finished])
+    }
+
+    /// A failed background command lands in the list as `.error`, ranked between blocked and finished.
+    func testUnseenAttentionPanesCarriesErrorBetweenBlockedAndFinished() throws {
+        let (store, focused, second) = try makeStoreWithBackgroundPane()
+        store.splitActivePane(axis: .horizontal, kind: .terminal)
+        let third = try XCTUnwrap(store.tree.allPaneIDs().first { $0 != focused && $0 != second })
+        store.focusPaneTree(focused)
+
+        store.setAgentStatus(.done, for: second)
+        store.setCompletionBadge(.failure, for: third)
+        XCTAssertEqual(store.unseenAttentionPanes.map(\.badge), [.error, .finished])
+    }
+
+    /// The list and the dot agree by construction: the focused leaf never appears in the list.
+    func testUnseenAttentionPanesExcludesFocusedLeaf() throws {
+        let (store, focused, background) = try makeStoreWithBackgroundPane()
+        store.setAgentStatus(.needsPermission, for: focused)
+        store.setAgentStatus(.needsPermission, for: background)
+        XCTAssertEqual(store.unseenAttentionPanes.map(\.pane), [background], "only the unfocused pane lists")
+    }
+
     /// A manual `tab badge --kind` override on a BACKGROUND tab drives the dot exactly like the rail: an
     /// attention-class override lights it, an activity-class override does not.
     func testManualTabBadgeOverrideDrivesDot() throws {
