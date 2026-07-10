@@ -272,15 +272,6 @@ public enum SettingsKey {
     /// ``newTabPosition`` name for the typed accessor.
     public static let newTabPositionKey = "shell.newTabPosition" // NewTabPosition.rawValue
 
-    /// How the vertical sidebar BUCKETS tabs into sections (sort-hamburger "Group By", E6). Stored as the
-    /// ``TabGrouping`` rawValue (`none`/`byProject`/`byDate`); default `.none` (one flat list). Read + written
-    /// by ``WorkspaceStore`` (the single source of truth for row order). `Key` suffix frees the bare
-    /// ``tabGrouping`` name for the typed accessor.
-    public static let tabGroupingKey = "shell.tabGrouping" // TabGrouping.rawValue
-    /// How tabs are ORDERED within a sidebar section (sort-hamburger "Sort By", E6). Stored as the
-    /// ``TabSort`` rawValue (`created`/`updated`/`manual`); default `.created` (= `session.tabs` array order).
-    public static let tabSortKey = "shell.tabSort" // TabSort.rawValue
-
     /// When the vertical TABS panel (sidebar) is shown (`auto-hide-tabs-panel`, E19/A18). Stored as the
     /// ``AutoHideTabsPanelMode`` rawValue (`default`/`always`/`auto`); default `.default` (always shown). Only
     /// `.auto` auto-hides when the active session has a single tab — the decision lives in the pure
@@ -545,15 +536,6 @@ public enum SettingsKey {
     /// (= append, byte-identical to the pre-E3 behaviour). A stale / invalid persisted raw value falls back
     /// to `.auto` via the `RawRepresentableBridge`. Read at the ⌘T fire-site.
     public static var newTabPosition: NewTabPosition { Defaults[.newTabPosition] }
-
-    /// The persisted sidebar tab grouping ("Group By", E6), default ``TabGrouping/byProject`` (group panes by
-    /// their project). A stale / invalid persisted raw value repairs to `.byProject` via the
-    /// `RawRepresentableBridge`. Read at store init.
-    public static var tabGrouping: TabGrouping { Defaults[.tabGrouping] }
-
-    /// The persisted within-section tab sort ("Sort By", E6), default ``TabSort/created``. A stale /
-    /// invalid persisted raw value repairs to `.created`. Read at store init.
-    public static var tabSort: TabSort { Defaults[.tabSort] }
 
     /// When the vertical TABS panel is shown (`auto-hide-tabs-panel`, E19/A18), default
     /// ``AutoHideTabsPanelMode/default`` (always shown). A stale / invalid persisted raw value repairs to
@@ -872,12 +854,6 @@ public extension Defaults.Keys {
     static let dockIconErrorBadge = Key<Bool>(slopDesk: SettingsKey.dockIconErrorBadge, default: true)
     static let defaultPaneKind = Key<PaneKind>(slopDesk: SettingsKey.defaultPaneKindKey, default: .terminal)
     static let newTabPosition = Key<NewTabPosition>(slopDesk: SettingsKey.newTabPositionKey, default: .auto)
-    // Sidebar tab grouping / sort (sort-hamburger, E6) stored as the bare enum rawValue. Group default
-    // `.byProject` (bucket panes by their project — a coding tool navigates by project); sort default
-    // `.created` (= `session.tabs` array order). A user can still pick `.none` (one flat list) in the
-    // hamburger. The WorkspaceStore owns the read/write; these are the persisted backing.
-    static let tabGrouping = Key<TabGrouping>(slopDesk: SettingsKey.tabGroupingKey, default: .byProject)
-    static let tabSort = Key<TabSort>(slopDesk: SettingsKey.tabSortKey, default: .created)
     // E19/A18 vertical-sidebar auto-hide (`auto-hide-tabs-panel`). Stores the bare `AutoHideTabsPanelMode`
     // rawValue via the `RawRepresentableBridge` (the `PreferRawRepresentable` conformance below), repairing a
     // stale value to `.default`. Default `.default` (always shown — byte-identical to the pre-E19 sidebar).
@@ -1006,12 +982,6 @@ extension PaneKind: Defaults.Serializable, Defaults.PreferRawRepresentable {}
 /// `new-tab-position` setting round-trips with the config value; `PreferRawRepresentable` selects the
 /// `RawRepresentableBridge`, which yields the key default (`.auto`) for a stale / invalid raw value.
 extension NewTabPosition: Defaults.Serializable, Defaults.PreferRawRepresentable {}
-
-/// Store ``TabGrouping`` / ``TabSort`` as their bare `String` rawValue so the persisted sidebar
-/// grouping/sort round-trips compactly; `PreferRawRepresentable` selects the `RawRepresentableBridge`,
-/// which yields the key default (`.none` / `.created`) for a stale / invalid raw value (E6).
-extension TabGrouping: Defaults.Serializable, Defaults.PreferRawRepresentable {}
-extension TabSort: Defaults.Serializable, Defaults.PreferRawRepresentable {}
 
 /// Store ``AutoHideTabsPanelMode`` as its bare `String` rawValue (`default`/`always`/`auto`) so the persisted
 /// `auto-hide-tabs-panel` setting (E19/A18) round-trips with the config value; `PreferRawRepresentable`

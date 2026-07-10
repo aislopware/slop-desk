@@ -319,10 +319,6 @@ public final class WorkspaceStore {
         self.persistence = persistence
         self.saveDebounce = saveDebounce
         self.videoTeardownSettle = videoTeardownSettle
-        // E6 WI-3: hydrate the persisted tab grouping/sort preference (the sidebar hamburger menu) — see the
-        // helper in WorkspaceStore+TabOrdering. Absent keys read the declared defaults (.none / .created) ⇒
-        // array order, byte-identical to the pre-E6 rail.
-        hydrateTabPreferences()
         // W5: the live model picks the init reconcile. `.canvas` (default) materializes the canvas panes
         // (the retained-but-dead path + every existing test); `.tree` (the app) materializes the tree's
         // leaves through the SAME registry diff — exactly one of the two trees ever drives a given store.
@@ -2375,10 +2371,6 @@ public final class WorkspaceStore {
         spec.lastKnownCwd = inheritedCwd
         let (next, _) = WorkspaceTreeOps.newTab(in: tree, spec: spec, at: SettingsKey.newTabPosition)
         tree = next
-        // E6 WI-6: a new tab is created AND selected (`WorkspaceTreeOps.newTab` sets `activeTabIndex`), so
-        // stamp its recency (parity with `selectTab` / `breakPaneToTab`) — otherwise the tab the user just
-        // opened sorts LAST under `.updated` (nil recency) and lands in "Earlier" under By-Date.
-        if let newTabID = tree.activeSession?.activeTab?.id { stampTabActivity(newTabID) }
         reconcileTree()
     }
 
@@ -2431,8 +2423,6 @@ public final class WorkspaceStore {
     /// registered; only focus follows). Reconcile is a registry no-op.
     public func selectTab(_ index: Int) {
         tree = WorkspaceTreeOps.selectTab(index, in: tree)
-        // E6 WI-3: stamp the newly-active tab as just-active so the `.updated` tab sort floats it first.
-        if let activeTabID = tree.activeSession?.activeTab?.id { stampTabActivity(activeTabID) }
         reconcileTree()
         // Badge auto-clear: acknowledge any completion/done badge for every pane in the newly-active tab
         // regardless of HOW the tab switch was triggered (keyboard ⌘1–⌘9, cycleTab, NavigatorColumn, or a
@@ -2523,13 +2513,7 @@ public final class WorkspaceStore {
     /// Ejects leaf `id` into a NEW tab of its session (Zellij/Herdr "break pane"); the source tab
     /// collapses/rebalances. No-op if it is its tab's only leaf.
     public func breakPaneToTab(_ id: PaneID) {
-        let next = WorkspaceTreeOps.breakPaneToTab(id, in: tree)
-        let didBreak = next != tree
-        tree = next
-        // E6 WI-6: a successful break ejects the pane into a NEW tab and selects it — stamp that
-        // newly-active tab's recency (parity with `selectTab`) so the `.updated` sidebar sort floats it
-        // first. A no-op break (the pane is its tab's only leaf) leaves the tree unchanged ⇒ nothing to stamp.
-        if didBreak, let newTabID = tree.activeSession?.activeTab?.id { stampTabActivity(newTabID) }
+        tree = WorkspaceTreeOps.breakPaneToTab(id, in: tree)
         reconcileTree()
     }
 
@@ -2829,51 +2813,17 @@ public final class WorkspaceStore {
     /// config key). PRUNED to the live leaf set alongside ``paneAgentStatus``.
     public internal(set) var paneReadOnly: Set<PaneID> = []
 
-    // MARK: - Tab grouping / sort + recency (E6 WI-3 — the sidebar hamburger's store-backed order)
-
-    /// How the sidebar buckets tabs into sections (the sidebar hamburger's "Group By"). The SINGLE source of truth
-    /// for the rendered section order (the rail is a pure derivation via ``orderedTabGroups(now:)``).
-    /// Hydrated from ``SettingsKey/tabGrouping`` on init and persisted by ``setTabGrouping(_:)``. Default
-    /// ``TabGrouping/byProject`` ⇒ panes bucket by their project (a coding tool navigates by project); a user
-    /// can pick ``TabGrouping/none`` (one flat list) in the hamburger. This pre-hydrate value is overwritten by
-    /// ``hydrateTabPreferences()`` on init, but matches the persisted default so an un-hydrated store agrees.
-    public internal(set) var tabGrouping: TabGrouping = .byProject
-
-    /// How tabs are ordered WITHIN a section (the sidebar hamburger's "Sort By"). Hydrated from ``SettingsKey/tabSort``
-    /// on init, persisted by ``setTabSort(_:)``, and flipped to ``TabSort/manual`` by a drag (``moveTab(from:to:)``).
-    /// Default ``TabSort/created`` ⇒ `session.tabs` array order (Design #2: array order == creation order).
-    public internal(set) var tabSort: TabSort = .created
-
-    /// RUNTIME-ONLY tab recency mirror driving the ``TabSort/updated`` order + the ``TabGrouping/byDate``
-    /// buckets (E6 Design #2 — NOT persisted, NOT on the `Tab` Codable, so no schema bump / migration;
-    /// recency resets to load order on relaunch, acceptable). Stamped by ``stampTabActivity(_:at:)`` from
-    /// every became-active / activity path (`newTab` / reopen-closed / `selectTab` / `breakPaneToTab` /
-    /// agent / completion). ``TabID``-keyed, so PRUNED on every ``reconcileTree()`` (not in the pane-keyed
-    /// `reconcileRegistry` prune).
-    public internal(set) var tabLastActiveAt: [TabID: Date] = [:]
+    // MARK: - Sidebar tab mirrors (the sidebar is ALWAYS grouped By-Project, in creation order)
 
     /// E20 ES-E20-3: the per-TAB MANUAL status-badge override set by `slopdesk tab badge --kind <kind>`
     /// (the client-control CLI). An EXPLICIT override that wins over the per-pane DERIVED badge
     /// (``TabBadgeResolver`` — agent / completion / busy / progress) for the tab's REPRESENTATIVE (active)
     /// pane row in the sidebar rail and the `tab list` badge column. Keyed by ``TabID`` (the badge is
     /// per-tab); being explicit, it bypasses the per-pane agent-badge gates. Pure VIEW state, NOT persisted
-    /// (a runtime affordance like ``tabLastActiveAt`` / ``paneAgentBadgeOverrides``). Written by
+    /// (a runtime affordance like ``paneAgentBadgeOverrides``). Written by
     /// ``setTabBadgeOverride(_:for:)``; PRUNED on every ``reconcileTree()`` (TabID-keyed → in
     /// ``pruneTreeSidebarMirrors``, not the pane-keyed prune).
     public internal(set) var tabBadgeOverrides: [TabID: TabBadgeKind] = [:]
-
-    /// Per-pane cached git toplevel (the absolute `git rev-parse --show-toplevel`) used as the precise
-    /// ``TabGrouping/byProject`` key. Populated by the debounced E6 WI-7 fetch (``refreshProjectKeysIfNeeded()``)
-    /// while grouping By-Project, carried on the E4 `gitStatus` RPC's `repoRoot`. Until the first fetch
-    /// resolves (and for a non-repo pane, which caches an empty string), ``paneProjectKey(_:)`` falls back to
-    /// `lastKnownCwd`, so By-Project groups by cwd immediately and WI-7 is never a hard dependency. PRUNED to
-    /// the live leaf set alongside the other per-pane mirrors.
-    public internal(set) var paneGitToplevel: [PaneID: String] = [:]
-
-    /// Panes with an in-flight git-toplevel `gitStatus` fetch (E6 WI-7) — dedupes concurrent requests so a
-    /// re-render / reconcile storm can't fan out N identical RPCs for the same pane. Cleared as each reply
-    /// lands (or is dropped). Runtime-only; never persisted.
-    private var paneGitToplevelInFlight: Set<PaneID> = []
 
     /// Per-pane compact git summary (branch / ahead / behind / changed count) — the sidebar tab row's
     /// SECOND LINE (``PaneGitSummary/compactLine``; the row falls back to the plain cwd when a pane has
@@ -2882,8 +2832,8 @@ public final class WorkspaceStore {
     /// per-pane mirrors. Runtime-only; never persisted.
     public internal(set) var paneGitSummary: [PaneID: PaneGitSummary] = [:]
 
-    /// Panes with an in-flight git-summary `gitStatus` fetch — the same de-dupe idiom as
-    /// ``paneGitToplevelInFlight`` (a completion burst must not fan out N identical RPCs).
+    /// Panes with an in-flight git-summary `gitStatus` fetch — de-dupes concurrent requests (a completion
+    /// burst must not fan out N identical RPCs). Cleared as each reply lands (or is dropped).
     private var paneGitSummaryInFlight: Set<PaneID> = []
 
     /// When each pane's ``paneGitSummary`` entry was last fetched (C3 BUG C) — the freshness clock the
@@ -2891,15 +2841,6 @@ public final class WorkspaceStore {
     /// ``gitSummaryStaleWindow`` (bounded, never a poll). Stamped by ``applyGitSummary(_:toplevel:for:at:)``,
     /// PRUNED to the live leaf set alongside ``paneGitSummary``. Runtime-only; never persisted.
     public internal(set) var paneGitFetchedAt: [PaneID: Date] = [:]
-
-    /// The debounce handle for the By-Project git-toplevel sweep (E6 WI-7): cancelled + rescheduled on each
-    /// trigger (grouping toggle / reconcile) so a burst coalesces into ONE fetch pass.
-    private var projectKeyRefreshTask: Task<Void, Never>?
-
-    /// How long ``refreshProjectKeysIfNeeded()`` coalesces a burst of triggers before sweeping the visible
-    /// panes for their git toplevel (E6 WI-7) — short enough to feel instant, long enough to absorb a
-    /// reconcile flurry.
-    private static let projectKeyDebounce: Duration = .milliseconds(200)
 
     /// The COALESCING memory for the attention notification (P3 piece 3): the last status we fired an
     /// attention edge for, per pane. So a flap that re-enters the same attention state (`done → working →
@@ -2937,6 +2878,15 @@ public final class WorkspaceStore {
     /// (Design #2 — resets on relaunch, harmless); PRUNED to the live leaf set alongside
     /// ``panePendingCompletion``.
     public internal(set) var paneCompletedAt: [PaneID: Date] = [:]
+
+    /// RUNTIME-ONLY per-pane "when did this pane last see an attention-relevant edge" mirror — the `since`
+    /// FALLBACK for the titlebar dot's NEEDS-ATTENTION breakdown (``UnseenAttentionEntry/since``) when no
+    /// clean-completion stamp exists (a BLOCKED `needsPermission` agent / a `.failure` badge never stamps
+    /// ``paneCompletedAt``). Stamped by the ``setAgentStatus(_:for:at:)`` chokepoint (genuine transitions
+    /// only) and the ``setCompletionBadge(_:for:at:)`` set-edge — the per-PANE successor of the deleted
+    /// tab-recency stamp the entry used to fall back to. NOT persisted; PRUNED to the live leaf set
+    /// alongside ``paneCompletedAt``.
+    public internal(set) var paneAttentionAt: [PaneID: Date] = [:]
 
     /// How long a clean completion shows its brief ``TabBadgeKind/completed`` checkmark flash before it
     /// settles to the persistent ``TabBadgeKind/finished`` accent dot. Short — the flash is meant to be a beat,
@@ -3024,14 +2974,10 @@ public final class WorkspaceStore {
         // B3: a pane that just gained focus (selectTab / selectSession / focusPaneTree all route here)
         // is now being watched — clear its pending command-completion badge.
         clearActiveLeafCompletionBadge()
-        // E6 WI-3: prune the tree-keyed sidebar mirrors (tab recency + per-pane git toplevel) to the live
-        // tree. Keyed by TabID / a tree-only concept, so pruned here against the tree rather than in the
-        // pane-keyed `reconcileRegistry` cache-prune. The helper lives in WorkspaceStore+TabOrdering.
+        // Prune the tree-keyed sidebar mirrors (the E20 manual tab badges) to the live tree. Keyed by
+        // TabID, so pruned here against the tree rather than in the pane-keyed `reconcileRegistry`
+        // cache-prune. The helper lives in WorkspaceStore+TabOrdering.
         pruneTreeSidebarMirrors()
-        // E6 WI-7: a newly-materialized pane (or a launch already in By-Project, hydrated from prefs) needs
-        // its git toplevel resolved — sweep the visible panes for any uncached key. Debounced + de-duped +
-        // self-guarded (a no-op unless grouping is By-Project), so this is cheap on the hot reconcile path.
-        refreshProjectKeysIfNeeded()
         scheduleSave()
     }
 
@@ -3078,6 +3024,11 @@ public final class WorkspaceStore {
         // OSC 7 cwd edge: keep the spec's inheritance source fresh as soon as the shell reports `cd`.
         connection?.onWorkingDirectoryChanged = { [weak self] cwd in
             self?.setLastKnownCwd(cwd, for: id)
+        }
+        // HOST-computed By-Project key (wire type 34): persist every pushed edge into the pane spec so the
+        // sidebar sections render from the host's truth (and a cold relaunch renders them from disk).
+        connection?.onProjectKeyChanged = { [weak self] key in
+            self?.setProjectKey(key, for: id)
         }
         // COMMAND-START STALE-BADGE CLEAR (progress-state.md): a new command beginning (OSC 133;C) clears this
         // pane's stale completion ✓/✗ so a busy background pane resolves to the running spinner, not the prior
@@ -3296,6 +3247,10 @@ public final class WorkspaceStore {
         if !paneCompletedAt.isEmpty {
             paneCompletedAt = paneCompletedAt.filter { leafSet.contains($0.key) }
         }
+        // Attention-edge timestamp mirror (the NEEDS-ATTENTION `since` fallback):
+        if !paneAttentionAt.isEmpty {
+            paneAttentionAt = paneAttentionAt.filter { leafSet.contains($0.key) }
+        }
         // Foreground-process mirror (E6 WI-2 — process label / privilege badge):
         if !paneForegroundProcess.isEmpty {
             paneForegroundProcess = paneForegroundProcess.filter { leafSet.contains($0.key) }
@@ -3483,6 +3438,10 @@ public final class WorkspaceStore {
                 }
                 connection?.onWorkingDirectoryChanged = { [weak self] cwd in
                     self?.setLastKnownCwd(cwd, for: id)
+                }
+                // HOST-computed By-Project key (canvas path): same guarded persist as wireMaterializedLeaf.
+                connection?.onProjectKeyChanged = { [weak self] key in
+                    self?.setProjectKey(key, for: id)
                 }
                 // LIVE TITLE PERSISTENCE (Goal A, canvas path): same lastKnownTitle wire as wireMaterializedLeaf.
                 connection?.onTitleChanged = { [weak self] title in
@@ -4223,20 +4182,32 @@ public extension WorkspaceStore {
         // E11 WI-2: the cwd just CHANGED (the guard above proves it differs from the stored value), so this is a
         // genuine visit — notify the frecency sink. Kept after the dirty guard so an unchanged re-focus is silent.
         onCwdVisited?(cwd)
-        // ES-E6-4: the pane's cwd just CHANGED (the guard above proves it differs), so any cached git
-        // toplevel for this pane is now stale — a `cd` can cross repos within the SAME live pane, and the
-        // reconcile prune only drops CLOSED leaves. Invalidate the cache so `paneProjectKey` falls back to
-        // the fresh cwd-derived key immediately (no longer the old repo), then re-trigger the debounced
-        // By-Project sweep so it refetches the new precise repo root. The refresh is a self-guarded no-op
-        // unless `tabGrouping == .byProject`, so None / By-Date never spend the probe.
-        if paneGitToplevel.removeValue(forKey: paneID) != nil {
-            refreshProjectKeysIfNeeded()
-        }
         // The sidebar git line follows the cwd: a `cd` can enter/leave/switch repos, so refetch this
         // pane's summary. The stale line stays visible until the fresh reply lands (no flicker on a
         // same-repo `cd`); the post-completion `refreshCwd` funnels through here ONLY when the cwd
         // actually changed (the dirty guard above), so this never double-fetches a quiet completion.
         refreshGitSummary(for: paneID, from: (handle(for: paneID) as? LivePaneSession)?.connection)
+    }
+
+    /// Model-agnostic read of pane `id`'s persisted ``PaneSpec/projectKey`` (tree or canvas spec, whichever
+    /// backs ``liveModel``) — the ``setProjectKey(_:for:)`` dirty guard's mirror of ``lastKnownCwd(for:)``.
+    func projectKey(for paneID: PaneID) -> String? {
+        switch liveModel {
+        case .tree: tree.spec(for: paneID)?.projectKey
+        case .canvas: workspace.canvas.spec(for: paneID)?.projectKey
+        }
+    }
+
+    /// Persists the HOST-computed By-Project key (wire type 34) into ``PaneSpec/projectKey`` — the write
+    /// sink ``ConnectionViewModel/onProjectKeyChanged`` funnels into, mirroring ``setLastKnownCwd(_:for:)``:
+    /// a transient plugin-cache reading (``PaneSpec/looksLikeTransientPluginCwd(_:)`` — the host's resolver
+    /// can race a zinit turbo `builtin cd` exactly like the old client-side `gitStatus` sweep did) is
+    /// DROPPED, and an unchanged value short-circuits before `updateSpecLive` so a reattach re-assert
+    /// never spends a reconcile + save. ``paneProjectKey(_:)`` reads it back for the sidebar sectioning.
+    func setProjectKey(_ key: String, for paneID: PaneID) {
+        guard !key.isEmpty, !PaneSpec.looksLikeTransientPluginCwd(key) else { return }
+        guard projectKey(for: paneID) != key else { return }
+        updateSpecLive(paneID) { $0.projectKey = key }
     }
 
     /// A26 cwd-freshness fallback: pull pane `id`'s current working directory from the host `cwd` RPC
@@ -4270,68 +4241,6 @@ public extension WorkspaceStore {
         }
     }
 
-    // MARK: - By-Project git-toplevel precision (E6 WI-7)
-
-    /// Lazily resolves each visible tab's active pane to its precise git toplevel
-    /// (`git rev-parse --show-toplevel`, carried on the E4 `gitStatus` RPC's new `repoRoot` field) and
-    /// caches it into ``paneGitToplevel`` so ``paneProjectKey(_:)`` upgrades from the cwd fallback to the
-    /// real repo root and the By-Project sections re-derive. A no-op unless ``tabGrouping`` is
-    /// ``TabGrouping/byProject`` (so a None / By-Date sidebar never fires the probe). Debounced + de-duped +
-    /// validate-then-drop: a `nil` connection / failed RPC silently leaves the cwd fallback standing. Safe to
-    /// call from `setTabGrouping(_:)` and the reconcile tail; both are coalesced into one sweep.
-    func refreshProjectKeysIfNeeded() {
-        guard tabGrouping == .byProject else { return }
-        projectKeyRefreshTask?.cancel()
-        projectKeyRefreshTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: Self.projectKeyDebounce)
-            guard !Task.isCancelled, let self else { return }
-            fetchMissingProjectKeys()
-        }
-    }
-
-    /// Fires one `gitStatus` RPC per visible tab's active pane that has no cached toplevel and no in-flight
-    /// request, caching the resolved `repoRoot` into ``paneGitToplevel`` on arrival (which re-derives the
-    /// grouped rows via `@Observable`). Per-pane, mirroring ``refreshCwd(for:from:)`` — each pane's own
-    /// `LivePaneSession.connection.activeMetadataClient` targets that pane's channel.
-    private func fetchMissingProjectKeys() {
-        guard let session = tree.activeSession else { return }
-        for tab in session.tabs {
-            guard let pane = tab.activePane,
-                  paneGitToplevel[pane] == nil,
-                  !paneGitToplevelInFlight.contains(pane),
-                  let connection = (handle(for: pane) as? LivePaneSession)?.connection
-            else { continue }
-            paneGitToplevelInFlight.insert(pane)
-            Task { @MainActor [weak self] in
-                let payload = await connection.activeMetadataClient?.gitStatus()
-                guard let self else { return }
-                paneGitToplevelInFlight.remove(pane)
-                // Validate-then-drop: a nil RPC leaves no cache entry, so a later sweep retries. A repo
-                // resolves to its toplevel; a non-repo cwd resolves `ok` with an empty `repoRoot`, which we
-                // still cache (marking the pane resolved so the sweep won't re-probe it) — `paneProjectKey`
-                // then keeps the cwd fallback for that pane.
-                guard let payload else { return }
-                cacheGitToplevel(payload.repoRoot, for: pane)
-            }
-        }
-    }
-
-    /// Caches the resolved git toplevel for pane `id` (E6 WI-7 arrival handler). Writing the observable
-    /// ``paneGitToplevel`` re-derives the By-Project sections. An empty `root` (a non-repo cwd) still marks
-    /// the pane resolved so the debounced sweep won't re-probe it; ``paneProjectKey(_:)`` keeps the cwd
-    /// fallback. Internal so a unit test (or the arrival task) can seed it without a live socket.
-    ///
-    /// A TRANSIENT plugin-cache toplevel (``PaneSpec/looksLikeTransientPluginCwd(_:)`` — `…/owner---repo`)
-    /// is DROPPED, not cached: a `gitStatus` RPC that raced a zinit turbo `builtin cd` resolved the PLUGIN's
-    /// repo root, not the user's project. Caching it would file the pane under a phantom
-    /// `zsh-users---zsh-autosuggestions` By-Project section (the same poison the `setLastKnownCwd` guard
-    /// blocks for cwd). Leaving no entry lets the debounced sweep re-probe once the shell settles at the
-    /// real prompt — self-healing, never a stuck plugin group.
-    func cacheGitToplevel(_ root: String, for id: PaneID) {
-        guard !PaneSpec.looksLikeTransientPluginCwd(root) else { return }
-        paneGitToplevel[id] = root
-    }
-
     // MARK: - Sidebar git line (the per-pane compact summary)
 
     /// Refreshes pane `id`'s compact git summary (``paneGitSummary`` → the sidebar row's second line)
@@ -4340,8 +4249,8 @@ public extension WorkspaceStore {
     /// `cd` can enter/leave/switch repos), and once on connect (the resume-identity edge). The stale
     /// value stays visible until the fresh reply lands (no flicker on a same-repo `cd`); a `nil`
     /// connection / failed RPC is a silent no-op (validate-then-drop), and the in-flight set de-dupes a
-    /// completion burst. The reply also feeds ``paneGitToplevel`` (the RPC already carries the precise
-    /// repo root, so By-Project grouping upgrades for free).
+    /// completion burst. (The By-Project key itself is HOST-pushed — wire type 34 → ``setProjectKey(_:for:)``
+    /// — so the reply's `repoRoot` only scopes the same-repo fan-out below, never the sectioning.)
     func refreshGitSummary(for id: PaneID, from connection: ConnectionViewModel?) {
         guard let connection, !paneGitSummaryInFlight.contains(id) else { return }
         paneGitSummaryInFlight.insert(id)
@@ -4362,23 +4271,23 @@ public extension WorkspaceStore {
     }
 
     /// Applies a freshly-fetched git `summary` for pane `id` (C3 BUG C): a dirty-guarded write to
-    /// ``paneGitSummary``, a ``paneGitFetchedAt`` freshness stamp, and the ``paneGitToplevel`` cache — then
-    /// FANS the same summary out to every OTHER live pane whose cached toplevel matches (a sibling in the SAME
-    /// repo now knows a sibling-pane commit landed without waiting for its own command edge), each with its
-    /// own dirty guard so a quiet sibling never churns the `@Observable` rail. An EMPTY toplevel is "no repo",
-    /// not a shared key, so it never fans out. `now` is injectable for a deterministic staleness test.
+    /// ``paneGitSummary`` and a ``paneGitFetchedAt`` freshness stamp — then FANS the same summary out to
+    /// every OTHER live pane whose By-Project key (``paneProjectKey(_:)`` — the host-pushed spec key, else
+    /// the cwd fallback) matches the reply's `toplevel` (a sibling in the SAME repo now knows a sibling-pane
+    /// commit landed without waiting for its own command edge), each with its own dirty guard so a quiet
+    /// sibling never churns the `@Observable` rail. An EMPTY toplevel is "no repo", not a shared key, so it
+    /// never fans out. `now` is injectable for a deterministic staleness test.
     func applyGitSummary(_ summary: PaneGitSummary, toplevel: String, for id: PaneID, at now: Date = Date()) {
         // Validate-then-drop a reading taken while the shell was transiently inside a plugin-cache dir (a
         // zinit turbo `builtin cd` the `gitStatus` RPC raced): its `toplevel` is the PLUGIN's repo and its
         // branch/changed counts are that plugin's, not the user's project. Discard the WHOLE reading (no
-        // summary write, no toplevel cache, no sibling fan-out) so neither the git line nor the By-Project
-        // section is poisoned; the next completion edge re-probes at the settled cwd.
+        // summary write, no sibling fan-out) so the git line is never poisoned; the next completion edge
+        // re-probes at the settled cwd.
         guard !PaneSpec.looksLikeTransientPluginCwd(toplevel) else { return }
         if paneGitSummary[id] != summary { paneGitSummary[id] = summary }
         paneGitFetchedAt[id] = now
-        cacheGitToplevel(toplevel, for: id)
         guard !toplevel.isEmpty else { return }
-        for (pane, root) in paneGitToplevel where pane != id && root == toplevel {
+        for pane in tree.allPaneIDs() where pane != id && paneProjectKey(pane) == toplevel {
             if paneGitSummary[pane] != summary { paneGitSummary[pane] = summary }
             paneGitFetchedAt[pane] = now
         }

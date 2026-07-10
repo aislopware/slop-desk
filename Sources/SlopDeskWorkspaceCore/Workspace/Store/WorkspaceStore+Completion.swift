@@ -23,9 +23,9 @@ public extension WorkspaceStore {
     func setCompletionBadge(_ badge: PaneCompletionBadge?, for id: PaneID, at date: Date = Date()) {
         guard panePendingCompletion[id] != badge else { return }
         if let badge { panePendingCompletion[id] = badge } else { panePendingCompletion.removeValue(forKey: id) }
-        // E6 WI-3: a command finishing is tab activity — stamp the owning tab's recency so a completed
-        // background tab floats up under the `.updated` sort. Only a real badge edge (set, not clear).
-        if badge != nil { stampTabActivity(forPane: id, at: date) }
+        // The NEEDS-ATTENTION `since` fallback: a real badge edge (set, not clear) stamps the pane — a
+        // `.failure` (→ `.error` entry) never stamps `paneCompletedAt`, so its menu-row age reads this.
+        if badge != nil { paneAttentionAt[id] = date }
         // Stamp the ephemeral `completedAt` that drives the checkmark→accent-dot decay: a fresh
         // `.success` records the instant (brief `.completed` flash, settling to `.finished`). Only the
         // positive `.success` edge stamps; a `.failure` (→ `.error`) or a clear leaves any prior stamp

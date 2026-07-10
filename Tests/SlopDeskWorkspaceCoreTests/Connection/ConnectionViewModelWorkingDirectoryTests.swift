@@ -58,4 +58,36 @@ final class ConnectionViewModelWorkingDirectoryTests: XCTestCase {
         vm.foldEventForTesting(.cwd("/Users/me/project2"))
         XCTAssertEqual(received, ["/Users/me/project", "/Users/me/project2"])
     }
+
+    // MARK: - Host-computed By-Project key (wire type 34) routing
+
+    /// A `.projectKey` wire event reaches the store callback UNGATED by `commandStartSeen` — the host
+    /// re-asserts the latched key on reattach BEFORE any command runs, and dropping it would reintroduce
+    /// the reconnect section flicker the host-side computation exists to remove (the plugin-dir poison is
+    /// handled at the store's `setProjectKey` write guard instead). FAILS if the route were folded into the
+    /// gated `routeWorkingDirectory` path.
+    func testProjectKeyRoutesToStoreCallbackWithoutCommandGate() {
+        let vm = makeVM()
+        var received: [String] = []
+        vm.onProjectKeyChanged = { received.append($0) }
+
+        // No command has started (the reattach re-assert shape) — the key must still land.
+        vm.foldEventForTesting(.projectKey("/Users/me/project"))
+        XCTAssertEqual(received, ["/Users/me/project"], "the pre-first-command re-assert is delivered")
+
+        // And a later change edge lands too.
+        vm.foldEventForTesting(.commandStatus(.running))
+        vm.foldEventForTesting(.projectKey("/Users/me/other"))
+        XCTAssertEqual(received, ["/Users/me/project", "/Users/me/other"])
+    }
+
+    /// An empty `.projectKey` payload is dropped at the VM boundary (validate-then-drop — nothing useful
+    /// to persist, and an empty key must never reach the store sink).
+    func testEmptyProjectKeyIsDropped() {
+        let vm = makeVM()
+        var received: [String] = []
+        vm.onProjectKeyChanged = { received.append($0) }
+        vm.foldEventForTesting(.projectKey(""))
+        XCTAssertEqual(received, [], "an empty key is dropped, never forwarded")
+    }
 }

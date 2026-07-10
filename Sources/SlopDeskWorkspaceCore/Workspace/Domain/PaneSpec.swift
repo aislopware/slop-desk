@@ -164,6 +164,13 @@ public struct PaneSpec: Sendable, Equatable {
     /// ``WorkspacePersistence/loadTree()``). Read-only from the client perspective.
     public var lastKnownTitle: String?
 
+    /// The HOST-computed By-Project sidebar key (wire type 34): the git worktree toplevel containing the
+    /// pane's cwd, else the cwd itself. Persisted so a cold relaunch renders the FINAL sections from disk
+    /// (no cwd-fallback → toplevel re-bucketing flash). Written only through the guarded
+    /// ``WorkspaceStore/setProjectKey(_:for:)`` sink; an absent key decodes `nil`
+    /// (``WorkspaceStore/paneProjectKey(_:)`` then falls back to ``lastKnownCwd``).
+    public var projectKey: String?
+
     /// True when the user has EXPLICITLY renamed this pane (⌘R / the palette / the inline rail field →
     /// ``WorkspaceStore/renamePane(_:to:)``). The single, unambiguous signal that ``title`` is a custom
     /// user identity that must win over the cwd-folder / shell-title auto-derivations.
@@ -238,6 +245,7 @@ public struct PaneSpec: Sendable, Equatable {
         resumeLastReceivedSeq: Int64? = nil,
         lastKnownCwd: String? = nil,
         lastKnownTitle: String? = nil,
+        projectKey: String? = nil,
         userRenamed: Bool = false,
     ) {
         self.kind = kind
@@ -247,6 +255,7 @@ public struct PaneSpec: Sendable, Equatable {
         self.resumeLastReceivedSeq = resumeLastReceivedSeq
         self.lastKnownCwd = lastKnownCwd
         self.lastKnownTitle = lastKnownTitle
+        self.projectKey = projectKey
         self.userRenamed = userRenamed
     }
 }
@@ -264,6 +273,7 @@ extension PaneSpec: Codable {
         case resumeLastReceivedSeq
         case lastKnownCwd
         case lastKnownTitle
+        case projectKey
         case userRenamed
     }
 
@@ -276,6 +286,8 @@ extension PaneSpec: Codable {
         resumeLastReceivedSeq = try c.decodeIfPresent(Int64.self, forKey: .resumeLastReceivedSeq)
         lastKnownCwd = try c.decodeIfPresent(String.self, forKey: .lastKnownCwd)
         lastKnownTitle = try c.decodeIfPresent(String.self, forKey: .lastKnownTitle)
+        // Additive: a file written before the host-pushed key decodes to `nil` (cwd fallback).
+        projectKey = try c.decodeIfPresent(String.self, forKey: .projectKey)
         // Additive (B2): an older file without the key decodes to `false` (validate-then-default).
         userRenamed = try c.decodeIfPresent(Bool.self, forKey: .userRenamed) ?? false
     }
@@ -289,6 +301,7 @@ extension PaneSpec: Codable {
         try c.encodeIfPresent(resumeLastReceivedSeq, forKey: .resumeLastReceivedSeq)
         try c.encodeIfPresent(lastKnownCwd, forKey: .lastKnownCwd)
         try c.encodeIfPresent(lastKnownTitle, forKey: .lastKnownTitle)
+        try c.encodeIfPresent(projectKey, forKey: .projectKey)
         // Encoded only when set, so a never-renamed pane's JSON is unchanged (additive-minimal).
         if userRenamed { try c.encode(userRenamed, forKey: .userRenamed) }
     }

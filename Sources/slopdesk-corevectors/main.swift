@@ -801,6 +801,9 @@ root["terminalWireMessages"] = [
     // OSC 7 cwd edge (terminal CONTROL, host → client).
     // type 33 cwd: UTF-8 path body, same string shape as title.
     wmRecord("cwd", .cwd("/Users/me/project dir"), ["path": "/Users/me/project dir"]),
+    // Host-computed By-Project sidebar key (terminal CONTROL, host → client).
+    // type 34 projectKey: UTF-8 path body (git toplevel else cwd), same string shape as title/cwd.
+    wmRecord("project_key", .projectKey("/Users/me/project dir"), ["path": "/Users/me/project dir"]),
 ]
 
 // WB1 — Warp-style "Blocks" wire messages (terminal CONTROL).

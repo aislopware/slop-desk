@@ -136,6 +136,26 @@ final class MuxChannelSession: @unchecked Sendable {
     private let progressLock = NSLock()
     private var lastProgress: WireMessage?
 
+    /// Host-authoritative By-Project key (type 34) — the reattach/dedupe latches. `lastCwdTruth` is
+    /// the freshest cwd this session has observed (OSC-7 sniff, else the prompt-edge `proc_pidinfo`
+    /// probe); `lastProjectKey` is the last EMITTED type-34 (git toplevel containing that cwd, else
+    /// the cwd itself — ``ProjectKeyResolver``). Both are latched at the SNIFF point (like
+    /// `lastProgress` — sniffed control rides the out-FIFO, so a detached window's messages reach the
+    /// sender long after the reattach re-assert reads these) and re-asserted by
+    /// ``reestablishActivityOnReattach()`` so a reconnecting client renders the FINAL sidebar
+    /// sections immediately, with zero client-side re-derivation. Guarded by `projectKeyLock`
+    /// (written on the read-loop thread; read by the reattach path).
+    private let projectKeyLock = NSLock()
+    private var lastCwdTruth: String?
+    private var lastProjectKey: String?
+
+    /// Test seam for the prompt-edge cwd probe (the ``HostMetadataProbe`` `proc_pidinfo` read):
+    /// unit tests drive ``ingestPTYChunkForTesting(_:)`` on an UNSPAWNED PTY (hang-safety rule), where
+    /// the real probe answers `nil` (pid −1 guards out before any syscall) — injecting a fake here
+    /// lets them exercise the non-OSC-7 derivation path deterministically. `nil` (production) uses
+    /// the real probe.
+    var cwdProbeOverride: (() -> String?)?
+
     /// Observer closures registered by the agent-control `wait` and `subscribe` verbs. Each is
     /// called with the raw PTY chunk immediately after the sniffer pass (non-destructive, never
     /// modifies the byte stream). Guarded by `observersLock`.
@@ -708,7 +728,7 @@ final class MuxChannelSession: @unchecked Sendable {
         if let message { enqueueControl([message]) }
     }
 
-    /// 2026-07-10 — the type-23/26/27/32 sibling of ``reestablishEchoOnReattach(echoOn:)``: re-emits
+    /// 2026-07-10 — the type-23/26/27/32/33/34 sibling of ``reestablishEchoOnReattach(echoOn:)``: re-emits
     /// the pane's CURRENT activity truths so a returning client — whose per-pane mirrors reset to
     /// idle/none on reconnect — is re-told what is still live (`sleep 300`'s busy dot + "sleep"
     /// label, a working/blocked agent's badge, a spanning OSC 9;4 spinner). Every source contributes
@@ -727,6 +747,16 @@ final class MuxChannelSession: @unchecked Sendable {
         let agentEmission = agentDetector.reestablishOnReattach()
         agentDetectLock.unlock()
         messages.append(contentsOf: agentEmission.messages)
+        // Host-authoritative cwd + By-Project key (type 33/34): re-tell the latched truths so the
+        // returning client's sidebar sections and cwd mirror are correct IMMEDIATELY — no client-side
+        // RPC pull, no cwd-fallback→toplevel re-bucketing flash. `nil` (never observed) contributes
+        // nothing, keeping the ordinary idle reconnect chatter-free.
+        projectKeyLock.lock()
+        let cwdTruth = lastCwdTruth
+        let key = lastProjectKey
+        projectKeyLock.unlock()
+        if let cwdTruth { messages.append(.cwd(cwdTruth)) }
+        if let key { messages.append(.projectKey(key)) }
         if !messages.isEmpty { enqueueControl(messages) }
     }
 
@@ -1275,7 +1305,7 @@ final class MuxChannelSession: @unchecked Sendable {
         // command status — one pass, not two per-byte machines scanning this hot thread
         // twice). It only OBSERVES; the bytes are forwarded unchanged below. Emission
         // order is byte-faithful interleaved (consumers fold each type independently).
-        let controlMsgs = sniffer.observe(chunk)
+        var controlMsgs = sniffer.observe(chunk)
         // Agent-control: cache the latest title from any sniffed title message so
         // `list-panes` can return it without an extra sniffer pass. Runs on the PTY
         // read-loop thread (serial) — update under titleLock (read from control socket
@@ -1292,6 +1322,11 @@ final class MuxChannelSession: @unchecked Sendable {
         // control drain — sniffed control rides the out-FIFO and a detached window's messages only
         // reach the sender after the backlog ships, long after the reattach re-assert reads this).
         latchProgress(controlMsgs)
+        // Host-authoritative By-Project key (type 34): derive from THIS chunk's cwd truth (the OSC-7
+        // sniff when present, else the prompt-edge probe) and append the change-edge emission so it
+        // rides the same FIFO slot as the bytes that produced it. Latched at the sniff point for the
+        // same reattach reason as the progress latch above.
+        controlMsgs.append(contentsOf: deriveProjectKeyMessages(from: controlMsgs))
         // Agent-control: fire output observers for the `wait` verb AFTER the sniffer
         // (so a wait-observer sees the same stream order as the client) and BEFORE the
         // FIFO append (non-destructive — observers only READ the chunk).
@@ -1575,6 +1610,45 @@ final class MuxChannelSession: @unchecked Sendable {
         blocksLock.unlock()
         latchProgress(messages) // K2 auto-progress is a second type-32 source — same reattach truth
         if !messages.isEmpty { enqueueControl(messages) }
+    }
+
+    /// Host-authoritative By-Project key (type 34) — the change-edge derivation. The freshest cwd
+    /// truth in `sniffed` is the LAST OSC-7 `.cwd` (shell-declared, exact); a shell that emits no
+    /// OSC-7 (Starship / hookless) is covered by the prompt-edge probe: a `.commandStatus(.idle)` in
+    /// the batch marks a prompt boundary (133;B/D) — exactly when a `cd` becomes observable — and
+    /// triggers ONE `proc_pidinfo` read (a single syscall; never a subprocess on this read-loop
+    /// thread). An unchanged cwd is dropped at the first anchor; a changed cwd re-resolves the
+    /// toplevel (pure filesystem walk-up, ``ProjectKeyResolver``) and only a CHANGED key emits.
+    /// Returns `[]` in the common case (no cwd signal at all — every mid-command chunk).
+    private func deriveProjectKeyMessages(from sniffed: [WireMessage]) -> [WireMessage] {
+        var cwd: String?
+        var promptEdge = false
+        for message in sniffed {
+            switch message {
+            case let .cwd(path): cwd = path
+            case let .commandStatus(status): if case .idle = status { promptEdge = true }
+            default: break
+            }
+        }
+        if cwd == nil, promptEdge { cwd = probeCwd() }
+        guard let cwd, !cwd.isEmpty else { return [] }
+        projectKeyLock.lock()
+        defer { projectKeyLock.unlock() }
+        guard cwd != lastCwdTruth else { return [] }
+        lastCwdTruth = cwd
+        let key = ProjectKeyResolver.projectKey(forCwd: cwd)
+        guard key != lastProjectKey else { return [] }
+        lastProjectKey = key
+        return [.projectKey(key)]
+    }
+
+    /// The prompt-edge cwd read: the test seam when set, else the real ``HostMetadataProbe``
+    /// `proc_pidinfo` probe (foreground pid, shell-pid fallback — the same resolution the `cwd`
+    /// metadata RPC serves). On an unspawned PTY (unit tests) the pids are −1 and the probe answers
+    /// `nil` before any syscall.
+    private func probeCwd() -> String? {
+        if let cwdProbeOverride { return cwdProbeOverride() }
+        return HostMetadataProbe(masterFD: pty.masterFD, shellPID: pty.pid).paneWorkingDirectory()
     }
 
     /// Latches the pane's CURRENT OSC 9;4 progress truth (see `lastProgress`) from a batch of
@@ -1890,6 +1964,14 @@ final class MuxChannelSession: @unchecked Sendable {
     }
 
     func reestablishActivityOnReattachForTesting() { reestablishActivityOnReattach() }
+
+    /// Exercises the type-34 change-edge derivation (``deriveProjectKeyMessages(from:)``) directly —
+    /// the live emission rides the out-FIFO (not the control queue), so the returned array is the
+    /// only headless way to pin WHAT a chunk's sniffed batch emits (and that an unchanged cwd/key
+    /// emits nothing). The latches it writes are the same ones the reattach re-assert reads.
+    func deriveProjectKeyMessagesForTesting(from sniffed: [WireMessage]) -> [WireMessage] {
+        deriveProjectKeyMessages(from: sniffed)
+    }
 
     /// WB1 — drive the real `feedBlocks` glue (segmenter tap → enqueueControl) WITHOUT a PTY/read
     /// loop, so the type-28 emission + the byte-identical-when-off contract are provable headlessly.

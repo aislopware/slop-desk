@@ -1794,7 +1794,10 @@ public final class TerminalViewModel {
             // mirror — a `.clear` removes the indicator (`nil`), every other state sets the determinate /
             // indeterminate / error value the pane status strip + Dock read.
             progress = PaneProgress(state: state, percent: percent)
-        case .cwd:
+        case .cwd,
+             .projectKey:
+            // Both are pane-METADATA edges the connection layer routes to the store (`lastKnownCwd` /
+            // `PaneSpec.projectKey`); the terminal surface itself renders neither.
             break
         }
     }

@@ -1,6 +1,6 @@
 // NavigatorColumnSelectTests — pins the pane→tab resolution the sidebar rail uses when a row is
 // clicked (`NavigatorColumn.owningTabIndex(of:in:)`, the seam `NavigatorColumn.select` calls) and the
-// E6 WI-3 tab-recency stamp + badge auto-clear that ride the row-click path.
+// badge auto-clear that rides the row-click path.
 //
 // Headless: a tree-model `WorkspaceStore` over the `MountTestPaneSession` fake (no socket / video / Metal —
 // hang-safety).
@@ -45,25 +45,18 @@ final class NavigatorColumnSelectTests: XCTestCase {
     }
 
     /// The user-visible consequence: driving exactly what `NavigatorColumn.select` does on a row click —
-    /// resolve the owning tab then `selectTab` it — stamps TAB B's recency (E6 WI-3), the stamp that floats
-    /// the tab to the top of the `.updated` sidebar sort.
-    func testSelectingBackgroundRowStampsOwningTabRecency() throws {
-        let (store, bgPane, tabB) = try makeBackgroundPaneScenario()
+    /// resolve the owning tab then `selectTab` it — makes the background tab ACTIVE.
+    func testSelectingBackgroundRowActivatesOwningTab() throws {
+        let (store, bgPane, _) = try makeBackgroundPaneScenario()
         let session = try XCTUnwrap(store.tree.activeSession)
-        let before = store.tabLastActiveAt[tabB]
 
         // The select(_:) sequence (the row-click path) against the resolution seam.
         let resolved = try XCTUnwrap(
             NavigatorColumn.owningTabIndex(of: bgPane, in: session),
-            "the background pane must resolve an owning tab (a nil here is the dropped-stamp regression)",
+            "the background pane must resolve an owning tab (a nil here is the dropped-select regression)",
         )
         store.selectTab(resolved)
 
-        let after = try XCTUnwrap(
-            store.tabLastActiveAt[tabB],
-            "selecting the row stamps tab B recency (E6 WI-3)",
-        )
-        if let before { XCTAssertGreaterThanOrEqual(after, before, "the stamp advances, never rewinds") }
         XCTAssertEqual(store.tree.activeSession?.activeTabIndex, 1, "tab B is now the active tab")
     }
 

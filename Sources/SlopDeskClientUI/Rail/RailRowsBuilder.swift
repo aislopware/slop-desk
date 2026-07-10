@@ -47,12 +47,13 @@ struct RailRow: Identifiable, Equatable {
     /// fallback. `nil` for a non-repo cwd or a video pane. Default keeps the direct-construction call sites
     /// (the Equatable pins) source-compatible.
     var gitSummary: PaneGitSummary?
-    /// The pane's OWN By-Project key (``WorkspaceStore/paneProjectKey(_:)`` — its cached git toplevel else
-    /// cwd, plugin-dirs guarded out), carried per-ROW so ``RailRowsBuilder/sectionedByProject(_:tabOrder:query:)``
-    /// buckets each pane by ITS project, not its tab's active-pane project. This is what makes a SPLIT tab's
-    /// two panes land in their respective project sections AND stops the section header from flickering with
-    /// focus. `nil` for a keyless / video pane (⇒ the "Other" bucket). Defaulted so the Equatable pins /
-    /// completion-title call sites stay source-compatible.
+    /// The pane's OWN By-Project key (``WorkspaceStore/paneProjectKey(_:)`` — the HOST-pushed
+    /// ``PaneSpec/projectKey`` else cwd, plugin-dirs guarded out), carried per-ROW so
+    /// ``RailRowsBuilder/sectionedByProject(_:tabOrder:query:)`` buckets each pane by ITS project, not its
+    /// tab's active-pane project. This is what makes a SPLIT tab's two panes land in their respective
+    /// project sections AND stops the section header from flickering with focus. `nil` for a keyless /
+    /// video pane (⇒ the "Other" bucket). Defaulted so the Equatable pins / completion-title call sites
+    /// stay source-compatible.
     var projectKey: String?
 
     /// A copy of this row with a new `title` (C3 BUG A collision disambiguation) — every other field is
@@ -120,8 +121,8 @@ enum RailRowsBuilder {
                     isEditing: chrome.isEditing,
                     isSelected: isSelected,
                     gitSummary: chrome.gitSummary,
-                    // The pane's OWN project key (guarded git toplevel / cwd) drives per-pane By-Project
-                    // sectioning; a video pane has no project (⇒ "Other").
+                    // The pane's OWN project key (guarded host-pushed key / cwd) drives per-pane
+                    // By-Project sectioning; a video pane has no project (⇒ "Other").
                     projectKey: kind == .terminal ? store.paneProjectKey(paneID) : nil,
                 ))
             }
@@ -311,43 +312,20 @@ enum RailRowsBuilder {
         }
     }
 
-    /// Compose the sidebar search filter with the store-derived tab grouping (E6 WI-5): narrow `rows` by
-    /// `query`, then bucket the survivors into sections following `groups` (``TabOrderingEngine`` tab order, as
-    /// returned by ``WorkspaceStore/orderedTabGroups(now:)``). A group whose rows all filter out is DROPPED (no
-    /// empty header). Pane order within a tab is preserved (`Dictionary(grouping:)` keeps element order). Pure +
-    /// static so the navigator's glue is unit-testable without a SwiftUI view.
-    static func sectioned(_ rows: [RailRow], groups: [OrderedTabGroup], query: String) -> [RailRowGroup] {
-        let survivors = filtered(rows, query: query)
-        let byTab = Dictionary(grouping: survivors, by: \.tabID)
-        var out: [RailRowGroup] = []
-        for group in groups {
-            var groupRows: [RailRow] = []
-            for tabID in group.tabIDs {
-                groupRows.append(contentsOf: byTab[tabID] ?? [])
-            }
-            guard !groupRows.isEmpty else { continue }
-            out.append(RailRowGroup(header: group.header, rows: groupRows))
-        }
-        return out
-    }
-
-    /// The PER-PANE By-Project sectioning — the render path for ``TabGrouping/byProject`` (bug: a SPLIT tab's
-    /// group name flickered with focus). Where ``sectioned(_:groups:query:)`` buckets WHOLE TABS by their
-    /// active pane's project (so a split tab spanning two projects flips its whole section as focus moves
-    /// between its panes), this buckets each PANE ROW by ITS OWN ``RailRow/projectKey``. Consequences:
+    /// The PER-PANE By-Project sectioning — the sidebar's ONE render path (the 2026-07-10 re-scope deleted
+    /// every other grouping/sort mode). Buckets each PANE ROW by ITS OWN ``RailRow/projectKey`` (not its
+    /// tab's active-pane project). Consequences:
     ///   • a split tab's two panes land in their RESPECTIVE project sections (the user's "group correctly"),
-    ///   • the section a pane sits in no longer depends on which pane is focused (the flicker is gone —
+    ///   • the section a pane sits in no longer depends on which pane is focused (no header flicker —
     ///     `projectKey` is a per-pane value, not `tab.activePane`),
-    ///   • a single-pane tab is unchanged (its one pane == the tab's project, as before).
+    ///   • a single-pane tab's one pane == the tab's project.
     /// Section ORDER is STABLE: first appearance of each project key while walking rows in their natural
     /// CREATION order (`rows` are emitted in `session.tabs` order then pane pre-order) — so a section never
-    /// jumps position when you switch tabs, even under ``TabSort/updated`` (matching the old tab-level
-    /// By-Project, which bucketed in array order). WITHIN each section rows follow `tabOrder` (the
-    /// sorted-but-ungrouped order, ``WorkspaceStore/flatOrderedTabIDs(now:)``) then pane pre-order, so
-    /// ``TabSort/updated`` still floats a recently-active tab's panes up inside their project without
-    /// reordering the sections themselves. The keyless "Other" bucket (video / cwd-less panes) takes its
-    /// first-appearance slot too. Query filter composes first; an all-filtered section is DROPPED. Pure +
-    /// static so the per-pane grouping rule is unit-pinned without a SwiftUI view.
+    /// jumps position when you switch tabs. WITHIN each section rows follow `tabOrder`
+    /// (``WorkspaceStore/flatOrderedTabIDs()`` — the same creation order) then pane pre-order. The keyless
+    /// "Other" bucket (video / cwd-less panes) takes its first-appearance slot too. Query filter composes
+    /// first; an all-filtered section is DROPPED. Pure + static so the per-pane grouping rule is
+    /// unit-pinned without a SwiftUI view.
     static func sectionedByProject(_ rows: [RailRow], tabOrder: [TabID], query: String) -> [RailRowGroup] {
         let survivors = filtered(rows, query: query)
         // Pass 1 — bucket in CREATION order; `order` fixes the (stable) section sequence.
@@ -375,63 +353,10 @@ enum RailRowsBuilder {
     }
 }
 
-/// One rendered sidebar section: an optional `header` (the group title, `nil` ⇒ the ungrouped flat list) and
-/// the rows in render order. A pure value (`Equatable`) so ``RailRowsBuilder/sectioned(_:groups:query:)`` is
-/// pinnable headlessly; the navigator wraps it in an `Identifiable` row for `ForEach`.
+/// One rendered sidebar section: an optional `header` (the group title) and the rows in render order. A
+/// pure value (`Equatable`) so ``RailRowsBuilder/sectionedByProject(_:tabOrder:query:)`` is pinnable
+/// headlessly; the navigator wraps it in an `Identifiable` row for `ForEach`.
 struct RailRowGroup: Equatable {
     let header: String?
     let rows: [RailRow]
-}
-
-/// The drag payload for a sidebar tab reorder (E6 WI-5, FIX 2): a row's TAB IDENTITY (a UUID string), NOT
-/// its rendered index. Encoding identity is what makes the WYSIWYG drag correct under ``TabSort/updated``: a
-/// completion can re-derive ``WorkspaceStore/orderedTabGroups(now:)`` and visually shuffle the rows WHILE a
-/// drag is in flight, and an index-based payload would then drop whatever tab is NOW at the stale index. An
-/// id payload instead resolves the dragged tab's CURRENT rendered position at drop time. Decoding is
-/// validate-then-DROP: a payload that is not a parseable UUID, or not a LIVE tab id in the rendered order,
-/// yields no move — so a foreign plaintext drag (e.g. an in-range numeric string from another app, which the
-/// old `Int(payload)` decode would have ACCEPTED) triggers no reorder and no Sort→Manual flip. Pure + static
-/// so the navigator's drag glue is unit-testable without a SwiftUI view.
-enum TabDragPayload {
-    /// Encode a row's tab identity as its `.draggable` payload string.
-    static func encode(_ tabID: TabID) -> String { tabID.raw.uuidString }
-
-    /// Resolve a dropped `payload` plus the drop `targetTabID` into the `(from, to)` RENDERED-position move,
-    /// or `nil` to DROP the drag. `renderedOrder` is the LIVE flat sidebar order at drop time, so `from`
-    /// follows the dragged tab's identity even if the order changed since the drag began. Dropped when the
-    /// payload is unparseable / not a live tab, the target isn't shown, or it is a self-drop (`from == to`).
-    static func resolveMove(
-        payload: String, onto targetTabID: TabID, in renderedOrder: [TabID],
-    ) -> (from: Int, to: Int)? {
-        guard let uuid = UUID(uuidString: payload) else { return nil }
-        guard let from = renderedOrder.firstIndex(of: TabID(raw: uuid)) else { return nil }
-        guard let to = renderedOrder.firstIndex(of: targetTabID) else { return nil }
-        guard from != to else { return nil }
-        return (from, to)
-    }
-}
-
-/// The pure placement model for the sidebar tab-reorder INSERTION-LINE indicator (E18 WI-7). The spec
-/// (`user-interface__drag-and-drop.md`): dragging a rail tab shows "a thin insertion-line indicator [for]
-/// the landing position between tabs". The navigator draws a 2pt accent rule on the TOP edge of the row a
-/// reorder drag is hovering. This model resolves WHERE (which rendered index) that rule is anchored so the
-/// decision is unit-pinned without a SwiftUI view (the live `isTargeted`/overlay render is a Phase-3 HW
-/// target). It is purely additive to the reorder drag — it never changes the drop payload, the resolved
-/// move, or the manual-reorder gate (``TabDragPayload`` owns those).
-enum TabReorderInsertionLine {
-    /// Width (points) of the insertion-line indicator — a thin 2pt accent rule.
-    static let thickness: CGFloat = 2
-
-    /// The rendered index whose TOP edge gets the insertion line, or `nil` to draw NOTHING. `hovering` is the
-    /// tab id of the row the reorder drag is currently over (`nil` ⇒ no row targeted); `reorderEnabled` is
-    /// the navigator's manual-reorder gate (off under an active grouping / a search filter, where a hand
-    /// landing slot has no meaning — so NO landing rule is promised); `renderedOrder` is the LIVE flat
-    /// sidebar order. Returns `nil` when reorder is gated off, no row is targeted, or the targeted row is not
-    /// shown in the live order (a stale / filtered-out target) — never a stray rule against a hidden row.
-    static func anchorIndex(
-        hovering target: TabID?, reorderEnabled: Bool, in renderedOrder: [TabID],
-    ) -> Int? {
-        guard reorderEnabled, let target else { return nil }
-        return renderedOrder.firstIndex(of: target)
-    }
 }

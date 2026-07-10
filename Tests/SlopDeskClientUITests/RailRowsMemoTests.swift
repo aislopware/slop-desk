@@ -12,7 +12,7 @@
 // stale-cache-vs-fresh-chrome assertions are the invalidation-shape proxy.
 //
 // Headless: same `MountTestPaneSession` tree-model store as `RailRowBuilderTests` (no socket / video /
-// Metal). Grouping keys are cleared around each test (the persistence test-isolation idiom).
+// Metal).
 
 import XCTest
 @testable import SlopDeskClientUI
@@ -20,21 +20,6 @@ import XCTest
 
 @MainActor
 final class RailRowsMemoTests: XCTestCase {
-    override func setUp() {
-        super.setUp()
-        clearGroupingKeys()
-    }
-
-    override func tearDown() {
-        clearGroupingKeys()
-        super.tearDown()
-    }
-
-    private nonisolated func clearGroupingKeys() {
-        SettingsKey.store.removeObject(forKey: SettingsKey.tabGroupingKey)
-        SettingsKey.store.removeObject(forKey: SettingsKey.tabSortKey)
-    }
-
     private func makeStore() -> WorkspaceStore {
         WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
     }

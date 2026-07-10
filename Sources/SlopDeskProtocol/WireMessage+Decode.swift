@@ -210,6 +210,13 @@ extension WireMessage {
             }
             return .cwd(path)
 
+        case 34: // projectKey
+            let bytes = reader.remaining()
+            guard let path = String(data: bytes, encoding: .utf8) else {
+                throw SlopDeskError.malformedBody("projectKey: invalid UTF-8")
+            }
+            return .projectKey(path)
+
         default:
             throw SlopDeskError.unknownMessageType(type)
         }

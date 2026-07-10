@@ -62,10 +62,6 @@ public extension WorkspaceStore {
         tree = WorkspaceTreeOps.insertTab(
             record.tab, specs: record.specs, at: SettingsKey.newTabPosition, in: tree,
         )
-        // E6 WI-6: `insertTab` selects the restored tab (sets `activeTabIndex`) — stamp its recency (parity
-        // with `newTab` / `selectTab`) so the just-reopened, now-active tab floats first under `.updated`
-        // and lands in "Today" under By-Date, instead of sorting last on a nil recency.
-        if let newTabID = tree.activeSession?.activeTab?.id { stampTabActivity(newTabID) }
         reconcileTree()
         return tree.activeSession?.activeTab?.activePane
     }

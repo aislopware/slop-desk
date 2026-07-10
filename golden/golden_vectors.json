@@ -3593,6 +3593,11 @@
       "hex": "00000016212f55736572732f6d652f70726f6a65637420646972",
       "kind": "cwd",
       "path": "/Users/me/project dir"
+    },
+    {
+      "hex": "00000016222f55736572732f6d652f70726f6a65637420646972",
+      "kind": "project_key",
+      "path": "/Users/me/project dir"
     }
   ],
   "trendlineDrive": {

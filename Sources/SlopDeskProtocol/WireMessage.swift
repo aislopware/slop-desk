@@ -245,6 +245,22 @@ public enum WireMessage: Equatable, Sendable {
     /// tabs/splits inherit the live cwd immediately.
     case cwd(String)
 
+    /// The pane's By-Project sidebar key (type 34, host → client, CONTROL): the git worktree TOPLEVEL
+    /// containing the pane's cwd, else the cwd itself. HOST-computed — the single source of truth for
+    /// the sidebar's By-Project sectioning, so every client (and every reconnect of the same client)
+    /// renders identical sections with ZERO client-side re-derivation: no `gitStatus` RPC sweep, no
+    /// cwd-fallback→toplevel re-bucketing flash. The host derives the cwd from its OSC-7 sniff and the
+    /// prompt-edge `proc_pidinfo` probe, resolves the toplevel with a pure filesystem walk (no `git`
+    /// subprocess on the read loop), emits on CHANGE edges only (dedupe-anchored), and re-asserts the
+    /// latched truth on reattach (the type-23/26/27/31/32 sibling). The client persists it into
+    /// ``PaneSpec`` so a cold relaunch renders the final sections immediately from disk.
+    ///
+    /// UTF-8 path body (same single-trailing-string shape as ``title``/``cwd``). Additive within wire
+    /// version 1 (host accepts only v1, no negotiation → host + client redeploy together); a peer that
+    /// does not know type 34 DROPS the frame (`unknownMessageType`), never traps. Pane identity rides
+    /// the mux channel envelope, not this body.
+    case projectKey(String)
+
     /// The semantic state of the foreground command in a pane's shell (from OSC 133).
     public enum CommandStatus: Equatable, Sendable {
         /// OSC 133;C — a command began executing (preexec). The pane is RUNNING.
@@ -283,6 +299,7 @@ public enum WireMessage: Equatable, Sendable {
         case .inputEcho: 31
         case .progress: 32
         case .cwd: 33
+        case .projectKey: 34
         }
     }
 
@@ -313,7 +330,8 @@ public enum WireMessage: Equatable, Sendable {
              .metadataResponse,
              .inputEcho,
              .progress,
-             .cwd:
+             .cwd,
+             .projectKey:
             .control
         }
     }

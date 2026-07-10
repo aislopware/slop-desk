@@ -154,7 +154,6 @@ final class SlateSnapshotRender: XCTestCase {
             liveVideoCap: 2,
             persistence: nil,
         )
-        store.tabGrouping = .byProject // direct (internal) set — render-only, no Defaults write
         let panes = tabs.compactMap(\.activePane)
         if panes.count >= 5 {
             store.setForegroundProcess("zsh", for: panes[0])

@@ -32,18 +32,15 @@ public extension WorkspaceStore {
     /// EDGE detection runs here. It captures the last-notified state before the mutation and, after
     /// committing, runs ``applyAttentionEdge(for:lastNotified:status:)`` — a genuine entry into
     /// needsPermission/done notifies once (coalesced), a flap does not.
-    ///
-    /// E6 WI-6: because this is the chokepoint, the tab-recency stamp rides it — a genuine status change
-    /// stamps the owning tab's ``WorkspaceStore/tabLastActiveAt`` so a working / blocked background tab
-    /// floats up under the `.updated` sidebar sort. Past the idempotency guard, so only a real transition
-    /// stamps; and from ANY source (the wire signal funnel `handleAgentSignal`, a manifest fallback, a
-    /// test) — not just the wire path.
     func setAgentStatus(_ status: ClaudeStatus, for id: PaneID, at date: Date = Date()) {
         guard paneAgentStatus[id] != status else { return }
         let lastNotified = lastNotifiedStatus[id] ?? .none
         if status == .none { paneAgentStatus.removeValue(forKey: id) } else { paneAgentStatus[id] = status }
         applyAttentionEdge(for: id, lastNotified: lastNotified, status: status)
-        stampTabActivity(forPane: id, at: date)
+        // The NEEDS-ATTENTION `since` fallback: a genuine status transition (past the idempotency guard)
+        // stamps the pane — a BLOCKED `needsPermission` agent never stamps `paneCompletedAt`, so this is
+        // where its menu-row age comes from.
+        paneAttentionAt[id] = date
         // Drive the checkmark→accent-dot decay for an agent turn: a genuine entry into `.done` stamps
         // the ephemeral `completedAt` (brief `.completed` flash, settling to `.finished`). Only the
         // positive edge stamps — a stale stamp is harmless (the resolver reads it ONLY in the
@@ -203,7 +200,7 @@ public extension WorkspaceStore {
                             pane: paneID,
                             badge: badge,
                             label: agentLabel(for: paneID),
-                            since: paneCompletedAt[paneID] ?? tabLastActiveAt[tab.id],
+                            since: paneCompletedAt[paneID] ?? paneAttentionAt[paneID],
                         ))
                     }
                 }
@@ -376,8 +373,8 @@ public struct UnseenAttentionEntry: Equatable, Sendable {
     /// the row's second line ("Allow Bash(npm install)?"). `nil` ⇒ the view shows a per-badge caption.
     public let label: String?
     /// The best-known instant the pane ENTERED attention — the completion stamp
-    /// (``WorkspaceStore/paneCompletedAt``) when one exists, else the owning tab's activity recency
-    /// (``WorkspaceStore/tabLastActiveAt``, stamped by the same agent-status/completion edges). `nil`
+    /// (``WorkspaceStore/paneCompletedAt``) when one exists, else the pane's attention-edge stamp
+    /// (``WorkspaceStore/paneAttentionAt``, stamped by the same agent-status/completion edges). `nil`
     /// when neither is known (e.g. a manual CLI badge override) — the view then shows no age.
     public let since: Date?
 

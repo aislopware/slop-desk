@@ -132,18 +132,18 @@ final class SidebarGitAndRenameStoreTests: XCTestCase {
         XCTAssertEqual(store.paneGitSummary[pane], repoSummary(), "the summary is written")
     }
 
-    /// A fetch for pane X FANS out to a sibling pane in the SAME repo (matching cached toplevel) — so a
-    /// sibling-pane commit is reflected without waiting for the sibling's own command edge. The dirty guard
-    /// and freshness stamp apply to the fanned-to pane too.
+    /// A fetch for pane X FANS out to a sibling pane in the SAME repo (matching By-Project key — the
+    /// host-pushed ``PaneSpec/projectKey``) — so a sibling-pane commit is reflected without waiting for the
+    /// sibling's own command edge. The dirty guard and freshness stamp apply to the fanned-to pane too.
     func testApplyGitSummaryFansToSameRepoSiblings() throws {
         let store = makeStore()
         let a = try firstPane(store)
         store.splitActivePane(axis: .horizontal, kind: .terminal, leading: false, launchGrace: .zero)
         let panes = try XCTUnwrap(store.tree.activeSession?.activeTab?.allPaneIDs())
         let b = try XCTUnwrap(panes.first { $0 != a })
-        // Both panes are in the same repo toplevel.
-        store.cacheGitToplevel("/repo", for: a)
-        store.cacheGitToplevel("/repo", for: b)
+        // Both panes carry the same host-pushed repo key.
+        store.setProjectKey("/repo", for: a)
+        store.setProjectKey("/repo", for: b)
         let now = Date()
         let summary = repoSummary(branch: "feature", changed: 7)
         store.applyGitSummary(summary, toplevel: "/repo", for: a, at: now)
@@ -158,20 +158,19 @@ final class SidebarGitAndRenameStoreTests: XCTestCase {
         store.splitActivePane(axis: .horizontal, kind: .terminal, leading: false, launchGrace: .zero)
         let panes = try XCTUnwrap(store.tree.activeSession?.activeTab?.allPaneIDs())
         let b = try XCTUnwrap(panes.first { $0 != a })
-        store.cacheGitToplevel("/repo-a", for: a)
-        store.cacheGitToplevel("/repo-b", for: b)
+        store.setProjectKey("/repo-a", for: a)
+        store.setProjectKey("/repo-b", for: b)
         store.applyGitSummary(repoSummary(), toplevel: "/repo-a", for: a, at: Date())
         XCTAssertNil(store.paneGitSummary[b], "a different-repo sibling is not touched")
     }
 
-    /// An EMPTY toplevel ("no repo") never fans out even to a pane that also caches an empty toplevel.
+    /// An EMPTY toplevel ("no repo") never fans out — it is not a shared key.
     func testApplyGitSummaryEmptyToplevelDoesNotFan() throws {
         let store = makeStore()
         let a = try firstPane(store)
         store.splitActivePane(axis: .horizontal, kind: .terminal, leading: false, launchGrace: .zero)
         let panes = try XCTUnwrap(store.tree.activeSession?.activeTab?.allPaneIDs())
         let b = try XCTUnwrap(panes.first { $0 != a })
-        store.cacheGitToplevel("", for: b)
         store.applyGitSummary(repoSummary(), toplevel: "", for: a, at: Date())
         XCTAssertNil(store.paneGitSummary[b], "an empty toplevel is 'no repo', not a shared key ⇒ no fan-out")
     }

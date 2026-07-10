@@ -123,6 +123,10 @@ public actor SlopDeskClient {
         /// The shell-reported current working directory (OSC 7, wire type 33). The GUI persists this
         /// into the pane spec so split/new-tab inherit the live cwd immediately.
         case cwd(String)
+        /// The HOST-computed By-Project sidebar key (wire type 34): the git worktree toplevel containing
+        /// the pane's cwd, else the cwd itself. Emitted on change edges and re-asserted on reattach, so a
+        /// reconnecting GUI renders the final sections without re-deriving anything (zero-flicker).
+        case projectKey(String)
         /// The transport dropped (network loss / clean close). ``ReconnectManager``
         /// reacts to this; surfaced for diagnostics.
         case disconnected(reason: String)
@@ -598,6 +602,9 @@ public actor SlopDeskClient {
             eventBroadcaster.yield(.progress(state: validated, percent: percent))
         case let .cwd(path):
             eventBroadcaster.yield(.cwd(path))
+        case let .projectKey(path):
+            // Host-computed By-Project key (type 34): surface verbatim; the GUI store validates + persists.
+            eventBroadcaster.yield(.projectKey(path))
         case let .pong(timestampMS):
             recordPong(sentAtMS: timestampMS)
         default:

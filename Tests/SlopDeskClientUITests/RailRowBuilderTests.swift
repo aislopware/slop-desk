@@ -14,25 +14,6 @@ import XCTest
 
 @MainActor
 final class RailRowBuilderTests: XCTestCase {
-    // The By-Project sectioning tests drive `setTabGrouping` / `setTabSort`, which PERSIST through
-    // Defaults-backed `SettingsKey`. Clear those keys around every test so a persisted `.updated` sort (or a
-    // grouping choice) can't leak into a sibling test's `makeThreeProjectStore` — or, worse, across into
-    // another suite — and silently reorder its rows by recency (the isolation idiom `TabSortStoreTests` uses).
-    override func setUp() {
-        super.setUp()
-        clearGroupingKeys()
-    }
-
-    override func tearDown() {
-        clearGroupingKeys()
-        super.tearDown()
-    }
-
-    private nonisolated func clearGroupingKeys() {
-        SettingsKey.store.removeObject(forKey: SettingsKey.tabGroupingKey)
-        SettingsKey.store.removeObject(forKey: SettingsKey.tabSortKey)
-    }
-
     /// A headless tree-model store over the fake session (mirrors `OverlayCoordinatorMountTests`).
     private func makeStore() -> WorkspaceStore {
         WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
@@ -460,10 +441,9 @@ final class RailRowBuilderTests: XCTestCase {
         )
     }
 
-    // MARK: - WI-5: `sectioned` (search filter × store-derived grouping → rendered sections)
+    // MARK: - The always-on By-Project sectioning (search filter × per-pane project buckets)
 
-    /// A three-tab store with two distinct project cwds. Tabs 1+2 share `…/alpha`, tab 3 is `…/beta`. Returns
-    /// the store with its grouping left at the caller's choice (default `.none`).
+    /// A three-tab store with two distinct project cwds. Tabs 1+2 share `…/alpha`, tab 3 is `…/beta`.
     private func makeThreeProjectStore() -> WorkspaceStore {
         let store = makeStore()
         store.newTab(kind: .terminal, launchGrace: .zero) // tab 2
@@ -475,48 +455,43 @@ final class RailRowBuilderTests: XCTestCase {
         return store
     }
 
-    /// Ungrouped (`.none`) ⇒ exactly one header-less section carrying every row in tab order — byte-identical
-    /// to the pre-E6 flat rail (a regression to a sectioned-when-ungrouped layout would fail this).
-    func testSectionedFlatWhenUngrouped() {
+    /// The survivors bucket into project sections (basename headers): the two `…/alpha` tabs land together
+    /// in section 1, the lone `…/beta` tab in section 2 — first-appearance (creation) order.
+    func testSectionedByProjectBucketsRowsByCreationOrder() {
         let store = makeThreeProjectStore()
-        store.tabGrouping = .none
-        let sections = RailRowsBuilder.sectioned(
-            RailRowsBuilder.rows(for: store),
-            groups: store.orderedTabGroups(),
-            query: "",
-        )
-        XCTAssertEqual(sections.count, 1, ".none ⇒ one flat section")
-        XCTAssertNil(sections[0].header, "the flat section carries no header chrome")
-        XCTAssertEqual(sections[0].rows.map(\.tabNumber), [1, 2, 3], "all rows, in tab order")
-    }
-
-    /// By-Project ⇒ the survivors bucket into the engine's project sections (basename headers); the two
-    /// `…/alpha` tabs land together in section 1, the lone `…/beta` tab in section 2.
-    func testSectionedByProjectBucketsRowsByEngineOrder() {
-        let store = makeThreeProjectStore()
-        store.tabGrouping = .byProject
-        let sections = RailRowsBuilder.sectioned(
-            RailRowsBuilder.rows(for: store),
-            groups: store.orderedTabGroups(),
-            query: "",
+        let sections = RailRowsBuilder.sectionedByProject(
+            RailRowsBuilder.rows(for: store), tabOrder: store.flatOrderedTabIDs(), query: "",
         )
         XCTAssertEqual(sections.map(\.header), ["alpha", "beta"], "section headers are the cwd basenames")
         XCTAssertEqual(sections[0].rows.map(\.tabNumber), [1, 2], "both alpha tabs share section 1")
         XCTAssertEqual(sections[1].rows.map(\.tabNumber), [3], "the lone beta tab is section 2")
     }
 
-    /// The search filter composes with grouping: a query that only matches the `beta` cwd drops the entire
-    /// `alpha` section (no empty header survives). Fails on a naive map that kept zero-row sections.
+    /// The search filter composes with the grouping: a query that only matches the `beta` cwd drops the
+    /// entire `alpha` section (no empty header survives). Fails on a naive map that kept zero-row sections.
     func testSectionedDropsEmptySectionAfterFilter() {
         let store = makeThreeProjectStore()
-        store.tabGrouping = .byProject
-        let sections = RailRowsBuilder.sectioned(
-            RailRowsBuilder.rows(for: store),
-            groups: store.orderedTabGroups(),
-            query: "beta",
+        let sections = RailRowsBuilder.sectionedByProject(
+            RailRowsBuilder.rows(for: store), tabOrder: store.flatOrderedTabIDs(), query: "beta",
         )
         XCTAssertEqual(sections.map(\.header), ["beta"], "the alpha section filters out entirely → dropped")
         XCTAssertEqual(sections[0].rows.map(\.tabNumber), [3])
+    }
+
+    /// A HOST-pushed project key (wire type 34 → `setProjectKey`) re-buckets the pane by the pushed repo
+    /// root instead of the cwd fallback — the end-to-end store → row → section path for the host key.
+    func testSectionedByProjectUsesHostPushedKeyOverCwd() {
+        let store = makeThreeProjectStore()
+        let beta = RailRowsBuilder.rows(for: store)[2].id
+        store.setProjectKey("/work/monorepo", for: beta)
+        let sections = RailRowsBuilder.sectionedByProject(
+            RailRowsBuilder.rows(for: store), tabOrder: store.flatOrderedTabIDs(), query: "",
+        )
+        XCTAssertEqual(
+            sections.map(\.header), ["alpha", "monorepo"],
+            "the host-pushed key wins over the cwd-derived section for that pane",
+        )
+        XCTAssertEqual(sections.last?.rows.map(\.id), [beta])
     }
 
     // MARK: - Per-pane By-Project sectioning (the split-tab "group name flickers with focus" bug)
@@ -582,19 +557,16 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertEqual(sections.last?.rows.map(\.id), [beta])
     }
 
-    /// By-Project SECTION order must be STABLE across a tab switch under Sort = Most Recent (`.updated`):
-    /// selecting a tab stamps recency (floating that tab's rows up WITHIN their project), but must NOT
-    /// reorder the sections themselves. Two single-pane tabs in different projects keep their creation-order
-    /// section layout regardless of which is focused. FAILS on a section order derived from the recency-
-    /// SORTED tab order (which flips [alpha, beta] → [beta, alpha] the moment you click the beta tab) — the
-    /// case the split-tab focus test can't reach (a pane focus never stamps TAB recency).
-    func testByProjectSectionOrderStableAcrossTabSwitchUnderUpdated() {
+    /// By-Project SECTION order is STABLE across a tab switch: selecting a tab must NOT reorder the
+    /// sections (they follow first-appearance in `session.tabs` — creation order — never focus/recency).
+    /// Two single-pane tabs in different projects keep their creation-order section layout regardless of
+    /// which is focused.
+    func testByProjectSectionOrderStableAcrossTabSwitch() {
         let store = makeStore()
         store.newTab(kind: .terminal, launchGrace: .zero) // two single-pane tabs
         let rows0 = RailRowsBuilder.rows(for: store)
         store.setLastKnownCwd("/work/alpha", for: rows0[0].id)
         store.setLastKnownCwd("/work/beta", for: rows0[1].id)
-        store.setTabSort(.updated)
 
         func headers() -> [String?] {
             RailRowsBuilder.sectionedByProject(
@@ -604,10 +576,10 @@ final class RailRowBuilderTests: XCTestCase {
 
         store.selectTab(0)
         XCTAssertEqual(headers(), ["alpha", "beta"], "creation-order section layout")
-        store.selectTab(1) // stamps tab 2 most-recent under .updated
+        store.selectTab(1)
         XCTAssertEqual(
             headers(), ["alpha", "beta"],
-            "section order stays put across a tab switch — recency floats rows WITHIN a section, not sections",
+            "section order stays put across a tab switch — creation order, never focus-derived",
         )
     }
 

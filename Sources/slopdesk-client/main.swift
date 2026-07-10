@@ -406,6 +406,10 @@ Task {
             case .cwd:
                 // OSC 7 cwd is GUI metadata for split/new-tab inheritance. The raw CLI has no pane spec.
                 break
+            case .projectKey:
+                // The host-computed By-Project sidebar key (wire type 34) backs the GUI sidebar
+                // sectioning. The raw-mode CLI has no sidebar — a no-op here (mirrors `.cwd`).
+                break
             }
         }
     }

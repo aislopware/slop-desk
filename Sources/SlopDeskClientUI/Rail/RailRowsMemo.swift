@@ -30,7 +30,7 @@ import SlopDeskWorkspaceCore
 ///   • tab identity + order, pane identity + pre-order (row set / order / `tabNumber`),
 ///   • each pane's full `PaneSpec` (kind, title + `userRenamed`, cwd, `lastKnownTitle`, `railSubtitle` —
 ///     the title/subtitle/cwd/disambiguation inputs; `PaneSpec` is `Equatable`, so any spec edit misses),
-///   • the pane's By-Project key (`paneProjectKey` — cached git toplevel else cwd; sectioning input),
+///   • the pane's By-Project key (`paneProjectKey` — the host-pushed spec key else cwd; sectioning input),
 ///   • A4 only: the foreground process of a pane that would TITLE itself by it (no folder name, no user
 ///     rename). Read conditionally so the whole-dict Observation dependency on `paneForegroundProcess` is
 ///     registered only while such a pane exists — for cwd-titled panes a process tick stays a cache hit.

@@ -122,6 +122,14 @@ public final class ConnectionViewModel {
     /// ``PaneSpec/lastKnownCwd`` so cwd inheritance uses the live prompt cwd immediately.
     public var onWorkingDirectoryChanged: ((_ cwd: String) -> Void)?
 
+    /// A HOST-computed By-Project key edge (wire type 34): the git worktree toplevel containing the
+    /// pane's cwd, else the cwd. The store persists it into ``PaneSpec/projectKey`` (the sidebar's
+    /// By-Project sectioning key). Deliberately NOT gated on `commandStartSeen` — the host re-asserts
+    /// the latched key on reattach BEFORE any command runs, and that re-assert is exactly what makes a
+    /// reconnect render the final sections without a flicker; transient plugin-dir poison is dropped at
+    /// the store's write sink instead (``WorkspaceStore/setProjectKey(_:for:)``).
+    public var onProjectKeyChanged: ((_ key: String) -> Void)?
+
     /// Whether a command has started (OSC 133;C) in this pane yet. Gates ``routeWorkingDirectory``:
     /// startup zsh/plugin code transiently `cd`s into a plugin cache dir while sourcing `.zshrc` and emits
     /// an OSC 7 from there BEFORE the first prompt — those pre-command edges must not overwrite the
@@ -752,6 +760,13 @@ public final class ConnectionViewModel {
             onProgressUpdate?(PaneProgress(state: state, percent: percent))
         case let .cwd(path):
             routeWorkingDirectory(path)
+        case let .projectKey(path):
+            // Host-computed By-Project key (wire type 34): forward every non-empty edge to the store's
+            // guarded write sink. Unlike OSC-7 cwd routing this is NOT gated on `commandStartSeen` — the
+            // host's reattach re-assert lands before any command, and dropping it would reintroduce the
+            // reconnect section flicker the host-side computation exists to remove.
+            guard !path.isEmpty else { break }
+            onProjectKeyChanged?(path)
         case .bell:
             break
         }
