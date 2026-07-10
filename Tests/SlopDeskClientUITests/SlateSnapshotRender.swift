@@ -246,9 +246,15 @@ final class SlateSnapshotRender: XCTestCase {
             persistence: nil,
         )
         let panes = tabs.compactMap(\.activePane)
-        store.setAgentStatus(.needsPermission, for: panes[1]) // herdr — blocked (hand, listed first)
-        store.setCompletionBadge(.failure, for: panes[2]) // api — failed command (triangle)
-        store.setAgentStatus(.done, for: panes[3]) // docs — unread finish (checkmark)
+        let now = Date()
+        // herdr — blocked 4 minutes ago, with the host's blocking question as the label.
+        store.setAgentLabel("Allow Bash(npm run deploy)?", for: panes[1])
+        store.setAgentStatus(.needsPermission, for: panes[1], at: now.addingTimeInterval(-240))
+        // api — failed command 12 minutes ago (no label → the "Failed" caption).
+        store.setCompletionBadge(.failure, for: panes[2], at: now.addingTimeInterval(-720))
+        // docs — agent finished an hour ago, its last line as the label.
+        store.setAgentLabel("Docs regenerated — 3 files changed", for: panes[3])
+        store.setAgentStatus(.done, for: panes[3], at: now.addingTimeInterval(-3900))
         return (store, panes[0])
     }
 

@@ -199,7 +199,12 @@ public extension WorkspaceStore {
                             )
                         }
                     if let badge, badge.needsAttention {
-                        found.append(UnseenAttentionEntry(pane: paneID, badge: badge))
+                        found.append(UnseenAttentionEntry(
+                            pane: paneID,
+                            badge: badge,
+                            label: agentLabel(for: paneID),
+                            since: paneCompletedAt[paneID] ?? tabLastActiveAt[tab.id],
+                        ))
                     }
                 }
             }
@@ -362,10 +367,26 @@ public extension WorkspaceStore {
 
 /// One pane currently WAITING on the user — an item of ``WorkspaceStore/unseenAttentionPanes`` (the
 /// titlebar dot's breakdown, listed in the title menu's NEEDS-ATTENTION section). Carries the RESOLVED
-/// gated badge so the menu row shows the same glyph vocabulary as the sidebar rail.
+/// gated badge so the menu row shows the same glyph vocabulary as the sidebar rail, plus the cheap
+/// context the row's second line + trailing age speak.
 public struct UnseenAttentionEntry: Equatable, Sendable {
     public let pane: PaneID
     public let badge: TabBadgeKind
+    /// The host-provided agent label (the type-27 blocking prompt / last assistant line), when present —
+    /// the row's second line ("Allow Bash(npm install)?"). `nil` ⇒ the view shows a per-badge caption.
+    public let label: String?
+    /// The best-known instant the pane ENTERED attention — the completion stamp
+    /// (``WorkspaceStore/paneCompletedAt``) when one exists, else the owning tab's activity recency
+    /// (``WorkspaceStore/tabLastActiveAt``, stamped by the same agent-status/completion edges). `nil`
+    /// when neither is known (e.g. a manual CLI badge override) — the view then shows no age.
+    public let since: Date?
+
+    public init(pane: PaneID, badge: TabBadgeKind, label: String? = nil, since: Date? = nil) {
+        self.pane = pane
+        self.badge = badge
+        self.label = label
+        self.since = since
+    }
 }
 
 private extension TabBadgeKind {

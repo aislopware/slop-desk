@@ -196,9 +196,17 @@ struct TitlePaneMenu: View {
             if !waiting.isEmpty {
                 SlatePopoverSection("NEEDS ATTENTION")
                 ForEach(waiting, id: \.pane) { entry in
-                    // The leading glyph IS the sidebar's badge view — one status vocabulary, rail ≡ menu
-                    // (the red orbit for blocked, the triangle for a failure, the dots for finishes).
-                    SlatePopoverRow(waitingTitle(entry.pane), leading: TabBadgeView(kind: entry.badge)) {
+                    // The leading glyph IS the sidebar's badge view — one status vocabulary, rail ≡ menu.
+                    // Line 2 = the host agent label (the actual blocking question / last assistant line)
+                    // when the wire carried one, else the badge's caption; trailing = how long it has
+                    // been waiting (the shortcut slot doubles as the age readout — one trailing
+                    // complication, same anatomy).
+                    SlatePopoverRow(
+                        waitingTitle(entry.pane),
+                        leading: TabBadgeView(kind: entry.badge),
+                        subtitle: entry.label ?? Self.waitingCaption(entry.badge),
+                        shortcut: Self.relativeAge(of: entry.since),
+                    ) {
                         jump(to: entry.pane)
                     }
                 }
@@ -228,6 +236,35 @@ struct TitlePaneMenu: View {
             kind: spec?.kind ?? .terminal, spec: spec, processLabel: store.paneForegroundProcess[id],
         )
         return title.isEmpty ? "~" : title
+    }
+
+    /// The fallback second line for a waiting pane whose host sent no agent label — what the badge MEANS,
+    /// in words. The non-attention kinds never reach the list; empty keeps them harmless if one ever does.
+    static func waitingCaption(_ badge: TabBadgeKind) -> String {
+        switch badge {
+        case .awaitingInput: "Needs your input"
+        case .error: "Failed"
+        case .completed,
+             .finished: "Finished"
+        case .caffeinate,
+             .commandBusy,
+             .commandRunning,
+             .running,
+             .sudo: ""
+        }
+    }
+
+    /// A compact "how long has this been waiting" readout — `42s` / `5m` / `2h` / `3d`, or `nil` when the
+    /// instant is unknown (no age shown) or in the future (clock skew — show nothing, never `-3s`). Pure +
+    /// static so the bucketing is unit-pinned.
+    static func relativeAge(of date: Date?, now: Date = Date()) -> String? {
+        guard let date else { return nil }
+        let seconds = now.timeIntervalSince(date)
+        guard seconds >= 0 else { return nil }
+        if seconds < 60 { return "\(Int(seconds))s" }
+        if seconds < 3600 { return "\(Int(seconds / 60))m" }
+        if seconds < 86400 { return "\(Int(seconds / 3600))h" }
+        return "\(Int(seconds / 86400))d"
     }
 
     /// Focus a waiting pane from its NEEDS-ATTENTION row (switches session + tab as needed). Deferred one

@@ -47,6 +47,9 @@ struct SlatePopoverRow: View {
     /// Type-erased so the row stays non-generic (menu rows, never a hot path).
     var leading: AnyView?
     let title: String
+    /// A muted second line under the title (the NEEDS-ATTENTION rows' agent label / caption). The row
+    /// grows to two lines when present; single-line rows keep the `heightBar` metric exactly.
+    var subtitle: String?
     var shortcut: String?
     var checked: Bool
     /// Muted title — a read-only info row (e.g. the working-directory path), not an action.
@@ -56,6 +59,7 @@ struct SlatePopoverRow: View {
     init(
         _ title: String,
         icon: String? = nil,
+        subtitle: String? = nil,
         shortcut: String? = nil,
         checked: Bool = false,
         dim: Bool = false,
@@ -64,6 +68,7 @@ struct SlatePopoverRow: View {
         self.title = title
         self.icon = icon
         leading = nil
+        self.subtitle = subtitle
         self.shortcut = shortcut
         self.checked = checked
         self.dim = dim
@@ -75,6 +80,7 @@ struct SlatePopoverRow: View {
     init(
         _ title: String,
         leading: some View,
+        subtitle: String? = nil,
         shortcut: String? = nil,
         checked: Bool = false,
         dim: Bool = false,
@@ -83,6 +89,7 @@ struct SlatePopoverRow: View {
         self.title = title
         icon = nil
         self.leading = AnyView(leading)
+        self.subtitle = subtitle
         self.shortcut = shortcut
         self.checked = checked
         self.dim = dim
@@ -102,11 +109,20 @@ struct SlatePopoverRow: View {
                         .foregroundStyle(Slate.Text.secondary)
                         .frame(width: 16)
                 }
-                Text(title)
-                    .font(.system(size: Slate.Typeface.base))
-                    .foregroundStyle(dim ? Slate.Text.secondary : Slate.Text.primary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                        .font(.system(size: Slate.Typeface.base))
+                        .foregroundStyle(dim ? Slate.Text.secondary : Slate.Text.primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.system(size: Slate.Typeface.footnote))
+                            .foregroundStyle(Slate.Text.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
                 Spacer(minLength: Slate.Metric.space2)
                 if checked {
                     Image(systemSymbol: .checkmark)
@@ -119,7 +135,10 @@ struct SlatePopoverRow: View {
                 }
             }
             .padding(.horizontal, Slate.Metric.space3)
-            .frame(height: Slate.Metric.heightBar)
+            // Single-line rows keep the exact bar metric; a subtitle row grows by token padding instead
+            // of a raw two-line height literal (check-ds-leaks).
+            .padding(.vertical, subtitle == nil ? 0 : Slate.Metric.space1)
+            .frame(minHeight: Slate.Metric.heightBar)
             .background(hovering ? Slate.State.hover : .clear)
             .contentShape(.rect)
         }

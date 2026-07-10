@@ -153,6 +153,38 @@ final class TitlebarAttentionDotTests: XCTestCase {
         XCTAssertEqual(store.unseenAttentionPanes.map(\.badge), [.error, .finished])
     }
 
+    /// Each entry carries the pane's host agent LABEL (the type-27 blocking prompt) and the instant it
+    /// entered attention — the completion stamp for a done/success, else the owning tab's activity
+    /// recency (stamped by the same status edge) — so the menu row can show WHAT it wants and for HOW
+    /// long. Injectable dates; no wall clock in the assertions.
+    func testEntriesCarryLabelAndSince() throws {
+        let (store, _, background) = try makeStoreWithBackgroundPane()
+        let blockedAt = Date(timeIntervalSinceReferenceDate: 7000)
+        store.setAgentLabel("Allow Bash(npm install)?", for: background)
+        store.setAgentStatus(.needsPermission, for: background, at: blockedAt)
+        let blocked = try XCTUnwrap(store.unseenAttentionPanes.first)
+        XCTAssertEqual(blocked.label, "Allow Bash(npm install)?", "the host label rides the entry")
+        XCTAssertEqual(blocked.since, blockedAt, "a blocked agent's since = the status-edge tab stamp")
+
+        // An agent DONE stamps `paneCompletedAt` — that exact instant wins over the tab recency.
+        let doneAt = Date(timeIntervalSinceReferenceDate: 8000)
+        store.setAgentStatus(.done, for: background, at: doneAt)
+        let done = try XCTUnwrap(store.unseenAttentionPanes.first)
+        XCTAssertEqual(done.since, doneAt, "a finish's since = the completion stamp")
+    }
+
+    /// A pane with no label and no stamps (a manual CLI override) lists with nil label/since — the view
+    /// falls back to its per-badge caption and shows no age.
+    func testManualOverrideEntryHasNoLabelOrSince() throws {
+        let store = makeStore()
+        let firstTab = try XCTUnwrap(store.tree.activeSession?.tabs.first?.id)
+        store.newTab(kind: .terminal)
+        store.setTabBadgeOverride(.error, for: firstTab)
+        let entry = try XCTUnwrap(store.unseenAttentionPanes.first)
+        XCTAssertNil(entry.label)
+        XCTAssertNil(entry.since)
+    }
+
     /// The list and the dot agree by construction: the focused leaf never appears in the list.
     func testUnseenAttentionPanesExcludesFocusedLeaf() throws {
         let (store, focused, background) = try makeStoreWithBackgroundPane()
