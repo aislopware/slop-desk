@@ -727,15 +727,21 @@ final class MuxChannelSession: @unchecked Sendable {
     ///     `taskLock` before `exitTask` is (re)started, making the assignment atomic with the
     ///     task launch and eliminating the race between a racing exit and a post-call assignment.
     ///
-    /// - Precondition: `isDetached == true`. A no-op (safe) if called on a live session.
+    /// - Precondition: `isDetached == true`. A no-op (safe) if called on a live session —
+    ///   returning `false` so the caller can REFUSE the channel instead of acking a pane whose
+    ///   relay is actually wired to someone else (audit #0: the silent no-op left the loser of a
+    ///   concurrent double-reattach believing it owned the pane).
+    ///
+    /// - Returns: `true` when the relay was rebound to the new sub-channels; `false` when the
+    ///   session was not detached (nothing was changed).
     func rebindRelay(
         data newData: MuxSubChannel,
         control newControl: MuxSubChannel,
         onExit newOnExit: (@Sendable (UInt32) -> Void)?,
-    ) {
+    ) -> Bool {
         taskLock.lock()
         guard isDetached else { taskLock.unlock()
-            return
+            return false
         }
         // Swap the sub-channels.
         data = newData
@@ -894,26 +900,15 @@ final class MuxChannelSession: @unchecked Sendable {
             self?.flushPendingResize()
         }
 
-        // Restart the exit task ONLY if the child is still alive (C2: if it exited while
-        // detached, onExit was already rewired to fire the detached-exit handler; we must
-        // not start a second exit task that double-fires onExit on the SAME channel ID).
-        //
-        // onExit was assigned above (under taskLock) BEFORE this task is started, so the
-        // reattach handler is atomically in place when the exit task can first fire. The task
-        // captures `rebindChannelID` (not `self.channelID`) to avoid retaining `self` strongly
-        // through the channel property.
-        if !isChildExited() {
-            let rebindChannelID = channelID
-            let rebindPTY = pty // local capture so the task does not capture `self` strongly
-            exitTask?.cancel()
-            exitTask = Task { [weak self] in
-                let code = await rebindPTY.waitForExit()
-                await self?.awaitEOFOrTimeout()
-                self?.enqueueExit(code: code)
-                await self?.awaitExitSentOrTimeout()
-                self?.onExit?(rebindChannelID)
-            }
-        }
+        // The ORIGINAL exit task from startRelay() keeps running untouched (audit #3). It reads
+        // `self?.onExit` dynamically at fire time, and `onExit` was reassigned above under
+        // taskLock — so whichever life the child dies in, the CURRENT handler fires (every
+        // handler ignores its channel-ID argument and captures its own key/context). The old
+        // cancel+recreate here DOUBLE-REGISTERED a waiter: `PTYProcess.waitForExit()` parks a
+        // plain CheckedContinuation with no cancellation plumbing, so `exitTask?.cancel()`
+        // never retired the old registration — `completeExit` then resumed BOTH tasks and the
+        // pane sent a duplicate `.exit` wire frame per reattach-while-alive cycle (and the
+        // stale task's `notifyCloseObservers` could fire from the wrong life).
 
         // R2 (benign): agentWatchTask was NOT cancelled by detach() — it survives the detached
         // window so the poll keeps running. But its control wake continuation was finished by
@@ -930,6 +925,7 @@ final class MuxChannelSession: @unchecked Sendable {
         // wake is retained even if the drain task hasn't started its `for await` loop yet —
         // bufferingNewest(1) holds one pending yield. No output is lost.
         setClientOnline(true)
+        return true
     }
 
     /// Pumps the ReplayBuffer tail (`seq > lastReceivedSeq`) into `channel` as sequential
@@ -1686,6 +1682,17 @@ final class MuxChannelSession: @unchecked Sendable {
     func ackForTesting(upTo seq: Int64) { acknowledge(upTo: seq) }
     /// Drives the real ``setClientOnline(_:)`` glue (offline-gate side).
     func setClientOnlineForTesting(_ online: Bool) { setClientOnline(online) }
+
+    /// Whether an exit-waiter task exists (audit #3 regression seam): only ``startRelay()`` may
+    /// ever create one — `rebindRelay` must NOT cancel+recreate it, because
+    /// `PTYProcess.waitForExit()` parks a plain CheckedContinuation with no cancellation
+    /// plumbing, so every recreate left one more never-retired waiter that fired a duplicate
+    /// `.exit` wire frame when the child eventually died.
+    var hasExitTaskForTesting: Bool {
+        taskLock.lock()
+        defer { taskLock.unlock() }
+        return exitTask != nil
+    }
 
     /// Exit-ordering EOF latch seams (R5 rank 5).
     func signalEOFForTesting() { signalEOFReached() }

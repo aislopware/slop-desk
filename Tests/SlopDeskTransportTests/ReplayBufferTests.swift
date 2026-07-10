@@ -503,6 +503,43 @@ final class ReplayBufferTests: XCTestCase {
         XCTAssertEqual(replayed.last, .output(seq: 51, bytes: Data("TAIL".utf8)))
     }
 
+    /// Audit 2026-07-10 #5: every re-chunked replay frame must respect the credit progress
+    /// invariant — payload ≤ ``MuxFlowControl/maxOutputFramePayloadBytes`` (wire size ≤ window/2).
+    /// The old hardcoded `max(32 KiB, …)` floor emitted 32768-byte payloads → 32781 wire bytes >
+    /// 32768 (window/2) — the literal "13-byte dead zone" wedge documented at
+    /// `MuxFlowControl.maxOutputFramePayloadBytes`, reintroduced on the cold-reattach path: a
+    /// partial over-half-window frame parks the sender against a receiver whose pending credit
+    /// can never cross the grant threshold (permanently silent pane right after reattach).
+    func testRechunkNeverExceedsMaxOutputFramePayload() {
+        let identity: @Sendable (Data) -> Data = \.self
+        var buf = ReplayBuffer(scrollbackBytes: 8 * 1024 * 1024, scrollbackDistiller: identity)
+        // Production-shaped ring entries: each at the drain cap (`takeMergedFrame` bounds every
+        // appended frame to exactly this), several of them.
+        let cap = MuxFlowControl.maxOutputFramePayloadBytes
+        var joinedIn = Data()
+        var last: Int64 = 0
+        for i in 0..<8 {
+            let chunk = Data(repeating: UInt8(0x30 + i), count: cap)
+            joinedIn += chunk
+            last = buf.append(bytes: chunk)
+        }
+        buf.ack(upTo: last) // everything → scrollback ring
+        let replayed = buf.replay(after: 0)
+        var joinedOut = Data()
+        for m in replayed {
+            guard case let .output(_, bytes) = m else {
+                XCTFail("expected .output")
+                continue
+            }
+            XCTAssertLessThanOrEqual(
+                bytes.count, cap,
+                "re-chunked replay frame must respect the window/2 progress invariant",
+            )
+            joinedOut += bytes
+        }
+        XCTAssertEqual(joinedOut, joinedIn, "re-chunk must be byte-preserving")
+    }
+
     func testNilDistillerIsRawByteIdentical() {
         // With no distiller, replay(after:) is byte-identical to the pre-distiller behaviour.
         var buf = ReplayBuffer(scrollbackBytes: 256) // distiller defaults to nil

@@ -206,6 +206,106 @@ final class MuxBugFixRegressionTests: XCTestCase {
         )
     }
 
+    // MARK: - [Audit 2026-07-10 #8] a reused channel id after close is refused, never respawned
+
+    /// On the host the PEER chooses ids; ids are terminal-forever once closed (monotonic no-reuse).
+    /// The registration gate used to consult only the dispatch dict (`dataChannels[id] == nil`),
+    /// which the close path had just emptied — so open→close→open on ONE id re-invoked
+    /// `hostOpenHandler` (a fresh PTY fork) every cycle, unbounded: the live-channel cap never
+    /// trips (count stays ~1) and the ChannelTable ring bounds table memory, not spawns.
+    func testReusedChannelIDAfterCloseIsRefusedNotRespawned() async throws {
+        let (_, hostControl) = InMemoryMuxLink.pair()
+        let (clientData, hostData) = InMemoryMuxLink.pair()
+        let host = MuxNWConnection(role: .host, controlLink: hostControl, dataLink: hostData)
+
+        let opens = AtomicCounter()
+        await host.setHostOpenHandler { _ in opens.bump() }
+        await host.setHostCloseHandler { _ in }
+        await host.start()
+
+        let open = MuxEnvelopeCodec.encode(
+            .channelOpen(channelID: 5, sessionID: UUID(), lastReceivedSeq: 0, channelClass: 0, initialCwd: nil),
+        )
+        try await clientData.send(open)
+        try await clientData.send(MuxEnvelopeCodec.encode(.channelClose(channelID: 5)))
+        // The hostile/buggy reopen storm on the SAME (now terminally closed) id.
+        for _ in 0..<10 {
+            try await clientData.send(open)
+        }
+        try await Task.sleep(for: .milliseconds(120))
+
+        XCTAssertEqual(
+            opens.value, 1,
+            "a channelOpen for a terminally-closed id must be refused, not re-registered — "
+                + "each accepted reopen used to fork a fresh PTY (unbounded fork storm on one id)",
+        )
+    }
+
+    // MARK: - [Audit 2026-07-10 #13] the client drops unsolicited channelOpen (peer cannot grow its tables)
+
+    /// Only the client ever legitimately sends `channelOpen` (the host is a pure responder). A
+    /// buggy/compromised HOST spamming distinct ids at the client used to `open(id)` a permanent
+    /// phantom entry per id in the client's dataTable (never closed → never ring-evicted):
+    /// unbounded memory growth from network input — the client-side mirror of the host's guards.
+    func testClientRoleDropsUnsolicitedChannelOpen() async throws {
+        let (peerControl, clientControl) = InMemoryMuxLink.pair()
+        let (peerData, clientData) = InMemoryMuxLink.pair()
+        _ = peerControl
+        let client = MuxNWConnection(role: .client, controlLink: clientControl, dataLink: clientData)
+        await client.start()
+
+        for id in UInt32(1)...50 {
+            try await peerData.send(MuxEnvelopeCodec.encode(
+                .channelOpen(channelID: id, sessionID: UUID(), lastReceivedSeq: 0, channelClass: 0, initialCwd: nil),
+            ))
+        }
+        try await Task.sleep(for: .milliseconds(120))
+
+        let dataCount = await client.dataTableStateCountForTesting
+        XCTAssertEqual(
+            dataCount, 0,
+            "an unsolicited channelOpen storm must not grow the client's data router table",
+        )
+    }
+
+    // MARK: - [Audit 2026-07-10 #7] a host refusal actually closes the client's channel
+
+    /// The production client marks a channel `.open` OPTIMISTICALLY in `openChannel()` (before the
+    /// frame is sent), so by ack time the state is never `.idle`. `ChannelTable.reject` used to
+    /// transition only from `.idle` → a real host refusal (`stopping`, reattach-key race) was a
+    /// silent no-op: the sub-channels were never finished and the pane hung open + silent forever,
+    /// with nothing for the UI or ReconnectManager to observe. The isolated MuxRouter unit test
+    /// missed this because `allocateChannel()` alone leaves the state `.idle`; this test drives the
+    /// REAL `openChannel()` sequence.
+    func testHostRefusalFinishesTheOptimisticallyOpenedChannel() async throws {
+        let (peerControl, clientControl) = InMemoryMuxLink.pair()
+        let (peerData, clientData) = InMemoryMuxLink.pair()
+        _ = peerControl
+        let client = MuxNWConnection(role: .client, controlLink: clientControl, dataLink: clientData)
+        await client.start()
+
+        let pair = try await client.openChannel(sessionID: UUID(), lastReceivedSeq: 0)
+
+        // Observe the data sub-channel's inbound: it must COMPLETE when the refusal lands.
+        let finished = AtomicCounter()
+        let observer = Task {
+            do {
+                for try await _ in pair.data.inbound {}
+            } catch {}
+            finished.bump()
+        }
+
+        // The host refuses the open (e.g. it was stopping, or the reattach key raced).
+        try await peerData.send(MuxEnvelopeCodec.encode(.channelOpenAck(channelID: 1, accepted: false)))
+
+        try await Self.waitUntil(timeout: 5) { finished.value == 1 }
+        XCTAssertEqual(
+            finished.value, 1,
+            "a refused open must finish the sub-channels — a silent no-op left the pane hung forever",
+        )
+        observer.cancel()
+    }
+
     // MARK: - helpers
 
     /// Polls `condition` (an async predicate) until true or the timeout elapses.

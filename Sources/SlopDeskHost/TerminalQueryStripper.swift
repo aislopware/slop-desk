@@ -161,22 +161,38 @@ enum TerminalQueryStripper {
     // MARK: OSC / DCS
 
     /// OSC numbers whose query AND set forms are stripped from replay: dynamic colors
-    /// (10/11/12/17/19 + resets 110/111/112), palette (4/5/104/105), clipboard (52).
+    /// (10/11/12/17/19 + resets 110/111/112), palette (4/5/104/105), clipboard (52), and the
+    /// kitty color protocol (21 — a live `key=?` query/response OSC in ghostty, same shape and
+    /// PTY-input delivery mechanism as 10/11/12; audit 2026-07-10 #2).
     private static let strippedOSCNumbers: Set<String> =
-        ["4", "5", "10", "11", "12", "17", "19", "52", "104", "105", "110", "111", "112"]
+        ["4", "5", "10", "11", "12", "17", "19", "21", "52", "104", "105", "110", "111", "112"]
 
     private static func shouldStripOSC(body: ArraySlice<UInt8>) -> Bool {
         let number = body.prefix(while: { $0 != UInt8(ascii: ";") })
         return strippedOSCNumbers.contains(String(bytes: number, encoding: .utf8) ?? "")
     }
 
-    /// DCS bodies that are queries (XTGETTCAP `+q…`, DECRQSS `$q…`) or the echoed XTVERSION
-    /// response (`>|…`). Anything else (sixel…) is kept.
+    /// DCS bodies that are queries (XTGETTCAP `+q…`, DECRQSS `$q…`), the echoed XTVERSION
+    /// response (`>|…`), or the echoed DECRQSS/XTGETTCAP responses (`{0|1}$r…` / `{0|1}+r…`,
+    /// ghostty's reply formats — audit 2026-07-10 #1: a poisoned transcript carrying a reply
+    /// re-emitted raw DCS garbage on the fresh command line). Anything else (sixel…) is kept.
     private static func shouldStripDCS(body: ArraySlice<UInt8>) -> Bool {
-        let prefix = [UInt8](body.prefix(2))
-        return prefix == [UInt8(ascii: "+"), UInt8(ascii: "q")]
-            || prefix == [UInt8(ascii: "$"), UInt8(ascii: "q")]
-            || prefix.first == UInt8(ascii: ">") && prefix.dropFirst().first == UInt8(ascii: "|")
+        let prefix = [UInt8](body.prefix(3))
+        if prefix.count >= 2 {
+            if prefix[0] == UInt8(ascii: "+"), prefix[1] == UInt8(ascii: "q") { return true }
+            if prefix[0] == UInt8(ascii: "$"), prefix[1] == UInt8(ascii: "q") { return true }
+            if prefix[0] == UInt8(ascii: ">"), prefix[1] == UInt8(ascii: "|") { return true }
+        }
+        if prefix.count >= 3,
+           prefix[0] == UInt8(ascii: "0") || prefix[0] == UInt8(ascii: "1"),
+           prefix[1] == UInt8(ascii: "$") || prefix[1] == UInt8(ascii: "+"),
+           prefix[2] == UInt8(ascii: "r")
+        {
+            return true
+        }
+        // The zero-body miss responses `0$r`/`1$r`/`0+r`/`1+r` are exactly 3 bytes; longer hit
+        // responses carry the payload after `r` — both are covered by the 3-byte prefix match.
+        return false
     }
 
     /// Scans a string sequence's body from `bodyStart` to its terminator. Returns the body end

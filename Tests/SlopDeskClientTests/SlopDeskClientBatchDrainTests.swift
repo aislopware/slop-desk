@@ -93,23 +93,28 @@ final class SlopDeskClientBatchDrainTests: XCTestCase {
         await client.close()
     }
 
-    /// Night-review regression: a (re)connect must DROP the dead session's undrained inbox
-    /// — stale entries would render after the fresh-session wipe AND credit their wire
-    /// bytes to the NEW transport (a phantom windowAdjust over-grant on the new channel).
-    func testReconnectClearsUndrainedInbox() async throws {
+    /// Audit 2026-07-10 #6 (SUPERSEDES the night-review wipe): a (re)connect must KEEP the
+    /// prior life's undrained inbox bytes. They were already claimed to the host at wire-arrival
+    /// time (`highestContiguousSeq` → `lastReceivedSeq`), so a reattaching host will never
+    /// resend them — dropping the client's only copy was a silent, permanent scrollback gap at
+    /// the reconnect boundary. The night-review's real concern (crediting stale wire bytes to
+    /// the NEW transport) is handled by zeroing the carried entries' credit, which
+    /// ``SlopDeskClientReconnectInboxTests`` pins; here we pin ordering + no-loss.
+    func testReconnectKeepsUndrainedInboxAheadOfFreshOutput() async throws {
         let client = SlopDeskClient(makeTransport: { RecordingTransport() })
         try await client.connect(host: "h", port: 1)
-        await client.handleInboundForTesting(.output(seq: 1, bytes: Data("dead-session".utf8)))
+        await client.handleInboundForTesting(.output(seq: 1, bytes: Data("old-tail-".utf8)))
 
-        // Reconnect WITHOUT draining: the stale entry must be gone afterwards.
+        // Reconnect WITHOUT draining: the un-consumed tail must survive, FIFO-ahead of the
+        // fresh session's output.
         try await client.connect(host: "h", port: 1)
-        let batch = await client.takeOutputBatch()
-        XCTAssertTrue(batch.isEmpty, "the dead session's undrained entries never cross a reconnect")
-
-        // And the fresh session's first output still flows normally.
         await client.handleInboundForTesting(.output(seq: 1, bytes: Data("fresh".utf8)))
-        let fresh = await client.takeOutputBatch()
-        XCTAssertEqual(fresh, [Data("fresh".utf8)])
+        let batch = await client.takeOutputBatch()
+        let joined = batch.reduce(Data()) { $0 + $1 }
+        XCTAssertEqual(
+            joined, Data("old-tail-fresh".utf8),
+            "the prior life's un-consumed bytes must cross the reconnect, ahead of fresh output",
+        )
         await client.close()
     }
 

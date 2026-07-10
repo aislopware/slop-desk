@@ -114,7 +114,7 @@ final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
         let recorder = SendRecorder()
         let newData = MuxSubChannel(channelID: 1, channel: .data) { _, frame in recorder.record(frame) }
         let newControl = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
-        session.rebindRelay(data: newData, control: newControl, onExit: nil)
+        XCTAssertTrue(session.rebindRelay(data: newData, control: newControl, onExit: nil))
 
         let expected = away1 + away2
         await waitUntil { recorder.outputBytes == expected }
@@ -151,7 +151,7 @@ final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
         let recorder = SendRecorder()
         let newData = MuxSubChannel(channelID: 1, channel: .data) { _, frame in recorder.record(frame) }
         let newControl = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
-        session.rebindRelay(data: newData, control: newControl, onExit: nil)
+        XCTAssertTrue(session.rebindRelay(data: newData, control: newControl, onExit: nil))
 
         await waitUntil { gate.outstanding == 0 && !rec.isPaused }
         XCTAssertEqual(
@@ -195,9 +195,40 @@ final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
         // The recording channel has no real peer granting window updates — top up the send
         // window so the whole 1 MiB backlog (+ frame overhead) can ship without suspending.
         await newData.grantCredit(4 * 1024 * 1024)
-        session.rebindRelay(data: newData, control: newControl, onExit: nil)
+        XCTAssertTrue(session.rebindRelay(data: newData, control: newControl, onExit: nil))
         await waitUntil { recorder.outputBytes.count == 16 * 64 * 1024 && !rec.isPaused }
         XCTAssertEqual(recorder.outputBytes.count, 16 * 64 * 1024, "the whole away-backlog ships on reattach")
         XCTAssertFalse(rec.isPaused, "gate rebalances back below the restored attached bound")
+    }
+
+    // MARK: - Audit #3 — rebindRelay must NOT register a second PTY exit waiter
+
+    /// `PTYProcess.waitForExit()` parks a plain CheckedContinuation with NO cancellation
+    /// plumbing: cancelling the task that awaits it never retires the registration. The old
+    /// rebindRelay cancelled+recreated the exit task on every reattach-while-alive, so each
+    /// cycle added one more parked waiter — when the child finally exited, `completeExit`
+    /// resumed ALL of them and the pane sent a duplicate `.exit` wire frame per cycle.
+    ///
+    /// The fix: the ONE exit task from `startRelay()` is the only waiter, ever (it reads
+    /// `onExit` at fire time, so rebinding the handler is enough). On a session that never
+    /// ran `startRelay()` (these hang-safe tests), `exitTask` is nil and must STAY nil
+    /// across any number of detach/rebind cycles — under the old code the first rebind
+    /// created one, which is exactly the double-registration this pins against.
+    func testRebindRelayNeverCreatesAnExitWaiter() {
+        let session = makeSession()
+        session.installGateForTesting(PausableQueueGate(capacity: 1_000_000) { _ in })
+        XCTAssertFalse(session.hasExitTaskForTesting, "precondition: no startRelay → no exit task")
+
+        for cycle in 1...3 {
+            session.detach(onDetachedExit: { _ in })
+            let newData = MuxSubChannel(channelID: 1, channel: .data) { _, _ in }
+            let newControl = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
+            XCTAssertTrue(session.rebindRelay(data: newData, control: newControl, onExit: nil))
+            XCTAssertFalse(
+                session.hasExitTaskForTesting,
+                "rebind cycle \(cycle): rebindRelay must not mint an exit waiter — "
+                    + "only startRelay() ever does (duplicate .exit frame regression)",
+            )
+        }
     }
 }

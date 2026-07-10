@@ -86,6 +86,32 @@ final class ChannelTableTests: XCTestCase {
         XCTAssertEqual(table.state(of: id), .closed)
     }
 
+    /// Audit 2026-07-10 #7: the production client marks a channel `.open` OPTIMISTICALLY in
+    /// `openChannel()` before the frame is even sent, so a refusal always finds `.open`, never
+    /// `.idle`. `reject` must close from BOTH — the old `.idle`-only guard made a real host
+    /// refusal a silent no-op (the pane hung open + silent forever).
+    func testRejectClosesFromOpenNotJustIdle() {
+        var table = ChannelTable()
+        let idleID = table.allocate()
+        XCTAssertEqual(table.reject(idleID), .closed, "reject from .idle closes (the pre-open refusal)")
+
+        let openID = table.allocate()
+        table.open(openID) // the production optimistic open
+        XCTAssertEqual(
+            table.reject(openID), .closed,
+            "reject from .open must close too — production state is ALWAYS .open by ack time",
+        )
+        XCTAssertFalse(table.isOpen(openID))
+
+        // Terminal states and unknown ids stay untouched (no resurrection, no phantom entry).
+        let closingID = table.allocate()
+        table.open(closingID)
+        table.localClose(closingID)
+        XCTAssertEqual(table.reject(closingID), .halfClosed, "reject never regresses a close handshake")
+        XCTAssertEqual(table.reject(9999), .closed)
+        XCTAssertNil(table.state(of: 9999), "a stray refusal for an unknown id creates no entry")
+    }
+
     func testLiveChannelIDsExcludesOnlyFullyClosed() {
         var table = ChannelTable()
         let a = table.allocate() // 1 idle

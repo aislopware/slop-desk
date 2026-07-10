@@ -102,14 +102,27 @@ public struct ChannelTable: Sendable, Equatable {
 
     /// Records that the responder REFUSED our channel-open (it replied
     /// ``MuxFrame/channelOpenAck`` with `accepted: false`). A refused channel never
-    /// opened, so there is NO half-close handshake — the locally-allocated `idle` id
-    /// goes straight to ``ChannelState/closed`` (retained, never reused, like any closed
-    /// id). A no-op for an id that is already open/closing/closed or was never allocated
-    /// (a stray refusal for an unknown id creates no entry). Returns the resulting state.
+    /// opened, so there is NO half-close handshake — the id goes straight to
+    /// ``ChannelState/closed`` (retained, never reused, like any closed id).
+    ///
+    /// Accepts the transition from `.idle` AND `.open` (audit 2026-07-10 #7): the production
+    /// client marks a channel `.open` OPTIMISTICALLY in `openChannel()` — before the frame is
+    /// even sent — so by ack time the state is never `.idle`. The old `.idle`-only guard made a
+    /// real host refusal (`stopping`, reattach-key race) a silent no-op: the router reported
+    /// `.open`, the sub-channels were never finished, and the pane hung open + silent forever.
+    /// A no-op for an id already closing/closed or never allocated (a stray refusal for an
+    /// unknown id creates no entry). Returns the resulting state.
     @discardableResult
     public mutating func reject(_ id: UInt32) -> ChannelState {
-        if states[id] == .idle { states[id] = .closed
+        switch states[id] {
+        case .idle,
+             .open:
+            states[id] = .closed
             noteTerminal(id)
+        case .halfClosed,
+             .closed,
+             .none:
+            break // already terminal (ring-recorded at first close) or unknown — no entry created
         }
         return states[id] ?? .closed
     }

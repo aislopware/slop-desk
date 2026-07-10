@@ -312,7 +312,7 @@ public final class HostServer: @unchecked Sendable {
             await group.waitForAll()
         }
         // S3: kill every detached session — shells that were kept alive across a client disconnect.
-        await detachedStore?.drainAll()
+        detachedStore?.drainAll()
         // R5 rank 3: close every accepted connection so its 2 receive loops + 2 NWConnections/sockets
         // are torn down (and its handler retain cycle broken). Without this each Start→Stop cycle on the
         // long-lived menu-bar host abandoned one live connection → accumulation toward EMFILE.
@@ -396,21 +396,14 @@ public final class HostServer: @unchecked Sendable {
         hook(count)
     }
 
-    /// Registers a reattached session in the live map under `lock`, exactly mirroring the
-    /// fresh-shell path in ``spawnFreshShell``. Returns `true` if the session was registered,
-    /// or `false` if `stopping` was set (the caller must then shut the session down and refuse
-    /// the channel). NSLock is unavailable from the async ``performReattach`` directly — same
-    /// discipline as ``markStopping()`` / ``drainMuxSessions()``.
-    @discardableResult
-    private func registerReattachedSession(_ session: MuxChannelSession, key: MuxSessionKey) -> Bool {
+    /// Unregisters `key` from the live map iff it still points at `session` — the defensive
+    /// failed-rebind path in ``performReattach`` (registration itself now happens inside
+    /// ``spawnMuxChannel``'s claim critical section). NSLock is unavailable from the async
+    /// ``performReattach`` directly — same discipline as ``markStopping()`` / ``drainMuxSessions()``.
+    private func unregisterReattachedSession(_ session: MuxChannelSession, key: MuxSessionKey) {
         lock.lock()
-        if stopping {
-            lock.unlock()
-            return false
-        }
-        muxSessions[key] = session
+        if muxSessions[key] === session { muxSessions[key] = nil }
         lock.unlock()
-        return true
     }
 
     /// Snapshot of the live connection ids carrying channels (diagnostics / tests).
@@ -482,14 +475,43 @@ public final class HostServer: @unchecked Sendable {
     ///   signals this (C4: client resets its seq to 0 on a fresh-shell ack).
     private func spawnMuxChannel(_ open: MuxChannelOpen, on connection: MuxNWConnection, connectionID: UUID) {
         let key = MuxSessionKey(connectionID: connectionID, channelID: open.channelID)
+        // (`hasRealSessionID` compares the ZERO sentinel `WireMessage.newSessionID` — a
+        // first-connect preamble from a raw/old client. Our mux client replaces the sentinel
+        // with a fresh real UUID before sending, so this is normally always true.)
+        let hasRealSessionID = open.sessionID != WireMessage.newSessionID
+        // ONE critical section decides the route (audit 2026-07-10 #0/#9/#12): the composite-key
+        // idempotency guard, the stopping gate, the "sessionID already attached elsewhere"
+        // refusal, and the exclusive detached-store claim all happen under `lock` — paired with
+        // `detachMuxSession`'s synchronous insert, no two channelOpens can ever route the same
+        // sessionID to two attachments (the double-attach alias that let one client's later
+        // close kill the OTHER client's live PTY and delete its scrollback journal).
+        lock.lock()
+        let isStopping = stopping
         // Idempotency guard (defense-in-depth with the `isNewChannel` gate in `MuxNWConnection.route`):
         // if a session already exists for this composite key, a duplicate/retransmitted `channelOpen`
         // must NOT spawn a SECOND PTY and overwrite the live session in `muxSessions` (orphaning the
         // first PTY + master fd + reaper thread). Re-ack idempotently and return.
-        lock.lock()
         let alreadyLive = muxSessions[key] != nil
-        let isStopping = stopping
+        // Same sessionID already LIVE under a DIFFERENT composite key (a second connection /
+        // window presenting a persisted id that is still attached): refuse. Aliasing one live
+        // session under two keys (the old behavior's effective outcome) froze the loser AND made
+        // its close path kill the winner's PTY; spawning a duplicate fresh shell instead would
+        // interleave two writers into the one sessionID-keyed journal. One attachment per
+        // sessionID, ever — the loser gets `accepted: false` and may retry with a fresh id.
+        let attachedElsewhere = !isStopping && !alreadyLive && hasRealSessionID
+            && muxSessions.contains { $0.key != key && $0.value.sessionID == open.sessionID }
+        // S3 PATH A claim: exclusively TAKE the detached session (removes the entry + cancels
+        // its TTL task atomically — `claim` auto-evicts a child-exited entry and returns nil,
+        // PATH C → falls to B). Registering the claimed session under its NEW key in this same
+        // critical section makes the sessionID immediately visible as "attached" to every later
+        // channelOpen — closing the two-concurrent-reattach and reattach-vs-TTL races.
+        var claimed: MuxChannelSession?
+        if !isStopping, !alreadyLive, !attachedElsewhere, hasRealSessionID, let store = detachedStore {
+            claimed = store.claim(open.sessionID)
+            if let claimed { muxSessions[key] = claimed }
+        }
         lock.unlock()
+
         if isStopping {
             // Shutting down — refuse the channel so we never fork a PTY that would outlive the daemon
             // (a channelOpen racing stop() after the session map was drained).
@@ -500,42 +522,42 @@ public final class HostServer: @unchecked Sendable {
             Task { await connection.sendOpenAck(open.channelID, accepted: true) }
             return
         }
-
-        // S3 PATH A: reattach to an existing detached session.
-        // `lookup` auto-evicts a child-exited entry and returns nil (PATH C → falls to B).
-        // (The guard compares the ZERO sentinel `WireMessage.newSessionID` — a first-connect
-        // preamble from a raw/old client. Our mux client replaces the sentinel with a fresh
-        // real UUID before sending, so this arm is normally always taken.)
-        if let store = detachedStore, open.sessionID != WireMessage.newSessionID {
+        if attachedElsewhere {
+            onLog?(
+                "mux channel \(open.channelID) (conn \(connectionID)): refused — "
+                    + "session \(open.sessionID) is already attached on another connection",
+            )
+            Task { await connection.sendOpenAck(open.channelID, accepted: false) }
+            return
+        }
+        if let session = claimed {
+            // PATH A: live detached session claimed — reattach.
             Task { [weak self] in
-                guard let self else { return }
-                if let session = await store.lookup(open.sessionID) {
-                    // PATH A: live detached session found — reattach.
-                    await performReattach(
-                        session: session,
-                        open: open,
-                        connection: connection,
-                        connectionID: connectionID,
-                        store: store,
-                    )
-                } else {
-                    // PATH B/C: no detached session (or child exited) — spawn fresh.
-                    spawnFreshShell(open: open, connection: connection, connectionID: connectionID, key: key)
-                }
+                await self?.performReattach(
+                    session: session,
+                    open: open,
+                    connection: connection,
+                    connectionID: connectionID,
+                )
             }
         } else {
-            // S3 disabled or zero UUID (first connect) — always PATH B.
+            // PATH B/C: no detached session (or child exited), S3 disabled, or zero UUID
+            // (first connect) — spawn fresh.
             spawnFreshShell(open: open, connection: connection, connectionID: connectionID, key: key)
         }
     }
 
     /// PATH A: reattach a returning client to its detached ``MuxChannelSession``.
+    ///
+    /// The session was already CLAIMED (removed from the store, TTL cancelled) and registered
+    /// under `key` in ``spawnMuxChannel``'s single critical section — this method only rebinds
+    /// the relay and acks. If `stop()` raced in after the claim, `drainMuxSessions()` finds the
+    /// session in the map and shuts it down like any other live session.
     private func performReattach(
         session: MuxChannelSession,
         open: MuxChannelOpen,
         connection: MuxNWConnection,
         connectionID: UUID,
-        store: DetachedSessionStore,
     ) async {
         let key = MuxSessionKey(connectionID: connectionID, channelID: open.channelID)
         // Replay the buffered tail to the NEW data sub-channel BEFORE rebinding so live output
@@ -546,16 +568,21 @@ public final class HostServer: @unchecked Sendable {
         // onExit is threaded INTO rebindRelay so it is assigned under taskLock, atomically with
         // the exitTask (re)start — closing the race where a shell that exits between rebindRelay
         // returning and a post-call `session.onExit =` assignment would fire the stale
-        // detached-exit handler. C2: store.remove cancels the TTL timer.
-        session.rebindRelay(
+        // detached-exit handler. (The TTL timer was already cancelled by `claim`.)
+        let rebound = session.rebindRelay(
             data: open.data,
             control: open.control,
             onExit: { [weak self] _ in self?.removeMuxSession(key) },
         )
-        await store.remove(open.sessionID)
-        // Register in the live map (synchronous helper — NSLock is unavailable from async directly).
-        guard registerReattachedSession(session, key: key) else {
-            session.shutdown()
+        guard rebound else {
+            // Defensive (the exclusive claim should make this unreachable): the session was not
+            // in the detached state — refuse the channel rather than ack a pane whose relay is
+            // wired elsewhere. Unregister OUR key only; the session itself is not ours to kill.
+            unregisterReattachedSession(session, key: key)
+            onLog?(
+                "mux channel \(open.channelID) (conn \(connectionID)): refused — "
+                    + "session \(open.sessionID) was claimed but not rebindable (not detached)",
+            )
             Task { await connection.sendOpenAck(open.channelID, accepted: false) }
             return
         }
@@ -787,17 +814,19 @@ public final class HostServer: @unchecked Sendable {
         session.detach { [weak self, weak store, weak session] id in
             // C2: shell exited while in the store — remove the entry (TTL cancelled) and
             // close the master fd. The shell is already dead, so no kill needed.
-            Task {
-                await store?.remove(id)
-                // E13 WI-3 (prevent-sleep strict balance): a parked shell that exits mid-turn never
-                // delivered a non-working transition — fan a final `.none` so a `.working` observer clears it.
-                if let session { self?.fanAgentTeardown(session) }
-                // shutdownDetached is safe on an already-dead shell (idempotent fd close).
-                session?.shutdownDetached()
-            }
+            store?.remove(id)
+            // E13 WI-3 (prevent-sleep strict balance): a parked shell that exits mid-turn never
+            // delivered a non-working transition — fan a final `.none` so a `.working` observer clears it.
+            if let session { self?.fanAgentTeardown(session) }
+            // shutdownDetached is safe on an already-dead shell (idempotent fd close).
+            session?.shutdownDetached()
             self?.onLog?("detached session \(id): shell exited while parked")
         }
-        Task { await store.insert(session, key: key, ttl: ttl) }
+        // SYNCHRONOUS insert (audit #9): the old `Task { await store.insert }` fire-and-forget
+        // could lose to a fast reconnect, whose claim then missed the store and spawned a SECOND
+        // shell under the same sessionID (orphaned live PTY + two writers interleaving the one
+        // sessionID-keyed journal). By the time this method returns, the session is claimable.
+        store.insert(session, key: key, ttl: ttl)
         onLog?("mux channel \(key.channelID) (conn \(key.connectionID)): detached session \(sessionID)")
     }
 

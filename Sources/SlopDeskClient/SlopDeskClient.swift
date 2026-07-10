@@ -430,27 +430,35 @@ public actor SlopDeskClient {
         // true on reconnect — the old `!returning` gate skipped the reset exactly when it was most
         // needed; the dedup-regression test pins this).
         //
-        //   • resumeFromSeq == 0  →  HOST spawned a FRESH shell. The old session is gone; its
-        //     `highestSeqFed`/`highestContiguousSeq` MUST be reset so `deliverOutput` doesn't
-        //     silently drop the fresh shell's seq-1 output. The inbox is flushed for the same
-        //     reason (see below).
+        //   • resumeFromSeq == 0  →  the mux path's constant answer (the openAck carries only
+        //     `accepted: Bool`) — the host may have spawned a FRESH shell OR genuinely
+        //     reattached (PATH A); the client cannot tell. The seq marks MUST be reset so a
+        //     fresh shell's seq-1 output isn't dropped as a "duplicate" (a reattached shell's
+        //     next seqs just re-baseline via the gap-tolerant `deliverOutput`).
         //
         //   • resumeFromSeq > 0  →  HOST honored a real RETURNING_CLIENT resume (SLOPDESK_DETACH_ENABLED
         //     path): it replays the tail from `resumeFromSeq` onward. The client's marks were seeded
         //     by ``seedResumeIdentity(sessionID:seq:)`` to match, so the dedup high-water is ALREADY
         //     correct — resetting would discard them and make `deliverOutput` re-deliver the replayed
-        //     tail as new, duplicating output on the pane. Leave them; the inbox is already empty
-        //     (drained on the prior disconnect / before seeding).
+        //     tail as new, duplicating output on the pane. Leave them.
         if resumeFromSeq == 0 {
             highestSeqFed = 0
             highestContiguousSeq = 0
             ackPending = false
-            // Drop the DEAD session's undrained inbox entries with the seq marks. Two reasons
-            // (night-review findings): (a) a consumer drain racing the reconnect could paint
-            // the old session's tail AFTER the fresh-session wipe; (b) takeOutputBatch credits
-            // taken entries to the CURRENT transport — stale entries would emit a phantom
-            // windowAdjust over-grant on the NEW channel (its peer never sent those bytes).
-            outputInbox.removeAll(keepingCapacity: true)
+            // KEEP the un-consumed inbox bytes (audit 2026-07-10 #6). `deliverOutput` advanced
+            // `highestContiguousSeq` at wire-ARRIVAL time, and this connect already presented it
+            // as `lastReceivedSeq` — so on a genuine reattach the host will NEVER resend these
+            // bytes: the inbox copy is the only copy, and the old `removeAll()` here made a
+            // silent, permanent scrollback gap at every reconnect that raced an undrained burst
+            // (deterministically so on iOS pause→resume). The entries stay FIFO-ahead of the new
+            // life's output — correct for PATH A (tail of the same shell) and for PATH B (the
+            // grid keeps the old session's content; its tail still belongs before the fresh
+            // shell's bytes). Their wire-credit is ZEROED because `takeOutputBatch` credits taken
+            // entries to the CURRENT transport — the old wipe's actual motivation — and the NEW
+            // channel's peer never sent those bytes (a phantom windowAdjust over-grant otherwise).
+            if !outputInbox.isEmpty {
+                outputInbox = outputInbox.map { (bytes: $0.bytes, wireBytes: 0) }
+            }
         }
 
         if returning, let learnedID {

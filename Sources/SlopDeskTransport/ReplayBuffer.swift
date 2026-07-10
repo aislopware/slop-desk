@@ -336,13 +336,27 @@ public struct ReplayBuffer: Sendable {
 
     /// Splits `data` (distilled scrollback) into at most `seqs.count` `.output` messages, assigning the
     /// scrollback seqs ascending. `data.count <= sum(original entry sizes)`, so at chunk size
-    /// `max(32 KiB, ceil(count / maxChunks))` the chunk count is `<= maxChunks`; the LAST allowed chunk
+    /// `ceil(count / maxChunks)` the chunk count is `<= maxChunks`; the LAST allowed chunk
     /// absorbs the remainder so every byte is emitted and no seq is reused. Empty `data` ⇒ no messages
     /// (the client's forward-jump tolerance in `deliverOutput` handles the seq gap).
+    ///
+    /// The chunk size is CLAMPED to ``MuxFlowControl/maxOutputFramePayloadBytes`` (audit
+    /// 2026-07-10 #5): every emitted frame must satisfy the credit progress invariant
+    /// (wire bytes ≤ window/2), exactly like the live drain's `takeMergedFrame` cap. The old
+    /// hardcoded `max(32 KiB, …)` floor emitted 32768-byte payloads — 32781 wire bytes, 13 over
+    /// window/2: the documented "dead zone" that can park the sender against a receiver whose
+    /// pending credit never crosses the grant threshold (a silent pane right after cold
+    /// reattach). The clamp is safe on the seq budget: every ring entry was appended at
+    /// ≤ the same cap, so `ceil(count / maxChunks)` ≤ cap and the chunk count stays
+    /// ≤ `maxChunks` even at the clamped size; the last-chunk absorb then never exceeds the
+    /// cap either.
     private static func rechunk(_ data: Data, across seqs: [Int64]) -> [WireMessage] {
         guard !data.isEmpty, !seqs.isEmpty else { return [] }
         let maxChunks = seqs.count
-        let chunkSize = max(32 * 1024, (data.count + maxChunks - 1) / maxChunks)
+        let chunkSize = min(
+            MuxFlowControl.maxOutputFramePayloadBytes,
+            max(32 * 1024, (data.count + maxChunks - 1) / maxChunks),
+        )
         var result: [WireMessage] = []
         var start = data.startIndex
         var k = 0

@@ -355,6 +355,27 @@ public actor MuxNWConnection {
         // (the last router-table memory-DoS vector after R6 #6 / R7 / R9 #1). Drop it before
         // `MuxRoutingCore.route` (which would `open(id)` a phantom controlTable entry).
         if link == .control, case .channelOpen = frame { return }
+        // Audit 2026-07-10 #13: the CLIENT never legitimately receives `channelOpen` either — the
+        // host is a pure responder (every open originates in the client's `openChannel`). Routing
+        // one would `open(id)` a phantom entry in the client's dataTable that is never closed and
+        // therefore never ring-evicted (the terminal ring only bounds half-closed/closed ids):
+        // unbounded state growth from a buggy/compromised host — the client-side mirror of the
+        // R11 drop and of the host's over-cap refusal, which are both host/control-only.
+        if role == .client, case .channelOpen = frame { return }
+        // Audit 2026-07-10 #8: a `channelOpen` for an id that already reached a TERMINAL state on
+        // this connection is a stale/hostile REOPEN — ids are monotonic and never reused by a
+        // well-behaved client. The dispatch entry was removed at close, so the registration
+        // block's `dataChannels[id] == nil` gate alone would re-register the id and re-invoke
+        // `hostOpenHandler`: one fresh PTY fork per open→close cycle on a SINGLE reused id,
+        // unbounded — the live-channel cap never trips (count stays ~1 during churn) and the
+        // ChannelTable ring only bounds table MEMORY, not spawns. Refuse before the router.
+        if role == .host, link == .data, case let .channelOpen(id, _, _, _, _) = frame,
+           let priorState = dataTable.state(of: id), priorState == .closed || priorState == .halfClosed
+        {
+            let refusal = MuxEnvelopeCodec.encode(.channelOpenAck(channelID: id, accepted: false))
+            dataLink.sendPipelined(refusal)
+            return
+        }
 
         let decision: MuxRoutingDecision =
             if link == .control {

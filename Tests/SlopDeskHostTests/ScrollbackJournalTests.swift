@@ -162,20 +162,24 @@ final class ScrollbackJournalTests: XCTestCase {
     }
 
     func testSweepDeletesAgedAndOverCountJournals() throws {
-        let store = makeStore()
+        // Files come from a PRIOR daemon life (a separate store instance over the same dir), so
+        // the sweeping store holds no live writers — the production shape: sweep runs at daemon
+        // start, before any pane vends a journal.
+        let priorLife = makeStore()
         let fm = FileManager.default
 
         // Three journals: one ancient, two fresh.
         let ancient = UUID(), fresh1 = UUID(), fresh2 = UUID()
         for id in [ancient, fresh1, fresh2] {
-            store.journal(for: id).append(Data("x".utf8))
-            store.journal(for: id).synchronize()
+            priorLife.journal(for: id).append(Data("x".utf8))
+            priorLife.journal(for: id).synchronize()
         }
         let ancientURL = tempDir.appendingPathComponent("\(ancient.uuidString).scrollback")
         try fm.setAttributes(
             [.modificationDate: Date(timeIntervalSinceNow: -30 * 24 * 3600)], ofItemAtPath: ancientURL.path,
         )
 
+        let store = makeStore() // the fresh life doing the sweeping
         store.sweep(maxAge: 14 * 24 * 3600, keepNewest: 256)
         XCTAssertFalse(fm.fileExists(atPath: ancientURL.path), "past-maxAge journal must be swept")
         XCTAssertNotNil(store.restoredScrollback(for: fresh1))
@@ -184,6 +188,41 @@ final class ScrollbackJournalTests: XCTestCase {
         let survivors = try fm.contentsOfDirectory(atPath: tempDir.path)
             .filter { $0.hasSuffix(".scrollback") }
         XCTAssertEqual(survivors.count, 1, "keepNewest must bound the file count")
+    }
+
+    /// Audit 2026-07-10 #10: sweep must NEVER unlink a file a LIVE writer holds open — POSIX
+    /// `write()` to an unlinked inode keeps succeeding silently, so the pane would keep
+    /// journaling into a file nobody can ever restore (the whole transcript silently lost).
+    /// A reconnect can vend the writer while the startup sweep is still scanning; even a
+    /// by-policy-stale file (ancient mtime / over the count cap) is exempt once vended.
+    func testSweepSkipsFilesWithLiveWriters() throws {
+        let store = makeStore()
+        let fm = FileManager.default
+        let live = UUID()
+        let journal = store.journal(for: live) // vended writer = live pane
+        journal.append(Data("still-writing".utf8))
+        journal.synchronize()
+        let liveURL = tempDir.appendingPathComponent("\(live.uuidString).scrollback")
+        try fm.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: -30 * 24 * 3600)], ofItemAtPath: liveURL.path,
+        )
+
+        store.sweep(maxAge: 14 * 24 * 3600, keepNewest: 256)
+        XCTAssertTrue(
+            fm.fileExists(atPath: liveURL.path),
+            "a live writer's file must survive sweep regardless of its mtime",
+        )
+
+        store.sweep(maxAge: 14 * 24 * 3600, keepNewest: 0)
+        XCTAssertTrue(
+            fm.fileExists(atPath: liveURL.path),
+            "a live writer's file must survive the keepNewest bound too",
+        )
+
+        // And the writer still works after the sweeps (nothing was unlinked under it).
+        journal.append(Data(" more".utf8))
+        journal.synchronize()
+        XCTAssertNotNil(store.restoredScrollback(for: live))
     }
 
     // MARK: - Environment gates
@@ -308,7 +347,7 @@ final class MuxChannelSessionScrollbackJournalTests: XCTestCase {
         let recorder = SendRecorder()
         let newData = MuxSubChannel(channelID: 1, channel: .data) { _, frame in recorder.record(frame) }
         let newControl = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
-        session.rebindRelay(data: newData, control: newControl, onExit: nil)
+        XCTAssertTrue(session.rebindRelay(data: newData, control: newControl, onExit: nil))
 
         let expected = preamble + live
         await waitUntil { recorder.outputBytes == expected }

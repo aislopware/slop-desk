@@ -156,6 +156,12 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
     /// Deletes journals whose pane will never return: older than `maxAge` (mtime), or beyond the
     /// `keepNewest` most-recently-written files. Runs synchronously (call it from a detached
     /// task at daemon start — `HostServer` does).
+    ///
+    /// LIVE writers are exempt (audit 2026-07-10 #10): sweep runs concurrently with the listener
+    /// coming up, so a reconnect can vend a `journal(for:)` writer for a file sweep is about to
+    /// unlink. POSIX `write()` to an unlinked inode keeps succeeding silently — the pane would
+    /// keep journaling into a file nobody can ever restore (the whole transcript, past AND
+    /// future, silently lost). A sessionID currently vended in `journals` is skipped outright.
     func sweep(maxAge: TimeInterval = 14 * 24 * 3600, keepNewest: Int = 256) {
         let fm = FileManager.default
         guard let urls = try? fm.contentsOfDirectory(
@@ -164,6 +170,11 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
         let now = Date()
         var dated: [(url: URL, mtime: Date)] = []
         for url in urls where url.pathExtension == "scrollback" {
+            if let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent),
+               hasLiveWriter(for: id)
+            {
+                continue // a live pane owns this file — never unlink under an open writer
+            }
             let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
                 .contentModificationDate ?? .distantPast
             if now.timeIntervalSince(mtime) > maxAge {
@@ -177,6 +188,13 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
         for stale in dated.dropFirst(keepNewest) {
             try? fm.removeItem(at: stale.url)
         }
+    }
+
+    /// Whether a `journal(for:)` writer is currently vended for `sessionID` (under `lock`).
+    private func hasLiveWriter(for sessionID: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return journals[sessionID] != nil
     }
 
     private func fileURL(for sessionID: UUID) -> URL {
@@ -249,7 +267,15 @@ final class ScrollbackJournal: @unchecked Sendable {
             fm.createFile(atPath: fileURL.path, contents: nil)
         }
         guard let opened = try? FileHandle(forWritingTo: fileURL) else { return nil }
-        size = (try? opened.seekToEnd()).map(Int.init) ?? 0
+        guard let end = try? opened.seekToEnd() else {
+            // A failed seek is an OPEN failure (audit 2026-07-10 #14): `lseek` never moves the
+            // offset on error, so the fd still sits at 0 — writing there would OVERWRITE the
+            // journal head and serve silent corruption on the next restore. Dropping the chunk
+            // (append's existing disk-full posture) is strictly safer than corrupting history.
+            try? opened.close()
+            return nil
+        }
+        size = Int(end)
         handle = opened
         return opened
     }
@@ -266,13 +292,18 @@ final class ScrollbackJournal: @unchecked Sendable {
             cut = newline + 1
         }
         let tail = current[cut...]
+        // Close FIRST, clearing `handle` even when close() itself throws (audit 2026-07-10 #11):
+        // the old single do/catch skipped `handle = nil` on a throwing close, leaving a POISONED
+        // FileHandle in place — openIfNeeded() returned it forever and every subsequent append
+        // silently dropped for the pane's lifetime. A cleared handle forces a fresh open (+ seek)
+        // on the next append, in both the success and the failure branch.
+        try? handle?.close()
+        handle = nil
         do {
-            try handle?.close()
-            handle = nil
             try tail.write(to: fileURL, options: .atomic)
             size = tail.count
         } catch {
-            // Compaction failure keeps the (over-cap) file; the next append retries.
+            // Compaction failure keeps the (over-cap) file; the next append reopens + retries.
             size = current.count
         }
     }

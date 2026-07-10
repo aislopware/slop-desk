@@ -50,6 +50,29 @@ final class TerminalQueryStripperTests: XCTestCase {
         XCTAssertEqual(strip("a\u{1B}]104\u{07}b"), "ab", "palette reset")
     }
 
+    /// Audit 2026-07-10 #1: the ECHOED RESPONSES of DECRQSS (`DCS {0|1} $ r … ST`, ghostty's
+    /// `stream_handler` reply format) and XTGETTCAP (`DCS {0|1} + r … ST`, ghostty's terminfo
+    /// reply format) must be stripped like their query halves — a poisoned transcript carrying
+    /// them re-emits raw DCS garbage on the fresh command line at cold reattach (the exact bug
+    /// class this type exists to fix, already covered for the XTVERSION `>|` response).
+    func testStripsDCSEchoedResponses() {
+        XCTAssertEqual(strip("a\u{1B}P1$rm\u{1B}\\b"), "ab", "DECRQSS hit response")
+        XCTAssertEqual(strip("a\u{1B}P0$r\u{1B}\\b"), "ab", "DECRQSS miss response")
+        XCTAssertEqual(strip("a\u{1B}P1+r524742=3838\u{1B}\\b"), "ab", "XTGETTCAP hit response")
+        XCTAssertEqual(strip("a\u{1B}P0+r\u{1B}\\b"), "ab", "XTGETTCAP miss response")
+    }
+
+    /// Audit 2026-07-10 #2: OSC 21 (kitty color protocol) is a live query/response OSC in
+    /// ghostty — same shape and delivery mechanism as the already-guarded OSC 10/11/12. Both
+    /// forms must be stripped so a recorded probe is never re-answered into the shell's stdin.
+    func testStripsOSC21KittyColorProtocol() {
+        XCTAssertEqual(strip("a\u{1B}]21;foreground=?\u{07}b"), "ab", "OSC 21 query (BEL)")
+        XCTAssertEqual(
+            strip("a\u{1B}]21;foreground=rgb:aa/bb/cc\u{1B}\\b"), "ab",
+            "OSC 21 echoed response / set (ST)",
+        )
+    }
+
     // MARK: - What must SURVIVE replay verbatim
 
     func testKeepsRenderingSequences() {
