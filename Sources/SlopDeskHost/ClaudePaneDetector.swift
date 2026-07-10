@@ -253,6 +253,32 @@ public struct ClaudePaneDetector: Sendable {
         return emission
     }
 
+    /// Reattach re-assert (2026-07-10 — the type-26/27 sibling of the echo re-anchor): the detector's
+    /// CURRENT truth as fresh messages for a returning client whose per-pane mirrors reset to none on
+    /// reconnect. Both streams are edge-triggered against the `lastEmitted*` anchors, so after
+    /// `rebindRelay` wiped the control-out queue nothing would ever re-tell the new client about a
+    /// foreground command / working agent that SPANS the reattach — and a status change folded WHILE
+    /// DETACHED (its emission wiped with control-out, its anchor already advanced) is otherwise lost
+    /// forever. The status is recomputed from the MACHINE (the truth), not replayed from the anchor,
+    /// and the anchor is re-pointed at it so the next unchanged fold still dedupes. Quiet before any
+    /// fold (both anchors nil): a detection-off session keeps its no-type-26/27-stream contract.
+    public mutating func reestablishOnReattach() -> Emission {
+        var emission = Emission()
+        if let name = lastEmittedName {
+            emission.foreground = .foregroundProcess(name: name)
+        }
+        if lastEmittedStatus != nil {
+            let triple = ForegroundProcessDetector.StatusTriple(
+                state: UInt8(truncatingIfNeeded: machine.status.urgency),
+                kind: lastNotificationKind,
+                label: machine.displayLabel ?? "",
+            )
+            lastEmittedStatus = triple
+            emission.status = .claudeStatus(state: triple.state, kind: triple.kind, label: triple.label)
+        }
+        return emission
+    }
+
     // MARK: - Status dedupe (ONE anchor for the ONE type-27 stream)
 
     /// Returns a type-27 `claudeStatus` message iff the machine's `(state, kind, label)` triple changed

@@ -347,4 +347,55 @@ final class ClaudePaneDetectorTests: XCTestCase {
         let second = d.report(state: "working", message: nil, at: 2)
         XCTAssertNil(second.status, "an identical consecutive report dedupes (no new type-27)")
     }
+
+    // MARK: - Reattach re-assert (2026-07-10: indicators must survive a client restart)
+
+    /// Both streams are edge-triggered against the `lastEmitted*` anchors, so a returning client
+    /// (whose mirrors reset to none on reconnect) would never be re-told about a working agent /
+    /// foreground command that SPANS the reattach. ``ClaudePaneDetector/reestablishOnReattach()``
+    /// re-emits the CURRENT truth verbatim — and must leave the dedupe anchors consistent so the
+    /// very next unchanged fold stays silent (no double-emit churn).
+    func testReestablishOnReattachReemitsCurrentTruthAndKeepsDedupe() {
+        var d = ClaudePaneDetector()
+        _ = d.sample(name: "claude", at: 0)
+        let hook = d.hook(bytes: json(#"{"hook_event_name":"UserPromptSubmit"}"#), at: 1)
+        let announced = hook.status
+        XCTAssertNotNil(announced, "the working transition emitted its type-27 (to the OLD client)")
+
+        let reassert = d.reestablishOnReattach()
+        XCTAssertEqual(reassert.foreground, .foregroundProcess(name: "claude"), "the type-26 name is re-told")
+        XCTAssertEqual(reassert.status, announced, "the CURRENT working truth is re-told verbatim")
+
+        _ = d.tick(at: 2)
+        let resample = d.sample(name: "claude", at: 2)
+        XCTAssertNil(resample.status, "the dedupe anchor survives the re-assert — unchanged folds stay silent")
+    }
+
+    /// Before ANY fold (detection off / nothing ever sampled) the re-assert must emit NOTHING —
+    /// keeping the no-type-26/27-stream contract byte-identical for detection-off sessions.
+    func testReestablishBeforeAnyFoldEmitsNothing() {
+        var d = ClaudePaneDetector()
+        XCTAssertTrue(d.reestablishOnReattach().isEmpty, "no truth yet — a fresh detector re-asserts nothing")
+    }
+
+    /// The R2 hole `rebindRelay` documents: a status change folded WHILE DETACHED lands on a wiped
+    /// control-out queue (lost), and the anchor already advanced — so no future edge ever corrects
+    /// the returning client's stale status. The re-assert must carry the machine's CURRENT truth
+    /// (not the last delivered one): agent finishes while the link is down → reattach re-tells done.
+    func testReestablishCarriesStatusChangeFoldedWhileDetached() {
+        var d = ClaudePaneDetector()
+        _ = d.sample(name: "claude", at: 0)
+        _ = d.hook(bytes: json(#"{"hook_event_name":"UserPromptSubmit"}"#), at: 1)
+        XCTAssertEqual(d.status, .working)
+        // Detached window: the Stop hook fires; its type-27 emission is wiped with control-out.
+        let stop = d.hook(bytes: json(#"{"hook_event_name":"Stop","last_assistant_message":"ok"}"#), at: 2)
+        XCTAssertEqual(d.status, .done)
+
+        let reassert = d.reestablishOnReattach()
+        XCTAssertEqual(
+            reassert.status,
+            stop.status,
+            "the reattach re-tells the CURRENT (done) truth, not the stale working one",
+        )
+    }
 }

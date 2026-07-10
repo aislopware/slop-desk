@@ -127,6 +127,15 @@ final class MuxChannelSession: @unchecked Sendable {
     private let titleLock = NSLock()
     private var _currentTitle: String = ""
 
+    /// E14/K1 reattach truth — the last NON-CLEAR OSC 9;4 progress message emitted for this pane
+    /// (`nil` when cleared / never reported). Latched at BOTH emit points — the sniffer's chunk pass
+    /// and the Blocks segmenter's auto-progress — so a reattaching client (which reset its progress
+    /// mirror on disconnect) can be re-told the live state: progress is control-only, never in the
+    /// replayed output bytes — the same class as the echo truth. Guarded by `progressLock` (written
+    /// on the read-loop thread; read by the reattach path).
+    private let progressLock = NSLock()
+    private var lastProgress: WireMessage?
+
     /// Observer closures registered by the agent-control `wait` and `subscribe` verbs. Each is
     /// called with the raw PTY chunk immediately after the sniffer pass (non-destructive, never
     /// modifies the byte stream). Guarded by `observersLock`.
@@ -621,8 +630,20 @@ final class MuxChannelSession: @unchecked Sendable {
     /// host machine before P1, so a finished turn stayed 🔵 forever). Both folds share the one machine
     /// under `agentDetectLock` (the hook socket-accept thread also folds into it).
     private func sampleForeground(masterFD: Int32) {
-        let name = PTYForegroundProbe.foregroundName(masterFD: masterFD)
-        let now = ProcessInfo.processInfo.systemUptime
+        foldForegroundSample(
+            name: PTYForegroundProbe.foregroundName(masterFD: masterFD),
+            at: ProcessInfo.processInfo.systemUptime,
+        )
+        // E17 / I22: ride the same low-rate poll as a BACKSTOP for the PTY-echo edge (a no-echo
+        // prompt that appears without a fresh keystroke). The PRIMARY driver is the post-input probe.
+        sampleEcho(masterFD: masterFD)
+    }
+
+    /// Folds one already-resolved foreground basename (plus the clock TICK) through the detector and
+    /// enqueues the resulting type-26/27 messages. Split from ``sampleForeground(masterFD:)`` so the
+    /// OS probe and the pure fold are separable — the fold is exercised directly by tests via a seam,
+    /// mirroring ``foldEchoSample(echoOn:)``.
+    private func foldForegroundSample(name: String, at now: TimeInterval) {
         agentDetectLock.lock()
         // Tick FIRST so the decay is evaluated at this `now`, then the presence sample; both emit
         // type-27 only on a real triple change (the detector dedupes), so at most one status frame ships.
@@ -636,9 +657,6 @@ final class MuxChannelSession: @unchecked Sendable {
         if !tickEmission.isEmpty { enqueueControl(tickEmission.messages) }
         if !sampleEmission.isEmpty { enqueueControl(sampleEmission.messages) }
         if let newStatus { notifyAgentStatusChanged(newStatus) }
-        // E17 / I22: ride the same low-rate poll as a BACKSTOP for the PTY-echo edge (a no-echo
-        // prompt that appears without a fresh keystroke). The PRIMARY driver is the post-input probe.
-        sampleEcho(masterFD: masterFD)
     }
 
     /// E17 / I22 — probes the PTY master's termios `ECHO` flag via the thin ``PTYEchoProbe`` shim,
@@ -688,6 +706,28 @@ final class MuxChannelSession: @unchecked Sendable {
         let message = echoDetector.sample(echoOn: echoOn)
         echoDetectLock.unlock()
         if let message { enqueueControl([message]) }
+    }
+
+    /// 2026-07-10 — the type-23/26/27/32 sibling of ``reestablishEchoOnReattach(echoOn:)``: re-emits
+    /// the pane's CURRENT activity truths so a returning client — whose per-pane mirrors reset to
+    /// idle/none on reconnect — is re-told what is still live (`sleep 300`'s busy dot + "sleep"
+    /// label, a working/blocked agent's badge, a spanning OSC 9;4 spinner). Every source contributes
+    /// only a NON-DEFAULT truth, so an ordinary idle reconnect enqueues nothing: an idle shell has
+    /// no `runningSince` (and idle IS the client's reset state — a synthetic `.idle` would fabricate
+    /// a lastCommand/completion edge), a cleared progress latches `nil`, and an untouched detector
+    /// keeps the detection-off stream byte-identical.
+    private func reestablishActivityOnReattach() {
+        var messages: [WireMessage] = []
+        if let running = sniffer.commandStatusForReattach() { messages.append(running) }
+        progressLock.lock()
+        let progress = lastProgress
+        progressLock.unlock()
+        if let progress { messages.append(progress) }
+        agentDetectLock.lock()
+        let agentEmission = agentDetector.reestablishOnReattach()
+        agentDetectLock.unlock()
+        messages.append(contentsOf: agentEmission.messages)
+        if !messages.isEmpty { enqueueControl(messages) }
     }
 
     // MARK: - Detach / reattach (tmux-style survival — C1–C4)
@@ -903,6 +943,16 @@ final class MuxChannelSession: @unchecked Sendable {
         // output byte stream). Done AFTER the `controlOut.removeAll()` and control-sender rebuild above so
         // the backfill is enqueued onto the live wake continuation, mirroring the echo re-assert.
         resendBlocksOnReattach()
+
+        // 2026-07-10 — RE-ASSERT the remaining CONTROL-ONLY activity truths (same class as the echo
+        // re-assert above): the busy bit (type-23 `.running`), the foreground-process name (type-26),
+        // the agent status (type-27), and a live OSC 9;4 progress (type-32) are all edge-triggered
+        // and never in the replayed output byte stream, and the client reset its mirrors on
+        // reconnect — without a fresh emit, a `sleep 300` (or a working/blocked agent) that spans
+        // the reattach shows NO indicator / command label on the returning client until the next
+        // real edge. Same ordering constraints as the echo re-assert (after the controlOut wipe +
+        // control-sender rebuild).
+        reestablishActivityOnReattach()
 
         // Restart the input task (reads from the NEW data sub-channel).
         let masterFD = pty.masterFD
@@ -1238,6 +1288,10 @@ final class MuxChannelSession: @unchecked Sendable {
                 titleLock.unlock()
             }
         }
+        // Reattach truth: latch the pane's current OSC 9;4 progress at the sniff point (NOT at the
+        // control drain — sniffed control rides the out-FIFO and a detached window's messages only
+        // reach the sender after the backlog ships, long after the reattach re-assert reads this).
+        latchProgress(controlMsgs)
         // Agent-control: fire output observers for the `wait` verb AFTER the sniffer
         // (so a wait-observer sees the same stream order as the client) and BEFORE the
         // FIFO append (non-destructive — observers only READ the chunk).
@@ -1519,7 +1573,20 @@ final class MuxChannelSession: @unchecked Sendable {
         blocksLock.lock()
         let messages = blockTracker?.ingest(chunk) ?? []
         blocksLock.unlock()
+        latchProgress(messages) // K2 auto-progress is a second type-32 source — same reattach truth
         if !messages.isEmpty { enqueueControl(messages) }
+    }
+
+    /// Latches the pane's CURRENT OSC 9;4 progress truth (see `lastProgress`) from a batch of
+    /// outbound control messages: a `.clear` latches `nil`, any other progress state latches its
+    /// message verbatim; the last one in the batch wins (latest-state fold, same as the client's).
+    private func latchProgress(_ messages: [WireMessage]) {
+        for message in messages {
+            guard case let .progress(state, _) = message else { continue }
+            progressLock.lock()
+            lastProgress = state == ProgressState.clear.rawValue ? nil : message
+            progressLock.unlock()
+        }
     }
 
     /// WB / reattach — RE-SENDS every block the tracker still holds (its metadata) as a burst of type-28
@@ -1813,6 +1880,16 @@ final class MuxChannelSession: @unchecked Sendable {
     /// EXACT production method ``rebindRelay`` calls, so reverting its re-anchor breaks both together.
     func foldEchoSampleForTesting(echoOn: Bool) { foldEchoSample(echoOn: echoOn) }
     func reestablishEchoOnReattachForTesting(echoOn: Bool) { reestablishEchoOnReattach(echoOn: echoOn) }
+
+    /// 2026-07-10 activity-reattach seams (the type-23/26/27/32 sibling of the echo seams above):
+    /// drive the pure detector fold with an INJECTED name/clock (no `tcgetpgrp` probe) and the EXACT
+    /// production re-assert ``rebindRelay`` calls, so the indicators-survive-a-client-restart truth
+    /// is provable headlessly via ``takeControlBatchForTesting()``.
+    func foldForegroundSampleForTesting(name: String, at now: TimeInterval) {
+        foldForegroundSample(name: name, at: now)
+    }
+
+    func reestablishActivityOnReattachForTesting() { reestablishActivityOnReattach() }
 
     /// WB1 — drive the real `feedBlocks` glue (segmenter tap → enqueueControl) WITHOUT a PTY/read
     /// loop, so the type-28 emission + the byte-identical-when-off contract are provable headlessly.

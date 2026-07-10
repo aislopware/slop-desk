@@ -248,6 +248,18 @@ public final class HostOutputSniffer: @unchecked Sendable {
         observe(Data(bytes))
     }
 
+    /// Reattach re-assert (2026-07-10 — the type-23 sibling of the echo truth): the CURRENT OSC-133
+    /// command-status truth, or `nil` when the shell is at a prompt. ONLY the running case is
+    /// returned — idle IS the client's reconnect reset state, and a synthetic `.idle` would
+    /// fabricate a `lastCommand` (exit nil / 0 ms) and a completion edge for a command that never
+    /// finished. Called from the reattach path's thread (the sniffer otherwise runs on the
+    /// read-loop thread), hence under `lock`.
+    public func commandStatusForReattach() -> WireMessage? {
+        lock.lock()
+        defer { lock.unlock() }
+        return runningSince != nil ? .commandStatus(.running) : nil
+    }
+
     // MARK: State machine (verbatim from HostTitleBellSniffer — the strict superset)
 
     private func step(_ byte: UInt8, into messages: inout [WireMessage]) {
