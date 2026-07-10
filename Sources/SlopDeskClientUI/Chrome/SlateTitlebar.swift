@@ -140,22 +140,34 @@ private struct TitleMenuButton: View {
         .onHover { hover = $0 }
         .animation(Slate.Anim.smallFade, value: hover)
         .animation(Slate.Anim.smallFade, value: showDot)
-        .popover(isPresented: $show, arrowEdge: .bottom) { menu }
+        .popover(isPresented: $show, arrowEdge: .bottom) {
+            TitlePaneMenu(store: store, activePane: activePane, dismiss: { show = false })
+        }
     }
+}
+
+/// The centre title's pane menu — the `.popover` content of ``TitleMenuButton``. Internal (not nested
+/// private) so the L10 snapshot harness (`SlateSnapshotRender`) can render the REAL menu headlessly; a
+/// popover never opens under `ImageRenderer`. `dismiss` closes the presenting popover before an action runs.
+///
+/// The menu speaks the shared ``SlatePopoverSection``/``SlatePopoverRow``/``SlatePopoverDivider``
+/// vocabulary (MERIDIAN C3) — one menu chrome across the app, no per-popover drift.
+///
+/// NEEDS ATTENTION (top, only while non-empty): the titlebar dot's per-pane breakdown
+/// (``WorkspaceStore/unseenAttentionPanes`` — blocked first, then failures, then unread finishes).
+/// Clicking a row FOCUSES that pane (session/tab switch included) — the dot points here, this answers
+/// it. The section vanishes with the dot, so the at-rest menu is unchanged (zero ornament at rest).
+struct TitlePaneMenu: View {
+    let store: WorkspaceStore
+    let activePane: PaneID?
+    var dismiss: () -> Void = {}
 
     private var cwd: String? {
         guard let id = activePane else { return nil }
         return store.tree.activeSession?.specs[id]?.lastKnownCwd
     }
 
-    // The menu speaks the shared ``SlatePopoverSection``/``SlatePopoverRow``/``SlatePopoverDivider``
-    // vocabulary (MERIDIAN C3) — one menu chrome across the app, no per-popover drift.
-    //
-    // NEEDS ATTENTION (top, only while non-empty): the titlebar dot's per-pane breakdown
-    // (``WorkspaceStore/unseenAttentionPanes`` — blocked first, then failures, then unread finishes).
-    // Clicking a row FOCUSES that pane (session/tab switch included) — the dot points here, this answers
-    // it. The section vanishes with the dot, so the at-rest menu is unchanged (zero ornament at rest).
-    private var menu: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             let waiting = store.unseenAttentionPanes
             if !waiting.isEmpty {
@@ -212,30 +224,30 @@ private struct TitleMenuButton: View {
     /// Focus a waiting pane from its NEEDS-ATTENTION row (switches session + tab as needed). Deferred one
     /// runloop tick so dismissing the popover doesn't race the focus reconcile — same idiom as `split`.
     private func jump(to id: PaneID) {
-        show = false
+        dismiss()
         DispatchQueue.main.async { store.focusPaneTree(id) }
     }
 
     private func split(_ axis: SplitAxis) {
-        show = false
+        dismiss()
         // A split MINTS a pane → create an in-pane CHOOSER pane (Terminal / Remote window), focused. Defer one
         // runloop tick so dismissing THIS menu's popover doesn't race the split's reconcile + focus.
         DispatchQueue.main.async { store.openChooserPane(.split(axis: axis)) }
     }
 
     private func move(_ direction: FocusDirection) {
-        show = false
+        dismiss()
         store.swapActivePaneInDirection(direction)
     }
 
     private func close() {
         guard let id = activePane else { return }
-        show = false
+        dismiss()
         store.requestClosePaneTree(id)
     }
 
     private func copyPath() {
-        show = false
+        dismiss()
         #if os(macOS)
         guard let path = cwd else { return }
         ClientPasteboard.write(path)

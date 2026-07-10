@@ -163,6 +163,93 @@ final class SlateSnapshotRender: XCTestCase {
         return store
     }
 
+    // MARK: - Titlebar attention dot + the title menu's NEEDS-ATTENTION section (opt-in render)
+
+    /// Renders the LIVE ``SlateTitlebar`` (the bell-style unseen-attention dot next to the centre title)
+    /// and the LIVE ``TitlePaneMenu`` (the NEEDS ATTENTION section listing the waiting panes, blocked
+    /// first) over a headless seeded store — the visual lock for the titlebar dot feature. SAME
+    /// `ImageRenderer` opt-in idiom as the showcase; inert (skipped) unless
+    /// `SLOPDESK_TITLEBAR_SNAPSHOT_DIR=<dir>` is set, where it writes `titlebar-dot.png` +
+    /// `title-menu-attention.png`. Headless (`MountTestPaneSession`) — no socket / video / Metal.
+    @MainActor
+    func testRenderTitlebarAttention() throws {
+        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TITLEBAR_SNAPSHOT_DIR"] else {
+            throw XCTSkip("set SLOPDESK_TITLEBAR_SNAPSHOT_DIR=<dir> to render the titlebar attention chrome")
+        }
+        let (store, focused) = makeAttentionStore()
+
+        // The titlebar strip in situ: mock traffic lights at the fixed 80pt lead the real chrome clears,
+        // the centre title carrying the dot, and a slice of the paper content region below the hairline.
+        let strip = VStack(spacing: 0) {
+            ZStack(alignment: .topLeading) {
+                SlateTitlebar(store: store, chrome: WorkspaceChromeState())
+                trafficLights.padding(.leading, 20).padding(.top, 9)
+            }
+            Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
+            Slate.Surface.face
+        }
+        .background(Slate.Surface.ground)
+        try render(strip, size: CGSize(width: 920, height: 96), to: dir, named: "titlebar-dot.png")
+
+        // The REAL title menu (the popover content), on a popover-like panel so the section reads in place.
+        let menu = TitlePaneMenu(store: store, activePane: focused)
+            .background(Slate.Surface.face)
+            .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusCard))
+            .overlay(
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
+                    .stroke(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
+            )
+            .padding(24)
+        try render(
+            scrimmed(menu), size: CGSize(width: 340, height: 420), to: dir, named: "title-menu-attention.png",
+        )
+    }
+
+    /// The three macOS traffic lights, mocked for the strip render (the real ones are window chrome and
+    /// never render under `ImageRenderer`).
+    private var trafficLights: some View {
+        HStack(spacing: 8) {
+            Circle().fill(Color(nsColor: .systemRed)).frame(width: 12, height: 12)
+            Circle().fill(Color(nsColor: .systemYellow)).frame(width: 12, height: 12)
+            Circle().fill(Color(nsColor: .systemGreen)).frame(width: 12, height: 12)
+        }
+    }
+
+    /// A headless `.tree` store with four single-pane tabs: the FOCUSED `slopdesk` pane plus three
+    /// background panes in every attention class — a blocked agent (`herdr`), a failed command (`api`),
+    /// and an unread agent finish (`docs`) — so the dot lights and the menu section lists all three,
+    /// blocked first.
+    @MainActor
+    private func makeAttentionStore() -> (store: WorkspaceStore, focused: PaneID) {
+        let rows: [(title: String, cwd: String)] = [
+            ("slopdesk", "/Users/abner/Workplace/slopdesk"),
+            ("herdr", "/Users/abner/Workplace/herdr"),
+            ("api", "/Users/abner/Workplace/api"),
+            ("docs", "/Users/abner/Workplace/docs"),
+        ]
+        var tabs: [SlopDeskWorkspaceCore.Tab] = []
+        var specs: [PaneID: PaneSpec] = [:]
+        for row in rows {
+            let pane = PaneID()
+            specs[pane] = PaneSpec(kind: .terminal, title: row.title, lastKnownCwd: row.cwd)
+            tabs.append(SlopDeskWorkspaceCore.Tab(title: row.title, root: .leaf(pane), activePane: pane))
+        }
+        let session = Session(name: "Local", tabs: tabs, activeTabIndex: 0, specs: specs)
+        let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)
+        let store = WorkspaceStore(
+            restoringTree: tree,
+            liveModel: .tree,
+            makeSession: { MountTestPaneSession($0) },
+            liveVideoCap: 2,
+            persistence: nil,
+        )
+        let panes = tabs.compactMap(\.activePane)
+        store.setAgentStatus(.needsPermission, for: panes[1]) // herdr — blocked (hand, listed first)
+        store.setCompletionBadge(.failure, for: panes[2]) // api — failed command (triangle)
+        store.setAgentStatus(.done, for: panes[3]) // docs — unread finish (checkmark)
+        return (store, panes[0])
+    }
+
     /// Center an overlay panel on the dimmed scrim + window background, the way `OverlayHostView` composes it.
     @MainActor
     private func scrimmed(_ panel: some View) -> some View {
