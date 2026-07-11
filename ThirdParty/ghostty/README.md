@@ -61,6 +61,36 @@ build-local `PATH`.
 
 ---
 
+## Upstream watch (audited 2026-07-11)
+
+**v1.3.1 is STILL the latest upstream release tag** (only the mutable `tip` nightly exists past
+it; `1.3.2`/`1.4.0` milestones are open but unshipped). Upstream `main` is ~1.4k commits ahead
+with material terminal-core work — **all unreleased**, so the pin stands. Re-audit when a new
+tag lands. What's waiting on `main` (motivates a prompt rebase when tagged):
+
+- **VT throughput**: PR #13220 (~1.5–6×) + #13226 (~1.2–3.4×; ASCII ~128→~725 MB/s) — directly
+  helps us, our client pushes remote-PTY bytes through `ghostty_surface_write_output`.
+- **Scrollback page compression**: PR #13264 (70–90% resident-memory savings) + the #13282
+  `page_serial` generation-marker correctness fix (search-after-erase panics).
+- (PR #13209's pty-read pipelining does NOT apply to us — the external backend bypasses termio reads.)
+
+Rebase exposure is small: `include/ghostty.h` on `main` renames `ghostty_app_key_is_binding` →
+`ghostty_config_key_is_binding`, drops `translated` from the trigger union (we use neither), and
+makes `ghostty_surface_free_text` take `(surface, text*)` — our binding already passes `(s, &text)`.
+New `GHOSTTY_API` visibility macro is harmless for static linking (`GHOSTTY_STATIC`).
+
+- **External-IO backend stays fork-only.** Upstream PR #10484 (Manual termio backend, ~our
+  approach) was closed unmerged with zero review; no tracking issue exists. Official iOS support
+  ships an embedded UIView platform but its termio is `exec`-only — the fork delta remains required.
+- **daiimus fork is frozen** at our pinned `21c71734` (2026-03-10, zero commits since). It also
+  carries a large tmux-control-mode integration (upstream #1935, unmerged) beyond the External.zig
+  delta — on the next rebase consider carrying ONLY External.zig + embedded glue and dropping the
+  tmux surface area we don't use.
+- **Known live bug upstream+forks**: iOS Metal-teardown use-after-free on `ghostty_surface_free`
+  (issue #13021, closed without a merged fix; `Metal.zig` at HEAD has no `loopExit`/`threadExit`).
+  Affects any Metal-embedding iOS app freeing a surface during renderer teardown — re-check before
+  shipping the iOS client.
+
 ## Build outcome (honest status)
 
 **The build WORKS on this macOS 26.5 / Xcode 26.5 / arm64 host** and produces a universal
@@ -93,6 +123,8 @@ delta — would yield a fragile, divergent fork whose subtle I/O-buffering behav
 be validated by full ghostty test + HW runs. Since the shim is invisible at runtime, **0.15.2
 + shim is the correct pin**. **Re-evaluate when upstream bumps its own `minimum_zig_version`
 to 0.16+** — then bump `ZIG_VERSION`/`ZIG_SHA256`, drop the shim, and re-verify the header.
+(Checked 2026-07-11: upstream HEAD still pins `0.15.2`; the 0.16 migration is tracked in
+upstream issue #12726 — Linux builds, macOS is blocked on Arocc/`translate-c` ARM/NEON.)
 
 ---
 
