@@ -270,6 +270,12 @@ struct NavigatorColumn: View {
             onRename: { commitRename(row, to: $0) },
             onCancelRename: { store.clearTabRenameRequest() },
         )
+        // The "row title frozen at first render" fix (2026-07-11): key the leaf's identity on the
+        // memoized fields it renders (``RailRow/leafIdentity``) so a structural rebuild that retitles
+        // this row (cwd landed / chooser resolved / rename) replaces the leaf instead of leaving the
+        // first-render title on screen. Volatile chrome still flows live; focus-only changes keep the
+        // same identity (no churn).
+        .id(row.leafIdentity)
         .contextMenu { rowContextMenu(row) }
     }
 
@@ -289,6 +295,8 @@ struct NavigatorColumn: View {
             onRename: { commitRename(row, to: $0) },
             onCancelRename: { store.clearTabRenameRequest() },
         )
+        // Same leaf-identity key as ``macRow(_:)`` — see there.
+        .id(row.leafIdentity)
         .contextMenu { rowContextMenu(row) }
     }
 
@@ -365,6 +373,8 @@ struct NavigatorColumn: View {
             onCancelRename: { store.clearTabRenameRequest() },
         )
         .tag(row.id)
+        // Same leaf-identity key as the macOS ``macRow(_:)`` — see there.
+        .id(row.leafIdentity)
         .contextMenu { rowContextMenu(row) }
     }
     #endif

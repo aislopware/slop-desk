@@ -43,6 +43,28 @@ final class RailRowsMemoTests: XCTestCase {
         return store
     }
 
+    /// REPRO 2026-07-11 (user screenshot): ⌘T chooser → pick Terminal — the rail row must retitle
+    /// from "New Pane" to the cwd folder name on the very next memo read.
+    func testChooserResolveRebuildsMemoRowTitle() throws {
+        let store = makeStore()
+        let source = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
+        store.setLastKnownCwd("/Users/me/projects/slop-desk/Sources/CSlopDeskSIMD", for: source)
+        let memo = RailRowsMemo()
+        _ = memo.rows(for: store)
+
+        store.openChooserPane(.newTab)
+        let chooser = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
+        let rowsBefore = memo.rows(for: store)
+        XCTAssertEqual(rowsBefore.first { $0.id == chooser }?.title, "New Pane")
+
+        store.choosePaneKind(chooser, kind: .terminal)
+        let rowsAfter = memo.rows(for: store)
+        XCTAssertEqual(
+            rowsAfter.first { $0.id == chooser }?.title, "Sources/CSlopDeskSIMD",
+            "the resolved pane retitles by folder name (parent-qualified against the source pane collision)",
+        )
+    }
+
     // MARK: - Output parity (the memo must be invisible to the model the sidebar renders)
 
     /// A memo MISS (first build) returns exactly what the pure builder returns — rows AND the per-pane

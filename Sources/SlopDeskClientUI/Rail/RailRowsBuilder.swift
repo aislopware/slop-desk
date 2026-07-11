@@ -56,6 +56,19 @@ struct RailRow: Identifiable, Equatable {
     /// stay source-compatible.
     var projectKey: String?
 
+    /// The SwiftUI view identity for this row's LEAF view (`SidebarLiveRow` / `IOSSidebarLiveRow`) —
+    /// the pane id plus every MEMOIZED field the leaf renders from this row value (title / kind / cwd
+    /// tooltip). The 2026-07-11 "row title frozen at first render" fix: inside the sidebar's lazy
+    /// container, a leaf whose Observation deps (the volatile chrome dicts) fire re-renders with the
+    /// row value it was CREATED with — a structural rebuild that changes this row's title (cwd landed,
+    /// a chooser resolved to a terminal, a rename) updated the memoized model but never repainted the
+    /// leaf, so the rail showed "New Pane"/a stale folder name forever while its subtitle stayed live.
+    /// Keying the leaf's `.id(_:)` on this string forces a fresh leaf whenever a rendered-from-row
+    /// field changes; volatile chrome keeps flowing through `liveChrome` unchanged.
+    var leafIdentity: String {
+        "\(id.raw.uuidString)|\(title)|\(kind.rawValue)|\(cwd ?? "")"
+    }
+
     /// A copy of this row with a new `title` (C3 BUG A collision disambiguation) — every other field is
     /// carried verbatim. Kept here so ``RailRowsBuilder/disambiguated(_:)`` need not restate the memberwise init.
     func retitled(_ newTitle: String) -> Self {
