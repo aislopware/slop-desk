@@ -52,15 +52,14 @@ let package = Package(
         // ships 6.3.2); 3.0.1 is the crash fix. macOS-only.
         .package(url: "https://github.com/sindresorhus/KeyboardShortcuts.git", from: "3.0.1"),
         // Type-safe UserDefaults for the global `SettingsKey` namespace. Depend ONLY on the `Defaults`
-        // product — pure-Foundation, NO transitive deps (swift-syntax is reachable only from the
-        // `DefaultsMacros` targets we don't use). Exempt from the "UI deps attach only to ClientUI"
-        // rule: it's not UI, and lands on the headless `SlopDeskWorkspaceCore` (where `SettingsKey`
-        // lives) plus ClientUI's `@Default` views. HELD at 8.2.0 (upToNextMajor = latest swift-syntax-
-        // FREE 8.x): 9.x adds the `@ObservableDefault` macro target, which drags swift-syntax (603.x,
-        // 75k-file fetch) into Package.resolved (absent at 8.x, present at 9.0.9) for ZERO functional
-        // gain, regressing the "no swift-syntax in the resolved graph" invariant. Re-evaluate only if
-        // the macro is needed. (Phase-D upgrade 2026-06-29.)
-        .package(url: "https://github.com/sindresorhus/Defaults.git", from: "8.2.0"),
+        // product — the macro/swift-syntax targets (`DefaultsMacros`) are not linked. Exempt from the
+        // "UI deps attach only to ClientUI" rule: it's not UI, and lands on the headless
+        // `SlopDeskWorkspaceCore` (where `SettingsKey` lives) plus ClientUI's `@Default` views.
+        // 2026-07-11: un-HELD from 8.2.0 → 9.x (user call). This drags swift-syntax into
+        // Package.resolved (Defaults declares it package-level for the `@ObservableDefault` macro we
+        // don't use) — swift-syntax is FETCHED at resolve time but NOT built/linked into any product
+        // here, so build time and binaries are unaffected; only the checkout is heavier.
+        .package(url: "https://github.com/sindresorhus/Defaults.git", from: "9.0.9"),
     ],
     targets: [
         // MARK: Libraries
