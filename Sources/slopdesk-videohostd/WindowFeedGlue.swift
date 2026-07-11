@@ -18,6 +18,11 @@ import CoreGraphics
 import SlopDeskVideoHost
 import SlopDeskVideoProtocol
 
+/// The ONE minimized-state probe (docs/45 Phase 5): budgeted `AXMinimized` reads that tell a
+/// MINIMIZED off-screen window from an on-another-Space one (≤3 stale pids per tick, 3 s TTL,
+/// 0.25 s per-app timeout — a fleet of hung apps costs ≤0.75 s worst-tick, ~0 steady-state).
+@MainActor private let minimizedProbe = MinimizedStateProbe()
+
 /// Enumerates the host's app windows into the pure feed input shape. `@MainActor`: the AppKit reads
 /// (`NSWorkspace.frontmostApplication`, `NSRunningApplication`) belong there, and one ≤ 2.5 ms
 /// CGWindowList call per tick on the daemon's otherwise-idle main queue is far below any budget
@@ -49,6 +54,7 @@ func enumerateHostWindows() -> [WindowFeedSourceWindow] {
 
     var onScreen: [WindowFeedSourceWindow] = []
     var offScreen: [WindowFeedSourceWindow] = []
+    var offScreenByPID: [pid_t: [UInt32]] = [:]
     for dict in info {
         guard let layer = dict[kCGWindowLayer as String] as? Int, layer == 0,
               let number = dict[kCGWindowNumber as String] as? UInt32,
@@ -73,11 +79,22 @@ func enumerateHostWindows() -> [WindowFeedSourceWindow] {
             displayIndex: UInt8(clamping: display),
             isAppHidden: state.isHidden,
             isFrontmostApp: pid == frontmostPID,
-            // Off-screen just means "minimized OR other Space OR hidden app" — the AXMinimized
-            // disambiguation is the Phase-5 budgeted probe.
-            isMinimized: false,
+            isMinimized: false, // resolved below by the budgeted AX probe
         )
-        if isOnScreen { onScreen.append(window) } else { offScreen.append(window) }
+        if isOnScreen { onScreen.append(window) } else {
+            offScreen.append(window)
+            offScreenByPID[pid, default: []].append(number)
+        }
+    }
+    // Minimized-vs-other-Space disambiguation (Phase 5): the budgeted AXMinimized probe. Only
+    // off-screen windows are ambiguous; probe failures leave `false` (the tooltip's honest
+    // "On another Space" fallback).
+    if !offScreenByPID.isEmpty {
+        let now = TimeInterval(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
+        let minimized = minimizedProbe.minimizedWindowIDs(offScreenByPID: offScreenByPID, now: now)
+        for index in offScreen.indices where minimized.contains(offScreen[index].windowID) {
+            offScreen[index].isMinimized = true
+        }
     }
     // CGWindowList orders on-screen windows front-to-back; off-screen order is unspecified — keep
     // the z-ordered block first so the client's first seed (and the focused-window pick) is honest.
@@ -264,12 +281,16 @@ func makeSessionlessDispatcher(
     }
 }
 
-/// Bridges NSWorkspace app-lifecycle notifications into differ kicks, debounced 150 ms (an app
-/// launch fires several notifications back-to-back; one kick suffices).
+/// Bridges NSWorkspace app-lifecycle notifications AND the frontmost app's AX window events into
+/// differ kicks, debounced 150 ms (an app launch fires several notifications back-to-back; one
+/// kick suffices). Phase 5: a `didActivate` also retargets the ``WindowFeedAXObserver`` so window
+/// create/destroy/title/focus/miniaturize IN the frontmost app kick instantly too — the 1 Hz
+/// differ stays the backstop for everything else (background apps, AX-refusing apps).
 @MainActor
 final class WindowFeedKicker {
     private let service: WindowFeedService
     private var pending: DispatchWorkItem?
+    private var axObserver: WindowFeedAXObserver?
 
     init(service: WindowFeedService) {
         self.service = service
@@ -280,13 +301,31 @@ final class WindowFeedKicker {
             NSWorkspace.didActivateApplicationNotification,
         ] {
             center.addObserver(
-                self, selector: #selector(noteWorkspaceEvent), name: name, object: nil,
+                self, selector: #selector(noteWorkspaceEvent(_:)), name: name, object: nil,
             )
+        }
+        // AX events land on the observer's dedicated thread — hop to main for the shared debounce.
+        axObserver = WindowFeedAXObserver { [weak self] in
+            DispatchQueue.main.async { self?.scheduleKick() }
+        }
+        if let frontmost = NSWorkspace.shared.frontmostApplication {
+            axObserver?.retarget(pid: frontmost.processIdentifier)
         }
     }
 
     @objc
-    private func noteWorkspaceEvent() {
+    private func noteWorkspaceEvent(_ notification: Notification) {
+        // Follow the focus: the newly ACTIVATED app becomes the AX-observed one (its windows are
+        // where the user is working — exactly the windows whose churn should feel instant).
+        if notification.name == NSWorkspace.didActivateApplicationNotification,
+           let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+        {
+            axObserver?.retarget(pid: app.processIdentifier)
+        }
+        scheduleKick()
+    }
+
+    private func scheduleKick() {
         pending?.cancel()
         let work = DispatchWorkItem { [service] in
             Task { await service.kick() }

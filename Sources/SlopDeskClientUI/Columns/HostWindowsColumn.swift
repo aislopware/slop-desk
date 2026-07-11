@@ -390,6 +390,16 @@ private struct HostWindowLiveRow: View {
         .opacity(dimmed ? 0.5 : 1)
     }
 
+    /// Open-in-Split (docs/45 Phase 5): the split-with-spec op beside the active pane — same
+    /// endpoint persistence + cap gating as the tab path.
+    private func openSplit(_ axis: SplitAxis) {
+        let title = feed.titles[identity.windowID] ?? ""
+        store.newRemoteWindowSplit(
+            windowID: identity.windowID, title: title, appName: identity.appName, axis: axis,
+        )
+        store.recordRecentCommand(.newPane(.remoteGUI))
+    }
+
     /// Dimensions / display / visibility live in the tooltip ONLY — never row filler (docs/45 §2).
     private func tooltip(title: String, state: HostWindowState?) -> String {
         var parts = [title.isEmpty ? identity.appName : "\(identity.appName) — \(title)"]
@@ -411,6 +421,10 @@ private struct HostWindowLiveRow: View {
         } else {
             Button("Open in New Tab") { onAct(false) }
         }
+        // Open in Split (docs/45 Phase 5): pull the window in BESIDE the active pane — the
+        // split-with-spec op; works for streamed windows too (a deliberate second pane).
+        Button("Open in Split Right") { openSplit(.horizontal) }
+        Button("Open in Split Down") { openSplit(.vertical) }
         if let onPeek {
             Button("Peek") { onPeek() }
         }

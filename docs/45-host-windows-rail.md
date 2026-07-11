@@ -5,6 +5,15 @@
 
 # Host Windows Rail — Definitive Design Spec
 
+> **STATUS (2026-07-11): ALL 5 PHASES SHIPPED** — wire types 16–21 golden-pinned, push feed live,
+> icons + peek in. Deliberate deltas from this spec, decided at build time (docs/DECISIONS.md):
+> hover-dwell peek DEFERRED pending HW evaluation (Space/context-menu ship); rail width persistence
+> SKIPPED (NSSplitView autosave interacts with the collapse animation — min 220/max 320 bounds it);
+> picker/panel re-skin onto `HostWindowListView` replaced by FEED-backed pre-warm (one data source,
+> the battle-tested views stay); peek presents as a native NSPopover anchored to its row (floats
+> above the AppKit split — the OverlayHostView hop was unnecessary).
+
+
 The right sidebar that mirrors the host machine's desktop. Synthesized from three designs and nine critiques; every critical/major flaw is resolved inline, every contested call adjudicated.
 
 ---

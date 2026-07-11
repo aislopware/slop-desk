@@ -65,6 +65,22 @@ final class HostWindowsColumnTests: XCTestCase {
         XCTAssertEqual(OpenQuicklyView.streamedPane(for: 42, in: store), ref.paneID)
     }
 
+    func testOpenInSplitInsertsBesideTheActivePane() throws {
+        // The split-with-spec op (docs/45 Phase 5): the new remoteGUI leaf lands in the ACTIVE tab
+        // (not a new one), pre-bound and focused.
+        let store = makeStore()
+        let tabsBefore = store.tree.activeSession?.tabs.count ?? 0
+        let paneID = store.newRemoteWindowSplit(windowID: 42, title: "t", appName: "Xcode", axis: .horizontal)
+        XCTAssertEqual(store.tree.activeSession?.tabs.count, tabsBefore, "a split never mints a tab")
+        XCTAssertEqual(store.tree.activeSession?.activeTab?.activePane, paneID, "the new leaf lands focused")
+        let spec = try XCTUnwrap(store.tree.activeSession?.specs[paneID])
+        XCTAssertEqual(spec.video?.windowID, 42, "pre-bound like the tab path")
+        XCTAssertEqual(
+            HostWindowsColumn.streamedRef(for: 42, in: store)?.paneID, paneID,
+            "the streamed marker sees a split pane exactly like a tab pane",
+        )
+    }
+
     func testEarliestTabWinsForDuplicateStreams() throws {
         // ⌘-click deliberately opens a SECOND pane of the same host window — the marker (and the
         // single-click focus target) stays with the EARLIEST tab, so the rail's geography is stable.

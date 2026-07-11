@@ -25,6 +25,30 @@ public extension WorkspaceStore {
         return id
     }
 
+    /// Splits the ACTIVE pane along `axis`, inserting a `.remoteGUI` leaf PRE-BOUND to host window
+    /// `windowID` (docs/45 Phase 5 — the rail's "Open in Split" context verbs). The split-with-spec
+    /// sibling of ``newRemoteWindowTab(windowID:title:appName:)``: same endpoint persistence + cap
+    /// gating; the new leaf lands focused. Falls back to a NEW TAB when no pane is active (an empty
+    /// workspace has nothing to split — never a dead verb). Returns the new pane id.
+    @discardableResult
+    func newRemoteWindowSplit(
+        windowID: UInt32, title: String, appName: String, axis: SplitAxis,
+    ) -> PaneID {
+        guard let active = tree.activeSession?.activeTab?.activePane else {
+            return newRemoteWindowTab(windowID: windowID, title: title, appName: appName)
+        }
+        let label = title.isEmpty ? (appName.isEmpty ? "Remote window" : appName) : title
+        let spec = PaneSpec(
+            kind: .remoteGUI,
+            title: label,
+            video: VideoEndpoint(windowID: windowID, title: label, appName: appName),
+        )
+        let (next, id) = WorkspaceTreeOps.splitPane(active, axis: axis, newSpec: spec, in: tree)
+        tree = next
+        reconcileTree()
+        return id
+    }
+
     /// RELEASE STUCK INPUT (C5, the palette's `view.releaseStuckInput`): fire the ACTIVE pane's
     /// synthetic-release escape hatch — a key-up for every held modifier + a mouse-up for every button
     /// through the remote-GUI pane's existing release send paths — for when the host is left holding
