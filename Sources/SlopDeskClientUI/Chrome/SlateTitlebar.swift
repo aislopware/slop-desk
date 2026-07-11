@@ -1,14 +1,17 @@
 // SlateTitlebar — the full-width titlebar chrome. It floats as a top overlay over the content area (the
 // window runs `.hiddenTitleBar`, so there is NO system unified toolbar — this IS the chrome):
-//   • left  — sidebar REOPEN, only while the sidebar is collapsed (expanded toggle lives inside the
-//     sidebar traffic-light strip). Fixed lead 80 clears the system lights.
+//   • left  — sidebar REOPEN (`sidebar.left`), only while the sidebar is collapsed (expanded toggle
+//     lives inside the sidebar traffic-light strip). Fixed lead 80 clears the system lights.
 //   • centre— the active tab's title as a `⋯` menu (working dir / split / move / find / close pane)
-//   • right — the Host Windows rail REOPEN, only while the rail is collapsed (its expanded toggle
-//     lives inside the rail strip — the mirror of the left arrangement), plus the connection cluster
-//     ONLY while the LEFT sidebar is collapsed (resting home is the sidebar FOOTER; trailing titlebar
-//     has room — never jammed next to the traffic lights).
-// The reopen button flips the shared `WorkspaceChromeState` flag that the split representable reads
-// to collapse the matching `NSSplitViewItem` — same machinery the old toolbar drove.
+//   • right — the Host Windows rail REOPEN (`macwindow.on.rectangle` — the rail lists the host's
+//     WINDOWS, so its toggle wears the window glyph, deliberately distinct from the left `sidebar.left`;
+//     user ruling 2026-07-11), only while the rail is collapsed, plus the connection cluster ONLY while
+//     the LEFT sidebar is collapsed (resting home is the sidebar FOOTER).
+// Both reopen buttons are HOVER-REVEALED (user ruling 2026-07-11, the otty behavior): hidden at rest,
+// faded in while the pointer is inside the top strip (`HoverSensor` — hit-test-transparent, so the
+// strip stays draggable/clickable). The centre title + connection cluster stay always-visible: they are
+// STATUS, not controls. The reopen button flips the shared `WorkspaceChromeState` flag that the split
+// representable reads to collapse the matching `NSSplitViewItem` — same machinery the old toolbar drove.
 
 #if canImport(SwiftUI)
 import Foundation
@@ -56,20 +59,23 @@ struct SlateTitlebar: View {
     private var sidebarVisible: Bool { !chrome.sidebarCollapsed }
     private var hostRailVisible: Bool { !chrome.hostRailCollapsed }
 
+    /// Pointer-in-top-strip — the reveal gate for both reopen buttons (`HoverSensor` below).
+    @State private var topHover = false
+
     var body: some View {
         // Aligns the controls to the TRAFFIC-LIGHT row: top-anchored at `rowTop` so a 24pt plate's icon
         // centres at y≈15 (the row the red/yellow/green buttons sit on), NOT the vertical centre of the 40pt
         // strip.
         let rowTop: CGFloat = 3
         return ZStack(alignment: .top) {
-            // Left: sidebar REOPEN only while collapsed (expanded toggle sits in the sidebar strip). Fixed
-            // lead 80 clears traffic lights. Fade in after collapse settles; hide instantly on expand so it
-            // doesn't ride the slide (x 80→300).
+            // Left: sidebar REOPEN only while collapsed AND the top strip is hovered. On reveal-by-collapse
+            // fade in after the slide settles (never ride it, x 80→300); on reveal-by-hover just small-fade.
             PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
-                .opacity(sidebarVisible ? 0 : 1)
-                .allowsHitTesting(!sidebarVisible)
+                .opacity(!sidebarVisible && topHover ? 1 : 0)
+                .allowsHitTesting(!sidebarVisible && topHover)
                 .padding(.leading, 80)
                 .animation(sidebarVisible ? nil : Slate.Anim.standard.delay(0.15), value: sidebarVisible)
+                .animation(Slate.Anim.smallFade, value: topHover)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, rowTop)
 
@@ -100,22 +106,27 @@ struct SlateTitlebar: View {
                         onConnect: onConnect,
                     )
                 }
-                // Fade in after the collapse settles; hide instantly on expand so it doesn't ride
-                // the slide — the same choreography as the left reopen button.
-                PlateIconButton(symbol: .sidebarRight) { chrome.toggleHostWindows() }
-                    .opacity(hostRailVisible ? 0 : 1)
-                    .allowsHitTesting(!hostRailVisible)
+                // The WINDOW glyph, not `sidebar.right` — this toggle opens the host-WINDOWS rail and
+                // must read differently from the left sidebar's (user ruling 2026-07-11). Same
+                // hover + settle choreography as the left reopen button.
+                PlateIconButton(symbol: .macwindowOnRectangle) { chrome.toggleHostWindows() }
+                    .opacity(!hostRailVisible && topHover ? 1 : 0)
+                    .allowsHitTesting(!hostRailVisible && topHover)
                     .animation(
                         hostRailVisible ? nil : Slate.Anim.standard.delay(0.15),
                         value: hostRailVisible,
                     )
+                    .animation(Slate.Anim.smallFade, value: topHover)
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.trailing, Slate.Metric.space3)
             .padding(.top, rowTop)
         }
         .frame(height: Slate.Metric.titlebarHeight, alignment: .top)
-        .animation(Slate.Anim.standard, value: sidebarVisible)
+        #if os(macOS) // HoverSensor is AppKit; this titlebar only MOUNTS on macOS but compiles for iOS
+            .background(HoverSensor { topHover = $0 })
+        #endif
+            .animation(Slate.Anim.standard, value: sidebarVisible)
     }
 
     // NOTE: the titlebar carries NO hidden SwiftUI `.keyboardShortcut` for the chrome chords. ⌘⇧L

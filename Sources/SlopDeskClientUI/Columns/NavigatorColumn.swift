@@ -59,6 +59,11 @@ struct NavigatorColumn: View {
     /// `@State` (NOT `@Observable`): its mutation during a body eval must not re-invalidate anything.
     @State private var rowsMemo = RailRowsMemo()
 
+    #if os(macOS)
+    /// Pointer-in-strip — the collapse toggle's hover-reveal gate (the otty behavior, 2026-07-11).
+    @State private var stripHover = false
+    #endif
+
     /// The rows the sidebar renders this eval — ALWAYS the memoized structural rows. The query filter
     /// (``RailRowsBuilder/filtered``) applies DOWNSTREAM over these same rows (`windowRows(from:)` +
     /// `sectionedByProject(_:tabOrder:query:)`), so search composes over the memo rather than bypassing it.
@@ -176,22 +181,26 @@ struct NavigatorColumn: View {
             // visible mid-slide it glides with the moving edge and reads as a flash. So it shows only in the
             // SETTLED expanded state: hides INSTANTLY when the collapse flag flips (before the slide starts)
             // and, on expand, fades back only after the slide settles (0.25 clears the ~0.25s NSSplitView
-            // collapse animation; 0.15 still caught the tail).
+            // collapse animation; 0.15 still caught the tail). On top of that it is HOVER-REVEALED
+            // (2026-07-11, the otty behavior): at rest the strip is empty; the pointer entering the strip
+            // fades it in (`HoverSensor` — hit-test-transparent, the strip stays draggable).
             ZStack(alignment: .topTrailing) {
                 Color.clear
                 if let chrome {
                     PlateIconButton(symbol: .sidebarLeft) { chrome.toggleSidebar() }
-                        .opacity(chrome.sidebarCollapsed ? 0 : 1)
-                        .allowsHitTesting(!chrome.sidebarCollapsed)
+                        .opacity(!chrome.sidebarCollapsed && stripHover ? 1 : 0)
+                        .allowsHitTesting(!chrome.sidebarCollapsed && stripHover)
                         .animation(
                             chrome.sidebarCollapsed ? nil : Slate.Anim.standard.delay(0.25),
                             value: chrome.sidebarCollapsed,
                         )
+                        .animation(Slate.Anim.smallFade, value: stripHover)
                         .padding(.top, 3)
                         .padding(.trailing, 8)
                 }
             }
             .frame(height: Slate.Metric.titlebarHeight)
+            .background(HoverSensor { stripHover = $0 })
             HStack(spacing: 0) {
                 // MERIDIAN L2: the panel label speaks the INSTRUMENT voice (mono + wide tracking) — same
                 // register as `SlateSectionHeader`, one size up for the panel-level label.

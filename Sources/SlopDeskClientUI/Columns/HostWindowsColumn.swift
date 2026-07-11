@@ -38,6 +38,8 @@ struct HostWindowsColumn: View {
     /// Windows with a peek fetch in flight (single-flight; a second Space is a no-op).
     @State private var peekFetching: Set<UInt32> = []
     @FocusState private var listFocused: Bool
+    /// Pointer-in-strip — the collapse toggle's hover-reveal gate (the otty behavior, 2026-07-11).
+    @State private var stripHover = false
 
     /// One fully-formed peek: the row it anchors to, the image, and its instrument caption.
     struct PeekPresentation: Identifiable {
@@ -72,21 +74,26 @@ struct HostWindowsColumn: View {
 
     /// Traffic-light-row strip: ONLY the rail-collapse toggle, top-LEADING (the mirror of the left
     /// rail's top-trailing toggle — each toggle hugs its column's inner edge). Same settled-state
-    /// choreography: hide instantly on collapse, fade back after the slide settles.
+    /// choreography: hide instantly on collapse, fade back after the slide settles — plus the
+    /// hover-reveal gate (2026-07-11, the otty behavior): at rest the strip is empty. The glyph is
+    /// the WINDOW one (`macwindow.on.rectangle`), matching the titlebar reopen button — this toggle
+    /// is about the host's windows, deliberately distinct from the left `sidebar.left`.
     private var strip: some View {
         ZStack(alignment: .topLeading) {
             Color.clear
-            PlateIconButton(symbol: .sidebarRight) { chrome.toggleHostWindows() }
-                .opacity(chrome.hostRailCollapsed ? 0 : 1)
-                .allowsHitTesting(!chrome.hostRailCollapsed)
+            PlateIconButton(symbol: .macwindowOnRectangle) { chrome.toggleHostWindows() }
+                .opacity(!chrome.hostRailCollapsed && stripHover ? 1 : 0)
+                .allowsHitTesting(!chrome.hostRailCollapsed && stripHover)
                 .animation(
                     chrome.hostRailCollapsed ? nil : Slate.Anim.standard.delay(0.25),
                     value: chrome.hostRailCollapsed,
                 )
+                .animation(Slate.Anim.smallFade, value: stripHover)
                 .padding(.top, 3)
                 .padding(.leading, 8)
         }
         .frame(height: Slate.Metric.titlebarHeight)
+        .background(HoverSensor { stripHover = $0 })
     }
 
     /// The panel label — instrument voice, same register as the left rail's "TABS". No hostname, no
