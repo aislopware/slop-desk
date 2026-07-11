@@ -78,6 +78,34 @@ final class PaneChooserStoreLandingTests: XCTestCase {
         XCTAssertTrue(store.tree.isInvariantHeld())
     }
 
+    /// The PRIMARY ⌘T flow end-to-end at the spec level (the "new tab shows 'New Pane'" report,
+    /// 2026-07-11): a chooser minted from a pane with a known cwd INHERITS that cwd, and picking
+    /// Terminal retitles the spec to "Terminal" — so the rail's `rowTitle` (folder name over
+    /// `lastKnownTitle ?? title`) can never be left at the chooser's "New Pane" once resolved, and
+    /// the terminal materializes with the inherited cwd as its spawn hint.
+    func testChooserResolveKeepsInheritedCwdAndRetitles() throws {
+        let store = makeTreeStore()
+        let source = try XCTUnwrap(activeID(store))
+        store.setLastKnownCwd("/Users/me/projects/slop-desk", for: source)
+
+        store.openChooserPane(.newTab)
+        let chooser = try XCTUnwrap(activeID(store))
+        XCTAssertEqual(
+            store.tree.spec(for: chooser)?.lastKnownCwd, "/Users/me/projects/slop-desk",
+            "the chooser spec carries the inherited cwd (ES-E3-2)",
+        )
+        XCTAssertEqual(store.tree.spec(for: chooser)?.title, "New Pane")
+
+        store.choosePaneKind(chooser, kind: .terminal)
+        let spec = try XCTUnwrap(store.tree.spec(for: chooser))
+        XCTAssertEqual(spec.title, "Terminal", "the resolve retitles — 'New Pane' must not survive")
+        XCTAssertEqual(
+            spec.lastKnownCwd, "/Users/me/projects/slop-desk",
+            "a Terminal pick KEEPS the inherited cwd (it becomes the spawn hint + the folder-name title source)",
+        )
+        XCTAssertNil(spec.lastKnownTitle, "no shell title yet — nothing can shadow the folder-name title")
+    }
+
     /// `choosePaneKind` is a no-op on a non-chooser pane (defensive — only a `.chooser` pane transitions).
     func testChoosePaneKindNoOpOnNonChooser() throws {
         let store = makeTreeStore()

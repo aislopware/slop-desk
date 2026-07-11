@@ -341,6 +341,22 @@ public final class WorkspaceStore {
     /// exactly like ``PanePresentation/busy(handle:)``.
     public func paneIsBusy(_ id: PaneID) -> Bool { registry[id]?.isShellBusy ?? false }
 
+    /// Whether pane `id`'s plain BUSY DOT (``TabBadgeKind/commandBusy``) should render: the shell is
+    /// busy AND the current command has been running at least the configured reveal delay
+    /// (``SettingsKey/tabBadgeBusyDelaySecondsValue``, default 3 s) — a fast `ls`/`cd` never flashes
+    /// the rail. The `isBusy` input BOTH badge-resolution call sites feed to ``TabBadgeGating/resolve``
+    /// (the rail's `chrome(...)` and ``unseenAttentionPanes`` — they must agree). A busy shell with no
+    /// start stamp shows immediately (fail-visible — the stamp and the busy bit ride the same OSC-133
+    /// `.running` edge, so this is a defensive default, not a path). Everything else (close guards,
+    /// broadcast checks) keeps reading the raw ``paneIsBusy(_:)`` — a busy shell must confirm a close
+    /// from second zero. `now` is injectable for deterministic threshold tests.
+    public func paneShowsBusyDot(_ id: PaneID, now: Date = Date()) -> Bool {
+        guard paneIsBusy(id) else { return false }
+        guard let startedAt = paneCommandStartedAt[id] else { return true }
+        let elapsed = now.timeIntervalSince(startedAt)
+        return !elapsed.isLess(than: SettingsKey.tabBadgeBusyDelaySecondsValue)
+    }
+
     /// C8 improvement 3: fold every live pane's PATH-1 connection status into a compact ``WorkspaceConnectionAlert``
     /// for the collapsed-sidebar connection indicator, or `nil` when all panes are healthy. Iterates the tree
     /// in DFS order (a STABLE worst-pane tie-break) and reads each materialized ``LivePaneSession``'s channel
@@ -2888,6 +2904,14 @@ public final class WorkspaceStore {
     /// alongside ``paneCompletedAt``.
     public internal(set) var paneAttentionAt: [PaneID: Date] = [:]
 
+    /// RUNTIME-ONLY per-pane "when did the current foreground command start" stamp — the busy-dot
+    /// REVEAL anchor ``paneShowsBusyDot(_:now:)`` compares against "now" so the plain
+    /// ``TabBadgeKind/commandBusy`` dot appears only once a command has run past the configured delay.
+    /// Stamped on the command-START edge (``handleCommandStarted(id:at:)`` — which also arms the FIX-1
+    /// one-shot that re-renders the rail at the reveal boundary), cleared on completion. NOT persisted;
+    /// PRUNED to the live leaf set alongside ``paneCompletedAt``.
+    public internal(set) var paneCommandStartedAt: [PaneID: Date] = [:]
+
     /// How long a clean completion shows its brief ``TabBadgeKind/completed`` checkmark flash before it
     /// settles to the persistent ``TabBadgeKind/finished`` accent dot. Short — the flash is meant to be a beat,
     /// not a dwell — but long enough to register. Compared against ``paneCompletedAt`` in
@@ -3259,6 +3283,10 @@ public final class WorkspaceStore {
         // Attention-edge timestamp mirror (the NEEDS-ATTENTION `since` fallback):
         if !paneAttentionAt.isEmpty {
             paneAttentionAt = paneAttentionAt.filter { leafSet.contains($0.key) }
+        }
+        // Command-start stamp (the busy-dot reveal clock):
+        if !paneCommandStartedAt.isEmpty {
+            paneCommandStartedAt = paneCommandStartedAt.filter { leafSet.contains($0.key) }
         }
         // Foreground-process mirror (E6 WI-2 — process label / privilege badge):
         if !paneForegroundProcess.isEmpty {

@@ -1350,7 +1350,7 @@ final class MuxChannelSession: @unchecked Sendable {
         // command status — one pass, not two per-byte machines scanning this hot thread
         // twice). It only OBSERVES; the bytes are forwarded unchanged below. Emission
         // order is byte-faithful interleaved (consumers fold each type independently).
-        var controlMsgs = sniffer.observe(chunk)
+        let controlMsgs = sniffer.observe(chunk)
         // Agent-control: cache the latest title from any sniffed title message so
         // `list-panes` can return it without an extra sniffer pass. Runs on the PTY
         // read-loop thread (serial) — update under titleLock (read from control socket
@@ -1389,11 +1389,19 @@ final class MuxChannelSession: @unchecked Sendable {
         // to/over the bound, PAUSE the read loop so the kernel PTY buffer fills and
         // backpressures the shell (the real flood fix).
         enqueueOutput(chunk.count)
+        // Type-33 is host-gated single-source (see ``deriveProjectKey(from:)``, which just consumed
+        // this batch): the raw sniffed OSC-7 `.cwd` must not ALSO ride the FIFO — pre-warm-up plugin
+        // noise would reach the client unfiltered, and a probe-beaten stale OSC-7 would arrive at
+        // drain time AFTER (and client-side overwrite) the probed truth emitted above.
+        let fifoControl = controlMsgs.filter { message in
+            if case .cwd = message { return false }
+            return true
+        }
         // Append-then-yield (no lost wake): the pending bufferingNewest(1) wake always
         // observes a complete FIFO. The continuation is read under fifoLock (teardown
         // nils it); yield happens OUTSIDE the lock (it may resume the drain inline).
         fifoLock.lock()
-        outFIFO.append(.chunk(bytes: chunk, control: controlMsgs))
+        outFIFO.append(.chunk(bytes: chunk, control: fifoControl))
         let wake = outputWakeContinuation
         fifoLock.unlock()
         wake?.yield(())
@@ -1682,6 +1690,11 @@ final class MuxChannelSession: @unchecked Sendable {
     /// truth); after warm-up OSC-7 changes flow normally (a mid-command `cd` in a script still
     /// re-groups, no prompt edge required).
     ///
+    /// **Type-33 single-source:** an ACCEPTED change also emits `.cwd` here, synchronously — and
+    /// ``ingestPTYChunk(_:)`` strips the raw sniffed OSC-7 from the FIFO ride, so the client only
+    /// ever sees warm-up-gated, dedupe-anchored, probe-preferred cwd values (the client applies
+    /// them ungated; its old startup-noise gate is retired).
+    ///
     /// **Async (the resolver walk — `metadataQueue`):** a CHANGED cwd hands
     /// ``ProjectKeyResolver/projectKey(forCwd:)`` — a `stat(2)`-per-ancestor filesystem walk that
     /// can block INDEFINITELY on a hung network mount (NFS/SMB/FUSE) — to
@@ -1723,6 +1736,14 @@ final class MuxChannelSession: @unchecked Sendable {
         }
         lastCwdTruth = cwd
         projectKeyLock.unlock()
+        // Host-authoritative cwd (type 33): emit the ACCEPTED truth change synchronously, before the
+        // async key resolve — the client's tab cwd line must update even while the resolver walk is
+        // parked on a hung mount. This is the ONLY live type-33 source (`ingestPTYChunk` strips the
+        // raw sniffed OSC-7 from the FIFO ride), so what reaches the client carries the same
+        // guarantees as the type-34 it precedes: warm-up-gated, dedupe-anchored, probe-preferred.
+        // It also covers OSC-7-less shells (Starship): their prompt-edge probe changes now push the
+        // cwd with no metadata-RPC dependency — the stale-tab-cwd-after-reconnect fix.
+        enqueueControl([.cwd(cwd)])
         scheduleProjectKeyResolve(for: cwd)
     }
 

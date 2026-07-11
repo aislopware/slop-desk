@@ -495,6 +495,7 @@ private struct ShellSettingsTab: View {
     @Default(.tabBadgeOnCommandFinish) private var tabBadgeOnCommandFinish
     @Default(.tabBadgeOnCommandFail) private var tabBadgeOnCommandFail
     @Default(.tabBadgeOnCommandAwaitInput) private var tabBadgeOnCommandAwaitInput
+    @Default(.tabBadgeBusyDelaySeconds) private var tabBadgeBusyDelaySeconds
     // SOUND group (Shell). BEL → NSSound.beep() gate + error-exit beep (E14/K10).
     @Default(.soundShellControlled) private var soundShellControlled
     @Default(.soundOnErrorExit) private var soundOnErrorExit
@@ -625,6 +626,16 @@ private struct ShellSettingsTab: View {
                 "Badge the tab when a command stops at an interactive prompt.",
                 isOn: $tabBadgeOnCommandAwaitInput,
             )
+            // The busy-dot reveal delay (`WorkspaceStore.paneShowsBusyDot`): how long a command must run
+            // before the plain busy dot shows — a fast `ls` never flashes the rail. 0 = immediate.
+            LabeledContent("Busy dot delay") {
+                HStack(spacing: Slate.Metric.space2) {
+                    Slider(value: $tabBadgeBusyDelaySeconds, in: 0...10, step: 0.5)
+                    Text(String(format: "%.1fs", tabBadgeBusyDelaySeconds))
+                        .foregroundStyle(Slate.Text.secondary)
+                        .monospacedDigit()
+                }
+            }
             timingFooter(.live)
         }
     }

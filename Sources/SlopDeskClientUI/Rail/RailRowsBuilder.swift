@@ -181,7 +181,9 @@ enum RailRowsBuilder {
         let gatedBadge = TabBadgeGating.resolve(
             agent: status,
             completion: store.panePendingCompletion[paneID],
-            isBusy: store.paneIsBusy(paneID),
+            // Reveal-thresholded (default 3 s) so a fast `ls` never flashes the busy dot; must match
+            // the `unseenAttentionPanes` input (the two resolution sites may never disagree).
+            isBusy: store.paneShowsBusyDot(paneID),
             foregroundProcess: processLabel,
             completionFreshness: store.completionFreshness(forPane: paneID),
             progress: store.progress(for: paneID),

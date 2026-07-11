@@ -118,23 +118,21 @@ public final class ConnectionViewModel {
     /// observable `progress` mirror via `terminal.handle` regardless.
     public var onProgressUpdate: ((_ progress: PaneProgress?) -> Void)?
 
-    /// A shell-reported cwd edge (OSC 7, wire type 33). The store persists this into
-    /// ``PaneSpec/lastKnownCwd`` so cwd inheritance uses the live prompt cwd immediately.
+    /// A HOST-derived cwd edge (wire type 33). The store persists this into
+    /// ``PaneSpec/lastKnownCwd`` so the tab's cwd line + cwd inheritance follow the live cwd
+    /// immediately. Host-gated single-source (``MuxChannelSession.deriveProjectKey``): the host
+    /// emits only warm-up-gated, dedupe-anchored, probe-preferred change edges (plus the reattach
+    /// re-assert), so — like `.projectKey` — it is applied UNGATED here; the plugin-dir poison
+    /// backstop stays at the store's write sink (``WorkspaceStore/setLastKnownCwd(_:for:)``).
     public var onWorkingDirectoryChanged: ((_ cwd: String) -> Void)?
 
     /// A HOST-computed By-Project key edge (wire type 34): the git worktree toplevel containing the
     /// pane's cwd, else the cwd. The store persists it into ``PaneSpec/projectKey`` (the sidebar's
-    /// By-Project sectioning key). Deliberately NOT gated on `commandStartSeen` — the host re-asserts
-    /// the latched key on reattach BEFORE any command runs, and that re-assert is exactly what makes a
-    /// reconnect render the final sections without a flicker; transient plugin-dir poison is dropped at
-    /// the store's write sink instead (``WorkspaceStore/setProjectKey(_:for:)``).
+    /// By-Project sectioning key). Applied ungated, like `.cwd` — the host re-asserts the latched key
+    /// on reattach BEFORE any command runs, and that re-assert is exactly what makes a reconnect
+    /// render the final sections without a flicker; transient plugin-dir poison is dropped at the
+    /// store's write sink instead (``WorkspaceStore/setProjectKey(_:for:)``).
     public var onProjectKeyChanged: ((_ key: String) -> Void)?
-
-    /// Whether a command has started (OSC 133;C) in this pane yet. Gates ``routeWorkingDirectory``:
-    /// startup zsh/plugin code transiently `cd`s into a plugin cache dir while sourcing `.zshrc` and emits
-    /// an OSC 7 from there BEFORE the first prompt — those pre-command edges must not overwrite the
-    /// inheritance source (`lastKnownCwd`), or a later new-tab / split spawns its PTY in the plugin dir.
-    private var commandStartSeen = false
 
     private var client: SlopDeskClient?
     /// The pane's typed metadata façade (E4), created on connect bound to the live ``client``, torn down
@@ -355,10 +353,6 @@ public final class ConnectionViewModel {
         // Tear down any prior session first (re-connect to a new target).
         await teardown()
         deliberatelyClosed = false
-        // Re-arm the OSC-7 startup-noise gate for this fresh session (see `commandStartSeen`): a re-dialed
-        // pane spawns a brand-new shell that re-sources `.zshrc`, so its pre-first-command plugin OSC 7
-        // must be dropped again.
-        commandStartSeen = false
         terminal.reset()
 
         let client = makeClient()
@@ -652,11 +646,6 @@ public final class ConnectionViewModel {
             // skips the terminal.handle(event) forward below, which would otherwise wedge the terminal
             // model's connectionStatus to .connected past disconnect()'s terminal.reset() (R13 #3).
             if deliberatelyClosed { return }
-            // A reconnect spawns a BRAND-NEW host shell (the mux path has no server-side resume) that
-            // re-sources `.zshrc`, replaying the plugin-manager OSC-7 startup noise. Re-arm the gate
-            // (`commandStartSeen`) so that pre-first-command OSC 7 is dropped again — else the stale-true
-            // flag admits the plugin cache dir and poisons `lastKnownCwd` (the plugin-cache-poison bug).
-            commandStartSeen = false
             self.sessionID = sessionID
             effectiveSessionID = sessionID
             onResumeIdentitySnapshot?(sessionID, snapshotedContiguousSeq)
@@ -697,7 +686,6 @@ public final class ConnectionViewModel {
             case .running:
                 // The command-START edge clears a STALE completion badge in the store (a new run resets the
                 // prior exit ✓/✗ before the spinner resolves). The terminal model still sets `.running`.
-                commandStartSeen = true
                 onCommandStarted?()
             case let .idle(exitCode, durationMS):
                 onCommandCompleted?(exitCode, durationMS)
@@ -759,42 +747,25 @@ public final class ConnectionViewModel {
             // pane status strip / Dock read. `PaneProgress(state:percent:)` maps a `.clear` to `nil`.
             onProgressUpdate?(PaneProgress(state: state, percent: percent))
         case let .cwd(path):
-            routeWorkingDirectory(path)
+            // Host-derived cwd truth (wire type 33): forward every non-empty edge to the store's guarded
+            // write sink, UNGATED — the host is the single type-33 source (warm-up-gated change edges +
+            // the reattach re-assert; `MuxChannelSession.deriveProjectKey`), so a client-side
+            // first-command gate would only re-drop the re-assert and leave the tab's cwd line stale
+            // across a reconnect (the 2026-07-11 stale-cwd bug). Plugin-dir poison is dropped at
+            // ``WorkspaceStore/setLastKnownCwd(_:for:)``, mirroring `.projectKey` below.
+            guard !path.isEmpty else { break }
+            onWorkingDirectoryChanged?(path)
         case let .projectKey(path):
             // Host-computed By-Project key (wire type 34): forward every non-empty edge to the store's
-            // guarded write sink. Unlike OSC-7 cwd routing this is NOT gated on `commandStartSeen` — the
-            // host's reattach re-assert lands before any command, and dropping it would reintroduce the
-            // reconnect section flicker the host-side computation exists to remove.
+            // guarded write sink — the host's reattach re-assert lands before any command, and dropping
+            // it would reintroduce the reconnect section flicker the host-side computation exists to
+            // remove.
             guard !path.isEmpty else { break }
             onProjectKeyChanged?(path)
         case .bell:
             break
         }
         terminal.handle(event)
-    }
-
-    private func routeWorkingDirectory(_ path: String) {
-        guard !path.isEmpty else { return }
-        // OSC-7 STARTUP-NOISE GATE. A zsh plugin manager (zinit / antidote / antigen / …) transiently
-        // `cd`s into its plugin CACHE directory while sourcing `.zshrc` and emits an OSC 7 from there —
-        // e.g. `…/plugins/zsh-users---zsh-autosuggestions` — BEFORE the first prompt. Accepting that edge
-        // overwrites this pane's inherit source (`lastKnownCwd`), so a later new-tab / split then `chdir`s
-        // the freshly-spawned PTY into that plugin dir (via `channelOpen`) instead of the real project
-        // cwd. That is the whole bug: split/new-tab landing in `zsh-users---zsh-autosuggestions`.
-        //
-        // Gate on `commandStartSeen` (first OSC 133;C command-START): plugin sourcing never emits a
-        // command-START mark, whereas an INTERACTIVE `cd` (itself a command) does — so a genuine user `cd`
-        // is still captured live from the OSC 7 the shell reports. Before the first command the stamped
-        // `lastKnownCwd` (set at pane creation from the inherited cwd) is already the correct inherit
-        // source, so dropping pre-command edges is loss-free. The host `cwd` RPC is NOT a useful
-        // cross-check: it re-reads the shell's LIVE cwd — the same transient plugin dir the OSC 7 reported
-        // — so it races the `cd` rather than authoritatively rejecting the noise.
-        //
-        // NOTE: `metadataClient`-independent by design — every production terminal pane has a live
-        // `metadataClient`, so any branch keyed on it being nil would never run in production (the exact
-        // trap the previous implementation fell into). One path, exercised by the unit tests.
-        guard commandStartSeen else { return }
-        onWorkingDirectoryChanged?(path)
     }
 
     #if DEBUG

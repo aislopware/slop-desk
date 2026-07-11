@@ -17,6 +17,13 @@ import XCTest
 /// first command edge (plugin-manager pre-prompt `cd` noise), and at a prompt edge the probe beats
 /// a same-batch, possibly-stale OSC-7.
 ///
+/// 2026-07-11 (stale-cwd-after-reconnect fix) — type 33 `.cwd` is now host-gated SINGLE-SOURCE
+/// through the same derivation: an ACCEPTED cwd-truth change emits `.cwd` synchronously at the
+/// latch (before the async key resolve), the raw sniffed OSC-7 no longer rides the output FIFO,
+/// and the client applies type-33 ungated (its startup-noise gate is retired — the warm-up gate +
+/// probe-at-edge HERE own that filtering). An OSC-7-less shell's `cd` now reaches the client's tab
+/// cwd line host-pushed, with no completion-RPC dependency, including right after a reconnect.
+///
 /// Driven WITHOUT a PTY or running relay (hang-safety): the derivation seam
 /// (`deriveProjectKeyForTesting`) exercises the exact code `ingestPTYChunk` runs over each chunk's
 /// sniffed batch, `cwdProbeOverride` stands in for the `proc_pidinfo` prompt-edge probe, and the
@@ -127,8 +134,8 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
         session.deriveProjectKeyForTesting(from: [.cwd(sub)])
         XCTAssertEqual(
             session.takeControlBatchForTesting(),
-            [.projectKey(root)],
-            "a cwd inside a repo emits the TOPLEVEL as the project key (host-computed, no RPC)",
+            [.cwd(sub), .projectKey(root)],
+            "an accepted cwd change emits the type-33 truth AND the host-computed toplevel key",
         )
         session.deriveProjectKeyForTesting(from: [.cwd(sub)])
         XCTAssertNil(
@@ -136,9 +143,11 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
             "an unchanged cwd is dropped at the first dedupe anchor — every prompt's OSC-7 must not re-emit",
         )
         session.deriveProjectKeyForTesting(from: [.cwd(root)])
-        XCTAssertNil(
+        XCTAssertEqual(
             session.takeControlBatchForTesting(),
-            "a cwd change WITHIN the same project resolves the same key — no emission, no client re-render",
+            [.cwd(root)],
+            "a cwd change WITHIN the same project emits the cwd edge (the tab's cwd line follows a "
+                + "same-repo cd) but dedupes the unchanged key — no section re-render",
         )
     }
 
@@ -148,7 +157,12 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
         let (root, sub) = try makeTempRepo()
         session.cwdProbeOverride = { sub }
         session.deriveProjectKeyForTesting(from: [.commandStatus(.idle(exitCode: 0, durationMS: 5))])
-        XCTAssertEqual(session.takeControlBatchForTesting(), [.projectKey(root)])
+        XCTAssertEqual(
+            session.takeControlBatchForTesting(),
+            [.cwd(sub), .projectKey(root)],
+            "a probe-derived change pushes the type-33 cwd too — an OSC-7-less shell's `cd` reaches "
+                + "the client's tab cwd line host-pushed, with no metadata-RPC dependency",
+        )
         session.deriveProjectKeyForTesting(from: [.title("mid-command chunk")])
         XCTAssertNil(
             session.takeControlBatchForTesting(),
@@ -166,7 +180,7 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
         session.deriveProjectKeyForTesting(from: [.cwd(base.path)])
         XCTAssertEqual(
             session.takeControlBatchForTesting(),
-            [.projectKey(base.path)],
+            [.cwd(base.path), .projectKey(base.path)],
             "no repo anywhere above the cwd → the cwd itself is the (stable) key",
         )
     }
@@ -185,6 +199,29 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
             session.takeControlBatchForTesting(),
             [.cwd(sub), .projectKey(root)],
             "reattach re-tells the latched cwd + host-computed key — the returning client renders the final sections immediately",
+        )
+    }
+
+    /// Type-33 is host-gated SINGLE-SOURCE (the deriveProjectKey emit): the raw sniffed OSC-7
+    /// `.cwd` must NOT also ride the output FIFO — pre-warm-up plugin noise would reach the
+    /// client unfiltered, and a probe-beaten stale OSC-7 would arrive at drain time AFTER (and
+    /// client-side overwrite) the probed truth emitted at ingest time.
+    func testSniffedCwdDoesNotRideTheOutputFIFO() throws {
+        let session = makeSession()
+        let (_, sub) = try makeTempRepo()
+        warmUp(session)
+        session.ingestPTYChunkForTesting(osc("7;file://\(sub)"))
+        guard case let .output(_, _, fifoControl)? = session.takeMergedFrame() else {
+            XCTFail("the ingested chunk must be poppable as one merged output frame")
+            return
+        }
+        let cwds = fifoControl.filter { message in
+            if case .cwd = message { return true }
+            return false
+        }
+        XCTAssertEqual(
+            cwds, [],
+            "the sniffed `.cwd` is consumed by deriveProjectKey and must be stripped from the FIFO ride",
         )
     }
 
@@ -213,6 +250,11 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
             return false
         }
         XCTAssertEqual(earlyKeys, [], "no type-34 may be emitted before the resolve has run")
+        XCTAssertTrue(
+            preResolve.contains(.cwd(sub)),
+            "the type-33 cwd truth is emitted SYNCHRONOUSLY at the latch — the tab's cwd line "
+                + "updates even while the resolver walk is parked on a hung mount",
+        )
 
         pending.runAll()
         XCTAssertEqual(
@@ -236,6 +278,7 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
         session.deriveProjectKeyForTesting(from: [.cwd(subA)])
         session.deriveProjectKeyForTesting(from: [.cwd(subB)])
         XCTAssertEqual(pending.count, 2, "each cwd change dispatched its own resolve")
+        drainControlOut(session) // the two sync type-33 emits — this test pins only the key
         pending.runAll() // FIFO — exactly the serial metadataQueue's order
         XCTAssertEqual(
             session.takeControlBatchForTesting(),
@@ -269,7 +312,7 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
         session.deriveProjectKeyForTesting(from: [.cwd(sub)])
         XCTAssertEqual(
             session.takeControlBatchForTesting(),
-            [.projectKey(root)],
+            [.cwd(sub), .projectKey(root)],
             "post-warm-up OSC-7 changes derive normally",
         )
     }
@@ -288,8 +331,9 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
         )
         XCTAssertEqual(
             session.takeControlBatchForTesting(),
-            [.projectKey(rootTruth)],
-            "at a prompt edge the probe (ground truth) must beat a same-batch, possibly-stale OSC-7",
+            [.cwd(subTruth), .projectKey(rootTruth)],
+            "at a prompt edge the probe (ground truth) must beat a same-batch, possibly-stale OSC-7 "
+                + "— and the type-33 emitted to the client carries the PROBED truth, never the stale value",
         )
         session.reestablishActivityOnReattachForTesting()
         XCTAssertEqual(
@@ -311,7 +355,7 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
         )
         XCTAssertEqual(
             session.takeControlBatchForTesting(),
-            [.projectKey(root)],
+            [.cwd(sub), .projectKey(root)],
             "when the probe fails, the same-batch OSC-7 is the best remaining truth",
         )
     }
@@ -330,7 +374,7 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
         session.deriveProjectKeyForTesting(from: [.cwd(sub)])
         XCTAssertEqual(
             session.takeControlBatchForTesting(),
-            [.projectKey(root)],
+            [.cwd(sub), .projectKey(root)],
             "a mid-command OSC-7 cwd change (no prompt edge) still derives normally after warm-up",
         )
         XCTAssertFalse(probed.wasSet, "no prompt edge in the batch → the probe is never consulted")

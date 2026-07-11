@@ -117,6 +117,9 @@ public extension WorkspaceStore {
     /// "Long-Command Completion" master as an ADDITIONAL path. `paneTitle` is the live pane title (notification
     /// content).
     func handleCommandCompleted(id: PaneID, exitCode: Int32?, durationMS: UInt32, paneTitle: String) {
+        // The command is over — retire its busy-dot reveal clock (the dot itself already dropped with
+        // the live busy bit; this just keeps the stamp map honest for the next start edge).
+        paneCommandStartedAt.removeValue(forKey: id)
         let focused = isPaneFocused(id)
         let threshold = CommandNotificationPolicy.longRunningThresholdMS
         let badge = BackgroundCompletionPolicy.badge(
@@ -159,8 +162,19 @@ public extension WorkspaceStore {
     /// instead of the running spinner (`progress-state.md` "current progress state"). Mirrors the focus/progress
     /// clear paths; idempotent (a no-op when there is no badge). Deliberately does NOT touch `paneProgress` — a
     /// fresh command re-emits its own OSC 9;4 if any.
-    func handleCommandStarted(id: PaneID) {
+    ///
+    /// Also stamps ``WorkspaceStore/paneCommandStartedAt`` (the busy-dot reveal clock — the plain
+    /// ``TabBadgeKind/commandBusy`` dot shows only once the command outlives the configured delay, so a
+    /// fast `ls` never flashes the rail) and arms the FIX-1 one-shot that re-renders the rail at the
+    /// reveal boundary — ``WorkspaceStore/paneShowsBusyDot(_:now:)`` reads the wall clock, not an
+    /// `@Observable` dependency, so without the tick nothing would repaint the row when the delay elapses.
+    /// `at` is injectable for deterministic tests.
+    func handleCommandStarted(id: PaneID, at date: Date = Date()) {
         setCompletionBadge(nil, for: id)
+        paneCommandStartedAt[id] = date
+        flashDecayScheduler(SettingsKey.tabBadgeBusyDelaySecondsValue) { [weak self] in
+            self?.completionFlashTick &+= 1
+        }
     }
 
     /// Whether `id` is the focused leaf RIGHT NOW: the app is active AND `id` is the active session's

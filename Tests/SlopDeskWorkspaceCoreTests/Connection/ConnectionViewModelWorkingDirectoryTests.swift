@@ -2,9 +2,13 @@ import SlopDeskClient
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Tests for ``ConnectionViewModel``'s OSC-7 working-directory routing + its startup-noise gate
-/// (`commandStartSeen`). Uses `foldEventForTesting` — the DEBUG hook — so no async event loop or
-/// network is needed. No `GhosttySurface`/`SCStream`/`VT`/Metal instantiation.
+/// Tests for ``ConnectionViewModel``'s wire type-33/34 routing. Both are HOST-gated single-source
+/// truths (`MuxChannelSession.deriveProjectKey`: warm-up gate, dedupe anchor, probe-beats-stale-OSC-7
+/// — pinned in `MuxChannelSessionProjectKeyTests`), so the VM applies them UNGATED; the old
+/// client-side first-command gate would re-drop the host's reattach re-assert and leave the tab's
+/// cwd line stale across a reconnect (the 2026-07-11 stale-cwd bug). Uses `foldEventForTesting` —
+/// the DEBUG hook — so no async event loop or network is needed. No
+/// `GhosttySurface`/`SCStream`/`VT`/Metal instantiation.
 @MainActor
 final class ConnectionViewModelWorkingDirectoryTests: XCTestCase {
     private func makeVM() -> ConnectionViewModel {
@@ -15,57 +19,63 @@ final class ConnectionViewModelWorkingDirectoryTests: XCTestCase {
         )
     }
 
-    /// A pre-first-command OSC 7 (plugin-manager startup noise) must be DROPPED; a cwd edge after the
-    /// first command-start (a genuine interactive `cd`) is accepted.
-    func testWorkingDirectoryGatedUntilFirstCommand() {
+    /// A `.cwd` edge reaches the store callback UNGATED — the host re-asserts the latched cwd on
+    /// reattach BEFORE any command runs, and dropping it left the tab's cwd line stale until the
+    /// next accepted change. FAILS if a first-command gate is reintroduced on this route.
+    func testCwdRoutesToStoreCallbackWithoutCommandGate() {
         let vm = makeVM()
         var received: [String] = []
         vm.onWorkingDirectoryChanged = { received.append($0) }
 
-        vm.foldEventForTesting(.cwd("/plugins/zsh-users---zsh-autosuggestions"))
-        XCTAssertEqual(received, [], "a pre-first-command OSC 7 must be dropped (startup noise)")
-
-        vm.foldEventForTesting(.commandStatus(.running))
+        // No command has started (the reattach re-assert shape) — the cwd must still land.
         vm.foldEventForTesting(.cwd("/Users/me/project"))
-        XCTAssertEqual(received, ["/Users/me/project"], "a cwd edge after the first command-start is accepted")
+        XCTAssertEqual(received, ["/Users/me/project"], "the pre-first-command re-assert is delivered")
+
+        // And a later change edge lands too.
+        vm.foldEventForTesting(.commandStatus(.running))
+        vm.foldEventForTesting(.cwd("/Users/me/other"))
+        XCTAssertEqual(received, ["/Users/me/project", "/Users/me/other"])
     }
 
-    /// Bug 2/3: a reconnect spawns a BRAND-NEW host shell that re-sources `.zshrc`, replaying the exact
-    /// plugin-manager OSC-7 startup noise. The gate must RE-ARM at the reconnect boundary so that fresh
-    /// shell's pre-first-command OSC 7 is dropped again — otherwise the stale-true gate admits the plugin
-    /// cache dir and poisons `lastKnownCwd` (the exact regression the initial-connect gate fixed).
-    func testReconnectReArmsStartupNoiseGate() {
+    /// A reconnect must not wedge the route: cwd edges arriving AFTER a `.reconnected` (the host's
+    /// reattach re-assert, then a post-reconnect `cd`'s change edge) all land. This is the exact
+    /// user-visible regression: after a reconnect, `cd` no longer updated the tab's cwd line.
+    func testCwdKeepsRoutingAcrossReconnect() {
         let vm = makeVM()
         var received: [String] = []
         vm.onWorkingDirectoryChanged = { received.append($0) }
 
-        // Arm the gate with a real command on the first shell.
         vm.foldEventForTesting(.commandStatus(.running))
         vm.foldEventForTesting(.cwd("/Users/me/project"))
-        XCTAssertEqual(received, ["/Users/me/project"])
 
-        // Reconnect → brand-new shell. The gate must reset.
-        vm.foldEventForTesting(.reconnected(sessionID: UUID(), resumeFromSeq: 0))
-        vm.foldEventForTesting(.cwd("/plugins/zsh-users---zsh-autosuggestions"))
+        vm.foldEventForTesting(.reconnected(sessionID: UUID(), resumeFromSeq: 42))
+        // The host's reattach re-assert (no command has run on the reattached link yet):
+        vm.foldEventForTesting(.cwd("/Users/me/project"))
+        // A genuine post-reconnect cd's change edge:
+        vm.foldEventForTesting(.cwd("/Users/me/elsewhere"))
         XCTAssertEqual(
             received,
-            ["/Users/me/project"],
-            "a reconnect must re-arm the startup-noise gate so the fresh shell's plugin OSC 7 is dropped",
+            ["/Users/me/project", "/Users/me/project", "/Users/me/elsewhere"],
+            "reattach re-assert + post-reconnect change edges must all reach the store sink",
         )
+    }
 
-        // A real command on the reconnected shell re-arms the gate and the next cwd is accepted.
-        vm.foldEventForTesting(.commandStatus(.running))
-        vm.foldEventForTesting(.cwd("/Users/me/project2"))
-        XCTAssertEqual(received, ["/Users/me/project", "/Users/me/project2"])
+    /// An empty `.cwd` payload is dropped at the VM boundary (validate-then-drop — nothing useful
+    /// to persist, and an empty path must never reach the store sink).
+    func testEmptyCwdIsDropped() {
+        let vm = makeVM()
+        var received: [String] = []
+        vm.onWorkingDirectoryChanged = { received.append($0) }
+        vm.foldEventForTesting(.cwd(""))
+        XCTAssertEqual(received, [], "an empty cwd is dropped, never forwarded")
     }
 
     // MARK: - Host-computed By-Project key (wire type 34) routing
 
-    /// A `.projectKey` wire event reaches the store callback UNGATED by `commandStartSeen` — the host
-    /// re-asserts the latched key on reattach BEFORE any command runs, and dropping it would reintroduce
-    /// the reconnect section flicker the host-side computation exists to remove (the plugin-dir poison is
-    /// handled at the store's `setProjectKey` write guard instead). FAILS if the route were folded into the
-    /// gated `routeWorkingDirectory` path.
+    /// A `.projectKey` wire event reaches the store callback ungated (the same contract as `.cwd`) —
+    /// the host re-asserts the latched key on reattach BEFORE any command runs, and dropping it would
+    /// reintroduce the reconnect section flicker the host-side computation exists to remove (the
+    /// plugin-dir poison is handled at the store's `setProjectKey` write guard instead).
     func testProjectKeyRoutesToStoreCallbackWithoutCommandGate() {
         let vm = makeVM()
         var received: [String] = []

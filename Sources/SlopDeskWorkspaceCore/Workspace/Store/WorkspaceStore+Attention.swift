@@ -187,7 +187,9 @@ public extension WorkspaceStore {
                             TabBadgeGating.resolve(
                                 agent: agentStatus(for: paneID),
                                 completion: panePendingCompletion[paneID],
-                                isBusy: paneIsBusy(paneID),
+                                // Reveal-thresholded, matching the rail's `chrome(...)` input — the two
+                                // resolution sites may never disagree.
+                                isBusy: paneShowsBusyDot(paneID),
                                 foregroundProcess: paneForegroundProcess[paneID],
                                 completionFreshness: .settled,
                                 progress: progress(for: paneID),

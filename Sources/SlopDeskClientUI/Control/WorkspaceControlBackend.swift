@@ -516,7 +516,9 @@ final class WorkspaceControlBackend: ClientControlBackend {
         let gated = TabBadgeGating.resolve(
             agent: status,
             completion: store.panePendingCompletion[paneID],
-            isBusy: store.paneIsBusy(paneID),
+            // Reveal-thresholded, matching the rail's `chrome(...)` input (`tab list` must report the
+            // same badge the sidebar renders).
+            isBusy: store.paneShowsBusyDot(paneID),
             foregroundProcess: store.paneForegroundProcess[paneID],
             completionFreshness: store.completionFreshness(forPane: paneID),
             progress: store.progress(for: paneID),

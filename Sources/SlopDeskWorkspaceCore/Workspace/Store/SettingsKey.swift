@@ -97,6 +97,10 @@ public enum SettingsKey {
     /// DRIVE it is deferred (see `docs/DECISIONS.md`); the toggle is wired so the future signal gates without a
     /// code change. Distinct from the agent `agentBadgeWhenAwaitingInput` gate.
     public static let tabBadgeOnCommandAwaitInput = "tabBadge.onCommandAwaitInput"
+    /// "Tab Badge — Busy Dot Delay" — seconds a foreground command must have been running before the plain
+    /// busy dot (`TabBadgeKind.commandBusy`) is shown (default 3 s; 0 = immediate). Keeps a fast `ls`/`cd`
+    /// from flashing the rail. Consumed via `WorkspaceStore.paneShowsBusyDot(_:now:)`.
+    public static let tabBadgeBusyDelaySeconds = "tabBadge.busyDelaySeconds"
     // Controls / scroll / copy (Controls section). FIRE-TIME `Defaults.Keys` flags, deliberately NOT folded
     // into any typed prefs model, so they never reach the `EnvConfig` overlay or the `video-prefs.json`
     // sidecar → golden-safe. E8 owns the BEHAVIOUR; E7 only declares + surfaces them (persisted forward-stubs
@@ -421,6 +425,12 @@ public enum SettingsKey {
     /// "Tab Badge — When Command Awaits Input" — show the hand for a plain interactive prompt (default ON).
     /// Read fire-time. (The host detector that DRIVES the badge is deferred — see DECISIONS.md.)
     public static var tabBadgeOnCommandAwaitInputEnabled: Bool { Defaults[.tabBadgeOnCommandAwaitInput] }
+
+    /// "Tab Badge — Busy Dot Delay": seconds a command must run before the busy dot shows (default 3;
+    /// 0 = immediate). Read fire-time; a negative persisted value clamps to 0 (validate-then-default).
+    public static var tabBadgeBusyDelaySecondsValue: Double {
+        Double.maximum(Defaults[.tabBadgeBusyDelaySeconds], 0)
+    }
 
     /// The resolved GLOBAL ``CommandBadgeGates`` the pure gating consumes — the ONE seam ``RailRowsBuilder`` /
     /// the control backend read alongside ``agentBadgeGates`` so the three COMMAND-badge toggles are applied in
@@ -832,6 +842,7 @@ public extension Defaults.Keys {
     static let tabBadgeOnCommandFinish = Key<Bool>(slopDesk: SettingsKey.tabBadgeOnCommandFinish, default: true)
     static let tabBadgeOnCommandFail = Key<Bool>(slopDesk: SettingsKey.tabBadgeOnCommandFail, default: true)
     static let tabBadgeOnCommandAwaitInput = Key<Bool>(slopDesk: SettingsKey.tabBadgeOnCommandAwaitInput, default: true)
+    static let tabBadgeBusyDelaySeconds = Key<Double>(slopDesk: SettingsKey.tabBadgeBusyDelaySeconds, default: 3)
     static let systemDialogPanes = Key<Bool>(slopDesk: SettingsKey.systemDialogPanes, default: true)
     static let autoSwitchLayouts = Key<Bool>(slopDesk: SettingsKey.autoSwitchLayouts, default: true)
     static let redactSecrets = Key<Bool>(slopDesk: SettingsKey.redactSecrets, default: true)
