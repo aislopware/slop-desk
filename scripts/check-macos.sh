@@ -141,9 +141,14 @@ if [[ "${CONNECT}" == "1" ]]; then
   # inherited — LaunchServices does not forward the shell environment. Stderr is kept (the
   # SLOPDESK_ECHO_PROBE seam prints keystroke→ingest latency lines there — step 4d).
   APP_LOG="${WORK}/app-stderr.log"
+  # -ApplePersistenceIgnoreState YES: a prior run killed mid-flight leaves AppKit savedState
+  # whose SwiftUI window identifier no longer matches the rebuilt binary → state restoration
+  # returns window=0x0 AND suppresses the default window → the app runs with ZERO windows, the
+  # scene .task autoconnect trigger never fires, and this check false-FAILs ("no ESTABLISHED
+  # session"). Ignoring persisted state makes every automation launch a clean first launch.
   SLOPDESK_AUTOCONNECT_HOST=127.0.0.1 SLOPDESK_AUTOCONNECT_PORT="${CONNECT_PORT}" \
     SLOPDESK_AUTOTYPE="${AUTOTYPE}" SLOPDESK_ECHO_PROBE=1 \
-    "${APP_BIN}" > /dev/null 2> "${APP_LOG}" &
+    "${APP_BIN}" -ApplePersistenceIgnoreState YES > /dev/null 2> "${APP_LOG}" &
 else
   open "${APP}"
 fi
