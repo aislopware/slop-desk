@@ -8,7 +8,7 @@ import XCTest
 @MainActor
 final class HostWindowFeedTests: XCTestCase {
     override func tearDown() {
-        HostWindowFeedQuery.shared = nil
+        HostWindowFeedQuery.openLink = nil
         super.tearDown()
     }
 
@@ -32,7 +32,7 @@ final class HostWindowFeedTests: XCTestCase {
     ) -> HostWindowFeed {
         HostWindowFeed(
             isActive: { active }, isConnected: { connected },
-            renewalGap: renewalGap, idleGap: idleGap,
+            renewalGap: renewalGap, firstAnswerGap: .milliseconds(5), idleGap: idleGap,
         )
     }
 
@@ -99,31 +99,32 @@ final class HostWindowFeedTests: XCTestCase {
 
     // MARK: fold() — liveness
 
-    func testCurrentAckKeepsLivenessAndUnansweredRoundsDropIt() {
+    func testPushedSnapshotsApplyLikeRenewalReplies() {
+        // Phase 2: a push is just an unsolicited answer on the held lane — same fold path.
         let f = feed()
-        f.apply([window(id: 1)], generation: 5)
-        f.fold(.current(generation: 5))
+        f.fold(.snapshot(generation: 5, windows: [window(id: 1)]))
         XCTAssertTrue(f.isLive)
-        f.fold(nil)
-        XCTAssertTrue(f.isLive, "one lost round is UDP weather, not an outage")
-        f.fold(nil)
-        XCTAssertFalse(f.isLive, "two consecutive unanswered rounds dim the rail")
-        // The next answered round restores liveness.
-        f.fold(.snapshot(generation: 6, windows: [window(id: 1)]))
-        XCTAssertTrue(f.isLive)
+        XCTAssertEqual(f.knownGeneration, 5)
+        f.fold(.snapshot(generation: 6, windows: [window(id: 1), window(id: 2)]))
+        XCTAssertEqual(f.structure.map(\.windowID), [1, 2])
+        XCTAssertEqual(f.knownGeneration, 6)
     }
 
     func testMismatchedCurrentAckDoesNotMarkLive() {
         let f = feed()
         f.apply([window(id: 1)], generation: 5)
-        f.fold(nil)
-        f.fold(nil)
-        XCTAssertFalse(f.isLive)
-        // A stale/duplicated ack for a DIFFERENT generation is not confirmation of what we hold.
+        // Force the dimmed state via the loop-side gate closing, then probe the ack rule directly.
         f.fold(.current(generation: 4))
-        XCTAssertFalse(f.isLive)
-        f.fold(.current(generation: 5))
-        XCTAssertTrue(f.isLive)
+        XCTAssertTrue(f.isLive, "an ack never DROPS liveness")
+        let g = feed()
+        g.apply([window(id: 1)], generation: 5)
+        // A stale/duplicated ack for a DIFFERENT generation is not confirmation of what we hold:
+        // it must not RESTORE liveness once lost.
+        g.setLiveForTesting(false)
+        g.fold(.current(generation: 4))
+        XCTAssertFalse(g.isLive)
+        g.fold(.current(generation: 5))
+        XCTAssertTrue(g.isLive)
     }
 
     // MARK: Sectioning + filter (pure)
@@ -158,51 +159,52 @@ final class HostWindowFeedTests: XCTestCase {
         )
     }
 
-    // MARK: run() — lifecycle gating
+    // MARK: run() — lifecycle gating over the persistent link
 
-    func testLoopIdlesWithZeroQueriesWhileInactive() async {
-        let counter = QueryCounter()
-        HostWindowFeedQuery.shared = { _, _, _, _ in
-            counter.count += 1
-            return .current(generation: 0)
-        }
+    func testLoopOpensNoLinkWhileInactive() async {
+        let tracker = LinkTracker()
+        HostWindowFeedQuery.openLink = { _, _, _, onAnswer in tracker.open(onAnswer: onAnswer) }
         let f = feed(active: false)
         let task = Task { await f.run() }
         try? await Task.sleep(for: .milliseconds(60))
         task.cancel()
         _ = await task.value
-        XCTAssertEqual(counter.count, 0, "a collapsed rail costs the host 0 Hz — no wire traffic at all")
+        XCTAssertEqual(tracker.opened, 0, "a collapsed rail costs the host 0 Hz — no lane, no traffic")
     }
 
-    func testLoopRenewsWhileActiveAndAppliesSnapshots() async {
-        let counter = QueryCounter()
-        HostWindowFeedQuery.shared = { [self] _, _, _, known in
-            counter.count += 1
-            return known == 7 ? .current(generation: 7)
-                : .snapshot(generation: 7, windows: [window(id: 1)])
-        }
+    func testLoopHoldsOneLinkRenewsAndReceivesPushes() async {
+        let tracker = LinkTracker()
+        HostWindowFeedQuery.openLink = { _, _, _, onAnswer in tracker.open(onAnswer: onAnswer) }
         let f = feed()
         let task = Task { await f.run() }
-        try? await Task.sleep(for: .milliseconds(80))
+        try? await Task.sleep(for: .milliseconds(40))
+        // The host answers the renewal…
+        tracker.push(.snapshot(generation: 7, windows: [window(id: 1)]))
+        try? await Task.sleep(for: .milliseconds(20))
+        // …and later PUSHES a bump between renewals (Phase 2) — no send required.
+        tracker.push(.snapshot(generation: 8, windows: [window(id: 1), window(id: 2)]))
+        try? await Task.sleep(for: .milliseconds(20))
         task.cancel()
         _ = await task.value
-        XCTAssertGreaterThanOrEqual(counter.count, 2, "renewals keep flowing on the gap cadence")
-        XCTAssertEqual(f.structure.map(\.windowID), [1])
-        XCTAssertEqual(f.knownGeneration, 7)
+        XCTAssertEqual(tracker.opened, 1, "ONE persistent lane per active stretch, never per renewal")
+        XCTAssertGreaterThanOrEqual(tracker.sends, 2, "renewals keep flowing on the gap cadence")
+        XCTAssertEqual(f.structure.map(\.windowID), [1, 2], "the push applied without a renewal")
+        XCTAssertEqual(f.knownGeneration, 8)
         XCTAssertTrue(f.isLive)
     }
 
-    func testLoopMarksStaleWhenGatesClose() async {
+    func testLoopClosesLinkAndDimsWhenGatesClose() async {
+        let tracker = LinkTracker()
         let gate = Gate()
-        HostWindowFeedQuery.shared = { [self] _, _, _, _ in
-            .snapshot(generation: 1, windows: [window(id: 1)])
-        }
+        HostWindowFeedQuery.openLink = { _, _, _, onAnswer in tracker.open(onAnswer: onAnswer) }
         let f = HostWindowFeed(
             isActive: { gate.open }, isConnected: { true },
-            renewalGap: .milliseconds(5), idleGap: .milliseconds(5),
+            renewalGap: .milliseconds(5), firstAnswerGap: .milliseconds(5), idleGap: .milliseconds(5),
         )
         let task = Task { await f.run() }
-        try? await Task.sleep(for: .milliseconds(40))
+        try? await Task.sleep(for: .milliseconds(30))
+        tracker.push(.snapshot(generation: 1, windows: [window(id: 1)]))
+        try? await Task.sleep(for: .milliseconds(20))
         gate.open = false
         try? await Task.sleep(for: .milliseconds(40))
         task.cancel()
@@ -210,11 +212,46 @@ final class HostWindowFeedTests: XCTestCase {
         XCTAssertTrue(f.hasEverLoaded)
         XCTAssertFalse(f.isLive, "closed gates dim the rail (cached rows stay for instant reveal)")
         XCTAssertEqual(f.structure.map(\.windowID), [1], "cached rows survive the gate closing")
+        XCTAssertEqual(tracker.closed, 1, "the lane is released the moment the gates close")
     }
 }
 
-/// Main-actor mutable capture boxes for the loop tests (Swift 6: no captured vars in @Sendable).
+/// Fake lane factory for the loop tests: counts opens/sends/closes and lets the test PUSH answers
+/// (the Phase-2 shape). Main-actor (Swift 6: no captured vars in @Sendable).
 @MainActor
-private final class QueryCounter { var count = 0 }
+private final class LinkTracker {
+    private(set) var opened = 0
+    private(set) var sends = 0
+    private(set) var closed = 0
+    private var sink: (@MainActor (HostWindowFeedAnswer) -> Void)?
+
+    func open(onAnswer: @escaping @MainActor (HostWindowFeedAnswer) -> Void) -> any HostWindowFeedLink {
+        opened += 1
+        sink = onAnswer
+        return FakeLink(tracker: self)
+    }
+
+    func push(_ answer: HostWindowFeedAnswer) { sink?(answer) }
+
+    /// Each renewal is acked `.current` like a real quiet host, so liveness never times out
+    /// mid-test between the explicit pushes.
+    func noteSend(knownGeneration: UInt32) {
+        sends += 1
+        sink?(.current(generation: knownGeneration))
+    }
+
+    func noteClose() {
+        closed += 1
+        sink = nil
+    }
+
+    private final class FakeLink: HostWindowFeedLink {
+        private let tracker: LinkTracker
+        init(tracker: LinkTracker) { self.tracker = tracker }
+        func send(knownGeneration: UInt32) { tracker.noteSend(knownGeneration: knownGeneration) }
+        func close() { tracker.noteClose() }
+    }
+}
+
 @MainActor
 private final class Gate { var open = true }

@@ -885,9 +885,12 @@ Task {
         // Coalesces concurrent listWindows answers per channelID (so a lossy/looping client can't pile up
         // SCShareableContent enumerations — the discovery mirror of the registry's `minting` dedup).
         let listAnswerGuard = ListAnswerGuard()
-        // The ONE host-window feed cache/responder (docs/45): all subscribers share its 1 s-TTL
-        // snapshot, so N clients cost one CGWindowList enumeration per TTL, not N.
-        let windowFeedResponder = WindowFeedResponder()
+        // The ONE host-window feed service (docs/45): renewals register TTL subscribers, a differ
+        // pushes generation bumps ×2 while any live (0 Hz with none), and NSWorkspace events kick
+        // immediate ticks — all subscribers share one cache, so N clients cost one enumeration per
+        // tick, not N. The kicker is retained for the daemon's lifetime by the observer registration.
+        let windowFeedService = WindowFeedService(mux: mux)
+        _ = WindowFeedKicker(service: windowFeedService)
         try await mux.start { channelID, channel, data in
             // ORDERING: an ADMITTED lane's sink appends to its session's serial inbound queue
             // SYNCHRONOUSLY, in arrival order, on the transport's serial receive queue — so a mouseUp
@@ -917,14 +920,14 @@ Task {
                       case let .windowFeedSubscribe(knownGeneration) = msg
             {
                 // Session-LESS host-window FEED renewal (docs/45 rail): answer from the shared 1 s-TTL
-                // snapshot cache, NEVER mint a session. Bootstraps its reply flow exactly like
-                // listWindows; the per-channel guard coalesces retransmits and the responder's cache
-                // coalesces enumeration across channels/clients.
+                // snapshot cache AND register the lane as a push subscriber (TTL 6 s — Phase 2), NEVER
+                // mint a session. Bootstraps its reply flow exactly like listWindows; the per-channel
+                // guard coalesces retransmits and the service's cache coalesces enumeration across
+                // channels/clients.
                 if listAnswerGuard.begin(channelID) {
-                    Task { await windowFeedResponder.answer(
+                    Task { await windowFeedService.answer(
                         channelID: channelID,
                         knownGeneration: knownGeneration,
-                        mux: mux,
                         answerGuard: listAnswerGuard,
                     ) }
                 }

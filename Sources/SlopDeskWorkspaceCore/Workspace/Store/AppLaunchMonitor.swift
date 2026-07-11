@@ -16,6 +16,10 @@ public final class AppLaunchMonitor {
     private let pollGap: Duration
     /// The host app names present on the last poll (to diff for newly-appeared apps).
     private var lastApps: Set<String> = []
+    /// The live host-windows feed (docs/45, set post-init by the app). While it is LIVE (rail or
+    /// Open Quickly holding the subscription), its ≤2 s-fresh snapshot answers the poll for FREE —
+    /// one feed replaces two pollers; the wire query below is only the collapsed-rail fallback.
+    public weak var hostWindowFeed: HostWindowFeed?
 
     @preconcurrency
     public init(
@@ -58,10 +62,16 @@ public final class AppLaunchMonitor {
             lastApps = []
             return
         }
-        let t = target()
-        let windows = await query(t.host, t.mediaPort, t.cursorPort)
-        if Task.isCancelled { return }
-        let apps = Set(windows.map(\.appName).filter { !$0.isEmpty })
+        let apps: Set<String>
+        if let feed = hostWindowFeed, feed.isLive {
+            // Phase-2 re-point: the push feed is already fresh (≤ 2 s) — zero extra wire traffic.
+            apps = Set(feed.structure.map(\.appName).filter { !$0.isEmpty })
+        } else {
+            let t = target()
+            let windows = await query(t.host, t.mediaPort, t.cursorPort)
+            if Task.isCancelled { return }
+            apps = Set(windows.map(\.appName).filter { !$0.isEmpty })
+        }
         let newApps = apps.subtracting(lastApps)
         let goneApps = lastApps.subtracting(apps)
         lastApps = apps

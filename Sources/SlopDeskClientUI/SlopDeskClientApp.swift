@@ -455,6 +455,9 @@ public struct SlopDeskClientApp: App {
         _hostWindowFeed = State(initialValue: feed)
         // Open Quickly's Host rows read the SAME live feed the rail renders (weak — @State owns it).
         overlay.hostWindowFeed = feed
+        // Phase-2 re-point: while the feed is live its snapshot answers the app-launch monitor's
+        // poll for free (one poller replaces two); collapsed-rail falls back to the wire query.
+        launchMonitor.hostWindowFeed = feed
         // QUIT-DRAIN: hand the termination delegate the single live store (weak — the App's `@State`
         // owns it) so `applicationShouldTerminate` can drain the in-flight pane teardowns via
         // `quiesce()` before the process dies. Set here, before any window exists, so the seam is live

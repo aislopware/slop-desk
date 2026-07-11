@@ -124,7 +124,7 @@ struct HostWindowsColumn: View {
 
     @ViewBuilder
     private func list(_ sections: [(appName: String, rows: [HostWindowIdentity])]) -> some View {
-        if HostWindowFeedQuery.shared == nil {
+        if HostWindowFeedQuery.openLink == nil {
             emptyLabel("Window discovery unavailable")
         } else if !feed.hasEverLoaded {
             // Never loaded: connected ⇒ the first snapshot is in flight (rows appear fully formed —

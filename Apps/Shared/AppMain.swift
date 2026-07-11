@@ -125,38 +125,38 @@ struct ClientAppMain {
             }
         }
 
-        // Host-window FEED seam (docs/45 rail): inject one subscribe round so the cross-platform
-        // `HostWindowFeed` renewal loop can list the host's windows live WITHOUT importing the gated
-        // video module. Maps the wire `HostWindowRecord` → the UI's `HostWindowInfo`. `nil` (no video
-        // module) ⇒ the rail shows its unavailable empty state.
+        // The channel IS the seam's link (both halves are @MainActor with matching shapes); the
+        // conformance lives here because the video module deliberately never imports WorkspaceCore.
+        // (Declared before the closure below so the return type erases cleanly.)
+
+        // Host-window FEED seam (docs/45 rail): inject the persistent-lane opener so the
+        // cross-platform `HostWindowFeed` loop can subscribe — and receive Phase-2 PUSHES between
+        // renewals — WITHOUT importing the gated video module. Maps the wire `HostWindowRecord` →
+        // the UI's `HostWindowInfo`. `nil` (no video module) ⇒ the rail shows its unavailable state.
         MainActor.assumeIsolated {
-            HostWindowFeedQuery.shared = { host, mediaPort, cursorPort, knownGeneration in
-                let answer = await WindowFeedRound.subscribeOnce(
-                    host: host, mediaPort: mediaPort, cursorPort: cursorPort,
-                    knownGeneration: knownGeneration,
-                )
-                switch answer {
-                case let .current(generation):
-                    return .current(generation: generation)
-                case let .snapshot(generation, records):
-                    return .snapshot(generation: generation, windows: records.map {
-                        HostWindowInfo(
-                            windowID: $0.windowID,
-                            bundleID: $0.bundleID,
-                            appName: $0.appName,
-                            title: $0.title,
-                            widthPt: Int($0.widthPt),
-                            heightPt: Int($0.heightPt),
-                            displayIndex: Int($0.displayIndex),
-                            isOnScreen: $0.flags.contains(.onScreen),
-                            isMinimized: $0.flags.contains(.minimized),
-                            isAppHidden: $0.flags.contains(.appHidden),
-                            isFrontmostApp: $0.flags.contains(.frontmostApp),
-                            isFocused: $0.flags.contains(.focusedWindow),
-                        )
-                    })
-                case nil:
-                    return nil
+            HostWindowFeedQuery.openLink = { host, mediaPort, cursorPort, onAnswer in
+                WindowFeedChannel(host: host, mediaPort: mediaPort, cursorPort: cursorPort) { answer in
+                    switch answer {
+                    case let .current(generation):
+                        onAnswer(.current(generation: generation))
+                    case let .snapshot(generation, records):
+                        onAnswer(.snapshot(generation: generation, windows: records.map {
+                            HostWindowInfo(
+                                windowID: $0.windowID,
+                                bundleID: $0.bundleID,
+                                appName: $0.appName,
+                                title: $0.title,
+                                widthPt: Int($0.widthPt),
+                                heightPt: Int($0.heightPt),
+                                displayIndex: Int($0.displayIndex),
+                                isOnScreen: $0.flags.contains(.onScreen),
+                                isMinimized: $0.flags.contains(.minimized),
+                                isAppHidden: $0.flags.contains(.appHidden),
+                                isFrontmostApp: $0.flags.contains(.frontmostApp),
+                                isFocused: $0.flags.contains(.focusedWindow),
+                            )
+                        }))
+                    }
                 }
             }
         }
@@ -189,3 +189,10 @@ struct ClientAppMain {
         SlopDeskClientApp.main()
     }
 }
+
+#if canImport(SlopDeskVideoClient)
+/// The video module's persistent feed lane IS the WorkspaceCore seam's link — both halves are
+/// `@MainActor` with matching shapes. The conformance lives HERE (retroactive) because the video
+/// module deliberately never imports `SlopDeskWorkspaceCore` (the seam-split discipline).
+extension WindowFeedChannel: @retroactive HostWindowFeedLink {}
+#endif

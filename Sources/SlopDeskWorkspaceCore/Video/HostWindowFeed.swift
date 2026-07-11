@@ -66,17 +66,28 @@ public enum HostWindowFeedAnswer: Equatable, Sendable {
     case snapshot(generation: UInt32, windows: [HostWindowInfo])
 }
 
-/// The **window-feed seam** (docs/45): the GUI app injects one subscribe round (implemented in
-/// `SlopDeskVideoClient.WindowFeedRound.subscribeOnce`), so the cross-platform feed loop can renew
-/// WITHOUT importing the gated video module. `nil` → the rail shows its unavailable empty state.
+/// A live window-feed lane: fire renewals; answers — including Phase-2 PUSHES between renewals —
+/// arrive on the callback given at open. `close()` releases the lane (the host's subscriber TTL
+/// reaps the server side after 3 missed renewals).
+@preconcurrency
+@MainActor
+public protocol HostWindowFeedLink: AnyObject {
+    func send(knownGeneration: UInt32)
+    func close()
+}
+
+/// The **window-feed seam** (docs/45): the GUI app injects the lane-opener (implemented in
+/// `SlopDeskVideoClient.WindowFeedChannel`), so the cross-platform feed loop can subscribe WITHOUT
+/// importing the gated video module. `nil` → the rail shows its unavailable empty state.
 @preconcurrency
 @MainActor
 public final class HostWindowFeedQuery {
-    /// App-registered subscribe round (set once at launch). Args: host, mediaPort, cursorPort,
-    /// knownGeneration (0 = have nothing).
-    public static var shared: (@MainActor (
-        _ host: String, _ mediaPort: UInt16, _ cursorPort: UInt16, _ knownGeneration: UInt32,
-    ) async -> HostWindowFeedAnswer?)?
+    /// App-registered lane opener (set once at launch). Args: host, mediaPort, cursorPort, and the
+    /// answer sink (renewal replies AND pushes). Returns `nil` when the video pipeline is absent.
+    public static var openLink: (@MainActor (
+        _ host: String, _ mediaPort: UInt16, _ cursorPort: UInt16,
+        _ onAnswer: @escaping @MainActor (HostWindowFeedAnswer) -> Void,
+    ) -> (any HostWindowFeedLink)?)?
 }
 
 /// A window's structural identity in the rail: the row's `leafIdentity` key (`windowID|bundleID`)
@@ -160,16 +171,23 @@ public final class HostWindowFeed {
 
     /// The generation this client holds (0 = nothing) — renewal input, not UI state.
     @ObservationIgnored public private(set) var knownGeneration: UInt32 = 0
-    /// Consecutive unanswered rounds while the gates were open (2 ⇒ `isLive = false`).
-    @ObservationIgnored private var unansweredStreak = 0
+    /// When the last answer (renewal reply OR push) landed — the staleness signal.
+    @ObservationIgnored private var lastAnswerAt: ContinuousClock.Instant?
+    /// Whether any answer has landed since the current link opened (drives the fast first-answer
+    /// retransmit cadence).
+    @ObservationIgnored private var answeredSinceOpen = false
+    /// The live lane (Phase 2: held open across renewals so pushes always have a handler).
+    @ObservationIgnored private var link: (any HostWindowFeedLink)?
 
     // MARK: Lifecycle gates (injected — chrome flag + OQ visibility + connection)
 
     private let isActive: @MainActor () -> Bool
     private let isConnected: @MainActor () -> Bool
     private let target: @MainActor () -> ConnectionTarget
-    /// Gap between answered renewals (docs/45: 2 s) — injectable for deterministic tests.
+    /// Gap between renewals once answered (docs/45: 2 s) — injectable for deterministic tests.
     private let renewalGap: Duration
+    /// Retransmit gap until the FIRST answer after a lane opens (docs/45: 500 ms).
+    private let firstAnswerGap: Duration
     /// Poll gap while the gates are closed (cheap closure checks, no wire traffic).
     private let idleGap: Duration
 
@@ -179,46 +197,75 @@ public final class HostWindowFeed {
         isConnected: @escaping @MainActor () -> Bool,
         target: @escaping @MainActor () -> ConnectionTarget = { .default },
         renewalGap: Duration = .seconds(2),
+        firstAnswerGap: Duration = .milliseconds(500),
         idleGap: Duration = .milliseconds(500),
     ) {
         self.isActive = isActive
         self.isConnected = isConnected
         self.target = target
         self.renewalGap = renewalGap
+        self.firstAnswerGap = firstAnswerGap
         self.idleGap = idleGap
     }
 
-    /// Renews until the owning Task is cancelled. While the gates are closed (rail collapsed AND
-    /// Open Quickly hidden, or disconnected) it idles WITHOUT wire traffic — a collapsed rail costs
-    /// the host exactly 0 Hz (docs/45 §8) — keeping the cached rows for a dimmed instant reveal.
+    /// Renews until the owning Task is cancelled. While the gates are open it holds ONE persistent
+    /// lane (renewal replies AND pushes land on it); while closed (rail collapsed AND Open Quickly
+    /// hidden, or disconnected) the lane is released and it idles WITHOUT wire traffic — a collapsed
+    /// rail costs the host exactly 0 Hz (docs/45 §8) — keeping cached rows for a dimmed reveal.
     public func run() async {
+        defer { closeLink() }
         while !Task.isCancelled {
-            guard isActive(), isConnected(), let query = HostWindowFeedQuery.shared else {
+            guard isActive(), isConnected(), let open = HostWindowFeedQuery.openLink else {
+                closeLink()
                 if isLive { isLive = false }
                 try? await Task.sleep(for: idleGap)
                 continue
             }
-            let t = target()
-            let answer = await query(t.host, t.mediaPort, t.cursorPort, knownGeneration)
-            if Task.isCancelled { return }
-            fold(answer)
-            try? await Task.sleep(for: renewalGap)
+            if link == nil {
+                let t = target()
+                answeredSinceOpen = false
+                link = open(t.host, t.mediaPort, t.cursorPort) { [weak self] answer in
+                    self?.fold(answer)
+                }
+            }
+            link?.send(knownGeneration: knownGeneration)
+            try? await Task.sleep(for: answeredSinceOpen ? renewalGap : firstAnswerGap)
+            noteRenewalElapsed()
         }
     }
 
-    /// Folds one round's answer into the store (internal for deterministic tests).
+    /// Releases the live lane (gates closed / loop cancelled). The host's subscriber TTL reaps the
+    /// server side after 3 missed renewals.
+    private func closeLink() {
+        link?.close()
+        link = nil
+    }
+
+    /// Staleness check after each renewal interval: no answer (reply or push) for two full renewal
+    /// gaps ⇒ dim the rail. UDP weather loses single datagrams, not multi-second stretches.
+    private func noteRenewalElapsed() {
+        guard isLive, answeredSinceOpen else { return }
+        let grace = renewalGap * 2 + firstAnswerGap
+        if let last = lastAnswerAt, ContinuousClock.now - last > grace {
+            isLive = false
+        }
+    }
+
+    /// Test seam: force the liveness flag so ack-rule tests need no real timers.
+    func setLiveForTesting(_ live: Bool) { isLive = live }
+
+    /// Folds one answer (renewal reply or push) into the store (internal for deterministic tests).
     func fold(_ answer: HostWindowFeedAnswer?) {
+        guard let answer else { return }
+        lastAnswerAt = ContinuousClock.now
+        answeredSinceOpen = true
         switch answer {
         case let .snapshot(generation, windows):
             apply(windows, generation: generation)
         case let .current(generation):
             // The host says our generation is current. A mismatched ack (stale/duplicated datagram)
-            // is NOT confirmation of what we hold — treat as liveness only.
-            unansweredStreak = 0
+            // is NOT confirmation of what we hold — liveness only when it names OUR generation.
             if !isLive, generation == knownGeneration { isLive = true }
-        case nil:
-            unansweredStreak += 1
-            if unansweredStreak >= 2, isLive { isLive = false }
         }
     }
 
@@ -226,7 +273,6 @@ public final class HostWindowFeed {
     /// written ONLY when its value actually changed.
     func apply(_ windows: [HostWindowInfo], generation: UInt32) {
         knownGeneration = generation
-        unansweredStreak = 0
 
         // STRUCTURE: survivors keep their frozen positions; new windows append in snapshot order.
         let liveIDs = Set(windows.map(\.windowID))

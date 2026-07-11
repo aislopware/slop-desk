@@ -1,8 +1,14 @@
-// The host-window FEED glue (docs/45 rail): answers `windowFeedSubscribe` from a 1 s-TTL snapshot
-// cache. Enumeration is `CGWindowListCopyWindowInfo` (~2.5 ms) — NEVER `SCShareableContent` (that
-// stays hello/mint-only; it costs a replayd round-trip). All pure logic (inclusion, flags, caps,
-// generation, packing) lives in `SlopDeskVideoHost/WindowFeed` and is headless-tested; this file is
-// only the AppKit/CoreGraphics reads + the send/retire choreography.
+// The host-window FEED glue (docs/45): Phase-1 request/reply + Phase-2 PUSH. Renewals register a
+// subscriber (TTL 6 s — the lane is retired on expiry, not per answer); while ≥1 subscriber lives, a
+// differ ticks at 1 Hz (4 Hz for 3 s after a structural change; 0 Hz with none), folds per the pure
+// coalesce policy, and pushes snapshot chunks ×2 on every generation bump. NSWorkspace
+// launch/terminate/activate events kick an immediate tick (debounced 150 ms).
+//
+// Enumeration is `CGWindowListCopyWindowInfo` (~2.5 ms) — NEVER `SCShareableContent` (that stays
+// hello/mint-only). All pure logic (inclusion, flags, caps, generation, packing, subscribers,
+// coalesce/burst) lives in `SlopDeskVideoHost/WindowFeed` and is headless-tested; this file is only
+// the AppKit/CoreGraphics reads + send/retire choreography. Nothing here ever runs on the transport
+// receive queue or any queue the input path touches (actor executor + main-queue AppKit reads).
 
 import Foundation
 
@@ -14,8 +20,8 @@ import SlopDeskVideoProtocol
 
 /// Enumerates the host's app windows into the pure feed input shape. `@MainActor`: the AppKit reads
 /// (`NSWorkspace.frontmostApplication`, `NSRunningApplication`) belong there, and one ≤ 2.5 ms
-/// CGWindowList call per cache-TTL on the daemon's otherwise-idle main queue is far below any
-/// budget that matters (the transport receive queue and input path are NEVER touched).
+/// CGWindowList call per tick on the daemon's otherwise-idle main queue is far below any budget
+/// that matters.
 @MainActor
 func enumerateHostWindows() -> [WindowFeedSourceWindow] {
     guard let info = CGWindowListCopyWindowInfo(
@@ -67,8 +73,8 @@ func enumerateHostWindows() -> [WindowFeedSourceWindow] {
             displayIndex: UInt8(clamping: display),
             isAppHidden: state.isHidden,
             isFrontmostApp: pid == frontmostPID,
-            // Phase-1 honesty: off-screen just means "minimized OR other Space OR hidden app" —
-            // the AXMinimized disambiguation is the Phase-5 budgeted probe.
+            // Off-screen just means "minimized OR other Space OR hidden app" — the AXMinimized
+            // disambiguation is the Phase-5 budgeted probe.
             isMinimized: false,
         )
         if isOnScreen { onScreen.append(window) } else { offScreen.append(window) }
@@ -82,50 +88,155 @@ private extension CGRect {
     var area: CGFloat { isNull ? 0 : width * height }
 }
 
-/// Serializes feed answers over the ONE shared ``WindowFeedCache``: renewal retransmits, generation
-/// re-requests, and multiple clients are all answered from the same encoded chunks — at most one
-/// enumeration per TTL regardless of subscriber count (the enumeration-amplification guard).
-actor WindowFeedResponder {
+/// The ONE feed service: subscriber table + snapshot cache + differ loop + pushes, serialized on
+/// this actor. Renewal retransmits, generation re-requests, and N clients are all answered from the
+/// same encoded chunks — at most one enumeration per cache TTL outside the differ's own cadence.
+actor WindowFeedService {
     private var cache = WindowFeedCache()
+    private var subscribers = WindowFeedSubscriberTable()
+    private var policy = WindowFeedPushPolicy()
+    private var tickTask: Task<Void, Never>?
+    private let mux: NWVideoMuxDatagramTransport
 
-    /// Monotonic seconds (never wall clock — TTL must survive clock changes).
+    init(mux: NWVideoMuxDatagramTransport) {
+        self.mux = mux
+    }
+
+    /// Monotonic seconds (never wall clock — TTLs must survive clock changes).
     private static func nowSeconds() -> TimeInterval {
         TimeInterval(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
     }
 
-    /// Answers one `windowFeedSubscribe` on `channelID`: rebuild-if-stale, then either the 5-byte
-    /// `windowFeedCurrent` ack or the full chunk sequence dup-sent ×2 ~25 ms apart (the
-    /// `bye`/`streamCadence` loss pattern). Retires the lane after the answer — the feed lane is
-    /// pure request/reply in Phase 1 (the renewal re-bootstraps it, exactly like `listWindows`).
+    /// Answers one `windowFeedSubscribe` on `channelID` AND registers/renews it as a push
+    /// subscriber. The lane is NOT retired per answer (Phase 2) — the TTL reap retires it after 3
+    /// missed renewals, so pushes between renewals ride the stamped reply flow.
     func answer(
         channelID: UInt32,
         knownGeneration: UInt32,
-        mux: NWVideoMuxDatagramTransport,
         answerGuard: ListAnswerGuard,
     ) async {
         defer { answerGuard.end(channelID) }
         let now = Self.nowSeconds()
+        subscribers.renew(channelID, now: now)
         if cache.needsRebuild(now: now) {
             let source = await enumerateHostWindows()
             cache.fold(WindowFeedSnapshotBuilder.records(from: source), now: now)
         }
         let (isSnapshot, payloads) = cache.replyDatagrams(forKnownGeneration: knownGeneration)
-        for payload in payloads {
-            mux.send(payload, on: .control, channelID: channelID)
-        }
         if isSnapshot {
             log(
                 "answered windowFeedSubscribe on chan=\(channelID): gen=\(cache.generation) "
                     + "\(cache.records.count) windows in \(payloads.count) chunk(s)",
             )
-            // Dup-send ×2: converts P(loss) → P(loss)² per chunk; the client's assembler is
-            // idempotent per (generation, chunkIndex).
-            try? await Task.sleep(for: .milliseconds(25))
+        }
+        send(payloads, to: [channelID], dup: isSnapshot)
+        ensureTicking()
+    }
+
+    /// An NSWorkspace event landed (debounced by the kicker): run one immediate differ tick so a
+    /// launch/quit/⌘Tab reaches subscribers in ~150 ms instead of the next 1 Hz tick.
+    func kick() async {
+        guard !subscribers.isEmpty else { return }
+        await tick(now: Self.nowSeconds())
+    }
+
+    /// The differ loop: reap → enumerate → classify → fold-per-policy → push. Runs ONLY while ≥1
+    /// subscriber lives (0 Hz with none — the loop exits and the next renewal restarts it).
+    private func ensureTicking() {
+        guard tickTask == nil else { return }
+        tickTask = Task { [weak self] in
+            while let self, !Task.isCancelled {
+                guard await tickOnce() else { return }
+                let interval = await policy.tickInterval(now: Self.nowSeconds())
+                try? await Task.sleep(for: .seconds(interval))
+            }
+        }
+    }
+
+    /// One loop turn. Returns `false` when the subscriber table emptied (the loop exits).
+    private func tickOnce() async -> Bool {
+        let now = Self.nowSeconds()
+        for expired in subscribers.reapExpired(now: now) {
+            mux.retire(expired)
+            log("window-feed subscriber chan=\(expired) expired (3 missed renewals) — lane retired")
+        }
+        guard !subscribers.isEmpty else {
+            tickTask = nil
+            return false
+        }
+        await tick(now: now)
+        return true
+    }
+
+    /// One differ tick: enumerate, classify against the cached records, fold when the pure policy
+    /// allows (structural = now + burst; volatile = coalesce gates), push on a generation bump.
+    private func tick(now: TimeInterval) async {
+        let source = await enumerateHostWindows()
+        let fresh = WindowFeedSnapshotBuilder.records(from: source)
+        let change = WindowFeedPushPolicy.classify(old: cache.records, new: fresh)
+        guard policy.shouldFold(change, now: now) else {
+            // Unchanged: refresh the cache TTL so renewals keep answering without re-enumerating.
+            // Gated volatile churn: do NOT fold — the coalesce gate opens on a later tick.
+            if change == .none { cache.fold(fresh, now: now) }
+            return
+        }
+        cache.fold(fresh, now: now)
+        let (isSnapshot, payloads) = cache.replyDatagrams(forKnownGeneration: 0)
+        guard isSnapshot else { return }
+        let targets = subscribers.subscribers(now: now)
+        log("window-feed push gen=\(cache.generation) → \(targets.count) subscriber(s)")
+        send(payloads, to: targets, dup: true)
+    }
+
+    /// Sends `payloads` to every target lane; `dup` re-sends ~25 ms later (the `bye`/`streamCadence`
+    /// loss pattern — P(loss) → P(loss)²; the client's assembler is idempotent per chunk).
+    private func send(_ payloads: [Data], to channels: [UInt32], dup: Bool) {
+        for channelID in channels {
             for payload in payloads {
                 mux.send(payload, on: .control, channelID: channelID)
             }
         }
-        mux.retire(channelID)
+        guard dup else { return }
+        Task { [mux] in
+            try? await Task.sleep(for: .milliseconds(25))
+            for channelID in channels {
+                for payload in payloads {
+                    mux.send(payload, on: .control, channelID: channelID)
+                }
+            }
+        }
+    }
+}
+
+/// Bridges NSWorkspace app-lifecycle notifications into differ kicks, debounced 150 ms (an app
+/// launch fires several notifications back-to-back; one kick suffices).
+@MainActor
+final class WindowFeedKicker {
+    private let service: WindowFeedService
+    private var pending: DispatchWorkItem?
+
+    init(service: WindowFeedService) {
+        self.service = service
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [
+            NSWorkspace.didLaunchApplicationNotification,
+            NSWorkspace.didTerminateApplicationNotification,
+            NSWorkspace.didActivateApplicationNotification,
+        ] {
+            center.addObserver(
+                self, selector: #selector(noteWorkspaceEvent), name: name, object: nil,
+            )
+        }
+    }
+
+    @objc
+    private func noteWorkspaceEvent() {
+        pending?.cancel()
+        let work = DispatchWorkItem { [service] in
+            Task { await service.kick() }
+        }
+        pending = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
     }
 }
 #endif
