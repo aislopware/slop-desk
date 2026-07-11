@@ -3,8 +3,10 @@
 //   • left  — sidebar REOPEN, only while the sidebar is collapsed (expanded toggle lives inside the
 //     sidebar traffic-light strip). Fixed lead 80 clears the system lights.
 //   • centre— the active tab's title as a `⋯` menu (working dir / split / move / find / close pane)
-//   • right — connection cluster ONLY while the sidebar is collapsed (resting home is the sidebar FOOTER;
-//     trailing titlebar has room — never jammed next to the traffic lights).
+//   • right — the Host Windows rail REOPEN, only while the rail is collapsed (its expanded toggle
+//     lives inside the rail strip — the mirror of the left arrangement), plus the connection cluster
+//     ONLY while the LEFT sidebar is collapsed (resting home is the sidebar FOOTER; trailing titlebar
+//     has room — never jammed next to the traffic lights).
 // The reopen button flips the shared `WorkspaceChromeState` flag that the split representable reads
 // to collapse the matching `NSSplitViewItem` — same machinery the old toolbar drove.
 
@@ -52,6 +54,7 @@ struct SlateTitlebar: View {
     }
 
     private var sidebarVisible: Bool { !chrome.sidebarCollapsed }
+    private var hostRailVisible: Bool { !chrome.hostRailCollapsed }
 
     var body: some View {
         // Aligns the controls to the TRAFFIC-LIGHT row: top-anchored at `rowTop` so a 24pt plate's icon
@@ -82,20 +85,34 @@ struct SlateTitlebar: View {
             TitleMenuButton(title: activeTitle, store: store, activePane: activePane)
                 .padding(.top, rowTop)
 
-            // Right: connection cluster — collapsed-sidebar fallback only (footer is the resting home).
-            // Trailing titlebar has room for host + metrics; never next to the traffic lights.
-            if let connection, !sidebarVisible {
-                ConnectionCluster(
-                    connection: connection,
-                    pingMS: ConnectionTelemetry.pingMS(store),
-                    fps: ConnectionTelemetry.fps(store),
-                    kbps: ConnectionTelemetry.kbps(store),
-                    onConnect: onConnect,
-                )
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.trailing, Slate.Metric.space3)
-                .padding(.top, rowTop)
+            // Right: the Host Windows rail REOPEN (only while the rail is collapsed — the expanded
+            // toggle lives inside the rail's strip, exactly the left sidebar's split of duties), with
+            // the connection cluster beside it (collapsed-LEFT-sidebar fallback only; footer is the
+            // resting home). The reopen slot is ALWAYS reserved (hidden ⇒ transparent, not absent) so
+            // the cluster never shifts when the rail toggles — the zero-shift rule.
+            HStack(spacing: Slate.Metric.space2) {
+                if let connection, !sidebarVisible {
+                    ConnectionCluster(
+                        connection: connection,
+                        pingMS: ConnectionTelemetry.pingMS(store),
+                        fps: ConnectionTelemetry.fps(store),
+                        kbps: ConnectionTelemetry.kbps(store),
+                        onConnect: onConnect,
+                    )
+                }
+                // Fade in after the collapse settles; hide instantly on expand so it doesn't ride
+                // the slide — the same choreography as the left reopen button.
+                PlateIconButton(symbol: .sidebarRight) { chrome.toggleHostWindows() }
+                    .opacity(hostRailVisible ? 0 : 1)
+                    .allowsHitTesting(!hostRailVisible)
+                    .animation(
+                        hostRailVisible ? nil : Slate.Anim.standard.delay(0.15),
+                        value: hostRailVisible,
+                    )
             }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.trailing, Slate.Metric.space3)
+            .padding(.top, rowTop)
         }
         .frame(height: Slate.Metric.titlebarHeight, alignment: .top)
         .animation(Slate.Anim.standard, value: sidebarVisible)
