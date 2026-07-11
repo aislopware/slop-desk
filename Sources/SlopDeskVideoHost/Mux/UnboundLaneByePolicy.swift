@@ -51,7 +51,13 @@ public enum UnboundLaneByeDecider {
                  .listWindows,
                  .windowList,
                  .listSystemDialogs,
-                 .systemDialogList:
+                 .systemDialogList,
+                 .windowFeedSubscribe,
+                 .windowFeedSnapshot,
+                 .windowFeedCurrent:
+                // `windowFeedSubscribe` is session-LESS discovery like the list requests (answered by
+                // the daemon — it must bootstrap, never bye); the snapshot/current replies are
+                // host→client and never arrive inbound legitimately.
                 return false
             }
         case .video,

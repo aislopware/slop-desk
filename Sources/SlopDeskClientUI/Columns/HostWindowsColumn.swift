@@ -1,0 +1,430 @@
+// HostWindowsColumn — the RIGHT sidebar listing the HOST machine's windows (docs/45), the left
+// rail's mirror twin: same ground surface, 40pt strip, instrument-voice header, search plate, 32pt
+// rows at radius 7. A supervision instrument, not a picker: every row is one click from becoming a
+// pane, and every already-streamed window points back at its pane (trailing accent tab ordinal).
+//
+// STABILITY IS THE UX (docs/45 §1): sections are alphabetical by app, rows keep first-seen order —
+// nothing reorders on host focus flips / title churn / refresh ticks; state restyles in place
+// (weight, dimming, ordinal), never by motion or position.
+//
+// PERF DISCIPLINE (docs/45 §7, the ca429f90 3-part rule): section membership is memoized in
+// ``HostWindowRowsMemo`` keyed ONLY on structural identity + the filter; title / metrics / state /
+// frontmost / streamed-ref are VOLATILE — live-read inside ``HostWindowLiveRow`` leaves keyed
+// `.id(leafIdentity)`, never passed as init params (lazy containers freeze first-render params).
+
+#if os(macOS)
+import AppKit
+import SFSafeSymbols
+import SlopDeskWorkspaceCore
+import SwiftUI
+
+struct HostWindowsColumn: View {
+    let store: WorkspaceStore
+    /// The ONE feed store (app-owned; its renewal loop gates on the rail's collapse + connection).
+    let feed: HostWindowFeed
+    let chrome: WorkspaceChromeState
+
+    /// The transient filter query (token-AND over appName + title, the picker's policy).
+    @State private var query = ""
+    /// The section/rows memo — a plain class in @State so body re-runs hit the cache unless the
+    /// STRUCTURAL fingerprint (identity sequence + filter) changed.
+    @State private var memo = HostWindowRowsMemo()
+    /// The keyboard cursor (↑/↓ + ⏎), or `nil` when the panel isn't being keyboard-driven. The
+    /// raised card renders ONLY for this cursor — selection vocabulary, not streamed-state.
+    @State private var cursor: HostWindowIdentity?
+    @FocusState private var listFocused: Bool
+
+    var body: some View {
+        // Filter reads `feed.titles` ONLY while a query is active (registering the body's dependency
+        // on titles is the price of live-filtering; at rest an empty query keeps the body
+        // structural-only, so title ticks re-render just the ≤64 leaves).
+        let sections = memo.sections(
+            structure: feed.structure,
+            titles: query.isEmpty ? [:] : feed.titles,
+            query: query,
+        )
+        return VStack(alignment: .leading, spacing: 0) {
+            strip
+            header
+            searchField
+                .padding(.horizontal, 8)
+                .padding(.bottom, 6)
+            list(sections)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Slate.theme.ground)
+    }
+
+    // MARK: - Chrome (strip + header + search — the left rail's anatomy, mirrored)
+
+    /// Traffic-light-row strip: ONLY the rail-collapse toggle, top-LEADING (the mirror of the left
+    /// rail's top-trailing toggle — each toggle hugs its column's inner edge). Same settled-state
+    /// choreography: hide instantly on collapse, fade back after the slide settles.
+    private var strip: some View {
+        ZStack(alignment: .topLeading) {
+            Color.clear
+            PlateIconButton(symbol: .sidebarRight) { chrome.toggleHostWindows() }
+                .opacity(chrome.hostRailCollapsed ? 0 : 1)
+                .allowsHitTesting(!chrome.hostRailCollapsed)
+                .animation(
+                    chrome.hostRailCollapsed ? nil : Slate.Anim.standard.delay(0.25),
+                    value: chrome.hostRailCollapsed,
+                )
+                .padding(.top, 3)
+                .padding(.leading, 8)
+        }
+        .frame(height: Slate.Metric.titlebarHeight)
+    }
+
+    /// The panel label — instrument voice, same register as the left rail's "TABS". No hostname, no
+    /// counts (the left rail's footer owns connection truth; filler earns no pixels).
+    private var header: some View {
+        HStack(spacing: 0) {
+            Text("HOST")
+                .font(Slate.Typeface.instrument(Slate.Typeface.footnote, weight: .semibold))
+                .tracking(Slate.Typeface.instrumentTracking)
+                .foregroundStyle(Slate.State.header)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 6)
+    }
+
+    /// Byte-identical anatomy to the left rail's search plate (`NavigatorColumn.searchField`).
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemSymbol: .magnifyingglass)
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.icon)
+            TextField("Search windows", text: $query)
+                .textFieldStyle(.plain)
+                .font(.system(size: Slate.Typeface.body))
+                .foregroundStyle(Slate.Text.primary)
+                .tint(Slate.State.accent)
+            if !query.isEmpty {
+                Button { query = "" } label: {
+                    Image(systemSymbol: .xmarkCircleFill)
+                        .font(.system(size: Slate.Typeface.footnote))
+                        .foregroundStyle(Slate.Text.icon)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(Slate.Surface.face, in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall))
+        .overlay(
+            RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
+                .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
+        )
+    }
+
+    // MARK: - List
+
+    @ViewBuilder
+    private func list(_ sections: [(appName: String, rows: [HostWindowIdentity])]) -> some View {
+        if HostWindowFeedQuery.shared == nil {
+            emptyLabel("Window discovery unavailable")
+        } else if !feed.hasEverLoaded {
+            // Never loaded: connected ⇒ the first snapshot is in flight (rows appear fully formed —
+            // no spinner, no skeleton); disconnected ⇒ say what unlocks the rail.
+            emptyLabel(feed.isLive ? " " : "Connect to a host to see its windows")
+        } else if sections.isEmpty {
+            emptyLabel(query.isEmpty
+                ? "No windows on the host"
+                : windowFilterEmptyMessage())
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(sections, id: \.appName) { section in
+                        SlateSectionHeader(section.appName.uppercased()) {
+                            if section.rows.count > 1 {
+                                Text("\(section.rows.count)")
+                                    .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                                    .foregroundStyle(Slate.Text.tertiary)
+                            }
+                        }
+                        ForEach(section.rows) { identity in
+                            HostWindowLiveRow(
+                                identity: identity,
+                                feed: feed,
+                                store: store,
+                                isCursor: cursor == identity && listFocused,
+                                onAct: { duplicate in act(on: identity, duplicate: duplicate) },
+                            )
+                            .id(identity.leafIdentity)
+                            // New rows fade in (opacity only — no layout animation, no slide);
+                            // removals and field updates apply instantly (docs/45 §3 Motion).
+                            .transition(.opacity.animation(Slate.Anim.reveal))
+                        }
+                    }
+                }
+                .padding(.horizontal, 8)
+            }
+            .scrollIndicators(.hidden)
+            .frame(maxHeight: .infinity)
+            // Stale feed (gates closed / unanswered renewals): cached rows dim in place and stop
+            // accepting clicks — the calm outage treatment; the left rail's footer tells the story.
+            .opacity(feed.isLive ? 1 : 0.4)
+            .allowsHitTesting(feed.isLive)
+            .focusable()
+            .focused($listFocused)
+            .onKeyPress(.downArrow) { moveCursor(1, in: sections) }
+            .onKeyPress(.upArrow) { moveCursor(-1, in: sections) }
+            .onKeyPress(.return) {
+                guard let cursor else { return .ignored }
+                act(on: cursor, duplicate: NSEvent.modifierFlags.contains(.command))
+                return .handled
+            }
+            .onKeyPress(.escape) {
+                if !query.isEmpty { query = ""
+                    return .handled
+                }
+                listFocused = false
+                return .handled
+            }
+        }
+    }
+
+    /// The rail's quiet empty label — the left rail's `emptyLabel` register (no icon, no card).
+    private func emptyLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: Slate.Typeface.base))
+            .foregroundStyle(Slate.Text.tertiary)
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// The filter-miss message — names the filter AND the fix (the picker's pinned copy shape).
+    private func windowFilterEmptyMessage() -> String {
+        RemoteWindowModel.windowFilterEmptyMessage(filter: query, totalCount: feed.structure.count)
+    }
+
+    // MARK: - Acting (the ONE verb, state-aware — docs/45 §4)
+
+    /// Single-click / ⏎: focus the streaming pane when the window is already in the workspace, else
+    /// open a new pane. `duplicate` (⌘-click / ⌘⏎) deliberately opens ANOTHER pane of the same window.
+    private func act(on identity: HostWindowIdentity, duplicate: Bool) {
+        cursor = identity
+        if !duplicate, let ref = Self.streamedRef(for: identity.windowID, in: store) {
+            store.focusPaneTree(ref.paneID)
+            return
+        }
+        openPane(for: identity)
+    }
+
+    private func openPane(for identity: HostWindowIdentity) {
+        let title = feed.titles[identity.windowID] ?? ""
+        store.newRemoteWindowTab(
+            windowID: identity.windowID, title: title, appName: identity.appName,
+        )
+        store.recordRecentCommand(.newPane(.remoteGUI))
+    }
+
+    private func moveCursor(
+        _ delta: Int, in sections: [(appName: String, rows: [HostWindowIdentity])],
+    ) -> KeyPress.Result {
+        let flat = sections.flatMap(\.rows)
+        guard !flat.isEmpty else { return .ignored }
+        let current = cursor.flatMap { c in flat.firstIndex(where: { $0 == c }) }
+        let next = ((current ?? (delta > 0 ? -1 : flat.count)) + delta + flat.count) % flat.count
+        cursor = flat[next]
+        return .handled
+    }
+
+    // MARK: - Streamed derivation (client-side, live-read by leaves)
+
+    /// Where a host window is already streaming: the pane + its 1-based tab ordinal in the ACTIVE
+    /// session. The earliest tab wins for a window streamed twice (⌘-click duplicates are
+    /// secondary). Reads `PaneSpec.video` — the binding `RemoteWindowModel` persists on every
+    /// open/rebind, so markers self-correct through `WindowRebind` after a host restart.
+    static func streamedRef(for windowID: UInt32, in store: WorkspaceStore) -> StreamedRef? {
+        guard let session = store.tree.activeSession else { return nil }
+        for (index, tab) in session.tabs.enumerated() {
+            for paneID in tab.allPaneIDs() {
+                guard let spec = session.specs[paneID], spec.kind == .remoteGUI,
+                      spec.video?.windowID == windowID else { continue }
+                return StreamedRef(paneID: paneID, tabOrdinal: index + 1)
+            }
+        }
+        return nil
+    }
+
+    struct StreamedRef: Equatable {
+        let paneID: PaneID
+        let tabOrdinal: Int
+    }
+}
+
+// MARK: - Leaf row (volatile fields live-read — the ca429f90 rule)
+
+/// One host-window row. Init params are STRUCTURAL only (identity + stable references + the cursor
+/// flag); title / metrics / state / frontmost / streamed-ref are read from the live stores inside
+/// `body`, so a lazy container can never freeze them at first render.
+private struct HostWindowLiveRow: View {
+    let identity: HostWindowIdentity
+    let feed: HostWindowFeed
+    let store: WorkspaceStore
+    let isCursor: Bool
+    /// Fires the row's verb; `duplicate` = ⌘-click (open another pane of an already-streamed window).
+    let onAct: (_ duplicate: Bool) -> Void
+
+    var body: some View {
+        let title = feed.titles[identity.windowID] ?? ""
+        let state = feed.states[identity.windowID]
+        let dimmed = state?.isDimmed ?? false
+        let isFrontmost = feed.frontmostWindowID == identity.windowID
+        let streamed = HostWindowsColumn.streamedRef(for: identity.windowID, in: store)
+        SlateListRow(
+            active: isCursor,
+            onTap: { onAct(NSEvent.modifierFlags.contains(.command)) },
+            leading: { icon(dimmed: dimmed) },
+            title: {
+                Text(title.isEmpty ? identity.appName : title)
+                    .font(.system(size: Slate.Typeface.body, weight: isFrontmost ? .medium : .regular))
+                    .foregroundStyle(dimmed ? Slate.Text.secondary : Slate.Text.primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            },
+            titleTrailing: { hovering in
+                if hovering {
+                    // The verb hint — the click's meaning, legible pre-click (docs/45 §3).
+                    Text(streamed.map { "FOCUS · \($0.tabOrdinal)" } ?? "OPEN")
+                        .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                        .foregroundStyle(Slate.Text.tertiary)
+                } else if let streamed {
+                    // Streamed marker: the pane's tab ordinal in the accent — quiet, positional.
+                    Text("\(streamed.tabOrdinal)")
+                        .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                        .foregroundStyle(Slate.State.accent)
+                }
+            },
+            subtitleTrailing: { _ in },
+            trailingOverlay: { _ in },
+        )
+        .help(tooltip(title: title, state: state))
+        .contextMenu { contextMenu(streamed: streamed) }
+    }
+
+    /// The 16pt app icon — resolved LOCALLY by bundleID (the client is a Mac too; most apps match).
+    /// Unresolved ⇒ the static `macwindow` glyph — no monogram, no loading animation (docs/45 §2).
+    private func icon(dimmed: Bool) -> some View {
+        Group {
+            if let icon = HostAppIconCache.shared.icon(forBundleID: identity.bundleID) {
+                Image(nsImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 16, height: 16)
+            } else {
+                Image(systemSymbol: .macwindow)
+                    .font(.system(size: Slate.Typeface.iconSizeFallback))
+                    .foregroundStyle(Slate.Text.icon)
+                    .frame(width: 16, height: 16)
+            }
+        }
+        .opacity(dimmed ? 0.5 : 1)
+    }
+
+    /// Dimensions / display / visibility live in the tooltip ONLY — never row filler (docs/45 §2).
+    private func tooltip(title: String, state: HostWindowState?) -> String {
+        var parts = [title.isEmpty ? identity.appName : "\(identity.appName) — \(title)"]
+        if let m = feed.metrics[identity.windowID] {
+            parts.append("\(m.widthPt) × \(m.heightPt)")
+            if m.displayIndex > 0 { parts.append("Display \(m.displayIndex + 1)") }
+        }
+        if let state, !state.isOnScreen {
+            parts.append(state.isAppHidden ? "App hidden" : state.isMinimized ? "Minimized" : "On another Space")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private func contextMenu(streamed: HostWindowsColumn.StreamedRef?) -> some View {
+        if streamed != nil {
+            Button("Focus Pane") { onAct(false) }
+            Button("Open Another Pane") { onAct(true) }
+        } else {
+            Button("Open in New Tab") { onAct(false) }
+        }
+        Divider()
+        Button("Copy Window Title") {
+            let title = feed.titles[identity.windowID] ?? ""
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(title.isEmpty ? identity.appName : title, forType: .string)
+        }
+    }
+}
+
+// MARK: - Section/rows memo (structural fingerprint ONLY)
+
+/// Memoizes the rail's sectioned rows: rebuilt ONLY when the structural fingerprint — the ordered
+/// identity sequence + the filter query — changes. Title / metrics / state are EXCLUDED (volatile at
+/// this feature's cadences; leaves live-read them), so a title tick can never re-run sectioning.
+/// Plain non-@Observable class held in `@State` (the `RailRowsMemo` shape).
+@MainActor
+final class HostWindowRowsMemo {
+    private var fingerprint = ""
+    private var cached: [(appName: String, rows: [HostWindowIdentity])] = []
+    /// Test pin: how many times the sections were actually rebuilt (RailRowsMemoTests shape).
+    private(set) var buildCount = 0
+
+    func sections(
+        structure: [HostWindowIdentity],
+        titles: [UInt32: String],
+        query: String,
+    ) -> [(appName: String, rows: [HostWindowIdentity])] {
+        let next = Self.fingerprint(structure: structure, query: query)
+        if next == fingerprint { return cached }
+        fingerprint = next
+        buildCount += 1
+        let filtered = HostWindowFeed.filtered(structure, titles: titles, query: query)
+        cached = HostWindowFeed.sectioned(filtered)
+        return cached
+    }
+
+    /// Ordered leaf identities + section keys + the query — nothing volatile.
+    static func fingerprint(structure: [HostWindowIdentity], query: String) -> String {
+        var out = query
+        out.reserveCapacity(query.count + structure.count * 24)
+        for identity in structure {
+            out += "\u{1F}"
+            out += identity.leafIdentity
+            out += "\u{1E}"
+            out += identity.appName
+        }
+        return out
+    }
+}
+
+// MARK: - Local app-icon cache
+
+/// bundleID → 16pt-ready NSImage, resolved ONCE per bundleID via the LOCAL Mac's Launch Services
+/// (`urlForApplication(withBundleIdentifier:)`). Misses cache too (negative entries), so a host-only
+/// app costs one lookup, not one per render. Phase 3 adds the wire fetch for those misses.
+@MainActor
+final class HostAppIconCache {
+    static let shared = HostAppIconCache()
+    private var cache: [String: NSImage?] = [:]
+
+    func icon(forBundleID bundleID: String) -> NSImage? {
+        if let hit = cache[bundleID] { return hit }
+        guard !bundleID.isEmpty,
+              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+        else {
+            cache[bundleID] = NSImage?.none
+            return nil
+        }
+        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        icon.size = NSSize(width: 16, height: 16)
+        cache[bundleID] = icon
+        return icon
+    }
+}
+
+private extension Slate.Typeface {
+    /// The fallback glyph size inside the 16pt icon slot.
+    static let iconSizeFallback: CGFloat = 12
+}
+#endif

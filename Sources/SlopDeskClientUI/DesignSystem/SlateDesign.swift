@@ -432,6 +432,11 @@ enum Slate {
         /// terminal starts BELOW the titlebar (the resting silhouette), not under the centred title.
         static let titlebarHeight: CGFloat = heightStrip
         static let sidebarWidth: CGFloat = 220
+        /// The Host Windows rail (docs/45) — the RIGHT sidebar's default / min / max thickness
+        /// (a touch wider than the left rail: app icon + title + streamed ordinal per row).
+        static let hostRailWidth: CGFloat = 240
+        static let hostRailMinWidth: CGFloat = 220
+        static let hostRailMaxWidth: CGFloat = 320
         /// The Settings window's left navigator column (a two-column Settings layout — wider than the
         /// workspace sidebar so the icon+label section rows + the search pill sit comfortably).
         static let settingsSidebarWidth: CGFloat = 260

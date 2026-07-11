@@ -3951,6 +3951,45 @@
       ],
       "hex": "0c000100000009019000c801000d53656375726974794167656e740000",
       "variant": "systemDialogList"
+    },
+    {
+      "hex": "10deadbeef",
+      "knownGeneration": 3735928559,
+      "variant": "windowFeedSubscribe"
+    },
+    {
+      "chunkCount": 3,
+      "chunkIndex": 1,
+      "generation": 7,
+      "hex": "1100000007010300020000002a05e803d619000015636f6d2e6d69746368656c6c682e67686f73747479000747686f73747479000e7e2f776f726b20e28094207a73680000002b03200258060100000004546f6f6c0000",
+      "records": [
+        {
+          "appName": "Ghostty",
+          "bundleID": "com.mitchellh.ghostty",
+          "display": 0,
+          "flags": 25,
+          "height": 982,
+          "title": "~/work — zsh",
+          "width": 1512,
+          "windowID": 42
+        },
+        {
+          "appName": "Tool",
+          "bundleID": "",
+          "display": 1,
+          "flags": 6,
+          "height": 600,
+          "title": "",
+          "width": 800,
+          "windowID": 43
+        }
+      ],
+      "variant": "windowFeedSnapshot"
+    },
+    {
+      "generation": 7,
+      "hex": "1200000007",
+      "variant": "windowFeedCurrent"
     }
   ],
   "virtualDisplayGeometry": [

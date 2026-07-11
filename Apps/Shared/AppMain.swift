@@ -125,6 +125,42 @@ struct ClientAppMain {
             }
         }
 
+        // Host-window FEED seam (docs/45 rail): inject one subscribe round so the cross-platform
+        // `HostWindowFeed` renewal loop can list the host's windows live WITHOUT importing the gated
+        // video module. Maps the wire `HostWindowRecord` → the UI's `HostWindowInfo`. `nil` (no video
+        // module) ⇒ the rail shows its unavailable empty state.
+        MainActor.assumeIsolated {
+            HostWindowFeedQuery.shared = { host, mediaPort, cursorPort, knownGeneration in
+                let answer = await WindowFeedRound.subscribeOnce(
+                    host: host, mediaPort: mediaPort, cursorPort: cursorPort,
+                    knownGeneration: knownGeneration,
+                )
+                switch answer {
+                case let .current(generation):
+                    return .current(generation: generation)
+                case let .snapshot(generation, records):
+                    return .snapshot(generation: generation, windows: records.map {
+                        HostWindowInfo(
+                            windowID: $0.windowID,
+                            bundleID: $0.bundleID,
+                            appName: $0.appName,
+                            title: $0.title,
+                            widthPt: Int($0.widthPt),
+                            heightPt: Int($0.heightPt),
+                            displayIndex: Int($0.displayIndex),
+                            isOnScreen: $0.flags.contains(.onScreen),
+                            isMinimized: $0.flags.contains(.minimized),
+                            isAppHidden: $0.flags.contains(.appHidden),
+                            isFrontmostApp: $0.flags.contains(.frontmostApp),
+                            isFocused: $0.flags.contains(.focusedWindow),
+                        )
+                    })
+                case nil:
+                    return nil
+                }
+            }
+        }
+
         // System-dialog poll seam (the "show system popups in their own pane" feature): inject the
         // host system-dialog query so the cross-platform `SystemDialogMonitor` can auto-spawn dialog
         // panes WITHOUT importing the gated video module. Maps the protocol's `SystemDialogSummary` →

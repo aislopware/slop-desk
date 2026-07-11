@@ -239,13 +239,14 @@ final class E1KeymapParityTests: XCTestCase {
         )
     }
 
-    /// ⌘⇧R is UNBOUND (the Details panel — whose Toggle owned ⌘⇧R — is REMOVED; keyboard-centric shell),
-    /// and Rename — which once squatted on ⌘⇧R — stays chord-less. FAILS if a binding re-takes ⌘⇧R without
-    /// a deliberate decision.
-    func testCmdShiftRIsUnboundAndRenameIsChordLess() {
-        XCTAssertNil(
+    /// ⌘⇧R belongs to the Host Windows rail (docs/45 — the DELIBERATE re-take of the chord the removed
+    /// Details panel freed), and Rename — which once squatted on ⌘⇧R — stays chord-less. FAILS if the
+    /// chord moves again without a deliberate decision.
+    func testCmdShiftRTogglesHostWindowsAndRenameIsChordLess() {
+        XCTAssertEqual(
             WorkspaceBindingRegistry.chordTable[KeyChord(character: "r", [.command, .shift])],
-            "⌘⇧R is free — the Details panel (its old owner) is removed",
+            .toggleHostWindows,
+            "⌘⇧R toggles the Host Windows rail (docs/45) — the deliberate successor to the removed Details panel",
         )
         // Rename is still a REGISTERED, routable action (title menu / context menu / palette), but chord-LESS.
         let rename = WorkspaceBindingRegistry.binding(for: .renamePane)

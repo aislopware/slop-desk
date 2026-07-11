@@ -282,6 +282,9 @@ public enum SettingsKey {
     /// ``SidebarAutoHidePolicy/desiredCollapsed(mode:tabCount:)`` and the view-side glue (WI-7) drives
     /// ``WorkspaceChromeState/sidebarCollapsed`` from it. `Key` suffix frees the bare ``autoHideTabsPanel`` name.
     public static let autoHideTabsPanelKey = "shell.autoHideTabsPanel" // AutoHideTabsPanelMode.rawValue
+    /// Whether the Host Windows rail (docs/45, the RIGHT sidebar) is collapsed. Default TRUE — the
+    /// rail must earn its pixels; ⌘⇧R / palette / titlebar reveal it, and the choice persists.
+    public static let hostWindowsRailCollapsedKey = "shell.hostWindowsRailCollapsed"
 
     /// The working-directory policy for a NEW WINDOW (`working-directory`), default `home` — a fresh
     /// window opens at the shell's login cwd. Stored as the ``WorkingDirectoryPolicy/rawConfig`` string
@@ -871,6 +874,12 @@ public extension Defaults.Keys {
     static let autoHideTabsPanel = Key<AutoHideTabsPanelMode>(
         slopDesk: SettingsKey.autoHideTabsPanelKey,
         default: .default,
+    )
+    // Host Windows rail (docs/45): collapsed by default (chrome must earn its pixels); the ⌘⇧R /
+    // palette / titlebar toggle persists the user's choice across launches.
+    static let hostWindowsRailCollapsed = Key<Bool>(
+        slopDesk: SettingsKey.hostWindowsRailCollapsedKey,
+        default: true,
     )
     // Working-directory policies stored as the `WorkingDirectoryPolicy.rawConfig` String (config value).
     // New window defaults to `home` (login cwd); new tab / split default to `inherit` (active pane's cwd).

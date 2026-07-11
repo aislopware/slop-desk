@@ -45,6 +45,12 @@ import Foundation
 /// type 13 scrollOffset:  UInt16 dx | UInt16 dy | UInt16 bandTop | UInt16 bandBottom
 ///                            (dx/dy are i16 stored as a bit-preserving u16; decode casts back)
 /// type 14 contentMask:   UInt16 count | per rect: UInt16 x | UInt16 y | UInt16 w | UInt16 h
+/// type 15 displayMax:    UInt16 width | UInt16 height
+/// type 16 windowFeedSubscribe: UInt32 knownGeneration (0 = have nothing)
+/// type 17 windowFeedSnapshot:  UInt32 generation | UInt8 chunkIndex | UInt8 chunkCount
+///                            | UInt16 recordCount | per record: UInt32 id | UInt16 w | UInt16 h
+///                            | UInt8 flags | UInt8 displayIndex | lp bundleID | lp app | lp title
+/// type 18 windowFeedCurrent:   UInt32 generation
 /// ```
 ///
 /// Liveness keepalive (additive after the resize pair — CONCURRENCY-HOST-1 crash-without-bye):
@@ -74,6 +80,68 @@ public struct WindowSummary: Equatable, Sendable {
         self.title = title
         self.width = width
         self.height = height
+    }
+}
+
+/// Per-window state bits in a ``HostWindowRecord`` (the type-17 `flags` byte). Encoded as the raw
+/// byte; unknown future bits decode inertly (an old client just never reads them).
+public struct HostWindowFlags: OptionSet, Equatable, Sendable {
+    public let rawValue: UInt8
+
+    public init(rawValue: UInt8) { self.rawValue = rawValue }
+
+    /// The window is on the active Space and not minimized (`kCGWindowIsOnscreen`).
+    public static let onScreen = Self(rawValue: 1 << 0)
+    /// The window is minimized to the Dock (`AXMinimized`, best-effort).
+    public static let minimized = Self(rawValue: 1 << 1)
+    /// The owning application is hidden (`NSRunningApplication.isHidden`).
+    public static let appHidden = Self(rawValue: 1 << 2)
+    /// The owning application is frontmost on the host.
+    public static let frontmostApp = Self(rawValue: 1 << 3)
+    /// This window is the frontmost app's focused (first, layer-0) window — at most one per snapshot.
+    public static let focusedWindow = Self(rawValue: 1 << 4)
+}
+
+/// One host window in a ``VideoControlMessage/windowFeedSnapshot(generation:chunkIndex:chunkCount:records:)``
+/// — the host-windows RAIL's row data (docs/45). Richer than the picker's ``WindowSummary``: adds
+/// `bundleID` (client-local app-icon resolution), the state ``HostWindowFlags``, and a display ordinal.
+/// Record order on the wire is host z-order front-to-back (free data for the client's FIRST seed;
+/// never a live sort key — rail rows are position-stable after seeding).
+public struct HostWindowRecord: Equatable, Sendable {
+    /// The host CGWindowID (`hello.requestedWindowID` streams it — same contract as ``WindowSummary``).
+    public var windowID: UInt32
+    /// Window size in points (clamped to UInt16 on the wire, same as ``WindowSummary``).
+    public var widthPt: UInt16
+    public var heightPt: UInt16
+    /// State bits (see ``HostWindowFlags``).
+    public var flags: HostWindowFlags
+    /// Ordinal of the display the window is on (0-based; 0 when unknown) — peek/tooltip captions only.
+    public var displayIndex: UInt8
+    /// The owning app's bundle identifier ("" when the process has none) — the icon cache key.
+    public var bundleID: String
+    /// The owning application name (e.g. "Ghostty") — the section key + empty-title fallback.
+    public var appName: String
+    /// The window title (may be empty; host caps it to ``VideoControlMessage/feedTitleMaxBytes``).
+    public var title: String
+
+    public init(
+        windowID: UInt32,
+        widthPt: UInt16,
+        heightPt: UInt16,
+        flags: HostWindowFlags,
+        displayIndex: UInt8,
+        bundleID: String,
+        appName: String,
+        title: String,
+    ) {
+        self.windowID = windowID
+        self.widthPt = widthPt
+        self.heightPt = heightPt
+        self.flags = flags
+        self.displayIndex = displayIndex
+        self.bundleID = bundleID
+        self.appName = appName
+        self.title = title
     }
 }
 
@@ -204,6 +272,26 @@ public enum VideoControlMessage: Equatable, Sendable {
     /// resize-to-display-origin). Inert to an old peer (unknown type → dropped); a client that never
     /// receives it leaves its fields uncapped.
     case displayMax(width: UInt16, height: UInt16)
+    /// Client → host: "keep the host-window feed flowing; I hold `knownGeneration`" — the ONE
+    /// session-less feed message (docs/45). Sent every ~2 s while the host-windows rail (or Open
+    /// Quickly) is visible: it is the Phase-1 poll, the Phase-2 subscription renewal, AND the
+    /// loss-healing resync anchor in one. `knownGeneration == 0` ⇒ the client has nothing. The host
+    /// answers ``windowFeedSnapshot(generation:chunkIndex:chunkCount:records:)`` chunks on a
+    /// generation mismatch, or the 5-byte ``windowFeedCurrent(generation:)`` ack when the client is
+    /// already current. Inert to an old host (unknown type → dropped) — the rail shows its
+    /// empty/disconnected state.
+    case windowFeedSubscribe(knownGeneration: UInt32)
+    /// Host → client: one chunk of the full host-window snapshot for `generation` (docs/45). Full
+    /// snapshots, never deltas — idempotent and latest-wins on a lossy control lane. The HOST packs
+    /// chunks byte-budgeted to one control datagram (``feedRecordBytesPerChunk``) and dup-sends ×2;
+    /// the client assembles per generation (all chunks must agree on `chunkCount`), applies the
+    /// latest fully-assembled generation, and heals any loss at the next
+    /// ``windowFeedSubscribe(knownGeneration:)`` renewal. Inert to an old peer.
+    case windowFeedSnapshot(generation: UInt32, chunkIndex: UInt8, chunkCount: UInt8, records: [HostWindowRecord])
+    /// Host → client: "your `knownGeneration` is current — no snapshot coming" (docs/45). The 5-byte
+    /// ack that lets the client distinguish a quiet host from a lost snapshot; steady state on an
+    /// unchanged desktop is one subscribe + one of these per renewal. Inert to an old peer.
+    case windowFeedCurrent(generation: UInt32)
 
     public var messageType: UInt8 {
         switch self {
@@ -222,8 +310,22 @@ public enum VideoControlMessage: Equatable, Sendable {
         case .scrollOffset: 13
         case .contentMask: 14
         case .displayMax: 15
+        case .windowFeedSubscribe: 16
+        case .windowFeedSnapshot: 17
+        case .windowFeedCurrent: 18
         }
     }
+
+    /// The host-side byte cap for ONE `windowFeedSnapshot` chunk's RECORDS (excluding the 9-byte
+    /// message header): control datagrams are not packetized, so a chunk must fit one mux datagram —
+    /// `VideoPacketizer.maxDatagramSize` (1200) − 5 mux framing (u32 channelID + u8 tag) − 9 message
+    /// header (type + generation + chunkIndex + chunkCount + recordCount). The HOST's chunk packer
+    /// greedy-packs against this; the codec itself does not enforce it (decode is bounds-checked
+    /// per-field regardless).
+    public static let feedRecordBytesPerChunk = 1186
+    /// The host-side UTF-8 byte cap for a ``HostWindowRecord/title`` (truncated at a character
+    /// boundary host-side) — bounds the worst-case record so the greedy packer always progresses.
+    public static let feedTitleMaxBytes = 120
 
     /// Encodes the message to its `[UInt8 type][body]` wire form. Single source of truth shared with the
     /// Android client (pinned bit-for-bit by the `videoControl` golden vectors). For list messages the
@@ -310,6 +412,27 @@ public enum VideoControlMessage: Equatable, Sendable {
         case let .displayMax(width, height):
             out.appendBE(width)
             out.appendBE(height)
+        case let .windowFeedSubscribe(knownGeneration):
+            out.appendBE(knownGeneration)
+        case let .windowFeedSnapshot(generation, chunkIndex, chunkCount, records):
+            // The CALLER (host) must byte-budget records to one datagram (`feedRecordBytesPerChunk`);
+            // the count truncates to UInt16 like the other list messages.
+            out.appendBE(generation)
+            out.append(chunkIndex)
+            out.append(chunkCount)
+            out.appendBE(UInt16(truncatingIfNeeded: records.count))
+            for r in records {
+                out.appendBE(r.windowID)
+                out.appendBE(r.widthPt)
+                out.appendBE(r.heightPt)
+                out.append(r.flags.rawValue)
+                out.append(r.displayIndex)
+                out.appendVideoControlLengthPrefixed(r.bundleID)
+                out.appendVideoControlLengthPrefixed(r.appName)
+                out.appendVideoControlLengthPrefixed(r.title)
+            }
+        case let .windowFeedCurrent(generation):
+            out.appendBE(generation)
         }
         return out
     }
@@ -433,6 +556,50 @@ public enum VideoControlMessage: Equatable, Sendable {
             let w = try reader.readUInt16()
             let h = try reader.readUInt16()
             return .displayMax(width: w, height: h)
+        case 16:
+            return try .windowFeedSubscribe(knownGeneration: reader.readUInt32())
+        case 17:
+            let generation = try reader.readUInt32()
+            let chunkIndex = try reader.readUInt8()
+            let chunkCount = try reader.readUInt8()
+            // Validate-then-drop: a chunk must identify a real slot in a real chunk sequence. A zero
+            // chunkCount or out-of-range index can only be corruption/hostile — drop the datagram
+            // rather than hand the assembler an unsatisfiable generation.
+            guard chunkCount >= 1, chunkIndex < chunkCount else {
+                throw VideoProtocolError.malformed(
+                    "windowFeedSnapshot chunk \(chunkIndex)/\(chunkCount) is not a valid slot",
+                )
+            }
+            let count = try Int(reader.readUInt16())
+            var records: [HostWindowRecord] = []
+            // Same untrusted-count discipline as windowList: no reserveCapacity; each record read
+            // throws `.truncated` the instant the datagram runs short, so a bogus huge count can't
+            // over-allocate or over-read.
+            for _ in 0..<count {
+                let id = try reader.readUInt32()
+                let w = try reader.readUInt16()
+                let h = try reader.readUInt16()
+                let flags = try HostWindowFlags(rawValue: reader.readUInt8())
+                let display = try reader.readUInt8()
+                let bundleID = try reader.readVideoControlLengthPrefixed()
+                let app = try reader.readVideoControlLengthPrefixed()
+                let title = try reader.readVideoControlLengthPrefixed()
+                records.append(HostWindowRecord(
+                    windowID: id,
+                    widthPt: w,
+                    heightPt: h,
+                    flags: flags,
+                    displayIndex: display,
+                    bundleID: bundleID,
+                    appName: app,
+                    title: title,
+                ))
+            }
+            return .windowFeedSnapshot(
+                generation: generation, chunkIndex: chunkIndex, chunkCount: chunkCount, records: records,
+            )
+        case 18:
+            return try .windowFeedCurrent(generation: reader.readUInt32())
         default:
             throw VideoProtocolError.malformed("unknown video control message type \(type)")
         }

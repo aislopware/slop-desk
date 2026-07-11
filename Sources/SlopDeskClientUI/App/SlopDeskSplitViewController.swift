@@ -28,6 +28,13 @@ final class SlopDeskSplitViewController: NSSplitViewController {
 
     /// Retained so the titlebar toggle can animate its collapse (set in `viewDidLoad`).
     private var sidebarItem: NSSplitViewItem?
+    /// The RIGHT Host Windows rail (docs/45) — retained like `sidebarItem` so `applyCollapse` can
+    /// animate it. A third PLAIN split item (never `.inspector` — that unmounts content and kills
+    /// live video panes; a plain sibling item never remounts the centre column).
+    private var hostRailItem: NSSplitViewItem?
+    /// The host-windows feed store (app-owned) the rail column renders. `nil` (tests/previews)
+    /// skips mounting the rail entirely.
+    private let hostWindowFeed: HostWindowFeed?
 
     /// E19 WI-4 (A29) — the sidebar (TABS panel) default thickness, shared with
     /// the window-size glue (`SlopDeskClientApp.applyInitialWindowSize`) so the `grid` mode's `chromeOverhead`
@@ -39,12 +46,14 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         connection: AppConnection,
         chrome: WorkspaceChromeState,
         preferences: PreferencesStore? = nil,
+        hostWindowFeed: HostWindowFeed? = nil,
         onConnect: @escaping () -> Void = {},
     ) {
         self.store = store
         self.connection = connection
         self.chrome = chrome
         self.preferences = preferences
+        self.hostWindowFeed = hostWindowFeed
         self.onConnect = onConnect
         super.init(nibName: nil, bundle: nil)
     }
@@ -108,6 +117,27 @@ final class SlopDeskSplitViewController: NSSplitViewController {
 
         addSplitViewItem(sidebarItem)
         addSplitViewItem(contentItem)
+
+        // 3) Host Windows rail (docs/45) — the RIGHT column listing the host machine's windows. A
+        //    PLAIN item like the sidebar (never `NSSplitViewItem(inspectorWithViewController:)` /
+        //    SwiftUI `.inspector`: both unmount the centre on toggle, which kills live video panes).
+        //    Same holding priority as the sidebar so window-resize grows the content, not the rail.
+        //    Starts collapsed per the persisted chrome flag (`updateNSViewController` applies it
+        //    every update; setting it before the first layout avoids a flash-of-rail at launch).
+        if let hostWindowFeed {
+            let hostRail = NSHostingController(rootView: HostWindowsColumn(
+                store: store, feed: hostWindowFeed, chrome: chrome,
+            ))
+            let hostRailItem = NSSplitViewItem(viewController: hostRail)
+            hostRailItem.minimumThickness = Slate.Metric.hostRailMinWidth
+            hostRailItem.maximumThickness = Slate.Metric.hostRailMaxWidth
+            hostRailItem.canCollapse = true
+            hostRailItem.holdingPriority = NSLayoutConstraint.Priority(260)
+            hostRailItem.isCollapsed = chrome.hostRailCollapsed
+            hostRail.safeAreaRegions = []
+            addSplitViewItem(hostRailItem)
+            self.hostRailItem = hostRailItem
+        }
 
         self.sidebarItem = sidebarItem
 
@@ -223,23 +253,28 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         }
     }
 
-    /// Apply the toolbar collapse flag to the sidebar item (idempotent — only animates a real
-    /// change so a steady-state update doesn't re-trigger the animation).
-    func applyCollapse(sidebarCollapsed: Bool) {
+    /// Apply the toolbar collapse flags to the sidebar + host-rail items (idempotent — only animates
+    /// a real change so a steady-state update doesn't re-trigger the animation).
+    func applyCollapse(sidebarCollapsed: Bool, hostRailCollapsed: Bool = true) {
         let sidebarChanging = sidebarItem.map { $0.isCollapsed != sidebarCollapsed } ?? false
+        let railChanging = hostRailItem.map { $0.isCollapsed != hostRailCollapsed } ?? false
         // LOST-PROMPT FIX: `animator().isCollapsed = …` applies the FIRST collapse-animation layout frame
         // SYNCHRONOUSLY, which fires `GhosttyLayerBackedView.layout()` and forwards an INTERMEDIATE grid
         // size to the host BEFORE `splitViewSubviewsDidResize` (the notification) suspends forwarding. That
         // premature SIGWINCH makes zsh run `zle reset-prompt` at the wrong width, double-firing against the
         // final-width reset and erasing the prompt line. Suspend FIRST so the intermediate frames are held;
         // the settle timer in `splitViewSubviewsDidResize` resumes + flushes the FINAL grid (the
-        // idempotency guard in `setResizeSuspended` prevents a double-flush).
-        if sidebarChanging {
+        // idempotency guard in `setResizeSuspended` prevents a double-flush). The host rail's collapse
+        // resizes the SAME centre column, so it takes the identical suspend-first treatment.
+        if sidebarChanging || railChanging {
             resizeForwardingSuspended = true
             store.setTerminalResizeSuspended(true)
         }
         if sidebarChanging, let sidebarItem {
             sidebarItem.animator().isCollapsed = sidebarCollapsed
+        }
+        if railChanging, let hostRailItem {
+            hostRailItem.animator().isCollapsed = hostRailCollapsed
         }
     }
 }

@@ -82,6 +82,10 @@ public struct SlopDeskClientApp: App {
     /// ``WorkspaceRootView`` (both platforms); iOS reads only the two collapse flags (pin is an inert no-op).
     @State private var chrome: WorkspaceChromeState
     #if os(macOS)
+    /// The host-windows feed (docs/45): the ONE `@Observable` store behind the RIGHT rail + Open
+    /// Quickly's host-window rows. App-owned so its renewal loop outlives column mounts; the loop
+    /// itself runs in a scene `.task` and self-gates on chrome/OQ/connection.
+    @State private var hostWindowFeed: HostWindowFeed
     /// E19 WI-4: a WEAK handle to THIS scene's `NSWindow`, captured in the blessed `.introspect(.window)`
     /// closure so the `.onChange(of: chrome.pinned)` pin actuator can re-level the live window WITHOUT the
     /// forbidden `NSApplication.windows` scan (and without depending on the introspect closure re-firing on a
@@ -436,8 +440,21 @@ public struct SlopDeskClientApp: App {
         _appLaunchMonitor = State(initialValue: launchMonitor)
         // E19 WI-4: the app owns the chrome flags (incl. window PIN) so the macOS scene's blessed
         // `.introspect(.window)` closure reads the SAME `chrome.pinned` the titlebar / menu flip.
-        _chrome = State(initialValue: WorkspaceChromeState())
+        let chromeState = WorkspaceChromeState()
+        _chrome = State(initialValue: chromeState)
         #if os(macOS)
+        // Host-windows FEED (docs/45): the ONE app-owned store the RIGHT rail + Open Quickly render.
+        // Its renewal loop (a scene `.task` below) gates on the LIVE chrome flag + OQ visibility +
+        // connection — a collapsed rail with no OQ costs the host exactly 0 Hz. Strong captures of the
+        // app-lifetime chrome/overlay locals; the connection is weak like `overlay.connectionTarget`.
+        let feed = HostWindowFeed(
+            isActive: { !chromeState.hostRailCollapsed || overlay.openQuicklyVisible },
+            isConnected: { [weak appConnection] in appConnection?.status == .connected },
+            target: { [weak appConnection] in appConnection?.target ?? .default },
+        )
+        _hostWindowFeed = State(initialValue: feed)
+        // Open Quickly's Host rows read the SAME live feed the rail renders (weak — @State owns it).
+        overlay.hostWindowFeed = feed
         // QUIT-DRAIN: hand the termination delegate the single live store (weak — the App's `@State`
         // owns it) so `applicationShouldTerminate` can drain the in-flight pane teardowns via
         // `quiesce()` before the process dies. Set here, before any window exists, so the seam is live
@@ -535,11 +552,14 @@ public struct SlopDeskClientApp: App {
             connection: connection,
             overlay: overlayCoordinator,
             chrome: chrome,
+            hostWindowFeed: hostWindowFeed,
             installSidebarToggle: { [keyDispatcher] toggle in keyDispatcher.setToggleSidebar(toggle) },
             // E19 WI-4: hand the dispatcher the (chord-less by default) Pin Window toggle, so a user-bound
             // chord for `.pinWindow` flips the SAME `chrome.pinned` the menu Button + the `NSWindow.level` glue
             // read, through the one NSEvent monitor that owns every chord.
             installPinToggle: { [keyDispatcher] toggle in keyDispatcher.setTogglePinWindow(toggle) },
+            // Host Windows rail (docs/45): ⌘⇧R routes through the same one NSEvent monitor.
+            installHostRailToggle: { [keyDispatcher] toggle in keyDispatcher.setToggleHostWindows(toggle) },
         )
         // Keyboard-audit fix: bind the coordinator's `openSettingsAction` to the SwiftUI `openSettings`
         // environment action so the palette "Open Settings" row + the agent footer hook open the stock
@@ -617,6 +637,10 @@ public struct SlopDeskClientApp: App {
                 // drives); the monitor swallows ONLY the prefix + armed follow-ups + bound chords and passes
                 // every bare key through, so it never interferes with autoconnect typing.
                 .task { keyDispatcher.install() }
+                // Host-windows FEED renewal loop (docs/45), scoped to the scene like the dialog
+                // monitor. Self-gating: a collapsed rail with Open Quickly hidden (or a disconnected
+                // app) idles with ZERO wire traffic, so running it unconditionally costs nothing.
+                .task { await hostWindowFeed.run() }
                 // E20 WI-3: bind the client control socket so the `slopdesk` CLI can drive this running
                 // GUI. The bind/listen is a couple of syscalls + a detached accept thread (the per-connection
                 // read loops stay OFF the cooperative pool — hang-safety, mirroring the host ctl socket). A
@@ -958,10 +982,11 @@ public struct SlopDeskClientApp: App {
             width: window.frame.size.width - window.contentLayoutRect.size.width,
             height: window.frame.size.height - window.contentLayoutRect.size.height,
         )
-        // In-window non-terminal overhead for `grid` mode: the revealed sidebar width
+        // In-window non-terminal overhead for `grid` mode: the revealed sidebar + host-rail widths
         // (the titlebar is an overlay → no vertical cost; vertical-tabs-only → no horizontal tab bar).
         let overheadWidth =
             (chrome.sidebarCollapsed ? 0 : SlopDeskSplitViewController.defaultSidebarWidth)
+                + (chrome.hostRailCollapsed ? 0 : Slate.Metric.hostRailWidth)
         let chromeOverhead = CGSize(width: overheadWidth, height: 0)
         guard let size = WindowSizeMath.resolvedContentSize(
             mode: mode,

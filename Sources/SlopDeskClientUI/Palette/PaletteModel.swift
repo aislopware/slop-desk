@@ -102,6 +102,10 @@ public enum PaletteAction: Sendable {
     /// the legacy `store.sidebarCollapsed` the native shell never reads. Same live flag the ⌘⇧L chord + the
     /// titlebar button drive, so the run path, the chord, the button, and the ✓ stay in lockstep.
     case toggleSidebar
+    /// Toggle the RIGHT Host Windows rail (docs/45) — routed by the overlay coordinator to the LIVE
+    /// ``WorkspaceChromeState`` `hostRailCollapsed` flag, the SAME one the ⌘⇧R chord + the rail's own
+    /// toggle button drive, so the run path, the chord, and the ✓ stay in lockstep.
+    case toggleHostWindows
     /// E19 WI-4: toggle "Pin Window" (keep the window floating above all other apps).
     /// Routed by the overlay coordinator to the injected ``OverlayCoordinator/togglePinWindow`` closure (bound
     /// to the SAME live ``WorkspaceChromeState`` `pinned` flag the menu Button + the `NSWindow.level` glue

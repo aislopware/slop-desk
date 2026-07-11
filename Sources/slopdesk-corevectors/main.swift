@@ -349,6 +349,43 @@ root["videoControl"] = [
     ]), ["dialogs": [
         ["windowID": 9, "owner": "SecurityAgent", "title": "", "width": 400, "height": 200, "isSecure": true],
     ]]),
+    vc(
+        "windowFeedSubscribe",
+        .windowFeedSubscribe(knownGeneration: 0xDEAD_BEEF),
+        ["knownGeneration": 0xDEAD_BEEF],
+    ),
+    vc("windowFeedSnapshot", .windowFeedSnapshot(
+        generation: 7,
+        chunkIndex: 1,
+        chunkCount: 3,
+        records: [
+            HostWindowRecord(
+                windowID: 42, widthPt: 1512, heightPt: 982,
+                flags: [.onScreen, .frontmostApp, .focusedWindow], displayIndex: 0,
+                bundleID: "com.mitchellh.ghostty", appName: "Ghostty", title: "~/work — zsh",
+            ),
+            HostWindowRecord(
+                windowID: 43, widthPt: 800, heightPt: 600,
+                flags: [.minimized, .appHidden], displayIndex: 1,
+                bundleID: "", appName: "Tool", title: "",
+            ),
+        ],
+    ), [
+        "generation": 7,
+        "chunkIndex": 1,
+        "chunkCount": 3,
+        "records": [
+            [
+                "windowID": 42, "width": 1512, "height": 982, "flags": 0b0001_1001, "display": 0,
+                "bundleID": "com.mitchellh.ghostty", "appName": "Ghostty", "title": "~/work — zsh",
+            ],
+            [
+                "windowID": 43, "width": 800, "height": 600, "flags": 0b0000_0110, "display": 1,
+                "bundleID": "", "appName": "Tool", "title": "",
+            ],
+        ],
+    ]),
+    vc("windowFeedCurrent", .windowFeedCurrent(generation: 7), ["generation": 7]),
 ]
 
 // MARK: RecoveryMessage

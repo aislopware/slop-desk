@@ -80,6 +80,11 @@ public enum WorkspaceAction: Hashable, Sendable {
     // terminal (own paste pipeline) / empty / read-only pane.
     case pasteAsKeystrokes
     case toggleSidebar // ⌘⇧L — show/hide the sessions sidebar
+    // Host Windows rail (docs/45): ⌘⇧R shows/hides the RIGHT sidebar listing the host machine's
+    // windows (mirror-twin of the left rail; ⌘⇧R is free since the Details panel was removed).
+    // Window-scope → needs no active pane; routed through a view closure onto
+    // `WorkspaceChromeState.hostRailCollapsed` like `.toggleSidebar`.
+    case toggleHostWindows // ⌘⇧R — show/hide the host-windows rail
     // View → Pin Window (E19 ES-E19-1): keep the window floating above ALL other apps' windows. CHORD-LESS;
     // the live macOS app flips `WorkspaceChromeState.pinned` → `NSWindow.level = .floating` via the route
     // closure. Window-scope → needs no active pane; iOS has no window level (documented no-op).
@@ -235,6 +240,7 @@ public extension WorkspaceAction {
              .closeWindow, // closes the whole window (→ Session) — a window-scope action, needs no active pane
              .reopenClosed, // restores a closed pane into the active tab — acts on history, not a live pane
              .toggleSidebar,
+             .toggleHostWindows, // window-scope chrome toggle — needs no active pane (like the sidebar toggle)
              .pinWindow, // a window-scope NSWindow.level toggle — needs no active pane (like the sidebar toggle)
              .openQuickly, // a global fuzzy switcher — needs no active pane
              .toggleSyncInput, // the tab must exist, but the palette can still show it (mirrors .newTab)
@@ -664,6 +670,16 @@ public enum WorkspaceBindingRegistry {
             id: "view.toggleSidebar", action: .toggleSidebar, title: "Toggle Tabs Panel",
             category: .view, chord: KeyChord(character: "l", [.command, .shift]),
             symbol: "sidebar.left", keywords: "sidebar sessions tabs panel rail hide show collapse",
+        ),
+        // Host Windows rail ⌘⇧R (docs/45): the RIGHT sidebar listing the host machine's windows —
+        // the mirror twin of ⌘⇧L. ⌘⇧R is FREE since the Details panel was removed (`r` is otherwise
+        // only ⌃⌘R re-run); routes through a `toggleHostWindows` view-closure onto the live
+        // `WorkspaceChromeState.hostRailCollapsed`, exactly the `view.toggleSidebar` shape.
+        WorkspaceBinding(
+            id: "view.hostWindows", action: .toggleHostWindows, title: "Toggle Host Windows",
+            category: .view, chord: KeyChord(character: "r", [.command, .shift]),
+            symbol: "sidebar.right",
+            keywords: "host windows rail right sidebar panel remote list apps stream hide show collapse",
         ),
         // Pin Window (E19 ES-E19-1, "View ▸ Pin Window" — `spec/user-interface__window-tab-split.md:14`
         // "keeps the window floating above all other apps' windows"). No default chord — `chord: nil`

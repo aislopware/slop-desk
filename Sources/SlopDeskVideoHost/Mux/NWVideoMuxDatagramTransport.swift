@@ -433,15 +433,18 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
         return true
     }
 
-    /// One-shot peek: does a control-channel payload decode as a session-LESS discovery request — either
-    /// `listWindows` (docs/31 picker) or `listSystemDialogs` (the system-popup-pane feature)? Like the
-    /// hello peek, only the control channel can carry these. Lets such a request bootstrap its reply flow
-    /// so the daemon can answer it without minting a capture session.
+    /// One-shot peek: does a control-channel payload decode as a session-LESS discovery request —
+    /// `listWindows` (docs/31 picker), `listSystemDialogs` (the system-popup-pane feature), or
+    /// `windowFeedSubscribe` (the host-windows rail feed, docs/45)? Like the hello peek, only the
+    /// control channel can carry these. Lets such a request bootstrap its reply flow so the daemon can
+    /// answer it without minting a capture session. EVERY new client→host session-less type MUST be
+    /// added here AND stay bye-exempt in ``UnboundLaneByeDecider`` — a missed site = silent bye-storms.
     private static func payloadIsListRequest(channel: VideoChannel, payload: Data) -> Bool {
         guard channel == .control, let msg = try? VideoControlMessage.decode(payload) else { return false }
         switch msg {
         case .listWindows,
-             .listSystemDialogs: return true
+             .listSystemDialogs,
+             .windowFeedSubscribe: return true
         default: return false
         }
     }

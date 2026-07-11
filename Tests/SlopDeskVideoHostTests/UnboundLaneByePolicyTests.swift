@@ -47,6 +47,27 @@ final class UnboundLaneByePolicyTests: XCTestCase {
         XCTAssertFalse(UnboundLaneByeDecider.warrantsBye(
             channel: .control, payload: VideoControlMessage.listSystemDialogs.encode(),
         ))
+        // The window-FEED subscribe (docs/45 rail) is session-less discovery exactly like the list
+        // requests: it must bootstrap its reply flow, never be answered with a bye — a bye here
+        // would tear down the pane sessions of a client whose rail is merely polling.
+        XCTAssertFalse(UnboundLaneByeDecider.warrantsBye(
+            channel: .control,
+            payload: VideoControlMessage.windowFeedSubscribe(knownGeneration: 42).encode(),
+        ))
+    }
+
+    func testHostToClientFeedRepliesNeverWarrantBye() {
+        // windowFeedSnapshot / windowFeedCurrent are host→client; arriving inbound is
+        // corrupt/hostile — validate-then-drop, never reflect.
+        XCTAssertFalse(UnboundLaneByeDecider.warrantsBye(
+            channel: .control,
+            payload: VideoControlMessage.windowFeedSnapshot(
+                generation: 1, chunkIndex: 0, chunkCount: 1, records: [],
+            ).encode(),
+        ))
+        XCTAssertFalse(UnboundLaneByeDecider.warrantsBye(
+            channel: .control, payload: VideoControlMessage.windowFeedCurrent(generation: 1).encode(),
+        ))
     }
 
     func testStrayByeGetsNoReply() {

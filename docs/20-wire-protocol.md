@@ -558,6 +558,26 @@ media flows. `[UInt8 type][body]`, big-endian:
   POINT size the captured window can reach (the bounds of its display, or the parked VD). The host
   sends it once at capture start, paired with its resize-to-display-origin step, so the client's
   "Resize…" popover can cap its width/height fields at a size the remote can actually adopt.
+- **Session-LESS discovery (no capture mint; the request bootstraps its reply flow at the mux, is
+  never answered with an unbound-lane `bye`, and its lane is retired after the reply):**
+  `listWindows` (7, zero body) → `windowList` (8) powers the remote-window picker;
+  `listSystemDialogs` (11, zero body) → `systemDialogList` (12) powers the system-popup panes. Exact
+  record layouts live in the `VideoControlCodec.swift` header table (golden-pinned).
+- **Host-window FEED (docs/45 rail, 2026-07-11):** `windowFeedSubscribe` (16, client → host,
+  `UInt32 knownGeneration`, 0 = have nothing) is the ONE feed message — sent every ~2 s while the
+  host-windows rail / Open Quickly is visible it is simultaneously the poll, the (Phase-2)
+  subscription renewal, and the loss-healing resync anchor. The host answers with either
+  **`windowFeedCurrent` (18, `UInt32 generation`)** — "you're current", so a quiet desktop costs
+  5 bytes each way per renewal — or a **`windowFeedSnapshot` (17)** chunk sequence: `UInt32
+  generation` + `UInt8 chunkIndex` + `UInt8 chunkCount` + `UInt16 recordCount` + records of `UInt32
+  windowID` + `UInt16 wPt` + `UInt16 hPt` + `UInt8 flags` (bit0 onScreen, bit1 minimized, bit2
+  appHidden, bit3 frontmostApp, bit4 focusedWindow) + `UInt8 displayIndex` + lp `bundleID` + lp
+  `appName` + lp `title`. Always FULL snapshots (never deltas — idempotent, latest-wins on a lossy
+  lane), byte-budgeted by the host so each chunk fits one datagram
+  (`VideoControlMessage.feedRecordBytesPerChunk`, titles capped at 120 UTF-8 bytes), dup-sent ×2
+  ~25 ms apart (the `bye`/`streamCadence` loss pattern). The client assembles per generation (all
+  chunks must agree on `chunkCount`), applies the latest fully-assembled generation, and heals any
+  loss at the next renewal. All three are inert to an old peer (unknown type → dropped).
 
 ## 9.3 Video frame datagrams — `FrameFragment` (video channel)
 

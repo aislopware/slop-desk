@@ -21,6 +21,10 @@ struct RouteToggles {
     var find: (() -> Void)?
     var peekReply: (() -> Void)?
     var sidebar: (() -> Void)?
+    /// Toggles the Host Windows rail (docs/45, ⌘⇧R). A chrome-flag concern like `sidebar` (the live
+    /// app flips `WorkspaceChromeState.hostRailCollapsed`); `nil` (headless / test / iOS default) is
+    /// a graceful no-op, never a dead chord.
+    var hostWindows: (() -> Void)?
     var globalSearch: (() -> Void)?
     /// Toggles the Jump-To affordance (E10 WI-8, ⌘J). A VIEW overlay (like `globalSearch`), passed in as a
     /// closure; `nil` (headless / test default) is a graceful no-op, never a dead chord. E11 (WI-5/WI-7)
@@ -61,6 +65,7 @@ public extension WorkspaceBindingRegistry {
         toggleFind: (() -> Void)? = nil,
         togglePeekReply: (() -> Void)? = nil,
         toggleSidebar: (() -> Void)? = nil,
+        toggleHostWindows: (() -> Void)? = nil,
         toggleGlobalSearch: (() -> Void)? = nil,
         toggleJumpTo: (() -> Void)? = nil,
         openQuickly: (() -> Void)? = nil,
@@ -70,7 +75,8 @@ public extension WorkspaceBindingRegistry {
         let toggles = RouteToggles(
             palette: togglePalette, cheatSheet: toggleCheatSheet, find: toggleFind,
             peekReply: togglePeekReply,
-            sidebar: toggleSidebar, globalSearch: toggleGlobalSearch, jumpTo: toggleJumpTo,
+            sidebar: toggleSidebar, hostWindows: toggleHostWindows,
+            globalSearch: toggleGlobalSearch, jumpTo: toggleJumpTo,
             openQuickly: openQuickly, pinWindow: togglePinWindow,
             closeWindow: closeWindow,
         )
@@ -201,6 +207,10 @@ public extension WorkspaceBindingRegistry {
         // store-flag reader still toggles).
         case .toggleSidebar:
             if let s = toggles.sidebar { s() } else { store.toggleSidebarCollapsed() }
+        // Toggle Host Windows (⌘⇧R, docs/45): the RIGHT rail collapse is VIEW @State
+        // (`WorkspaceChromeState.hostRailCollapsed`, read by the native split controller) — a passed-in
+        // closure like `.toggleSidebar`; `nil` (headless / test / iOS default) is a graceful no-op.
+        case .toggleHostWindows: toggles.hostWindows?()
         // Pin Window (E19 ES-E19-1 / WI-3): float the window above all other apps. A macOS NSWindow.level
         // concern (VIEW @State `WorkspaceChromeState.pinned`), passed in as a closure like `.toggleSidebar`;
         // `nil` (headless / test / iOS default) is a graceful no-op, never a dead chord.
@@ -371,6 +381,8 @@ public extension WorkspaceBindingRegistry {
         // Sidebar is the tree-shell chrome; the canvas path still toggles it via the closure (the live macOS
         // app wires `chrome.toggleSidebar`). `nil` (the canvas test default) is a graceful no-op.
         case .toggleSidebar: toggles.sidebar?()
+        // The Host Windows rail is tree-shell chrome too; the canvas path forwards the closure the same way.
+        case .toggleHostWindows: toggles.hostWindows?()
         // Pin Window is a window-level concern (the live macOS app flips `WorkspaceChromeState.pinned`); the
         // canvas path forwards it via the closure too — a graceful no-op when none is supplied, never a dead chord.
         case .pinWindow: toggles.pinWindow?()

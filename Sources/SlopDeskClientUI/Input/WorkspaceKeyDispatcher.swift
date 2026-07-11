@@ -52,6 +52,8 @@ final class WorkspaceKeyDispatcher {
     /// `store.sidebarCollapsed`, so the root view installs the real closure via ``setToggleSidebar(_:)`` on
     /// appear. Until then `nil` ⇒ `.toggleSidebar` falls back to the store flag in `route` — never a dead chord.
     private var toggleSidebar: (() -> Void)?
+    /// The Host Windows rail toggle (⌘⇧R, docs/45) — installed late like `toggleSidebar`.
+    private var toggleHostWindows: (() -> Void)?
     /// "Pin Window" (View ▸ Pin Window). View-owned `@State` (`WorkspaceChromeState`), installed late by the
     /// root view via ``setTogglePinWindow(_:)`` once the chrome exists. Pin Window is CHORD-LESS by default, so
     /// this fires only if a user binds a chord to `.pinWindow`; until installed `nil` ⇒ graceful no-op.
@@ -158,6 +160,10 @@ final class WorkspaceKeyDispatcher {
     /// this to `chrome.toggleSidebar` on appear). Without it ⌘⇧L falls back to `store.sidebarCollapsed` (which
     /// nothing reads on macOS); this closure makes ⌘⇧L actually collapse the native sidebar item.
     func setToggleSidebar(_ toggle: @escaping () -> Void) { toggleSidebar = toggle }
+
+    /// Install the Host Windows rail toggle (⌘⇧R, docs/45) once `WorkspaceChromeState` exists — the same
+    /// late-wiring as `setToggleSidebar`. Until installed `.toggleHostWindows` is a graceful no-op.
+    func setToggleHostWindows(_ toggle: @escaping () -> Void) { toggleHostWindows = toggle }
 
     /// Install the "Pin Window" toggle once the `WorkspaceChromeState` exists (the root view wires this to
     /// `chrome.togglePin()` on appear). Pin Window is chord-less by default, so this only fires when a user
@@ -306,6 +312,7 @@ final class WorkspaceKeyDispatcher {
             toggleFind: toggleFind,
             togglePeekReply: togglePeekReply,
             toggleSidebar: toggleSidebar,
+            toggleHostWindows: toggleHostWindows,
             toggleGlobalSearch: toggleGlobalSearch,
             toggleJumpTo: toggleJumpTo,
             openQuickly: toggleOpenQuickly,

@@ -371,18 +371,16 @@ func describe(_ w: SCWindow) -> String {
     )
 }
 
-/// System apps whose windows are NOT useful to stream — filtered OUT of the picker list (docs/31).
-private let pickerSystemApps: Set<String> = [
-    "", "Window Server", "Control Center", "Dock", "Notification Center", "Spotlight", "Wallpaper",
-]
-
 /// Maps an `SCWindow` to a picker ``WindowSummary``, or `nil` if it is system chrome / a tiny indicator
 /// (StatusIndicator, Cursor, Menubar, Control Center items) that should not appear in the picker.
+/// The verdict is the shared ``WindowFeedInclusionPolicy`` — the ONE inclusion policy for the picker
+/// AND the host-windows feed (docs/45), so the two surfaces can never drift.
 @Sendable
 func pickerSummary(_ w: SCWindow) -> WindowSummary? {
     let app = w.owningApplication?.applicationName ?? ""
     let width = Int(w.frame.width.rounded()), height = Int(w.frame.height.rounded())
-    guard !pickerSystemApps.contains(app), width >= 80, height >= 80 else { return nil }
+    guard WindowFeedInclusionPolicy.includes(ownerName: app, widthPt: width, heightPt: height)
+    else { return nil }
     return WindowSummary(
         windowID: w.windowID,
         appName: app,
@@ -887,6 +885,9 @@ Task {
         // Coalesces concurrent listWindows answers per channelID (so a lossy/looping client can't pile up
         // SCShareableContent enumerations — the discovery mirror of the registry's `minting` dedup).
         let listAnswerGuard = ListAnswerGuard()
+        // The ONE host-window feed cache/responder (docs/45): all subscribers share its 1 s-TTL
+        // snapshot, so N clients cost one CGWindowList enumeration per TTL, not N.
+        let windowFeedResponder = WindowFeedResponder()
         try await mux.start { channelID, channel, data in
             // ORDERING: an ADMITTED lane's sink appends to its session's serial inbound queue
             // SYNCHRONOUSLY, in arrival order, on the transport's serial receive queue — so a mouseUp
@@ -911,6 +912,21 @@ Task {
                 // reply, NEVER mint a session. Bootstraps its reply flow exactly like listWindows.
                 if listAnswerGuard.begin(channelID) {
                     Task { await answerSystemDialogList(channelID: channelID, mux: mux, answerGuard: listAnswerGuard) }
+                }
+            } else if channel == .control, let msg = try? VideoControlMessage.decode(data),
+                      case let .windowFeedSubscribe(knownGeneration) = msg
+            {
+                // Session-LESS host-window FEED renewal (docs/45 rail): answer from the shared 1 s-TTL
+                // snapshot cache, NEVER mint a session. Bootstraps its reply flow exactly like
+                // listWindows; the per-channel guard coalesces retransmits and the responder's cache
+                // coalesces enumeration across channels/clients.
+                if listAnswerGuard.begin(channelID) {
+                    Task { await windowFeedResponder.answer(
+                        channelID: channelID,
+                        knownGeneration: knownGeneration,
+                        mux: mux,
+                        answerGuard: listAnswerGuard,
+                    ) }
                 }
             } else {
                 Task { await registry.dispatch(channelID: channelID, channel: channel, data: data) }

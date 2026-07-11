@@ -123,6 +123,9 @@ public final class OverlayCoordinator {
     @ObservationIgnored public private(set) var remotePickerModel: RemoteWindowModel?
     /// Resolves the app-global ``ConnectionTarget`` for the picker's discovery query. Injected by the root.
     @ObservationIgnored public var connectionTarget: @MainActor () -> ConnectionTarget = { .default }
+    /// The app-owned host-windows feed (docs/45) — set once at app init so Open Quickly's Host rows
+    /// read the SAME live store the rail renders. Weak: the App's `@State` owns the feed.
+    @ObservationIgnored public weak var hostWindowFeed: HostWindowFeed?
 
     // MARK: Chrome toggles (injected by the root, which owns the live `WorkspaceChromeState`)
 
@@ -131,6 +134,9 @@ public final class OverlayCoordinator {
     /// button + the palette ✓ read — never the legacy `store.sidebarCollapsed` the native shell ignores. No-op
     /// by default (iOS / tests / previews), so the row is never a trap.
     @ObservationIgnored public var toggleSidebar: @MainActor () -> Void = {}
+    /// Toggles the RIGHT Host Windows rail (docs/45, ⌘⇧R) — bound by the root view to the live
+    /// `chrome.toggleHostWindows()` so the palette row, the chord, and the rail button flip ONE flag.
+    @ObservationIgnored public var toggleHostWindows: @MainActor () -> Void = {}
     /// E19/A30 (WI-4): toggles the window-pin flag (View ▸ Pin Window). Bound by ``WorkspaceRootView`` to
     /// `chrome.togglePin()` so any surface routed here flips the SAME live `WorkspaceChromeState.pinned` the
     /// menu Button + the macOS `NSWindow.level` glue read. No-op by default (iOS / tests / previews).
@@ -398,6 +404,9 @@ public final class OverlayCoordinator {
             if !keepOpen { closePalette() }
         case .toggleSidebar:
             toggleSidebar()
+            if !keepOpen { closePalette() }
+        case .toggleHostWindows:
+            toggleHostWindows()
             if !keepOpen { closePalette() }
         case .togglePinWindow:
             togglePinWindow()

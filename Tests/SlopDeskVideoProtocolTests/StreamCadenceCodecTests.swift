@@ -38,20 +38,20 @@ final class StreamCadenceCodecTests: XCTestCase {
         XCTAssertThrowsError(try VideoControlMessage.decode(Data([10, 0x00])))
     }
 
-    /// The decoder's `default` arm still drops a type PAST the highest defined (15 = displayMax) as
-    /// `.malformed` — the forward-compatibility contract (a future control type claims 16+). Type 15
-    /// (displayMax) is now DEFINED, so a bare type byte for it throws `.truncated` (short body), not
-    /// `.malformed`; the "unknown type" probe must sit past the max.
+    /// The decoder's `default` arm still drops a type PAST the highest defined (18 = windowFeedCurrent)
+    /// as `.malformed` — the forward-compatibility contract (a future control type claims 19+). Types
+    /// 16–18 (the window-feed trio) are now DEFINED, so a bare type byte for them throws `.truncated`
+    /// (short body), not `.malformed`; the "unknown type" probe must sit past the max.
     func testUnknownTypePastDefinedStillThrowsMalformed() {
-        XCTAssertThrowsError(try VideoControlMessage.decode(Data([16]))) { error in
+        XCTAssertThrowsError(try VideoControlMessage.decode(Data([19]))) { error in
             guard case VideoProtocolError.malformed = error else {
                 return XCTFail("unknown type must throw .malformed, got \(error)")
             }
         }
-        // displayMax (type 15) is DEFINED → a bare type byte (no 4-byte body) throws `.truncated`.
-        XCTAssertThrowsError(try VideoControlMessage.decode(Data([15]))) { error in
+        // windowFeedSubscribe (type 16) is DEFINED → a bare type byte (no 4-byte body) throws `.truncated`.
+        XCTAssertThrowsError(try VideoControlMessage.decode(Data([16]))) { error in
             guard case VideoProtocolError.truncated = error else {
-                return XCTFail("short displayMax body must throw .truncated, got \(error)")
+                return XCTFail("short windowFeedSubscribe body must throw .truncated, got \(error)")
             }
         }
     }

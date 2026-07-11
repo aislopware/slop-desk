@@ -146,6 +146,16 @@ public struct ActionsPaletteSource: PaletteDataSource {
             subtitle: nil, shortcut: glyph(.toggleSidebar), filter: .actions, category: .view,
             action: .toggleSidebar,
         ),
+        // "Toggle Host Windows" (docs/45): the RIGHT rail listing the host machine's windows. Same
+        // live-chrome routing as Toggle Tabs Panel — the ⌘⇧R chord, this row, and the rail's own
+        // button all flip `WorkspaceChromeState.hostRailCollapsed`, and the ✓ reads it.
+        PaletteItem(
+            id: "action.toggleHostWindows", icon: "sidebar.right", title: "Toggle Host Windows",
+            subtitle: nil,
+            keywords: "host windows rail right sidebar panel remote list apps stream",
+            shortcut: glyph(.toggleHostWindows), filter: .actions, category: .view,
+            action: .toggleHostWindows,
+        ),
         // Read Only (E17 ES-E17-1): toggle the active pane's input gate. Under the SHELL section as the
         // first shell verb in the catalog. The spec accepts
         // "read only" plus the synonyms `readonly` / `lock` / `freeze` / `view only` — folded into the row's

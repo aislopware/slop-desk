@@ -70,22 +70,22 @@ final class OpenQuicklyModelTests: XCTestCase {
 
     // MARK: - Pill taxonomy (ES-E11-1)
 
-    /// REVERT-TO-CONFIRM-FAIL: re-adding an SSH or Recipes case grows `allCases` past 6; dropping a live
-    /// pill fails the order assertion.
+    /// REVERT-TO-CONFIRM-FAIL: re-adding an SSH or Recipes case grows `allCases` past 7 (the 7th is
+    /// the deliberate Host pill, docs/45); dropping a live pill fails the order assertion.
     func testPickerPillsOrderExcludesSSHAndRecipes() {
         XCTAssertEqual(
             OpenQuicklyFilter.pickerPills,
-            [.all, .opened, .recent, .folders, .agents, .current],
+            [.all, .opened, .recent, .folders, .agents, .hostWindows, .current],
         )
         XCTAssertEqual(
             OpenQuicklyFilter.pickerPills.map(\.label),
-            ["All", "Opened", "Recent", "Folders", "Agents", "Current"],
+            ["All", "Opened", "Recent", "Folders", "Agents", "Host", "Current"],
         )
         let labels = OpenQuicklyFilter.pickerPills.map(\.label)
         XCTAssertFalse(labels.contains("SSH"), "the SSH pill is a deliberate product cut")
         XCTAssertFalse(labels.contains("Recipes"), "the Recipes pill was removed with the recipe feature")
         // Both are structural cuts (no enum case).
-        XCTAssertEqual(OpenQuicklyFilter.allCases.count, 6)
+        XCTAssertEqual(OpenQuicklyFilter.allCases.count, 7)
     }
 
     func testDefaultFilterIsAll() {
@@ -99,6 +99,7 @@ final class OpenQuicklyModelTests: XCTestCase {
         XCTAssertEqual(OpenQuicklyFilter.recent.pickerChordKey, "r")
         XCTAssertEqual(OpenQuicklyFilter.folders.pickerChordKey, "z")
         XCTAssertEqual(OpenQuicklyFilter.agents.pickerChordKey, "g")
+        XCTAssertEqual(OpenQuicklyFilter.hostWindows.pickerChordKey, "h")
         XCTAssertEqual(OpenQuicklyFilter.current.pickerChordKey, "j")
         let keys = OpenQuicklyFilter.pickerPills.map(\.pickerChordKey)
         XCTAssertEqual(Set(keys).count, keys.count, "the per-pill picker chords are collision-free")

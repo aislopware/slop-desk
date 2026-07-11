@@ -8,13 +8,20 @@
 // place and reading them in the SwiftUI body re-invalidates the representable.
 
 #if canImport(SwiftUI)
+import Defaults
 import Foundation
+import SlopDeskWorkspaceCore
 
 @MainActor
 @Observable
 final class WorkspaceChromeState {
     /// Whether the left navigator (sidebar) split item is collapsed.
     var sidebarCollapsed = false
+    /// Whether the RIGHT Host Windows rail (docs/45) split item is collapsed. Seeded from the
+    /// persisted default (collapsed on first launch — the rail earns its pixels); every toggle
+    /// writes the choice back so it survives relaunch. Unlike the left sidebar there is no
+    /// auto-hide policy — the ONE owner of this flag is the user's toggle.
+    var hostRailCollapsed = Defaults[.hostWindowsRailCollapsed]
     /// E19/A30: whether the window is PINNED (View ▸ Pin Window — keep-on-top). Lives with the other
     /// chrome flags so reading it in the SwiftUI scene body re-invalidates the introspect-bearing scene; the
     /// macOS `NSWindow` glue (E19 WI-4) maps it to `NSWindow.level` (`.floating` ⇄ `.normal`). Pure view
@@ -49,5 +56,13 @@ final class WorkspaceChromeState {
     /// Flip the window-pin flag ("Pin Window"). The macOS scene's `.onChange(of: chrome.pinned)` actuates
     /// `NSWindow.level`; on iOS this is an inert flag flip (no floating-window concept).
     func togglePin() { pinned.toggle() }
+
+    /// Toggle the Host Windows rail (⌘⇧R / palette / titlebar — docs/45) and persist the choice.
+    /// The macOS split shell reads `hostRailCollapsed` in `updateNSViewController` and animates the
+    /// third split item; the feed's renewal loop reads it as a lifecycle gate (collapsed = 0 Hz).
+    func toggleHostWindows() {
+        hostRailCollapsed.toggle()
+        Defaults[.hostWindowsRailCollapsed] = hostRailCollapsed
+    }
 }
 #endif
