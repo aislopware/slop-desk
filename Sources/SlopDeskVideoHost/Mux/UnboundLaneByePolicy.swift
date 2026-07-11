@@ -56,7 +56,8 @@ public enum UnboundLaneByeDecider {
                  .windowFeedSnapshot,
                  .windowFeedCurrent,
                  .appIconRequest,
-                 .blobChunk:
+                 .blobChunk,
+                 .windowPreviewRequest:
                 // `windowFeedSubscribe` + `appIconRequest` are session-LESS discovery like the list
                 // requests (answered by the daemon — they must bootstrap, never bye); the
                 // snapshot/current/blob replies are host→client and never arrive inbound legitimately.

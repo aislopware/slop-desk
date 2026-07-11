@@ -398,6 +398,11 @@ root["videoControl"] = [
         "blobKind": 0, "blobID": String(0xDEAD_BEEF_CAFE_F00D as UInt64), "metaA": 64, "metaB": 0,
         "chunkIndex": 1, "chunkCount": 3, "bytesHex": "89504e47",
     ]),
+    vc(
+        "windowPreviewRequest",
+        .windowPreviewRequest(windowID: 42, maxWidthPx: 640),
+        ["windowID": 42, "maxWidthPx": 640],
+    ),
 ]
 
 // MARK: RecoveryMessage

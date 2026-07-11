@@ -104,6 +104,20 @@ public final class HostAppIconQuery {
     ) async -> Data?)?
 }
 
+/// The **window-preview PEEK seam** (docs/45 Phase 4): the GUI app injects the one-shot preview
+/// fetch (implemented in `SlopDeskVideoClient.WindowPreviewFetch`). Returns magic-validated JPEG
+/// bytes + pixel dimensions, or `nil` (timeout / host throttle) — the peek simply never appears
+/// (fully-formed-only). `nil` seam ⇒ the Peek verb is hidden.
+@preconcurrency
+@MainActor
+public final class HostWindowPreviewQuery {
+    /// App-registered fetch (set once at launch). Args: host, mediaPort, cursorPort, windowID,
+    /// maxWidthPx. Returns (jpeg, pxWidth, pxHeight).
+    public static var shared: (@MainActor (
+        _ host: String, _ mediaPort: UInt16, _ cursorPort: UInt16, _ windowID: UInt32, _ maxWidthPx: UInt16,
+    ) async -> (jpeg: Data, pxWidth: Int, pxHeight: Int)?)?
+}
+
 /// A window's structural identity in the rail: the row's `leafIdentity` key (`windowID|bundleID`)
 /// plus the section key (`appName` — fixed for a window's lifetime, so structural by nature).
 public struct HostWindowIdentity: Equatable, Hashable, Sendable, Identifiable {
@@ -267,6 +281,10 @@ public final class HostWindowFeed {
 
     /// Test seam: force the liveness flag so ack-rule tests need no real timers.
     func setLiveForTesting(_ live: Bool) { isLive = live }
+
+    /// The current connection target — the rail's peek fetch reuses the feed's own target closure
+    /// (one source for host + UDP ports).
+    public var connectionTarget: ConnectionTarget { target() }
 
     /// Folds one answer (renewal reply or push) into the store (internal for deterministic tests).
     func fold(_ answer: HostWindowFeedAnswer?) {

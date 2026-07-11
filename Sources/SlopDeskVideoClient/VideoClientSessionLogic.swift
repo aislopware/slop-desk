@@ -184,7 +184,8 @@ public struct VideoClientStateMachine: Sendable {
              .windowFeedSnapshot,
              .windowFeedCurrent,
              .appIconRequest,
-             .blobChunk:
+             .blobChunk,
+             .windowPreviewRequest:
             // hello / resizeRequest / keepalive / listWindows / focusWindow / listSystemDialogs /
             // windowFeedSubscribe / appIconRequest are all client→host. `windowList` +
             // `systemDialogList` + `windowFeedSnapshot` + `windowFeedCurrent` + `blobChunk` ARE

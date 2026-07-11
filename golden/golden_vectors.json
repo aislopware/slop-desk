@@ -4007,6 +4007,12 @@
       "metaA": 64,
       "metaB": 0,
       "variant": "blobChunk"
+    },
+    {
+      "hex": "150000002a0280",
+      "maxWidthPx": 640,
+      "variant": "windowPreviewRequest",
+      "windowID": 42
     }
   ],
   "virtualDisplayGeometry": [

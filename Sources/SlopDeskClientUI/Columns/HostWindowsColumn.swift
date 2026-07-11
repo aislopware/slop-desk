@@ -32,7 +32,20 @@ struct HostWindowsColumn: View {
     /// The keyboard cursor (↑/↓ + ⏎), or `nil` when the panel isn't being keyboard-driven. The
     /// raised card renders ONLY for this cursor — selection vocabulary, not streamed-state.
     @State private var cursor: HostWindowIdentity?
+    /// The live PEEK (docs/45 Phase 4): set ONLY once the JPEG fully arrives (no spinner, no
+    /// skeleton — if it never arrives, nothing appears), presented as a popover on its row.
+    @State private var peek: PeekPresentation?
+    /// Windows with a peek fetch in flight (single-flight; a second Space is a no-op).
+    @State private var peekFetching: Set<UInt32> = []
     @FocusState private var listFocused: Bool
+
+    /// One fully-formed peek: the row it anchors to, the image, and its instrument caption.
+    struct PeekPresentation: Identifiable {
+        let identity: HostWindowIdentity
+        let image: NSImage
+        let caption: String
+        var id: String { identity.leafIdentity }
+    }
 
     var body: some View {
         // Filter reads `feed.titles` ONLY while a query is active (registering the body's dependency
@@ -152,8 +165,15 @@ struct HostWindowsColumn: View {
                                 store: store,
                                 isCursor: cursor == identity && listFocused,
                                 onAct: { duplicate in act(on: identity, duplicate: duplicate) },
+                                onPeek: HostWindowPreviewQuery.shared == nil
+                                    ? nil : { requestPeek(identity) },
                             )
                             .id(identity.leafIdentity)
+                            // The peek popover anchors to ITS row (a real NSPopover window — floats
+                            // above the AppKit split, dismisses on Esc/outside-click natively).
+                            .popover(item: peekBinding(for: identity), arrowEdge: .leading) { peek in
+                                PeekCard(presentation: peek)
+                            }
                             // New rows fade in (opacity only — no layout animation, no slide);
                             // removals and field updates apply instantly (docs/45 §3 Motion).
                             .transition(.opacity.animation(Slate.Anim.reveal))
@@ -184,6 +204,47 @@ struct HostWindowsColumn: View {
                 listFocused = false
                 return .handled
             }
+            .onKeyPress(.space) {
+                guard let cursor, HostWindowPreviewQuery.shared != nil else { return .ignored }
+                requestPeek(cursor)
+                return .handled
+            }
+        }
+    }
+
+    // MARK: - Peek (docs/45 Phase 4 — Space / context menu; fully-formed-only)
+
+    /// The per-row popover binding: presents ONLY when the live peek belongs to `identity`.
+    private func peekBinding(for identity: HostWindowIdentity) -> Binding<PeekPresentation?> {
+        Binding(
+            get: { peek?.identity == identity ? peek : nil },
+            set: { if $0 == nil, peek?.identity == identity { peek = nil } },
+        )
+    }
+
+    /// Fetches one preview and presents it fully formed. Single-flight per window; a timeout /
+    /// host throttle means nothing appears (never a spinner). The caption carries the dimensions +
+    /// display — the row itself stays clean.
+    private func requestPeek(_ identity: HostWindowIdentity) {
+        guard let query = HostWindowPreviewQuery.shared,
+              !peekFetching.contains(identity.windowID), feed.isLive else { return }
+        peekFetching.insert(identity.windowID)
+        let target = feed.connectionTarget
+        Task { @MainActor in
+            defer { peekFetching.remove(identity.windowID) }
+            guard let result = await query(
+                target.host, target.mediaPort, target.cursorPort, identity.windowID, 640,
+            ), let image = NSImage(data: result.jpeg) else { return }
+            // The row may have died while fetching — a peek for a gone window never appears.
+            guard feed.structure.contains(identity) else { return }
+            var parts = [identity.appName.uppercased()]
+            if let m = feed.metrics[identity.windowID] {
+                parts.append("\(m.widthPt) × \(m.heightPt)")
+                if m.displayIndex > 0 { parts.append("DISPLAY \(m.displayIndex + 1)") }
+            }
+            peek = PeekPresentation(
+                identity: identity, image: image, caption: parts.joined(separator: " · "),
+            )
         }
     }
 
@@ -270,6 +331,8 @@ private struct HostWindowLiveRow: View {
     let isCursor: Bool
     /// Fires the row's verb; `duplicate` = ⌘-click (open another pane of an already-streamed window).
     let onAct: (_ duplicate: Bool) -> Void
+    /// Requests the row's peek (docs/45 Phase 4). `nil` (no preview seam) hides the verb.
+    let onPeek: (() -> Void)?
 
     var body: some View {
         let title = feed.titles[identity.windowID] ?? ""
@@ -348,12 +411,42 @@ private struct HostWindowLiveRow: View {
         } else {
             Button("Open in New Tab") { onAct(false) }
         }
+        if let onPeek {
+            Button("Peek") { onPeek() }
+        }
         Divider()
         Button("Copy Window Title") {
             let title = feed.titles[identity.windowID] ?? ""
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(title.isEmpty ? identity.appName : title, forType: .string)
         }
+    }
+}
+
+// MARK: - Peek card (the ONLY window-content imagery anywhere — docs/45 Phase 4)
+
+/// The fully-formed peek: the JPEG at a LEGIBLE 320 pt width (true aspect, letterboxed past
+/// 220 pt tall) over `Surface.face`, captioned in the instrument voice. Appears ONLY complete —
+/// there is no loading state to render by design.
+private struct PeekCard: View {
+    let presentation: HostWindowsColumn.PeekPresentation
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Slate.Metric.space2) {
+            Image(nsImage: presentation.image)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(maxWidth: 320, maxHeight: 220)
+                .background(Slate.Surface.face)
+                .clipShape(RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall))
+            Text(presentation.caption)
+                .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                .tracking(Slate.Typeface.instrumentTracking)
+                .foregroundStyle(Slate.Text.secondary)
+        }
+        .padding(Slate.Metric.space3)
+        .frame(width: 320 + Slate.Metric.space3 * 2)
     }
 }
 

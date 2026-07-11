@@ -172,6 +172,17 @@ struct ClientAppMain {
             }
         }
 
+        // Window-preview PEEK seam (docs/45 Phase 4): one-shot kind-1 JPEG fetch for the rail's
+        // Space/context-menu peek. Magic-validated bytes + pixel dims, or nil (fully-formed-only).
+        MainActor.assumeIsolated {
+            HostWindowPreviewQuery.shared = { host, mediaPort, cursorPort, windowID, maxWidthPx in
+                await WindowPreviewFetch.fetch(
+                    host: host, mediaPort: mediaPort, cursorPort: cursorPort,
+                    windowID: windowID, maxWidthPx: maxWidthPx,
+                )
+            }
+        }
+
         // System-dialog poll seam (the "show system popups in their own pane" feature): inject the
         // host system-dialog query so the cross-platform `SystemDialogMonitor` can auto-spawn dialog
         // panes WITHOUT importing the gated video module. Maps the protocol's `SystemDialogSummary` →

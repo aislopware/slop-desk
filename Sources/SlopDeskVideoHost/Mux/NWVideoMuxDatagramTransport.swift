@@ -445,7 +445,8 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
         case .listWindows,
              .listSystemDialogs,
              .windowFeedSubscribe,
-             .appIconRequest: return true
+             .appIconRequest,
+             .windowPreviewRequest: return true
         default: return false
         }
     }

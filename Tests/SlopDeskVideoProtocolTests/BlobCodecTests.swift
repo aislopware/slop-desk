@@ -51,6 +51,14 @@ final class BlobCodecTests: XCTestCase {
         XCTAssertThrowsError(try VideoControlMessage.decode(data))
     }
 
+    func testWindowPreviewRequestRoundTripAndLayout() throws {
+        let msg = VideoControlMessage.windowPreviewRequest(windowID: 0xAABB_CCDD, maxWidthPx: 640)
+        XCTAssertEqual(try VideoControlMessage.decode(msg.encode()), msg)
+        XCTAssertEqual(msg.messageType, 21)
+        XCTAssertEqual(msg.encode(), Data([21, 0xAA, 0xBB, 0xCC, 0xDD, 0x02, 0x80]))
+        XCTAssertThrowsError(try VideoControlMessage.decode(Data([21, 0x00])), "truncated body throws")
+    }
+
     // MARK: Chunker ↔ assembler round trip
 
     func testChunkerSplitsAndAssemblerReassemblesByteIdentical() throws {

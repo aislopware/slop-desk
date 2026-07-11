@@ -208,6 +208,62 @@ actor WindowFeedService {
     }
 }
 
+/// Builds the daemon's session-LESS discovery dispatcher (docs/31 picker + docs/45
+/// feed/icons/peek): ONE closure the mux receive path calls for unbound control datagrams. Owns
+/// the services + the per-channel answer guard (retransmit coalescing); returns `false` for
+/// anything that is not a session-less request (→ the registry's session dispatch). Every service
+/// answers WITHOUT minting a capture session; the transport already stamped each request's reply
+/// flow (they bootstrap like a hello).
+@MainActor
+func makeSessionlessDispatcher(
+    mux: NWVideoMuxDatagramTransport,
+) -> @Sendable (_ channelID: UInt32, _ channel: VideoChannel, _ data: Data) -> Bool {
+    let listAnswerGuard = ListAnswerGuard()
+    let windowFeedService = WindowFeedService(mux: mux)
+    // Retained by the returned closure's capture — observes NSWorkspace for the daemon's lifetime.
+    let kicker = WindowFeedKicker(service: windowFeedService)
+    let appIconService = AppIconService(mux: mux)
+    let windowPreviewService = WindowPreviewService(mux: mux)
+    return { channelID, channel, data in
+        _ = kicker
+        guard channel == .control, let msg = try? VideoControlMessage.decode(data) else { return false }
+        switch msg {
+        case .listWindows:
+            if listAnswerGuard.begin(channelID) {
+                Task { await answerWindowList(channelID: channelID, mux: mux, answerGuard: listAnswerGuard) }
+            }
+        case .listSystemDialogs:
+            if listAnswerGuard.begin(channelID) {
+                Task { await answerSystemDialogList(channelID: channelID, mux: mux, answerGuard: listAnswerGuard) }
+            }
+        case let .windowFeedSubscribe(knownGeneration):
+            // Feed renewal (docs/45): answered from the shared 1 s-TTL cache AND registered as a
+            // push subscriber (TTL 6 s — Phase 2).
+            if listAnswerGuard.begin(channelID) {
+                Task { await windowFeedService.answer(
+                    channelID: channelID, knownGeneration: knownGeneration, answerGuard: listAnswerGuard,
+                ) }
+            }
+        case let .appIconRequest(sizePx, bundleID):
+            if listAnswerGuard.begin(channelID) {
+                Task { await appIconService.answer(
+                    channelID: channelID, sizePx: sizePx, bundleID: bundleID, answerGuard: listAnswerGuard,
+                ) }
+            }
+        case let .windowPreviewRequest(windowID, maxWidthPx):
+            if listAnswerGuard.begin(channelID) {
+                Task { await windowPreviewService.answer(
+                    channelID: channelID, windowID: windowID, maxWidthPx: maxWidthPx,
+                    answerGuard: listAnswerGuard,
+                ) }
+            }
+        default:
+            return false
+        }
+        return true
+    }
+}
+
 /// Bridges NSWorkspace app-lifecycle notifications into differ kicks, debounced 150 ms (an app
 /// launch fires several notifications back-to-back; one kick suffices).
 @MainActor

@@ -589,6 +589,12 @@ media flows. `[UInt8 type][body]`, big-endian:
   accumulation, and validates image magic before any cache sees bytes; a request retransmit
   re-sends every chunk from the host's LRU'd encoded cache (whole-blob re-request — no per-chunk
   NACK machinery). Both inert to an old peer.
+- **Window-preview PEEK (docs/45 Phase 4):** `windowPreviewRequest` (21, client → host, `UInt32
+  windowID` + `UInt16 maxWidthPx`) — session-LESS like `appIconRequest`. Answered with `blobChunk`
+  kind 1 (JPEG). The host hard-throttles (single-flight per window, captures reused ≤ 1 s, ≤ 2
+  fresh captures/s globally, chunks paced ~1 datagram/ms) because `SCScreenshotManager` shares
+  WindowServer/GPU with the live encoders; a throttled request is answered with SILENCE (the
+  client's peek is fully-formed-only — nothing appears). Inert to an old peer.
 
 ## 9.3 Video frame datagrams — `FrameFragment` (video channel)
 

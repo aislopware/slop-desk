@@ -54,6 +54,7 @@ import Foundation
 /// type 19 appIconRequest:  UInt16 sizePx | lp bundleID
 /// type 20 blobChunk:       UInt8 blobKind | UInt64 blobID | UInt16 metaA | UInt16 metaB
 ///                            | UInt8 chunkIndex | UInt8 chunkCount | UInt16 byteCount | bytes
+/// type 21 windowPreviewRequest: UInt32 windowID | UInt16 maxWidthPx
 /// ```
 ///
 /// Liveness keepalive (additive after the resize pair — CONCURRENCY-HOST-1 crash-without-bye):
@@ -309,6 +310,13 @@ public enum VideoControlMessage: Equatable, Sendable {
         blobKind: UInt8, blobID: UInt64, metaA: UInt16, metaB: UInt16,
         chunkIndex: UInt8, chunkCount: UInt8, bytes: Data,
     )
+    /// Client → host: "capture `windowID` as a one-shot preview ≤ `maxWidthPx` wide" — the rail's
+    /// PEEK (docs/45 Phase 4; Space / context menu, the ONLY window-content imagery anywhere, at a
+    /// LEGIBLE size per the icon-over-thumbnail ruling). Session-less like `appIconRequest`. The
+    /// host answers with ``blobChunk`` kind 1 (JPEG, paced 1 datagram/ms, single-flight per window,
+    /// ≤1 s-old captures reused, ≤2 captures/s globally — SCScreenshotManager shares WindowServer
+    /// with the live encoders, so previews are throttled, never eager).
+    case windowPreviewRequest(windowID: UInt32, maxWidthPx: UInt16)
 
     public var messageType: UInt8 {
         switch self {
@@ -332,6 +340,7 @@ public enum VideoControlMessage: Equatable, Sendable {
         case .windowFeedCurrent: 18
         case .appIconRequest: 19
         case .blobChunk: 20
+        case .windowPreviewRequest: 21
         }
     }
 
@@ -473,6 +482,9 @@ public enum VideoControlMessage: Equatable, Sendable {
             out.append(chunkCount)
             out.appendBE(UInt16(truncatingIfNeeded: bytes.count))
             out.append(bytes)
+        case let .windowPreviewRequest(windowID, maxWidthPx):
+            out.appendBE(windowID)
+            out.appendBE(maxWidthPx)
         }
         return out
     }
@@ -665,6 +677,10 @@ public enum VideoControlMessage: Equatable, Sendable {
                 blobKind: blobKind, blobID: blobID, metaA: metaA, metaB: metaB,
                 chunkIndex: chunkIndex, chunkCount: chunkCount, bytes: bytes,
             )
+        case 21:
+            let windowID = try reader.readUInt32()
+            let maxWidthPx = try reader.readUInt16()
+            return .windowPreviewRequest(windowID: windowID, maxWidthPx: maxWidthPx)
         default:
             throw VideoProtocolError.malformed("unknown video control message type \(type)")
         }

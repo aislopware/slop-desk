@@ -882,18 +882,10 @@ Task {
             await parkingManager.unpark(channelID: id)
         }
         holder.setMux(registry, mux)
-        // Coalesces concurrent listWindows answers per channelID (so a lossy/looping client can't pile up
-        // SCShareableContent enumerations — the discovery mirror of the registry's `minting` dedup).
-        let listAnswerGuard = ListAnswerGuard()
-        // The ONE host-window feed service (docs/45): renewals register TTL subscribers, a differ
-        // pushes generation bumps ×2 while any live (0 Hz with none), and NSWorkspace events kick
-        // immediate ticks — all subscribers share one cache, so N clients cost one enumeration per
-        // tick, not N. The kicker is retained for the daemon's lifetime by the observer registration.
-        let windowFeedService = WindowFeedService(mux: mux)
-        _ = WindowFeedKicker(service: windowFeedService)
-        // App-icon fetch (docs/45 Phase 3): renders + serves kind-0 icon blobs, LRU-cached per
-        // (bundleID, px) — the client asks once ever per bundleID (its disk cache holds the rest).
-        let appIconService = AppIconService(mux: mux)
+        // Session-LESS discovery dispatch (docs/31 picker + docs/45 feed/icons/peek): built in
+        // `makeSessionlessDispatcher` (WindowFeedGlue.swift), which owns the services + the
+        // per-channel retransmit-coalescing guard + the NSWorkspace kick observer.
+        let dispatchSessionless = makeSessionlessDispatcher(mux: mux)
         try await mux.start { channelID, channel, data in
             // ORDERING: an ADMITTED lane's sink appends to its session's serial inbound queue
             // SYNCHRONOUSLY, in arrival order, on the transport's serial receive queue — so a mouseUp
@@ -903,50 +895,8 @@ Task {
             // hello for a not-yet-minted lane needs the async mint hop.
             if let sink = sinkTable.sink(channelID) {
                 sink(channel, data)
-            } else if channel == .control, let msg = try? VideoControlMessage.decode(data), case .listWindows = msg {
-                // Session-LESS window discovery (docs/31 picker): enumerate + reply, NEVER mint a capture
-                // session. The transport already stamped this channelID's reply flow (listWindows
-                // bootstraps like a hello), so the reply can be sent back; answerWindowList retires it.
-                // Coalesce retransmits: only spawn an enumeration if one isn't already in flight for this id.
-                if listAnswerGuard.begin(channelID) {
-                    Task { await answerWindowList(channelID: channelID, mux: mux, answerGuard: listAnswerGuard) }
-                }
-            } else if channel == .control, let msg = try? VideoControlMessage.decode(data),
-                      case .listSystemDialogs = msg
-            {
-                // Session-LESS system-dialog poll (the system-popup-pane feature): enumerate + classify +
-                // reply, NEVER mint a session. Bootstraps its reply flow exactly like listWindows.
-                if listAnswerGuard.begin(channelID) {
-                    Task { await answerSystemDialogList(channelID: channelID, mux: mux, answerGuard: listAnswerGuard) }
-                }
-            } else if channel == .control, let msg = try? VideoControlMessage.decode(data),
-                      case let .windowFeedSubscribe(knownGeneration) = msg
-            {
-                // Session-LESS host-window FEED renewal (docs/45 rail): answer from the shared 1 s-TTL
-                // snapshot cache AND register the lane as a push subscriber (TTL 6 s — Phase 2), NEVER
-                // mint a session. Bootstraps its reply flow exactly like listWindows; the per-channel
-                // guard coalesces retransmits and the service's cache coalesces enumeration across
-                // channels/clients.
-                if listAnswerGuard.begin(channelID) {
-                    Task { await windowFeedService.answer(
-                        channelID: channelID,
-                        knownGeneration: knownGeneration,
-                        answerGuard: listAnswerGuard,
-                    ) }
-                }
-            } else if channel == .control, let msg = try? VideoControlMessage.decode(data),
-                      case let .appIconRequest(sizePx, bundleID) = msg
-            {
-                // Session-LESS app-icon fetch (docs/45 Phase 3): render/serve from the LRU chunk
-                // cache, NEVER mint a session. Bootstraps its reply flow exactly like listWindows.
-                if listAnswerGuard.begin(channelID) {
-                    Task { await appIconService.answer(
-                        channelID: channelID,
-                        sizePx: sizePx,
-                        bundleID: bundleID,
-                        answerGuard: listAnswerGuard,
-                    ) }
-                }
+            } else if dispatchSessionless(channelID, channel, data) {
+                // Answered (or coalesced) by a session-less discovery service above.
             } else {
                 Task { await registry.dispatch(channelID: channelID, channel: channel, data: data) }
             }

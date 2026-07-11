@@ -54,10 +54,14 @@ final class UnboundLaneByePolicyTests: XCTestCase {
             channel: .control,
             payload: VideoControlMessage.windowFeedSubscribe(knownGeneration: 42).encode(),
         ))
-        // The app-icon fetch (docs/45 Phase 3) is the same session-less shape.
+        // The app-icon fetch (docs/45 Phase 3) + preview peek (Phase 4) are the same shape.
         XCTAssertFalse(UnboundLaneByeDecider.warrantsBye(
             channel: .control,
             payload: VideoControlMessage.appIconRequest(sizePx: 64, bundleID: "com.a.b").encode(),
+        ))
+        XCTAssertFalse(UnboundLaneByeDecider.warrantsBye(
+            channel: .control,
+            payload: VideoControlMessage.windowPreviewRequest(windowID: 42, maxWidthPx: 640).encode(),
         ))
     }
 

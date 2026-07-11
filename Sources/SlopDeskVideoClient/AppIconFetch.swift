@@ -63,14 +63,15 @@ public enum AppIconFetch {
 
 /// One-shot blob box: chunks fold under the lock (receive queue), the first COMPLETE blob matching
 /// the expected (kind, blobID) resolves the waiter. The `ReplyBox` shape with the shared
-/// ``BlobAssembler`` folded in.
-private final class BlobReplyBox: @unchecked Sendable {
+/// ``BlobAssembler`` folded in. Internal — the icon (kind 0) and preview (kind 1) fetch rounds
+/// share it.
+final class BlobReplyBox: @unchecked Sendable {
     private let lock = NSLock()
     private var assembler = BlobAssembler()
     private let expectedKind: UInt8
     private let expectedID: UInt64
-    private var blob: Data?
-    private var cont: CheckedContinuation<Data?, Never>?
+    private var blob: BlobAssembler.CompleteBlob?
+    private var cont: CheckedContinuation<BlobAssembler.CompleteBlob?, Never>?
     private var resolved = false
 
     init(expectedKind: UInt8, expectedID: UInt64) {
@@ -90,7 +91,7 @@ private final class BlobReplyBox: @unchecked Sendable {
             blobKind: blobKind, blobID: blobID, metaA: metaA, metaB: metaB,
             chunkIndex: chunkIndex, chunkCount: chunkCount, bytes: bytes,
         )
-        if let complete, blob == nil { blob = complete.bytes }
+        if let complete, blob == nil { blob = complete }
         guard blob != nil, !resolved, let c = cont else {
             lock.unlock()
             return
@@ -115,8 +116,9 @@ private final class BlobReplyBox: @unchecked Sendable {
         c.resume(returning: b)
     }
 
-    func firstBlob() async -> Data? {
-        await withCheckedContinuation { (c: CheckedContinuation<Data?, Never>) in
+    /// Awaits the first complete blob (or `finish()`), with its meta fields.
+    func firstBlobWithMeta() async -> BlobAssembler.CompleteBlob? {
+        await withCheckedContinuation { (c: CheckedContinuation<BlobAssembler.CompleteBlob?, Never>) in
             lock.lock()
             if resolved || blob != nil {
                 resolved = true
@@ -128,6 +130,11 @@ private final class BlobReplyBox: @unchecked Sendable {
             cont = c
             lock.unlock()
         }
+    }
+
+    /// Awaits the first complete blob's bytes (the icon path's shape).
+    func firstBlob() async -> Data? {
+        await firstBlobWithMeta()?.bytes
     }
 }
 #endif
