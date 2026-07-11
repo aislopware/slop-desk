@@ -74,7 +74,11 @@ struct NavigatorColumn: View {
         rowsMemo.rows(for: store)
     }
 
-    /// The active tab's active pane — drives which row reads as selected.
+    /// The active tab's active pane — drives which row reads as selected. iOS-only consumer (the system
+    /// `List(selection:)` binding); the macOS rows read selection LIVE inside ``SidebarLiveRow`` so a focus
+    /// change repaints the two affected leaves directly — passing it down as an init param left the OLD
+    /// selected row's raised card on screen (the same lazy-container stale-value class as the 2026-07-11
+    /// "row title frozen at first render" fix; see ``RailRow/leafIdentity``).
     private var selectedPane: PaneID? {
         store.tree.activeSession?.activeTab?.activePane
     }
@@ -262,7 +266,6 @@ struct NavigatorColumn: View {
         SidebarLiveRow(
             store: store,
             row: row,
-            active: row.id == selectedPane,
             fallbackTitle: defaultTitle(for: row.kind),
             isWindowRow: false,
             onSelect: { select(row.id) },
@@ -273,8 +276,8 @@ struct NavigatorColumn: View {
         // The "row title frozen at first render" fix (2026-07-11): key the leaf's identity on the
         // memoized fields it renders (``RailRow/leafIdentity``) so a structural rebuild that retitles
         // this row (cwd landed / chooser resolved / rename) replaces the leaf instead of leaving the
-        // first-render title on screen. Volatile chrome still flows live; focus-only changes keep the
-        // same identity (no churn).
+        // first-render title on screen. Volatile chrome — including SELECTION — is read live inside
+        // the leaf; focus-only changes keep the same identity (no churn).
         .id(row.leafIdentity)
         .contextMenu { rowContextMenu(row) }
     }
@@ -287,7 +290,6 @@ struct NavigatorColumn: View {
         SidebarLiveRow(
             store: store,
             row: row,
-            active: row.id == selectedPane,
             fallbackTitle: defaultTitle(for: row.kind),
             isWindowRow: true,
             onSelect: { select(row.id) },
@@ -500,7 +502,6 @@ struct NavigatorColumn: View {
 private struct SidebarLiveRow: View {
     let store: WorkspaceStore
     let row: RailRow
-    let active: Bool
     /// The kind's generic title (``PaneChooserRegistry``) when the row title is empty.
     let fallbackTitle: String
     /// MERIDIAN C4: a WINDOWS-section row prefers the live ``RemoteWindowModel`` app name for line 2.
@@ -518,6 +519,13 @@ private struct SidebarLiveRow: View {
         // required — a `@ViewBuilder` rejects a bare Void discard statement.
         // swiftlint:disable:next redundant_discardable_let
         let _ = store.completionFlashTick
+        // SELECTION is volatile chrome and must be read HERE, not passed in from the sidebar body: inside
+        // the lazy container a leaf can re-render (its own Observation deps) with the init-param values it
+        // was CREATED with, so a param-carried `active` left the PREVIOUSLY selected row's raised card on
+        // screen next to the new one (two "selected" rows). Reading `activePane` in the leaf both keeps the
+        // paint correct (this body recomputes it every re-render) and makes a focus change invalidate
+        // exactly the row leaves, never the sidebar body.
+        let active = row.id == store.tree.activeSession?.activeTab?.activePane
         let chrome = RailRowsBuilder.liveChrome(for: row, store: store)
         SlateTabRow(
             title: row.title.isEmpty ? fallbackTitle : row.title,
