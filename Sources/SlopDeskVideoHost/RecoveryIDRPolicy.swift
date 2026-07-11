@@ -107,7 +107,7 @@ public final class RecoveryIDRPolicy: @unchecked Sendable {
     public var availableTokens: Double { tokens }
 
     /// Called from `onEncodedFrame` for EVERY keyframe handed to the wire (recovery, first-frame,
-    /// static-crisp, heartbeat) with `packetizer.peekNextFrameID` read BEFORE packetize.
+    /// static-crisp, heartbeat) with the frameID the `PacketizeLane` returned for that keyframe.
     public func noteKeyframeSent(frameID: UInt32, now: Double) {
         recentKeyframes.append(SentKeyframe(id: frameID, at: now))
         if recentKeyframes.count > config.keyframeRingCapacity { recentKeyframes.removeFirst() }

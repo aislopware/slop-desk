@@ -309,20 +309,43 @@ public actor SlopDeskClient {
     /// Held as `AnyObject` + a feeder closure so this target need not link SlopDeskTerminal.
     private var surfaceFeed: (@Sendable (Data) -> Void)?
 
+    /// The restored-pane resume identity, threaded into ``init(ackInterval:makeTransport:resumeSeed:)``
+    /// so it is set SYNCHRONOUSLY as part of construction — before the client object escapes to any
+    /// concurrent caller. Mirrors exactly the trio ``seedResumeIdentity(sessionID:seq:)`` mutates
+    /// (`sessionID`, `highestContiguousSeq`, `highestSeqFed`).
+    ///
+    /// Closes seed-resume-identity-race (docs/DECISIONS 2026-07-11): the OLD production path built
+    /// the client, then fired an UNAWAITED `Task { await c.seedResumeIdentity(...) }` before
+    /// returning it — nothing ordered that seed job's actor-hop before a separately-scheduled
+    /// `connect()` Task's OWN actor-hop, so a cold-launch restore of many panes could lose the race
+    /// and silently start a fresh session instead of reattaching. Seeding inside `init` removes the
+    /// async gap entirely: there is no point after construction where the fields are still
+    /// unseeded, so a racing `connect()` can never observe stale state.
+    public typealias ResumeSeed = (sessionID: UUID, lastSeq: Int64)
+
     /// - Parameters:
     ///   - ackInterval: how often the coalesced ack ticker may flush (correctness-independent).
     ///   - makeTransport: the session-transport factory. Vends a logical channel over a shared
     ///     ``MuxNWConnection`` (a `MuxClientTransport`) — wired at the
     ///     `WorkspaceStore.liveMakeSession` construction site, never on the hot path.
+    ///   - resumeSeed: an optional restored-pane identity, applied synchronously before this
+    ///     initializer returns (see ``ResumeSeed``). `nil` (the default) is the ordinary fresh-shell
+    ///     path — no behavior change from before this parameter existed.
     @preconcurrency
     public init(
         ackInterval: Duration = SlopDeskClient.defaultAckInterval,
         makeTransport: @escaping @Sendable () -> any ClientTransporting,
+        resumeSeed: ResumeSeed? = nil,
     ) {
         self.ackInterval = ackInterval
         self.makeTransport = makeTransport
         (outputWakeStream, outputWakeContinuation) =
             AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+        if let resumeSeed {
+            sessionID = resumeSeed.sessionID
+            highestContiguousSeq = resumeSeed.lastSeq
+            highestSeqFed = resumeSeed.lastSeq
+        }
     }
 
     /// Attaches a feeder that mirrors every delivered `output` payload to a terminal
@@ -336,9 +359,17 @@ public actor SlopDeskClient {
     // MARK: Connect / reconnect
 
     /// Pre-seeds the resume identity so the NEXT ``connect(...)`` presents this session
-    /// UUID and last-received seq to the host (the SLOPDESK_DETACH_ENABLED path). The
-    /// caller is ``LivePaneSession/makeTerminal(_:makeClient:makeInspector:target:)`` when a
-    /// restored ``PaneSpec`` carries a non-nil ``PaneSpec/resumeSessionID``.
+    /// UUID and last-received seq to the host (the SLOPDESK_DETACH_ENABLED path).
+    ///
+    /// NOT the production restore-a-pane path anymore (seed-resume-identity-race,
+    /// docs/DECISIONS 2026-07-11): ``LivePaneSession/makeTerminal(_:makeClient:makeInspector:target:)``
+    /// now threads a restored ``PaneSpec/resumeSessionID`` through
+    /// ``init(ackInterval:makeTransport:resumeSeed:)`` instead, because calling this method requires
+    /// an actor hop (`await`) that a separately-scheduled `connect()` Task is not ordered against —
+    /// exactly the race this method's doc used to wave off as "the only safe window". Init-time
+    /// seeding has no such window: the fields are set before the object is ever handed to a second
+    /// caller. This method remains for the CLI (`slopdesk-client`, a single sequential `Task` with no
+    /// competing connect job — not racy there) and for tests that seed after construction.
     ///
     /// Design: seeding into the existing actor state (`sessionID` / `highestContiguousSeq`)
     /// means the established ``connect(...)`` line `let resume = sessionID ?? WireMessage.newSessionID`

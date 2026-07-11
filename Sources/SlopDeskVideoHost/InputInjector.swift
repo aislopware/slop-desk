@@ -39,9 +39,10 @@ public final class InputInjector: @unchecked Sendable {
     /// SAFETY button-balance. On a `mouseDown` for an already-held button it injects a synthetic
     /// release first, so a fresh click never starts inside a selection stranded by a lost
     /// `mouseUp`. Pure decision lives in ``InputButtonBalance``; the lock guards it (harmless
-    /// insurance — in the ordered path injection is already serial).
+    /// insurance — in the ordered path injection is already serial). SEEDED at init (see
+    /// ``balanceSnapshot``) so a transparent-reconnect injector rebuild carries the held state.
     private let balanceLock = NSLock()
-    private var balance = InputButtonBalance()
+    private var balance: InputButtonBalance
 
     /// SCROLL RESAMPLE state (active only when ``scrollResampleHz`` > 0). The resampler + its output
     /// timer are CONFINED to `scrollQueue` (a serial queue), so neither needs a lock. `postScroll`
@@ -125,10 +126,21 @@ public final class InputInjector: @unchecked Sendable {
         return max(60, min(1000, v))
     }()
 
-    public init(pid: pid_t, windowID: CGWindowID, windowBoundsCG: VideoRect) {
+    /// - Parameter balance: the held-button/modifier state to START from. The default (empty) is
+    ///   the fresh-session case; a transparent-reconnect rebuild passes the PREVIOUS injector's
+    ///   ``balanceSnapshot`` so a button/modifier the user held ACROSS the reconnect still matches
+    ///   its eventual up (an empty balance would classify that up as an orphan → suppress → the
+    ///   terminating CGEvent is never posted → host OS stuck in drag/modifier state).
+    public init(
+        pid: pid_t,
+        windowID: CGWindowID,
+        windowBoundsCG: VideoRect,
+        balance: InputButtonBalance = InputButtonBalance(),
+    ) {
         self.pid = pid
         self.windowID = windowID
         self.windowBoundsCG = windowBoundsCG
+        self.balance = balance
         eventSource = CGEventSource(stateID: .hidSystemState)
         if let eventSource {
             // Default suppression interval is 0.25s: after a posted/warped event, synthetic events
@@ -150,6 +162,14 @@ public final class InputInjector: @unchecked Sendable {
         boundsLock.lock()
         windowBoundsCG = bounds
         boundsLock.unlock()
+    }
+
+    /// The current held-button/modifier balance (a value snapshot, taken under the balance lock).
+    /// The session actor reads this off the STALE injector at teardown and threads it into the
+    /// replacement injector's `init(balance:)`, so a transparent auto-reconnect never wipes the
+    /// knowledge of what the user is physically holding (the stuck-drag/stuck-⌘ reconnect fix).
+    public var balanceSnapshot: InputButtonBalance {
+        balanceLock.withLock { balance }
     }
 
     private var bounds: VideoRect {

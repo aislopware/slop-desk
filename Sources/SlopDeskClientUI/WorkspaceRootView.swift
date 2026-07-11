@@ -333,8 +333,15 @@ public struct WorkspaceRootView: View {
               let paneID = session.activeTab?.activePane
         else { return productName }
         let spec = session.specs[paneID]
+        let kind = spec?.kind ?? .terminal
+        // The `paneForegroundProcess` read is GUARDED (perf audit 2026-07-11) by the SAME
+        // `RailStructureKey.titledByProcess` escape-order check the sidebar's structural fingerprint uses:
+        // an unconditional read made `.navigationTitle` — hence the WHOLE root view body — a dependent of
+        // the WHOLE process dict, so a background pane's 1Hz process tick re-evaluated the root view even
+        // though only a cwd-less, non-renamed terminal pane's title ever depends on that dict.
+        let titledByProcess = RailStructureKey.titledByProcess(kind: kind, spec: spec)
         let title = RailRowsBuilder.rowTitle(
-            kind: spec?.kind ?? .terminal, spec: spec, processLabel: store.paneForegroundProcess[paneID],
+            kind: kind, spec: spec, processLabel: titledByProcess ? store.paneForegroundProcess[paneID] : nil,
         )
         return title.isEmpty ? productName : title
     }

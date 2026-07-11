@@ -17,8 +17,9 @@ import XCTest
 @MainActor
 final class ClaudeStatusWiringTests: XCTestCase {
     /// An inert client factory (never connected — these tests drive the status fold directly, no byte
-    /// stream). `@Sendable` free function so it can be passed as `makeClient`.
-    private static let makeUnconnectedClient: @Sendable () -> SlopDeskClient = {
+    /// stream). `@Sendable` free function so it can be passed as `makeClient` (ignores the resume seed —
+    /// no restored pane in these tests).
+    private static let makeUnconnectedClient: @Sendable (SlopDeskClient.ResumeSeed?) -> SlopDeskClient = { _ in
         SlopDeskClient(makeTransport: {
             MuxClientTransport(
                 acquire: { _, _, _, _ in throw SlopDeskTransportError.notConnected("inert test transport") },
@@ -232,7 +233,7 @@ final class ClaudeStatusWiringTests: XCTestCase {
     /// The client surfaces a type-27 `claudeStatus` WireMessage as a `.claudeStatus` Event (the byte
     /// payload is carried verbatim; the UI maps it back). Proven via the client's test inbound seam.
     func testClientSurfacesClaudeStatusWireMessageAsEvent() async {
-        let client = Self.makeUnconnectedClient()
+        let client = Self.makeUnconnectedClient(nil)
         // Subscribe BEFORE driving so the multicast child stream observes the yield.
         let events = client.events
         let observer = Task { () -> SlopDeskClient.Event? in

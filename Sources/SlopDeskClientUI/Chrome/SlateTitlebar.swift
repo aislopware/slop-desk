@@ -32,33 +32,26 @@ struct SlateTitlebar: View {
     private var activeTitle: String {
         guard let id = activePane else { return "~" }
         let spec = store.tree.activeSession?.specs[id]
+        let kind = spec?.kind ?? .terminal
         // Same source as the sidebar rail row (`RailRowsBuilder.rowTitle`) and the macOS window title
         // (`WorkspaceRootView.windowTitle`): the focused pane's cwd FOLDER NAME (an explicit rename wins,
         // a cwd-less pane falls back to its foreground program), NOT the raw shell title — so the centre
         // chip TRACKS the active pane instead of showing a static "Terminal". A `cd` / pane switch re-titles
         // it reactively (both read observed `tree` state).
+        //
+        // The `paneForegroundProcess` read is GUARDED (perf audit 2026-07-11) by the SAME
+        // `RailStructureKey.titledByProcess` escape-order check the sidebar's structural fingerprint uses:
+        // this titlebar is ALWAYS mounted, so an unconditional read made its body a dependent of the WHOLE
+        // process dict — a background pane's 1Hz process tick re-ran it even though only a cwd-less,
+        // non-renamed pane's title ever depends on that dict.
+        let titledByProcess = RailStructureKey.titledByProcess(kind: kind, spec: spec)
         let title = RailRowsBuilder.rowTitle(
-            kind: spec?.kind ?? .terminal, spec: spec, processLabel: store.paneForegroundProcess[id],
+            kind: kind, spec: spec, processLabel: titledByProcess ? store.paneForegroundProcess[id] : nil,
         )
         return title.isEmpty ? "~" : title
     }
 
     private var sidebarVisible: Bool { !chrome.sidebarCollapsed }
-
-    /// The title pip's tint — the STATUS colour of the most-urgent waiting pane (the head of the
-    /// urgency-sorted ``WorkspaceStore/unseenAttentionPanes``), matching the sidebar badge dots: red for
-    /// a blocked agent / failed command, BLUE (the agent palette's done 🔵) for unread finishes, green
-    /// only during the brief clean-finish flash. Secondary when nothing waits (the pip is hidden then
-    /// anyway — this is just its resting value).
-    private var attentionTint: Color {
-        switch store.unseenAttentionPanes.first?.badge {
-        case .awaitingInput,
-             .error: Slate.Status.err
-        case .completed: Slate.Status.ok
-        case .finished: Slate.Status.info
-        default: Slate.Text.secondary
-        }
-    }
 
     var body: some View {
         // Aligns the controls to the TRAFFIC-LIGHT row: top-anchored at `rowTop` so a 24pt plate's icon
@@ -77,12 +70,17 @@ struct SlateTitlebar: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, rowTop)
 
-            // Centre: the active title as a menu, on the traffic-light row.
-            TitleMenuButton(
-                title: activeTitle, showDot: store.hasUnseenAttention, dotTint: attentionTint,
-                store: store, activePane: activePane,
-            )
-            .padding(.top, rowTop)
+            // Centre: the active title as a menu, on the traffic-light row. The unseen-attention dot's
+            // visibility + tint are computed INSIDE `TitleMenuButton` (perf audit 2026-07-11), not read
+            // here: `store.unseenAttentionPanes` is a full DFS over every session/tab/pane touching a wide
+            // net of volatile dicts (agent status / completion / busy / process / progress / gates) + a
+            // sort, and this titlebar body is ALWAYS mounted — reading it here made the WHOLE body (the
+            // sidebar-toggle plate, the connection cluster, the slide animation) a dependent of every one
+            // of those dicts, so ANY pane's 1Hz tick anywhere re-ran all of it. Scoping the read to the
+            // leaf button means a tick re-renders only that small button — mirrors `RailRowsMemo`'s
+            // leaf-scoping shape for the sidebar rail.
+            TitleMenuButton(title: activeTitle, store: store, activePane: activePane)
+                .padding(.top, rowTop)
 
             // Right: connection cluster — collapsed-sidebar fallback only (footer is the resting home).
             // Trailing titlebar has room for host + metrics; never next to the traffic lights.
@@ -117,19 +115,26 @@ struct SlateTitlebar: View {
 /// The centred active-title button. Hover shows a `⋯` + plate; click opens the pane menu (working dir /
 /// split / move / find / close pane). Wired to the live store.
 ///
-/// `showDot` is the unseen-attention indicator (``WorkspaceStore/hasUnseenAttention``): the SAME static
-/// status dot the sidebar tab rows wear (one vocabulary — the user reads red/blue identically in both
-/// places), tinted `dotTint` (the most-urgent waiting pane). It lives in the trailing COMPLICATION SLOT
-/// the hover `⋯` already reserves — the one-trailing-complication anatomy every Slate row speaks
-/// (``SlateTabRow``/``SlatePopoverRow``) — so the centred title NEVER shifts, and at rest the titlebar
-/// reads `title ●` exactly like a tab row. On hover/press the dot yields to the `⋯` (you are about to
-/// open the menu, whose NEEDS-ATTENTION section is the dot's answer). Vanishes when everything is seen
-/// (MERIDIAN zero-ornament at rest). Superscript-pip and leading-bullet variants were tried and rejected
-/// (2026-07-10): a badge riding TEXT reads as dirt — badges belong on icons or in the row's trailing slot.
+/// The trailing dot is the unseen-attention indicator (``WorkspaceStore/hasUnseenAttention``): the SAME
+/// static status dot the sidebar tab rows wear (one vocabulary — the user reads red/blue identically in
+/// both places), tinted by the most-urgent waiting pane (``WorkspaceStore/unseenAttentionPanes``'s head).
+/// Computed HERE, not by the parent ``SlateTitlebar`` (perf audit 2026-07-11): `unseenAttentionPanes` is a
+/// full DFS over every session/tab/pane touching a wide net of volatile store dicts + a sort, and
+/// `SlateTitlebar` is an ALWAYS-MOUNTED overlay — reading the walk there made its WHOLE body (plate button
+/// + connection cluster + slide animation) a dependent of all those dicts. Scoping the read to this small
+/// leaf means a pane's status tick elsewhere re-renders only this button. The walk is also SINGLE-BOUND
+/// (`let waiting = …` below, mirroring ``TitlePaneMenu``'s own bind) — the old shape read
+/// `store.unseenAttentionPanes` twice (once for the dot, once for the tint), redoing the DFS twice per eval.
+///
+/// It lives in the trailing COMPLICATION SLOT the hover `⋯` already reserves — the one-trailing-complication
+/// anatomy every Slate row speaks (``SlateTabRow``/``SlatePopoverRow``) — so the centred title NEVER shifts,
+/// and at rest the titlebar reads `title ●` exactly like a tab row. On hover/press the dot yields to the
+/// `⋯` (you are about to open the menu, whose NEEDS-ATTENTION section is the dot's answer). Vanishes when
+/// everything is seen (MERIDIAN zero-ornament at rest). Superscript-pip and leading-bullet variants were
+/// tried and rejected (2026-07-10): a badge riding TEXT reads as dirt — badges belong on icons or in the
+/// row's trailing slot.
 private struct TitleMenuButton: View {
     let title: String
-    let showDot: Bool
-    let dotTint: Color
     let store: WorkspaceStore
     let activePane: PaneID?
 
@@ -137,7 +142,10 @@ private struct TitleMenuButton: View {
     @State private var show = false
 
     var body: some View {
-        Button { show.toggle() } label: {
+        let waiting = store.unseenAttentionPanes
+        let showDot = !waiting.isEmpty
+        let dotTint = Self.tint(for: waiting.first?.badge)
+        return Button { show.toggle() } label: {
             HStack(spacing: 5) {
                 Text(title)
                     .font(.system(size: Slate.Typeface.body, weight: .medium))
@@ -165,6 +173,21 @@ private struct TitleMenuButton: View {
         .animation(Slate.Anim.smallFade, value: showDot)
         .popover(isPresented: $show, arrowEdge: .bottom) {
             TitlePaneMenu(store: store, activePane: activePane, dismiss: { show = false })
+        }
+    }
+
+    /// The title pip's tint — the STATUS colour of the most-urgent waiting pane (the head of the
+    /// urgency-sorted ``WorkspaceStore/unseenAttentionPanes``), matching the sidebar badge dots: red for
+    /// a blocked agent / failed command, BLUE (the agent palette's done 🔵) for unread finishes, green
+    /// only during the brief clean-finish flash. Secondary when nothing waits (the pip is hidden then
+    /// anyway — this is just its resting value).
+    private static func tint(for badge: TabBadgeKind?) -> Color {
+        switch badge {
+        case .awaitingInput,
+             .error: Slate.Status.err
+        case .completed: Slate.Status.ok
+        case .finished: Slate.Status.info
+        default: Slate.Text.secondary
         }
     }
 }

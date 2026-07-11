@@ -229,6 +229,56 @@ final class DetachResumeIdentityTests: XCTestCase {
         await client.close()
     }
 
+    // MARK: - (f) seed-resume-identity-race: LivePaneSession.make seeds at construction, not via a Task
+
+    /// Closes seed-resume-identity-race (`LivePaneSession.swift` `makeClientSeeded`, docs/DECISIONS
+    /// 2026-07-11): the OLD `makeClientSeeded` called the (then zero-arg) `makeClient()` factory and
+    /// fired an UNAWAITED `Task { await c.seedResumeIdentity(...) }` before returning the client.
+    /// Nothing ordered that seed job ahead of `ConnectionViewModel.performConnect()`'s own
+    /// separately-scheduled `connect()` Task — under cold-launch restore, the seed could lose the
+    /// race against the actor's mailbox, and `connect()` would read a nil `sessionID` (fresh shell)
+    /// instead of the restored one.
+    ///
+    /// This test drives the REAL fixed path end to end: `LivePaneSession.make` → the
+    /// `ConnectionViewModel` it wires → `connect()` — with a `makeClient` factory shaped exactly like
+    /// production's `WorkspaceStore.muxBackedClientFactory` (a `(SlopDeskClient.ResumeSeed?) ->
+    /// SlopDeskClient` that forwards the seed straight into `SlopDeskClient.init(resumeSeed:)`). It
+    /// asserts the FIRST connect presents the restored `sessionID` with `lastReceivedSeq == 0` (the
+    /// cold-launch contract) — deterministically, with no sleeps and no dependence on Task scheduling
+    /// order, because the seed is set synchronously in `init` before `makeClientSeeded` (a plain
+    /// zero-arg closure with no `Task` left in it) ever returns the client.
+    func testLivePaneSessionMakeSeedsClientAtConstructionNoRace() async throws {
+        let resumeID = UUID()
+        let spec = PaneSpec(
+            kind: .terminal,
+            title: "Terminal",
+            resumeSessionID: resumeID,
+            resumeLastReceivedSeq: 555, // must be ignored — cold path always presents 0
+        )
+
+        let recording = SeedRecordingTransport()
+        let session = LivePaneSession.make(
+            spec,
+            makeClient: { seed in SlopDeskClient(makeTransport: { recording }, resumeSeed: seed) },
+            makeInspector: { _ in nil },
+            target: { .default },
+        )
+
+        let vm = try XCTUnwrap(session.connection, "a .terminal pane always has a connection")
+        await vm.connect()
+
+        let (presentedResume, presentedSeq) = await recording.connectArgs
+        XCTAssertEqual(
+            presentedResume, resumeID,
+            "LivePaneSession.make must seed the restored sessionID at construction, with no race "
+                + "against ConnectionViewModel's separately-scheduled connect() Task",
+        )
+        XCTAssertEqual(
+            presentedSeq, 0,
+            "cold launch must present lastReceivedSeq=0 regardless of the saved spec seq",
+        )
+    }
+
     // MARK: - Harness: a minimal WorkspaceStore (tree path) that exposes its connection
 
     /// A thin harness that builds a REAL `WorkspaceStore` with `LiveModel.tree` and a REAL
@@ -257,7 +307,7 @@ final class DetachResumeIdentityTests: XCTestCase {
             makeSession: { spec in
                 LivePaneSession.make(
                     spec,
-                    makeClient: {
+                    makeClient: { _ in
                         SlopDeskClient(makeTransport: {
                             // An inert transport: connect() is never called in these tests,
                             // so fatalError is unreachable; the inbound stream is empty.

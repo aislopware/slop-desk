@@ -165,13 +165,8 @@ public actor SlopDeskVideoHostSession {
         return 1.0 / 60.0
     }()
 
-    /// Only the high-frequency CONTINUOUS phases accumulate: `scrollPhase == changed(2)` (finger drag)
-    /// or `momentumPhase == continue(2)` (inertial coast). began/ended/begin/end and discrete wheel
-    /// (phase 0) are gesture boundaries — injected immediately (after flushing any accumulator) so the
-    /// gesture structure + total travel are exact.
-    static func isCoalescableScrollPhase(scrollPhase: UInt8, momentumPhase: UInt8) -> Bool {
-        scrollPhase == 2 || momentumPhase == 2
-    }
+    // (Which scroll phases accumulate lives in ``ScrollCoalescePlanner/isCoalescableScrollPhase`` —
+    // the pure planner that owns the whole scroll-accumulator fold since the 2026-07-11 extraction.)
 
     /// PURE (unit-tested): should this captured frame be SKIPPED for congestion backpressure? Skip iff
     /// backpressure is enabled, the lane is backed up beyond `depthThreshold`, AND the frame carries no
@@ -501,11 +496,14 @@ public actor SlopDeskVideoHostSession {
     private let recoveryRouter = RecoveryDatagramRouter()
 
     private var stateMachine: VideoSessionStateMachine
-    /// The send-path packetizer. A Rust-backed reference type (owns the core packetizer + its FEC
-    /// codec); MTU-split, parity, header stamp, and interleave all run in the Rust core via FFI. The
-    /// per-frame group size the interleave keys by is resolved inside the packetizer from the FEC
-    /// scheme + tier — `onEncodedFrame` only passes the interleave on/off flag.
-    private let packetizer: VideoPacketizer
+    /// The send-path packetize lane (keystroke-latency fix, 2026-07-11): OWNS the `VideoPacketizer`
+    /// (MTU-split, per-frame FEC parity, header stamp, interleave — all native Swift) on its own
+    /// serial executor, so `onEncodedFrame`'s heavy per-frame work no longer blocks this actor's
+    /// input consumer. `onEncodedFrame` awaits it (a suspension point → keystrokes interleave) and
+    /// records LTR / recovery-IDR / NACK-ring bookkeeping against the RETURNED frameID. Like the
+    /// packetizer it replaces, the lane persists across encoder rebuilds/resizes (frameIDs stay
+    /// monotonic for the whole session).
+    private let packetizeLane: PacketizeLane
 
     // Live components, created on accept (never in a test).
     private var capturer: WindowCapturer? {
@@ -536,6 +534,18 @@ public actor SlopDeskVideoHostSession {
     private var geometryWatcher: WindowGeometryWatcher?
     private var cursorSampler: CursorSampler?
     private var injector: InputInjector?
+    /// Held-button/modifier balance carried ACROSS injector rebuilds (the reconnect-stuck-drag
+    /// fix). A transparent auto-reconnect (SCStream death / wifi flap → bye → fresh hello) rebuilds
+    /// the `InputInjector` while the user may still be PHYSICALLY holding a drag or ⌘; a fresh
+    /// empty ``InputButtonBalance`` would classify their eventual mouseUp/keyUp as an orphan →
+    /// suppress → the terminating CGEvent is never posted → host OS wedged in drag/modifier state
+    /// (AppKit mouse-tracking loops hang; a latched ⌘ corrupts all subsequent input). Teardown
+    /// snapshots the stale injector's balance here; the next `startLiveComponents` seeds the new
+    /// injector from it, so the post-reconnect up matches and posts normally. A deliberate session
+    /// END (bye/stop with NO successor hello) never reads this — behaviour there is unchanged; and
+    /// carrying into a much-later fresh hello is safe (a stale held entry either matches a genuinely
+    /// still-stuck host button, releasing it, or is healed by the pre-release path on the next down).
+    private var carriedInputBalance = InputButtonBalance()
     /// Whether the next injected input event must raise+focus first.
     private var inputNeedsRaise = true
 
@@ -581,7 +591,7 @@ public actor SlopDeskVideoHostSession {
     /// awaitingKeyframe drop + a needless requestIDR. The VT callback now APPENDS to this
     /// lock-protected FIFO synchronously (carrying encode order end-to-end) and signals; a SINGLE
     /// consumer task drains it and `await`s ``onEncodedFrame(avcc:keyframe:crisp:)`` IN ORDER, so
-    /// `packetizer.packetize` assigns frameID/streamSeq in encode order. ONE ordered hop, not one
+    /// the packetize lane assigns frameID/streamSeq in encode order. ONE ordered hop, not one
     /// detached Task per frame. Shared across resize (the queue/consumer are the actor's, created
     /// once in ``start()``); every encoder-callback site feeds the SAME queue.
     private var encodedQueue: EncodedFrameQueue?
@@ -643,7 +653,7 @@ public actor SlopDeskVideoHostSession {
         // to save the occasional loss-recovery round-trip. The client reads the FEC tier per
         // fragment, so a parity-less stream is wire-compatible with an unchanged client.
         let fecDisabled = ProcessInfo.processInfo.environment["SLOPDESK_FEC"] == "0"
-        packetizer = VideoPacketizer(fec: fecDisabled ? nil : fec)
+        packetizeLane = PacketizeLane(fec: fecDisabled ? nil : fec)
     }
 
     // MARK: Lifecycle
@@ -814,28 +824,19 @@ public actor SlopDeskVideoHostSession {
     }
 
     // SCROLL-COALESCE accumulator (time-gated, held ACROSS drains — see `scrollInjectInterval`).
-    // Sums continuous-phase scroll deltas; flushed (one summed CGEvent) at most once per interval,
-    // on any gesture boundary / non-scroll event, or at the end of a drain run.
-    private var scrollAccumDx: Double = 0
-    private var scrollAccumDy: Double = 0
-    private var scrollAccumTemplate: InputEvent? // newest phase/normalized/tag for the summed inject
-    private var lastScrollInjectUptime: Double = 0
-
-    /// Inject the accumulated (summed) scroll as one event, then clear the accumulator. No-op when
-    /// nothing is buffered. Preserves total scroll travel (deltas are additive).
-    private func flushPendingScroll() async {
-        guard case let .scroll(_, _, norm, scrollPhase, momentumPhase, continuous, tag) = scrollAccumTemplate
-        else { return }
-        let summed = InputEvent.scroll(
-            dx: scrollAccumDx, dy: scrollAccumDy, normalized: norm,
-            scrollPhase: scrollPhase, momentumPhase: momentumPhase, continuous: continuous, tag: tag,
-        )
-        scrollAccumDx = 0
-        scrollAccumDy = 0
-        scrollAccumTemplate = nil
-        let raiseFirst = InputDatagramRouter.raiseFirst(for: summed, needsRaise: inputNeedsRaise)
-        await inject(summed, raiseFirst: raiseFirst)
-    }
+    // The whole fold — sum continuous-phase deltas, ≤1 summed emit per interval, boundary +
+    // trailing flushes — is the PURE ``ScrollCoalescePlanner`` (extracted 2026-07-11 so the
+    // trailing-flush reachability is unit-tested); this actor just injects what it returns.
+    private var scrollPlanner = ScrollCoalescePlanner(
+        injectInterval: SlopDeskVideoHostSession.scrollInjectInterval,
+        coalesceScroll: SlopDeskVideoHostSession.scrollCoalesceEnabled,
+    )
+    /// One-shot idle flush for a HELD scroll residual (the lost-gesture-`ended` backstop). The
+    /// reachable empty-run trailing flush already drains the residual on the next inbound batch
+    /// (netstats arrive ~20/s), but if the wire goes fully quiet this timer flushes it after one
+    /// `scrollInjectInterval` instead of stranding it until the next input. Re-arms itself while
+    /// a residual is still gate-held; cancelled + cleared at media teardown.
+    private var scrollIdleFlushTask: Task<Void, Never>?
 
     /// Collapses an arrival-ordered run of input events to its coalesced form and injects each,
     /// reproducing the per-event raise latch the single-event path applied: a button-down raises
@@ -846,40 +847,33 @@ public actor SlopDeskVideoHostSession {
     /// SCROLL COALESCING (2026-06-17): continuous-phase scroll deltas are SUMMED into a time-gated
     /// accumulator (held across drains) and posted ≤ once per `scrollInjectInterval`, ending the
     /// ~200/s `CGEvent` flood that saturated the WindowServer → SCStream capture stalls. A gesture
-    /// boundary (began/ended/wheel) or any non-scroll event flushes the accumulator FIRST, in order.
+    /// boundary (began/ended/wheel) or any non-scroll event flushes the accumulator FIRST, in
+    /// order — and (2026-07-11 fix) an EMPTY run reaches the trailing flush too, so a residual
+    /// stranded by a lost gesture-`ended` drains on the next control/recovery-only batch instead
+    /// of waiting for the next unrelated input.
     private func injectCoalesced(_ run: [InputEvent]) async {
-        guard !run.isEmpty else { return }
-        for event in InputMotionCoalescer.coalesce(run, coalesceScroll: Self.scrollCoalesceEnabled) {
-            if Self.scrollCoalesceEnabled,
-               case let .scroll(dx, dy, norm, scrollPhase, momentumPhase, continuous, tag) = event,
-               Self.isCoalescableScrollPhase(scrollPhase: scrollPhase, momentumPhase: momentumPhase)
-            {
-                scrollAccumDx += dx
-                scrollAccumDy += dy
-                scrollAccumTemplate = .scroll(
-                    dx: 0, dy: 0, normalized: norm,
-                    scrollPhase: scrollPhase, momentumPhase: momentumPhase, continuous: continuous, tag: tag,
-                )
-                let now = ProcessInfo.processInfo.systemUptime
-                if now - lastScrollInjectUptime >= Self.scrollInjectInterval {
-                    lastScrollInjectUptime = now
-                    await flushPendingScroll()
-                }
-                continue
-            }
-            // Gesture boundary / non-scroll: flush any accumulated scroll FIRST (order-preserving).
-            await flushPendingScroll()
+        for event in scrollPlanner.plan(run: run, now: ProcessInfo.processInfo.systemUptime) {
             let raiseFirst = InputDatagramRouter.raiseFirst(for: event, needsRaise: inputNeedsRaise)
             await inject(event, raiseFirst: raiseFirst)
         }
-        // Trailing flush: if continuous scroll ended this run without a boundary event, don't strand
-        // the residual past the gate — but only flush when the gate has elapsed (else hold for the
-        // next drain to keep the ≤1/interval cap; the next scroll or a boundary will flush it).
-        let now = ProcessInfo.processInfo.systemUptime
-        if scrollAccumTemplate != nil, now - lastScrollInjectUptime >= Self.scrollInjectInterval {
-            lastScrollInjectUptime = now
-            await flushPendingScroll()
+        if scrollPlanner.hasPendingScroll { armScrollIdleFlush() }
+    }
+
+    /// Arms the one-shot idle flush (no-op while one is already armed — see `scrollIdleFlushTask`).
+    private func armScrollIdleFlush() {
+        guard scrollIdleFlushTask == nil else { return }
+        scrollIdleFlushTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.scrollInjectInterval * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await self?.scrollIdleFlushFired()
         }
+    }
+
+    /// Timer body: an empty-run plan is exactly the trailing-flush path — the gate decides, and
+    /// `injectCoalesced` re-arms if the residual is still held (fired before the gate elapsed).
+    private func scrollIdleFlushFired() async {
+        scrollIdleFlushTask = nil
+        await injectCoalesced([])
     }
 
     private func handleControl(_ data: Data) async {
@@ -1469,7 +1463,7 @@ public actor SlopDeskVideoHostSession {
         // until the client decodes+acks a new LTR frame on the rebuilt session (else every K-th frame
         // would be VT's IDR fallback). Re-armed by the next `.ack` fold.
         capturer?.setSelfHealEligible(false)
-        // Component 2: `recoveryIDRPolicy` is DELIBERATELY NOT reset here. The packetizer (and so
+        // Component 2: `recoveryIDRPolicy` is DELIBERATELY NOT reset here. The packetize lane (and so
         // frameIDs) persists across encoder rebuilds, so the sent-keyframe ring and the delivered id
         // stay valid — and the token bucket MUST survive a rebuild (a resize storm during loss must
         // not refill the recovery-IDR budget). If HW testing ever shows resize-recovery starvation,
@@ -2118,11 +2112,17 @@ public actor SlopDeskVideoHostSession {
         }
         self.cursorSampler = cursorSampler
 
-        // Input injector (created with the window pid + bounds).
+        // Input injector (created with the window pid + bounds). SEEDED with the carried
+        // held-button/modifier balance so a transparent-reconnect rebuild (bye → fresh hello)
+        // still matches — and posts — the up of a button/⌘ the user held across the reconnect
+        // (see `carriedInputBalance`). If a live injector is being REPLACED without an
+        // intervening teardown, its balance is the freshest truth — snapshot it first.
+        if let injector { carriedInputBalance = injector.balanceSnapshot }
         injector = InputInjector(
             pid: window.owningApplication?.processID ?? 0,
             windowID: window.windowID,
             windowBoundsCG: bounds,
+            balance: carriedInputBalance,
         )
         inputNeedsRaise = true
 
@@ -2180,6 +2180,11 @@ public actor SlopDeskVideoHostSession {
         // after teardown. Inert anyway ([weak self] + mediaFlowing-guarded), but cancel for consistency.
         pendingContractTask?.cancel()
         pendingContractTask = nil
+        // Drop any held scroll residual + its idle flush: a stale gesture tail from the session
+        // being torn down must not be injected at the start of the next one.
+        scrollIdleFlushTask?.cancel()
+        scrollIdleFlushTask = nil
+        scrollPlanner.clearPending()
         // Frames queued in the paced-send lane belong to the capture/encode generation being torn
         // down — drop them (a mid-pace job aborts at its next chunk boundary). The lane itself
         // survives for the next hello; `stop()` is what closes it.
@@ -2208,7 +2213,14 @@ public actor SlopDeskVideoHostSession {
         if encoder === staleEncoder { encoder = nil }
         if cursorSampler === staleCursorSampler { cursorSampler = nil }
         if geometryWatcher === staleGeometryWatcher { geometryWatcher = nil }
-        if injector === staleInjector { injector = nil }
+        if injector === staleInjector {
+            // Carry the held-button/modifier truth forward BEFORE dropping the injector, so the
+            // next hello's rebuild seeds from it (the reconnect-stuck-drag fix). Inside the same
+            // identity guard as the clear: a stale teardown resuming after a newer start must not
+            // overwrite the carry with an older injector's state.
+            if let staleInjector { carriedInputBalance = staleInjector.balanceSnapshot }
+            injector = nil
+        }
     }
 
     // MARK: Component callbacks
@@ -2295,12 +2307,12 @@ public actor SlopDeskVideoHostSession {
             ? fecTierState.tier
             : AdaptiveFECPolicy.defaultTier
         let tier = AdaptiveFECPolicy.wireTier(adaptiveTier: adaptiveTier)
-        // WF-8: if this is an LTR frame (SLOPDESK_LTR on AND the encoder surfaced an ack token), record the
-        // frameID↔token mapping (read the frameID the packetizer is ABOUT to assign, BEFORE packetize
-        // increments it) so a later client ack(frameID) can fold the token, AND mark every fragment
-        // with the isLTR wire bit so the client knows to ack on decode. Off ⇒ ltrToken nil ⇒ no record,
-        // isLTR false ⇒ byte-identical wire. The packetizer persists across resize, so the frameID is
-        // stable; record/peek/packetize all run here in encode order on the actor → race-free.
+        // WF-8: if this is an LTR frame (SLOPDESK_LTR on AND the encoder surfaced an ack token), the
+        // record below (post-packetize) maps the frameID the lane RETURNS to the token so a later
+        // client ack(frameID) can fold it, AND every fragment carries the isLTR wire bit so the
+        // client knows to ack on decode. Off ⇒ ltrToken nil ⇒ no record, isLTR false ⇒
+        // byte-identical wire. The packetize lane persists across resize, so the frameID is stable;
+        // frames flow through here one at a time in encode order → the record stays race-free.
         // STALE-LTR FIX (2026-06-12): an IDR resets the DECODER's reference world — the DPB,
         // long-term references INCLUDED, is cleared by HEVC spec — so every token acked BEFORE
         // this keyframe now describes a reference the client no longer holds. Without this reset
@@ -2317,36 +2329,25 @@ public actor SlopDeskVideoHostSession {
             encoder?.clearStagedAckedTokens()
         }
         let isLTR = Self.ltrEnabled && ltrToken != nil
-        if isLTR, let token = ltrToken {
-            ltrController.recordLTRFrame(frameID: packetizer.peekNextFrameID, token: token)
-        }
-        // Component 2: record (keyframe frameID, sentAt) for the delivery-keyed recovery-IDR
-        // cooldown — EVERY keyframe (recovery, first-frame, static-crisp, heartbeat), peeked BEFORE
-        // packetize increments (the same race-free discipline as the LTR record above). kfDup's
-        // second copy reuses the same frameID, so there is nothing extra to record for it.
-        if keyframe {
-            recoveryIDRPolicy.noteKeyframeSent(
-                frameID: packetizer.peekNextFrameID,
-                now: ProcessInfo.processInfo.systemUptime,
-            )
-        }
-        // Packetize AND interleave in ONE Rust-core call (the send path is Rust-owned — the symmetric
-        // counterpart of the receive reassembler). The core MTU-splits, FEC-parities (through its own
-        // codec — no double-FEC), stamps the 19-byte header, and (when `interleave`) reorders
-        // transmission column-major across FEC groups so an adjacent-loss BURST spreads to distinct
-        // groups (each recoverable) instead of wiping one group. Header `fragIndex`/grouping is
-        // unchanged, so the client (reassembles by index, reorder-tolerant) is unaffected — host-only,
-        // no wire change. INTERLEAVE DEFAULT ON (SLOPDESK_INTERLEAVE=0 disables): the once-seen
-        // white-screen was HW-investigated 2026-06-09 and does NOT reproduce on the current codebase.
-        // The core keys the interleave by the SAME per-frame group size the parity used, m-aware (OFF
-        // tier ⇒ no-op; tier 0 ⇒ the codec's group ⇒ byte-identical to the pre-port send order).
-        // RAW send path (perf): get the finished wire datagrams directly — skip the parse-into-
-        // FrameFragment-then-re-encode round-trip the send never needs (byte-identical, unit-pinned by
-        // PacketizeRawByteIdentityTests). ~3× fewer allocs/frame, several ms off dense IDR/kfDup bursts.
-        // NACK ring (selective ARQ): the frameID the packetizer is ABOUT to assign this frame (read
-        // BEFORE packetizeRaw increments it — the same race-free discipline as the LTR record above).
-        let ringFrameID = packetizer.peekNextFrameID
-        let orderedRaw = packetizer.packetizeRaw(
+        // Packetize AND interleave OFF-ACTOR on the dedicated ``PacketizeLane`` (keystroke-latency
+        // fix, 2026-07-11). The lane MTU-splits, FEC-parities (no double-FEC), stamps the 19-byte
+        // header, and (when `interleave`) reorders transmission column-major across FEC groups so an
+        // adjacent-loss BURST spreads to distinct groups (each recoverable) instead of wiping one
+        // group. Header `fragIndex`/grouping is unchanged, so the client (reassembles by index,
+        // reorder-tolerant) is unaffected — host-only, no wire change. INTERLEAVE DEFAULT ON
+        // (SLOPDESK_INTERLEAVE=0 disables): the once-seen white-screen was HW-investigated
+        // 2026-06-09 and does NOT reproduce on the current codebase. The lane keys the interleave by
+        // the SAME per-frame group size the parity used, m-aware (OFF tier ⇒ no-op; tier 0 ⇒ the
+        // codec's group ⇒ byte-identical to the pre-port send order). RAW send path (perf): finished
+        // wire datagrams directly, no FrameFragment parse/re-encode round-trip (byte-identical,
+        // unit-pinned by PacketizeRawByteIdentityTests + PacketizeLaneTests).
+        //
+        // The `await` is the POINT: this heavy per-frame work used to run synchronously on THIS
+        // actor, so a keystroke arriving mid-packetize of a large IDR waited several ms for
+        // `CGEventPost`. Suspending here frees the actor for the inbound input consumer; frame
+        // ORDER is untouched because the single encoded-frame consumer awaits `onEncodedFrame`
+        // one frame at a time end-to-end (this method has no other caller).
+        let packetized = await packetizeLane.packetize(
             frame: avcc,
             keyframe: keyframe,
             crisp: crisp,
@@ -2356,10 +2357,34 @@ public actor SlopDeskVideoHostSession {
             ackedAnchored: ackedAnchored,
             interleave: Self.interleaveTransmit,
         )
-        let outgoings = scheduler.scheduleFrameRaw(orderedRaw)
+        // A bye/stop teardown can interleave through the await (it could not while packetize was
+        // inline): its `sendLane.flush()` already dropped the queued frames of this capture
+        // generation, so drop this one too instead of enqueueing it after the flush — and skip the
+        // bookkeeping below (the frame is never sent, so nothing may reference its frameID).
+        guard stateMachine.mediaFlowing else {
+            dbg("encoded frame DROPPED post-packetize (mediaFlowing=false)")
+            return
+        }
+        // WF-8: record the frameID↔token mapping for the LTR frame JUST packetized (the lane
+        // returns the frameID it assigned, so record/packetize can no longer race) so a later
+        // client ack(frameID) can fold the token. Off ⇒ ltrToken nil ⇒ no record.
+        if isLTR, let token = ltrToken {
+            ltrController.recordLTRFrame(frameID: packetized.frameID, token: token)
+        }
+        // Component 2: record (keyframe frameID, sentAt) for the delivery-keyed recovery-IDR
+        // cooldown — EVERY keyframe (recovery, first-frame, static-crisp, heartbeat). kfDup's
+        // second copy reuses the same frameID, so there is nothing extra to record for it.
+        if keyframe {
+            recoveryIDRPolicy.noteKeyframeSent(
+                frameID: packetized.frameID,
+                now: ProcessInfo.processInfo.systemUptime,
+            )
+        }
+        let outgoings = packetized.outgoings
         // Record this frame's datagrams so a later client NACK can be answered by re-sending exactly
-        // the lost fragments (nil ring unless SLOPDESK_NACK). Keyed by frameID; bounded ring.
-        retransmitRing?.record(frameID: ringFrameID, outgoings: outgoings)
+        // the lost fragments (nil ring unless SLOPDESK_NACK). Keyed by frameID; bounded ring. Still
+        // BEFORE the send-lane feed, so a NACK can never observe a sent-but-unrecorded frame.
+        retransmitRing?.record(frameID: packetized.frameID, outgoings: outgoings)
         if Self.debugStderr {
             let now = ProcessInfo.processInfo.systemUptime
             if dbgLastFrameSendAt > 0, now - dbgLastFrameSendAt > 0.028 {
@@ -3035,7 +3060,7 @@ private final class InboundQueue: @unchecked Sendable {
 /// Lock-protected FIFO of ENCODED frames feeding the host's single ordered consumer (FIX C). The
 /// encoder's VT output callback fires in STRICT encode order on a serial queue and APPENDS here
 /// synchronously (no actor hop — so encode order is carried end-to-end); the single consumer task
-/// drains the backlog IN ORDER and awaits `onEncodedFrame` one at a time, so the packetizer
+/// drains the backlog IN ORDER and awaits `onEncodedFrame` one at a time, so the packetize lane
 /// assigns frameID/streamSeq in encode order. Replaces the prior `Task`-per-frame fan-out, which
 /// gave no FIFO guarantee across separately-created Tasks targeting the actor (frame N+1 could be
 /// processed before frame N → a delta packetized before its IDR).

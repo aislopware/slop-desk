@@ -46,8 +46,14 @@ parser rewrite in `dcs.zig`/`parse_table.zig` and a per-keystroke mutex round-tr
   resize reflow), and the NEW `update_mutex` in `src/renderer/generic.zig` serializes
   every `updateFrame` entry — closing the main-thread-draw vs renderer-thread data race
   the 2026-07-11 audit found (`terminal_state` periodic reset, highlight rebuilds, and
-  `dirty=false` all mutate outside `state.mutex`/`draw_mutex`). Lock order:
-  `update_mutex → state.mutex → draw_mutex`.
+  `dirty=false` all mutate outside `state.mutex`/`draw_mutex`). The round-4 audit
+  extended it to every "must be called on the render thread" mutator of
+  updateFrame-visible state: `changeConfig` (frees `config.links`' arena + swaps
+  `font_shaper` → was a UAF window), `setFontGrid` (its `markDirty` could be swallowed
+  by updateFrame's dirty reset → garbage glyphs), `setScreenSize`, `setFocus`, and the
+  two search-match swaps in `renderer/Thread.zig` `drainMailbox` (upstream takes NO
+  lock there). Lock order: `update_mutex → state.mutex → draw_mutex` (update_mutex
+  always outermost; no guarded path holds the other two when acquiring it).
 - **iOS embedding fixes**: `ghostty_config_load_file_len`/`ghostty_config_load_string`
   (iOS has no default config paths) + `NoHomeDir` tolerance in `Config.zig`, the
   `Metal.zig` teardown UAF fix (clear display callback + `removeFromSuperlayer` in

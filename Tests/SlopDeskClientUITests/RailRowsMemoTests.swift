@@ -269,4 +269,41 @@ final class RailRowsMemoTests: XCTestCase {
         let badged = rows.filter { RailRowsBuilder.liveChrome(for: $0, store: store).badge == .error }
         XCTAssertEqual(badged.map(\.id), representative.map { [$0] } ?? [], "override on the representative only")
     }
+
+    // MARK: - `RailStructureKey.titledByProcess` (perf audit 2026-07-11)
+
+    /// Pins the pure escape-order guard shared by the memo AND the titlebar / window-title reads
+    /// (``SlateTitlebar``'s `activeTitle`, `WorkspaceRootView.windowTitle(for:)`): only a terminal pane with
+    /// a spec, no cwd folder name, and no non-empty user rename would actually resolve its title from the
+    /// foreground-process dict — every OTHER shape must return `false` so those call sites can skip the
+    /// dict read entirely without changing what the user sees.
+    func testTitledByProcessGuard() {
+        let bareTerminal = PaneSpec(kind: .terminal, title: "")
+        XCTAssertTrue(
+            RailStructureKey.titledByProcess(kind: .terminal, spec: bareTerminal),
+            "a cwd-less, non-renamed terminal pane titles itself by the foreground process",
+        )
+
+        let cwdSpec = PaneSpec(kind: .terminal, title: "", lastKnownCwd: "/Users/me/alpha")
+        XCTAssertFalse(
+            RailStructureKey.titledByProcess(kind: .terminal, spec: cwdSpec),
+            "a known cwd folder name always wins — the process dict is irrelevant once it's known",
+        )
+
+        let renamedSpec = PaneSpec(kind: .terminal, title: "deploy box", userRenamed: true)
+        XCTAssertFalse(
+            RailStructureKey.titledByProcess(kind: .terminal, spec: renamedSpec),
+            "an explicit user rename wins — it never falls back to the process",
+        )
+
+        XCTAssertFalse(
+            RailStructureKey.titledByProcess(kind: .remoteGUI, spec: bareTerminal),
+            "only a terminal pane's title chain ever escapes to the process fallback",
+        )
+
+        XCTAssertFalse(
+            RailStructureKey.titledByProcess(kind: .terminal, spec: nil),
+            "a spec-less pane has no title chain to resolve, structural or otherwise",
+        )
+    }
 }

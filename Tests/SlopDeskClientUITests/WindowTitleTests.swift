@@ -72,4 +72,28 @@ final class WindowTitleTests: XCTestCase {
         store.renamePane(pane, to: "build box")
         XCTAssertEqual(WorkspaceRootView.windowTitle(for: store), "build box")
     }
+
+    // MARK: - A4 process fallback (perf audit 2026-07-11: the `paneForegroundProcess` read is now GUARDED
+
+    // by `RailStructureKey.titledByProcess` — these pin that the guard is behavior-preserving, not just a
+    // read-count optimization)
+
+    /// A cwd-less, non-renamed pane still titles the WINDOW by its foreground process — the guard must
+    /// not silently drop the A4 fallback while skipping the dict read for every other pane shape.
+    func testWindowTitleFallsBackToForegroundProcessWhenCwdless() throws {
+        let store = makeStore()
+        let pane = try activePane(store)
+        store.setForegroundProcess("vim", for: pane)
+        XCTAssertEqual(WorkspaceRootView.windowTitle(for: store), "vim")
+    }
+
+    /// Once a cwd is known, the window title never depends on `paneForegroundProcess` at all — a process
+    /// change on a cwd-titled pane is a no-op for the title (the guard's whole point).
+    func testWindowTitleIgnoresForegroundProcessOnceCwdKnown() throws {
+        let store = makeStore()
+        let pane = try activePane(store)
+        store.setLastKnownCwd("/Users/me/project-alpha", for: pane)
+        store.setForegroundProcess("vim", for: pane)
+        XCTAssertEqual(WorkspaceRootView.windowTitle(for: store), "project-alpha")
+    }
 }

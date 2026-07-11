@@ -566,6 +566,105 @@ public struct InputMotionCoalescer: Sendable {
     }
 }
 
+/// Pure fold of the session actor's scroll-accumulating coalesced-inject pipeline (the stateful
+/// half of `injectCoalesced`, extracted so its flush reachability is unit-testable).
+///
+/// SCROLL COALESCING (2026-06-17): continuous-phase scroll deltas are SUMMED into a time-gated
+/// accumulator (held ACROSS runs) and emitted ≤ once per `injectInterval`, ending the ~200/s
+/// `CGEvent` flood that saturated the WindowServer → SCStream capture stalls. A gesture boundary
+/// (began/ended/wheel) or any non-scroll event flushes the accumulator FIRST, in order; a
+/// trailing flush covers a run that ends mid-gesture. ``plan(run:now:)`` returns the exact
+/// ordered events the actor must inject; the actor applies its raise latch per returned event,
+/// so raise/button-balance semantics are untouched by the extraction. (`now` is sampled once per
+/// run — runs fold in µs, far below the ms-scale gate, so per-event sampling is indistinguishable.)
+public struct ScrollCoalescePlanner: Sendable {
+    /// Only the high-frequency CONTINUOUS phases accumulate: `scrollPhase == changed(2)` (finger
+    /// drag) or `momentumPhase == continue(2)` (inertial coast). began/ended/begin/end and
+    /// discrete wheel (phase 0) are gesture boundaries — emitted immediately (after flushing any
+    /// accumulator) so the gesture structure + total travel are exact.
+    public static func isCoalescableScrollPhase(scrollPhase: UInt8, momentumPhase: UInt8) -> Bool {
+        scrollPhase == 2 || momentumPhase == 2
+    }
+
+    private var accumDx: Double = 0
+    private var accumDy: Double = 0
+    /// Newest phase/normalized/tag template for the summed emit (`nil` ⇔ nothing accumulated).
+    private var accumTemplate: InputEvent?
+    private var lastInjectUptime: Double = 0
+    private let injectInterval: Double
+    private let coalesceScroll: Bool
+
+    public init(injectInterval: Double, coalesceScroll: Bool) {
+        self.injectInterval = injectInterval
+        self.coalesceScroll = coalesceScroll
+    }
+
+    /// Whether a summed residual is currently held (drives the actor's idle-flush re-arm).
+    public var hasPendingScroll: Bool { accumTemplate != nil }
+
+    /// Folds one arrival-ordered `run` and returns the ordered events to inject NOW. Continuous
+    /// scroll accumulates (emitted at most once per `injectInterval`); everything else passes
+    /// through with any pending residual flushed FIRST (order-preserving).
+    public mutating func plan(run: [InputEvent], now: Double) -> [InputEvent] {
+        // NO empty-run early return (2026-07-11 fix): an empty run (a drain that carried only
+        // control/recovery datagrams — e.g. the ~20/s netstats batches) must still reach the
+        // trailing flush below, or a residual stranded by a LOST gesture-`ended` datagram waits
+        // for the next unrelated input event.
+        var out: [InputEvent] = []
+        for event in InputMotionCoalescer.coalesce(run, coalesceScroll: coalesceScroll) {
+            if coalesceScroll,
+               case let .scroll(dx, dy, norm, scrollPhase, momentumPhase, continuous, tag) = event,
+               Self.isCoalescableScrollPhase(scrollPhase: scrollPhase, momentumPhase: momentumPhase)
+            {
+                accumDx += dx
+                accumDy += dy
+                accumTemplate = .scroll(
+                    dx: 0, dy: 0, normalized: norm,
+                    scrollPhase: scrollPhase, momentumPhase: momentumPhase, continuous: continuous, tag: tag,
+                )
+                if now - lastInjectUptime >= injectInterval {
+                    lastInjectUptime = now
+                    appendPendingFlush(&out)
+                }
+                continue
+            }
+            // Gesture boundary / non-scroll: flush any accumulated scroll FIRST (order-preserving).
+            appendPendingFlush(&out)
+            out.append(event)
+        }
+        // Trailing flush: if continuous scroll ended this run without a boundary event, don't strand
+        // the residual past the gate — but only flush when the gate has elapsed (else hold for the
+        // next run to keep the ≤1/interval cap; the next scroll or a boundary will flush it).
+        if accumTemplate != nil, now - lastInjectUptime >= injectInterval {
+            lastInjectUptime = now
+            appendPendingFlush(&out)
+        }
+        return out
+    }
+
+    /// Drops any pending residual WITHOUT emitting it (media teardown: a stale gesture tail must
+    /// not leak into the next session).
+    public mutating func clearPending() {
+        accumDx = 0
+        accumDy = 0
+        accumTemplate = nil
+    }
+
+    /// Emits the accumulated (summed) scroll as one event, then clears the accumulator. No-op when
+    /// nothing is buffered. Preserves total scroll travel (deltas are additive).
+    private mutating func appendPendingFlush(_ out: inout [InputEvent]) {
+        guard case let .scroll(_, _, norm, scrollPhase, momentumPhase, continuous, tag) = accumTemplate
+        else { return }
+        out.append(.scroll(
+            dx: accumDx, dy: accumDy, normalized: norm,
+            scrollPhase: scrollPhase, momentumPhase: momentumPhase, continuous: continuous, tag: tag,
+        ))
+        accumDx = 0
+        accumDy = 0
+        accumTemplate = nil
+    }
+}
+
 /// Routes a datagram received on the DEDICATED recovery channel (client→host loss
 /// recovery, doc 17 §3.6). Pure decision logic: decode the ``RecoveryMessage`` and
 /// decide the host action. Kept separate from ``InputDatagramRouter`` because recovery

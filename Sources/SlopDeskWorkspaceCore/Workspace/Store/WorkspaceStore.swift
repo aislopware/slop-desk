@@ -3961,32 +3961,44 @@ public extension WorkspaceStore {
         }
     }
 
-    /// Builds a `@Sendable () -> SlopDeskClient` whose clients route over the shared mux connection
-    /// pooled by `registry`. Each `SlopDeskClient` is constructed with an injected `makeTransport` that
-    /// vends a fresh `MuxClientTransport` bound to the registry's acquire/release — so the channel is
-    /// opened on the shared connection at `connect()` and released (refcount--) at `close()`, with
-    /// the shared transport torn down only when the LAST pane's channel goes. The registry is
-    /// `@MainActor`; the transport's acquire/release closures hop onto the main actor to call it.
+    /// Builds a `@Sendable (SlopDeskClient.ResumeSeed?) -> SlopDeskClient` whose clients route over the
+    /// shared mux connection pooled by `registry`. Each `SlopDeskClient` is constructed with an
+    /// injected `makeTransport` that vends a fresh `MuxClientTransport` bound to the registry's
+    /// acquire/release — so the channel is opened on the shared connection at `connect()` and released
+    /// (refcount--) at `close()`, with the shared transport torn down only when the LAST pane's channel
+    /// goes. The registry is `@MainActor`; the transport's acquire/release closures hop onto the main
+    /// actor to call it.
+    ///
+    /// The `resumeSeed` parameter is passed straight through to `SlopDeskClient.init(resumeSeed:)`,
+    /// which sets `sessionID` / `highestContiguousSeq` / `highestSeqFed` synchronously as part of
+    /// construction — the fix for seed-resume-identity-race (docs/DECISIONS 2026-07-11):
+    /// `LivePaneSession.makeTerminal` used to seed a restored pane's identity via a fire-and-forget
+    /// `Task { await c.seedResumeIdentity(...) }` AFTER this factory returned the client, racing the
+    /// separately-scheduled `connect()` Task on the actor's mailbox. Threading the seed through `init`
+    /// removes that gap: `nil` (a fresh/never-restored pane) is byte-identical to the pre-fix behavior.
     private static func muxBackedClientFactory(
         registry: ConnectionRegistry,
-    ) -> @Sendable () -> SlopDeskClient {
-        { @Sendable in
-            SlopDeskClient(makeTransport: {
-                MuxClientTransport(
-                    acquire: { host, port, sessionID, lastReceivedSeq, initialCwd in
-                        try await registry.acquire(
-                            host: host,
-                            port: port,
-                            sessionID: sessionID,
-                            lastReceivedSeq: lastReceivedSeq,
-                            initialCwd: initialCwd,
-                        )
-                    },
-                    release: { host, port, channelID in
-                        await registry.release(host: host, port: port, channelID: channelID)
-                    },
-                )
-            })
+    ) -> @Sendable (SlopDeskClient.ResumeSeed?) -> SlopDeskClient {
+        { @Sendable resumeSeed in
+            SlopDeskClient(
+                makeTransport: {
+                    MuxClientTransport(
+                        acquire: { host, port, sessionID, lastReceivedSeq, initialCwd in
+                            try await registry.acquire(
+                                host: host,
+                                port: port,
+                                sessionID: sessionID,
+                                lastReceivedSeq: lastReceivedSeq,
+                                initialCwd: initialCwd,
+                            )
+                        },
+                        release: { host, port, channelID in
+                            await registry.release(host: host, port: port, channelID: channelID)
+                        },
+                    )
+                },
+                resumeSeed: resumeSeed,
+            )
         }
     }
 

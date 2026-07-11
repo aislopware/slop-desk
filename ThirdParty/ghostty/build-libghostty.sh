@@ -608,7 +608,10 @@ SLICE_LIBS="$(find "${OUT_XCFRAMEWORK}" -type f \( -name '*.a' -o -name 'Ghostty
 [ -n "${SLICE_LIBS}" ] || fail "no library slice found inside ${OUT_XCFRAMEWORK}."
 log "xcframework library slices:"; echo "${SLICE_LIBS}" | sed 's/^/    /'
 
-VERIFIED=0
+# EVERY slice must pass — a universal build with one defective slice (e.g. a
+# stale .zig-cache root harvested for iOS only) must fail HERE, not later as
+# undefined-symbol link errors in the client build.
+ALL_OK=1
 while IFS= read -r lib; do
     [ -n "${lib}" ] || continue
     log "verifying slice: ${lib}"
@@ -622,13 +625,13 @@ while IFS= read -r lib; do
     if [ "${#MISSING[@]}" -eq 0 ]; then
         log "  ✔ all ${#REQUIRED_SYMS[@]} required external-IO symbols present"
         nm -gU "${lib}" 2>/dev/null | grep -E " _(ghostty_surface_write_output|ghostty_surface_set_size|ghostty_surface_key|ghostty_surface_text|ghostty_app_new|ghostty_surface_new)\$" | sed 's/^/        /'
-        VERIFIED=1
     else
         log "  ✖ MISSING required symbols: ${MISSING[*]}"
+        ALL_OK=0
     fi
 done <<< "${SLICE_LIBS}"
 
-[ "${VERIFIED}" -eq 1 ] || fail "FINAL assembled library is missing required external-IO symbols (the ar/ranlib bypass failed — did libghostty_zcu.o survive? did ranlib run?)."
+[ "${ALL_OK}" -eq 1 ] || fail "at least one slice is missing required external-IO symbols (the ar/ranlib bypass failed — did libghostty_zcu.o survive? did ranlib run? stale .zig-cache root?)."
 
 ok "OK: ${OUT_XCFRAMEWORK}"
 ok "    zig=${ZIG_VERSION}  ghostty=${GHOSTTY_TAG}+fork-delta  target=${XCFRAMEWORK_TARGET}  sdk-shim=${MACOS_SDK_SHIM_PATH}"

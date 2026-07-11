@@ -240,16 +240,20 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// - Parameters:
     ///   - spec: the leaf intent (kind + endpoint(s) + title). Endpoint pre-fills the connection /
     ///     remote-window form fields; an unconfigured spec yields an idle, fillable session.
-    ///   - makeClient: the `@Sendable () -> SlopDeskClient` the `ConnectionViewModel` uses to stand up the
-    ///     client on `connect()`. Passed through verbatim — the store fakes the whole session via
-    ///     `makeSession`, never the client (docs/22 §0).
+    ///   - makeClient: the `@Sendable (SlopDeskClient.ResumeSeed?) -> SlopDeskClient` factory used to
+    ///     stand up the client on `connect()`. Takes the resume seed (non-`nil` only for a restored
+    ///     `.terminal` pane, see ``makeTerminal(_:makeClient:makeInspector:target:)``) so the
+    ///     PRODUCTION factory (`WorkspaceStore.muxBackedClientFactory`) can pass it straight into
+    ///     `SlopDeskClient.init(resumeSeed:)` — set synchronously at construction, closing the
+    ///     seed-resume-identity-race (docs/DECISIONS 2026-07-11). A test factory that has no restored
+    ///     identity to seed can ignore the argument (`{ _ in ... }`).
     ///   - makeInspector: builds the read-only `InspectorClient` (NWConnection #2) for a `.terminal`
     ///     pane's endpoint (subscribed dynamically once `claude` is detected, W11), or `nil` when no
     ///     second channel is available. Retained for the `resume()` rebuild.
     @preconcurrency
     public static func make(
         _ spec: PaneSpec,
-        makeClient: @escaping @Sendable () -> SlopDeskClient,
+        makeClient: @escaping @Sendable (SlopDeskClient.ResumeSeed?) -> SlopDeskClient,
         makeInspector: @escaping @MainActor (ConnectionTarget) -> InspectorClient?,
         target: @escaping @MainActor () -> ConnectionTarget = { .default },
     ) -> LivePaneSession {
@@ -279,7 +283,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// subscribed dynamically once ``claudeStatus`` lifts off `.none`.
     private static func makeTerminal(
         _ spec: PaneSpec,
-        makeClient: @escaping @Sendable () -> SlopDeskClient,
+        makeClient: @escaping @Sendable (SlopDeskClient.ResumeSeed?) -> SlopDeskClient,
         makeInspector: @escaping @MainActor (ConnectionTarget) -> InspectorClient?,
         target: @escaping @MainActor () -> ConnectionTarget,
     ) -> LivePaneSession {
@@ -305,16 +309,21 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         // lastReceivedSeq=0, triggering full ring replay (entries 1..ackedSeq) then the un-acked tail —
         // like `tmux attach-session` (host SLOPDESK_SCROLLBACK_PERSIST gate).
         //
-        // WARM in-process reconnect (iOS bg/fg, transport drop without process exit): seedResumeIdentity
-        // is NOT called — the actor's live highestContiguousSeq is presented directly in
+        // WARM in-process reconnect (iOS bg/fg, transport drop without process exit): no resume seed is
+        // built here at all — the actor's live highestContiguousSeq is presented directly in
         // SlopDeskClient.connect() (`let lastSeq = highestContiguousSeq`). That path is unaffected.
-        let makeClientSeeded: @Sendable () -> SlopDeskClient = {
-            let c = makeClient()
-            if let id = savedResumeID {
-                Task { await c.seedResumeIdentity(sessionID: id, seq: 0) }
-            }
-            return c
-        }
+        //
+        // SEED-AT-CONSTRUCTION (closes seed-resume-identity-race, docs/DECISIONS 2026-07-11): this used
+        // to call the zero-arg `makeClient()` and then fire an UNAWAITED
+        // `Task { await c.seedResumeIdentity(...) }` before returning — nothing ordered that seed job
+        // ahead of `ConnectionViewModel.performConnect()`'s own separately-scheduled connect Task, so the
+        // seed could lose the race against the actor's mailbox and `connect()` would read a nil
+        // `sessionID` (fresh shell) instead of the restored one. `makeClient` now takes the seed
+        // directly and the production factory (`WorkspaceStore.muxBackedClientFactory`) threads it into
+        // `SlopDeskClient.init(resumeSeed:)`, which sets `sessionID` / `highestContiguousSeq` /
+        // `highestSeqFed` synchronously — no Task, no actor hop, no race window.
+        let resumeSeed: SlopDeskClient.ResumeSeed? = savedResumeID.map { (sessionID: $0, lastSeq: 0) }
+        let makeClientSeeded: @Sendable () -> SlopDeskClient = { makeClient(resumeSeed) }
         let connection = ConnectionViewModel(
             terminal: terminal,
             target: target,

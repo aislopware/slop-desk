@@ -42,6 +42,11 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
     private let lock = NSLock()
     private var journals: [UUID: ScrollbackJournal] = [:]
 
+    /// Completed ``sweep()`` call count, guarded by `lock` (testing only — the periodic-sweep
+    /// schedule pin, `HostServerJournalSweepTests`, counts passes over a tiny injected interval
+    /// without any wall-clock day).
+    private var sweepCallCount = 0
+
     /// Terminal-mode sanitize suffix appended to every restored transcript: the prior life may
     /// have ended inside an alt-screen TUI with mouse reporting / bracketed paste / app-cursor
     /// modes on and the cursor hidden. Replaying those bytes verbatim into a FRESH terminal would
@@ -179,6 +184,9 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
     /// keep journaling into a file nobody can ever restore (the whole transcript, past AND
     /// future, silently lost). A sessionID currently vended in `journals` is skipped outright.
     func sweep(maxAge: TimeInterval = 14 * 24 * 3600, keepNewest: Int = 256) {
+        lock.lock()
+        sweepCallCount += 1
+        lock.unlock()
         let fm = FileManager.default
         guard let urls = try? fm.contentsOfDirectory(
             at: directory, includingPropertiesForKeys: [.contentModificationDateKey],
@@ -224,6 +232,13 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
     /// (testing only).
     func hasLiveWriterForTesting(_ sessionID: UUID) -> Bool {
         hasLiveWriter(for: sessionID)
+    }
+
+    /// Completed ``sweep()`` call count (testing only — the periodic-sweep schedule pin).
+    func sweepCallCountForTesting() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return sweepCallCount
     }
 }
 

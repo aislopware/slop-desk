@@ -633,29 +633,86 @@ index 6c7432d..490ceb2 100644
  fn displayCallback(renderer: *Renderer) align(8) void {
      renderer.drawFrame(true) catch |err| {
          log.warn("Error drawing frame in display callback, err={}", .{err});
+diff --git a/src/renderer/Thread.zig b/src/renderer/Thread.zig
+index 5087213..47668c8 100644
+--- a/src/renderer/Thread.zig
++++ b/src/renderer/Thread.zig
+@@ -457,6 +457,12 @@ fn drainMailbox(self: *Thread) !void {
+             },
+ 
+             .search_viewport_matches => |v| {
++                // SLOPDESK: these fields are read by a possibly-main-thread
++                // updateFrame outside any lock upstream (update_mutex doc in
++                // renderer/generic.zig).
++                self.renderer.update_mutex.lock();
++                defer self.renderer.update_mutex.unlock();
++
+                 // Note we don't free the new value because we expect our
+                 // allocators to match.
+                 if (self.renderer.search_matches) |*m| m.arena.deinit();
+@@ -465,6 +471,10 @@ fn drainMailbox(self: *Thread) !void {
+             },
+ 
+             .search_selected_match => |v| {
++                // SLOPDESK: see .search_viewport_matches above.
++                self.renderer.update_mutex.lock();
++                defer self.renderer.update_mutex.unlock();
++
+                 // Note we don't free the new value because we expect our
+                 // allocators to match.
+                 if (self.renderer.search_selected_match) |*m| m.arena.deinit();
 diff --git a/src/renderer/generic.zig b/src/renderer/generic.zig
-index ff632f6..ceb2d89 100644
+index ff632f6..2152c2b 100644
 --- a/src/renderer/generic.zig
 +++ b/src/renderer/generic.zig
-@@ -100,6 +100,17 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -100,6 +100,21 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
          /// being modified, and also when it's being accessed in `drawFrame`.
          draw_mutex: std.Thread.Mutex = .{},
  
-+        /// SLOPDESK: serializes `updateFrame` entries. Upstream assumes only
-+        /// the renderer thread ever runs updateFrame; SlopDesk's Surface.draw
-+        /// additionally calls it synchronously on the app/main thread (see
-+        /// Surface.zig draw()). updateFrame mutates renderer-private state
-+        /// (terminal_state incl. its periodic deinit/reset, search highlight
-+        /// rebuilds, overlay) outside state.mutex/draw_mutex, so concurrent
-+        /// entry from two threads is a data race. Lock order: update_mutex ->
-+        /// state.mutex -> draw_mutex (update_mutex is only ever taken at
-+        /// updateFrame entry, never while holding the other two).
++        /// SLOPDESK: serializes `updateFrame` against every other mutator of
++        /// updateFrame-visible state. Upstream assumes only the renderer
++        /// thread ever runs updateFrame; SlopDesk's Surface.draw additionally
++        /// calls it synchronously on the app/main thread (see Surface.zig
++        /// draw()). updateFrame touches renderer-private state (terminal_state
++        /// incl. its periodic deinit/reset and dirty reset, config.links,
++        /// font_shaper.endFrame, search match/highlight fields, overlay)
++        /// OUTSIDE state.mutex/draw_mutex, so it must also be held by the
++        /// "must be called on the render thread" mutators of that state:
++        /// changeConfig, setFontGrid, setScreenSize, setFocus, and the
++        /// search-match swaps in renderer/Thread.zig drainMailbox. Lock
++        /// order: update_mutex -> state.mutex -> draw_mutex (update_mutex is
++        /// always the outermost; never acquired while holding the other two).
 +        update_mutex: std.Thread.Mutex = .{},
 +
          /// The configuration we need derived from the main config.
          config: DerivedConfig,
  
-@@ -1125,6 +1136,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+@@ -1027,6 +1042,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+         ///
+         /// Must be called on the render thread.
+         pub fn setFocus(self: *Self, focus: bool) !void {
++            // SLOPDESK: `focused` is read by a possibly-main-thread
++            // updateFrame (see update_mutex doc).
++            self.update_mutex.lock();
++            defer self.update_mutex.unlock();
++
+             assert(self.focused != focus);
+ 
+             self.focused = focus;
+@@ -1068,6 +1088,12 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+         ///
+         /// Must be called on the render thread.
+         pub fn setFontGrid(self: *Self, grid: *font.SharedGrid) void {
++            // SLOPDESK: serialize vs a possibly-main-thread updateFrame —
++            // markDirty below must not be swallowed by its dirty reset, and
++            // the shaper cache swap must not race endFrame (update_mutex doc).
++            self.update_mutex.lock();
++            defer self.update_mutex.unlock();
++
+             self.draw_mutex.lock();
+             defer self.draw_mutex.unlock();
+ 
+@@ -1125,6 +1151,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
              state: *renderer.State,
              cursor_blink_visible: bool,
          ) Allocator.Error!void {
@@ -667,6 +724,32 @@ index ff632f6..ceb2d89 100644
              // const start = std.time.Instant.now() catch unreachable;
              // const start_micro = std.time.microTimestamp();
              // defer {
+@@ -1839,6 +1870,13 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+ 
+         /// Update the configuration.
+         pub fn changeConfig(self: *Self, config: *DerivedConfig) !void {
++            // SLOPDESK: serialize vs a possibly-main-thread updateFrame —
++            // config.deinit() frees the arena backing `config.links` and the
++            // font_shaper swap frees the shaper updateFrame uses outside
++            // draw_mutex (update_mutex doc).
++            self.update_mutex.lock();
++            defer self.update_mutex.unlock();
++
+             self.draw_mutex.lock();
+             defer self.draw_mutex.unlock();
+ 
+@@ -1920,6 +1958,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
+             self: *Self,
+             size: renderer.Size,
+         ) void {
++            // SLOPDESK: serialize vs a possibly-main-thread updateFrame
++            // (update_mutex doc).
++            self.update_mutex.lock();
++            defer self.update_mutex.unlock();
++
+             self.draw_mutex.lock();
+             defer self.draw_mutex.unlock();
+ 
 diff --git a/src/simd/codepoint_width.cpp b/src/simd/codepoint_width.cpp
 index 4eb7da6..c440493 100644
 --- a/src/simd/codepoint_width.cpp

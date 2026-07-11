@@ -989,6 +989,7 @@ final class GhosttyLayerBackedView: NSView {
         renderDisplayLink?.invalidate()
         renderDisplayLink = nil
         lastAppliedLayout = nil   // a future re-attach must re-apply size unconditionally
+        detectedLinksCache = nil  // the snapshot belongs to the closing surface's viewport
         // Cancel any pending settle-present burst so a torn-down view never fires `requestPresent`.
         for item in settleItems { item.cancel() }
         settleItems.removeAll(keepingCapacity: true)
@@ -1007,7 +1008,10 @@ final class GhosttyLayerBackedView: NSView {
         // Pass the detaching surface so the model clears its `surface` ONLY if this is the surface it
         // currently feeds. A stale duplicate view's detach must NOT nil the live (on-screen) surface
         // — that froze the visible terminal on its initial replay while new output was dropped.
-        model?.detachSurface(detaching)
+        // A surface-LESS view (an off-window probe that never attached) makes NO call at all:
+        // `detachSurface(nil)` takes the unconditional else-branch and clears the LIVE pane's surface,
+        // freezing the visible terminal until an unrelated SwiftUI pass re-attaches.
+        if let detaching { model?.detachSurface(detaching) }
     }
 
     deinit {
@@ -1513,7 +1517,14 @@ final class GhosttyLayerBackedView: NSView {
         super.flagsChanged(with: event)
         guard let model else { return }
         let commandHeld = event.modifierFlags.contains(.command)
-        if model.linkHighlightActive != commandHeld { model.linkHighlightActive = commandHeld }
+        if model.linkHighlightActive != commandHeld {
+            model.linkHighlightActive = commandHeld
+            // ⌘ just went down → drop the link-snapshot cache: `viewportRevision` only ticks while the
+            // highlight is active, so a viewport move BETWEEN holds (copy-mode nav, jump-to-prompt) can
+            // leave the generation keys matching a moved viewport. Each hold starts from a fresh read.
+            // Only on the TRANSITION — a mid-hold ⇧ press (⌘⇧-click) must not evict a valid cache.
+            if commandHeld { detectedLinksCache = nil }
+        }
         if commandHeld {
             // ⌘ went down with a (possibly) stationary pointer: resolve the hover from the CURRENT location so
             // the full-path preview appears immediately, without waiting for the next pointer move.
@@ -1527,29 +1538,24 @@ final class GhosttyLayerBackedView: NSView {
     /// detection is on, and the surface is NOT a mouse-reporting TUI (alt screen — don't fight vim/tmux/htop),
     /// hit-test the detected links in the VISIBLE viewport against the pointer cell and publish the resolved
     /// path to the now-dormant ``TerminalViewModel/hoveredLinkFullPath`` seam (its status-bar consumer was
-    /// removed). A move off any
-    /// link, a released ⌘, or a pointer-exit clears it. All the math + detection live in the PURE, headless-
-    /// tested ``TerminalViewModel/hoveredLinkPath(rows:cwd:schemes:metrics:pointX:pointY:)``; this is the thin
-    /// actuator that feeds it the live `viewportTextRows()` + WI-2 `cellMetrics()`. `point` is in the surface's
-    /// top-left-origin POINT space (the `surfacePoint`/`cellMetrics` convention).
+    /// removed). A move off any link, a released ⌘, or a pointer-exit clears it.
+    ///
+    /// AUDIT FIX `cmd-hover-full-viewport-reread-per-mousemove`: routes through ``detectedLink(at:)`` —
+    /// the SAME gates + cell math as the ⌘-click path (both mirror the PURE, headless-tested
+    /// ``TerminalViewModel/hoveredLinkPath(rows:cwd:schemes:metrics:pointX:pointY:)``, including its
+    /// `resolvedAbsolute ?? raw` result) — so the per-move cost against an unchanged viewport is ONLY the
+    /// pure cell hit-test over ``detectedLinksCache``, not a full `viewportTextRows()` C-ABI re-read +
+    /// re-detection per mouseMoved. `point` is in the surface's top-left-origin POINT space (the
+    /// `surfacePoint`/`cellMetrics` convention).
     private func updateLinkHover(at point: (x: Double, y: Double)) {
         guard let model else { return }
-        guard model.linkHighlightActive,
-              SettingsKey.linkDetectionEnabled,
-              !model.isAlternateScreen,
-              let metrics = surface?.cellMetrics()
-        else {
+        guard model.linkHighlightActive else {
             if model.hoveredLinkFullPath != nil { model.hoveredLinkFullPath = nil }
             return
         }
-        let path = TerminalViewModel.hoveredLinkPath(
-            rows: surface?.viewportTextRows() ?? [],
-            cwd: model.linkCwd,
-            schemes: SettingsKey.linkSchemePolicy,
-            metrics: metrics,
-            pointX: CGFloat(point.x),
-            pointY: CGFloat(point.y),
-        )
+        // detectedLink(at:) applies the detection-toggle / alt-screen / metrics gates; any gate failing
+        // yields nil, which clears the preview exactly like the old explicit guard did.
+        let path = detectedLink(at: point).map { $0.resolvedAbsolute ?? $0.raw }
         if model.hoveredLinkFullPath != path { model.hoveredLinkFullPath = path }
     }
 
@@ -1583,10 +1589,43 @@ final class GhosttyLayerBackedView: NSView {
         return flags.contains(.shift) ? .commandShiftClick : .commandClick
     }
 
+    /// AUDIT FIX `cmd-hover-full-viewport-reread-per-mousemove`: the (viewport rows → detected links)
+    /// snapshot every ⌘-hover / ⌘-click / menu hit-test reads. `viewportTextRows()` re-reads the whole
+    /// visible grid row-by-row through the C ABI (contending `renderer_state.mutex` with the off-main VT
+    /// parse) and `TerminalLinkDetector.detect` re-runs the regex pass — paying both on EVERY mouseMoved
+    /// (60–120/s, main thread) is what this cache removes; a pointer move with a valid cache runs ONLY
+    /// the pure cell hit-test. Keyed on the model's output generation (`bytesReceived`, bumped once per
+    /// ingest pass) + local-scroll generation (`viewportRevision`) + the resolving cwd; dropped outright
+    /// by `scrollWheel` (a non-⌘ scroll bumps NO revision), by each ⌘-down (`flagsChanged` — a fresh hold
+    /// starts from a fresh read), and by `detach()`.
+    private var detectedLinksCache: (bytesReceived: Int, viewportRevision: Int, cwd: String?, links: [DetectedLink])?
+
+    /// The detected links for the CURRENT viewport snapshot — served from ``detectedLinksCache`` while its
+    /// generation keys still match, else re-read + re-cached. The refresh deliberately KEEPS the per-row
+    /// `viewportTextRows()` read (the soft-wrap grid-alignment fix) — never the unwrapped whole-viewport read.
+    private func currentDetectedLinks() -> [DetectedLink] {
+        let bytes = model?.bytesReceived ?? 0
+        let revision = model?.viewportRevision ?? 0
+        let cwd = model?.linkCwd
+        if let cache = detectedLinksCache,
+           cache.bytesReceived == bytes, cache.viewportRevision == revision, cache.cwd == cwd {
+            return cache.links
+        }
+        let links = TerminalLinkDetector.detect(
+            rows: surface?.viewportTextRows() ?? [],
+            cwd: cwd,
+            schemes: SettingsKey.linkSchemePolicy,
+        )
+        detectedLinksCache = (bytes, revision, cwd, links)
+        return links
+    }
+
     /// The ``DetectedLink`` under a top-left-origin surface POINT (points), or `nil` when the point is over no
     /// detected span / detection is off / there is no live surface. Mirrors the pure
     /// ``TerminalViewModel/hoveredLinkPath(...)`` cell math (plain `*`/`/`+ — view geometry, never `fma`)
     /// but returns the link OBJECT the action policy needs (kind + raw + resolved), not just its path.
+    /// Detection reads the cached snapshot (``currentDetectedLinks()``), so a repeat hit-test against an
+    /// unchanged viewport is pure cell math.
     private func detectedLink(at point: (x: Double, y: Double)) -> DetectedLink? {
         guard SettingsKey.linkDetectionEnabled,
               model?.isAlternateScreen == false,
@@ -1597,12 +1636,7 @@ final class GhosttyLayerBackedView: NSView {
         let column = Int((point.x - Double(metrics.originX)) / Double(metrics.cellWidth))
         let row = Int((point.y - Double(metrics.originY)) / Double(metrics.cellHeight))
         guard row >= 0, column >= 0 else { return nil }
-        let links = TerminalLinkDetector.detect(
-            rows: surface?.viewportTextRows() ?? [],
-            cwd: model?.linkCwd,
-            schemes: SettingsKey.linkSchemePolicy,
-        )
-        return links.first { $0.row == row && column >= $0.colStart && column < $0.colEnd }
+        return currentDetectedLinks().first { $0.row == row && column >= $0.colStart && column < $0.colEnd }
     }
 
     /// The live link config the policy reads (`link-cmd-click` / `link-cmd-shift-click`), resolved
@@ -1914,6 +1948,9 @@ final class GhosttyLayerBackedView: NSView {
         // observable viewport tick the ⌘-hold ``LinkHighlightOverlay`` depends on — else its underlines
         // would cling to pre-scroll screen rows over unrelated text until new output / ⌘ re-press.
         if model?.linkHighlightActive == true { model?.noteViewportScrolled() }
+        // …and drop the link-snapshot cache UNCONDITIONALLY: a non-⌘ scroll bumps no generation key, so a
+        // later ⌘-click / right-click-menu hit-test would otherwise resolve against the pre-scroll rows.
+        detectedLinksCache = nil
 
         // E8 WI-12 (I14/I15, ES-E8-5): SCROLL-PAST overscroll + SMOOTH-SCROLL — DOCUMENTED RENDERING CEILING.
         // The delta above is handed straight to libghostty, which OWNS the viewport: on the primary screen it
@@ -2684,14 +2721,23 @@ struct GhosttyMetalLayerView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> GhosttyLayerBackedView {
         let view = GhosttyLayerBackedView()
+        // Do NOT create the surface here (mirrors the macOS makeNSView). SwiftUI builds the representable
+        // for an off-window probe/sizing pass too; creating the libghostty surface in that throwaway view
+        // spawns a full renderer/io thread set, STEALS `model.surface` from the on-screen pane via
+        // `attachSurface`, and starts a 60Hz CADisplayLink that leaks if dismantle is never called. Just
+        // remember the model — the surface is created lazily once the view enters a real window
+        // (`didMoveToWindow`), so EXACTLY ONE surface exists per pane.
+        view.model = model
         view.isFocusedPane = isFocused
-        view.attach(model: model)
         return view
     }
 
     func updateUIView(_ uiView: GhosttyLayerBackedView, context: Context) {
+        uiView.model = model
+        // Attach only on-window (idempotent). The off-window probe view never reaches here with a
+        // window set, so it never calls `ghostty_surface_new`.
+        if uiView.window != nil { uiView.attach(model: model) }
         uiView.isFocusedPane = isFocused
-        uiView.attach(model: model)
     }
 
     static func dismantleUIView(_ uiView: GhosttyLayerBackedView, coordinator: ()) {
@@ -2710,7 +2756,7 @@ final class GhosttyLayerBackedView: UIView {
     var metalLayer: CAMetalLayer { layer as! CAMetalLayer }
 
     private var surface: GhosttySurface?
-    private weak var model: TerminalViewModel?
+    weak var model: TerminalViewModel?   // set by the representable; read by the window-gated attach
     /// Whether THIS pane is the workspace's focused pane (set by the representable). Drives libghostty's
     /// render FOCUS so an unfocused pane shows ghostty's hollow non-blinking cursor (focused = solid block),
     /// matching the macOS sibling. Forwarding unfocus does NOT freeze the pane — output still presents via
@@ -2760,9 +2806,14 @@ final class GhosttyLayerBackedView: UIView {
     private var presentTicks = 0
 
     /// Single arming choke point (mirrors macOS `requestPresent`): content/gesture/layout
-    /// changes arm a few ticks; `renderTick` drains them and goes idle.
+    /// changes arm a few ticks; `renderTick` drains them, then PAUSES the link (device),
+    /// so an idle pane stops paying a permanent 60Hz main-runloop wakeup. Un-pausing HERE
+    /// keeps every arming site correct by construction (any future path must route through
+    /// this or it silently never presents). Nil-safe before the link exists; on the
+    /// SIMULATOR the link free-runs and is never paused, so the un-pause is a no-op there.
     func requestPresent(_ ticks: Int = 3) {
         presentTicks = max(presentTicks, ticks)
+        displayLink?.isPaused = false
     }
 
     // MARK: Pan-to-scroll (touch scrollback)
@@ -2921,8 +2972,28 @@ final class GhosttyLayerBackedView: UIView {
         requestPresent(2)
     }
 
+    /// The surface is created ONLY once the view is in a real window — never for SwiftUI's off-window
+    /// probe pass (mirrors the macOS `viewDidMoveToWindow`): `ghostty_surface_new` spawns libghostty's
+    /// renderer/io threads, and a probe-spawned duplicate also steals `model.surface` from the on-screen
+    /// pane. Leaving the window invalidates the display link so a detached view never keeps a 60Hz
+    /// main-runloop wakeup alive (dismantle is not guaranteed to run for every discarded view).
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil {
+            if let model { attach(model: model) }
+            startRenderTickIfNeeded()
+            requestPresent(8)   // prime the initial glyph flush
+        } else {
+            displayLink?.invalidate()   // off-window: stop ticking so a detached view never spins
+            displayLink = nil
+        }
+    }
+
+    /// Idempotent: builds the surface on first call (only when on-window), then attaches it to the
+    /// model. Safe to call repeatedly from `updateUIView` / `didMoveToWindow`.
     func attach(model: TerminalViewModel) {
         self.model = model
+        guard window != nil else { return }   // never spawn a surface for the off-window probe view
         installPanToScrollIfNeeded()
         installTapIfNeeded()
         if surface == nil {
@@ -2965,16 +3036,17 @@ final class GhosttyLayerBackedView: UIView {
         lastForwardedFocus = isFocusedPane
         surface?.setFocus(isFocusedPane)
         requestPresent(8)   // prime the initial glyph flush / flush the replay (mirrors macOS)
+    }
 
-        // Start the render-thread pacing tick (idempotent). 60 fps is plenty for a
-        // terminal; libghostty coalesces (its updateFrame is dirty-gated, so idle ticks
-        // are cheap no-ops).
-        if displayLink == nil {
-            let link = CADisplayLink(target: self, selector: #selector(renderTick))
-            link.preferredFramesPerSecond = 60
-            link.add(to: .main, forMode: .common)
-            displayLink = link
-        }
+    /// Starts the render-thread pacing tick (idempotent, window-gated — mirrors the macOS
+    /// `startRenderTickIfNeeded`). 60 fps is plenty for a terminal; on device the tick is
+    /// `presentTicks`-gated and pauses itself when drained, so idle costs nothing.
+    private func startRenderTickIfNeeded() {
+        guard displayLink == nil, window != nil else { return }
+        let link = CADisplayLink(target: self, selector: #selector(renderTick))
+        link.preferredFramesPerSecond = 60
+        link.add(to: .main, forMode: .common)
+        displayLink = link
     }
 
     @objc private func renderTick() {
@@ -2987,7 +3059,13 @@ final class GhosttyLayerBackedView: UIView {
         // wakeup + mutex churn per pane, even fully idle). KEEP drawNow when armed — the
         // macOS setNeedsDisplay/displayIfNeeded present path does not exist on iOS (the
         // IOSurfaceLayer is an unwired SUBLAYER here).
-        guard presentTicks > 0 else { return }
+        guard presentTicks > 0 else {
+            // Ticks drained → PAUSE the link entirely (the macOS renderTick pattern): an idle
+            // pane stops costing even the 60Hz main-runloop wakeup of a no-op tick.
+            // `requestPresent` (the single arming choke point) un-pauses.
+            displayLink?.isPaused = true
+            return
+        }
         presentTicks -= 1
         surface?.drawNow()
         #endif
@@ -3011,8 +3089,10 @@ final class GhosttyLayerBackedView: UIView {
         surface = nil
         detaching?.close()
         // Identity-gated detach (see the macOS sibling): a stale duplicate view's detach must not nil
-        // the live surface the model is still feeding.
-        model?.detachSurface(detaching)
+        // the live surface the model is still feeding. A surface-LESS view (an off-window probe that
+        // never attached) makes NO call at all — `detachSurface(nil)` takes the unconditional
+        // else-branch and clears the LIVE pane's surface, freezing the visible terminal.
+        if let detaching { model?.detachSurface(detaching) }
     }
 
     /// The last (bounds.size, scale) actually APPLIED to a live surface — the iOS mirror of

@@ -194,6 +194,18 @@ public final class HostServer: @unchecked Sendable {
     /// never touch the real Application Support dir — hostd main wires `makeFromEnvironment()`).
     private let scrollbackJournals: ScrollbackJournalStore?
 
+    /// Cadence for the periodic ``ScrollbackJournalStore/sweep()`` pass that runs for the life of
+    /// the daemon (see ``scrollbackJournals``'s docs). hostd is a week/month-long process: a
+    /// single sweep at init leaves orphaned `<uuid>.scrollback` files from link-drop detaches and
+    /// TTL evictions unbounded until a daemon restart. Injectable so tests can drive the loop
+    /// without a wall-clock day; production default = daily.
+    public let scrollbackSweepInterval: Duration
+
+    /// Handle for the periodic sweep loop (nil when disk persistence/detach is off). Cancelled in
+    /// ``stop()`` so a repeated Start→Stop cycle never leaks a background loop (mirrors
+    /// ``HostTransport``'s `reaperTask`).
+    private var journalSweepTask: Task<Void, Never>?
+
     public init(
         port: UInt16,
         shellPath: String? = nil,
@@ -209,6 +221,7 @@ public final class HostServer: @unchecked Sendable {
         detachMaxSessions: Int? = nil,
         resumeOnRecovery: Bool? = nil,
         scrollbackJournals: ScrollbackJournalStore? = nil,
+        scrollbackSweepInterval: Duration = .seconds(24 * 3600),
     ) {
         self.port = port
         self.shellPath = shellPath ?? HostEnvironment.loginShell()
@@ -219,6 +232,7 @@ public final class HostServer: @unchecked Sendable {
         self.agentControlSocketPath = agentControlSocketPath
         self.ctlBinaryPath = ctlBinaryPath
         self.blocksEnabled = blocksEnabled
+        self.scrollbackSweepInterval = scrollbackSweepInterval
         transport = HostTransport()
 
         // S3: resolve detach from env (default-ON: only "0" disables) unless overridden by the caller.
@@ -250,11 +264,14 @@ public final class HostServer: @unchecked Sendable {
         detachedStore = effectiveDetach ? DetachedSessionStore(maxSessions: detachMaxSessionsResolved) : nil
 
         // Disk scrollback journals ride the same gate as detach (see the property docs). Sweep
-        // orphans OFF the init path — a cold Application Support scan must never delay startup.
+        // orphans OFF the init path — a cold Application Support scan must never delay startup —
+        // then keep re-sweeping on ``scrollbackSweepInterval`` for the life of the daemon: hostd
+        // is a week/month-long process, and a single init-time sweep would leave orphans from
+        // link-drop detaches and TTL evictions unbounded until a daemon restart.
         let journals = effectiveDetach ? scrollbackJournals : nil
         self.scrollbackJournals = journals
         if let journals {
-            Task.detached(priority: .utility) { journals.sweep() }
+            startJournalSweep(journals: journals)
         }
 
         // Non-deliberate ends of life the store handles ITSELF (TTL + overflow eviction) never
@@ -265,6 +282,25 @@ public final class HostServer: @unchecked Sendable {
         detachedStore?.onEvicted = { [weak self] sessionID in
             self?.scrollbackJournals?.release(sessionID: sessionID)
             self?.unregisterHookSink(sessionID: sessionID)
+        }
+    }
+
+    /// Launches the periodic disk-scrollback sweep — ``ScrollbackJournalStore/sweep()`` re-run at
+    /// ``scrollbackSweepInterval`` cadence for the life of the daemon (see ``scrollbackJournals``'s
+    /// docs for why a single init-time sweep is not enough). Mirrors `HostTransport.startReaper()`'s
+    /// shape. No `self` capture needed: `journals` and the interval are plain values, and the loop
+    /// is torn down by cancelling ``journalSweepTask`` (``stop()``), not by `self` deallocating.
+    private func startJournalSweep(journals: ScrollbackJournalStore) {
+        let interval = scrollbackSweepInterval
+        journalSweepTask = Task.detached(priority: .utility) {
+            while !Task.isCancelled {
+                journals.sweep()
+                do {
+                    try await Task.sleep(for: interval)
+                } catch {
+                    return // cancelled
+                }
+            }
         }
     }
 
@@ -313,6 +349,8 @@ public final class HostServer: @unchecked Sendable {
         // than forking a shell that would be minted after the drain below and outlive the daemon.
         markStopping()
         muxAcceptTask?.cancel()
+        journalSweepTask?.cancel()
+        journalSweepTask = nil
         await transport.stop()
         // R5 rank 8: tear the channels down in PARALLEL on the concurrent teardown queue instead of
         // serially (each `shutdown()` blocks up to ~0.25s for an interactive shell that ignores SIGTERM,

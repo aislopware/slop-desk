@@ -63,13 +63,7 @@ struct RailStructureKey: Equatable {
             TabKey(id: tab.id, panes: tab.allPaneIDs().map { paneID in
                 let spec = session.specs[paneID]
                 let kind = spec?.kind ?? .terminal
-                // Mirror `RailRowsBuilder.rowTitle`'s escape order: a terminal pane consults the
-                // foreground process only when it has a spec, is NOT user-renamed, and has no cwd folder
-                // name — exactly the case where a process change changes the TITLE (structural).
-                let titledByProcess = kind == .terminal
-                    && spec != nil
-                    && !(spec?.userRenamed == true && spec?.title.isEmpty == false)
-                    && RailRowsBuilder.cwdFolderName(spec?.lastKnownCwd) == nil
+                let titledByProcess = Self.titledByProcess(kind: kind, spec: spec)
                 return PaneKey(
                     id: paneID,
                     spec: spec,
@@ -78,6 +72,21 @@ struct RailStructureKey: Equatable {
                 )
             })
         }
+    }
+
+    /// Mirrors `RailRowsBuilder.rowTitle`'s escape order: a terminal pane consults the foreground process
+    /// only when it has a spec, is NOT user-renamed, and has no cwd folder name — exactly the case where a
+    /// process change changes the TITLE (structural). The ONE guard deciding whether reading
+    /// `store.paneForegroundProcess[id]` is even worthwhile — shared by this fingerprint AND the titlebar /
+    /// window-title reads (``SlateTitlebar``'s `activeTitle`, `WorkspaceRootView.windowTitle(for:)`; perf
+    /// audit 2026-07-11) so all three title sites register the volatile process dict as an Observation
+    /// dependency ONLY for a pane that would actually retitle by it — a background pane's process tick
+    /// otherwise re-evaluates a body/view that can never change as a result.
+    static func titledByProcess(kind: PaneKind, spec: PaneSpec?) -> Bool {
+        kind == .terminal
+            && spec != nil
+            && !(spec?.userRenamed == true && spec?.title.isEmpty == false)
+            && RailRowsBuilder.cwdFolderName(spec?.lastKnownCwd) == nil
     }
 }
 

@@ -251,7 +251,7 @@ final class InspectorGlueTests: XCTestCase {
         // The store's makeInspector seam: hand the session a loopback-backed client (no network).
         let session = LivePaneSession.make(
             PaneSpec(kind: .terminal, title: "claude"),
-            makeClient: { makeUnconnectedClient() },
+            makeClient: { _ in makeUnconnectedClient() },
             makeInspector: { _ in InspectorClient(channel: clientCh) },
         )
 
@@ -290,7 +290,7 @@ final class InspectorGlueTests: XCTestCase {
 
         let session = LivePaneSession.make(
             PaneSpec(kind: .terminal, title: "claude"),
-            makeClient: { makeUnconnectedClient() },
+            makeClient: { _ in makeUnconnectedClient() },
             makeInspector: { _ in InspectorClient(channel: clientCh) },
         )
         detectClaude(in: session)
@@ -322,7 +322,7 @@ final class InspectorGlueTests: XCTestCase {
         var clientHandedOut = 0
         let session = LivePaneSession.make(
             PaneSpec(kind: .terminal, title: "claude"),
-            makeClient: { makeUnconnectedClient() },
+            makeClient: { _ in makeUnconnectedClient() },
             makeInspector: { _ in
                 clientHandedOut += 1
                 return InspectorClient(channel: clientCh)
@@ -361,7 +361,7 @@ final class InspectorGlueTests: XCTestCase {
 
         let session = LivePaneSession.make(
             PaneSpec(kind: .terminal, title: "claude"),
-            makeClient: { makeUnconnectedClient() },
+            makeClient: { _ in makeUnconnectedClient() },
             makeInspector: { _ in InspectorClient(channel: clientCh) },
         )
         let vm = try XCTUnwrap(session.inspector)
@@ -397,7 +397,7 @@ final class InspectorGlueTests: XCTestCase {
 
         let session = LivePaneSession.make(
             PaneSpec(kind: .terminal, title: "claude"),
-            makeClient: { makeUnconnectedClient() },
+            makeClient: { _ in makeUnconnectedClient() },
             makeInspector: { _ in InspectorClient(channel: clientCh) },
         )
         let vm = try XCTUnwrap(session.inspector)
@@ -431,7 +431,7 @@ final class InspectorGlueTests: XCTestCase {
         var makeInspectorCalled = false
         let session = LivePaneSession.make(
             PaneSpec(kind: .terminal, title: "term"),
-            makeClient: { makeUnconnectedClient() },
+            makeClient: { _ in makeUnconnectedClient() },
             makeInspector: { _ in
                 makeInspectorCalled = true
                 return nil
@@ -460,7 +460,7 @@ final class InspectorGlueTests: XCTestCase {
         let store = WorkspaceStore(liveModel: .tree, makeSession: { spec in
             LivePaneSession.make(
                 spec,
-                makeClient: { makeUnconnectedClient() },
+                makeClient: { _ in makeUnconnectedClient() },
                 makeInspector: { _ in
                     makeInspectorCalls += 1
                     let (host, client) = LoopbackByteChannel.pair()
@@ -501,7 +501,7 @@ final class InspectorGlueTests: XCTestCase {
         var hostSides: [InspectorSource] = []
         let session = LivePaneSession.make(
             PaneSpec(kind: .terminal, title: "claude"),
-            makeClient: { makeUnconnectedClient() },
+            makeClient: { _ in makeUnconnectedClient() },
             makeInspector: { _ in
                 let (host, client) = LoopbackByteChannel.pair()
                 hostSides.append(InspectorSource(channel: host))
@@ -530,7 +530,7 @@ final class InspectorGlueTests: XCTestCase {
         var makeInspectorCalled = false
         let session = LivePaneSession.make(
             PaneSpec(kind: .terminal, title: "term"),
-            makeClient: { makeUnconnectedClient() },
+            makeClient: { _ in makeUnconnectedClient() },
             makeInspector: { _ in
                 makeInspectorCalled = true
                 return nil

@@ -83,7 +83,7 @@ final class ClaudeKindRemovalTests: XCTestCase {
         var madeInspector = false
         let session = LivePaneSession.make(
             PaneSpec(kind: .terminal, title: "term"),
-            makeClient: {
+            makeClient: { _ in
                 SlopDeskClient(makeTransport: {
                     MuxClientTransport(
                         acquire: { _, _, _, _ in throw SlopDeskTransportError.notConnected("inert") },

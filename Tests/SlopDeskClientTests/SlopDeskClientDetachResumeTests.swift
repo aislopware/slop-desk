@@ -51,6 +51,108 @@ final class SlopDeskClientDetachResumeTests: XCTestCase {
         await client.close()
     }
 
+    // MARK: - (f) init(resumeSeed:) seeds synchronously at construction (closes seed-resume-identity-race)
+
+    /// The production race this closes (`LivePaneSession.swift` — `makeClientSeeded`): the OLD code
+    /// built the client via a zero-arg factory, then fired an UNAWAITED
+    /// `Task { await c.seedResumeIdentity(...) }` before returning it. Nothing ordered that seed
+    /// job's actor-hop ahead of `ConnectionViewModel.performConnect()`'s own separately-scheduled
+    /// `connect()` Task — under cold-launch restore of many panes, the seed could lose the race and
+    /// `connect()` would read a nil `sessionID` (fresh shell) instead of the restored one.
+    ///
+    /// The fix threads the identity through `init(resumeSeed:)`, which sets `sessionID` /
+    /// `highestContiguousSeq` / `highestSeqFed` INSIDE the synchronous initializer. This test proves
+    /// that: it reads the fields back immediately after construction with no `seedResumeIdentity`
+    /// call, no `Task`, and no sleep — deterministic, not timing-dependent. (A fail-first run against
+    /// the OLD API shape is not possible: `resumeSeed:` did not exist before this fix, so there is no
+    /// prior API surface to fail against — this is the "new init param IS the fix" case called out in
+    /// the audit.)
+    func testInitResumeSeedIsSetSynchronouslyBeforeConstructorReturns() async {
+        let savedID = UUID()
+        let savedSeq: Int64 = 42
+
+        let recording = RecordingTransport(resumeFromSeq: savedSeq, returningClient: true)
+        let client = SlopDeskClient(
+            makeTransport: { recording },
+            resumeSeed: (sessionID: savedID, lastSeq: savedSeq),
+        )
+
+        // No seedResumeIdentity, no Task — just read the actor state right after `init` returned.
+        let seededSessionID = await client.sessionID
+        let seededSeq = await client.highestContiguousSeq
+        XCTAssertEqual(
+            seededSessionID, savedID,
+            "init(resumeSeed:) must set sessionID before the initializer returns",
+        )
+        XCTAssertEqual(
+            seededSeq, savedSeq,
+            "init(resumeSeed:) must set highestContiguousSeq before the initializer returns",
+        )
+
+        await client.close()
+    }
+
+    /// The init-seeded client presents the seed on the FIRST `connect()` — the same wire contract
+    /// `testSeededIdentityIsPresentedToTransport` proves for `seedResumeIdentity`, but via the
+    /// race-proof construction path.
+    func testInitResumeSeedIsPresentedToTransportOnFirstConnect() async throws {
+        let savedID = UUID()
+        let savedSeq: Int64 = 123
+
+        let recording = RecordingTransport(resumeFromSeq: savedSeq, returningClient: true)
+        let client = SlopDeskClient(
+            makeTransport: { recording },
+            resumeSeed: (sessionID: savedID, lastSeq: savedSeq),
+        )
+
+        try await client.connect(host: "h", port: 1)
+
+        let (presentedResume, presentedSeq) = await recording.connectArgs
+        XCTAssertEqual(presentedResume, savedID, "init-seeded sessionID must be presented in channelOpen")
+        XCTAssertEqual(presentedSeq, savedSeq, "init-seeded seq must be presented as lastReceivedSeq")
+
+        await client.close()
+    }
+
+    /// REGRESSION GUARD: races the init-seeded construction against concurrent unrelated actor traffic
+    /// on the SAME client, from separate unstructured `Task`s (mirroring the shape that made the OLD
+    /// fire-and-forget `seedResumeIdentity` Task nondeterministic — two independent Tasks hopping onto
+    /// the same actor with no ordering between them). Because the seed is set inside the synchronous
+    /// `init` — before either Task exists — there is no interleaving under which `connect()` can
+    /// observe an unseeded client. Repeated across many iterations so a reintroduced async gap between
+    /// construction and seeding would show up as flake, not pass on a single lucky scheduling.
+    func testInitResumeSeedNeverLosesRaceAgainstConcurrentActorTraffic() async {
+        for _ in 0..<200 {
+            let savedID = UUID()
+            let savedSeq: Int64 = 7
+
+            let recording = RecordingTransport(resumeFromSeq: savedSeq, returningClient: true)
+            let client = SlopDeskClient(
+                makeTransport: { recording },
+                resumeSeed: (sessionID: savedID, lastSeq: savedSeq),
+            )
+
+            // Two independent unstructured Tasks race on the SAME actor — same shape as
+            // ConnectionViewModel's "seed job" vs "connect job", except there is no seed job left:
+            // the seed already landed synchronously in init before either Task was created.
+            async let noise: Void = client.setInitialCwd("/tmp")
+            async let connected: Void = { try? await client.connect(host: "h", port: 1) }()
+            _ = await (noise, connected)
+
+            let (presentedResume, presentedSeq) = await recording.connectArgs
+            XCTAssertEqual(
+                presentedResume, savedID,
+                "the init seed must never lose the race against concurrent actor traffic",
+            )
+            XCTAssertEqual(
+                presentedSeq, savedSeq,
+                "the init seed's seq must never lose the race against concurrent actor traffic",
+            )
+
+            await client.close()
+        }
+    }
+
     // MARK: - (b) No seed → newSessionID (fresh-shell path unchanged)
 
     func testNoSeedPresentsFreshSessionID() async throws {
