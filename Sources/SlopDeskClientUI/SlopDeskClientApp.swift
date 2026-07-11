@@ -1103,6 +1103,18 @@ final class SlopDeskAppTerminationDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let store = Self.store else { return .terminateNow }
         guard !draining else { return .terminateCancel } // drain in flight — its reply resolves the quit
+        // QUIT-CONFIRM (2026-07-11): a stray ⌘Q reached the app while the user was working the Host
+        // Windows rail — the log shows `performKeyEquivalent: → terminate:` with no intent (the
+        // user read the vanish as a CRASH; rcmd/XKey event-tap leaks are prime suspects). With any
+        // tab open, an interactive quit asks first. Apple-Event quits (osascript, logout/shutdown)
+        // skip the dialog — blocking automation or logout is worse than a stray quit.
+        if QuitConfirmPolicy.requiresConfirmation(
+            hasOpenTabs: store.tree.sessions.contains { !$0.tabs.isEmpty },
+            isAppleEventQuit: NSAppleEventManager.shared().currentAppleEvent != nil,
+            envValue: ProcessInfo.processInfo.environment["SLOPDESK_QUIT_CONFIRM"],
+        ), !Self.confirmQuit() {
+            return .terminateCancel
+        }
         draining = true
         // Persist BEFORE the async drain so even an interrupted drain window keeps the layout; the
         // willTerminate flush re-saves after the reply (idempotent, and the authoritative last word).
@@ -1112,6 +1124,30 @@ final class SlopDeskAppTerminationDelegate: NSObject, NSApplicationDelegate {
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
+    }
+
+    /// The confirm dialog itself (GUI — the decision lives in ``QuitConfirmPolicy``). Return = Quit,
+    /// Esc = Cancel: an intentional quit costs one keystroke; a stray one becomes a visible dialog
+    /// instead of a vanished window.
+    private static func confirmQuit() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Quit SlopDesk?"
+        alert.informativeText = "Host sessions keep running; your workspace reattaches on the next launch."
+        alert.addButton(withTitle: "Quit")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+}
+
+/// PURE quit-confirmation decision (unit-pinned in `QuitConfirmPolicyTests`): interactive quits with
+/// any open tab confirm; Apple-Event quits (automation, logout) and an explicit
+/// `SLOPDESK_QUIT_CONFIRM=0` never do. An empty workspace quits silently — there is nothing to lose.
+enum QuitConfirmPolicy {
+    static func requiresConfirmation(
+        hasOpenTabs: Bool, isAppleEventQuit: Bool, envValue: String?,
+    ) -> Bool {
+        guard envValue != "0" else { return false } // default-ON idiom (CLAUDE.md env table)
+        return hasOpenTabs && !isAppleEventQuit
     }
 }
 
