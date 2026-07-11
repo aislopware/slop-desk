@@ -863,59 +863,6 @@ typedef struct {
   ssize_t selected;
 } ghostty_action_search_selected_s;
 
-// apprt.action.TmuxStateChanged
-typedef struct {
-  uint32_t window_count;
-  uint32_t pane_count;
-} ghostty_action_tmux_state_changed_s;
-
-// apprt.action.TmuxCommandResponse
-// Pointer lifetime: data is valid only for the duration of the action
-// callback invocation. The consumer must copy data if needed beyond that.
-typedef struct {
-  const char* data;
-  size_t len;
-  bool is_error;
-} ghostty_action_tmux_command_response_s;
-
-// apprt.action.TmuxExit
-// reason is inline (not a pointer), so no lifetime concerns.
-typedef struct {
-  char reason[15];
-  uint8_t reason_len;
-} ghostty_action_tmux_exit_s;
-
-
-// apprt.action.TmuxActiveWindowChanged
-typedef struct {
-  uint32_t window_id;
-} ghostty_action_tmux_active_window_changed_s;
-
-
-// apprt.action.TmuxSessionRenamed
-// Session name stored inline to avoid dangling-pointer risk.
-// Names longer than 23 characters are truncated.
-typedef struct {
-  char name[23];
-  uint8_t name_len;
-} ghostty_action_tmux_session_renamed_s;
-
-// apprt.action.TmuxFocusedPaneChanged
-typedef struct {
-  uint32_t window_id;
-  uint32_t pane_id;
-} ghostty_action_tmux_focused_pane_changed_s;
-
-// apprt.action.TmuxSubscriptionChanged
-// Pointer lifetime: name and value are valid only for the duration of the
-// action callback invocation. The consumer must copy if needed.
-typedef struct {
-  const char* name;
-  const char* value;
-  size_t value_len;
-} ghostty_action_tmux_subscription_changed_s;
-
-
 // terminal.Scrollbar
 typedef struct {
   uint64_t total;
@@ -990,14 +937,6 @@ typedef enum {
   GHOSTTY_ACTION_SEARCH_SELECTED,
   GHOSTTY_ACTION_READONLY,
   GHOSTTY_ACTION_COPY_TITLE_TO_CLIPBOARD,
-  GHOSTTY_ACTION_TMUX_STATE_CHANGED,
-  GHOSTTY_ACTION_TMUX_EXIT,
-  GHOSTTY_ACTION_TMUX_READY,
-  GHOSTTY_ACTION_TMUX_COMMAND_RESPONSE,
-  GHOSTTY_ACTION_TMUX_ACTIVE_WINDOW_CHANGED,
-  GHOSTTY_ACTION_TMUX_SESSION_RENAMED,
-  GHOSTTY_ACTION_TMUX_FOCUSED_PANE_CHANGED,
-  GHOSTTY_ACTION_TMUX_SUBSCRIPTION_CHANGED,
 } ghostty_action_tag_e;
 
 typedef union {
@@ -1039,13 +978,6 @@ typedef union {
   ghostty_action_search_total_s search_total;
   ghostty_action_search_selected_s search_selected;
   ghostty_action_readonly_e readonly;
-  ghostty_action_tmux_state_changed_s tmux_state_changed;
-  ghostty_action_tmux_command_response_s tmux_command_response;
-  ghostty_action_tmux_exit_s tmux_exit;
-  ghostty_action_tmux_active_window_changed_s tmux_active_window_changed;
-  ghostty_action_tmux_session_renamed_s tmux_session_renamed;
-  ghostty_action_tmux_focused_pane_changed_s tmux_focused_pane_changed;
-  ghostty_action_tmux_subscription_changed_s tmux_subscription_changed;
 } ghostty_action_u;
 
 typedef struct {
@@ -1172,7 +1104,6 @@ void ghostty_surface_draw_now(ghostty_surface_t);
 void ghostty_surface_set_content_scale(ghostty_surface_t, double, double);
 void ghostty_surface_set_focus(ghostty_surface_t, bool);
 void ghostty_surface_set_occlusion(ghostty_surface_t, bool);
-
 void ghostty_surface_set_size(ghostty_surface_t, uint32_t, uint32_t);
 ghostty_surface_size_s ghostty_surface_size(ghostty_surface_t);
 void ghostty_surface_set_color_scheme(ghostty_surface_t,
@@ -1185,7 +1116,6 @@ bool ghostty_surface_key_is_binding(ghostty_surface_t,
                                     ghostty_binding_flags_e*);
 void ghostty_surface_text(ghostty_surface_t, const char*, uintptr_t);
 void ghostty_surface_write_output(ghostty_surface_t, const char*, uintptr_t);
-
 void ghostty_surface_preedit(ghostty_surface_t, const char*, uintptr_t);
 bool ghostty_surface_mouse_captured(ghostty_surface_t);
 bool ghostty_surface_mouse_button(ghostty_surface_t,
@@ -1222,113 +1152,10 @@ bool ghostty_surface_read_text(ghostty_surface_t,
                                ghostty_text_s*);
 void ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*);
 
-// Selection bounds in viewport coordinates (points).
-// Returns false if no selection or not visible in viewport.
-typedef struct {
-  double start_x; // Top-left of first selected cell (points)
-  double start_y;
-  double end_x;   // Bottom-right of last selected cell (points)
-  double end_y;
-} ghostty_selection_bounds_s;
-bool ghostty_surface_selection_bounds(ghostty_surface_t,
-                                      ghostty_selection_bounds_s*);
-
 #ifdef __APPLE__
 void ghostty_surface_set_display_id(ghostty_surface_t, uint32_t);
 void* ghostty_surface_quicklook_font(ghostty_surface_t);
 bool ghostty_surface_quicklook_word(ghostty_surface_t, ghostty_text_s*);
-
-// iOS ScreenSearch-based sync API (replaces xev-based search thread)
-typedef struct {
-    intptr_t total;    // Total matches found (-1 on error)
-    intptr_t selected; // Selected match index (-1 if none)
-    bool success;      // True if operation succeeded
-    intptr_t screen_type;   // 0 = primary screen, 1 = alternate screen
-    intptr_t total_rows;    // Total rows in screen (scrollback + visible)
-    intptr_t visible_rows;  // Number of visible rows
-} ghostty_search_result_s;
-
-ghostty_search_result_s ghostty_surface_search_start(ghostty_surface_t,
-                                                      const char*,
-                                                      uintptr_t);
-ghostty_search_result_s ghostty_surface_search_next(ghostty_surface_t);
-ghostty_search_result_s ghostty_surface_search_prev(ghostty_surface_t);
-void ghostty_surface_search_end(ghostty_surface_t);
-// === tmux Control Mode API (iOS) ===
-// These APIs expose Ghostty's native tmux control mode viewer for iOS apps.
-// When a surface enters tmux control mode (via tmux -CC), Ghostty internally
-// creates Terminal instances for each pane with full scrollback support.
-// These APIs allow iOS to query and render those pane Terminals.
-
-// Get number of tmux panes (returns 0 if not in tmux mode)
-size_t ghostty_surface_tmux_pane_count(ghostty_surface_t);
-
-// Get tmux pane IDs. Returns number of IDs written to out_ids array.
-// Returns 0 if not in tmux control mode.
-size_t ghostty_surface_tmux_pane_ids(ghostty_surface_t,
-                                     size_t* out_ids,
-                                     size_t max_count);
-
-// Set which tmux pane this surface renders AND routes input to.
-// Returns true if successful, false if pane_id not found or not in tmux mode.
-bool ghostty_surface_tmux_set_active_pane(ghostty_surface_t, size_t pane_id);
-
-// Set which tmux pane receives input (send-keys) WITHOUT swapping the renderer.
-// Used in multi-surface mode where each pane has its own rendering surface.
-// Returns true if successful, false if pane_id not found or not in tmux mode.
-bool ghostty_surface_tmux_set_active_pane_input_only(ghostty_surface_t, size_t pane_id);
-
-// Reset to render the main terminal (not a tmux pane).
-void ghostty_surface_tmux_reset_active_pane(ghostty_surface_t);
-
-// Info about a tmux window.
-typedef struct {
-  size_t id;          // tmux window ID (e.g., 0 for @0)
-  size_t width;       // columns
-  size_t height;      // rows
-  size_t name_len;    // actual name length (may exceed buffer if truncated)
-} ghostty_tmux_window_info_s;
-
-// Get number of tmux windows (returns 0 if not in tmux mode)
-size_t ghostty_surface_tmux_window_count(ghostty_surface_t);
-
-// Get info about a tmux window by index.
-// Copies window name into out_name (up to name_buf_len bytes).
-// Returns zeroed struct if index out of bounds or not in tmux mode.
-ghostty_tmux_window_info_s ghostty_surface_tmux_window_info(
-    ghostty_surface_t, size_t index, char* out_name, size_t name_buf_len);
-
-// Get raw tmux layout string for a window by index.
-// Copies into out_buf (up to buf_len bytes). Returns actual length.
-// Returns 0 if index out of bounds or not in tmux mode.
-size_t ghostty_surface_tmux_window_layout(
-    ghostty_surface_t, size_t index, char* out_buf, size_t buf_len);
-
-// Get the active tmux window ID. Returns -1 if not in tmux mode or none set.
-ssize_t ghostty_surface_tmux_active_window_id(ghostty_surface_t);
-
-// Get the focused pane ID for a tmux window by index (from %window-pane-changed).
-// This is the pane tmux considers focused, not the apprt-set active pane.
-// Returns -1 if not in tmux mode, index out of bounds, or no focus known.
-ssize_t ghostty_surface_tmux_window_focused_pane_id(ghostty_surface_t, size_t index);
-
-// Bind a target surface's renderer to a tmux pane terminal owned by a source
-// surface's tmux viewer. The target will render the pane content and stay in
-// sync when the source's pane map is rebuilt. Returns true on success.
-bool ghostty_surface_tmux_attach_to_pane(ghostty_surface_t target, ghostty_surface_t source, size_t pane_id);
-
-// Detach a target surface from its tmux pane binding. Restores the original
-// mutex and terminal pointer. No-op if not attached.
-void ghostty_surface_tmux_detach_pane(ghostty_surface_t target);
-
-// Send an arbitrary tmux command. The response arrives asynchronously via
-// the tmux_command_response action callback. Returns true if queued/sent,
-// false if not in tmux mode or on error.
-bool ghostty_surface_tmux_send_command(ghostty_surface_t, const char*, size_t);
-
-// Request graceful detach from the tmux session. Sends detach-client to tmux,
-// which causes tmux to send %exit (triggering normal cleanup). Thread-safe.
-void ghostty_surface_tmux_detach(ghostty_surface_t surface);
 #endif
 
 ghostty_inspector_t ghostty_surface_inspector(ghostty_surface_t);

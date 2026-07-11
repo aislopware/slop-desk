@@ -18,13 +18,17 @@
 #   5. Verify the external-IO symbols are present in the FINAL assembled library (nm)
 #      and print "OK: <path>" or a precise failure.
 #
-# APPROACH (b): pin the daiimus fork SHA DIRECTLY. The external-IO C API
-#   (ghostty_surface_write_output, write_callback/resize_callback config fields,
-#   GHOSTTY_BACKEND_EXTERNAL, ghostty_surface_set_size, ghostty_surface_key/_text)
-#   already exists on this branch via src/termio/External.zig (~470 LOC) + the C glue
-#   in src/apprt/embedded.zig. No upstream patch to author/rebase → most reliable path
-#   to the symbols. The equivalent source delta is recorded in External.zig.patch for
-#   documentation / future upstream-rebase reference.
+# SOURCE (2026-07-11 SLIM DELTA): upstream ghostty @ the pinned tag + ONE consolidated
+#   slopdesk patch carrying ONLY what SlopDesk uses: the external-IO backend
+#   (src/termio/External.zig + backend union + embedded.zig C glue: write_output,
+#   draw_now, write_callback/resize_callback/backend_type), the iOS embedding fixes
+#   (config load_string/load_file_len, NoHomeDir, Metal teardown UAF fix, panic
+#   handler), the Unicode-17 width tables, defensive search-engine fixes, and the
+#   slopdesk updateFrame serialization (`update_mutex` in generic.zig — closes the
+#   main-thread-draw vs renderer-thread data race). The daiimus fork's tmux
+#   control-mode viewer + iOS sync-search API were DROPPED 2026-07-11 (SlopDesk
+#   replaces tmux; nothing referenced those symbols). Historical provenance of the
+#   original fork delta stays recorded in External.zig.patch + README.
 #
 # ─────────────────────────────────────────────────────────────────────────────
 # macOS-26.5-HOST CAVEATS (this recipe was proven on macOS 26.5 / Xcode 26.5 / arm64)
@@ -85,12 +89,13 @@ set -euo pipefail
 # ─────────────────────────────────────────────────────────────────────────────
 # PINS — change deliberately; see ThirdParty/ghostty/README.md.
 # ─────────────────────────────────────────────────────────────────────────────
-# SOURCE = canonical upstream ghostty @ a pinned TAG + the slopdesk "fork-delta" patch
-# (the daiimus external-backend fork: External.zig + tmux control-mode viewer + search + the
-# embedded C glue, rebased onto the tag) + slopdesk patches 0001/0002 (§2b). This is REPRODUCIBLE
-# against canonical upstream — no dependency on the daiimus fork remaining available at build
-# time. §2 uses an already-prepared .work/ghostty-src tree as-is when present (sentinel check),
-# else clones the tag and applies the fork-delta patch. See README "Chosen fork + pins".
+# SOURCE = canonical upstream ghostty @ a pinned TAG + ONE consolidated slopdesk SLIM
+# delta patch (external-IO backend + iOS fixes + updateFrame serialization; the tmux/
+# search fork surface was dropped 2026-07-11 — see the header note above). REPRODUCIBLE
+# against canonical upstream — no dependency on the daiimus fork remaining available at
+# build time. §2 uses an already-prepared .work/ghostty-src tree as-is when present
+# (sentinel check), else clones the tag and applies the delta. See README "Pins + the
+# SLIM delta".
 GHOSTTY_UPSTREAM_REPO="https://github.com/ghostty-org/ghostty.git"  # canonical upstream
 GHOSTTY_TAG="v1.3.1"                                                # pinned upstream tag
 # Provenance of the fork delta (NOT cloned at build time; recorded for rebase reference):
@@ -263,15 +268,17 @@ fi
 log "preflight OK: zig ${ZIG_VERSION} links via the shim (SDK ${MACOS_SDK_SHIM_PATH})."
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2. Source = upstream ghostty @ GHOSTTY_TAG + fork-delta patch (reproducible).
-#    Sentinel: a prepared tree already carries src/termio/External.zig (the fork's
-#    external backend) AND the 0002 `queueWriteLocked` fix in Termio.zig. If both are
-#    present, USE THE TREE AS-IS (don't clobber a hand-prepared / mid-rebase tree).
-#    Otherwise clone the pinned upstream tag and apply the consolidated fork delta;
-#    §2b then layers the small ordered slopdesk patches (0001/0002).
+# 2. Source = upstream ghostty @ GHOSTTY_TAG + the SLIM slopdesk delta (reproducible).
+#    Sentinel: a prepared tree already carries src/termio/External.zig (the external
+#    backend) AND the `update_mutex` updateFrame serialization in generic.zig (the
+#    2026-07-11 slim delta marker — an OLD fat tree with the tmux fork delta lacks
+#    it and gets re-prepared). If both are present, USE THE TREE AS-IS (don't
+#    clobber a hand-prepared / mid-rebase tree). Otherwise clone the pinned
+#    upstream tag and apply the consolidated slim delta; §2b then layers any
+#    ordered slopdesk patches (currently none — the delta is fully consolidated).
 # ─────────────────────────────────────────────────────────────────────────────
 if [ -f "${SRC_DIR}/src/termio/External.zig" ] \
-   && grep -q "queueWriteLocked" "${SRC_DIR}/src/termio/Termio.zig" 2>/dev/null; then
+   && grep -q "update_mutex" "${SRC_DIR}/src/renderer/generic.zig" 2>/dev/null; then
     log "using prepared source tree at ${SRC_DIR} (HEAD $(git -C "${SRC_DIR}" rev-parse --short HEAD 2>/dev/null || echo '?'))"
 else
     log "preparing source: clone ${GHOSTTY_UPSTREAM_REPO} @ ${GHOSTTY_TAG} + apply ${FORKDELTA_PATCH##*/}"
@@ -281,7 +288,7 @@ else
         || fail "git clone of upstream ${GHOSTTY_TAG} failed (network blocked?)."
     git -C "${SRC_DIR}" apply --whitespace=nowarn "${FORKDELTA_PATCH}" \
         || fail "fork-delta patch ${FORKDELTA_PATCH##*/} did not apply to ${GHOSTTY_TAG} (tag/patch drift — regenerate)."
-    log "fork delta applied onto ${GHOSTTY_TAG} (external backend + tmux viewer + search + C glue)."
+    log "slim delta applied onto ${GHOSTTY_TAG} (external-IO backend + iOS fixes + updateFrame serialization; NO tmux/search)."
 fi
 
 # Confirm the external-IO symbols are actually present in the source header before
@@ -303,14 +310,11 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 # 2b. Apply SlopDesk's local libghostty patches (idempotent).
 #
-#   patches/0001-slopdesk-sync-updateframe-in-draw.patch — makes core Surface.draw()
-#   run renderer.updateFrame() synchronously BEFORE drawFrame(), so a synchronous
-#   `ghostty_surface_draw` rebuilds the cell buffer on the CALLING (app) thread.
-#   Without it the only cell-rebuild path is the renderer thread's libxev `wakeup`
-#   async, which is NOT pumped after the initial startup notify on the iOS
-#   Simulator — so the terminal paints only a background with no glyphs. With the
-#   patch the Simulator renders correctly; it is harmless (idempotent rebuild)
-#   on device and macOS. updateFrame locks renderer_state.mutex internally.
+#   Currently NONE — the 2026-07-11 slim consolidation folded the former 0001
+#   (sync updateFrame in draw, now race-fixed via generic.zig `update_mutex`)
+#   into the consolidated delta and retired 0002 (its recursive-lock trigger
+#   left with the tmux queueWrite wrapping). The loop stays for future
+#   surgical patches layered on top of the consolidated delta.
 # ─────────────────────────────────────────────────────────────────────────────
 PATCH_DIR="${SCRIPT_DIR}/patches"
 if [ -d "${PATCH_DIR}" ]; then

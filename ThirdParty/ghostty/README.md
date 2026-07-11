@@ -15,45 +15,66 @@ that renderer.
 
 ---
 
-## Chosen fork + pins
+## Pins + the SLIM delta (2026-07-11)
 
 | Pin | Value | Source of truth |
 |-----|-------|-----------------|
 | **Upstream** | `ghostty-org/ghostty` @ **`v1.3.1`** | canonical tag (2026-03-13); the reproducible base |
-| Fork delta | `daiimus/ghostty:ios-external-backend` (= v1.3.0 + external backend) | `patches/slopdesk-libghostty-on-v1.3.1.patch` |
-| Merge SHA (local) | `c38ee78…` | local merge of v1.3.1 + fork delta + 0001/0002 (not on any remote) |
+| **Slopdesk delta** | ONE consolidated patch, 17 files, +1155/−341 | `slopdesk-libghostty-on-v1.3.1.patch` |
+| Slim SHA (local) | `5c78c84…` (branch `slim` in `.work/ghostty-src`) | v1.3.1 + the slim delta (not on any remote) |
 | **Zig** | `0.15.2` | the source's `build.zig.zon` `minimum_zig_version` (0.16 not adoptable — see below) |
 | Zig SHA-256 | `3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b` | `zig-aarch64-macos-0.15.2.tar.xz` |
 
-**2026-06-06 — bumped ghostty 1.3.0 → 1.3.1.** The source is canonical upstream **`v1.3.1`**
-with the daiimus external-backend fork delta merged on top (External.zig + the tmux
-control-mode viewer + search + embedded C glue), plus the two slopdesk patches. The merge
-took ONE conflict (Surface.zig `io_backend` init block — resolved by keeping the fork's
-`uses_external` branching and porting v1.3.1's `working-directory` `.value()` change). The
-v1.3.1 embedded ABI change `read_clipboard_cb` `void → bool` is absorbed in the integration
-(`CGhostty/ghostty.h` + the Swift callback returns `true`, since we complete the request
-synchronously). Reproducible recipe: `git clone --branch v1.3.1` upstream + apply
-`patches/slopdesk-libghostty-on-v1.3.1.patch` (+ 0001/0002); `build-libghostty.sh` automates it.
+**2026-07-11 — SLIMMED the delta: tmux control-mode + iOS sync-search DROPPED.** The
+patch-audit round confirmed SlopDesk references **zero** `ghostty_surface_tmux_*` /
+`ghostty_surface_search_*` / `ghostty_surface_selection_bounds` symbols (SlopDesk *is*
+the tmux replacement), so the fork's tmux viewer (~10k patch lines incl. the DCS/ST
+parser rewrite in `dcs.zig`/`parse_table.zig` and a per-keystroke mutex round-trip in
+`queueWrite`) was cut. What the consolidated patch now carries — the COMPLETE list:
 
-### Why this fork, directly (approach **(b)**)
+- **External-IO backend**: `src/termio/External.zig` (~470 LOC), the `external` arm in
+  `src/termio/backend.zig`, `src/termio.zig` export, the `embedded.zig` glue
+  (`ghostty_surface_write_output`, `ghostty_surface_draw_now`, `getTermioBackend`/
+  `usesExternalBackend`, `backend_type`/`write_callback`/`resize_callback` surface-config
+  fields) + the matching `include/ghostty.h` declarations, and `Surface.zig`'s
+  backend-selection block in `init()` (+ the `.external` arm in `childExitedAbnormally`).
+- **Termio torn-read fix**: `self.size = size` moved INSIDE `renderer_state.mutex` in
+  `Termio.resize` — with the external backend, `processOutput` runs on the embedder's
+  feed thread and reads `size` under that mutex.
+- **updateFrame serialization** (the ex-patch-0001, race-fixed): `Surface.draw()` calls
+  `renderer.updateFrame()` synchronously (iOS-Simulator wakeup-pump bug + crisp macOS
+  resize reflow), and the NEW `update_mutex` in `src/renderer/generic.zig` serializes
+  every `updateFrame` entry — closing the main-thread-draw vs renderer-thread data race
+  the 2026-07-11 audit found (`terminal_state` periodic reset, highlight rebuilds, and
+  `dirty=false` all mutate outside `state.mutex`/`draw_mutex`). Lock order:
+  `update_mutex → state.mutex → draw_mutex`.
+- **iOS embedding fixes**: `ghostty_config_load_file_len`/`ghostty_config_load_string`
+  (iOS has no default config paths) + `NoHomeDir` tolerance in `Config.zig`, the
+  `Metal.zig` teardown UAF fix (clear display callback + `removeFromSuperlayer` in
+  `deinit`/`loopExit` — the upstream-#13021 class), the `main_c.zig` iOS panic handler,
+  and lib-mode logging in `global.zig`.
+- **Unicode 17 width tables** (`src/simd/codepoint_width.*`) and two defensive
+  `unreachable`→graceful-return fixes in `src/terminal/search/` (upstream's own search
+  engine; ReleaseFast `unreachable` is UB).
 
-Two routes were possible: (a) pin **upstream** ghostty + author our own `External.zig`
-patch, or (b) pin a **daiimus** SHA that already carries the external-IO API. We chose
-**(b)** because it most reliably yields the symbols:
+**What was dropped** (present in the pre-2026-07-11 fat delta; recoverable from git
+history of this file + the old patch): the tmux control-mode viewer
+(`src/terminal/tmux/*`, `stream_handler.zig` observer plumbing, `apprt` tmux
+actions/messages, `Surface.zig` pane bindings, 14 `ghostty_surface_tmux_*` C APIs), the
+iOS sync-search C API, `ghostty_surface_selection_bounds`, and the unconditional
+DCS/ST/`parse_table` rewrite (upstream FSM behavior is restored). The `queueWriteLocked`
+patch (ex-0002) is gone WITH its trigger: upstream `queueWrite` never touches
+`renderer_state.mutex`, so the recursive-lock hazard no longer exists.
 
-- The external-IO C API (`ghostty_surface_write_output`, the `write_callback` /
-  `resize_callback` config fields, `GHOSTTY_BACKEND_EXTERNAL`) **does not exist in
-  upstream Ghostty** (verified against the header); it exists only on the forks.
-- `daiimus/ghostty:ios-external-backend` ships a complete `src/termio/External.zig`
-  (~470 LOC: `init`/`deinit`/`threadEnter`/`resize`/`queueWrite` + write/resize
-  callbacks + unit tests) plus the C glue in `src/apprt/embedded.zig` — strictly more
-  complete than `wiedymi/ghostty:custom-io` (which lacks the resize callback and is
-  frozen), and proven in a shipping iOS app (Geistty).
-- Authoring our own patch against a moving upstream SHA adds rebase risk for **zero
-  benefit** over pinning a branch that already builds. We still record the source delta
-  in [`External.zig.patch`](External.zig.patch) so a future upstream rebase has the exact
-  change in hand. `build-libghostty.sh` does **not** apply it — the pinned branch already
-  contains it.
+Historical provenance: the external backend originated in
+`daiimus/ghostty:ios-external-backend` @ `21c71734` (v1.3.0-based, frozen since
+2026-03-10); the original ~470-LOC backend delta stays recorded in
+[`External.zig.patch`](External.zig.patch). The pre-slim consolidated fork delta
+(32 files, +9469/−793 incl. tmux) is in git history at tag-time `a499d3d1^`.
+
+Reproducible recipe: `git clone --branch v1.3.1` upstream + apply
+`slopdesk-libghostty-on-v1.3.1.patch`; `build-libghostty.sh` automates it (its §2
+sentinel = `External.zig` present + `update_mutex` in `generic.zig`).
 
 `brew`'s `zig 0.16.0` cannot build this source (see below). The build script ignores brew
 and downloads the pinned **0.15.2** into the gitignored `.toolchain/`, used via a
@@ -82,10 +103,10 @@ New `GHOSTTY_API` visibility macro is harmless for static linking (`GHOSTTY_STAT
 - **External-IO backend stays fork-only.** Upstream PR #10484 (Manual termio backend, ~our
   approach) was closed unmerged with zero review; no tracking issue exists. Official iOS support
   ships an embedded UIView platform but its termio is `exec`-only — the fork delta remains required.
-- **daiimus fork is frozen** at our pinned `21c71734` (2026-03-10, zero commits since). It also
-  carries a large tmux-control-mode integration (upstream #1935, unmerged) beyond the External.zig
-  delta — on the next rebase consider carrying ONLY External.zig + embedded glue and dropping the
-  tmux surface area we don't use.
+- **daiimus fork is frozen** at `21c71734` (2026-03-10, zero commits since). Its tmux
+  delta was DROPPED from our tree 2026-07-11 (see "Pins + the SLIM delta") — we now carry
+  only External.zig + the embedded glue + slopdesk fixes, so the next upstream rebase is
+  ~2k patch lines instead of ~12.5k.
 - **Known live bug upstream+forks**: iOS Metal-teardown use-after-free on `ghostty_surface_free`
   (issue #13021, closed without a merged fix; `Metal.zig` at HEAD has no `loopExit`/`threadExit`).
   Affects any Metal-embedding iOS app freeing a surface during renderer teardown — re-check before
@@ -144,8 +165,8 @@ ZIG_BUILD_TIMEOUT_SECS=1800 ThirdParty/ghostty/build-libghostty.sh
 The script is idempotent (re-runnable with no manual cleanup):
 
 1. Downloads pinned Zig → `.toolchain/` (gitignored), **verifying SHA-256**.
-2. Clones the pinned fork SHA → `.work/ghostty-src` (gitignored); fast-fails if the
-   external-IO symbols are not in the source header (wrong SHA).
+2. Clones upstream @ `v1.3.1` → `.work/ghostty-src` (gitignored) and applies the slim
+   delta patch; fast-fails if the external-IO symbols are not in the source header.
 3. `zig build -Demit-xcframework=true -Dxcframework-target=<native|universal>
    -Doptimize=ReleaseFast` with the build-local Zig. First run also fetches ~15 Zig
    package deps into `.work/zig-global-cache` (network required).
@@ -156,9 +177,11 @@ The script is idempotent (re-runnable with no manual cleanup):
 
 **Gitignored** (derived/large; reproducible from the pins above):
 `.toolchain/`, `.work/`, `libghostty.xcframework/`, `GhosttyKit.xcframework/`.
-**Committed**: this README, `build-libghostty.sh`, `External.zig.patch`,
+**Committed**: this README, `build-libghostty.sh`,
+`slopdesk-libghostty-on-v1.3.1.patch` (the consolidated slim delta),
+`External.zig.patch` (historical provenance),
 `integration/CGhostty/{module.modulemap,ghostty.h}`,
-`integration/GhosttySurface/GhosttySurface.swift`.
+`integration/GhosttySurface/*.swift`.
 
 ---
 
