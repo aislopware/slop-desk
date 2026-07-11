@@ -86,16 +86,20 @@ func enumerateHostWindows() -> [WindowFeedSourceWindow] {
             offScreenByPID[pid, default: []].append(number)
         }
     }
-    // Minimized-vs-other-Space disambiguation (Phase 5): the budgeted AXMinimized probe. Only
-    // off-screen windows are ambiguous; probe failures leave `false` (the tooltip's honest
-    // "On another Space" fallback).
+    // Off-screen AX classification (Phase 5 + junk filter): the budgeted `kAXWindows` probe marks
+    // which off-screen windows are MINIMIZED and which have any AX evidence of being real at all —
+    // the snapshot builder drops the evidence-less ones (phantom `.optionAll` entries). Probe
+    // failures leave both flags `false` (the window hides until a later sweep succeeds).
     if !offScreenByPID.isEmpty {
         let now = TimeInterval(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
-        let minimized = minimizedProbe.minimizedWindowIDs(offScreenByPID: offScreenByPID, now: now)
-        for index in offScreen.indices where minimized.contains(offScreen[index].windowID) {
-            offScreen[index].isMinimized = true
+        let verdicts = minimizedProbe.classify(offScreenByPID: offScreenByPID, now: now)
+        for index in offScreen.indices {
+            let id = offScreen[index].windowID
+            offScreen[index].isMinimized = verdicts.minimized.contains(id)
+            offScreen[index].isAXListed = verdicts.axListed.contains(id)
         }
     }
+    minimizedProbe.retain(onlyWindowIDs: Set(onScreen.map(\.windowID) + offScreen.map(\.windowID)))
     // CGWindowList orders on-screen windows front-to-back; off-screen order is unspecified — keep
     // the z-ordered block first so the client's first seed (and the focused-window pick) is honest.
     return onScreen + offScreen

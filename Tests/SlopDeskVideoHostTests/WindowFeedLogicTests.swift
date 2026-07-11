@@ -19,11 +19,12 @@ final class WindowFeedLogicTests: XCTestCase {
         hidden: Bool = false,
         frontmost: Bool = false,
         minimized: Bool = false,
+        axListed: Bool = false,
     ) -> WindowFeedSourceWindow {
         WindowFeedSourceWindow(
             windowID: id, ownerName: owner, bundleID: bundleID, layer: layer, isOnScreen: onScreen,
             title: title, widthPt: w, heightPt: h, displayIndex: display, isAppHidden: hidden,
-            isFrontmostApp: frontmost, isMinimized: minimized,
+            isFrontmostApp: frontmost, isMinimized: minimized, isAXListed: axListed,
         )
     }
 
@@ -49,6 +50,22 @@ final class WindowFeedLogicTests: XCTestCase {
         XCTAssertTrue(WindowFeedInclusionPolicy.includes(ownerName: "Ghostty", widthPt: 80, heightPt: 80))
     }
 
+    func testOffScreenWindowsNeedAXEvidence() {
+        // The phantom-window junk filter (user report 2026-07-11: 16 of 27 records were Chrome tab
+        // caches / panel services / `loginwindow`): an OFF-SCREEN window is listed only with AX
+        // evidence — its app's `kAXWindows` sweep returned it (axListed) or called it minimized.
+        // On-screen windows never need evidence.
+        let records = WindowFeedSnapshotBuilder.records(from: [
+            source(id: 1, onScreen: true), // on screen — always in
+            source(id: 2, onScreen: false), // phantom: no evidence — OUT
+            source(id: 3, onScreen: false, minimized: true), // real minimized window — in
+            source(id: 4, onScreen: false, axListed: true), // real other-Space window — in
+            source(id: 5, onScreen: false, hidden: true), // hidden app's PHANTOM: still no AX — OUT
+            source(id: 6, onScreen: false, hidden: true, axListed: true), // hidden app's real window — in
+        ])
+        XCTAssertEqual(records.map(\.windowID), [1, 3, 4, 6])
+    }
+
     // MARK: Builder — flags
 
     func testFlagsMapStateBits() {
@@ -61,7 +78,9 @@ final class WindowFeedLogicTests: XCTestCase {
     func testFocusedWindowIsTheFrontmostAppsFirstOnScreenWindowOnly() {
         let records = WindowFeedSnapshotBuilder.records(from: [
             source(id: 1, onScreen: true, frontmost: false),
-            source(id: 2, onScreen: false, frontmost: true), // frontmost app's minimized window: never focused
+            // frontmost app's MINIMIZED window: never focused (minimized also keeps it past the
+            // off-screen AX-evidence gate, so this pin still exercises the focused-bit rule).
+            source(id: 2, onScreen: false, frontmost: true, minimized: true),
             source(id: 3, onScreen: true, frontmost: true), // ← the focused one (first on-screen in z-order)
             source(id: 4, onScreen: true, frontmost: true), // same app, behind: frontmostApp but NOT focused
         ])

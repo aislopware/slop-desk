@@ -25,3 +25,37 @@ final class MinimizedProbeBudgetTests: XCTestCase {
         XCTAssertEqual(budget.pidsToProbe([1, 9], now: 101), [9])
     }
 }
+
+/// PURE per-window AX-evidence ledger behind the probe (the phantom-window junk filter,
+/// 2026-07-11): fold semantics, the explicit not-listed verdict for swept-but-absent ids, and the
+/// closed-window prune. Headless — no AX.
+final class WindowAXLedgerTests: XCTestCase {
+    func testFoldMarksSweptWindowsListedAndAbsentOffScreenOnesPhantom() {
+        var ledger = WindowAXLedger()
+        // The app's sweep returned windows 10 (normal) and 11 (minimized); CGWindowList also showed
+        // off-screen ids 11 and 99 for this pid — 99 is the phantom.
+        ledger.fold(sweep: [10: false, 11: true], offScreenIDs: [11, 99])
+        XCTAssertEqual(ledger.verdict(for: 10), .init(axListed: true, minimized: false))
+        XCTAssertEqual(ledger.verdict(for: 11), .init(axListed: true, minimized: true))
+        XCTAssertEqual(ledger.verdict(for: 99), .init(axListed: false, minimized: false))
+        XCTAssertNil(ledger.verdict(for: 42), "never-probed windows have NO verdict (not a phantom one)")
+    }
+
+    func testPhantomVerdictIsOverwrittenWhenALaterSweepListsTheWindow() {
+        // A window can be born between the CG enumeration and the AX sweep (or its id recycled) —
+        // the NEXT successful sweep must win over the stale phantom verdict.
+        var ledger = WindowAXLedger()
+        ledger.fold(sweep: [:], offScreenIDs: [7])
+        XCTAssertEqual(ledger.verdict(for: 7)?.axListed, false)
+        ledger.fold(sweep: [7: true], offScreenIDs: [7])
+        XCTAssertEqual(ledger.verdict(for: 7), .init(axListed: true, minimized: true))
+    }
+
+    func testRetainPrunesClosedWindows() {
+        var ledger = WindowAXLedger()
+        ledger.fold(sweep: [10: false], offScreenIDs: [99])
+        ledger.retain(only: [10])
+        XCTAssertNotNil(ledger.verdict(for: 10))
+        XCTAssertNil(ledger.verdict(for: 99), "closed windows leave the ledger")
+    }
+}

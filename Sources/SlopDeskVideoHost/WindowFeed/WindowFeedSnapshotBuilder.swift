@@ -31,6 +31,10 @@ public struct WindowFeedSourceWindow: Equatable, Sendable {
     public var isFrontmostApp: Bool
     /// `AXMinimized` (best-effort, budgeted — Phase 5; false when not probed).
     public var isMinimized: Bool
+    /// Whether the AX probe has seen this window in its app's `kAXWindows` list (best-effort,
+    /// budgeted; false when not probed). Off-screen windows need this evidence to be listed — see
+    /// ``WindowFeedSnapshotBuilder/records(from:)``.
+    public var isAXListed: Bool
 
     public init(
         windowID: UInt32,
@@ -45,6 +49,7 @@ public struct WindowFeedSourceWindow: Equatable, Sendable {
         isAppHidden: Bool = false,
         isFrontmostApp: Bool = false,
         isMinimized: Bool = false,
+        isAXListed: Bool = false,
     ) {
         self.windowID = windowID
         self.ownerName = ownerName
@@ -58,6 +63,7 @@ public struct WindowFeedSourceWindow: Equatable, Sendable {
         self.isAppHidden = isAppHidden
         self.isFrontmostApp = isFrontmostApp
         self.isMinimized = isMinimized
+        self.isAXListed = isAXListed
     }
 }
 
@@ -101,6 +107,13 @@ public enum WindowFeedSnapshotBuilder {
                       ownerName: w.ownerName, widthPt: w.widthPt, heightPt: w.heightPt,
                   )
             else { continue }
+            // Off-screen windows need AX EVIDENCE to be listed (user report 2026-07-11: the rail
+            // drowned in `.optionAll` phantoms — Chrome tab caches, panel services, `loginwindow`,
+            // 16 of 27 records). A REAL off-screen window (minimized, other Space, hidden app) shows
+            // up in its app's `kAXWindows`; phantom caches never do. Alpha/sharing-state were dead
+            // ends (all 1.0/1). Cold cost: a real off-screen window may hide for the probe's first
+            // few budgeted ticks (≤3 pids/s, 3 s TTL) before appearing — junk-free beats instant.
+            guard w.isOnScreen || w.isMinimized || w.isAXListed else { continue }
             var flags: HostWindowFlags = []
             if w.isOnScreen { flags.insert(.onScreen) }
             if w.isMinimized { flags.insert(.minimized) }

@@ -12,6 +12,13 @@
 > picker/panel re-skin onto `HostWindowListView` replaced by FEED-backed pre-warm (one data source,
 > the battle-tested views stay); peek presents as a native NSPopover anchored to its row (floats
 > above the AppKit split — the OverlayHostView hop was unnecessary).
+>
+> **Post-ship feedback round (2026-07-11, user-tested):** off-screen windows now need AX EVIDENCE
+> (`kAXWindows` sweep) to be listed — `.optionAll` phantoms (Chrome tab caches, panel services)
+> drowned the rail (adjudicated call 14 refined: minimized/other-Space rows stay, evidence-less
+> ones go); the rail's toggles wear `macwindow.on.rectangle` (distinct from the left `sidebar.left`)
+> and ALL top-strip toggles are hover-revealed (otty behavior); a stray ⌘Q (read as a "crash")
+> gained a confirm-quit dialog when tabs are open.
 
 
 The right sidebar that mirrors the host machine's desktop. Synthesized from three designs and nine critiques; every critical/major flaw is resolved inline, every contested call adjudicated.
