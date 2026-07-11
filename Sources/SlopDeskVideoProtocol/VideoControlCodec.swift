@@ -51,6 +51,9 @@ import Foundation
 ///                            | UInt16 recordCount | per record: UInt32 id | UInt16 w | UInt16 h
 ///                            | UInt8 flags | UInt8 displayIndex | lp bundleID | lp app | lp title
 /// type 18 windowFeedCurrent:   UInt32 generation
+/// type 19 appIconRequest:  UInt16 sizePx | lp bundleID
+/// type 20 blobChunk:       UInt8 blobKind | UInt64 blobID | UInt16 metaA | UInt16 metaB
+///                            | UInt8 chunkIndex | UInt8 chunkCount | UInt16 byteCount | bytes
 /// ```
 ///
 /// Liveness keepalive (additive after the resize pair — CONCURRENCY-HOST-1 crash-without-bye):
@@ -292,6 +295,20 @@ public enum VideoControlMessage: Equatable, Sendable {
     /// ack that lets the client distinguish a quiet host from a lost snapshot; steady state on an
     /// unchanged desktop is one subscribe + one of these per renewal. Inert to an old peer.
     case windowFeedCurrent(generation: UInt32)
+    /// Client → host: "send me `bundleID`'s app icon at `sizePx`" — session-LESS like the feed
+    /// subscribe (docs/45 Phase 3; the rail's LOCAL Launch-Services resolve covers most apps, so
+    /// this fires only for host-only apps, once ever per bundleID thanks to the client disk cache).
+    /// The host answers with ``blobChunk`` kind 0 (PNG, single-flight per blobID, LRU-cached).
+    case appIconRequest(sizePx: UInt16, bundleID: String)
+    /// Host → client: one chunk of a binary blob — the ONE shared blob reply for app icons (kind 0,
+    /// PNG, `blobID` = FNV-1a64(bundleID), `metaA` = pxEdge) and window previews (kind 1, JPEG,
+    /// `blobID` = windowID, `metaA`/`metaB` = pxW/pxH — Phase 4). Chunks fit one datagram
+    /// (``blobBytesPerChunk``); the client's `BlobAssembler` reassembles per (kind, blobID) and
+    /// validates image magic before use. Inert to an old peer.
+    case blobChunk(
+        blobKind: UInt8, blobID: UInt64, metaA: UInt16, metaB: UInt16,
+        chunkIndex: UInt8, chunkCount: UInt8, bytes: Data,
+    )
 
     public var messageType: UInt8 {
         switch self {
@@ -313,8 +330,18 @@ public enum VideoControlMessage: Equatable, Sendable {
         case .windowFeedSubscribe: 16
         case .windowFeedSnapshot: 17
         case .windowFeedCurrent: 18
+        case .appIconRequest: 19
+        case .blobChunk: 20
         }
     }
+
+    /// One `blobChunk`'s max data bytes: `VideoPacketizer.maxDatagramSize` (1200) − 5 mux framing −
+    /// 18 message header (type + kind + u64 id + 2×u16 meta + index + count + u16 byteCount). The
+    /// HOST's blob chunker packs against this.
+    public static let blobBytesPerChunk = 1177
+    /// Blob size caps by kind (validate-then-drop: an assembled blob past its cap is hostile).
+    public static let iconBlobMaxBytes = 32 * 1024
+    public static let previewBlobMaxBytes = 48 * 1024
 
     /// The host-side byte cap for ONE `windowFeedSnapshot` chunk's RECORDS (excluding the 9-byte
     /// message header): control datagrams are not packetized, so a chunk must fit one mux datagram —
@@ -433,6 +460,19 @@ public enum VideoControlMessage: Equatable, Sendable {
             }
         case let .windowFeedCurrent(generation):
             out.appendBE(generation)
+        case let .appIconRequest(sizePx, bundleID):
+            out.appendBE(sizePx)
+            out.appendVideoControlLengthPrefixed(bundleID)
+        case let .blobChunk(blobKind, blobID, metaA, metaB, chunkIndex, chunkCount, bytes):
+            // The CALLER (host) must cap `bytes` to one datagram (`blobBytesPerChunk`).
+            out.append(blobKind)
+            out.appendBE(blobID)
+            out.appendBE(metaA)
+            out.appendBE(metaB)
+            out.append(chunkIndex)
+            out.append(chunkCount)
+            out.appendBE(UInt16(truncatingIfNeeded: bytes.count))
+            out.append(bytes)
         }
         return out
     }
@@ -600,6 +640,31 @@ public enum VideoControlMessage: Equatable, Sendable {
             )
         case 18:
             return try .windowFeedCurrent(generation: reader.readUInt32())
+        case 19:
+            let sizePx = try reader.readUInt16()
+            let bundleID = try reader.readVideoControlLengthPrefixed()
+            return .appIconRequest(sizePx: sizePx, bundleID: bundleID)
+        case 20:
+            let blobKind = try reader.readUInt8()
+            let blobID = try reader.readUInt64()
+            let metaA = try reader.readUInt16()
+            let metaB = try reader.readUInt16()
+            let chunkIndex = try reader.readUInt8()
+            let chunkCount = try reader.readUInt8()
+            // Validate-then-drop: a chunk must identify a real slot (mirrors windowFeedSnapshot).
+            guard chunkCount >= 1, chunkIndex < chunkCount else {
+                throw VideoProtocolError.malformed(
+                    "blobChunk chunk \(chunkIndex)/\(chunkCount) is not a valid slot",
+                )
+            }
+            let byteCount = try Int(reader.readUInt16())
+            // `readBytes` bounds-checks against the buffer BEFORE reading, so a corrupt byteCount
+            // drops the datagram rather than over-reading.
+            let bytes = try reader.readBytes(byteCount)
+            return .blobChunk(
+                blobKind: blobKind, blobID: blobID, metaA: metaA, metaB: metaB,
+                chunkIndex: chunkIndex, chunkCount: chunkCount, bytes: bytes,
+            )
         default:
             throw VideoProtocolError.malformed("unknown video control message type \(type)")
         }

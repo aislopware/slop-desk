@@ -182,12 +182,15 @@ public struct VideoClientStateMachine: Sendable {
              .systemDialogList,
              .windowFeedSubscribe,
              .windowFeedSnapshot,
-             .windowFeedCurrent:
+             .windowFeedCurrent,
+             .appIconRequest,
+             .blobChunk:
             // hello / resizeRequest / keepalive / listWindows / focusWindow / listSystemDialogs /
-            // windowFeedSubscribe are all client→host. `windowList` + `systemDialogList` +
-            // `windowFeedSnapshot` + `windowFeedCurrent` ARE host→client but handled out-of-band by
-            // the discovery / system-dialog-monitor / window-feed queries (their own lanes), NOT by
-            // a streaming session's FSM — defensive no-op here.
+            // windowFeedSubscribe / appIconRequest are all client→host. `windowList` +
+            // `systemDialogList` + `windowFeedSnapshot` + `windowFeedCurrent` + `blobChunk` ARE
+            // host→client but handled out-of-band by the discovery / system-dialog-monitor /
+            // window-feed / blob queries (their own lanes), NOT by a streaming session's FSM —
+            // defensive no-op here.
             return []
         }
     }

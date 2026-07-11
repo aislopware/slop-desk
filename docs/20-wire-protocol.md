@@ -578,6 +578,17 @@ media flows. `[UInt8 type][body]`, big-endian:
   ~25 ms apart (the `bye`/`streamCadence` loss pattern). The client assembles per generation (all
   chunks must agree on `chunkCount`), applies the latest fully-assembled generation, and heals any
   loss at the next renewal. All three are inert to an old peer (unknown type → dropped).
+- **App icons + blobs (docs/45 Phase 3):** `appIconRequest` (19, client → host, `UInt16 sizePx` +
+  lp `bundleID`) is session-LESS like the feed subscribe (bootstraps, bye-exempt, lane retired per
+  answer). The host answers with **`blobChunk` (20)** — the ONE shared binary-blob reply: `UInt8
+  blobKind` + `UInt64 blobID` + `UInt16 metaA` + `UInt16 metaB` + `UInt8 chunkIndex` + `UInt8
+  chunkCount` + `UInt16 byteCount` + bytes (≤ `VideoControlMessage.blobBytesPerChunk` per chunk).
+  Kind 0 = app icon (PNG, `blobID` = FNV-1a64(bundleID), `metaA` = pxEdge, assembled cap 32 KB);
+  kind 1 = window preview (JPEG, `blobID` = windowID, `metaA`/`metaB` = pxW/pxH, cap 48 KB — Phase
+  4). The client's shared `BlobAssembler` reassembles per (kind, blobID), caps hostile
+  accumulation, and validates image magic before any cache sees bytes; a request retransmit
+  re-sends every chunk from the host's LRU'd encoded cache (whole-blob re-request — no per-chunk
+  NACK machinery). Both inert to an old peer.
 
 ## 9.3 Video frame datagrams — `FrameFragment` (video channel)
 

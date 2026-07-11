@@ -296,6 +296,16 @@ public final class RemoteWindowModel {
             : nil
     }
 
+    /// Pre-warms the picker list from the LIVE host-window feed (docs/45 Phase 3 consolidation):
+    /// the panel renders instantly from ≤2 s-fresh push data instead of waiting a discovery round
+    /// trip; the on-appear ``refresh()`` still runs its wire round (freshness re-validated). No-op
+    /// once a window is open (the same stale-stamp guard `refresh()` takes) or with nothing to show.
+    public func prewarm(_ windows: [RemoteWindowSummary]) {
+        guard active == nil, !windows.isEmpty else { return }
+        availableWindows = windows
+        loadError = nil
+    }
+
     /// The window list narrowed by a filter query — every whitespace-separated token must match
     /// case-insensitively in the title OR the app name (token-AND, the picker's filter-field policy;
     /// 10+ windows on a busy host made the unfiltered list scroll-blind). Pure + static for tests.

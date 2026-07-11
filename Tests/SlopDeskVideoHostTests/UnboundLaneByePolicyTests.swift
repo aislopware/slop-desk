@@ -54,6 +54,11 @@ final class UnboundLaneByePolicyTests: XCTestCase {
             channel: .control,
             payload: VideoControlMessage.windowFeedSubscribe(knownGeneration: 42).encode(),
         ))
+        // The app-icon fetch (docs/45 Phase 3) is the same session-less shape.
+        XCTAssertFalse(UnboundLaneByeDecider.warrantsBye(
+            channel: .control,
+            payload: VideoControlMessage.appIconRequest(sizePx: 64, bundleID: "com.a.b").encode(),
+        ))
     }
 
     func testHostToClientFeedRepliesNeverWarrantBye() {
@@ -67,6 +72,13 @@ final class UnboundLaneByePolicyTests: XCTestCase {
         ))
         XCTAssertFalse(UnboundLaneByeDecider.warrantsBye(
             channel: .control, payload: VideoControlMessage.windowFeedCurrent(generation: 1).encode(),
+        ))
+        XCTAssertFalse(UnboundLaneByeDecider.warrantsBye(
+            channel: .control,
+            payload: VideoControlMessage.blobChunk(
+                blobKind: 0, blobID: 1, metaA: 0, metaB: 0, chunkIndex: 0, chunkCount: 1,
+                bytes: Data([0x01]),
+            ).encode(),
         ))
     }
 

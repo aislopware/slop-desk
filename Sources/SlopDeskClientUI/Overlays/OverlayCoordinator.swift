@@ -593,7 +593,21 @@ public final class OverlayCoordinator {
     /// Builds a fresh discovery-driving ``RemoteWindowModel`` bound to the live app target so its
     /// `refresh()` lists the current host's windows.
     public func openRemotePicker() {
-        remotePickerModel = RemoteWindowModel(target: connectionTarget)
+        let model = RemoteWindowModel(target: connectionTarget)
+        // Phase-3 consolidation (docs/45): the LIVE push feed pre-warms the picker so it renders
+        // instantly from ≤2 s-fresh data; the panel's on-appear refresh still re-validates.
+        if let feed = hostWindowFeed, feed.isLive {
+            model.prewarm(feed.structure.map { identity in
+                RemoteWindowSummary(
+                    windowID: identity.windowID,
+                    appName: identity.appName,
+                    title: feed.titles[identity.windowID] ?? "",
+                    width: UInt16(clamping: feed.metrics[identity.windowID]?.widthPt ?? 0),
+                    height: UInt16(clamping: feed.metrics[identity.windowID]?.heightPt ?? 0),
+                )
+            })
+        }
+        remotePickerModel = model
         remotePickerVisible = true
     }
 

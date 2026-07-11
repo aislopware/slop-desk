@@ -161,6 +161,17 @@ struct ClientAppMain {
             }
         }
 
+        // App-icon fetch seam (docs/45 Phase 3): one-shot kind-0 blob fetch for HOST-only apps the
+        // client's Launch Services can't resolve. Magic-validated PNG bytes or nil.
+        MainActor.assumeIsolated {
+            HostAppIconQuery.shared = { host, mediaPort, cursorPort, bundleID, sizePx in
+                await AppIconFetch.fetch(
+                    host: host, mediaPort: mediaPort, cursorPort: cursorPort,
+                    bundleID: bundleID, sizePx: sizePx,
+                )
+            }
+        }
+
         // System-dialog poll seam (the "show system popups in their own pane" feature): inject the
         // host system-dialog query so the cross-platform `SystemDialogMonitor` can auto-spawn dialog
         // panes WITHOUT importing the gated video module. Maps the protocol's `SystemDialogSummary` →

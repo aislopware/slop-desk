@@ -891,6 +891,9 @@ Task {
         // tick, not N. The kicker is retained for the daemon's lifetime by the observer registration.
         let windowFeedService = WindowFeedService(mux: mux)
         _ = WindowFeedKicker(service: windowFeedService)
+        // App-icon fetch (docs/45 Phase 3): renders + serves kind-0 icon blobs, LRU-cached per
+        // (bundleID, px) — the client asks once ever per bundleID (its disk cache holds the rest).
+        let appIconService = AppIconService(mux: mux)
         try await mux.start { channelID, channel, data in
             // ORDERING: an ADMITTED lane's sink appends to its session's serial inbound queue
             // SYNCHRONOUSLY, in arrival order, on the transport's serial receive queue — so a mouseUp
@@ -928,6 +931,19 @@ Task {
                     Task { await windowFeedService.answer(
                         channelID: channelID,
                         knownGeneration: knownGeneration,
+                        answerGuard: listAnswerGuard,
+                    ) }
+                }
+            } else if channel == .control, let msg = try? VideoControlMessage.decode(data),
+                      case let .appIconRequest(sizePx, bundleID) = msg
+            {
+                // Session-LESS app-icon fetch (docs/45 Phase 3): render/serve from the LRU chunk
+                // cache, NEVER mint a session. Bootstraps its reply flow exactly like listWindows.
+                if listAnswerGuard.begin(channelID) {
+                    Task { await appIconService.answer(
+                        channelID: channelID,
+                        sizePx: sizePx,
+                        bundleID: bundleID,
                         answerGuard: listAnswerGuard,
                     ) }
                 }

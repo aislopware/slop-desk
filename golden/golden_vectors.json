@@ -3990,6 +3990,23 @@
       "generation": 7,
       "hex": "1200000007",
       "variant": "windowFeedCurrent"
+    },
+    {
+      "bundleID": "com.mitchellh.ghostty",
+      "hex": "1300400015636f6d2e6d69746368656c6c682e67686f73747479",
+      "sizePx": 64,
+      "variant": "appIconRequest"
+    },
+    {
+      "blobID": "16045690984503111693",
+      "blobKind": 0,
+      "bytesHex": "89504e47",
+      "chunkCount": 3,
+      "chunkIndex": 1,
+      "hex": "1400deadbeefcafef00d004000000103000489504e47",
+      "metaA": 64,
+      "metaB": 0,
+      "variant": "blobChunk"
     }
   ],
   "virtualDisplayGeometry": [

@@ -22,6 +22,11 @@ extension Data {
     mutating func appendBE(_ value: Int32) {
         appendBE(UInt32(bitPattern: value))
     }
+
+    mutating func appendBE(_ value: UInt64) {
+        appendBE(UInt32(truncatingIfNeeded: value >> 32))
+        appendBE(UInt32(truncatingIfNeeded: value))
+    }
 }
 
 /// Errors raised while decoding video-path wire messages.
@@ -68,6 +73,12 @@ struct VideoByteReader {
 
     mutating func readInt32() throws -> Int32 {
         try Int32(bitPattern: readUInt32())
+    }
+
+    mutating func readUInt64() throws -> UInt64 {
+        let high = try UInt64(readUInt32())
+        let low = try UInt64(readUInt32())
+        return (high << 32) | low
     }
 
     /// Reads a big-endian `Float64` (IEEE 754 bit pattern). Used by the coordinate /

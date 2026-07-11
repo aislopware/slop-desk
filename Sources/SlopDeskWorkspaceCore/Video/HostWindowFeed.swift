@@ -90,6 +90,20 @@ public final class HostWindowFeedQuery {
     ) -> (any HostWindowFeedLink)?)?
 }
 
+/// The **app-icon fetch seam** (docs/45 Phase 3): the GUI app injects the one-shot icon fetch
+/// (implemented in `SlopDeskVideoClient.AppIconFetch`), so the rail's icon cache can pull HOST-only
+/// app icons over the wire WITHOUT importing the gated video module. Returns magic-validated PNG
+/// bytes, or `nil` (timeout / no icon — the caller's negative cache stops re-asking). `nil` seam ⇒
+/// local-resolve only.
+@preconcurrency
+@MainActor
+public final class HostAppIconQuery {
+    /// App-registered fetch (set once at launch). Args: host, mediaPort, cursorPort, bundleID, sizePx.
+    public static var shared: (@MainActor (
+        _ host: String, _ mediaPort: UInt16, _ cursorPort: UInt16, _ bundleID: String, _ sizePx: UInt16,
+    ) async -> Data?)?
+}
+
 /// A window's structural identity in the rail: the row's `leafIdentity` key (`windowID|bundleID`)
 /// plus the section key (`appName` — fixed for a window's lifetime, so structural by nature).
 public struct HostWindowIdentity: Equatable, Hashable, Sendable, Identifiable {

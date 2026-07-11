@@ -206,12 +206,14 @@ public struct VideoSessionStateMachine: Sendable {
              .displayMax,
              .windowFeedSubscribe,
              .windowFeedSnapshot,
-             .windowFeedCurrent:
-            // Window-list, system-dialog-list AND window-feed discovery are answered at the DAEMON
-            // level (session-less, no capture mint) and never reach a session's state machine.
+             .windowFeedCurrent,
+             .appIconRequest,
+             .blobChunk:
+            // Window-list, system-dialog-list, window-feed AND icon discovery are answered at the
+            // DAEMON level (session-less, no capture mint) and never reach a session's state machine.
             // `windowList`/`systemDialogList`/`scrollOffset`/`contentMask`/`displayMax`/
-            // `windowFeedSnapshot`/`windowFeedCurrent` are host→client and never arrive at the host.
-            // No-op.
+            // `windowFeedSnapshot`/`windowFeedCurrent`/`blobChunk` are host→client and never arrive
+            // at the host. No-op.
             return []
         }
     }

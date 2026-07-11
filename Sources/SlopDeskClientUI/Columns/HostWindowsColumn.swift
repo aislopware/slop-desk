@@ -398,28 +398,142 @@ final class HostWindowRowsMemo {
     }
 }
 
-// MARK: - Local app-icon cache
+// MARK: - App-icon cache (local resolve → disk cache → wire fetch)
 
-/// bundleID → 16pt-ready NSImage, resolved ONCE per bundleID via the LOCAL Mac's Launch Services
-/// (`urlForApplication(withBundleIdentifier:)`). Misses cache too (negative entries), so a host-only
-/// app costs one lookup, not one per render. Phase 3 adds the wire fetch for those misses.
+/// bundleID → 16pt-ready NSImage. Resolution ladder (docs/45 Phase 3): (1) the LOCAL Mac's Launch
+/// Services — the client is a Mac too, so most apps match; (2) the DISK cache of previously wire-
+/// fetched icons (LRU 5 MB); (3) ONE wire fetch per bundleID via the ``HostAppIconQuery`` seam
+/// (single-flight; a magic-validated PNG lands in both caches and bumps ``version`` so rows
+/// re-render). Misses cache negatively — a host-only app with no icon costs one fetch ever.
+/// `@Observable` ONLY for `version`; the row leaves read `icon(forBundleID:)` (which touches it) so
+/// an async icon arrival repaints exactly the rows.
 @MainActor
+@Observable
 final class HostAppIconCache {
     static let shared = HostAppIconCache()
-    private var cache: [String: NSImage?] = [:]
+
+    /// Bumped when a wire-fetched icon lands — the leaves' re-render signal.
+    private(set) var version = 0
+    @ObservationIgnored private var memory: [String: NSImage?] = [:]
+    @ObservationIgnored private var fetching: Set<String> = []
+    /// The wire-fetch target (set by the app once the connection exists; returns `nil` while
+    /// disconnected so no fetch round is wasted). Unset ⇒ local-only.
+    @ObservationIgnored var remoteTarget: (@MainActor () -> ConnectionTarget?)?
+
+    /// The wire-fetch pixel edge (64 px covers 16 pt @2x–@4x rendering).
+    private static let fetchPx: UInt16 = 64
 
     func icon(forBundleID bundleID: String) -> NSImage? {
-        if let hit = cache[bundleID] { return hit }
-        guard !bundleID.isEmpty,
-              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
-        else {
-            cache[bundleID] = NSImage?.none
+        _ = version // register the arrival signal even on the miss path
+        if let hit = memory[bundleID] { return hit }
+        guard !bundleID.isEmpty else {
+            memory[bundleID] = NSImage?.none
             return nil
         }
-        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        // (1) Local Launch Services.
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+            let icon = NSWorkspace.shared.icon(forFile: url.path)
+            icon.size = NSSize(width: 16, height: 16)
+            memory[bundleID] = icon
+            return icon
+        }
+        // (2) Disk cache of prior wire fetches.
+        if let data = HostAppIconDiskCache.read(bundleID: bundleID, px: Self.fetchPx),
+           let icon = Self.rowImage(from: data)
+        {
+            memory[bundleID] = icon
+            return icon
+        }
+        // (3) Wire fetch (single-flight, negative-cached).
+        scheduleFetch(bundleID)
+        memory[bundleID] = NSImage?.none
+        return nil
+    }
+
+    private func scheduleFetch(_ bundleID: String) {
+        guard !fetching.contains(bundleID),
+              let query = HostAppIconQuery.shared,
+              let targetProvider = remoteTarget,
+              let target = targetProvider()
+        else { return }
+        fetching.insert(bundleID)
+        Task { @MainActor [weak self] in
+            let data = await query(target.host, target.mediaPort, target.cursorPort, bundleID, Self.fetchPx)
+            guard let self else { return }
+            fetching.remove(bundleID)
+            guard let data, let icon = Self.rowImage(from: data) else { return } // negative entry stands
+            HostAppIconDiskCache.write(data, bundleID: bundleID, px: Self.fetchPx)
+            memory[bundleID] = icon
+            version += 1 // repaint the rows waiting on this icon
+        }
+    }
+
+    private static func rowImage(from data: Data) -> NSImage? {
+        guard let icon = NSImage(data: data) else { return nil }
         icon.size = NSSize(width: 16, height: 16)
-        cache[bundleID] = icon
         return icon
+    }
+}
+
+/// The wire-fetched icon disk cache: `Caches/host-app-icons/<fnv64(bundleID)>-<px>.png`, pruned
+/// LRU-by-mtime to 5 MB on write. Contents are magic-validated PNGs (the fetch validates before
+/// this layer sees bytes), keyed content-addressably so a hostile bundleID string never becomes a
+/// path component.
+enum HostAppIconDiskCache {
+    static let maxBytes = 5 * 1024 * 1024
+
+    private static var directory: URL? {
+        guard let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+        else { return nil }
+        let dir = base.appendingPathComponent("SlopDesk/host-app-icons", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private static func fileURL(bundleID: String, px: UInt16) -> URL? {
+        // FNV-1a64 of the bundleID — content-addressable, path-safe (matches the wire blobID).
+        var hash: UInt64 = 0xCBF2_9CE4_8422_2325
+        for byte in bundleID.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01B3
+        }
+        return directory?.appendingPathComponent(String(format: "%016llx-%d.png", hash, px))
+    }
+
+    static func read(bundleID: String, px: UInt16) -> Data? {
+        guard let url = fileURL(bundleID: bundleID, px: px),
+              let data = try? Data(contentsOf: url) else { return nil }
+        // Refresh mtime so the LRU prune keeps hot icons.
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
+        return data
+    }
+
+    static func write(_ data: Data, bundleID: String, px: UInt16) {
+        guard let url = fileURL(bundleID: bundleID, px: px) else { return }
+        try? data.write(to: url, options: .atomic)
+        prune()
+    }
+
+    /// Drops oldest-mtime files until the cache fits `maxBytes`.
+    private static func prune() {
+        guard let dir = directory,
+              let files = try? FileManager.default.contentsOfDirectory(
+                  at: dir, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
+              )
+        else { return }
+        var entries: [(url: URL, size: Int, mtime: Date)] = files.compactMap { url in
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            else { return nil }
+            return (url, values.fileSize ?? 0, values.contentModificationDate ?? .distantPast)
+        }
+        var total = entries.reduce(0) { $0 + $1.size }
+        guard total > maxBytes else { return }
+        entries.sort { $0.mtime < $1.mtime }
+        for entry in entries {
+            guard total > maxBytes else { break }
+            try? FileManager.default.removeItem(at: entry.url)
+            total -= entry.size
+        }
     }
 }
 
