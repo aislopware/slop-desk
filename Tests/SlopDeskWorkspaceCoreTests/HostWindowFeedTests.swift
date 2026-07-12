@@ -175,6 +175,11 @@ final class HostWindowFeedTests: XCTestCase {
     func testLoopHoldsOneLinkRenewsAndReceivesPushes() async {
         let tracker = LinkTracker()
         HostWindowFeedQuery.openLink = { _, _, _, onAnswer in tracker.open(onAnswer: onAnswer) }
+        // Deterministic despite wall-clock sleeps: every send is auto-acked `.current` by the
+        // tracker, so a stall-induced staleness dim self-heals within the SAME loop iteration
+        // (send → synchronous ack → live again), and a cancelled sleep no longer runs the
+        // staleness check at all (run() treats early wake-up as "no interval elapsed" — the old
+        // trailing check was this test's flake: teardown timed an interval that never ran).
         let f = feed()
         let task = Task { await f.run() }
         try? await Task.sleep(for: .milliseconds(40))

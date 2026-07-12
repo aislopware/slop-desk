@@ -258,6 +258,10 @@ public final class HostWindowFeed {
             }
             link?.send(knownGeneration: knownGeneration)
             try? await Task.sleep(for: answeredSinceOpen ? renewalGap : firstAnswerGap)
+            // A cancelled wake-up — thrown mid-sleep OR resumed past its deadline with teardown
+            // already requested — is not an elapsed renewal interval: a staleness verdict here
+            // would time an interval that never ran and dim the rail on its way out.
+            guard !Task.isCancelled else { break }
             noteRenewalElapsed()
         }
     }
