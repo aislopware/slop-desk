@@ -97,6 +97,30 @@ final class ScrollbackJournalTests: XCTestCase {
         )
     }
 
+    /// The PRODUCTION store (`makeFromEnvironment` → `ScrollbackReplayTransform`) restores a
+    /// journaled zsh prompt cycle with the width-stale PROMPT_SP mark+fill cluster stripped —
+    /// the last seam between the unit-tested stripper and the wire preamble.
+    func testProductionRestoreStripsPromptEOLMarkClusters() throws {
+        let sessionID = UUID()
+        let store = try XCTUnwrap(ScrollbackJournalStore.makeFromEnvironment(
+            environment: ["SLOPDESK_SCROLLBACK_DIR": tempDir.path],
+        ))
+        let cluster = "\u{1B}[1m\u{1B}[7m%\u{1B}[27m\u{1B}[1m\u{1B}[0m"
+            + String(repeating: " ", count: 121) + "\r \r"
+        let cycle = "ls output\r\n" + cluster + "\u{1B}]133;D;0\u{07}\u{1B}]133;A\u{07}PS1 "
+        store.journal(for: sessionID).append(Data(cycle.utf8))
+        store.journal(for: sessionID).synchronize()
+
+        let restored = try XCTUnwrap(store.restoredScrollback(for: sessionID))
+        let text = try XCTUnwrap(String(bytes: restored, encoding: .utf8))
+        XCTAssertFalse(text.contains("\u{1B}[7m%"), "the standout mark must not reach the preamble")
+        XCTAssertFalse(text.contains(String(repeating: " ", count: 40)), "nor the COLUMNS-wide fill")
+        XCTAssertTrue(text.contains("ls output"), "real output survives")
+        XCTAssertTrue(text.contains("\u{1B}]133;A\u{07}"), "the prompt anchor survives")
+        XCTAssertTrue(restored.suffix(ScrollbackJournalStore.sanitizeSuffix.count)
+            .elementsEqual(ScrollbackJournalStore.sanitizeSuffix))
+    }
+
     // MARK: - Cap / compaction
 
     /// The file is bounded: past 2× cap it compacts to the newest ~cap tail, and the surviving
