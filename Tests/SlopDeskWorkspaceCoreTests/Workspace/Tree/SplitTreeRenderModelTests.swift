@@ -363,10 +363,78 @@ final class SplitTreeRenderModelTests: XCTestCase {
         XCTAssertFalse(handle.canMoveTowardTrailing)
     }
 
-    private func movabilityHandle(leading: Double, trailing: Double) -> SplitTreeRenderModel.DividerHandle {
+    /// Movability is PIXEL-based, not weight-based: a pane whose weight is comfortably above the
+    /// weight floor but whose on-screen extent sits under ``SplitLayoutSolver/defaultMinLeaf`` reads
+    /// as immovable toward it. Regression guard: the weight-only rule (`> minWeight`) calls this
+    /// movable and fails here.
+    func testDividerMovabilityUsesPixelExtentNotWeight() {
+        // span 400, flexSum 2 → the 0.5-weight child renders 100 pt wide, under the 160 pt floor.
+        let handle = movabilityHandle(leading: 0.5, trailing: 1.5, span: 400)
+        XCTAssertGreaterThan(0.5, SplitWeight.minWeight, "premise: the weight floor alone would allow this")
+        XCTAssertFalse(handle.canMoveTowardLeading, "100 pt < the 160 pt pixel floor — dead despite the weight")
+        XCTAssertTrue(handle.canMoveTowardTrailing)
+    }
+
+    // MARK: - Divider drag clamp (the pixel floor the store's relative clamp misses)
+
+    /// The live drag clamps the proposed leading weight so BOTH panes keep the solver's
+    /// ``SplitLayoutSolver/defaultMinLeaf`` along the axis: an over-drag lands exactly at the
+    /// pixel-floor weight, either side; in-range proposals pass through untouched.
+    func testClampedLeadingWeightHoldsThePixelFloor() {
+        // span 1000, flexSum 2 → the 160 pt column floor is weight 160/1000·2 = 0.32.
+        let handle = movabilityHandle(leading: 1, trailing: 1, span: 1000)
+        XCTAssertEqual(handle.clampedLeadingWeight(0), 0.32, accuracy: 1e-9, "leading floor")
+        XCTAssertEqual(handle.clampedLeadingWeight(5), 1.68, accuracy: 1e-9, "trailing floor (sum-preserving)")
+        XCTAssertEqual(handle.clampedLeadingWeight(0.9), 0.9, accuracy: 1e-9, "in-range passes through")
+    }
+
+    /// A ROW seam floors at the min-leaf HEIGHT (120 pt), not the width.
+    func testClampedLeadingWeightUsesHeightFloorForRowSeams() {
+        let handle = SplitTreeRenderModel.DividerHandle(
+            splitID: SplitNodeID(), childIndex: 0, axis: .vertical, rect: .zero,
+            parentSpan: 1000, flexSum: 2, leadingWeight: 1, trailingWeight: 1,
+        )
+        XCTAssertEqual(handle.clampedLeadingWeight(0), 0.24, accuracy: 1e-9, "120/1000·2")
+    }
+
+    /// A pair too tight for two pixel floors (span 300 < 2·160): the side already UNDER the floor
+    /// can only be grown — the drag works toward balance (shrink the 210 pt side down to its 160 pt
+    /// floor, feeding the starved 90 pt side) and never past it. The cursor agrees: one-way toward
+    /// the bigger side only.
+    func testClampedLeadingWeightRescuesOverTightPairTowardBalance() {
+        // lead 1.4 / trail 0.6 of flexSum 2 over span 300 → extents 210 / 90; floor weight 160/300·2.
+        let handle = movabilityHandle(leading: 1.4, trailing: 0.6, span: 300)
+        let floorWeight = 160.0 / 300.0 * 2.0
+        XCTAssertEqual(handle.clampedLeadingWeight(0.2), floorWeight, accuracy: 1e-9, "shrink stops at the floor")
+        XCTAssertEqual(handle.clampedLeadingWeight(1.9), 1.4, accuracy: 1e-9, "growing the 210 pt side is refused")
+        XCTAssertTrue(handle.canMoveTowardLeading, "the over-floor side can still shrink")
+        XCTAssertFalse(handle.canMoveTowardTrailing, "the starved side cannot shrink further")
+    }
+
+    /// BOTH sides under the floor (span too tight for even one): the seam is frozen — clamp returns
+    /// the current weight for any proposal, and the cursor reads dead both ways.
+    func testClampedLeadingWeightFreezesWhenBothSidesUnderFloor() {
+        // extents 60 / 60 over span 120 — nothing can shrink.
+        let handle = movabilityHandle(leading: 0.5, trailing: 0.5, span: 120)
+        XCTAssertEqual(handle.clampedLeadingWeight(0.1), 0.5, accuracy: 1e-9)
+        XCTAssertEqual(handle.clampedLeadingWeight(0.9), 0.5, accuracy: 1e-9)
+        XCTAssertFalse(handle.canMoveTowardLeading)
+        XCTAssertFalse(handle.canMoveTowardTrailing)
+    }
+
+    /// A handle without geometry (span 0 — built outside a layout) passes proposals through: the
+    /// store's weight-domain floor still applies downstream.
+    func testClampedLeadingWeightPassesThroughWithoutGeometry() {
+        let handle = movabilityHandle(leading: 1, trailing: 1, span: 0)
+        XCTAssertEqual(handle.clampedLeadingWeight(0.001), 0.001, accuracy: 1e-12)
+    }
+
+    private func movabilityHandle(
+        leading: Double, trailing: Double, span: CGFloat = 800,
+    ) -> SplitTreeRenderModel.DividerHandle {
         SplitTreeRenderModel.DividerHandle(
             splitID: SplitNodeID(), childIndex: 0, axis: .horizontal, rect: .zero,
-            parentSpan: 800, flexSum: leading + trailing,
+            parentSpan: span, flexSum: leading + trailing,
             leadingWeight: leading, trailingWeight: trailing,
         )
     }

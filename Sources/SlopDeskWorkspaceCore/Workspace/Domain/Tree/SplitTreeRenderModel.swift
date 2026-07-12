@@ -83,20 +83,69 @@ public enum SplitTreeRenderModel {
             self.trailingWeight = trailingWeight
         }
 
+        /// The pixel floor each pane keeps along THIS divider's axis — the solver's declared minimum
+        /// leaf (``SplitLayoutSolver/defaultMinLeaf``): width for a column seam, height for a row seam.
+        /// One source of truth: the drag clamp stopping here is what keeps the render-time floor from
+        /// ever overlapping neighbouring panes.
+        public var axisMinExtent: CGFloat {
+            axis == .horizontal
+                ? SplitLayoutSolver.defaultMinLeaf.width
+                : SplitLayoutSolver.defaultMinLeaf.height
+        }
+
+        /// A child's current on-screen extent along the split axis (`weight / flexSum · parentSpan` —
+        /// the solver's flex share, ignoring `.fixed` bands exactly like the drag's pixel→weight
+        /// conversion). `0` for an unknown span (a handle built without geometry).
+        private func extent(ofWeight weight: Double) -> CGFloat {
+            guard parentSpan > 0, flexSum > 0 else { return 0 }
+            return CGFloat(weight) / flexSum * parentSpan
+        }
+
         /// Whether the divider can move TOWARD the leading child (left for a column seam, up for a row
-        /// seam) — shrinking the leading child, growing the trailing one. The live drag clamps the leading
-        /// weight into `[minWeight, pairSum − minWeight]` (``SplitNode/settingDividerWeight``), so this
-        /// direction is dead once the leading child sits at the floor; a `.fixed` neighbour (weight
-        /// sentinel `0`) kills it too. The half-thousandth slack absorbs float residue from repeated
-        /// drags — a weight parked AT the floor must read as immovable, not "movable by 1e-16".
+        /// seam) — shrinking the leading child, growing the trailing one. Dead once the leading child
+        /// sits at its ``axisMinExtent`` pixel floor (the live drag's clamp,
+        /// ``clampedLeadingWeight(_:)``); a `.fixed` neighbour (weight sentinel `0`) kills it too.
+        /// The half-point slack absorbs float residue from repeated drags — a pane parked AT the floor
+        /// must read as immovable, not "movable by 1e-13 px". A handle without geometry (span 0) falls
+        /// back to the weight-domain floor the store enforces.
         public var canMoveTowardLeading: Bool {
-            leadingWeight > SplitWeight.minWeight + 0.0005 && trailingWeight > 0
+            guard trailingWeight > 0, leadingWeight > 0 else { return false }
+            guard parentSpan > 0 else { return leadingWeight > SplitWeight.minWeight + 0.0005 }
+            return extent(ofWeight: leadingWeight) > axisMinExtent + 0.5
         }
 
         /// The mirror of ``canMoveTowardLeading``: movable toward the TRAILING child (right/down),
-        /// which shrinks the trailing child — dead once IT sits at the ``SplitWeight/minWeight`` floor.
+        /// which shrinks the trailing child — dead once IT sits at the pixel floor.
         public var canMoveTowardTrailing: Bool {
-            trailingWeight > SplitWeight.minWeight + 0.0005 && leadingWeight > 0
+            guard leadingWeight > 0, trailingWeight > 0 else { return false }
+            guard parentSpan > 0 else { return trailingWeight > SplitWeight.minWeight + 0.0005 }
+            return extent(ofWeight: trailingWeight) > axisMinExtent + 0.5
+        }
+
+        /// Clamp a live-drag's proposed leading weight so the pair keeps its ``axisMinExtent`` pixel
+        /// floor — the missing half of the resize contract: the store's weight-domain floor
+        /// (``SplitWeight/minWeight``) is RELATIVE, so on a wide parent it let a drag squash a pane
+        /// to an invisible sliver (the solver then floors the RENDERED size and the neighbour paints
+        /// over it). Sum-preserving like the store clamp; the pixel floor never drops below the
+        /// weight floor.
+        ///
+        /// The bounds BRACKET the current weight (`min(floor, current) … max(pairFloor, current)`),
+        /// so a pair too tight to grant both floors still behaves: a side already under the floor
+        /// can only be GROWN — the drag works toward balance, never past it — and a pair with both
+        /// sides under is frozen. This is exactly the freedom ``canMoveTowardLeading`` /
+        /// ``canMoveTowardTrailing`` report, so the cursor and the gesture always agree. An unknown
+        /// span (handle built without geometry) passes through — the store's weight floor still
+        /// applies.
+        public func clampedLeadingWeight(_ proposed: Double) -> Double {
+            guard parentSpan > 0, flexSum > 0 else { return proposed }
+            let pairSum = leadingWeight + trailingWeight
+            let floorWeight = Double.maximum(
+                Double(axisMinExtent) / Double(parentSpan) * Double(flexSum),
+                SplitWeight.minWeight,
+            )
+            let lower = Double.minimum(floorWeight, leadingWeight)
+            let upper = Double.maximum(pairSum - floorWeight, leadingWeight)
+            return Double.minimum(Double.maximum(proposed, lower), upper)
         }
 
         /// A **stable** SwiftUI identity for the handle — its STRUCTURAL position in the tree

@@ -119,12 +119,15 @@ struct PaneDivider: View {
     /// `startLead +` the translation converted to weight via ``PaneMath/weightDelta(pixelIncrement:axisSpan:flexSum:)``
     /// (`Δpx · flexSum / parentSpan` — the inverse of a flex child's `extent = weight/flexSum·span`, and the
     /// same conversion the keyboard resize uses). It returns 0 for a zero/non-finite span, leaving `base`
-    /// unchanged. The store clamps the result at the min-weight floor.
+    /// unchanged. Clamped by the handle so BOTH panes keep the solver's pixel floor
+    /// (``SplitTreeRenderModel/DividerHandle/clampedLeadingWeight(_:)`` — the store's own clamp is
+    /// weight-relative and let a wide parent squash a pane invisible); over-drags hold at the floor
+    /// and resume when the cursor returns, exactly as with the store clamp.
     private func targetLeadingWeight(translation: CGFloat) -> Double {
         let base = startLead ?? handle.leadingWeight
-        return base + PaneMath.weightDelta(
+        return handle.clampedLeadingWeight(base + PaneMath.weightDelta(
             pixelIncrement: translation, axisSpan: handle.parentSpan, flexSum: handle.flexSum,
-        )
+        ))
     }
 
     @ViewBuilder
