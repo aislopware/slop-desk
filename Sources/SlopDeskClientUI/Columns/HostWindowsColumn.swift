@@ -344,6 +344,11 @@ private struct HostWindowLiveRow: View {
     /// Requests the row's peek (docs/45 Phase 4). `nil` (no preview seam) hides the verb.
     let onPeek: (() -> Void)?
 
+    /// Hover, sensed by the DRAG-SOURCE overlay's tracking area (the overlay owns the row's mouse
+    /// events, so SwiftUI `.onHover` inside `SlateListRow` never fires here) and piped back through
+    /// `hoverOverride`. Also drives the row's own hover choreography below.
+    @State private var hovered = false
+
     var body: some View {
         let title = feed.titles[identity.windowID] ?? ""
         let state = feed.states[identity.windowID]
@@ -355,9 +360,11 @@ private struct HostWindowLiveRow: View {
             onTap: { onAct(NSEvent.modifierFlags.contains(.command)) },
             leading: { icon(dimmed: dimmed) },
             title: {
+                // A DIMMED row (minimized / other Space / hidden app) wakes up under the pointer —
+                // the hover preview of what opening it restores. Colour-only, restyle-in-place.
                 Text(title.isEmpty ? identity.appName : title)
                     .font(.system(size: Slate.Typeface.body, weight: isFrontmost ? .medium : .regular))
-                    .foregroundStyle(dimmed ? Slate.Text.secondary : Slate.Text.primary)
+                    .foregroundStyle(dimmed && !hovered ? Slate.Text.secondary : Slate.Text.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             },
@@ -376,13 +383,15 @@ private struct HostWindowLiveRow: View {
             },
             subtitleTrailing: { _ in },
             trailingOverlay: { _ in },
+            hoverOverride: hovered,
         )
         .help(tooltip(title: title, state: state))
         .contextMenu { contextMenu(streamed: streamed) }
         // DRAG SOURCE (docs/45 round 3): drag the row onto the canvas to place the window — the
         // canvas previews split/dock/new-tab zones (`HostWindowDropAffordance`). An AppKit overlay,
         // NOT `.onDrag` (the row's tap gesture eats the mouse-down — see `HostWindowRowDragSource`);
-        // it also owns the row's left-click, so `onAct` fires from here, not `SlateListRow.onTap`.
+        // it also owns the row's left-click (`onAct`, not `SlateListRow.onTap`) AND its hover
+        // (`hovered`, not `.onHover` — the overlay swallows those events too).
         .overlay {
             HostWindowRowDragSource(
                 payload: HostWindowDragPayload(
@@ -392,12 +401,15 @@ private struct HostWindowLiveRow: View {
                     bundleID: identity.bundleID,
                 ),
                 onAct: onAct,
+                onHover: { hovered = $0 },
             )
         }
     }
 
     /// The 16pt app icon — resolved LOCALLY by bundleID (the client is a Mac too; most apps match).
     /// Unresolved ⇒ the static `macwindow` glyph — no monogram, no loading animation (docs/45 §2).
+    /// On hover the icon perks up: a small scale bump (the pane-move pill's treatment) + a dimmed
+    /// row's icon returns to full strength — colour/scale only, the frame never moves.
     private func icon(dimmed: Bool) -> some View {
         Group {
             if let icon = HostAppIconCache.shared.icon(forBundleID: identity.bundleID) {
@@ -412,7 +424,9 @@ private struct HostWindowLiveRow: View {
                     .frame(width: 16, height: 16)
             }
         }
-        .opacity(dimmed ? 0.5 : 1)
+        .opacity(dimmed && !hovered ? 0.5 : 1)
+        .scaleEffect(hovered ? 1.12 : 1)
+        .animation(Slate.Anim.smallFade, value: hovered)
     }
 
     /// Open-in-Split (docs/45 Phase 5): the split-with-spec op beside the active pane — same

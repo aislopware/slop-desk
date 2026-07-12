@@ -67,22 +67,42 @@ final class HostWindowDragSession {
 struct HostWindowRowDragSource: NSViewRepresentable {
     let payload: HostWindowDragPayload
     let onAct: (_ duplicate: Bool) -> Void
+    /// Hover in/out — the overlay swallows the events SwiftUI `.onHover` rides, so it senses hover
+    /// itself (tracking areas ignore hitTest) and the row styles off this instead.
+    let onHover: (Bool) -> Void
 
     func makeNSView(context _: Context) -> DragView {
         let view = DragView()
         view.payload = payload
         view.onAct = onAct
+        view.onHover = onHover
         return view
     }
 
     func updateNSView(_ view: DragView, context _: Context) {
         view.payload = payload
         view.onAct = onAct
+        view.onHover = onHover
     }
 
     final class DragView: NSView, NSDraggingSource {
         var payload: HostWindowDragPayload?
         var onAct: ((_ duplicate: Bool) -> Void)?
+        var onHover: ((Bool) -> Void)?
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(
+                rect: .zero,
+                options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+                owner: self,
+                userInfo: nil,
+            ))
+        }
+
+        override func mouseEntered(with _: NSEvent) { onHover?(true) }
+        override func mouseExited(with _: NSEvent) { onHover?(false) }
 
         override func mouseDown(with event: NSEvent) {
             guard let window else { return }
@@ -109,6 +129,9 @@ struct HostWindowRowDragSource: NSViewRepresentable {
 
         private func beginDrag(with event: NSEvent) {
             guard let payload else { return }
+            // The pointer conceptually leaves the row (the drag image takes over) — settle the
+            // hover styling; a session end over the row re-enters via the tracking area.
+            onHover?(false)
             // Park the side channel FIRST — the canvas overlay chip + the drop commit read it
             // synchronously (the pasteboard is sealed until drop), and `isDragging` arms the
             // drop catcher's hit-test window.

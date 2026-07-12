@@ -50,7 +50,15 @@ struct SlateListRow<
     /// row with no such affordance.
     @ViewBuilder let trailingOverlay: (_ hovering: Bool) -> TrailingOverlay
 
+    /// EXTERNAL hover, for a row whose events are owned by an AppKit overlay (the host-windows rail's
+    /// drag source swallows the events SwiftUI `.onHover` needs — the overlay senses hover with its own
+    /// tracking area and drives the row through this instead). `nil` (every other caller) keeps the
+    /// shell's own `.onHover`.
+    var hoverOverride: Bool?
+
     @State private var hovering = false
+
+    private var isHovering: Bool { hoverOverride ?? hovering }
 
     private var hasSubtitle: Bool { !(subtitle ?? "").isEmpty }
 
@@ -61,7 +69,7 @@ struct SlateListRow<
                 HStack(spacing: Slate.Metric.space2) {
                     title()
                     Spacer(minLength: Slate.Metric.space2)
-                    titleTrailing(hovering)
+                    titleTrailing(isHovering)
                 }
                 if hasSubtitle {
                     HStack(spacing: Slate.Metric.space2) {
@@ -73,7 +81,7 @@ struct SlateListRow<
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Spacer(minLength: Slate.Metric.space2)
-                        subtitleTrailing(hovering)
+                        subtitleTrailing(isHovering)
                     }
                 }
             }
@@ -84,7 +92,7 @@ struct SlateListRow<
         // the same trailing inset as the content, vertically centered over BOTH lines so it never floats off a
         // single line's baseline (the per-line clusters above fade out under hover to clear the way for it).
         .overlay(alignment: .trailing) {
-            trailingOverlay(hovering)
+            trailingOverlay(isHovering)
                 .padding(.trailing, Slate.Metric.space3)
         }
         .background(rowBackground, in: .rect(cornerRadius: Slate.Metric.radiusTab))
@@ -95,13 +103,13 @@ struct SlateListRow<
         .contentShape(.rect)
         .onTapGesture { onTap?() }
         .onHover { hovering = $0 }
-        .animation(Slate.Anim.smallFade, value: hovering)
+        .animation(Slate.Anim.smallFade, value: isHovering)
         .animation(Slate.Anim.smallFade, value: active)
     }
 
     private var rowBackground: Color {
         if active { Slate.Surface.raised }
-        else if hovering { Slate.State.hover }
+        else if isHovering { Slate.State.hover }
         else { .clear }
     }
 }
