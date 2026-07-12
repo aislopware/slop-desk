@@ -1,17 +1,16 @@
 import Foundation
 
-/// PURE content/congestion-adaptive FPS governor (the regular-cadence successor of the retired
-/// `AdaptiveFPSController`, 2026-06-11).
+/// PURE content/congestion-adaptive FPS governor with a regular-cadence actuation model.
 ///
 /// WHY: under a genuinely bandwidth-starved link, VideoToolbox can only coarsen QP so far — past the
 /// QP51 entropy floor a dense (high-entropy scroll) stream's offered load exceeds whatever rate the
-/// ABR actuated, and the queue/loss spiral starts. Parsec's answer (and now ours) is to drop the
-/// FRAME RATE so each remaining frame gets a bigger byte budget (sharper) AND the aggregate rate
-/// fits the actuated target. The retired controller did this with an alternating skip keyed on the
-/// previous frame's size — delivering frames at irregular 16.7/33.3 ms intervals, which WAS the
-/// measured primary cadence khựng. This governor instead picks a target fps from a clean-divisor
-/// LADDER of the base fps and actuates it through a schedule-anchored ``EncodeCadenceGate`` — so a
-/// governed 30 fps is a metronome-regular every-2nd-delivery cadence, never an alternating skip.
+/// ABR actuated, and the queue/loss spiral starts. Parsec's answer (and ours) is to drop the FRAME
+/// RATE so each remaining frame gets a bigger byte budget (sharper) AND the aggregate rate fits the
+/// actuated target. An alternating skip keyed on the previous frame's size is avoided because it
+/// delivers frames at irregular 16.7/33.3 ms intervals, which is a primary cadence-stutter source.
+/// This governor instead picks a target fps from a clean-divisor LADDER of the base fps and actuates
+/// it through a schedule-anchored ``EncodeCadenceGate`` — so a governed 30 fps is a metronome-regular
+/// every-2nd-delivery cadence, never an alternating skip.
 ///
 /// CONTROL LAW (one tick per folded NetworkStats report, ~50 ms — the same clock as
 /// ``LiveCongestionController``):
@@ -207,9 +206,9 @@ public struct FPSGovernor: Sendable, Equatable {
 }
 
 /// PURE schedule-anchored encode-cadence gate — the governor's actuator at the capture→encode
-/// hand-off (NOT the retired alternating skip). The SCStream delivery rate stays untouched (the
-/// 2× capture ceiling exists because ceiling==content-rate produced the measured ~30 ms slot-beat
-/// gaps); this gate admits deliveries on a drift-free schedule at the governed interval:
+/// hand-off (not an alternating skip). The SCStream delivery rate stays untouched (the 2× capture
+/// ceiling exists because ceiling==content-rate produces ~30 ms slot-beat gaps); this gate admits
+/// deliveries on a drift-free schedule at the governed interval:
 ///  - an admitted frame advances `nextDue` by EXACTLY `interval` (drift-free metronome);
 ///  - a content stall (`now − nextDue > interval`) re-anchors from `now` (no burst catch-up);
 ///  - admit when `now + tolerance ≥ nextDue` — the tolerance soaks capture-slot scheduling jitter

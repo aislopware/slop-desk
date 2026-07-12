@@ -7,11 +7,12 @@
 //   full short hostname                 instrument tertiary
 //   (secondary; err when offline)       (warn/err when slow/bad)
 //
-// Monogram + hostname was redundant (CM already *is* the host); the 6pt health LED went next
-// (2026-07-10: the attention dot owns the "dot" language now — a second always-on dot in the chrome was
-// noise). State lives in the TEXT: the metric digits carry the health colour (warn/err when degrading),
-// the trailing status word covers offline, and the hostname itself dims to tertiary when not connected.
-// Full target (raw IP etc.) still in the tooltip. Tap → Connect editor; give-up → Retry.
+// No monogram plate — the hostname already *is* the host, so a plate would be redundant. No health
+// LED either — the attention dot owns the "dot" language elsewhere in the chrome, and a second
+// always-on dot here would be noise. State lives in the TEXT instead: the metric digits carry the
+// health colour (warn/err when degrading), the trailing status word covers offline, and the hostname
+// itself dims to tertiary when not connected. Full target (raw IP etc.) still in the tooltip.
+// Tap → Connect editor; give-up → Retry.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -85,8 +86,8 @@ struct ConnectionCluster: View {
         HStack(spacing: Slate.Metric.space1) {
             Button(action: onConnect) {
                 HStack(alignment: .center, spacing: Slate.Metric.space2) {
-                    // Host name carries the identity; it DIMS to tertiary when not connected (state in
-                    // the text — the old 6pt health LED is gone, the metric digits carry health colour).
+                    // Host name carries the identity; it DIMS to tertiary when not connected — state
+                    // lives in the text, not a separate LED, since the metric digits carry health colour.
                     Text(displayHost)
                         .font(.system(size: Slate.Typeface.footnote, weight: .medium))
                         .foregroundStyle(isConnected ? Slate.Text.secondary : Slate.Text.tertiary)

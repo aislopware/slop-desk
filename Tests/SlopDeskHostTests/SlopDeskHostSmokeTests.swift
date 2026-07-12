@@ -22,7 +22,7 @@ final class SlopDeskHostSmokeTests: XCTestCase {
     func testCuratedEnvironmentHasSaneTerminalDefaults() {
         let env = HostEnvironment.curated(parent: ["PATH": "/usr/bin", "HOME": "/Users/x"])
         // The plain-shell path advertises the libghostty TERM that ``ClaudeCodeProfile`` still
-        // owns as the single source of truth (the curated Claude launch is now a client-side
+        // owns as the single source of truth (the curated Claude launch is a client-side
         // preset, but the TERM constant lives on the profile) — the client renders with libghostty.
         XCTAssertEqual(env["TERM"], "xterm-ghostty")
         XCTAssertEqual(env["TERM"], HostEnvironment.defaultTerm)
@@ -47,7 +47,7 @@ final class SlopDeskHostSmokeTests: XCTestCase {
         XCTAssertEqual(env["TERM"], "xterm-256color")
     }
 
-    /// R8 #2: TERMINFO / TERMINFO_DIRS must be forwarded to the child when the parent has them — the
+    /// TERMINFO / TERMINFO_DIRS must be forwarded to the child when the parent has them — the
     /// host's terminfo probe honours those dirs, so a child that did NOT inherit them would advertise a
     /// `TERM=xterm-ghostty` whose entry its ncurses cannot find (every TUI degrades). When absent, they
     /// must NOT be fabricated.
@@ -82,14 +82,14 @@ final class SlopDeskHostSmokeTests: XCTestCase {
     }
 
     func testParseRetiredClaudeFlagIsUnknownAndRejected() {
-        // W11 Decision #9: the curated `claude` launch is no longer a daemon mode. `--claude`
-        // is now an UNKNOWN flag → parse returns nil (caller prints usage + exits non-zero).
+        // The curated `claude` launch is not a daemon mode. `--claude`
+        // is an UNKNOWN flag → parse returns nil (caller prints usage + exits non-zero).
         XCTAssertNil(HostdArguments.parse(["slopdesk-hostd", "--claude"]))
         XCTAssertNil(HostdArguments.parse(["slopdesk-hostd", "--claude", "--xterm256"]))
     }
 
     func testParseRetiredXterm256FlagIsUnknownAndRejected() {
-        // `--xterm256` was only meaningful with `--claude`; both are retired and unknown now.
+        // `--xterm256` is only meaningful with `--claude`; both are retired and unknown flags.
         XCTAssertNil(HostdArguments.parse(["slopdesk-hostd", "--xterm256"]))
     }
 
@@ -116,7 +116,7 @@ final class SlopDeskHostSmokeTests: XCTestCase {
     }
 
     func testInspectorIsOnlyEnabledByExplicitFlags() throws {
-        // The `--claude` auto-enable is retired (W11 Decision #6): the inspector now stands up
+        // The `--claude` auto-enable is retired: the inspector stands up
         // only on an explicit `--inspector`/`--transcript`. A bare daemon leaves it off.
         let parsed = try XCTUnwrap(HostdArguments.parse(["slopdesk-hostd"]))
         XCTAssertFalse(parsed.inspectorEnabled, "no implicit inspector without an explicit flag")

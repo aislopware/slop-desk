@@ -3,7 +3,7 @@ import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskHost
 
-/// P1 (review #1–#4, #9) — the SINGLE per-pane ``ClaudePaneDetector`` is the host's one source of truth.
+/// The SINGLE per-pane ``ClaudePaneDetector`` is the host's one source of truth.
 ///
 /// These tests drive the ONE detector with the full mix of inputs the live ``MuxChannelSession`` feeds it
 /// — the foreground poll's `sample`, the per-poll `tick`, and the hook socket's `hook(bytes:)` — and
@@ -35,8 +35,8 @@ final class ClaudePaneDetectorTests: XCTestCase {
     // MARK: - (a) Decay is DRIVEN by ticks (the host emits a type-27 `.idle` after the timeout)
 
     /// A Stop hook puts the machine in `.done`; with NO further hook (the Stop hook fired and stopped),
-    /// only TICKS advance time — and a tick past the timeout must emit a type-27 `.idle`. Pre-P1 nobody
-    /// ticked the host machine, so a finished turn stayed `.done` (🔵) forever (review #4).
+    /// only TICKS advance time — and a tick past the timeout must emit a type-27 `.idle`. Without ticks
+    /// advancing the host machine, a finished turn would stay `.done` (🔵) forever.
     func testStopThenOnlyTicksEmitsIdleAfterTimeout() {
         var d = ClaudePaneDetector(doneToIdleTimeout: 5)
         // Hook: Stop → done. (No foreground sample needed — the hook drives presence-independent status.)
@@ -120,7 +120,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
         }
     }
 
-    // MARK: - (P5 #6) Dedupe is COUNTED, not just nil-checked
+    // MARK: - Dedupe is COUNTED, not just nil-checked
 
     /// A genuine dedupe assertion: COUNT the type-27 frames emitted across a stream that repeats the same
     /// status, and assert exactly one frame ships per DISTINCT `(state,kind,label)` triple. With the
@@ -154,7 +154,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     // MARK: - type-26 is a basename edge only (a display hint, not a status source)
 
     /// type-26 (`foregroundProcess`) fires only on a basename EDGE and is independent of the type-27
-    /// status stream — a coarse display hint, never a second status source (review #2).
+    /// status stream — a coarse display hint, never a second status source.
     func testType26IsBasenameEdgeOnly() {
         var d = ClaudePaneDetector()
         let first = d.sample(name: "zsh", at: 0)
@@ -165,7 +165,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
         XCTAssertEqual(edge.foreground, .foregroundProcess(name: "claude"), "a basename change re-emits type-26")
     }
 
-    // MARK: - PIECE 4: agent self-report folds as an authoritative hook
+    // MARK: - Agent self-report folds as an authoritative hook
 
     /// A self-report `working`/`blocked`/`done`/`idle` maps to the same machine verdict an
     /// equivalent real hook would. Each is precedence-2 (authoritative), so it beats the bare
@@ -239,10 +239,10 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// The stickiness floor LAPSES: once the grace window elapses with the agent still absent
     /// (genuinely exited — the SHELL is back in the foreground), a foreground-absence sample DOES
     /// terminate — a stale report does not pin the pane forever. Complements
-    /// ``testReportStickyAgainstForegroundAbsence``. (2026-07-02: the basename here must be a
-    /// NON-wrapper — a wrapper basename like `node` now deliberately stays sticky beyond the window
-    /// while a hook/report-established status is live, see
-    /// ``testWrapperAbsenceBeyondGraceWindowKeepsHookStatus``.)
+    /// ``testReportStickyAgainstForegroundAbsence``. The basename here must be a NON-wrapper — a
+    /// wrapper basename like `node` deliberately stays sticky beyond the window while a
+    /// hook/report-established status is live, see
+    /// ``testWrapperAbsenceBeyondGraceWindowKeepsHookStatus``.
     func testReportStickinessLapsesAfterGraceWindow() {
         var d = ClaudePaneDetector()
         _ = d.report(state: "working", message: nil, at: 0)
@@ -255,7 +255,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
         XCTAssertNotNil(e.status, "the termination emits a type-27 transition")
     }
 
-    // MARK: - Queue-safety fix (2026-07-02): HOOK events get the same stickiness a ctl report has
+    // MARK: - Queue-safety: HOOK events get the same stickiness a ctl report has
 
     /// A real HOOK event must stamp the stickiness window exactly like a ctl self-report: with claude
     /// running under a wrapper (npm-installed `claude` is a `#!/usr/bin/env node` shebang → the PTY
@@ -348,7 +348,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
         XCTAssertNil(second.status, "an identical consecutive report dedupes (no new type-27)")
     }
 
-    // MARK: - Reattach re-assert (2026-07-10: indicators must survive a client restart)
+    // MARK: - Reattach re-assert (indicators must survive a client restart)
 
     /// Both streams are edge-triggered against the `lastEmitted*` anchors, so a returning client
     /// (whose mirrors reset to none on reconnect) would never be re-told about a working agent /
@@ -378,7 +378,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
         XCTAssertTrue(d.reestablishOnReattach().isEmpty, "no truth yet — a fresh detector re-asserts nothing")
     }
 
-    /// The R2 hole `rebindRelay` documents: a status change folded WHILE DETACHED lands on a wiped
+    /// The hole `rebindRelay` guards against: a status change folded WHILE DETACHED lands on a wiped
     /// control-out queue (lost), and the anchor already advanced — so no future edge ever corrects
     /// the returning client's stale status. The re-assert must carry the machine's CURRENT truth
     /// (not the last delivered one): agent finishes while the link is down → reattach re-tells done.

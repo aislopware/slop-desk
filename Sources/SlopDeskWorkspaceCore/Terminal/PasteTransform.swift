@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - "Paste as…" clipboard transforms (E8 / ES-E8-4)
+// MARK: - "Paste as…" clipboard transforms
 
 /// PURE clipboard transforms behind the **Edit ▸ Paste as…** submenu. Each variant rewrites the text
 /// (or file bytes) BEFORE it reaches the shell via the surface's `text(_:)` typing path. Cross-platform,

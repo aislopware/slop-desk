@@ -1,4 +1,4 @@
-// ThemeCatalog (E15 WI-6) — the single ClientUI-side theme directory: the shipped built-in `SlateTheme`s
+// ThemeCatalog — the single ClientUI-side theme directory: the shipped built-in `SlateTheme`s
 // (keyed by their stable id).
 //
 // WHY a catalog distinct from `ThemeStore`: `ThemeStore` owns the ACTIVE theme + the cross-`NSHostingController`

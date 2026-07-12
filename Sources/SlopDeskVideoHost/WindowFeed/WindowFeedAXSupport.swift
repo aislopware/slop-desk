@@ -1,7 +1,7 @@
 // Phase-5 AX support for the host-window feed (docs/45 §6): instant differ kicks from the
 // frontmost app's AX notifications, and the budgeted `kAXWindows` probe that (a) disambiguates
 // "minimized" from "on another Space" for off-screen windows and (b) supplies the AX EVIDENCE an
-// off-screen window needs to be listed at all (the phantom-window junk filter, 2026-07-11).
+// off-screen window needs to be listed at all (the phantom-window junk filter).
 //
 // ⚠️ **GUI + TCC ONLY** (Accessibility — the same grant the injector / geometry watcher hold).
 // COMPILED + reviewed like ``WindowGeometryWatcher``; not driven from unit tests. The 1 Hz differ
@@ -171,8 +171,8 @@ public struct OffScreenAXClassification: Sendable {
 }
 
 /// The budgeted AX probe (docs/45 Phase 5): sweeps `kAXWindows` per off-screen-owning app to tell
-/// a MINIMIZED window from an on-another-Space one — and, since the junk-filter round (2026-07-11),
-/// to tell EITHER from a phantom CGWindowList entry that no AX sweep ever returns. Cache-first —
+/// a MINIMIZED window from an on-another-Space one, and to tell EITHER from a phantom
+/// CGWindowList entry that no AX sweep ever returns. Cache-first —
 /// each probed pid refreshes every one of its windows' ledger entries, so between probes the answer
 /// is free. Main-actor (the repo's AX-messaging convention; the per-app 0.25 s timeout bounds a
 /// hung target).

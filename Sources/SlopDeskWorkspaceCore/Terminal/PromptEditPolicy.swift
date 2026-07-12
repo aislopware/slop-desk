@@ -1,8 +1,8 @@
 import Foundation
 
-// MARK: - E8 WI-11 (I18): undo-at-prompt key intercept
+// MARK: - Undo-at-prompt key intercept
 
-/// The PURE, headless decision behind **Undo at prompt** (I18): given a ⌘Z (undo) or ⌘⇧Z / ⌘Y
+/// The PURE, headless decision behind **Undo at prompt**: given a ⌘Z (undo) or ⌘⇧Z / ⌘Y
 /// (redo) gesture and whether the terminal sits at an EDITABLE shell prompt, what raw bytes — if any —
 /// should the client send to the host PTY?
 ///

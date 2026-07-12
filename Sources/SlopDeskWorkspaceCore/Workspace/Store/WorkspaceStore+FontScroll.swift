@@ -15,9 +15,9 @@ public enum FontSizeStep: Equatable, Sendable {
     case reset
 }
 
-// MARK: - ScrollAction (the named viewport-scroll the E1 ⇧PageUp/Down + ⇧Home/End chords route through)
+// MARK: - ScrollAction (the named viewport-scroll the ⇧PageUp/Down + ⇧Home/End chords route through)
 
-/// The four viewport-scroll intents the E1 keymap binds to the named scroll keys (⇧PageUp/PageDown →
+/// The four viewport-scroll intents the keymap binds to the named scroll keys (⇧PageUp/PageDown →
 /// page up/down, ⇧Home/End → buffer top/bottom). A framework-neutral enum (no AppKit / no libghostty
 /// import) so the routing + the store hook stay headless; the libghostty action string each maps to is the
 /// single source of the mapping (``libghosttyAction``).
@@ -25,7 +25,7 @@ public enum FontSizeStep: Equatable, Sendable {
 /// Scroll-sign convention (libghostty `Binding.zig`, mirrored by ``TerminalViewModel/handleCopyModeKey(_:)``):
 /// NEGATIVE = UP toward OLDER scrollback. So `.pageUp` is `scroll_page_fractional:-0.9` and `.pageDown` is
 /// `scroll_page_fractional:0.9`. `0.9` (≈ one page minus a sliver of overlap context) is the same "≈ a page"
-/// fraction the E1 plan pins — distinct from copy-mode's half-page `±0.5` (Ctrl-D/U), which is a different
+/// fraction the plan pins — distinct from copy-mode's half-page `±0.5` (Ctrl-D/U), which is a different
 /// gesture.
 public enum ScrollAction: Equatable, Sendable {
     /// ⇧PageUp — one page toward OLDER scrollback (negative sign).
@@ -51,9 +51,9 @@ public enum ScrollAction: Equatable, Sendable {
     }
 }
 
-// MARK: - WorkspaceStore × Font size + viewport scroll (E1 ES-E1-3 / ES-E1-4 store hooks)
+// MARK: - WorkspaceStore × Font size + viewport scroll (store hooks)
 
-/// The E1 active-pane font-size + viewport-scroll store hooks, split into their own extension so the
+/// The active-pane font-size + viewport-scroll store hooks, split into their own extension so the
 /// (already large) ``WorkspaceStore`` body stays under the lint type-body ceiling — the same reason
 /// ``WorkspaceStore+Blocks`` exists. Each one mirrors ``WorkspaceStore/jumpToBlockInActivePane(delta:)``:
 /// resolve the active pane's live ``TerminalViewModel`` (``activeTerminalModel``), probe its `surface` for

@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E8 WI-12 (I14/I15, ES-E8-5): pins the pure ``ScrollPastPolicy`` — the testable heart of the
+/// Pins the pure ``ScrollPastPolicy`` — the testable heart of the
 /// "Scroll Past Last Line" / "Scroll Past First Line" overscroll. The GUI surface (`GhosttyTerminalView`,
 /// compile-only behind `#if canImport(CGhostty)`) only documents the deferred RENDERING ceiling (no
 /// libghostty viewport hook), so the anchor arithmetic + the alt-screen suppression gate are pinned here.
@@ -118,7 +118,7 @@ final class ScrollPastPolicyTests: XCTestCase {
         )
     }
 
-    /// The alt-screen suppression (ES-E8-5): EVERY mode returns `nil` while a full-screen TUI owns the screen,
+    /// The alt-screen suppression: EVERY mode returns `nil` while a full-screen TUI owns the screen,
     /// so vim/htop/less keep their own bottom edge. The load-bearing gate — a missing `isAlternateScreen`
     /// guard fails here on the enabled modes.
     func testAltScreenSuppressesEveryMode() {

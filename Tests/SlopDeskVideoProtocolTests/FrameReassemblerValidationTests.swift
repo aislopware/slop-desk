@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskVideoProtocol
 
-/// R7 #6 hostile-input hardening for ``FrameReassembler``: UDP video has no auth beyond the mesh, so a
+/// Hostile-input hardening for ``FrameReassembler``: UDP video has no auth beyond the mesh, so a
 /// peer-crafted fragment header must not let it allocate/iterate a huge per-frame buffer (alloc+CPU DoS)
 /// or wedge a frame with an out-of-range index. Pure: no transport.
 final class FrameReassemblerValidationTests: XCTestCase {
@@ -61,11 +61,11 @@ final class FrameReassemblerValidationTests: XCTestCase {
         )
     }
 
-    /// R7 #3 contract lock: in the reorder-then-loss interleaving, the INGESTED fragment's own frame can
+    /// Contract lock: in the reorder-then-loss interleaving, the INGESTED fragment's own frame can
     /// become hopeless during its OWN ingest — `ingest()` then returns `.dropped(frameID:)` DIRECTLY and
     /// pops it OFF the drain queue, so `nextDroppedFrame()` is empty for it. A client that only drains
     /// `nextDroppedFrame()` (ignoring the `.dropped` return) would NEVER signal recovery for that frame
-    /// (the bug R7 #3 fixed by routing the `.dropped` return through the same recovery path).
+    /// (fixed by routing the `.dropped` return through the same recovery path).
     func testReorderThenLossReturnsDroppedFromIngestNotViaQueue() {
         var r = FrameReassembler() // no FEC: any missing data fragment on an old frame is terminal
         // frame1 arrives first → advances the loss frontier, still incomplete (needs fragIndex 1).

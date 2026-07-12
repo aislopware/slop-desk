@@ -814,7 +814,7 @@ root["terminalWireMessages"] = [
         .notification(title: "semis;in;title", body: "and;in;body;too"),
         ["title": "semis;in;title", "body": "and;in;body;too"],
     ),
-    // W9 — Claude-Code agent status (terminal CONTROL, host → client).
+    // Claude-Code agent status (terminal CONTROL, host → client).
     // type 26 foregroundProcess: coarse process-watch path, body = UTF-8 basename.
     wmRecord("foregroundProcess", .foregroundProcess(name: "claude"), ["name": "claude"]),
     wmRecord("foregroundProcess", .foregroundProcess(name: ""), ["name": ""]),
@@ -841,11 +841,11 @@ root["terminalWireMessages"] = [
         .claudeStatus(state: 2, kind: 3, label: "Done — ✅ build green 🚀"),
         ["state": Int(2), "kindByte": Int(3), "label": "Done — ✅ build green 🚀"],
     ),
-    // E17 / I22 — secure-input echo signal (terminal CONTROL, host → client).
+    // Secure-input echo signal (terminal CONTROL, host → client).
     // type 31 inputEcho: 1-byte body = [UInt8 enabled] (1 = canonical echo on, 0 = no-echo password prompt).
     wmRecord("inputEcho", .inputEcho(enabled: false), ["enabled": false]),
     wmRecord("inputEcho", .inputEcho(enabled: true), ["enabled": true]),
-    // E14 / K1 — OSC 9;4 taskbar progress (terminal CONTROL, host → client).
+    // OSC 9;4 taskbar progress (terminal CONTROL, host → client).
     // type 32 progress: 2-byte body = [UInt8 state][UInt8 percent].
     // state = ProgressState (0 clear / 1 in-progress / 2 error / 3 indeterminate); percent 0…100.
     wmRecord("progress", .progress(state: 1, percent: 40), ["state": Int(1), "percent": Int(40)]),
@@ -860,7 +860,7 @@ root["terminalWireMessages"] = [
     wmRecord("project_key", .projectKey("/Users/me/project dir"), ["path": "/Users/me/project dir"]),
 ]
 
-// WB1 — Warp-style "Blocks" wire messages (terminal CONTROL).
+// Warp-style "Blocks" wire messages (terminal CONTROL).
 // type 15 requestBlockOutput (c→h): body = [UInt32 index].
 // type 28 commandBlock (h→c): metadata only = [UInt32 index][UInt8 hasExit][Int32 BE exit]
 //   [UInt8 hasDuration][UInt32 BE duration][UInt8 complete][UInt32 BE outputLen]
@@ -946,9 +946,9 @@ root["blocksWireMessages"] = [
     ),
 ]
 
-// E4 — host metadata RPC envelope (terminal CONTROL). ONE generic request/response pair carrying a
+// Host metadata RPC envelope (terminal CONTROL). ONE generic request/response pair carrying a
 // verb/status byte + a client-chosen requestID + an opaque length-prefixed payload (the per-verb
-// MetadataCodec rides inside, pinned by its OWN samples in WI-2).
+// MetadataCodec rides inside, pinned by its OWN samples below).
 // type 16 metadataRequest (c→h): body = [UInt32 BE requestID][UInt8 verb][UInt32 BE payloadLen][payload].
 // type 30 metadataResponse (h→c): body = [UInt32 BE requestID][UInt8 status][UInt32 BE payloadLen][payload].
 // verb / status carry the RAW byte (forward-tolerant of an unknown value).
@@ -973,7 +973,7 @@ root["metadataWireMessages"] = [
         .metadataRequest(requestID: UInt32.max, verb: 200, payload: Data([0x00, 0xFF, 0x80, 0x7F])),
         ["requestId": UInt32.max, "verb": Int(200), "payloadHex": hex([0x00, 0xFF, 0x80, 0x7F])],
     ),
-    // request: openPath (E10 WI-7) — a SIDE-EFFECTING verb (9) carrying a raw UTF-8 ABSOLUTE host path
+    // request: openPath — a SIDE-EFFECTING verb (9) carrying a raw UTF-8 ABSOLUTE host path
     // (revealPath = 10 is byte-identical save the verb byte; one sample pins the envelope shape).
     wmRecord(
         "metadataRequest",
@@ -984,9 +984,9 @@ root["metadataWireMessages"] = [
             "payloadHex": hex(Data("/Users/me/project/main.swift".utf8)),
         ],
     ),
-    // request: installAgentHooks (E13 WI-1) — a SIDE-EFFECTING agent verb (11) with an EMPTY payload
+    // request: installAgentHooks — a SIDE-EFFECTING agent verb (11) with an EMPTY payload
     // (uninstallAgentHooks = 12 / agentHookStatus = 13 are byte-identical save the verb byte; one sample
-    // pins the new agent-hooks verb family on the wire, mirroring E10's single openPath sample for 9/10).
+    // pins the agent-hooks verb family on the wire, mirroring the single openPath sample above for 9/10).
     wmRecord(
         "metadataRequest",
         .metadataRequest(requestID: 0x0B0C_0D0E, verb: 11, payload: Data()),
@@ -1016,11 +1016,11 @@ root["metadataWireMessages"] = [
         .metadataResponse(requestID: 99, status: 200, payload: metaUnicodePayload),
         ["requestId": UInt32(99), "status": Int(200), "payloadHex": hex(metaUnicodePayload)],
     ),
-    // response: agentHookStatus (E13 WI-1) — status .ok + a flag payload (the only agent-hooks reply
+    // response: agentHookStatus — status .ok + a flag payload (the only agent-hooks reply
     // carrying one). This record pins the metadataResponse ENVELOPE around an opaque 1-byte payload and
-    // is FROZEN as-is; the live verb-13 payload is now the 2-byte [installed][listenerActive] flags
-    // (queue-safety cluster 2026-07-02, docs/20) — the payload is opaque to the envelope codec, so the
-    // envelope bytes pinned here are unaffected.
+    // stays FROZEN as-is even though the live verb-13 payload is the 2-byte [installed][listenerActive]
+    // flags (see docs/20) — the payload is opaque to the envelope codec, so the envelope bytes pinned
+    // here are unaffected.
     wmRecord(
         "metadataResponse",
         .metadataResponse(requestID: 0x0B0C_0D0E, status: 0, payload: Data([0x01])),
@@ -1028,7 +1028,7 @@ root["metadataWireMessages"] = [
     ),
 ]
 
-// E4 / WI-2 — the per-verb MetadataCodec payload encodings that ride INSIDE the opaque metadataResponse
+// The per-verb MetadataCodec payload encodings that ride INSIDE the opaque metadataResponse
 // payload. These PIN the exact bytes of every structured list codec (manual BE, [UInt16 count]-prefixed,
 // length-prefixed UTF-8 strings) so a refactor cannot silently shift a field. The cwd / gitDiff /
 // readAgentSession verbs carry RAW bytes (no nested codec) and so have no sample here.
@@ -1192,16 +1192,16 @@ func rectBits(_ prefix: String, _ r: CGRect) -> [String: Any] {
     ]
 }
 
-// NOTE: captureUnion / captureRetarget vectors are FROZEN in golden_vectors.json. Their logic now
+// NOTE: captureUnion / captureRetarget vectors are FROZEN in golden_vectors.json. Their logic
 // lives solely in the Rust core (slopdesk_core::capture_region, reached via the C ABI);
 // golden_parity validates the core against the frozen corpus, so no Swift dumper section is needed.
 
 // NOTE: virtualDisplayGeometry / vdOriginToRight / vdChipPixelLimit / vdRefreshRates vectors are
-// FROZEN in golden_vectors.json. Their logic now lives solely in the Rust core
+// FROZEN in golden_vectors.json. Their logic lives solely in the Rust core
 // (slopdesk_core::virtual_display_geometry, reached via the C ABI); golden_parity validates the
 // core against the frozen corpus, so no Swift dumper section is needed here.
 
-// NOTE: windowPlacement / windowFits vectors are FROZEN in golden_vectors.json. Their logic now
+// NOTE: windowPlacement / windowFits vectors are FROZEN in golden_vectors.json. Their logic
 // lives solely in the Rust core (`slopdesk_core::window_placement`, reached via the C ABI); the
 // `golden_parity` test still validates the core against the frozen corpus, so no Swift dumper
 // section is needed here.

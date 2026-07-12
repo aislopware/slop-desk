@@ -3,9 +3,9 @@ import Foundation
 // MARK: - TabOrderingEngine (the pure By-Project key helpers)
 
 /// The PURE helpers behind the sidebar's single layout: sections are ALWAYS bucketed by the By-Project key
-/// and both sections and rows follow first-appearance in `session.tabs` (creation order) — the 2026-07-10
-/// re-scope (`docs/DECISIONS.md`) that deleted the grouping/sort hamburger, the `.byDate` buckets, the
-/// `.updated` recency sort, and manual drag-reorder. The bucketing itself lives in
+/// and both sections and rows follow first-appearance in `session.tabs` (creation order) — there is no
+/// grouping/sort hamburger, `.byDate` buckets, `.updated` recency sort, or manual drag-reorder; see
+/// `docs/DECISIONS.md` for the rationale. The bucketing itself lives in
 /// ``RailRowsBuilder/sectionedByProject(_:tabOrder:query:)`` (per-PANE, so a split tab's panes land in
 /// their respective projects); these two statics are the shared key-normalization/header rules so every
 /// caller derives identical sections from a key. No SwiftUI, no I/O — fully headless-testable.

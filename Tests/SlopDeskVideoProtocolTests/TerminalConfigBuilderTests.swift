@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskVideoProtocol
 
-/// W13 — the PURE `TerminalPreferences → ghostty config string` builder. Pins every field to its
+/// The PURE `TerminalPreferences → ghostty config string` builder. Pins every field to its
 /// Ghostty config key (`font-family`, `font-size`, `font-style`, `theme`, `cursor-style`,
 /// `cursor-style-blink`, `scrollback-limit`) + the keybind lines, headlessly (no libghostty surface).
 final class TerminalConfigBuilderTests: XCTestCase {
@@ -163,10 +163,10 @@ final class TerminalConfigBuilderTests: XCTestCase {
         XCTAssertEqual(lines.first, "font-family = Menlo", "font-family leads the stable order")
     }
 
-    // MARK: - E15 WI-2: byte-identical pre-E15 guard
+    // MARK: - Byte-identical default-args guard
 
-    /// The load-bearing regression guard: a default-constructed `TerminalPreferences` with NO E15 args
-    /// (palette / selection-bg nil) reproduces the EXACT default builder output. Default extras:
+    /// The load-bearing regression guard: a default-constructed `TerminalPreferences` with no palette /
+    /// selection-bg args (nil) reproduces the EXACT default builder output. Default extras:
     /// `font-feature = -calt,-liga,-dlig` (ligatures off) and `selection-foreground = cell-foreground`
     /// (libghostty token — keep cell colours under the highlight). No per-face / palette / cell-height /
     /// thicken / selection-background default leaks a line.
@@ -186,8 +186,8 @@ final class TerminalConfigBuilderTests: XCTestCase {
         XCTAssertEqual(TerminalConfigBuilder.string(for: TerminalPreferences()), expected)
     }
 
-    /// Passing the new E15 args as nil is byte-for-byte the no-args build (so existing callers and the
-    /// headless build are untouched), even when the prefs carry old non-default font/cursor/keybind data.
+    /// Passing the palette/selection args as nil is byte-for-byte the no-args build (so existing callers and
+    /// the headless build are untouched), even when the prefs carry old non-default font/cursor/keybind data.
     func testE15NilArgsAreByteForByteTheNoArgsBuild() {
         let prefs = TerminalPreferences(fontFamily: "JetBrains Mono", fontSize: 14.5, cursorStyle: .bar)
         XCTAssertEqual(
@@ -200,7 +200,7 @@ final class TerminalConfigBuilderTests: XCTestCase {
         )
     }
 
-    // MARK: - E15 WI-2: palette + selection emission (validate-then-drop)
+    // MARK: - Palette + selection emission (validate-then-drop)
 
     /// A valid 16-entry palette emits `palette = N=hex` for indices 0–15, AFTER `foreground`. The palette
     /// hex matches the existing bare-hex `background`/`foreground` form (no leading `#`).
@@ -269,7 +269,7 @@ final class TerminalConfigBuilderTests: XCTestCase {
         XCTAssertEqual(nilArg["selection-foreground"], "cell-foreground", "cell-foreground is unconditional")
     }
 
-    // MARK: - E15 WI-2: font-parity keys
+    // MARK: - Font-parity keys
 
     /// The fallback chain (item 6): ghostty has NO `font-family-fallback` key — the chain is REPEATED
     /// `font-family =` lines (the primary first, then each fallback in order), since `font-family` is a

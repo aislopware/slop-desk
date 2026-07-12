@@ -4,7 +4,7 @@ import SlopDeskTransport
 import XCTest
 @testable import SlopDeskClient
 
-/// R15 #1 regression: ``ReconnectManager`` must never run a reconnect campaign against a CLOSED client.
+/// Regression: ``ReconnectManager`` must never run a reconnect campaign against a CLOSED client.
 ///
 /// The two deliberate-shutdown paths are asymmetric: ``SlopDeskClient/pause()`` yields its own
 /// `.disconnected` and sets `paused`, but ``SlopDeskClient/close()`` sets `closed` and finishes the

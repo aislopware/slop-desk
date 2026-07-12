@@ -1,12 +1,12 @@
-// LinkHighlightOverlay — the ⌘-hold link underline (E10 WI-5 / ES-E10-1).
+// LinkHighlightOverlay — the ⌘-hold link underline.
 //
 // A DECORATION overlay layered OVER the terminal surface in `TerminalLeafView` (never a content branch —
 // the libghostty-freeze guardrail): while the pane model reports ⌘ is held (``TerminalViewModel/linkHighlightActive``),
-// it runs the pure ``TerminalLinkDetector`` over the live VISIBLE viewport rows (the WI-2
+// it runs the pure ``TerminalLinkDetector`` over the live VISIBLE viewport rows (the
 // ``TerminalViewportSnapshotting`` seam) and draws a 1pt accent underline under every detected path / URL /
-// `file://` / `mailto:` span, mapped to points by the WI-2 ``TerminalCellMetrics`` (`full-path-hover.png`'s
-// `CREDITS.md` underline). The renderer still resolves the hovered link's full path into the now-DORMANT
-// ``TerminalViewModel/hoveredLinkFullPath`` seam (its status-bar consumer was removed); this overlay only
+// `file://` / `mailto:` span, mapped to points by the ``TerminalCellMetrics`` (`full-path-hover.png`'s
+// `CREDITS.md` underline). The renderer still resolves the hovered link's full path into the dormant
+// ``TerminalViewModel/hoveredLinkFullPath`` seam, which has no status-bar consumer; this overlay only
 // paints the underlines.
 //
 // Honest ceiling: a headless / `BuildStatusPlaceholderView` surface does NOT conform to
@@ -14,11 +14,11 @@
 // `cellMetrics()` is absent and the overlay simply renders nothing — an ABSENT underline, never a wrong one.
 //
 // INERT on iOS: there is no ⌘ modifier, so the renderer never sets ``linkHighlightActive`` true on iOS and the
-// overlay body short-circuits to empty (the iOS link affordance is tap-on-label / long-press, WI-9). The view
+// overlay body short-circuits to empty (the iOS link affordance is tap-on-label / long-press). The view
 // still compiles for iOS (no `#if os` here — `Canvas` is iOS 15+; the gate is runtime state, not platform).
 //
 // Never intercepts hits (`allowsHitTesting(false)`): clicks fall through to the renderer, which owns ⌘click /
-// ⌘⇧click / right-click on a detected link (WI-6). SYSTEM/theme colours only (`Slate.State.accent`).
+// ⌘⇧click / right-click on a detected link. SYSTEM/theme colours only (`Slate.State.accent`).
 
 #if canImport(SwiftUI)
 import SlopDeskTerminal
@@ -65,9 +65,9 @@ struct LinkHighlightOverlay: View {
             Canvas { context, _ in
                 let shading = GraphicsContext.Shading.color(accent)
                 for link in links {
-                    // CLAMP to the visible grid (FINDING 3 defence): skip a span that starts off-screen-right
-                    // and trim one that overruns the grid edge, so a soft-wrap-shifted span is never drawn in
-                    // the void to the right of the terminal.
+                    // CLAMP to the visible grid: skip a span that starts off-screen-right and trim one that
+                    // overruns the grid edge, so a soft-wrap-shifted span is never drawn in the void to the
+                    // right of the terminal.
                     guard let rect = metrics.clampedRect(
                         row: link.row, colStart: link.colStart, colEnd: link.colEnd,
                     ) else { continue }
@@ -80,7 +80,7 @@ struct LinkHighlightOverlay: View {
                     context.stroke(underline, with: shading, lineWidth: 1)
                 }
             }
-            // DECORATION only: never swallow a click — the renderer owns ⌘click / right-click on the link (WI-6).
+            // DECORATION only: never swallow a click — the renderer owns ⌘click / right-click on the link.
             .allowsHitTesting(false)
         }
     }

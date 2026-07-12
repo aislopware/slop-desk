@@ -2,12 +2,12 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E13 WI-2 (ES-E13-1) — the Agents settings-card model ``AgentHooksController``: the install / uninstall /
+/// The Agents settings-card model ``AgentHooksController``: the install / uninstall /
 /// status state machine driven through three injected async seams (the app wires them to the active
 /// connection's first-pane ``MetadataClient``; here they are fakes). Each behavior has a test that FAILS on
 /// the un-fixed code:
 /// - `refresh()` folds the typed status report — installed+listener → `.installed`, installed with the
-///   listener DOWN → `.installedInactive` (queue-safety cluster 2026-07-02: the false-green bug — hooks
+///   listener DOWN → `.installedInactive` (the false-green bug — hooks
 ///   written to settings.json while hostd was launched without `SLOPDESK_AGENT_HOOKS=1` are DEAD, so the
 ///   card must warn, not show "✓ Installed"), not-installed → `.notInstalled`, `nil` → `.disconnected`
 ///   (the nil case is what keeps the card off a FALSE "Not Installed");
@@ -32,7 +32,7 @@ final class AgentHooksControllerTests: XCTestCase {
         XCTAssertTrue(controller.isInstalled)
     }
 
-    /// Queue-safety cluster (2026-07-02): the false-green fix — installed on disk but the host hook
+    /// The false-green fix — installed on disk but the host hook
     /// listener is unbound ⇒ `.installedInactive`, NEVER the green `.installed`.
     func testRefreshInstalledWithoutListenerGivesInstalledInactive() async {
         let controller = AgentHooksController(refreshStatus: { Self.inactive })
@@ -79,8 +79,8 @@ final class AgentHooksControllerTests: XCTestCase {
         XCTAssertEqual(controller.state, .installed)
     }
 
-    /// Queue-safety cluster (2026-07-02): clicking Install on a hostd with NO bound listener must land
-    /// `.installedInactive` — pre-fix `install()` set `.installed` directly, flashing the false green
+    /// Clicking Install on a hostd with NO bound listener must land
+    /// `.installedInactive` — landing `.installed` directly would flash the false green
     /// over a dead integration.
     func testInstallSuccessWithoutListenerGivesInstalledInactive() async {
         let host = FakeHooksHost(listenerActive: false)

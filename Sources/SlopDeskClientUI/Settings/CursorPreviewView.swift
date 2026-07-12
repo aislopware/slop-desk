@@ -1,4 +1,4 @@
-// CursorPreviewView — the Appearance → Cursor section (E8 WI-3).
+// CursorPreviewView — the Appearance → Cursor section.
 //
 // Follows the design spec `docs/ui-shell/screenshots/cursor-style.png`: a "CURSOR" section that opens with a
 // one-line description + a LIVE PREVIEW card (the `john@doe-pc$ git commit -m "│"` mock that re-renders the
@@ -6,7 +6,7 @@
 // slider, and the Style / Blink / Animation dropdowns. Every control binds `store.terminal` (a
 // `TerminalPreferences` render-pref field), so a change flows through the store's `terminal` `didSet`
 // → `applyTerminal()` → `TerminalConfigBroadcaster` and re-applies live (the cursor color/opacity/text lines
-// are emitted by `TerminalConfigBuilder`, WI-2) — there is NO `refreshTerminalControls()` hop here (that seam
+// are emitted by `TerminalConfigBuilder`) — there is NO `refreshTerminalControls()` hop here (that seam
 // is for the fire-time `Defaults` Controls toggles, not the typed render prefs).
 //
 // macOS-only: the full Cursor section (`ColorPicker` + live preview) is macOS; the Appearance tab keeps a
@@ -65,12 +65,12 @@ extension Color {
     }
 
     /// This colour as a 6-hex `cursor-color` string (gamma-encoded sRGB), or `""` (follow the theme) when it
-    /// can't be resolved — so a colour that resists conversion degrades to "Default", never traps. Resolved via
-    /// `Color.resolve(in:)` — the SwiftUI-native replacement for the old `NSColor(self).usingColorSpace(.sRGB)`
-    /// bridge. `Color.Resolved.{red,green,blue}` are the same gamma-encoded sRGB 0…1 channels (wide-gamut picks
-    /// are gamut-mapped to sRGB, as `usingColorSpace(.sRGB)` did), so the persisted hex matches the old path
-    /// within channel rounding. This feeds the libghostty config string, NOT the frozen golden wire —
-    /// `CursorColorHexTests` pins the pure `CursorColorHex.hex` helper (unchanged).
+    /// can't be resolved — so a colour that resists conversion degrades to "Default", never traps. Resolved
+    /// purely via `Color.resolve(in:)` (no `NSColor` bridge): `Color.Resolved.{red,green,blue}` are gamma-encoded
+    /// sRGB 0…1 channels, with wide-gamut picks gamut-mapped to sRGB — equivalent to an
+    /// `NSColor(self).usingColorSpace(.sRGB)` conversion within channel rounding, so hex values persisted by
+    /// that bridge keep resolving to the same colour. This feeds the libghostty config string, NOT the frozen
+    /// golden wire — `CursorColorHexTests` pins the pure `CursorColorHex.hex` helper.
     func cursorHexString(in environment: EnvironmentValues) -> String {
         let resolved = resolve(in: environment)
         return CursorColorHex.hex(r: Double(resolved.red), g: Double(resolved.green), b: Double(resolved.blue))

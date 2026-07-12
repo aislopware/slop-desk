@@ -201,7 +201,7 @@ public final class ClientCursorCompositor {
         // BOTTOM-LEFT (+Y up). The placement math returns a TOP-LEFT frame (the same space the
         // input path flips into via `bounds.height - p.y`), so writing it verbatim mirrors the
         // cursor vertically — it tracks the wrong pixel and looks badly offset from where clicks
-        // land ("con trỏ client/server lệch rất nhiều"). Flip Y into the parent's bottom-left
+        // land, with the client and host cursors far apart. Flip Y into the parent's bottom-left
         // space so the composited cursor sits on the SAME pixel the input encoder targets.
         // (Reads the live parent bounds in POINTS — the sublayer frame is in the parent's point
         // space, not the pixel `drawableSize`.) iOS `UIView` layers are already top-left → no flip.

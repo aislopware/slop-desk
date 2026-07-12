@@ -61,9 +61,9 @@ struct CommandBlockTracker {
         maxTotalOutputBytes: Int = Self.defaultMaxTotalOutputBytes,
         autoProgressPrefixes: [String] = [],
     ) {
-        // K2 (E14/WI-3): when the caller does not inject a segmenter, build one carrying the resolved
-        // auto-progress prefix list ("Auto Progress-Bar Commands"). An INJECTED segmenter keeps its
-        // OWN prefixes (tests). An empty list ⇒ no synthetic spinner (byte-identical to the pre-E14 tap).
+        // When the caller does not inject a segmenter, build one carrying the resolved auto-progress
+        // prefix list ("Auto Progress-Bar Commands"). An INJECTED segmenter keeps its OWN prefixes
+        // (tests). An empty list ⇒ no synthetic spinner (byte-identical to the tap with the feature off).
         self.segmenter = segmenter ?? CommandBlockSegmenter(autoProgressPrefixes: autoProgressPrefixes)
         // Validate-then-clamp: a non-positive bound would mean "retain nothing"; treat <=0 as the
         // default so a caller can never accidentally disable retention or under/overflow.
@@ -81,9 +81,9 @@ struct CommandBlockTracker {
         // read-loop hot path (blocks tracking is default-ON, this runs for EVERY PTY chunk).
         let completed = segmenter.ingest(chunk)
         var messages: [WireMessage] = []
-        // K2 auto-progress (E14/WI-3): drain any synthetic OSC-9;4 spinner/clear the segmenter queued at
-        // the C / D marks for a configured slow command. These ride the SAME CONTROL FIFO as the type-28
-        // commandBlock metadata (the live owner enqueues the whole returned batch together).
+        // Drain any synthetic OSC-9;4 spinner/clear the segmenter queued at the C / D marks for a
+        // configured slow command. These ride the SAME CONTROL FIFO as the type-28 commandBlock
+        // metadata (the live owner enqueues the whole returned batch together).
         messages.append(contentsOf: segmenter.drainAutoProgress())
         for block in completed {
             // Emit BEFORE retaining so dedup compares against the PRIOR emit, then retain the output.
@@ -136,13 +136,13 @@ struct CommandBlockTracker {
     /// metadata MEANINGFULLY differs from what was last emitted for this index (dedup). Records the
     /// new metadata.
     ///
-    /// CHURN GUARD (#8): for a RUNNING block we deliberately EXCLUDE the growing `outputLen` from the
-    /// dedup comparison — a running command whose output grows on every PTY chunk would otherwise
-    /// re-emit a type-28 per chunk, churning the CONTROL channel for no UI gain (the client gates the
+    /// CHURN GUARD: a RUNNING block deliberately EXCLUDES the growing `outputLen` from the dedup
+    /// comparison — a running command whose output grows on every PTY chunk would otherwise re-emit
+    /// a type-28 per chunk, churning the CONTROL channel for no UI gain (the client gates the
     /// copy-output affordance on `complete`, so it does not need a live byte count). So a running
     /// block emits ONCE on start (and again if its command text fills in late), and the COMPLETION
-    /// emit carries the final exit / duration / `outputLen` exactly. We still RECORD the latest
-    /// `outputLen` in `lastEmitted` so the running→completed transition (which flips `complete` and
+    /// emit carries the final exit / duration / `outputLen` exactly. The latest `outputLen` is still
+    /// RECORDED in `lastEmitted` so the running→completed transition (which flips `complete` and
     /// freezes the final length) is always emitted.
     private mutating func emitIfChanged(_ block: CommandBlockSegmenter.CommandBlock) -> WireMessage? {
         let index = UInt32(truncatingIfNeeded: block.index)

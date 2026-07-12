@@ -7,7 +7,7 @@
 // nothing reorders on host focus flips / title churn / refresh ticks; state restyles in place
 // (weight, dimming, ordinal), never by motion or position.
 //
-// PERF DISCIPLINE (docs/45 §7, the ca429f90 3-part rule): section membership is memoized in
+// PERF DISCIPLINE (docs/45 §7 — leafIdentity / live-read / no-init-param): section membership is memoized in
 // ``HostWindowRowsMemo`` keyed ONLY on structural identity + the filter; title / metrics / state /
 // frontmost / streamed-ref are VOLATILE — live-read inside ``HostWindowLiveRow`` leaves keyed
 // `.id(leafIdentity)`, never passed as init params (lazy containers freeze first-render params).
@@ -38,7 +38,7 @@ struct HostWindowsColumn: View {
     /// Windows with a peek fetch in flight (single-flight; a second Space is a no-op).
     @State private var peekFetching: Set<UInt32> = []
     @FocusState private var listFocused: Bool
-    /// Pointer-in-strip — the collapse toggle's hover-reveal gate (the otty behavior, 2026-07-11).
+    /// Pointer-in-strip — the collapse toggle's hover-reveal gate (matches the otty behavior).
     @State private var stripHover = false
 
     /// One fully-formed peek: the row it anchors to, the image, and its instrument caption.
@@ -75,7 +75,7 @@ struct HostWindowsColumn: View {
     /// Traffic-light-row strip: ONLY the rail-collapse toggle, top-LEADING (the mirror of the left
     /// rail's top-trailing toggle — each toggle hugs its column's inner edge). Same settled-state
     /// choreography: hide instantly on collapse, fade back after the slide settles — plus the
-    /// hover-reveal gate (2026-07-11, the otty behavior): at rest the strip is empty. The glyph is
+    /// hover-reveal gate (the otty behavior): at rest the strip is empty. The glyph is
     /// the WINDOW one (`macwindow.on.rectangle`), matching the titlebar reopen button — this toggle
     /// is about the host's windows, deliberately distinct from the left `sidebar.left`.
     private var strip: some View {
@@ -197,8 +197,8 @@ struct HostWindowsColumn: View {
             .allowsHitTesting(feed.isLive)
             .focusable()
             .focused($listFocused)
-            // Focusable for ↑/↓/⏎ ONLY — never the system focus ring (user report 2026-07-12:
-            // clicking the rail drew a blue border around the whole list).
+            // Focusable for ↑/↓/⏎ ONLY — never the system focus ring, else clicking the rail draws
+            // a blue border around the whole list.
             .focusEffectDisabled()
             .onKeyPress(.downArrow) { moveCursor(1, in: sections) }
             .onKeyPress(.upArrow) { moveCursor(-1, in: sections) }
@@ -329,7 +329,7 @@ struct HostWindowsColumn: View {
     }
 }
 
-// MARK: - Leaf row (volatile fields live-read — the ca429f90 rule)
+// MARK: - Leaf row (volatile fields live-read — leafIdentity / live-read / no-init-param rule)
 
 /// One host-window row. Init params are STRUCTURAL only (identity + stable references + the cursor
 /// flag); title / metrics / state / frontmost / streamed-ref are read from the live stores inside
@@ -369,10 +369,9 @@ private struct HostWindowLiveRow: View {
                     .truncationMode(.middle)
             },
             titleTrailing: { _ in
-                // Streamed marker: the pane's tab ordinal in the accent — quiet, positional.
-                // (A hover verb hint — "OPEN" / "FOCUS · n" — lived here and was removed on user
-                // ruling 2026-07-12: it said nothing the click doesn't; the tooltip carries the
-                // long-form meaning.)
+                // Streamed marker: the pane's tab ordinal in the accent — quiet, positional. No
+                // hover verb hint ("OPEN" / "FOCUS · n") — it would say nothing the click doesn't;
+                // the tooltip already carries the long-form meaning.
                 if let streamed {
                     Text("\(streamed.tabOrdinal)")
                         .font(Slate.Typeface.instrument(Slate.Typeface.small))
@@ -385,7 +384,7 @@ private struct HostWindowLiveRow: View {
         )
         .help(tooltip(title: title, state: state))
         .contextMenu { contextMenu(streamed: streamed) }
-        // DRAG SOURCE (docs/45 round 3): drag the row onto the canvas to place the window — the
+        // DRAG SOURCE (docs/45): drag the row onto the canvas to place the window — the
         // canvas previews split/dock/new-tab zones (`HostWindowDropAffordance`). An AppKit overlay,
         // NOT `.onDrag` (the row's tap gesture eats the mouse-down — see `HostWindowRowDragSource`);
         // it also owns the row's left-click (`onAct`, not `SlateListRow.onTap`) AND its hover

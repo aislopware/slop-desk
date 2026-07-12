@@ -1,14 +1,14 @@
 import Foundation
 
-/// User keybinding overrides (decision #4 / W6). The W6 `WorkspaceBindingRegistry` is the single
+/// User keybinding overrides. `WorkspaceBindingRegistry` is the single
 /// source of truth for the available commands (each a stable, string `bindingID` such as
 /// `"pane.splitRight"`); `KeybindingPreferences` makes those editable: a sparse map of
 /// `bindingID → keyEquivalent` overrides. Absent ⇒ the registry's default shortcut stands.
 ///
-/// W12 ships only the editable MODEL (pure `Codable`, headlessly testable + round-trippable) so the
+/// This is only the editable MODEL (pure `Codable`, headlessly testable + round-trippable) so the
 /// settings system has a place to store overrides; the registry it keys into and the live application
-/// of an override land with W6. Keyed by `String` (not the W6 registry type) so this model builds
-/// standalone — W6 supplies the id constants, this only stores them.
+/// of an override live elsewhere. Keyed by `String` (not the registry's own type) so this model builds
+/// standalone — the registry supplies the id constants, this only stores them.
 ///
 /// A `KeyChord` is a normalised, serialisable shortcut: a base key plus modifier flags. Equality /
 /// `Codable` are derived; the chord's CANONICAL string form (`"cmd+shift+d"`) is what the UI shows and
@@ -44,8 +44,8 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
         /// token the dispatcher's reverse bridge emits (`KeyChord.asPreferencesChord` →
         /// `preferencesKeyToken`: `"pageup"`, `"return"`, `"left"`, …). WITHOUT this fold a config line like
         /// `keybind = cmd+pgup:text:x` would store under key `"pgup"` while a live ⌘PageUp keystroke produces
-        /// key `"pageup"` — a permanent miss that silently kills the literal-byte / `unbind:` half of
-        /// ES-E1-6. Single printable characters (already lowercased) pass through unchanged; an unmapped
+        /// key `"pageup"` — a permanent miss that silently breaks the literal-byte / `unbind:` matching.
+        /// Single printable characters (already lowercased) pass through unchanged; an unmapped
         /// multi-char token (e.g. `space`) is left as-is (it has no registry `Key`, so it can't match anyway).
         private static func canonicalKey(_ key: String) -> String {
             switch key.lowercased() {
@@ -145,7 +145,7 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
         }
     }
 
-    /// A literal-byte override (E1/WI-6): a chord bound to send raw bytes to the focused terminal instead
+    /// A literal-byte override: a chord bound to send raw bytes to the focused terminal instead
     /// of firing a named action — the `text:` / `csi:` / `esc:` config bindings (see
     /// `spec/customization__custom-keybindings.md`). The bytes are RESOLVED at parse time (by
     /// ``KeybindGrammar``, which prepends `ESC` / `ESC [` for the `esc:` / `csi:` kinds), so the dispatcher
@@ -172,12 +172,12 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
 
     /// The persisted schema version. No-backcompat (single-user): a stored blob whose version is not the
     /// CURRENT one decode-FAILS so the store falls back to a default (empty) override set rather than
-    /// mis-reading a stale shape. Bumped to 2 for the W-B sequence model, then to 3 for E1/WI-6's
-    /// ``textBindings`` + ``unbinds`` maps (the old shape had no version field, no sequence overrides, and no
-    /// text/unbind maps, so any old blob — version absent / 1 / 2 — is intentionally rejected).
+    /// mis-reading a stale shape. Version 3 covers the sequence model plus the ``textBindings``
+    /// + ``unbinds`` maps; a blob with no version field, or version 1 / 2, predates one or both of those
+    /// fields, so it is intentionally rejected rather than partially decoded.
     public static let currentSchemaVersion = 3
 
-    /// Sparse override map: `bindingID → chord`. An id absent here uses the W6 registry default. A
+    /// Sparse override map: `bindingID → chord`. An id absent here uses the registry default. A
     /// single-chord override (the editor's common case). For a MULTI-KEY override see ``sequenceOverrides``.
     public var overrides: [String: KeyChord]
 
@@ -186,13 +186,13 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
     /// override for the same id (a sequence is the richer rebind). Empty by default ⇒ no behaviour change.
     public var sequenceOverrides: [String: KeySequence]
 
-    /// E1/WI-6: literal-byte bindings, keyed by the CHORD (not a registry binding id — a text binding has
+    /// Literal-byte bindings, keyed by the CHORD (not a registry binding id — a text binding has
     /// no action id). The dispatcher consults this BEFORE the action table: a chord present here sends its
     /// ``TextBinding/payload`` via `sendBytes` and swallows the event. Empty by default ⇒ no behaviour
     /// change. (JSON-encodes as a flat key/value array since the key is not a `String` — round-trips fine.)
     public var textBindings: [KeyChord: TextBinding]
 
-    /// E1/WI-6: chords whose DEFAULT action is suppressed (the `unbind:<chord>` config directive). The dispatcher passes
+    /// Chords whose DEFAULT action is suppressed (the `unbind:<chord>` config directive). The dispatcher passes
     /// a matching event straight through (the default responder chain handles it) instead of firing the
     /// registry action. Empty by default ⇒ no behaviour change.
     public var unbinds: Set<KeyChord>
@@ -265,11 +265,12 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
     }
 
     /// Whether two DISTINCT binding ids resolve to the same chord/sequence (a conflict the UI highlights).
-    /// Only considers explicit overrides — registry defaults are W6's to reconcile. A single-chord override
-    /// and a 1-element SEQUENCE override of the same chord collide (their canonicals match); a multi-key
-    /// sequence collides only with another binding bound to the IDENTICAL full sequence.
+    /// Only considers explicit overrides — reconciling against registry defaults is the registry's own
+    /// concern. A single-chord override and a 1-element SEQUENCE override of the same chord collide (their
+    /// canonicals match); a multi-key sequence collides only with another binding bound to the IDENTICAL
+    /// full sequence.
     ///
-    /// E1/WI-6: ``textBindings`` and ``unbinds`` participate too — they own the SAME chord namespace as a
+    /// ``textBindings`` and ``unbinds`` participate too — they own the SAME chord namespace as a
     /// single-chord action override, so a text binding (or an unbind) on a chord that an action override
     /// also resolves to is a real clash the UI must surface. They fold in under synthetic ids
     /// (`"text:<canonical>"` / `"unbind:<canonical>"`) so a collision lists every contender on that chord.

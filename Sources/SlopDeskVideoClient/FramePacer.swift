@@ -12,18 +12,18 @@ import UIKit
 
 /// Drives display from VSync (`CADisplayLink`), NOT decode-completion (doc 17 §3.7).
 ///
-/// ⚠️ **GUI-ONLY** for the `CADisplayLink` path (needs a run loop + a screen).
-/// COMPILED + reviewed; not driven from tests.
+/// ⚠️ **GUI-ONLY** for the `CADisplayLink` path (needs a run loop + a screen); never driven
+/// from tests.
 ///
-/// Pacing policy — small JITTER BUFFER (2026-06-08, motion-smoothness):
+/// Pacing policy — a small JITTER BUFFER, the Parsec/Moonlight render-ahead:
 /// - Decoded frames queue oldest-first via ``submit(_:)``.
 /// - Presentation HOLDS (priming) until the buffer first fills to ``targetDepth``,
 ///   establishing a few frames of slack. Thereafter each VSync presents ONE frame in
 ///   order — turning bursty / variable arrival into a steady one-per-vsync cadence.
 /// - The slack absorbs the arrival/decode latency SPIKE at a static→motion transition
-///   (idle = tiny 1.5 KB frames → scroll = 40–220 KB frames); without it the previous
-///   "present newest / skip-late" pacer re-showed the last frame for a tick = the
-///   "khựng khựng on idle-then-scroll" judder. (The Parsec/Moonlight render-ahead.)
+///   (idle = tiny 1.5 KB frames → scroll = 40–220 KB frames). A "present newest / skip-late"
+///   pacer has no slack to spend there, so it re-shows the last frame for a tick — exactly the
+///   idle-then-scroll stutter.
 /// - HOMEOSTASIS: never carry more than ``targetDepth`` frames (drop the oldest excess),
 ///   so steady-state depth — hence added latency — settles at ≈targetDepth/fps instead of
 ///   ratcheting up to ``maxDepth`` under sustained motion or clock skew. ``maxDepth`` is a
@@ -31,23 +31,22 @@ import UIKit
 /// - RE-PRIME: the host idle-skips static frames, so any idle drains the buffer to empty.
 ///   After a sustained dry spell the pacer drops back to priming, REBUILDING the slack
 ///   before the next scroll — so every stop→scroll transition is smooth, not just the first.
-/// - PRESENT-ON-ARRIVAL (2026-06-10, select-text latency; widened same day to PRESENT-ON-DECODE):
-///   a frame landing in an empty queue that completes the depth is presented IMMEDIATELY, not
-///   held for the next vsync — reclaiming the tick-wait on EVERY frame at depth 1 (sparse
-///   highlight/typing AND the dense scroll stream; the Parsec model). Only reachable at
-///   `liveDepth == 1` (at depth ≥ 2 an empty-queue arrival can never complete the depth). The
-///   immediate present consumes the cadence slot (`lastRenderHostTime`), so the following link
-///   tick is throttled and re-shows never pile on. `SLOPDESK_PRESENT_ON_ARRIVAL=0` for A/B.
-/// - DISPLAY-NATIVE TICK (2026-06-10, latency audit): ``maxFrameRate`` resolves to the
-///   DISPLAY's native refresh (``resolveTickRate``), not the host content fps. On a 120 Hz
-///   panel the link ticks every 8.3 ms, halving the worst-case hold of a mid-interval arrival.
-///   At depth 1 with 60 fps content the tick BETWEEN two arrivals drains the queue
-///   (underflowRun → 1), so the NEXT arrival satisfies the present-on-arrival gate — dense
-///   stream presents on decode with the 8.3 ms tick as fallback cadence.
-///   `SLOPDESK_PRESENT_ON_ARRIVAL=0` ⇒ pure 120 Hz-quantized cadence (avg hold ≈ 4.2 ms);
-///   `SLOPDESK_TICK_HZ` overrides the resolved rate. Steady 60 fps content never reaches the
-///   re-prime threshold (underflowRun oscillates 0↔1, occasionally 2 — a depth-1 re-prime is
-///   satisfied by the very next arrival, no hold).
+/// - PRESENT-ON-ARRIVAL (really present-on-DECODE): a frame landing in an empty queue that
+///   completes the depth is presented IMMEDIATELY, not held for the next vsync — reclaiming the
+///   tick-wait on EVERY frame at depth 1 (sparse highlight/typing AND the dense scroll stream;
+///   the Parsec model). Only reachable at `liveDepth == 1` (at depth ≥ 2 an empty-queue arrival
+///   can never complete the depth). The immediate present consumes the cadence slot
+///   (`lastRenderHostTime`), so the following link tick is throttled and re-shows never pile on.
+///   `SLOPDESK_PRESENT_ON_ARRIVAL=0` for A/B.
+/// - DISPLAY-NATIVE TICK: ``maxFrameRate`` resolves to the DISPLAY's native refresh
+///   (``resolveTickRate``), not the host content fps. On a 120 Hz panel the link ticks every
+///   8.3 ms, halving the worst-case hold of a mid-interval arrival. At depth 1 with 60 fps
+///   content the tick BETWEEN two arrivals drains the queue (underflowRun → 1), so the NEXT
+///   arrival satisfies the present-on-arrival gate — dense stream presents on decode with the
+///   8.3 ms tick as fallback cadence. `SLOPDESK_PRESENT_ON_ARRIVAL=0` ⇒ pure 120 Hz-quantized
+///   cadence (avg hold ≈ 4.2 ms); `SLOPDESK_TICK_HZ` overrides the resolved rate. Steady 60 fps
+///   content never reaches the re-prime threshold (underflowRun oscillates 0↔1, occasionally 2 —
+///   a depth-1 re-prime is satisfied by the very next arrival, no hold).
 ///
 /// The queue policy is pure and unit-testable; the `CADisplayLink` wiring is GUI-only.
 /// Trade-off: ~``targetDepth`` frames of added latency (≈targetDepth/fps s) for smoothness,
@@ -82,15 +81,16 @@ public final class FramePacer: @unchecked Sendable {
     /// a genuine producer stall/idle (re-prime); reset to 0 on any presented frame.
     private var underflowRun = 0
     /// Submit timestamps in LOCKSTEP with ``queue`` (same appends/removeFirsts), so the dequeue
-    /// site can measure the REAL pacer hold (submit → first present). (The host's `clientHoldMs`
-    /// telemetry measured arrival staleness at the 50ms report timer — useless for presentation
-    /// latency.) Guarded by ``lock``.
+    /// site can measure the REAL pacer hold (submit → first present). The wire `clientHoldMs`
+    /// telemetry is NOT this: it samples arrival staleness at the 50 ms report timer, which says
+    /// nothing about presentation latency. Guarded by ``lock``.
     private var queueSubmittedAt: [Double] = []
     /// Debug-only (``dbgEnabled``): per-frame pacer holds for the current ~2s window, drained
     /// into one stderr line (`pacer hold p50/p90/max`). Guarded by ``lock``.
     private var dbgHolds: [Double] = []
     private var dbgHoldsWindowStart: Double = 0
-    /// KHỰNG-ladder stage 5 (``dbgEnabled``): last CONTENT-present time. Guarded by ``lock``.
+    /// Debug-only (``dbgEnabled``): last CONTENT-present time, feeding the present-gap detector in
+    /// ``dbgNoteHold(since:now:)``. Guarded by ``lock``.
     private var dbgLastPresentAt: Double = 0
 
     /// Frames to buffer before presentation begins. The absorbed arrival/decode jitter is
@@ -107,8 +107,8 @@ public final class FramePacer: @unchecked Sendable {
     public let maxFrameRate: Double
 
     /// Whether the adaptive jitter-buffer controller is engaged (env `SLOPDESK_ADAPTIVE_JITTER`).
-    /// When false the buffer is a FIXED ``targetDepth``, byte-identical to the pre-adaptive pacer:
-    /// ``liveDepth`` never reassigned, ``controller`` nil, arrival jitter never measured.
+    /// When false the buffer is a FIXED ``targetDepth``: ``liveDepth`` is never reassigned,
+    /// ``controller`` is nil, arrival jitter is never measured.
     private let adaptiveJitter: Bool
     /// The LIVE presentation depth the priming / homeostasis / re-prime logic reads. Equals
     /// ``targetDepth`` when adaptive is off; otherwise the controller's recommendation.
@@ -123,10 +123,9 @@ public final class FramePacer: @unchecked Sendable {
     private var jitter = OWDJitterEstimator()
     /// The adaptive depth controller (nil when adaptive is off). Guarded by ``lock``.
     private var controller: AdaptiveJitterController?
-    /// Component 4 (adaptive pacer depth v2, 2026-06-11): late-EVENT driven 1↔2 depth policy +
-    /// always-on presentation-health telemetry (``drainTelemetry()``). The policy ALWAYS runs
-    /// (counters feed the NetworkStats wire unconditionally); only its DEPTH ACTION is gated by
-    /// ``adaptiveDepthV2``. Guarded by ``lock``.
+    /// Late-EVENT driven 1↔2 depth policy + always-on presentation-health telemetry
+    /// (``drainTelemetry()``). The policy ALWAYS runs (its counters feed the NetworkStats wire
+    /// unconditionally); only its DEPTH ACTION is gated by ``adaptiveDepthV2``. Guarded by ``lock``.
     private var depthPolicy: PacerDepthPolicy
     /// Whether the v2 policy may move ``liveDepth`` (1↔2). Resolved at construction:
     /// `adaptiveDepth && targetDepth == 1 && !deadlineMode` — a manual `SLOPDESK_JITTER_DEPTH ≥ 2`
@@ -135,26 +134,25 @@ public final class FramePacer: @unchecked Sendable {
     /// Present-on-arrival for a starved display (see the header). Construction-time constant.
     private let presentOnArrival: Bool
 
-    // MARK: DEADLINE PACER (2026-06-10, the Parsec-smoothness research round)
+    // MARK: DEADLINE PACER
 
     //
-    // Both prior modes schedule presentation off ARRIVAL events (drain-on-vsync, or
-    // present-on-decode), so network jitter passes straight into inter-presentation intervals —
-    // the "bunched frame" stutter: two frames arrive inside one vsync window, drain on
-    // consecutive 8.3ms ticks, then a hole (8/8/17/8ms instead of 16.7 flat). The fix, per
-    // WebRTC `VCMTiming` + the Moonlight/cloud-gaming literature: anchor each frame's
-    // presentation DEADLINE to the CONTENT rhythm — `lastDeadline + contentInterval` — with a
-    // small playout delay absorbing jitter, and present at the first tick past the deadline.
+    // The arrival-driven modes (drain-on-vsync, present-on-decode) schedule presentation off
+    // ARRIVAL events, so network jitter passes straight into inter-presentation intervals — the
+    // "bunched frame" stutter: two frames arrive inside one vsync window, drain on consecutive
+    // 8.3ms ticks, then a hole (8/8/17/8ms instead of 16.7 flat). Per WebRTC `VCMTiming` + the
+    // Moonlight/cloud-gaming literature, this mode instead anchors each frame's presentation
+    // DEADLINE to the CONTENT rhythm — `lastDeadline + contentInterval` — with a small playout
+    // delay absorbing jitter, and presents at the first tick past the deadline.
     // CRITICAL: the anchor advances by the SCHEDULED deadline, never the actual present time,
     // so a late tick cannot accumulate schedule drift. Latest-frame-wins on the single pending
     // slot (a post-stall bunch shows the newest frame, not a fast-forward replay).
-    // DEFAULT ON (HW-validated: present-gaps 0.37%→0%, max hold 258ms→91ms over NetBird vs the
-    // arrival path); `SLOPDESK_PACER=arrival` restores present-on-arrival, `SLOPDESK_PLAYOUT_MS`
-    // tunes the delay (default 10 ≈ 0.6 frame).
+    // DEFAULT ON (HW-validated against the arrival path: present-gaps 0.37%→0%, max hold
+    // 258ms→91ms over NetBird); `SLOPDESK_PACER=arrival` selects present-on-arrival,
+    // `SLOPDESK_PLAYOUT_MS` tunes the delay (default 10 ≈ 0.6 frame).
     private let deadlineMode: Bool
-    /// The content-rhythm interval (deadline mode). MUTABLE since the FPS governor (2026-06-11):
-    /// a host `streamCadence` message rebases it via ``setContentFps(_:)``. Read and written only
-    /// under ``lock``.
+    /// The content-rhythm interval (deadline mode). MUTABLE: a host `streamCadence` message
+    /// rebases it via ``setContentFps(_:)``. Read and written only under ``lock``.
     private var contentIntervalSec: Double
     /// The deadline-mode playout buffer (seconds). MUTABLE: when ``adaptivePlayout`` is on it is
     /// driven by live network jitter via ``notePlayoutJitter(_:)`` (grow-fast / shrink-slow), else
@@ -204,7 +202,7 @@ public final class FramePacer: @unchecked Sendable {
     /// The frame object last handed to ``renderCallback`` (main-confined, like
     /// `lastRenderHostTime`). Re-presenting the SAME object is a visual no-op, so ``tick()`` SKIPS
     /// the render — at 120 Hz with 60 fps content half the ticks are empty re-shows, and rendering
-    /// them burned ~1 ms of main-thread/GPU work per 8.3 ms slot, delaying the present-on-decode
+    /// them burns ~1 ms of main-thread/GPU work per 8.3 ms slot, delaying the present-on-decode
     /// main-actor hops this pacer relies on.
     private var lastRenderedFrame: CVImageBuffer?
     /// Forces the next tick to render even an identical frame (main-confined). Set via
@@ -215,11 +213,11 @@ public final class FramePacer: @unchecked Sendable {
     // MARK: SCROLL-HINT REPROJECTION (default-OFF; env-gated at the construction site)
 
     /// The Rust-core scroll-hint offset law, or `nil` when `SLOPDESK_SCROLL_REPROJECT != 1`. When
-    /// nil EVERY reproject path below is skipped, so the present path is byte-identical to before
-    /// this feature. When set, the pacer integrates local scroll velocity into a UV offset on its
-    /// BETWEEN-CONTENT ticks (the would-be identity-skip re-shows), re-presents the last frame WITH
-    /// that offset, and resets the offset the instant a real decoded frame is presented (so the new
-    /// frame's own scrolled content is never double-counted). Main-confined like the render path.
+    /// nil EVERY reproject path below is skipped, leaving the present path untouched. When set, the
+    /// pacer integrates local scroll velocity into a UV offset on its BETWEEN-CONTENT ticks (the
+    /// would-be identity-skip re-shows), re-presents the last frame WITH that offset, and resets the
+    /// offset the instant a real decoded frame is presented (so the new frame's own scrolled content
+    /// is never double-counted). Main-confined like the render path.
     private let reprojector: ScrollReprojector?
     /// Sets the current reproject offset on the (@MainActor) renderer's dedicated uniform. Does NOT
     /// present — the pacer drives the re-present through its own ``renderCallback`` right after, so
@@ -255,7 +253,7 @@ public final class FramePacer: @unchecked Sendable {
         renderCallback: @escaping RenderCallback,
     ) {
         // SCROLL-HINT REPROJECTION: both must be present to engage; either nil ⇒ feature off (the
-        // default), and every reproject path is skipped so the present path is byte-identical.
+        // default), and every reproject path is skipped, leaving the present path untouched.
         if let reprojector, let applyReprojection {
             self.reprojector = reprojector
             self.applyReprojection = applyReprojection
@@ -291,12 +289,11 @@ public final class FramePacer: @unchecked Sendable {
             config: depthPolicyConfig,
             adaptEnabled: adaptiveDepth && clampedTarget == 1 && !deadlineMode,
         )
-        // OFF ⇒ liveDepth stays == targetDepth forever (controller nil, never consulted) ⇒
-        // the fixed-depth path is byte-identical to before this feature.
+        // Adaptive OFF ⇒ liveDepth stays == targetDepth forever (controller nil, never consulted).
         liveDepth = clampedTarget
         // The controller's fps is its seconds→frames conversion UNIT and it is the CONTENT fps —
-        // the SAME unit ``setContentFps(_:)`` rebases with. Constructing with `maxFrameRate` (the
-        // display tick rate, e.g. 120) made the unit FLIP to content fps (60) on the first
+        // the SAME unit ``setContentFps(_:)`` rebases with. Seeding it with `maxFrameRate` (the
+        // display tick rate, e.g. 120) would make the unit FLIP to content fps (60) on the first
         // `streamCadence` rebase, halving every depth recommendation mid-session.
         controller = resolvedAdaptiveJitter
             ? AdaptiveJitterController(
@@ -334,8 +331,8 @@ public final class FramePacer: @unchecked Sendable {
         submitForTest(frame, now: Self.currentHostTimeSeconds())
     }
 
-    /// TEST SEAM (internal — R17 lesson: don't churn the public surface for tests): the full
-    /// production ``submit(_:)`` body with the monotonic clock injected, so the depth-v2 policy's
+    /// TEST SEAM (internal — don't churn the public surface for tests): the full production
+    /// ``submit(_:)`` body with the monotonic clock injected, so the depth-v2 policy's
     /// time-windowed promote/demote is drivable from a virtual-clock unit test.
     func submitForTest(_ frame: CVImageBuffer, now: Double) {
         if deadlineMode {
@@ -377,9 +374,9 @@ public final class FramePacer: @unchecked Sendable {
                 depthChangeLine = "SlopDesk[video.client]: jitter depth \(before)→\(liveDepth) (arrival jitter \(String(format: "%.1f", jitterMs))ms)\n"
             }
         }
-        // Component 4: one decoded-frame arrival feeds the v2 policy's interval estimator + dense
-        // gate (telemetry always; the demote evaluation inside fires BEFORE the pacer re-primes on
-        // a post-idle resume, so the boost doesn't cost one extra held frame at resume).
+        // One decoded-frame arrival feeds the v2 policy's interval estimator + dense gate (telemetry
+        // always; the demote evaluation inside fires BEFORE the pacer re-primes on a post-idle
+        // resume, so the boost doesn't cost one extra held frame at resume).
         depthPolicy.noteArrival(now)
         if adaptiveDepthV2, let line = applyPolicyDepthLocked() { depthChangeLine = line }
         // Starved-display fast path (header: PRESENT-ON-ARRIVAL). Decided under the lock, ACTED on
@@ -400,14 +397,14 @@ public final class FramePacer: @unchecked Sendable {
         }
     }
 
-    /// Component 4 — called under ``lock``: consume the v2 policy's recommended depth. PROMOTE
-    /// re-primes (`primed = false`) so the slack frame is actually BUILT — without it, depth 2 only
-    /// disables present-on-arrival and changes trim limits but holds no standing frame. DEMOTE is
-    /// plain: homeostasis trims the extra frame and the present-on-arrival gate re-arms by itself
-    /// (both read ``liveDepth``). Returns the debug depth-change line (nil outside
-    /// `SLOPDESK_VIDEO_DEBUG` / when depth did not move) for the CALLER to write AFTER
-    /// `lock.unlock()` — this is reachable from the decode-thread ``submit(_:)`` path, and a
-    /// blocking stderr write must never happen under the pacer lock.
+    /// Called under ``lock``: consume the v2 policy's recommended depth. PROMOTE re-primes
+    /// (`primed = false`) so the slack frame is actually BUILT — without it, depth 2 only disables
+    /// present-on-arrival and changes trim limits but holds no standing frame. DEMOTE is plain:
+    /// homeostasis trims the extra frame and the present-on-arrival gate re-arms by itself (both
+    /// read ``liveDepth``). Returns the debug depth-change line (nil outside `SLOPDESK_VIDEO_DEBUG`
+    /// / when depth did not move) for the CALLER to write AFTER `lock.unlock()` — this is reachable
+    /// from the decode-thread ``submit(_:)`` path, and a blocking stderr write must never happen
+    /// under the pacer lock.
     private func applyPolicyDepthLocked() -> String? {
         let desired = depthPolicy.depth
         guard desired != liveDepth else { return nil }
@@ -418,11 +415,11 @@ public final class FramePacer: @unchecked Sendable {
         return "SlopDesk[video.client]: jitter depth \(before)→\(desired) (v3 owd-late)\n"
     }
 
-    /// Depth v3: fold one NETWORK-late event (the session's `OwdLateDetector` flagged an owd spike
-    /// past the path baseline) into the depth policy — the promotion/demotion source. Lock-guarded
-    /// and synchronous; callable straight from the session actor (same contract as
-    /// ``drainTelemetry()``). The depth action applies immediately so a promote re-primes before the
-    /// next present, not one arrival later.
+    /// Folds one NETWORK-late event (the session's `OwdLateDetector` flagged an owd spike past the
+    /// path baseline) into the depth policy — the promotion/demotion source. Lock-guarded and
+    /// synchronous; callable straight from the session actor (same contract as ``drainTelemetry()``).
+    /// The depth action applies immediately so a promote re-primes before the next present, not one
+    /// arrival later.
     public func noteNetworkLate() {
         noteNetworkLateForTest(now: Self.currentHostTimeSeconds())
     }
@@ -439,9 +436,9 @@ public final class FramePacer: @unchecked Sendable {
         }
     }
 
-    /// Component 4: drain the windowed presentation-health counters + the live depth gauge for one
-    /// NetworkStats report. Lock-guarded and synchronous — callable straight from the session actor
-    /// with no main hop (the pacer is `@unchecked Sendable` with its own lock).
+    /// Drains the windowed presentation-health counters + the live depth gauge for one NetworkStats
+    /// report. Lock-guarded and synchronous — callable straight from the session actor with no main
+    /// hop (the pacer is `@unchecked Sendable` with its own lock).
     public func drainTelemetry() -> PacerTelemetrySnapshot {
         lock.lock()
         defer { lock.unlock() }
@@ -454,13 +451,13 @@ public final class FramePacer: @unchecked Sendable {
     /// `queueWasEmpty && queueCount >= liveDepth` is only satisfiable at `liveDepth == 1` (after an
     /// empty-queue append, `queueCount == 1`), so depth ≥ 2 keeps the pure vsync cadence untouched.
     ///
-    /// HISTORY (2026-06-10): the first version also required `underflowRun >= 1` ("display already
-    /// starved") to scope this to sparse content. MEASURED on HW it barely fired in the DENSE regime
-    /// either: a THROTTLED tick returns before incrementing `underflowRun`, so the gate raced the
-    /// arrival and usually lost — live hold stayed at p50≈8ms/p90≈20ms (pure tick-wait). Dropping the
-    /// starved requirement is safe: a second present inside one vsync slot is queued to the next
-    /// refresh by Core Animation (when the tick would have shown it), and it still consumes the
-    /// cadence slot so the link tick right after is throttled.
+    /// Do NOT add an `underflowRun >= 1` ("display already starved") requirement to scope this to
+    /// sparse content: a THROTTLED tick returns before incrementing `underflowRun`, so that gate
+    /// races the arrival and usually loses — measured on HW it barely fires even in the DENSE
+    /// regime, leaving hold at p50≈8ms/p90≈20ms (pure tick-wait). Firing unconditionally is safe:
+    /// a second present inside one vsync slot is queued to the next refresh by Core Animation
+    /// (when the tick would have shown it anyway), and it still consumes the cadence slot so the
+    /// link tick right after is throttled.
     public static func shouldPresentOnArrival(
         enabled: Bool,
         queueWasEmpty: Bool,
@@ -493,7 +490,7 @@ public final class FramePacer: @unchecked Sendable {
         needsRedisplay = true
     }
 
-    /// FPS GOVERNOR (2026-06-11): rebase the content-cadence assumptions on a host fps change (the
+    /// FPS GOVERNOR: rebase the content-cadence assumptions on a host fps change (the
     /// `streamCadence` control message). Lock-guarded; callable off-main. Default arrival-mode
     /// pacing is fps-agnostic (present-on-arrival), so this rebases only (a) the deadline-mode
     /// rhythm interval and (b) the adaptive controller's seconds→frames conversion — the controller
@@ -511,9 +508,9 @@ public final class FramePacer: @unchecked Sendable {
                 initialDepth: c.targetDepth,
             )
         }
-        // Component 4: pin the v2 policy's expected interval to the announced cadence — an INSTANT
-        // late-threshold rebase (no ~8-arrival estimator transient, no false late at the
-        // crossover). The governor re-announces on every step, so the hint tracks the live fps.
+        // Pin the v2 policy's expected interval to the announced cadence — an INSTANT late-threshold
+        // rebase (no ~8-arrival estimator transient, no false late at the crossover). The governor
+        // re-announces on every step, so the hint tracks the live fps.
         depthPolicy.setIntervalHint(1.0 / max(1.0, fps))
         lock.unlock()
     }
@@ -587,8 +584,8 @@ public final class FramePacer: @unchecked Sendable {
         defer { if let depthChangeLine { FileHandle.standardError.write(Data(depthChangeLine.utf8)) } }
         lock.lock()
         defer { lock.unlock() }
-        // NOTE: all depth reads below use `liveDepth` (== targetDepth when adaptive is off, so
-        // this path is unchanged; the controller's live recommendation when on).
+        // All depth reads below go through `liveDepth`: == targetDepth when adaptive is off, the
+        // controller's live recommendation when on.
         if !primed {
             // (Re)prime: hold (re-show last) until the buffer fills to liveDepth, (re)building the
             // jitter slack BEFORE steady presentation. Re-entered after a sustained dry spell (below),
@@ -615,8 +612,8 @@ public final class FramePacer: @unchecked Sendable {
             let submittedAt = queueSubmittedAt.removeFirst()
             lastShownFrame = next
             underflowRun = 0
-            // Component 4: one CONTENT present = one gap classification (telemetry always; the
-            // depth action only when v2 is engaged).
+            // One CONTENT present = one gap classification (telemetry always; the depth action only
+            // when v2 is engaged).
             depthPolicy.notePresent(now)
             if adaptiveDepthV2, let line = applyPolicyDepthLocked() { depthChangeLine = line }
             if Self.dbgEnabled { dbgNoteHold(since: submittedAt, now: now) }
@@ -643,11 +640,11 @@ public final class FramePacer: @unchecked Sendable {
         // underflowRun > 0, so neither grow path (noteUnderrun nor noteFrame) could ever fire — the buffer
         // pins at 1 with single-frame-repeat judder and no self-healing as a clean LAN degrades. Keeping
         // re-prime ≥ 2 means a single dip at the floor is still transient (→ grows via noteUnderrun), while
-        // 2+ empty vsyncs is still a real idle. For liveDepth ≥ 2 this equals the old max(1, liveDepth)
-        // (no behaviour change).
-        // Component 4: an empty-queue re-show tick may OPEN a late-gap episode (counted once per
-        // episode inside the policy) — the hitch is recorded as it happens, even if no frame ever
-        // resolves it (motion stop).
+        // 2+ empty vsyncs is still a real idle. For liveDepth ≥ 2 the floor is inert (max(2, liveDepth)
+        // == liveDepth).
+        //
+        // An empty-queue re-show tick may OPEN a late-gap episode (counted once per episode inside the
+        // policy) — the hitch is recorded as it happens, even if no frame ever resolves it (motion stop).
         depthPolicy.noteReshow(now)
         underflowRun += 1
         if underflowRun >= max(2, liveDepth) {
@@ -678,12 +675,11 @@ public final class FramePacer: @unchecked Sendable {
 
     /// Debug-only (called under ``lock``): fold one frame's REAL pacer hold (submit → first present)
     /// and emit a ~2s-windowed `p50/p90/max` stderr line — the ground-truth presentation-latency
-    /// metric for HW A/Bs (the wire `clientHoldMs` is arrival staleness, not pacer hold). The in-lock
-    /// stderr write is debug mode only, microseconds.
+    /// metric for HW A/Bs. The in-lock stderr write is debug mode only, microseconds.
     private func dbgNoteHold(since submittedAt: Double, now: Double) {
-        // KHỰNG-ladder stage 5: a >28ms gap between two CONTENT presents = the user-visible hitch
+        // Stutter-ladder stage 5: a >28ms gap between two CONTENT presents = the user-visible hitch
         // itself (one content interval at 60fps is 16.7ms; >28ms means a frame slot went empty).
-        // Read against stages 1-4 to see which segment created the hole.
+        // Read against stages 1-4 (host-side) to see which segment created the hole.
         if dbgLastPresentAt > 0, now - dbgLastPresentAt > 0.028 {
             FileHandle.standardError
                 .write(Data("SlopDesk[video.client]: present gap \(Int((now - dbgLastPresentAt) * 1000))ms\n".utf8))
@@ -717,7 +713,7 @@ public final class FramePacer: @unchecked Sendable {
             if due {
                 lastPresentDeadline = pendingDeadline // advance by the SCHEDULE, not by `now`
                 pendingFrame = nil
-                depthPolicy.notePresent(hostTimeSeconds) // component 4: telemetry only in deadline mode
+                depthPolicy.notePresent(hostTimeSeconds) // telemetry only: no depth action in deadline mode
                 if Self.dbgEnabled { dbgNoteHold(since: submittedAt, now: hostTimeSeconds) }
             }
             lock.unlock()

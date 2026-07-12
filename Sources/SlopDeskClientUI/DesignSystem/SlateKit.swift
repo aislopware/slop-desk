@@ -36,10 +36,10 @@ import AppKit
 
 /// An invisible, hit-test-TRANSPARENT hover sensor: `hitTest` returns nil so clicks, drags and the
 /// window-move gesture pass through untouched — the tracking area still reports enter/exit. This is
-/// what the top-strip reveal rides (user ruling 2026-07-11: chrome toggles hide at rest and appear
-/// only while the pointer is in the top zone — the otty behavior). SwiftUI `.onHover` needs
-/// `.contentShape` over the transparent strip, which would ALSO swallow those clicks; an NSView
-/// tracking area decouples "where hover is sensed" from "what is clickable".
+/// what the top-strip reveal rides: chrome toggles hide at rest and appear only while the pointer is
+/// in the top zone (the otty behavior). SwiftUI `.onHover` needs `.contentShape` over the transparent
+/// strip, which would ALSO swallow those clicks; an NSView tracking area decouples "where hover is
+/// sensed" from "what is clickable".
 struct HoverSensor: NSViewRepresentable {
     let onChange: (Bool) -> Void
 

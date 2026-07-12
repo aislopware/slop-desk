@@ -1,11 +1,11 @@
 // Pure dominant-vertical-shift estimator for scroll reprojection (host side), plus the per-row NEON
 // luma hashing seam over locked NV12 planes.
 //
-// This is the resurrected, native-Swift port of the Rust `slopdesk-core::scroll_shift` reference
-// (`estimate_vertical_shift`) PLUS the `slopdesk-ffi::video::scroll_shift` per-row hashing + the
-// `aisd_estimate_scroll_shift_nv12` ABI — the all-Swift migration deletes the Rust core + FFI
-// boundary. The row hashing reuses `FrameHasher` (one row hashed as a 1-row luma-only NV12 frame),
-// so it is byte-identical to the old kernel.
+// This mirrors the Rust `slopdesk-core::scroll_shift` reference (`estimate_vertical_shift`) and the
+// `slopdesk-ffi::video::scroll_shift` per-row hashing / `aisd_estimate_scroll_shift_nv12` ABI
+// bit-for-bit — any drift from that reference behavior is a bug. The row hashing reuses
+// `FrameHasher` (one row hashed as a 1-row luma-only NV12 frame), so row hashes stay byte-identical
+// to the per-row NV12 hash path.
 //
 // ## What it does
 //
@@ -138,7 +138,7 @@ public enum ScrollShiftEstimator {
         return best
     }
 
-    // MARK: - NV12 plane entry (matches the old `aisd_estimate_scroll_shift_nv12` ABI)
+    // MARK: - NV12 plane entry (matches the `aisd_estimate_scroll_shift_nv12` ABI)
 
     /// Estimates the dominant VERTICAL content shift (pixel rows) between two locked NV12 luma planes
     /// over BORROWED pointers (zero-copy). Returns `(shift, confidenceMilli, bandTop, bandBottom)`:
@@ -197,8 +197,8 @@ func borrowPlane(
 /// Per-row luma hashes: hashes the first `width` bytes of each of the `height` `stride`-spaced rows,
 /// bounds-guarded per row (an over-stated `height` stops early rather than reading OOB). Each row is
 /// hashed via the allocation-free ``FrameHasher/hashRow(_:seed:)`` — byte-identical to hashing it as
-/// a 1-row luma-only NV12 frame (the old per-row `hashNV12` call), but without the per-row
-/// `StreamHasher` heap buffer, so a 1080-row plane no longer churns 1080 small allocations.
+/// a 1-row luma-only NV12 frame, but without a per-row `StreamHasher` heap buffer, so a 1080-row
+/// plane costs one allocation total rather than 1080 small ones.
 func rowHashes(
     _ y: UnsafeBufferPointer<UInt8>, _ stride: Int, _ width: Int, _ height: Int,
 ) -> [UInt64] {

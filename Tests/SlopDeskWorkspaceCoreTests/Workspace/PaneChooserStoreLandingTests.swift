@@ -2,7 +2,7 @@ import CoreGraphics
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// WS-C v2 — the IN-PANE chooser store landing. Every new-pane gesture mints a real, FOCUSED `.chooser`
+/// The IN-PANE chooser store landing. Every new-pane gesture mints a real, FOCUSED `.chooser`
 /// pane (the pane's CONTENT is the kind picker); ``WorkspaceStore/choosePaneKind(_:kind:)`` then flips it to
 /// the real kind IN PLACE (same `PaneID`) and reconcile materializes the session. This suite is the headless
 /// authority for that contract (`openChooserPane` placement + `choosePaneKind` transition + reconcile-skip).
@@ -78,9 +78,8 @@ final class PaneChooserStoreLandingTests: XCTestCase {
         XCTAssertTrue(store.tree.isInvariantHeld())
     }
 
-    /// The PRIMARY ⌘T flow end-to-end at the spec level (the "new tab shows 'New Pane'" report,
-    /// 2026-07-11): a chooser minted from a pane with a known cwd INHERITS that cwd, and picking
-    /// Terminal retitles the spec to "Terminal" — so the rail's `rowTitle` (folder name over
+    /// The PRIMARY ⌘T flow end-to-end at the spec level: a chooser minted from a pane with a known cwd
+    /// INHERITS that cwd, and picking Terminal retitles the spec to "Terminal" — so the rail's `rowTitle` (folder name over
     /// `lastKnownTitle ?? title`) can never be left at the chooser's "New Pane" once resolved, and
     /// the terminal materializes with the inherited cwd as its spawn hint.
     func testChooserResolveKeepsInheritedCwdAndRetitles() throws {
@@ -92,7 +91,7 @@ final class PaneChooserStoreLandingTests: XCTestCase {
         let chooser = try XCTUnwrap(activeID(store))
         XCTAssertEqual(
             store.tree.spec(for: chooser)?.lastKnownCwd, "/Users/me/projects/slop-desk",
-            "the chooser spec carries the inherited cwd (ES-E3-2)",
+            "the chooser spec carries the inherited cwd",
         )
         XCTAssertEqual(store.tree.spec(for: chooser)?.title, "New Pane")
 

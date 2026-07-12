@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E5 ES-E5-5 store-level wiring for ⇧⌘F Global Search, observed on a ``RecordingTerminalPaneSession`` that
+/// Store-level wiring for ⇧⌘F Global Search, observed on a ``RecordingTerminalPaneSession`` that
 /// carries a REAL ``TerminalViewModel`` whose `surface` is a recording ``TerminalSurfaceActions`` — so the
 /// cross-seam scrollback mirror + the libghostty navigation actions are pinned WITHOUT a real GhosttySurface
 /// (the hang-safety rule: no VideoToolbox / Metal / SCStream / real window server).
@@ -31,8 +31,8 @@ final class GlobalSearchStoreTests: XCTestCase {
 
     /// Two hits in the SAME pane land DISTINCTLY via direct `scroll_to_row:<line>`: the 1st hit scrolls to
     /// row 0 and the 3rd to row 2. The amber highlight is armed by the leading `search:` action (literal +
-    /// case-insensitive mode). An ordinal `navigate_search:next` walk was replaced by the direct scroll because
-    /// the old approach was viewport-relative and wrong in case-sensitive mode (see GlobalSearchController).
+    /// case-insensitive mode). The direct scroll is used instead of an ordinal `navigate_search:next` walk
+    /// because that ordinal walk is viewport-relative and wrong in case-sensitive mode (see GlobalSearchController).
     func testJumpAdvancesToClickedHitsOrdinalWithinPane() throws {
         let store = makeStore()
         let session = try activeSession(store)

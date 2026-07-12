@@ -53,7 +53,7 @@ public actor HostTransport {
 
     private var pendingMux: [UUID: PendingMuxLink] = [:]
 
-    /// Set by ``stop()`` (R9 #5). After stop, an in-flight handshake that completes a mux pair must NOT
+    /// Set by ``stop()``. After stop, an in-flight handshake that completes a mux pair must NOT
     /// be yielded (the stream is finished → the mux + its 2 sockets would leak, unseen by
     /// `HostServer.drainMuxConnections`), and a newly-arrived first link must NOT be parked in
     /// `pendingMux` (already drained). `associateMux` closes such links immediately instead.
@@ -92,13 +92,13 @@ public actor HostTransport {
     /// result from ``boundPort``). Suspends until the listener is `.ready`.
     ///
     /// - Parameters:
-    ///   - readinessTimeout: bounds reaching `.ready` (R15 #3). `NWListener` can park in `.waiting`
+    ///   - readinessTimeout: bounds reaching `.ready`. `NWListener` can park in `.waiting`
     ///     (no network at login, DHCP not yet up) and never resolve; without a bound the
     ///     `withCheckedThrowingContinuation` below suspends `start()` forever, wedging the host (the
     ///     menu-bar Start spinner never clears). On expiry `start()` throws
     ///     ``SlopDeskTransportError/timedOut(_:)``. 10s is far beyond a real local bind (ms), so it
     ///     never false-positives the healthy path.
-    ///   - onListenerFailed: surfaced when the listener fails AFTER it became ready (R15 #2) — a
+    ///   - onListenerFailed: surfaced when the listener fails AFTER it became ready — a
     ///     post-bind interface drop / socket error. The continuation resolves on the FIRST
     ///     ready/failed, so a LATER failure otherwise vanishes and a long-lived host keeps showing
     ///     "running" while silently accepting nothing. Additive + defaulted nil: the headless daemon
@@ -109,7 +109,7 @@ public actor HostTransport {
         readinessTimeout: Duration = .seconds(10),
         onListenerFailed: (@Sendable (SlopDeskTransportError) -> Void)? = nil,
     ) async throws {
-        // R10 self-audit: do NOT reset `stopped` here. A `HostTransport` is SINGLE-USE — `stop()`
+        // Do NOT reset `stopped` here. A `HostTransport` is SINGLE-USE — `stop()`
         // permanently `finish()`es `muxConnectionContinuation`, so a fresh listener after stop would
         // yield accepted muxes into a dead stream (the relay owner never sees them → leak). Resetting
         // `stopped` would falsely advertise restart support and ACCEPT-then-leak instead of refusing.
@@ -129,7 +129,7 @@ public actor HostTransport {
         // actor synchronously *before* start() returns — no separate Task race.
         let resolvedPort: UInt16 = try await withCheckedThrowingContinuation { continuation in
             let box = ReadyBox()
-            // R15 #3: bound the wait for `.ready`. A listener stuck in `.waiting` (no network at login,
+            // Bound the wait for `.ready`. A listener stuck in `.waiting` (no network at login,
             // DHCP not up) would otherwise never resume this continuation. The timer resume-throws; it
             // is cancelled the instant a terminal state (ready/failed/cancelled) resolves the box.
             let timeoutTask = Task {
@@ -149,7 +149,7 @@ public actor HostTransport {
                     timeoutTask.cancel()
                     let err = SlopDeskTransportError.listenerFailed(String(describing: error))
                     if box.hasResumed {
-                        // R15 #2: the continuation already resolved on `.ready` — this is a POST-bind
+                        // The continuation already resolved on `.ready` — this is a POST-bind
                         // failure (interface drop / socket error). Surface it as a health signal so a
                         // long-lived host can re-classify "running" → "failed" instead of silently
                         // accepting nothing. (Resuming again here would be a no-op via the box anyway.)
@@ -212,10 +212,10 @@ public actor HostTransport {
         reaperTask = nil
         listener?.cancel()
         listener = nil
-        // R9 #5: drain + close every half-paired link parked in pendingMux. Otherwise a client whose
+        // Drain + close every half-paired link parked in pendingMux. Otherwise a client whose
         // CONTROL socket arrived but whose DATA never did (a Start→Stop before DATA, or a NetBird flap)
         // abandons a live NWConnection on every cycle → fd exhaustion on the long-lived menu-bar host
-        // (the pre-pairing analogue of the R5 rank-3 accepted-connection leak).
+        // (the pre-pairing analogue of the accepted-connection leak).
         for (id, entry) in pendingMux {
             pendingMux[id] = nil
             if let control = entry.control { Task { await control.close() } }
@@ -341,7 +341,7 @@ public actor HostTransport {
     /// the second completes the pair.
     private func associateMux(_ connection: NWConnection, connectionID: UUID, isControl: Bool) {
         let link = NWMuxByteLink(connection: connection, label: isControl ? "host.control" : "host.data")
-        // R9 #5: after stop(), do NOT pair (yielding to the finished stream leaks the mux's 2 sockets)
+        // After stop(), do NOT pair (yielding to the finished stream leaks the mux's 2 sockets)
         // or park (pendingMux is drained). Close this just-arrived link + any half-pair immediately.
         guard !stopped else {
             Task { await link.close() }
@@ -368,7 +368,7 @@ public actor HostTransport {
             )
             Task {
                 await mux.start()
-                // R11 (completes R9 #5): the `guard !stopped` above only rejects a link that ARRIVES
+                // The `guard !stopped` above only rejects a link that ARRIVES
                 // after stop(). A pair that PASSED the guard still spawns this Task, and stop() can run
                 // during the `await mux.start()` suspension — finishing the stream. A yield into a
                 // finished AsyncStream is silently dropped (`.terminated`), orphaning this fully-started
@@ -385,7 +385,7 @@ public actor HostTransport {
             // so it would leak its fd — and a peer re-sending the same side repeatedly leaks one per
             // duplicate AND restamps createdAt, pushing the reaper deadline out. The pure, unit-tested
             // ``MuxPairing`` decides whether this re-park displaces a same-side half; if so close it,
-            // and preserve the original createdAt so the reaper deadline cannot be deferred (R12 #2).
+            // and preserve the original createdAt so the reaper deadline cannot be deferred.
             // On the genuine first arrival (existing == nil) nothing is displaced and createdAt is now.
             let decision = MuxPairing.decide(
                 existingHasControl: existing?.control != nil,
@@ -403,7 +403,7 @@ public actor HostTransport {
 }
 
 /// The pure pairing decision for a just-arrived mux half-link, given the currently-parked half (if
-/// any) and which side arrived. Extracted so the duplicate-same-side fd-leak guard (R12 #2) is
+/// any) and which side arrived. Extracted so the duplicate-same-side fd-leak guard is
 /// unit-testable without a real `NWConnection`: the two physical mux sockets (CONTROL + DATA) sharing
 /// one connectionID pair into one ``MuxNWConnection``; the first to arrive parks, the second completes
 /// the pair. A SECOND socket for a side that is ALREADY parked (two CONTROLs, or two DATAs, before the

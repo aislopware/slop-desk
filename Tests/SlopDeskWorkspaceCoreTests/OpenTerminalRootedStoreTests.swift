@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E18 WI-6 — the terminal-rooted external-drop STORE ingress (`WorkspaceStore.openTerminalRooted`,
+/// The terminal-rooted external-drop STORE ingress (`WorkspaceStore.openTerminalRooted`,
 /// `WorkspaceStore+Drop.swift`): a dropped folder/file lands in a fresh terminal tab or split and the
 /// `cd … || cd <parent>` line is sent VERBATIM through the new pane's session handle. (These tests lived in
 /// the since-deleted `WebPaneStoreTests` — the local web pane is removed, but the terminal drop ingress is
@@ -25,7 +25,7 @@ final class OpenTerminalRootedStoreTests: XCTestCase {
         }
     }
 
-    /// ES-E18-2 / test #8: a dropped folder on the New-Tab zone (`DropAction.newTabCd`) opens a fresh
+    /// A dropped folder on the New-Tab zone (`DropAction.newTabCd`) opens a fresh
     /// TERMINAL tab and `cd`s it to the dropped path — falling back to the path's PARENT (a dropped FILE →
     /// its containing folder) via ``LinkActionPolicy/changeDirectoryCommandLine(_:)`` — sent VERBATIM through
     /// the new pane's `FakePaneSession` sink, NEVER `SendKeysParser`. `home` new-tab policy ⇒ the new tab
@@ -83,7 +83,7 @@ final class OpenTerminalRootedStoreTests: XCTestCase {
         )
     }
 
-    /// Batch-4 item 9 — the Open-Quickly Folder "Split Down" action passes `axis: .vertical` to
+    /// The Open-Quickly Folder "Split Down" action passes `axis: .vertical` to
     /// `openTerminalRooted`, which must split the active pane VERTICALLY (a stacked split), not horizontally.
     /// Revert-to-confirm-fail: on the un-fixed store `openTerminalRooted` has NO `axis` parameter (the call
     /// fails to compile) and always split `.horizontal`.

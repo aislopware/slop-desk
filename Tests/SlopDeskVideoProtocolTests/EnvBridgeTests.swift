@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskVideoProtocol
 
-/// W12 bridge tests: setting → env mapping, the symmetric-key flagging, the `video-prefs.json`
+/// Bridge tests: setting → env mapping, the symmetric-key flagging, the `video-prefs.json`
 /// sidecar round-trip, and the daemon-launch overlay fold. The load-bearing assertion is that a
 /// DEFAULT (all-`nil`) ``VideoPreferences`` maps to an EMPTY overlay — so the empty-overlay
 /// behaviour-preservation invariant in ``EnvConfigTests`` is reachable from the real settings model.
@@ -74,9 +74,9 @@ final class EnvBridgeTests: XCTestCase {
         XCTAssertFalse(EnvConfig.boolDefaultOff("SLOPDESK_AGENT_HOOKS"))
     }
 
-    /// E13 WI-3: the two new sidecar agent flags map 1:1 to their host env keys; an unset field emits nothing.
+    /// The sidecar agent flags map 1:1 to their host env keys; an unset field emits nothing.
     func testAgentPreferencesMapsPreventSleepAndResumeKeys() {
-        // Only the new fields set — the detect/hooks keys stay absent (unset emits nothing).
+        // Only the prevent-sleep/resume fields set — the detect/hooks keys stay absent (unset emits nothing).
         let onOff = EnvBridge.toEnv(AgentPreferences(preventSleep: true, resumeOnRecovery: false))
         XCTAssertEqual(onOff["SLOPDESK_AGENT_PREVENT_SLEEP"], "1")
         XCTAssertEqual(onOff["SLOPDESK_AGENT_RESUME_ON_RECOVERY"], "0")

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Adaptive FEC (WF-4): picks the per-frame XOR-parity group size from the host's
+/// Adaptive FEC: picks the per-frame XOR-parity group size from the host's
 /// measured loss and signals it on the wire so the client splits data/parity
 /// identically. Two PURE concerns (value-type style, like `NetworkEstimate` /
 /// `LiveCongestionController`):
@@ -15,7 +15,7 @@ import Foundation
 /// size" (NOT a hardcoded 5). Prod both ends run `XORParityFEC(5)`, so tier 0 is
 /// byte-identical to today. With `SLOPDESK_ADAPTIVE_FEC` unset the host always sends
 /// tier 0, so the spare flags bits stay zero and every frame is wire-identical to the
-/// pre-WF-4 path.
+/// pre-adaptive path.
 public enum AdaptiveFECPolicy {
     /// The default on-wire tier. Tier 0 routes to the endpoint's configured `fec.groupSize`
     /// on BOTH ends (5 in prod); its flags-byte bits are all-zero → byte-identical to the
@@ -60,7 +60,7 @@ public enum AdaptiveFECPolicy {
         /// Resolved parity count `m` (clamped to ``mRange``; `1` = inactive / unchanged wire), read
         /// once from `SLOPDESK_FEC_M` at process start (env static — fixed for the lifetime, so host
         /// and client never disagree mid-session). Resolves through ``EnvConfig`` (ProcessInfo env →
-        /// overlay, W12) so a GUI setting can override it; an EMPTY overlay ⇒ ``configEnv`` byte-
+        /// overlay) so a GUI setting can override it; an EMPTY overlay ⇒ ``configEnv`` byte-
         /// identical to `ProcessInfo.processInfo.environment` for these two keys, so this site (and the
         /// golden corpus pinning the defaults) is unchanged.
         public static let parityCount = resolveParityCount(env: configEnv)
@@ -122,9 +122,8 @@ public enum AdaptiveFECPolicy {
     /// Wire FEC tiers carrying the adaptive-`m` ladder's three parity levels. From reserved tier
     /// slots 5/6/7, all of which ``groupSize(forTier:default:)`` maps to the endpoint default (`= k`)
     /// — the hard `m > 1` constraint (the RS Cauchy encoder has exactly `k` columns; group-size tiers
-    /// 2/3/4 map to `g != k` and so can NOT carry `m > 1`). Mirror of the Rust
-    /// `adaptive_fec::PARITY_TIER_*` constants; the receive `m` they resolve to (2 / 3 / 5) lives in
-    /// `adaptive_fec::parity_count` (read by the core reassembler).
+    /// 2/3/4 map to `g != k` and so can NOT carry `m > 1`). Each tier resolves to a fixed receive `m`
+    /// (2 / 3 / 5), consumed by the client reassembler.
     public static let parityTierClean: UInt8 = 5 // m = 2 (least overhead, clean link)
     public static let parityTierNormal: UInt8 = 6 // m = 3 (baseline, == legacy fixed FEC_M=3)
     public static let parityTierBurst: UInt8 = 7 // m = 5 (heavy recovery on a loss burst)
@@ -193,12 +192,12 @@ public enum AdaptiveFECPolicy {
 
     // MARK: B. Loss → tier decision (host only)
 
-    /// FEC LADDER FLOOR (2026-06-11, telemetry round). The relax path FLOORS at level 1 (g10, ~10%
-    /// overhead) and never selects OFF by default. MEASURED on the live FPT↔Viettel path (169 s,
-    /// baseline loss 0.1–0.6%): 158 tier transitions incl. 18 to OFF; 102 unrecovered frame losses
-    /// (1.1%) vs 186 FEC-recovered → 65 client decode-fails ≈ 1 per 2.6 s, each a blip risk. On a
-    /// NONZERO-baseline-loss path OFF is never safe — the dwell only slows the walk there, not stops
-    /// it. `SLOPDESK_FEC_ALLOW_OFF=1` re-enables relax-to-OFF (a genuinely loss-free LAN/loopback can
+    /// FEC LADDER FLOOR: the relax path FLOORS at level 1 (g10, ~10% overhead) and never selects OFF
+    /// by default. On the live FPT↔Viettel path (169 s, baseline loss 0.1–0.6%), letting relax reach
+    /// OFF produced 158 tier transitions incl. 18 to OFF, 102 unrecovered frame losses (1.1%) vs 186
+    /// FEC-recovered → 65 client decode-fails ≈ 1 per 2.6 s, each a blip risk. On a NONZERO-baseline-
+    /// loss path OFF is never safe — the dwell only slows the walk there, not stops it.
+    /// `SLOPDESK_FEC_ALLOW_OFF=1` re-enables relax-to-OFF (a genuinely loss-free LAN/loopback can
     /// reclaim the standing ~10%). The WIRE CODEC for tier 1 is untouched — an OFF-tier frame from an
     /// old/flagged host still decodes.
     public static let allowOffTierDefault = allowOffTier(env: ProcessInfo.processInfo.environment)
@@ -281,24 +280,24 @@ public enum AdaptiveFECPolicy {
         return current // dead-band → hold
     }
 
-    // MARK: Relax dwell (2026-06-11, 4G burst-flap fix)
+    // MARK: Relax dwell (4G burst-flap fix)
 
     /// How many CONSECUTIVE relax-demanding reports must accumulate before the tier steps DOWN one
     /// level. Escalation stays immediate (one step per report).
     ///
-    /// WHY: on the real 4G path the first adaptive-FEC deployment FLAPPED — 224 tier changes in one
-    /// session, cycling OFF→g10→g5→g10→OFF every ~8s. Mobile loss arrives in BURSTS seconds apart;
-    /// the loss EWMA decays below the relax thresholds between bursts, so one-step-per-report relax
-    /// walked back to OFF in ~1s and EVERY burst landed on an unprotected stream (118 unrecovered
-    /// frames ≈ 1%, almost all in OFF windows). Requiring ~12s of consecutively clean reports (24 at
-    /// the ~2/s netstats cadence) keeps g10 armed BETWEEN bursts while a genuinely clean path (home
-    /// WiFi) still relaxes to OFF — just ~12s per step slower, a one-time cost against a standing
-    /// 10-20% overhead saving.
+    /// WHY: naive one-step-per-report relax flaps badly on a real 4G path — mobile loss arrives in
+    /// BURSTS seconds apart, and the loss EWMA decays below the relax thresholds between bursts, so
+    /// relax walks back to OFF in ~1s and EVERY burst then lands on an unprotected stream (measured:
+    /// 224 tier changes in one session, cycling OFF→g10→g5→g10→OFF every ~8s, 118 unrecovered frames
+    /// ≈ 1%, almost all in OFF windows). Requiring ~12s of consecutively clean reports (24 at the
+    /// ~2/s netstats cadence) keeps g10 armed BETWEEN bursts while a genuinely clean path (home WiFi)
+    /// still relaxes to OFF — just ~12s per step slower, a one-time cost against a standing 10-20%
+    /// overhead saving.
     public static let relaxDwellReports = 24
 
-    /// STICKY RELAX (2026-06-11, telemetry round): a report carrying UNRECOVERED frame loss proves
-    /// the CURRENT redundancy was insufficient — relaxing soon after is exactly the measured
-    /// blip-per-2.6s failure mode. For this many reports after any `unrecovered > 0` report the relax
+    /// STICKY RELAX: a report carrying UNRECOVERED frame loss proves the CURRENT redundancy was
+    /// insufficient — relaxing soon after is exactly the measured blip-per-2.6s failure mode (see
+    /// ``allowOffTierDefault``). For this many reports after any `unrecovered > 0` report the relax
     /// dwell is DOUBLED (escalation stays immediate). Cheap: one countdown `Int` on ``TierState``. The
     /// window is `2 × dwell` BY CONSTRUCTION — a shorter window would close before a streak could reach
     /// the doubled dwell, reducing the mechanism to a one-report delay.
@@ -366,9 +365,7 @@ public enum AdaptiveFECPolicy {
     /// Steps the per-frame parity multiplicity `m` (over ``parityTierClean``/`Normal`/`Burst` → `m`
     /// 2/3/5) with the same hysteresis + dwell + sticky-relax: escalation immediate on a loss burst,
     /// relaxation waits out the (sticky-doubled) dwell, floor is the CLEAN level (`m == 2`) — no OFF
-    /// tier on this path, so unlike the group-size ladder it takes no `allowOff`. Delegates to the
-    /// Rust core (`adaptive_fec::next_parity_tier_state`, the single source of truth shared with the
-    /// Android host); `dwell` stays Swift-side.
+    /// tier on this path, so unlike the group-size ladder it takes no `allowOff`.
     public static func nextParityTierState(
         forLossRate loss: Double,
         state: TierState,

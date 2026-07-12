@@ -6,7 +6,7 @@ import XCTest
 /// truths (`MuxChannelSession.deriveProjectKey`: warm-up gate, dedupe anchor, probe-beats-stale-OSC-7
 /// — pinned in `MuxChannelSessionProjectKeyTests`), so the VM applies them UNGATED; the old
 /// client-side first-command gate would re-drop the host's reattach re-assert and leave the tab's
-/// cwd line stale across a reconnect (the 2026-07-11 stale-cwd bug). Uses `foldEventForTesting` —
+/// cwd line stale across a reconnect (the stale-cwd bug). Uses `foldEventForTesting` —
 /// the DEBUG hook — so no async event loop or network is needed. No
 /// `GhosttySurface`/`SCStream`/`VT`/Metal instantiation.
 @MainActor

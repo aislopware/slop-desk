@@ -253,14 +253,14 @@ final class HostOutputSnifferTests: XCTestCase {
         // fires; `ESC X` is the SOS (Start Of String) introducer — a STRING sequence whose
         // body a conformant terminal swallows to its ST/BEL terminator, emitting NOTHING. So
         // the trailing BEL is the SOS TERMINATOR, not a real bell.
-        // (R9 #4: before the DCS/SOS/PM/APC string-state fix the sniffer fired a phantom
-        // `.bell` here — it treated `X` as an untracked escape and re-parsed the BEL in ground.)
+        // Without DCS/SOS/PM/APC string-state tracking the sniffer would fire a phantom
+        // `.bell` here — it would treat `X` as an untracked escape and re-parse the BEL in ground.
         let bytes = Array("\(ESC)]0;abc".utf8) + Array("\(ESC)X".utf8) + Array(BEL.utf8)
         XCTAssertEqual(observeWhole(bytes), [.title("abc")])
         assertForwardsUnchanged(bytes)
     }
 
-    /// R9 #4 (security): a BEL inside a DCS/SOS/PM/APC string is the body/terminator, not a
+    /// Security: a BEL inside a DCS/SOS/PM/APC string is the body/terminator, not a
     /// real bell — a conformant terminal never rings it. A malicious remote (`printf
     /// '\033P\007'`) must not inject a phantom bell, and an `ESC]2;…` embedded in a string
     /// body must not spoof the tab title.
@@ -792,7 +792,7 @@ final class HostOutputSnifferTests: XCTestCase {
         )
     }
 
-    // MARK: - OSC 9;4 taskbar progress → .progress (E14 / K1)
+    // MARK: - OSC 9;4 taskbar progress → .progress
 
     /// The `.progress` subsequence (the fused sniffer may interleave titles/bells/notifications).
     private func progressOnly(_ messages: [WireMessage]) -> [WireMessage] {
@@ -839,8 +839,8 @@ final class HostOutputSnifferTests: XCTestCase {
     }
 
     func testOSC9FreeTextNotificationPathUnchanged() {
-        // REGRESSION GUARD (frozen `hostOutputSniffer` key): only the previously-DROPPED 9;4 subtype
-        // changed; a free-text OSC-9 still fires a byte-identical `.notification` (empty title).
+        // Regression guard (frozen `hostOutputSniffer` key): only the DROPPED 9;4 subtype is special-cased;
+        // a free-text OSC-9 still fires a byte-identical `.notification` (empty title).
         XCTAssertEqual(
             observeWhole(bytes("\u{1B}]9;Build done\u{07}")),
             [.notification(title: "", body: "Build done")],
@@ -930,7 +930,7 @@ final class HostOutputSnifferTests: XCTestCase {
         XCTAssertEqual(observeWhole(bytes("\u{1B}]9;real\u{07}")), [.notification(title: "", body: "real")])
     }
 
-    /// R9 #4 (security): a `133;C/D` mark embedded inside a DCS/APC string body must NOT produce a phantom
+    /// Security: a `133;C/D` mark embedded inside a DCS/APC string body must NOT produce a phantom
     /// command-status — a conformant terminal swallows the string. So a hostile remote program cannot fake
     /// a running/idle badge (with an attacker-chosen exit code + duration).
     func testStringSequencesSwallowEmbeddedCommandStatus() {

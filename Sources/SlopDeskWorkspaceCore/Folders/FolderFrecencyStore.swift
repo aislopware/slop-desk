@@ -1,11 +1,11 @@
 import Foundation
 import Observation
 
-// MARK: - E11 WI-1: Folders frecency store (client-side, persisted)
+// MARK: - Folders frecency store (client-side, persisted)
 
 /// The in-process, **client-side** persisted frecency store for visited working directories — the backing
 /// of the Open-Quickly **Folders** filter (`⌘Z`). `record(cwd:)` is called from the client when a pane's
-/// known cwd changes (E11 WI-2 wires `WorkspaceStore.onCwdVisited` to it); `ranked(now:)` feeds the picker;
+/// known cwd changes (wired via `WorkspaceStore.onCwdVisited`); `ranked(now:)` feeds the picker;
 /// `forget(path:)` backs the per-row "Forget This Folder" action.
 ///
 /// ### Discipline (CLAUDE.md)

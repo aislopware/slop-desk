@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - E8 WI-9 (H14): OSC-22 pointer-shape mapping
+// MARK: - OSC-22 pointer-shape mapping
 
 /// Swift mirror of libghostty's `ghostty_action_mouse_shape_e` C enum (`terminal.MouseShape`,
 /// `CGhostty/ghostty.h:672-707`). The raw values are pinned to the C enum's declaration order so an
@@ -72,15 +72,15 @@ public enum PointerShapeToken: String, CaseIterable, Sendable, Equatable {
     case resizeLeftRight
 }
 
-/// The PURE, headless OSC-22 pointer-shape → cursor-token table (H14).
+/// The PURE, headless OSC-22 pointer-shape → cursor-token table.
 ///
 /// It mirrors ghostty's macOS `setCursorShape` (`SurfaceView_AppKit.swift:505-556`) EXACTLY for the shapes
 /// macOS has a native `NSCursor` for, and returns `nil` for every shape upstream "ignores" — there is no
 /// native `NSCursor` for help / progress / wait / cell / alias / copy / move / no-drop / all-scroll /
 /// {col,row,diagonal}-resize / zoom, so the faithful behaviour is to KEEP the current cursor (a `nil` the
 /// GUI treats as "no change") rather than invent a substitute. `GHOSTTY_MOUSE_SHAPE_DEFAULT` maps to
-/// ``PointerShapeToken/arrow`` — this is the "reset to arrow on default / program exit" the plan calls out
-/// (a program leaving a custom shape, e.g. `btop`/`yazi` exiting back to the shell, re-emits the default).
+/// ``PointerShapeToken/arrow`` — resetting to arrow on default handles a program leaving a custom shape,
+/// e.g. `btop`/`yazi` exiting back to the shell, re-emitting the default.
 public enum PointerShapeMapping {
     /// Resolve a parsed ``OSCPointerShape`` to the cursor token the GUI should adopt, or `nil` to keep the
     /// current cursor (shapes with no native `NSCursor`, mirroring upstream's "ignore unknown shapes").

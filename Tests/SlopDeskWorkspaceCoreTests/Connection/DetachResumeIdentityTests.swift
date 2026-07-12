@@ -5,9 +5,9 @@ import SlopDeskTransport
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Tests for the SLOPDESK_DETACH_ENABLED capture path (Stage 2, C2/C3) and WorkspaceStore wiring.
+/// Tests for the SLOPDESK_DETACH_ENABLED capture path and WorkspaceStore wiring.
 ///
-/// (c) The capture path writes the effective sessionID + seq back into the spec (via
+/// The capture path writes the effective sessionID + seq back into the spec (via
 ///     `onResumeIdentitySnapshot` → `updateSpecLive`) — asserted on a fake session backed by
 ///     `FakePaneSession`-shaped store, using the `foldEventForTesting` + `onResumeIdentitySnapshot`
 ///     seam exactly as `ConnectionViewModelTitleTests` uses `onTitleChanged`.
@@ -27,7 +27,7 @@ final class DetachResumeIdentityTests: XCTestCase {
         )
     }
 
-    // MARK: - (c) onResumeIdentitySnapshot is called with the effective sessionID + seq
+    // MARK: - onResumeIdentitySnapshot is called with the effective sessionID + seq
 
     /// A simulated successful connect fires `onResumeIdentitySnapshot` with the learned session UUID
     /// and seq 0 (the seq at connect time, before any output has been received). This mirrors the
@@ -71,7 +71,7 @@ final class DetachResumeIdentityTests: XCTestCase {
         )
     }
 
-    // MARK: - (c) WorkspaceStore wires onResumeIdentitySnapshot → updateSpecLive
+    // MARK: - WorkspaceStore wires onResumeIdentitySnapshot → updateSpecLive
 
     /// The store's `wireMaterializedLeaf` wires `onResumeIdentitySnapshot` so a snapshot call
     /// persists the session UUID and seq into the pane's spec (the same mechanism as `onTitleChanged`
@@ -149,7 +149,7 @@ final class DetachResumeIdentityTests: XCTestCase {
 
     // MARK: - Cold-launch scrollback: LivePaneSession.make seeds seq=0 always
 
-    /// COLD LAUNCH contract (SLOPDESK_SCROLLBACK_PERSIST, Stage 3):
+    /// COLD LAUNCH contract (SLOPDESK_SCROLLBACK_PERSIST):
     /// `LivePaneSession.make` with a spec that carries BOTH `resumeSessionID` and a
     /// non-zero `resumeLastReceivedSeq` must seed the client's resume identity with
     /// `seq=0`, NOT the spec's saved seq.
@@ -229,17 +229,17 @@ final class DetachResumeIdentityTests: XCTestCase {
         await client.close()
     }
 
-    // MARK: - (f) seed-resume-identity-race: LivePaneSession.make seeds at construction, not via a Task
+    // MARK: - seed-resume-identity-race: LivePaneSession.make seeds at construction, not via a Task
 
-    /// Closes seed-resume-identity-race (`LivePaneSession.swift` `makeClientSeeded`, docs/DECISIONS
-    /// 2026-07-11): the OLD `makeClientSeeded` called the (then zero-arg) `makeClient()` factory and
-    /// fired an UNAWAITED `Task { await c.seedResumeIdentity(...) }` before returning the client.
-    /// Nothing ordered that seed job ahead of `ConnectionViewModel.performConnect()`'s own
+    /// Closes seed-resume-identity-race (`LivePaneSession.swift` `makeClientSeeded`, see
+    /// docs/DECISIONS.md): a `makeClientSeeded` that called a zero-arg `makeClient()` factory and
+    /// fired an UNAWAITED `Task { await c.seedResumeIdentity(...) }` before returning the client
+    /// would have nothing ordering that seed job ahead of `ConnectionViewModel.performConnect()`'s own
     /// separately-scheduled `connect()` Task — under cold-launch restore, the seed could lose the
     /// race against the actor's mailbox, and `connect()` would read a nil `sessionID` (fresh shell)
     /// instead of the restored one.
     ///
-    /// This test drives the REAL fixed path end to end: `LivePaneSession.make` → the
+    /// This test drives the fixed path end to end: `LivePaneSession.make` → the
     /// `ConnectionViewModel` it wires → `connect()` — with a `makeClient` factory shaped exactly like
     /// production's `WorkspaceStore.muxBackedClientFactory` (a `(SlopDeskClient.ResumeSeed?) ->
     /// SlopDeskClient` that forwards the seed straight into `SlopDeskClient.init(resumeSeed:)`). It

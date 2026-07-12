@@ -53,7 +53,7 @@ public struct FlowCreditPolicy: Sendable, Equatable {
     /// Re-credits the window by `bytesToAdd` (an SSH `CHANNEL_WINDOW_ADJUST`).
     /// Negative grants are ignored. Replenishing a blocked window unblocks it.
     ///
-    /// OVERFLOW-SAFE (R6 #7): a huge peer-chosen `UInt32` grant (or a long run of grants) must not
+    /// OVERFLOW-SAFE: a huge peer-chosen `UInt32` grant (or a long run of grants) must not
     /// Int-overflow-trap the `remaining += bytesToAdd`. Saturate at `Int.max` instead. NOTE: SSH-style
     /// windows may legitimately grow PAST ``initialWindow`` (it is the starting reference, not a hard
     /// cap on `remaining` — see `testAdjustCanGrowBeyondInitialWindow`), so we deliberately do NOT clamp

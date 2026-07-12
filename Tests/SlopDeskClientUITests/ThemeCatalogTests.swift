@@ -1,4 +1,4 @@
-// ThemeCatalog tests (E15 WI-6) — the built-in theme directory ClientUI uses. Pure logic only: the built-in
+// ThemeCatalog tests — the built-in theme directory ClientUI uses. Pure logic only: the built-in
 // id table round-trip. No SCStream/VT/Metal/surface is touched.
 
 #if canImport(SwiftUI)

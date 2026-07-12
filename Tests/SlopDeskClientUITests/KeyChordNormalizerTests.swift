@@ -1,4 +1,4 @@
-// KeyChordNormalizerTests (WS-B / B3) — the PURE NSEvent→`KeyChord` mapping the live dispatcher feeds the
+// KeyChordNormalizerTests — the PURE NSEvent→`KeyChord` mapping the live dispatcher feeds the
 // prefix machine. Exercised headlessly: the normalizer is AppKit-free (takes the destructured event fields),
 // so no `NSEvent` is constructed and no SCStream/VT/Metal/VideoWindowView is touched. Each test pins a fact
 // the dispatcher relies on: modifier mapping, the base-key/charactersIgnoringModifiers parity with
@@ -118,11 +118,11 @@ final class KeyChordNormalizerTests: XCTestCase {
         ))
     }
 
-    /// E17 ES-E17-2 / WI-5: ⌃⇧Space (the Vi Mode entry chord, keyCode 49) maps to the NAMED `.space` chord so
+    /// ⌃⇧Space (the Vi Mode entry chord, keyCode 49) maps to the NAMED `.space` chord so
     /// the dispatcher's `resolvedChordTable` alias resolves it. A bare Space / ⇧-only Space (no ⌃/⌥/⌘) stays
-    /// normal typing → `nil`, so the modified-only mapping never swallows the space bar. Revert-to-fail: before
-    /// adding the keyCode-49 case, ⌃⇧Space fell to the whitespace rejection and yielded `nil` (the Vi Mode chord
-    /// was unreachable on macOS).
+    /// normal typing → `nil`, so the modified-only mapping never swallows the space bar. Without the keyCode-49
+    /// case, ⌃⇧Space would fall to the whitespace rejection and yield `nil`, making the Vi Mode chord
+    /// unreachable on macOS.
     func testControlShiftSpaceMapsToNamedSpaceChord() {
         XCTAssertEqual(
             KeyChordNormalizer.chord(

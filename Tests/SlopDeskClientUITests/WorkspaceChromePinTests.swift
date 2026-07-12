@@ -1,10 +1,10 @@
-// WorkspaceChromePinTests — pins the E19 / WI-4 testable surface of "Pin Window" WITHOUT an NSWindow.
+// WorkspaceChromePinTests — pins the testable surface of "Pin Window" WITHOUT an NSWindow.
 //
 // The macOS window-level glue itself is hang-unsafe to exercise (CLAUDE.md rule #6 — never instantiate an
-// NSWindow in a test), so WI-4's pin actuation (now the native `.windowLevel(chrome.pinned ? .floating :
+// NSWindow in a test), so the pin actuation (the native `.windowLevel(chrome.pinned ? .floating :
 // .normal)` scene modifier) + `applyInitialWindowSize` are compiled-and-reviewed only; the pure window-sizing
-// math is covered by `WindowSizeMathTests` (WI-1) and the action routing by
-// `WorkspaceBindingRoutingTests` (WI-3). What IS unit-testable here is the model contract the glue actuates:
+// math is covered by `WindowSizeMathTests` and the action routing by
+// `WorkspaceBindingRoutingTests`. What IS unit-testable here is the model contract the glue actuates:
 // the `WorkspaceChromeState.pinned` flag + the `OverlayCoordinator.togglePinWindow` seam the root view
 // (`wireChromeToggles`) and the menu (`WorkspaceCommands`) flip — driven headlessly, no AppKit.
 
@@ -16,7 +16,7 @@ import XCTest
 final class WorkspaceChromePinTests: XCTestCase {
     /// A fresh window is NOT pinned (pinning is an explicit affordance), and `togglePin()`
     /// flips the flag each call. REVERT-TO-CONFIRM-FAIL: the property / method do not exist on the un-fixed
-    /// `WorkspaceChromeState`, so this fails to compile-then-pass only once WI-4 adds them.
+    /// `WorkspaceChromeState`, so this fails to compile-then-pass only once the property / method are added.
     func testTogglePinFlipsTheChromeFlag() {
         let chrome = WorkspaceChromeState()
         XCTAssertFalse(chrome.pinned, "a fresh window resting state is UNpinned")
@@ -50,9 +50,9 @@ final class WorkspaceChromePinTests: XCTestCase {
         overlay.togglePinWindow() // no binding ⇒ the default `{}` runs, no crash
     }
 
-    /// E19 / WI-4 (M4) — the palette ✓ gutter tracks the pinned state. `OverlayHostView.toggledState(for:)`
+    /// The palette ✓ gutter tracks the pinned state. `OverlayHostView.toggledState(for:)`
     /// resolves the "action.pinWindow" row to `chrome.pinned`, so the palette lights the checkmark while
-    /// pinned and clears it when unpinned — the checkable Pin Window row (ES-E2-3). REVERT-TO-CONFIRM-FAIL:
+    /// pinned and clears it when unpinned — the checkable Pin Window row. REVERT-TO-CONFIRM-FAIL:
     /// drop the `case "action.pinWindow": chrome.pinned` arm and the resolver falls to the `default: false`,
     /// so the ✓ never lights and `pinned == true` below fails.
     func testToggledStateLightsPinRowWhenPinned() {

@@ -31,7 +31,7 @@ enum WorkspaceSchemaMigration {
         from == to ? workspace : nil
     }
 
-    // MARK: - Tree-rooted migration registration (W3 — additive, off the live load path)
+    // MARK: - Tree-rooted migration registration (additive, off the live load path)
 
     /// The registered upgrade step into the tree-rooted ``TreeWorkspace`` shape (docs/42 §Migration):
     /// - `from ∈ 5...9` — migrates through the frozen ``WorkspaceV9`` mirror (all v5–v9 canvas files
@@ -41,9 +41,9 @@ enum WorkspaceSchemaMigration {
     /// - `from == 11` (current) — the caller decodes directly; this returns `nil` (nothing to upgrade).
     /// - Any other version → `nil` → the caller resets to the default workspace.
     ///
-    /// **Additive (W3): the live `WorkspacePersistence.load()` still returns the v9 ``Workspace`` and does
-    /// NOT call this.** It is the registered seam W4 wires in behind the version peek when the store cuts
-    /// over to ``TreeWorkspace``. Forward-tolerant on `5...9` (those older shapes all decode through the v9
+    /// **Additive: the live `WorkspacePersistence.load()` still returns the v9 ``Workspace`` and does
+    /// NOT call this.** It is the registered seam that gets wired in behind the version peek once the
+    /// store cuts over to ``TreeWorkspace``. Forward-tolerant on `5...9` (those older shapes all decode through the v9
     /// mirror — the v9 fields are a superset).
     ///
     /// **v10 → v11 is an identity step** (schema v11 only adds optional fields to ``PaneSpec`` — all four
@@ -55,9 +55,9 @@ enum WorkspaceSchemaMigration {
     /// here so the caller's direct decode takes effect).
     static func migrateToTree(_ data: Data, from: Int) -> TreeWorkspace? {
         switch from {
-        // L0 / D2: the canvas-era v5–v9 migration (frozen `WorkspaceV9` shadow) is DELETED per the
-        // "No backcompat / single-user" directive — a stale v5–v9 canvas file now decode-fails to the
-        // default workspace rather than migrating.
+        // The canvas-era v5–v9 migration (frozen `WorkspaceV9` shadow) has no home here: per the
+        // single-user / no-backcompat policy, a stale v5–v9 canvas file decode-fails to the default
+        // workspace rather than migrating.
         case 10:
             // A v10 file only lacks the four new optional PaneSpec fields, which `decodeIfPresent` resolves
             // to nil. Re-decode the raw bytes as TreeWorkspace (identical schema, additive fields absent)

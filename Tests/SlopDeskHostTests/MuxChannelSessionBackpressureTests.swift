@@ -3,10 +3,10 @@ import SlopDeskTransport
 import XCTest
 @testable import SlopDeskHost
 
-/// Integration test for the ReplayBuffer → read-loop-pause WIRING (deep-hunt R5, rank 2). The 64 MiB
-/// retained-byte cap + 4 MiB offline gate used to be DEAD CODE — `MuxChannelSession` only `append`ed
-/// and `ack`ed the buffer and never consulted `shouldPauseDrain`, so a wire-consuming-but-not-acking
-/// client grew host RAM unbounded. This proves the relay now feeds that signal into the output gate.
+/// Integration test for the ReplayBuffer → read-loop-pause WIRING. The 64 MiB retained-byte cap + 4 MiB
+/// offline gate are useless unless `MuxChannelSession` actually consults `shouldPauseDrain` after
+/// `append`/`ack`ing the buffer — otherwise a wire-consuming-but-not-acking client grows host RAM
+/// unbounded. This proves the relay feeds that signal into the output gate.
 ///
 /// Driven WITHOUT a PTY or read loop: `MuxChannelSession` is built with an UNSPAWNED ``PTYProcess``
 /// (never read — `startRelay()` is not called) and a TINY-cap ``ReplayBuffer``, and the real
@@ -67,7 +67,7 @@ final class MuxChannelSessionBackpressureTests: XCTestCase {
         XCTAssertFalse(rec.isPaused, "back online under the cap → resume")
     }
 
-    // MARK: - Exit-ordering EOF latch (R5 rank 5)
+    // MARK: - Exit-ordering EOF latch
 
     /// Once EOF is signalled (read loop drained the master), the exit gate returns IMMEDIATELY — so
     /// `.exit` is yielded right after the final tail, with no spurious delay on the common path.
@@ -116,7 +116,7 @@ final class MuxChannelSessionBackpressureTests: XCTestCase {
         )
     }
 
-    // MARK: - Exit-sent latch (R13 #7)
+    // MARK: - Exit-sent latch
 
     /// Once the drain signals `.exit` was SENT on the wire, the exit task's gate returns IMMEDIATELY so
     /// onExit (→ teardown) fires right after — no spurious delay on the common path.
@@ -161,7 +161,7 @@ final class MuxChannelSessionBackpressureTests: XCTestCase {
         )
     }
 
-    // MARK: - ZDOTDIR shim-dir cleanup (R8 #3)
+    // MARK: - ZDOTDIR shim-dir cleanup
 
     /// `shutdown()` deletes the per-session ZDOTDIR shim dir once the child has exited — without this the
     /// host's temp dir accumulated one `slopdesk-zdotdir-*` dir + 4 files per opened pane forever. Driven

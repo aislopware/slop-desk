@@ -27,7 +27,7 @@ if getrlimit(RLIMIT_NOFILE, &fdLimit) == 0 {
     }
 }
 
-// W12 (decision #10): fold the `video-prefs.json` sidecar into `EnvConfig.overlay` at launch, BEFORE
+// Fold the `video-prefs.json` sidecar into `EnvConfig.overlay` at launch, BEFORE
 // any consumer reads a setting — here the agent-detection gates (`SLOPDESK_AGENT_DETECT`/`_HOOKS`,
 // read below) resolve ProcessInfo env → overlay → default, so a GUI toggle applies on the next launch.
 // A real `SLOPDESK_*` env var still wins (the sidecar only fills gaps). The same sidecar the
@@ -40,7 +40,7 @@ if !appliedHostPrefs.isEmpty, ProcessInfo.processInfo.environment["SLOPDESK_VIDE
     )
 }
 
-// W10 — `integration install|uninstall claude`: write/merge (or strip) the Claude Code hooks
+// `integration install|uninstall claude`: write/merge (or strip) the Claude Code hooks
 // config + hook script, then EXIT. This is a one-shot setup command, not the daemon path; it
 // runs entirely off the pure ``AgentInstaller`` + its thin disk shim. Honored before the daemon
 // arg-parse so `integration …` never reaches the listener.
@@ -88,15 +88,15 @@ let log: @Sendable (String) -> Void = { message in
     FileHandle.standardError.write(Data("\(programName): \(message)\n".utf8))
 }
 
-// W10: the foreground-process watch is the PRIMARY, zero-config Claude detection signal
+// The foreground-process watch is the PRIMARY, zero-config Claude detection signal
 // (Decision #5) — default-ON, only `SLOPDESK_AGENT_DETECT=0` disables it.
 let agentDetectEnabled = HostEnvironment.agentDetectEnabled()
 
-// WB1: the Warp-style "Blocks" tap (per-command segmentation) — default-ON, only
+// The Warp-style "Blocks" tap (per-command segmentation) — default-ON, only
 // `SLOPDESK_BLOCKS=0` disables it. When off the byte pipeline + sniffer are byte-identical.
 let blocksEnabled = HostEnvironment.blocksEnabled()
 
-// W10: the OPT-IN Claude-hook listener (Decision #5: SECOND/opt-in). Bound only when
+// The OPT-IN Claude-hook listener (Decision #5: SECOND/opt-in). Bound only when
 // `SLOPDESK_AGENT_HOOKS=1` (default-OFF). The socket lives in the user's temp dir, keyed by
 // pid so concurrent hosts don't collide. The installed hook (`integration install claude`)
 // POSTs to `SLOPDESK_SOCKET_PATH`, which every PTY env exports.
@@ -149,7 +149,7 @@ let server = HostServer(
 )
 server.onLog = log
 
-// E13 WI-3 (ES-E13-3): hold a system-sleep assertion while ANY agent is processing. DEFAULT-OFF — only
+// Hold a system-sleep assertion while ANY agent is processing. DEFAULT-OFF — only
 // `SLOPDESK_AGENT_PREVENT_SLEEP=1` (the client `preventSleep` toggle, via the video-prefs.json sidecar)
 // enables it. macOS-host-only: the `IOPMAssertion` glue (`PreventSleepAssertion`) lives behind `#if
 // os(macOS)`. The driver aggregates each pane's `claudeStatus` transition (the existing P1 fan-out) into a
@@ -203,11 +203,11 @@ if let agentControlListener {
 
 // Inspector server (NWConnection #2, port + 1) — read-only structured companion.
 // Constructed when --inspector / --transcript is set. The replay log is the
-// replay-then-live fan-out; the engine feeds it. PIECE C (live per-PTY transcript-path
-// discovery via the SessionStart hook) is DEFERRED — for now the path is the injected
+// replay-then-live fan-out; the engine feeds it. Live per-PTY transcript-path
+// discovery via the SessionStart hook is DEFERRED — for now the path is the injected
 // --transcript value (if any), tailed straight into the engine. Without a path the
 // server still binds (so a client can connect) and the replay log stays empty until
-// PIECE C wires the per-session tailer.
+// per-session tailing is wired up.
 let inspectorEngine = InspectorEngine()
 let inspectorReplayLog = InspectorReplayLog()
 inspectorReplayLog.ingest(inspectorEngine.events)
@@ -222,8 +222,8 @@ if parsed.inspectorEnabled {
     inspector.onLog = log
     inspectorServer = inspector
 
-    // If a transcript path was injected, tail it into the engine now (PIECE C will
-    // replace this with per-PTY discovery). The tailer tolerates the file not existing
+    // If a transcript path was injected, tail it into the engine now (per-PTY discovery
+    // will replace this later). The tailer tolerates the file not existing
     // yet, so it is safe to start before `claude` creates it.
     if let path = parsed.transcriptPath {
         let tailer = TranscriptTailer(path: path)
@@ -236,7 +236,7 @@ if parsed.inspectorEnabled {
 
 // A one-shot latch so a SECOND SIGINT during the (potentially ~0.25s/pane) async shutdown does not
 // spawn a second teardown Task that calls `exit(0)` again — two concurrent libc `exit()` calls are UB
-// (atexit handlers / stdio flush run twice). R16 HOSTD-1.
+// (atexit handlers / stdio flush run twice).
 final class ShutdownLatch: @unchecked Sendable {
     private let lock = NSLock()
     private var fired = false
@@ -284,12 +284,12 @@ Task {
     // the terminal-server bring-up above: by now the terminal server is already bound + accepting, so
     // an inspector-bind failure (e.g. EADDRINUSE on port+1 while the main port was free) must tear the
     // terminal server down CLEANLY — the orderly child-reap / `bye` path — before exiting, not `exit(1)`
-    // and leak a just-accepted shell un-reaped. R16 HOSTD-2.
+    // and leak a just-accepted shell un-reaped.
     if let inspectorServer {
         do {
             try await inspectorServer.start()
         } catch {
-            // R16-deferred completion: route this exit(1) through the SAME one-shot latch as the SIGINT
+            // Route this exit(1) through the SAME one-shot latch as the SIGINT
             // handler, so an inspector-bind failure and a concurrent Ctrl-C can never both call exit()
             // (two concurrent libc exit()s are UB). If SIGINT already owns shutdown, let it finish.
             guard shutdownLatch.tryFire() else { return }

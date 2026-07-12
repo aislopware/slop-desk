@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E10 WI-1 (ES-E10-1 / ES-E10-2): the pure terminal path/URL/link detector. These pin every supported
+/// The pure terminal path/URL/link detector. These pin every supported
 /// form (absolute / tilde / relative / `path:line:col` / `scheme://` / `file://` / `mailto:`), the cwd
 /// resolution, the East-Asian-wide cell-column mapping (the jump-to
 /// spec confirms CJK), the scheme policy, the anti-hang column bound, and the validate-then-drop of
@@ -108,7 +108,7 @@ final class TerminalLinkDetectorTests: XCTestCase {
 
     // MARK: - CJK cell columns (the wide-glyph mapping)
 
-    /// A path after CJK text starts at the right CELL column (each wide glyph = 2 cells), so the WI-2
+    /// A path after CJK text starts at the right CELL column (each wide glyph = 2 cells), so the
     /// geometry seam lands the underline correctly. A naive Character-offset detector would say 4, not 7.
     func testCJKWideGlyphsAdvanceCellColumns() {
         let link = only("日本語 /usr/local/bin/foo")

@@ -1,11 +1,11 @@
-// E20 WI-9 (ES-E20-4) — the macOS "Set as Default Terminal" integration (LOCAL OS handler only).
+// The macOS "Set as Default Terminal" integration (LOCAL OS handler only).
 //
 // First-launch step 2 (`spec/getting-started__first-launch.md` §2) has two integration points:
 //   1. The SYSTEM default — register the app as the OS handler for terminal URL schemes (`ssh://`, `man://`,
 //      `telnet://`) and shell-script content types (`.command`/`.sh`/`.tool`). This IS implementable on the
 //      LOCAL client Mac and lives here (the modern non-deprecated `NSWorkspace.setDefaultApplication` API).
 //   2. "Set as Default Terminal for Common Apps" — rewriting VS Code / Cursor / … per-app external-terminal
-//      config. For a REMOTE-host editor this needs a host-side agent and CANNOT map 1:1 (E20 carry-over §4 /
+//      config. For a REMOTE-host editor this needs a host-side agent and CANNOT map 1:1 (see
 //      DECISIONS "no dead UI"), so the first-launch card honestly-DISABLES it with a documented note rather
 //      than ship a dead button. There is therefore deliberately NO `configureCommonApps()` method here.
 //

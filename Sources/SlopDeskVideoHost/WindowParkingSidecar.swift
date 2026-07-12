@@ -2,11 +2,10 @@
 import CoreGraphics
 import Foundation
 
-// C6 BUG C (2026-07-03): a daemon crash / SIGKILL used to leave VD-parked windows stranded — the
-// clean-shutdown drain restores them, but nothing recovered after an unclean exit (the "next-launch
-// hygiene" the shutdown comment promised did not exist). The fix: ``WindowParkingManager`` persists
-// the parked set to this JSON sidecar on every park/unpark, and the next `slopdesk-videohostd`
-// launch reads any leftover file, AX-restores the windows that are STILL stranded (validated by
+// A daemon crash / SIGKILL leaves VD-parked windows stranded: the clean-shutdown drain restores
+// them, but nothing else recovers an unclean exit. ``WindowParkingManager`` persists the parked set
+// to this JSON sidecar on every park/unpark, and the next `slopdesk-videohostd` launch reads any
+// leftover file, AX-restores the windows that are STILL stranded (validated by
 // ``StrandedWindowRestorePolicy`` — never yank a window the user/OS already re-homed), then deletes
 // the file. The codec + predicate are PURE and headlessly unit-tested; the AX/CGWindowList reads
 // stay thin in the daemon.

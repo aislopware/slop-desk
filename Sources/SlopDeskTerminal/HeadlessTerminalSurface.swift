@@ -6,7 +6,7 @@ import SlopDeskProtocol
 /// It performs **no VT parsing** — it is a faithful byte sink, which is exactly what
 /// the headless `slopdesk-client` CLI and the test suite need to verify the byte
 /// pipeline end to end without libghostty or a GUI. The real terminal emulation is
-/// the libghostty-backed `GhosttySurface` in the GUI app target (WF-5).
+/// the libghostty-backed `GhosttySurface` in the GUI app target.
 ///
 /// Thread-safety: all mutable state is guarded by an internal lock, so it is safe to
 /// `feed` from a background receive loop while reading ``output`` elsewhere. Hence

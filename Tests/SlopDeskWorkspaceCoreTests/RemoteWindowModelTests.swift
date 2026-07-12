@@ -24,7 +24,7 @@ final class RemoteWindowModelTests: XCTestCase {
         XCTAssertTrue(m.canOpen)
     }
 
-    /// C5 — the "Release Stuck Input" escape hatch: `releaseStuckInput()` drives the LIVE published
+    /// The "Release Stuck Input" escape hatch: `releaseStuckInput()` drives the LIVE published
     /// sink exactly once per invocation, is a safe no-op with no sink (not streaming / read-only —
     /// the seam withholds it), and `canReleaseStuckInput` requires BOTH a streaming pane and a sink.
     func testReleaseStuckInputDrivesThePublishedSink() {
@@ -81,7 +81,7 @@ final class RemoteWindowModelTests: XCTestCase {
         XCTAssertNil(m.active)
     }
 
-    // FINDING B end-state: the host REFUSED the session (helloAck accepted:false — window gone /
+    // The host REFUSED the session (helloAck accepted:false — window gone /
     // mux mint-failure refusal). The pane must LEAVE `.active` (the black dead surface) and fall
     // back to the picker with an error explaining why — mirroring the stale-binding revalidation's
     // `.unresolved` fallback.
@@ -169,10 +169,10 @@ final class RemoteWindowModelTests: XCTestCase {
         XCTAssertEqual(m.streamFps, 60, "a negative cadence is ignored")
     }
 
-    // MARK: Paste-as-keystrokes read-only / teardown gate (E21 WI-3 · F5-paste-leak)
+    // MARK: Paste-as-keystrokes read-only / teardown gate
 
-    /// **F5 — a read-only lock landing MID-PASTE must withhold the remaining keystrokes.** The read-only
-    /// seam enforces WI-3 by clearing ``RemoteWindowModel/keyInjector`` (the sink). Before the fix the
+    /// **A read-only lock landing MID-PASTE must withhold the remaining keystrokes.** The read-only
+    /// seam enforces this by clearing ``RemoteWindowModel/keyInjector`` (the sink). Before the fix the
     /// paste loop captured the sink into a local at spawn and never re-read it, so toggling Read Only
     /// mid-paste kept injecting keystrokes (incl. into a SECURE field) for the rest of the paste. The
     /// fixed loop re-reads the LIVE sink each iteration and stops the instant it goes `nil`.
@@ -197,7 +197,7 @@ final class RemoteWindowModelTests: XCTestCase {
         )
     }
 
-    /// **F5 — tearing the pane down (`close()`) MID-PASTE must cancel the in-flight paste.** Before the fix
+    /// **Tearing the pane down (`close()`) MID-PASTE must cancel the in-flight paste.** Before the fix
     /// `close()` left ``RemoteWindowModel/pasteTask`` running, so a closed pane kept injecting. Here the
     /// injector calls `close()` on its first stroke; the cancelled task must stop at the next iteration, so
     /// only the first character's 2 edges land. The un-fixed code (no cancel in `close()`, captured local
@@ -319,7 +319,7 @@ final class RemoteWindowModelTests: XCTestCase {
         XCTAssertEqual(m.appName, "Finder", "pick records the owning app (PANE REBIND)")
     }
 
-    // MARK: - PANE REBIND (2026-06-12): endpoint commit + stale-binding revalidation
+    // MARK: - PANE REBIND: endpoint commit + stale-binding revalidation
 
     func testOpenCommitsEndpointWithAppName() {
         let m = RemoteWindowModel(target: { self.target })
@@ -373,7 +373,7 @@ final class RemoteWindowModelTests: XCTestCase {
         XCTAssertNotNil(m.loadError, "the form explains why the pane fell back")
     }
 
-    // MARK: pickAndOpen — a fresh user pick revalidates against a stale list (2026-07-02 fix)
+    // MARK: pickAndOpen — a fresh user pick revalidates against a stale list
 
     // A live window the user picks stays live (the common case: the picked id is still open).
     func testPickAndOpenKeepsLiveWindow() async {
@@ -419,7 +419,7 @@ final class RemoteWindowModelTests: XCTestCase {
         XCTAssertNil(m.loadError)
     }
 
-    // MARK: Stale-verdict guard (2026-07-10): a close() racing the discovery await must stay closed
+    // MARK: Stale-verdict guard: a close() racing the discovery await must stay closed
 
     /// **THE BUG:** `revalidateBinding()` suspended on the discovery query and then acted on the verdict
     /// UNCONDITIONALLY — closing the pane while the query was in flight let a `.rebind` verdict silently
@@ -553,7 +553,7 @@ final class RemoteWindowFilterTests: XCTestCase {
 // MARK: - Test support
 
 /// Records the per-key edges the model injects through ``RemoteWindowModel/keyInjector`` (no real
-/// CGEvent / secure field — pure value capture for the F5 paste-leak regression tests).
+/// CGEvent / secure field — pure value capture for the paste-leak regression tests).
 @MainActor
 private final class StrokeRecorder {
     struct Edge: Equatable {

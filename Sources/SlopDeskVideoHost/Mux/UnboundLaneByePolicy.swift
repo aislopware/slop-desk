@@ -1,9 +1,9 @@
 import Foundation
 import SlopDeskVideoProtocol
 
-// PURE unbound-lane bye policy (the reconnect-wedge fix, 2026-07-03). No sockets, no clock —
-// the transport passes `now` in — exactly the "decider beside the actor" discipline of
-// ``VideoMuxRouter`` / ``IdleReapDecider``, so both halves are unit-testable headlessly.
+// PURE unbound-lane bye policy: no sockets, no clock — the transport passes `now` in — exactly
+// the "decider beside the actor" discipline of ``VideoMuxRouter`` / ``IdleReapDecider``, so both
+// halves are unit-testable headlessly.
 
 /// Decides whether a datagram the mux transport is DROPPING for an unbound lane (unadmitted or
 /// retired, non-bootstrap) proves the SENDER still believes a live session exists — in which case
@@ -13,9 +13,9 @@ import SlopDeskVideoProtocol
 /// ## The wedge this fixes
 /// A videohostd RESTART forgets every admitted lane, but a client mid-session has no way to know:
 /// UDP gives it no signal, its state machine stays `.streaming` forever, and its keepalive/input
-/// datagrams land here and used to be dropped SILENTLY — a frozen pane with dead input until the
-/// app relaunched. Answering those datagrams with a `bye` closes the loop: the client's existing
-/// `bye` handling tears the dead session down and re-hellos within one keepalive interval.
+/// datagrams land here. Dropping them silently would freeze the pane with dead input until the app
+/// relaunched. Answering those datagrams with a `bye` closes the loop: the client's existing `bye`
+/// handling tears the dead session down and re-hellos within one keepalive interval.
 ///
 /// ## What warrants a bye (and what must NOT)
 /// - `.input` / `.recovery` datagrams — only ever sent by a client that believes it is streaming.

@@ -4,10 +4,10 @@
 //     lives inside the sidebar traffic-light strip). Fixed lead 80 clears the system lights.
 //   • centre— the active tab's title as a `⋯` menu (working dir / split / move / find / close pane)
 //   • right — the Host Windows rail REOPEN (`macwindow.on.rectangle` — the rail lists the host's
-//     WINDOWS, so its toggle wears the window glyph, deliberately distinct from the left `sidebar.left`;
-//     user ruling 2026-07-11), only while the rail is collapsed, plus the connection cluster ONLY while
+//     WINDOWS, so its toggle wears the window glyph, deliberately distinct from the left `sidebar.left`),
+//     only while the rail is collapsed, plus the connection cluster ONLY while
 //     the LEFT sidebar is collapsed (resting home is the sidebar FOOTER).
-// Both reopen buttons are HOVER-REVEALED (user ruling 2026-07-11, the otty behavior): hidden at rest,
+// Both reopen buttons are HOVER-REVEALED (the otty behavior): hidden at rest,
 // faded in while the pointer is inside the top strip (`HoverSensor` — hit-test-transparent, so the
 // strip stays draggable/clickable). The centre title + connection cluster stay always-visible: they are
 // STATUS, not controls. The reopen button flips the shared `WorkspaceChromeState` flag that the split
@@ -44,7 +44,7 @@ struct SlateTitlebar: View {
         // chip TRACKS the active pane instead of showing a static "Terminal". A `cd` / pane switch re-titles
         // it reactively (both read observed `tree` state).
         //
-        // The `paneForegroundProcess` read is GUARDED (perf audit 2026-07-11) by the SAME
+        // The `paneForegroundProcess` read is GUARDED by the SAME
         // `RailStructureKey.titledByProcess` escape-order check the sidebar's structural fingerprint uses:
         // this titlebar is ALWAYS mounted, so an unconditional read made its body a dependent of the WHOLE
         // process dict — a background pane's 1Hz process tick re-ran it even though only a cwd-less,
@@ -80,7 +80,7 @@ struct SlateTitlebar: View {
                 .padding(.top, rowTop)
 
             // Centre: the active title as a menu, on the traffic-light row. The unseen-attention dot's
-            // visibility + tint are computed INSIDE `TitleMenuButton` (perf audit 2026-07-11), not read
+            // visibility + tint are computed INSIDE `TitleMenuButton`, not read
             // here: `store.unseenAttentionPanes` is a full DFS over every session/tab/pane touching a wide
             // net of volatile dicts (agent status / completion / busy / process / progress / gates) + a
             // sort, and this titlebar body is ALWAYS mounted — reading it here made the WHOLE body (the
@@ -107,7 +107,7 @@ struct SlateTitlebar: View {
                     )
                 }
                 // The WINDOW glyph, not `sidebar.right` — this toggle opens the host-WINDOWS rail and
-                // must read differently from the left sidebar's (user ruling 2026-07-11). Same
+                // must read differently from the left sidebar's. Same
                 // hover + settle choreography as the left reopen button.
                 PlateIconButton(symbol: .macwindowOnRectangle) { chrome.toggleHostWindows() }
                     .opacity(!hostRailVisible && topHover ? 1 : 0)
@@ -146,20 +146,20 @@ struct SlateTitlebar: View {
 /// The trailing dot is the unseen-attention indicator (``WorkspaceStore/hasUnseenAttention``): the SAME
 /// static status dot the sidebar tab rows wear (one vocabulary — the user reads red/blue identically in
 /// both places), tinted by the most-urgent waiting pane (``WorkspaceStore/unseenAttentionPanes``'s head).
-/// Computed HERE, not by the parent ``SlateTitlebar`` (perf audit 2026-07-11): `unseenAttentionPanes` is a
+/// Computed HERE, not by the parent ``SlateTitlebar``: `unseenAttentionPanes` is a
 /// full DFS over every session/tab/pane touching a wide net of volatile store dicts + a sort, and
-/// `SlateTitlebar` is an ALWAYS-MOUNTED overlay — reading the walk there made its WHOLE body (plate button
-/// + connection cluster + slide animation) a dependent of all those dicts. Scoping the read to this small
-/// leaf means a pane's status tick elsewhere re-renders only this button. The walk is also SINGLE-BOUND
-/// (`let waiting = …` below, mirroring ``TitlePaneMenu``'s own bind) — the old shape read
-/// `store.unseenAttentionPanes` twice (once for the dot, once for the tint), redoing the DFS twice per eval.
+/// `SlateTitlebar` is an ALWAYS-MOUNTED overlay — reading the walk there would make its WHOLE body (plate
+/// button + connection cluster + slide animation) a dependent of all those dicts. Scoping the read to this
+/// small leaf means a pane's status tick elsewhere re-renders only this button. The walk is also
+/// SINGLE-BOUND (`let waiting = …` below, mirroring ``TitlePaneMenu``'s own bind) — reading
+/// `store.unseenAttentionPanes` twice (once for the dot, once for the tint) would redo the DFS twice per eval.
 ///
 /// It lives in the trailing COMPLICATION SLOT the hover `⋯` already reserves — the one-trailing-complication
 /// anatomy every Slate row speaks (``SlateTabRow``/``SlatePopoverRow``) — so the centred title NEVER shifts,
 /// and at rest the titlebar reads `title ●` exactly like a tab row. On hover/press the dot yields to the
 /// `⋯` (you are about to open the menu, whose NEEDS-ATTENTION section is the dot's answer). Vanishes when
-/// everything is seen (MERIDIAN zero-ornament at rest). Superscript-pip and leading-bullet variants were
-/// tried and rejected (2026-07-10): a badge riding TEXT reads as dirt — badges belong on icons or in the
+/// everything is seen (MERIDIAN zero-ornament at rest). Superscript-pip and leading-bullet variants are
+/// avoided: a badge riding TEXT reads as dirt — badges belong on icons or in the
 /// row's trailing slot.
 private struct TitleMenuButton: View {
     let title: String

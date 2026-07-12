@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E10 WI-8 (ES-E10-5): the pure Jump-To panel model. These pin the ASSEMBLY (detected links first, then
+/// The pure Jump-To panel model. These pin the ASSEMBLY (detected links first, then
 /// the OSC-133 command/prompt index; empty commands skipped; duplicate links deduped; the right type
 /// badge/icon/timestamp per row; the right scrollback-jump / link `Act`) and the FILTER (an injected
 /// scorer drops non-matches and orders survivors by score descending with a STABLE tie-break; an empty

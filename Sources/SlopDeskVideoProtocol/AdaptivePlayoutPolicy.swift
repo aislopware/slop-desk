@@ -1,16 +1,15 @@
 // Adaptive playout-delay policy for the client's deadline presentation pacer — sizes the
 // jitter-absorption buffer to the LIVE measured network jitter instead of a fixed constant.
 //
-// Native-Swift port of the former `slopdesk-core::adaptive_playout` (the all-Swift migration
-// deletes the Rust core + FFI boundary). A FIXED playout buffer is wrong across links — a clean LAN
-// (tiny jitter) wastes latency while a jittery WAN underruns and stutters. This maps a measured
-// jitter scalar to a target buffer `clamp(k·jitter + base, [floor, ceil])`, then steps toward it
-// grow-fast / shrink-slow so a transient spike decays over several ticks (no latency ratchet).
+// A FIXED playout buffer is wrong across links — a clean LAN (tiny jitter) wastes latency while a
+// jittery WAN underruns and stutters. This maps a measured jitter scalar to a target buffer
+// `clamp(k·jitter + base, [floor, ceil])`, then steps toward it grow-fast / shrink-slow so a
+// transient spike decays over several ticks (no latency ratchet).
 //
 // THE FMA TRAP: `k * jitter + base` is computed as a SEPARATE multiply then add — never a fused
-// multiply-add — so the low bits match the reference exactly. Pure scalar arithmetic in the SECONDS
-// domain; the public `stepMs` entry mirrors the old `aisd_adaptive_playout_step_ms` ABI (jitter in
-// seconds; prev/shrink/base/floor/ceil in milliseconds; returns milliseconds).
+// multiply-add — so the low bits match the `aisd_adaptive_playout_step_ms` reference ABI exactly.
+// Pure scalar arithmetic in the SECONDS domain; the public `stepMs` entry keeps that ABI's units
+// (jitter in seconds; prev/shrink/base/floor/ceil in milliseconds; returns milliseconds).
 
 /// The hysteretic playout-buffer law. The caller resolves the env knobs and passes them in, so this
 /// stays deterministic; the Swift shell holds only the last value (`prevPlayoutMs`).
@@ -85,7 +84,7 @@ public enum AdaptivePlayoutPolicy {
 
     /// One hysteretic step of the playout delay (milliseconds): maps live `jitterSeconds` to the
     /// target `clamp(k·jitter + base, [floor, ceil])` and steps `prevPlayoutMs` toward it — grow-fast,
-    /// shrink-slow (≤ `shrinkStepMs` down per call). Mirrors the old `aisd_adaptive_playout_step_ms`.
+    /// shrink-slow (≤ `shrinkStepMs` down per call). Matches the `aisd_adaptive_playout_step_ms` ABI.
     public static func stepMs(
         jitterSeconds: Double,
         prevPlayoutMs: Double,

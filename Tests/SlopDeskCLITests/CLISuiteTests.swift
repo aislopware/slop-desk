@@ -2,7 +2,7 @@ import SlopDeskCLICore
 import SlopDeskProtocol
 import XCTest
 
-// Hang-safe tests for the user-facing `slopdesk` CLI's pure core (ui-shell E20, WI-1).
+// Hang-safe tests for the user-facing `slopdesk` CLI's pure core.
 //
 // No socket, no GUI, no subprocess. The `SlopDeskCLICore` library (global-flag parsing, the
 // `version` summary builder, the per-shell completion generator) is driven directly. The
@@ -23,10 +23,8 @@ final class CLIArgsTests: XCTestCase {
     }
 
     /// xterm/ghostty `-e <cmd>` LAUNCHES THE GUI and runs the command in the first pane (it does NOT
-    /// local-exec — a pane is a remote PTY, so the command is forwarded over the control path). This reverses
-    /// the earlier E20 de-advertisement where `-e` was a fatal `.unknownFlag` error. Revert-to-confirm-fail:
-    /// the pre-fix parser returned `.failure(.unknownFlag("-e"))`; this now demands a GUI-launch with the
-    /// command captured verbatim.
+    /// local-exec — a pane is a remote PTY, so the command is forwarded over the control path). `-e` must
+    /// NOT be treated as an unknown flag: it demands a GUI-launch with the command captured verbatim.
     func testExecFlagLaunchesGUIAndCapturesCommand() {
         guard case let .success(inv) = CLIArgs.parse(["slopdesk", "-e", "vim", "file.txt"]) else {
             XCTFail("expected -e to launch the GUI, not an unknown-flag error")
@@ -344,7 +342,7 @@ final class CLICompletionsTests: XCTestCase {
     }
 }
 
-// MARK: - WatchProgress (E20 WI-7)
+// MARK: - WatchProgress
 
 /// Tests for the `slopdesk watch` byte vocabulary. The EXPECTED byte strings are authored
 /// independently here (literal `ESC ] 9 ; 4 ; <state> BEL` / `ESC ] 9 ; <body> BEL`), not derived
@@ -415,7 +413,7 @@ final class WatchProgressTests: XCTestCase {
         XCTAssertTrue(WatchProgress.notificationBytes(message: "").isEmpty)
     }
 
-    /// M8-watch-notify-toggle: the watch-FINISH banner must NOT use the generic free-text OSC-9 form (which
+    /// The watch-FINISH banner must NOT use the generic free-text OSC-9 form (which
     /// the host routes to `.explicitOSC` / the master switch). It rides OSC 777 carrying the private
     /// `WatchNotificationMarker` sentinel in the TITLE field, so the client routes it to `.watchFinish`
     /// (gated by Notify on Watch Finish). Revert-to-confirm-fail: swapping this back to `notificationBytes`

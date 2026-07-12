@@ -1,4 +1,4 @@
-// SettingsView — the SwiftUI Settings surface (REBUILD-V2, WS-D / D4; E7 9-section taxonomy).
+// SettingsView — the SwiftUI Settings surface.
 //
 // A two-column Settings window; the right column is a THIN `@Bindable` over the one live `@Observable`
 // `PreferencesStore`. Each section edits a slice of the typed prefs models (`TerminalPreferences`,
@@ -11,9 +11,9 @@
 // search pill (filters SECTION ROWS) is DISTINCT from the Advanced → All-Settings content search (filters
 // config KEYS) — both surfaced at once.
 //
-// E7 reorg: the old 5-tab strip (General / Terminal / Video / Keybindings / Advanced) → an 8-section taxonomy
-// (`SettingsSection`): General / Shell / Controls / Editor / Agents / Appearance / Key Bindings / Advanced.
-// Groups relocate to the section the screenshots prove: FONT (family + size) + CURSOR (style + blink) →
+// An 8-section taxonomy (`SettingsSection`): General / Shell / Controls / Editor / Agents / Appearance /
+// Key Bindings / Advanced — finer-grained than a flat tab strip so each group can sit where its screenshot
+// proves it belongs, rather than where it happens to fit. FONT (family + size) + CURSOR (style + blink) →
 // **Appearance** (`font-setting.png` / `cursor-style.png`); SCROLLBACK → **Controls**
 // (`spec/terminal-features__scroll.md`); theme → Appearance; agent host flags → Agents; Close Confirmation
 // (Closing Tab / Closing Window) → **General** (`launch-option.png`). **Editor** is reserved for a built-in
@@ -26,7 +26,7 @@
 // a STOCK SwiftUI `Settings` scene (`SlopDeskSettingsScene`) — ⌘, opens a separate system-chromed window
 // that doesn't clash with the workspace's hover-reveal titlebar. When the coordinator lands the same tree can
 // move into an in-window panel via `settingsVisible`. `SettingsView` stays cross-platform so the iOS settings
-// sheet (WI-5) can host the same section structs.
+// sheet can host the same section structs.
 //
 // DEFERRED vs LIVE-APPLY: each section carries an `ApplyTiming` chip (`.live` = immediate; `.reconnect` = a
 // HOST-read sidecar flag, effective on the next host connection). Terminal + appearance + keybindings + the
@@ -58,7 +58,7 @@ import UIKit
 #if os(macOS)
 public struct SlopDeskSettingsScene: Scene {
     private let store: PreferencesStore
-    /// E13 WI-2: the app-owned Agents install-hooks model, injected so the card's Install/Uninstall/Status
+    /// The app-owned Agents install-hooks model, injected so the card's Install/Uninstall/Status
     /// round-trips reach the host. Optional — a preview/future host can omit it (card then renders the
     /// disabled "Connect a session" state).
     private let agentHooks: AgentHooksController?
@@ -86,8 +86,8 @@ public struct SlopDeskSettingsScene: Scene {
 
 // MARK: - Settings taxonomy (the 8 sections — one source for the macOS navigator + the iOS list)
 
-/// The settings taxonomy — 8 sections, each an icon+label row in the macOS navigator (and, once WI-5 lands,
-/// an iOS-sheet row). Title + `systemImage` live here as the ONE source so the macOS and (future) iOS lists
+/// The settings taxonomy — 8 sections, each an icon+label row in the macOS navigator (and, once the iOS sheet
+/// lands, an iOS-sheet row). Title + `systemImage` live here as the ONE source so the macOS and (future) iOS lists
 /// never drift; `SettingsSectionTaxonomyTests` pins the set + order against a drop/reorder/icon-swap. Order +
 /// glyphs mirror `docs/ui-shell/screenshots/all-settings.png`: General, Shell, Controls, Editor, Agents,
 /// Appearance, Key Bindings, Advanced.
@@ -132,7 +132,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         }
     }
 
-    /// macOS-only sections are dropped from the compact iOS sheet (WI-5). Only **Keybindings** qualifies: its
+    /// macOS-only sections are dropped from the compact iOS sheet. Only **Keybindings** qualifies: its
     /// chord CAPTURE is a macOS `NSEvent` monitor (`KeyCaptureMonitor` is `#if os(macOS)`), with no iOS
     /// capture UI. Advanced's macOS-HOST-only *rows* (raw `SLOPDESK_*` editor + Video host flags) are gated
     /// INSIDE `AdvancedSettingsTab`, not by hiding the section, so the All-Settings list still reaches iOS.
@@ -148,7 +148,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 // MARK: - Apply-timing tag (deferred vs live, surfaced as a chip not prose)
 
 /// When a setting takes effect — surfaced as a chip so the deferred/live distinction is a DATA attribute,
-/// not prose (D4).
+/// not prose.
 enum ApplyTiming {
     case live // applies immediately (terminal reload / theme / keybinding republish / fire-time key)
     case reconnect // a HOST-read flag shipped via the sidecar — applies on the next host connection
@@ -198,7 +198,7 @@ struct SettingsView: View {
     @Bindable var store: PreferencesStore
 
     /// The selected section — also bound into ``SettingsSectionContent`` so the Advanced All-Settings list's
-    /// ✎ jump buttons can repoint the navigator to the owning section (WI-3).
+    /// ✎ jump buttons can repoint the navigator to the owning section.
     @State private var selectedSection: SettingsSection = .general
 
     /// The SIDEBAR search pill query — narrows which SECTION ROWS show. DISTINCT from the Advanced →
@@ -279,10 +279,10 @@ private struct SettingsWindowAppearancePinner: NSViewRepresentable {
 // MARK: - Shared per-section content (one dispatch for the macOS navigator + the iOS sheet)
 
 /// Resolves a ``SettingsSection`` to its per-section body — the ONE place the section → struct mapping lives,
-/// so the macOS navigator (`SettingsView`) and iOS `SettingsSheet` (WI-5) render byte-identical content. The
+/// so the macOS navigator (`SettingsView`) and iOS `SettingsSheet` render byte-identical content. The
 /// per-section structs stay `private`; this `internal` view lets the iOS sheet (a separate file) reach them
 /// without widening their visibility. `selectedSection` threads the navigator selection so the Advanced
-/// All-Settings ✎ jump can repoint it (a no-op on iOS, where the jump is deferred — WI-3).
+/// All-Settings ✎ jump can repoint it (a no-op on iOS, where the jump is deferred).
 struct SettingsSectionContent: View {
     let section: SettingsSection
     @Bindable var store: PreferencesStore
@@ -305,7 +305,7 @@ struct SettingsSectionContent: View {
 // MARK: - General section
 
 /// The General-page SECTION group headers, in render order, as a PURE source list so the body can't drift
-/// from a headless taxonomy pin (`GeneralSectionLayoutTests`). macOS appends **OS Integration** — the E20 M1
+/// from a headless taxonomy pin (`GeneralSectionLayoutTests`). macOS appends **OS Integration** — the
 /// home for Default Terminal / Finder Integration / Full Disk Access (`first-launch-default-terminal.png`,
 /// `spec/getting-started__first-launch.md §2`). iOS OMITS it: the LaunchServices registration +
 /// System-Settings deep-links are `#if os(macOS)` (`DefaultTerminalIntegration`), no iOS handler.
@@ -328,7 +328,7 @@ enum GeneralSettingsLayout {
     }
 }
 
-/// General: On-Launch behaviour (O1), the tab/window close-confirmation policies (Close Confirmation lives on
+/// General: On-Launch behaviour, the tab/window close-confirmation policies (Close Confirmation lives on
 /// the General page — `launch-option.png`), privacy (redact secrets), and the default pane kind. All
 /// fire-time `Defaults.Keys` — applied LIVE. The NOTIFICATION group is NOT here — it's under **Shell**
 /// (`notification-setting.png` shows NOTIFICATION + TAB BADGE on the Shell page).
@@ -346,7 +346,7 @@ private struct GeneralSettingsTab: View {
     @Default(.closeConfirmWindow) private var closeConfirmWindow
     @Default(.redactSecrets) private var redactSecrets
     @Default(.defaultPaneKind) private var defaultPaneKind
-    // E20 M1 (ES-E20-4): the OS Integration "Default Terminal" status, refreshed on appear + after Set.
+    // The OS Integration "Default Terminal" status, refreshed on appear + after Set.
     // macOS-only — `DefaultTerminalIntegration` is `#if os(macOS)` (no iOS LaunchServices / deep-links).
     #if os(macOS)
     @State private var isDefaultTerminal = false
@@ -377,7 +377,7 @@ private struct GeneralSettingsTab: View {
                 timingFooter(.live)
             }
 
-            // OS Integration (E20 M1) — macOS-only. Reuses the SAME `DefaultTerminalIntegration` actions as
+            // OS Integration — macOS-only. Reuses the SAME `DefaultTerminalIntegration` actions as
             // the first-launch sheet, so the buttons stay REACHABLE after "Skip Setup" (the bug this fixes).
             #if os(macOS)
             osIntegrationSection
@@ -392,13 +392,13 @@ private struct GeneralSettingsTab: View {
         Text("Multiple Tabs").tag(CloseConfirmationPolicy.multipleTabs)
     }
 
-    // MARK: - OS Integration (E20 M1 — macOS-only, reachable post-first-launch)
+    // MARK: - OS Integration (macOS-only, reachable post-first-launch)
 
     /// Settings → General → OS Integration (`first-launch-default-terminal.png` /
     /// `getting-started__first-launch.md §2`). REUSES the first-launch sheet's rows so behaviour lives in one
     /// place (`DefaultTerminalIntegration`): a Default-Terminal status row (Set / "Default"), the Finder +
     /// Full-Disk-Access deep-links, and the honestly-DISABLED "Default Terminal for Common Apps" row (a
-    /// remote-host editor's config can't be rewritten from the client — E20 exclusion §4 / no dead button).
+    /// remote-host editor's config can't be rewritten from the client — no dead button).
     /// macOS-only.
     #if os(macOS)
     private var osIntegrationSection: some View {
@@ -470,17 +470,17 @@ private struct GeneralSettingsTab: View {
 
 // MARK: - Shell section
 
-/// Shell: the NOTIFICATION + SOUND + CODE AGENT groups (E14/K9-K11) and the window/tab/split
+/// Shell: the NOTIFICATION + SOUND + CODE AGENT groups and the window/tab/split
 /// working-directory policy. `notification-setting.png` (Shell row highlighted) homes NOTIFICATION under
 /// Shell (NOT General): the System Permission status row, the master "Allow App Notifications", per-event
 /// toggles, the Notify-While-Foreground tri-state picker, and the macOS-only Bounce Dock Icon — all backed by
-/// the pure `NotificationPolicy` engine (WI-4). Working Directory is also Shell's
+/// the pure `NotificationPolicy` engine. Working Directory is also Shell's
 /// (`spec/user-interface__window-tab-split.md` 66 + 282, `open-option.png`). NOT here: New Tab Position →
 /// **Appearance** (`tab-setting.png`); close-confirmation → **General** (`launch-option.png`); title + OSC-52
 /// privilege gates → **Advanced**. Each reads a fire-time `Defaults.Key` at the fire-site, so they apply LIVE.
 private struct ShellSettingsTab: View {
-    // NOTIFICATION group (notification-setting.png). Backed by the pure `NotificationPolicy` engine (E14/K9,
-    // WI-4) — real behaviour, not deferred stubs.
+    // NOTIFICATION group (notification-setting.png). Backed by the pure `NotificationPolicy` engine —
+    // real behaviour, not deferred stubs.
     @Default(.oscNotifications) private var oscNotifications
     @Default(.longCommandNotifications) private var longCommandNotifications
     @Default(.notifyOnFinish) private var notifyOnFinish
@@ -496,23 +496,23 @@ private struct ShellSettingsTab: View {
     @Default(.tabBadgeOnCommandFail) private var tabBadgeOnCommandFail
     @Default(.tabBadgeOnCommandAwaitInput) private var tabBadgeOnCommandAwaitInput
     @Default(.tabBadgeBusyDelaySeconds) private var tabBadgeBusyDelaySeconds
-    // SOUND group (Shell). BEL → NSSound.beep() gate + error-exit beep (E14/K10).
+    // SOUND group (Shell). BEL → NSSound.beep() gate + error-exit beep.
     @Default(.soundShellControlled) private var soundShellControlled
     @Default(.soundOnErrorExit) private var soundOnErrorExit
-    // CODE AGENT group (Claude-only — E14 scope exclusion). IPC-driven, no shell integration needed.
+    // CODE AGENT group (Claude-only). IPC-driven, no shell integration needed.
     @Default(.agentNotifyTaskComplete) private var agentNotifyTaskComplete
     @Default(.agentNotifyAwaitInput) private var agentNotifyAwaitInput
     @Default(.workingDirectoryNewWindow) private var workingDirNewWindow
     @Default(.workingDirectoryNewTab) private var workingDirNewTab
     @Default(.workingDirectoryNewSplit) private var workingDirNewSplit
-    // E20 WI-9: the "SlopDesk CLI" card (Install CLI / Omit Prefix / Allow Overwrite). macOS-only — the
+    // The "SlopDesk CLI" card (Install CLI / Omit Prefix / Allow Overwrite). macOS-only — the
     // `/usr/local/bin` symlink + admin escalation are `#if os(macOS)`; iOS omits the section (no dead toggle).
     #if os(macOS)
     @State private var cliInstaller = CLIInstaller()
     #endif
 
     /// The two policy choices the picker surfaces. A custom-path policy (set from the config / Advanced
-    /// editor) is shown as `home` here; editing the path lands in WI-3's All-Settings raw editor.
+    /// editor) is shown as `home` here; editing the path lands in the All-Settings raw editor.
     private enum WorkingDirChoice: String, CaseIterable, Identifiable {
         case inherit
         case home
@@ -535,7 +535,7 @@ private struct ShellSettingsTab: View {
                 timingFooter(.live)
             }
 
-            // SLOPDESK CLI (E20 WI-9 — Settings → Shell → CLI card). macOS-only: the `/usr/local/bin` symlink
+            // SLOPDESK CLI (Settings → Shell → CLI card). macOS-only: the `/usr/local/bin` symlink
             // + admin escalation are `#if os(macOS)`, so iOS omits it. Shares `CLIInstallCardBody` with the
             // first-launch Install-CLI step (one source).
             #if os(macOS)
@@ -640,7 +640,7 @@ private struct ShellSettingsTab: View {
         }
     }
 
-    /// The SOUND group (Shell): the BEL → system-beep gate + the error-exit beep (E14/K10).
+    /// The SOUND group (Shell): the BEL → system-beep gate + the error-exit beep.
     private var soundSection: some View {
         slateFormSection("Sound") {
             toggleRow(
@@ -657,7 +657,7 @@ private struct ShellSettingsTab: View {
         }
     }
 
-    /// The CODE AGENT group (Claude-only — E14 scope exclusion). IPC-driven, no shell integration needed.
+    /// The CODE AGENT group (Claude-only). IPC-driven, no shell integration needed.
     private var codeAgentSection: some View {
         slateFormSection("Code Agent") {
             toggleRow(
@@ -718,7 +718,7 @@ private struct ShellSettingsTab: View {
 /// **iOS caveat (carryover / spec flag):** macOS deep-links to the Notifications pane
 /// (`x-apple.systempreferences:com.apple.preference.notifications`); iOS CANNOT deep-link to the per-app OS
 /// pane, so the button opens the app's OWN settings via `UIApplication.openSettingsURLString` — macOS
-/// deep-link `#if os(macOS)`, iOS fallback `#if os(iOS)`. See docs/DECISIONS.md E14 WI-7.
+/// deep-link `#if os(macOS)`, iOS fallback `#if os(iOS)`. See docs/DECISIONS.md.
 private struct NotificationPermissionRow: View {
     /// The current dot — starts amber (unknown) until the async query resolves, never a false green.
     @State private var dot: PermissionStatus.Dot = .amber
@@ -791,7 +791,7 @@ private struct NotificationPermissionRow: View {
 
 // MARK: - Controls section
 
-/// Controls: fire-time toggles + multi-state pickers (E8 owns BEHAVIOUR; E7 declared + persisted them). The
+/// Controls: fire-time toggles + multi-state pickers. The
 /// groups mirror `spec/terminal-features__{selection,copy-and-paste,scroll,cursor-and-mouse}.md` +
 /// `mouse-option.png`: **Selection**, **Copy & Paste**, **Scroll** (incl. SCROLLBACK depth — the `Settings →
 /// Controls → Scroll` home), **Mouse**, **Keyboard** (Undo at Prompt), and the slopdesk-specific **System**
@@ -829,14 +829,14 @@ private struct ControlsSettingsTab: View {
     @Default(.undoAtPrompt) private var undoAtPrompt
     @Default(.optionAsAlt) private var optionAsAlt
     @Default(.systemDialogPanes) private var systemDialogPanes
-    // Links (Settings → Controls → Open With / Link Schemes, E10 WI-3). Client-side link interaction —
+    // Links (Settings → Controls → Open With / Link Schemes). Client-side link interaction —
     // NOT libghostty config, so these bind DIRECTLY (no `refreshing(_:)` terminal-config rebuild).
     @Default(.linkDetection) private var linkDetection
     @Default(.linkCmdClick) private var linkCmdClick
     @Default(.linkCmdShiftClick) private var linkCmdShiftClick
     @Default(.autoDetectLinkSchemes) private var autoDetectLinkSchemes
     @Default(.customLinkSchemes) private var customLinkSchemes
-    // Secure Input (E17 ES-E17-4 / WI-7) — macOS-only (the iOS sheet hides the section). The keys still
+    // Secure Input — macOS-only (the iOS sheet hides the section). The keys still
     // compile + round-trip on iOS; only the UI is gated.
     #if os(macOS)
     @Default(.autoSecureInput) private var autoSecureInput
@@ -922,7 +922,7 @@ private struct ControlsSettingsTab: View {
                 timingFooter(.live)
             }
 
-            // Secure Input (E17 ES-E17-4 / WI-7) — macOS-only (process-global `EnableSecureEventInput`). The
+            // Secure Input — macOS-only (process-global `EnableSecureEventInput`). The
             // whole Section is `#if os(macOS)`, so the iOS sheet hides it; the `SettingsKey` keys still compile.
             #if os(macOS)
             slateFormSection("Secure Input") {
@@ -1052,9 +1052,9 @@ private struct ControlsSettingsTab: View {
         }
     }
 
-    // MARK: - E10 Links (Open With + Link Schemes)
+    // MARK: - Links (Open With + Link Schemes)
 
-    /// Settings → Controls → Open With (E10 WI-3). The link-interaction knobs are CLIENT-side (not libghostty
+    /// Settings → Controls → Open With. The link-interaction knobs are CLIENT-side (not libghostty
     /// config), so they bind DIRECTLY — no `refreshing(_:)` rebuild.
     ///
     /// HONESTY CEILING (docs/DECISIONS.md): a per-target "Open Files / Folders With → [app]" surrogate needs a
@@ -1098,7 +1098,7 @@ private struct ControlsSettingsTab: View {
         }
     }
 
-    /// Settings → Controls → Link Schemes (E10 WI-3). The custom-scheme list is editable only when the
+    /// Settings → Controls → Link Schemes. The custom-scheme list is editable only when the
     /// mode is Custom; `http(s)` / `file` / `mailto` are always detected regardless of this mode.
     private var linkSchemesSection: some View {
         slateFormSection("Link Schemes") {
@@ -1160,7 +1160,7 @@ private struct ControlsSettingsTab: View {
     // MARK: - Row helpers
 
     /// Wrap a fire-time `Defaults` control binding so a change ALSO re-applies the live terminal config (the
-    /// E8 Controls passthrough). `PreferencesStore` is isolated on its injected `UserDefaults`; the global
+    /// Controls passthrough). `PreferencesStore` is isolated on its injected `UserDefaults`; the global
     /// Controls toggles live in `Defaults.standard`, so `refreshTerminalControls()` is the explicit re-read
     /// seam (there is no `Defaults.observe` in the store, by design — see `PreferencesStore`).
     private func refreshing<V: Equatable>(_ binding: Binding<V>) -> Binding<V> {
@@ -1240,7 +1240,7 @@ private struct EditorSettingsTab: View {
 
 /// Appearance: the TABS group (New Tab Position — `tab-setting.png` shows it here, NOT Shell), the theme
 /// picker (via `AppearancePreferences` → `ThemeStore`), the density tier, the terminal FONT (family + size)
-/// and CURSOR (style + blink) — font/cursor relocated here from the old Editor/Controls tabs per
+/// and CURSOR (style + blink) — font/cursor belong here, not the Editor/Controls tabs, per
 /// `font-setting.png` / `cursor-style.png` — plus the chrome toggles. All LIVE (theme repoints every token;
 /// font/cursor rebuild the libghostty config string and bump `TerminalConfigBroadcaster`; New Tab Position +
 /// chrome toggles are read at fire-time / next render).
@@ -1248,12 +1248,12 @@ private struct AppearanceSettingsTab: View {
     @Bindable var store: PreferencesStore
 
     @Default(.newTabPosition) private var newTabPosition
-    // E19/A18 vertical-sidebar auto-hide (`auto-hide-tabs-panel`) — cross-platform (the sidebar is on
-    // both macOS + iPad). The decision is the pure `SidebarAutoHidePolicy`; WI-7 drives `chrome.sidebarCollapsed`.
+    // Vertical-sidebar auto-hide (`auto-hide-tabs-panel`) — cross-platform (the sidebar is on
+    // both macOS + iPad). The decision is the pure `SidebarAutoHidePolicy`, which drives `chrome.sidebarCollapsed`.
     @Default(.autoHideTabsPanel) private var autoHideTabsPanel
     @Default(.showBlockDividers) private var showBlockDividers
     #if os(macOS)
-    // E19/A29 window-size (`window-size`) — macOS-only: the initial dimensions are an `NSWindow`
+    // window-size (`window-size`) — macOS-only: the initial dimensions are an `NSWindow`
     // concept (iOS has no resizable window), so the keys are bound only where the `Window` section renders.
     @Default(.windowSize) private var windowSize
     @Default(.windowCols) private var windowCols
@@ -1270,16 +1270,16 @@ private struct AppearanceSettingsTab: View {
             // selector (Vertical Tabs / Tabs Top / Tabs Bottom). slopdesk is VERTICAL-TABS-ONLY by deliberate
             // decision — no horizontal tab bar, so no layout selector, and a reviewer must NOT read the missing
             // option as a gap to backfill. The "Auto Hide Tabs Panel" row and the WINDOW group below are both
-            // BACKED — Auto Hide drives `SidebarAutoHidePolicy` (E19/A18, WI-2/WI-7), Window Size + steppers
-            // feed `WindowSizeMath` via the macOS `NSWindow` glue (E19/A29, WI-1/WI-4). Not dead UI.
+            // BACKED — Auto Hide drives `SidebarAutoHidePolicy`, Window Size + steppers
+            // feed `WindowSizeMath` via the macOS `NSWindow` glue. Not dead UI.
             slateFormSection("Tabs") {
                 Picker("New tab position", selection: $newTabPosition) {
                     Text("Automatic").tag(NewTabPosition.auto)
                     Text("End").tag(NewTabPosition.end)
                     Text("After Current Tab").tag(NewTabPosition.afterCurrent)
                 }
-                // AUTO HIDE TABS PANEL (E19/A18 — `auto-hide-tabs-panel`, `tab-setting.png`): `.auto` collapses
-                // the sidebar when the active session has one tab (WI-7 reads `SidebarAutoHidePolicy`);
+                // AUTO HIDE TABS PANEL (`auto-hide-tabs-panel`, `tab-setting.png`): `.auto` collapses
+                // the sidebar when the active session has one tab (reads `SidebarAutoHidePolicy`);
                 // `.default`/`.always` never auto-hide. Cross-platform.
                 pickerRow(
                     "Auto Hide Tabs Panel",
@@ -1293,13 +1293,13 @@ private struct AppearanceSettingsTab: View {
                 timingFooter(.live)
             }
 
-            // WINDOW (E19/A29 — `window-size`, `tab-setting.png`). macOS-only: initial dimensions are an
+            // WINDOW (`window-size`, `tab-setting.png`). macOS-only: initial dimensions are an
             // `NSWindow` concept, so iOS omits it. Extracted to keep the `Form` closure under `closure_body_length`.
             #if os(macOS)
             windowSection
             #endif
 
-            // THEME (E15 WI-6): the picker lists every built-in theme; picking one writes `theme`/`themeDark`.
+            // THEME: the picker lists every built-in theme; picking one writes `theme`/`themeDark`.
             // With "Use separated theme for dark mode" ON the OS appearance selects the slot, so a Dark Theme
             // picker appears below the toggle (`dark-mode-theme.png`).
             slateFormSection("Theme") {
@@ -1338,10 +1338,10 @@ private struct AppearanceSettingsTab: View {
                 }
             }
 
-            // FONT (E15 WI-8): the Font-Family scope tabs, "Aa" specimen combobox, Auto-match, per-face
+            // FONT: the Font-Family scope tabs, "Aa" specimen combobox, Auto-match, per-face
             // families, size, line-height, ligatures, and bold/italic/underline/blink/blending controls, bound
-            // to `store.terminal` + `store.appearance.themeFonts`. Replaces the old family-TextField +
-            // size-Stepper Section (`font-setting.png` / `font-setting-bold.png`). See `FontSettingsView`.
+            // to `store.terminal` + `store.appearance.themeFonts` (`font-setting.png` /
+            // `font-setting-bold.png`). See `FontSettingsView`.
             FontSettingsView(store: store)
 
             // The FULL Cursor group (live preview + color / text-under / opacity / style / blink / animation)
@@ -1369,7 +1369,7 @@ private struct AppearanceSettingsTab: View {
                 Toggle("Show command dividers", isOn: $showBlockDividers)
             }
 
-            // DOCK ICON (E14/K5/K8 — M2): under **Appearance** (terminal-features__progress-state.md).
+            // DOCK ICON: under **Appearance** (terminal-features__progress-state.md).
             // macOS-only (no Dock on iOS — the group is `#if os(macOS)`). Both toggles actuate
             // ``DockProgressController`` via the pure ``DockTintPolicy`` (read fire-time through
             // `WorkspaceStore.dockTileModel`) — not dead UI.
@@ -1439,12 +1439,12 @@ private struct AppearanceSettingsTab: View {
         )
     }
 
-    // MARK: - E19/A29 Window section (macOS-only)
+    // MARK: - Window section (macOS-only)
 
     /// The WINDOW group (`tab-setting.png`): the `window-size` policy picker + mode-specific steppers.
     /// `.remember` restores the autosaved frame (default); `.grid` sizes to `window-cols × window-rows`;
     /// `.frame` to `window-width-px × window-height-px`. Raw values are clamped by `WindowSizeMath` and applied
-    /// ONCE per window open by the introspect glue (WI-4), so a later manual resize is never fought. macOS-only.
+    /// ONCE per window open by the introspect glue, so a later manual resize is never fought. macOS-only.
     #if os(macOS)
     private var windowSection: some View {
         slateFormSection("Window") {
@@ -1509,14 +1509,14 @@ private struct AppearanceSettingsTab: View {
 
 // MARK: - Agents section
 
-/// Agents: the CLAUDE CODE install-hooks card (E13 WI-2 — install/uninstall + status row, via the host
-/// metadata channel), the host-side agent-detection flags (relocated from the old Video tab — host-read, so
-/// reconnect), plus layout-auto-switch and clipboard-history fire-time toggles (LIVE). **Claude Code only**
-/// (E13 directive 1): NO codex/opencode card — `MetadataCodec.AgentKind.codex` is documented-dead, never rendered.
+/// Agents: the CLAUDE CODE install-hooks card (install/uninstall + status row, via the host
+/// metadata channel), the host-side agent-detection flags (belong here rather than Video — host-read, so
+/// reconnect), plus layout-auto-switch and clipboard-history fire-time toggles (LIVE). **Claude Code only**:
+/// NO codex/opencode card — `MetadataCodec.AgentKind.codex` is documented-dead, never rendered.
 private struct AgentsSettingsTab: View {
     @Bindable var store: PreferencesStore
 
-    /// E13 WI-2: the install-hooks model, injected by the app scene (seams target the active connection's
+    /// The install-hooks model, injected by the app scene (seams target the active connection's
     /// first-pane ``MetadataClient``). `nil` outside the app scene (previews / iOS sheet pre-wiring) → the card
     /// renders disabled ("Connect a session") rather than crashing.
     @Environment(\.agentHooksController) private var agentHooks
@@ -1524,7 +1524,7 @@ private struct AgentsSettingsTab: View {
     @Default(.autoSwitchLayouts) private var autoSwitchLayouts
     @Default(.recordClipboardHistory) private var recordClipboardHistory
 
-    // E13 WI-3: the "Agent Behaviour" toggles. badge×3 + notify×2 are fire-time `Defaults.Keys` (apply
+    // The "Agent Behaviour" toggles. badge×3 + notify×2 are fire-time `Defaults.Keys` (apply
     // live); prevent-sleep / resume-on-recovery ride the `AgentPreferences` sidecar (`$store.agent`, reconnect).
     @Default(.agentBadgeWhileProcessing) private var agentBadgeWhileProcessing
     @Default(.agentBadgeWhenComplete) private var agentBadgeWhenComplete
@@ -1561,7 +1561,7 @@ private struct AgentsSettingsTab: View {
         .task { await agentHooks?.refresh() }
     }
 
-    // MARK: Agent Behaviour (E13 WI-3 — badge×3 + notify×2, greyed until an integration is installed)
+    // MARK: Agent Behaviour (badge×3 + notify×2, greyed until an integration is installed)
 
     /// The "Agent Behaviour" badge/notify toggles (apply LIVE). Greyed out until at least one
     /// integration is installed (``behaviorEnabled``); Claude-only. The badge toggles drive the GLOBAL
@@ -1621,9 +1621,9 @@ private struct AgentsSettingsTab: View {
                     .foregroundStyle(Slate.Text.tertiary)
             }
 
-            // Queue-safety (2026-07-02): installed-but-INACTIVE — hooks are in settings.json but the host
-            // daemon's hook listener isn't bound, so every hook exits silently and no live agent states (or
-            // prompt-queue turn signals) arrive. Show the exact fix, not a green check over a dead integration.
+            // installed-but-INACTIVE — hooks are in settings.json but the host daemon's hook listener isn't
+            // bound, so every hook exits silently and no live agent states (or prompt-queue turn signals)
+            // arrive. Show the exact fix, not a green check over a dead integration.
             if state == .installedInactive {
                 Text(
                     "Hooks are installed but the host isn't listening. Restart the host daemon with "
@@ -1709,7 +1709,7 @@ private struct AgentsSettingsTab: View {
     }
 }
 
-// MARK: - Agents card state derivation (E13 WI-2 — the ONE nil-controller fallback, shared + testable)
+// MARK: - Agents card state derivation (the ONE nil-controller fallback, shared + testable)
 
 /// The Agents card's derived state from the (optional) injected ``AgentHooksController`` — the ONE place the
 /// nil-controller fallbacks live, so the macOS scene and iOS ``SettingsSheet`` derive the card identically. A
@@ -1729,10 +1729,10 @@ enum AgentSettingsCard {
     }
 }
 
-// MARK: - Agents settings-card environment slot (E13 WI-2)
+// MARK: - Agents settings-card environment slot
 
 extension EnvironmentValues {
-    /// The single app-owned ``AgentHooksController`` (E13 WI-2), injected at the Settings scene root so the
+    /// The single app-owned ``AgentHooksController``, injected at the Settings scene root so the
     /// Agents card reaches it. `nil` outside the app scene (previews / the iOS sheet before its wiring lands)
     /// → the card renders disabled rather than crashing.
     @Entry var agentHooksController: AgentHooksController?
@@ -1765,7 +1765,7 @@ private struct AdvancedSettingsTab: View {
     /// The shared navigator selection — threaded into the All-Settings list so a ✎ jump can repoint it.
     @Binding var selectedSection: SettingsSection
 
-    // E14/K11-K12 privilege surface (terminal-features__notifications.md → Settings → Advanced). Cross-platform
+    // Privilege surface (terminal-features__notifications.md → Settings → Advanced). Cross-platform
     // — these gate what a remote OSC sequence may do client-side, so they apply on macOS AND iOS.
     @Default(.titleShellControlled) private var titleShellControlled
     @Default(.titleReport) private var titleReport
@@ -1775,7 +1775,7 @@ private struct AdvancedSettingsTab: View {
 
     #if os(macOS)
     /// Local edit buffer of `key = value` lines; committed into `store.rawOverrides` on change. macOS-only:
-    /// the raw `SLOPDESK_*` editor is a HOST-side concern, so the compact iOS sheet (WI-5) omits it.
+    /// the raw `SLOPDESK_*` editor is a HOST-side concern, so the compact iOS sheet omits it.
     @State private var text: String = ""
     #endif
 
@@ -1783,7 +1783,7 @@ private struct AdvancedSettingsTab: View {
         Form {
             privilegesSection
 
-            // The raw `SLOPDESK_*` editor + Video HOST flags are macOS-host-relevant, so the iOS sheet (WI-5)
+            // The raw `SLOPDESK_*` editor + Video HOST flags are macOS-host-relevant, so the iOS sheet
             // omits them; the cross-platform All-Settings list below still reaches iOS.
             #if os(macOS)
             slateFormSection("Raw overrides") {
@@ -1822,7 +1822,7 @@ private struct AdvancedSettingsTab: View {
         #endif
     }
 
-    // MARK: - Privileges (E14/K11-K12 — title gates + OSC-52 master + read/write tri-state)
+    // MARK: - Privileges (title gates + OSC-52 master + read/write tri-state)
 
     /// The privilege surface (Settings → Advanced, `terminal-features__notifications.md`): title gates + the
     /// OSC-52 master switch + read/write tri-state pickers. The pickers are DISABLED while the master is off
@@ -1892,7 +1892,7 @@ private struct AdvancedSettingsTab: View {
 
     /// Wrap a fire-time `Defaults` clipboard binding so a change ALSO re-applies the live terminal config —
     /// the master + read/write tokens are read by `TerminalControls.from(defaults:)` into the libghostty
-    /// `clipboard-*` lines, so `refreshTerminalControls()` is the explicit re-read seam (the E8 idiom).
+    /// `clipboard-*` lines, so `refreshTerminalControls()` is the explicit re-read seam.
     private func refreshingControls<V: Equatable>(_ binding: Binding<V>) -> Binding<V> {
         Binding(
             get: { binding.wrappedValue },

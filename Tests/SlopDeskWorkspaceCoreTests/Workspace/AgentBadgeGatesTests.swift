@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E13 WI-3 (ES-E13-2): the ``AgentBadgeGates`` value type — the per-pane toggle bundle the tab context-menu
+/// The ``AgentBadgeGates`` value type — the per-pane toggle bundle the tab context-menu
 /// flips. The SOURCE-AWARE gating itself (which families each toggle drops) now lives in ``TabBadgeGating`` and
 /// is pinned by `TabBadgeGatingTests`; this file pins only the value-type contract (single-bit toggling).
 final class AgentBadgeGatesTests: XCTestCase {

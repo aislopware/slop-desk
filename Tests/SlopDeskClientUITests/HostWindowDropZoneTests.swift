@@ -1,4 +1,4 @@
-// Pins the rail-window drop-zone mapping (docs/45 round 3): where a HOST WINDOW dragged off the
+// Pins the rail-window drop-zone mapping (docs/45): where a HOST WINDOW dragged off the
 // right rail would land, resolved by the pure `SplitContainer.resolveWindowDropZone` — the
 // insert-drag mirror of the pane-move resolver. Headless: pure rect math over hand-placed leaves.
 

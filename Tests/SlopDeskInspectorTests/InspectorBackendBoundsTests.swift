@@ -1,10 +1,10 @@
 import XCTest
 @testable import SlopDeskInspector
 
-/// R17 INSP-LEAK-1: the EventBuilder per-subagent maps are keyed by agentID and were never evicted on
+/// The EventBuilder per-subagent maps are keyed by agentID and were never evicted on
 /// the agentID DIMENSION — a long session (or an adversarial transcript declaring many distinct
 /// subagent ids) grew them for the host's lifetime. A drop-oldest agent cap (the host analogue of the
-/// client's R13 #4) bounds them.
+/// client's per-agent cap) bounds them.
 final class EventBuilderAgentCapTests: XCTestCase {
     func testSubagentAgentIDDimensionIsBounded() {
         var builder = EventBuilder()
@@ -33,7 +33,7 @@ final class EventBuilderAgentCapTests: XCTestCase {
     }
 }
 
-/// R17 INSP-WIRE-1: when the replay log dropped the oldest events (retention overflow) before the
+/// When the replay log dropped the oldest events (retention overflow) before the
 /// prefix a subscriber asked for, the replay must PREPEND a `.historyTruncated` marker so the client
 /// knows the timeline starts mid-transcript, rather than silently presenting a truncated history as
 /// complete.

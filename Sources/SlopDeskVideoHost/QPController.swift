@@ -1,8 +1,8 @@
 import Foundation
 import SlopDeskVideoProtocol
 
-/// Link-adaptive constant-QP controller (own rate control, 2026-06-18) — native Swift, the single
-/// source of truth for the integer AIMD-on-QP law.
+/// Link-adaptive constant-QP controller — native Swift, the single source of truth for the integer
+/// AIMD-on-QP law.
 ///
 /// VideoToolbox's `AverageBitRate` VBR banks unused budget while idle, then slams the QP on the frames
 /// after a post-idle burst (the "idle → hard-scroll → blur" clawback). Pinning a CONSTANT QP per frame
@@ -13,7 +13,7 @@ import SlopDeskVideoProtocol
 /// NOTE: QP is INVERSE quality, so the AIMD senses flip vs a bitrate controller — congestion RAISES Q.
 struct QPController: Equatable {
     /// Sharpest (lowest) QP on a clean link. `SLOPDESK_QP_SHARP` (default 26 — the HW-validated
-    /// "khá là ok" constant-QP value; not sharper, to keep frame sizes / drops bounded on WiFi).
+    /// constant-QP value judged good enough; not sharper, to keep frame sizes / drops bounded on WiFi).
     static let qSharp: Int = envInt("SLOPDESK_QP_SHARP", 26, min: 1, max: 51)
     /// Coarsest (highest) QP under sustained congestion. `SLOPDESK_QP_COARSE` (default 40).
     static let qCoarse: Int = envInt("SLOPDESK_QP_COARSE", 40, min: 1, max: 51)
@@ -23,11 +23,11 @@ struct QPController: Equatable {
     static let downInterval: Int = envInt("SLOPDESK_QP_DOWN_INTERVAL", 4, min: 1, max: 10000)
 
     /// Parse + CLAMP an int config value to `[min, max]`, falling back to `def`. Resolves through
-    /// ``EnvConfig`` (ProcessInfo env → overlay) instead of `ProcessInfo` directly — W12 — so a GUI
-    /// setting can override it. With an EMPTY overlay `EnvConfig.string(key)` is byte-identical to the
-    /// previous `ProcessInfo.processInfo.environment[key]`, so this site (and the golden corpus that
-    /// pins these defaults) is unchanged. NOTE: this site CLAMPS out-of-range values (it does not reject
-    /// them), distinct from `LiveCongestionController`'s validate-then-default — that law stays here.
+    /// ``EnvConfig`` (ProcessInfo env → overlay) instead of `ProcessInfo` directly, so a GUI setting can
+    /// override it. With an EMPTY overlay `EnvConfig.string(key)` is byte-identical to
+    /// `ProcessInfo.processInfo.environment[key]`, so this site (and the golden corpus that pins these
+    /// defaults) is unaffected. NOTE: this site CLAMPS out-of-range values (it does not reject them),
+    /// distinct from `LiveCongestionController`'s validate-then-default — that law stays here.
     static func envInt(_ key: String, _ def: Int, min lo: Int, max hi: Int) -> Int {
         guard let s = EnvConfig.string(key), let v = Int(s) else { return def }
         return Swift.max(lo, Swift.min(hi, v))

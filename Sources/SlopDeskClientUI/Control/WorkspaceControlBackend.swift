@@ -1,13 +1,13 @@
-// E20 WI-3 — Client control backend over the live client stores.
+// Client control backend over the live client stores.
 //
 // The concrete ``ClientControlBackend`` the ``ClientControlServer`` drives: adapts the running client
 // GUI's `@MainActor` stores — ``WorkspaceStore`` (the `Session → Tab → Pane` tree), ``PreferencesStore``
 // (render/appearance), ``ThemeStore`` / ``ThemeCatalog``, ``WorkspaceBindingRegistry`` (keybinds), and
-// ``FolderFrecencyStore`` (jump) — onto the verb seam the PURE ``ClientControlDispatcher`` (WI-2) calls.
+// ``FolderFrecencyStore`` (jump) — onto the verb seam the PURE ``ClientControlDispatcher`` calls.
 //
 // ## Compiled-only (hang-safety)
 // Like the host's `AgentControlListener`, this touches live GUI stores and is **never instantiated in a
-// unit test** — the dispatcher is tested against a FAKE backend (WI-2 `ClientControlDispatcherTests`).
+// unit test** — the dispatcher is tested against a FAKE backend (`ClientControlDispatcherTests`).
 // Stores are held WEAKLY (the app owns them); a deallocated store degrades to empty/`nil`/`false`, never a trap.
 //
 // ## Validate-then-drop
@@ -17,19 +17,18 @@
 // send-keys / shim text is sent **VERBATIM UTF-8**; named keys go through a small explicit keycode table
 // (never `SendKeysParser`), per CLAUDE.md.
 //
-// ## Refinement boundary (later work items)
-// Every method wires against an existing seam so the socket is functional end-to-end at WI-3. The
-// scrollback `pane capture` read's DEPTH lands with WI-4 (marked inline). `config get/set/unset/show/
-// reload` drive the LIVE settings — `theme` retints via ``ThemeStore``, render keys reflow/retint via
-// ``PreferencesStore``, unknown keys honestly error (no dead namespace / no `EnvConfig.overlay` write).
-// `tab badge --kind` writes the store-side per-tab override the rail + `tab list` render (E20 ES-E20-3).
-// The `view`/`edit` shim landed its new-pane placement in WI-6. None of these are on the golden wire; this
-// is the NDJSON control plane only.
+// ## Known gaps
+// Every method wires against an existing seam so the socket is functional end-to-end. The scrollback
+// `pane capture` read's DEPTH is shallow (marked inline). `config get/set/unset/show/reload` drive the
+// LIVE settings — `theme` retints via ``ThemeStore``, render keys reflow/retint via ``PreferencesStore``,
+// unknown keys honestly error (no dead namespace / no `EnvConfig.overlay` write). `tab badge --kind`
+// writes the store-side per-tab override the rail + `tab list` render. None of these are on the golden
+// wire; this is the NDJSON control plane only.
 
 #if canImport(SwiftUI)
 import Foundation
 import SlopDeskAgentDetect
-import SlopDeskCLICore // JumpResolver — the PURE frecency/$HOME-toggle/`--no-cd` jump resolution (WI-5)
+import SlopDeskCLICore // JumpResolver — the PURE frecency/$HOME-toggle/`--no-cd` jump resolution
 import SlopDeskVideoProtocol // ThemeChoice — the typed theme selection the `config set theme` write maps onto
 import SlopDeskWorkspaceCore
 #if canImport(AppKit)
@@ -137,8 +136,7 @@ final class WorkspaceControlBackend: ClientControlBackend {
     /// Set the MANUAL status badge on a tab (focused tab when `tabId` is nil) — the `tab badge --kind` verb.
     /// Resolves the target ``TabID`` (unknown/absent → `false` → dispatcher's `tab not found`) and writes the
     /// per-tab override the rail + `tab list` consult AHEAD of the derived badge
-    /// (``WorkspaceStore/setTabBadgeOverride(_:for:)``). The real ES-E20-3 write path — no longer reports
-    /// success while doing nothing.
+    /// (``WorkspaceStore/setTabBadgeOverride(_:for:)``).
     func setTabBadge(tabId: String?, kind: TabBadgeKind) -> Bool {
         guard let store, let target = resolveTabID(tabId) else { return false }
         store.setTabBadgeOverride(kind, for: target)
@@ -206,11 +204,11 @@ final class WorkspaceControlBackend: ClientControlBackend {
         return true
     }
 
-    // MARK: - view / edit shim (WI-6)
+    // MARK: - view / edit shim
 
     /// Open the read-only `view` / editor `edit` shim in a NEW pane (`--new-tab` default / `--new-window` /
-    /// split side) — NOT a native local file renderer (an slopdesk pane IS a remote PTY; there is no local
-    /// renderer — the documented E20 shim, carry-over §4). TYPES a shell command into the freshly-spawned
+    /// split side) — NOT a native local file renderer (a slopdesk pane IS a remote PTY; there is no local
+    /// renderer to target). TYPES a shell command into the freshly-spawned
     /// pane: `view` → `open <url>` for a URL else `less <path>`; `edit` → `${EDITOR:-vi} <path>`. Injected
     /// through the SAME new-pane launch seam template panes use (``SessionTemplateEngine/launchBytes(cwd:command:)``),
     /// after the new pane's prompt appears. Returns `false` only when the placement op spawned no pane
@@ -223,11 +221,11 @@ final class WorkspaceControlBackend: ClientControlBackend {
         let before = Self.leafIDs(of: store)
         switch placement {
         case .newTab: store.newTab(kind: .terminal)
-        // C8 improvement 2 (re-scope): the multi-session UI was pruned (no session switcher), so a
-        // `--new-window` that mints a NEW SESSION and swaps the UI to it would strand the user with no way
-        // back. Degrade UI-reachable `--new-window` to a NEW TAB in the CURRENT session — no orphan session
-        // is ever user-created. Verb name stays `--new-window` for CLI compat
-        // (see ``ClientControlProtocol/Placement``); only the placement target changed.
+        // The multi-session UI has no session switcher, so a `--new-window` that minted a NEW SESSION and
+        // swapped the UI to it would strand the user with no way back. `--new-window` degrades to a NEW TAB
+        // in the CURRENT session instead — no orphan session is ever user-created. The verb name stays
+        // `--new-window` for CLI compat (see ``ClientControlProtocol/Placement``); only the placement target
+        // differs from what the name implies.
         case .newWindow: store.newTab(kind: .terminal)
         case .left: store.splitActivePane(axis: .horizontal, kind: .terminal, leading: true)
         case .right: store.splitActivePane(axis: .horizontal, kind: .terminal, leading: false)
@@ -294,13 +292,13 @@ final class WorkspaceControlBackend: ClientControlBackend {
     ///
     /// `transient` (apply-without-persisting) is HONESTLY REJECTED (returns `false`): slopdesk's live render
     /// settings ARE their own persistence — the typed ``PreferencesStore`` model the renderer reads is the
-    /// SAME model whose `didSet` persists; there is no separate ephemeral render layer. The pre-fix backend
-    /// ignored the flag and persisted identically while the dispatcher echoed `transient:true`, lying to the
-    /// caller — so we reject rather than silently persist. Recorded as a ceiling in `docs/DECISIONS.md`. A
-    /// genuine overlay would need splitting render-source-of-truth from persistence in the libghostty config
-    /// builder + typed model — out of scope for the CLI. (The old ``EnvConfig/overlay`` route is gone: a
-    /// `nonisolated(unsafe)` static the pipeline read AND ``PreferencesStore`` wholesale-replaced on any
-    /// video/agent change, so the write both raced and was silently clobbered.)
+    /// SAME model whose `didSet` persists; there is no separate ephemeral render layer. Silently accepting the
+    /// flag while persisting anyway would let the dispatcher echo `transient:true` and lie to the caller, so
+    /// rejection is the honest response. Recorded as a ceiling in `docs/DECISIONS.md`. A genuine overlay would
+    /// need splitting render-source-of-truth from persistence in the libghostty config builder + typed model —
+    /// out of scope for the CLI. A `nonisolated(unsafe)` static `EnvConfig.overlay` the pipeline reads would be
+    /// an easy-looking shortcut here, but ``PreferencesStore`` wholesale-replaces its model on any video/agent
+    /// change, so such a write would both race and get silently clobbered — deliberately not reintroduced.
     func configSet(key: String, value: String, transient: Bool) -> Bool {
         guard !transient else { return false }
         guard let preferences else { return false }
@@ -502,12 +500,12 @@ final class WorkspaceControlBackend: ClientControlBackend {
         return spec.lastKnownTitle ?? spec.title
     }
 
-    /// The tab's single fused badge TOKEN: a MANUAL `tab badge --kind` override (E20 ES-E20-3) if one is set,
-    /// else the badge resolved for its representative (active) pane via the SAME ``TabBadgeGating/resolve(...)``
-    /// path the sidebar rail uses (E6), or `nil` when all-clear.
+    /// The tab's single fused badge TOKEN: a MANUAL `tab badge --kind` override if one is set, else the badge
+    /// resolved for its representative (active) pane via the SAME ``TabBadgeGating/resolve(...)`` path the
+    /// sidebar rail uses, or `nil` when all-clear.
     private func tabBadgeToken(session _: Session, tab: Tab) -> String? {
         guard let store else { return nil }
-        // E20 ES-E20-3: an explicit manual override wins over the derived per-pane badge (and the gates).
+        // An explicit manual override wins over the derived per-pane badge (and the gates).
         if let override = store.tabBadgeOverride(for: tab.id) {
             return ClientControlProtocol.badgeToken(for: override)
         }
@@ -603,8 +601,7 @@ final class WorkspaceControlBackend: ClientControlBackend {
     }
 
     /// The byte sequence for a named key (the keycode path — NEVER `SendKeysParser`, per CLAUDE.md). A small
-    /// explicit table covering the common control keys; an unknown name is dropped. The full named-key set is
-    /// a WI-4 refinement.
+    /// explicit table covering the common control keys; an unknown name is dropped.
     private static func namedKeyBytes(_ name: String) -> [UInt8]? {
         switch name.lowercased() {
         case "enter",

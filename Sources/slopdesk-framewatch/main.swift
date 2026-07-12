@@ -1,4 +1,4 @@
-// slopdesk-framewatch — objective frame-cadence instrument (2026-06-10 khựng hunt).
+// slopdesk-framewatch — objective frame-cadence instrument for diagnosing stutter.
 //
 // Captures ONE window via ScreenCaptureKit `desktopIndependentWindow` (works on a BACKGROUND /
 // occluded window — full-screen `screencapture -v` could not measure this honestly) and records

@@ -1,13 +1,13 @@
-// PaneDivider — the resize handle between two split panes (REBUILD-V2, L2). A thin separator hairline drawn
+// PaneDivider — the resize handle between two split panes. A thin separator hairline drawn
 // inside a comfortable hit band; a resize cursor on hover. Dragging resizes the panes LIVE — the layout
 // updates every frame, like an AppKit `NSSplitView` divider — while the host grid-resize SEND is deferred
 // until release (the shell brackets the drag with `setTerminalResizeSuspended`, so the server gets ONE resize
 // event when the drag settles, not one per frame). Double-click evens out THIS seam only (never the whole tab).
 //
-// LIVE-RESIZE RULE (why this no longer needs the old ghost-seam / commit-on-release dance): the drag sets the
-// leading child's ABSOLUTE weight each frame — `handle.leadingWeight` captured at drag start, plus the cursor
-// translation converted to weight (`Δpx · flexSum / parentSpan`). Two things keep it cursor-matched instead
-// of the old "divider chases itself, seam barely travels" bug:
+// LIVE-RESIZE RULE: the drag sets the leading child's ABSOLUTE weight each frame — `handle.leadingWeight`
+// captured at drag start, plus the cursor translation converted to weight (`Δpx · flexSum / parentSpan`).
+// A ghost-seam preview with a separate commit-on-release step is unnecessary and would risk a "divider
+// chases itself, seam barely travels" mismatch; two things keep it cursor-matched instead:
 //   1. the gesture reads its translation in the STABLE `PaneMoveSpace.name` coordinate space (NOT the
 //      divider's own frame, which slides out from under the cursor as the panes resize), so the translation
 //      tracks the real cursor; and
@@ -16,7 +16,7 @@
 // The store clamps the weight at `SplitWeight.minWeight`, so the seam stops on the neighbour by itself: no
 // ghost-seam preview and no travel clamp are needed (the real panes move + the resize scrim covers them).
 //
-// Hit-test guardrail (repo memory): the FAT transparent hit band gets `.contentShape(Rectangle())` over a
+// Hit-test guardrail: the FAT transparent hit band gets `.contentShape(Rectangle())` over a
 // thin visual hairline; SplitContainer applies `.position(...)` to this whole view, so the hit area travels
 // WITH the handle. SYSTEM/DS colours only (the accent hairline is a drag affordance, not a hover state).
 

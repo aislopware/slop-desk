@@ -8,7 +8,7 @@ import XCTest
 /// capture-local PIXEL `MaskRect`s the client masks the black flank with. No session, no SCStream —
 /// only the geometry, so it runs headlessly (the session itself is hang-unsafe to instantiate).
 final class ContentMaskGeometryTests: XCTestCase {
-    /// Real HW geometry (2026-06-17): VS Code window [0,30 1440x900] + gear menu [48,733 269x283],
+    /// Real HW geometry: VS Code window [0,30 1440x900] + gear menu [48,733 269x283],
     /// DIALOG-EXPANDed to the union region [0,30 1440x986], captured @2× (2880x1972 px). The window
     /// becomes the full-width top block and the menu the overhang rect, both in capture pixels.
     func testConvertsGlobalRectsToCaptureLocalPixels() {

@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - Config action-name → registry bindingID resolver (E1 / WI-1, the N5 resolver core)
+// MARK: - Config action-name → registry bindingID resolver (the N5 resolver core)
 
 /// Maps config action NAMES (`new_tab`, `split_right`, `goto_tab:N`, …) to this registry's stable
 /// binding ids (`tab.new`, `pane.splitRight`, `tab.select.<n>`, …).

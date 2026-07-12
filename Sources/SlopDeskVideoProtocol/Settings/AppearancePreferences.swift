@@ -1,20 +1,20 @@
 import Foundation
 
-/// CLIENT-chrome appearance prefs (WS-D, D2) — the theme + density tier the GUI client renders.
+/// CLIENT-chrome appearance prefs — the theme + density tier the GUI client renders.
 ///
 /// CRITICAL invariant (golden-safety): unlike ``VideoPreferences`` / ``AgentPreferences``, appearance is
 /// PURE client chrome. It is NEVER routed through ``EnvBridge/toEnv(_:)``, never folded into
 /// ``EnvConfig/overlay``, and never serialised into the `video-prefs.json` sidecar — so a default install
 /// (all-`nil`) leaves the env overlay EMPTY and the golden corpus byte-identical. It persists ONLY to
 /// `UserDefaults` (key `settings.appearance.v1`) and applies ONLY to ``ThemeStore`` / ``SettingsKey/density``.
-/// The E15 dual-slot / per-theme-font fields ADDED below keep this invariant — they too only drive
+/// The dual-slot / per-theme-font fields below keep this invariant — they too only drive
 /// ``ThemeStore`` (theme/chrome) + ``TerminalConfigBuilder`` (pure client render config), never the
 /// wire/sidecar/overlay; a default-install (all-`nil`) is still byte-identical to the frozen golden corpus.
 ///
 /// Default = all-`nil` ⇒ NO behaviour change: the theme stays the compile-time default (Monokai Pro Classic)
 /// and the density key is left untouched.
 ///
-/// DUAL-SLOT MODEL (E15 / ES-E15-1): ``theme`` is the LIGHT / single / primary slot; ``themeDark`` is the
+/// DUAL-SLOT MODEL: ``theme`` is the LIGHT / single / primary slot; ``themeDark`` is the
 /// DARK slot. With ``useSeparateDarkTheme`` OFF (or `nil`) the primary slot applies for EVERY OS appearance
 /// (one theme, no follow-OS — except the legacy `.system` built-in, which still follows the OS by
 /// construction). With it ON the OS appearance selects the slot (light → light slot, dark → dark slot),
@@ -33,7 +33,7 @@ public struct AppearancePreferences: Codable, Sendable, Equatable {
     /// picks the slot (light → ``theme``, dark → ``themeDark``); `nil`/`false` ⇒ the single primary slot
     /// applies for every appearance. `nil` (unset) reads as OFF.
     public var useSeparateDarkTheme: Bool?
-    /// Per-theme font overrides keyed by theme slug (the Font → Light/Dark scope tabs, ES-E15-4). `nil`/absent
+    /// Per-theme font overrides keyed by theme slug (the Font → Light/Dark scope tabs). `nil`/absent
     /// ⇒ no per-theme override (the Global ``TerminalPreferences/fontFamily`` stands). Stored here (not on the
     /// terminal prefs) because the override is keyed by the THEME a slot resolves to.
     public var themeFonts: [String: String]?

@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// PURE event-driven crisp re-anchor logic (2026-06-16). N consecutive byte-identical `.complete`
+/// PURE event-driven crisp re-anchor logic. N consecutive byte-identical `.complete`
 /// frames ⇒ fire the crisp re-anchor once, re-arm on any change. No hashing/clocks/pixels — safe
 /// under `swift test --filter StillnessCrispDeciderTests`.
 final class StillnessCrispDeciderTests: XCTestCase {

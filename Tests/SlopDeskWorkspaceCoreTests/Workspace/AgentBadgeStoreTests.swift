@@ -3,7 +3,7 @@ import SlopDeskAgentDetect
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E13 WI-3: the WorkspaceStore wiring behind the tab-context-menu badge controls — the per-pane
+/// The WorkspaceStore wiring behind the tab-context-menu badge controls — the per-pane
 /// ``AgentBadgeGates`` override (override-else-global resolution), the single-bit toggle, and "Clear Badge"
 /// (acknowledge completion/attention so the badge drops). Hang-safe: `FakePaneSession`, no surface/socket.
 @MainActor
@@ -149,7 +149,7 @@ final class AgentBadgeStoreTests: XCTestCase {
         )
     }
 
-    // MARK: E20 ES-E20-3 — manual per-tab badge override (the `tab badge --kind` CLI seam)
+    // MARK: Manual per-tab badge override (the `tab badge --kind` CLI seam)
 
     private func firstTab(_ store: WorkspaceStore) throws -> TabID {
         try XCTUnwrap(store.tree.activeSession?.activeTab?.id)

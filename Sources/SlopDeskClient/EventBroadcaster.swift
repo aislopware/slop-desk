@@ -7,7 +7,7 @@ import Foundation
 /// `AsyncStream` is single-consumer / fan-IN: if two `for await` loops iterate the *same*
 /// stream, each yielded element is delivered to exactly ONE of them, nondeterministically.
 /// `SlopDeskClient` has multiple legitimate event consumers at once — `ReconnectManager`
-/// (watches `.disconnected` to drive reconnect, WF-4) and the WF-8 view-models (chrome +
+/// (watches `.disconnected` to drive reconnect) and the view-models (chrome +
 /// terminal status). Sharing a single `AsyncStream` between them means a `.disconnected` /
 /// `.reconnected` / `.title` is stolen by whichever loop happens to win the race, so the
 /// reconnect supervisor can miss the drop and the chrome/terminal statuses diverge.
@@ -17,10 +17,9 @@ import Foundation
 ///
 /// ### Semantics
 /// - **Live, not replay:** a subscriber created after some events were yielded sees only
-///   events from that point on (matching the previous single-`AsyncStream` behaviour for a
-///   late subscriber). Subscribe before driving the events you want to observe.
-/// - **Unbounded buffering per child** (same policy as the old single stream), so a slow
-///   consumer never drops events.
+///   events from that point on — there is no backlog to catch up on. Subscribe before driving
+///   the events you want to observe.
+/// - **Unbounded buffering per child**, so a slow consumer never drops events.
 /// - **Sendable:** all mutable state is guarded by an `NSLock`; safe to `yield`/`subscribe`
 ///   from any isolation domain (the actor yields; `nonisolated` accessors subscribe).
 final class EventBroadcaster<Element: Sendable>: @unchecked Sendable {

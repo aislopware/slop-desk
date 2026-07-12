@@ -1,7 +1,7 @@
 import Foundation
 import SlopDeskInspector
 
-/// W10 — `slopdesk integration install claude` (docs/41 §4.2 signal 2, docs/42 W10). The
+/// `slopdesk integration install claude` (docs/41 §4.2 signal 2, docs/42). The
 /// OPT-IN hooks enricher (Decision #5: detection works WITHOUT this via the foreground watcher;
 /// the installer is SECOND). It writes a small hook script + MERGES a Claude Code hooks config
 /// into the user's `~/.claude/settings.json` so every SessionStart / Stop / Notification /
@@ -28,7 +28,7 @@ public enum AgentInstaller {
     public static let hookMarker = "slopdesk-agent"
 
     /// The Claude Code hook events we install (docs/41 §2.6). Each drives a ``ClaudeStatus``
-    /// transition through the W7 machine: SessionStart→idle, UserPromptSubmit/PreToolUse/
+    /// transition through the status machine: SessionStart→idle, UserPromptSubmit/PreToolUse/
     /// PostToolUse→working, Notification→blocked, Stop→done, SessionEnd→none.
     public static let installedEvents = [
         "SessionStart",
@@ -224,11 +224,11 @@ public enum AgentInstaller {
         return try writeSettings(stripped, to: settingsPath, fileManager: fileManager)
     }
 
-    /// E13 WI-1 — PURE read of the install marker: true iff `settingsPath` carries at least one of OUR
+    /// PURE read of the install marker: true iff `settingsPath` carries at least one of OUR
     /// hook entries (matched by ``hookMarker`` via ``entryIsOurs(_:)``). Reads the settings tolerantly
     /// (a missing / unreadable / corrupt / hook-less file → empty root → `false`, never a trap), scans
-    /// every event's entry array, and stops on the first marker hit. The ONLY genuine logic add to this
-    /// file for the agent-hooks wire (the host's `agentHookStatus` verb returns this as a 1-byte flag).
+    /// every event's entry array, and stops on the first marker hit. Backs the host's
+    /// `agentHookStatus` verb, which returns this as a 1-byte flag.
     public static func isInstalled(
         settingsPath: String,
         fileManager: FileManager = .default,

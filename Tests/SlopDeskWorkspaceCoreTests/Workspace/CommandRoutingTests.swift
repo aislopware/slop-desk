@@ -391,11 +391,12 @@ final class CommandRoutingTests: XCTestCase {
         XCTAssertEqual(fake(store, background)?.clearBellCount, 0)
     }
 
-    // MARK: - View overlay: Open Quickly on the CANVAS path (E11/WI-7)
+    // MARK: - View overlay: Open Quickly on the CANVAS path
 
     /// On a `.canvas`-live store the `.openQuickly` action (⌘⇧O) routes through the canvas fallback to its
     /// `openQuickly` view-overlay closure — the picker has no canvas analogue, so it still toggles the overlay
-    /// and leaves the canvas untouched. FAILS on the pre-WI-7 canvas path (`.openQuickly` was a dead `break`).
+    /// and leaves the canvas untouched. Regression guard: a canvas path that leaves `.openQuickly` a dead
+    /// `break` fails this.
     func testOpenQuicklyOnCanvasFiresOverlayClosureAndDoesNotMutateCanvas() {
         let store = makeStore()
         let before = store.workspace

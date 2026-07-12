@@ -10,8 +10,7 @@
 //               NO shadow — at-rest depth is the surface ladder, never a cast shadow (MERIDIAN L5).
 // The subtitle always speaks the INSTRUMENT voice (MERIDIAN L2: it is data — cwd / git line / host app —
 // not prose), so no caller can restyle it.
-// (The old `SlateSidebarRow` — icon+title rows for a navigator list that no longer exists — is DELETED;
-// `SlateTabRow` and future host/window rows build on this shell instead.)
+// `SlateTabRow` and future host/window rows build on this shell.
 
 #if canImport(SwiftUI)
 import SwiftUI
@@ -20,9 +19,9 @@ import SwiftUI
 /// accessories. `titleTrailing` sits on line 1 (right of the title); `subtitleTrailing` sits on the compact
 /// line-2 subtitle (right of the cwd/git line) and renders ONLY when a subtitle exists. Both builders receive
 /// the live hover flag so a caller can swap clusters under hover (e.g. status meta ↔ close button) without
-/// owning its own hover state. Splitting the trailing per line (was ONE full-height centered column) is what
-/// lets a two-line row keep the running-process label pinned to line 1 and the status badge alone on the
-/// compact line 2, instead of a single accessory floating vertically between the two lines.
+/// owning its own hover state. The trailing clusters are split per line (rather than ONE full-height centered
+/// column) so a two-line row can keep the running-process label pinned to line 1 and the status badge alone on
+/// the compact line 2 — a single accessory would otherwise float vertically between the two lines.
 struct SlateListRow<
     Leading: View, Title: View, TitleTrailing: View, SubtitleTrailing: View, TrailingOverlay: View,
 >: View {

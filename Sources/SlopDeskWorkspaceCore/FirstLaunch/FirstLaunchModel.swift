@@ -1,26 +1,26 @@
 import Defaults
 import Foundation
 
-// MARK: - E20 WI-9 (ES-E20-4): the first-launch gating model (PURE, headless-testable)
+// MARK: - The first-launch gating model (PURE, headless-testable)
 
 /// One step of the guided first-launch checklist
 /// (`docs/ui-shell/spec/getting-started__first-launch.md`): On-Launch, Set-as-Default-Terminal, Install-CLI, Theme,
 /// Install-Claude-hooks. PURE (a `String`-raw `CaseIterable`) so the gating is exhaustively unit-pinned and
 /// the view can enumerate it. The two macOS-only steps (the `/usr/local/bin` install + the OS default-handler
 /// registration) are marked ``isMacOnly`` so ``FirstLaunchModel/steps(for:)`` drops them on iOS — iOS keeps
-/// the cross-platform steps (On-Launch, Theme, Install-Claude-hooks), per the E20 carry-over §3 iOS rule.
+/// the cross-platform steps (On-Launch, Theme, Install-Claude-hooks).
 public enum FirstLaunchStep: String, CaseIterable, Identifiable, Sendable {
-    /// Step 1 — On Launch (Restore Last Session vs New Window). Cross-platform (E7 already ships it).
+    /// Step 1 — On Launch (Restore Last Session vs New Window). Cross-platform.
     case onLaunch
     /// Step 2 — Set as Default Terminal (LOCAL OS handler; the remote / "Common Apps" case is
-    /// honestly-disabled per the E20 exclusion). **macOS-only.**
+    /// honestly-disabled — out of scope). **macOS-only.**
     case defaultTerminal
     /// Step 3 — Install the `slopdesk` CLI (`/usr/local/bin` symlink + Omit-Prefix + Allow-Overwrite).
     /// **macOS-only.**
     case installCLI
-    /// Step 4 — Change Theme (the E15 theme picker). Cross-platform.
+    /// Step 4 — Change Theme (the theme picker). Cross-platform.
     case theme
-    /// Step 5 — Install Claude Code hooks (the E13 install card). Cross-platform. **Claude only.**
+    /// Step 5 — Install Claude Code hooks (the install card). Cross-platform. **Claude only.**
     case installClaudeHooks
 
     public var id: String { rawValue }
@@ -87,7 +87,7 @@ public enum FirstLaunchPlatform: String, Sendable, CaseIterable {
     case iOS
 }
 
-/// The PURE gating model behind the guided first-launch sheet (E20 WI-9 / ES-E20-4). It owns three things,
+/// The PURE gating model behind the guided first-launch sheet. It owns three things,
 /// all headless-testable (revert-to-confirm-fail): (1) **whether** to present (first run only — the
 /// ``hasCompletedFirstLaunch`` `Defaults` flag, suppressed under automation); (2) the **ordered step set**
 /// for the platform (macOS gets all five; iOS drops the two macOS-only OS-integration steps); (3) the
@@ -212,7 +212,7 @@ public final class FirstLaunchModel {
     public func finish() { onFinish(true) }
 }
 
-// MARK: - CLIShellShim (E20 WI-9 — the "Omit Prefix" shell-function snippet; PURE)
+// MARK: - CLIShellShim (the "Omit Prefix" shell-function snippet; PURE)
 
 /// The PURE builder for the "Omit `slopdesk` Prefix" shell snippet — the `edit`/`view`/`watch`/
 /// `jump`/`learn` functions exposed in app-launched shells so a user can type `edit foo.txt` instead of

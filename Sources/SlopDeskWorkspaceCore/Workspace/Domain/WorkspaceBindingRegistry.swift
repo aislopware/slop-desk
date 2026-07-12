@@ -52,29 +52,29 @@ public enum WorkspaceAction: Hashable, Sendable {
     case toggleZoom // ⌘⇧↩ — maximize / restore the active pane (render-only)
     case commandPalette // ⌘⇧P — show/hide the command palette (the documented default)
     case cheatSheet // ⌘/ — show/hide the keyboard cheat sheet
-    case find // ⌘F — show/hide the find-in-terminal bar over the active pane (W14 #5)
+    case find // ⌘F — show/hide the find-in-terminal bar over the active pane
     case findNext // ⌘G — advance to the NEXT find match (opens the find bar if closed)
     case findPrev // ⇧⌘G — step to the PREVIOUS find match (opens the find bar if closed)
-    case globalSearch // ⇧⌘F — show/hide the cross-tab Global Search results surface (E5 ES-E5-5)
-    case toggleCopyMode // ⌘⇧C (+ ⌃⇧Space alias) — enter modal keyboard vi / copy-mode over the active pane (P5b)
-    // Vi Mode Key Hints (E17 ES-E17-2): palette / menu command toggling the active pane's `⌘/` vi
+    case globalSearch // ⇧⌘F — show/hide the cross-tab Global Search results surface
+    case toggleCopyMode // ⌘⇧C (+ ⌃⇧Space alias) — enter modal keyboard vi / copy-mode over the active pane
+    // Vi Mode Key Hints: palette / menu command toggling the active pane's `⌘/` vi
     // key-hint bar. chord: nil — the live `⌘/` is `.cheatSheet`'s (contextual); surfacing it here makes
     // the bar discoverable, not only reachable via the contextual chord while in vi mode.
     case toggleViKeyHints
-    // Read-Only mode (E17 ES-E17-1): toggle the active pane's READ-ONLY input gate — every outbound path
+    // Read-Only mode: toggle the active pane's READ-ONLY input gate — every outbound path
     // (keys / paste / IME commit / mouse-report / click-to-move / drop / sync-broadcast) drops + beeps
     // once while output keeps streaming. No default chord; menu + command palette only.
     case toggleReadOnly
-    // Secure Keyboard Entry (E17 ES-E17-4): the MANUAL toggle for macOS process-global secure event input
+    // Secure Keyboard Entry: the MANUAL toggle for macOS process-global secure event input
     // over the active pane (the AUTO path engages on a host no-echo password prompt; this is the explicit
     // override). No default chord — menu + command palette only.
     case secureKeyboardEntry
-    // Release Stuck Input (C5, 2026-07-03): manual escape hatch for a remote-GUI pane whose host is left
+    // Release Stuck Input: manual escape hatch for a remote-GUI pane whose host is left
     // holding a modifier/button (every release datagram of a redundant burst lost) — synthesizes key-up
     // for ALL modifiers + mouse-up for all buttons via the pane's synthetic-release paths. No default
     // chord — palette/menu only; a no-op for a non-video active pane.
     case releaseStuckInput
-    // Paste as Keystrokes (C7, 2026-07-03): ⌥⌘V types the LOCAL clipboard into the ACTIVE remote-GUI
+    // Paste as Keystrokes: ⌥⌘V types the LOCAL clipboard into the ACTIVE remote-GUI
     // pane's host window as paced per-key CGEvents (the path that reaches a sudo / SecurityAgent secure
     // field) — since a plain ⌘V forwards a raw Cmd+V that pastes the HOST clipboard. A no-op for a
     // terminal (own paste pipeline) / empty / read-only pane.
@@ -85,28 +85,28 @@ public enum WorkspaceAction: Hashable, Sendable {
     // Window-scope → needs no active pane; routed through a view closure onto
     // `WorkspaceChromeState.hostRailCollapsed` like `.toggleSidebar`.
     case toggleHostWindows // ⌘⇧R — show/hide the host-windows rail
-    // View → Pin Window (E19 ES-E19-1): keep the window floating above ALL other apps' windows. CHORD-LESS;
+    // View → Pin Window: keep the window floating above ALL other apps' windows. CHORD-LESS;
     // the live macOS app flips `WorkspaceChromeState.pinned` → `NSWindow.level = .floating` via the route
     // closure. Window-scope → needs no active pane; iOS has no window level (documented no-op).
     case pinWindow
-    case openQuickly // ⌘⇧O — open the fuzzy "open quickly" file/symbol switcher (E11 stub)
-    // Jump-To (E10 ES-E10-5): ⌘J opens the floating Jump-To panel — the active pane's detected paths/URLs
+    case openQuickly // ⌘⇧O — open the fuzzy "open quickly" file/symbol switcher (stub)
+    // Jump-To: ⌘J opens the floating Jump-To panel — the active pane's detected paths/URLs
     // (over scrollback) + its OSC-133 command/prompt index, fuzzy-filterable, ↩ to act / ⌘K per-row
     // actions. A VIEW overlay (OverlayCoordinator), routed through a passed-in toggle closure like
     // `.globalSearch`. ⌘J is FREE (only ⌘⇧J / ⌘⌥J use `j`).
     case jumpTo
 
-    // Hint Mode (E10 ES-E10-6 / `terminal-features__hint-mode`): overlay 2-letter Vimium labels on every
+    // Hint Mode (`terminal-features__hint-mode`): overlay 2-letter Vimium labels on every
     // detected target in the active pane's viewport; type the label to run the action — no mouse. Three
     // intents: ⌘⇧J open (paths→host / URLs→client), ⌘⇧Y copy (→ client clipboard), reveal-in-Finder (host),
     // CHORD-LESS (⌘⇧R is reserved for Toggle Details — see `view.toggleDetails`) so palette/menu-surfaced +
-    // an in-overlay action switch. E10 OWNS ⌘⇧J for Hint to Open, so `.peekAndReply` moved off ⌘⇧J → ⌘⌥J
+    // an in-overlay action switch. Hint Mode owns ⌘⇧J for Hint to Open, so `.peekAndReply` binds ⌘⌥J instead
     // (see `view.peekReply`). Each targets the active terminal pane (a no-op off-terminal).
     case hintToOpen // ⌘⇧J
     case hintToCopy // ⌘⇧Y
     case hintToReveal // chord-less
 
-    // View — viewport scroll (E1 ES-E1-3; named-key chords — the §5 prefix exemption)
+    // View — viewport scroll (named-key chords — the §5 prefix exemption)
     case scrollPageUp // ⇧PageUp — scroll the active pane one page toward older scrollback
     case scrollPageDown // ⇧PageDown — scroll the active pane one page toward newer output
     case scrollToTop // ⇧Home — jump the viewport to the top of the scrollback buffer
@@ -114,12 +114,12 @@ public enum WorkspaceAction: Hashable, Sendable {
     case commandJumpPrev // ⌘PageUp — jump to the PREVIOUS shell prompt (reuses jumpToBlock(-1))
     case commandJumpNext // ⌘PageDown — jump to the NEXT shell prompt (reuses jumpToBlock(+1))
 
-    // View — font size (E1 ES-E1-4; libghostty rescales the cell box, reflowing the remote PTY grid via SIGWINCH)
+    // View — font size (libghostty rescales the cell box, reflowing the remote PTY grid via SIGWINCH)
     case increaseFontSize // ⌘= / ⌘+ — bump the active pane's render font size (⌘+ via `aliasChords`)
     case decreaseFontSize // ⌘- — shrink the active pane's render font size
     case resetFontSize // ⌘0 — reset the active pane's render font size to the configured default
 
-    // Blocks (WB2 — Warp-style per-command blocks)
+    // Blocks (Warp-style per-command blocks)
     case commandNavigator // ⌃⌘O — show/hide the searchable recent-blocks navigator over the active pane
     case jumpPreviousBlock // ⌃⌘[ — jump the viewport to the previous shell prompt (OSC 133, libghostty)
     case jumpNextBlock // ⌃⌘] — jump the viewport to the next shell prompt
@@ -133,19 +133,19 @@ public enum WorkspaceAction: Hashable, Sendable {
     case prevTab // ⌘⇧[
     case selectTab(Int) // ⌘1…⌘9 (1-based)
     case closeTab // no default chord — closes the active tab (all its panes); reachable via the ⌘W
-    // cascade + palette/menu (E7 carry-over #5: ⌘⇧W is Close Window, so there's no Close-Tab chord)
+    // cascade + palette/menu (⌘⇧W is Close Window, so there's no Close-Tab chord)
     case closeWindow // ⌘⇧W — close the active window (→ Session); the close-confirmation surface gates it
-    case reopenClosed // ⌘⇧T — reopen the most recently closed pane (browser idiom; E3 stub)
+    case reopenClosed // ⌘⇧T — reopen the most recently closed pane (browser idiom; stub)
 
     // Synchronized input (Zellij ToggleActiveSyncTab)
     case toggleSyncInput // ⌘⇧I — broadcast keystrokes to every other pane in the active tab
 
-    // Supervision (P3 — jump to the pane that needs you)
+    // Supervision (jump to the pane that needs you)
     case jumpToAttention // ⌘⇧U — focus the oldest pane needing attention (needsPermission first, then done)
 
-    // Supervision (P4 — answer the blocked pane INLINE without a context switch)
-    case peekAndReply // ⌘⌥J — open the Peek & Reply overlay over the oldest pane needing attention (moved off
-    // ⌘⇧J, which E10 Hint Mode now owns for Hint to Open — see `view.peekReply` / `hintToOpen`)
+    // Supervision (answer the blocked pane INLINE without a context switch)
+    case peekAndReply // ⌘⌥J — open the Peek & Reply overlay over the oldest pane needing attention (not ⌘⇧J:
+    // Hint Mode owns that for Hint to Open — see `view.peekReply` / `hintToOpen`)
 }
 
 public extension WorkspaceAction {
@@ -206,7 +206,7 @@ public extension WorkspaceAction {
              .commandNavigator,
              // scans the ACTIVE terminal pane (scrollback links + OSC-133 command index); empty list off-terminal.
              .jumpTo,
-             // Hint Mode (E10 ES-E10-6) overlays labels on the ACTIVE terminal pane's targets; no-ops off-terminal.
+             // Hint Mode overlays labels on the ACTIVE terminal pane's targets; no-ops off-terminal.
              .hintToOpen,
              .hintToCopy,
              .hintToReveal,
@@ -215,7 +215,7 @@ public extension WorkspaceAction {
              .reRunLastCommand,
              .jumpPreviousFailed,
              .jumpNextFailed,
-             // E1 scroll / font / command-jump target the active TERMINAL pane — same graceful-no-op family
+             // Scroll / font / command-jump target the active TERMINAL pane — same graceful-no-op family
              // as the block / find rows above.
              .scrollPageUp,
              .scrollPageDown,
@@ -256,7 +256,7 @@ public extension WorkspaceAction {
 /// One row of the single-source-of-truth binding table: an action, its default chord (or `nil` for a
 /// palette-only verb), plus the display shape the menu / palette / cheat sheet render. Pure value data.
 public struct WorkspaceBinding: Sendable, Equatable {
-    /// A stable string id (the dedup + rebind key; C4 settings will key user overrides by it).
+    /// A stable string id (the dedup + rebind key; settings will key user overrides by it).
     public let id: String
     public let action: WorkspaceAction
     public let title: String
@@ -312,7 +312,7 @@ public struct WorkspaceBinding: Sendable, Equatable {
 /// The single source of truth for the IDE-shell command surface (docs/42 §W6): ONE ``bindings`` table
 /// that the menu bar (``WorkspaceCommands``), the ⌘⇧P command palette (``CommandPaletteView``), the ⌘/
 /// cheat sheet (``KeyboardCheatSheet``), and the routing tests ALL read — so chord, menu item, palette
-/// row, and cheat-sheet glyph can never drift (and C4 settings has one table to make user-editable).
+/// row, and cheat-sheet glyph can never drift (and settings has one table to make user-editable).
 ///
 /// Every chord is ⌘- or ⌥-prefixed (the load-bearing §5 conflict rule: a bare key / Ctrl-letter falls
 /// through to the focused terminal), and no two bindings share a chord — both pinned by
@@ -338,7 +338,7 @@ public enum WorkspaceBindingRegistry {
             category: .panes, chord: KeyChord(character: "d", [.command, .shift]),
             symbol: "rectangle.split.1x2", keywords: "split row stacked horizontal divider new pane below",
         ),
-        // Split-left / split-up (E1 ES-E1-1): ⌥+ the ⌘D / ⌘⇧D split chords, inserting the new pane on the
+        // Split-left / split-up: ⌥+ the ⌘D / ⌘⇧D split chords, inserting the new pane on the
         // LEADING side (left of a horizontal split / above a vertical one) and focusing it. ⌘⌥D / ⌘⌥⇧D are
         // FREE (⌥ is in no other `d` chord; ⌘D right, ⌘⇧D down). Pinned unique by the chord-uniqueness guard.
         WorkspaceBinding(
@@ -442,9 +442,9 @@ public enum WorkspaceBindingRegistry {
             category: .tabs, chord: KeyChord(character: "t", [.command]),
             symbol: "plus.rectangle.on.rectangle", keywords: "add open create tab",
         ),
-        // Tab cycling RE-POINTED to ⌘⇧]/⌘⇧[ (E1 ES-E1-2 / DECISIONS): plain ⌘]/⌘[ now drive sequential
-        // PANE cycling (`focus.cycleNext`/`focus.cyclePrev`), per the reference table. The old
-        // ⌘]/⌘[ tab parity (Muxy) is deliberately superseded — pinned by `E1KeymapParityTests`.
+        // Tab cycling lives on ⌘⇧]/⌘⇧[ (see DECISIONS), NOT plain ⌘]/⌘[ — those drive sequential
+        // PANE cycling instead (`focus.cycleNext`/`focus.cyclePrev`), per the reference table; the Muxy tab
+        // parity on bare ⌘]/⌘[ is intentionally not followed here. Pinned by `E1KeymapParityTests`.
         WorkspaceBinding(
             id: "tab.next", action: .nextTab, title: "Next Tab",
             category: .tabs, chord: KeyChord(character: "]", [.command, .shift]),
@@ -455,20 +455,20 @@ public enum WorkspaceBindingRegistry {
             category: .tabs, chord: KeyChord(character: "[", [.command, .shift]),
             symbol: "arrow.backward.square", keywords: "cycle back previous switch tab",
         ),
-        // Close Tab has NO default chord (E7 carry-over #5 / DECISIONS): ⌘⇧W is Close WINDOW and ⌘W already
-        // cascades pane → tab → window, so no dedicated Close-Tab chord. `chord: nil` keeps the row in the
-        // palette / menu; tab close stays reachable via the ⌘W cascade. Pinned chord-less by
-        // `TreeCommandRoutingTests`; the ⌘⇧W re-map is in DECISIONS.md.
+        // Close Tab has NO default chord (see DECISIONS): ⌘⇧W is Close WINDOW and ⌘W already
+        // cascades pane → tab → window, so a dedicated Close-Tab chord is unnecessary. `chord: nil` keeps the
+        // row in the palette / menu; tab close stays reachable via the ⌘W cascade. Pinned chord-less by
+        // `TreeCommandRoutingTests`; the ⌘⇧W assignment is explained in DECISIONS.md.
         WorkspaceBinding(
             id: "tab.close", action: .closeTab, title: "Close Tab",
             category: .tabs, chord: nil,
             symbol: "xmark.rectangle", keywords: "close end terminate tab all panes",
         ),
-        // Close Window ⌘⇧W (E7 carry-over #5) — the reference default (spec/user-interface__window-tab-
+        // Close Window ⌘⇧W — the reference default (spec/user-interface__window-tab-
         // split.md:99/103/104: ⌘⇧W = Close window). A window maps to a slopdesk ``Session`` (DECISIONS.md),
         // so routing to `requestCloseWindow()` parks the close behind the `closeConfirmWindow` policy /
-        // busy-shell guard. ⌘⇧W was Close Tab before E7; reconciled here (Close Tab gave the chord up,
-        // keeping ⌘⇧W collision-free). Pinned by `TreeCommandRoutingTests`.
+        // busy-shell guard. Close Tab (above) is deliberately left chord-less so ⌘⇧W stays collision-free
+        // for this binding. Pinned by `TreeCommandRoutingTests`.
         WorkspaceBinding(
             id: "window.close", action: .closeWindow, title: "Close Window",
             category: .tabs, chord: KeyChord(character: "w", [.command, .shift]),
@@ -476,7 +476,7 @@ public enum WorkspaceBindingRegistry {
         ),
         // Reopen the most recently closed pane (the browser "reopen tab" idiom, beside ⌘T new / ⌘⇧W close).
         // ⌘⇧T is FREE on the tree shell (the only other `t` chords are ⌘T new tab + ⌃⌘T break-pane). The
-        // closed-pane LIFO + restore land in E3; the E1 route is a documented graceful no-op (no dead chord).
+        // closed-pane LIFO + restore are future work; this route is a documented graceful no-op (no dead chord).
         WorkspaceBinding(
             id: "tab.reopenClosed", action: .reopenClosed, title: "Reopen Closed Pane",
             category: .tabs, chord: KeyChord(character: "t", [.command, .shift]),
@@ -488,7 +488,7 @@ public enum WorkspaceBindingRegistry {
             symbol: "keyboard.badge.ellipsis",
             keywords: "sync broadcast input panes tab synchronize mirror zellij",
         ),
-        // Supervision (P3): jump to the oldest pane needing attention (needsPermission first, then done) —
+        // Supervision: jump to the oldest pane needing attention (needsPermission first, then done) —
         // a global action across all tabs/sessions, so it lives in the Tabs group beside sync-input. ⌘⇧U is
         // FREE (no other binding uses `u`); pinned unique by the chord-uniqueness test.
         WorkspaceBinding(
@@ -497,13 +497,13 @@ public enum WorkspaceBindingRegistry {
             symbol: "bell.badge",
             keywords: "jump unread attention needs permission blocked done next pane supervise oldest",
         ),
-        // Supervision (P4): ⌘⌥J opens the Peek & Reply overlay over the oldest pane needing attention so the
+        // Supervision: ⌘⌥J opens the Peek & Reply overlay over the oldest pane needing attention so the
         // human can ANSWER a blocked agent INLINE — no full tab/context switch. Partner of ⌘⇧U (jump TO the
-        // pane): "J" = jump-in-and-reply, kept on `j`. RE-POINTED ⌘⇧J → ⌘⌥J in E10 ("E10 OWNS ⌘⇧J for Hint
-        // Mode"): ⌘⇧J is now Hint to Open (`view.hintOpen`), and ⌘⌥J is FREE. Menu/palette-surfaced, so the
-        // displacement's muscle-memory impact is minimal (DECISIONS.md). This chord fires ONLY via its menu
-        // item, so the Pane menu carries the matching "Peek & Reply" item. Pinned unique by the
-        // chord-uniqueness test + `PeekReplyTests`.
+        // pane): "J" = jump-in-and-reply, kept on `j`. Bound to ⌘⌥J, not ⌘⇧J, because Hint Mode owns
+        // ⌘⇧J for Hint to Open (`view.hintOpen`); ⌘⌥J is free. Menu/palette-surfaced, so there's no muscle-
+        // memory cost to this choice (DECISIONS.md). This chord fires ONLY via its menu item, so the Pane
+        // menu carries the matching "Peek & Reply" item. Pinned unique by the chord-uniqueness test +
+        // `PeekReplyTests`.
         WorkspaceBinding(
             id: "view.peekReply", action: .peekAndReply, title: "Peek & Reply to Blocked Pane",
             category: .tabs, chord: KeyChord(character: "j", [.command, .option]),
@@ -533,7 +533,7 @@ public enum WorkspaceBindingRegistry {
             category: .focus, chord: KeyChord(.downArrow, [.control, .command]),
             symbol: "arrow.down", keywords: "move navigate pane",
         ),
-        // Sequential pane cycle (E1 ES-E1-2): ⌘]/⌘[ step focus through the active tab's panes in DFS order
+        // Sequential pane cycle: ⌘]/⌘[ step focus through the active tab's panes in DFS order
         // (wrapping). These chords were FREED from tab cycling, which moved to ⌘⇧]/⌘⇧[ (see the `tab.next`
         // re-point + DECISIONS). Distinct from ⌃⌘]/⌃⌘[ (block jump) and ⌘⇧]/⌘⇧[ (tab cycle).
         WorkspaceBinding(
@@ -572,7 +572,7 @@ public enum WorkspaceBindingRegistry {
             category: .view, chord: KeyChord(character: "f", [.command]),
             symbol: "magnifyingglass", keywords: "search scrollback grep locate text in terminal",
         ),
-        // Find Next / Previous (E5 ES-E5-3): ⌘G advances, ⇧⌘G steps back through the active pane's find
+        // Find Next / Previous: ⌘G advances, ⇧⌘G steps back through the active pane's find
         // matches — and OPENS the find bar when it is closed (faithful "find next opens find"). ⌘G / ⇧⌘G are
         // FREE (`g` appears in NO other chord). Pinned unique by `TreeCommandRoutingTests`.
         WorkspaceBinding(
@@ -585,14 +585,14 @@ public enum WorkspaceBindingRegistry {
             category: .view, chord: KeyChord(character: "g", [.command, .shift]),
             symbol: "chevron.up", keywords: "previous find search back backward match",
         ),
-        // Global Search (E5 ES-E5-5): ⇧⌘F searches every tab's scrollback and shows a grouped results surface.
+        // Global Search: ⇧⌘F searches every tab's scrollback and shows a grouped results surface.
         // ⇧⌘F is reserved for global search. Pinned unique by `TreeCommandRoutingTests`.
         WorkspaceBinding(
             id: "view.globalSearch", action: .globalSearch, title: "Global Search…",
             category: .view, chord: KeyChord(character: "f", [.command, .shift]),
             symbol: "magnifyingglass.circle", keywords: "global search all tabs scrollback grep cross pane find",
         ),
-        // Vi Mode (P5b / E17 WI-5): modal keyboard scrollback navigation ("Vi Mode" / tmux-zellij copy-mode).
+        // Vi Mode: modal keyboard scrollback navigation ("Vi Mode" / tmux-zellij copy-mode).
         // Documented entry chord is ⌃⇧Space; slopdesk's canonical DISPLAY chord stays the pre-existing ⌘⇧C
         // (muscle memory / menu glyph unchanged), with ⌃⇧Space folded in as a SECOND resolving chord via
         // ``aliasChords`` (no extra display row — the ⌘+ font-increase idiom). Title "Vi Mode", "copy mode"
@@ -605,7 +605,7 @@ public enum WorkspaceBindingRegistry {
             symbol: "doc.on.clipboard",
             keywords: "vi mode copy mode scrollback keyboard navigate select yank visual control shift space tmux zellij",
         ),
-        // Vi Mode Key Hints (E17 ES-E17-2 / WI-5): the `⌘/` reference-card toggle, surfaced as a DISCOVERABLE
+        // Vi Mode Key Hints: the `⌘/` reference-card toggle, surfaced as a DISCOVERABLE
         // palette / menu command (not only the contextual `⌘/` firing in vi mode). `chord: nil` — the live
         // `⌘/` is `view.cheatSheet`'s (double duty: cheat sheet normally, this hint bar in vi mode), so a
         // second registered chord would collide. Toggles the active pane's hint bar (no-op outside vi mode,
@@ -616,7 +616,7 @@ public enum WorkspaceBindingRegistry {
             symbol: "keyboard.badge.eye",
             keywords: "vi mode key hints reference card cheat shortcuts copy mode command slash toggle bar",
         ),
-        // Read-Only mode (E17 ES-E17-1): toggle the active pane's input gate. No default chord — reachable
+        // Read-Only mode: toggle the active pane's input gate. No default chord — reachable
         // via the View menu (the app ships no Shell menu) + the command palette ("Read Only", also
         // `readonly` / `lock` / `freeze` / `view only` — the spec's accepted terms). `chord: nil` surfaces
         // the row WITHOUT binding a key (chord-less idiom — like `pane.rename` / `tab.close`); the user may
@@ -627,7 +627,7 @@ public enum WorkspaceBindingRegistry {
             symbol: "lock",
             keywords: "read only readonly lock freeze view only locked viewer input gate protect",
         ),
-        // Secure Keyboard Entry (E17 ES-E17-4): the MANUAL toggle for macOS process-global secure event input
+        // Secure Keyboard Entry: the MANUAL toggle for macOS process-global secure event input
         // over the active pane. No default chord — `chord: nil` surfaces the row in the menu + palette
         // WITHOUT binding a key (chord-less idiom — like `view.readOnly` / `pane.rename`); bindable in
         // Settings → Keybindings. Pinned chord-less by `TreeCommandRoutingTests`.
@@ -637,7 +637,7 @@ public enum WorkspaceBindingRegistry {
             symbol: "lock.shield",
             keywords: "secure input keyboard entry password sudo protect eavesdrop sniff secure event input",
         ),
-        // Release Stuck Input (C5, 2026-07-03): the remote-GUI escape hatch — synthesize key-up for ALL
+        // Release Stuck Input: the remote-GUI escape hatch — synthesize key-up for ALL
         // modifiers + mouse-up for all buttons on the active video pane when the host is left holding input
         // (every release datagram of the loss-resilient burst lost). `chord: nil` (chord-less idiom);
         // palette/menu, bindable in Settings → Keybindings. A no-op for a non-video / read-only /
@@ -648,7 +648,7 @@ public enum WorkspaceBindingRegistry {
             symbol: "keyboard.badge.ellipsis",
             keywords: "release stuck input modifier key mouse button unstick reset keyboard command shift remote window video",
         ),
-        // Paste as Keystrokes (C7, 2026-07-03): ⌥⌘V types the LOCAL clipboard into the active remote-GUI
+        // Paste as Keystrokes: ⌥⌘V types the LOCAL clipboard into the active remote-GUI
         // pane's host window (paced per-key CGEvents — reaches a sudo / SecurityAgent secure field). ⌥⌘V is
         // FREE (`v` in NO other chord — plain ⌘V / ⌘⇧V never enter the registry, they belong to the
         // terminal's paste responder) and ⌘-prefixed (§5) so it's intercepted before a focused terminal.
@@ -660,12 +660,12 @@ public enum WorkspaceBindingRegistry {
             keywords: "paste keystrokes type clipboard local password sudo securityagent remote window video field secure",
         ),
         // Toggle Tabs Panel ⌘⇧L — the reference default (spec/reference__keybindings.md:66 "Toggle tabs
-        // panel | ⌘⇧L"; line 201 "⌘⇧L … map to sidebar … toggles"). RE-BOUND from the old ⌘B, which routed to
-        // `store.toggleSidebarCollapsed()` — a LEGACY flag the native split shell never reads (macOS collapse
-        // is driven by `WorkspaceChromeState.sidebarCollapsed`), so ⌘B was a DEAD chord. ⌘⇧L now routes
-        // through a `toggleSidebar` view-closure onto the live chrome flag, and the titlebar's redundant
-        // SwiftUI ⌘⇧L shortcut is dropped (single owner). ⌘⇧L is FREE (no other `l` chord; ⌃⌘L is Cycle
-        // Layout). Pinned by E1KeymapParityTests.
+        // panel | ⌘⇧L"; line 201 "⌘⇧L … map to sidebar … toggles"). Deliberately NOT ⌘B: that chord only
+        // reaches `store.toggleSidebarCollapsed()`, a flag the native split shell never reads (macOS collapse
+        // is driven by `WorkspaceChromeState.sidebarCollapsed`) — binding ⌘B here would be a dead chord. ⌘⇧L
+        // routes through a `toggleSidebar` view-closure onto the live chrome flag; the titlebar keeps no
+        // separate SwiftUI ⌘⇧L shortcut of its own (single owner). ⌘⇧L is FREE (no other `l` chord; ⌃⌘L is
+        // Cycle Layout). Pinned by E1KeymapParityTests.
         WorkspaceBinding(
             id: "view.toggleSidebar", action: .toggleSidebar, title: "Toggle Tabs Panel",
             category: .view, chord: KeyChord(character: "l", [.command, .shift]),
@@ -681,7 +681,7 @@ public enum WorkspaceBindingRegistry {
             symbol: "sidebar.right",
             keywords: "host windows rail right sidebar panel remote list apps stream hide show collapse",
         ),
-        // Pin Window (E19 ES-E19-1, "View ▸ Pin Window" — `spec/user-interface__window-tab-split.md:14`
+        // Pin Window ("View ▸ Pin Window" — `spec/user-interface__window-tab-split.md:14`
         // "keeps the window floating above all other apps' windows"). No default chord — `chord: nil`
         // surfaces the row WITHOUT binding a key (chord-less idiom — like `view.readOnly` / `pane.rename`);
         // bindable in Settings → Keybindings. The live macOS app flips `WorkspaceChromeState.pinned` →
@@ -693,7 +693,7 @@ public enum WorkspaceBindingRegistry {
             symbol: "pin",
             keywords: "pin window float floating always on top above keep front level stay topmost pip",
         ),
-        // Blocks (WB2): the Command Navigator toggle + jump-to-block prev/next. ⌃⌘O / ⌃⌘[ / ⌃⌘] are all
+        // Blocks: the Command Navigator toggle + jump-to-block prev/next. ⌃⌘O / ⌃⌘[ / ⌃⌘] are all
         // ⌘-prefixed (the §5 conflict rule) and collision-free against the rest of the table (tab cycling
         // is ⌘[/], focus is ⌃⌘arrows — neither uses ⌃⌘bracket). They target the active terminal pane.
         WorkspaceBinding(
@@ -701,7 +701,7 @@ public enum WorkspaceBindingRegistry {
             category: .view, chord: KeyChord(character: "o", [.control, .command]),
             symbol: "list.bullet.rectangle", keywords: "blocks commands history recent navigator output jump warp",
         ),
-        // Jump-To (E10 ES-E10-5 / `user-interface__outline.md`): ⌘J opens the floating Jump-To panel over the
+        // Jump-To (`user-interface__outline.md`): ⌘J opens the floating Jump-To panel over the
         // active pane — detected paths/URLs + its OSC-133 command/prompt index, fuzzy-filterable, ↩ acts / ⌘K
         // opens the per-row actions popover. ⌘J is FREE (`j` is otherwise only ⌘⇧J peek-reply / ⌘⌥J). A VIEW
         // overlay (OverlayCoordinator), routed via a passed-in toggle closure like Global Search. Pinned
@@ -712,10 +712,10 @@ public enum WorkspaceBindingRegistry {
             symbol: "scope",
             keywords: "jump to outline quick switch goto navigate command url path link prompt current",
         ),
-        // Hint Mode (E10 ES-E10-6 / `terminal-features__hint-mode`): the three "Hint to …" intents overlaying
+        // Hint Mode (`terminal-features__hint-mode`): the three "Hint to …" intents overlaying
         // 2-letter Vimium labels on the active pane's targets. ⌘⇧J Open + ⌘⇧Y Copy are the documented
-        // defaults — both FREE after E10 RE-POINTED `.peekAndReply` off ⌘⇧J → ⌘⌥J ("E10 OWNS ⌘⇧J for Hint
-        // Mode"; `y` is in NO other chord). Hint to Reveal is CHORD-LESS (`chord: nil` — palette/menu +
+        // defaults — ⌘⇧J is free for Hint Mode to own because `.peekAndReply` is bound to ⌘⌥J instead
+        // (see `view.peekReply`); `y` is in NO other chord. Hint to Reveal is CHORD-LESS (`chord: nil` — palette/menu +
         // in-overlay action switch while hint mode is up; bindable in Settings — ⌘⇧R is free since the
         // Details panel was removed). Pinned unique by the chord-uniqueness guard.
         WorkspaceBinding(
@@ -746,7 +746,7 @@ public enum WorkspaceBindingRegistry {
             category: .view, chord: KeyChord(character: "]", [.control, .command]),
             symbol: "chevron.down.circle", keywords: "next prompt block command forward down jump scroll osc133",
         ),
-        // WB3: re-run last command + jump-to-failed prev/next. ⌃⌘R / ⌃⌘⇧[ / ⌃⌘⇧] are all ⌘-prefixed (§5)
+        // Re-run last command + jump-to-failed prev/next. ⌃⌘R / ⌃⌘⇧[ / ⌃⌘⇧] are all ⌘-prefixed (§5)
         // and collision-free: ⌃⌘R is otherwise unbound; ⌃⌘⇧[ / ⌃⌘⇧] add ⇧ to the block-jump chords, so
         // they are distinct from both ⌃⌘[ / ⌃⌘] (block jump) and ⌘[ / ⌘] (tab cycling).
         WorkspaceBinding(
@@ -764,7 +764,7 @@ public enum WorkspaceBindingRegistry {
             category: .view, chord: KeyChord(character: "]", [.control, .command, .shift]),
             symbol: "chevron.down.2", keywords: "next failed error nonzero exit block jump forward down",
         ),
-        // E1 viewport scroll (ES-E1-3): the named-key chords ⇧PageUp/PageDown (page scroll) + ⇧Home/End
+        // Viewport scroll: the named-key chords ⇧PageUp/PageDown (page scroll) + ⇧Home/End
         // (buffer ends). These are the ONE exemption to the §5 "every chord ⌘/⌥-prefixed" rule — a ⇧-prefixed
         // NAMED key (PageUp/Home/End) cannot steal a printable terminal letter (pinned by the prefix test's
         // named-key exemption). Distinct from copy-mode's half-page scroll. Target the active terminal pane.
@@ -788,7 +788,7 @@ public enum WorkspaceBindingRegistry {
             category: .view, chord: KeyChord(.end, [.shift]),
             symbol: "arrow.down.to.line.compact", keywords: "scroll bottom buffer end newest scrollback terminal",
         ),
-        // E1 command jumps (ES-E1-3): ⌘PageUp/PageDown jump the viewport to the previous / next shell
+        // Command jumps: ⌘PageUp/PageDown jump the viewport to the previous / next shell
         // prompt — they REUSE the OSC-133 command-jump (`jumpToBlockInActivePane(∓1)`), NOT raw scroll.
         WorkspaceBinding(
             id: "view.cmdJumpPrev", action: .commandJumpPrev, title: "Jump to Previous Command",
@@ -800,7 +800,7 @@ public enum WorkspaceBindingRegistry {
             category: .view, chord: KeyChord(.pageDown, [.command]),
             symbol: "chevron.down.circle", keywords: "jump next command prompt block osc133 down",
         ),
-        // E1 font size (ES-E1-4): ⌘= bumps, ⌘- shrinks, ⌘0 resets. ⌘0 is FREE (select-tab digits start at
+        // Font size: ⌘= bumps, ⌘- shrinks, ⌘0 resets. ⌘0 is FREE (select-tab digits start at
         // ⌘1). The `+` glyph (⌘+) does NOT fold onto `=` for free — on a US/ANSI layout ⌘+ arrives as `+`+⇧
         // (or keypad `+`), which `charactersIgnoringModifiers` keys as a DISTINCT chord — so ``aliasChords``
         // adds those two spellings → `.increaseFontSize` (no extra display row). A font-size step resizes the
@@ -821,8 +821,8 @@ public enum WorkspaceBindingRegistry {
             category: .view, chord: KeyChord(character: "0", [.command]),
             symbol: "textformat.size", keywords: "font size reset default actual original zero text",
         ),
-        // Open Quickly (E1-registered, E11 behaviour): ⌘⇧O fuzzy file/symbol switcher. ⌘⇧O is FREE (the only
-        // other `o` chord is ⌃⌘O command navigator). Routable stub until E11 — never a dead chord.
+        // Open Quickly: ⌘⇧O fuzzy file/symbol switcher. ⌘⇧O is FREE (the only
+        // other `o` chord is ⌃⌘O command navigator). A routable stub for now — never a dead chord.
         WorkspaceBinding(
             id: "view.openQuickly", action: .openQuickly, title: "Open Quickly…",
             category: .view, chord: KeyChord(character: "o", [.command, .shift]),
@@ -856,14 +856,14 @@ public enum WorkspaceBindingRegistry {
     /// / ``groupedForDisplay`` — the chord-uniqueness guard runs over `allBindings`, so an alias is
     /// intentionally outside it (it shares its ACTION, not its chord, with the canonical row).
     ///
-    /// E1 ES-E1-4: the font-increase chord is canonically ⌘= (no ⇧), but the muscle-memory chord is the `+`
+    /// The font-increase chord is canonically ⌘= (no ⇧), but the muscle-memory chord is the `+`
     /// glyph (`⌘+`). On a US/ANSI layout `+` IS Shift-`=`, and `charactersIgnoringModifiers` ignores ⌘/⌥/⌃
     /// but NOT ⇧ — so pressing ⌘+ delivers `"+"` with ⇧ set, i.e. `KeyChord(character: "+", [.command,
     /// .shift])`, NOT ⌘=. Without this alias that chord is unbound and ⌘+ leaks to the PTY (font never grows).
     /// We alias BOTH spellings the OS can deliver for ⌘+: the shifted main-row `+` (`⌘⇧+`) and the (unshifted)
     /// keypad `+` (`⌘+`). `KeyChord.init(character:)` lower-cases, a no-op for `+`, so both key cleanly.
     ///
-    /// E17 ES-E17-2 / WI-5: the documented Vi Mode entry chord is ⌃⇧Space. slopdesk's canonical Vi-Mode
+    /// The documented Vi Mode entry chord is ⌃⇧Space. slopdesk's canonical Vi-Mode
     /// binding (`view.copyMode`) DISPLAYS ⌘⇧C, so ⌃⇧Space is folded in as a SECOND resolving chord onto the
     /// same `.toggleCopyMode` action — like the ⌘+ font-increase alias (no display row, shares the ACTION not
     /// the chord). Space is the NAMED `.space` key (the macOS normalizer maps keyCode 49 → `.space` only with

@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskVideoProtocol
 
-/// W12 P1 — REACHES-CONSUMER proofs for the GUI-exposed flags whose live read sites were migrated to
+/// REACHES-CONSUMER proofs for the GUI-exposed flags whose live read sites were migrated to
 /// ``EnvConfig`` but whose consumers live in HW-gated / executable targets that cannot be instantiated
 /// headlessly (the daemon's `SLOPDESK_VD` / `SLOPDESK_CAPTURE_SCALE`, the client's `SLOPDESK_PACER`
 /// / `SLOPDESK_PLAYOUT_MS`). For these we assert the consumer's EXACT parse/clamp expression — copied
@@ -35,7 +35,7 @@ final class SettingsReachConsumerTests: XCTestCase {
     // MARK: SLOPDESK_VD — `slopdesk-videohostd` VideoHostdArguments.virtualDisplay
 
     /// The daemon's VD override: `if let vd = EnvConfig.string("SLOPDESK_VD") { virtualDisplay = (vd != "0") }`
-    /// (default-OFF since 2026-07-05; only a non-`"0"` value enables). An overlay value reaches it; absent
+    /// (default-OFF; only a non-`"0"` value enables). An overlay value reaches it; absent
     /// ⇒ the daemon keeps its `virtualDisplay = false` default (the override branch isn't taken).
     func testOverlayReachesVirtualDisplay() throws {
         try skipIfRealEnv("SLOPDESK_VD")

@@ -3,7 +3,7 @@ import CoreGraphics
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// The PURE display-pick math behind the host-window-resize feature (2026-06-30): pick the display a
+/// The PURE display-pick math behind the host-window-resize feature: pick the display a
 /// window sits on so the host can report its point-size MAX (the `displayMax` popover cap) and re-anchor
 /// the window at the display ORIGIN before an AX resize. CG global points throughout.
 final class WindowDisplayResolverTests: XCTestCase {

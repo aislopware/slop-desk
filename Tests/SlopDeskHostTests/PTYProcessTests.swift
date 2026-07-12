@@ -6,7 +6,7 @@ import XCTest
 @testable import SlopDeskHost
 @testable import SlopDeskTransport // reach `MuxSubChannel.deliver(payload:)` (the demux inbound seam)
 
-/// WF-3 PTY-level tests: deterministic, headless, no client networking — drive the
+/// PTY-level tests: deterministic, headless, no client networking — drive the
 /// `PTYProcess` master fd directly and assert on the shell's output bytes.
 final class PTYProcessTests: XCTestCase {
     // MARK: read helpers
@@ -14,12 +14,11 @@ final class PTYProcessTests: XCTestCase {
     /// Reads `fd` until `needle` appears or `timeout` passes; returns all output so far.
     ///
     /// `poll()`-gated on the CALLING thread — `read()` only runs after `POLLIN`, so it can never block
-    /// past the deadline and the helper leaves NO thread behind. The previous shape (a background
-    /// dispatch thread in a blocking `read()` + a semaphore timeout) abandoned that thread inside
-    /// `read()` on a missed needle — a PTY master never EOFs on child exit, so the read stayed pending
-    /// forever and the test-end `close(masterFD)` (PTYProcess.deinit) deadlocked against it in the
-    /// kernel: the "unkillable 40-min hang" the resize-burst test's doc describes, surfaced reliably
-    /// by `swift test --parallel` load.
+    /// past the deadline and the helper leaves NO thread behind. A naive background-dispatch-thread
+    /// blocking `read()` + semaphore timeout abandons that thread inside `read()` on a missed needle —
+    /// a PTY master never EOFs on child exit, so the read stays pending forever and the test-end
+    /// `close(masterFD)` (PTYProcess.deinit) deadlocks against it in the kernel: the "unkillable 40-min
+    /// hang" the resize-burst test's doc describes, surfaced reliably by `swift test --parallel` load.
     private func readUntil(
         fd: Int32,
         needle: String,
@@ -95,7 +94,7 @@ final class PTYProcessTests: XCTestCase {
         XCTAssertTrue(output.contains(dir.path), "expected child cwd \(dir.path), got: \(output)")
     }
 
-    /// Bug 1: an inherited cwd that no longer exists (deleted dir, foreign ssh path, `~`-style preset)
+    /// An inherited cwd that no longer exists (deleted dir, foreign ssh path, `~`-style preset)
     /// must NOT kill the freshly-spawned shell (`chdir`-fail `_exit 127` = dead pane). The host validates
     /// the requested cwd and falls back to HOME, so the pane comes up live.
     func testResolveCwdFallsBackToHomeForInvalidRequest() throws {
@@ -202,11 +201,11 @@ final class PTYProcessTests: XCTestCase {
         )
     }
 
-    /// WF10 REGRESSION — controlling terminal + SIGWINCH delivery for an INTERACTIVE zsh.
+    /// Controlling terminal + SIGWINCH delivery for an INTERACTIVE zsh.
     ///
-    /// The old `testControllingTTY` spawned only `/bin/sh -c …`, which acquired its ctty even
-    /// under the old `posix_spawn(POSIX_SPAWN_SETSID)` path — while the LIVE interactive zsh (the
-    /// real workload) had NO ctty (`TTY=??`, `TPGID=0`). With no ctty the kernel delivers no
+    /// `testControllingTTY` spawns only `/bin/sh -c …`, which acquires its ctty even under a
+    /// `posix_spawn(POSIX_SPAWN_SETSID)` path — while a LIVE interactive zsh (the real workload)
+    /// has NO ctty (`TTY=??`, `TPGID=0`) under that same path. With no ctty the kernel delivers no
     /// `SIGWINCH` on `TIOCSWINSZ`: `$COLUMNS` never updates, `TRAPWINCH` never fires, the
     /// post-resize prompt blanks. This reproduces the real workload (`zsh -i`) and proves the
     /// `fork()`+`login_tty` path restores BOTH ctty AND signal-driven resize:
@@ -243,8 +242,8 @@ final class PTYProcessTests: XCTestCase {
         }
 
         // (1) Controlling terminal: `tty </dev/tty` only resolves (to the alias `/dev/tty`) if the
-        // slave is genuinely this session's controlling terminal — the WF10 defect made `/dev/tty`
-        // report "Device not configured"/"not a tty" for interactive zsh.
+        // slave is genuinely this session's controlling terminal — without that, `/dev/tty` reports
+        // "Device not configured"/"not a tty" for interactive zsh.
         Self.write(pty.masterFD, "tty </dev/tty\n")
         let ttyOut = readUntil(fd: pty.masterFD, needle: "/dev/tty", timeout: 5.0)
         XCTAssertTrue(
@@ -458,7 +457,7 @@ final class PTYProcessTests: XCTestCase {
         )
     }
 
-    /// LATENT-HANG REGRESSION (the consolidation-pass find): `MuxChannelSession.shutdown()` ends with
+    /// LATENT-HANG REGRESSION: `MuxChannelSession.shutdown()` ends with
     /// `PTYProcess.closeMaster()` → `close(masterFD)`, and on macOS `close()` of a PTY master BLOCKS
     /// while the `PTYReadLoop` is parked in an in-flight kernel `read()` on that same fd. `stop()`
     /// signals the loop's gate but cannot interrupt a `read()` already in the kernel — that read returns
@@ -511,7 +510,7 @@ final class PTYProcessTests: XCTestCase {
         XCTAssertNotNil(pty.waitExitCode(), "shutdown() must terminate+reap the live child on the destroy path")
     }
 
-    /// [0/1] `shutdownDetached()` must return to the CALLER immediately (it offloads the blocking
+    /// `shutdownDetached()` must return to the CALLER immediately (it offloads the blocking
     /// SIGTERM→wait→SIGKILL→wait→close to a background queue), while STILL terminating + reaping the
     /// child and closing the master. The caller here stands in for the mux connection's receive loop:
     /// blocking it (as the old inline `shutdown()` from `removeMuxSession` did) stalls every sibling
@@ -539,7 +538,7 @@ final class PTYProcessTests: XCTestCase {
         XCTAssertNotNil(pty.waitExitCode(), "the detached shutdown still terminates + reaps the child")
     }
 
-    /// RAPID OPEN/CLOSE CHURN — the "mở/đóng nhanh liên tục" path (open + close many panes fast).
+    /// RAPID OPEN/CLOSE CHURN — the rapid-repeated open/close path (open + close many panes fast).
     /// Drives 250 full spawn → relay → shutdown cycles through the fork+login_tty path and asserts the
     /// process's open-fd count does NOT grow — a per-cycle master-fd leak is the documented failure
     /// (a daemon hit `EMFILE` after ~250 sessions). Each cycle spawns a self-exiting shell (so

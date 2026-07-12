@@ -7,7 +7,7 @@ import XCTest
 ///   • [3] a DUPLICATE `channelOpen` for a live channel must NOT re-fire the host open hook
 ///     (double-spawn / orphaned-PTY leak).
 ///   • [4] a `channelClose` arriving BEFORE `setHostCloseHandler` must be BUFFERED + replayed
-///     (else the pane's shell leaks — the open path buffered, the close path used to drop).
+///     (else the pane's shell leaks — buffering must apply to the close path just like the open path).
 ///   • [5] a HARD link failure must mark the connection `isDead` and make `openChannel` reject reuse
 ///     (so a reconnecting pane never opens onto a corpse the registry still pools).
 final class MuxBugFixRegressionTests: XCTestCase {
@@ -98,12 +98,12 @@ final class MuxBugFixRegressionTests: XCTestCase {
         }
     }
 
-    // MARK: - [R11] channelOpen on the CONTROL link is never legitimate → dropped (memory-DoS cap)
+    // MARK: - channelOpen on the CONTROL link is never legitimate → dropped (memory-DoS cap)
 
     /// A `channelOpen` only ever arrives on the DATA link (`openChannel` → `dataLink.send`). The
     /// per-connection cap that bounds the router table is `link == .data`, so a hostile peer could
     /// spam channelOpen frames on the CONTROL link to grow `controlTable` without bound (the last
-    /// router-table memory-DoS vector). The R11 guard drops a control-link channelOpen BEFORE it
+    /// router-table memory-DoS vector). The guard drops a control-link channelOpen BEFORE it
     /// reaches `MuxRoutingCore.route` — so neither the control table grows NOR the host open hook fires.
     func testChannelOpenOnControlLinkIsDroppedAndDoesNotGrowControlTable() async throws {
         let (clientControl, hostControl) = InMemoryMuxLink.pair()
@@ -127,7 +127,7 @@ final class MuxBugFixRegressionTests: XCTestCase {
         XCTAssertEqual(controlTableCount, 0, "a control-link channelOpen storm must not grow the control router table")
     }
 
-    // MARK: - [R12 #1] channelOpen/channelClose churn does not grow the router tables unbounded
+    // MARK: - channelOpen/channelClose churn does not grow the router tables unbounded
 
     /// On the HOST the PEER chooses channel ids. A hostile/buggy peer that repeatedly opens then closes
     /// a channel with a FRESH id each cycle keeps the LIVE channel count at ~0 (so the per-connection cap
@@ -169,7 +169,7 @@ final class MuxBugFixRegressionTests: XCTestCase {
         XCTAssertFalse(dead, "the connection stays healthy throughout the churn")
     }
 
-    // MARK: - [R12 #2] duplicate same-side mux preamble closes the displaced half (fd-leak guard)
+    // MARK: - duplicate same-side mux preamble closes the displaced half (fd-leak guard)
 
     /// The pure pairing decision behind `HostTransport.associateMux`: a CONTROL+DATA pair completes, but
     /// a SECOND same-side half (two CONTROLs / two DATAs before the opposite peer arrives) is a re-park
@@ -206,11 +206,11 @@ final class MuxBugFixRegressionTests: XCTestCase {
         )
     }
 
-    // MARK: - [Audit 2026-07-10 #8] a reused channel id after close is refused, never respawned
+    // MARK: - a reused channel id after close is refused, never respawned
 
     /// On the host the PEER chooses ids; ids are terminal-forever once closed (monotonic no-reuse).
-    /// The registration gate used to consult only the dispatch dict (`dataChannels[id] == nil`),
-    /// which the close path had just emptied — so open→close→open on ONE id re-invoked
+    /// The registration gate must not rely on the dispatch dict alone (`dataChannels[id] == nil`) —
+    /// the close path empties that dict too, so open→close→open on ONE id would re-invoke
     /// `hostOpenHandler` (a fresh PTY fork) every cycle, unbounded: the live-channel cap never
     /// trips (count stays ~1) and the ChannelTable ring bounds table memory, not spawns.
     func testReusedChannelIDAfterCloseIsRefusedNotRespawned() async throws {
@@ -241,12 +241,12 @@ final class MuxBugFixRegressionTests: XCTestCase {
         )
     }
 
-    // MARK: - [Audit 2026-07-10 #13] the client drops unsolicited channelOpen (peer cannot grow its tables)
+    // MARK: - the client drops unsolicited channelOpen (peer cannot grow its tables)
 
     /// Only the client ever legitimately sends `channelOpen` (the host is a pure responder). A
-    /// buggy/compromised HOST spamming distinct ids at the client used to `open(id)` a permanent
-    /// phantom entry per id in the client's dataTable (never closed → never ring-evicted):
-    /// unbounded memory growth from network input — the client-side mirror of the host's guards.
+    /// buggy/compromised HOST spamming distinct ids at the client must not be able to `open(id)` a
+    /// permanent phantom entry per id in the client's dataTable (never closed → never ring-evicted):
+    /// that would be unbounded memory growth from network input — the client-side mirror of the host's guards.
     func testClientRoleDropsUnsolicitedChannelOpen() async throws {
         let (peerControl, clientControl) = InMemoryMuxLink.pair()
         let (peerData, clientData) = InMemoryMuxLink.pair()
@@ -268,15 +268,15 @@ final class MuxBugFixRegressionTests: XCTestCase {
         )
     }
 
-    // MARK: - [Audit 2026-07-10 #7] a host refusal actually closes the client's channel
+    // MARK: - a host refusal actually closes the client's channel
 
     /// The production client marks a channel `.open` OPTIMISTICALLY in `openChannel()` (before the
-    /// frame is sent), so by ack time the state is never `.idle`. `ChannelTable.reject` used to
-    /// transition only from `.idle` → a real host refusal (`stopping`, reattach-key race) was a
-    /// silent no-op: the sub-channels were never finished and the pane hung open + silent forever,
-    /// with nothing for the UI or ReconnectManager to observe. The isolated MuxRouter unit test
-    /// missed this because `allocateChannel()` alone leaves the state `.idle`; this test drives the
-    /// REAL `openChannel()` sequence.
+    /// frame is sent), so by ack time the state is never `.idle`. `ChannelTable.reject` must accept
+    /// the transition from BOTH `.idle` and `.open` — an `.idle`-only guard would make a real host
+    /// refusal (`stopping`, reattach-key race) a silent no-op: the sub-channels would never finish
+    /// and the pane would hang open + silent forever, with nothing for the UI or ReconnectManager to
+    /// observe. The isolated MuxRouter unit test missed this because `allocateChannel()` alone
+    /// leaves the state `.idle`; this test drives the REAL `openChannel()` sequence.
     func testHostRefusalFinishesTheOptimisticallyOpenedChannel() async throws {
         let (peerControl, clientControl) = InMemoryMuxLink.pair()
         let (peerData, clientData) = InMemoryMuxLink.pair()

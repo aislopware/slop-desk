@@ -1,4 +1,4 @@
-// ToastStackViewTests — pins the E2 / WI-4 toast host's view-level behaviour (the model-level de-dupe /
+// ToastStackViewTests — pins the toast host's view-level behaviour (the model-level de-dupe /
 // cap / dismiss is pinned by `OverlayCoordinatorMountTests`). Two things this view owns that the coordinator
 // does not: the flavour → tint mapping (the leading glyph colour) and that the card stack renders headlessly.
 //
@@ -15,8 +15,8 @@ import XCTest
 final class ToastStackViewTests: XCTestCase {
     // MARK: - Flavour tint mapping (the leading-glyph colour role)
 
-    /// The toast glyph is tinted by flavour: success → OK, error → error, default → info, attention → accent
-    /// (E2 plan WI-4). Pin the SPEC mapping — a regression that swapped success/error (or pointed a flavour at
+    /// The toast glyph is tinted by flavour: success → OK, error → error, default → info, attention → accent.
+    /// Pin the SPEC mapping — a regression that swapped success/error (or pointed a flavour at
     /// the wrong status role) would fail here, and the view + this test read the SAME `tint(for:)` so the
     /// rendered colour can't drift from the asserted contract. (Distinctness is asserted only for OK vs error,
     /// which are distinct hues in every theme; default/attention coincide under the Monokai Classic palette

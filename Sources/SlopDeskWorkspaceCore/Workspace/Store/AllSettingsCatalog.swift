@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - AllSettingsCatalog (headless source for the Advanced "All Settings" list — E7 WI-3)
+// MARK: - AllSettingsCatalog (headless source for the Advanced "All Settings" list)
 
 /// The pure, headless catalog the Advanced → **All Settings** list iterates (see
 /// `customization__advanced-settings.md`). It enumerates every client-side configuration key slopdesk
@@ -144,9 +144,9 @@ public enum AllSettingsCatalog {
             keywords: "notification command complete long running done shell",
         ),
 
-        // E14/K9 (notification-setting.png NOTIFICATION section). Fire-time toggles; the pure
-        // NotificationPolicy reads the resolved `notificationSettings` bundle. WI-7 surfaces the rich
-        // navigator panel; declared here so the searchable All Settings list is complete + round-trips.
+        // Fire-time toggles; the pure NotificationPolicy reads the resolved `notificationSettings`
+        // bundle. The rich navigator panel surfaces these too; declared here so the searchable All
+        // Settings list is complete + round-trips.
         SettingEntry(
             key: SettingsKey.notifyOnFinish,
             label: "Notify on Command Finish",
@@ -246,7 +246,7 @@ public enum AllSettingsCatalog {
             keywords: "working directory cwd folder split home inherit same",
         ),
 
-        // MARK: Controls (copy / paste / mouse / scroll fire-time flags — E8 owns the behaviour)
+        // MARK: Controls (copy / paste / mouse / scroll fire-time flags)
 
         SettingEntry(
             key: SettingsKey.copyOnSelect,
@@ -305,8 +305,8 @@ public enum AllSettingsCatalog {
             keywords: "scroll multiplier wheel speed mouse sensitivity",
         ),
 
-        // E8 WI-1: the remaining Controls / Mouse / Scroll knobs (E8 owns the behaviour; declared here so
-        // the Advanced list is complete and the keys round-trip today).
+        // The remaining Controls / Mouse / Scroll knobs; declared here so the Advanced list is complete
+        // and the keys round-trip today.
         SettingEntry(
             key: SettingsKey.clearSelectionOnTyping,
             label: "Clear Selection on Typing",
@@ -441,8 +441,8 @@ public enum AllSettingsCatalog {
             keywords: "option alt meta esc keyboard macos key word jump emacs vim readline accented",
         ),
 
-        // E10 (Path/link detection — Settings → Controls → Open With / Link Schemes). Declared here so
-        // the Advanced "All Settings" list is complete; E10 WI-5/6/8/9 own the behaviour.
+        // Path/link detection (Settings → Controls → Open With / Link Schemes). Declared here so
+        // the Advanced "All Settings" list is complete.
         SettingEntry(
             key: SettingsKey.linkDetection,
             label: "Detect Links & Paths",
@@ -495,7 +495,7 @@ public enum AllSettingsCatalog {
             keywords: "system dialog password security pane spawn authorization",
         ),
 
-        // E14/K2 (Auto Progress-Bar Commands — terminal-features__progress-state.md). Advanced list key;
+        // Auto Progress-Bar Commands (terminal-features__progress-state.md). Advanced list key;
         // the host enforces its own copy via the SLOPDESK_AUTO_PROGRESS_COMMANDS env bridge.
         SettingEntry(
             key: SettingsKey.autoProgressCommands,
@@ -507,10 +507,10 @@ public enum AllSettingsCatalog {
             keywords: "auto progress bar spinner slow command curl git npm brew docker osc 9;4 shell integration",
         ),
 
-        // E14/K11-K12 (privilege surface — terminal-features__notifications.md → Settings → Advanced). The
+        // Privilege surface (terminal-features__notifications.md → Settings → Advanced). The
         // OSC-52 read/write tri-state pickers (clipboardReadKey/clipboardWriteKey, above) are gated by the
         // Clipboard — Shell Controlled master; Title — Shell Controlled gates OSC 0/2; Title Report is a
-        // documented ceiling (persists/surfaces but does not yet actuate — see docs/DECISIONS.md E14 WI-7).
+        // documented ceiling (persists/surfaces but does not yet actuate — see docs/DECISIONS.md).
         SettingEntry(
             key: SettingsKey.titleShellControlled,
             label: "Title — Shell Controlled",
@@ -538,7 +538,7 @@ public enum AllSettingsCatalog {
             keywords: "clipboard shell controlled osc 52 master read write privilege deny",
         ),
 
-        // E14/K13 (IPC guards on the agent-control ctl socket — privilege surface → Settings → Advanced). The
+        // IPC guards on the agent-control ctl socket (privilege surface → Settings → Advanced). The
         // ENFORCEMENT is HOST-side (the guard runs on the host's NDJSON ctl socket); these client toggles are
         // the edit surface and re-drive the host via the SLOPDESK_IPC_ALLOW_* env bridge on the next launch.
         SettingEntry(
@@ -581,7 +581,7 @@ public enum AllSettingsCatalog {
         ),
         // The DOCK ICON group lives under **Appearance** (terminal-features__progress-state.md). macOS-only
         // NSDockTile behaviour (inert on iOS); the live toggles live under Appearance → Dock Icon, so the
-        // searchable All Settings rows JUMP there (M2 — `hasDedicatedTab` → `appearance`) rather than rendering
+        // searchable All Settings rows JUMP there (`hasDedicatedTab` → `appearance`) rather than rendering
         // a duplicate inline control. The keys round-trip on both platforms.
         SettingEntry(
             key: SettingsKey.dockIconAnimateProgress,

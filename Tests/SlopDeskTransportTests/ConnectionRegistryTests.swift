@@ -4,7 +4,7 @@ import XCTest
 
 /// Refcount + teardown tests for ``ConnectionRegistry`` — the per-host shared-connection pool.
 /// Headless: the shared ``MuxNWConnection`` is built from IN-MEMORY links (no socket), and an
-/// auto-accepting host end keeps `openChannel` from blocking. Proves the load-bearing S1 invariant:
+/// auto-accepting host end keeps `openChannel` from blocking. Proves the load-bearing invariant:
 /// N same-host panes ride ONE shared connection, and the connection is torn down ONLY when the LAST
 /// channel closes (single-pane close/reconnect never drops it).
 @MainActor
@@ -67,7 +67,7 @@ final class ConnectionRegistryTests: XCTestCase {
         XCTAssertEqual(registry.channelCount(host: "h", port: 1), 0)
     }
 
-    /// [2] Two panes first-connecting to the SAME new host CONCURRENTLY must net `pendingAcquires` to
+    /// Two panes first-connecting to the SAME new host CONCURRENTLY must net `pendingAcquires` to
     /// zero, so closing both later tears the shared connection down. Before the fix, a coalesced
     /// first-acquire that resumed before the build creator stored the entry silently skipped its
     /// `pendingAcquires += 1` (optional-chained no-op) but still ran the matching `-= 1`, driving the
@@ -92,7 +92,7 @@ final class ConnectionRegistryTests: XCTestCase {
         }
     }
 
-    /// [5] After a HARD link drop (TCP RST / NetBird flap), a reconnecting pane must NOT re-acquire the
+    /// After a HARD link drop (TCP RST / NetBird flap), a reconnecting pane must NOT re-acquire the
     /// dead pooled connection — the registry evicts the corpse and builds a FRESH one. Before the fix,
     /// `finishLink` did not mark the connection dead, so the still-pooled entry was handed back and the
     /// reconnecting pane opened onto a dead link forever.
@@ -195,7 +195,7 @@ final class ConnectionRegistryTests: XCTestCase {
         }
     }
 
-    /// R8 #1: `acquire()`'s post-`openChannel` refcount mutations must be IDENTITY-GATED. If a concurrent
+    /// `acquire()`'s post-`openChannel` refcount mutations must be IDENTITY-GATED. If a concurrent
     /// dead-eviction rebuilds the pooled connection while THIS acquire is suspended inside `openChannel`'s
     /// `dataLink.send`, the resuming acquire must NOT decrement/insert into the FRESH entry — that
     /// underflows its `pendingAcquires` (→ a permanent connection leak: the last-channel teardown guard
@@ -306,7 +306,7 @@ final class ConnectionRegistryTests: XCTestCase {
         XCTAssertEqual(registry.sharedConnectionCount, 0, "the last channel release tears it down once unpinned")
     }
 
-    /// REGRESSION (docs/31 review): an `unpin()` that races `pin()`'s in-flight build must NOT orphan the
+    /// REGRESSION: an `unpin()` that races `pin()`'s in-flight build must NOT orphan the
     /// just-built shared connection. Before the fix, unpin removed the optimistic pin while the build's
     /// `entries[key]` was still nil (so unpin found nothing to tear down), then the build completed and
     /// stored a LIVE zero-channel connection that no path ever reclaimed (a permanent socket leak —

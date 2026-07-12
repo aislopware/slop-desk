@@ -1,8 +1,8 @@
 import SlopDeskVideoProtocol
 
-/// The client's decode frontier: the wrap-aware highest frameID that SUCCESSFULLY decoded
-/// (component 2, 2026-06-11). Every recovery request (`requestIDR` / `requestLTRRefresh`) now
-/// carries ``wireValue`` so the host's delivery-keyed `RecoveryIDRPolicy` can tell whether a
+/// The client's decode frontier: the wrap-aware highest frameID that SUCCESSFULLY decoded.
+/// Every recovery request (`requestIDR` / `requestLTRRefresh`) carries ``wireValue`` so the
+/// host's delivery-keyed `RecoveryIDRPolicy` can tell whether a
 /// recently-sent keyframe reached this client (request newer ⇒ delivered) or is a presumed
 /// casualty (request older + past the in-flight grace ⇒ bypass the cooldown).
 ///

@@ -1,13 +1,13 @@
-// TextBindingResolutionTests (E1/WI-7) — the dispatcher's text-binding / unbind resolution step pinned
-// headlessly. `WorkspaceKeyDispatcher.handle` resolves a `text:`/`csi:`/`esc:` config binding (→ sendBytes)
+// TextBindingResolutionTests pins the dispatcher's text-binding / unbind resolution step headlessly.
+// `WorkspaceKeyDispatcher.handle` resolves a `text:`/`csi:`/`esc:` config binding (→ sendBytes)
 // and an `unbind:` (→ passthrough) BEFORE the action table; that resolution lives in the pure, AppKit-free
 // `WorkspaceBindingRegistry.textBinding(for:)` / `isUnbound(_:)` (so it is provable without the NSEvent
 // monitor). These tests pin: the chord-keyed lookup hits, the registry→preferences chord bridge round-trips
 // (so a `KeybindGrammar`-parsed chord and a dispatcher-produced registry chord key the SAME entry), and the
 // empty-overrides fast path is a clean miss.
 //
-// FAILS on the pre-WI-7 code: `textBinding(for:)` / `isUnbound(_:)` / `KeyChord.asPreferencesChord` did not
-// exist (the dispatcher had no text-binding branch at all).
+// Without `textBinding(for:)` / `isUnbound(_:)` / `KeyChord.asPreferencesChord`, the dispatcher would have
+// no text-binding branch at all.
 
 import SlopDeskVideoProtocol
 import XCTest

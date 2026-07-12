@@ -7,16 +7,16 @@ import Foundation
 /// ``KeyboardAccessoryDecision``) so the byte mappings are exercised by the headless test runner,
 /// not only by an iOS-triple build. Arrows key on the stable `UIKeyCommand.input*Arrow` PUA scalars
 /// (matched literally, like ``InputRouting/keyChord(for:)``) and are DECCKM-aware via
-/// ``arrowBytes(for:applicationCursorKeys:)`` (docs/29 #6); `arrowFallback` remains an escape hatch
+/// ``arrowBytes(for:applicationCursorKeys:)``; `arrowFallback` remains an escape hatch
 /// for keys the pure tables don't model. No UIKit import — the whole encoder is testable without a
 /// device.
 public enum KeyEncoding {
     /// Pure mapping of a key to its ASCII control code. The full C0 range matters, not just letters:
     /// Ctrl-A…Ctrl-Z map to 1…26, Ctrl-[ is the canonical ESC (0x1B) vim/readline users press
     /// constantly, and Ctrl-\ / Ctrl-] / Ctrl-^ / Ctrl-_ / Ctrl-@ are the remaining C0 controls
-    /// (0x1C…0x1F, NUL). Previously every non-letter fell through to `v & 0x7F` (a no-op for ASCII),
-    /// so Ctrl-[ sent a literal `[` instead of ESC — Escape from the iOS hardware keyboard was
-    /// completely broken (R12 #3).
+    /// (0x1C…0x1F, NUL). Falling through non-letters to `v & 0x7F` alone (a no-op for ASCII) would
+    /// send Ctrl-[ as a literal `[` instead of ESC — Escape from the iOS hardware keyboard would be
+    /// completely broken.
     public static func controlCode(for scalar: UnicodeScalar) -> [UInt8] {
         let v = scalar.value
         if v >= 0x61, v <= 0x7A { return [UInt8(v - 0x60)] } // a-z → 1…26
@@ -30,21 +30,21 @@ public enum KeyEncoding {
     /// Splits a soft-keyboard text commit when the accessory-bar Ctrl is ARMED: the FIRST scalar folds
     /// to its control code (to be sent RAW — the PTY never echoes a control byte), and the remainder
     /// stays plain text. Returns `nil` when not armed or the text is empty (send the text as-is). This is
-    /// the pure, headless-testable core of the accessory Ctrl fold — without it the bar's Ctrl button was
-    /// a dead no-op for soft-keyboard letters, so Ctrl-C from a pure soft keyboard was impossible (R13 #6).
+    /// the pure, headless-testable core of the accessory Ctrl fold — without it the bar's Ctrl button would be
+    /// a dead no-op for soft-keyboard letters, and Ctrl-C from a pure soft keyboard would be impossible.
     public static func foldArmedControl(_ text: String, armed: Bool) -> (controlBytes: [UInt8], rest: String)? {
         guard armed, let first = text.unicodeScalars.first else { return nil }
         let rest = String(String.UnicodeScalarView(text.unicodeScalars.dropFirst()))
         return (controlCode(for: first), rest)
     }
 
-    /// Arrow-key bytes, DECCKM-aware (docs/29 #6). Keys on the `UIKeyCommand.input*Arrow` scalars the
+    /// Arrow-key bytes, DECCKM-aware. Keys on the `UIKeyCommand.input*Arrow` scalars the
     /// iOS layer normalizes into `characters` (the same PUA constants ``InputRouting/keyChord(for:)``
     /// already matches — stable, documented AppKit/UIKit values, so no UIKit import is needed). The
     /// mode decides the introducer: DECCKM reset → CSI (`ESC [ A…D`), DECCKM set (application cursor
     /// keys, what vim/less/htop enable) → SS3 (`ESC O A…D`). The caller threads the live mode from
-    /// `TerminalViewModel.isCursorKeysApplication` (the client-side DECSET `?1` parse) — the old
-    /// always-CSI encoding made arrows dead or garbled in DECCKM-application TUIs.
+    /// `TerminalViewModel.isCursorKeysApplication` (the client-side DECSET `?1` parse) — a fixed
+    /// always-CSI encoding would make arrows dead or garbled in DECCKM-application TUIs.
     public static func arrowBytes(
         for press: InputRouting.KeyPress,
         applicationCursorKeys: Bool,
@@ -70,7 +70,7 @@ public enum KeyEncoding {
         switch press.characters {
         case "\u{1B}": [0x1B] // ESC
         // Shift+Tab is back-tab (CBT, ESC [ Z) — UIKit reports the same "\t" with or without Shift,
-        // so the shift flag is the only discriminator. Plain Tab stays forward TAB (R12 #6).
+        // so the shift flag is the only discriminator. Plain Tab stays forward TAB.
         case "\t": press.shift ? [0x1B, 0x5B, 0x5A] : [0x09]
         case "\r",
              "\n": [0x0D] // CR (Enter)
@@ -83,8 +83,8 @@ public enum KeyEncoding {
     /// Encodes a classified key-path press into the raw terminal bytes for `sendInput`. Returns `nil`
     /// for a press that carries nothing to send (e.g. a bare modifier). `applicationCursorKeys` is the
     /// live DECCKM state (`TerminalViewModel.isCursorKeysApplication`) steering the arrow introducer;
-    /// `arrowFallback` remains the escape hatch for special keys the pure tables don't model (the
-    /// pre-#6 shape where the iOS layer resolved arrows itself), consulted only after both tables miss.
+    /// `arrowFallback` remains the escape hatch for special keys the pure tables don't model, letting
+    /// a caller resolve arrows itself, consulted only after both tables miss.
     public static func encode(
         _ press: InputRouting.KeyPress,
         applicationCursorKeys: Bool = false,
@@ -97,9 +97,9 @@ public enum KeyEncoding {
         {
             // Option held with a special key applies the same xterm metaSendsEscape prefix the letter
             // path uses below: Option+Backspace → ESC + DEL (readline/zsh delete-previous-word),
-            // Option+Return → ESC + CR, Option+Arrow → ESC + CSI. Without this the Option modifier was
-            // silently dropped on every special key, degrading word-wise shell editing (R12 #5). Plain
-            // (un-Option) special keys are byte-identical to before. Ctrl on a special key is NOT a
+            // Option+Return → ESC + CR, Option+Arrow → ESC + CSI. Without this the Option modifier would be
+            // silently dropped on every special key, degrading word-wise shell editing. Plain
+            // (un-Option) special keys are unaffected. Ctrl on a special key is NOT a
             // simple prefix (it needs parameterized CSI, e.g. ESC[1;5D) so it is left unchanged here.
             return press.option ? [0x1B] + bytes : bytes
         }
@@ -108,7 +108,7 @@ public enum KeyEncoding {
         guard let scalar = base.unicodeScalars.first else { return nil }
         if press.control {
             // A co-held Option (Ctrl+Alt+letter) still takes the xterm meta/ESC prefix — e.g.
-            // Ctrl+Alt+C → ESC 0x03 — instead of silently dropping the Option (R13).
+            // Ctrl+Alt+C → ESC 0x03 — instead of silently dropping the Option.
             let code = controlCode(for: scalar)
             return press.option ? [0x1B] + code : code
         }

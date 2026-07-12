@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskVideoProtocol
 
-/// E1/WI-6 — pins for the PURE config-binding parser (`KeybindGrammar`). Covers every action prefix
+/// Pins for the PURE config-binding parser (`KeybindGrammar`). Covers every action prefix
 /// (`text:` / `csi:` / `esc:`), the `unbind:<chord>` directive, the parameterised `goto_tab:N` named
 /// action, modifier-permutation chord parsing, the escape vocabulary, and — load-bearing per CLAUDE.md
 /// §3 — the malformed-drop cases (a hostile / malformed line returns `nil`, never traps). Every malformed
@@ -145,7 +145,7 @@ final class KeybindGrammarTests: XCTestCase {
         XCTAssertNil(KeybindGrammar.parseChord("cmd+b>cmd+v"), "sequences are not single chords")
     }
 
-    /// E7/WI-6 carry-over #3 (revert-to-confirm-fail): `space`, `escape`/`esc`, `delete`, `backspace`, and
+    /// Revert-to-confirm-fail: `space`, `escape`/`esc`, `delete`, `backspace`, and
     /// `forwarddelete` are DROPPED from the base-key vocabulary — neither `mapKey` nor the registry
     /// `KeyChord.Key` enum can resolve them, so a chord binding one would parse but never fire (a silent
     /// no-op). Validate-then-drop (CLAUDE.md §3) means `parseChord` must now return `nil` for them, bare OR

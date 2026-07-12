@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Keyboard-map audit 2026-07-07: pins the pure ``KeyEventTextPolicy`` — the testable heart of the
+/// Pins the pure ``KeyEventTextPolicy`` — the testable heart of the
 /// "arrow keys type garbage into kitty-protocol apps (Claude Code)" fix. AppKit reports named function
 /// keys as PUA placeholders (U+F700–F8FF) in `event.characters`; forwarding one as `ghostty_input_key_s
 /// .text` makes ghostty's kitty encoder write the raw PUA bytes to the PTY instead of the `CSI A`-family

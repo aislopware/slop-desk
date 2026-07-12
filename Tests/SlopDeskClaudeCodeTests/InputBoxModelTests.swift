@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskClaudeCode
 
-/// WF-7 input-box state-machine tests (A shell / B1 TUI-compose).
+/// Input-box state-machine tests (A shell / B1 TUI-compose).
 final class InputBoxModelTests: XCTestCase {
     private let ESC = "\u{1B}"
     private let BEL = "\u{07}"

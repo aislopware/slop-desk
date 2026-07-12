@@ -74,7 +74,7 @@ Follow-on requested in conversation; spiked → built → reviewed → fast-forw
 - Review caught + fixed: viewport-relative jump math, CSI-leak into commandText (colorized shells), copy timeout race, copy-while-running. Full suite **2799**, `make check` + `check-ios` + loopback all green.
 - **Needs eyes-on** (`check-macos`): navigator/header/chip render + live jump/copy over a real libghostty surface. Needs a shell with **OSC 133 shell-integration** (`ShellIntegration.swift`) for blocks to appear.
 
-## Addendum — three more follow-on features (same overnight session, "tiếp tục ý tưởng hay khác")
+## Addendum — three more follow-on features (same overnight session, per the user's request to keep going with more good ideas)
 
 Each orchestrated as **implement → 5-dimension adversarial review → verify → fix**, committed only after re-running `make check` (lint + build + full suite + golden). **All four are client-only: no wire/host/FFI/golden/schema change; golden byte-identical every time.** Branch now **33 commits vs main, unpushed.**
 

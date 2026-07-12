@@ -1,4 +1,4 @@
-// slopdesk-videohostd — the GUI video path (PATH 2 / Phase 4) host daemon.
+// slopdesk-videohostd — the GUI video path (PATH 2) host daemon.
 //
 // The executable wrapper for `SlopDeskVideoHostSession`: enumerates the host's shareable windows
 // (ScreenCaptureKit), binds ONE shared UDP media + cursor flow (`NWVideoMuxDatagramTransport`), and
@@ -39,11 +39,11 @@ struct VideoHostdArguments {
     var scale: Double = 1.0 // capture at window-points × scale PIXELS (1 = point-res/light; raise for sharper)
     var bitrateMbps: Int = 12 // live-encoder target bitrate (Mbps); raise for crisper text
     var fps: Int = 30 // encoder frame-rate cap (coding tool, not game stream); --fps 60 for smoother motion
-    // Feature #1: OPTIONALLY create a HiDPI 2× virtual display and move each remoted window onto it, so it
+    // OPTIONALLY create a HiDPI 2× virtual display and move each remoted window onto it, so it
     // renders at REAL Retina backing (sharp text) instead of a point-res upscale on a 1× host.
-    // DEFAULT OFF (2026-07-05, user directive): capture the REAL display directly — no synthetic display in
-    // the host's arrangement, no window parking. On a 1× host that means 1× capture (softer text); the VD
-    // is the ONLY way to get 2× on a 1× host, so opt back in with `--virtual-display` / `SLOPDESK_VD=1`.
+    // DEFAULT OFF: capture the REAL display directly — no synthetic display in the host's arrangement,
+    // no window parking. On a 1× host that means 1× capture (softer text); the VD is the ONLY way to get
+    // 2× on a 1× host, so opt back in with `--virtual-display` / `SLOPDESK_VD=1`.
     var virtualDisplay = false
     var vdPointWidth = 1920 // VD logical (point) size; windows larger than this are resized to fit
     var vdPointHeight = 1080
@@ -134,9 +134,9 @@ struct VideoHostdArguments {
             }
             i += 1
         }
-        // Env override (only when no explicit CLI flag was given): SLOPDESK_VD enables the now-default-OFF
-        // virtual display — only "0" keeps it off, any other value enables; a CLI flag always wins. W12:
-        // resolve through `EnvConfig` (ProcessInfo env → settings overlay) so a GUI toggle can drive it.
+        // Env override (only when no explicit CLI flag was given): SLOPDESK_VD enables the default-OFF
+        // virtual display — only "0" keeps it off, any other value enables; a CLI flag always wins.
+        // Resolve through `EnvConfig` (ProcessInfo env → settings overlay) so a GUI toggle can drive it.
         if !vdExplicit, let vd = EnvConfig.string("SLOPDESK_VD") {
             a.virtualDisplay = (vd != "0")
         }
@@ -149,7 +149,7 @@ struct VideoHostdArguments {
     }
 }
 
-// W12 (decision #10): fold the `video-prefs.json` sidecar into `EnvConfig.overlay` at launch, BEFORE
+// Fold the `video-prefs.json` sidecar into `EnvConfig.overlay` at launch, BEFORE
 // any consumer's `static let` (QPController / LiveCongestionController / …) is forced — they resolve
 // ProcessInfo env → overlay → default, so a GUI setting applies on the next connect. A real
 // `SLOPDESK_*` env var still wins (the sidecar only fills gaps). No live reload — the video flags
@@ -192,7 +192,7 @@ func cpuBrandString() -> String {
     return String(bytes: buf.prefix(while: { $0 != 0 }), encoding: .utf8) ?? ""
 }
 
-/// C6 BUG A: everything the lazy VD re-create needs after a WindowServer termination — the
+/// Everything the lazy VD re-create needs after a WindowServer termination — the
 /// launch-time geometry/fps to re-apply, and the single-flight + cooldown gate so concurrent mints
 /// never stack blocking `applySettings:` calls. Armed ONLY when the launch-time create succeeded
 /// (an environment where the VD never worked should not retry on every hello).
@@ -202,7 +202,7 @@ struct VDRecreateContext {
     let gate = VirtualDisplayRecreateGate()
 }
 
-/// Resolve a pane's capture placement (feature #1): PARK its window on the LIVE virtual display
+/// Resolve a pane's capture placement: PARK its window on the LIVE virtual display
 /// (captured at the VD's real backing scale → sharp) or fall back to 1× in place. The VD is
 /// re-queried per mint so a WindowServer-terminated VD (displayID cleared) cleanly degrades. Returns
 /// the capture scale, the authoritative post-move POINT size (`nil` ⇒ 1× window frame), and the
@@ -222,7 +222,7 @@ func resolvePaneCapture(
         guard let vd = holder.currentVirtualDisplay() else { return (CGDirectDisplayID(0), 1) }
         return (vd.displayID, vd.scale)
     }
-    // C6 BUG A: the VD is DEAD (WindowServer terminated it — displayID cleared by the termination
+    // The VD is DEAD (WindowServer terminated it — displayID cleared by the termination
     // handler, so no park can target it). Lazily re-create it on this park request — single-flight
     // + cooldown via the gate; a losing/throttled mint just captures 1× and a later hello retries.
     if liveVDID == 0, let recreate, recreate.gate.begin(now: ProcessInfo.processInfo.systemUptime) {
@@ -264,15 +264,15 @@ func resolvePaneCapture(
 /// smoothness-over-sharpness lever measured to keep the HW encoder under the 60fps frame budget.
 @Sendable
 func resolveCaptureScaleOverride(vdScale: Double) -> Double {
-    // W12: resolve through `EnvConfig` (ProcessInfo env → settings overlay) so a GUI setting can
-    // override it; an EMPTY overlay is byte-identical to the previous `ProcessInfo` read.
+    // Resolve through `EnvConfig` (ProcessInfo env → settings overlay) so a GUI setting can
+    // override it; an EMPTY overlay is byte-identical to a plain `ProcessInfo` read.
     guard let s = EnvConfig.string("SLOPDESK_CAPTURE_SCALE"),
           let v = Double(s), v >= 1
     else { return vdScale }
     return min(vdScale, v)
 }
 
-// MARK: - C6 BUG C: next-launch parked-window hygiene
+// MARK: - Next-launch parked-window hygiene
 
 /// The global bounds of every online display — the ``StrandedWindowRestorePolicy`` input. Empty on
 /// any CG failure (the predicate then fails SOFT: no window is moved on uncertainty).
@@ -301,7 +301,7 @@ func currentWindowFrame(windowID: UInt32, expectedPid: Int32) -> CGRect? {
     return frame
 }
 
-/// C6 BUG C: recover windows a CRASHED/SIGKILLed previous daemon left stranded on its (now gone)
+/// Recover windows a CRASHED/SIGKILLed previous daemon left stranded on its (now gone)
 /// virtual display (clean shutdown restores through `performGracefulShutdown`). Reads the parked-window
 /// sidecar the previous run persisted, deletes it FIRST (one-shot — a hygiene crash must not loop), then
 /// AX-restores each recorded window that still exists (same windowID AND owner pid) and still sits at an
@@ -476,8 +476,8 @@ final class Holder: @unchecked Sendable {
     private let lock = NSLock()
     private var registry: VideoMuxSessionRegistry?
     private var mux: NWVideoMuxDatagramTransport?
-    private var virtualDisplay: VirtualDisplay? // feature #1: held for daemon lifetime (ARC owns the CGVirtualDisplay)
-    private var parkingManager: WindowParkingManager? // feature #1: restores parked windows on close/shutdown/VD-death
+    private var virtualDisplay: VirtualDisplay? // held for daemon lifetime (ARC owns the CGVirtualDisplay)
+    private var parkingManager: WindowParkingManager? // restores parked windows on close/shutdown/VD-death
     func setMux(_ r: VideoMuxSessionRegistry, _ m: NWVideoMuxDatagramTransport) { lock.lock()
         registry = r
         mux = m
@@ -527,7 +527,7 @@ final class ShutdownGate: @unchecked Sendable {
 let shutdownGate = ShutdownGate()
 
 // A one-shot latch so a second SIGINT during the async shutdown does not spawn a second teardown Task
-// that calls `exit(0)` again (two concurrent libc `exit()` calls are UB). R16 HOSTD-1.
+// that calls `exit(0)` again (two concurrent libc `exit()` calls are UB).
 final class VideoShutdownLatch: @unchecked Sendable {
     private let lock = NSLock()
     private var fired = false
@@ -552,11 +552,11 @@ func performGracefulShutdown(_ signalName: String) {
     shutdownGate.close() // reject any hello that lands during the drain (no new mint onto the VD)
     Task {
         if let (registry, mux) = holder.currentMux() {
-            // RECONNECT-WEDGE FIX (2026-07-03): tell every live client FIRST — a clean daemon stop
-            // (redeploy/restart) used to close the sockets silently, leaving each client's session
-            // `.streaming` forever (frozen pane + dead input until app relaunch). The bye triggers
-            // the client's rebuild-and-re-hello path immediately; ×2 because a bye is one unacked
-            // UDP datagram (same discipline as the VD-termination drain).
+            // Tell every live client FIRST — closing the sockets silently on a
+            // clean daemon stop (redeploy/restart) would leave each client's session `.streaming`
+            // forever (frozen pane + dead input until app relaunch). The bye triggers the client's
+            // rebuild-and-re-hello path immediately; ×2 because a bye is one unacked UDP datagram
+            // (same discipline as the VD-termination drain).
             let bye = VideoControlMessage.bye.encode()
             for id in await registry.liveChannelIDs {
                 mux.send(bye, on: .control, channelID: id)
@@ -618,7 +618,7 @@ final class MuxRetireBox: @unchecked Sendable {
     }
 }
 
-/// C6 BUG A: the VD-termination drain. Every live session whose window was PARKED on the dead VD
+/// The VD-termination drain. Every live session whose window was PARKED on the dead VD
 /// is still capturing it — a silent client freeze — so bye + stop each one (the client's existing
 /// disconnect/reconnect UI engages; its fresh hello re-mints onto the re-created VD or 1×), then
 /// restore every parked window. The pure decision is `VirtualDisplayTerminationPolicy`
@@ -656,17 +656,17 @@ func handleVirtualDisplayTermination(holder: Holder, parkingManager: WindowParki
     )
 }
 
-/// Feature #1 bring-up + the C6 lifecycle wiring, extracted from the launch Task. Runs the C6
-/// BUG C launch hygiene, builds the daemon-lifetime `VirtualDisplay` + `WindowParkingManager`
-/// (mirroring the parked set to the crash sidecar), creates the VD when enabled, and arms the C6
-/// BUG A termination drain + lazy re-create. Returns the parking manager and the recreate context
+/// Virtual-display bring-up + lifecycle wiring, extracted from the launch Task. Runs the
+/// launch hygiene, builds the daemon-lifetime `VirtualDisplay` + `WindowParkingManager`
+/// (mirroring the parked set to the crash sidecar), creates the VD when enabled, and arms the
+/// termination drain + lazy re-create. Returns the parking manager and the recreate context
 /// (`nil` when the VD is disabled or its launch-time create failed).
 @Sendable
 func bringUpVirtualDisplay(
     args: VideoHostdArguments,
     holder: Holder,
 ) async -> (parkingManager: WindowParkingManager, vdRecreate: VDRecreateContext?) {
-    // C6 BUG C: next-launch hygiene BEFORE a fresh VD exists — restore windows a previous CRASHED
+    // Next-launch hygiene BEFORE a fresh VD exists — restore windows a previous CRASHED
     // daemon left stranded (the sidecar below is the crash journal), then keep the sidecar
     // mirrored to every park/unpark so the NEXT unclean exit is recoverable too.
     let parkingSidecarURL = WindowParkingSnapshot.defaultSidecarURL()
@@ -703,7 +703,7 @@ func bringUpVirtualDisplay(
         log("WARNING: virtual display unavailable — capturing 1×, text SOFT. Set SLOPDESK_VD=0 to silence.")
         return (parkingManager, nil)
     }
-    // C6 BUG A: recover when WindowServer later tears the VD down (sleep/wake, GPU reset,
+    // Recover when WindowServer later tears the VD down (sleep/wake, GPU reset,
     // fast-user-switch). `handleTermination` already cleared `displayID` by the time this fires,
     // so concurrent mints fail SOFT to 1× (no re-park onto the dead VD); the drain then
     // disconnects the affected sessions + restores their windows.
@@ -720,7 +720,7 @@ func bringUpVirtualDisplay(
             "note: --fps \(args.fps) exceeds 60; the VD advertises a \(args.fps)Hz mode but the encoder fps is the real cap",
         )
     }
-    // C6 BUG A: arm the lazy re-create — after a WindowServer termination, the next park request
+    // Arm the lazy re-create — after a WindowServer termination, the next park request
     // re-creates the VD (single-flight + cooldown) instead of leaving every later pane soft at 1×
     // until a daemon restart.
     return (parkingManager, VDRecreateContext(geometry: geo, fps: args.fps))
@@ -759,7 +759,7 @@ Task {
             exit(0)
         }
 
-        // ── WF-7 (#9) LTR capability probe (SLOPDESK_LTR_PROBE, default OFF) — DIAGNOSTIC ONLY ──────────
+        // ── LTR capability probe (SLOPDESK_LTR_PROBE, default OFF) — DIAGNOSTIC ONLY ──────────
         // Runs ONCE here, BEFORE `mux.start` admits any client, on a THROWAWAY VTCompressionSession that
         // never touches a live encoder, and logs a single `LTR-PROBE:` verdict line to stderr. Placing it
         // before the listener guarantees zero HW-encoder concurrency (no live session can exist yet).
@@ -781,7 +781,7 @@ Task {
         let bitrate = args.bitrateMbps * 1_000_000
         let mediaPort = args.mediaPort, cursorPort = args.cursorPort
 
-        // ── Feature #1: optional HiDPI 2× virtual display ────────────────────────────────────────
+        // ── Optional HiDPI 2× virtual display ────────────────────────────────────────
         // Created ONCE and SHARED across panes (held by `holder` for the daemon lifetime — recreating
         // it mid-session risks the SCK FB17797423 wrong-framebuffer bug). Each remoted window is then
         // moved onto it (per-mint, below) via the `WindowParkingManager` so it renders at REAL Retina
@@ -789,12 +789,12 @@ Task {
         // display. The manager remembers each window's original frame and restores it on pane close /
         // shutdown / VD termination. ANY failure (private API absent, WindowServer refusal,
         // pixel-limit) leaves the VD displayID at 0 → capture stays at the existing 1× `effectiveScale`.
-        // Never crashes. C6: the bring-up (incl. launch hygiene, the crash sidecar mirror, the
+        // Never crashes. The bring-up (incl. launch hygiene, the crash sidecar mirror, the
         // termination drain, and the lazy re-create context) is extracted to
         // `bringUpVirtualDisplay` above.
         let (parkingManager, vdRecreate) = await bringUpVirtualDisplay(args: args, holder: holder)
 
-        // CONCURRENCY-HOST-1 mux analogue: the shared transport arms the per-lane reaper.
+        // The shared transport arms the per-lane reaper.
         let mux = NWVideoMuxDatagramTransport(mediaPort: mediaPort, cursorPort: cursorPort)
         // One shared sink table both the registry (reads on dispatch) and the per-lane transports
         // (register synchronously inside session.start) use, so the triggering hello is delivered
@@ -824,7 +824,7 @@ Task {
             guard let w = live.first(where: { $0.windowID == requestedWindowID }) else {
                 throw VideoHostdError.muxNoWindow(requestedWindowID: requestedWindowID)
             }
-            // ⚠️ FIX #7 (UN-coded, documented limitation — needs two panes naming the SAME windowID):
+            // ⚠️ Documented, un-coded limitation — needs two panes naming the SAME windowID:
             // each lane mints its OWN session bound to this `windowID`. Two lanes on one windowID would
             // each AX-resize the SAME real window on a resizeRequest, so concurrent resizes can fight
             // (last write wins, capture/window aspect can briefly disagree). This atypical config is
@@ -835,7 +835,7 @@ Task {
                 sinkTable: sinkTable,
                 onRetire: { id in retireBox.retire(id) },
             )
-            // Feature #1: PARK this window on the VD (AX move via the parking manager, which remembers
+            // PARK this window on the VD (AX move via the parking manager, which remembers
             // the original frame for restore) and capture at the VD's real backing scale; falls back
             // to 1× in place if the VD is down/terminated or the move fails. See `resolvePaneCapture`.
             let placement = await resolvePaneCapture(
@@ -878,7 +878,7 @@ Task {
         retireBox.bind { id in Task { await registry.retire(id)
             await parkingManager.unpark(channelID: id) // restore the window when its last pane closes
         } }
-        // CONCURRENCY-HOST-1: when the reaper reclaims a dead lane, retire it AND stop its session
+        // When the reaper reclaims a dead lane, retire it AND stop its session
         // (capture/encode actually stops — the leak `retire` alone left), then restore its window.
         mux.onReapLane = { id in await registry.retireAndStop(id)
             await parkingManager.unpark(channelID: id)

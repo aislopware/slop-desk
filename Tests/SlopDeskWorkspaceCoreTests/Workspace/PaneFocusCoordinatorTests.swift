@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Tests for ``PaneFocusCoordinator`` registration semantics — specifically the R13 #8 make-before-
+/// Tests for ``PaneFocusCoordinator`` registration semantics — specifically the make-before-
 /// dismantle race: a host that dismantles must unregister BY IDENTITY so it cannot clobber a NEW host
 /// that already re-registered under the same paneID. The coordinator is cross-platform (it compiles on
 /// macOS, where there is no UIKit first-responder model), so this is unit-testable without a device.
@@ -29,8 +29,8 @@ final class PaneFocusCoordinatorTests: XCTestCase {
         XCTAssertFalse(a.became, "the dismantled host A never focuses")
     }
 
-    /// Contrast — the OLD by-paneID unregister drops WHATEVER is registered, clobbering the live B. This
-    /// documents exactly why `dismantleUIView` must unregister by identity, not by paneID (R13 #8).
+    /// Contrast — by-paneID unregister drops WHATEVER is registered, clobbering the live B. This
+    /// documents exactly why `dismantleUIView` must unregister by identity, not by paneID.
     func testUnregisterByPaneIDClobbersReregisteredHost() {
         let coord = PaneFocusCoordinator()
         let id = PaneID()
@@ -39,6 +39,6 @@ final class PaneFocusCoordinatorTests: XCTestCase {
         coord.register(b, for: id)
         coord.unregister(id) // by-paneID drops the live B too
         coord.focus(id)
-        XCTAssertFalse(b.became, "by-paneID unregister wrongly dropped the live host (the R13 #8 bug)")
+        XCTAssertFalse(b.became, "by-paneID unregister wrongly dropped the live host")
     }
 }

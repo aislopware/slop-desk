@@ -1,9 +1,9 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E1 WI-2 (ES-E1-2): pins ``WorkspaceStore/cyclePaneFocusTree(forward:)`` — the ⌘]/⌘[ "focus next/
+/// Pins ``WorkspaceStore/cyclePaneFocusTree(forward:)`` — the ⌘]/⌘[ "focus next/
 /// previous pane" walk over the ACTIVE TAB's panes in pre-order DFS, wrapping at the ends, a no-op below
-/// two panes. Distinct from ⌘⇧]/⌘⇧[ tab cycling (E1 re-scopes those chords; this is the pane-level walk).
+/// two panes. Distinct from ⌘⇧]/⌘⇧[ tab cycling, which uses separate chords; this is the pane-level walk.
 ///
 /// The pure ``WorkspaceStore/paneCycleTreeTarget(forward:)`` resolver is asserted in isolation (the wrap /
 /// no-op guard, mirroring `recentPaneTarget` / `inGroupCycleTarget`), then the public mutating
@@ -108,10 +108,10 @@ final class CyclePaneFocusTreeTests: XCTestCase {
         XCTAssertEqual(activePane(store), only)
     }
 
-    // MARK: - Pure op (WorkspaceTreeOps.cyclePaneTarget / cyclePaneFocus) — E3 WI-5
+    // MARK: - Pure op (WorkspaceTreeOps.cyclePaneTarget / cyclePaneFocus)
 
     /// The pure ``WorkspaceTreeOps/cyclePaneTarget(forward:in:)`` — the SINGLE source of the DFS-wrap math
-    /// the store now delegates to (E3 ES-E3-5) — steps through the active tab's `Tab.allPaneIDs()` DFS
+    /// the store delegates to — steps through the active tab's `Tab.allPaneIDs()` DFS
     /// order forward and backward. Asserts against the canonical `allPaneIDs()` indexing (never the op's
     /// own derivation), so a regression in the step math fails the test.
     func testPureOpStepsDFSOrderForwardAndBackward() {

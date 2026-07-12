@@ -1,9 +1,9 @@
 import Foundation
 import SlopDeskVideoProtocol
 
-// MARK: - WorkspaceBindingRegistry × KeybindingPreferences (W13 — user overrides)
+// MARK: - WorkspaceBindingRegistry × KeybindingPreferences (user overrides)
 
-/// W13: the wiring that makes the W6 ``WorkspaceBindingRegistry`` resolve a chord using the W12
+/// The wiring that makes ``WorkspaceBindingRegistry`` resolve a chord using the
 /// ``KeybindingPreferences`` OVERRIDE when one is present — WITHOUT duplicating the binding table. The
 /// registry stays the single source of truth for the available commands + their DEFAULT chords; this
 /// extension layers a sparse `bindingID → chord` override map on top.
@@ -11,14 +11,14 @@ import SlopDeskVideoProtocol
 /// Two `KeyChord` shapes meet here:
 ///   • the registry's framework-neutral ``KeyChord`` (enum `Key` + `Modifiers` OptionSet), the keyboard
 ///     dispatcher's join key;
-///   • W12's serialisable ``KeybindingPreferences/KeyChord`` (a `key: String` + four `Bool` modifier
+///   • the serialisable ``KeybindingPreferences/KeyChord`` (a `key: String` + four `Bool` modifier
 ///     flags), what the Settings UI stores + round-trips.
 /// ``KeybindingPreferences/KeyChord/asRegistryChord`` maps the persisted shape into the dispatcher
 /// shape so `resolvedChord(for:)` and `resolvedChordTable` honour an override transparently.
 public extension WorkspaceBindingRegistry {
     /// The process-wide live keybinding overrides, published by the ``PreferencesStore`` on a settings
-    /// change (W13 apply path #4). EMPTY by default ⇒ every binding resolves to its registry default ⇒
-    /// behaviour-identical to W6. `nonisolated(unsafe)` for the same write-once-then-read-many contract
+    /// change. EMPTY by default ⇒ every binding resolves to its registry default ⇒ behaviour-identical
+    /// to the no-override registry. `nonisolated(unsafe)` for the same write-once-then-read-many contract
     /// as ``EnvConfig/overlay``: the store sets it on the main actor; the dispatcher reads it.
     nonisolated(unsafe) static var activeOverrides = KeybindingPreferences()
 
@@ -64,7 +64,7 @@ public extension WorkspaceBindingRegistry {
         return map
     }
 
-    // MARK: - Sequence-aware resolution (W-B prefix sequences)
+    // MARK: - Sequence-aware resolution (prefix sequences)
 
     /// The full SEQUENCE that should fire `action` RIGHT NOW: the user override sequence (single-chord OR
     /// multi-key) if one is set for the action's binding id, else the registry default sequence. The prefix
@@ -102,9 +102,9 @@ public extension WorkspaceBindingRegistry {
     }
 }
 
-// MARK: - Text-binding / unbind resolution (E1/WI-6 + WI-7)
+// MARK: - Text-binding / unbind resolution
 
-/// E1/WI-7: the dispatcher consults these BEFORE the action table. A `text:`/`csi:`/`esc:` config binding
+/// The dispatcher consults these BEFORE the action table. A `text:`/`csi:`/`esc:` config binding
 /// sends raw bytes to the focused terminal (a literal-byte binding); an `unbind:` suppresses the
 /// default action so the chord passes through to the responder chain. Both maps are keyed by the persisted
 /// ``KeybindingPreferences/KeyChord`` shape, so a registry ``KeyChord`` (what the live dispatcher's
@@ -144,7 +144,7 @@ public extension WorkspaceBindingRegistry {
 // MARK: - registry KeyChord → KeybindingPreferences.KeyChord (the reverse bridge)
 
 public extension KeyChord {
-    /// Map the registry's framework-neutral ``KeyChord`` into the persisted W12 shape
+    /// Map the registry's framework-neutral ``KeyChord`` into the persisted shape
     /// (``KeybindingPreferences/KeyChord``) so a live keystroke can be looked up in the chord-keyed
     /// `textBindings` / `unbinds` maps. The INVERSE of ``KeybindingPreferences/KeyChord/asRegistryChord``:
     /// it emits the canonical named-key token `mapKey` round-trips (`"return"`, `"left"`, `"pageup"`, …) so
@@ -183,7 +183,7 @@ public extension KeyChord {
 // MARK: - KeybindingPreferences.KeyChord → registry KeyChord
 
 public extension KeybindingPreferences.KeyChord {
-    /// Map the persisted W12 chord (`key: String` + modifier flags) into the registry's framework-neutral
+    /// Map the persisted chord (`key: String` + modifier flags) into the registry's framework-neutral
     /// ``KeyChord``. Named keys (`"return"`, `"left"`, `"tab"`, …) map to the registry's `Key` cases; a
     /// single printable character maps to `.character`. An empty / multi-char / unknown-named key yields
     /// `nil` (validate-then-default: the resolver then keeps the registry default).
@@ -230,7 +230,7 @@ public extension KeybindingPreferences.KeyChord {
 // MARK: - KeybindingPreferences.KeySequence → registry KeySequence
 
 public extension KeybindingPreferences.KeySequence {
-    /// Map the persisted W-B sequence (a list of serialisable chords) into the dispatcher's framework-neutral
+    /// Map the persisted sequence (a list of serialisable chords) into the dispatcher's framework-neutral
     /// ``KeySequence``. EVERY chord must map (via ``KeybindingPreferences/KeyChord/asRegistryChord``); if ANY
     /// chord is unmappable (a malformed stored value) the whole sequence yields `nil` (validate-then-default:
     /// the resolver then keeps the registry default rather than firing a partial / wrong sequence).

@@ -1,11 +1,11 @@
-// WorkspaceKeyDispatcher — the LIVE keybinding dispatcher (WS-B / B3).
+// WorkspaceKeyDispatcher — the LIVE keybinding dispatcher.
 //
-// Re-scope of the old "no NSEvent monitor — an off-menu binding is a dead chord" rule (DECISIONS.md, the
-// ⌘⇧I sync-input note): it held only while every chord was a single ⌘/⌥ shortcut a SwiftUI `.commands` menu
-// could express. A tmux/zellij MULTI-KEY prefix (⌃A then D) can't be a `.keyboardShortcut`, and a `.commands`
-// menu can't SWALLOW the follow-up key BEFORE the terminal first responder (libghostty's
-// `GhosttyLayerBackedView`) sees it — so the second key would leak into the PTY. Hence ONE app-level
-// `NSEvent.addLocalMonitorForEvents(matching: .keyDown)` installed at launch. DECISIONS.md records the re-scope.
+// A "no NSEvent monitor — an off-menu binding is a dead chord" rule (DECISIONS.md, the ⌘⇧I sync-input
+// note) only holds while every chord is a single ⌘/⌥ shortcut a SwiftUI `.commands` menu can express.
+// A tmux/zellij MULTI-KEY prefix (⌃A then D) can't be a `.keyboardShortcut`, and a `.commands` menu can't
+// SWALLOW the follow-up key BEFORE the terminal first responder (libghostty's `GhosttyLayerBackedView`)
+// sees it — so the second key would leak into the PTY. Hence ONE app-level
+// `NSEvent.addLocalMonitorForEvents(matching: .keyDown)` installed at launch. DECISIONS.md records the scope.
 //
 // CONTRACT (load-bearing): a BARE unmodified key MUST pass through untouched — normal typing always reaches
 // the PTY/video responder. The monitor only intercepts:
@@ -16,7 +16,7 @@
 //
 // PURITY: NSEvent→`KeyChord` normalization lives in the pure, AppKit-free `KeyChordNormalizer` (mirrors
 // GhosttyTerminalView's `ghosttyMods` + `charactersIgnoringModifiers` for parity) so it's unit-tested
-// headlessly; transition logic lives in the pure `PrefixStateMachine` (B2). Only NSEvent→intent wiring is here.
+// headlessly; transition logic lives in the pure `PrefixStateMachine`. Only NSEvent→intent wiring is here.
 
 #if os(macOS)
 import AppKit
@@ -38,8 +38,8 @@ final class WorkspaceKeyDispatcher {
     /// `nil` (headless / test default) keeps `.globalSearch` a graceful no-op via `route` — never a dead chord.
     private let toggleGlobalSearch: (() -> Void)?
     /// The Jump-To panel toggle (⌘J). ``OverlayCoordinator`` state, passed as a closure; `nil` (headless /
-    /// test default) keeps `.jumpTo` a graceful no-op via `route` — never a dead chord. E11 re-points ⌘J to
-    /// "open Open-Quickly at `.current`" (folded-in Jump-To); still threaded here as `toggleJumpTo`.
+    /// test default) keeps `.jumpTo` a graceful no-op via `route` — never a dead chord. ⌘J opens Open-Quickly
+    /// at `.current` (Jump-To is folded into it); still threaded here as `toggleJumpTo`.
     private let toggleJumpTo: (() -> Void)?
     /// The Open-Quickly picker toggle (⌘⇧O → the merged `.all` pill). ``OverlayCoordinator`` state
     /// (`openQuicklyVisible`/`openQuicklyFilter`), passed as a closure; `nil` (headless / test default) keeps
@@ -91,7 +91,7 @@ final class WorkspaceKeyDispatcher {
     /// exactly while a follow-up key is awaited. `{ _ in }` (headless / test default) keeps the dispatcher inert.
     private let onPrefixArmedChange: (Bool) -> Void
 
-    /// The pure prefix machine (B2). Its sequence resolver reads the override-aware `resolvedSequenceTable`
+    /// The pure prefix machine. Its sequence resolver reads the override-aware `resolvedSequenceTable`
     /// (single-chord fallback to `resolvedChordTable`) so a rebind — single OR multi-key — takes effect; the
     /// prefix chord is configurable (defaults to the store's live `workspaceKeyPrefix`).
     private let machine: PrefixStateMachine

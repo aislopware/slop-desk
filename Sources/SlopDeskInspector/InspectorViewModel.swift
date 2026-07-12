@@ -16,7 +16,7 @@ public final class InspectorViewModel {
     /// Tool cards in arrival order (timeline). Keyed lookup keeps pairing O(1).
     public private(set) var toolCards: [ToolCard] = []
     private var toolCardIndex: [String: Int] = [:]
-    /// How many oldest main tool cards the drop-oldest cap has evicted (UI/UX pass-3 #9) — surfaced as a
+    /// How many oldest main tool cards the drop-oldest cap has evicted — surfaced as a
     /// "N earlier steps hidden" banner so a long session does not silently lose the start of its timeline.
     /// Monotonic; reset in `consume()` so a fromSeq:0 replay rebuilds rather than doubles it.
     public private(set) var evictedToolCardCount = 0
@@ -35,9 +35,9 @@ public final class InspectorViewModel {
 
     /// Drop-oldest caps so a long session (or a host emitting tens of thousands of tool calls) cannot
     /// grow client memory without bound — the host already bounds its analogues (InspectorReplayLog
-    /// 50k, EventBuilder 100k), so the client was the unbounded end (R12 #7). Eviction is batched
+    /// 50k, EventBuilder 100k), so the client was the unbounded end. Eviction is batched
     /// (cap → retain, not one-at-a-time) so it stays amortized O(1) like the host. The OUTER agent-count
-    /// dimension is bounded too (R13 #4): `subagentOrder` evicts the oldest agents' node + cards + index
+    /// dimension is bounded too: `subagentOrder` evicts the oldest agents' node + cards + index
     /// TOGETHER so `subagentTree` never references an orphan (drop-oldest, NOT terminal-status — a
     /// `.stopped` agent is still rendered, so status eviction would vanish a visible node).
     static let toolCardCap = 20000
@@ -73,12 +73,12 @@ public final class InspectorViewModel {
     private static let recentUnknownLinesCap = 50
 
     /// Number of oldest events the HOST replay log dropped (retention overflow) before the prefix this
-    /// client subscribed from (R17 INSP-WIRE-1). `> 0` means the timeline starts mid-transcript; the UI
+    /// client subscribed from. `> 0` means the timeline starts mid-transcript; the UI
     /// can disclose "N earlier steps dropped" instead of presenting a truncated history as complete.
     public private(set) var droppedReplayEventCount = 0
 
     /// Liveness of the consumed inspector feed. Surfaced as a banner so frozen tool cards don't look
-    /// live forever — on macOS there is no in-session auto-resume (PIECE C), so a feed that `.ended`
+    /// live forever — on macOS there is no in-session auto-resume, so a feed that `.ended`
     /// or `.failed` stays stale until the next iOS pause/resume cycle.
     public enum FeedState: Sendable, Equatable { case live, ended, failed }
     public private(set) var feedState: FeedState = .live
@@ -86,7 +86,7 @@ public final class InspectorViewModel {
     /// Whether anything user-visible has been folded into the timeline yet (drives the empty-state
     /// placeholder). **Excludes `messages`** (stored but never rendered today — including it would
     /// reintroduce a blank panel) and the always-present session header. Uses `subagentTree` (NOT the
-    /// raw `subagents` dict): the tree drops empty-id + self-parent nodes (R11), so a single malformed
+    /// raw `subagents` dict): the tree drops empty-id + self-parent nodes, so a single malformed
     /// empty-id subagent must NOT suppress the placeholder while rendering nothing (the exact blank-void
     /// this gate exists to prevent — `subagentTree.isEmpty` ⟺ the subagent section renders nothing).
     public var hasRenderableActivity: Bool {
@@ -128,7 +128,7 @@ public final class InspectorViewModel {
                 recentUnknownLines.removeFirst(recentUnknownLines.count - Self.recentUnknownLinesCap)
             }
         case let .historyTruncated(droppedCount):
-            // Latest-wins (a re-replay re-sends the current drop count) — not accumulated. R17 INSP-WIRE-1.
+            // Latest-wins (a re-replay re-sends the current drop count) — not accumulated.
             droppedReplayEventCount = droppedCount
         }
     }
@@ -139,7 +139,7 @@ public final class InspectorViewModel {
         // An iOS pause/resume reuses this SAME model and re-subscribes `fromSeq: 0`, so the host
         // replays its ENTIRE history into us again. Cards/subagents self-dedupe by id (upsert), but
         // these monotonic accumulators do NOT — without a reset, every resume DOUBLES the displayed
-        // "N thinking steps" / "N unrecognised lines" and re-appends duplicate messages (R12 #4).
+        // "N thinking steps" / "N unrecognised lines" and re-appends duplicate messages.
         // Clear them so a full replay REBUILDS, not inflates, them. (Safe only because the client
         // always subscribes fromSeq:0 — a future partial-resume path would need a seq watermark or
         // stable-key dedup here instead; see LivePaneSession.subscribeInspector.)
@@ -149,7 +149,7 @@ public final class InspectorViewModel {
         recentUnknownLines = []
         messages = []
         evictedToolCardCount = 0
-        droppedReplayEventCount = 0 // latest-wins; reset so a re-replay rebuilds it (R17 INSP-WIRE-1)
+        droppedReplayEventCount = 0 // latest-wins; reset so a re-replay rebuilds it
         do {
             for try await event in events {
                 apply(event)
@@ -159,7 +159,7 @@ public final class InspectorViewModel {
             feedState = .failed
             // Read-only viewer: a transport error (e.g. a true framing desync,
             // InspectorChannel `frameTooLarge`) just ends the feed. There is no in-session
-            // live resubscribe today — that is deferred to PIECE C. The feed resumes on the
+            // live resubscribe today. The feed resumes on the
             // next iOS pause/resume cycle, when LivePaneSession.resume → subscribeInspector
             // opens a fresh connection and subscribes(fromSeq: 0) from the host replay log.
         }
@@ -179,7 +179,7 @@ public final class InspectorViewModel {
     public var subagentTree: [SubagentTreeNode] {
         let all = Array(subagents.values)
         let byParent = Dictionary(grouping: all) { $0.parentID ?? "" }
-        // `visited` is the set of parent keys on the CURRENT recursion path (R11). A node whose id is
+        // `visited` is the set of parent keys on the CURRENT recursion path. A node whose id is
         // already on the path must NOT be recursed into — otherwise a self-parent, or the degenerate
         // EMPTY-STRING id (which groups under the `""` root and would recurse `build("")` forever →
         // stack-overflow / @MainActor SIGSEGV from one malformed/empty subagent id in tolerant input),
@@ -213,7 +213,7 @@ public final class InspectorViewModel {
             if toolCards.count > Self.toolCardCap {
                 let drop = toolCards.count - Self.toolCardRetain
                 toolCards.removeFirst(drop)
-                evictedToolCardCount += drop // track the truncation so the UI can disclose it (pass-3 #9)
+                evictedToolCardCount += drop // track the truncation so the UI can disclose it
                 // Every surviving card's index shifted down by `drop` — rebuild the lookup from the
                 // surviving slice so a later upsert of a retained id still resolves in place.
                 toolCardIndex = Dictionary(uniqueKeysWithValues: toolCards.enumerated().map { ($1.id, $0) })

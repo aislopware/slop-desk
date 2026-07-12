@@ -2,7 +2,7 @@ import XCTest
 @testable import SlopDeskVideoProtocol
 
 /// Tests for `ScrollResampler` — the bursty-low-rate → steady-high-rate scroll resampler that fixes
-/// the VS Code remote-scroll "giật" (HW-measured: Chromium needs ~250 Hz injection to render 60 fps;
+/// the VS Code remote-scroll judder (HW-measured: Chromium needs ~250 Hz injection to render 60 fps;
 /// the wire delivers ~60–120 Hz). The load-bearing invariant is TOTAL PRESERVATION: the summed output
 /// must equal the summed input (to <1 px/axis), or remote scroll would drift away from the user's
 /// gesture. Also pinned: markers pass through 1:1, the continuous stream resamples to a high tick

@@ -3,7 +3,7 @@ import XCTest
 @testable import SlopDeskClient
 @testable import SlopDeskWorkspaceCore
 
-/// E14/K1 WI-2 — the per-pane OSC 9;4 PROGRESS wiring: the client validates the state at its boundary, the
+/// The per-pane OSC 9;4 PROGRESS wiring: the client validates the state at its boundary, the
 /// ``TerminalViewModel`` mirrors it (`progress`), and the store holds the per-pane `paneProgress` (→ the
 /// sidebar badge + the macOS Dock aggregate) bumping `completionFlashTick` on each edge. Entirely headless
 /// (`FakePaneSession` opens no socket; the ConnectionViewModel path drives `foldEventForTesting`, no network).
@@ -30,7 +30,7 @@ final class WorkspaceStoreProgressTests: XCTestCase {
         XCTAssertNil(store.progress(for: id), "a clear removes the indicator")
     }
 
-    /// M3: a finished command (OSC 133;D) clears the store's per-pane progress mirror too, so the sidebar rail
+    /// A finished command (OSC 133;D) clears the store's per-pane progress mirror too, so the sidebar rail
     /// doesn't rank the running tier over the just-completed ✓/✗ badge (the `9;4;5`-equivalent on the store
     /// side). Revert-to-confirm-fail: the un-fixed `handleCommandCompleted` never touched `paneProgress`, so a
     /// program that finished without an explicit `9;4;0` left a stuck spinner over the completion badge.
@@ -46,7 +46,7 @@ final class WorkspaceStoreProgressTests: XCTestCase {
 
     // MARK: - completionFlashTick bumps on an edge (the rail re-render seam), not on a dup
 
-    /// A genuine progress edge bumps ``WorkspaceStore/completionFlashTick`` (the E6 seam the sidebar rail
+    /// A genuine progress edge bumps ``WorkspaceStore/completionFlashTick`` (the seam the sidebar rail
     /// observes) so the row recomputes its fused badge; an IDENTICAL update is idempotent (no churn). Reverting
     /// the `completionFlashTick &+= 1` in `handleProgress` makes this FAIL — the tick never moves.
     func testProgressEdgeBumpsFlashTickButDupDoesNot() throws {
@@ -109,7 +109,7 @@ final class WorkspaceStoreProgressTests: XCTestCase {
 
     /// A `.progress` event folded through the ``TerminalViewModel`` sets its observable `progress` mirror (the
     /// pane status strip + Dock read it); a `.clear` resets it; the state is mapped from the validated
-    /// ``ProgressState``. Revert-to-confirm-fail: the pre-WI-2 model had no `progress` property — this would
+    /// ``ProgressState``. Revert-to-confirm-fail: a model without a `progress` property — this would
     /// not compile.
     func testTerminalModelMirrorsProgress() {
         let vm = TerminalViewModel()
@@ -137,7 +137,7 @@ final class WorkspaceStoreProgressTests: XCTestCase {
         XCTAssertNil(vm.progress, "a terminated shell reports no progress")
     }
 
-    /// M3: OSC 133;D (a command finished) clears a stuck OSC 9;4 badge — the `9;4;5`-equivalent. A program that
+    /// OSC 133;D (a command finished) clears a stuck OSC 9;4 badge — the `9;4;5`-equivalent. A program that
     /// drove a determinate bar and finished WITHOUT an explicit `9;4;0` (or was killed mid-progress) must not
     /// leave the indicator showing. `ProgressOSCParser` DROPS state 5, so the completion edge is what clears it.
     /// Revert-to-confirm-fail: the un-fixed `.commandStatus(.idle)` arm sets `shellActivity`/`lastCommand`/beep

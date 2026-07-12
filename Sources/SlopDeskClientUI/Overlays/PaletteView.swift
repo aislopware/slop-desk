@@ -1,7 +1,7 @@
-// PaletteView — the floating command palette overlay (E2 / WI-2). Renders the live state of the injected
+// PaletteView — the floating command palette overlay. Renders the live state of the injected
 // ``OverlayCoordinator`` as a VERBS-ONLY command palette: a pre-focused search field and a
 // sectioned, fzf-highlighted result list with keycap chips, a ✓ toggled-state gutter, and a keyboard-selected
-// fill row. (The per-domain filter chips moved to the E11 Open-Quickly picker — ⌘⇧P shows no chips.)
+// fill row. (The per-domain filter chips live in the Open-Quickly picker — ⌘⇧P shows no chips here.)
 //
 // Faithful to `spec/user-interface__command-palette.md` (the centered floating panel, the magnifier +
 // blue/accent caret, ALL-CAPS section headers with the WORKING-DIRECTORY badge, per-symbol keycap chips,
@@ -26,7 +26,7 @@ struct PaletteView: View {
     @Bindable var coordinator: OverlayCoordinator
     /// The live store — read-only here, for the WORKING-DIRECTORY badge (the focused pane's `lastKnownCwd`).
     let store: WorkspaceStore
-    /// Whether a row currently shows its ✓ (toggled-on) gutter. Built by the host (WI-5) from the chrome
+    /// Whether a row currently shows its ✓ (toggled-on) gutter. Built by the host from the chrome
     /// state (e.g. `id == "action.toggleSidebar" ? !chrome.sidebarCollapsed : false`) so the pure coordinator
     /// never learns about chrome. `@MainActor` so the host's closure can read the `@MainActor`
     /// ``WorkspaceChromeState`` synchronously. Defaults to "nothing toggled" for standalone mounts / previews.
@@ -134,7 +134,7 @@ struct PaletteView: View {
 
     private func sectionHeader(_ item: PaletteItem) -> some View {
         HStack(spacing: Slate.Metric.space2) {
-            // Batch-5b (B): mirror the action-row's 20pt leading ✓/icon gutter so the uppercase header text
+            // Mirror the action-row's 20pt leading ✓/icon gutter so the uppercase header text
             // shares the row LABELS' left margin (command-palette.png: the headers are FLUSH with the row
             // labels, the ✓/icon gutter sitting to their LEFT). A section header carries no glyph, so this is an
             // empty placeholder — only its width matters.
@@ -161,7 +161,7 @@ struct PaletteView: View {
         // `.padding(.horizontal, space3)` is the action-row's INNER padding; `.padding(.leading, space2)` adds
         // its OUTER inset. Together with the 20pt gutter + the `space2` HStack spacing the header text lands at
         // the EXACT x of a row label (space2 + space3 + 20 + space2), so headers + labels are flush (the row's
-        // Batch-4 inset highlight + ✓-gutter are left untouched). The trailing `space2` mirrors the action
+        // inset highlight + ✓-gutter are left untouched). The trailing `space2` mirrors the action
         // row's OUTER inset (space3 + space2 = 20pt) so the cwd pill's RIGHT edge lines up with the keycap-chip
         // column instead of jutting `space2` past it (command-palette.png: pill + keycaps share one right edge).
         .padding(.horizontal, Slate.Metric.space3)
@@ -313,7 +313,7 @@ struct PaletteView: View {
         return nil
     }
 
-    /// The focused pane's last-known working directory (E4 cwd over the wire; stale-by-RTT is acceptable for
+    /// The focused pane's last-known working directory (cwd over the wire; stale-by-RTT is acceptable for
     /// display). nil ⇒ no badge. Reads the same active-pane chain the rest of the chrome uses.
     private var workingDirectory: String? {
         guard let session = store.tree.activeSession,

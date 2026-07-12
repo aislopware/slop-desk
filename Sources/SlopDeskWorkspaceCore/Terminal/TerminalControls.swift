@@ -1,17 +1,17 @@
 import Defaults
 import Foundation
 
-// MARK: - E8 terminal-control enums (the Controls / Mouse / Scroll multi-state knobs)
+// MARK: - Terminal-control enums (the Controls / Mouse / Scroll multi-state knobs)
 
 /// A clipboard-access decision for the OSC-52 read/write gates (config keys `clipboard-read` /
 /// `clipboard-write`, libghostty `allow` / `deny` / `ask`).
 ///
 /// - ``allow``: silently honour the request.
 /// - ``deny``: silently refuse it.
-/// - ``ask``: surface the confirmation sheet (WI-6 reuses the paste-protection surface).
+/// - ``ask``: surface the confirmation sheet (reuses the paste-protection surface).
 ///
 /// PURE `String`-raw + `CaseIterable` so it bridges to `Defaults` and the pickers can enumerate it. Raw
-/// values match the libghostty config tokens 1:1, so the config builder (WI-2) emits ``RawValue``
+/// values match the libghostty config tokens 1:1, so the config builder emits ``RawValue``
 /// directly. ``init(rawValue:)`` is validate-then-repair to ``ask`` (a stale/hostile string never traps);
 /// non-failable so the `Defaults.PreferRawRepresentable` bridge works.
 public enum ClipboardAccess: String, Codable, Sendable, CaseIterable {
@@ -31,7 +31,7 @@ public enum ClipboardAccess: String, Codable, Sendable, CaseIterable {
     }
 
     /// The SILENT (no-dialog) resolution of an OSC-52 clipboard-READ request, as the text the embedder hands
-    /// `completeClipboardRead(_:confirmed: true)` (WI-6, GUI-only). ``allow`` returns the real `text`; ``deny``
+    /// `completeClipboardRead(_:confirmed: true)` (GUI-only). ``allow`` returns the real `text`; ``deny``
     /// returns `""` — a well-formed EMPTY reply that frees the request without leaking the clipboard (and,
     /// paired with `confirmed: true`, never re-trips libghostty's read gate, which a `confirmed: false`
     /// completion recurses on — the read contract differs from a paste's). ``ask`` returns `nil`: the embedder
@@ -48,7 +48,7 @@ public enum ClipboardAccess: String, Codable, Sendable, CaseIterable {
 }
 
 /// What a bare right-click does in the terminal viewport (settings key `mouse.rightClickAction`).
-/// ⌃+right-click always shows the context menu regardless of this setting (GUI site, WI-7).
+/// ⌃+right-click always shows the context menu regardless of this setting (GUI site).
 ///
 /// - ``contextMenu``: show the native context menu (the default).
 /// - ``copy``: copy the current selection.
@@ -77,16 +77,16 @@ public enum RightClickAction: String, Codable, Sendable, CaseIterable {
         }
     }
 
-    // NOTE: the LIVE bare-right-click dispatch is owned END-TO-END by libghostty — the config builder (WI-2)
+    // NOTE: the LIVE bare-right-click dispatch is owned END-TO-END by libghostty — the config builder
     // emits this action's ``rawValue`` as `right-click-action`, so the libghostty-based surface performs
     // Copy / Paste / Copy-or-Paste / Ignore / Context-Menu directly. That avoids the GUI re-reading
-    // `hasSelection()` AFTER libghostty has already word-selected under the cursor (the WI-7 race). The GUI
+    // `hasSelection()` AFTER libghostty has already word-selected under the cursor (a race). The GUI
     // view (`rightMouseDown`, compile-only behind `#if canImport(CGhostty)`) enforces ONLY the
     // ⌃-right-always-menu override; there is no client-side effect model to keep in sync.
 }
 
 /// Overscroll behaviour past the LAST line of content ("Scroll Past Last Line", default Disabled).
-/// Suppressed on the alternate screen (`ScrollPastPolicy`, WI-12, returns `nil` there so full-screen TUIs
+/// Suppressed on the alternate screen (`ScrollPastPolicy` returns `nil` there so full-screen TUIs
 /// keep their bottom edge).
 ///
 /// - ``disabled``: clamp at the buffer bottom (the default).
@@ -170,7 +170,7 @@ public enum MouseShiftCapture: String, Codable, Sendable, CaseIterable {
         }
     }
 
-    /// The libghostty `mouse-shift-capture` token this case maps to. Consumed by the config builder (WI-2);
+    /// The libghostty `mouse-shift-capture` token this case maps to. Consumed by the config builder;
     /// kept next to the enum and unit-pinned.
     ///
     /// **The mapping is INVERTED on purpose**: this enum's axis ("⇧ *selects text* even when the app captures
@@ -211,7 +211,7 @@ public enum MouseShiftCapture: String, Codable, Sendable, CaseIterable {
 
 /// How the macOS Option key is treated for terminal input ("Option as Alt", libghostty
 /// `macos-option-as-alt`, default ``off``). The client renders with libghostty, so key→byte encoding
-/// happens in the local surface — a real, reachable knob the builder (WI-2) emits.
+/// happens in the local surface — a real, reachable knob the builder emits.
 ///
 /// - ``off``: Option composes accented characters (¡, é, ©…) as normal — libghostty `false`.
 /// - ``both``: BOTH Option keys send Alt/Meta (Esc-prefixed) sequences — libghostty `true`.
@@ -238,8 +238,8 @@ public enum OptionAsAlt: String, Codable, Sendable, CaseIterable {
     }
 
     /// The libghostty `macos-option-as-alt` token this case maps to (values `false` / `true` / `left` /
-    /// `right` — see the vendored ghostty `input/config.zig` `OptionAsAlt`). Consumed by the config builder
-    /// (WI-2); kept next to the enum and unit-pinned. ``both`` → `true`, ``off`` → `false`.
+    /// `right` — see the vendored ghostty `input/config.zig` `OptionAsAlt`). Consumed by the config builder;
+    /// kept next to the enum and unit-pinned. ``both`` → `true`, ``off`` → `false`.
     public var configValue: String {
         switch self {
         case .off: "false"
@@ -250,12 +250,12 @@ public enum OptionAsAlt: String, Codable, Sendable, CaseIterable {
     }
 }
 
-// MARK: - E10 link-interaction enums (Settings → Controls → Open With / Link Schemes)
+// MARK: - Link-interaction enums (Settings → Controls → Open With / Link Schemes)
 
 /// What a `⌘`click on a detected link / path does (settings key `link-cmd-click`, default ``open``).
 ///
-/// - ``open``: open in the best handler — a file / folder opens or reveals on the HOST (over the E4
-///   metadata RPC, E10 WI-7), a URL opens in the client's system browser.
+/// - ``open``: open in the best handler — a file / folder opens or reveals on the HOST (over the
+///   metadata RPC), a URL opens in the client's system browser.
 /// - ``copy``: copy the resolved absolute path / URL to the client pasteboard.
 /// - ``nothing``: do nothing (reach links via the right-click menu / Jump-To / Hint Mode) — the escape
 ///   hatch when ⌘click conflicts with a TUI.
@@ -282,8 +282,8 @@ public enum LinkCmdClick: String, Codable, Sendable, CaseIterable {
 /// What a `⌘⇧`click on a detected link / path does (settings key `link-cmd-shift-click`, default
 /// ``revealFinder``).
 ///
-/// - ``revealFinder``: reveal the path in the HOST Finder (`open -R`-equivalent over the metadata RPC,
-///   E10 WI-7); a URL has no Finder target, so the click copies it instead.
+/// - ``revealFinder``: reveal the path in the HOST Finder (`open -R`-equivalent over the metadata RPC);
+///   a URL has no Finder target, so the click copies it instead.
 /// - ``openSystemDefault``: open the path / URL with the HOST's system-default handler.
 ///
 /// PURE `String`-raw + `CaseIterable`; CLIENT-side dispatch token. ``init(rawValue:)`` is
@@ -328,15 +328,15 @@ public enum AutoDetectLinkSchemes: String, Codable, Sendable, CaseIterable {
 
 // MARK: - TerminalControls (the fire-time control bundle the config builder consumes)
 
-/// The pure, headless bundle of E8 terminal CONTROL values the libghostty config builder (WI-2) turns into
+/// The pure, headless bundle of terminal CONTROL values the libghostty config builder turns into
 /// `copy-on-select` / `clipboard-*` / `mouse-*` config lines (+ the ⇧+arrow `adjust_selection` keybinds).
 /// Controls sibling of ``TerminalPreferences`` (render prefs) — the two are independent inputs to
 /// `TerminalConfigBuilder.string(...)`, NOT nested: the builder emits render lines from
 /// ``TerminalPreferences`` and control lines from this struct.
 ///
 /// Every field derives from a fire-time `Defaults.Keys` flag (in `SettingsKey`), so this bundle never
-/// reaches the `EnvConfig` overlay or the `video-prefs.json` sidecar — golden-safe by construction, like
-/// the E7 stubs. ``from(defaults:)`` is the single read site (`PreferencesStore.applyTerminal` rebuilds it
+/// reaches the `EnvConfig` overlay or the `video-prefs.json` sidecar — golden-safe by construction.
+/// ``from(defaults:)`` is the single read site (`PreferencesStore.applyTerminal` rebuilds it
 /// on every apply / `refreshTerminalControls()`), so the init defaults mirror the `Defaults.Keys` defaults
 /// and a default-constructed value is a faithful "factory" terminal.
 ///
@@ -371,8 +371,8 @@ public struct TerminalControls: Codable, Sendable, Equatable {
     public var clickToMove: Bool
     /// The `mouse-reporting` config line — allow programs (vim, tmux, htop) to capture mouse events (default ON).
     public var allowMouseCapture: Bool
-    /// The `mouse.rightClickAction` settings key (H7/H8) — what a bare right-click does in the viewport (default
-    /// ``RightClickAction/contextMenu``). The config builder (WI-2) emits its `rawValue` as libghostty's
+    /// The `mouse.rightClickAction` settings key — what a bare right-click does in the viewport (default
+    /// ``RightClickAction/contextMenu``). The config builder emits its `rawValue` as libghostty's
     /// `right-click-action` so libghostty owns the dispatch; the GUI view keeps only the ⌃-right-always-menu
     /// override.
     public var rightClickAction: RightClickAction
@@ -382,7 +382,7 @@ public struct TerminalControls: Codable, Sendable, Equatable {
     /// The `mouse-scroll-multiplier` config line — multiply the scroll-wheel delta (default `1.0`).
     public var scrollMultiplier: Double
     /// "Option as Alt" — whether the macOS Option key sends Alt/Meta (Esc-prefixed) sequences
-    /// (default ``OptionAsAlt/off``, libghostty `macos-option-as-alt`). The config builder (WI-2) emits its
+    /// (default ``OptionAsAlt/off``, libghostty `macos-option-as-alt`). The config builder emits its
     /// ``OptionAsAlt/configValue`` as `macos-option-as-alt`; the client's libghostty surface owns the
     /// key→byte encoding, so this is a real, reachable knob.
     public var optionAsAlt: OptionAsAlt
@@ -428,7 +428,7 @@ public struct TerminalControls: Codable, Sendable, Equatable {
     /// while production passes `SettingsKey.store` (`.standard` in the app). Each missing key falls back to
     /// its `Defaults.Key` default (mirrored by this struct's init defaults).
     public static func from(defaults: UserDefaults = SettingsKey.store) -> Self {
-        // E14/K12: the "Clipboard — Shell Controlled" master switch (default ON) gates the WHOLE OSC-52 path
+        // The "Clipboard — Shell Controlled" master switch (default ON) gates the WHOLE OSC-52 path
         // ahead of the per-direction Ask/Allow/Deny gate. When OFF, read + write resolve to `.deny`, so the
         // builder emits `clipboard-read/write = deny` and no remote OSC-52 reaches the gate.
         let clipboardShellControlled = defaults[.clipboardShellControlled]

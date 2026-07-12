@@ -50,7 +50,7 @@ public struct VideoClientStateMachine: Sendable {
         /// Send this control message to the host (on the control channel).
         case sendControl(VideoControlMessage)
         /// Session up at the negotiated capture size: bring up decoder / pacer / renderer
-        /// (the actor's GUI-only step). `fullRange` (WF-6 #8) is the stream's negotiated
+        /// (the actor's GUI-only step). `fullRange` is the stream's negotiated
         /// luma range off the `helloAck`; the actor sets the decoder's output pixel-format
         /// + the renderer's shader coefficients from it to follow the host's actual encoded
         /// range. `false` ⇒ video-range.
@@ -196,10 +196,10 @@ public struct VideoClientStateMachine: Sendable {
         }
     }
 
-    /// Re-emits the `hello` while STILL `.connecting` (hello-retry path — the reconnect-wedge fix's
-    /// second half). Over plain UDP the one-shot hello or its ack can be lost, and after a pipeline
-    /// rebuild the restarted host may not be listening yet — either way the session used to wedge in
-    /// `.connecting` forever. Driven on the ``HelloRetryPolicy`` cadence; any resolved state
+    /// Re-emits the `hello` while STILL `.connecting` (hello-retry path — the second half of the
+    /// reconnect-wedge fix). Over plain UDP the one-shot hello or its ack can be lost, and after a
+    /// pipeline rebuild the restarted host may not be listening yet — either way, without a retry the
+    /// session would wedge in `.connecting` forever. Driven on the ``HelloRetryPolicy`` cadence; any resolved state
     /// (streaming / rejected / stopped) returns `[]`, ending the retry loop. Idempotent on the host
     /// (a duplicate hello re-acks without restarting capture).
     public mutating func resendHello() -> [Effect] {
@@ -248,8 +248,8 @@ public enum HelloRetryPolicy {
     }
 }
 
-/// The STICKY show/hide reducer behind the remote-GUI pane's "Reconnecting…" scrim (stall-scrim
-/// wiring, 2026-07-03 — the presentational residual of the reconnect-wedge fix). The stall monitor
+/// The STICKY show/hide reducer behind the remote-GUI pane's "Reconnecting…" scrim — the
+/// presentational counterpart of the reconnect-wedge fix. The stall monitor
 /// folds each ``StreamStallPolicy/Verdict`` through this and notifies the view ONLY on a flip.
 ///
 /// Why sticky: once shown, the recovery path itself makes the verdict leave `.stalled` — a
@@ -296,7 +296,7 @@ public struct StallScrimLatch: Sendable, Equatable {
     }
 }
 
-/// Pure edge-pan reachability + clamp math for the ACTUAL-SIZE viewport (2026-07-02). The pane shows
+/// Pure edge-pan reachability + clamp math for the ACTUAL-SIZE viewport. The pane shows
 /// the remote window inside a fixed viewport; the DISPLAYED window size is the native POINT size ×
 /// the client zoom (a compositor scale of the sublayer), and edge-pan is the only in-pane way to
 /// reach content beyond the pane. Both the navigability GATE and the per-axis pan CLAMP must key off
@@ -339,7 +339,7 @@ public struct ModifierLatchTracker: Sendable, Equatable {
     public func isDown(_ keyCode: UInt16) -> Bool { downKeyCodes.contains(keyCode) }
 
     /// Record one modifier `flagsChanged` edge (idempotent — a repeated same-edge is absorbed).
-    /// Caps Lock (keyCode 57) is NEVER latched (C5 BUG A): it is a TOGGLE, not a held key, so the
+    /// Caps Lock (keyCode 57) is NEVER latched: it is a TOGGLE, not a held key, so the
     /// blur-time synthesized "release" (a bare key-up CGEvent on virtualKey 57) would FLIP the host's
     /// Caps state — focus/blur of a GUI pane with local Caps on toggled remote Caps every time. Its
     /// genuine `flagsChanged` edges still forward to the host 1:1; they just bypass the latch.
@@ -379,7 +379,7 @@ public enum VideoScaleMath {
     }
 }
 
-/// Pre-decode triage for a reassembled frame (R15 #9). A ZERO-byte frame must never reach
+/// Pre-decode triage for a reassembled frame. A ZERO-byte frame must never reach
 /// `VTDecompressionSessionDecodeFrame` as a zero-length sample buffer: the decode fails and the
 /// session's hard-failure recovery tears the live `VTDecompressionSession` down + forces a full IDR
 /// round-trip (a visible stall) — needless churn for what is really a corrupt/empty fragment (a
@@ -515,19 +515,18 @@ public struct ResizeDebounce: Sendable, Equatable {
     }
 }
 
-/// 1:1 PANE SNAP (2026-06-11 "match the virtual display"; corrected 2026-06-16). A remote-GUI
-/// canvas pane adopts the STREAM's natural size so its video renders without a fractional resample.
-/// The snap target is the HOST WINDOW's own POINT size — `decoded pixels / the HOST captureScale` —
-/// which the resizeRequest/resizeAck round-trip carries in POINTS, so the resize feedback loop has
-/// gain 1 and a user drag converges to the size dragged to.
+/// 1:1 PANE SNAP: a remote-GUI canvas pane adopts the STREAM's natural size so its video renders
+/// without a fractional resample. The snap target is the HOST WINDOW's own POINT size — `decoded
+/// pixels / the HOST captureScale` — which the resizeRequest/resizeAck round-trip carries in POINTS,
+/// so the resize feedback loop has gain 1 and a user drag converges to the size dragged to.
 ///
-/// ⚠️ The bug it fixes (2026-06-16): the target was `decoded pixels / the CLIENT contentsScale`,
-/// only correct when the host captures at the client's scale (2× VD on a 2× Retina client). With NO
-/// virtual display the host captures at 1× while the client is 2× Retina, so `pixels / 2` HALVED
-/// the pane every resize cycle (loop gain 0.5) — "khi resize thì pane cứ bị co nhỏ". The host
-/// captureScale is not on the wire but is CONSTANT for the session and inferable from the first
-/// decoded frame: `decoded pixels / the acked window points` (see ``inferredCaptureScale``). Pure
-/// math — unit-testable headlessly.
+/// ⚠️ The target must be `decoded pixels / the HOST captureScale`, NOT `decoded pixels / the CLIENT
+/// contentsScale`: the latter is only correct when the host captures at the client's scale (2× VD on
+/// a 2× Retina client). With NO virtual display the host captures at 1× while the client is 2×
+/// Retina, so `pixels / 2` would HALVE the pane every resize cycle (loop gain 0.5) — the panes would
+/// keep shrinking on every resize. The host captureScale is not on the wire but is CONSTANT for the
+/// session and inferable from the first decoded frame: `decoded pixels / the acked window points`
+/// (see ``inferredCaptureScale``). Pure math — unit-testable headlessly.
 public enum StreamSizeSnap {
     /// The video-layer point size at which the decoded stream renders 1:1: `pixels / captureScale`,
     /// where `captureScale` is the HOST's capture scale (NOT the client contentsScale — see the type
@@ -649,7 +648,7 @@ public struct InputEventEncoder: Sendable {
         mode: VideoContentMode = .fit,
         viewportCrop: VideoRect? = nil,
     ) -> VideoPoint {
-        // ACTUAL-SIZE VIEWPORT (per-axis 1:1 crop, 2026-06-30): with the pane at the window's actual
+        // ACTUAL-SIZE VIEWPORT (per-axis 1:1 crop): with the pane at the window's actual
         // point size, the renderer maps a texture sub-rect `viewportCrop` (UV origin + size, per-axis)
         // onto the WHOLE drawable (fit = (1,1), no letterbox / scalar-zoom). The inverse is a plain
         // per-axis affine — view fraction → UV — matching the renderer's `crop.xy + uv·crop.zw`
@@ -845,7 +844,7 @@ public struct InputEventEncoder: Sendable {
     }
 }
 
-/// Pure decider for the cursor-shape SELF-HEAL (FIX B). A cursor shape bitmap is shipped over the
+/// Pure decider for the cursor-shape SELF-HEAL. A cursor shape bitmap is shipped over the
 /// cursor socket ONCE per `shapeID`; a lost (or over-MTU, IP-fragment-lost) shape would otherwise
 /// leave the overlay permanently wrong/invisible for the whole session — the host strips the real
 /// cursor, so this overlay is the ONLY cursor the user sees.

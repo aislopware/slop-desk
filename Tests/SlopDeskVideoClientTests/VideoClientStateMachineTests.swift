@@ -32,7 +32,7 @@ final class VideoClientStateMachineTests: XCTestCase {
     func testAcceptedHelloAckStartsPipelineAndStreams() {
         var sm = makeSM()
         _ = sm.start()
-        // WF-6 (#8): a full-range ack must carry fullRange:true through to the startDecodePipeline effect.
+        // A full-range ack must carry fullRange:true through to the startDecodePipeline effect.
         let ack = VideoControlMessage.helloAck(
             accepted: true,
             streamID: 7,
@@ -71,9 +71,9 @@ final class VideoClientStateMachineTests: XCTestCase {
         let effects = sm.handleControl(reject)
         XCTAssertEqual(sm.state, .rejected)
         XCTAssertFalse(sm.mediaFlowing)
-        // FINDING B: `.rejected` used to be a DEAD END — zero effects, so nothing up the stack ever
-        // learned; retry correctly stopped but the pane froze on a black surface forever. The
-        // transition must surface `.sessionRejectedByHost` — a TERMINAL effect DISTINCT from
+        // `.rejected` must not be a DEAD END — zero effects would leave nothing up the stack
+        // learning about it; retry correctly stops but the pane would freeze on a black surface
+        // forever. The transition must surface `.sessionRejectedByHost` — a TERMINAL effect DISTINCT from
         // `.sessionEndedByHost` (whose pipeline handler auto-rebuilds and re-hellos: a rejection
         // entering that loop would re-send the same doomed hello forever). No decode pipeline was
         // ever started, so no `.stopDecodePipeline` rides along.

@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - E13 WI-3 (ES-E13-3): prevent-sleep decision (pure, headless)
+// MARK: - Prevent-sleep decision (pure, headless)
 
 /// The pure decision behind the host's "prevent sleep while an agent is processing" feature. Kept tiny and
 /// dependency-free (no `IOPMAssertion`, no PTY, no clock) so it is unit-pinned headlessly; the macOS glue

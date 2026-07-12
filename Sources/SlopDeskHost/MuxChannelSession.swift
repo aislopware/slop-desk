@@ -28,7 +28,7 @@ import SlopDeskTransport
 /// the kernel PTY buffer fills and backpressures the shell — the real flood fix); it RESUMES when
 /// the drain brings the queue back under the bound.
 ///
-/// ### Detach / reattach (tmux-style survival, C1–C4)
+/// ### Detach / reattach (tmux-style survival)
 /// On client disconnect with `SLOPDESK_DETACH_ENABLED` on, ``detach()`` runs instead of
 /// ``shutdown()``: it cancels the relay tasks and engages the ReplayBuffer's offline gate to pause
 /// the PTY drain, but does NOT stop/close the ``PTYReadLoop`` — `stop()` is irreversible. The shell
@@ -53,18 +53,18 @@ final class MuxChannelSession: @unchecked Sendable {
     /// ``detach()`` / ``shutdownDetached()`` from ``DetachedSessionStore.evict`` paths.
     private(set) var isDetached: Bool = false
 
-    // data/control are var so rebindRelay can swap in new sub-channels on reattach (C3/C4).
+    // data/control are var so rebindRelay can swap in new sub-channels on reattach.
     private var data: MuxSubChannel
     private var control: MuxSubChannel
 
-    /// The per-session ZDOTDIR shim directory (R8 #3), if the zsh shell-integration shim was
-    /// installed for this pane. Deleted in ``shutdown()`` once the child has exited — safe because
-    /// the shell read its rc files at exec time. Without this, every opened pane leaked one
-    /// `slopdesk-zdotdir-*` dir + 4 files into temp for the host's long-lived lifetime.
+    /// The per-session ZDOTDIR shim directory, if the zsh shell-integration shim was installed for
+    /// this pane. Deleted in ``shutdown()`` once the child has exited — safe because the shell read
+    /// its rc files at exec time. Without this, every opened pane leaks one `slopdesk-zdotdir-*`
+    /// dir + 4 files into temp for the host's long-lived lifetime.
     private let shimDir: URL?
 
-    /// W10 — whether host-side Claude-Code agent detection (the foreground process-watch) is
-    /// enabled for this channel. When true, ``startRelay()`` spins a low-rate poll that resolves
+    /// Whether host-side Claude-Code agent detection (the foreground process-watch) is enabled for
+    /// this channel. When true, ``startRelay()`` spins a low-rate poll that resolves
     /// the PTY's foreground basename and drives ``ForegroundProcessDetector`` → type-26/27.
     private let agentDetectEnabled: Bool
 
@@ -72,37 +72,37 @@ final class MuxChannelSession: @unchecked Sendable {
     /// drive it, though the poll itself is never run in a unit test — hang-safety).
     private let agentPollInterval: Duration
 
-    /// LIVE probe of the host's agent-hook listener bind state (queue-safety cluster, 2026-07-02),
-    /// injected by ``HostServer`` (`{ agentHookListener?.isListening ?? false }`). Read per
+    /// LIVE probe of the host's agent-hook listener bind state, injected by ``HostServer``
+    /// (`{ agentHookListener?.isListening ?? false }`). Read per
     /// `agentHookStatus` (verb 13) request so the reply reports whether hooks are ACTUALLY flowing,
     /// not just installed on disk. Defaults `false` (no listener wired — the honest answer).
     private let agentHookListenerActive: @Sendable () -> Bool
 
-    /// WB1 — whether the additive "Blocks" tap runs for this channel. When false the byte pipeline
+    /// Whether the additive "Blocks" tap runs for this channel. When false the byte pipeline
     /// + the live ``HostOutputSniffer`` are byte-identical (the segmenter is never instantiated, no
     /// type-28/29 ever emitted). Resolved from `SLOPDESK_BLOCKS` (default-ON) by the owner.
     private let blocksEnabled: Bool
 
-    /// WB1 — the per-channel "Blocks" tracker (the segmenter + bounded output ring + dedup), or
+    /// The per-channel "Blocks" tracker (the segmenter + bounded output ring + dedup), or
     /// `nil` when ``blocksEnabled`` is false. Touched from TWO contexts — the serial read-loop
     /// thread (`ingest` in `onChunk`) and the control task (`serveOutput` on a `requestBlockOutput`)
     /// — so it is guarded by ``blocksLock``. A pure value type, so it lives behind the lock.
     private let blocksLock = NSLock()
     private var blockTracker: CommandBlockTracker?
 
-    /// P1 — the SINGLE per-pane Claude detector (ONE ``ClaudeStatusMachine``). Fed by ALL detection
+    /// The SINGLE per-pane Claude detector (ONE ``ClaudeStatusMachine``). Fed by ALL detection
     /// inputs — the foreground poll's `processPresent`, the per-poll `tick` (drives the `.done→.idle`
-    /// decay), and the hook socket's bytes — so the host is the single source of truth (review #1/#9).
-    /// Touched from TWO contexts (the serial `agentWatchTask` and the socket-accept thread when a hook
-    /// POSTs), so it is guarded by `agentDetectLock` — replacing the pre-P1 pair of independent machines
-    /// (`foregroundDetector` + `agentHookHandler`) that fought over the one type-27 stream.
+    /// decay), and the hook socket's bytes — so the host is the single source of truth. Touched from
+    /// TWO contexts (the serial `agentWatchTask` and the socket-accept thread when a hook POSTs), so
+    /// it is guarded by `agentDetectLock`. ONE machine, deliberately: a pair of independent machines
+    /// (`foregroundDetector` + `agentHookHandler`) would fight over the one type-27 stream.
     private let agentDetectLock = NSLock()
     private var agentDetector = ClaudePaneDetector()
 
     /// The foreground-watch poll task (cancel on shutdown).
     private var agentWatchTask: Task<Void, Never>?
 
-    /// E17 / I22 — the pure per-pane PTY-echo edge detector (the AUTO Secure-Keyboard-Entry signal).
+    /// The pure per-pane PTY-echo edge detector (the AUTO Secure-Keyboard-Entry signal).
     /// Driven by ``PTYEchoProbe`` from TWO contexts — the input task (opportunistically right after a
     /// client keystroke is written to the PTY, where `ECHO` flips fastest around a password prompt) and
     /// the foreground-watch poll (a low-rate backstop, when `agentDetectEnabled`) — so it is guarded by
@@ -111,7 +111,7 @@ final class MuxChannelSession: @unchecked Sendable {
     private let echoDetectLock = NSLock()
     private var echoDetector = EchoModeDetector()
 
-    /// C3 — connect-time warm-up guard for the echo edge (guarded by `echoDetectLock`). A freshly
+    /// Connect-time warm-up guard for the echo edge (guarded by `echoDetectLock`). A freshly
     /// connected PTY master can read `ECHO`-cleared for a sample or two right after attach — before the
     /// line discipline settles to echo-on — and folding that transient as a real edge would emit a
     /// spurious `inputEcho(false)` that LATCHES the client's Secure-Input pill on a normal prompt. So
@@ -127,7 +127,7 @@ final class MuxChannelSession: @unchecked Sendable {
     private let titleLock = NSLock()
     private var _currentTitle: String = ""
 
-    /// E14/K1 reattach truth — the last NON-CLEAR OSC 9;4 progress message emitted for this pane
+    /// Reattach truth — the last NON-CLEAR OSC 9;4 progress message emitted for this pane
     /// (`nil` when cleared / never reported). Latched at BOTH emit points — the sniffer's chunk pass
     /// and the Blocks segmenter's auto-progress — so a reattaching client (which reset its progress
     /// mirror on disconnect) can be re-told the live state: progress is control-only, never in the
@@ -179,13 +179,13 @@ final class MuxChannelSession: @unchecked Sendable {
     /// from the exit task. Guarded by `observersLock`.
     private var closeObservers: [UUID: @Sendable () -> Void] = [:]
 
-    /// E4 — a dedicated serial queue for the host metadata RPC's BLOCKING probe work (git/lsof/proc/
+    /// A dedicated serial queue for the host metadata RPC's BLOCKING probe work (git/lsof/proc/
     /// FileManager). Kept OFF the serial control loop so a slow `lsof` / `git` can never stall this
     /// pane's resize/ack/ping; ``enqueueControl`` (lock-guarded) carries the response back. Serial so
     /// concurrent metadata requests for one pane don't pile up subprocesses.
     private let metadataQueue = DispatchQueue(label: "slopdesk.host.metadata", qos: .userInitiated)
 
-    /// Finding 4 (2026-07-11) — the number of metadata work items currently admitted onto
+    /// The number of metadata work items currently admitted onto
     /// `metadataQueue` for this session (guarded by `metadataInFlightLock`; incremented at
     /// admission in ``serveMetadata(requestID:verb:payload:)``, decremented when the work item
     /// finishes). The control sub-channel is deliberately unwindowed, so this counter is the ONLY
@@ -244,7 +244,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Index-cursor deque head for `outFIFO` (guarded by `fifoLock`, like the array). Producers
     /// APPEND only; the drain pops by advancing this cursor instead of `Array.removeFirst()` —
     /// which is an O(count) memmove per pop, and a DETACHED session accumulates one entry per
-    /// PTY `read()` (nothing drains) up to the 64 MiB budget, so the reattach drain used to pay
+    /// PTY `read()` (nothing drains) up to the 64 MiB budget, so the reattach drain would pay
     /// O(n²) element shifts (~10^11 at a full kernel-chunk backlog — a huge reattach stall).
     /// ``advanceFIFOHead()`` bulk-compacts the consumed prefix (amortized O(1) per pop).
     /// Invariant: `0 <= fifoHead <= outFIFO.count`; entries below `fifoHead` are consumed.
@@ -273,9 +273,9 @@ final class MuxChannelSession: @unchecked Sendable {
     }
 
     /// Sniffed control messages awaiting their own sender. Split from the data drain so a
-    /// slow/stalled CONTROL socket (or per-redraw title churn) can never stall data sends —
-    /// data waited on control before this split. Per-channel control FIFO is preserved
-    /// (running→idle, successive titles); cross-socket order vs data was never guaranteed
+    /// slow/stalled CONTROL socket (or per-redraw title churn) can never stall data sends — a
+    /// shared drain would make data wait on control. Per-channel control FIFO still holds
+    /// (running→idle, successive titles); cross-socket order vs data is NOT guaranteed
     /// (different TCP connections).
     private let controlOutLock = NSLock()
     private var controlOut: [WireMessage] = []
@@ -292,7 +292,7 @@ final class MuxChannelSession: @unchecked Sendable {
     }
 
     /// Pops the next merged frame under `fifoLock`. `.exit` is a merge BARRIER (it must
-    /// stay strictly after the final tail chunks — the R5-rank-5 EOF-latch ordering).
+    /// stay strictly after the final tail chunks — the EOF-latch ordering).
     /// Single-chunk fast path returns the chunk's `Data` UNCHANGED (zero added copy — the
     /// interactive steady state stays byte-identical work); only a multi-chunk backlog
     /// pays one concatenation, amortized by skipping N−1 seq/encode/envelope/send rounds.
@@ -304,8 +304,8 @@ final class MuxChannelSession: @unchecked Sendable {
     /// reinserted at the FIFO head (byte order preserved; the gate accounting still sums
     /// to the producer's enqueued total because each emitted frame dequeues exactly its
     /// own byteCount). Without this, a max-size frame's 13-byte encode overhead could park
-    /// the sender permanently just below the receiver's grant threshold (the 13-byte
-    /// dead-zone stall the night review caught).
+    /// the sender permanently just below the receiver's grant threshold — the 13-byte
+    /// dead-zone stall.
     func takeMergedFrame() -> MergedFrame? {
         fifoLock.lock()
         defer { fifoLock.unlock() }
@@ -321,8 +321,8 @@ final class MuxChannelSession: @unchecked Sendable {
         if bytes.count > cap {
             // SPLIT an over-cap head chunk: ship the prefix (with the chunk's sniffed
             // control — per-channel control FIFO holds), overwrite the unconsumed HEAD
-            // SLOT with the remainder (O(1); the old removeFirst + insert(at: 0) pair
-            // was two O(count) memmoves per emitted frame) so byte order is untouched.
+            // SLOT with the remainder (O(1); a removeFirst + insert(at: 0) pair would be
+            // two O(count) memmoves per emitted frame) so byte order is untouched.
             let prefix = Data(bytes.prefix(cap))
             let remainder = Data(bytes.dropFirst(cap))
             outFIFO[fifoHead] = .chunk(bytes: remainder, control: [])
@@ -351,7 +351,7 @@ final class MuxChannelSession: @unchecked Sendable {
         return .output(bytes: bytes, byteCount: byteCount, control: control)
     }
 
-    /// EOF latch (R5 rank 5): set true by ``PTYReadLoop``'s `onEOF` once the read loop has drained the
+    /// EOF latch: set true by ``PTYReadLoop``'s `onEOF` once the read loop has drained the
     /// master to EOF — which, per the read-loop contract, happens only AFTER every buffered output chunk
     /// has been yielded into the FIFO. The exit task awaits this before yielding `.exit`, so the
     /// reaper-driven exit can never overtake the final output tail on the shared FIFO (which would
@@ -359,7 +359,7 @@ final class MuxChannelSession: @unchecked Sendable {
     private let eofLock = NSLock()
     private var eofReached = false
 
-    /// Set true once the drain has actually SENT the `.exit(code:)` frame on the DATA channel (R13 #7).
+    /// Set true once the drain has actually SENT the `.exit(code:)` frame on the DATA channel.
     /// The exit task awaits this between yielding `.exit` and calling `onExit` (which triggers teardown),
     /// so `shutdown()` can never cancel the drain before the buffered exit code reaches the wire. Guarded
     /// by `exitSentLock`.
@@ -367,7 +367,7 @@ final class MuxChannelSession: @unchecked Sendable {
     private var exitSent = false
 
     /// Bounded-queue backpressure GATE: fuses the ``BoundedQueuePolicy`` accounting with the
-    /// read-loop pause/resume action ATOMICALLY under one lock (FIX #3 — see ``PausableQueueGate``).
+    /// read-loop pause/resume action ATOMICALLY under one lock (see ``PausableQueueGate``).
     /// Built in ``startRelay()`` once the `readLoop` exists (so the gate can drive it). `nil` until then.
     private var outputGate: PausableQueueGate?
 
@@ -390,7 +390,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// bails if a newer resize superseded it. `Task.cancel()` cannot interrupt a task already past
     /// its `sleep`, so the generation — not cancellation alone — is what makes the LATEST size win.
     private var resizeGeneration: UInt64 = 0
-    /// LOST-PROMPT FIX: a one-shot, cancel-replace task that re-sends `SIGWINCH` (`pty.nudgeRedraw`) a
+    /// LOST-PROMPT guard: a one-shot, cancel-replace task that re-sends `SIGWINCH` (`pty.nudgeRedraw`) a
     /// short delay AFTER a resize settles. `TIOCSWINSZ` already delivers one SIGWINCH, but that fires
     /// WHILE the client grid is still mid-reflow, so the shell's `zle reset-prompt` redraws into a
     /// transient grid that the final reflow then clears — leaving the prompt line blank with only a bare
@@ -401,7 +401,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Called once when the child exits so the owner can drop this channel from its map.
     var onExit: (@Sendable (UInt32) -> Void)?
 
-    /// P1 supervision hook — fired whenever this pane's detected Claude status TRANSITIONS to a
+    /// Supervision hook — fired whenever this pane's detected Claude status TRANSITIONS to a
     /// new value (foreground poll, hook POST, or a self-report). The ``HostServer`` sets it (like
     /// ``onExit``) to fan the cross-pane `agent_status_changed` event to top-level subscribers.
     /// `nil` by default → no fan-out (the headless smoke daemon never sets it). The closure is
@@ -454,9 +454,9 @@ final class MuxChannelSession: @unchecked Sendable {
         self.blocksEnabled = blocksEnabled
         self.scrollbackJournal = scrollbackJournal
         self.restoredScrollback = restoredScrollback
-        // WB1: instantiate the per-channel Blocks tracker only when enabled — otherwise the byte
-        // pipeline + sniffer stay byte-identical (no segmenter touches the stream, no emit). E14/K2:
-        // the tracker's segmenter carries the resolved auto-progress prefix list (from
+        // Instantiate the per-channel Blocks tracker only when enabled — otherwise the byte
+        // pipeline + sniffer stay byte-identical (no segmenter touches the stream, no emit).
+        // The tracker's segmenter carries the resolved auto-progress prefix list (from
         // `SLOPDESK_AUTO_PROGRESS_COMMANDS`, default the built-in slow-command list) so a matched
         // slow command auto-drives a synthetic OSC-9;4 spinner alongside the type-28 block metadata.
         blockTracker = blocksEnabled
@@ -500,19 +500,19 @@ final class MuxChannelSession: @unchecked Sendable {
                         try? await data.send(.output(seq: seq, bytes: bytes))
                         dequeueOutput(byteCount)
                         // Hand sniffed control to its OWN sender: the data drain never awaits
-                        // the control socket (a stalled control link froze data before this).
+                        // the control socket, so a stalled control link cannot freeze data.
                         if !controlMessages.isEmpty { enqueueControl(controlMessages) }
                     case let .exit(code):
                         try? await data.send(.exit(code: code))
-                        signalExitSent() // R13 #7: release the exit task's await so onExit can run
+                        signalExitSent() // release the exit task's await so onExit can run
                     }
                 }
             }
         }
 
         // CONTROL OUT: one serial sender for sniffed title/bell/commandStatus, FIFO per
-        // channel (the only ordering consumers rely on — they fold each type independently
-        // and cross-socket order vs data was already non-deterministic).
+        // channel (the only ordering consumers rely on — they fold each type independently,
+        // and cross-socket order vs data is non-deterministic anyway).
         let (controlWakeups, controlWake) =
             AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
         controlOutLock.lock()
@@ -535,7 +535,7 @@ final class MuxChannelSession: @unchecked Sendable {
             onEOF: { [weak self] in self?.signalEOFReached() },
         )
         self.readLoop = readLoop
-        // FIX #3: build the bounded-queue gate now that the read loop exists, so pause/resume is
+        // Build the bounded-queue gate now that the read loop exists, so pause/resume is
         // applied ATOMICALLY with the accounting (no lost-wakeup freeze).
         outputGate = PausableQueueGate(capacity: MuxFlowControl.hostQueueCapacityBytes) { paused in
             readLoop.setPaused(paused)
@@ -547,9 +547,9 @@ final class MuxChannelSession: @unchecked Sendable {
 
         // INPUT: the DATA sub-channel carries `input`. The blocking `write(2)` runs on a
         // DEDICATED serial queue (mirroring PTYReadLoop's dedicated read thread): the PTY
-        // master fd is deliberately blocking, so a paste into a non-reading foreground
-        // program used to park a width-limited COOPERATIVE-POOL thread — a few wedged
-        // writers degraded every other pane's drains. Credit is granted only AFTER the
+        // master fd is deliberately blocking, so on the cooperative pool a paste into a
+        // non-reading foreground program would park a width-limited thread — a few wedged
+        // writers would degrade every other pane's drains. Credit is granted only AFTER the
         // write returns (credit-at-consumption), so a stalled PTY transitively parks the
         // CLIENT's sender at one window instead of buffering the paste in host RAM.
         let inputQueue = DispatchQueue(label: "slopdesk.host.pty-input.\(channelID)", qos: .userInitiated)
@@ -563,7 +563,7 @@ final class MuxChannelSession: @unchecked Sendable {
                                 done.resume()
                             }
                         }
-                        // E17/I22: termios ECHO flips fastest around a password prompt — re-probe right
+                        // termios ECHO flips fastest around a password prompt — re-probe right
                         // after writing this keystroke so AUTO Secure Keyboard Entry engages with minimal
                         // lag. The detector dedupes, so the steady (echo-on) state emits nothing.
                         self?.sampleEcho(masterFD: masterFD)
@@ -573,8 +573,8 @@ final class MuxChannelSession: @unchecked Sendable {
                 }
             } catch { /* channel gone — the daemon keeps the shell alive (keep-alive) */ }
             // The DATA channel ended (clean close or drop): the client is no longer reachable on this
-            // channel, so engage the ReplayBuffer's 4 MiB offline gate for the window before teardown
-            // (R5 rank 2). Harmless if the session is already being shut down (gate-pause is idempotent).
+            // channel, so engage the ReplayBuffer's 4 MiB offline gate for the window before teardown.
+            // Harmless if the session is already being shut down (gate-pause is idempotent).
             self?.setClientOnline(false)
         }
 
@@ -611,12 +611,12 @@ final class MuxChannelSession: @unchecked Sendable {
                         // micro-debounce, and a ping orders against nothing.
                         self.enqueueControl([.pong(timestampMS: timestampMS)])
                     case let .requestBlockOutput(index):
-                        // WB1: serve the block's retained output (type 29) from the ring, or an
+                        // Serve the block's retained output (type 29) from the ring, or an
                         // empty response if evicted / blocks disabled. Orders against nothing — like
                         // a ping, deliberately NO flushPendingResize so it can't defeat the debounce.
                         self.serveBlockOutput(index: index)
                     case let .metadataRequest(requestID, verb, payload):
-                        // E4: serve the Details-Panel metadata RPC (type 30) off the metadata queue.
+                        // Serve the Details-Panel metadata RPC (type 30) off the metadata queue.
                         // Orders against nothing — like blockOutput, NO flushPendingResize.
                         self.serveMetadata(requestID: requestID, verb: verb, payload: payload)
                     default:
@@ -631,7 +631,7 @@ final class MuxChannelSession: @unchecked Sendable {
         let id = channelID
         exitTask = Task { [weak self] in
             let code = await pty.waitForExit()
-            // R5 rank 5: gate the exit yield on the read loop having drained the master to EOF, so the
+            // Gate the exit yield on the read loop having drained the master to EOF, so the
             // FINAL output tail is enqueued AHEAD of `.exit` on the shared FIFO. `onEOF` is called by
             // PTYReadLoop only AFTER it has yielded every buffered chunk, so awaiting the EOF latch here
             // guarantees `.exit` follows the last `.chunk` (the FIFO + single sequential drain preserve
@@ -643,7 +643,7 @@ final class MuxChannelSession: @unchecked Sendable {
             // the output-observer → close-observer → wire-exit sequence.
             self?.notifyCloseObservers()
             self?.enqueueExit(code: code)
-            // R13 #7: wait until the drain actually SENT `.exit` on the wire before firing onExit (which
+            // Wait until the drain actually SENT `.exit` on the wire before firing onExit (which
             // triggers shutdown → outputTask.cancel()). Otherwise teardown can cancel the drain before
             // the buffered exit code is flushed, dropping the clean exit status. Bounded + cancellation-
             // aware (shutdown cancels this task), so a dead client / torn-down pane never hangs. Ordering
@@ -652,7 +652,7 @@ final class MuxChannelSession: @unchecked Sendable {
             self?.onExit?(id)
         }
 
-        // W10: foreground-process watch (Decision #5 PRIMARY signal). A low-rate poll resolves
+        // Foreground-process watch — the PRIMARY agent-detection signal. A low-rate poll resolves
         // the PTY's foreground basename and folds it through the pure ``ForegroundProcessDetector``,
         // enqueueing the resulting type-26/27 CONTROL messages on a basename edge / status change
         // (the detector dedupes — an idle `claude` does not spam identical frames). The OS probe
@@ -675,16 +675,16 @@ final class MuxChannelSession: @unchecked Sendable {
     /// is the monotonic uptime — a plain `Double` seconds, honouring the no-wall-clock-in-logic
     /// convention (the pure detector takes the time as a parameter; only this driver reads it).
     ///
-    /// The per-poll `tick(at:)` is what drives the `.done → .idle` decay (review #4: nobody ticked the
-    /// host machine before P1, so a finished turn stayed 🔵 forever). Both folds share the one machine
-    /// under `agentDetectLock` (the hook socket-accept thread also folds into it).
+    /// The per-poll `tick(at:)` is what drives the `.done → .idle` decay — nothing else advances the
+    /// host machine's clock, so without it a finished turn would stay 🔵 forever. Both folds share the
+    /// one machine under `agentDetectLock` (the hook socket-accept thread also folds into it).
     private func sampleForeground(masterFD: Int32) {
         foldForegroundSample(
             name: PTYForegroundProbe.foregroundName(masterFD: masterFD),
             at: ProcessInfo.processInfo.systemUptime,
         )
-        // E17 / I22: ride the same low-rate poll as a BACKSTOP for the PTY-echo edge (a no-echo
-        // prompt that appears without a fresh keystroke). The PRIMARY driver is the post-input probe.
+        // Ride the same low-rate poll as a BACKSTOP for the PTY-echo edge (a no-echo prompt that
+        // appears without a fresh keystroke). The PRIMARY driver is the post-input probe.
         sampleEcho(masterFD: masterFD)
     }
 
@@ -708,7 +708,7 @@ final class MuxChannelSession: @unchecked Sendable {
         if let newStatus { notifyAgentStatusChanged(newStatus) }
     }
 
-    /// E17 / I22 — probes the PTY master's termios `ECHO` flag via the thin ``PTYEchoProbe`` shim,
+    /// Probes the PTY master's termios `ECHO` flag via the thin ``PTYEchoProbe`` shim,
     /// folds it through the pure ``EchoModeDetector``, and enqueues a type-31 ``WireMessage/inputEcho``
     /// on the CONTROL sender on an edge (the detector dedupes — an unchanged echo state emits nothing).
     /// Called opportunistically right after writing client input to the PTY (where `ECHO` flips fastest
@@ -722,7 +722,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// OS probe and the pure fold are separable (the fold is exercised directly by tests via a seam).
     private func foldEchoSample(echoOn: Bool) {
         echoDetectLock.lock()
-        // C3: until a confirmed echo-ON sample has been seen on THIS connection, suppress a no-echo
+        // Until a confirmed echo-ON sample has been seen on THIS connection, suppress a no-echo
         // reading entirely (don't fold, don't emit) — a transient startup no-echo (termios not yet
         // settled to echo-on) must not latch the client's Secure-Input pill. The first echo-on sample
         // warms the path up; thereafter a genuine echo→no-echo edge folds normally. (Reattach has its
@@ -739,7 +739,7 @@ final class MuxChannelSession: @unchecked Sendable {
         if let message { enqueueControl([message]) }
     }
 
-    /// E17 / ES-E17-4 — on a client (re)attach, RE-ESTABLISH the client's echo truth. The detector is
+    /// On a client (re)attach, RE-ESTABLISH the client's echo truth. The detector is
     /// edge-triggered against `lastEmitted`, and the client resets `hostNoEcho = false` on reconnect, so if a
     /// no-echo prompt (sudo / ssh / `read -s`) is up ACROSS the reattach the host would see no edge and emit
     /// nothing — leaving the client's AUTO Secure Keyboard Entry disengaged for the rest of the password entry
@@ -748,7 +748,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// returning client ONLY by a fresh type-31. Re-anchoring the detector to the canonical echo-on baseline
     /// then folding the CURRENT probed echo forces a fresh type-31 iff the live echo still deviates — re-sending
     /// no-echo truth to the freshly-attached client. The re-anchor is the load-bearing step: without it the
-    /// re-fold of an unchanged state is a no-op (the ES-E17-4 bug).
+    /// re-fold of an unchanged state is a no-op and nothing is re-sent.
     private func reestablishEchoOnReattach(echoOn: Bool) {
         echoDetectLock.lock()
         echoDetector = EchoModeDetector(initialEcho: true)
@@ -757,7 +757,7 @@ final class MuxChannelSession: @unchecked Sendable {
         if let message { enqueueControl([message]) }
     }
 
-    /// 2026-07-10 — the type-23/26/27/32/33/34 sibling of ``reestablishEchoOnReattach(echoOn:)``: re-emits
+    /// The type-23/26/27/32/33/34 sibling of ``reestablishEchoOnReattach(echoOn:)``: re-emits
     /// the pane's CURRENT activity truths so a returning client — whose per-pane mirrors reset to
     /// idle/none on reconnect — is re-told what is still live (`sleep 300`'s busy dot + "sleep"
     /// label, a working/blocked agent's badge, a spanning OSC 9;4 spinner). Every source contributes
@@ -789,34 +789,33 @@ final class MuxChannelSession: @unchecked Sendable {
         if !messages.isEmpty { enqueueControl(messages) }
     }
 
-    // MARK: - Detach / reattach (tmux-style survival — C1–C4)
+    // MARK: - Detach / reattach (tmux-style survival)
 
     /// Non-destructively detaches the relay from its current client connection.
     ///
-    /// **C1 — read loop is NOT stopped.** `PTYReadLoop.stop()` sets a PERMANENT `stopped`
+    /// **The read loop is NOT stopped.** `PTYReadLoop.stop()` sets a PERMANENT `stopped`
     /// flag (irreversible) and would prevent rebinding. Instead, `setClientOnline(false)`
     /// engages the ReplayBuffer's 4 MiB offline gate which causes `PausableQueueGate` to
     /// pause the read loop via its replay-pause source. The shell stays alive; the loop
     /// parks on the `NSCondition` gate consuming zero syscalls.
     ///
-    /// **C2 — onExit is rewired before detach completes** so a shell that exits WHILE IN
-    /// THE STORE fires `onDetachedExit` (provided by the caller) instead of the old
-    /// `onExit`, which may already have been replaced by the HostServer on a previous
-    /// connection. Pass a closure that calls `store.remove(sessionID)` +
-    /// `session.shutdownDetached()`.
+    /// **onExit is rewired before detach completes** so a shell that exits WHILE IN THE
+    /// STORE fires `onDetachedExit` (provided by the caller) rather than a handler the
+    /// HostServer may have installed for a since-gone connection. Pass a closure that calls
+    /// `store.remove(sessionID)` + `session.shutdownDetached()`.
     func detach(onDetachedExit: @escaping @Sendable (UUID) -> Void) {
         taskLock.lock()
         let alreadyDetached = isDetached
         isDetached = true
-        // Rewire onExit (C2): if the child exits while we are in the store, fire the
-        // detached-exit handler instead of whatever the previous connection wired.
+        // Rewire onExit: if the child exits while we are in the store, fire the detached-exit
+        // handler instead of whatever the previous connection wired.
         let id = sessionID
         onExit = { _ in onDetachedExit(id) }
-        // Idempotence (audit 2026-07-10 round 2 #0): a second detach on an already-detached
-        // session — the failed-rebind re-park racing handleLinkDown's own detach — must be a
-        // no-op past the exit-handler refresh above. The relay tasks/continuations are already
-        // torn down, the offline gate engaged, and the queue bound already re-sized; re-running
-        // the teardown would only churn state another thread may be inspecting.
+        // Idempotence: a second detach on an already-detached session — the failed-rebind re-park
+        // racing handleLinkDown's own detach — must be a no-op past the exit-handler refresh above.
+        // The relay tasks/continuations are already torn down, the offline gate engaged, and the
+        // queue bound already re-sized; re-running the teardown would only churn state another
+        // thread may be inspecting.
         if alreadyDetached {
             taskLock.unlock()
             return
@@ -840,7 +839,7 @@ final class MuxChannelSession: @unchecked Sendable {
         outputTask?.cancel()
         outputTask = nil
         taskLock.unlock()
-        // Engage the offline gate so the PTY drain pauses (C1): the read loop parks on its
+        // Engage the offline gate so the PTY drain pauses: the read loop parks on its
         // NSCondition and the kernel PTY buffer backpressures the shell.
         setClientOnline(false)
         // Re-size the queue bound for detached life: 64 KiB is a LATENCY bound (head-of-line
@@ -853,7 +852,7 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// Rebinds the relay to a fresh pair of sub-channels from a returning client.
     ///
-    /// **C3 (revised) — keeps the out-FIFO, clears only control-out.** FIFO chunks are never in
+    /// **Keeps the out-FIFO, clears only control-out.** FIFO chunks are never in
     /// the ReplayBuffer (seq assignment happens at drain time, AFTER the pop), so the FIFO holds
     /// exactly the output produced WHILE DETACHED — the restarted drain ships it after the
     /// caller's `replayTail` (fresh seqs above every replayed seq → byte order preserved) and
@@ -876,7 +875,7 @@ final class MuxChannelSession: @unchecked Sendable {
     ///
     /// - Precondition: `isDetached == true`. A no-op (safe) if called on a live session —
     ///   returning `false` so the caller can REFUSE the channel instead of acking a pane whose
-    ///   relay is actually wired to someone else (audit #0: the silent no-op left the loser of a
+    ///   relay is actually wired to someone else (a silent no-op would leave the loser of a
     ///   concurrent double-reattach believing it owned the pane).
     ///
     /// - Returns: `true` when the relay was rebound to the new sub-channels; `false` when the
@@ -890,15 +889,14 @@ final class MuxChannelSession: @unchecked Sendable {
         guard isDetached else { taskLock.unlock()
             return false
         }
-        // Refuse DEAD sub-channels (audit 2026-07-10 round 2 #0): `MuxNWConnection.finishLink`
-        // finishes every sub-channel BEFORE firing `linkDownHandler`, so already-finished
-        // targets mean the NEW connection died while the reattach was still replaying — and
-        // `handleLinkDown` has re-parked (or is about to re-park) this session in the
-        // DetachedSessionStore. Rebinding would flip `isDetached = false` onto channels every
-        // send throws on, leaving a stored session that reads as "attached" — the next claim
-        // then fails its rebind and the session is orphaned (live agent unreachable by every
-        // map, store, TTL, and stop()). Refusing keeps the session detached and claimable;
-        // the caller re-parks/reaps via its failed-rebind path.
+        // Refuse DEAD sub-channels: `MuxNWConnection.finishLink` finishes every sub-channel BEFORE
+        // firing `linkDownHandler`, so already-finished targets mean the NEW connection died while
+        // the reattach was still replaying — and `handleLinkDown` has re-parked (or is about to
+        // re-park) this session in the DetachedSessionStore. Rebinding would flip
+        // `isDetached = false` onto channels every send throws on, leaving a stored session that
+        // reads as "attached" — the next claim then fails its rebind and the session is orphaned
+        // (live agent unreachable by every map, store, TTL, and stop()). Refusing keeps the session
+        // detached and claimable; the caller re-parks/reaps via its failed-rebind path.
         guard !newData.isFinished, !newControl.isFinished else { taskLock.unlock()
             return false
         }
@@ -915,17 +913,11 @@ final class MuxChannelSession: @unchecked Sendable {
         // assignment could fire the stale detached-exit handler and kill the just-reattached PTY.
         onExit = newOnExit
 
-        // C3 (revised): the out-FIFO is KEPT, not cleared. Seq assignment / ReplayBuffer retention
-        // happens at DRAIN time (`takeMergedFrame` POPS a frame BEFORE `nextSeq` appends it), so no
-        // FIFO byte is ever in the ReplayBuffer — the FIFO holds exactly the DETACHED-WINDOW output
-        // the read loop produced after detach() cancelled the drain. `replayTail` cannot replay those
-        // bytes; clearing them here dropped them permanently (silent transcript gap) AND leaked their
-        // PausableQueueGate accounting (no matching dequeue → a ≥64 KiB detached burst left the read
-        // loop paused FOREVER — a frozen pane). The restarted drain below ships them with fresh seqs
-        // (> every replayed seq → byte order preserved: replay tail first, then detached bytes) and
-        // dequeues their gate accounting as it sends, rebalancing a gate-paused read loop. Only
-        // `controlOut` is cleared — control is stateless/re-derived (echo truth + block metadata
-        // re-asserted below).
+        // ONLY `controlOut` is cleared — the out-FIFO is KEPT (see the doc comment). Clearing the
+        // FIFO here would drop the detached-window bytes permanently (`replayTail` cannot replay
+        // them — they were never sequenced → silent transcript gap) AND leak their
+        // PausableQueueGate accounting (no matching dequeue → a ≥64 KiB detached burst would leave
+        // the read loop paused FOREVER — a frozen pane).
         controlOutLock.lock()
         controlOut.removeAll(keepingCapacity: false)
         controlOutLock.unlock()
@@ -933,18 +925,17 @@ final class MuxChannelSession: @unchecked Sendable {
         // Restore the ATTACHED queue sizing (detach() raised it to the detached budget). With a
         // >64 KiB detached backlog outstanding this immediately re-pauses the read loop; the
         // restarted drain ships the backlog, dequeues its accounting, and resumes it — the exact
-        // rebalance the C3 note above describes.
+        // rebalance the note above describes.
         outputGate?.setCapacity(MuxFlowControl.hostQueueCapacityBytes)
 
-        // Rebuild the control wake stream and restart the control sender FIRST — BEFORE the
-        // output drain below exists (2026-07-11 finding 1). The restarted drain pops the detached
-        // backlog and hands its sniffed control to `enqueueControl`, which reads
-        // `controlWakeContinuation` (nil'd by detach()); with the old order (output drain built +
-        // kicked first) the drain could run in the window before this reassignment and strand a
-        // detached-window control message (e.g. an OSC-0/2 title change) in `controlOut` with no
-        // wake — `.title` is not re-asserted by any reestablish call, so a quiet reconnect never
-        // flushed it. Starting the control sender this early is safe in the other direction: it
-        // simply parks on its fresh wake stream until the first enqueue.
+        // Rebuild the control wake stream and restart the control sender FIRST — BEFORE the output
+        // drain below exists. The restarted drain pops the detached backlog and hands its sniffed
+        // control to `enqueueControl`, which reads `controlWakeContinuation` (nil'd by detach());
+        // were the output drain built + kicked first, it could run in the window before this
+        // reassignment and strand a detached-window control message (e.g. an OSC-0/2 title change)
+        // in `controlOut` with no wake — `.title` is not re-asserted by any reestablish call, so a
+        // quiet reconnect would never flush it. Starting the control sender this early is safe in
+        // the other direction: it simply parks on its fresh wake stream until the first enqueue.
         let (controlWakeups, controlWake) =
             AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
         controlOutLock.lock()
@@ -996,15 +987,15 @@ final class MuxChannelSession: @unchecked Sendable {
         let backlogWake = outputWakeContinuation
         fifoLock.unlock()
         if hasDetachedBacklog { backlogWake?.yield(()) }
-        // Race seam (2026-07-11 finding 1): fired at the EARLIEST instant the restarted output
-        // drain can be running — it has been created and its backlog kick delivered. The drain's
+        // Race seam: fired at the EARLIEST instant the restarted output drain can be running —
+        // it has been created and its backlog kick delivered. The drain's
         // first act on a detached backlog is takeMergedFrame → enqueueControl(sniffed control),
         // which reads `controlWakeContinuation`; the ordering test pins that the control wake is
         // ALREADY installed here (the race window itself — the drain Task getting scheduled inside
         // a few rebind-thread instructions — cannot be forced deterministically from outside).
         onOutputDrainRestartedForTesting?()
 
-        // E17 / ES-E17-4 — RE-ESTABLISH the client's echo truth on reattach (mirrors how the PTY size is
+        // RE-ESTABLISH the client's echo truth on reattach (mirrors how the PTY size is
         // re-asserted on reconnect): re-anchor the edge-triggered detector and re-emit a fresh type-31 for the
         // CURRENT probed echo so a no-echo prompt that is up across this reattach re-engages the client's AUTO
         // Secure Keyboard Entry (which reset to echo-on on reconnect). Done AFTER the `controlOut.removeAll()`
@@ -1013,13 +1004,13 @@ final class MuxChannelSession: @unchecked Sendable {
         // continuation). See ``reestablishEchoOnReattach(echoOn:)`` for the full rationale.
         reestablishEchoOnReattach(echoOn: PTYEchoProbe.echoEnabled(masterFD: pty.masterFD))
 
-        // WB / reattach — RE-SEND the held blocks' metadata so the returning client rebuilds its
+        // RE-SEND the held blocks' metadata so the returning client rebuilds its
         // Commands/Outline navigator (block metadata rides the control channel and is not in the replayed
         // output byte stream). Done AFTER the `controlOut.removeAll()` and control-sender rebuild above so
         // the backfill is enqueued onto the live wake continuation, mirroring the echo re-assert.
         resendBlocksOnReattach()
 
-        // 2026-07-10 — RE-ASSERT the remaining CONTROL-ONLY activity truths (same class as the echo
+        // RE-ASSERT the remaining CONTROL-ONLY activity truths (same class as the echo
         // re-assert above): the busy bit (type-23 `.running`), the foreground-process name (type-26),
         // the agent status (type-27), and a live OSC 9;4 progress (type-32) are all edge-triggered
         // and never in the replayed output byte stream, and the client reset its mirrors on
@@ -1045,7 +1036,7 @@ final class MuxChannelSession: @unchecked Sendable {
                                 done.resume()
                             }
                         }
-                        // E17/I22: re-probe termios ECHO right after writing input on the reattached
+                        // Re-probe termios ECHO right after writing input on the reattached
                         // channel too (same rationale as the live relay) — AUTO Secure Keyboard Entry
                         // must keep working after a reconnect. The detector dedupes the steady state.
                         self?.sampleEcho(masterFD: masterFD)
@@ -1073,9 +1064,9 @@ final class MuxChannelSession: @unchecked Sendable {
                     case let .requestBlockOutput(index):
                         self?.serveBlockOutput(index: index)
                     case let .metadataRequest(requestID, verb, payload):
-                        // E4: serve the metadata RPC on the rebind (reattach) loop too — without this
-                        // the Details Panel silently dies after a reconnect (the type-26/27 + blockOutput
-                        // duplicated-case shape). Orders against nothing — NO flushPendingResize.
+                        // Serve the metadata RPC on the rebind (reattach) loop too — without this the
+                        // Details Panel silently dies after a reconnect. Orders against nothing — NO
+                        // flushPendingResize.
                         self?.serveMetadata(requestID: requestID, verb: verb, payload: payload)
                     default:
                         self?.flushPendingResize()
@@ -1085,26 +1076,26 @@ final class MuxChannelSession: @unchecked Sendable {
             self?.flushPendingResize()
         }
 
-        // The ORIGINAL exit task from startRelay() keeps running untouched (audit #3). It reads
-        // `self?.onExit` dynamically at fire time, and `onExit` was reassigned above under
-        // taskLock — so whichever life the child dies in, the CURRENT handler fires (every
-        // handler ignores its channel-ID argument and captures its own key/context). The old
-        // cancel+recreate here DOUBLE-REGISTERED a waiter: `PTYProcess.waitForExit()` parks a
-        // plain CheckedContinuation with no cancellation plumbing, so `exitTask?.cancel()`
-        // never retired the old registration — `completeExit` then resumed BOTH tasks and the
-        // pane sent a duplicate `.exit` wire frame per reattach-while-alive cycle (and the
-        // stale task's `notifyCloseObservers` could fire from the wrong life).
+        // The ORIGINAL exit task from startRelay() keeps running untouched — do NOT cancel+recreate
+        // it here. It reads `self?.onExit` dynamically at fire time, and `onExit` was reassigned
+        // above under taskLock, so whichever life the child dies in, the CURRENT handler fires
+        // (every handler ignores its channel-ID argument and captures its own key/context). A
+        // cancel+recreate would DOUBLE-REGISTER a waiter: `PTYProcess.waitForExit()` parks a plain
+        // CheckedContinuation with no cancellation plumbing, so `exitTask?.cancel()` never retires
+        // the old registration — `completeExit` would resume BOTH tasks and the pane would send a
+        // duplicate `.exit` wire frame per reattach-while-alive cycle (and the stale task's
+        // `notifyCloseObservers` could fire from the wrong life).
 
-        // R2 (benign): agentWatchTask was NOT cancelled by detach() — it survives the detached
-        // window so the poll keeps running. But its control wake continuation was finished by
-        // detach(), so any agent-status update emitted WHILE DETACHED is dropped (nil continuation).
-        // The new continuation rebuilt above carries future updates; a brief stale status until the
-        // next poll tick (~1 s) is acceptable. A nudge here would need sampleForeground exported to
-        // run after unlock — not worth the risk vs. the natural 1-s poll cadence.
+        // agentWatchTask is NOT cancelled by detach() — it survives the detached window so the poll
+        // keeps running. But its control wake continuation was finished by detach(), so any
+        // agent-status update emitted WHILE DETACHED is dropped (nil continuation). The new
+        // continuation rebuilt above carries future updates; a brief stale status until the next
+        // poll tick (~1 s) is acceptable. A nudge here would need sampleForeground exported to run
+        // after unlock — not worth the risk vs. the natural 1-s poll cadence.
 
         taskLock.unlock()
 
-        // R1 (safe): setClientOnline(true) is called just AFTER taskLock is released so it can
+        // setClientOnline(true) is called just AFTER taskLock is released so it can
         // acquire replayLock without nesting locks. The wake it triggers goes to the new
         // outputWakeContinuation (rebuilt inside taskLock above with bufferingNewest(1)), so the
         // wake is retained even if the drain task hasn't started its `for await` loop yet —
@@ -1143,10 +1134,10 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// Tears this channel down FOR GOOD and releases its PTY + master fd.
     ///
-    /// ⚠️ DESTROY-ONLY. At S1 every caller of `shutdown()` is a genuine end-of-session:
+    /// ⚠️ DESTROY-ONLY. Every caller of `shutdown()` is a genuine end-of-session:
     /// `HostServer.stop()` (daemon stopping) and `HostServer.removeMuxSession()` — itself
     /// reached only from the child's own exit, a peer `channelClose`, or a whole-link drop
-    /// (peer crash / TCP reset). S1 has NO per-channel reconnect/resume, so none of those is
+    /// (peer crash / TCP reset). There is NO per-channel reconnect/resume, so none of those is
     /// keep-alive: the shell MUST die here, or the PTY + master fd leak on every disconnect.
     /// WHEN PER-CHANNEL RESUME LANDS, a resume-able disconnect must route to a NEW `detach()`
     /// that stops the read loop + closes the master WITHOUT killing the child — it must NOT
@@ -1180,9 +1171,9 @@ final class MuxChannelSession: @unchecked Sendable {
         inputTask?.cancel()
         controlTask?.cancel()
         exitTask?.cancel()
-        agentWatchTask?.cancel() // W10: stop the foreground-process poll
+        agentWatchTask?.cancel() // stop the foreground-process poll
         agentWatchTask = nil
-        // `outputTask.cancel()` now GENUINELY unblocks a drain parked on an exhausted DATA credit
+        // `outputTask.cancel()` GENUINELY unblocks a drain parked on an exhausted DATA credit
         // window: `MuxSubChannel.awaitChunkCredit`'s park is cancellation-aware, so a cancelled sender
         // wakes + throws and the task completes. Without that, the `HostServer.stop()` teardown — which
         // does NOT route through `MuxNWConnection` (the only path that `finish()`es the sub-channels) —
@@ -1190,8 +1181,8 @@ final class MuxChannelSession: @unchecked Sendable {
         // host accumulating one per affected channel on every Start/Stop).
         outputTask?.cancel()
         taskLock.unlock()
-        // R13 #1: `resizeDebounceTask` is owned by `resizeLock` (scheduleResize / flushPendingResize),
-        // NOT `taskLock`. Cancelling it under taskLock (the old code) raced scheduleResize's store under
+        // `resizeDebounceTask` is owned by `resizeLock` (scheduleResize / flushPendingResize), NOT
+        // `taskLock`. Cancelling it under taskLock would race scheduleResize's store under
         // resizeLock — two disjoint mutexes guarding one ARC `Task` reference = a data race (torn read /
         // ARC over-release / missed cancel). Read+nil under its own lock, then cancel outside the lock,
         // matching flushPendingResize's discipline (locks are never nested in this file → no deadlock).
@@ -1203,10 +1194,10 @@ final class MuxChannelSession: @unchecked Sendable {
         resizeLock.unlock()
         resizeTask?.cancel()
         nudgeTask?.cancel()
-        // R5 rank 5: release the exit task's EOF gate (it is also cancelled above, but signalling makes
-        // it return promptly rather than polling to its timeout) so teardown never lingers on the latch.
+        // Release the exit task's EOF gate (it is also cancelled above, but signalling makes it
+        // return promptly rather than polling to its timeout) so teardown never lingers on the latch.
         signalEOFReached()
-        // R13 #7: likewise release the exit-sent latch so a torn-down exit task returns at once instead
+        // Likewise release the exit-sent latch so a torn-down exit task returns at once instead
         // of polling to its timeout (mirrors the EOF latch above; the cancel above also unblocks it).
         signalExitSent()
         // DESTROY-path child termination (see the doc comment): SIGTERM, then a bounded wait
@@ -1219,8 +1210,8 @@ final class MuxChannelSession: @unchecked Sendable {
             pty.waitUntilExited(timeout: 0.25)
         }
         pty.closeMaster()
-        // R8 #3: the child has exited, so its ZDOTDIR shim dir is no longer needed — delete it so the
-        // host's temp dir does not accumulate one `slopdesk-zdotdir-*` dir per opened pane forever.
+        // The child has exited, so its ZDOTDIR shim dir is dead — delete it so the host's temp dir
+        // does not accumulate one `slopdesk-zdotdir-*` dir per opened pane forever.
         if let shimDir { try? FileManager.default.removeItem(at: shimDir) }
     }
 
@@ -1323,7 +1314,7 @@ final class MuxChannelSession: @unchecked Sendable {
     // MARK: - Bounded-output-queue backpressure (lock-guarded; the value type is not Sendable)
 
     /// Accounts `count` enqueued output bytes; pauses the read loop if the FIFO crossed the bound.
-    /// FIX #3: the accounting + the pause action are applied ATOMICALLY inside ``PausableQueueGate``
+    /// The accounting + the pause action are applied ATOMICALLY inside ``PausableQueueGate``
     /// (under one lock) so a concurrent ``dequeueOutput(_:)`` can never interleave a stale resume
     /// after this pause and leave the loop frozen below capacity.
     private func enqueueOutput(_ count: Int) {
@@ -1331,7 +1322,7 @@ final class MuxChannelSession: @unchecked Sendable {
     }
 
     /// Accounts `count` sent output bytes; resumes a paused read loop if the FIFO drained below the
-    /// bound. FIX #3: atomic with the accounting (see ``PausableQueueGate``).
+    /// bound. Atomic with the accounting (see ``PausableQueueGate``).
     private func dequeueOutput(_ count: Int) {
         outputGate?.dequeue(count)
     }
@@ -1379,7 +1370,7 @@ final class MuxChannelSession: @unchecked Sendable {
         // (so a wait-observer sees the same stream order as the client) and BEFORE the
         // FIFO append (non-destructive — observers only READ the chunk).
         notifyOutputObservers(chunk)
-        // WB1: ADDITIVE PARALLEL tap — feed the SAME chunk to the per-channel Blocks
+        // ADDITIVE PARALLEL tap — feed the SAME chunk to the per-channel Blocks
         // segmenter and enqueue any type-28 `commandBlock` metadata on the CONTROL sender.
         // Only OBSERVES; the bytes below are forwarded unchanged. `nil` when SLOPDESK_BLOCKS
         // is off, so the pipeline stays byte-identical. Kept OFF the data drain (its own
@@ -1415,7 +1406,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// starts, so it precedes every live shell byte.
     private func enqueueRestoredScrollback() {
         // One-shot: TAKE the stored preamble so the FIFO copy becomes the only owner. Without
-        // the release, the stored property pinned a second up-to-journal-cap copy for the
+        // the release, the stored property would pin a second up-to-journal-cap copy for the
         // session's entire life — per restored pane.
         fifoLock.lock()
         let restored = restoredScrollback
@@ -1432,7 +1423,7 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// Enqueues `.exit` on the output FIFO (the reaper path). `.exit` is a merge BARRIER in
     /// ``takeMergedFrame()`` — it never coalesces with chunks, so it stays strictly after the
-    /// final output tail (the R5-rank-5 EOF-latch ordering).
+    /// final output tail (the EOF-latch ordering).
     private func enqueueExit(code: Int32) {
         fifoLock.lock()
         outFIFO.append(.exit(code: code))
@@ -1464,9 +1455,9 @@ final class MuxChannelSession: @unchecked Sendable {
         wake?.yield(())
     }
 
-    /// W10 — ingests one received Claude-hook record (raw POST body bytes) for THIS pane and, if it
+    /// Ingests one received Claude-hook record (raw POST body bytes) for THIS pane and, if it
     /// produced a status change, enqueues the resulting type-27 on the CONTROL sender. Folds through the
-    /// SAME ``ClaudePaneDetector`` the foreground poll drives (P1 single source of truth — no second
+    /// SAME ``ClaudePaneDetector`` the foreground poll drives (single source of truth — no second
     /// machine), under `agentDetectLock` because the socket-accept thread is a different context than the
     /// watch task. Validate-then-drop: malformed bytes are silently ignored. The clock is monotonic
     /// uptime (a plain `Double`; the decision logic is in the pure detector, which takes the time).
@@ -1479,11 +1470,11 @@ final class MuxChannelSession: @unchecked Sendable {
         if let changed { notifyAgentStatusChanged(changed) }
     }
 
-    /// Folds an AGENT SELF-REPORT (the P1 `report` ctl verb) into the ONE ``ClaudePaneDetector``
+    /// Folds an AGENT SELF-REPORT (the `report` ctl verb) into the ONE ``ClaudePaneDetector``
     /// under `agentDetectLock`. The state string has already been validated by the caller; an
     /// unrecognised string is a no-op inside the detector (validate-then-drop). Any resulting
     /// type-27 is enqueued to the (possibly absent) client AND fans the cross-pane
-    /// `agent_status_changed` observer (P1 supervision stream) on a real transition.
+    /// `agent_status_changed` observer (the supervision stream) on a real transition.
     func reportAgentStatusForControl(state: String, message: String?) {
         agentDetectLock.lock()
         let emission = agentDetector.report(
@@ -1548,7 +1539,7 @@ final class MuxChannelSession: @unchecked Sendable {
         return ansiStrip ? ANSIStripper.strip(text) : text
     }
 
-    /// Returns the pane's scrollback as an array of LOGICAL lines (P1 `read --unwrapped`).
+    /// Returns the pane's scrollback as an array of LOGICAL lines (the `read --unwrapped` verb).
     ///
     /// The host keeps NO screen buffer and the scrollback ring stores RAW PTY read-chunk byte
     /// slices (NOT terminal-width-aware lines), so TRUE reverse-of-terminal-wrapping is impossible
@@ -1563,17 +1554,17 @@ final class MuxChannelSession: @unchecked Sendable {
         return Self.unwrapLogicalLines(text, lines: limit)
     }
 
-    /// Pure logical-line split (P1 `read --unwrapped`): split `text` on hard `\n`, keep blank
+    /// Pure logical-line split (the `read --unwrapped` verb): split `text` on hard `\n`, keep blank
     /// lines, and optionally keep only the last `limit`. Extracted as a `static` so it is
     /// unit-testable with no PTY/ReplayBuffer.
     ///
-    /// Trailing-element handling (review finding): only DROP the final element when the text ended
-    /// in `\n` (so the split's trailing `""` is a separator artifact, not content). When the text
-    /// does NOT end in `\n`, the final element is a complete-but-unterminated logical line — which
-    /// host-side is INDISTINGUISHABLE from the very signal an orchestrator scrapes (a live shell
-    /// prompt or a Claude "awaiting input" line that carries no trailing newline). Dropping it
-    /// unconditionally silently swallowed the freshest line, so we KEEP it. (A genuine half-written
-    /// partial is rare and harmless to include; losing the prompt is the worse failure.)
+    /// Trailing-element handling: only DROP the final element when the text ended in `\n` (so the
+    /// split's trailing `""` is a separator artifact, not content). When the text does NOT end in
+    /// `\n`, the final element is a complete-but-unterminated logical line — which host-side is
+    /// INDISTINGUISHABLE from the very signal an orchestrator scrapes (a live shell prompt or a
+    /// Claude "awaiting input" line that carries no trailing newline). Dropping it unconditionally
+    /// would silently swallow the freshest line, so we KEEP it. (A genuine half-written partial is
+    /// rare and harmless to include; losing the prompt is the worse failure.)
     static func unwrapLogicalLines(_ text: String, lines limit: Int? = nil) -> [String] {
         guard !text.isEmpty else { return [] }
         var rows = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
@@ -1593,7 +1584,7 @@ final class MuxChannelSession: @unchecked Sendable {
         return _currentTitle
     }
 
-    /// The current rolled-up Claude detection status for this pane (P1 supervision API).
+    /// The current rolled-up Claude detection status for this pane (the supervision API).
     ///
     /// Read under `agentDetectLock` because `agentDetector` is folded from TWO contexts (the
     /// serial `agentWatchTask` foreground poll and the hook socket-accept thread); a bare read
@@ -1656,7 +1647,7 @@ final class MuxChannelSession: @unchecked Sendable {
         for (_, observer) in observers { observer(chunk) }
     }
 
-    /// WB1 — feeds one outbound chunk to the per-channel Blocks tracker (under ``blocksLock``) and
+    /// Feeds one outbound chunk to the per-channel Blocks tracker (under ``blocksLock``) and
     /// enqueues any resulting type-28 `commandBlock` metadata on the CONTROL sender. A no-op when
     /// blocks are disabled (`blockTracker == nil`), so the byte pipeline stays byte-identical.
     private func feedBlocks(_ chunk: Data) {
@@ -1664,7 +1655,7 @@ final class MuxChannelSession: @unchecked Sendable {
         blocksLock.lock()
         let messages = blockTracker?.ingest(chunk) ?? []
         blocksLock.unlock()
-        latchProgress(messages) // K2 auto-progress is a second type-32 source — same reattach truth
+        latchProgress(messages) // auto-progress is a second type-32 source — same reattach truth
         if !messages.isEmpty { enqueueControl(messages) }
     }
 
@@ -1677,23 +1668,23 @@ final class MuxChannelSession: @unchecked Sendable {
     /// a prompt boundary (133;B/D) — exactly when a `cd` becomes observable — and triggers ONE
     /// `proc_pidinfo` read (a single syscall, the same class as the input path's `tcgetattr`;
     /// never a subprocess and never a `stat` on this thread). At a prompt edge the PROBE is
-    /// preferred over a same-batch OSC-7 (finding 3b: the probe is ground truth at exactly that
-    /// moment; a possibly-stale OSC-7 loses), falling back to the batch's OSC-7 when the probe
-    /// fails (unspawned/gone shell). An unchanged cwd is dropped at the `lastCwdTruth` anchor,
-    /// which is latched HERE (sniff time) so a reattach re-assert always sees the newest cwd.
+    /// preferred over a same-batch OSC-7 (the probe is ground truth at exactly that moment; a
+    /// possibly-stale OSC-7 loses), falling back to the batch's OSC-7 when the probe fails
+    /// (unspawned/gone shell). An unchanged cwd is dropped at the `lastCwdTruth` anchor, which is
+    /// latched HERE (sniff time) so a reattach re-assert always sees the newest cwd.
     ///
-    /// **Warm-up gate (finding 3a — mirrors `echoWarmedUp`):** OSC-7-only batches are IGNORED
-    /// until the first command edge (`.commandStatus(.idle)` or `.running`) has been observed on
-    /// this session. A plugin manager that `cd`s into its git-cloned cache dir BEFORE the first
-    /// prompt emits OSC-7 for a directory the user was never in — latching it persisted a bogus
-    /// sidebar section client-side. The first prompt edge itself derives from the probe (ground
-    /// truth); after warm-up OSC-7 changes flow normally (a mid-command `cd` in a script still
-    /// re-groups, no prompt edge required).
+    /// **Warm-up gate (mirrors `echoWarmedUp`):** OSC-7-only batches are IGNORED until the first
+    /// command edge (`.commandStatus(.idle)` or `.running`) has been observed on this session. A
+    /// plugin manager that `cd`s into its git-cloned cache dir BEFORE the first prompt emits OSC-7
+    /// for a directory the user was never in — latching it would persist a bogus sidebar section
+    /// client-side. The first prompt edge itself derives from the probe (ground truth); after
+    /// warm-up OSC-7 changes flow normally (a mid-command `cd` in a script still re-groups, no
+    /// prompt edge required).
     ///
     /// **Type-33 single-source:** an ACCEPTED change also emits `.cwd` here, synchronously — and
     /// ``ingestPTYChunk(_:)`` strips the raw sniffed OSC-7 from the FIFO ride, so the client only
-    /// ever sees warm-up-gated, dedupe-anchored, probe-preferred cwd values (the client applies
-    /// them ungated; its old startup-noise gate is retired).
+    /// ever sees warm-up-gated, dedupe-anchored, probe-preferred cwd values and can apply them
+    /// ungated (it needs no startup-noise gate of its own).
     ///
     /// **Async (the resolver walk — `metadataQueue`):** a CHANGED cwd hands
     /// ``ProjectKeyResolver/projectKey(forCwd:)`` — a `stat(2)`-per-ancestor filesystem walk that
@@ -1741,8 +1732,8 @@ final class MuxChannelSession: @unchecked Sendable {
         // parked on a hung mount. This is the ONLY live type-33 source (`ingestPTYChunk` strips the
         // raw sniffed OSC-7 from the FIFO ride), so what reaches the client carries the same
         // guarantees as the type-34 it precedes: warm-up-gated, dedupe-anchored, probe-preferred.
-        // It also covers OSC-7-less shells (Starship): their prompt-edge probe changes now push the
-        // cwd with no metadata-RPC dependency — the stale-tab-cwd-after-reconnect fix.
+        // It also covers OSC-7-less shells (Starship): their prompt-edge probe changes push the cwd
+        // with no metadata-RPC dependency, so the tab cwd cannot go stale across a reconnect.
         enqueueControl([.cwd(cwd)])
         scheduleProjectKeyResolve(for: cwd)
     }
@@ -1753,9 +1744,9 @@ final class MuxChannelSession: @unchecked Sendable {
     /// `projectKeyLock`, the resolve is DROPPED if a later `cd` superseded it (`cwd` is no longer
     /// `lastCwdTruth` — the newer change's own resolve is already queued behind this one), deduped
     /// against `lastProjectKey`, latched, and the type-34 enqueued directly on the CONTROL sender.
-    /// It no longer rides the out-FIFO alongside the producing bytes — FIFO ordering was never
-    /// load-bearing for this latest-state truth (the client folds the newest key it sees, and the
-    /// reattach re-assert reads the latches, not the stream).
+    /// It deliberately does NOT ride the out-FIFO alongside the producing bytes — FIFO ordering is
+    /// not load-bearing for this latest-state truth (the client folds the newest key it sees, and
+    /// the reattach re-assert reads the latches, not the stream).
     private func scheduleProjectKeyResolve(for cwd: String) {
         let resolve: @Sendable () -> Void = { [weak self] in
             guard let self else { return }
@@ -1797,7 +1788,7 @@ final class MuxChannelSession: @unchecked Sendable {
         }
     }
 
-    /// WB / reattach — RE-SENDS every block the tracker still holds (its metadata) as a burst of type-28
+    /// Reattach — RE-SENDS every block the tracker still holds (its metadata) as a burst of type-28
     /// `commandBlock` messages on the CONTROL channel, so a client that (re)attaches to an already-running
     /// session rebuilds its Commands/Outline navigator. Block metadata rides the control channel and is
     /// NEVER replayed by the ReplayBuffer (only raw `.output` is sequenced), so a returning client would
@@ -1813,7 +1804,7 @@ final class MuxChannelSession: @unchecked Sendable {
         if !messages.isEmpty { enqueueControl(messages) }
     }
 
-    /// WB1 — serves a `requestBlockOutput(index)` by enqueueing the block's retained output (type
+    /// Serves a `requestBlockOutput(index)` by enqueueing the block's retained output (type
     /// 29) from the ring on the CONTROL sender. Always replies (an EMPTY `blockOutput` when the
     /// block was evicted / never existed / blocks are disabled) so the client never hangs waiting.
     private func serveBlockOutput(index: UInt32) {
@@ -1823,7 +1814,7 @@ final class MuxChannelSession: @unchecked Sendable {
         enqueueControl([message])
     }
 
-    /// E4 — serves a `metadataRequest(requestID:verb:payload:)` by running the PURE
+    /// Serves a `metadataRequest(requestID:verb:payload:)` by running the PURE
     /// ``MetadataResponseBuilder`` over THIS pane's ``HostMetadataProbe`` (its `masterFD` + shell pid)
     /// and enqueueing the resulting type-30 `metadataResponse` on the CONTROL sender. The probe's
     /// git/lsof/proc work is BLOCKING, so it runs on ``metadataQueue`` (OFF the serial control loop) —
@@ -1837,7 +1828,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// flood on the unwindowed control channel must not grow `metadataQueue` (or fork subprocesses)
     /// without limit. Each admitted work item releases its slot on completion (defer).
     private func serveMetadata(requestID: UInt32, verb: UInt8, payload: Data) {
-        // Finding 4 (2026-07-11) — bounded admission: the control sub-channel is deliberately
+        // Bounded admission: the control sub-channel is deliberately
         // unwindowed, so a hostile/buggy peer streaming back-to-back tiny metadataRequest frames
         // would otherwise queue unbounded closures (each retaining its payload + self) and fork
         // git/lsof without limit. At/over the cap, do NOT enqueue work — reply IMMEDIATELY with
@@ -1862,7 +1853,7 @@ final class MuxChannelSession: @unchecked Sendable {
                 metadataInFlight -= 1
                 metadataInFlightLock.unlock()
             }
-            // E10 WI-7: the side-effecting path verbs (openPath = 9 / revealPath = 10) actuate on the
+            // The side-effecting path verbs (openPath = 9 / revealPath = 10) actuate on the
             // HOST's own Finder / Launch Services via `HostPathActionPerformer` and reply with an
             // empty-payload status. They are handled HERE — BEFORE, and never reach, the read-only
             // `MetadataResponseBuilder` (which performs NO side effects). `response` returns nil for
@@ -1871,13 +1862,13 @@ final class MuxChannelSession: @unchecked Sendable {
                 enqueueControl([response])
                 return
             }
-            // E13 WI-1: the agent-hooks verbs (installAgentHooks = 11 / uninstallAgentHooks = 12 write or
+            // The agent-hooks verbs (installAgentHooks = 11 / uninstallAgentHooks = 12 write or
             // strip our entries in ~/.claude/settings.json via `AgentInstaller`; agentHookStatus = 13 is a
             // pure read returning the 2-byte `[installed][listenerActive]` flags — the second byte is the
-            // LIVE hook-listener bind state so the client can show installed-but-inactive, queue-safety
-            // cluster 2026-07-02). Handled HERE — BEFORE, and never reaching, the read-only
-            // `MetadataResponseBuilder`. `response` returns nil for every OTHER verb, so the read verbs
-            // fall through to the pure builder unchanged.
+            // LIVE hook-listener bind state so the client can show installed-but-inactive). Handled
+            // HERE — BEFORE, and never reaching, the read-only `MetadataResponseBuilder`. `response`
+            // returns nil for every OTHER verb, so the read verbs fall through to the pure builder
+            // unchanged.
             if let response = HostAgentActionPerformer.response(
                 requestID: requestID, verb: verb, payload: payload,
                 hookListenerActive: agentHookListenerActive(),
@@ -1909,11 +1900,11 @@ final class MuxChannelSession: @unchecked Sendable {
         let seq = replay.append(bytes: bytes)
         let shouldPause = replay.shouldPauseDrain
         replayLock.unlock()
-        // R5 rank 2: the retained-byte cap is no longer dead. Appending may push retained bytes over
-        // the 64 MiB cap (or the 4 MiB offline gate); feed that into the read-loop pause so the kernel
-        // PTY buffer backpressures the shell instead of the host buffering the un-acked stream
-        // unboundedly. OR-composed with the bounded-queue source inside the gate (resume only when both
-        // clear). The lock is released BEFORE touching the gate to keep the lock order replayLock→gate.
+        // Appending may push retained bytes over the 64 MiB cap (or the 4 MiB offline gate); feed
+        // that into the read-loop pause so the kernel PTY buffer backpressures the shell instead of
+        // the host buffering the un-acked stream unboundedly. OR-composed with the bounded-queue
+        // source inside the gate (resume only when both clear). The lock is released BEFORE touching
+        // the gate to keep the lock order replayLock→gate.
         updateReplayBackpressure(shouldPause)
         return seq
     }
@@ -1928,8 +1919,8 @@ final class MuxChannelSession: @unchecked Sendable {
         updateReplayBackpressure(shouldPause)
     }
 
-    /// Marks the client online/offline for the offline (4 MiB) gate, then recomputes backpressure. In
-    /// S1 a channel-gone usually tears the whole session down moments later, but wiring this keeps the
+    /// Marks the client online/offline for the offline (4 MiB) gate, then recomputes backpressure. A
+    /// channel-gone usually tears the whole session down moments later, but wiring this keeps the
     /// offline gate honest for the brief window and for when per-channel resume lands.
     private func setClientOnline(_ online: Bool) {
         replayLock.lock()
@@ -1945,7 +1936,7 @@ final class MuxChannelSession: @unchecked Sendable {
         outputGate?.setReplayPause(shouldPause)
     }
 
-    // MARK: - Exit ordering: EOF latch (R5 rank 5)
+    // MARK: - Exit ordering: EOF latch
 
     /// Marks the read loop as having drained the master to EOF (called from `onEOF`, and from
     /// ``shutdown()`` so a torn-down exit task never waits the full timeout).
@@ -1982,13 +1973,13 @@ final class MuxChannelSession: @unchecked Sendable {
     }
 
     /// Awaits the drain having SENT `.exit` on the wire (or a bounded timeout / cancellation) before the
-    /// exit task fires `onExit` (R13 #7). Mirrors ``awaitEOFOrTimeout`` (2 ms poll, runs once per pane).
+    /// exit task fires `onExit`. Mirrors ``awaitEOFOrTimeout`` (2 ms poll, runs once per pane).
     /// A dead client whose credit never arrives times out — the code can't be delivered to it anyway —
     /// and ``shutdown()`` cancels the exit task so a torn-down pane returns at once.
     ///
-    /// 10s (was 2s): with credit-at-consumption the send window tracks the client's RENDER
+    /// The 10s budget: with credit-at-consumption the send window tracks the client's RENDER
     /// drain, so a transiently-stalled client (window drag, brief main-thread stall) can
-    /// legitimately park the `.exit` send for a few seconds — a 2s window made dropping a
+    /// legitimately park the `.exit` send for a few seconds — a 2s window would make dropping a
     /// clean exit code routine instead of exceptional. Still bounded + cancellation-aware,
     /// so teardown never hangs on it.
     private func awaitExitSentOrTimeout(_ timeout: Duration = .seconds(10)) async {
@@ -2011,7 +2002,7 @@ final class MuxChannelSession: @unchecked Sendable {
     ///   is injected so a COLD-reattach scrollback replay collapses the transient B→C line-editor churn
     ///   (tab-completion menus, autosuggestions, per-keystroke redraws) to the committed OSC-133 command
     ///   line — the fresh terminal then re-renders a clean transcript instead of raw editing artifacts.
-    ///   Set `"0"` to replay the raw scrollback bytes (the pre-distiller behaviour).
+    ///   Set `"0"` to replay the raw scrollback bytes instead.
     /// - `SLOPDESK_SCROLLBACK_STRIP_QUERIES` — default-ON (`env != "0"`). When ON, a
     ///   ``TerminalQueryStripper`` pass removes terminal queries / echoed responses / stale color
     ///   state from the replayed history, so the client terminal never re-answers a prior life's
@@ -2038,7 +2029,7 @@ final class MuxChannelSession: @unchecked Sendable {
         )
     }
 
-    // MARK: - Test seams (replay-backpressure wiring, R5 rank 2)
+    // MARK: - Test seams (replay-backpressure wiring)
 
     // These drive the append/ack/online glue against a real ``PausableQueueGate`` WITHOUT a PTY or
     // read loop, so the "retained ≥ cap → pause; ack → resume" wiring is provable headlessly. Reached
@@ -2054,23 +2045,22 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Drives the real ``setClientOnline(_:)`` glue (offline-gate side).
     func setClientOnlineForTesting(_ online: Bool) { setClientOnline(online) }
 
-    /// Whether an exit-waiter task exists (audit #3 regression seam): only ``startRelay()`` may
-    /// ever create one — `rebindRelay` must NOT cancel+recreate it, because
-    /// `PTYProcess.waitForExit()` parks a plain CheckedContinuation with no cancellation
-    /// plumbing, so every recreate left one more never-retired waiter that fired a duplicate
-    /// `.exit` wire frame when the child eventually died.
+    /// Whether an exit-waiter task exists (regression seam): only ``startRelay()`` may ever create
+    /// one — `rebindRelay` must NOT cancel+recreate it, because `PTYProcess.waitForExit()` parks a
+    /// plain CheckedContinuation with no cancellation plumbing, so each recreate would leave one
+    /// more never-retired waiter that fires a duplicate `.exit` wire frame when the child dies.
     var hasExitTaskForTesting: Bool {
         taskLock.lock()
         defer { taskLock.unlock() }
         return exitTask != nil
     }
 
-    /// Exit-ordering EOF latch seams (R5 rank 5).
+    /// Exit-ordering EOF latch seams.
     func signalEOFForTesting() { signalEOFReached() }
     func isEOFReachedForTesting() -> Bool { isEOFReached() }
     func awaitEOFForTesting(timeout: Duration) async { await awaitEOFOrTimeout(timeout) }
 
-    /// Exit-sent latch seams (R13 #7) — the drain signals once `.exit` is on the wire; the exit task
+    /// Exit-sent latch seams — the drain signals once `.exit` is on the wire; the exit task
     /// awaits it before firing onExit so teardown can't cancel the drain before the exit code is sent.
     func signalExitSentForTesting() { signalExitSent() }
     func isExitSentForTesting() -> Bool { isExitSent() }
@@ -2111,13 +2101,13 @@ final class MuxChannelSession: @unchecked Sendable {
     func takeControlBatchForTesting() -> [WireMessage]? { takeControlBatch() }
     static var maxControlOutQueuedForTesting: Int { maxControlOutQueued }
 
-    /// Race seam (2026-07-11 finding 1) — invoked by ``rebindRelay(data:control:onExit:)``
-    /// immediately after the restarted output drain has been created and its detached-backlog
-    /// kick delivered (see the call site). `nil` in production; tests use it to pin that the
-    /// control wake continuation/sender are rebuilt BEFORE the output drain can run.
+    /// Race seam — invoked by ``rebindRelay(data:control:onExit:)`` immediately after the restarted
+    /// output drain has been created and its detached-backlog kick delivered (see the call site).
+    /// `nil` in production; tests use it to pin that the control wake continuation/sender are
+    /// rebuilt BEFORE the output drain can run.
     var onOutputDrainRestartedForTesting: (() -> Void)?
 
-    /// Whether the control sender's wake continuation is currently installed (finding 1). Read
+    /// Whether the control sender's wake continuation is currently installed. Read
     /// under `controlOutLock` — the same lock `enqueueControl` reads it under, so this answers
     /// exactly "would an enqueue right now be woken?".
     var hasControlWakeContinuationForTesting: Bool {
@@ -2126,14 +2116,14 @@ final class MuxChannelSession: @unchecked Sendable {
         return controlWakeContinuation != nil
     }
 
-    /// E17 / ES-E17-4 echo seams — drive the pure echo fold and the reattach re-establishment with an
+    /// Echo seams — drive the pure echo fold and the reattach re-establishment with an
     /// INJECTED `echoOn` (no PTY probe), so the edge-trigger dedupe AND the reattach re-emit are provable
     /// headlessly via ``takeControlBatchForTesting()``. ``reestablishEchoOnReattachForTesting`` exercises the
     /// EXACT production method ``rebindRelay`` calls, so reverting its re-anchor breaks both together.
     func foldEchoSampleForTesting(echoOn: Bool) { foldEchoSample(echoOn: echoOn) }
     func reestablishEchoOnReattachForTesting(echoOn: Bool) { reestablishEchoOnReattach(echoOn: echoOn) }
 
-    /// 2026-07-10 activity-reattach seams (the type-23/26/27/32 sibling of the echo seams above):
+    /// Activity-reattach seams (the type-23/26/27/32 sibling of the echo seams above):
     /// drive the pure detector fold with an INJECTED name/clock (no `tcgetpgrp` probe) and the EXACT
     /// production re-assert ``rebindRelay`` calls, so the indicators-survive-a-client-restart truth
     /// is provable headlessly via ``takeControlBatchForTesting()``.
@@ -2154,15 +2144,14 @@ final class MuxChannelSession: @unchecked Sendable {
         deriveProjectKey(from: sniffed)
     }
 
-    /// E4 / finding 4 — drive the real ``serveMetadata(requestID:verb:payload:)`` glue (the exact
-    /// call both control loops make on an inbound `.metadataRequest`) WITHOUT a running relay, so
-    /// the always-replies + bounded-in-flight contracts are provable headlessly via
-    /// ``takeControlBatchForTesting()``.
+    /// Drives the real ``serveMetadata(requestID:verb:payload:)`` glue (the exact call both control
+    /// loops make on an inbound `.metadataRequest`) WITHOUT a running relay, so the always-replies +
+    /// bounded-in-flight contracts are provable headlessly via ``takeControlBatchForTesting()``.
     func serveMetadataForTesting(requestID: UInt32, verb: UInt8, payload: Data) {
         serveMetadata(requestID: requestID, verb: verb, payload: payload)
     }
 
-    /// Finding 4 — the bounded-admission cap + live in-flight count, so the flood test can pin
+    /// The bounded-admission cap + live in-flight count, so the flood test can pin
     /// "at most `cap` work items queued" and "every slot released when its work item finishes".
     static var maxMetadataInFlightForTesting: Int { maxMetadataInFlight }
     var metadataInFlightForTesting: Int {
@@ -2171,7 +2160,7 @@ final class MuxChannelSession: @unchecked Sendable {
         return metadataInFlight
     }
 
-    /// Finding 4 — suspend/resume the serial `metadataQueue` so a flood test can hold admitted
+    /// Suspend/resume the serial `metadataQueue` so a flood test can hold admitted
     /// work items in-flight deterministically (never spawn/park real probe subprocesses — the
     /// flood uses an unknown verb, which the pure builder answers without a syscall). Tests MUST
     /// balance every suspend with exactly one resume before the session is released (a suspended
@@ -2179,12 +2168,12 @@ final class MuxChannelSession: @unchecked Sendable {
     func suspendMetadataQueueForTesting() { metadataQueue.suspend() }
     func resumeMetadataQueueForTesting() { metadataQueue.resume() }
 
-    /// WB1 — drive the real `feedBlocks` glue (segmenter tap → enqueueControl) WITHOUT a PTY/read
-    /// loop, so the type-28 emission + the byte-identical-when-off contract are provable headlessly.
+    /// Drives the real `feedBlocks` glue (segmenter tap → enqueueControl) WITHOUT a PTY/read loop,
+    /// so the type-28 emission + the byte-identical-when-off contract are provable headlessly.
     func feedBlocksForTesting(_ chunk: Data) { feedBlocks(chunk) }
-    /// WB1 — drive the real `serveBlockOutput` glue (ring lookup → enqueueControl).
+    /// Drives the real `serveBlockOutput` glue (ring lookup → enqueueControl).
     func serveBlockOutputForTesting(index: UInt32) { serveBlockOutput(index: index) }
-    /// WB1 — whether the Blocks tap is active for this channel (the tracker was instantiated).
+    /// Whether the Blocks tap is active for this channel (the tracker was instantiated).
     var blocksEnabledForTesting: Bool { blocksEnabled }
 
     private static func writeAll(fd: Int32, data: Data) {

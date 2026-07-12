@@ -1,13 +1,13 @@
 import Foundation
 
-// MARK: - E8 (H9 / ES-E8-6): mouse-hide-while-typing visibility mapping
+// MARK: - mouse-hide-while-typing visibility mapping
 
 /// Swift mirror of libghostty's `ghostty_action_mouse_visibility_e` C enum (`apprt.action.MouseVisibility`,
 /// `CGhostty/ghostty.h:709-713`). The raw values are pinned to the C enum's declaration order so an `Int32`
 /// delivered by a `GHOSTTY_ACTION_MOUSE_VISIBILITY` action maps 1:1 WITHOUT importing `CGhostty` into this
 /// headless, AppKit-free module — keeping the visibility decision unit-testable.
 ///
-/// `mouse-hide-while-typing = true` (H9, default ON) only makes libghostty DECIDE to hide the pointer;
+/// `mouse-hide-while-typing = true` (default ON) only makes libghostty DECIDE to hide the pointer;
 /// it then delegates the actual hide/show to the embedder via this action (`Surface.zig` `hideMouse`/
 /// `showMouse` → `performAction(.mouse_visibility, .hidden/.visible)`). The GUI surface
 /// (`GhosttyTerminalView`, compile-only behind `#if canImport(CGhostty)`) reads the raw int and asks
@@ -17,7 +17,7 @@ public enum MouseVisibility: Int32, CaseIterable, Sendable, Equatable {
     case hidden = 1
 }
 
-/// The PURE, headless mouse-visibility decision (H9). Reads the raw `ghostty_action_mouse_visibility_e`
+/// The PURE, headless mouse-visibility decision. Reads the raw `ghostty_action_mouse_visibility_e`
 /// value the C `action_cb` hands across as an `Int32` and resolves whether the pointer should be VISIBLE.
 public enum MouseVisibilityMapping {
     /// Resolve a raw `ghostty_action_mouse_visibility_e` value to whether the pointer should be VISIBLE.

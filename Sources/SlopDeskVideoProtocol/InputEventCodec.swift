@@ -42,7 +42,7 @@ public enum InputEvent: Equatable, Sendable {
     /// Mouse drag (a button is HELD) to a normalised window position. The CLIENT sends
     /// this explicitly when its view reports a `mouseDragged` (vs a `mouseMoved`), so the
     /// host posts the matching `*MouseDragged` STATELESSLY — it never infers "is a button
-    /// held?" from host-side state. This is what makes drag-select ("bôi đen") correct: it
+    /// held?" from host-side state. This is what makes drag-select correct: it
     /// is wire-reorder-safe over UDP (a drag that arrives before its `mouseDown` is simply
     /// ignored by the target app until the down anchors the selection) and it removes the
     /// phantom-drag-after-a-lost-`mouseUp` class of bug (a `.mouseMove` is now ALWAYS a pure

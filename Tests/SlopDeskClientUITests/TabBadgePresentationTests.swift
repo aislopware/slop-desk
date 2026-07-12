@@ -1,7 +1,7 @@
-// TabBadgePresentationTests — pins E6 WI-4's pure view-side badge map. `StatusPresentation.tabBadge` resolves
+// TabBadgePresentationTests — pins the pure view-side badge map. `StatusPresentation.tabBadge` resolves
 // each `TabBadgeKind` to the correct glyph (spinner / accent dot / tinted SF-symbol), and `tabBadgeLabel`
 // gives every kind a distinct non-empty AX/tooltip string. Headless VALUE assertions — no SwiftUI render, no
-// video/Metal/SCStream. Each test fails on the pre-WI-4 code (the two helpers did not exist), so none is
+// video/Metal/SCStream. Each test fails if the two helpers don't exist, so none is
 // tautological. (Tints are deliberately NOT asserted here — `Color` equality is provider-fragile; the symbol
 // NAME + glyph SHAPE are the load-bearing spec, locked by name, with the visual tint left to the snapshot.)
 
@@ -56,8 +56,8 @@ final class TabBadgePresentationTests: XCTestCase {
         XCTAssertNil(symbolName(of: .commandBusy))
     }
 
-    /// The settled vocabulary is ALL static dots (2026-07-10 UI feedback: no character glyphs next to
-    /// dots — the old checkmark/triangle/hand are gone): blocked/failed red, done-unread blue,
+    /// The settled vocabulary is ALL static dots (no character glyphs next to
+    /// dots): blocked/failed red, done-unread blue,
     /// clean-finish flash green. Tints are left to the snapshot (Color equality is provider-fragile);
     /// the SHAPE class is the load-bearing pin.
     func testSettledKindsAreStaticDotsNotCharacterGlyphs() {
@@ -88,7 +88,7 @@ final class TabBadgePresentationTests: XCTestCase {
         XCTAssertEqual(Set(labels).count, kinds.count, "labels are distinct per kind")
     }
 
-    // MARK: - Progress readout (E14/K1 WI-2 — the OSC 9;4 taskbar-style determinate percent)
+    // MARK: - Progress readout (the OSC 9;4 taskbar-style determinate percent)
 
     /// Only a DETERMINATE (`9;4;1;<pct>`) state has a "taskbar" percent readout; an indeterminate spinner /
     /// an error / no-progress show no number. Reverting `progressPercentLabel` to always-nil fails the

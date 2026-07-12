@@ -1,10 +1,10 @@
-// E20 WI-9 (ES-E20-4) — the guided first-launch sheet.
+// The guided first-launch sheet.
 //
 // A non-blocking, one-time setup flow composing already-built settings into a first-launch checklist
-// (`spec/getting-started__first-launch.md`, governed by the 6 screenshots): On-Launch (E7), Set-as-Default-
+// (`spec/getting-started__first-launch.md`, governed by the 6 screenshots): On-Launch, Set-as-Default-
 // Terminal (LOCAL handler; the remote "Common Apps" case honestly-DISABLED with a note), Install-CLI (the
-// macOS `CLIInstaller` symlink + Omit-Prefix + Allow-Overwrite), Theme (E15 picker), and Install-Claude-hooks
-// (the E13 `AgentHooksController` card). The gating + step order live in the PURE `FirstLaunchModel`
+// macOS `CLIInstaller` symlink + Omit-Prefix + Allow-Overwrite), Theme picker, and Install-Claude-hooks
+// (the `AgentHooksController` card). The gating + step order live in the PURE `FirstLaunchModel`
 // (`SlopDeskWorkspaceCore`); this is the view layer only — compiled + HW-verified, never unit-tested.
 //
 // iOS keeps the cross-platform steps (On-Launch, Theme, Claude-hooks); `FirstLaunchModel.steps(for: .iOS)`
@@ -137,7 +137,7 @@ public struct FirstLaunchView: View {
     }
 }
 
-// MARK: - Step 1 · On Launch (E7 — cross-platform)
+// MARK: - Step 1 · On Launch (cross-platform)
 
 /// Step 1 — the On-Launch picker (`@Default(.onLaunch)` — the SAME live key Settings → General binds).
 /// "Restore Last Session" reconnects the still-running detached host sessions; "New Window" starts fresh.
@@ -170,9 +170,9 @@ private struct FirstLaunchOnLaunchStep: View {
     }
 }
 
-// MARK: - Step 4 · Theme (E15 — cross-platform)
+// MARK: - Step 4 · Theme (cross-platform)
 
-/// Step 4 — a compact theme grid (the E15 built-ins). Picking a swatch writes the light/primary slot
+/// Step 4 — a compact theme grid (the built-ins). Picking a swatch writes the light/primary slot
 /// (`store.appearance.theme`) exactly like Settings → Appearance, so the whole app retints LIVE. A "more in
 /// Settings" note points at the full grid + the ⌘⇧P palette flow.
 private struct FirstLaunchThemeStep: View {
@@ -243,9 +243,9 @@ private struct FirstLaunchThemeStep: View {
     }
 }
 
-// MARK: - Step 5 · Install Claude Code hooks (E13 — cross-platform, Claude only)
+// MARK: - Step 5 · Install Claude Code hooks (cross-platform, Claude only)
 
-/// Step 5 — reuses the E13 `AgentHooksController` install card (Claude only). The controller is injected
+/// Step 5 — reuses the `AgentHooksController` install card (Claude only). The controller is injected
 /// by the app scene (`\.agentHooksController`); when no pane backs it the card shows the honest "Connect a
 /// session" disabled state rather than a dead button.
 private struct FirstLaunchClaudeHooksStep: View {
@@ -283,8 +283,8 @@ private struct FirstLaunchClaudeHooksStep: View {
         case .installed:
             Label("Installed", systemImage: "checkmark").foregroundStyle(Slate.Status.ok)
         case .installedInactive:
-            // Queue-safety cluster (2026-07-02): written to settings.json but the host listener is not
-            // bound — honest amber, not the green check (Settings ▸ Agents carries the restart hint).
+            // Written to settings.json but the host listener is not bound — honest amber, not the green
+            // check (Settings ▸ Agents carries the restart hint).
             Label("Installed — inactive", systemImage: "exclamationmark.triangle")
                 .foregroundStyle(Slate.Status.warn)
                 .help("Restart the host daemon with SLOPDESK_AGENT_HOOKS=1, then open new panes.")
@@ -309,7 +309,7 @@ private struct FirstLaunchClaudeHooksStep: View {
 
 // MARK: - Shared step chrome (a flat card + a gray note)
 
-/// A flat card wrapping a step's controls (card == window background, hairline border — the E-series flat
+/// A flat card wrapping a step's controls (card == window background, hairline border — the flat
 /// pane aesthetic).
 struct FirstLaunchCard<Content: View>: View {
     @ViewBuilder var content: Content
@@ -347,7 +347,7 @@ struct FirstLaunchNote: View {
 
 /// Step 2 — register the app as the LOCAL OS handler for terminal URL schemes / shell scripts, plus the
 /// Finder-Integration and Full-Disk-Access deep-links. The "Set as Default Terminal for Common Apps" remote
-/// case is honestly-DISABLED with a note (E20 exclusion §4 — no dead button: a remote-host editor's config
+/// case is honestly-DISABLED with a note (no dead button: a remote-host editor's config
 /// can't be rewritten from the client).
 private struct FirstLaunchDefaultTerminalStep: View {
     let model: FirstLaunchModel

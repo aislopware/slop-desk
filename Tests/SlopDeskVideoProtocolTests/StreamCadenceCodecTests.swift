@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskVideoProtocol
 
-/// Wire codec for the `streamCadence` control message (type 10, FPS governor 2026-06-11):
+/// Wire codec for the `streamCadence` control message (type 10, FPS governor):
 /// host → client content-cadence announcement, sent at session start and on every governed fps
 /// step (dup ×2). Body = one big-endian UInt16 fps. Pattern of KeepaliveCodecTests /
 /// FocusWindowCodecTests: round-trip + truncation + unknown-type tolerance.
@@ -40,7 +40,7 @@ final class StreamCadenceCodecTests: XCTestCase {
 
     /// The decoder's `default` arm still drops a type PAST the highest defined (21 =
     /// windowPreviewRequest) as `.malformed` — the forward-compatibility contract (a future control
-    /// type claims 22+). Types 16–21 (the window-feed trio + icon/blob/preview) are now DEFINED, so
+    /// type claims 22+). Types 16–21 (the window-feed trio + icon/blob/preview) are DEFINED, so
     /// a bare type byte for them throws `.truncated` (short body), not `.malformed`; the "unknown
     /// type" probe sits past the max.
     func testUnknownTypePastDefinedStillThrowsMalformed() {

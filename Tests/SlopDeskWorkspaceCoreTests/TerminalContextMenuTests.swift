@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// The pure terminal right-click menu model (docs/42 W14 #10): item ordering, separators, and — the
+/// The pure terminal right-click menu model (docs/42): item ordering, separators, and — the
 /// load-bearing piece — per-item enablement for the pane state (copy needs a selection; paste needs
 /// clipboard text; select-all / clear / splits / find are always live). No view.
 final class TerminalContextMenuTests: XCTestCase {
@@ -49,7 +49,7 @@ final class TerminalContextMenuTests: XCTestCase {
     }
 
     func testSeparatorsGroupClipboardEditBlocksSplitFind() {
-        // A separator above Select All, Copy Command Output (WB2 blocks group), Split Right, and Find —
+        // A separator above Select All, Copy Command Output (blocks group), Split Right, and Find —
         // four group boundaries (clipboard | edit | blocks | split | find).
         let withSeparator = TerminalContextMenu.items.filter(\.separatorBefore)
         XCTAssertEqual(withSeparator, [.selectAll, .copyOutput, .splitRight, .find])
@@ -73,7 +73,7 @@ final class TerminalContextMenuTests: XCTestCase {
         }
     }
 
-    // MARK: Paste as… (E8 / ES-E8-4)
+    // MARK: Paste as…
 
     func testPasteAsItemsAreNotInTopLevelMenu() {
         // The "Paste as…" variants hang off the submenu, never the flat top-level list (so adding them as

@@ -1,6 +1,6 @@
 import Foundation
 
-// WF-6 (#8) FULL-RANGE COLOR — the SINGLE pure source of truth for the YCbCr→RGB
+// FULL-RANGE COLOR — the SINGLE pure source of truth for the YCbCr→RGB
 // coefficients the client's Metal shader uses. NO platform deps (this is the shared
 // host+client protocol module), so the coefficient math is headlessly unit-testable
 // while the actual rendered pixels (HW-only-verifiable) read these exact values.

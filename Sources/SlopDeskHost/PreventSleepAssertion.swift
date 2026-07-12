@@ -3,7 +3,7 @@ import Foundation
 import IOKit
 import IOKit.pwr_mgt
 
-// MARK: - E13 WI-3 (ES-E13-3): the macOS prevent-sleep assertion glue (code-reviewed only)
+// MARK: - macOS prevent-sleep assertion glue (code-reviewed only)
 
 /// Holds a SINGLE `IOPMAssertion` (`kIOPMAssertionTypePreventUserIdleSystemSleep`) and drives it to a
 /// desired state, STRICTLY BALANCED: it creates the assertion exactly once on a false→true edge and releases

@@ -2,17 +2,17 @@ import Foundation
 import os
 import SlopDeskTerminal
 
-// MARK: - CommandBlock → PeekBlockLine (the P4 peek "recent output" shape)
+// MARK: - CommandBlock → PeekBlockLine (the peek "recent output" shape)
 
 /// ``CommandBlock`` carries the typed command line + status label, satisfying the pure ``PeekBlockLine``
 /// shape ``PeekContent/recentLines(from:limit:)`` reads — so the peek DTO builds off the live
-/// ``TerminalBlockModel`` while the builder stays free of an `SlopDeskTerminal` import (the P4 overlay's
+/// ``TerminalBlockModel`` while the builder stays free of an `SlopDeskTerminal` import (the overlay's
 /// recent-lines text is unit-tested with a stand-in).
 extension CommandBlock: PeekBlockLine {}
 
 // MARK: - TerminalModelProviding (the store↔live-session seam the block ops resolve through)
 
-/// The capability seam the WB2/WB3 active-pane block ops resolve through INSTEAD of an
+/// The capability seam the active-pane block ops resolve through INSTEAD of an
 /// `as? LivePaneSession` cast — so the store's block-routing glue (navigator / jump-to-block /
 /// re-run-last / jump-to-failed / bookmark seed) is testable via a recording double carrying a REAL
 /// ``TerminalViewModel`` that never opens a socket. Production conformer: ``LivePaneSession`` (returns
@@ -32,10 +32,10 @@ protocol TerminalModelProviding: AnyObject {
     var bookmarkScopeKey: String { get }
 }
 
-// MARK: - BlockBookmarkSeam (WB3 — the store's per-pane bookmark persistence + jump cursor)
+// MARK: - BlockBookmarkSeam (the store's per-pane bookmark persistence + jump cursor)
 
 /// The per-pane block-bookmark persistence seam plus the jump-to-failed cursor, bundled so the
-/// ``WorkspaceStore`` holds ONE stored property for the whole WB3 surface (keeping its body under the lint
+/// ``WorkspaceStore`` holds ONE stored property for the whole surface (keeping its body under the lint
 /// type-body ceiling). `load`/`save` are wired by the app to the ``PreferencesStore`` keyed by the
 /// per-SESSION scope key (``TerminalModelProviding/bookmarkScopeKey`` — NOT the stable pane id, so a
 /// relaunch with a fresh block-index space does not re-apply stale stars onto unrelated commands); left
@@ -55,9 +55,9 @@ public struct BlockBookmarkSeam {
 
 // MARK: - BlockJump (the ONE shared absolute re-anchor jump — navigator + store share it)
 
-/// The single absolute "jump the viewport to the block whose prompt ordinal is N" implementation
-/// (WB2/WB3/E9), so the navigator's per-row jump and the store's jump-to-failed can't drift on the
-/// choreography. Pure over the ``TerminalSurfaceActions`` seam; `nonisolated` so both call sites reach it.
+/// The single absolute "jump the viewport to the block whose prompt ordinal is N" implementation, so the
+/// navigator's per-row jump and the store's jump-to-failed can't drift on the choreography. Pure over the
+/// ``TerminalSurfaceActions`` seam; `nonisolated` so both call sites reach it.
 ///
 /// ## Why an ORDINAL, not a "position among the blocks"
 /// libghostty's `scrollPrompt` (ghostty `PageList.zig`, pinned v1.3.1) counts `.prompt` ROWS — one per
@@ -89,16 +89,16 @@ enum BlockJump {
     ///
     /// MUST fit ghostty's binding parameter type: `jump_to_prompt` is declared `i16` (`Binding.zig`,
     /// pinned v1.3.1), so any |delta| > 32768 fails the ACTION-STRING PARSE and the whole binding silently
-    /// no-ops — the jump then degenerates to bare `scroll_to_bottom` (the first shipped value, 1_000_000,
-    /// did exactly that on hardware). 32_000 stays inside `i16` while far beyond any retained scrollback's
-    /// prompt count.
+    /// no-ops — the jump then degenerates to bare `scroll_to_bottom` (a round value like 1_000_000 fails
+    /// this way on hardware). 32_000 stays inside `i16` while far beyond any retained scrollback's prompt
+    /// count.
     nonisolated static let reAnchorDelta = 32000
 
     /// The largest single DOWNWARD `jump_to_prompt` step that fits ghostty's binding parameter.
     ///
     /// `jump_to_prompt` is declared `i16` (`Binding.zig`, pinned v1.3.1 — max 32767), so a single step
     /// whose delta exceeds that fails the ACTION-STRING PARSE and silently no-ops the WHOLE binding — the
-    /// exact i16 trap the anchor delta hit in 84b2cf3. The step delta `ordinal − 1` is unbounded (a
+    /// same i16 trap ``reAnchorDelta`` guards against. The step delta `ordinal − 1` is unbounded (a
     /// long-lived detached session stamps ever-growing ordinals — every Enter counts), so past ordinal
     /// 32768 the raw step would silently land on the anchor (oldest prompt) instead of the target. A step
     /// beyond this bound is therefore SPLIT into in-range hops: each positive `jump_to_prompt` re-counts
@@ -151,9 +151,9 @@ enum BlockJump {
     }
 }
 
-// MARK: - WorkspaceStore × Command Blocks (WB2 — Warp-style per-command blocks)
+// MARK: - WorkspaceStore × Command Blocks (Warp-style per-command blocks)
 
-/// The WB2/WB3 active-pane Block ops, split into their own extension so the (already large)
+/// The active-pane Block ops, split into their own extension so the (already large)
 /// ``WorkspaceStore`` body stays under the lint ceiling. They mirror
 /// ``WorkspaceStore/requestFindInActivePane()``: resolve the active pane's live terminal model (in
 /// whichever live model is active), then route to its block hooks.
@@ -168,10 +168,10 @@ public extension WorkspaceStore {
         }
     }
 
-    /// The active pane's live terminal model in WHICHEVER live model is active (W5): the tree's active pane
+    /// The active pane's live terminal model in WHICHEVER live model is active: the tree's active pane
     /// on the IDE shell, the canvas focus on the retained-but-dead path. `nil` for a non-terminal active
-    /// pane (`.remoteGUI` / `.systemDialog`) or an empty shell. Shared by the WB2 block ops so the
-    /// navigator / jump work on both paths — and by the E1 ``WorkspaceStore+FontScroll`` hooks (font/scroll
+    /// pane (`.remoteGUI` / `.systemDialog`) or an empty shell. Shared by the block ops so the
+    /// navigator / jump work on both paths — and by the ``WorkspaceStore+FontScroll`` hooks (font/scroll
     /// resolve the same active terminal model), so it is `internal` (cross-file) rather than `private`.
     internal var activeTerminalModel: TerminalViewModel? {
         guard let activeID = activePaneID,
@@ -179,7 +179,7 @@ public extension WorkspaceStore {
         return provider.terminalModel
     }
 
-    /// Opens the Command Navigator (WB2/E10 WI-10: ⌃⌘O / the chrome chip / a menu item) over the active pane —
+    /// Opens the Command Navigator (⌃⌘O / the chrome chip / a menu item) over the active pane —
     /// routes to its ``TerminalViewModel/onRequestBlockNavigator`` (wired by `TerminalLeafView`, which TOGGLES
     /// its per-pane `CommandNavigatorView` overlay). A no-op for a non-terminal active pane or an empty shell.
     /// The navigator's recent-blocks list is the PURE ``TerminalBlockModel`` (unit-tested).
@@ -187,7 +187,7 @@ public extension WorkspaceStore {
         activeTerminalModel?.onRequestBlockNavigator?()
     }
 
-    /// P5b: TOGGLES modal keyboard COPY-MODE over the active pane (the ⌘⇧C chord / Pane-menu "Copy Mode" entry).
+    /// TOGGLES modal keyboard COPY-MODE over the active pane (the ⌘⇧C chord / Pane-menu "Copy Mode" entry).
     /// Drives the MODEL as the single source of truth — ``TerminalViewModel/enterCopyMode()`` /
     /// ``TerminalViewModel/exitCopyMode()`` (which flip `isCopyMode` and fire `onRequestCopyMode` so the overlay
     /// `@State` syncs FROM the model, never an independent inverting toggle). A no-op for a non-terminal active
@@ -212,8 +212,8 @@ public extension WorkspaceStore {
     }
 
     /// Jumps the active pane's viewport to the previous (`delta < 0`) / next (`delta > 0`) shell prompt —
-    /// WB2's ⌃⌘[ / ⌃⌘] (and the navigator's per-row jump). Routes to libghostty's `jump_to_prompt:<delta>`
-    /// via the active surface's ``TerminalSurfaceActions`` seam (the same lever W14's jump-to-prompt uses).
+    /// ⌃⌘[ / ⌃⌘] (and the navigator's per-row jump). Routes to libghostty's `jump_to_prompt:<delta>`
+    /// via the active surface's ``TerminalSurfaceActions`` seam (the same lever the jump-to-prompt uses).
     /// A no-op for a non-terminal pane, an empty shell, or a headless/placeholder surface (no seam).
     func jumpToBlockInActivePane(delta: Int) {
         guard let model = activeTerminalModel,
@@ -221,7 +221,7 @@ public extension WorkspaceStore {
         actions.performBindingAction("jump_to_prompt:\(delta)")
     }
 
-    /// WB3 BOOKMARKS: seeds a freshly-materialized pane's ``TerminalBlockModel`` from persistence (keyed by
+    /// BOOKMARKS: seeds a freshly-materialized pane's ``TerminalBlockModel`` from persistence (keyed by
     /// the per-SESSION ``TerminalModelProviding/bookmarkScopeKey``, NOT the stable pane id — so a relaunch
     /// with a fresh block-index space starts with no stars instead of grafting stale indices onto unrelated
     /// commands) and wires its `onBookmarksChanged` to persist back on every toggle. A no-op for a
@@ -236,7 +236,7 @@ public extension WorkspaceStore {
         }
     }
 
-    // MARK: - WB3: Re-run last command
+    // MARK: - Re-run last command
 
     /// Re-runs the active pane's LATEST captured command by re-injecting its text (verbatim, +1 newline)
     /// into the pane's shell via the normal input path (``TerminalViewModel/sendInput(_:)`` → wire type 3).
@@ -249,7 +249,7 @@ public extension WorkspaceStore {
     }
 
     /// Re-runs an EXPLICIT captured command `text` (the Open-Quickly **Current** filter's Command-row
-    /// "Re-Run in Current Pane" action, E11 WI-6) by re-injecting it verbatim into the active pane's shell —
+    /// "Re-Run in Current Pane" action) by re-injecting it verbatim into the active pane's shell —
     /// the SAME ``BlockReRunEncoder`` verbatim-UTF-8 path ``reRunLastCommandInActivePane()`` uses (strip any
     /// trailing CR/LF, append exactly one `0x0A`; NEVER ``SendKeysParser``, so a literal `"<Enter>"` in the
     /// captured text can't become a control byte — the injection-safety invariant). Differs from the
@@ -278,7 +278,7 @@ public extension WorkspaceStore {
         model.copyBlockOutput(index: index, onResult: onResult)
     }
 
-    // MARK: - WB3: Jump to previous / next FAILED block
+    // MARK: - Jump to previous / next FAILED block
 
     /// Jumps the active pane's viewport to the next (`forward`) / previous (`!forward`) FAILED block from
     /// the per-pane cursor (``WorkspaceStore/blockJumpCursor``), updating the cursor, via the SAME absolute
@@ -295,10 +295,10 @@ public extension WorkspaceStore {
         BlockJump.toPromptOrdinal(target.promptOrdinal, using: actions)
     }
 
-    // MARK: - E9: Jump to a specific Outline block
+    // MARK: - Jump to a specific Outline block
 
     /// Jumps the active pane's viewport to the block with `index` — the Commands-panel per-row jump
-    /// (E9, now merged into the Info tab), the ONE reuse of the shared absolute re-anchor jump
+    /// (now merged into the Info tab), the ONE reuse of the shared absolute re-anchor jump
     /// (``BlockJump``) that the navigator's per-row jump + jump-to-failed also route through (so the
     /// choreography can't drift). Resolves the active terminal model + its ``TerminalSurfaceActions``
     /// surface seam and jumps to the block's host-stamped ``CommandBlock/promptOrdinal``. A no-op for a

@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskProtocol
 
-/// E14 / K1 — the `progress` wire codec (terminal CONTROL channel, host → client, type 32):
+/// The `progress` wire codec (terminal CONTROL channel, host → client, type 32):
 ///
 /// - `progress(state: UInt8, percent: UInt8)` — the OSC 9;4 taskbar-progress badge. Body = a flat
 ///   2-byte `[UInt8 state][UInt8 percent]` (no BE for single bytes). The state is carried VERBATIM

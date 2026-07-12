@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskVideoProtocol
 
-/// WF-6 (#8) FULL-RANGE COLOR — the headless-testable half of the change: the pure
+/// FULL-RANGE COLOR — the headless-testable half of the change: the pure
 /// coefficient math. Rendered-pixel correctness is HW-only-verifiable (Metal GPU);
 /// these tests prove (a) the `.video` coefficients are byte-identical to the shader's
 /// current literals (so DEFAULT OFF is unchanged), (b) `.full` changes ONLY the luma,

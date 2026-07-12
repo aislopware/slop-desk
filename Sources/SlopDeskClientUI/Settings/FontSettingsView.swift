@@ -1,12 +1,12 @@
-// FontSettingsView — the Appearance → Font section (E15 WI-8).
+// FontSettingsView — the Appearance → Font section.
 //
 // Follows the design spec `docs/ui-shell/screenshots/font-setting.png` + `font-setting-bold.png`: the
 // "FONT FAMILY" section opens with a "Settings for" pill row of SCOPE TABS — Computed / Global / Light Theme
 // / Dark Theme / Fallback — then a contextual note, the "Auto-match weight & style" toggle, the Font Family
 // combobox with "Aa" specimens (and, when auto-match is OFF, the Bold / Italic / Bold-Italic face pickers),
 // then Text (size + line-height), Ligatures, and the Style & Rendering controls (bold / italic / underline /
-// blink / blending) with deferred-apply notes. Replaces the old `Section("Font")` (family TextField + size
-// Stepper) in `AppearanceSettingsTab`.
+// blink / blending) with deferred-apply notes. This is the whole Font section for `AppearanceSettingsTab` —
+// a single family TextField + size Stepper can't express scope tabs, per-face pickers, or deferred-apply notes.
 //
 // BINDINGS (golden-safe — pure client chrome, never the wire/sidecar/`EnvConfig`): every render control binds
 // `store.terminal` (a ``TerminalPreferences`` font-parity field), so a change flows through the store's
@@ -16,9 +16,9 @@
 // ``FontScopeResolver/lightSlotSlug(_:)`` / `darkSlotSlug(_:)`); the read-only Computed tab shows
 // ``FontScopeResolver/resolvedFamily(global:themeFonts:slug:fallback:)`` for the active OS-appearance slot.
 //
-// DEFERRED-APPLY (decision #5): the underline-off and SGR-blink toggles, and the `srgb-over` / `linear` /
+// DEFERRED-APPLY: the underline-off and SGR-blink toggles, and the `srgb-over` / `linear` /
 // `perceptual` blending modes, have no verified stock libghostty key — they PERSIST + surface here with a
-// note but are NOT emitted (exactly the precedent set by `cursorAnimation = .smooth`). Ligatures, fallback,
+// note but are NOT emitted (the same precedent as `cursorAnimation = .smooth`). Ligatures, fallback,
 // per-face families, bold/italic mode, line-height, and `macos-like` blending (→ `font-thicken`) DO map and
 // re-render live.
 //
@@ -428,7 +428,7 @@ private enum LineHeightChoice: Hashable {
 /// Free-text (not a closed Picker) because the terminal renders on the HOST — any host-installed family can be
 /// typed even if this device lacks it.
 ///
-/// DRAFT-COMMIT (stability audit): the store-backed rows must NOT write `selection` per keystroke — every
+/// DRAFT-COMMIT: the store-backed rows must NOT write `selection` per keystroke — every
 /// write rides `PreferencesStore.terminal`/`.appearance` `didSet` → persist + `TerminalConfigBroadcaster`
 /// → every live terminal reloads libghostty config + PTY-resizes. So keystrokes edit a LOCAL draft that is
 /// committed via ``DraftCommitDebouncer`` — after a short idle pause (live preview: one trailing commit per

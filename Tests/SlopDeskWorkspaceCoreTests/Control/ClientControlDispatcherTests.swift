@@ -2,7 +2,7 @@ import SlopDeskAgentDetect
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-// E20 WI-2 — `ClientControlDispatcher` tests.
+// `ClientControlDispatcher` tests.
 //
 // Each method: parse → dispatch → response with a FAKE ``ClientControlBackend`` (no socket, no GUI).
 // Plus the validate-then-drop contract: hostile / short / malformed input ALWAYS yields an error
@@ -668,7 +668,7 @@ final class ClientControlDispatcherTests: XCTestCase {
     }
 
     func testAgentStatusResolvedButNoStatusYet() {
-        // M6 regression: a pane that EXISTS but whose agent has not reported a status yet (the startup
+        // A pane that EXISTS but whose agent has not reported a status yet (the startup
         // window) must answer `seen:true` with NO status — so watch:claude keeps polling, NOT exit 4.
         // Revert-to-confirm-fail: the old `agentStatus(id:) -> ClaudeStatus?` returned nil here, which the
         // dispatcher encoded as `seen:false` → first-poll never-seen → exit 4.

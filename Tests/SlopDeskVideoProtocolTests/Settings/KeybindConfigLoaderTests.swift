@@ -2,16 +2,15 @@ import Foundation
 import XCTest
 @testable import SlopDeskVideoProtocol
 
-/// E1/WI-6 (production wiring) — pins for ``KeybindConfigLoader``, the config-file → ``KeybindingPreferences``
-/// population path that makes the `text:` / `csi:` / `esc:` / `unbind:` half of ES-E1-6 reachable end-to-end.
-/// Before this loader existed NOTHING wrote ``KeybindingPreferences/textBindings`` / ``unbinds`` from a real
-/// user-facing source, so the dispatcher's text-binding / unbind branch was dead code in practice; these
-/// tests FAIL to compile/run against that earlier tree (the type did not exist) and prove the fold here.
+/// Pins for ``KeybindConfigLoader``, the config-file → ``KeybindingPreferences`` population path that makes
+/// the `text:` / `csi:` / `esc:` / `unbind:` half reachable end-to-end. Without this loader NOTHING writes
+/// ``KeybindingPreferences/textBindings`` / ``unbinds`` from a real user-facing source, so the dispatcher's
+/// text-binding / unbind branch would be dead code in practice.
 final class KeybindConfigLoaderTests: XCTestCase {
     // MARK: text: / csi: / esc: → textBindings (the literal-byte half)
 
     /// `keybind = cmd+shift+h:text:hi` populates `textBindings` on the ⌘⇧H chord with the literal bytes — so
-    /// after publishing into `activeOverrides` a ⌘⇧H keystroke injects `[h, i]` (the ES-E1-6 acceptance).
+    /// after publishing into `activeOverrides` a ⌘⇧H keystroke injects `[h, i]`.
     func testTextBindingIsFoldedIntoTextBindings() {
         let prefs = KeybindConfigLoader.apply(configText: "keybind = cmd+shift+h:text:hi")
         let chord = KeybindingPreferences.KeyChord(key: "h", command: true, shift: true)
@@ -71,7 +70,7 @@ final class KeybindConfigLoaderTests: XCTestCase {
     // MARK: unbind: → unbinds (the disable-a-default half)
 
     /// `keybind = unbind:cmd+d` inserts ⌘D into `unbinds` so the dispatcher passes the chord through instead
-    /// of firing the default split-right action (the ES-E1-6 "an unbind: directive disables a default").
+    /// of firing the default split-right action (an `unbind:` directive disables a default).
     func testUnbindIsFoldedIntoUnbinds() {
         let prefs = KeybindConfigLoader.apply(configText: "keybind = unbind:cmd+d")
         XCTAssertTrue(prefs.unbinds.contains(.init(key: "d", command: true)))
@@ -163,7 +162,7 @@ final class KeybindConfigLoaderTests: XCTestCase {
     }
 
     /// With NO resolver supplied, named-action lines are simply dropped (the text/unbind directives are still
-    /// honoured — they need no registry). This is the launch-time default for the ES-E1-6 wiring.
+    /// honoured — they need no registry). This is the launch-time default.
     func testNamedActionDroppedWithoutResolver() {
         let prefs = KeybindConfigLoader.apply(
             configText: """
@@ -175,14 +174,14 @@ final class KeybindConfigLoaderTests: XCTestCase {
         XCTAssertTrue(prefs.unbinds.contains(.init(key: "q", command: true)))
     }
 
-    // MARK: WI-2 — the production-shaped resolver folds named/param actions end-to-end
+    // MARK: the production-shaped resolver folds named/param actions end-to-end
 
     /// A hand-built stand-in for the production `WorkspaceBindingRegistry.bindingID(forConfigName:arg:)`
     /// resolver installed at launch (`SlopDeskClientApp.swift`). The VideoProtocol test target cannot import
     /// `SlopDeskWorkspaceCore` (the registry lives there — the very reason the loader takes a closure hook),
     /// so this mirrors the table's CONTRACT: bare names map to ids, `goto_tab:N` (N ∈ 1…9) expands per-digit,
     /// and an unknown name / out-of-range arg resolves to `nil` (drop, no trap). It is deliberately NOT the
-    /// registry — it is a faithful fake of the shape WI-2 wires, so these loader-level cases stay in-module.
+    /// registry — it is a faithful fake of the shape the production resolver wires, so these loader-level cases stay in-module.
     private func handBuiltResolver(
         _ named: KeybindConfigLoader.NamedBinding,
     ) -> (bindingID: String, chord: KeybindingPreferences.KeyChord)? {
@@ -206,7 +205,7 @@ final class KeybindConfigLoaderTests: XCTestCase {
     }
 
     /// A bare named action (`cmd+t:new_tab`) folds into `overrides` under the resolved bindingID with the
-    /// trigger chord — the end-to-end fold the launch-time resolver performs (ES-E1-6's named half). The
+    /// trigger chord — the end-to-end fold the launch-time resolver performs (the named-action half). The
     /// `text:`/`unbind:` directives stay empty (this line is a pure override).
     func testNamedBindingFoldsIntoOverridesViaResolver() {
         let prefs = KeybindConfigLoader.apply(

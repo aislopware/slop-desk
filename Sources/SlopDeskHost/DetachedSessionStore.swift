@@ -7,15 +7,15 @@ import Foundation
 /// either (a) the client returns and calls ``claim(_:)`` to reattach, (b) the TTL fires and
 /// ``evict(_:)`` kills the shell, or (c) ``drainAll()`` is called on `stop()`.
 ///
-/// **Synchronous by design (audit 2026-07-10 race cluster).** This used to be an actor, which
-/// forced every transition through an `await` hop. Two of those hops were load-bearing races:
+/// Synchronous by design: an actor would force every transition through an `await` hop, and two
+/// of those hops are load-bearing races —
 ///
-/// 1. `detach → Task { await store.insert }` — the fire-and-forget insert could lose to a fast
-///    reconnect's lookup, which then missed the store and spawned a SECOND shell under the same
+/// 1. `detach → Task { await store.insert }` — a fire-and-forget insert can lose to a fast
+///    reconnect's lookup, which then misses the store and spawns a SECOND shell under the same
 ///    sessionID (orphaned live PTY + two writers interleaving one scrollback journal).
-/// 2. `lookup` returned the live session WITHOUT removing it — two concurrent reconnects (or a
-///    reconnect racing an armed TTL task) could both obtain the same session; the loser's later
-///    `channelClose` then killed the winner's live PTY and deleted its disk journal.
+/// 2. a `lookup` that returns the live session WITHOUT removing it lets two concurrent reconnects
+///    (or a reconnect racing an armed TTL task) both obtain the same session; the loser's later
+///    `channelClose` then kills the winner's live PTY and deletes its disk journal.
 ///
 /// As a lock-guarded class, ``insert(_:key:ttl:)`` completes before `detachMuxSession` returns
 /// (no scheduling gap), and ``claim(_:)`` removes the entry + cancels its TTL task in ONE
@@ -90,18 +90,18 @@ final class DetachedSessionStore: @unchecked Sendable {
         lock.lock()
         if let existing = store[id] {
             if existing.session === session {
-                // Idempotent re-park (audit r2 #0: the failed-rebind recovery racing
-                // handleLinkDown's own insert): the session is already stored — keep the
-                // ORIGINAL entry (its detachedAt and armed TTL task). The old dictionary
-                // overwrite leaked the first entry's TTL task un-cancelled, and that stale
-                // timer later evicted (killed) whatever live entry held this id.
+                // Idempotent re-park (the failed-rebind recovery can race handleLinkDown's own
+                // insert): the session is already stored — keep the ORIGINAL entry (its
+                // detachedAt and armed TTL task). Overwriting the dictionary here would leak the
+                // first entry's TTL task un-cancelled, and that stale timer would later evict
+                // (kill) whatever live entry holds this id.
                 lock.unlock()
                 return
             }
             // Same id, DIFFERENT session (defensive — the attached-elsewhere refusal should
-            // make this unreachable): newest wins like the plain overwrite before it, but the
-            // displaced entry's TTL task is cancelled (it would evict the NEW entry later) and
-            // its now-unreachable session is reaped instead of leaking.
+            // make this unreachable): newest wins, but the displaced entry's TTL task must be
+            // cancelled (it would evict the NEW entry later) and its now-unreachable session
+            // reaped instead of leaking.
             displaced = store.removeValue(forKey: id)
         }
         if let maxSessions, store.count >= maxSessions,
@@ -137,7 +137,7 @@ final class DetachedSessionStore: @unchecked Sendable {
     /// AND cancels its TTL task in one critical section — or returns `nil` if not found /
     /// child already exited.
     ///
-    /// Exclusivity is the point (audit #0/#4/#12): of two concurrent reconnects presenting the
+    /// Exclusivity is the point: of two concurrent reconnects presenting the
     /// same sessionID, exactly ONE gets the session; the other sees `nil` and falls through to
     /// the fresh-shell path (where `HostServer`'s live-sessionID guard refuses the duplicate).
     /// Cancelling the TTL task here closes the reattach-vs-TTL race: once claimed, an armed

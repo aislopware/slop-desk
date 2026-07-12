@@ -1,8 +1,8 @@
-// OverlayCoordinatorMountTests — pins the E2 / WI-1 mount wiring at the model level. (The ⌘⇧P / ⌘/ GUI
+// OverlayCoordinatorMountTests — pins the overlay coordinator's mount wiring at the model level. (The ⌘⇧P / ⌘/ GUI
 // press + toast emission are acceptance-tested in `check-macos.sh`; these pin the contract the app's
 // wiring depends on so a refactor can't silently sever it.)
 //
-// WI-1 builds an `OverlayCoordinator` in `SlopDeskClientApp.init()`, injects `connectionTarget`, threads
+// The app builds an `OverlayCoordinator` in `SlopDeskClientApp.init()`, injects `connectionTarget`, threads
 // `togglePalette`/`toggleCheatSheet` into the macOS `WorkspaceKeyDispatcher`, and routes the store's
 // background-event sinks through `pushToast`. These exercise the SAME coordinator surface — headless, no
 // video/Metal/SCStream (hang-safety rule), over a tree-model `WorkspaceStore` + tiny fake session.
@@ -23,7 +23,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         return (overlay, store)
     }
 
-    // MARK: - ES-E2-1 / WI-1: the dispatcher + menu toggle drive `paletteVisible`
+    // MARK: - The dispatcher + menu toggle drive `paletteVisible`
 
     /// The ⌘⇧P toggle the app threads into `WorkspaceKeyDispatcher` is `overlay.togglePalette()`. Pin
     /// open-then-close, and that `closePalette()` clears the transient query/filter/selection so the next
@@ -46,9 +46,9 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertEqual(overlay.paletteSelection, 0, "close resets the keyboard selection")
     }
 
-    // MARK: - Batch-5b (A): opening the palette resolves the focused pane's cwd (populates the WD pill)
+    // MARK: - Opening the palette resolves the focused pane's cwd (populates the WD pill)
 
-    /// Batch-5b (A) fix: opening the palette EAGERLY resolves the focused pane's cwd so the WORKING DIRECTORY
+    /// Opening the palette EAGERLY resolves the focused pane's cwd so the WORKING DIRECTORY
     /// header's cwd pill populates even on a fresh prompt (no OSC 133;D completion yet) with the Details/Info
     /// tab closed — the case the two lazy `lastKnownCwd` writers left blank. The app binds
     /// `overlay.resolveActiveCwd` (in `WorkspaceRootView`) to the live `cwd()` RPC → `store.setLastKnownCwd`.
@@ -68,7 +68,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertEqual(fired, 2, "the ⌘⇧P toggle's open path also resolves the cwd")
     }
 
-    // MARK: - ES-E2-2 / WI-2a: `rankedResults` carries the fzf highlight ranges the view needs
+    // MARK: - `rankedResults` carries the fzf highlight ranges the view needs
 
     /// The PaletteView highlights the matched code points from ``RankedRow/titleRanges``; that wiring only
     /// works if `rankedResults` is sourced from `mixer.ranked(...)` (NOT the range-less `paletteResults`).
@@ -118,7 +118,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         )
     }
 
-    /// Regression (E2 review): once a recents-worthy command has run, the zero-state shows the SAME catalog
+    /// Regression: once a recents-worthy command has run, the zero-state shows the SAME catalog
     /// verb under both "Recents" and "Actions". The two rows MUST carry distinct ids — a duplicate id is
     /// SwiftUI's documented "the ID occurs multiple times … undefined results" (`ForEach` + `.id(_:)`
     /// drop/mis-diff rows, `proxy.scrollTo` resolves an ambiguous target). Pin that every zero-state row id is
@@ -165,10 +165,10 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertEqual(after, before + 1, "accepting the namespaced recents row still runs the catalog New-Tab verb")
     }
 
-    // MARK: - ES-E2-1: the ⌘⇧P palette is VERBS-ONLY (no filter chips, no jump-to sources)
+    // MARK: - The ⌘⇧P palette is VERBS-ONLY (no filter chips, no jump-to sources)
 
     /// ⌘⇧P is the Command Palette (verbs) — the per-domain filter chips + the Tabs/Files/Conversations/Repos
-    /// jump-to belong to Open Quickly (⌘⇧O / E11), now a SEPARATE surface. Pin that command mode mixes ONLY
+    /// jump-to belong to Open Quickly (⌘⇧O), now a SEPARATE surface. Pin that command mode mixes ONLY
     /// the action sources (`availableFilters == [.actions]`) and that no jump-to row or section leaks in —
     /// even with a second pane a Tabs source WOULD have surfaced. Fails on a palette that still registered the
     /// Tabs/Files multi-source providers (the dead `multiSource` mixer branch) under ⌘⇧P.
@@ -194,7 +194,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         }
     }
 
-    /// ES-E2-1 "grouped by section": the verbs-only zero-state LEADS with the WORKING DIRECTORY section (which
+    /// "grouped by section": the verbs-only zero-state LEADS with the WORKING DIRECTORY section (which
     /// owns the cwd badge in the view) carrying the client-side Copy Path row, and the catalog is grouped into
     /// multiple categories. Also pins that the removed Details-panel / Git-window rows stay gone. Fails on the
     /// old flat catalog.
@@ -236,7 +236,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         )
     }
 
-    // MARK: - ES-E2-1: the keyboard selection stays valid when the query narrows (the clamp fix)
+    // MARK: - The keyboard selection stays valid when the query narrows (the clamp fix)
 
     /// The bug: the selection index isn't reset when the query changes, so after a query NARROWS (fewer ranked
     /// rows) a parked index points past the end — the highlight vanishes and ↩ becomes a silent no-op
@@ -276,7 +276,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertEqual(after, before + 1, "↩ runs the highlighted action after the query narrowed (no silent no-op)")
     }
 
-    // MARK: - ES-E2-2 / WI-2a: ⌘↩ keep-open chaining vs plain ↩ close
+    // MARK: - ⌘↩ keep-open chaining vs plain ↩ close
 
     /// `acceptSelectedKeepingOpen()` (the ⌘↩ chord) RUNS the selected `.store` row but leaves the palette
     /// open so the user can chain; plain `acceptSelected()` (↩) runs AND closes. Pin both — the prior `run`
@@ -313,10 +313,10 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
     // MARK: - Keyboard audit: "Open Settings" routes through the injected openSettings action
 
-    /// Audit fix (Bug 4): the palette "Open Settings" row + the agent footer's settings hook both call
-    /// `overlay.openSettings()`, which previously only flipped a `settingsVisible` flag NO view observed — a
-    /// dead control. Now it invokes the injected `openSettingsAction` (the app binds it to the SwiftUI
-    /// `openSettings` environment action → the stock Settings scene). Pin that `openSettings()` fires the
+    /// The palette "Open Settings" row + the agent footer's settings hook both call
+    /// `overlay.openSettings()`, which invokes the injected `openSettingsAction` (the app binds it to the SwiftUI
+    /// `openSettings` environment action → the stock Settings scene) rather than merely flipping a
+    /// `settingsVisible` flag no view observes. Pin that `openSettings()` fires the
     /// closure AND that running the "Open Settings" palette row routes through it. REVERT-TO-CONFIRM-FAIL:
     /// restore `openSettings()` to set a flag instead of calling `openSettingsAction` and `fired` stays 0.
     func testOpenSettingsFiresInjectedAction() throws {
@@ -353,12 +353,12 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertFalse(overlay.cheatSheetVisible, "⌘/ again closes it")
     }
 
-    // MARK: - ES-E11-1 / WI-5: the Open-Quickly picker state (the ⌘⇧O / ⌘J closures the app threads)
+    // MARK: - The Open-Quickly picker state (the ⌘⇧O / ⌘J closures the app threads)
 
     /// ⌘⇧O is `overlay.toggleOpenQuickly(filter: .all)`. Pin that the first press opens the picker on the
     /// merged `.all` list and the second closes it — the SAME closure the dispatcher fires each press. The
     /// picker starts hidden and defaults to `.all` (the ⌘⇧O entry). Fails on a coordinator that still owns the
-    /// pre-E11 `jumpToVisible`/`toggleJumpTo()` (no filter) instead of the Open-Quickly state.
+    /// legacy `jumpToVisible`/`toggleJumpTo()` (no filter) instead of the Open-Quickly state.
     func testToggleOpenQuicklyOpensAtAllAndCloses() {
         let (overlay, _) = makeCoordinator()
         XCTAssertFalse(overlay.openQuicklyVisible, "the picker starts hidden")
@@ -372,7 +372,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertFalse(overlay.openQuicklyVisible, "⌘⇧O again closes the picker")
     }
 
-    /// ⌘J is re-pointed (E11) to `overlay.toggleOpenQuickly(filter: .current)` — the folded-in Jump-To. Pin
+    /// ⌘J is re-pointed to `overlay.toggleOpenQuickly(filter: .current)` — the folded-in Jump-To. Pin
     /// that it opens the picker pre-selected on the `.current` pill (NOT `.all`), so the focused-pane links +
     /// command index show first. Fails if ⌘J opened to the wrong pill or didn't carry the filter through.
     func testToggleOpenQuicklyCurrentOpensOnTheCurrentPill() {
@@ -401,8 +401,8 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertFalse(overlay.openQuicklyVisible, "closeOpenQuickly dismisses the picker")
     }
 
-    /// WI-5: the app constructs a client-side `FolderFrecencyStore` and attaches it like the store. Pin that
-    /// `attach(folders:)` wires the reference the Open-Quickly Folders pill (WI-6) reads. A held-strong store
+    /// The app constructs a client-side `FolderFrecencyStore` and attaches it like the store. Pin that
+    /// `attach(folders:)` wires the reference the Open-Quickly Folders pill reads. A held-strong store
     /// is required because the coordinator keeps it weakly (the app owns it).
     func testAttachFoldersStoreWiresTheReference() {
         let (overlay, _) = makeCoordinator()
@@ -415,7 +415,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertTrue(overlay.folders === folders, "attach(folders:) wires the app-owned frecency store")
     }
 
-    // MARK: - ES-E5-5 / WI-4: the ⇧⌘F Global Search overlay flag
+    // MARK: - The ⇧⌘F Global Search overlay flag
 
     /// The ⇧⌘F toggle the app threads into the key dispatcher + the View menu is `overlay.toggleGlobalSearch()`.
     /// Pin that it opens, that `openGlobalSearch()`/`closeGlobalSearch()` flip the flag, and that the dispatcher
@@ -435,7 +435,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertFalse(overlay.globalSearchVisible, "closeGlobalSearch() dismisses it")
     }
 
-    /// E5 divergence #1: Global Search is a NON-scrimmed full surface, so it must be EXCLUDED from
+    /// Global Search is a NON-scrimmed full surface, so it must be EXCLUDED from
     /// `anyModalVisible` (else the host would dim the workspace behind it). Pin that opening it does NOT flip the
     /// modal gate — this FAILS if a refactor folds `globalSearchVisible` into `anyModalVisible`.
     func testGlobalSearchIsNotAModal() {
@@ -469,7 +469,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         )
     }
 
-    // MARK: - ES-E2-4 / WI-3: the cheat sheet's data source (categories + glyph chips)
+    // MARK: - The cheat sheet's data source (categories + glyph chips)
 
     /// `KeyboardCheatSheetView` renders ``WorkspaceBindingRegistry/groupedForDisplay`` as one section per
     /// category. Pin the four categories in their fixed display order — a reorder / dropped section would
@@ -491,9 +491,9 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
     /// The chip-rendering contract the view depends on: a chord-bearing row resolves a non-empty glyph from
     /// the registry (the chips), while the chord-LESS rows render NO chip. Those are the collapsed ⌘1…⌘9
-    /// representative + chord-less Rename Tab + chord-less Close Tab (E7 re-scoped ⌘⇧W onto Close Window,
-    /// leaving Close Tab reachable only via the ⌘W cascade / palette, see DECISIONS.md) + the three E17 view
-    /// toggles `Read Only` + `Secure Keyboard Entry` + `Vi Mode Key Hints` + the E19 `Pin Window` toggle —
+    /// representative + chord-less Rename Tab + chord-less Close Tab (⌘⇧W was re-scoped onto Close Window,
+    /// leaving Close Tab reachable only via the ⌘W cascade / palette, see DECISIONS.md) + the three view
+    /// toggles `Read Only` + `Secure Keyboard Entry` + `Vi Mode Key Hints` + the `Pin Window` toggle —
     /// all palette/menu-only, `chord: nil` (bindable in Settings → Keybindings; Pin Window pinned chord-less
     /// by `WorkspaceBindingRoutingTests`). The representative bakes its hint into its title instead. The trap:
     /// `glyph(for:)` of the representative's stand-in `.selectTab(1)` action resolves the REAL ⌘1 binding, so
@@ -502,19 +502,19 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     func testCheatSheetGlyphChipsGateOnRowChord() {
         let rows = WorkspaceBindingRegistry.groupedForDisplay.flatMap(\.bindings)
 
-        // The chord-less rows are EXACTLY the representative + Rename Tab + Close Tab + the three E17 view
-        // toggles + the E10 Hint to Reveal verb + the E19 Pin Window toggle (all palette/menu-only, no key).
+        // The chord-less rows are EXACTLY the representative + Rename Tab + Close Tab + the three view
+        // toggles + the Hint to Reveal verb + the Pin Window toggle (all palette/menu-only, no key).
         let chordLessIDs = Set(rows.filter { $0.chord == nil }.map(\.id))
         XCTAssertEqual(
             chordLessIDs,
             [
                 "tab.selectN", "pane.rename", "tab.close",
                 "view.readOnly", "view.secureKeyboardEntry", "view.viKeyHints",
-                // E10 WI-9: Hint to Reveal in Finder is chord-less.
+                // Hint to Reveal in Finder is chord-less.
                 "view.hintReveal",
-                // E19 ES-E19-1: Pin Window is chord-less (the "View ▸ Pin Window" toggle ships no default chord).
+                // Pin Window is chord-less (the "View ▸ Pin Window" toggle ships no default chord).
                 "view.pinWindow",
-                // C5 (2026-07-03): Release Stuck Input is chord-less (the remote-GUI escape hatch —
+                // Release Stuck Input is chord-less (the remote-GUI escape hatch —
                 // palette/menu-only; pinned by `TreeCommandRoutingTests`).
                 "view.releaseStuckInput",
             ],
@@ -544,7 +544,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         )
     }
 
-    // MARK: - ES-E2-6 / WI-1: the pill onTap / openConnect() route opens the connect overlay
+    // MARK: - The pill onTap / openConnect() route opens the connect overlay
 
     /// `WorkspaceRootView.openConnect()` (the iOS pill `onTap`) calls `overlay.openConnect()`. Pin the flag.
     func testOpenConnectShowsConnectOverlay() {
@@ -556,7 +556,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertFalse(overlay.connectVisible)
     }
 
-    // MARK: - WI-1: the injected `connectionTarget` seam resolves the live host
+    // MARK: - The injected `connectionTarget` seam resolves the live host
 
     /// The app injects `overlay.connectionTarget = { appConnection?.target ?? .default }` so the
     /// remote-window picker queries the live host. Pin that a non-default injected target flows through.
@@ -576,9 +576,9 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         )
     }
 
-    // MARK: - ES-E2-5 / WI-1: the store→toast emitters' model (de-dupe + cap)
+    // MARK: - The store→toast emitters' model (de-dupe + cap)
 
-    /// The WI-1 emitters push a `Toast` with a stable `pane.<key>` id so a newer event REPLACES the prior
+    /// The emitters push a `Toast` with a stable `pane.<key>` id so a newer event REPLACES the prior
     /// one for that pane, and the stack is capped at 4 (oldest evicted). Pin both at the model level — the
     /// emitters in `SlopDeskClientApp` depend on exactly this behaviour.
     func testToastEmittersDeDupeAndCap() {
@@ -607,8 +607,8 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertEqual(overlay.toasts.last?.flavor, .attention, "the newer flavour wins")
     }
 
-    /// `dismissToast` removes exactly the targeted card (the X button / auto-dismiss timer path the
-    /// ToastStackView in WI-4 drives).
+    /// `dismissToast` removes exactly the targeted card (the X button / auto-dismiss timer path
+    /// ToastStackView drives).
     func testDismissToastRemovesOnlyThatCard() {
         let overlay = OverlayCoordinator()
         overlay.pushToast(Toast(id: "a", title: "A"))
@@ -617,7 +617,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertEqual(overlay.toasts.map(\.id), ["b"], "only the dismissed card is removed")
     }
 
-    // MARK: - E13 / WI-8 (P4): the ⌘⌥J Peek & Reply overlay state (the closures the app threads)
+    // MARK: - The ⌘⌥J Peek & Reply overlay state (the closures the app threads)
 
     /// ⌘⌥J is `overlay.togglePeekReply()`. Pin the HONEST gate: it does NOTHING when no pane needs attention
     /// (no empty card), and OPENS over the blocked pane once one does — exactly the routing contract "the
@@ -708,7 +708,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertFalse(overlay.anyModalVisible)
     }
 
-    // MARK: - WI-5: the `anyModalVisible` hit-testing gate the OverlayHostView reads
+    // MARK: - The `anyModalVisible` hit-testing gate the OverlayHostView reads
 
     /// `OverlayHostView.allowsHitTesting(anyModalVisible || !toasts.isEmpty)` — the host is transparent to
     /// clicks until a modal is up. Pin that `anyModalVisible` tracks EXACTLY the five scrimmed panels (palette
@@ -739,7 +739,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         overlay.closeRemotePicker()
         XCTAssertFalse(overlay.anyModalVisible)
 
-        // E11 / WI-5: the Open-Quickly picker is a centered, SCRIMMED modal (it folded in E10's Jump-To), so it
+        // The Open-Quickly picker is a centered, SCRIMMED modal (it folded in Jump-To), so it
         // MUST register here. Fails if `openQuicklyVisible` is not folded into `anyModalVisible`.
         overlay.openOpenQuickly()
         XCTAssertTrue(overlay.anyModalVisible, "the Open-Quickly picker is a modal")
@@ -751,11 +751,11 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertFalse(overlay.anyModalVisible, "a toast is not a focus-stealing modal")
     }
 
-    // MARK: - M3: the keyboard-capture gate the app's `isOverlayCapturingKeys` closure reads
+    // MARK: - The keyboard-capture gate the app's `isOverlayCapturingKeys` closure reads
 
     /// `capturesKeyboardWhileVisible` is the SINGLE source of truth the app's `isOverlayCapturingKeys` gate
     /// reads so the global NSEvent dispatcher YIELDS modeled chords to a focused overlay. Pin that it tracks
-    /// EVERY keyboard-owning overlay: Open-Quickly, Peek & Reply, AND (after the Batch-1 audit fix) the four
+    /// EVERY keyboard-owning overlay: Open-Quickly, Peek & Reply, AND the four
     /// SCRIMMED modals (palette / cheat sheet / connect / remote picker). The NSEvent monitor PREEMPTS the
     /// responder chain, so sheet-presented panels can't rely on it alone; ⌘W/⌘T/⌘2 would destructively mutate
     /// the BACKGROUND tree behind their scrim without this gate.
@@ -775,7 +775,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         overlay.closePeekReply()
         XCTAssertFalse(overlay.capturesKeyboardWhileVisible)
 
-        // The scrimmed panels ARE now in the gate (Batch-1 audit fix): the NSEvent monitor preempts the
+        // The scrimmed panels are in the gate: the NSEvent monitor preempts the
         // responder chain, so palette / cheat-sheet / connect / remote-picker must trip it or ⌘W/⌘T/⌘2
         // destructively mutates the background tree. (Pinned deeper by DispatcherOverlayYieldTests.)
         overlay.openPalette()
@@ -783,7 +783,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         overlay.closePalette()
     }
 
-    // MARK: - ES-E2-6 / WI-5: a picked window opens a `.remoteGUI` tab + closes the picker
+    // MARK: - A picked window opens a `.remoteGUI` tab + closes the picker
 
     /// `RemoteWindowPickerModal` routes a pick through `coordinator.openRemoteWindow(_:)` (NOT the in-pane
     /// `pick()→open()`). Pin that it opens a NEW `.remoteGUI` tab pre-bound to the picked window AND closes the
@@ -813,7 +813,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         )
     }
 
-    // MARK: - ES-E2-3 / WI-5: the host's toggled-state predicate reflects live chrome
+    // MARK: - The host's toggled-state predicate reflects live chrome
 
     #if canImport(SwiftUI)
     /// `OverlayHostView.toggledState(for:)` is the pure predicate the host hands the palette so the ✓ gutter
@@ -841,7 +841,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     }
 
     /// The CLOSED loop (the gap the predicate-only test above leaves): RUNNING the "Toggle Tabs Panel" row
-    /// through the coordinator must flip the SAME `chrome.sidebarCollapsed` the ✓ predicate reads (ES-E2-3).
+    /// through the coordinator must flip the SAME `chrome.sidebarCollapsed` the ✓ predicate reads.
     /// Wires `toggleSidebar` to the live chrome exactly as `WorkspaceRootView` does, then asserts the
     /// predicate flips after `run`. FAILS on the old wiring (the row ran `store.toggleSidebarCollapsed()`, a
     /// dead flag the ✓ never reads — the predicate would never move).

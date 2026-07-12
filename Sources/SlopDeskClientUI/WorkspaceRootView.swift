@@ -1,4 +1,4 @@
-// WorkspaceRootView — the native 2-column IDE shell (REBUILD-V2, L1 + L4a toolbar).
+// WorkspaceRootView — the native 2-column IDE shell.
 //
 // macOS: an `NSViewControllerRepresentable` (`WorkspaceSplitRepresentable`) owning an
 // `SlopDeskSplitViewController` (sidebar | content `NSSplitViewController` items, each an
@@ -8,7 +8,7 @@
 // stock `NavigationSplitView` over the same two columns + its own toolbar. (Right-hand inspector /
 // Details column REMOVED — keyboard-centric.)
 //
-// NO custom design-system / token target (deleted in L0): SYSTEM semantic colours + fonts + SF Symbols.
+// NO custom design-system / token target: SYSTEM semantic colours + fonts + SF Symbols.
 
 #if canImport(SwiftUI)
 import Defaults
@@ -40,7 +40,7 @@ public struct WorkspaceRootView: View {
     /// the vertical TABS panel auto-hide together with the active session's tab count (see ``applyAutoHide``).
     @Default(.autoHideTabsPanel) private var autoHideTabsPanel
     #if os(iOS)
-    /// Whether the iOS settings sheet (WI-5) is presented — flipped by the toolbar gear, read by the `.sheet`.
+    /// Whether the iOS settings sheet is presented — flipped by the toolbar gear, read by the `.sheet`.
     @State private var showSettings = false
 
     /// (iOS) Maps the shared `chrome.sidebarCollapsed` flag (driven by the auto-hide policy, read by macOS's
@@ -348,11 +348,11 @@ public struct WorkspaceRootView: View {
         else { return productName }
         let spec = session.specs[paneID]
         let kind = spec?.kind ?? .terminal
-        // The `paneForegroundProcess` read is GUARDED (perf audit 2026-07-11) by the SAME
-        // `RailStructureKey.titledByProcess` escape-order check the sidebar's structural fingerprint uses:
-        // an unconditional read made `.navigationTitle` — hence the WHOLE root view body — a dependent of
-        // the WHOLE process dict, so a background pane's 1Hz process tick re-evaluated the root view even
-        // though only a cwd-less, non-renamed terminal pane's title ever depends on that dict.
+        // The `paneForegroundProcess` read is GUARDED by the SAME `RailStructureKey.titledByProcess`
+        // escape-order check the sidebar's structural fingerprint uses: an unconditional read would make
+        // `.navigationTitle` — hence the WHOLE root view body — a dependent of the WHOLE process dict, so a
+        // background pane's 1Hz process tick would re-evaluate the root view even though only a cwd-less,
+        // non-renamed terminal pane's title ever depends on that dict.
         let titledByProcess = RailStructureKey.titledByProcess(kind: kind, spec: spec)
         let title = RailRowsBuilder.rowTitle(
             kind: kind, spec: spec, processLabel: titledByProcess ? store.paneForegroundProcess[paneID] : nil,

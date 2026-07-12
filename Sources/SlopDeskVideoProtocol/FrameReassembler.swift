@@ -9,17 +9,18 @@ public struct ReassembledFrame: Equatable, Sendable {
     /// host packetized, restored either directly or via FEC recovery.
     public var avcc: Data
     /// True when a data hole existed and FEC parity filled it (the `fecRecovered` telemetry
-    /// numerator); false for a whole-arrival frame. Defaulted for source-compat.
+    /// numerator); false for a whole-arrival frame.
     public var recoveredViaFEC: Bool
-    /// WF-8: a Long-Term-Reference frame (fragments carried ``FrameFragmentHeader/Flags/isLTR``,
+    /// A Long-Term-Reference frame (fragments carried ``FrameFragmentHeader/Flags/isLTR``,
     /// bit 6). On a SUCCESSFUL decode the client replies `RecoveryMessage.ack(frameID)` so the host
-    /// learns the client holds this LTR (the ACKED-ONLY recovery invariant). Defaulted false for
-    /// source-compat; false on every pre-WF-8 / LTR-off frame.
+    /// learns the client holds this LTR (the ACKED-ONLY recovery invariant). False whenever LTR is off.
     public var isLTR: Bool
     /// Bit 7 — this frame was encoded via `ForceLTRRefresh` (references ONLY client-acked LTRs),
     /// the decode gate's non-keyframe re-anchor admission (see FrameFragmentHeader.Flags.ackedAnchored).
     public var ackedAnchored: Bool
 
+    /// The three flag params default to `false` so a call site that only cares about the frame itself
+    /// (tests, plain whole-arrival construction) need not spell them out.
     public init(
         frameID: UInt32,
         keyframe: Bool,
@@ -58,12 +59,12 @@ public enum ReassemblyResult: Equatable, Sendable {
 /// lost (`.dropped`) only once we know we cannot complete it — a NEWER frame's fragments arrive while
 /// this one still misses data FEC cannot fill. That edge triggers request-recovery.
 ///
-/// The whole reassembly ALGORITHM — fragment buffering, the data/parity boundary inversion (FIX #1),
-/// the m-aware FEC recovery, the NACK / selective-ARQ hold, and the hopeless-frame loss sweep — is
-/// NATIVE Swift (the SINGLE SOURCE OF TRUTH). It reuses the native primitives ``FECScheme`` (the
-/// production ``RustReedSolomonFEC`` over GF(2^8)), ``AdaptiveFECPolicy`` (per-frame group-size +
-/// parity-`m` tier tables), and the ``FrameFragment`` codec. With `m == 1` (the production wire) the
-/// receive path is byte-identical to the legacy single-parity reassembler the golden vectors anchored.
+/// The whole reassembly ALGORITHM — fragment buffering, the data/parity boundary inversion, the
+/// m-aware FEC recovery, the NACK / selective-ARQ hold, and the hopeless-frame loss sweep — lives
+/// here, on top of ``FECScheme`` (the production ``RustReedSolomonFEC`` over GF(2^8)),
+/// ``AdaptiveFECPolicy`` (per-frame group-size + parity-`m` tier tables), and the ``FrameFragment``
+/// codec. With `m == 1` (the production wire) the receive path is byte-identical to single-parity
+/// XOR — the shape the golden vectors pin, so keep that identity when touching FEC.
 ///
 /// A `final class` (NOT a value struct) so callers hold it by reference in the single client receive
 /// loop (one per video stream). Not `Sendable` by design: it owns mutable per-frame state.
@@ -77,11 +78,11 @@ public final class FrameReassembler {
         let fragCount: UInt16
         var keyframe: Bool = false
         var crisp: Bool = false
-        /// WF-8: true once ANY fragment carries ``FrameFragmentHeader/Flags/isLTR`` (bit 6). Threaded
+        /// True once ANY fragment carries ``FrameFragmentHeader/Flags/isLTR`` (bit 6). Threaded
         /// into the completed ``ReassembledFrame``.
         var isLTR: Bool = false
         var ackedAnchored: Bool = false
-        /// WF-4: the FEC tier PINNED from the FIRST fragment seen. Every fragment carries the same
+        /// The FEC tier PINNED from the FIRST fragment seen. Every fragment carries the same
         /// tier; later disagreement (a corrupt fragment) is ignored so the data/parity split — and the
         /// per-frame parity multiplicity `m` — can't change mid-frame.
         let fecTier: UInt8
@@ -89,35 +90,34 @@ public final class FrameReassembler {
         var data: [UInt16: Data] = [:]
         /// Parity payloads keyed by flat group-major/parity-rank layout index `group * m + rank`
         /// (= `fragIndex - dataBoundary`), NOT raw `fragIndex`, so a LOST group-0 parity never shifts
-        /// the boundary or mis-maps a surviving higher-group parity (FIX #1). For `m == 1` the slot
-        /// collapses to the group order — byte-identical to the v1 layout.
+        /// the boundary or mis-maps a surviving higher-group parity. For `m == 1` the slot collapses
+        /// to the group order — byte-identical to single-parity.
         var parity: [Int: Data] = [:]
         /// The observed parity boundary (lowest parity `fragIndex` seen). Authoritative ONLY in the
         /// no-FEC fallback; with FEC the boundary comes from the unambiguous fragCount inversion.
         var dataCount: Int?
 
-        // MARK: pinned per-frame FEC geometry (audit perf fix)
+        // MARK: pinned per-frame FEC geometry
 
-        // Because `fragCount`, `fecTier`, and the reassembler's scheme are all fixed for the life of
-        // a frame, the whole FEC geometry is resolved ONCE here instead of per received fragment.
+        // `fragCount`, `fecTier`, and the reassembler's scheme are all fixed for the life of a frame,
+        // so the whole FEC geometry is resolved ONCE here rather than per received fragment.
 
-        /// The per-frame FEC group size (WF-4 tier → size), or `nil` for a no-FEC client OR an
-        /// OFF-tier frame — treated as no-parity. Was `parityGroupSize(_:)` per call.
+        /// The per-frame FEC group size (tier → size), or `nil` for a no-FEC client OR an
+        /// OFF-tier frame — treated as no-parity.
         let groupSize: Int?
-        /// The per-frame parity-shards-per-group count `m` (>= 1). Was `parityCount(_:)` per call.
+        /// The per-frame parity-shards-per-group count `m` (>= 1).
         let m: Int
         /// The resolved data/parity boundary for the FEC case (`groupSize != nil`):
-        /// `invertedDataCount(fragCount, g, m) ?? fragCount` — the previously per-call descending
-        /// scan. Unused when `groupSize == nil` (the no-FEC boundary is the mutable observed
-        /// `dataCount` above).
+        /// `invertedDataCount(fragCount, g, m) ?? fragCount`. Unused when `groupSize == nil` (the
+        /// no-FEC boundary is the mutable observed `dataCount` above).
         let pinnedDataCount: Int
 
-        // MARK: incremental completeness counters (audit perf fix)
+        // MARK: incremental completeness counters
 
-        // `canEventuallyComplete` used to re-scan every data group (grouped dictionary probes over
-        // `0..<dataCount`) on EVERY fragment ingest — O(dataCount²) per frame, millions of probes on
-        // a multi-thousand-fragment IDR, serialized on the client receive path exactly at the
-        // keyframe latency spike. These counters keep the SAME decision available in O(1): per-group
+        // Deciding `canEventuallyComplete` by re-scanning every data group (grouped dictionary probes
+        // over `0..<dataCount`) on EVERY fragment ingest is O(dataCount²) per frame — millions of
+        // probes on a multi-thousand-fragment IDR, serialized on the client receive path exactly at
+        // the keyframe latency spike. These counters hold the SAME decision in O(1): per-group
         // missing-data / surviving-parity counts, plus a three-way tally of not-yet-complete groups.
         // Updated only on a FIRST-arrival fragment (duplicates never re-count — dictionary presence
         // is checked before insert).
@@ -127,11 +127,11 @@ public final class FrameReassembler {
         /// Surviving parity shards per group (distinct parity SLOTS present among the group's `m`),
         /// FEC case only.
         var survivingPerGroup: [Int] = []
-        /// Groups with `missing > m` — beyond the per-group erasure budget (the old
-        /// `groupIsHopeless`). Any such group makes the frame permanently unrecoverable by FEC.
+        /// Groups with `missing > m` — beyond the per-group erasure budget. Any such group makes the
+        /// frame permanently unrecoverable by FEC.
         var hopelessGroups = 0
         /// Groups with `1 <= missing <= m` and `surviving >= missing` — repairable RIGHT NOW from
-        /// parity already held (the old `groupIsRecoverable`).
+        /// parity already held.
         var recoverableNowGroups = 0
         /// Groups with `1 <= missing <= m` but `surviving < missing` — within budget, still waiting
         /// on not-yet-arrived parity (or data).
@@ -164,21 +164,19 @@ public final class FrameReassembler {
             }
         }
 
-        /// How many of this frame's fragments are DATA (vs FEC parity). With FEC, always the
-        /// unambiguous fragCount inversion pinned at init (NEVER the observed parity boundary, which
-        /// a lost group-0 parity would shift — FIX #1); the inversion is m-aware and falls back to
-        /// `fragCount` on no solution (corrupt header, or a `fragCount` shaped for a different `m`).
-        /// With no FEC, the observed parity boundary (or the whole `fragCount`). O(1) — this was the
-        /// per-call descending-scan `resolvedDataCount(_:)`.
+        /// How many of this frame's fragments are DATA (vs FEC parity). O(1) — it reads the geometry
+        /// pinned at init. With FEC, always the unambiguous fragCount inversion (NEVER the observed
+        /// parity boundary, which a lost group-0 parity would shift); the inversion is m-aware and
+        /// falls back to `fragCount` on no solution (corrupt header, or a `fragCount` shaped for a
+        /// different `m`). With no FEC, the observed parity boundary (or the whole `fragCount`).
         var resolvedDataCount: Int {
             groupSize != nil ? pinnedDataCount : (dataCount ?? Int(fragCount))
         }
 
-        /// O(1) mirror of the old full-scan `canEventuallyComplete`: all data present, or FEC could
-        /// fill the remaining holes from parity ALREADY HELD. m-aware — a group is hopeless when it
-        /// lost more than its budget `m`; a group still missing data needs as many surviving parity
-        /// shards as it has holes. For `m == 1` this is "no group with >= 2 holes, and any
-        /// single-hole group has its (one) parity present". Mirrors `reassembler::can_eventually_complete`.
+        /// All data present, or FEC could fill the remaining holes from parity ALREADY HELD. m-aware
+        /// — a group is hopeless when it lost more than its budget `m`; a group still missing data
+        /// needs as many surviving parity shards as it has holes. For `m == 1` this is "no group with
+        /// >= 2 holes, and any single-hole group has its (one) parity present". O(1) off the counters.
         var canEventuallyComplete: Bool {
             let dc = resolvedDataCount
             if dc == 0 { return data[0] != nil } // zero-data frame: single empty fragment at index 0
@@ -189,10 +187,10 @@ public final class FrameReassembler {
             return hopelessGroups == 0 && awaitingGroups == 0
         }
 
-        /// O(1) mirror of the old full-scan `awaitingRecoverableParity`: the ONLY obstacle is
-        /// not-yet-arrived FEC parity — every group with a hole is within its `m`-erasure budget but
-        /// none is repairable from parity already held, and at least one hole exists. Not permanently
-        /// hopeless, so the sweep grants the reorder grace. Mirrors `reassembler::awaiting_recoverable_parity`.
+        /// The ONLY obstacle is not-yet-arrived FEC parity — every group with a hole is within its
+        /// `m`-erasure budget but none is repairable from parity already held, and at least one hole
+        /// exists. Not permanently hopeless, so the sweep grants the reorder grace. O(1) off the
+        /// counters.
         var isAwaitingRecoverableParity: Bool {
             groupSize != nil && hopelessGroups == 0 && recoverableNowGroups == 0 && awaitingGroups > 0
         }
@@ -245,8 +243,7 @@ public final class FrameReassembler {
         /// Moves `group`'s contribution in/out of the three-way tally (`delta` −1 before a counter
         /// change, +1 after). The buckets partition the NOT-yet-complete groups; a hole-free group is
         /// counted nowhere. `surviving <= m` always (a group has `m` parity slots), so `missing > m`
-        /// (hopeless) and `surviving >= missing` (recoverable now) are mutually exclusive — the same
-        /// classification the old `groupIsHopeless` / `groupIsRecoverable` scan applied per call.
+        /// (hopeless) and `surviving >= missing` (recoverable now) are mutually exclusive.
         private mutating func tally(group: Int, delta: Int) {
             let missing = missingPerGroup[group]
             guard missing >= 1 else { return }
@@ -284,7 +281,7 @@ public final class FrameReassembler {
 
     /// NACK / selective-ARQ: frame-ids past the frontier a FEC-unrecoverable frame is HELD pending
     /// (instead of dropped at `fecReorderGrace`) so a host retransmit can still fill it within the
-    /// client's playout buffer. `0` = retransmit OFF (legacy drop behaviour). Set by
+    /// client's playout buffer. `0` = retransmit OFF (drop straight at the FEC grace). Set by
     /// ``enableRetransmit(grace:maxFrags:)``.
     private var retransmitGrace: Int = 0
     /// Frames already surfaced via ``nextNeedsRetransmit()`` (so each retransmit is requested once).
@@ -298,11 +295,11 @@ public final class FrameReassembler {
     /// ``RecoveryMessage/maxNackFragments`` by ``enableRetransmit(grace:maxFrags:)``.
     private var nackMaxFrags: Int = 0
 
-    /// Upper bound on a frame's declared fragment count (R7 #6 hostile-input). `fragCount` is a
+    /// Upper bound on a frame's declared fragment count (hostile-input guard). `fragCount` is a
     /// peer-controlled `UInt16` (≤ 65535); a real frame is at most a few thousand fragments (a ~2 MB
     /// keyframe at ~1.2 KB/fragment ≈ 1700 data + parity). 8192 covers a ~10 MB frame with headroom,
     /// so a larger value can only be hostile — reject it BEFORE allocating any per-frame buffer and
-    /// surface it as `.stale`. Matches `FrameReassembler::MAX_FRAGMENTS_PER_FRAME`.
+    /// surface it as `.stale`.
     static let maxFragmentsPerFrame = 8192
 
     /// Builds a reassembler matching the host's FEC. `fec` supplies the per-group data count (`k =
@@ -323,8 +320,8 @@ public final class FrameReassembler {
     /// requested via ``nextNeedsRetransmit()`` can still fill it within the client's playout buffer.
     /// Only losses of at most `maxFrags` fragments are NACKed (SMALL loss; bigger skips to the
     /// Drop → LTR-refresh fallback). `maxFrags` is clamped to the wire cap
-    /// ``RecoveryMessage/maxNackFragments``. `grace == 0` (default) disables it — byte-identical legacy
-    /// drop behaviour.
+    /// ``RecoveryMessage/maxNackFragments``. `grace == 0` (default) disables it: a FEC-unrecoverable
+    /// frame drops straight at the reorder grace.
     public func enableRetransmit(grace: Int32, maxFrags: Int) {
         retransmitGrace = max(0, Int(grace))
         nackMaxFrags = min(maxFrags, RecoveryMessage.maxNackFragments)
@@ -354,12 +351,11 @@ public final class FrameReassembler {
         let header = fragment.header
         let frameID = header.frameID
 
-        // R7 #6 (hostile input — UDP video has no auth beyond the mesh): reject an implausible header
-        // BEFORE allocating any per-frame buffer. A crafted huge `fragCount` makes assembly
-        // build/iterate a `dataCount`-sized array per frame (alloc+CPU DoS), and `fragIndex >=
-        // fragCount` can never complete the frame. Every legitimate fragment satisfies
-        // `0 < fragCount <= maxFragmentsPerFrame` and `fragIndex < fragCount`. Drop the bad one as
-        // `.stale`.
+        // Hostile input — UDP video has no auth beyond the mesh: reject an implausible header BEFORE
+        // allocating any per-frame buffer. A crafted huge `fragCount` makes assembly build/iterate a
+        // `dataCount`-sized array per frame (alloc+CPU DoS), and `fragIndex >= fragCount` can never
+        // complete the frame. Every legitimate fragment satisfies `0 < fragCount <=
+        // maxFragmentsPerFrame` and `fragIndex < fragCount`. Drop the bad one as `.stale`.
         guard header.fragCount > 0,
               Int(header.fragCount) <= Self.maxFragmentsPerFrame,
               header.fragIndex < header.fragCount
@@ -368,10 +364,11 @@ public final class FrameReassembler {
         }
 
         if retired.contains(frameID) { return .stale }
+        // At or behind the retire frontier and not actively pending → a late straggler the bounded
+        // `retired` set may already have forgotten.
         if let retiredHigh = highestRetiredFrameID, frameID.distanceWrapped(from: retiredHigh) <= 0,
            pending[frameID] == nil
         {
-            // frameID is at or behind the retire frontier and not actively pending.
             return .stale
         }
 
@@ -382,8 +379,8 @@ public final class FrameReassembler {
             highestSeenFrameID = frameID
         }
 
-        // FRAGCOUNT PIN (audit fix, the `fecTier` pin's companion): `fragCount` is pinned from the
-        // FIRST fragment seen for a frame. Every boundary decision — `resolvedDataCount`, the
+        // FRAGCOUNT PIN (the `fecTier` pin's companion): `fragCount` is pinned from the FIRST
+        // fragment seen for a frame. Every boundary decision — `resolvedDataCount`, the
         // parity-slot mapping, `canEventuallyComplete`, `assemble`, the hopeless sweep — derives the
         // data/parity split from it, so a later fragment carrying a DIFFERENT fragCount (corrupt or
         // hostile; it passes the per-fragment `fragIndex < fragCount` guard against its OWN header)
@@ -400,7 +397,7 @@ public final class FrameReassembler {
         }
         if header.flags.contains(.keyframe) { entry.keyframe = true }
         if header.flags.contains(.crisp) { entry.crisp = true }
-        if header.flags.contains(.isLTR) { entry.isLTR = true } // WF-8 bit 6
+        if header.flags.contains(.isLTR) { entry.isLTR = true } // bit 6
         if header.flags.contains(.ackedAnchored) { entry.ackedAnchored = true } // bit 7
 
         if header.flags.contains(.parity) {
@@ -425,7 +422,6 @@ public final class FrameReassembler {
         }
         pending[frameID] = entry
 
-        // Try to complete THIS frame.
         let result = tryComplete(frameID: frameID)
 
         // Sweep ALL pending frames strictly older than the frontier that can no longer complete; queue
@@ -449,8 +445,8 @@ public final class FrameReassembler {
         // payload and runs FEC recovery). `canEventuallyComplete` is OUTCOME-EQUIVALENT to "assemble
         // would succeed now" — true iff every group is hole-free or has enough ALREADY-PRESENT parity
         // to cover its erasures. It reads the incremental per-group counters `ingest` maintains, so
-        // this precheck is O(1) per fragment (it used to re-scan every group per ingest — O(N²) on a
-        // multi-thousand-fragment IDR). The Completed/Incomplete decision is unchanged.
+        // the precheck stays O(1) per fragment instead of an O(N²) per-ingest group re-scan on a
+        // multi-thousand-fragment IDR.
         guard entry.canEventuallyComplete else { return .incomplete }
         guard let assembled = assemble(entry) else { return .incomplete }
         retire(frameID)
@@ -492,10 +488,9 @@ public final class FrameReassembler {
             // FEC cannot recover this frame from what is here. With NACK enabled (`rgrace > 0`) and the
             // loss SMALL enough, HOLD it for the retransmit-grace window so a host re-send can fill it
             // inside the client's playout buffer, and surface the request once. A loss too BIG to NACK
-            // (or an already-requested one short of its window) is NOT held uselessly: it falls through
-            // to the prompt Drop → LTR-refresh skip-to-current (holding it would stall the in-order
-            // client for the whole grace with no retransmit coming — the late-frame regression this
-            // guard fixes).
+            // is NOT held uselessly: it falls through to the prompt Drop → LTR-refresh
+            // skip-to-current, because holding it would stall the in-order client for the whole grace
+            // with no retransmit ever coming.
             if rgrace > 0, age <= rgrace {
                 if nacked.contains(fid) {
                     continue // already requested → hold for its retransmit.
@@ -521,9 +516,9 @@ public final class FrameReassembler {
     }
 
     /// Builds a frame's buffer with the whole per-frame FEC geometry resolved ONCE from the two
-    /// pinned wire fields (audit perf fix — this used to be re-derived per received fragment):
+    /// pinned wire fields (never re-derived per received fragment):
     ///
-    ///  * group size (WF-4): `nil` for a no-FEC client OR an OFF-tier frame
+    ///  * group size: `nil` for a no-FEC client OR an OFF-tier frame
     ///    (``AdaptiveFECPolicy/groupSize(forTier:default:)`` returns `nil`) → treated as no-parity.
     ///    Tier 0 routes to the configured `fec.groupSize`, matching the host;
     ///  * parity multiplicity `m` (see ``parityCount(forTier:)``);
@@ -541,10 +536,10 @@ public final class FrameReassembler {
     /// The PER-FRAME parity-shards-per-group count (`m`) for a frame's pinned FEC tier, floored to
     /// at least 1.
     ///
-    /// Mirrors `adaptive_fec::parity_count(tier, default_m)` exactly: `default_m` is the configured
-    /// scheme's own `parityCount` (`1` for the production XOR / `m == 1` codec, so EVERY tier resolves
-    /// to `m == 1` and the receive path is byte-identical to the single-parity world). A no-FEC client
-    /// has no parity, so `m` is `1` (immaterial — no recovery attempted).
+    /// `default_m` is the configured scheme's own `parityCount` (`1` for the production XOR / `m == 1`
+    /// codec, so EVERY tier resolves to `m == 1` and the receive path is byte-identical to the
+    /// single-parity world). A no-FEC client has no parity, so `m` is `1` (immaterial — no recovery
+    /// attempted).
     ///
     /// CRITICAL byte-identity invariant: the adaptive-`m` tier slots (5/6/7) resolve to `m > 1` only
     /// when `default_m >= 2`, i.e. a matched multi-loss codec (`FEC_M >= 2`, deploy-together). A
@@ -564,9 +559,9 @@ public final class FrameReassembler {
         return max(1, m)
     }
 
-    /// Parity shards per group at the adaptive ladder's CLEAN / NORMAL / BURST levels (tiers 5/6/7),
-    /// mirroring `adaptive_fec::PARITY_M_CLEAN` / `_NORMAL` / `_BURST`. NORMAL matches the legacy fixed
-    /// `FEC_M=3`. Only consulted when the configured `default_m >= 2` (a matched multi-loss codec).
+    /// Parity shards per group at the adaptive ladder's CLEAN / NORMAL / BURST levels (tiers 5/6/7).
+    /// NORMAL matches a fixed `FEC_M=3`. Only consulted when the configured `default_m >= 2` (a
+    /// matched multi-loss codec).
     private static let parityMClean = 2
     private static let parityMNormal = 3
     private static let parityMBurst = 5
@@ -578,8 +573,8 @@ public final class FrameReassembler {
     /// exists) solution. Returns `nil` when no `dataCount` solves the equation (corrupt header, or a
     /// `fragCount` shaped for a different `m`); call sites apply `?? fragCount` for the
     /// total-on-no-solution fallback. A non-positive `groupSize` or `m` (defensive, off hostile input)
-    /// yields `nil`. Mirrors `reassembler::invert_data_count`. Static (pure) — called once per frame
-    /// from `Pending.init` (audit perf fix: it used to run per received fragment).
+    /// yields `nil`. Static (pure) and called exactly once per frame from `Pending.init` — keep it off
+    /// the per-fragment path.
     private static func invertedDataCount(fragCount total: Int, groupSize: Int, m: Int) -> Int? {
         guard groupSize >= 1, m >= 1 else { return nil }
         var d = total
@@ -601,7 +596,7 @@ public final class FrameReassembler {
     /// loss: re-sending a stale frame into a burst is wasteful, so the client lets it Drop → LTR-refresh
     /// skip-to-current), or the data count is unknown. Parity is NOT requested — the host's retransmit
     /// ring holds the original data datagrams, and once enough DATA arrives the frame completes (with
-    /// FEC for any residual hole). Mirrors `reassembler::missing_data_frags`.
+    /// FEC for any residual hole).
     private func missingDataFrags(_ entry: Pending, maxFrags: Int) -> [UInt16]? {
         let dataCount = entry.resolvedDataCount
         if dataCount == 0 { return nil }
@@ -643,8 +638,8 @@ public final class FrameReassembler {
             for i in 0..<paritySlots { parityFragments.append(entry.parity[i]) }
             // ADAPTIVE-m: recover at the SAME per-frame m the host encoded with (from this frame's
             // pinned FEC tier), setting both the parity-array stride (`group * m + rank`) and the
-            // per-group recovery budget. For every legacy / production tier this equals the codec's
-            // configured m, so it is byte-identical to the pre-port `fec.recover`.
+            // per-group recovery budget. For every production tier this equals the codec's configured
+            // m, so it collapses to a plain `fec.recover`.
             dataFragments = recover(
                 with: fec, dataFragments: dataFragments, parityFragments: parityFragments, groupSize: g,
                 m: entry.m,
@@ -659,17 +654,15 @@ public final class FrameReassembler {
         return (avcc, hadHole)
     }
 
-    /// Recovers holes at the PER-FRAME parity multiplicity `m`, the counterpart of the core's
-    /// `FecScheme::recover_with_m`.
+    /// Recovers holes at the PER-FRAME parity multiplicity `m`.
     ///
     /// When the per-frame `m` equals the codec's configured `parityCount` (the production case —
     /// always for the `m == 1` wire, and for the FIXED multi-loss codec) this delegates straight to the
-    /// scheme's public `recover(dataFragments:parityFragments:groupSize:)` — byte-identical to the
-    /// pre-port path. When the adaptive-`m` ladder signals a per-frame `m` DIFFERING from the codec's
-    /// `m` (deploy-together, `FEC_M >= 2` + `ADAPTIVE_FEC_M`), it recovers through a codec built at that
-    /// per-frame `m`: the Cauchy parity rows are index-deterministic (row `i` depends only on `k = g`
-    /// and `i`, never on the total `m` — `x_i = k + i`), so this reproduces EXACTLY the host's
-    /// per-frame-`m` encode and equals `recover_with_m(g, m)`.
+    /// scheme's public `recover(dataFragments:parityFragments:groupSize:)`. When the adaptive-`m`
+    /// ladder signals a per-frame `m` DIFFERING from the codec's `m` (deploy-together, `FEC_M >= 2` +
+    /// `ADAPTIVE_FEC_M`), it recovers through a codec built at that per-frame `m`: the Cauchy parity
+    /// rows are index-deterministic (row `i` depends only on `k = g` and `i`, never on the total `m` —
+    /// `x_i = k + i`), so this reproduces EXACTLY the host's per-frame-`m` encode.
     private func recover(
         with fec: FECScheme,
         dataFragments: [Data?],
@@ -706,7 +699,7 @@ public extension UInt32 {
     /// Signed wrap-aware distance `self - other` interpreted in a 32-bit sequence space (handles the
     /// `frameID`/`streamSeq` wrap at 2^32). Positive ⇒ `self` is "ahead of" `other`. Public so the
     /// host's ``VideoMuxRouter`` can bound its retired channelID set with the SAME wrap-aware
-    /// high-water-mark prune (FIX #4).
+    /// high-water-mark prune.
     ///
     /// A two's-complement wrap-subtract (`Int(Int32(bitPattern: self &- other))`); the canonical
     /// wrap-distance law shared by the reassembler, decode frontier, and the network/trendline

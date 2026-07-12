@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E8 WI-10 (I7, ES-E8-2): pins the pure ``BackspaceSelectionPolicy`` — the testable heart of the
+/// Pins the pure ``BackspaceSelectionPolicy`` — the testable heart of the
 /// "Backspace deletes selection" feature. The GUI surface (`GhosttyTerminalView`, compile-only behind
 /// `#if canImport(CGhostty)`) is a thin actuator that applies the DEL-count / fallback per the documented
 /// geometry ceiling, so the 3-way decision (incl. the prompt-zone + alt-screen gates) is pinned here.
@@ -60,7 +60,7 @@ final class BackspaceSelectionPolicyTests: XCTestCase {
         )
     }
 
-    /// The vim/TUI passthrough (ES-E8-2): even with a selection AND the feature on, a full-screen / foreground
+    /// The vim/TUI passthrough: even with a selection AND the feature on, a full-screen / foreground
     /// program owning the screen must get the Backspace itself — NEVER delete the selection. The alt-screen
     /// gate takes precedence over the prompt-zone value (a TUI is `.running`, so prompt would be false anyway,
     /// but the gate is asserted independent of it here).
@@ -125,7 +125,7 @@ final class BackspaceSelectionPolicyTests: XCTestCase {
         }
     }
 
-    // MARK: - leadingDeleteCount: the geometry-ceiling data-loss guard (ES-E8-2)
+    // MARK: - leadingDeleteCount: the geometry-ceiling data-loss guard
 
     /// THE data-loss fix: the GUI cannot prove a selection ends at the cursor against the pinned libghostty
     /// fork (no cursor-geometry API), so it calls `leadingDeleteCount(…, selectionEndsAtCursor: false)`.

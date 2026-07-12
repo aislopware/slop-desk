@@ -77,7 +77,7 @@ public final class HostTitleBellSniffer: @unchecked Sendable {
         case oscDiscard
         /// Inside a discarded OSC and the previous byte was `ESC` (possible `ST`).
         case oscDiscardEscape
-        /// Inside a DCS/SOS/PM/APC string sequence (R9 #4): swallow the body to its ST/BEL terminator,
+        /// Inside a DCS/SOS/PM/APC string sequence: swallow the body to its ST/BEL terminator,
         /// emitting NOTHING. UNLIKE an OSC, an embedded ESC that is NOT `\` is part of the opaque string
         /// (it does NOT start a new sequence), so this never re-classifies — that is the whole point.
         case stringConsume
@@ -105,7 +105,7 @@ public final class HostTitleBellSniffer: @unchecked Sendable {
     private static let rightBracket: UInt8 = 0x5D // ']'
     private static let backslash: UInt8 = 0x5C // '\'
     private static let semicolon: UInt8 = 0x3B // ';'
-    // String-sequence introducers (R9 #4): DCS `ESC P`, SOS `ESC X`, PM `ESC ^`, APC `ESC _`. A real
+    // String-sequence introducers: DCS `ESC P`, SOS `ESC X`, PM `ESC ^`, APC `ESC _`. A real
     // terminal swallows their body to the ST/BEL terminator without ringing a bell or changing the title.
     private static let dcs: UInt8 = 0x50 // 'P'
     private static let sos: UInt8 = 0x58 // 'X'
@@ -158,7 +158,7 @@ public final class HostTitleBellSniffer: @unchecked Sendable {
                  Self.sos,
                  Self.pm,
                  Self.apc:
-                // R9 #4 (security): DCS/SOS/PM/APC introduce a STRING sequence whose body a conformant
+                // Security: DCS/SOS/PM/APC introduce a STRING sequence whose body a conformant
                 // terminal swallows to its ST/BEL terminator WITHOUT ringing a bell or changing the title.
                 // Consume the whole string + terminator, emitting NOTHING — else a malicious remote program
                 // could embed a BEL (phantom bell) or an `ESC]2;…` (title spoof) inside the string body and
@@ -223,7 +223,7 @@ public final class HostTitleBellSniffer: @unchecked Sendable {
             }
 
         case .stringConsume:
-            // R9 #4: swallow a DCS/SOS/PM/APC string body, emitting nothing. The ONLY terminators are
+            // Swallow a DCS/SOS/PM/APC string body, emitting nothing. The ONLY terminators are
             // ST (`ESC \`) and BEL. CRUCIALLY, unlike the OSC-discard path, an embedded ESC that is not
             // `\` stays INSIDE the string (it does NOT introduce a new sequence), so an `ESC]2;…` in the
             // body can never spoof a title and an embedded BEL never rings.

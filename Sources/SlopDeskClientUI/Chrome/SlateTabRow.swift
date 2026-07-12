@@ -11,9 +11,9 @@ import SwiftUI
 
 /// One sidebar tab row. ACTIVE = the raised-card treatment; hover = flat plate + close `×`.
 ///
-/// E6 WI-4 grew the row from a name-only plate to its full chrome. The trailing accessories are now split
-/// PER LINE: the foreground-process label ("zsh", ACTIVE row only) rides LINE 1 beside the tab name, and the
-/// fused status `badge` sits ALONE on the compact LINE-2 subtitle (a single-line row with no subtitle keeps
+/// The trailing accessories are split PER LINE: the foreground-process label ("zsh", ACTIVE row only) rides
+/// LINE 1 beside the tab name, and the fused status `badge` sits ALONE on the compact LINE-2 subtitle
+/// (a single-line row with no subtitle keeps
 /// the badge on line 1). Heights ride the ladder via ``SlateListRow`` (`heightRow` name-only, `heightRowTall`
 /// with a subtitle — `docs/ui-shell/screenshots/tab-badge.png`). Both clusters fade under the hover `×`.
 struct SlateTabRow: View {
@@ -30,24 +30,24 @@ struct SlateTabRow: View {
     var processLabel: String?
     /// The single fused status badge (spinner / check / dot / error / hand / coffee / shield). `nil` ⇒ none.
     var badge: TabBadgeKind?
-    /// E17 ES-E17-1 / WI-3: whether this pane's input gate is READ-ONLY — renders a small trailing lock glyph
-    /// (the sidebar's read-only indicator, twin of the pane's `🔒 READ ONLY ×` pill). Default `false` keeps
-    /// existing call sites source-compatible.
+    /// Whether this pane's input gate is READ-ONLY — renders a small trailing lock glyph (the sidebar's
+    /// read-only indicator, twin of the pane's `🔒 READ ONLY ×` pill). Default `false` keeps existing call
+    /// sites source-compatible.
     var readOnly: Bool = false
-    /// C3 BUG B: whether the row is in inline-RENAME mode — swaps the title `Text` for a committing
-    /// `TextField`. Default `false` keeps existing call sites source-compatible.
+    /// Whether the row is in inline-RENAME mode — swaps the title `Text` for a committing `TextField`.
+    /// Default `false` keeps existing call sites source-compatible.
     var isEditing: Bool = false
-    /// C3 BUG A: the row's tooltip text (the full cwd) — shown on hover via `.help`. Empty/`nil` ⇒ no tooltip.
+    /// The row's tooltip text (the full cwd) — shown on hover via `.help`. Empty/`nil` ⇒ no tooltip.
     var helpText: String?
     var onSelect: () -> Void
     var onClose: () -> Void
-    /// C3 BUG B: commit the inline rename with the field's current text. No-op default keeps call sites compatible.
+    /// Commit the inline rename with the field's current text. No-op default keeps call sites compatible.
     var onRename: (String) -> Void = { _ in }
-    /// C3 BUG B: dismiss the inline rename without renaming (escape / focus loss). No-op default.
+    /// Dismiss the inline rename without renaming (escape / focus loss). No-op default.
     var onCancelRename: () -> Void = {}
 
     @State private var closeHover = false
-    /// The inline-rename draft text (C3 BUG B) — seeded from `title` when the field opens.
+    /// The inline-rename draft text — seeded from `title` when the field opens.
     @State private var draft = ""
     /// Whether the inline rename has already been RESOLVED by Return (commit) or Escape (cancel) — so the
     /// focus-loss handler that fires when the field is torn down does NOT re-commit the draft (which would make
@@ -61,7 +61,7 @@ struct SlateTabRow: View {
     private var hasSubtitle: Bool { !(subtitle ?? "").isEmpty }
 
     var body: some View {
-        // The row is the shared ``SlateListRow`` shell (MERIDIAN C2): the shell owns the height ladder,
+        // The row is the shared ``SlateListRow`` shell: the shell owns the height ladder,
         // padding, hover plate and the active raised-card treatment; this view supplies only the
         // tab-specific slots — the title/rename field and the per-line trailing clusters (running-process
         // label pinned to line 1, the status badge alone on the compact line 2).
@@ -130,7 +130,7 @@ struct SlateTabRow: View {
         return line
     }
 
-    /// The inline-rename `TextField` (C3 BUG B): seeded from the current title on open, auto-focused, commits
+    /// The inline-rename `TextField`: seeded from the current title on open, auto-focused, commits
     /// on Return (`onSubmit` → `onRename`) and cancels on Escape (`onExitCommand` → `onCancelRename`). A blank
     /// commit is a no-op rename (the store keeps the folder-name title), so the field never blanks the row.
     private var renameField: some View {
@@ -168,15 +168,15 @@ struct SlateTabRow: View {
     }
 
     /// LINE 1 trailing (right of the title): the read-only lock (if locked) then the RUNNING-COMMAND label —
-    /// on EVERY row, active or not (2026-07-10: a background tab's running command is exactly what you scan
-    /// the sidebar for). A bare interactive shell (`zsh`/`bash`/`fish`/…) is suppressed via
+    /// on EVERY row, active or not, because a background tab's running command is exactly what you scan the
+    /// sidebar for. A bare interactive shell (`zsh`/`bash`/`fish`/…) is suppressed via
     /// ``RailRowsBuilder/processDisplayName(_:)`` — "zsh" is not a running command, it is the resting state —
     /// which also basenames a path label (`/usr/bin/sudo` → `sudo`). A row with no second line (no cwd/git
     /// subtitle) has nowhere else to put the status badge, so it also carries the fused `badge` here; a
     /// two-line row moves the badge down to ``lineTwoTrailing`` instead. All muted, right-aligned; the whole
     /// cluster fades out under the centered hover `×` (the row's ``trailingOverlay``).
-    /// (The persistent `⌘N` switch-shortcut chip is REMOVED per user feedback — the ⌘1…⌘9 chords still
-    /// work; the row just no longer advertises them.)
+    /// No persistent `⌘N` switch-shortcut chip: the ⌘1…⌘9 chords still work, the row just doesn't advertise
+    /// them.
     private func lineOneTrailing(hovering: Bool) -> some View {
         HStack(spacing: 6) {
             if readOnly {
@@ -212,9 +212,9 @@ struct SlateTabRow: View {
     ///
     /// The badge box (`TabBadgeView.side`) is TALLER than the subtitle text, so a badge appearing (a command
     /// starting) would otherwise grow line 2 and re-centre the row content — reading as the tab getting taller.
-    /// We RESERVE the badge's fixed box with a `Color.clear` slot that is ALWAYS present (an empty conditional
-    /// + `.frame` does NOT reserve space in SwiftUI — that was the earlier miss); the badge draws into the slot
-    /// via `.overlay` when present. So line 2 is the same height with or without a badge: zero shift.
+    /// The badge's fixed box is RESERVED via a `Color.clear` slot that is ALWAYS present — an empty conditional
+    /// + `.frame` does NOT reserve space in SwiftUI, so the slot must exist unconditionally; the badge draws
+    /// into it via `.overlay` when present. So line 2 is the same height with or without a badge: zero shift.
     private func lineTwoTrailing(hovering: Bool) -> some View {
         Color.clear
             .frame(width: TabBadgeView.side, height: TabBadgeView.side)

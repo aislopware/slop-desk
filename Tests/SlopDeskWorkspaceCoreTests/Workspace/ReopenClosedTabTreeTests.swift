@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E3 WI-3 (ES-E3-1): pins the TREE shell's "Reopen Closed Tab" LIFO — the ⇧⌘T chord that brings back the
+/// Pins the TREE shell's "Reopen Closed Tab" LIFO — the ⇧⌘T chord that brings back the
 /// most recently closed tab (its split tree + every pane's spec + the owning session), distinct from the
 /// canvas single-slot ``WorkspaceStore/reopenClosedPane()`` (which is a separate, retained-but-dead
 /// mechanism on the infinite-canvas path).
@@ -128,13 +128,13 @@ final class ReopenClosedTabTreeTests: XCTestCase {
         XCTAssertTrue(store.recentlyClosedTabs.isEmpty, "both records consumed")
     }
 
-    // MARK: - Index-addressed reopen (E11 review fix: Recent rows reopen the RIGHT tab)
+    // MARK: - Index-addressed reopen (Recent rows reopen the RIGHT tab)
 
     /// `reopenClosedTab(at:)` reopens EXACTLY the tab at the given LIFO index, not always the newest. Close
     /// A,B,C,D (leaving E so the session never re-seeds), so the LIFO (newest-first) is D(0),C(1),B(2),A(3);
     /// `reopenClosedTab(at: 2)` must restore B — the second-OLDEST close. The default `reopenLastClosedPane()`
-    /// (= `at: 0`) would restore D, so asserting B here FAILS against the old `popLast()`-everything routing
-    /// the Recent rows used (revert-to-confirm-fail: replace the body with `reopenLastClosedPane()` → "B" ≠ "D").
+    /// (= `at: 0`) would restore D, so asserting B here catches any regression that routes every Recent row
+    /// through `reopenLastClosedPane()` instead of the given index (replace the body with that call → "B" ≠ "D").
     func testReopenClosedTabAtIndexRestoresThatTabNotTheNewest() {
         let (ws, tabIDs, _) = tabbedWorkspace(["A", "B", "C", "D", "E"])
         let store = makeTreeStore(restoringTree: ws)

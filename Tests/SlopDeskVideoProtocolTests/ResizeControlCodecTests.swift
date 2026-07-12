@@ -106,7 +106,7 @@ final class ResizeControlCodecTests: XCTestCase {
     }
 
     /// A KNOWN helloAck: `[2][accepted][BE streamID][BE cw][BE ch][fullRange][BE bounds x/y/w/h
-    /// Float64×4]` = 43 bytes (WF-6 #8 added the 1-byte `fullRange` AFTER captureHeight). The OFF
+    /// Float64×4]` = 43 bytes; the 1-byte `fullRange` sits AFTER captureHeight. The OFF
     /// path encodes `fullRange = 0` there; the rest of the body is unchanged.
     func testHelloAckEncodingKnownLayout() throws {
         let ack = VideoControlMessage.helloAck(
@@ -123,7 +123,7 @@ final class ResizeControlCodecTests: XCTestCase {
         expected.appendBE(UInt32(0x0A0B_0C0D)) // streamID
         expected.appendBE(UInt16(1280)) // captureWidth
         expected.appendBE(UInt16(800)) // captureHeight
-        expected.append(0) // fullRange (WF-6 #8, OFF)
+        expected.append(0) // fullRange (OFF)
         expected.appendBE(Double(10)) // boundsX
         expected.appendBE(Double(20)) // boundsY
         expected.appendBE(Double(1280)) // boundsW
@@ -134,7 +134,7 @@ final class ResizeControlCodecTests: XCTestCase {
         XCTAssertEqual(try VideoControlMessage.decode(ack.encode()), ack)
     }
 
-    /// WF-6 (#8): the `fullRange` byte round-trips for BOTH values, and the ON encoding places a `1`
+    /// The `fullRange` byte round-trips for BOTH values, and the ON encoding places a `1`
     /// at the documented position (immediately after captureHeight), with no other body change.
     func testHelloAckFullRangeRoundTrip() throws {
         for fr in [false, true] {

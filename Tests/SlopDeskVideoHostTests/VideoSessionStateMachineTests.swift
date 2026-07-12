@@ -54,7 +54,7 @@ final class VideoSessionStateMachineTests: XCTestCase {
     }
 
     func testFullRangeFlagStampedIntoAcceptAndReAckButNeverIntoReject() {
-        // WF-6 (#8): a host configured full-range stamps fullRange=true into the accept ack AND the
+        // A host configured full-range stamps fullRange=true into the accept ack AND the
         // duplicate re-ack (same value, the atomicity invariant), but a REJECT always sends false.
         var sm = VideoSessionStateMachine(nextStreamID: 1, fullRange: true)
         _ = sm.start()
@@ -90,7 +90,7 @@ final class VideoSessionStateMachineTests: XCTestCase {
     }
 
     func testDefaultStateMachineIsVideoRange() {
-        // WF-6 (#8): the default (no fullRange arg) is video-range — the OFF path the wire-byte-identity
+        // The default (no fullRange arg) is video-range — the OFF path the wire-byte-identity
         // guard depends on.
         var sm = VideoSessionStateMachine(nextStreamID: 1)
         _ = sm.start()
@@ -207,9 +207,8 @@ final class VideoSessionStateMachineTests: XCTestCase {
         _ = sm.handleControl(hello, windowBoundsCG: bounds, resolveCaptureSize: acceptAll)
 
         let effects = sm.handleControl(.bye, windowBoundsCG: bounds, resolveCaptureSize: acceptAll)
-        // Bye re-arms (intended behavior change for #8): state returns to .listening
-        // — NOT terminal .stopped — so a fresh hello can reconnect. Capture still tears
-        // down because it was streaming.
+        // Bye re-arms: state returns to .listening — NOT terminal .stopped — so a fresh
+        // hello can reconnect. Capture still tears down because it was streaming.
         XCTAssertEqual(sm.state, .listening)
         XCTAssertFalse(sm.mediaFlowing)
         XCTAssertEqual(effects, [.stopCapture])

@@ -1,5 +1,5 @@
 import AppKit
-import SlopDeskTransport // PortValidation (R16 HOSTVIEW-1)
+import SlopDeskTransport // PortValidation
 import SwiftUI
 
 /// The body of the menu-bar popover (research §C4 / §C1).
@@ -64,16 +64,16 @@ struct MenuContentView: View {
             }
             Button("Cancel", role: .cancel) { pendingDestruction = nil }
         } message: { action in
-            // R16 HOSTVIEW-3: render from the count CAPTURED when the dialog was armed, not live state.
-            // If the last client drops (or the host self-stops via a listener failure) while the dialog
-            // is open, live state flips to "Listening" (0 clients), producing the self-contradictory
-            // "Listening — they will be disconnected." The snapshot keeps the justification consistent.
+            // Render from the count CAPTURED when the dialog was armed, not live state. If the last
+            // client drops (or the host self-stops via a listener failure) while the dialog is open,
+            // live state flips to "Listening" (0 clients), producing the self-contradictory "Listening
+            // — they will be disconnected." The snapshot keeps the justification consistent.
             Text("\(Self.clientCountPhrase(action.clientCount)) — they will be disconnected.")
         }
     }
 
     /// A stop/quit action that needs a connected-client confirmation. Carries the client count CAPTURED
-    /// at arm time (R16 HOSTVIEW-3) so the dialog message cannot drift to a stale/contradictory value.
+    /// at arm time so the dialog message cannot drift to a stale/contradictory value.
     private enum DestructiveAction: Identifiable {
         case stopHost(clientCount: Int)
         case quit(clientCount: Int)
@@ -158,10 +158,10 @@ struct MenuContentView: View {
 
     // MARK: Port
 
-    /// R16 HOSTVIEW-1: whether the entered port is a usable TCP port (`0`…`65535`, `0` = OS-assigned).
-    /// Gates the Start button so a negative / out-of-range value can never be silently coerced into a
-    /// bound port (the old `UInt16(clamping: max(0, port))` mapped `-5 → 0` and `99999 → 65535`,
-    /// desyncing the displayed/persisted value from the port actually bound).
+    /// Whether the entered port is a usable TCP port (`0`…`65535`, `0` = OS-assigned). Gates the Start
+    /// button so a negative / out-of-range value can never be silently coerced into a bound port —
+    /// `UInt16(clamping: max(0, port))` would map `-5 → 0` and `99999 → 65535`, desyncing the
+    /// displayed/persisted value from the port actually bound.
     private var portIsValid: Bool { PortValidation.isValid(port) }
 
     private var portField: some View {
@@ -200,22 +200,22 @@ struct MenuContentView: View {
         .controlSize(.large)
         .buttonStyle(.borderedProminent)
         .tint(controller.isRunning ? .red : .accentColor)
-        // Disable while busy (starting/stopping) OR, when not running, while the port is out of range
-        // (R16 HOSTVIEW-1) so an invalid value can never be coerced into a bound port.
+        // Disable while busy (starting/stopping) OR, when not running, while the port is out of range,
+        // so an invalid value can never be coerced into a bound port.
         .disabled(controller.isBusy || (!controller.isRunning && !portIsValid))
     }
 
     private func toggle() {
         if controller.isRunning {
             // Confirm before tearing down live client shells; one-click when nobody is connected. The
-            // count is SNAPSHOTTED into the action (R16 HOSTVIEW-3) so the dialog message can't drift.
+            // count is SNAPSHOTTED into the action so the dialog message can't drift.
             if hasConnectedClients {
                 pendingDestruction = .stopHost(clientCount: controller.clientCount ?? 0)
             } else {
                 controller.stop()
             }
         } else {
-            // Start ONLY on a valid port (R16 HOSTVIEW-1); the button is disabled otherwise, so this is
+            // Start ONLY on a valid port; the button is disabled otherwise, so this is
             // belt-and-suspenders against a coerced bind.
             guard let boundPort = PortValidation.port(port) else { return }
             controller.start(port: boundPort)
@@ -262,7 +262,7 @@ struct MenuContentView: View {
     private var quitButton: some View {
         Button(role: .destructive) {
             // Confirm before quitting if it would disconnect live clients; one-click otherwise. Snapshot
-            // the count into the action (R16 HOSTVIEW-3) so the dialog message stays consistent.
+            // the count into the action so the dialog message stays consistent.
             if hasConnectedClients {
                 pendingDestruction = .quit(clientCount: controller.clientCount ?? 0)
             } else {
@@ -282,8 +282,8 @@ struct MenuContentView: View {
 private struct TCCRowView: View {
     let row: TCCRow
     let refreshTick: Int
-    /// SwiftUI-native URL opener for the "Enable…" deep-link (was `NSWorkspace.shared.open`). `row.settingsURL`
-    /// is an `x-apple.systempreferences:` deep link, which `openURL` routes through LaunchServices as before.
+    /// SwiftUI-native URL opener for the "Enable…" deep-link. `row.settingsURL` is an
+    /// `x-apple.systempreferences:` deep link, which `openURL` routes through LaunchServices.
     @Environment(\.openURL) private var openURL
 
     var body: some View {

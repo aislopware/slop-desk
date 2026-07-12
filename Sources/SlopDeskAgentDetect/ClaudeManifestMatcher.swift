@@ -40,8 +40,8 @@ public struct ClaudeManifestMatcher: Sendable {
     /// classify as `claude`). A wrapper is **NOT presence** — it must never lift the presence floor
     /// (any `node` dev server would light the agent dot) — it only makes an ABSENCE *indeterminate*,
     /// so the ~1 Hz foreground poll does not terminate a hook/report-established status while the
-    /// wrapper holds the PTY foreground (queue-safety fix, 2026-07-02). Shells are deliberately NOT
-    /// listed: the shell returning to the foreground is the classic "claude exited" signal.
+    /// wrapper holds the PTY foreground. Shells are deliberately NOT listed: the shell returning to
+    /// the foreground is the classic "claude exited" signal.
     public func isLikelyWrapper(processName: String) -> Bool {
         guard !processName.isEmpty else { return false }
         let base = processName.split(separator: "/").last.map(String.init) ?? processName

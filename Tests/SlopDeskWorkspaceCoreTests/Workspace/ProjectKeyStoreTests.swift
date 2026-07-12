@@ -4,8 +4,7 @@ import SlopDeskAgentDetect
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// The STORE half of the host-computed By-Project key (wire type 34, 2026-07-10 re-scope — replaces the
-/// deleted grouping/sort hamburger suite `TabSortStoreTests`): ``WorkspaceStore/setProjectKey(_:for:)`` is
+/// The STORE half of the host-computed By-Project key (wire type 34): ``WorkspaceStore/setProjectKey(_:for:)`` is
 /// the guarded write sink the connection layer funnels host pushes into, and
 /// ``WorkspaceStore/paneProjectKey(_:)`` is the read the sidebar sectioning derives from
 /// (host key → `lastKnownCwd` fallback → `nil`/"Other").

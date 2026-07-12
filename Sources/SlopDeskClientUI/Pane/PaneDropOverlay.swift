@@ -1,5 +1,5 @@
 // PaneDropOverlay — the soft circular/elliptical drop-zone overlay drawn over a pane while an external drag
-// hovers it (E18 WI-5; see `docs/ui-shell/spec/user-interface__drag-and-drop.md`, `screenshots/drop-overlay-frame-action.png`).
+// hovers it (see `docs/ui-shell/spec/user-interface__drag-and-drop.md`, `screenshots/drop-overlay-frame-action.png`).
 //
 // PURE presentation: it draws the five labelled blobs straight from the SHARED ``PaneDropZoneLayout`` (the
 // SAME geometry the ``PaneDropReceiver`` hit-tests against — draw == hit, so the `.contentShape`-before-

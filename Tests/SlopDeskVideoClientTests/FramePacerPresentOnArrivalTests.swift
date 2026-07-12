@@ -2,7 +2,7 @@ import CoreVideo
 import XCTest
 @testable import SlopDeskVideoClient
 
-/// PRESENT-ON-ARRIVAL → PRESENT-ON-DECODE (2026-06-10): a frame that lands in an EMPTY queue
+/// PRESENT-ON-ARRIVAL → PRESENT-ON-DECODE: a frame that lands in an EMPTY queue
 /// and completes the live depth presents IMMEDIATELY instead of waiting for the next vsync
 /// tick — every depth-1 frame, sparse or dense (the Parsec model). The original starved-only
 /// gate (`underflowRun >= 1`) barely fired on HW (throttled ticks don't increment underflowRun)

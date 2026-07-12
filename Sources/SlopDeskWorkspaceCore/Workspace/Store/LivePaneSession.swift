@@ -3,7 +3,7 @@ import Observation
 import SlopDeskAgentDetect
 import SlopDeskClient
 import SlopDeskInspector
-import SlopDeskVideoProtocol // W12: EnvConfig — the behaviour-preserving config resolver (env → overlay → default)
+import SlopDeskVideoProtocol // EnvConfig — the behaviour-preserving config resolver (env → overlay → default)
 
 // MARK: - LivePaneSession (the production handle)
 
@@ -17,17 +17,17 @@ import SlopDeskVideoProtocol // W12: EnvConfig — the behaviour-preserving conf
 ///
 /// What it wraps, by kind:
 /// - `.terminal`   → `connection` (+ its `terminalModel`) + `inputBar`, PLUS a latent `inspector`
-///   (read-only `InspectorViewModel` over `InspectorClient` on NWConnection #2). Claude Code is no
-///   longer a stored `PaneKind` (docs/42 W11): ANY `.terminal` running `claude` is auto-detected (wire
+///   (read-only `InspectorViewModel` over `InspectorClient` on NWConnection #2). Claude Code is not a
+///   stored `PaneKind` (docs/42): ANY `.terminal` running `claude` is auto-detected (wire
 ///   types 26/27 fold into ``claudeStatus``), and the inspector second channel opens/closes
 ///   DYNAMICALLY on that runtime status (≠ `.none` opens it). The terminal|inspector split is per-pane
-///   VIEW state (WF5), NOT a tree node — one leaf.
+///   VIEW state, NOT a tree node — one leaf.
 /// - `.remoteGUI`  → a `remoteWindow` (`RemoteWindowModel`) instead of a connection-backed terminal.
 ///
 /// ### Lazy connect (load-bearing, docs/22 §6 RESTORED-vs-RECONNECTED)
 /// ``make(_:makeClient:makeInspector:)`` BUILDS the `ConnectionViewModel` (host/port pre-filled from
 /// `spec.endpoint`) but does **not** `connect()`. The view triggers `connect()` lazily on appear
-/// (WF4/WF5) so restoring a 12-pane workspace doesn't slam 12 sockets at launch.
+/// so restoring a 12-pane workspace doesn't slam 12 sockets at launch.
 @preconcurrency
 @MainActor
 @Observable
@@ -51,17 +51,17 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     public let inputBar: InputBarModel?
 
     /// The read-only structured inspector for a terminal pane (NWConnection #2). `nil` for non-terminal
-    /// kinds (`.remoteGUI` / `.systemDialog`); present for EVERY `.terminal` pane (W11 — any terminal can
+    /// kinds (`.remoteGUI` / `.systemDialog`); present for EVERY `.terminal` pane (any terminal can
     /// become a Claude session), but the second channel is SUBSCRIBED only while ``claudeStatus`` `≠ .none`.
     /// The model is durable across pause/resume; the client is closed on pause, rebuilt on resume. `model`
     /// is `let` (upsert/dedup keeps a re-tail safe); `client` is `var` because resume swaps in a fresh one.
     public let inspector: InspectorViewModel?
 
-    // MARK: Claude-Code auto-detection (W11 / P1 — client TRUSTS the host's type-27)
+    // MARK: Claude-Code auto-detection (client TRUSTS the host's type-27)
 
-    /// P1: the CLIENT is a passive display — the HOST owns the one ``ClaudeStatusMachine`` and is the
+    /// The CLIENT is a passive display — the HOST owns the one ``ClaudeStatusMachine`` and is the
     /// single source of truth. The client does NOT run its own machine or re-derive presence from type-26
-    /// (which fought the host's type-27 + caused inspector flap, review #2/#3); it maps the host's type-27
+    /// (re-deriving from it fights the host's type-27 and causes inspector flap); it maps the host's type-27
     /// `state` byte → ``ClaudeStatus`` (forward-tolerant) and trusts it. Whether a terminal can ever host
     /// a claude is a build-time fact (only `.terminal` panes), kept as this flag.
     private let isAgentDetectable: Bool
@@ -73,7 +73,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     public private(set) var claudeStatus: ClaudeStatus = .none
 
     /// The last foreground process basename the host reported (type 26) — a COARSE display-only hint, NOT
-    /// a status source (P1, review #3): a transient child process taking the PTY must never wipe a
+    /// a status source: a transient child process taking the PTY must never wipe a
     /// `.needsPermission` the host set via a hook, so type-26 updates THIS string only. `nil` until the
     /// host reports one. Observed so chrome that shows it re-renders.
     public private(set) var foregroundProcessName: String?
@@ -96,7 +96,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
 
     /// The store's factory, retained so `resume()` can rebuild a fresh ``InspectorClient`` after `pause()`
     /// closed the previous one (iOS kills an app that strands a background socket — docs/22 DECISIONS).
-    /// Set for every `.terminal` pane (W11); `nil` for the video kinds (`.remoteGUI` / `.systemDialog`).
+    /// Set for every `.terminal` pane; `nil` for the video kinds (`.remoteGUI` / `.systemDialog`).
     private let makeInspector: (@MainActor (ConnectionTarget) -> InspectorClient?)?
     /// Resolves the CURRENT app target for the inspector build/rebuild (inspector rides the same host as
     /// the terminal, on terminal port + 1). Read fresh at subscribe-time to pick up a host change. Set
@@ -141,7 +141,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// `connection.terminalModel` so the view never reaches into the connection.
     public var terminalModel: TerminalViewModel? { connection?.terminalModel }
 
-    /// WB3 BOOKMARKS persistence scope (``TerminalModelProviding/bookmarkScopeKey``): a token minted FRESH
+    /// BOOKMARKS persistence scope (``TerminalModelProviding/bookmarkScopeKey``): a token minted FRESH
     /// per materialization (so a relaunch — which re-numbers blocks from 0 in a new segmenter — starts with
     /// NO stars instead of grafting a prior run's block indices onto unrelated commands). Stable across a
     /// transport reconnect within one launch (the same instance survives; only the host shell +
@@ -163,12 +163,12 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// bar, NOT recorded for echo-dedup (a programmatic send has no local pre-echo to suppress).
     public func sendBytes(_ bytes: [UInt8]) { inputBar?.sendRaw(bytes, record: false) }
 
-    /// RELEASE STUCK INPUT (C5): route the palette escape hatch to the `.remoteGUI` pane's
+    /// RELEASE STUCK INPUT: route the palette escape hatch to the `.remoteGUI` pane's
     /// ``RemoteWindowModel`` (whose live sink the video view publishes; withheld while read-only /
     /// not streaming). A no-op for every other kind (`remoteWindow == nil`).
     public func releaseStuckInput() { remoteWindow?.releaseStuckInput() }
 
-    /// PASTE AS KEYSTROKES (C7): route the pane's clipboard-paste to the `.remoteGUI` pane's
+    /// PASTE AS KEYSTROKES: route the pane's clipboard-paste to the `.remoteGUI` pane's
     /// ``RemoteWindowModel`` (whose live key sink the video view publishes; withheld while read-only /
     /// not streaming, so the model no-ops). A no-op for every other kind (`remoteWindow == nil`) — a
     /// terminal pane has its own paste pipeline.
@@ -245,10 +245,10 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     ///     `.terminal` pane, see ``makeTerminal(_:makeClient:makeInspector:target:)``) so the
     ///     PRODUCTION factory (`WorkspaceStore.muxBackedClientFactory`) can pass it straight into
     ///     `SlopDeskClient.init(resumeSeed:)` — set synchronously at construction, closing the
-    ///     seed-resume-identity-race (docs/DECISIONS 2026-07-11). A test factory that has no restored
+    ///     seed-resume-identity-race (docs/DECISIONS). A test factory that has no restored
     ///     identity to seed can ignore the argument (`{ _ in ... }`).
     ///   - makeInspector: builds the read-only `InspectorClient` (NWConnection #2) for a `.terminal`
-    ///     pane's endpoint (subscribed dynamically once `claude` is detected, W11), or `nil` when no
+    ///     pane's endpoint (subscribed dynamically once `claude` is detected), or `nil` when no
     ///     second channel is available. Retained for the `resume()` rebuild.
     @preconcurrency
     public static func make(
@@ -279,7 +279,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
 
     /// Builds a `.terminal` session: a `ConnectionViewModel` bound to the app target (NOT connected) +
     /// an `InputBarModel`, plus the LATENT Claude-detection seam — an inspector model + the status
-    /// machine — wired for EVERY terminal (W11). The inspector second channel is not opened here; it's
+    /// machine — wired for EVERY terminal. The inspector second channel is not opened here; it's
     /// subscribed dynamically once ``claudeStatus`` lifts off `.none`.
     private static func makeTerminal(
         _ spec: PaneSpec,
@@ -292,7 +292,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         // session UUID (set by Stage 2's capture path), pre-seed the client's resume identity BEFORE the
         // first connect() so the channelOpen preamble presents the saved UUID + last-received seq,
         // enabling a RETURNING_CLIENT reattach. A nil resumeSessionID (brand-new/never-connected pane)
-        // takes the fresh-shell path. W12: route through `EnvConfig` (env → overlay → default); the
+        // takes the fresh-shell path. Routes through `EnvConfig` (env → overlay → default); the
         // default-ON (`!= "0"`) idiom is preserved exactly via `boolDefaultOn`, an EMPTY overlay
         // byte-identical.
         let detachEnabled = EnvConfig.boolDefaultOn("SLOPDESK_DETACH_ENABLED")
@@ -313,15 +313,15 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         // built here at all — the actor's live highestContiguousSeq is presented directly in
         // SlopDeskClient.connect() (`let lastSeq = highestContiguousSeq`). That path is unaffected.
         //
-        // SEED-AT-CONSTRUCTION (closes seed-resume-identity-race, docs/DECISIONS 2026-07-11): this used
-        // to call the zero-arg `makeClient()` and then fire an UNAWAITED
-        // `Task { await c.seedResumeIdentity(...) }` before returning — nothing ordered that seed job
-        // ahead of `ConnectionViewModel.performConnect()`'s own separately-scheduled connect Task, so the
-        // seed could lose the race against the actor's mailbox and `connect()` would read a nil
-        // `sessionID` (fresh shell) instead of the restored one. `makeClient` now takes the seed
-        // directly and the production factory (`WorkspaceStore.muxBackedClientFactory`) threads it into
-        // `SlopDeskClient.init(resumeSeed:)`, which sets `sessionID` / `highestContiguousSeq` /
-        // `highestSeqFed` synchronously — no Task, no actor hop, no race window.
+        // SEED-AT-CONSTRUCTION (closes seed-resume-identity-race, docs/DECISIONS): calling the zero-arg
+        // `makeClient()` and then firing an UNAWAITED `Task { await c.seedResumeIdentity(...) }` afterward
+        // would order nothing — that seed job could lose the race against
+        // `ConnectionViewModel.performConnect()`'s own separately-scheduled connect Task and the actor's
+        // mailbox, so `connect()` would read a nil `sessionID` (fresh shell) instead of the restored one.
+        // Instead `makeClient` takes the seed directly and the production factory
+        // (`WorkspaceStore.muxBackedClientFactory`) threads it into `SlopDeskClient.init(resumeSeed:)`,
+        // which sets `sessionID` / `highestContiguousSeq` / `highestSeqFed` synchronously — no Task, no
+        // actor hop, no race window.
         let resumeSeed: SlopDeskClient.ResumeSeed? = savedResumeID.map { (sessionID: $0, lastSeq: 0) }
         let makeClientSeeded: @Sendable () -> SlopDeskClient = { makeClient(resumeSeed) }
         let connection = ConnectionViewModel(
@@ -348,7 +348,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
             makeInspector: makeInspector,
             target: target,
             // Every terminal can host an auto-detected claude — the host's type-27 verdict (folded via
-            // `feedAgentSignal`) lifts `claudeStatus` off `.none`. The client TRUSTS that verdict (P1).
+            // `feedAgentSignal`) lifts `claudeStatus` off `.none`. The client TRUSTS that verdict.
             isAgentDetectable: true,
         )
     }
@@ -399,12 +399,12 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     // MARK: - Inspector second channel
 
     /// Opens + subscribes the inspector second channel (full replay from seq 0), then folds its event
-    /// stream into `inspector` until the stream ends. Called by the view's `.task` on appear (WF5) and
+    /// stream into `inspector` until the stream ends. Called by the view's `.task` on appear and
     /// by ``resume()``. Idempotent: does nothing if a client is already live. The fold is re-tail-safe
     /// because the model upserts/dedupes tool cards by id (docs/22 DECISIONS) — a resume replaying the
     /// whole transcript tail does not duplicate cards.
     public func subscribeInspector() async {
-        // W11: gated on the RUNTIME Claude status, not a stored kind — a plain terminal opens NO
+        // Gated on the RUNTIME Claude status, not a stored kind — a plain terminal opens NO
         // inspector socket until a `claude` is detected (`claudeStatus` ≠ `.none`). Re-driven on that
         // transition (see feedAgentSignal).
         guard claudeStatus != .none, let model = inspector else { return }
@@ -431,15 +431,15 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         if inspectorClient === client { inspectorClient = nil }
     }
 
-    // MARK: - Claude-Code agent signal fold (W11 / P1 — client TRUSTS the host's type-27)
+    // MARK: - Claude-Code agent signal fold (client TRUSTS the host's type-27)
 
     /// Folds one wire agent-detection event (type 26 `foregroundProcess` / type 27 `claudeStatus`) into
-    /// this pane's DISPLAY state. P1: the client is a passive display — it does NOT run a state machine
+    /// this pane's DISPLAY state. The client is a passive display — it does NOT run a state machine
     /// or re-derive presence:
     /// - **type 27 `claudeStatus`** is the SINGLE source of truth: the `state` byte maps directly to a
     ///   ``ClaudeStatus`` (forward-tolerant — an unknown/future byte degrades to `.none`), trusted
     ///   verbatim. Drives the dot AND the dynamic inspector open/close.
-    /// - **type 26 `foregroundProcess`** is a COARSE display-only process-name hint (review #3): it
+    /// - **type 26 `foregroundProcess`** is a COARSE display-only process-name hint: it
     ///   updates ``foregroundProcessName`` and NOTHING else — it can NEVER override the type-27 status,
     ///   so a transient child process taking the PTY can't wipe a host-set `.needsPermission`.
     ///
@@ -513,7 +513,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         }
     }
 
-    /// PANE REBIND (2026-06-12): ONE-SHOT stale-binding revalidation after the first optimistic
+    /// PANE REBIND: ONE-SHOT stale-binding revalidation after the first optimistic
     /// `open()`. CGWindowIDs die with the window and get recycled across host restarts, and the host
     /// rejects a dead id SILENTLY (`helloAck(accepted:false)` → zero client effects → a permanent black
     /// pane). The model checks the live window list and re-binds by app+title (`WindowRebind`);
@@ -571,7 +571,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
             setVideoActive(true)
         }
         if claudeStatus != .none, inspector != nil, inspectorClient == nil {
-            // W11: re-subscribe only when a claude is still detected (runtime status, not a stored kind).
+            // Re-subscribe only when a claude is still detected (runtime status, not a stored kind).
             // Track + cancel a prior re-subscribe before spawning a fresh one, so a teardown/pause in the
             // same main-actor turn can cancel this (subscribeInspector() re-checks then closes the
             // just-built client). NOT awaited — the fold blocks until the stream closes, so awaiting here

@@ -1,8 +1,8 @@
 import XCTest
 @testable import SlopDeskVideoClient
 
-/// Component 4 (adaptive pacer depth): PURE virtual-clock tests of ``PacerDepthPolicy``.
-/// v3 (2026-06-12): the depth ACTION (promote/demote) runs on NETWORK-late events
+/// PURE virtual-clock tests of ``PacerDepthPolicy`` (adaptive pacer depth).
+/// The depth ACTION (promote/demote) runs on NETWORK-late events
 /// (``PacerDepthPolicy/noteNetworkLate(_:)`` — owd spikes from `OwdLateDetector`); the
 /// present-gap classifier (late/idle/dense) is telemetry + diagnostics only. No Apple
 /// frameworks touched; all time is injected seconds.
@@ -70,11 +70,11 @@ final class PacerDepthPolicyTests: XCTestCase {
         XCTAssertEqual(dp.depth, 1)
     }
 
-    // MARK: v3 — present-gap lates are telemetry only (THE structural pinning fix)
+    // MARK: Present-gap lates are telemetry only (the structural pinning fix)
 
     /// A genuine present-gap late still CLASSIFIES (diagnostics) but neither counts into
     /// `lateFrames` nor promotes — arrival gaps conflate network lateness with content cadence
-    /// (the measured 2026-06-11 depth-2 pinning bug).
+    /// (the depth-2 pinning bug).
     func testPresentGapLateClassifiesButNeverCountsNorPromotes() {
         var dp = PacerDepthPolicy(adaptEnabled: true)
         var t = driveClean(&dp, from: 0, frames: 130) // past the 2s promote warmup
@@ -87,7 +87,7 @@ final class PacerDepthPolicyTests: XCTestCase {
         XCTAssertEqual(dp.depth, 1, "present lates never promote (v3)")
     }
 
-    /// REGRESSION — the measured 2026-06-12 pinning shape, inverted: promoted depth must DEMOTE
+    /// REGRESSION — the pinning shape, inverted: promoted depth must DEMOTE
     /// through a stretch whose every present gap classifies late (sub-cadence content under a
     /// stale hint), because the dwell evaluates NETWORK lates only.
     func testSubCadenceContentCannotPinDepth() {
@@ -334,7 +334,7 @@ final class PacerDepthPolicyTests: XCTestCase {
         XCTAssertEqual(dp.depth, 1)
     }
 
-    /// THE MEASURED FALSE-LATE SHAPE (2026-06-11): dense 60fps flow with routine jitter gaps a
+    /// THE FALSE-LATE SHAPE: dense 60fps flow with routine jitter gaps a
     /// hair past the old bare boundary. With the 25% slack these wobbles classify ZERO lates.
     func testDenseFlowJitterWithinSlackNeverLate() {
         var dp = PacerDepthPolicy(adaptEnabled: true)

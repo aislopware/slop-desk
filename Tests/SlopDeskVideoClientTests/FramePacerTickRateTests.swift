@@ -1,8 +1,8 @@
 import XCTest
 @testable import SlopDeskVideoClient
 
-/// DISPLAY-NATIVE TICK (latency audit, 2026-06-10): the display link runs at the display's
-/// native refresh, floored at the host content fps, with `SLOPDESK_TICK_HZ` as the A/B override.
+/// DISPLAY-NATIVE TICK: the display link runs at the display's native refresh, floored at the
+/// host content fps, with `SLOPDESK_TICK_HZ` as the A/B override.
 /// Pure resolution matrix — the GUI wiring (reading the view's screen) is GUI-only.
 final class FramePacerTickRateTests: XCTestCase {
     func testDisplayRateWinsWhenAboveContentFloor() {

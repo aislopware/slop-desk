@@ -3,8 +3,8 @@ import Foundation
 // MARK: - SidebarAutoHidePolicy (`auto-hide-tabs-panel` decision)
 
 /// The PURE decision for whether the vertical TABS panel (sidebar) should be collapsed for a given
-/// ``AutoHideTabsPanelMode`` + active-session tab count (E19/A18). Headless + unit-tested apart from the
-/// view-side glue (WI-7) that reads this and conditionally drives `WorkspaceChromeState.sidebarCollapsed`.
+/// ``AutoHideTabsPanelMode`` + active-session tab count. Headless + unit-tested apart from the
+/// view-side glue that reads this and conditionally drives `WorkspaceChromeState.sidebarCollapsed`.
 ///
 /// The result is a three-valued ``Bool?`` on purpose:
 /// - a concrete `true`/`false` is an OPINION the wiring should apply (collapse / reveal), and

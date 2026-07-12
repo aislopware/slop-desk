@@ -1,6 +1,6 @@
 import Foundation
 
-/// PURE decider for the EVENT-DRIVEN crisp re-anchor (2026-06-16 latency-first reframe; gated).
+/// PURE decider for the EVENT-DRIVEN crisp re-anchor (latency-first; gated).
 ///
 /// `StaticIDRDecider` re-sharpens on a wall-clock quiet window (~300ms after the last real frame).
 /// When ScreenCaptureKit re-delivers the now-static frame a few times after motion stops, the host

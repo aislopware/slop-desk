@@ -94,9 +94,9 @@ public struct CommandBlockSegmenter {
     private let clock: () -> Date
     private let outputCap: Int
 
-    /// K2 auto-progress (E14/WI-3): the configured slow-command PREFIX list ("Auto Progress-Bar
-    /// Commands"). EMPTY disables auto-progress — no synthetic spinner is emitted, so the segmenter is
-    /// byte-identical to the pre-E14 tap. Resolved by the owner from `SLOPDESK_AUTO_PROGRESS_COMMANDS`
+    /// Auto-progress: the configured slow-command PREFIX list ("Auto Progress-Bar Commands"). EMPTY
+    /// disables auto-progress — no synthetic spinner is emitted, so the segmenter stays byte-identical
+    /// to a run with auto-progress off. Resolved by the owner from `SLOPDESK_AUTO_PROGRESS_COMMANDS`
     /// (host) → ``AutoProgressMatcher/builtInPrefixes`` fallback.
     private let autoProgressPrefixes: [String]
 
@@ -104,8 +104,8 @@ public struct CommandBlockSegmenter {
     ///   - clock: wall-clock source for the C→D duration. Injectable so a test advances it
     ///     deterministically; defaults to `Date.init` in production.
     ///   - outputCap: per-block output byte ceiling (defaults to ``defaultOutputCap``).
-    ///   - autoProgressPrefixes: the slow-command prefix list for the synthetic OSC-9;4 spinner
-    ///     (E14/K2). Defaults to `[]` (auto-progress OFF — byte-identical to the pre-E14 segmenter).
+    ///   - autoProgressPrefixes: the slow-command prefix list for the synthetic OSC-9;4 spinner.
+    ///     Defaults to `[]` (auto-progress OFF — byte-identical to a segmenter without auto-progress).
     public init(
         clock: @escaping () -> Date = { Date() },
         outputCap: Int = Self.defaultOutputCap,
@@ -141,7 +141,7 @@ public struct CommandBlockSegmenter {
     ///
     /// Generic over any byte sequence (`[UInt8]`, `Data`, a slice…) so the live tap can feed each
     /// PTY chunk STRAIGHT through with zero copy — this runs per chunk on the read-loop hot path,
-    /// and the old `[UInt8]`-only signature forced an `Array(chunk)` alloc + memcpy per chunk.
+    /// and an `[UInt8]`-only signature would force an `Array(chunk)` alloc + memcpy per chunk.
     @discardableResult
     public mutating func ingest(_ bytes: some Sequence<UInt8>) -> [CommandBlock] {
         var completed: [CommandBlock] = []
@@ -184,8 +184,8 @@ public struct CommandBlockSegmenter {
         )
     }
 
-    /// Drains + clears the SYNTHETIC OSC-9;4 progress frames queued at the `C` / `D` marks (E14/WI-3,
-    /// K2). The owner (``CommandBlockTracker``) calls this after each ``ingest`` and enqueues the
+    /// Drains + clears the SYNTHETIC OSC-9;4 progress frames queued at the `C` / `D` marks. The owner
+    /// (``CommandBlockTracker``) calls this after each ``ingest`` and enqueues the
     /// frames on the CONTROL channel alongside the type-28 block metadata. Returns `[]` when
     /// auto-progress is disabled (empty prefix list) or nothing matched in this batch.
     public mutating func drainAutoProgress() -> [WireMessage] {
@@ -246,7 +246,7 @@ public struct CommandBlockSegmenter {
     /// ``promptCycleCount`` captured when the open block's cycle began — stamped onto the block.
     private var openPromptOrdinal = 0
 
-    // MARK: K2 auto-progress state (E14/WI-3) — synthetic OSC-9;4 spinner for configured slow commands
+    // MARK: Auto-progress state — synthetic OSC-9;4 spinner for configured slow commands
 
     /// Whether a SYNTHETIC indeterminate spinner is currently active for the open block — so its
     /// matching clear is emitted exactly once when the block closes (and never twice).
@@ -440,7 +440,7 @@ public struct CommandBlockSegmenter {
         guard let sep = oscBuffer.firstIndex(of: Self.semicolon) else { return }
         let psBytes = oscBuffer[oscBuffer.startIndex..<sep]
         let ps = String(bytes: psBytes, encoding: .utf8) ?? ""
-        // K2 auto-progress (E14/WI-3): NOTICE a program-emitted OSC 9;4 so the SYNTHETIC spinner stands
+        // Auto-progress: NOTICE a program-emitted OSC 9;4 so the SYNTHETIC spinner stands
         // down (the program drives the badge; the live ``HostOutputSniffer`` emits the REAL type-32
         // `.progress` — the segmenter only OBSERVES, never emits the real one). Allocation-free byte
         // probe for a body of `"4"` or `"4;…"`, mirroring HostOutputSniffer's `9;4` intercept.
@@ -504,9 +504,9 @@ public struct CommandBlockSegmenter {
             // resizes constantly: splits, sidebar toggles, window drags — plus starship / transient-
             // prompt hooks). Such a redraw re-fires `B` while STILL at the prompt — the open block
             // never saw a `C`, so it is in the `.command` phase with no output. That is the SAME
-            // prompt, NOT a new command. Closing it as an incomplete (forever-"running") phantom is
-            // the bug that piled up "(no command) running…" blocks per resize (wrong Outline, "all
-            // loading" Commands panel).
+            // prompt, NOT a new command. Closing it as an incomplete (forever-"running") phantom would
+            // pile up "(no command) running…" blocks per resize (wrong Outline, "all loading" Commands
+            // panel).
             //
             // So a re-fired `B` in the `.command` phase RE-ARMS the open block: discard any partial
             // command bytes (the redraw reprints PROMPT — captured as stray command bytes — then
@@ -561,7 +561,7 @@ public struct CommandBlockSegmenter {
             }
             runningSince = clock()
             phase = .output
-            // K2 auto-progress (E14/WI-3): synthesize an INDETERMINATE OSC-9;4 spinner when the typed
+            // Auto-progress: synthesize an INDETERMINATE OSC-9;4 spinner when the typed
             // command matches a configured slow-command prefix AND the program has not already driven
             // its OWN 9;4 in this block. An empty prefix list disables this (matches() → false). The
             // host-side shell-integration auto-wrap of known slow commands.
@@ -582,7 +582,7 @@ public struct CommandBlockSegmenter {
             // cycle, INCLUDING an empty Enter or Ctrl-C line-abort: those run precmd but NOT preexec,
             // so no `C` fired and the open block is still in `.command`, carrying the PREVIOUS
             // command's `$?`. Minting a "completed" phantom from that (empty commandText + stale exit)
-            // piled bogus "(no command)" / red-failed rows into Commands / Outline on every empty
+            // would pile bogus "(no command)" / red-failed rows into Commands / Outline on every empty
             // Enter. DROP it silently — mirrors the live ``HostOutputSniffer`` gating `D` on
             // `runningSince` (:415). Discard the unexecuted open block so it leaves no phantom (a
             // following `A`/`B` opens a fresh one). A `D` with no open block is the first-prompt
@@ -616,7 +616,7 @@ public struct CommandBlockSegmenter {
         // Stamp the cycle's prompt ordinal: primary `A` marks seen so far (0 = none yet, a mid-stream
         // join; the client then skips the outline jump rather than mis-landing).
         openPromptOrdinal = promptCycleCount
-        // K2 auto-progress (E14/WI-3): a fresh block starts with no synthetic spinner + no observed
+        // Auto-progress: a fresh block starts with no synthetic spinner + no observed
         // real 9;4 (suppression is strictly per-block).
         syntheticSpinnerActive = false
         sawRealProgressThisBlock = false
@@ -625,12 +625,13 @@ public struct CommandBlockSegmenter {
     /// Discards the currently-open block WITHOUT emitting it and WITHOUT consuming an index — for a
     /// prompt block that never executed (an empty Enter / Ctrl-C line-abort, or an idle-prompt A/B
     /// with no `C`). Such a cycle is NO command, so it must leave no phantom — neither a completed one
-    /// (the old `D`-arm bug) nor a forever-"running" incomplete one. Unlike ``takeOpenBlock`` it does
-    /// NOT bump ``nextIndex`` (the discarded prompt claims no block index), so the next real command
-    /// reuses the slot.
+    /// (a `D` arm that mints one for an unexecuted block) nor a forever-"running" incomplete one. Unlike
+    /// ``takeOpenBlock`` it does NOT bump ``nextIndex`` (the discarded prompt claims no block index), so
+    /// the next real command reuses the slot.
     private mutating func discardOpenBlock() {
         // A `.command`/idle-phase block never armed the synthetic spinner (that happens at `C`), so no
-        // clear is owed; reset the per-block K2 flags defensively so a following block starts clean.
+        // clear is owed; reset the per-block auto-progress flags defensively so a following block starts
+        // clean.
         syntheticSpinnerActive = false
         sawRealProgressThisBlock = false
         hasOpenBlock = false
@@ -648,7 +649,7 @@ public struct CommandBlockSegmenter {
         durationMS: UInt32? = nil,
     ) -> CommandBlock? {
         guard hasOpenBlock else { return nil }
-        // K2 auto-progress (E14/WI-3): CLEAR a synthetic spinner when its block closes (complete OR
+        // Auto-progress: CLEAR a synthetic spinner when its block closes (complete OR
         // not — a `D`, or an interrupted re-prompt at `A`/`B`/`finish`), UNLESS the program drove its
         // OWN 9;4 (then the program owns the clear — its 9;4;0 / the client's command-finish handler
         // resets it). The per-block "double-driving" suppression.

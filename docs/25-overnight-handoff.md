@@ -15,7 +15,7 @@ Session constraints (rationale):
 
 | Commit | What | Verified |
 |--------|------|----------|
-| `f1b9d7f` | host `captureScale` clamp to display backing-scale (one-corner render ("1 góc") + click-desync fix) | hardware (user, earlier) |
+| `f1b9d7f` | host `captureScale` clamp to display backing-scale (render confined to one corner + click-desync fix) | hardware (user, earlier) |
 | `93bdc16` | **host motion coalescer** — the mouse-delay fix | headless (43 tests) |
 | `19dfa66` | **client motion throttle** — complements the coalescer | headless (139 tests) |
 | `dfdca75` | **connection-mux S0** — pure multiplexing foundation (additive) | headless (69 tests) |
@@ -23,7 +23,7 @@ Session constraints (rationale):
 
 ---
 
-## 1. Mouse "delays several seconds" ("delay vài giây") — FIXED (done)
+## 1. Mouse delayed by several seconds — FIXED (done)
 
 **Root cause** (multi-agent, source-verified): the host inbound `AsyncStream` was *unbounded* and its single consumer *strictly serial* behind 3 synchronous WindowServer round-trips per motion event (`CGWarpMouseCursorPosition` + `CGAssociateMouseAndMouseCursorPosition` + `CGEvent.post`). A real trace was ~150:1 motion:button (1664 move + 163 drag vs 11 down), so under flood the backlog was ~99% stale pointer positions replayed FIFO → cursor crawled through old positions seconds behind. Video path is latency-correct (FramePacer most-recent-wins) and was **not** touched.
 
@@ -172,7 +172,7 @@ All on `feat/video-overnight` (not pushed). Each feature: ultracode research→d
 
 ## Greenfield un-gate — COMPLETE (WF-A + WF-B + WF-C), branch `refactor/ungate-features`
 
-Directive: *"This app is greenfield, so don't gate anything to hide a feature. If something is broken, fix it; if it can't be fixed anymore, tear it out."* (original: *"app này là greenfield, nên không gate để ẩn feature nào đi cả. Lỗi thì fix, không được nữa thì đập bỏ."*) All six runtime feature gates are removed (not flagged off) and every dead OFF/non-mux path deleted. Only debug/test/autoconnect seams remain (`SLOPDESK_VIDEO_DEBUG`, `SLOPDESK_INPUT_TRACE`, `SLOPDESK_VIDEO_INJECT_TO_PID`, `SLOPDESK_AUTOTYPE`, `SLOPDESK_*AUTOCONNECT_*`).
+The user directed that, since the app is greenfield, nothing should be gated to hide a feature: fix what is broken, and rip out what can no longer be fixed. All six runtime feature gates are removed (not flagged off) and every dead OFF/non-mux path deleted. Only debug/test/autoconnect seams remain (`SLOPDESK_VIDEO_DEBUG`, `SLOPDESK_INPUT_TRACE`, `SLOPDESK_VIDEO_INJECT_TO_PID`, `SLOPDESK_AUTOTYPE`, `SLOPDESK_*AUTOCONNECT_*`).
 
 | WF | Commit | Un-gated (now always-on) | Deleted |
 |----|--------|--------------------------|---------|

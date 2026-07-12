@@ -1,7 +1,7 @@
 import SlopDeskCLICore
 import XCTest
 
-// Hang-safe tests for the `slopdesk` CLI list/inspect formatting (E20, WI-4). PURE: the
+// Hang-safe tests for the `slopdesk` CLI list/inspect formatting. PURE: the
 // table + JSON renderers are exercised directly with constructed row dicts — no socket, no GUI. The
 // goldens are authored independently of the renderer's own derivation (column layout + padding +
 // markers), so a formatting regression FAILS here.

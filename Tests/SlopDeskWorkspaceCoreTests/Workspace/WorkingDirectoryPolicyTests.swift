@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E3 WI-2 (ES-E3-2): pins the pure `working-directory` policy — ``WorkingDirectoryPolicy`` — covering
+/// Pins the pure `working-directory` policy — ``WorkingDirectoryPolicy`` — covering
 /// the `init(rawConfig:)` ↔ `rawConfig` round-trip (the persisted config string) and
 /// `resolve(activePaneCwd:)` per case.
 ///

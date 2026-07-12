@@ -1,6 +1,6 @@
 // PaneFocusCornerGateTests — pins the focus-corner visibility gate: the accent triangle marks the
-// focused pane ONLY when its tab is actually split (2026-07-10: a single-pane tab has no sibling to
-// disambiguate, so the marker there was pure ornament). Headless VALUE assertions — no SwiftUI render.
+// focused pane ONLY when its tab is actually split (a single-pane tab has no sibling to
+// disambiguate, so the marker there is pure ornament). Headless VALUE assertions — no SwiftUI render.
 
 import XCTest
 @testable import SlopDeskClientUI

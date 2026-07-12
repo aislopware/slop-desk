@@ -1,11 +1,11 @@
-// PaneStatusPills — the per-pane status pills that float in the pane's TOP-TRAILING overlay region (E17).
+// PaneStatusPills — the per-pane status pills that float in the pane's TOP-TRAILING overlay region.
 //
 // The design reference mock places these in a window TITLEBAR's top-right corner
 // (`docs/ui-shell/screenshots/readonly-mode.png` and, later, `secure-input.png`). slopdesk has NO persistent
 // titlebar — the window chrome is a hover-reveal strip and the pane is a flush, window-level surface — so the
 // EQUIVALENT placement is the pane's top-trailing overlay region (the same place the ⌘F find bar floats). This
 // file is the home for
-// those pills: WI-3 ships ``ReadOnlyPill`` (the `🔒 READ ONLY ×` chip); WI-7 adds `SecureInputPill` beside it.
+// those pills: it ships ``ReadOnlyPill`` (the `🔒 READ ONLY ×` chip) and `SecureInputPill` beside it.
 //
 // `Slate.*` tokens ONLY — raw font / radius / colour literals fail `scripts/check-ds-leaks.sh`. No libghostty /
 // Metal / VideoToolbox is touched (CLAUDE.md rule #6): these are plain SwiftUI chips driven by the pane model's
@@ -17,7 +17,7 @@ import SFSafeSymbols
 import SlopDeskWorkspaceCore
 import SwiftUI
 
-/// The `🔒 READ ONLY ×` pill (E17 ES-E17-1 / WI-3) — shown in the pane's top-trailing overlay while the pane's
+/// The `🔒 READ ONLY ×` pill — shown in the pane's top-trailing overlay while the pane's
 /// input gate is armed. Faithful to `readonly-mode.png`: a compact, SUBTLY-FILLED rounded chip (NOT a brightly
 /// coloured badge — it blends with the chrome rather than standing out) carrying a solid padlock + the uppercase
 /// `READ ONLY` label in the primary text tone, then a LIGHTER `×` close glyph.
@@ -88,7 +88,7 @@ struct ReadOnlyPill: View {
     }
 }
 
-/// The `🛡 SECURE INPUT` pill (E17 ES-E17-4 / WI-7) — shown in the pane's top-trailing overlay while macOS
+/// The `🛡 SECURE INPUT` pill — shown in the pane's top-trailing overlay while macOS
 /// Secure Keyboard Entry is active for the pane (the host is at a no-echo password prompt and Auto Secure
 /// Input is on, OR the manual toggle is on) AND the secure-input INDICATOR setting is on. Faithful to
 /// `secure-input.png`: a VIVID-BLUE FILLED pill in the FIXED security-blue `Slate.Status.secureInput`

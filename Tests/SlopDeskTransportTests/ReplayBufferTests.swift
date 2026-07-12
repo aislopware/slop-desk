@@ -86,7 +86,7 @@ final class ReplayBufferTests: XCTestCase {
         for _ in 1...3 { buffer.append(bytes: Data(count: 7)) }
         buffer.ack(upTo: 100)
         XCTAssertEqual(buffer.retainedBytes, 0)
-        // NEW contract (audit 2026-07-10): the ack is CLAMPED to highestSeq — an over-ack still
+        // The ack is CLAMPED to highestSeq — an over-ack still
         // clears everything up to highestSeq, but ackedSeq never runs ahead of reality (an
         // unclamped ackedSeq would silently swallow every later legitimate ack).
         XCTAssertEqual(buffer.ackedSeq, 3, "ack past highestSeq clamps ackedSeq to highestSeq")
@@ -106,7 +106,7 @@ final class ReplayBufferTests: XCTestCase {
         XCTAssertEqual(buffer.append(bytes: Data(count: 1)), 4, "seq still continues from highestSeq")
     }
 
-    /// Audit 2026-07-10: a bogus far-future ack (buggy/corrupt peer sends e.g. `Int64.max`) must not
+    /// A bogus far-future ack (buggy/corrupt peer sends e.g. `Int64.max`) must not
     /// wedge the buffer forever. Unclamped, `ackedSeq` jumps past any seq a legitimate client can
     /// ever send, so every later ack hits the `seq > ackedSeq` early-return and is silently dropped;
     /// append() then accumulates until `maxBackupBytesCap` and `shouldPauseDrain` pauses the PTY
@@ -241,7 +241,7 @@ final class ReplayBufferTests: XCTestCase {
         XCTAssertEqual(buffer.retainedBytes, 600)
     }
 
-    // MARK: Instance-configurable caps (R5 rank 2 — lets the relay wiring be tested at a tiny cap)
+    // MARK: Instance-configurable caps (lets the relay wiring be tested at a tiny cap)
 
     /// `shouldPauseDrain` must honor the INSTANCE caps, not just the 64 MiB / 4 MiB statics — so a tiny
     /// cap exercises the same online-slow-consumer and offline-gate transitions without 64 MiB of heap.
@@ -323,7 +323,7 @@ final class ReplayBufferTests: XCTestCase {
         XCTAssertTrue(seqs.contains(s3), "newest acked entry must survive")
     }
 
-    // MARK: Scrollback ring — bulk eviction behavior pin (audit 2026-07-10 perf refactor)
+    // MARK: Scrollback ring — bulk eviction behavior pin (perf refactor)
 
     /// Pins the EXACT ring contents after a multi-entry eviction — seqs, byte totals, and the
     /// line-aligned head trim — so the O(k*n) `removeFirst()` loop can be refactored to one bulk
@@ -575,7 +575,7 @@ final class ReplayBufferTests: XCTestCase {
         XCTAssertEqual(replayed.last, .output(seq: 51, bytes: Data("TAIL".utf8)))
     }
 
-    /// Audit 2026-07-10 #5: every re-chunked replay frame must respect the credit progress
+    /// Every re-chunked replay frame must respect the credit progress
     /// invariant — payload ≤ ``MuxFlowControl/maxOutputFramePayloadBytes`` (wire size ≤ window/2).
     /// The old hardcoded `max(32 KiB, …)` floor emitted 32768-byte payloads → 32781 wire bytes >
     /// 32768 (window/2) — the literal "13-byte dead zone" wedge documented at

@@ -32,7 +32,7 @@ final class RecoveryDatagramRouterTests: XCTestCase {
         XCTAssertEqual(decision, .forceKeyframe(lastDecodedFrameID: nil))
     }
 
-    /// WF-8: requestLTRRefresh now routes to `.refreshLTR` (the actor decides LTR-refresh-vs-IDR from
+    /// requestLTRRefresh routes to `.refreshLTR` (the actor decides LTR-refresh-vs-IDR from
     /// runtime acked-token state), DISTINCT from requestIDR's `.forceKeyframe` (the guaranteed IDR).
     /// Component 2: it carries the decode frontier too (consumed only by the `.idr` fallback).
     func testRequestLTRRefreshRoutesToRefreshLTR() {
@@ -164,7 +164,7 @@ final class RecoveryDatagramRouterTests: XCTestCase {
         let inputRouter = InputDatagramRouter()
         let ltr = RecoveryMessage.requestLTRRefresh(fromFrameID: 7, toFrameID: 7, lastDecodedFrameID: 6).encode()
 
-        // The recovery router decodes it correctly → routes to the WF-8 LTR-refresh decision.
+        // The recovery router decodes it correctly → routes to the LTR-refresh decision.
         XCTAssertEqual(router.route(datagram: ltr, mediaFlowing: true), .refreshLTR(lastDecodedFrameID: 6))
 
         // The same bytes on the INPUT router would have been mis-decoded as a mouseDown

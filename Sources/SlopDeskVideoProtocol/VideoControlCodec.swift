@@ -57,8 +57,8 @@ import Foundation
 /// type 21 windowPreviewRequest: UInt32 windowID | UInt16 maxWidthPx
 /// ```
 ///
-/// Liveness keepalive (additive after the resize pair — CONCURRENCY-HOST-1 crash-without-bye):
-/// a zero-body `keepalive` sent every few seconds while streaming so the host's idle-timeout
+/// Liveness keepalive: guards against a client that crashes without sending `bye` — a zero-body
+/// `keepalive` sent every few seconds while streaming so the host's idle-timeout
 /// reaper distinguishes a live-but-quiet client from a crashed (silent → reapable) one.
 /// Wire-safe in BOTH directions: a peer that doesn't recognise type 6 hits the decoder's `default`
 /// arm → THROWS `.malformed`, and both consumers (host `handleControl`, client
@@ -166,9 +166,9 @@ public struct SystemDialogSummary: Equatable, Sendable {
     public var height: UInt16
     /// `true` ⇒ a `SecurityAgent`/`coreauthd` secure-credential (password/auth) prompt. Drives the
     /// client paste-guard's "is this a password field?" reasoning + a "Secure prompt" lock chip.
-    /// NOTE: does NOT block keystrokes — HW-proven (2026-06-15, Tahoe 26.5.1) the host's
-    /// `CGEvent(.cghidEventTap)` injection LANDS in these fields even while `IsSecureEventInputEnabled()`
-    /// is true, so typing the password from the client works (the old "view-only" claim was wrong).
+    /// NOTE: does NOT block keystrokes — the host's `CGEvent(.cghidEventTap)` injection LANDS in
+    /// these fields even while `IsSecureEventInputEnabled()` is true, so typing the password from
+    /// the client works; secure-input mode is not a barrier to remote typing here.
     public var isSecure: Bool
 
     public init(windowID: UInt32, owner: String, title: String, width: UInt16, height: UInt16, isSecure: Bool) {
@@ -204,7 +204,7 @@ public enum VideoControlMessage: Equatable, Sendable {
     /// Client → host: open a session for `requestedWindowID`, sized to `viewport`.
     case hello(protocolVersion: UInt16, requestedWindowID: UInt32, viewport: VideoSize)
     /// Host → client: accept/reject + negotiated capture size + the window's current CG-top-left
-    /// bounds (the input-mapping origin until geometry updates arrive). `fullRange` (WF-6 #8) tells
+    /// bounds (the input-mapping origin until geometry updates arrive). `fullRange` tells
     /// the client the encoded stream's luma swing so it picks the matching decoder pixel-format +
     /// YCbCr→RGB shader coefficients FROM THE STREAM (no separate client env flag). `false` ⇒
     /// video-range (the default).
@@ -240,10 +240,10 @@ public enum VideoControlMessage: Equatable, Sendable {
     /// RAISE the captured window to frontmost ONCE, proactively — so the first click lands instantly
     /// instead of paying the per-interaction activate-then-control raise stall. Zero body, idempotent
     /// (the raise short-circuits when already frontmost). Inert to an old host (unknown type → dropped).
-    /// The "raise the focused pane's window" model that replaced the abandoned no-raise
-    /// background-injection approach.
+    /// Background input injection without raising is avoided: it preserves host focus but pays a
+    /// per-interaction activate-then-control stall on every click, which this proactive raise removes.
     case focusWindow
-    /// Host → client: the stream's CONTENT cadence changed (FPS governor, 2026-06-11). Sent at session
+    /// Host → client: the stream's CONTENT cadence changed (FPS governor). Sent at session
     /// start and on every governed fps step (duplicated ×2, ~25 ms apart, for loss tolerance — the
     /// client's application is idempotent). The client rebases its deadline-pacer content interval +
     /// adaptive-jitter seconds→frames conversion on it. Inert to an old peer (unknown type → dropped).
@@ -381,7 +381,7 @@ public enum VideoControlMessage: Equatable, Sendable {
             out.appendBE(streamID)
             out.appendBE(w)
             out.appendBE(h)
-            out.append(fullRange ? 1 : 0) // WF-6 (#8): negotiated luma range (after captureHeight)
+            out.append(fullRange ? 1 : 0) // negotiated luma range (after captureHeight)
             out.appendBE(bounds.origin.x)
             out.appendBE(bounds.origin.y)
             out.appendBE(bounds.size.width)
@@ -512,7 +512,7 @@ public enum VideoControlMessage: Equatable, Sendable {
             let streamID = try reader.readUInt32()
             let cw = try reader.readUInt16()
             let ch = try reader.readUInt16()
-            let fr = try reader.readUInt8() != 0 // WF-6 (#8): negotiated luma range (after captureHeight)
+            let fr = try reader.readUInt8() != 0 // negotiated luma range (after captureHeight)
             let bx = try reader.readFiniteFloat64("helloAck.bounds.x")
             let by = try reader.readFiniteFloat64("helloAck.bounds.y")
             let bw = try reader.readFiniteFloat64("helloAck.bounds.w")

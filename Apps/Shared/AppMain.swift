@@ -1,6 +1,6 @@
-// L2 of the Warp-clone UI rewrite RETARGETED this shell to the rebuilt `SlopDeskClientApp` scene
-// (in the `SlopDeskClientUI` library, over `SlopDeskWorkspaceCore` + `SlopDeskDesignSystem`). The
-// SEAM types (`TerminalRendererFactory`, `VideoWindowFactory`, `RemoteWindowDiscovery`,
+// This shell targets the `SlopDeskClientApp` scene (in the `SlopDeskClientUI` library, over
+// `SlopDeskWorkspaceCore` + `SlopDeskDesignSystem`). The SEAM types (`TerminalRendererFactory`,
+// `VideoWindowFactory`, `RemoteWindowDiscovery`,
 // `SystemDialogDiscovery`, `RemoteWindowSummary`, `SystemDialogInfo`) live in `SlopDeskWorkspaceCore`;
 // the five seam registrations below stay PRESERVED — only the production renderer/video/discovery
 // closures are injected here (the GUI app target links libghostty/SlopDeskVideoClient; the
@@ -66,7 +66,7 @@ struct ClientAppMain {
             // and the orchestrator-backed VideoWindowView(title:connection:). Otherwise the
             // chrome-only initializer (no live decode) — the seam's preview/placeholder path.
             //
-            // `paneContext` (active state + the E21 WI-3 read-only `inputEnabled` gate + activate/canvas-
+            // `paneContext` (active state + the read-only `inputEnabled` gate + activate/canvas-
             // scroll callbacks) is destructured into primitives here — `SlopDeskVideoClient` cannot import
             // `SlopDeskClientUI` (the seam exists for exactly that reason), so the context type stays on the
             // `SlopDeskClientUI` side and only its Bools + closures cross into `VideoWindowView`.
@@ -92,8 +92,8 @@ struct ClientAppMain {
                     onStreamCadenceReady: paneContext.onStreamCadenceChanged,
                     onStreamBitrateReady: paneContext.onStreamBitrateChanged,
                     onStreamStallChanged: paneContext.onStreamStallChanged,
-                    // TERMINAL REJECTION (audit 2026-07-11): host refused the session — the seam routes
-                    // it to `RemoteWindowModel.noteSessionRejected()` (picker + error, no rebuild loop).
+                    // TERMINAL REJECTION: host refused the session — the seam routes it to
+                    // `RemoteWindowModel.noteSessionRejected()` (picker + error, no rebuild loop).
                     onSessionRejected: paneContext.onSessionRejected,
                 ))
             }
@@ -125,9 +125,9 @@ struct ClientAppMain {
             }
         }
 
-        // The channel IS the seam's link (both halves are @MainActor with matching shapes); the
-        // conformance lives here because the video module deliberately never imports WorkspaceCore.
-        // (Declared before the closure below so the return type erases cleanly.)
+        // `WindowFeedChannel` conforms to `HostWindowFeedLink` via the retroactive extension at the
+        // bottom of this file — see there for why the conformance lives outside the video module. It
+        // must stay declared BEFORE the closure below so that closure's return type erases cleanly.
 
         // Host-window FEED seam (docs/45 rail): inject the persistent-lane opener so the
         // cross-platform `HostWindowFeed` loop can subscribe — and receive Phase-2 PUSHES between

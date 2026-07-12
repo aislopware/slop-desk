@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - RecentlyClosedTab (the tree-path reopen-last-closed LIFO record)
 
-/// One entry of the tree shell's "Reopen Closed Tab" LIFO (E3 WI-3, the ⇧⌘T chord) — everything needed to
+/// One entry of the tree shell's "Reopen Closed Tab" LIFO (the ⇧⌘T chord) — everything needed to
 /// bring a just-closed ``Tab`` back exactly as it was: its full split ``tab`` tree, the ``PaneSpec`` of
 /// every leaf in it (``specs``), and the ``SessionID`` that owned it so a reopen lands the tab back in its
 /// original session when that session still exists.

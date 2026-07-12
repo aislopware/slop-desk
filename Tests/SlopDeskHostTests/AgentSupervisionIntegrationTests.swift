@@ -3,15 +3,15 @@ import SlopDeskAgentDetect
 import XCTest
 @testable import SlopDeskHost
 
-/// PIECE 2 + 1 + 5 integration — drives a REAL standalone PTY pane through `HostServer`
+/// Integration test — drives a REAL standalone PTY pane through `HostServer`
 /// (PTYs are allowed in tests; only SCStream/VT/Metal/Ghostty/NSWindow are forbidden) to prove
-/// the NEW cross-pane plumbing end-to-end without a socket:
+/// the cross-pane plumbing end-to-end without a socket:
 ///   - a `report` transition fans the server-level `agent_status_changed` observer,
 ///   - `listPanesForControl()` surfaces the reported per-pane state,
-///   - `spawnStandalonePane` injects the P1 self-orientation env sentinel.
+///   - `spawnStandalonePane` injects the self-orientation env sentinel.
 ///
-/// These FAIL on the un-fixed code: before P1 there was no `onAgentStatusChanged` hook, no
-/// server-level observer registry, no `state` on `PaneInfo`, and no `SLOPDESK_CTL` sentinel.
+/// These fail without an `onAgentStatusChanged` hook, a server-level observer registry, a
+/// `state` on `PaneInfo`, or a `SLOPDESK_CTL` sentinel.
 final class AgentSupervisionIntegrationTests: XCTestCase {
     /// A report transition on a live pane invokes a registered cross-pane observer with the pane's
     /// id and the mapped supervision state.
@@ -80,10 +80,10 @@ final class AgentSupervisionIntegrationTests: XCTestCase {
         XCTAssertEqual(mine?.state, "blocked", "list-panes surfaces the reported supervision state")
     }
 
-    /// PIECE 5 — `spawnStandalonePane` injects the FULL self-orientation env sentinel
+    /// `spawnStandalonePane` injects the full self-orientation env sentinel
     /// (`SLOPDESK_CTL=1`, `SLOPDESK_CTL_BIN`, `SLOPDESK_CONTROL_SOCKET`, `SLOPDESK_PANE_ID`)
     /// into the spawned child's environment. Proven by running a child that echoes those vars and
-    /// reading the result back through the same scrollback path the `read` verb uses. This FAILS if
+    /// reading the result back through the same scrollback path the `read` verb uses. This fails if
     /// the injection lines at `HostServer.spawnStandalonePane` are removed (the echoed line would be
     /// empty / missing the keys), unlike the constant-equality unit checks which never touch the wiring.
     func testSpawnInjectsSelfOrientationEnv() async throws {
@@ -126,13 +126,13 @@ final class AgentSupervisionIntegrationTests: XCTestCase {
         XCTAssertTrue(text.contains("PANE=\(paneId)"), "SLOPDESK_PANE_ID == the returned paneId; got:\n\(text)")
     }
 
-    /// E13 WI-3 (prevent-sleep STRICT BALANCE): tearing down a pane that is currently `.working` must fan a
-    /// FINAL non-working agent status for that pane, so a `.working`-tracking observer (the
-    /// `slopdesk-hostd` prevent-sleep driver) clears the dead paneId and releases its `IOPMAssertion`. This
-    /// models the driver's exact working-set accounting and asserts teardown empties it — a leaked assertion
-    /// otherwise keeps the Mac awake forever. FAILS on the un-fixed code, where `killPaneForControl` (and the
-    /// `removeMuxSession` / child-exit teardown paths) fanned NOTHING: the working report was the last event,
-    /// so the set kept the closed pane forever.
+    /// Tearing down a pane that is currently `.working` must fan a final non-working agent status
+    /// for that pane, so a `.working`-tracking observer (the `slopdesk-hostd` prevent-sleep driver)
+    /// clears the dead paneId and releases its `IOPMAssertion`. This models the driver's exact
+    /// working-set accounting and asserts teardown empties it — a leaked assertion otherwise keeps
+    /// the Mac awake forever. Fails if `killPaneForControl` (and the `removeMuxSession` / child-exit
+    /// teardown paths) fan nothing: the working report would be the last event, so the set would
+    /// keep the closed pane forever.
     func testTeardownOfWorkingPaneReleasesPreventSleepTracking() async throws {
         let server = HostServer(port: 0)
         defer { Task { await server.stop() } }

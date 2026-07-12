@@ -1,6 +1,6 @@
 import Foundation
 
-/// The per-verb payload codecs for the host metadata RPC (E4). Each ``MetadataVerb`` that returns a
+/// The per-verb payload codecs for the host metadata RPC. Each ``MetadataVerb`` that returns a
 /// STRUCTURED list rides one of these manual-binary sub-codecs INSIDE the opaque
 /// ``WireMessage/metadataResponse(requestID:status:payload:)`` payload — the envelope only
 /// length-prefixes the bytes; these codecs give them meaning. (The `cwd` / `gitDiff` /
@@ -107,7 +107,7 @@ public enum MetadataCodec {
         /// The `origin` remote URL (empty when no remote or no repo).
         public var remoteURL: String
         /// The absolute git toplevel (`git rev-parse --show-toplevel`) — the precise By-Project grouping
-        /// key (E6 WI-7). Empty when ``hasRepo`` is `false` (a no-repo payload is still only the single
+        /// key. Empty when ``hasRepo`` is `false` (a no-repo payload is still only the single
         /// `0` byte) and may be empty even inside a repo if the host probe could not resolve it; the
         /// client falls back to the pane cwd in that case (never a hard dependency). Carried ONLY when
         /// ``hasRepo`` is `true`, length-prefixed UTF-8 right after ``remoteURL`` — same idiom as `branch`.

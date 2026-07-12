@@ -32,17 +32,17 @@ public struct FrameFragmentHeader: Equatable, Sendable {
         /// client treats it as an ordinary keyframe.
         public static let crisp = Self(rawValue: 1 << 2)
 
-        // WF-4 ADAPTIVE FEC: a 3-bit FEC tier index packed into bits 3,4,5 of the (otherwise
+        // ADAPTIVE FEC: a 3-bit FEC tier index packed into bits 3,4,5 of the (otherwise
         // 3-bit-used) flags byte — NO new header field, NO size change. The tier signals the
         // per-frame XOR group size (``AdaptiveFECPolicy.groupSize(forTier:default:)``) so the
         // client splits data/parity identically to the host. EVERY fragment of a frame carries
         // the SAME tier; parity fragments additionally set `.parity` (bit 1, independent). Bits
-        // 6,7 stay reserved. Tier 0 leaves all three bits zero → byte-identical to the pre-WF-4
+        // 6,7 stay reserved. Tier 0 leaves all three bits zero → byte-identical to the plain
         // wire. These coexist with `.keyframe`/`.parity`/`.crisp` (disjoint bit masks).
         public static let tierShift: UInt8 = 3
         public static let tierMask: UInt8 = 0b0011_1000 // bits 3,4,5
 
-        /// WF-8 LTR-FRAME MARKER (bit 6): this frame is a Long-Term-Reference frame — the encoder
+        /// LTR-FRAME MARKER (bit 6): this frame is a Long-Term-Reference frame — the encoder
         /// emitted it carrying `kVTSampleAttachmentKey_RequireLTRAcknowledgementToken`, so a client
         /// that DECODES it must reply `RecoveryMessage.ack(frameID)` to tell the host it now holds
         /// that LTR (the ACKED-ONLY recovery invariant). Disjoint from keyframe/parity/crisp/tier;
@@ -50,15 +50,15 @@ public struct FrameFragmentHeader: Equatable, Sendable {
         /// token, so the OFF path leaves bit 6 zero → byte-identical wire.
         public static let isLTR = Self(rawValue: 1 << 6)
 
-        /// ACKED-ANCHORED MARKER (bit 7, 2026-06-12): this frame was encoded via `ForceLTRRefresh`
+        /// ACKED-ANCHORED MARKER (bit 7): this frame was encoded via `ForceLTRRefresh`
         /// — it references ONLY long-term references the client ACKNOWLEDGED (decoded), so it is
         /// decodable even when the recent short-term chain is broken. This is the client decode
         /// gate's ONLY non-keyframe re-anchor admission: `isLTR` (bit 6) cannot serve — VT
         /// surfaces an ack token on virtually EVERY frame once LTR is enabled (measured live:
         /// 7865/7874 frames), so bit 6 says "ack me", not "safe to decode past a loss". Set by
         /// the host exactly when the encode call carried `kVTEncodeFrameOptionKey_ForceLTRRefresh`
-        /// (recovery refresh + self-heal cadence). Previously-reserved bit ⇒ old senders leave it
-        /// zero (byte-identical wire when unused).
+        /// (recovery refresh + self-heal cadence). An otherwise-unused bit, so senders that don't
+        /// set it leave it zero (byte-identical wire when unused).
         public static let ackedAnchored = Self(rawValue: 1 << 7)
 
         /// The 3-bit FEC tier (0..7) read from bits 3-5 — masks out keyframe/parity/crisp + bits 6,7.
@@ -189,7 +189,7 @@ public final class VideoPacketizer: @unchecked Sendable {
     public var peekNextStreamSeq: UInt32 { nextStreamSeq }
 
     /// The `frameID` that the NEXT ``packetize(frame:keyframe:crisp:hostSendTsMillis:fecTier:isLTR:ackedAnchored:interleave:)``
-    /// call will assign (mirror of ``peekNextStreamSeq``). WF-8: the host actor reads this BEFORE
+    /// call will assign (mirror of ``peekNextStreamSeq``). The host actor reads this BEFORE
     /// packetizing so it can record the `frameID ↔ LTR-token` mapping for the frame about to be sent
     /// (`packetize` increments `nextFrameID`). Read in encode order on the actor. Pure read — does NOT
     /// advance the counter.
@@ -204,12 +204,12 @@ public final class VideoPacketizer: @unchecked Sendable {
     ///   - crisp: whether this is a crisp near-lossless static refresh keyframe (informational).
     ///   - hostSendTsMillis: host-monotonic ms since session start, stamped on EVERY fragment of this
     ///     frame (the actor supplies it). 0 = telemetry off.
-    ///   - fecTier: WF-4 adaptive-FEC tier (default tier 0 = the endpoint's configured group size).
+    ///   - fecTier: adaptive-FEC tier (default tier 0 = the endpoint's configured group size).
     ///     Selects the per-frame group size via ``AdaptiveFECPolicy/groupSize(forTier:default:)`` and
     ///     the per-frame parity multiplicity `m` via the adaptive-m ladder, and is stamped into every
     ///     fragment's flags so the client splits data/parity with the SAME group size + `m`. Default
     ///     tier 0 → no flag bits set, no parity-shape change → byte-identical.
-    ///   - isLTR: WF-8 — whether this frame is a Long-Term-Reference frame; sets bit 6 on EVERY
+    ///   - isLTR: whether this frame is a Long-Term-Reference frame; sets bit 6 on EVERY
     ///     fragment so the client acks it after decode. Default false → byte-identical.
     ///   - ackedAnchored: `ForceLTRRefresh` product (bit 7). Default false → byte-identical.
     ///   - interleave: run the burst-resilient column-major transmit reorder (keyed by the per-frame
@@ -302,8 +302,8 @@ public final class VideoPacketizer: @unchecked Sendable {
             }
         }
 
-        // WF-4: per-frame group size from the tier (nil = OFF → no parity). Tier 0 maps to the codec's
-        // configured `groupSize` (`k`) so parity shape is identical to the pre-WF-4 path.
+        // Per-frame group size from the tier (nil = OFF → no parity). Tier 0 maps to the codec's
+        // configured `groupSize` (`k`) so parity shape is identical to the plain path.
         let defaultGroup = fec?.groupSize ?? 1
         let groupSize = AdaptiveFECPolicy.groupSize(forTier: fecTier, default: defaultGroup)
         // ADAPTIVE-m: the per-frame parity multiplicity is ALSO derived from the tier. For tier 0-4
@@ -326,7 +326,7 @@ public final class VideoPacketizer: @unchecked Sendable {
         var baseFlags: FrameFragmentHeader.Flags = []
         if keyframe { baseFlags.insert(.keyframe) }
         if crisp { baseFlags.insert(.crisp) }
-        if isLTR { baseFlags.insert(.isLTR) } // WF-8 bit 6 — disjoint from keyframe/crisp/tier
+        if isLTR { baseFlags.insert(.isLTR) } // bit 6 — disjoint from keyframe/crisp/tier
         if ackedAnchored { baseFlags.insert(.ackedAnchored) } // bit 7 — ForceLTRRefresh product
         // Stamp the tier into bits 3-5 BEFORE forking data/parity flags. Tier 0 leaves them zero.
         baseFlags.setFECTier(fecTier)

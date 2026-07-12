@@ -1,4 +1,4 @@
-// CommandNavigatorView — the Command Navigator overlay (E10 / WI-10, G8), opened by ⌃⌘O over the ACTIVE
+// CommandNavigatorView — the Command Navigator overlay, opened by ⌃⌘O over the ACTIVE
 // pane (`view.commandNavigator` → `requestBlockNavigatorInActivePane` → the pane model's
 // `onRequestBlockNavigator`, toggled by `TerminalLeafView`). A scrimmed, centered card floating over the
 // pane's terminal surface: a pre-focused search field, a status segment (All | Failed | Bookmarked), then a

@@ -96,7 +96,7 @@ public struct Toast: Identifiable, Sendable, Equatable {
         )
     }
 
-    /// C8 improvement 1: the in-app toast for a completed RECONNECT's fresh-vs-resumed verdict — the ONLY
+    /// The in-app toast for a completed RECONNECT's fresh-vs-resumed verdict — the ONLY
     /// signal the user gets for whether a dropped link reattached the SAME live shell (scrollback/history
     /// intact) or spawned a FRESH shell (the previous session, and its context, ended). `.resumedSession` is
     /// reassuring (`.success`); `.freshShell` is a soft warning that context is gone (`.attention`).

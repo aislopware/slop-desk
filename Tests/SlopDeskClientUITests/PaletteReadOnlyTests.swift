@@ -2,7 +2,7 @@ import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
-/// E17 ES-E17-1 / WI-2 — the command palette's "Read Only" row + its spec-accepted search synonyms.
+/// The command palette's "Read Only" row + its spec-accepted search synonyms.
 /// `terminal-features__read-only-mode.md` §Behaviors: the palette accepts "read only" plus `readonly`,
 /// `lock`, `freeze`, `view only`. The synonyms ride the row's HIDDEN ``PaletteItem/keywords``, folded into
 /// the ``SearchMixer`` BELOW the title / subtitle tiers, so they surface the row without being rendered.
@@ -46,7 +46,7 @@ final class PaletteReadOnlyTests: XCTestCase {
         XCTAssertTrue(ids("freeze").contains("action.toggleReadOnly"), "yet ‘freeze’ still finds the row")
     }
 
-    // MARK: - E21 WI-3 — the Read Only palette verb is a first-class peer for a `.remoteGUI` active pane
+    // MARK: - the Read Only palette verb is a first-class peer for a `.remoteGUI` active pane
 
     /// The "Read Only" palette verb is KIND-GENERIC: its `.store` run-arm (`toggleReadOnlyInActivePane`) reaches
     /// a `.remoteGUI` active pane (a remote host window streamed over the video path), flipping the SAME

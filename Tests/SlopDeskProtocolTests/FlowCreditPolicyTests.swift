@@ -77,7 +77,7 @@ final class FlowCreditPolicyTests: XCTestCase {
         XCTAssertTrue(policy.isBlocked)
     }
 
-    /// R6 #7 regression: a huge `UInt32`-sized grant (or a long run of grants) must NOT Int-overflow-trap
+    /// A huge `UInt32`-sized grant (or a long run of grants) must NOT Int-overflow-trap
     /// `remaining += bytesToAdd`; it saturates at `Int.max`. The growable-window semantics
     /// (`testAdjustCanGrowBeyondInitialWindow`) are preserved — we only defuse the overflow trap.
     func testAdjustIsOverflowSafeAndStillGrowable() {

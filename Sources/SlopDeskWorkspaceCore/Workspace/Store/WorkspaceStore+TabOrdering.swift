@@ -5,11 +5,11 @@ import Foundation
 /// The sidebar-ordering surface factored out of ``WorkspaceStore`` so the class body stays under the
 /// `type_body_length` ceiling (like `WorkspaceStore+Attention.swift` / `WorkspaceStore+Completion.swift`).
 ///
-/// The sidebar has exactly ONE layout (2026-07-10 re-scope, `docs/DECISIONS.md`): panes bucket by their
-/// By-Project key and both sections and rows follow first-appearance in `session.tabs` (creation order).
-/// The old hamburger machinery — `TabGrouping`/`TabSort`, recency stamps, manual drag-reorder, and the
-/// client-side git-toplevel sweep — is deleted; the key is HOST-pushed (wire type 34 →
-/// ``WorkspaceStore/setProjectKey(_:for:)``) so every reconnect converges on the same sections.
+/// The sidebar has exactly ONE layout (see `docs/DECISIONS.md`): panes bucket by their By-Project key
+/// and both sections and rows follow first-appearance in `session.tabs` (creation order). There is no
+/// client-side grouping/sorting, recency stamps, manual drag-reorder, or git-toplevel sweep — the key is
+/// HOST-pushed (wire type 34 → ``WorkspaceStore/setProjectKey(_:for:)``) so every reconnect converges on
+/// the same sections regardless of client-side state.
 public extension WorkspaceStore {
     /// The active session's tab ids in ARRAY (== creation) order — the within-section row-order basis for
     /// the per-pane By-Project sectioning (``RailRowsBuilder/sectionedByProject(_:tabOrder:query:)``).

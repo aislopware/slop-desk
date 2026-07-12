@@ -51,7 +51,7 @@ final class StallScrimLatchTests: XCTestCase {
         XCTAssertFalse(latch.visible)
     }
 
-    /// THE BYE-PATH GAP (HW-found 2026-07-03): a host that shuts down GRACEFULLY sends `bye` — the FSM
+    /// THE BYE-PATH GAP: a host that shuts down GRACEFULLY sends `bye` — the FSM
     /// leaves `.streaming` before any stall verdict can fire, so verdicts run `.notConnected` and the
     /// scrim would never show while the pane sits frozen in hello-retry limbo. The rebuild path calls
     /// ``StallScrimLatch/noteReconnecting()`` to force the scrim up; it must show exactly once, hold

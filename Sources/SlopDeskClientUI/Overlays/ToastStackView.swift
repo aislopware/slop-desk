@@ -1,4 +1,4 @@
-// ToastStackView — the transient in-app notification host (E2 / WI-4). Renders the live
+// ToastStackView — the transient in-app notification host. Renders the live
 // ``OverlayCoordinator/toasts`` stack as a bottom-trailing column of dismissible cards (newest last),
 // the in-app surface for the background events that ALSO fire a macOS notification (long-command finished,
 // agent-needs-input, pane events) — so a user watching the workspace sees them without leaving the window.

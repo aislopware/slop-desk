@@ -1,9 +1,9 @@
 import Foundation
 import SlopDeskProtocol
 
-/// The FUSED host-side output sniffer: ONE pass over the outbound PTY byte stream replacing
-/// the back-to-back pair ``HostTitleBellSniffer`` + ``HostCommandStatusSniffer``. It emits
-/// inline host→client CONTROL messages:
+/// The FUSED host-side output sniffer: ONE pass over the outbound PTY byte stream that detects
+/// title/bell and command-status events together. It emits inline host→client CONTROL
+/// messages:
 ///
 /// - ``WireMessage/title(_:)`` — OSC 0 / OSC 2 (`ESC ] 0;… <terminator>` / `ESC ] 2;…`).
 /// - ``WireMessage/bell`` — a standalone ground-state `BEL` (never an OSC/string terminator).
@@ -11,25 +11,24 @@ import SlopDeskProtocol
 ///   host-measured C→D duration in milliseconds via the injectable ``clock``).
 /// - ``WireMessage/cwd(_:)`` — OSC 7 `file://host/path`, the shell's current working directory.
 ///
-/// ## Provenance (exact-parity port)
-/// Both old sniffers shared an IDENTICAL 8-state transition table; the title sniffer was the
-/// strict superset (it also emits `.bell` in ground). ``step(_:into:)`` is that table VERBATIM.
-/// The only fusion point is ``finishOSC(into:)``, dispatching on the Ps prefix: `0`/`2` → title
-/// (incl. `lastTitle` dedup), `133` → the command sniffer's C/D logic, guarded by an
-/// EXACT-PARITY 256-byte cap (``cmdOscCap``) so payloads of 257..4096 bytes stay ignored
-/// exactly as the old command sniffer (buffer cap 256) ignored them.
+/// ## Structure
+/// A single 8-state transition table (``step(_:into:)``) drives everything; it is a strict
+/// superset of pure title/bell parsing in that it also emits `.bell` in ground. The one
+/// dispatch point is ``finishOSC(into:)``, keyed on the Ps prefix: `0`/`2` → title (incl.
+/// `lastTitle` dedup), `133` → command C/D logic, guarded by a 256-byte cap (``cmdOscCap``)
+/// so a `133;…` payload of 257..4096 bytes stays ignored.
 ///
-/// Cross-type messages are emitted in BYTE order (the old pair emitted all title/bell before
-/// all command messages per chunk); per-type subsequences are byte-identical to the old pair.
+/// Cross-type messages are emitted in BYTE order (title/bell of a chunk precede its command
+/// messages); per-type subsequences preserve source order.
 ///
-/// ## Non-destructive + streaming-safe (unchanged invariants)
+/// ## Non-destructive + streaming-safe
 /// ``observe(_:)`` only OBSERVES — the caller forwards the original bytes UNCHANGED. The
 /// machine is a true byte-at-a-time state machine: state persists across chunks, so any
 /// split (mid-ESC, mid-OSC, mid-terminator) yields identical messages to the whole stream.
 /// The OSC payload buffer is capped (``oscCap``); over-cap / string-sequence bodies are
 /// swallowed without buffering, so a hostile stream can never wedge the sniffer or make it
-/// buffer unboundedly. Stray-ESC re-entry and DCS/SOS/PM/APC swallowing are carried over
-/// verbatim (see the old sniffers' doc comments for the full rationale of each).
+/// buffer unboundedly. Stray-ESC re-entry and DCS/SOS/PM/APC swallowing keep the machine
+/// resync-safe; each ``step(_:into:)`` case documents its rationale.
 ///
 /// ## Fast path (hot read-loop thread)
 /// In the three "skim" states — `.ground`, `.oscDiscard`, `.stringConsume` — the ONLY bytes
@@ -86,7 +85,7 @@ public final class HostOutputSniffer: @unchecked Sendable {
     /// launch (before any command has run, so no `133;D` fired).
     private var idleSentSinceLastC = false
 
-    // MARK: Parser state (verbatim from HostTitleBellSniffer)
+    // MARK: Parser state
 
     private enum State {
         /// Outside any escape sequence (opaque content). A `BEL` here is a real bell.
@@ -99,11 +98,11 @@ public final class HostOutputSniffer: @unchecked Sendable {
         /// `\` that completes an `ST` terminator (`ESC \`), or a new sequence start.
         case oscEscape
         /// An over-cap OSC is being DISCARDED: still INSIDE the OSC (so its terminator must
-        /// be consumed here, not re-parsed as ground), but no longer buffering. Bounded O(n).
+        /// be consumed here, not re-parsed as ground), but not buffering. Bounded O(n).
         case oscDiscard
         /// Inside a discarded OSC and the previous byte was `ESC` (possible `ST`).
         case oscDiscardEscape
-        /// Inside a DCS/SOS/PM/APC string sequence (R9 #4): swallow the body to its ST/BEL terminator,
+        /// Inside a DCS/SOS/PM/APC string sequence: swallow the body to its ST/BEL terminator,
         /// emitting NOTHING. UNLIKE an OSC, an embedded ESC that is NOT `\` is part of the opaque string
         /// (it does NOT start a new sequence), so this never re-classifies — that is the whole point.
         case stringConsume
@@ -127,15 +126,14 @@ public final class HostOutputSniffer: @unchecked Sendable {
     /// chunk-invariance oracle (byte-split == whole) still holds.
     private var kittyAssembly: [String: (title: String, body: String)] = [:]
 
-    /// Hard cap on the buffered OSC payload (the TITLE sniffer's cap — the larger of the two).
-    /// A real title is tiny; anything longer is abandoned + resynced. Generous enough for long
-    /// window titles / paths, small enough to bound a hostile unterminated OSC.
+    /// Hard cap on the buffered OSC payload. A real title is tiny; anything longer is abandoned +
+    /// resynced. Generous enough for long window titles / paths, small enough to bound a hostile
+    /// unterminated OSC.
     private static let oscCap = 4096
 
-    /// EXACT-PARITY guard for the 133 path: the old ``HostCommandStatusSniffer`` capped ITS
-    /// buffer at 256, so a `133;…` payload of 257..4096 bytes never reached its finishOSC.
-    /// The fused machine buffers up to 4096 (the title cap), so ``finishOSC(into:)`` must
-    /// re-impose 256 on the 133 branch to keep those payloads ignored byte-for-byte.
+    /// Tighter cap for the 133 branch: the shared OSC buffer holds up to 4096 (``oscCap``), but a
+    /// real `133;…` mark is short, so ``finishOSC(into:)`` re-imposes 256 here — a `133;…` payload
+    /// of 257..4096 bytes is ignored rather than parsed as a command mark.
     private static let cmdOscCap = 256
 
     /// Payload cap for the OSC 9 / OSC 777 / OSC 99 notification path: a real notification line is
@@ -159,7 +157,7 @@ public final class HostOutputSniffer: @unchecked Sendable {
     private static let rightBracket: UInt8 = 0x5D // ']'
     private static let backslash: UInt8 = 0x5C // '\'
     private static let semicolon: UInt8 = 0x3B // ';'
-    // String-sequence introducers (R9 #4): DCS `ESC P`, SOS `ESC X`, PM `ESC ^`, APC `ESC _`. A real
+    // String-sequence introducers: DCS `ESC P`, SOS `ESC X`, PM `ESC ^`, APC `ESC _`. A real
     // terminal swallows their body to the ST/BEL terminator without ringing a bell or changing the title.
     private static let dcs: UInt8 = 0x50 // 'P'
     private static let sos: UInt8 = 0x58 // 'X'
@@ -189,9 +187,9 @@ public final class HostOutputSniffer: @unchecked Sendable {
                     let escOffset = escPointer.map { base.distance(to: UnsafeRawPointer($0)) } ?? count
                     // …then scan for BELs ONLY in the prefix BEFORE that ESC. CRITICAL bound: an
                     // UNBOUNDED BEL memchr over the whole remainder, re-run on every ground re-entry,
-                    // degrades to O(n^2) on escape-dense streams (MEASURED at 29 MiB/s — SLOWER than
-                    // the per-byte loop it replaces). Bounding to [i, escOffset) keeps total scanned
-                    // bytes <= 2x the input (each byte seen by at most one ESC scan + one BEL scan).
+                    // degrades to O(n^2) on escape-dense streams (MEASURED at 29 MiB/s — SLOWER than a
+                    // plain per-byte loop). Bounding to [i, escOffset) keeps total scanned bytes
+                    // <= 2x the input (each byte seen by at most one ESC scan + one BEL scan).
                     var j = i
                     while j < escOffset {
                         guard let belPointer = memchr(base + j, Int32(Self.bel), escOffset - j) else { break }
@@ -248,19 +246,18 @@ public final class HostOutputSniffer: @unchecked Sendable {
         observe(Data(bytes))
     }
 
-    /// Reattach re-assert (2026-07-10 — the type-23 sibling of the echo truth): the CURRENT OSC-133
-    /// command-status truth, or `nil` when the shell is at a prompt. ONLY the running case is
-    /// returned — idle IS the client's reconnect reset state, and a synthetic `.idle` would
-    /// fabricate a `lastCommand` (exit nil / 0 ms) and a completion edge for a command that never
-    /// finished. Called from the reattach path's thread (the sniffer otherwise runs on the
-    /// read-loop thread), hence under `lock`.
+    /// Reattach re-assert: the CURRENT OSC-133 command-status truth, or `nil` when the shell is at
+    /// a prompt. ONLY the running case is returned — idle IS the client's reconnect reset state,
+    /// and a synthetic `.idle` would fabricate a `lastCommand` (exit nil / 0 ms) and a completion
+    /// edge for a command that never finished. Called from the reattach path's thread (the sniffer
+    /// otherwise runs on the read-loop thread), hence under `lock`.
     public func commandStatusForReattach() -> WireMessage? {
         lock.lock()
         defer { lock.unlock() }
         return runningSince != nil ? .commandStatus(.running) : nil
     }
 
-    // MARK: State machine (verbatim from HostTitleBellSniffer — the strict superset)
+    // MARK: State machine (the strict superset — also emits `.bell` in ground)
 
     private func step(_ byte: UInt8, into messages: inout [WireMessage]) {
         switch state {
@@ -284,7 +281,7 @@ public final class HostOutputSniffer: @unchecked Sendable {
                  Self.sos,
                  Self.pm,
                  Self.apc:
-                // R9 #4 (security): DCS/SOS/PM/APC introduce a STRING sequence whose body a conformant
+                // Security: DCS/SOS/PM/APC introduce a STRING sequence whose body a conformant
                 // terminal swallows to its ST/BEL terminator WITHOUT ringing a bell or changing the title.
                 // Consume the whole string + terminator, emitting NOTHING — else a malicious remote program
                 // could embed a BEL (phantom bell), an `ESC]2;…` (title spoof), or an `ESC]133;C/D`
@@ -340,14 +337,14 @@ public final class HostOutputSniffer: @unchecked Sendable {
                 state = .ground // `ESC \` = ST terminator of the discarded OSC.
             } else {
                 // The `ESC` was not an ST terminator — it may introduce a NEW sequence. Re-enter
-                // `.escape` and re-classify this byte (mirror the `.oscEscape` stray-ESC fix;
-                // there is no payload to finish since the OSC was discarded).
+                // `.escape` and re-classify this byte (mirroring `.oscEscape`; there is no payload
+                // to finish since the OSC was discarded).
                 state = .escape
                 step(byte, into: &messages)
             }
 
         case .stringConsume:
-            // R9 #4: swallow a DCS/SOS/PM/APC string body, emitting nothing. The ONLY terminators are
+            // Swallow a DCS/SOS/PM/APC string body, emitting nothing. The ONLY terminators are
             // ST (`ESC \`) and BEL. CRUCIALLY, unlike the OSC-discard path, an embedded ESC that is not
             // `\` stays INSIDE the string (it does NOT introduce a new sequence), so an `ESC]2;…` or
             // `ESC]133;…` in the body can never spoof a title / command status and an embedded BEL
@@ -381,7 +378,7 @@ public final class HostOutputSniffer: @unchecked Sendable {
                 // but that consumed ESC may itself introduce a NEW sequence — re-enter `.escape` (NOT
                 // `.ground`) and re-classify this byte as its introducer. Dropping to ground would
                 // orphan the ESC and let a following sequence's `]` be read as plain content, losing
-                // the whole sequence (the prior stray-ESC bug — see the old sniffers).
+                // the whole sequence.
                 finishOSC(into: &messages)
                 state = .escape
                 step(byte, into: &messages)
@@ -394,8 +391,7 @@ public final class HostOutputSniffer: @unchecked Sendable {
     private func finishOSC(into messages: inout [WireMessage]) {
         defer { oscBuffer.removeAll(keepingCapacity: true) }
         // Split the Ps prefix at the FIRST ';' — the payload after it may itself contain ';'
-        // (a title keeps them; the 133 path re-splits the FULL payload below, exactly like
-        // the old command sniffer).
+        // (a title keeps them; the 133 path re-splits the FULL payload below).
         guard let sep = oscBuffer.firstIndex(of: Self.semicolon) else { return }
         let psBytes = oscBuffer[oscBuffer.startIndex..<sep]
         let ps = String(bytes: psBytes, encoding: .utf8) ?? ""
@@ -403,9 +399,8 @@ public final class HostOutputSniffer: @unchecked Sendable {
         switch ps {
         case "0",
              "2":
-            // Title path — verbatim from HostTitleBellSniffer. We surface a title for OSC 0
-            // (icon name + window title) and OSC 2 (window title only). OSC 1 is
-            // icon-name-ONLY and is deliberately ignored — it never sets the window title.
+            // Surface a title for OSC 0 (icon name + window title) and OSC 2 (window title only).
+            // OSC 1 is icon-name-ONLY and is deliberately ignored — it never sets the window title.
             let titleBytes = oscBuffer[oscBuffer.index(after: sep)...]
             let title = String(bytes: titleBytes, encoding: .utf8) ?? ""
             // zsh/p10k/starship emit an empty-body OSC 0/2 during prompt redraw BEFORE
@@ -419,13 +414,11 @@ public final class HostOutputSniffer: @unchecked Sendable {
             messages.append(.title(title))
 
         case "133":
-            // EXACT-PARITY guard: the old command sniffer's 256-byte buffer cap means a
-            // `133;…` payload of 257..4096 bytes was discarded before ever reaching its
-            // finishOSC — reproduce that here so those payloads stay ignored.
+            // Re-impose the 133 cap (see ``cmdOscCap``): a `133;…` payload of 257..4096 bytes
+            // stays ignored rather than being parsed as a command mark.
             guard oscBuffer.count <= Self.cmdOscCap else { return }
-            // C/D logic — verbatim from HostCommandStatusSniffer: full split on ';' with
-            // empty fields KEPT. Expected: "133;A" | "133;B" | "133;C" | "133;D" |
-            // "133;D;<exit>" (+ extra ;k=v).
+            // C/D logic: full split on ';' with empty fields KEPT. Expected: "133;A" | "133;B" |
+            // "133;C" | "133;D" | "133;D;<exit>" (+ extra ;k=v).
             let payload = String(bytes: oscBuffer, encoding: .utf8) ?? ""
             let fields = payload.split(separator: ";", omittingEmptySubsequences: false)
             guard fields.count >= 2, fields[0] == "133" else { return }
@@ -481,10 +474,9 @@ public final class HostOutputSniffer: @unchecked Sendable {
             guard !body.isEmpty else { return }
             // OSC 9 is overloaded: iTerm2/ConEmu use `ESC]9;4;<state>;<pct>` for the taskbar PROGRESS-BAR
             // protocol (emitted continuously by winget, long builds, etc.), NOT a desktop notification;
-            // surfacing those as alerts with body "4;1;50" floods the user with raw output. So `9;4` is
-            // parsed into a `.progress` CONTROL message (E14/K1), never a `.notification`, while the
-            // free-text iTerm2 form (`ESC]9;<message>`) stays a notification — BYTE-IDENTICAL to before
-            // (only the previously-DROPPED `9;4` subtype now emits progress).
+            // surfacing those as alerts with body "4;1;50" would flood the user with raw output. So `9;4`
+            // is parsed into a `.progress` CONTROL message, never a `.notification`, while the free-text
+            // iTerm2 form (`ESC]9;<message>`) stays a notification.
             if body == "4" || body.hasPrefix("4;") {
                 if let (state, percent) = ProgressOSCParser.parse(body) {
                     messages.append(.progress(state: state.rawValue, percent: percent))

@@ -6,11 +6,11 @@ import SlopDeskTransport
 /// Disk-backed scrollback persistence: one raw-bytes file per client-owned session UUID.
 ///
 /// The in-memory half of "lossless reconnect" (``ReplayBuffer`` un-acked tail + scrollback ring,
-/// `DetachedSessionStore`) dies with the process. Every path that ends in a FRESH spawn
+/// `DetachedSessionStore`) dies with the process, so every path that ends in a FRESH spawn
 /// (`HostServer.spawnFreshShell`, PATH B/C — hostd restart/reboot, detach-TTL eviction, shell
-/// death) therefore started an empty transcript. The journal closes that gap the tmux-resurrect
-/// way: the TRANSCRIPT survives on disk and is replayed above the fresh shell; the live process
-/// does not (cannot) survive the daemon.
+/// death) would otherwise start on an empty transcript. The journal closes that gap the
+/// tmux-resurrect way: the TRANSCRIPT survives on disk and is replayed above the fresh shell; the
+/// live process does not (cannot) survive the daemon.
 ///
 /// ## Shape
 /// - `journal(for:)` vends a per-session ``ScrollbackJournal`` writer; appends ride the PTY
@@ -76,8 +76,8 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
     /// Builds the production store, or `nil` when disk persistence is off.
     ///
     /// Gates (both default-ON, the `!= "0"` idiom):
-    /// - `SLOPDESK_SCROLLBACK_PERSIST` — the existing master scrollback gate (also controls the
-    ///   in-memory ring in ``MuxChannelSession/makeReplayBuffer``).
+    /// - `SLOPDESK_SCROLLBACK_PERSIST` — the master scrollback gate (also controls the in-memory
+    ///   ring in ``MuxChannelSession/makeReplayBuffer``).
     /// - `SLOPDESK_SCROLLBACK_DISK` — disk-specific kill switch, so the journal can be disabled
     ///   without losing the warm-resume ring.
     ///
@@ -148,8 +148,8 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
     /// FileHandle, and drops the map entry. The FILE STAYS — it is the scrollback-restore
     /// source for a later cold client / the next daemon life (deleting the file remains
     /// exclusive to the deliberate-close path, ``delete(sessionID:)``). Without this, every
-    /// non-deliberate pane end leaked one open fd + one map entry for the daemon's lifetime —
-    /// and, because ``sweep()`` exempts ids live in the map, made the file permanently
+    /// non-deliberate pane end would leak one open fd + one map entry for the daemon's lifetime —
+    /// and, because ``sweep()`` exempts ids live in the map, would leave the file permanently
     /// unsweepable too. A later ``journal(for:)`` for the same id transparently vends a fresh
     /// writer whose `openIfNeeded` seeks to end (append semantics preserved across the release).
     func release(sessionID: UUID) {
@@ -178,11 +178,11 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
     /// `keepNewest` most-recently-written files. Runs synchronously (call it from a detached
     /// task at daemon start — `HostServer` does).
     ///
-    /// LIVE writers are exempt (audit 2026-07-10 #10): sweep runs concurrently with the listener
-    /// coming up, so a reconnect can vend a `journal(for:)` writer for a file sweep is about to
-    /// unlink. POSIX `write()` to an unlinked inode keeps succeeding silently — the pane would
-    /// keep journaling into a file nobody can ever restore (the whole transcript, past AND
-    /// future, silently lost). A sessionID currently vended in `journals` is skipped outright.
+    /// LIVE writers are exempt: sweep runs concurrently with the listener coming up, so a
+    /// reconnect can vend a `journal(for:)` writer for a file sweep is about to unlink. POSIX
+    /// `write()` to an unlinked inode keeps succeeding silently — the pane would keep journaling
+    /// into a file nobody can ever restore (the whole transcript, past AND future, silently
+    /// lost). A sessionID currently vended in `journals` is skipped outright.
     func sweep(maxAge: TimeInterval = 14 * 24 * 3600, keepNewest: Int = 256) {
         lock.lock()
         sweepCallCount += 1
@@ -300,8 +300,7 @@ final class ScrollbackJournal: @unchecked Sendable {
             guard !closed else { return }
             pending.append(bytes)
             if size + pending.count > byteCap * 2 {
-                // Cap check counts buffered bytes; compact() flushes first so it always runs
-                // over a file that already holds every append.
+                // Cap accounting counts buffered bytes, not just the on-disk `size`.
                 compact()
             } else if pending.count >= Self.flushThresholdBytes {
                 flushPending()
@@ -362,9 +361,9 @@ final class ScrollbackJournal: @unchecked Sendable {
     }
 
     /// Writes every buffered byte in ONE contiguous write(2), preserving arrival order. On any
-    /// failure (open, seek, disk full, revoked fd) the buffer is dropped — the same posture the
-    /// old per-chunk append had; the live stream is unaffected. No-op once `closed`
-    /// (`closeAndDelete()` / `closeKeepingFile()`).
+    /// failure (open, seek, disk full, revoked fd) the buffer is dropped: the journal is
+    /// best-effort history, and the live stream must not be held up by disk trouble. No-op once
+    /// `closed` (`closeAndDelete()` / `closeKeepingFile()`).
     private func flushPending() {
         guard !pending.isEmpty else { return }
         guard !closed, let handle = openIfNeeded() else {
@@ -375,7 +374,7 @@ final class ScrollbackJournal: @unchecked Sendable {
             try handle.write(contentsOf: pending)
             size += pending.count
         } catch {
-            // Dropped, as one batch instead of chunk-by-chunk.
+            // Intentionally swallowed — the whole batch is dropped, see the note above.
         }
         pending.removeAll(keepingCapacity: true)
     }
@@ -388,10 +387,10 @@ final class ScrollbackJournal: @unchecked Sendable {
         }
         guard let opened = try? FileHandle(forWritingTo: fileURL) else { return nil }
         guard let end = try? opened.seekToEnd() else {
-            // A failed seek is an OPEN failure (audit 2026-07-10 #14): `lseek` never moves the
-            // offset on error, so the fd still sits at 0 — writing there would OVERWRITE the
-            // journal head and serve silent corruption on the next restore. Dropping the chunk
-            // (append's existing disk-full posture) is strictly safer than corrupting history.
+            // A failed seek is an OPEN failure: `lseek` never moves the offset on error, so the
+            // fd still sits at 0 — writing there would OVERWRITE the journal head and serve
+            // silent corruption on the next restore. Dropping the chunk (append's disk-full
+            // posture) is strictly safer than corrupting history.
             try? opened.close()
             return nil
         }
@@ -415,11 +414,11 @@ final class ScrollbackJournal: @unchecked Sendable {
             cut = newline + 1
         }
         let tail = current[cut...]
-        // Close FIRST, clearing `handle` even when close() itself throws (audit 2026-07-10 #11):
-        // the old single do/catch skipped `handle = nil` on a throwing close, leaving a POISONED
-        // FileHandle in place — openIfNeeded() returned it forever and every subsequent append
-        // silently dropped for the pane's lifetime. A cleared handle forces a fresh open (+ seek)
-        // on the next append, in both the success and the failure branch.
+        // Close FIRST, clearing `handle` even when close() itself throws. Wrapping the close in
+        // the do/catch below would skip `handle = nil` on a throwing close, leaving a POISONED
+        // FileHandle in place — openIfNeeded() would return it forever and every subsequent
+        // append would silently drop for the pane's lifetime. A cleared handle forces a fresh
+        // open (+ seek) on the next append, in both the success and the failure branch.
         try? handle?.close()
         handle = nil
         do {

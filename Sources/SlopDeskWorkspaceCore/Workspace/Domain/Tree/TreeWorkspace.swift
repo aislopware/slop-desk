@@ -71,7 +71,7 @@ public struct TreeWorkspace: Codable, Sendable, Equatable {
     /// only NEW key, so it is `decodeIfPresent` — a v10 file written before W14 (no `launchPresets`)
     /// decodes with an empty list, which the store then re-seeds with the built-ins. Never traps on the
     /// missing key (the persisted-data contract — a forward-compatible additive field must not brick load).
-    /// A stale `snippets` key (feature removed 2026-07-03) is simply not in ``CodingKeys`` → decode-ignored.
+    /// A stale `snippets` key (the feature is removed) is simply not in ``CodingKeys`` → decode-ignored.
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)

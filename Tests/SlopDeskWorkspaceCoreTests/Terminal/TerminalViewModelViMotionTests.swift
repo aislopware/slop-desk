@@ -3,15 +3,15 @@ import SlopDeskTerminal
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-// MARK: - TerminalViewModelViMotionTests (E17 ES-E17-2/3 — vi repeat-count + ? backward + visual-mode)
+// MARK: - TerminalViewModelViMotionTests (vi repeat-count + ? backward + visual-mode)
 
-/// Exercises the E17 WI-4 extensions to ``TerminalViewModel/handleCopyModeKey(_:)`` — the PURE vi
+/// Exercises the extensions to ``TerminalViewModel/handleCopyModeKey(_:)`` — the PURE vi
 /// repeat-count accumulation, the `?` backward-find bias, and the `v`/`V`/`⌃v` visual modes (+ their
 /// `adjust_selection` selection-extend) — entirely in-memory: an abstract ``TerminalViewModel/CopyModeKey``
 /// in, a recording ``TerminalSurfaceActions`` mock out. NO `NSEvent`, NO `GhosttySurface`, NO window server
 /// (the hang-safety rule). Each test asserts the EXACT binding-action string(s) and the observable pill
 /// mirrors (``viPendingCount`` / ``viVisualMode``), so a key → action regression is caught here, not on
-/// hardware. These are the WI-4 counterparts to ``CopyModeTests`` (the base nav/copy/exit mapping).
+/// hardware. These are the counterparts to ``CopyModeTests`` (the base nav/copy/exit mapping).
 @MainActor
 final class TerminalViewModelViMotionTests: XCTestCase {
     /// A model with a recording surface attached; returns both so a test can assert recorded actions.
@@ -96,7 +96,7 @@ final class TerminalViewModelViMotionTests: XCTestCase {
         )
     }
 
-    /// E17 WI-5 — when a find bar IS wired, vi `n`/`N` route through the DIRECTION-AWARE find-next/prev seam
+    /// When a find bar IS wired, vi `n`/`N` route through the DIRECTION-AWARE find-next/prev seam
     /// (the same hooks ⌘G / ⇧⌘G use → the bar's `next()`/`previous()`, which bias on `searchBackward`), NOT a
     /// hardcoded forward `navigate_search:next` on the surface. This is what lets a `?`-opened backward search
     /// make `n` walk up and `N` walk down: the bar owns the concrete direction. The count still repeats the
@@ -161,7 +161,7 @@ final class TerminalViewModelViMotionTests: XCTestCase {
     }
 
     /// `?` still opens the SAME find bar via ``onRequestFind`` when the backward hook is not (yet) wired — so
-    /// the key is never dead before the GUI adds the backward bias (WI-5).
+    /// the key is never dead before the GUI adds the backward bias.
     func testQuestionFallsBackToForwardHookWhenBackwardUnwired() {
         let (model, _) = makeModel()
         var forward = 0

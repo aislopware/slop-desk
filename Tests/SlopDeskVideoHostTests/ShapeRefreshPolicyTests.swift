@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// PURE cursor shape-refresh decision (SHAPE-LAG FIX, 2026-06-10). Decides whether a 120 Hz
+/// PURE cursor shape-refresh decision. Decides whether a 120 Hz
 /// cursor-queue tick should dispatch the main-thread `NSCursor.currentSystem` refresh, given the
 /// window-server cursor seed (nil = private symbol unavailable). No AppKit, no dlsym — safe under
 /// `swift test --filter ShapeRefreshPolicyTests`.

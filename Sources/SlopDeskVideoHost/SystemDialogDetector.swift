@@ -9,13 +9,13 @@ import Foundation
 /// the on-screen windows, runs this classifier, and answers the client's `listSystemDialogs` poll with
 /// the matches; the client auto-spawns an ephemeral pane per dialog.
 ///
-/// **HW-grounded (probe 2026-06-12 + 2026-06-15, Tahoe 26.5.1):** `SCShareableContent` DOES list the
-/// SecurityAgent prompt (own window, layer 1000, onScreen), and `desktopIndependentWindow` captures it
-/// with real pixels — it is NOT capture-blocked. While it is up `IsSecureEventInputEnabled() == true`,
-/// BUT — corrected 2026-06-15 — that does NOT block injection: the host's `CGEvent(.cghidEventTap)`
-/// keystrokes LAND in the field anyway (it fills with dots + authenticates), so the password CAN be
-/// typed from the client. `Dialog/isSecure` therefore flags a secure-credential prompt (for the client
-/// paste-guard + a "Secure prompt" chip), NOT a view-only restriction.
+/// **HW-grounded (Tahoe 26.5.1):** `SCShareableContent` DOES list the SecurityAgent prompt (own window,
+/// layer 1000, onScreen), and `desktopIndependentWindow` captures it with real pixels — it is NOT
+/// capture-blocked. While it is up `IsSecureEventInputEnabled() == true`, but that does NOT block
+/// injection: the host's `CGEvent(.cghidEventTap)` keystrokes LAND in the field anyway (it fills with
+/// dots + authenticates), so the password CAN be typed from the client. `Dialog/isSecure` therefore
+/// flags a secure-credential prompt (for the client paste-guard + a "Secure prompt" chip), NOT a
+/// view-only restriction.
 ///
 /// **Scope (v1):** system AUTH prompts only — `SecurityAgent` / `coreauthd`. These never overlap with a
 /// streamed app window (different system pid, never a child of an app window) nor with the DIALOG-EXPAND

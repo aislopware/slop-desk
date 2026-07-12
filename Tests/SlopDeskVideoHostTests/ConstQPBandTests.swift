@@ -2,7 +2,7 @@
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// MOTION-KEYED CONSTANT QP (2026-06-18, Parsec-style scroll): pure policy for the const-QP live delta
+/// MOTION-KEYED CONSTANT QP (Parsec-style scroll): pure policy for the const-QP live delta
 /// path. The HW encoder it feeds is never instantiated here (hang-safety); this pins the rule that keeps
 /// STATIC frames byte-identical to pure const-QP while FORCING a MOTION frame to a coarser constant QP
 /// (Min==Max==q) so VT shrinks the fat scroll frame.

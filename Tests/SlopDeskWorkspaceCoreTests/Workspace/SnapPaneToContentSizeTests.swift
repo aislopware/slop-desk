@@ -2,8 +2,8 @@ import CoreGraphics
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Pins ``WorkspaceStore/snapPaneToContentSize(_:target:current:)`` — the 1:1 remote-GUI snap
-/// (2026-06-11 "pane resizes to match the virtual display"). The video view reports the stream's
+/// Pins ``WorkspaceStore/snapPaneToContentSize(_:target:current:)`` — the 1:1 remote-GUI snap so
+/// the pane resizes to match the virtual display. The video view reports the stream's
 /// native point size (`target`) and the video view's current point size (`current`); the store
 /// resizes the pane FRAME by the CONTENT delta, so the chrome inset (header + divider) needs no
 /// constant and the snap stays correct if the chrome ever changes.

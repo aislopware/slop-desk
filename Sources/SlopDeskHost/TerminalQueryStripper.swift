@@ -171,7 +171,7 @@ enum TerminalQueryStripper {
     /// OSC numbers whose query AND set forms are stripped from replay: dynamic colors
     /// (10/11/12/17/19 + resets 110/111/112), palette (4/5/104/105), clipboard (52), and the
     /// kitty color protocol (21 — a live `key=?` query/response OSC in ghostty, same shape and
-    /// PTY-input delivery mechanism as 10/11/12; audit 2026-07-10 #2).
+    /// PTY-input delivery mechanism as 10/11/12).
     private static let strippedOSCNumbers: Set<String> =
         ["4", "5", "10", "11", "12", "17", "19", "21", "52", "104", "105", "110", "111", "112"]
 
@@ -182,8 +182,8 @@ enum TerminalQueryStripper {
 
     /// DCS bodies that are queries (XTGETTCAP `+q…`, DECRQSS `$q…`), the echoed XTVERSION
     /// response (`>|…`), or the echoed DECRQSS/XTGETTCAP responses (`{0|1}$r…` / `{0|1}+r…`,
-    /// ghostty's reply formats — audit 2026-07-10 #1: a poisoned transcript carrying a reply
-    /// re-emitted raw DCS garbage on the fresh command line). Anything else (sixel…) is kept.
+    /// ghostty's reply formats): a poisoned transcript carrying a reply would re-emit raw DCS
+    /// garbage on the fresh command line. Anything else (sixel…) is kept.
     private static func shouldStripDCS(body: ArraySlice<UInt8>) -> Bool {
         let prefix = [UInt8](body.prefix(3))
         if prefix.count >= 2 {

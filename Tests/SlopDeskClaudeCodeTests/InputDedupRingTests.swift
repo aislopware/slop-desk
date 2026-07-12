@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskClaudeCode
 
-/// WF-7 dedup ring tests (input-box B1 echo suppression).
+/// Dedup ring tests (input-box echo suppression).
 final class InputDedupRingTests: XCTestCase {
     private func str(_ bytes: [UInt8]) -> String { String(bytes: bytes, encoding: .utf8) ?? "" }
 

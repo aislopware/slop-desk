@@ -1,12 +1,12 @@
-// TerminalFindBar — the in-pane ⌘F find overlay (E5 / WI-3). A THIN SwiftUI driver over the PURE
+// TerminalFindBar — the in-pane ⌘F find overlay. A THIN SwiftUI driver over the PURE
 // ``TerminalSearchController`` (the single source of truth for count / N-of-M / next-prev-wrap) plus
 // libghostty's OWN in-surface search bindings (`search:` / `navigate_search:` / `end_search`, via
 // ``TerminalViewModel/performSearchSurfaceAction(_:)``), which own the amber highlight + scroll-to-match.
-// The counter counts the `scrollbackTextLines()` snapshot taken on open (divergence #2 in plans/E5.md):
+// The counter counts the `scrollbackTextLines()` snapshot taken on open (a documented divergence):
 // count is the mirror's, highlight is libghostty's — they agree on the same buffer; the mirror refreshes
 // on open + on the `Aa` / `.*` toggles.
 //
-// REGEX-MODE CEILING (ES-E5-4 honesty fix). libghostty's in-surface search is a LITERAL substring matcher with
+// REGEX-MODE CEILING (an honesty fix). libghostty's in-surface search is a LITERAL substring matcher with
 // NO regex engine (`changeNeedle` compares case-insensitively; no pattern compilation). So in `.*` mode we must
 // NOT arm `search:<pattern>` — it would highlight the literal pattern text (usually 0 hits) while the counter
 // reports the real regex count, and `navigate_search:` would move nothing (a lying counter beside dead
@@ -26,10 +26,10 @@
 //   [ ▣ search-all-tabs ][ × close ]
 // (`rectangle.stack` "search all tabs" escalates to cross-tab Global Search ⇧⌘F — see
 // ``TerminalFindBarModel/searchAllTabs()``.)
-// (ES-E5-2 requires the `N of M` counter; `find.png` shows no inline counter, so its placement isn't
+// (The `N of M` counter is required; `find.png` shows no inline counter, so its placement isn't
 // screenshot-driven — we keep it before the nav chevrons.)
 //
-// Behaviour (ES-E5-1..4): auto-focus the field on appear; live query → recompute + re-arm highlight;
+// Behaviour: auto-focus the field on appear; live query → recompute + re-arm highlight;
 // ↩ / ⇧↩ next / prev; `Aa` / `.*` toggle case / regex; Esc (or ×) closes + clears highlights. The bar OWNS
 // no match math — `TerminalFindBarModel` wraps the controller + a weak model ref so the GUI and the headless
 // unit test (`TerminalFindBarModelTests`) drive the exact same logic.
@@ -58,7 +58,7 @@ final class TerminalFindBarModel {
     /// Bumped on every (re)open so the view re-asserts its `@FocusState` even when the bar is already mounted
     /// (⌘F while the bar is open should re-focus the field, but `.onAppear` won't fire again).
     private(set) var focusToken = 0
-    /// The SEARCH DIRECTION the bar opened in (E17 ES-E17-2 / WI-5): `/` and ⌘F search FORWARD (`false`); a
+    /// The SEARCH DIRECTION the bar opened in: `/` and ⌘F search FORWARD (`false`); a
     /// copy-mode `?` opens BACKWARD (`true`, via ``open(backward:)``). Biases vi's `n`/`N`: ``next()`` (`n`)
     /// steps in this direction, ``previous()`` (`N`) against it — so after `?foo`, `n` walks UP and `N` down
     /// (vim parity); a forward search keeps the natural sense.
@@ -67,7 +67,7 @@ final class TerminalFindBarModel {
     /// `end_search` passthrough. Weak (owned by the live session); `@ObservationIgnored` — pure wiring.
     @ObservationIgnored private weak var model: TerminalViewModel?
 
-    /// E5 "search all tabs" escalation — the `rectangle.stack` button (`find.png`). Opens cross-tab Global
+    /// "search all tabs" escalation — the `rectangle.stack` button (`find.png`). Opens cross-tab Global
     /// Search (⇧⌘F) seeded with the live query. Wired by ``TerminalLeafView`` to
     /// ``OverlayCoordinator/openGlobalSearch(seed:)``; `nil` in previews / tests ⇒ the button still dismisses
     /// the bar but the escalation no-ops. Pure wiring, so `@ObservationIgnored`.
@@ -236,7 +236,7 @@ final class TerminalFindBarModel {
 struct TerminalFindBar: View {
     let model: TerminalFindBarModel
 
-    /// Pre-focuses the query field on appear (ES-E5-1: typing lands immediately).
+    /// Pre-focuses the query field on appear (typing lands immediately).
     @FocusState private var queryFocused: Bool
 
     // Platform hit-target sizing: iOS uses larger plates + a wider field for touch; macOS is compact. Frame
@@ -344,14 +344,14 @@ struct TerminalFindBar: View {
             // find.png: the query text sits in its OWN delineated inset — a distinct FILLED gray rounded field
             // INSIDE the card (not flush). The card is `Surface.raised` (≈ white in light themes), so a flush
             // `Surface.face` field reads as near-invisible; instead the field wears `State.selected`, a
-            // translucent neutral wash. CROSS-THEME caveat (Batch-5b): `State.selected` is a BLACK wash in light
+            // translucent neutral wash. CROSS-THEME caveat: `State.selected` is a BLACK wash in light
             // (composites DARKER than the card → recessed inset, matching find.png) but WHITE in dark
             // (composites LIGHTER → reads RAISED, not recessed). No single solid/wash token is reliably
             // recessed-AND-visible on both themes (the only darker-than-card token in dark, `Surface.face`/the
             // backdrop, is near-invisible in light). So rather than chase a darker fill we DELINEATE the field
             // with its own inner `Line.subtle` hairline — a hard boundary that reads as a distinct inset
             // whichever way the fill contrasts. INNER field only; the card's no-border fill+shadow chrome
-            // (Batch-4) is NOT re-stroked (outer card stays borderless).
+            // is NOT re-stroked (outer card stays borderless).
             .background(Slate.State.selected, in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall))
             .overlay(
                 RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
@@ -394,9 +394,9 @@ struct TerminalFindBar: View {
 /// LOCKED MODE-PILL RENDERING — screenshot-matched, final; do NOT re-litigate.
 /// `find.png` AND `global-search.png` (verified by zooming both) show the `Aa` / underlined-`ab` / `.*` mode
 /// pills as INDIVIDUALLY-OUTLINED rounded chips — each with its OWN resting plate + `Line.subtle` hairline,
-/// gapped, sitting DIRECTLY on the bar. There is NO shared segmented backing tray. Reviews oscillated (bare
-/// glyphs → resting plates → shared tray → individually-outlined chips); THIS is the resolved reading — a
-/// future re-flag of "shared tray" or "bare glyphs" is ALREADY-RESOLVED, not a new finding.
+/// gapped, sitting DIRECTLY on the bar. There is NO shared segmented backing tray. Bare glyphs, resting plates,
+/// and a shared tray are all tempting alternatives that don't match the screenshots — individually-outlined
+/// chips is the correct reading; re-flagging either alternative is not a new finding.
 /// Non-negotiable invariants: (1) every idle chip is visually DELINEATED (own plate + hairline, never a bare
 /// glyph); (2) the find bar and global-search query bar render the pills IDENTICALLY — both via this type +
 /// ``FindTogglePill``.
@@ -419,7 +419,7 @@ struct FindTogglePillTray<Content: View>: View {
 /// LOCKED rendering (see the tray's doc comment): each chip is INDIVIDUALLY outlined. idle → its OWN
 /// `Surface.face` plate + `Line.subtle` hairline (never a bare glyph); hover → a `State.hover` plate (border
 /// held); on → accent text on an `accentMuted` wash + an accent hairline ring. No shared backing tray.
-/// Factored to file scope (internal) so the WI-4 GlobalSearch surface reuses the EXACT pill. `Slate.*` tokens
+/// Factored to file scope (internal) so the GlobalSearch surface reuses the EXACT pill. `Slate.*` tokens
 /// only.
 struct FindTogglePill: View {
     let label: String

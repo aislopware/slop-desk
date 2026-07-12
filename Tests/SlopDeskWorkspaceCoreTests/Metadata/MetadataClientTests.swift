@@ -5,7 +5,7 @@ import SlopDeskTransport
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// WI-4 (E4) — the client-side host-metadata round-trip: ``MetadataRequestRegistry`` (correlation +
+/// The client-side host-metadata round-trip: ``MetadataRequestRegistry`` (correlation +
 /// never-hangs timeout), ``MetadataClient`` (typed decode + per-pane cache + validate-then-drop), and the
 /// full wire path through a real ``SlopDeskClient`` + a fake ``ClientTransporting`` that echoes canned
 /// `metadataResponse` frames. Every behavior has a test that FAILS on the un-fixed code:
@@ -183,7 +183,7 @@ final class MetadataClientTests: XCTestCase {
     }
 
     func testMalformedOkPayloadReturnsEmptyNeverThrows() async {
-        // ES-E4-5: an ok status whose payload is a HOSTILE/truncated codec body (count says 5 entries, body
+        // An ok status whose payload is a HOSTILE/truncated codec body (count says 5 entries, body
         // is empty) must be swallowed to [] — never trap, never throw to the caller.
         let responder = EchoResponder()
         let client = MetadataClient(send: responder.send)

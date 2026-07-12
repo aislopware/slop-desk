@@ -2,7 +2,7 @@ import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskVideoClient
 
-/// Component 2: the client's decode frontier — wrap-aware monotonic max of successfully-decoded
+/// The client's decode frontier — wrap-aware monotonic max of successfully-decoded
 /// frameIDs + the wire sentinel encoding every recovery request carries.
 final class DecodeFrontierTests: XCTestCase {
     func testEmptyFrontierEncodesSentinel() {

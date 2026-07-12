@@ -36,14 +36,14 @@ public struct PaneGroupID: Hashable, Codable, Sendable {
 /// What a pane *is*. The kind selects which proven per-session stack the live layer will
 /// materialize for the leaf (docs/22 §7): a plain remote terminal or a remote-GUI video window.
 ///
-/// **Claude Code is no longer a kind (docs/42 W11).** A `claude` session is just a `.terminal`
-/// pane: the host watches its PTY foreground process / hooks and the client auto-detects it
-/// (wire types 26/27 → the per-pane `ClaudeStatus`), opening the read-only inspector channel
-/// dynamically. There is no dedicated "Claude Code pane".
+/// Claude Code is not a distinct kind: a `claude` session is just a `.terminal` pane. The host
+/// watches its PTY foreground process / hooks and the client auto-detects it (wire types 26/27 →
+/// the per-pane `ClaudeStatus`), opening the read-only inspector channel dynamically. There is no
+/// dedicated "Claude Code pane".
 ///
 /// `String`-raw + hand-stable so the persisted JSON discriminator is human-readable and
 /// versionable. **Forward/back-tolerant decode** (below): an OLD persisted `"claudeCode"` raw
-/// value maps to `.terminal` so a v9 / pre-W11-v10 file never traps now the case is gone.
+/// value maps to `.terminal` so a file predating the kind's removal never traps.
 public enum PaneKind: String, Codable, Sendable, Equatable {
     /// A remote PTY terminal (PATH 1 byte pipeline). Also hosts an auto-detected `claude` session.
     case terminal
@@ -61,19 +61,19 @@ public enum PaneKind: String, Codable, Sendable, Equatable {
     /// kind, at which point reconcile materializes the terminal / remote-GUI session IN PLACE (same `PaneID`).
     case chooser
 
-    /// The retired-but-tolerated legacy raw value of the removed "Claude Code" pane kind (docs/42 W11).
-    /// A `.claudeCode` pane is now just a `.terminal`; an OLD persisted file (v9, or a v10 written before
-    /// W11) may still carry this discriminator. Kept ONLY as the migration/decode bridge below.
+    /// The retired-but-tolerated legacy raw value of the removed "Claude Code" pane kind. A
+    /// `.claudeCode` pane is just a `.terminal`; an OLD persisted file may still carry this
+    /// discriminator. Kept ONLY as the migration/decode bridge below.
     static let legacyClaudeCodeRawValue = "claudeCode"
 
-    /// The retired-but-tolerated legacy raw value of the removed LOCAL web pane kind (E18, since pruned —
-    /// the app is a remote terminal + remote-GUI tool; a local browser is not core). An OLD persisted file
-    /// may still carry a `"web"` leaf; it decodes to `.terminal` via the bridge below (same discipline as
-    /// ``legacyClaudeCodeRawValue``) so a stale workspace never traps.
+    /// The retired-but-tolerated legacy raw value of the removed LOCAL web pane kind (the app is a
+    /// remote terminal + remote-GUI tool; a local browser is not core). An OLD persisted file may
+    /// still carry a `"web"` leaf; it decodes to `.terminal` via the bridge below (same discipline
+    /// as ``legacyClaudeCodeRawValue``) so a stale workspace never traps.
     static let legacyWebRawValue = "web"
 
     /// **Forward/back-tolerant decode (validate-then-repair, CLAUDE.md untrusted-persisted-data
-    /// contract).** A persisted `"claudeCode"` raw value (the removed kind, W11) or `"web"` raw value (the
+    /// contract).** A persisted `"claudeCode"` raw value (the removed kind) or `"web"` raw value (the
     /// removed local web pane) maps to `.terminal` so an old workspace file never traps now the cases are
     /// gone. Any OTHER unknown raw value still throws (it is genuine corruption the loader's reset path
     /// handles), preserving the strict behaviour for everything except the intentionally-retired values.
@@ -114,7 +114,7 @@ public struct VideoEndpoint: Codable, Sendable, Equatable {
     public var windowID: UInt32
     /// Human-readable window title (shown in pane chrome before the stream is live).
     public var title: String
-    /// PANE REBIND (2026-06-12): the owning app's name at pick time (`WindowSummary.appName`).
+    /// The owning app's name at pick time (`WindowSummary.appName`), used for pane rebind on restore.
     /// CGWindowIDs die with the window and get RECYCLED across host restarts, so `windowID` alone
     /// cannot be trusted on restore — app+title is what lets ``WindowRebind`` re-resolve the
     /// binding to the same app's window instead of streaming a dead/recycled id. Empty for
@@ -175,13 +175,13 @@ public struct PaneSpec: Sendable, Equatable {
     /// ``WorkspaceStore/renamePane(_:to:)``). The single, unambiguous signal that ``title`` is a custom
     /// user identity that must win over the cwd-folder / shell-title auto-derivations.
     ///
-    /// B2 (host-authoritative-metadata audit): the rail's OLD "is this a rename?" heuristic —
-    /// `title != defaultTitle && title != lastKnownTitle` — MISFIRES the moment a shell emits a SECOND OSC
-    /// title: the load-time promotion set `title == lastKnownTitle₀`, then `lastKnownTitle` advances to
-    /// `title₁` while `title` stays `title₀`, so `title != lastKnownTitle` flips true and the stale promoted
-    /// title latches as if the user had renamed it. An explicit flag removes the ambiguity (only a real
-    /// rename sets it). Additive persisted field (encoded only when `true`); an older file without it decodes
-    /// to `false` (no-backcompat: a pane renamed before B2 falls back to its cwd-folder title until re-named).
+    /// A heuristic like `title != defaultTitle && title != lastKnownTitle` MISFIRES the moment a shell
+    /// emits a SECOND OSC title: the load-time promotion set `title == lastKnownTitle₀`, then
+    /// `lastKnownTitle` advances to `title₁` while `title` stays `title₀`, so `title != lastKnownTitle`
+    /// flips true and the stale promoted title latches as if the user had renamed it. An explicit flag
+    /// removes the ambiguity (only a real rename sets it). Additive persisted field (encoded only when
+    /// `true`); an older file without it decodes to `false`, so a pane renamed before this flag existed
+    /// falls back to its cwd-folder title until re-named.
     public var userRenamed: Bool = false
 
     /// The title to surface in a command-completion notification/toast — the live OSC 0/2 shell title
@@ -189,11 +189,11 @@ public struct PaneSpec: Sendable, Equatable {
     /// host cwd's FOLDER NAME (``cwdDisplayName(_:)`` of ``lastKnownCwd`` — the same identity the
     /// sidebar/tab/window title show), else the static ``title`` (e.g. "Terminal"). Distinct from
     /// ``title`` itself, which stays the pane's persisted/renamable identity — this is only for the
-    /// completion sink, which historically read `title` directly and so always showed the generic default.
+    /// completion sink, which would otherwise read `title` directly and always show the generic default.
     ///
-    /// B1 (host-authoritative-metadata audit): the cwd fallback keeps the banner consistent with the
-    /// visible pane title for a shell that emits NO OSC-0/2 title (Starship / hookless) — without it the
-    /// banner said "Terminal" while every other surface showed the folder name.
+    /// The cwd fallback keeps the banner consistent with the visible pane title for a shell that emits
+    /// NO OSC-0/2 title (Starship / hookless) — without it the banner says "Terminal" while every other
+    /// surface shows the folder name.
     public var completionNotificationTitle: String {
         lastKnownTitle ?? Self.cwdDisplayName(lastKnownCwd) ?? title
     }
@@ -263,7 +263,7 @@ public struct PaneSpec: Sendable, Equatable {
 // MARK: - PaneSpec Codable (additive — new keys are decodeIfPresent so v10 files still load)
 
 extension PaneSpec: Codable {
-    /// A stale `floatingFrame` key (floating-pane feature removed 2026-07-03) is simply not in
+    /// A stale `floatingFrame` key (the floating-pane feature was removed) is simply not in
     /// ``CodingKeys`` → decode-ignored.
     private enum CodingKeys: String, CodingKey {
         case kind
@@ -288,7 +288,7 @@ extension PaneSpec: Codable {
         lastKnownTitle = try c.decodeIfPresent(String.self, forKey: .lastKnownTitle)
         // Additive: a file written before the host-pushed key decodes to `nil` (cwd fallback).
         projectKey = try c.decodeIfPresent(String.self, forKey: .projectKey)
-        // Additive (B2): an older file without the key decodes to `false` (validate-then-default).
+        // Additive: an older file without the key decodes to `false` (validate-then-default).
         userRenamed = try c.decodeIfPresent(Bool.self, forKey: .userRenamed) ?? false
     }
 
@@ -307,10 +307,10 @@ extension PaneSpec: Codable {
     }
 }
 
-// MARK: - PaneSpec presentation derivations (E21 WI-5)
+// MARK: - PaneSpec presentation derivations
 
 public extension PaneSpec {
-    /// The sidebar-rail SECOND LINE for this pane (E21 WI-5) — the single, kind-generic source of truth the
+    /// The sidebar-rail SECOND LINE for this pane — the single, kind-generic source of truth the
     /// native rail row (``RailRowsBuilder`` in `SlopDeskClientUI`) and any other surface bind their subtitle
     /// to, so a `.remoteGUI` window is a first-class peer of a terminal in the rail (carry-overs §0).
     ///

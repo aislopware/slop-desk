@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E11 WI-2 (ES-E11-4): the cwd-visit hook on ``WorkspaceStore``. `setLastKnownCwd(_:for:)` fires an injected
+/// The cwd-visit hook on ``WorkspaceStore``. `setLastKnownCwd(_:for:)` fires an injected
 /// `onCwdVisited: ((String) -> Void)?` closure with the NEW cwd whenever it records a CHANGED directory (the
 /// app wires this to ``FolderFrecencyStore/record(cwd:)`` so the Open-Quickly Folders filter learns visited
 /// dirs) — but ONLY after the dirty guard, so an unchanged re-write never records a phantom visit.

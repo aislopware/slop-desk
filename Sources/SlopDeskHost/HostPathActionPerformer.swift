@@ -3,7 +3,7 @@ import AppKit
 import Foundation
 import SlopDeskProtocol
 
-/// E10 WI-7 — the THIN macOS shim that actuates the TWO side-effecting metadata verbs (``MetadataVerb/openPath``
+/// The THIN macOS shim that actuates the TWO side-effecting metadata verbs (``MetadataVerb/openPath``
 /// = 9 / ``MetadataVerb/revealPath`` = 10) on the HOST's own Finder / Launch Services. It is the
 /// open/reveal twin of the read-only ``HostMetadataProbe``: ``MuxChannelSession/serveMetadata`` routes a
 /// `metadataRequest` whose verb is 9/10 HERE (BEFORE the pure ``MetadataResponseBuilder``, which performs

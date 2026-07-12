@@ -5,9 +5,9 @@ import XCTest
 @testable import SlopDeskClient
 @testable import SlopDeskWorkspaceCore
 
-/// Regression for R6 #1: `ConnectionViewModel.connect()`/`resume()` must NOT whitewash a torn-down or
-/// superseded pane to `.connected`. Because `SlopDeskClient.connect` now RETURNS (not throws) when it was
-/// closed/paused/superseded mid-handshake (the R5 zombie-transport fix), the VM's `do` success branch
+/// Regression: `ConnectionViewModel.connect()`/`resume()` must NOT whitewash a torn-down or
+/// superseded pane to `.connected`. Because `SlopDeskClient.connect` RETURNS (not throws) when it was
+/// closed/paused/superseded mid-handshake (the zombie-transport fix), the VM's `do` success branch
 /// would otherwise set `status = .connected` (+ overwrite `sessionID`) for a pane the user already
 /// disconnected. The fix: a `connectGeneration` + `self.client === client` identity guard before the
 /// post-await writes. Looped to shake the interleaving.
@@ -36,7 +36,7 @@ final class ConnectionViewModelSupersedeTests: XCTestCase {
         }
     }
 
-    /// R13 #3: a LATE `.reconnected` event — drained from the broadcaster buffer AFTER a deliberate
+    /// A LATE `.reconnected` event — drained from the broadcaster buffer AFTER a deliberate
     /// `disconnect()` (a buffered AsyncStream element is delivered even post-cancel/finish) — must NOT
     /// whitewash the closed pane back to green `.connected`. Folded synchronously via the DEBUG hook.
     func testLateReconnectedAfterDisconnectStaysDisconnected() async {

@@ -3,7 +3,7 @@ import XCTest
 @testable import SlopDeskTransport
 
 /// Smoke tests so the target compiles and runs. Full transport behaviour
-/// (framing over NWConnection, replay-after-drop, reconnect resume) lands in WF-2.
+/// (framing over NWConnection, replay-after-drop, reconnect resume) is covered elsewhere.
 final class SlopDeskTransportSmokeTests: XCTestCase {
     func testReplayBufferCapsAreContractValues() {
         XCTAssertEqual(ReplayBuffer.maxBackupBytes, 256 * 1024 * 1024)

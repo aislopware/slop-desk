@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// PURE WF-8 Long-Term-Reference recovery bookkeeping. The ``VideoEncoder`` it drives is HW-gated and
+/// Pure Long-Term-Reference recovery bookkeeping. The ``VideoEncoder`` it drives is HW-gated and
 /// never instantiated in a test, so this is the only headlessly-verifiable layer — it covers the
 /// `frameID → token` map (record + bounded evict-oldest), the acknowledged-token set (fold + bounded
 /// keep-most-recent), the unknown/duplicate-ack no-op, and — paramount — the ACKED-ONLY recovery
@@ -120,7 +120,7 @@ final class LTRControllerTests: XCTestCase {
         XCTAssertEqual(c.recoveryDecision(request: .idr, hasEnableLTR: true), .idr)
     }
 
-    // MARK: reset — encoder/VT-session rebuild invalidation (the WF-8 self-audit fix)
+    // MARK: reset — encoder/VT-session rebuild invalidation
 
     func testResetClearsAckedSetAndFrameMap() {
         var c = LTRController()
@@ -140,12 +140,12 @@ final class LTRControllerTests: XCTestCase {
         XCTAssertTrue(c.frameOrder.isEmpty, "reset clears the insertion-order list in lockstep")
     }
 
-    /// THE finding: across an encoder / VTCompressionSession rebuild (resize) the host installs a fresh
-    /// VT session that holds ZERO acknowledged LTRs, but the controller's acked tokens belonged to the
-    /// destroyed session. Until ``reset()`` existed there was no way to invalidate them, so
-    /// `recoveryDecision` kept returning `.ltrRefresh` → a `ForceLTRRefresh` against an LTR the new
-    /// session never had (host-side gate bypassed). After reset the gate correctly falls back to `.idr`
-    /// until the client decodes+acks a NEW LTR frame on the rebuilt session.
+    /// Across an encoder / VTCompressionSession rebuild (resize) the host installs a fresh VT session
+    /// that holds ZERO acknowledged LTRs, but the controller's acked tokens belonged to the destroyed
+    /// session. Without ``reset()`` there is no way to invalidate them, so `recoveryDecision` would keep
+    /// returning `.ltrRefresh` → a `ForceLTRRefresh` against an LTR the new session never had (host-side
+    /// gate bypassed). After reset the gate correctly falls back to `.idr` until the client decodes+acks
+    /// a NEW LTR frame on the rebuilt session.
     func testResetReArmsACKEDOnlyGateAfterSessionRebuild() {
         var c = LTRController()
         c.recordLTRFrame(frameID: 5, token: 0xDEAD)

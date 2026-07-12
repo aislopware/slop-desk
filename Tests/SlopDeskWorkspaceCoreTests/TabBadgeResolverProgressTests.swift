@@ -2,14 +2,14 @@ import SlopDeskAgentDetect
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E14/K1 WI-2 — the OSC 9;4 PROGRESS input to the pure ``TabBadgeResolver``. WI-2 routes a live
-/// ``PaneProgress`` into the EXISTING precedence: an active in-progress / indeterminate is a COMMAND-level
-/// signal, so it resolves to the quiet `.commandRunning` marker (not the loud agent `.running`); a `9;4;2`
-/// error resolves to the `.error` alert (ranked at the error tier, above a stale completion dot). A cleared
-/// progress (`nil`) falls through to the pre-E14 badge.
+/// The OSC 9;4 PROGRESS input to the pure ``TabBadgeResolver``. A live ``PaneProgress`` routes into the
+/// EXISTING precedence: an active in-progress / indeterminate is a COMMAND-level signal, so it resolves to
+/// the quiet `.commandRunning` marker (not the loud agent `.running`); a `9;4;2` error resolves to the
+/// `.error` alert (ranked at the error tier, above a stale completion dot). A cleared progress (`nil`) falls
+/// through to the badge that ignores progress entirely.
 ///
 /// REVERT-TO-CONFIRM-FAIL: each test compares a progress-FED resolver against the un-fed (`progress: nil`)
-/// result — on the pre-WI-2 resolver (no `progress` parameter) these would not compile, and the fed-vs-unfed
+/// result — on a resolver with no `progress` parameter these would not compile, and the fed-vs-unfed
 /// pairs prove the parameter actually changes the output (never a tautology). Headless: pure static, no clock.
 final class TabBadgeResolverProgressTests: XCTestCase {
     /// All-clear convenience caller; each test overrides only the axes it exercises.

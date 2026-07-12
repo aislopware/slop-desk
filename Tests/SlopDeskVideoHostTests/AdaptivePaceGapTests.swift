@@ -2,8 +2,8 @@
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// RC-2 (2026-06-09): the rate-proportional send-pacing gap. The fixed 0.5ms gap drained a chunk
-/// ~13× faster than a 12Mbps link → self-inflicted burst loss. This verifies the pure gap math:
+/// The rate-proportional send-pacing gap. A fixed 0.5ms gap drains a chunk ~13× faster than a
+/// 12Mbps link → self-inflicted burst loss. This verifies the pure gap math:
 /// gap = chunkBytes×8 / targetBps, clamped — so a chunk drains at ≈ the live link rate.
 final class AdaptivePaceGapTests: XCTestCase {
     // 8 fragments × 1200 bytes = 9600 bytes = 76,800 bits per chunk.
@@ -51,7 +51,7 @@ final class AdaptivePaceGapTests: XCTestCase {
         XCTAssertEqual(gap(1_000_000_000), floor)
     }
 
-    // MARK: Rate multiplier (2026-06-10 — pace at k× the live rate, not exact rate)
+    // MARK: Rate multiplier (pace at k× the live rate, not exact rate)
 
     private func gapX(_ bps: Int, _ k: Double) -> UInt64 {
         SlopDeskVideoHostSession.adaptivePaceGapNanos(

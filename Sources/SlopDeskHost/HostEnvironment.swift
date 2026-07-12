@@ -3,15 +3,14 @@ import SlopDeskVideoProtocol
 
 /// Builds the curated environment for a spawned login shell.
 ///
-/// W11 retired the curated `claude` launch mode (a Claude session is now an auto-detected `.terminal`
-/// pane — see `ClaudePaneDetector`); the only Claude-specific surface left is the ``Term`` choice in
-/// ``ClaudeCodeProfile`` (P4 removed `ClaudeCodeProfile.environment`/`ClaudeAuthResolver`). This generic
-/// profile is the Claude-agnostic env for a plain login shell (WF-3).
+/// A Claude session is an auto-detected `.terminal` pane (see `ClaudePaneDetector`), not a curated
+/// `claude` launch mode; the only Claude-specific surface left is the ``Term`` choice in
+/// ``ClaudeCodeProfile``. This generic profile is the Claude-agnostic env for a plain login shell.
 ///
 /// TERM is shared: the client renders with libghostty, so the plain-shell path advertises the SAME
-/// `TERM=xterm-ghostty` as the retired Claude path (``ClaudeCodeProfile/Term/ghostty``) — one source of
+/// `TERM=xterm-ghostty` as the Claude path (``ClaudeCodeProfile/Term/ghostty``) — one source of
 /// truth, not a divergent `xterm-256color` default. `curated(term:)` takes the value so callers can pick
-/// the documented `.xterm256` fallback (#54700).
+/// the documented `.xterm256` fallback.
 public enum HostEnvironment {
     /// The default `TERM` for a spawned shell. Single source of truth shared with
     /// ``ClaudeCodeProfile`` (its `.ghostty` raw value): the client renders with libghostty,
@@ -36,7 +35,7 @@ public enum HostEnvironment {
     ///   - term: the `TERM` to advertise. Defaults to ``defaultTerm`` (`xterm-ghostty`),
     ///     matching what the libghostty client renders.
     ///   - agentSocketPath: when non-nil, exported as `SLOPDESK_SOCKET_PATH` so an installed
-    ///     Claude Code hook (W10, ``AgentInstaller``) knows where to POST hook events. Absent
+    ///     Claude Code hook (``AgentInstaller``) knows where to POST hook events. Absent
     ///     by default — detection works WITHOUT hooks via the foreground watcher (Decision #5).
     ///   - paneID: when non-nil, exported as `SLOPDESK_PANE_ID` so the hook can tag which pane
     ///     it belongs to (Muxy's `MUXY_PANE_ID` analog). Absent by default.
@@ -53,7 +52,7 @@ public enum HostEnvironment {
 
         // Mirror identity / locale-ish vars from the parent when present.
         //
-        // TERMINFO / TERMINFO_DIRS are mirrored (R8 #2) because the host's terminfo PROBE
+        // TERMINFO / TERMINFO_DIRS are mirrored because the host's terminfo PROBE
         // (``TerminfoResolver/searchDirectories``) honours them when deciding whether `xterm-ghostty`
         // resolves. If the host was launched from a shell whose TERMINFO points at a non-standard dir
         // holding the ghostty entry (Nix / Homebrew / per-user install), the probe says "resolvable" and
@@ -105,7 +104,7 @@ public enum HostEnvironment {
         // `${SLOPDESK_SHELL_CURSOR:-1}` in the CHILD; forwarded ONLY when set.
         if let cursor = parent[ShellIntegration.cursorEnvKey] { env[ShellIntegration.cursorEnvKey] = cursor }
 
-        // W10: export the agent-hook socket path + pane id into the PTY env (Muxy's
+        // Export the agent-hook socket path + pane id into the PTY env (Muxy's
         // MUXY_SOCKET_PATH / MUXY_PANE_ID analog) when the host has the opt-in hook listener
         // enabled. The installed hook script (``AgentInstaller/hookScript()``) reads these to
         // POST hook events to the host; absent → the hook is a silent no-op.
@@ -116,11 +115,11 @@ public enum HostEnvironment {
         return env
     }
 
-    /// The PTY env var carrying the agent-hook listener socket path (W10). The installed
+    /// The PTY env var carrying the agent-hook listener socket path. The installed
     /// Claude Code hook (``AgentInstaller``) POSTs to this socket; matches `MUXY_SOCKET_PATH`.
     public static let agentSocketEnvKey = "SLOPDESK_SOCKET_PATH"
 
-    /// The PTY env var carrying the pane id the hook should tag its events with (W10);
+    /// The PTY env var carrying the pane id the hook should tag its events with;
     /// matches `MUXY_PANE_ID`.
     public static let agentPaneIDEnvKey = "SLOPDESK_PANE_ID"
 
@@ -133,13 +132,13 @@ public enum HostEnvironment {
     /// shells is not something to enable silently. Only an explicit `"1"` enables it.
     public static let agentControlEnvKey = "SLOPDESK_AGENT_CONTROL"
 
-    /// SENTINEL exported into a control-SPAWNED pane's env (P1): `"1"` tells an agent running
+    /// SENTINEL exported into a control-SPAWNED pane's env: `"1"` tells an agent running
     /// inside that it lives under slopdesk control and the ctl socket/binary are reachable, so it
     /// can self-orient with zero discovery. Set ONLY for `spawn`-created panes (not user panes).
     public static let ctlSentinelEnvKey = "SLOPDESK_CTL"
 
     /// The absolute path to the `slopdesk-ctl` binary, exported into a control-spawned pane's env
-    /// (P1) so an agent can invoke it directly without a PATH lookup. Empty/absent → the agent
+    /// so an agent can invoke it directly without a PATH lookup. Empty/absent → the agent
     /// falls back to a PATH lookup of `slopdesk-ctl`.
     public static let ctlBinaryEnvKey = "SLOPDESK_CTL_BIN"
 
@@ -150,7 +149,7 @@ public enum HostEnvironment {
         environment[agentControlEnvKey] == "1"
     }
 
-    /// W10 — whether host-side Claude-Code agent detection is enabled (the foreground
+    /// Whether host-side Claude-Code agent detection is enabled (the foreground
     /// process-watch + the rolled-up status emission). Default idiom = DEFAULT-ON via
     /// `env[key] != "0"` (only an explicit `"0"` disables) — process-watch is zero-config and
     /// the ratified primary signal (Decision #5), so it is on unless the operator opts out.
@@ -159,11 +158,11 @@ public enum HostEnvironment {
     /// Resolves whether agent detection (the foreground watcher) is enabled. Default-ON:
     /// only the exact string `"0"` disables; anything else (unset, `"1"`, …) enables.
     ///
-    /// W12: the default `environment` resolves through ``EnvConfig`` (ProcessInfo env → settings
+    /// The default `environment` resolves through ``EnvConfig`` (ProcessInfo env → settings
     /// overlay), so a GUI toggle in the agent settings (folded in from `video-prefs.json`) reaches this
-    /// gate. An EMPTY overlay is byte-identical to the old `ProcessInfo.processInfo.environment[key]`, so
-    /// the default-ON `!= "0"` truth table is unchanged. An explicit `environment:` (tests) bypasses the
-    /// overlay.
+    /// gate. An EMPTY overlay is byte-identical to a plain `ProcessInfo.processInfo.environment[key]`
+    /// read, so the default-ON `!= "0"` truth table is unchanged. An explicit `environment:` (tests)
+    /// bypasses the overlay.
     public static func agentDetectEnabled(
         environment: [String: String] = configEnv(agentDetectEnvKey),
     )
@@ -172,7 +171,7 @@ public enum HostEnvironment {
         environment[agentDetectEnvKey] != "0"
     }
 
-    /// WB1 — whether the host segments the outbound PTY stream into Warp-style "Blocks" (the
+    /// Whether the host segments the outbound PTY stream into Warp-style "Blocks" (the
     /// additive parallel ``CommandBlockSegmenter`` tap + the type-28/29 wire). Default idiom =
     /// DEFAULT-ON via `env[key] != "0"` (only an explicit `"0"` disables): when off, the byte
     /// pipeline + the live ``HostOutputSniffer`` stay byte-identical (no segmenter, no emit).
@@ -190,7 +189,7 @@ public enum HostEnvironment {
         environment[blocksEnvKey] != "0"
     }
 
-    /// E14/K2 — the env-bridge key carrying the client's "Auto Progress-Bar Commands" list to the
+    /// The env-bridge key carrying the client's "Auto Progress-Bar Commands" list to the
     /// host's synthetic OSC-9;4 spinner matcher (``AutoProgressMatcher``). Value is NEWLINE-separated
     /// prefix entries (each a whitespace-delimited command prefix, e.g. `git push`). Resolved at THIS ONE
     /// shared site — set IDENTICALLY on host + client (like ``SLOPDESK_FEC_M``): the client setting
@@ -198,7 +197,7 @@ public enum HostEnvironment {
     /// (env read at start). See docs/DECISIONS.md.
     public static let autoProgressCommandsEnvKey = "SLOPDESK_AUTO_PROGRESS_COMMANDS"
 
-    /// Resolves the host's auto-progress prefix list (E14/K2). UNSET ⇒ ``AutoProgressMatcher/builtInPrefixes``
+    /// Resolves the host's auto-progress prefix list. UNSET ⇒ ``AutoProgressMatcher/builtInPrefixes``
     /// (auto-progress ON for known slow commands); SET-but-EMPTY ⇒ `[]` (auto-progress DISABLED, the
     /// "clear the field" behaviour); SET ⇒ the parsed entries. Same ``EnvConfig`` overlay resolution as
     /// the other gates, so a GUI override reaches the matcher; an explicit `environment:` (tests) bypasses
@@ -211,7 +210,7 @@ public enum HostEnvironment {
         AutoProgressMatcher.parsePrefixes(envValue: environment[autoProgressCommandsEnvKey])
     }
 
-    /// E14/K13 — the env-bridge keys gating the agent-control ctl socket's MUTATING verbs. Default idiom =
+    /// The env-bridge keys gating the agent-control ctl socket's MUTATING verbs. Default idiom =
     /// DEFAULT-OFF via `env[key] == "1"` (same as ``agentControlEnvKey``): injecting keys into a live PTY,
     /// spawning / killing a pane, or reaching a `sudo`/`ssh` prompt is not something to enable silently. The
     /// CLIENT toggles (`SettingsKey.ipcAllowSendKeys` / `ipcAllowSensitiveSessions`) are the edit surface,
@@ -244,7 +243,7 @@ public enum HostEnvironment {
         environment[ipcAllowSensitiveEnvKey] == "1"
     }
 
-    /// W10 — whether the opt-in Claude-Code HOOK listener (the `AF_UNIX` socket) is enabled.
+    /// Whether the opt-in Claude-Code HOOK listener (the `AF_UNIX` socket) is enabled.
     /// Default idiom = DEFAULT-OFF via `env[key] == "1"` (only an explicit `"1"` enables):
     /// hooks are the SECOND/opt-in signal (Decision #5), so the socket is bound only when the
     /// operator turned it on (or `integration install claude` set it for them).
@@ -253,7 +252,7 @@ public enum HostEnvironment {
     /// Resolves whether the hook listener socket should be bound. Default-OFF: only `"1"`
     /// enables; anything else (unset, `"0"`) keeps it off (foreground watch still runs).
     ///
-    /// W12: the default `environment` resolves through ``EnvConfig`` — same as
+    /// The default `environment` resolves through ``EnvConfig`` — same as
     /// ``agentDetectEnabled(environment:)`` — so a GUI toggle reaches the gate; an EMPTY overlay is
     /// byte-identical to a `ProcessInfo` read (default-OFF `== "1"` preserved).
     public static func agentHooksEnabled(
@@ -264,7 +263,7 @@ public enum HostEnvironment {
         environment[agentHooksEnvKey] == "1"
     }
 
-    /// E13 WI-3 (ES-E13-3) — whether the host holds a system-sleep assertion while ANY agent is processing
+    /// Whether the host holds a system-sleep assertion while ANY agent is processing
     /// ("Prevent Sleep While Processing"). Default idiom = DEFAULT-OFF via `env[key] == "1"` (like
     /// ``agentHooksEnvKey``): blocking system sleep is not something to enable silently. The CLIENT toggle is
     /// the ``AgentPreferences/preventSleep`` field, shipped via the `video-prefs.json` sidecar (reconnect-
@@ -283,7 +282,7 @@ public enum HostEnvironment {
         environment[agentPreventSleepEnvKey] == "1"
     }
 
-    /// E13 WI-3 — whether the host re-arms a detached agent session on connection recovery ("Resume on
+    /// Whether the host re-arms a detached agent session on connection recovery ("Resume on
     /// Recovery"). Default idiom = DEFAULT-ON via `env[key] != "0"` (like ``agentDetectEnvKey``): re-arming a
     /// recovered session is the helpful default, opt-OUT only. The CLIENT toggle is
     /// ``AgentPreferences/resumeOnRecovery``, sidecar-borne (reconnect-tagged). ACTUATED by ``HostServer``:
@@ -305,8 +304,8 @@ public enum HostEnvironment {
     /// The single `SLOPDESK_*` key resolved through ``EnvConfig`` (ProcessInfo env →
     /// settings overlay) and wrapped back into the `[String: String]` shape these gates index — so the gate's exact
     /// truth table stays at the call site while the key's *source* honours a GUI override. An empty
-    /// overlay ⇒ at most the one `ProcessInfo` entry (or none), so the read is byte-identical to the
-    /// old `ProcessInfo.processInfo.environment` default. `public` only because a `public` function's
+    /// overlay ⇒ at most the one `ProcessInfo` entry (or none), so the read is byte-identical to a plain
+    /// `ProcessInfo.processInfo.environment` read. `public` only because a `public` function's
     /// default-argument expression references it (evaluated at the call site).
     public static func configEnv(_ key: String) -> [String: String] {
         guard let value = EnvConfig.string(key) else { return [:] }

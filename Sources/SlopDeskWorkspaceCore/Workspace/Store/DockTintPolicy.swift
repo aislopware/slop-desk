@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - macOS Dock tile decision (E14/K5/K8 — aggregate progress + red-on-error tint)
+// MARK: - macOS Dock tile decision (aggregate progress + red-on-error tint)
 
 /// Whether the macOS Dock tile shows the red error tint. A tiny pure value (`Equatable`/`Sendable`) so the
 /// whole tint decision crosses the headless → AppKit boundary without an `NSDockTile` — the actuation lives
@@ -12,10 +12,10 @@ public enum DockTint: Equatable, Sendable {
     case error
 }
 
-/// The COMPLETE, AppKit-free decision for what the macOS Dock tile should show (E14/K5/K8) — the red error
+/// The COMPLETE, AppKit-free decision for what the macOS Dock tile should show — the red error
 /// tint, whether to run the progress animation, and the determinate fraction when one is known. Pure +
 /// `Equatable` so the macOS `DockProgressController` re-applies the tile only on a genuine edge, and so the
-/// decision is unit-pinned WITHOUT ever instantiating an `NSDockTile` (the hang-safety rule, ES-E14-3).
+/// decision is unit-pinned WITHOUT ever instantiating an `NSDockTile` (the hang-safety rule).
 public struct DockTileModel: Equatable, Sendable {
     /// The red-on-error tint decision (gated by the `dock-icon-error-badge` toggle).
     public var tint: DockTint
@@ -33,22 +33,22 @@ public struct DockTileModel: Equatable, Sendable {
     }
 
     /// The default tile: no tint, no animation — the CLEAR state the controller restores when the last
-    /// progress/error session ends (the carryover "no stuck red tile" trap).
+    /// progress/error session ends (avoids a stuck red tile).
     public static let inert = Self(tint: .none, animatesProgress: false, determinateFraction: nil)
 
     /// Whether the tile is in its default state (nothing to draw over the app icon).
     public var isInert: Bool { self == .inert }
 }
 
-/// The PURE decision policy for the macOS Dock tile (E14/K5/K8) — split out of the AppKit actuation so the
-/// "error rollup → red, in-progress → animate, clear → inert" rule is unit-pinned headlessly (ES-E14-3 never
+/// The PURE decision policy for the macOS Dock tile — split out of the AppKit actuation so the
+/// "error rollup → red, in-progress → animate, clear → inert" rule is unit-pinned headlessly (never
 /// instantiates an `NSDockTile`). Mirrors the ``NotificationPolicy`` discipline: the macOS
 /// `DockProgressController` owns ONLY the `NSDockTile` drawing + `requestUserAttention` bounce; every decision
 /// it makes is one of these pure functions.
 public enum DockTintPolicy {
     /// The red error-tint decision from the cross-session OSC 9;4 progress rollup: an `.error` rollup tints
-    /// red; an in-progress / indeterminate / cleared rollup leaves it untinted. Pure + AppKit-free (the
-    /// plan-pinned WI-5 function). The `dock-icon-error-badge` toggle + the non-zero-exit signal are folded
+    /// red; an in-progress / indeterminate / cleared rollup leaves it untinted. Pure + AppKit-free. The
+    /// `dock-icon-error-badge` toggle + the non-zero-exit signal are folded
     /// in by ``resolve(progressRollup:anyFailure:animateProgressEnabled:errorBadgeEnabled:)``.
     public static func tint(forRollup rollup: PaneProgress?) -> DockTint {
         if case .error = rollup { return .error }

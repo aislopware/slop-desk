@@ -13,7 +13,7 @@ import Network
 ///   `TCP_NODELAY`: it disables Nagle's algorithm. Nagle coalesces small writes
 ///   and can add **up to ~200 ms** to a single-keystroke echo, which is the single
 ///   highest-impact omission across the surveyed terminal stacks
-///   (`DECISIONS.md` Mạng/transport, [17] §2.1). Mandatory on every PATH 1 socket.
+///   (`DECISIONS.md` Network / transport, [17] §2.1). Mandatory on every PATH 1 socket.
 /// - **TCP keepalive** (`enableKeepalive = true`, with a bounded idle/interval/count)
 ///   so a half-open connection — e.g. an iOS client that vanished when the OS killed
 ///   its TCP a few seconds after backgrounding — is detected rather than wedging a

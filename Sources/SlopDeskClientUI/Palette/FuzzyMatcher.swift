@@ -1,9 +1,9 @@
 // FuzzyMatcher — an in-tree Swift port of fzf's `FuzzyMatchV2` (Smith–Waterman local alignment with
-// fzf's structural bonuses), the ranking engine behind the command palette (`SearchMixer`). It replaces
-// the old `PaletteItem.score(for:)` exact/prefix/contains ladder with the same algorithm fzf uses, so a
-// query like `gc` ranks `getConfig`/`git commit` (camelCase + word-boundary humps) the way muscle memory
-// expects — and, unlike the old `Int`-only scorer, it returns the matched code-point positions so the
-// palette can highlight them.
+// fzf's structural bonuses), the ranking engine behind the command palette (`SearchMixer`). A naive
+// exact/prefix/contains ladder can't rank `gc` against `getConfig`/`git commit` the way muscle memory
+// expects (camelCase + word-boundary humps), so this uses fzf's actual algorithm instead — and, unlike
+// a plain `Int`-only scorer, it returns the matched code-point positions so the palette can highlight
+// them.
 //
 // WHY VENDOR (not a dependency, not a shell-out): the algorithm is small, hot, and carries identity
 // (it must produce ranges over OUR `PaletteItem` strings). Shelling out to the real `fzf` binary is

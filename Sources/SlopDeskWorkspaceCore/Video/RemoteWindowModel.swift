@@ -43,7 +43,7 @@ public final class RemoteWindowModel {
     /// Each call drives the host's per-event input path (`InputInjector.postKey`, plain `CGEvent`) — CGEvent
     /// keys reach `sudo` / SecurityAgent password fields even under Secure Event Input. `(keyCode, down, shift)`.
     ///
-    /// READ-ONLY GATE (E21 WI-3): on a read-only pane the SEAM binds a `nil` sink here (`GuiLeafView` →
+    /// READ-ONLY GATE: on a read-only pane the SEAM binds a `nil` sink here (`GuiLeafView` →
     /// ``RemotePaneContext/videoLeaf(isActive:readOnly:...)``), so paste-as-keystrokes is inert
     /// (``canPasteKeystrokes`` `false`, ``pasteAsKeystrokes(_:)`` no-ops) WITHOUT any model→store coupling —
     /// the model never learns the read-only state; the seam withholds the sink.
@@ -88,7 +88,7 @@ public final class RemoteWindowModel {
         streamFps = fps
     }
 
-    /// CONNECTION STATS (2026-07-04): client-measured video PAYLOAD bitrate (kilobits/sec), pushed ~1 Hz by
+    /// CONNECTION STATS: client-measured video PAYLOAD bitrate (kilobits/sec), pushed ~1 Hz by
     /// ``VideoWindowView``. Unlike ``streamFps`` a ZERO is a real reading (idle-skip = nothing flows), so it
     /// is kept; only a negative (nonsense) value is dropped. `nil` until the first report lands.
     public private(set) var streamKbps: Int?
@@ -99,7 +99,7 @@ public final class RemoteWindowModel {
         streamKbps = kbps
     }
 
-    /// STALL SCRIM (2026-07-03, reconnect-wedge residual): whether the stream is STALLED — the host went
+    /// STALL SCRIM: whether the stream is STALLED — the host went
     /// silent (no frame AND no 1 s host heartbeat) past the stall threshold, so the pane overlays a
     /// "Reconnecting…" scrim over the frozen last frame. Pushed by ``VideoWindowView`` on every flip (sticky
     /// through the client's self-heal rebuild — clears only when traffic actually resumes). Defaults `false`.
@@ -145,7 +145,7 @@ public final class RemoteWindowModel {
     /// Drive one client-viewport ``ViewportCommand`` through the live ``viewportInjector`` (no-op when no sink).
     public func sendViewport(_ command: ViewportCommand) { viewportInjector?(command.rawValue) }
 
-    /// RELEASE STUCK INPUT (C5, the manual escape hatch): a zero-arg closure ``VideoWindowView`` publishes
+    /// RELEASE STUCK INPUT (the manual escape hatch): a zero-arg closure ``VideoWindowView`` publishes
     /// once its session exists (via ``RemotePaneContext/onInputReleaseReady``; cleared `nil` on teardown,
     /// WITHHELD by the seam while read-only — it sends host input). Firing it synthesizes a key-UP for every
     /// held modifier + a mouse-UP for every button through the existing synthetic-release paths, clearing a
@@ -218,7 +218,7 @@ public final class RemoteWindowModel {
         pasteTask = Task { @MainActor [weak self] in
             for stroke in strokes {
                 if Task.isCancelled { return }
-                // READ-ONLY GATE (E21 WI-3): re-read the LIVE sink each iteration, not a value captured at
+                // READ-ONLY GATE: re-read the LIVE sink each iteration, not a value captured at
                 // spawn. If the seam clears `keyInjector` mid-paste (pane switched to read-only), the remaining
                 // strokes are withheld — keystrokes stop reaching the host (incl. a secure field) the instant
                 // the lock lands, not at the end of the paste.
@@ -296,7 +296,7 @@ public final class RemoteWindowModel {
             : nil
     }
 
-    /// Pre-warms the picker list from the LIVE host-window feed (docs/45 Phase 3 consolidation):
+    /// Pre-warms the picker list from the LIVE host-window feed (see docs/45):
     /// the panel renders instantly from ≤2 s-fresh push data instead of waiting a discovery round
     /// trip; the on-appear ``refresh()`` still runs its wire round (freshness re-validated). No-op
     /// once a window is open (the same stale-stamp guard `refresh()` takes) or with nothing to show.
@@ -385,7 +385,7 @@ public final class RemoteWindowModel {
         }
     }
 
-    // MARK: Stale-binding revalidation (PANE REBIND, 2026-06-12)
+    // MARK: Stale-binding revalidation (PANE REBIND)
 
     /// What ``revalidateBinding()`` decided (observability/tests).
     public enum RebindOutcome: Equatable, Sendable {
@@ -406,7 +406,7 @@ public final class RemoteWindowModel {
     public func revalidateBinding() async -> RebindOutcome {
         guard let query = RemoteWindowDiscovery.shared, let wid = parsedWindowID else { return .skipped }
         let t = target()
-        // STALE-VERDICT GUARD (2026-07-10): snapshot liveness BEFORE suspending. The spawn sites cancel
+        // STALE-VERDICT GUARD: snapshot liveness BEFORE suspending. The spawn sites cancel
         // the outer task on teardown, but cancellation is cooperative and the discovery closure has no
         // checkpoint — so a close() (or re-pick/re-open) racing the await must be caught HERE, after the
         // query resumes, or the verdict below would act on a pane that no longer exists.

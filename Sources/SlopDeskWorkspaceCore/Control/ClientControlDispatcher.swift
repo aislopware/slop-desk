@@ -1,11 +1,11 @@
 import Foundation
 import SlopDeskAgentDetect
 
-// E20 WI-2 — Client control dispatcher.
+// Client control dispatcher.
 //
 // The PURE verb dispatcher for the client control socket. Given a parsed request triple
 // `(id, method, params)` and a ``ClientControlBackend``, it runs the verb and returns the NDJSON
-// response object. The thin AF_UNIX shim (`ClientControlServer`, WI-3, compiled-only) reads request
+// response object. The thin AF_UNIX shim (`ClientControlServer`, compiled-only) reads request
 // lines, calls ``handleLine(_:)``, and writes the reply — mirroring the host's
 // `AgentControlAcceptor`/`AgentControlHandler` split so the dispatch logic is unit-testable against a
 // FAKE backend with NO socket and NO GUI (hang-safety rule).

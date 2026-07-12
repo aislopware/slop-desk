@@ -66,7 +66,7 @@ public final class InputInjector: @unchecked Sendable {
     private let raiseQueue = DispatchQueue(label: "slopdesk.window-raise", qos: .userInitiated)
 
     /// Whether the full AX raise chain has run at least once for this session (the CLICK-latency
-    /// fix). Now `raiseQueue`-confined (the raise moved off the main actor), so it needs no lock.
+    /// fix). `raiseQueue`-confined (the raise chain runs off the main actor), so it needs no lock.
     private var hasRaisedTargetOnce = false
 
     /// When the last raise actually ran (the CLICK-latency throttle). One click fires SEVERAL raise
@@ -109,16 +109,16 @@ public final class InputInjector: @unchecked Sendable {
         return !(v == "0" || v?.lowercased() == "false")
     }()
 
-    /// SCROLL RESAMPLE output rate (`SLOPDESK_SCROLL_RESAMPLE_HZ`, default **0 = OFF**). HW-measured
-    /// (2026-06-19): Chromium/Electron renders INJECTED smooth-scroll at a rate that climbs with the
+    /// SCROLL RESAMPLE output rate (`SLOPDESK_SCROLL_RESAMPLE_HZ`, default **0 = OFF**). HW-measured:
+    /// Chromium/Electron renders INJECTED smooth-scroll at a rate that climbs with the
     /// injection rate, only hitting the display's 60 fps near ~250 Hz (4× vsync); the wire delivers
     /// scroll at the client trackpad rate (~60–120 Hz, burstier under jitter), so a captured VS Code
-    /// scroll renders ~20–35 fps ("giật"). When > 0, the bursty wire scroll is resampled
+    /// scroll renders a visibly juddery ~20–35 fps. When > 0, the bursty wire scroll is resampled
     /// (``ScrollResampler``) to a STEADY `Hz` stream via a timer, driving the source app's native
     /// 60 fps smooth-scroll — fixing it at the source, not client-side reprojection. `0` keeps the
-    /// legacy direct-post path (byte-identical). Set to `250` to enable. Clamped [60, 1000].
+    /// direct-post path (byte-identical). Set to `250` to enable. Clamped [60, 1000].
     private static let scrollResampleHz: Int = {
-        // W12: resolve through `EnvConfig` (ProcessInfo env → settings overlay → nil) so a GUI setting
+        // Resolve through `EnvConfig` (ProcessInfo env → settings overlay → nil) so a GUI setting
         // can drive it; an EMPTY overlay is byte-identical to the raw read. The parse + 0-default +
         // [60, 1000] clamp idiom is kept VERBATIM (this site clamps, not validate-then-default).
         guard let s = EnvConfig.string("SLOPDESK_SCROLL_RESAMPLE_HZ"), let v = Int(s), v > 0
@@ -183,7 +183,7 @@ public final class InputInjector: @unchecked Sendable {
     /// Raises + focuses the target window so it is frontmost before posting events
     /// (doc 18 §A). Combines AX raise (reorders even when full app activation is
     /// throttled on macOS 14+) with `activate()` (doc 05 §4 caveat). NONISOLATED: the AX chain
-    /// now runs on ``raiseQueue`` (off the main actor), so callers no longer wrap it in a main hop.
+    /// runs on ``raiseQueue`` (off the main actor), so callers never need to wrap it in a main hop.
     public func raiseTargetWindow() {
         // OFF-MAIN: hop the whole AX chain onto ``raiseQueue`` and return IMMEDIATELY — running it
         // here instead of the caller's `Task { @MainActor }` keeps the MAIN ACTOR free for the
@@ -225,8 +225,8 @@ public final class InputInjector: @unchecked Sendable {
         // of the framework default (~6s) — best-effort, a missed raise just lands the click on the
         // already-frontmost window.
         AXUIElementSetMessagingTimeout(appEl, 0.08)
-        // FAST PATH: reuse the cached window element — skips the O(app-windows) AX iteration that
-        // dominated the raise cost (the source of the multi-second main stalls before this went off-main).
+        // FAST PATH: reuse the cached window element — skips the O(app-windows) AX iteration, which
+        // dominates the raise cost and is why this chain runs off the main actor at all.
         if let cached = cachedAXWindow {
             AXUIElementPerformAction(cached, kAXRaiseAction as CFString)
             AXUIElementSetAttributeValue(appEl, kAXMainWindowAttribute as CFString, cached)
@@ -332,9 +332,9 @@ public final class InputInjector: @unchecked Sendable {
         let pt = target(normalized)
         // Absolute HOVER move: warp the cursor, then post `.mouseMoved` so apps reading deltas see
         // it (doc 05 §1). A button-held drag is NEVER inferred here — the client sends an explicit
-        // `.mouseDrag` (see ``postMouseDrag``), so a move is always a pure hover. Fix for GAP D1:
-        // inferring "button held?" from host state let a lost `mouseUp` strand that state, turning
-        // every later hover into a phantom `.leftMouseDragged` (runaway selection). Stateless = no phantom drag.
+        // `.mouseDrag` (see ``postMouseDrag``), so a move is always a pure hover. Inferring "button
+        // held?" from host state would let a lost `mouseUp` strand that state, turning every later
+        // hover into a phantom `.leftMouseDragged` (runaway selection). Stateless = no phantom drag.
         warp(to: pt)
         if let event = CGEvent(
             mouseEventSource: eventSource,
@@ -350,7 +350,7 @@ public final class InputInjector: @unchecked Sendable {
     /// CLIENT reported the button held (its view fired `mouseDragged`, distinct from `mouseMoved`), so
     /// the host never tracks held state. macOS selection/drag engines consume `*MouseDragged` between
     /// mouseDown/mouseUp; a bare `.mouseMoved` mid-gesture is ignored and can collapse a selection
-    /// (broke drag-select, "bôi không được"). Statelessness is also wire-reorder-safe: over UDP a
+    /// (a stray hover during drag-select would leave the user unable to select). Statelessness is also wire-reorder-safe: over UDP a
     /// drag can arrive before its `mouseDown`; the app ignores a dragged with no active session, then
     /// anchors on the down and extends to the final drag — so the range stays correct even if early
     /// drag samples are lost or reordered.
@@ -544,12 +544,12 @@ public final class InputInjector: @unchecked Sendable {
     }
 
     private func postKey(keyCode: UInt16, down: Bool, modifiers: InputModifiers, tag _: UInt32) {
-        // A posted `CGEvent` key reaches even a SecurityAgent/coreauthd secure field: HW-proven
-        // (2026-06-15, Tahoe 26.5.1) a `CGEvent(.cghidEventTap)` keystroke fills the SecurityAgent
-        // password field and authenticates while `IsSecureEventInputEnabled()` is true — Secure Event
-        // Input blocks event-tap interception, NOT trusted HID-tap injection. (Why the former DriverKit
-        // virtual-HID keyboard was removed: CGEvent already reaches every dialog the host can surface;
-        // virtual-HID would only matter at the login/lock screen, which the host can't capture anyway.)
+        // A posted `CGEvent` key reaches even a SecurityAgent/coreauthd secure field: HW-proven on
+        // Tahoe 26.5.1, a `CGEvent(.cghidEventTap)` keystroke fills the SecurityAgent password field
+        // and authenticates while `IsSecureEventInputEnabled()` is true — Secure Event Input blocks
+        // event-tap interception, NOT trusted HID-tap injection. A DriverKit virtual-HID keyboard
+        // would add nothing: CGEvent already reaches every dialog the host can surface, and virtual-HID
+        // would only matter at the login/lock screen, which the host can't capture anyway.
         guard let event = CGEvent(keyboardEventSource: eventSource, virtualKey: CGKeyCode(keyCode), keyDown: down)
         else { return }
         event.flags = cgFlags(modifiers)

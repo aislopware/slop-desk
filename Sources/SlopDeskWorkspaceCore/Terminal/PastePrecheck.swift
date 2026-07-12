@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - E8 / ES-E8-3: embedder-side paste pre-check (the reachability fix)
+// MARK: - Embedder-side paste pre-check (the reachability fix)
 
 /// What the terminal embedder should do when ⌘V / right-click-Paste / the context-menu Paste is invoked,
 /// decided BEFORE the clipboard text is handed to libghostty.
@@ -17,7 +17,7 @@ public enum PastePrecheckDecision: Equatable, Sendable {
 
 /// The PURE, headless decision behind **Paste Protection** at the EMBEDDER's paste entry point.
 ///
-/// ## Why this exists (the reachability bug — ES-E8-3)
+/// ## Why this exists (the reachability bug)
 /// libghostty only invokes its `confirm_read_clipboard_cb` (the site that ran ``PasteSafetyAnalyzer``)
 /// when its OWN `input.paste.isSafe` returns false — and `isSafe` flags ONLY a payload containing `\n`
 /// (or a literal bracketed-paste end marker `\x1b[201~`). That gate is **NARROWER** than the four paste

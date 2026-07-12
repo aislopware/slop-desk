@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// PURE static-window forced-IDR decision logic (VIDEO-HOST-1). Decides whether the
+/// PURE static-window forced-IDR decision logic. Decides whether the
 /// frameQueue heartbeat timer should re-encode the cached buffer as a forced IDR, given an
 /// injected clock + what was last encoded. No SCStream, no VideoToolbox, no Dispatch — safe
 /// under `swift test --filter StaticIDRDeciderTests`.
@@ -142,7 +142,7 @@ final class StaticIDRDeciderTests: XCTestCase {
         )
     }
 
-    // 11. SHARPNESS (2026-06-10): the FIRST crisp after motion stops fires as soon as the quiet
+    // 11. SHARPNESS: the FIRST crisp after motion stops fires as soon as the quiet
     //     window clears — it does NOT wait a full heartbeat from the last REAL frame. Production
     //     shape: heartbeat 2.5, quietWindow 1.0 ⇒ crisp ~1 s after the scroll ends (Parsec-like),
     //     then steady-state synthetics one heartbeat apart.

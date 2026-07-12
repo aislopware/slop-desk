@@ -1,12 +1,11 @@
 import Foundation
 
-// C6 BUG A (2026-07-03): WindowServer can TERMINATE the virtual display out from under the daemon
-// (sleep/wake, GPU reset, fast-user-switch, display reconfig). Before this fix the daemon only
-// restored the parked window FRAMES — every live session whose window was parked on the VD kept
-// its SCStream pointed at the dead display: a silent client freeze with no bye and no reconnect.
-// These PURE policies (no AX, no SCK, no CG IPC — headlessly unit-tested) decide the recovery; the
-// side effects (bye send, session stop, window restore, VD re-create) stay thin in
-// `slopdesk-videohostd`.
+// WindowServer can TERMINATE the virtual display out from under the daemon (sleep/wake, GPU
+// reset, fast-user-switch, display reconfig). Restoring only the parked window FRAMES is not
+// enough — every live session whose window was parked on the VD would keep its SCStream pointed
+// at the dead display: a silent client freeze with no bye and no reconnect. These PURE policies
+// (no AX, no SCK, no CG IPC — headlessly unit-tested) decide the recovery; the side effects (bye
+// send, session stop, window restore, VD re-create) stay thin in `slopdesk-videohostd`.
 
 /// The "which sessions must be disconnected" decision for a VD termination. A session is affected
 /// iff its lane PARKED a window on the dead VD (the parking ledger's channel bindings) AND it is

@@ -2,14 +2,14 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// The busy-dot REVEAL THRESHOLD (2026-07-11): the plain ``TabBadgeKind/commandBusy`` dot shows only
+/// The busy-dot REVEAL THRESHOLD: the plain ``TabBadgeKind/commandBusy`` dot shows only
 /// once a foreground command has been running at least `SettingsKey.tabBadgeBusyDelaySecondsValue`
 /// (default 3 s, user-configurable, 0 = immediate) — a fast `ls`/`cd` must never flash the rail.
 ///
 /// ``WorkspaceStore/paneShowsBusyDot(_:now:)`` is the ONE thresholded `isBusy` input every badge
 /// resolution site feeds to `TabBadgeGating.resolve` (the rail's `chrome(...)`,
 /// `unseenAttentionPanes`, the control backend's `tab list`) — the resolver itself stays pure and
-/// clock-free. The reveal repaint rides the FIX-1 one-shot: ``WorkspaceStore/handleCommandStarted(id:at:)``
+/// clock-free. The reveal repaint rides a one-shot: ``WorkspaceStore/handleCommandStarted(id:at:)``
 /// arms `flashDecayScheduler(delay)` → `completionFlashTick` bump, the same idiom as the
 /// completion-flash decay.
 ///
@@ -128,7 +128,7 @@ final class BusyDotThresholdTests: XCTestCase {
         XCTAssertEqual(SettingsKey.tabBadgeBusyDelaySecondsValue, 0)
     }
 
-    // MARK: - the reveal repaint (FIX-1 one-shot)
+    // MARK: - the reveal repaint (one-shot)
 
     /// `handleCommandStarted` arms the one-shot at the CONFIGURED delay, and firing it bumps
     /// `completionFlashTick` — `paneShowsBusyDot` reads the wall clock, not an `@Observable`

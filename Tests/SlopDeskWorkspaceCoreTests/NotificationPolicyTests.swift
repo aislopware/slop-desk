@@ -2,10 +2,10 @@ import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E14/K9: the PURE notification-delivery decision — the Notify-While-Foreground tri-state gate + the
+/// The PURE notification-delivery decision — the Notify-While-Foreground tri-state gate + the
 /// per-event toggles. `UN`-free + headless (the macOS poster is the thin actuator), so the whole truth
-/// table is asserted against an INDEPENDENT expectation, never the output's own derivation. This is the
-/// carryover "the foreground gate must ACTUALLY gate" requirement, made a pure unit.
+/// table is asserted against an INDEPENDENT expectation, never the output's own derivation. Guarantees
+/// the foreground gate ACTUALLY gates, as a pure unit.
 final class NotificationPolicyTests: XCTestCase {
     /// The shipped baseline (`NotificationSettings()`) matches the notification-setting.png defaults.
     /// Revert-to-confirm-fail: flipping any default below breaks this pin.
@@ -85,7 +85,7 @@ final class NotificationPolicyTests: XCTestCase {
 
     // MARK: - Explicit-notification classification (watch-finish marker vs generic OSC)
 
-    /// M8-watch-notify-toggle: an `slopdesk watch` finish banner carries the private WatchNotificationMarker
+    /// An `slopdesk watch` finish banner carries the private WatchNotificationMarker
     /// sentinel in its title; it must route to `.watchFinish` (gated by Notify on Watch Finish) with the marker
     /// STRIPPED — NOT to `.explicitOSC` (the master Allow App Notifications switch). Revert-to-confirm-fail: the
     /// pre-fix dispatch hard-coded `event: .explicitOSC`, so Notify-on-Watch-Finish=OFF had NO effect and the

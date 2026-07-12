@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskHost
 
-/// WF4: the zsh shell-integration shim (generated ZDOTDIR) that forces a post-resize prompt
+/// The zsh shell-integration shim (generated ZDOTDIR) that forces a post-resize prompt
 /// reprint. Deterministic + HostServer-free: pure string assembly + temp-dir file writes.
 final class ShellIntegrationTests: XCTestCase {
     private func makeTempDir() -> URL {
@@ -304,7 +304,7 @@ final class ShellIntegrationTests: XCTestCase {
         )
     }
 
-    /// REGRESSION (live-host bug, 2026-06-07): macOS's system `/etc/zshrc` runs between our shim's
+    /// macOS's system `/etc/zshrc` runs between our shim's
     /// `.zprofile` and `.zshrc` with `ZDOTDIR` STILL pointed at the throwaway shim dir, and sets
     /// `HISTFILE=${ZDOTDIR:-$HOME}/.zsh_history` — so Ctrl-R history recall + zsh-autosuggestions
     /// (both read `$HISTFILE`) silently aimed at an always-empty per-session file. The shim's `.zshrc`
@@ -332,7 +332,7 @@ final class ShellIntegrationTests: XCTestCase {
         )
     }
 
-    // MARK: OSC 133 shell integration (WF11)
+    // MARK: OSC 133 shell integration
 
     func testZshrcInstallsOSC133HooksViaAddZshHook() throws {
         let dir = try XCTUnwrap(ShellIntegration.writeShimDirectory(into: makeTempDir()))
@@ -358,7 +358,7 @@ final class ShellIntegrationTests: XCTestCase {
         XCTAssertTrue(zshrc.contains("133;B"), "precmd must emit OSC 133;B (end of prompt / start of input)")
     }
 
-    /// Bug-A fix: `preexec` must report the EXACT command line via `133;E;%s` (from `$1`) BEFORE `C`, so the
+    /// `preexec` must report the EXACT command line via `133;E;%s` (from `$1`) BEFORE `C`, so the
     /// host does not reconstruct commandText from the redraw-polluted echo. Pins the escape helper is defined,
     /// invoked with `$1`, and that the E mark's payload is the escaped command (`%s`), emitted before C.
     func testZshrcPreexecEmitsExplicitCommandLineMark() throws {
@@ -592,7 +592,7 @@ final class ShellIntegrationTests: XCTestCase {
         }
     }
 
-    /// Bug 5 (XDG layout): the common `~/.zshenv` that `export ZDOTDIR="$HOME/.config/zsh"` reassigns
+    /// The common XDG-layout `~/.zshenv` that `export ZDOTDIR="$HOME/.config/zsh"` reassigns
     /// the real dir. Each shim file that sources a user startup file must RE-CAPTURE a reassigned
     /// `ZDOTDIR` back into `SLOPDESK_REAL_ZDOTDIR` (exported, so the NEXT shim file sees it) — before it
     /// re-asserts `ZDOTDIR` to the shim. Without this, `.zprofile`/`.zshrc`/`.zlogin` forward to the stale

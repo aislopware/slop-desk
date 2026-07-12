@@ -2,7 +2,7 @@
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// WF-7 (#9) PURE LTR-probe verdict mapping. The probe's VTCompressionSession is HW-gated and never
+/// PURE LTR-probe verdict mapping. The probe's VTCompressionSession is HW-gated and never
 /// instantiated here (it HANGS headlessly — same rule as the rest of `VideoEncoder`); this covers
 /// ONLY the pure `interpretLTRProbe` status→verdict logic that turns the captured OSStatus values
 /// into the single-word verdict logged on the Mac Studio host.
@@ -40,7 +40,7 @@ final class LTRProbeVerdictTests: XCTestCase {
     }
 
     // API accepted the documented form but NO LTR ack-token was emitted → ambiguous, NOT supported.
-    // (Guards against over-reporting "supported" on a no-op property accept — the WF-7 audit finding.)
+    // (Guards against over-reporting "supported" on a no-op property accept.)
     func testBooleanAcceptedButNoAckTokenIsAmbiguous() {
         XCTAssertEqual(
             VideoEncoder.interpretLTRProbe(

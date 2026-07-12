@@ -1,10 +1,10 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E8 WI-2 (I11): the clipboard-write "Ask" gate decision engine. libghostty enforces `deny` / `allow`
-/// itself and DELEGATES `ask` to the embedder via `write_clipboard_cb`'s `confirm` flag; the old callback
-/// ignored that flag and wrote unconditionally, so "Ask" silently behaved like "Allow". These pin the pure
-/// decision the callback now consults — confirm honored, empty payload dropped.
+/// The clipboard-write "Ask" gate decision engine. libghostty enforces `deny` / `allow`
+/// itself and DELEGATES `ask` to the embedder via `write_clipboard_cb`'s `confirm` flag; a callback that
+/// ignores that flag and writes unconditionally makes "Ask" silently behave like "Allow". These pin the pure
+/// decision the callback consults — confirm honored, empty payload dropped.
 final class ClipboardWritePolicyTests: XCTestCase {
     /// `clipboard-write = ask` (libghostty `confirm == true`) on a real payload ⇒ require confirmation.
     func testConfirmRequestedWithTextAsksForConfirmation() {

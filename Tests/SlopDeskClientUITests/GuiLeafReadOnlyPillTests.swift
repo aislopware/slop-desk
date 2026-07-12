@@ -2,22 +2,22 @@ import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
-/// E21 WI-3 (F3) — the `🔒 READ ONLY ×` pill mounts on a read-only `.remoteGUI` video pane.
+/// The `🔒 READ ONLY ×` pill mounts on a read-only `.remoteGUI` video pane.
 ///
-/// Carry-overs §2.3 / plan WI-3 require the E17 read-only pill on a read-only `.remoteGUI` pane so a locked
-/// remote window is a VISUAL peer of a read-only terminal leaf (the input gate already withholds keys/clicks,
-/// but on un-fixed code there was ZERO in-pane feedback and no `×` exit affordance). ``GuiLeafView`` now gates
-/// the pill through the PURE ``GuiLeafView/showReadOnlyPill(staticMirror:isReadOnly:)`` — this suite pins that
-/// gate (the body's mount predicate) plus the `×` release path through the store's convergent set.
+/// A locked remote window needs to be a VISUAL peer of a read-only terminal leaf (the input gate already
+/// withholds keys/clicks, but without the pill there is ZERO in-pane feedback and no `×` exit affordance).
+/// ``GuiLeafView`` gates the pill through the PURE ``GuiLeafView/showReadOnlyPill(staticMirror:isReadOnly:)``
+/// — this suite pins that gate (the body's mount predicate) plus the `×` release path through the store's
+/// convergent set.
 ///
 /// Hang-safety (CLAUDE.md rule #6): NO `SCStream`/`VTCompression`/`VTDecompression`/Metal/`NSWindow`/`WKWebView`
 /// is instantiated — only the pure static gate and the store's value-level read-only ops are exercised.
 @MainActor
 final class GuiLeafReadOnlyPillTests: XCTestCase {
     /// The gate is the AND of "is read-only" with "not the static-mirror snapshot path": it lights only for a
-    /// live, locked pane. On un-fixed code ``GuiLeafView`` had no pill gate at all (the helper did not exist),
-    /// so this is the revert-to-confirm-fail driver. The cases are hand-enumerated (not derived from the gate's
-    /// own expression), so the test is not tautological.
+    /// live, locked pane. This pins the gate itself so a regression that drops or inverts it fails here first.
+    /// The cases are hand-enumerated (not derived from the gate's own expression), so the test is not
+    /// tautological.
     func testReadOnlyPillGateLightsOnlyWhenLockedAndLive() {
         XCTAssertTrue(
             GuiLeafView.showReadOnlyPill(staticMirror: false, isReadOnly: true),

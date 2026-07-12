@@ -1,14 +1,14 @@
 import SlopDeskVideoProtocol
 
-/// DELIVERY-KEYED recovery-IDR admission policy (component 2, 2026-06-11) — replaces the
-/// capturer's sent-keyed F1 cooldown (`SLOPDESK_MIN_IDR_MS`, 500 ms) as the single authority on
-/// whether a client recovery request may force a real IDR.
+/// DELIVERY-KEYED recovery-IDR admission policy — replaces the capturer's sent-keyed F1 cooldown
+/// (`SLOPDESK_MIN_IDR_MS`, 500 ms) as the single authority on whether a client recovery request
+/// may force a real IDR.
 ///
-/// THE BUG THIS FIXES (the ranked-#1 hitch): the F1 gate keyed the cooldown on keyframe SEND
-/// time. When BOTH kfDup copies of a recovery IDR were lost (burst), the client's 2·RTT
-/// escalation re-requested every ~2·RTT — and EVERY request landing inside the 500 ms window was
-/// suppressed (the host kept shipping P-frames the broken client could not use). Worst case
-/// ~600 ms of freeze, C-dominated and RTT-independent. Delivery-keying removes the C term: a
+/// THE BUG THIS FIXES: keying the cooldown on keyframe SEND time can't distinguish send from
+/// delivery. If BOTH kfDup copies of a recovery IDR are lost (burst), the client's 2·RTT
+/// escalation re-requests every ~2·RTT — and EVERY request landing inside the 500 ms window gets
+/// suppressed (the host keeps shipping P-frames the broken client can't use). Worst case
+/// ~600 ms of freeze, cooldown-dominated and RTT-independent. Delivery-keying removes that term: a
 /// request that carries `lastDecodedFrameID < newest sent keyframe` past the in-flight grace
 /// PROVES that keyframe is a casualty ⇒ grant immediately (the casualty bypass).
 ///
@@ -29,10 +29,10 @@ import SlopDeskVideoProtocol
 /// (`UInt32.distanceWrapped` comes from SlopDeskVideoProtocol). Headlessly unit-testable like
 /// ``LiveCongestionController``.
 ///
-/// NATIVE SWIFT, the single source of truth (the Rust core is being retired). It is a `final
-/// class` (not the former value struct) so callers can hold and mutate it by reference — the
-/// stateful token bucket must NOT be value-copied by mistake (a `let`→`var` ripple would otherwise
-/// be needed at every owner). `@unchecked Sendable` is sound because the single owner
+/// NATIVE SWIFT, the single source of truth. `final class`, not a value struct: a struct would be
+/// value-copied by mistake at every owner (forcing a `let`→`var` ripple to keep mutations visible),
+/// so callers instead hold and mutate this by reference — the token bucket is stateful and must
+/// stay a single shared instance. `@unchecked Sendable` is sound because the single owner
 /// (``SlopDeskVideoHostSession``) only touches it on the session actor (and the tests /
 /// loopback-validate from one thread), so no two threads race the mutable state. ``Config`` stays a
 /// pure Swift value type — env resolution (`SLOPDESK_IDR_*`) stays Swift-side.

@@ -3,12 +3,12 @@ import XCTest
 @testable import SlopDeskHost
 @testable import SlopDeskTransport
 
-/// Detach/reattach OUTPUT retention + gate rebalance (post-audit replay-core fixes).
+/// Detach/reattach OUTPUT retention + gate rebalance.
 ///
 /// While a session is DETACHED the PTY read loop keeps running and appends chunks to the
 /// out-FIFO, but the output drain is cancelled — so those bytes are NEVER sequenced into the
 /// ReplayBuffer (seq assignment happens at drain time). `rebindRelay` therefore must NOT clear
-/// the out-FIFO (the old C3 "bytes already in ReplayBuffer" premise was false for exactly these
+/// the out-FIFO (the "bytes already in ReplayBuffer" premise is false for exactly these
 /// bytes): the restarted drain must ship them on the NEW data sub-channel, and — because every
 /// chunk was accounted into the ``PausableQueueGate`` at enqueue time — sending them is also
 /// what rebalances the gate so a read loop paused by the detached-era backlog RESUMES.
@@ -64,7 +64,7 @@ final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
         }
     }
 
-    /// A lock-guarded one-shot recording box (the finding-1 ordering probe's landing spot).
+    /// A lock-guarded one-shot recording box (the control-wake ordering probe's landing spot).
     private final class ObservedBox: @unchecked Sendable {
         private let lock = NSLock()
         private var stored: Bool?
@@ -194,7 +194,7 @@ final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
     /// while away" budget: a burst far past the attached bound must NOT pause the read loop
     /// while detached (the old behaviour stalled a still-working agent at 64 KiB + one kernel
     /// buffer). rebindRelay restores the attached bound — the backlog re-pauses the loop until
-    /// the restarted drain ships it, which is exactly the C3 rebalance the sibling tests pin.
+    /// the restarted drain ships it, which is exactly the rebalance the sibling tests pin.
     func testDetachRaisesQueueBudgetSoAwayOutputDoesNotStallAgent() async {
         let rec = PauseRec()
         let session = makeSession()
@@ -225,7 +225,7 @@ final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
         XCTAssertFalse(rec.isPaused, "gate rebalances back below the restored attached bound")
     }
 
-    // MARK: - Finding 1 (2026-07-11) — control wake must be installed before the output drain runs
+    // MARK: - Control wake must be installed before the output drain runs
 
     /// The restarted output drain's first act on a detached backlog is `takeMergedFrame()` →
     /// `enqueueControl(sniffed control)`. `detach()` nil'd `controlWakeContinuation`, so if the
@@ -291,7 +291,7 @@ final class MuxChannelSessionDetachReattachOutputTests: XCTestCase {
         )
     }
 
-    // MARK: - Audit #3 — rebindRelay must NOT register a second PTY exit waiter
+    // MARK: - rebindRelay must NOT register a second PTY exit waiter
 
     /// `PTYProcess.waitForExit()` parks a plain CheckedContinuation with NO cancellation
     /// plumbing: cancelling the task that awaits it never retires the registration. The old

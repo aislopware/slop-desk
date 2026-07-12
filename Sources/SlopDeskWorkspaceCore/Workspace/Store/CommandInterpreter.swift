@@ -196,8 +196,8 @@ public final class CommandInterpreter {
 
     /// Every default chord bound to `command`, in a DETERMINISTIC display order (fewest modifiers first,
     /// ties broken lexicographically). A command may carry more than one chord (⌘N and the ⌘T alias both
-    /// make a terminal pane); the old `first { $0.value == command }` reverse lookup was dictionary-order
-    /// nondeterministic once that held — every shortcut-display site (menu items, palette hints) goes
+    /// make a terminal pane), so a naive `first { $0.value == command }` reverse lookup would be
+    /// dictionary-order nondeterministic — every shortcut-display site (menu items, palette hints) goes
     /// through this instead. `[0]` is the canonical chord.
     public static func defaultChords(for command: WorkspaceCommand) -> [KeyChord] {
         defaultBindings
@@ -244,8 +244,8 @@ public extension CommandInterpreter {
         // New pane. ⌘N = macOS-native "new" (the File menu replaces New-Window, so ⌘N makes a pane not
         // an unwanted second window) creating the user's DEFAULT kind (Settings ▸ Canvas, default
         // Terminal). ⌘T is the muscle-memory alias that always makes a Terminal (the freed "new tab"
-        // chord). ⌥⌘N makes a Remote Window. (W11: no Claude Code pane kind any more — a `claude` in any
-        // terminal is auto-detected — so ⇧⌘N is freed.)
+        // chord). ⌥⌘N makes a Remote Window. There is no dedicated Claude Code pane kind — a `claude`
+        // process is auto-detected in any terminal — so ⇧⌘N stays unbound.
         map[KeyChord(character: "n", [.command])] = .newPaneDefault
         map[KeyChord(character: "t", [.command])] = .newPane(.terminal)
         map[KeyChord(character: "n", [.command, .option])] = .newPane(.remoteGUI)
@@ -312,8 +312,8 @@ public extension CommandInterpreter {
         // Rename the focused pane: ⌘R.
         map[KeyChord(character: "r", [.command])] = .renamePane
 
-        // Reconnect the focused pane: ⇧⌘R. The primary failure-recovery command was palette-only; a chord
-        // makes it learnable and surfaces its glyph in the menu + palette.
+        // Reconnect the focused pane: ⇧⌘R — the primary failure-recovery command, bound so it's learnable
+        // as a chord and surfaces its glyph in the menu + palette (not palette-only).
         map[KeyChord(character: "r", [.command, .shift])] = .reconnectPane
 
         // Viewport bookmarks: ⇧⌘n saves the current viewport into slot n, ⌘n jumps back — the
@@ -389,10 +389,10 @@ public final class PrefixStateMachine {
 
     /// Resolve a COMPLETED multi-key prefix sequence (the full `[prefix, follow-up]` ``KeySequence``) to its
     /// action, or `nil` if no sequence binding matches. Injected (a lookup over
-    /// ``WorkspaceBindingRegistry/resolvedSequenceTable``); `nil` when unset (the machine then resolves the
-    /// follow-up via ``resolveAfterPrefix`` alone — the pre-B1 single-chord behaviour). Consulted FIRST while
-    /// armed so a user-defined sequence whose tail key is NOT a standalone binding still fires (WS-B goal).
-    /// Keeping it here keeps ALL prefix transition logic in this machine.
+    /// ``WorkspaceBindingRegistry/resolvedSequenceTable``); `nil` when unset, in which case the machine
+    /// falls back to resolving the follow-up via ``resolveAfterPrefix`` alone (plain single-chord
+    /// resolution). Consulted FIRST while armed so a user-defined sequence whose tail key is NOT a
+    /// standalone binding still fires. Keeping it here keeps ALL prefix transition logic in this machine.
     public var resolveSequenceAfterPrefix: ((KeySequence) -> WorkspaceAction?)?
 
     /// Internal state: idle, or armed at an absolute time (the escape-timeout anchor).

@@ -18,10 +18,10 @@ import SlopDeskWorkspaceCore
 /// filter matches one the source is registered against.
 ///
 /// This is the verbs-only ⌘⇧P taxonomy — DISTINCT from the ⌘⇧O ``OpenQuicklyFilter`` pills (Open-Quickly is
-/// its own E11 surface). Only ``actions`` is wired by a live source today (``ActionsPaletteSource`` /
+/// its own surface). Only ``actions`` is wired by a live source today (``ActionsPaletteSource`` /
 /// ``CategoryActionsSource``); ``tabs`` is wired by ``TabsPaletteSource`` for ad-hoc mounts. The remaining
 /// domains (``sessions`` / ``files`` / ``conversations`` / ``repos``) are RETAINED as the documented Warp
-/// taxonomy but are no longer surfaced by any source — their empty-stub sources were removed in E11 / WI-5
+/// taxonomy but are no longer surfaced by any source — their empty-stub sources were removed
 /// once the multi-source jump-to moved to ``OpenQuicklyFilter`` (they were never reachable under ⌘⇧P).
 public enum QueryFilter: String, CaseIterable, Sendable, Hashable {
     case actions = "Actions"
@@ -69,7 +69,7 @@ public enum PaletteCategory: String, CaseIterable, Sendable, Hashable {
 
     /// The fixed display order: Working Directory leads (it OWNS the cwd badge in the view, per the
     /// screenshot), then the remaining verb groups. An empty category is skipped by the mixer / zero-state, so it
-    /// never renders an empty header. (Shell carries the E17 "Read Only" verb.)
+    /// never renders an empty header. (Shell carries the "Read Only" verb.)
     public static let commandOrder: [Self] = [
         .workingDirectory, .window, .pane, .tab, .view, .shell, .settings,
     ]
@@ -94,7 +94,7 @@ public enum PaletteAction: Sendable {
     case openConnect
     /// Open the keyboard cheat sheet overlay (handled by the overlay coordinator).
     case openCheatSheet
-    /// Open the Remote-Window picker (L6 / W1 — handled by the overlay coordinator; a pick opens a
+    /// Open the Remote-Window picker (handled by the overlay coordinator; a pick opens a
     /// `.remoteGUI` pane streaming the chosen host window).
     case openRemotePicker
     /// Toggle the left navigator / Tabs panel — routed by the overlay coordinator to the LIVE
@@ -106,11 +106,11 @@ public enum PaletteAction: Sendable {
     /// ``WorkspaceChromeState`` `hostRailCollapsed` flag, the SAME one the ⌘⇧R chord + the rail's own
     /// toggle button drive, so the run path, the chord, and the ✓ stay in lockstep.
     case toggleHostWindows
-    /// E19 WI-4: toggle "Pin Window" (keep the window floating above all other apps).
+    /// Toggle "Pin Window" (keep the window floating above all other apps).
     /// Routed by the overlay coordinator to the injected ``OverlayCoordinator/togglePinWindow`` closure (bound
     /// to the SAME live ``WorkspaceChromeState`` `pinned` flag the menu Button + the `NSWindow.level` glue
     /// read), so the palette row's ✓ gutter (resolved in ``OverlayHostView/toggledState(for:)``) tracks the
-    /// real pinned state. A checkable toggle (ES-E2-3); a documented no-op on iOS (no window level).
+    /// real pinned state. A checkable toggle; a documented no-op on iOS (no window level).
     case togglePinWindow
     /// Close the active window. Routed by the overlay coordinator to the injected
     /// ``OverlayCoordinator/closeWindow`` closure (bound on macOS to `NSWindow.performClose(nil)` → the native
@@ -119,7 +119,7 @@ public enum PaletteAction: Sendable {
     /// the row PARKS the confirmation rather than trapping — the SAME fallback the ⌘⇧W route arm uses, never a
     /// dead control.
     case closeWindow
-    /// Theme catalog verb (Batch 4 catalog-completeness): the palette "Switch Theme" row — switch the active local
+    /// The palette "Switch Theme" row — switch the active local
     /// theme. Routed by the overlay coordinator to the injected ``OverlayCoordinator/switchTheme`` closure
     /// (bound app-side to ``PreferencesStore`` — it advances the primary slot through the built-in themes, the
     /// SAME live `appearance.theme` Settings → Appearance edits, so the chrome retints + the terminal cells

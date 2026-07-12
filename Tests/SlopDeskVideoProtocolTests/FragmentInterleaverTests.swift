@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskVideoProtocol
 
-/// PURE transmission-interleave tests (2026-06-08 flicker fix). Proves the column-major reorder turns
+/// PURE transmission-interleave tests. Proves the column-major reorder turns
 /// an adjacent-loss BURST — which single-loss XOR FEC cannot recover when fragments are sent in
 /// consecutive group order — into spread loss that IS recoverable, with NO wire/protocol change
 /// (the reassembler reconstructs identically regardless of send order).

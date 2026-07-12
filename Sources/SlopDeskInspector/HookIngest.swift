@@ -9,7 +9,7 @@ import Foundation
 public enum HookPayload: Sendable, Equatable {
     /// `SessionStart` → `transcript_path` + `session_id` + `model` (doc 16). This is
     /// how the inspector discovers which JSONL file to tail — we do **not** reconstruct
-    /// the path from `cwd` (doc 16: "Lấy path từ field `transcript_path`").
+    /// the path from `cwd` (doc 16 specifies taking the path from the `transcript_path` field).
     case sessionStart(SessionInfo)
 
     /// `PostToolUse` → full tool name + input + (optional) result, sub-second, before

@@ -1,14 +1,14 @@
 import XCTest
 @testable import SlopDeskVideoProtocol
 
-/// E15 WI-3 / ES-E15-1 — the PURE dual-slot follow-OS resolver. Headless (no `NSApp`): `osIsDark` is injected,
+/// The PURE dual-slot follow-OS resolver. Headless (no `NSApp`): `osIsDark` is injected,
 /// so every toggle × OS-appearance combination is exercised deterministically.
 final class ThemeResolutionTests: XCTestCase {
     // MARK: Single / primary slot (useSeparateDarkTheme OFF or unset)
 
     /// The all-`nil` default appearance (FRESH INSTALL) FOLLOWS the OS — the picker presents an unset light slot
     /// as "System", so the resolver must render the light default in light mode and the dark default in dark
-    /// mode, NOT a fixed dark theme regardless of OS appearance (ES-E15). REVERT-TO-CONFIRM-FAIL: the old
+    /// mode, NOT a fixed dark theme regardless of OS appearance. The old
     /// `builtinID(for: nil)` returning a fixed `defaultDarkID` fails the light-mode case below.
     func testDefaultAppearanceFollowsOSForBothAppearances() {
         let def = AppearancePreferences()

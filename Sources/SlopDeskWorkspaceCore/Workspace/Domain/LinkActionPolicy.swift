@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - E10 WI-6 (ES-E10-2): pure link gesture/menu → action mapping
+// MARK: - Pure link gesture/menu → action mapping
 
 /// The user gesture on a detected link the policy resolves. A plain (un-modified) click is included so
 /// the "click does nothing — prevents accidental opens" rule is encoded HERE (not as an implicit
@@ -41,9 +41,8 @@ public struct LinkActionConfig: Equatable, Sendable {
 /// - ``changeDirectoryPTY``: inject `cd <path>` as **verbatim UTF-8** down the pane's PTY (Change
 ///   Directory Here) — never via `SendKeysParser` (memory: re-run/cd is verbatim UTF-8).
 /// - ``openHost``: ask the HOST to open the path in its best handler (the file lives on the host Mac, so
-///   `NSWorkspace.open` must run host-side — delivered by the E10 WI-7 metadata RPC verb).
-/// - ``revealHost``: ask the HOST to reveal the path in Finder (host-side `activateFileViewerSelecting`,
-///   WI-7).
+///   `NSWorkspace.open` must run host-side — delivered by the metadata RPC verb).
+/// - ``revealHost``: ask the HOST to reveal the path in Finder (host-side `activateFileViewerSelecting`).
 /// - ``openURLClient``: open the URL on the CLIENT (a URL / IP is host-agnostic — `NSWorkspace.open` /
 ///   `UIApplication.open`, or the in-app browser pane per config).
 /// - ``nothing``: no-op (a plain click, or a config that disables the gesture).
@@ -65,7 +64,7 @@ public enum LinkAction: Equatable, Sendable {
 /// | URL  | nothing | open URL (client) / copy / nothing | Copy URL (client) |
 ///
 /// Splitting it out as a pure enum keeps the click-actions table unit-testable headless (``LinkActionPolicyTests``,
-/// revert-to-confirm-fail) and lets BOTH the ⌘click/⌘⇧click renderer path (WI-6) and the right-click
+/// revert-to-confirm-fail) and lets BOTH the ⌘click/⌘⇧click renderer path and the right-click
 /// context menu (``TerminalContextMenu/LinkItem``) resolve through the SAME logic — no parallel switch
 /// that could drift. The renderer is the thin actuator: it feeds the ``DetectedLink`` under the pointer
 /// + the live config and dispatches the returned action.
@@ -73,7 +72,7 @@ public enum LinkAction: Equatable, Sendable {
 /// A path's actuation path uses ``DetectedLink/resolvedAbsolute`` when the detector could resolve it
 /// purely (an absolute path, a relative path joined to an absolute cwd, a `file://` path) and falls back
 /// to the raw matched text otherwise (a `~`-path / an unresolved relative path) — the HOST expands the
-/// remainder (`~`/cwd) and validates before acting (WI-7), so the client never reads the disk.
+/// remainder (`~`/cwd) and validates before acting, so the client never reads the disk.
 public enum LinkActionPolicy {
     /// Resolve a left-click gesture on `link` under `config`.
     public static func action(for gesture: LinkGesture, link: DetectedLink, config: LinkActionConfig) -> LinkAction {
@@ -92,9 +91,10 @@ public enum LinkActionPolicy {
     /// (⌘⇧J) and the Jump-To row default (↩). These always OPEN (a path on the host, a URL on the
     /// client) — they are NOT governed by `link-cmd-click`, which only configures the MOUSE ⌘click gesture.
     /// This is exactly the menu-item ``TerminalContextMenu/LinkItem/open`` resolution; naming it gives BOTH
-    /// keyboard actuators one config-INDEPENDENT entry so neither can drift back onto the configurable gesture
-    /// (the E10 review bug: a `link-cmd-click = copy/nothing` made ⌘⇧J / ↩ silently copy / no-op). Pinned by
-    /// ``LinkActionPolicyTests`` (revert-to-confirm-fail: it stays `.openHost`/`.openURLClient` under any config).
+    /// keyboard actuators one config-INDEPENDENT entry so neither can drift back onto the configurable gesture —
+    /// wiring ⌘⇧J / ↩ through `link-cmd-click` directly would let `link-cmd-click = copy/nothing` silently turn
+    /// them into copy / no-op. Pinned by ``LinkActionPolicyTests`` (revert-to-confirm-fail: it stays
+    /// `.openHost`/`.openURLClient` under any config).
     public static func explicitOpenAction(link: DetectedLink) -> LinkAction {
         action(for: .open, link: link)
     }
@@ -151,7 +151,7 @@ public enum LinkActionPolicy {
     /// the disk.
     static func effectivePath(_ link: DetectedLink) -> String { link.resolvedAbsolute ?? link.raw }
 
-    // MARK: - "Change Directory Here" actuation idiom (E10 review fix — cd a FILE → its parent folder)
+    // MARK: - "Change Directory Here" actuation idiom (cd a FILE → its parent folder)
 
     /// The verbatim-UTF-8 shell line that points the focused PTY at `path`, falling back to the path's PARENT
     /// folder when `path` is a FILE: cd the focused terminal to the path (**or its parent folder**).
@@ -161,7 +161,7 @@ public enum LinkActionPolicy {
     /// first `cd` succeeds and the fallback never runs. Both operands are single-quote-escaped so spaces / `$`
     /// / `;` land literally. ALL THREE actuators (TerminalLeafView, JumpToView, GhosttyTerminalView) emit this
     /// one string (`Data(line.utf8)`) so the idiom cannot drift; NEVER via `SendKeysParser` (cd is verbatim).
-    /// Pinned by ``LinkActionPolicyTests`` (revert-to-confirm-fail vs the old bare `cd '<file>'`).
+    /// Pinned by ``LinkActionPolicyTests`` (revert-to-confirm-fail: a bare `cd '<file>'` must not regress).
     public static func changeDirectoryCommandLine(_ path: String) -> String {
         "cd " + shellSingleQuoted(path) + " 2>/dev/null || cd " + shellSingleQuoted(posixParent(path)) + "\n"
     }

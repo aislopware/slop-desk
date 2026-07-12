@@ -1,10 +1,10 @@
-// E20 WI-3 — Client control socket server (AF_UNIX, NDJSON).
+// Client control socket server (AF_UNIX, NDJSON).
 //
 // The CLIENT-side runtime control surface the new `slopdesk` CLI talks to (windows/tabs/panes, badges,
 // jump/view/edit, config, theme/font/keybind dumps, pane capture/send-keys, agent status). It MIRRORS the
 // host's `AgentControlAcceptor` (`SlopDeskHost/AgentControlListener.swift`): an `AF_UNIX` stream socket
 // bound at a stable path, one background thread per accepted connection reading NDJSON request lines
-// (`{"id":…,"method":…,"params":{…}}`), each dispatched to the PURE ``ClientControlDispatcher`` (WI-2) and
+// (`{"id":…,"method":…,"params":{…}}`), each dispatched to the PURE ``ClientControlDispatcher`` and
 // answered with a response line. It reuses the SAME line protocol the host socket / `SlopDeskCtlCore`
 // speak — only the verb set differs (GUI ops vs host PTY ops).
 //
@@ -15,7 +15,7 @@
 // request hops to the main actor for the dispatch decision and writes the reply back off-main. This server
 // is **compiled + code-reviewed only** — it is NEVER instantiated in a test (no real socket in a unit test,
 // the same rule that excludes `AgentControlAcceptor`); the pure dispatcher is tested separately with a fake
-// backend (WI-2).
+// backend.
 //
 // ## Validate-then-drop
 // A request line that is non-UTF-8, over ``maxRequestBytes``, blank, or structurally malformed receives an

@@ -1,6 +1,6 @@
 // HostWindowDropAffordance — drag a HOST WINDOW ROW off the right rail and drop it INTO the split
-// canvas (docs/45 round 3, user request 2026-07-12). While the drag hovers the workspace, the SAME
-// zone language as the pane-move affordance previews where the window will land:
+// canvas. While the drag hovers the workspace, the SAME zone language as the pane-move affordance
+// previews where the window will land:
 //   • an EDGE band of a pane        → SPLIT: the window opens as a new column/row beside that pane;
 //   • the container's outer gutter  → DOCK: a full-span column/row on that whole edge;
 //   • anywhere else (a pane's centre, a divider gap) → NEW TAB (the rail click's verb).
@@ -58,8 +58,8 @@ final class HostWindowDragSession {
 
 /// The rail row's DRAG SOURCE. NOT SwiftUI `.onDrag`: the row shell's tap gesture claims the
 /// mouse-down before SwiftUI's drag interaction reaches its threshold, so `.onDrag` on (or around)
-/// a `SlateListRow` never starts a session (verified live 2026-07-12 — zero lift). This overlay
-/// owns the decision at the EVENT level instead: left mouse-down enters a tracking loop — ≥4pt of
+/// a `SlateListRow` never starts a session. This overlay owns the decision at the EVENT level
+/// instead: left mouse-down enters a tracking loop — ≥4pt of
 /// movement begins an `NSDraggingSession` (in-app only, `sourceOperationMaskFor` returns `[]`
 /// outside the app); mouse-up first IS the row's click verb (`onAct`, ⌘ = duplicate). Right-clicks
 /// and scroll are not intercepted (no overrides — they walk the responder chain to the SwiftUI
@@ -235,9 +235,9 @@ struct HostWindowDropDrag: Equatable {
 /// The rail-drag DROP DESTINATION `SplitContainer` mounts over the whole canvas. NOT SwiftUI
 /// `.onDrop`: SwiftUI's AppKit dragging-destination view registers only `public.data`/`public.item`
 /// and AppKit matches `registeredDraggedTypes` by EXACT STRING, so a custom-typed pasteboard never
-/// reaches the hosting view — and even advertised as `public.data` the internal routing never called
-/// `validateDrop` (both verified live 2026-07-12). This NSView registers for the custom type itself
-/// and implements `NSDraggingDestination` directly — the destination mirror of the AppKit source.
+/// reaches the hosting view — and even advertised as `public.data` the internal routing never calls
+/// `validateDrop`. This NSView registers for the custom type itself and implements
+/// `NSDraggingDestination` directly — the destination mirror of the AppKit source.
 ///
 /// Hit-testing: AppKit resolves the drag target via `hitTest` from the front, so this view sits
 /// TOPMOST over the canvas but returns `nil` from `hitTest` UNLESS a rail drag is in flight

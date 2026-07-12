@@ -117,7 +117,7 @@ public final class ConnectionRegistry {
                 initialCwd: initialCwd,
             )
         } catch {
-            // IDENTITY-GATE the cleanup (R8 #1, mirrors `release()` / `sharedConnection`): only touch
+            // IDENTITY-GATE the cleanup (mirrors `release()` / `sharedConnection`): only touch
             // entries[key] if it is STILL our connection. A dead-eviction can rebuild entries[key] under
             // a DIFFERENT connection while `openChannel` is suspended; our `pendingAcquires` reservation
             // went with the OLD (removed) entry, so decrementing the FRESH one underflows it. If rebuilt
@@ -139,7 +139,7 @@ public final class ConnectionRegistry {
             }
             throw error
         }
-        // IDENTITY-GATE the success-path mutations too (R8 #1): if a concurrent dead-eviction rebuilt
+        // IDENTITY-GATE the success-path mutations too: if a concurrent dead-eviction rebuilt
         // entries[key] under a different connection while `openChannel` was suspended, `connection` is the
         // OLD corpse — the eviction already `close()`d it (finishing these sub-channels) and discarded our
         // `pendingAcquires` reservation with the old entry. Decrementing/inserting into the FRESH entry
@@ -159,7 +159,7 @@ public final class ConnectionRegistry {
     /// (the `building` pool) so they never each construct a connection and orphan one.
     private func sharedConnection(host: String, port: UInt16, key: String) async throws -> MuxNWConnection {
         if let existing = entries[key] {
-            // Evict a DEAD pooled connection ([5]): a link drop (TCP RST / NetBird flap) leaves the
+            // Evict a DEAD pooled connection: a link drop (TCP RST / NetBird flap) leaves the
             // shared `MuxNWConnection` unusable but NOT removed from the pool (a surviving sibling
             // channel kept the entry), so a reconnecting pane would otherwise re-acquire the corpse and
             // its `openChannel` would fail forever. If the pooled connection reports `isDead`, drop the

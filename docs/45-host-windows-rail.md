@@ -51,7 +51,7 @@ The right sidebar that mirrors the host machine's desktop. Synthesized from thre
 9. **Frontmost-on-host cue:** kept, as `.medium` title weight only (quietest possible cue, real supervision info); focus-only changes never burst the feed and never reorder.
 10. **Peek trigger:** Space / context menu only at launch; hover-dwell deferred pending hardware evaluation. Peek card mounts via OverlayHostView (in-column placement is physically impossible at 240 pt).
 11. **Blob transport:** ONE shared `blobChunk` reply type + one shared reassembler for icons and previews (two request types, since icon requests must carry the bundleID string).
-12. **Hover trailing slot:** the streamed tab ordinal only — the hover verb hint (`OPEN` / `FOCUS · 3`) shipped and was then REMOVED on user ruling (2026-07-12: "không có tác dụng gì lắm"); the tooltip carries the click's meaning. Dimensions stay in tooltip and peek caption (240 pt row can't carry both).
+12. **Hover trailing slot:** the streamed tab ordinal only — the hover verb hint (`OPEN` / `FOCUS · 3`) shipped and was then REMOVED on the user's 2026-07-12 ruling that it added nothing useful; the tooltip carries the click's meaning. Dimensions stay in tooltip and peek caption (240 pt row can't carry both).
 13. **Hostname header / footer:** cut. Header is `HOST`; the left rail's footer already owns connection truth. No second footer, no counts duplication.
 14. **Minimized rows:** listed (completeness goal #1), dimmed in place — never re-sorted to the bottom, no `MIN` suffix text; tooltip disambiguates minimized / other-Space / hidden-app.
 15. **Raise-on-Host:** cut from scope entirely (type-9 `focusWindow` is session-bound; a new verb + lane plumbing isn't worth it yet).

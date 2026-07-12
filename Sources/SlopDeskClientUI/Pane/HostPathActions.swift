@@ -1,5 +1,5 @@
-// HostPathActions — the CLIENT actuator behind the host open / reveal path RPC (E10 WI-7 / ES-E10-2 /
-// ES-E10-6). A detected PATH lives on the HOST Mac, so ⌘click "Open" / ⌘⇧click "Reveal in Finder" (and the
+// HostPathActions — the CLIENT actuator behind the host open / reveal path RPC. A detected PATH lives on
+// the HOST Mac, so ⌘click "Open" / ⌘⇧click "Reveal in Finder" (and the
 // right-click items, Jump-To, and Hint-to-open/reveal) must round-trip to the host — not the client. The
 // renderer / overlays resolve ``LinkActionPolicy`` to ``LinkAction/openHost(_:)`` / ``LinkAction/revealHost(_:)``
 // and fire the model's `onRequestOpenHostPath` / `onRequestRevealHostPath` closures; THIS is where those
@@ -13,7 +13,7 @@
 import Foundation
 import SlopDeskWorkspaceCore
 
-/// The client-side actuator for the host path-action verbs (E10 WI-7). All members `@MainActor` (the
+/// The client-side actuator for the host path-action verbs. All members `@MainActor` (the
 /// view-model layer's isolation); `MetadataClient` is `@MainActor`.
 @MainActor
 enum HostPathActions {

@@ -89,7 +89,7 @@ final class HookIngestTests: XCTestCase {
         XCTAssertNil(HookParser.parse(Data("garbage".utf8)))
     }
 
-    // MARK: - W8: Notification / Stop / SessionEnd / UserPromptSubmit / PreToolUse
+    // MARK: - Notification / Stop / SessionEnd / UserPromptSubmit / PreToolUse
 
     func testNotificationPermissionHookClassifiesAsPermission() {
         let hook = HookParser.parse(Fixtures.data("hook-notification-permission.json"))

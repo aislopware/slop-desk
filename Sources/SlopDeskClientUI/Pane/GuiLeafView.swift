@@ -1,14 +1,14 @@
-// GuiLeafView — content of a video (PATH 2) pane leaf (WS-A / A1–A4); the video parallel of
+// GuiLeafView — content of a video (PATH 2) pane leaf; the video parallel of
 // ``TerminalLeafView``. Mounts the ``VideoWindowFactory`` seam for a `.remoteGUI` / `.systemDialog` pane,
 // drives the cap-enforced activation lifecycle, else shows the in-pane picker / gated placeholder.
 //
 // THREE display states, decided by the PURE ``RemoteGUIDisplay/resolve(admitted:configured:hasFreeSlot:)``
 // (headless-tested in `LiveVideoCapTests`):
 //   • `.live`      → model has an active descriptor → mount `VideoWindowFactory.make(descriptor, context)`.
-//   • `.entryForm` → no active stream and either unconfigured OR a cap slot free → the in-pane picker (A3).
+//   • `.entryForm` → no active stream and either unconfigured OR a cap slot free → the in-pane picker.
 //   • `.gated`     → configured but the 2-stream `liveVideoCap` is saturated → the cap placeholder.
 //
-// CAP LIFECYCLE (A2): `.task` calls `store.activateVideo(paneID)` (NOT `live.setVideoActive` — that bypasses
+// CAP LIFECYCLE: `.task` calls `store.activateVideo(paneID)` (NOT `live.setVideoActive` — that bypasses
 // the cap + `tearingDownVideo` accounting); `.onDisappear` calls `store.deactivateVideo(paneID)`. Re-attempts
 // admission when a sibling frees a slot via the `.task` keyed on `store.videoPromotionGeneration`.
 //
@@ -30,7 +30,7 @@ struct GuiLeafView: View {
     /// The live session backing this pane (its ``RemoteWindowModel``); `nil` shows only the placeholder.
     let live: LivePaneSession?
     /// Workspace focus → forwarded as `RemotePaneContext.isActive` so only the focused pane consumes
-    /// pointer/keyboard input (A4); a click on a background pane activates it via `onActivate`.
+    /// pointer/keyboard input; a click on a background pane activates it via `onActivate`.
     let isFocused: Bool
     /// EAGER/STATIC render path for headless ImageRenderer snapshots — renders the placeholder, never a
     /// live decode (no Metal/VT in an `ImageRenderer`).
@@ -41,7 +41,7 @@ struct GuiLeafView: View {
     let paneID: PaneID
     /// Whether this video pane is ON-SCREEN (tab active AND not zoom-hidden). Under the keep-all-mounted
     /// invariant a hidden tab's leaf is NEVER unmounted, so `onDisappear` does not fire on a tab switch — this
-    /// flag drives the activation lifecycle (A2/R-lifecycle #2): a hidden pane releases its `liveVideoCap` slot
+    /// flag drives the activation lifecycle: a hidden pane releases its `liveVideoCap` slot
     /// + stops the UDP/VT/Metal pipeline, a visible one (re)requests a slot. Defaults `true` for static-mirror / preview.
     var isVisible: Bool = true
     /// "LOCK POSITION" button state — mirrored locally so the footer lock icon reflects on/off. The actual
@@ -71,15 +71,16 @@ struct GuiLeafView: View {
                 // Metal-hosting view is sized to this PADDED frame, so its pointer→host coordinate mapping
                 // (relative to view bounds) stays consistent.
                 .padding(Slate.Metric.space2)
-            // WINDOW-PANE CONTROL BAR (issue 5): window CONTROLS — resize (moved out of pane CONTENT into the
-            // footer), lock-position (freeze edge-hover auto-pan), zoom in / out / reset — NOT a status strip.
-            // Host + connection state live ONCE in the sidebar header, not duplicated here. Only while live.
+            // WINDOW-PANE CONTROL BAR: window CONTROLS, kept out of the pane CONTENT and in the
+            // footer — resize, lock-position (freeze edge-hover auto-pan), zoom in / out / reset — NOT a
+            // status strip. Host + connection state live ONCE in the sidebar header, not duplicated here.
+            // Only while live.
             if showControlBar {
                 GuiPaneControlBar(model: model, store: store, panLocked: $panLocked)
             }
         }
         .background(NativePaneColor.terminalBackground)
-        // PASTE-AS-KEYSTROKES RESULT BANNER (C7): the model's transient "typed N, skipped M" feedback (set only
+        // PASTE-AS-KEYSTROKES RESULT BANNER: the model's transient "typed N, skipped M" feedback (set only
         // when some clipboard chars had no US-QWERTY mapping and were dropped) so the user learns a paste was
         // incomplete. Tap to dismiss; auto-clears on a timer. Never on the static-mirror path. Flat bottom pill.
         .overlay(alignment: .bottom) {
@@ -94,7 +95,7 @@ struct GuiLeafView: View {
             }
         }
         .animation(Slate.Anim.reveal, value: model?.pasteFeedback)
-        // E21 WI-3 (F3): the `🔒 READ ONLY ×` pill (``ReadOnlyPill``) so a read-only `.remoteGUI` /
+        // The `🔒 READ ONLY ×` pill (``ReadOnlyPill``) so a read-only `.remoteGUI` /
         // `.systemDialog` pane is a VISUAL peer of a read-only terminal leaf (same top-trailing overlay/reveal as
         // ``TerminalLeafView``). Without it a locked remote window silently swallows clicks/keys with ZERO
         // feedback and no exit affordance. A video pane has no ``TerminalViewModel`` (no `exitReadOnly()`), so
@@ -109,7 +110,7 @@ struct GuiLeafView: View {
             }
         }
         .animation(Slate.Anim.reveal, value: store.isReadOnly(for: paneID))
-        // CAP ADMISSION (A2/R-lifecycle #2): request a slot when ON-SCREEN, on appear AND whenever a sibling
+        // CAP ADMISSION: request a slot when ON-SCREEN, on appear AND whenever a sibling
         // frees one (`videoPromotionGeneration` bumps); `.task(id:)` cancels+restarts on either. Gated on
         // `isVisible` so a background-tab / zoom-hidden pane does NOT claim a `liveVideoCap` slot (else the
         // launch-time race where hidden tabs win the cap over the visible pane). NEVER calls `live.setVideoActive`
@@ -119,7 +120,7 @@ struct GuiLeafView: View {
             guard !staticMirror, model != nil, isVisible else { return }
             _ = store.activateVideo(paneID)
         }
-        // VISIBILITY-DRIVEN LIFECYCLE (R-lifecycle #2): under keep-all-mounted a hidden tab's leaf is never
+        // VISIBILITY-DRIVEN LIFECYCLE: under keep-all-mounted a hidden tab's leaf is never
         // unmounted, so `onDisappear` does NOT fire on a tab switch — driving (de)activation off `isVisible`
         // frees the slot + stops the decode pipeline off-screen and re-activates on return. (Zoom collapse too.)
         .onChange(of: isVisible) { _, nowVisible in
@@ -139,7 +140,7 @@ struct GuiLeafView: View {
         "\(live?.id.hashValue ?? 0):\(store.videoPromotionGeneration):\(isVisible ? 1 : 0)"
     }
 
-    /// E21 WI-3 (F3): whether the `🔒 READ ONLY ×` pill mounts — pane is read-only
+    /// Whether the `🔒 READ ONLY ×` pill mounts — pane is read-only
     /// (``WorkspaceStore/isReadOnly(for:)``, the convergent set) AND NOT the static-mirror path (an
     /// `ImageRenderer` capture renders no live chrome). PURE so it is headless-testable without instantiating
     /// the view (hang-safety: no SCStream/VT/Metal/NSWindow). Mirrors ``TerminalLeafView``'s gate minus the
@@ -165,8 +166,8 @@ struct GuiLeafView: View {
                 // The live surface fills its (padded) leaf rect: the Metal-hosting view is sized to that rect,
                 // so its tracking area + pointer→host coordinate mapping (relative to view bounds) stays correct.
                 // The stream `.fit`-letterboxes inside; the remote window keeps its own size (no host-follow
-                // resize — see `SlopDeskVideoClientSession.windowFollowsPane`). Resize moved from an in-content
-                // corner grip to the bottom CONTROL bar (`GuiPaneControlBar`).
+                // resize — see `SlopDeskVideoClientSession.windowFollowsPane`). Resize lives in the bottom
+                // CONTROL bar (`GuiPaneControlBar`), not an in-content corner grip.
                 liveSurface
             case .entryForm:
                 if let model {
@@ -184,7 +185,7 @@ struct GuiLeafView: View {
     /// descriptor (host + UDP ports from the app target) at `open()` time, so we pass `model.active` straight
     /// through. `onStreamNativeSize: nil` letterboxes a TILED leaf via `.fit`.
     ///
-    /// READ-ONLY (E21 WI-3): the per-render context via ``RemotePaneContext/videoLeaf(...)`` from the pane's
+    /// READ-ONLY: the per-render context via ``RemotePaneContext/videoLeaf(...)`` from the pane's
     /// convergent read-only state (`store.isReadOnly(for:)`) — `inputEnabled = !readOnly` gates the app-target
     /// client's pointer/keycode forwarding, and the helper CLEARS the paste-as-keystrokes sink
     /// (`model.keyInjector = nil`) while read-only, so a locked window accepts no input via either path. The
@@ -201,10 +202,10 @@ struct GuiLeafView: View {
                     onStreamNativeSize: nil,
                     bindKeyInjector: { [weak model] sink in model?.keyInjector = sink },
                     bindResizeInjector: { [weak model] sink in model?.resizeInjector = sink },
-                    // VIEWPORT CONTROLS (issue 5): zoom / pan-lock — pure CLIENT compositor ops, so the seam
+                    // VIEWPORT CONTROLS: zoom / pan-lock — pure CLIENT compositor ops, so the seam
                     // binds this sink even on a read-only pane (unlike the host-affecting key/resize sinks).
                     bindViewportInjector: { [weak model] sink in model?.viewportInjector = sink },
-                    // RELEASE STUCK INPUT (C5): the palette's escape hatch — host input, so the seam binds
+                    // RELEASE STUCK INPUT: the palette's escape hatch — host input, so the seam binds
                     // nil while read-only (exactly like the key sink).
                     bindInputRelease: { [weak model] sink in model?.inputReleaseInjector = sink },
                     // HOST-WINDOW RESIZE: the live view pushes the window's current + max point sizes so the
@@ -220,9 +221,9 @@ struct GuiLeafView: View {
                     // STALL SCRIM: the live view pushes the stream's stall flips (host silent ↔ traffic
                     // resumed) so the overlay below shows/clears "Reconnecting…" (informational).
                     onStreamStall: { [weak model] stalled in model?.noteStreamStalled(stalled) },
-                    // TERMINAL REJECTION (audit 2026-07-11): the host refused the session (window gone /
-                    // version skew) — tear down to the picker with an error, NEVER the auto-rebuild loop
-                    // (a rejection re-hello would retry a doomed request forever).
+                    // TERMINAL REJECTION: the host refused the session (window gone / version skew) — tear
+                    // down to the picker with an error, NEVER the auto-rebuild loop (a rejection re-hello
+                    // would retry a doomed request forever).
                     onSessionRejected: { [weak model] in model?.noteSessionRejected() },
                 ),
             )
@@ -264,9 +265,9 @@ struct GuiLeafView: View {
     }
 }
 
-/// STALL CAPTION (MERIDIAN L1/L2, replacing the 2026-07-03 dim-veil scrim): the drained frame IS the "not
-/// live" signal, so this caption carries only what the material can't — that recovery is running and how OLD
-/// the frozen frame is ("RECONNECTING · 12S", ticking). Instrument voice on a small dark chip pinned
+/// STALL CAPTION (MERIDIAN L1/L2): a dim-veil scrim over the frame is avoided because the drained frame IS the
+/// "not live" signal, so this caption carries only what the material can't — that recovery is running and how
+/// OLD the frozen frame is ("RECONNECTING · 12S", ticking). Instrument voice on a small dark chip pinned
 /// bottom-leading; no card, no veil, deliberately no button (recovery is automatic underneath).
 private struct StreamStallCaption: View {
     /// When the stall was detected (``RemoteWindowModel/streamStalledAt``) — the age counter's epoch.
@@ -298,15 +299,15 @@ private struct StreamStallCaption: View {
     }
 }
 
-/// The bottom CONTROL bar for a LIVE window pane (issue 5): the window controls that used to clutter the pane
-/// CONTENT — "Resize…" (numeric size popover, replacing the old DRAG grip), a "lock position" toggle (freezes
+/// The bottom CONTROL bar for a LIVE window pane: window controls kept OUT of the pane CONTENT —
+/// "Resize…" (a numeric size popover rather than an in-content DRAG grip), a "lock position" toggle (freezes
 /// edge-hover auto-pan), and zoom out / reset / in (client-side compositor zoom of the actual-size viewport). A
 /// flat strip along the pane bottom, a single top hairline (never a floating card). Resize is gated on a live
 /// host-resize sink (``RemoteWindowModel/canResizeWindow``, withheld while read-only); zoom/lock on a viewport
 /// sink (``RemoteWindowModel/canControlViewport``, live even while read-only — pure client ops).
 private struct GuiPaneControlBar: View {
     let model: RemoteWindowModel?
-    /// The store — supplies the LOCAL clipboard (current + the recent-clips ring) for the paste menu (C7).
+    /// The store — supplies the LOCAL clipboard (current + the recent-clips ring) for the paste menu.
     let store: WorkspaceStore
     /// Mirrors the pane's "lock position" state so the lock icon reflects on/off (the freeze itself lives in
     /// the video view; this toggles 1:1 with the `.toggleLock` command).
@@ -317,7 +318,7 @@ private struct GuiPaneControlBar: View {
 
     var body: some View {
         HStack(spacing: Slate.Metric.space1) {
-            // PASTE (C7): local-clipboard affordances — "Paste as Keystrokes" (types the CURRENT local clipboard
+            // PASTE: local-clipboard affordances — "Paste as Keystrokes" (types the CURRENT local clipboard
             // into the host window) + a "Clipboard Ring" submenu of recent clips (masked preview for secrets). A
             // footer MENU, not a surface context menu, which would steal the secondary-click the pane forwards to
             // the host window. Also via ⌥⌘V + the command palette.
@@ -443,7 +444,7 @@ private struct RemoteWindowSizePopover: View {
     }
 }
 
-/// PASTE-AS-KEYSTROKES menu (C7): the footer affordance making ``RemoteWindowModel/pasteAsKeystrokes(_:)`` +
+/// PASTE-AS-KEYSTROKES menu: the footer affordance making ``RemoteWindowModel/pasteAsKeystrokes(_:)`` +
 /// the store's ``WorkspaceStore/clipboardRing`` REACHABLE in a remote-GUI pane — a plain ⌘V there forwards a
 /// raw Cmd+V that pastes the HOST clipboard, so local text (e.g. a password for the auto-spawned SecurityAgent
 /// dialog pane) could never reach a remote field. A native ``Menu``: "Paste as Keystrokes" types the CURRENT
@@ -499,7 +500,7 @@ private struct GuiPastePlateMenu: View {
     }
 }
 
-/// The transient "typed N, skipped M" result banner (C7) for ``RemoteWindowModel/pasteAsKeystrokes(_:)`` —
+/// The transient "typed N, skipped M" result banner for ``RemoteWindowModel/pasteAsKeystrokes(_:)`` —
 /// shown only when some clipboard chars had no US-QWERTY mapping and were dropped, so the user learns a paste
 /// was incomplete. Tap to dismiss (also auto-clears on the model's timer). A flat bottom pill.
 private struct PasteFeedbackBanner: View {

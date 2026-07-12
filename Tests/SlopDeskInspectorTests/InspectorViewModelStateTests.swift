@@ -1,8 +1,8 @@
 import XCTest
 @testable import SlopDeskInspector
 
-/// Pins the UI-state projections added for the inspector empty-state / feed-death banner /
-/// unknown-line disclosure (UI/UX pass): the placeholder gate, the live/ended/failed feed liveness,
+/// Pins the UI-state projections for the inspector empty-state / feed-death banner /
+/// unknown-line disclosure: the placeholder gate, the live/ended/failed feed liveness,
 /// and the bounded unknown-line buffer that keeps the true monotonic count.
 @MainActor
 final class InspectorViewModelStateTests: XCTestCase {
@@ -24,7 +24,7 @@ final class InspectorViewModelStateTests: XCTestCase {
     }
 
     /// `hasRenderableActivity` must agree with what `subagentTree` actually renders: a single malformed
-    /// subagent (empty id, or self-parent cycle) is FILTERED out of the tree (R11), so it must NOT
+    /// subagent (empty id, or self-parent cycle) is FILTERED out of the tree, so it must NOT
     /// suppress the placeholder — otherwise the panel shows a blank void (the exact regression the
     /// empty-state feature exists to prevent). `subagentTree.isEmpty` ⟺ `hasRenderableActivity == false`.
     func testMalformedSubagentDoesNotSuppressPlaceholder() {
@@ -74,7 +74,7 @@ final class InspectorViewModelStateTests: XCTestCase {
         XCTAssertEqual(InspectorViewModel().feedState, .live, "a model that never consumed is live (no stale banner)")
     }
 
-    // MARK: - Resume full-replay idempotency (R12 #4)
+    // MARK: - Resume full-replay idempotency
 
     /// An iOS pause/resume reuses the SAME model and re-subscribes `fromSeq: 0`, so the host replays
     /// its ENTIRE history again. Cards/subagents self-dedupe by id, but the monotonic accumulators
@@ -108,7 +108,7 @@ final class InspectorViewModelStateTests: XCTestCase {
         XCTAssertEqual(vm.toolCards.count, 1, "cards still dedupe by id (upsert)")
     }
 
-    // MARK: - Bounded card / message growth (R12 #7)
+    // MARK: - Bounded card / message growth
 
     /// `toolCards` drop-oldest at the cap, and the lookup index is REBUILT after eviction so a later
     /// upsert of a surviving id still resolves in place (no duplicate append) — the part that breaks if
@@ -156,7 +156,7 @@ final class InspectorViewModelStateTests: XCTestCase {
         XCTAssertEqual(after.first(where: { $0.id == survivor })?.output, "done", "updated in place (index rebuilt)")
     }
 
-    /// UI/UX pass-3 #9: the drop-oldest cap records how many early cards it evicted, so the UI can show a
+    /// The drop-oldest cap records how many early cards it evicted, so the UI can show a
     /// "N earlier steps hidden" banner instead of silently truncating the start of a long session.
     func testEvictedToolCardCountTracksTruncation() {
         let vm = InspectorViewModel()
@@ -175,7 +175,7 @@ final class InspectorViewModelStateTests: XCTestCase {
         XCTAssertEqual(vm.messages.last?.text, "m\(n - 1)", "newest message retained")
     }
 
-    /// R13 #4: the OUTER agent-count dimension is bounded too — distinct agentIDs drop-oldest, and an
+    /// The OUTER agent-count dimension is bounded too — distinct agentIDs drop-oldest, and an
     /// evicted agent's node + cards + index are removed TOGETHER so `subagentTree` never orphans.
     func testDistinctAgentIDsAreBounded() {
         let vm = InspectorViewModel()

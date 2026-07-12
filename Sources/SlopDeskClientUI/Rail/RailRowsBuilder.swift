@@ -7,35 +7,35 @@ import SlopDeskAgentDetect
 import SlopDeskWorkspaceCore
 
 /// The data a single rail row binds to (derived from a pane within the active session's tabs). A pure value
-/// type — kept with the builder logic (it previously lived in the deleted `TabRow` view, but carries no view
-/// / design-system coupling). The native rail in L1+ rebuilds the row VIEW over this same model.
+/// type — kept with the builder logic rather than a view, since it carries no view/design-system coupling.
+/// The native rail in L1+ rebuilds the row VIEW over this same model.
 struct RailRow: Identifiable, Equatable {
     let id: PaneID
     let tabID: TabID
     let kind: PaneKind
     let title: String
-    /// The row's muted second line (``SlateTabRow`` subtitle). Kind-generic ``PaneSpec/railSubtitle`` (E21
-    /// WI-5): a terminal's cwd, or a video pane's host-app/window label; `nil` ⇒ a single-line row.
+    /// The row's muted second line (``SlateTabRow`` subtitle). Kind-generic ``PaneSpec/railSubtitle``:
+    /// a terminal's cwd, or a video pane's host-app/window label; `nil` ⇒ a single-line row.
     let subtitle: String?
     let status: ClaudeStatus
-    /// The 1-based tab shortcut number — the ⌘1…⌘9 target = tab index+1 (E6 WI-2). Split-tab panes share
-    /// the same `#N` (it is a TAB number, not a pane number), per the per-pane→per-tab mapping (plan Design #1).
+    /// The 1-based tab shortcut number — the ⌘1…⌘9 target = tab index+1. Split-tab panes share
+    /// the same `#N` (it is a TAB number, not a pane number), per the per-pane→per-tab mapping.
     let tabNumber: Int
-    /// The single fused status badge for the row (E6 WI-1 `TabBadgeResolver`), or `nil` when all-clear.
+    /// The single fused status badge for the row (``TabBadgeResolver``), or `nil` when all-clear.
     let badge: TabBadgeKind?
     /// The coarse host-reported foreground-process name (wire type 26), shown trailing on the active row; `nil`
     /// when the host has not reported one.
     let processLabel: String?
-    /// Whether this pane's input gate is READ-ONLY (E17 ES-E17-1 / WI-3) — read from the store's convergent
+    /// Whether this pane's input gate is READ-ONLY — read from the store's convergent
     /// ``WorkspaceStore/paneReadOnly`` set so the sidebar lock indicator and the pane's `🔒 READ ONLY ×` pill
     /// share one source of truth. Drives ``SlateTabRow``'s trailing lock glyph.
     let readOnly: Bool
-    /// The pane's raw last-known working directory (C3 BUG A) — a terminal pane's `lastKnownCwd`, `nil` for a
+    /// The pane's raw last-known working directory — a terminal pane's `lastKnownCwd`, `nil` for a
     /// video pane. NOT rendered as chrome: it is the row's TOOLTIP (`.help`) text AND a hidden search key so a
     /// git-repo row (whose visible subtitle is the git line, not the path) stays searchable BY PATH and two
     /// same-named worktrees are told apart by their full cwd.
     let cwd: String?
-    /// Whether this row is in inline-RENAME mode (C3 BUG B): the store's ``WorkspaceStore/pendingTabRename``
+    /// Whether this row is in inline-RENAME mode: the store's ``WorkspaceStore/pendingTabRename``
     /// names this row's tab AND this pane is that tab's representative (active) pane — so exactly one row per
     /// pending tab opens its rename field. Consumed by ``SlateTabRow`` to swap the title for a `TextField`.
     let isEditing: Bool
@@ -58,18 +58,18 @@ struct RailRow: Identifiable, Equatable {
 
     /// The SwiftUI view identity for this row's LEAF view (`SidebarLiveRow` / `IOSSidebarLiveRow`) —
     /// the pane id plus every MEMOIZED field the leaf renders from this row value (title / kind / cwd
-    /// tooltip). The 2026-07-11 "row title frozen at first render" fix: inside the sidebar's lazy
-    /// container, a leaf whose Observation deps (the volatile chrome dicts) fire re-renders with the
-    /// row value it was CREATED with — a structural rebuild that changes this row's title (cwd landed,
-    /// a chooser resolved to a terminal, a rename) updated the memoized model but never repainted the
-    /// leaf, so the rail showed "New Pane"/a stale folder name forever while its subtitle stayed live.
-    /// Keying the leaf's `.id(_:)` on this string forces a fresh leaf whenever a rendered-from-row
-    /// field changes; volatile chrome keeps flowing through `liveChrome` unchanged.
+    /// tooltip). Inside the sidebar's lazy container, a leaf whose Observation deps (the volatile chrome
+    /// dicts) fire re-renders with the row value it was CREATED with — a structural rebuild that changes
+    /// this row's title (cwd landed, a chooser resolved to a terminal, a rename) updates the memoized
+    /// model but would never repaint the leaf without this, so the rail would show "New Pane"/a stale
+    /// folder name forever while its subtitle stayed live. Keying the leaf's `.id(_:)` on this string
+    /// forces a fresh leaf whenever a rendered-from-row field changes; volatile chrome keeps flowing
+    /// through `liveChrome` unchanged.
     var leafIdentity: String {
         "\(id.raw.uuidString)|\(title)|\(kind.rawValue)|\(cwd ?? "")"
     }
 
-    /// A copy of this row with a new `title` (C3 BUG A collision disambiguation) — every other field is
+    /// A copy of this row with a new `title` (collision disambiguation) — every other field is
     /// carried verbatim. Kept here so ``RailRowsBuilder/disambiguated(_:)`` need not restate the memberwise init.
     func retitled(_ newTitle: String) -> Self {
         Self(
@@ -87,7 +87,7 @@ enum RailRowsBuilder {
     @MainActor
     static func rows(for store: WorkspaceStore) -> [RailRow] {
         guard let session = store.tree.activeSession else { return [] }
-        // FIX 1: observe the flash-decay tick so the rail re-renders ONCE at the completion flash-window
+        // Observe the flash-decay tick so the rail re-renders ONCE at the completion flash-window
         // boundary. `completionFreshness(forPane:)` below reads the wall clock at build time (NOT an
         // `@Observable` dependency); without this read a quiet completed pane would never re-render and its
         // brief `.completed` checkmark would stick. The store bumps the tick after `completedFlashWindow`
@@ -97,7 +97,7 @@ enum RailRowsBuilder {
         var out: [RailRow] = []
         for (tabIndex, tab) in session.tabs.enumerated() {
             let tabIsActive = tabIndex == activeTabIndex
-            // E20 ES-E20-3: a MANUAL `tab badge --kind` override (if any) is rendered on the tab's
+            // A MANUAL `tab badge --kind` override (if any) is rendered on the tab's
             // REPRESENTATIVE (active) pane row — the badge is per-tab, so it lands on the one row that
             // stands in for the tab (the same representative `tab list` reports). Resolved once per tab.
             let representativePane = tab.activePane ?? tab.allPaneIDs().first
@@ -107,16 +107,16 @@ enum RailRowsBuilder {
                 let spec = session.specs[paneID]
                 let kind = spec?.kind ?? .terminal
                 // The row's VOLATILE chrome (status / badge / git line / process / lock / rename mode) —
-                // resolved by the SAME `chrome(...)` the live row views read directly (perf audit: the
-                // sidebar body memoizes these rows and each row VIEW re-reads its own chrome fresh, so the
-                // resolution rule must have exactly one home or the two paths drift).
+                // resolved by the SAME `chrome(...)` the live row views read directly. The sidebar body
+                // memoizes these rows and each row VIEW re-reads its own chrome fresh, so the resolution
+                // rule must have exactly one home or the two paths drift.
                 let chrome = Self.chrome(
                     paneID: paneID, kind: kind, spec: spec, tabID: tab.id,
                     representativePane: representativePane, manualBadge: manualBadge, store: store,
                 )
                 // A TERMINAL row's line 1 is its cwd's FOLDER NAME (`slopdesk`), not the generic
                 // "Terminal" / raw shell title — an explicit user rename still wins (see `rowTitle`); a
-                // cwd-less pane falls back to its foreground program (A4) before the generic chain.
+                // cwd-less pane falls back to its foreground program before the generic chain.
                 let title = Self.rowTitle(kind: kind, spec: spec, processLabel: chrome.processLabel)
                 let isSelected = tabIsActive && tab.activePane == paneID
                 out.append(RailRow(
@@ -140,14 +140,14 @@ enum RailRowsBuilder {
                 ))
             }
         }
-        // C3 BUG A (3): disambiguate any two VISIBLE rows that collide on a folder-name title by prefixing the
+        // Disambiguate any two VISIBLE rows that collide on a folder-name title by prefixing the
         // parent path segment (`feature-a/myapp` vs `feature-b/myapp`) so same-named worktrees are told apart.
         return disambiguated(out)
     }
 
     /// The VOLATILE per-row chrome — every field of a rail row that ticks with pane activity rather than
     /// with workspace STRUCTURE: agent status, the fused badge, the git line / subtitle, the foreground
-    /// process, the read-only lock, and the inline-rename mode. Split out (perf audit) so the row VIEW can
+    /// process, the read-only lock, and the inline-rename mode. Split out so the row VIEW can
     /// read its own pane's chrome fresh from the store while the sidebar body renders MEMOIZED structural
     /// rows (``RailRowsMemo``) — a status tick then re-renders one cheap leaf row body instead of
     /// rebuilding the whole rows/section model. `Equatable` so tests pin builder ↔ live parity.
@@ -168,17 +168,17 @@ enum RailRowsBuilder {
     /// repo cwd, else the kind-generic ``PaneSpec/railSubtitle`` — a terminal's plain cwd, or (for a
     /// `.remoteGUI`/`.systemDialog` video pane, which has no shell cwd) the host-side window's owning app
     /// name (falling back to the window title). So a remote window reads as a labelled WINDOW rather than a
-    /// bare single line. (The coarse video-CONNECTION dot is deferred — recorded as an E21 §7 follow-up.)
+    /// bare single line. (The coarse video-CONNECTION dot is deferred as a follow-up.)
     ///
-    /// Badge: E13 WI-3 + Progress cluster — the SOURCE-AWARE gating masks the resolver inputs by source so
+    /// Badge: the SOURCE-AWARE gating masks the resolver inputs by source so
     /// the agent toggles (per-pane override beats the global default) and the command "TAB BADGE" toggles
     /// gate their OWN badge families independently — a program's busy / OSC 9;4 progress spinner and an
     /// OSC 9;4;2 progress error are never silenced by an agent toggle. Freshness decays the clean-completion
-    /// badge (store owns the clock); the resolver stays pure. E20 ES-E20-3: an explicit `tab badge --kind`
+    /// badge (store owns the clock); the resolver stays pure. An explicit `tab badge --kind`
     /// override wins for the tab's REPRESENTATIVE row, bypassing the agent-badge gates (it is an explicit
     /// CLI affordance, not an agent signal).
     ///
-    /// Rename mode (C3 BUG B): the row opens its inline rename field when the store's pending-rename names
+    /// Rename mode: the row opens its inline rename field when the store's pending-rename names
     /// this TAB and this pane is the tab's representative (active) pane — one editing row per pending tab.
     @MainActor
     static func chrome(
@@ -186,7 +186,7 @@ enum RailRowsBuilder {
         representativePane: PaneID?, manualBadge: TabBadgeKind?, store: WorkspaceStore,
     ) -> RailRowChrome {
         // The host's coarse foreground-process name (wire type 26): the trailing row label, a
-        // badge-resolver input, AND (A4) the pane-title fallback when the cwd is not known yet.
+        // badge-resolver input, AND the pane-title fallback when the cwd is not known yet.
         let processLabel = store.paneForegroundProcess[paneID]
         let gitSummary = kind == .terminal ? store.paneGitSummary[paneID] : nil
         let subtitle = gitSummary?.compactLine ?? spec?.railSubtitle
@@ -229,7 +229,7 @@ enum RailRowsBuilder {
         )
     }
 
-    /// C3 BUG A (3): for any TITLE shared by more than one row, replace each colliding row's folder-name title
+    /// For any TITLE shared by more than one row, replace each colliding row's folder-name title
     /// with its parent-qualified form (`parent/leaf`). Only folder-derived titles are rewritten (an explicit
     /// rename that happens to collide is left verbatim), and only when a distinct parent segment exists; rows
     /// with a unique title, no cwd, or no parent are returned unchanged. Pure so the collision rule is pinned
@@ -259,32 +259,32 @@ enum RailRowsBuilder {
 
     /// The row's LINE-1 title. A `.terminal` pane titles itself by its working directory's FOLDER NAME
     /// (`/Volumes/…/slopdesk` → `slopdesk`) — the identity a coding tool actually navigates by — with two
-    /// escapes: an EXPLICIT user rename always wins (B2: gated on ``PaneSpec/userRenamed``), and a pane
-    /// with no known cwd yet falls back to the host FOREGROUND-PROCESS name (A4: `processLabel`, wire type
-    /// 26 — a real program like `vim`/`npm`, a bare login shell suppressed) before the old shell-title
-    /// chain. Non-terminal kinds keep the E21 chain (`lastKnownTitle ?? title`) unchanged. Pure + static so
+    /// escapes: an EXPLICIT user rename always wins (gated on ``PaneSpec/userRenamed``), and a pane
+    /// with no known cwd yet falls back to the host FOREGROUND-PROCESS name (`processLabel`, wire type
+    /// 26 — a real program like `vim`/`npm`, a bare login shell suppressed) before the generic shell-title
+    /// chain. Non-terminal kinds keep the `lastKnownTitle ?? title` chain unchanged. Pure + static so
     /// the mapping is unit-pinned without a view.
     ///
     /// - Parameter processLabel: the pane's host-reported foreground process (``WorkspaceStore/paneForegroundProcess``),
-    ///   used ONLY as the no-cwd fallback (A4). Optional so the completion-title / test call sites that do not
+    ///   used ONLY as the no-cwd fallback. Optional so the completion-title / test call sites that do not
     ///   thread the store's process map still resolve the cwd/rename precedence.
     static func rowTitle(kind: PaneKind, spec: PaneSpec?, processLabel: String? = nil) -> String {
         let fallback = spec?.lastKnownTitle ?? spec?.title ?? ""
         guard kind == .terminal, let spec else { return fallback }
-        // B2: an EXPLICIT user rename (⌘R / palette / inline field) always wins — gated on the unambiguous
-        // `userRenamed` flag, NOT the old `title != lastKnownTitle` heuristic, which latched a stale
-        // load-time-promoted title as a phantom "rename" the moment a shell emitted a SECOND OSC title.
+        // An EXPLICIT user rename (⌘R / palette / inline field) always wins — gated on the unambiguous
+        // `userRenamed` flag, NOT a `title != lastKnownTitle` heuristic: that would latch a stale
+        // load-time-promoted title as a phantom "rename" the moment a shell emits a SECOND OSC title.
         if spec.userRenamed, !spec.title.isEmpty {
             return spec.title
         }
         // Folder name is the primary identity; when the cwd is not known yet (no OSC-7, host pull not
-        // landed) A4 titles the pane by its live foreground program before the generic "Terminal" chain.
+        // landed) the pane is titled by its live foreground program before the generic "Terminal" chain.
         return cwdFolderName(spec.lastKnownCwd)
             ?? processDisplayName(processLabel)
             ?? fallback
     }
 
-    /// A4: the host foreground-process name (wire type 26) as a pane-TITLE fallback, or `nil` to skip it.
+    /// The host foreground-process name (wire type 26) as a pane-TITLE fallback, or `nil` to skip it.
     /// Basenames the label and drops the leading `-` of a login-shell argv0, then SUPPRESSES a bare
     /// interactive shell (`zsh`/`bash`/`fish`/…) — titling a pane "zsh" is no more useful than "Terminal",
     /// so those fall through to the generic chain, while a real foreground program (`vim`, `npm`, `ssh`)
@@ -298,7 +298,7 @@ enum RailRowsBuilder {
         return name
     }
 
-    /// Bare interactive-shell basenames that must NOT title a pane (A4) — titling by the shell is no more
+    /// Bare interactive-shell basenames that must NOT title a pane — titling by the shell is no more
     /// informative than the generic default, so the row keeps the cwd/generic chain instead.
     private static let loginShellNames: Set<String> = [
         "zsh", "bash", "sh", "fish", "tcsh", "csh", "ksh", "dash", "login",
@@ -314,7 +314,7 @@ enum RailRowsBuilder {
     }
 
     /// Filter rows by a lower-cased search query (empty query ⇒ all). Matches the visible title + subtitle AND
-    /// the hidden keys — the raw `cwd` (C3 BUG A: a git-repo row's visible subtitle is the git line, not the
+    /// the hidden keys — the raw `cwd` (a git-repo row's visible subtitle is the git line, not the
     /// path, so without this it would be unsearchable by path) and the foreground `processLabel`.
     static func filtered(_ rows: [RailRow], query: String) -> [RailRow] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
@@ -327,8 +327,8 @@ enum RailRowsBuilder {
         }
     }
 
-    /// The PER-PANE By-Project sectioning — the sidebar's ONE render path (the 2026-07-10 re-scope deleted
-    /// every other grouping/sort mode). Buckets each PANE ROW by ITS OWN ``RailRow/projectKey`` (not its
+    /// The PER-PANE By-Project sectioning — the sidebar's ONE render path (every other grouping/sort mode
+    /// has been removed). Buckets each PANE ROW by ITS OWN ``RailRow/projectKey`` (not its
     /// tab's active-pane project). Consequences:
     ///   • a split tab's two panes land in their RESPECTIVE project sections (the user's "group correctly"),
     ///   • the section a pane sits in no longer depends on which pane is focused (no header flicker —

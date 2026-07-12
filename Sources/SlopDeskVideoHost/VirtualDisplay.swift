@@ -8,7 +8,7 @@ import Foundation
 @preconcurrency import CSlopDeskVirtualDisplay
 import OSLog
 
-/// Owns ONE HiDPI virtual display for the daemon lifetime (feature #1, 2026-06-08). The remoted
+/// Owns ONE HiDPI virtual display for the daemon lifetime. The remoted
 /// window is moved onto it (see ``WindowPlacement``) so it renders at real Retina 2× backing and is
 /// captured sharp, instead of the soft point-resolution-upscale path on a 1× host display.
 ///
@@ -61,7 +61,7 @@ public final class VirtualDisplay {
         // Snapshot the CURRENT (physical) displays BEFORE the VD exists, so the reconfigure can pin
         // every one of them at its current origin (stopping WindowServer from reflowing the user's
         // real multi-monitor layout) and place the VD past the rightmost edge where it can never
-        // overlap a real display. On a single-display host this reduces to today's behaviour: pin
+        // overlap a real display. On a single-display host this reduces to: pin
         // main at (0,0), VD at (mainWidth, 0).
         let physicalDisplays = Self.onlineDisplayBounds()
         let vdOrigin = VirtualDisplayPlanner.originToRight(of: physicalDisplays.map(\.bounds))
@@ -298,7 +298,7 @@ private final class OnceFlag: @unchecked Sendable {
     }
 }
 
-/// PURE point↔pixel↔millimeter arithmetic for a HiDPI virtual display (feature #1, 2026-06-08).
+/// PURE point↔pixel↔millimeter arithmetic for a HiDPI virtual display.
 /// No CoreGraphics IPC, no private API — just the math that decides the `CGVirtualDisplayMode`
 /// (POINT size), the descriptor's `maxPixelsWide/High` (PIXEL framebuffer), and
 /// `sizeInMillimeters` (for a target PPI). Kept separate from ``VirtualDisplay`` so the
@@ -358,7 +358,7 @@ public enum VirtualDisplayPlanner {
     /// it past every real display guarantees it never overlaps one — macOS resolves an overlap by
     /// reflowing displays, which corrupts the user's real multi-monitor arrangement. On a
     /// single-display host the rightmost edge IS the main display's width, so this reduces to the
-    /// historical `(mainWidth, 0)`. `existingDisplays` are the online displays' global bounds.
+    /// simple `(mainWidth, 0)` placement. `existingDisplays` are the online displays' global bounds.
     public static func originToRight(of existingDisplays: [CGRect]) -> CGPoint {
         // `Sequence.max()` keeps the FIRST element on ties (updates only on strict `<`); empty → nil
         // → `?? 0`. `.maxX` is the standardized right edge (negative-width rects normalize). Matches

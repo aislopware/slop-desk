@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-// MARK: - TerminalViewModelReadOnlyTests (E17 ES-E17-1 — the single-seam read-only input gate)
+// MARK: - TerminalViewModelReadOnlyTests (the single-seam read-only input gate)
 
 /// Exercises the PURE read-only state + the ``TerminalViewModel/sendInput(_:)`` gate entirely in-memory:
 /// no `NSEvent`, no `GhosttySurface`, no window server (the hang-safety rule). Because `sendInput` is the

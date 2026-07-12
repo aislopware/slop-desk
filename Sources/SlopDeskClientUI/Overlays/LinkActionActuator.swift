@@ -1,26 +1,26 @@
 // LinkActionActuator — the ONE thin platform dispatch behind a resolved `LinkAction` PLUS the per-row Actions
-// popover action table, extracted from `JumpToView` (E10) in E11 WI-4 so the Jump-To / Open-Quickly "Current"
-// rows — and, later, the File/Folder rows — share a single actuation home and no parallel switch can drift.
+// popover action table, shared by the Jump-To / Open-Quickly "Current" rows — and, later, the File/Folder
+// rows — so a single actuation home exists and no parallel switch can drift.
 //
-// This is a PURE BEHAVIORAL MOVE (no change): the INTENT mapping stays in the pure `LinkActionPolicy` /
-// `TerminalContextMenu` (which kind offers which items; gesture/menu-item → `LinkAction`); this actuator is the
-// thin macOS/iOS dispatch only, mirroring the renderer's `performLinkAction` and the leaf `TerminalLeafView`:
+// The INTENT mapping stays in the pure `LinkActionPolicy` / `TerminalContextMenu` (which kind offers which
+// items; gesture/menu-item → `LinkAction`); this actuator is the thin macOS/iOS dispatch only, mirroring the
+// renderer's `performLinkAction` and the leaf `TerminalLeafView`:
 //   - **Copy** (`copyPathClient`) → the CLIENT pasteboard.
 //   - **Reveal / Open** (`revealHost` / `openHost`) → the pane model's host RPC seams (`onRequestRevealHostPath`
-//     / `onRequestOpenHostPath`, the E10 WI-7 metadata verbs 10 / 9) — a no-op when no live model backs it.
+//     / `onRequestOpenHostPath`, metadata verbs 10 / 9) — a no-op when no live model backs it.
 //   - **Change Directory Here** (`changeDirectoryPTY`) → **verbatim UTF-8** `cd <quoted>` (parent-if-file)
 //     down the pane PTY via `LinkActionPolicy.changeDirectoryCommandLine` — NEVER `SendKeysParser` (cd is
 //     verbatim; memory: re-run/cd is verbatim UTF-8).
 //   - **URL** (`openURLClient`) → opened on the CLIENT (`NSWorkspace`/`UIApplication`).
 //
-// Scope note (WI-4 is the Jump-To set only): a command-BLOCK row here offers Jump-to + Copy (the Outline row
-// menu). A verbatim Re-Run of a captured block is NOT added by this actuator — it already lives on the store
-// (`WorkspaceStore` → `BlockReRunEncoder`); the E11 WI-6 Open-Quickly command rows reuse THAT path, never a
-// parallel encoder.
+// Scope note (the Jump-To set only): a command-BLOCK row here offers Jump-to + Copy (the Outline row menu).
+// A verbatim Re-Run of a captured block is NOT added by this actuator — it already lives on the store
+// (`WorkspaceStore` → `BlockReRunEncoder`); the Open-Quickly command rows reuse THAT path, never a parallel
+// encoder.
 //
 // `@MainActor` because every sink it touches (`WorkspaceStore.jumpToNavigatorBlockInActivePane`,
 // `TerminalViewModel.sendInput` / its host callbacks, the platform pasteboard) is main-actor work. Shared by
-// `JumpToView` today and `OpenQuicklyView` in E11 WI-6.
+// `JumpToView` and `OpenQuicklyView`.
 
 import Foundation
 import SlopDeskWorkspaceCore

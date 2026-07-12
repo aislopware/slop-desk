@@ -1,13 +1,12 @@
 import Foundation
 
-// MARK: - E13 WI-2 (ES-E13-1): the Agents settings-card model (Claude Code only)
+// MARK: - The Agents settings-card model (Claude Code only)
 
 /// The `@MainActor @Observable` model behind the Agents settings card's **Install Hooks** row — the
-/// install / uninstall / status state machine the card binds to. **Claude Code only** (E13 binding
-/// directive 1): there is no codex/opencode equivalent here; the card renders one CLAUDE CODE section over
-/// this single controller. The hooks it manages are the host-side agent-detection hooks; this NEVER pauses
-/// an agent pending an slopdesk confirmation (binding directive 2 — observe + notify, never an approval
-/// gate).
+/// install / uninstall / status state machine the card binds to. **Claude Code only**: there is no
+/// codex/opencode equivalent here; the card renders one CLAUDE CODE section over this single controller.
+/// The hooks it manages are the host-side agent-detection hooks; this NEVER pauses an agent pending a
+/// slopdesk confirmation — it observes and notifies, never gates approval.
 ///
 /// **Injected async seams.** The three host round-trips are injected so the app wires them to the active
 /// connection's first-pane ``MetadataClient`` (`installAgentHooks` / `uninstallAgentHooks` /
@@ -30,11 +29,10 @@ public final class AgentHooksController {
         /// The host replied "installed AND the hook listener is bound" — show **Installed** (disabled) +
         /// **Uninstall** + a green "✓ Installed" status. Only this state earns the green check.
         case installed
-        /// Queue-safety cluster (2026-07-02): the hooks are written to `settings.json` but the host's
-        /// hook LISTENER is not bound (hostd was launched without `SLOPDESK_AGENT_HOOKS=1`, or the
-        /// bind failed) — every installed hook exits silently, so the integration is DEAD despite being
-        /// installed. Shows a warning "Installed — inactive" badge + the hostd-restart instruction,
-        /// never the false green check.
+        /// The hooks are written to `settings.json` but the host's hook LISTENER is not bound (hostd was
+        /// launched without `SLOPDESK_AGENT_HOOKS=1`, or the bind failed) — every installed hook exits
+        /// silently, so the integration is DEAD despite being installed. Shows a warning
+        /// "Installed — inactive" badge + the hostd-restart instruction, never the false green check.
         case installedInactive
         /// An install / uninstall RPC is in flight — the buttons disable (the card shows progress).
         case working
@@ -99,10 +97,10 @@ public final class AgentHooksController {
         await applyProbe()
     }
 
-    /// Installs the hooks: → ``InstallState/working``, fire the seam, then RE-PROBE — on success too
-    /// (queue-safety cluster, 2026-07-02): a successful write proves only the `settings.json` merge, NOT
-    /// that the host's hook listener is bound, so landing `.installed` directly would flash the false
-    /// green check on a hostd launched without `SLOPDESK_AGENT_HOOKS=1`. The probe lands
+    /// Installs the hooks: → ``InstallState/working``, fire the seam, then RE-PROBE — on success too, because
+    /// a successful write proves only the `settings.json` merge, NOT that the host's hook listener is bound,
+    /// so landing `.installed` directly would flash the false green check on a hostd launched without
+    /// `SLOPDESK_AGENT_HOOKS=1`. The probe lands
     /// `.installed` / `.installedInactive` / `.disconnected` honestly (and a failure lands
     /// `.notInstalled` / `.disconnected` rather than a stuck `.working`). A no-op while a write is
     /// already in flight.

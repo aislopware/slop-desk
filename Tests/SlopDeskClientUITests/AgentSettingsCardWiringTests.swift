@@ -1,4 +1,4 @@
-// AgentSettingsCardWiringTests (E13 — ES-E13-1 / ES-E13-2 iOS halves).
+// AgentSettingsCardWiringTests
 //
 // The Agents settings card + the entire Agent-Behaviour toggle block read the app-owned
 // `AgentHooksController` from `@Environment(\.agentHooksController)`. The macOS `Settings` scene injects it;
@@ -8,8 +8,8 @@
 // These pin the FIX headlessly on the macOS `swift test` host (iOS view code rots silently — CLAUDE.md):
 // - `AgentSettingsCard` (the ONE nil-controller fallback) maps nil → `.disconnected` + behaviour-disabled,
 //   and an installed controller → `.installed` + behaviour-enabled;
-// - the iOS `SettingsSheet` RETAINS the controller threaded into it (the wiring this regression adds — pre-fix
-//   the sheet had no way to carry one) so the card it hands that controller resolves a LIVE state.
+// - the iOS `SettingsSheet` RETAINS the controller threaded into it so the card it hands that controller
+//   resolves a LIVE state.
 
 #if canImport(SwiftUI)
 import SlopDeskWorkspaceCore
@@ -60,7 +60,7 @@ final class AgentSettingsCardWiringTests: XCTestCase {
         )
     }
 
-    // MARK: the iOS settings sheet threads the controller (fails to build before the fix)
+    // MARK: the iOS settings sheet threads the controller
 
     func testIOSSettingsSheetRetainsInjectedControllerForAgentsCard() async {
         let controller = await installedController()

@@ -93,13 +93,12 @@ final class SlopDeskClientBatchDrainTests: XCTestCase {
         await client.close()
     }
 
-    /// Audit 2026-07-10 #6 (SUPERSEDES the night-review wipe): a (re)connect must KEEP the
-    /// prior life's undrained inbox bytes. They were already claimed to the host at wire-arrival
-    /// time (`highestContiguousSeq` → `lastReceivedSeq`), so a reattaching host will never
-    /// resend them — dropping the client's only copy was a silent, permanent scrollback gap at
-    /// the reconnect boundary. The night-review's real concern (crediting stale wire bytes to
-    /// the NEW transport) is handled by zeroing the carried entries' credit, which
-    /// ``SlopDeskClientReconnectInboxTests`` pins; here we pin ordering + no-loss.
+    /// A (re)connect must KEEP the prior life's undrained inbox bytes. They were already
+    /// claimed to the host at wire-arrival time (`highestContiguousSeq` → `lastReceivedSeq`),
+    /// so a reattaching host will never resend them — dropping the client's only copy would be
+    /// a silent, permanent scrollback gap at the reconnect boundary. Crediting stale wire bytes
+    /// to the NEW transport is a separate concern, handled by zeroing the carried entries'
+    /// credit, which ``SlopDeskClientReconnectInboxTests`` pins; here we pin ordering + no-loss.
     func testReconnectKeepsUndrainedInboxAheadOfFreshOutput() async throws {
         let client = SlopDeskClient(makeTransport: { RecordingTransport() })
         try await client.connect(host: "h", port: 1)

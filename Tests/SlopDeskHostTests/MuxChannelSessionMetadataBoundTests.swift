@@ -3,7 +3,7 @@ import SlopDeskTransport
 import XCTest
 @testable import SlopDeskHost
 
-/// Finding 4 (2026-07-11) — the control sub-channel is deliberately unwindowed, so a
+/// The control sub-channel is deliberately unwindowed, so a
 /// hostile/buggy peer can stream back-to-back tiny `.metadataRequest` frames faster than the
 /// serial `metadataQueue` drains them. Unbounded admission queued one closure per request (each
 /// retaining its payload + the session) and forked `git`/`lsof` without bound. The fix bounds

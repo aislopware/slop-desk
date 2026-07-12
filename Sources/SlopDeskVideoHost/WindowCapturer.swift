@@ -27,13 +27,13 @@ import SlopDeskVideoProtocol
 ///   encoder, within `minimumFrameInterval × (queueDepth − 1)` (WWDC22 s10155).
 /// - Idle-skip: `SCStreamFrameInfo.status == .idle` → return immediately, no encode,
 ///   no send (doc 17 §3.5). >90% of coding frames are static.
-/// - Heartbeat IDR ~1s so a reconnecting/loss-recovering client catches a frame.
+/// - Heartbeat IDR (``heartbeatIDRInterval``) so a reconnecting / loss-recovering client catches a frame.
 public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     /// Heartbeat IDR cadence (seconds): periodic forced keyframe so a late-joining / loss-recovering
-    /// client gets a decode anchor. Raised 1.0 → 2.5 (F2 flicker fix, 2026-06-08): on a never-idle window
-    /// every heartbeat is a 50-135 KB IDR burst (crisp path never fires) risking burst loss for ZERO
-    /// benefit to an in-sync client — 2.5 s removes most periodic bursts while keeping a prompt insurance
-    /// anchor (DETECTED loss recovers via the recovery channel, not this heartbeat). Env
+    /// client gets a decode anchor. 2.5 s rather than 1 s — on a never-idle window every heartbeat is a
+    /// 50-135 KB IDR burst (the crisp path never fires there), so a tight cadence risks burst loss for
+    /// ZERO benefit to an in-sync client; 2.5 s drops most periodic bursts while keeping a prompt
+    /// insurance anchor (DETECTED loss recovers via the recovery channel, not this heartbeat). Env
     /// `SLOPDESK_HEARTBEAT_S`, clamped [0.25, 60].
     public static let heartbeatIDRInterval: TimeInterval = {
         if let s = ProcessInfo.processInfo.environment["SLOPDESK_HEARTBEAT_S"], let v = Double(s), v >= 0.25,
@@ -41,16 +41,15 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         return 2.5
     }()
 
-    /// CAD-3 (2026-06-09 smoothness): force a periodic heartbeat IDR on the LIVE (active-motion) path.
-    /// DEFAULT OFF. On a never-idle window the heartbeat is a 50-135 KB IDR through
-    /// `encodeCompactKeyframe`, whose two synchronous `VTCompressionSessionCompleteFrames` calls BLOCK the
-    /// capture queue ~15 ms → a dropped capture + a big frame every `heartbeatIDRInterval` (2.5s) = a
-    /// PERIODIC cadence hitch during a long scroll ("vuốt lâu thì khựng"). It has zero benefit to an
-    /// in-sync client and DETECTED loss recovers via the recovery channel (requestIDR), not this heartbeat.
-    /// The STATIC-window timer (`onIDRTimerTick`) still re-anchors with a crisp IDR the instant motion
-    /// pauses, and a late-joining/decode-failed client still requests an IDR — so suppressing it removes the
-    /// hitch with no resilience loss on a low-loss link. `SLOPDESK_MOTION_HEARTBEAT=1` restores the periodic
-    /// motion IDR (for a genuinely lossy WAN).
+    /// Force a periodic heartbeat IDR on the LIVE (active-motion) path. DEFAULT OFF, because on a
+    /// never-idle window that heartbeat is a 50-135 KB IDR through `encodeCompactKeyframe`, whose two
+    /// synchronous `VTCompressionSessionCompleteFrames` calls BLOCK the capture queue ~15 ms → a dropped
+    /// capture plus a big frame every `heartbeatIDRInterval` (2.5 s) = a PERIODIC cadence hitch through a
+    /// long scroll. It buys an in-sync client nothing: DETECTED loss recovers via the recovery channel
+    /// (requestIDR), not this heartbeat; the STATIC-window timer (`onIDRTimerTick`) re-anchors with a
+    /// crisp IDR the instant motion pauses; and a late-joining / decode-failed client requests an IDR
+    /// itself. Suppressing it therefore costs no resilience on a low-loss link.
+    /// `SLOPDESK_MOTION_HEARTBEAT=1` restores the periodic motion IDR (for a genuinely lossy WAN).
     static let motionHeartbeatEnabled = ProcessInfo.processInfo.environment["SLOPDESK_MOTION_HEARTBEAT"] == "1"
 
     /// Called for each captured frame with its NV12 `CVPixelBuffer`, whether the encoder should
@@ -64,7 +63,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// heartbeat (NOT the first frame, NOT the static-timer crisp path) — the handler should encode it
     /// SMALL+coarse (``VideoEncoder/encodeCompactKeyframe``) so it survives a UDP burst and does not
     /// re-trigger the recovery-IDR loop. `crisp` and `compact` are mutually exclusive.
-    /// `ltrRefresh` (WF-8) is true ONLY on the LIVE path when the host chose a cheap LTR-refresh
+    /// `ltrRefresh` is true ONLY on the LIVE path when the host chose a cheap LTR-refresh
     /// recovery (``VideoEncoder/encodeLiveLTRRefresh(pixelBuffer:presentationTime:)``) — a small
     /// P-frame against an ACKNOWLEDGED long-term reference, NOT a keyframe. It is mutually exclusive
     /// with `forceKeyframe`/`crisp`/`compact` (a keyframe is a superset recovery and wins) and is never
@@ -84,9 +83,9 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     ) -> Void
 
     /// Whether the static-IDR timer upgrades its re-encode to a CRISP near-lossless frame
-    /// (Design A, ``VideoEncoder/encodeLiveCrispKeyframe``). Default on; set `SLOPDESK_CRISP=0` to
-    /// A/B back to a plain (live-QP) heartbeat IDR with no rebuild. Read once (static screen
-    /// behaviour only; HW-verified path, not unit-tested).
+    /// (``VideoEncoder/encodeLiveCrispKeyframe``). Default on; `SLOPDESK_CRISP=0` A/Bs it back to a
+    /// plain (live-QP) heartbeat IDR with no encoder rebuild. Read once (static-screen behaviour
+    /// only; HW-verified path, not unit-tested).
     private static let crispWhenStatic = ProcessInfo.processInfo.environment["SLOPDESK_CRISP"] != "0"
 
     /// STATIC-FRAME SUPPRESSION (default OFF). When enabled, each `.complete` frame's locked NV12
@@ -94,12 +93,12 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// NEON kernel) and compared to the last submitted frame's hash; a pixel-identical re-delivery with
     /// no forced obligation pending is DROPPED before the encoder (HEVC + SCK idle-skip handle most
     /// static content — this catches the residual byte-identical `.complete` re-deliveries). OFF ⇒ no
-    /// hash, byte-identical to today. Needs a real GUI + TCC session to exercise (the SCStream path hangs
+    /// hash, no behaviour change. Needs a real GUI + TCC session to exercise (the SCStream path hangs
     /// headlessly); only the pure decider + hash kernel are unit-tested. `SLOPDESK_STATIC_SUPPRESS=1`.
     private static let staticSuppressEnabled =
         ProcessInfo.processInfo.environment["SLOPDESK_STATIC_SUPPRESS"] == "1"
 
-    /// EVENT-DRIVEN CRISP RE-ANCHOR (default OFF; 2026-06-16 latency-first reframe). When enabled, each
+    /// EVENT-DRIVEN CRISP RE-ANCHOR (default OFF). When enabled, each
     /// `.complete` frame's NV12 planes are hashed (NEON) and `stillCrispThreshold` consecutive byte-
     /// identical frames trigger the crisp re-anchor IMMEDIATELY (``StillnessCrispDecider``) instead of
     /// waiting the ~300ms wall-clock quiet window — re-sharpen lands ~1-2 frames after motion stops WHEN
@@ -126,10 +125,10 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         ProcessInfo.processInfo.environment["SLOPDESK_SCROLL_REPROJECT"] == "1"
 
     /// SCROLL-SHIFT QUANTIZE (default 3). Right-shifts each luma byte by this many bits before the
-    /// per-row hash, so real capture noise (resample / dither / ±LSB) no longer breaks the EXACT row
-    /// match the estimator relies on. Without it the host detects no scroll on real content (the
-    /// `measureScrollOffset == 0 every frame` bug); 3 tolerates ±3 of per-pixel noise. `0` restores the
-    /// exact byte-for-byte match. Clamped to 0...7. `SLOPDESK_SCROLL_QUANTIZE`.
+    /// per-row hash, so real capture noise (resample / dither / ±LSB) cannot break the EXACT row match
+    /// the estimator relies on. Without it `measureScrollOffset` returns 0 on every frame of real
+    /// content; 3 tolerates ±3 of per-pixel noise. `0` demands an exact byte-for-byte row match.
+    /// Clamped to 0...7. `SLOPDESK_SCROLL_QUANTIZE`.
     private static let scrollQuantizeShift: UInt8 = {
         let v = ProcessInfo.processInfo.environment["SLOPDESK_SCROLL_QUANTIZE"].flatMap(Int.init) ?? 3
         return UInt8(max(0, min(7, v)))
@@ -140,11 +139,11 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// `MaxAllowedFrameQP` ceiling: a small change (caret move, few chars) is pinned to a LOW (sharp)
     /// ceiling RC cannot coarsen past — even under a tight WAN budget — while a burst rides up to the
     /// configured ceiling (graded blur). Generalizes the crisp-on-FULL-static refresh to the common
-    /// "almost-static editing" case. DEFAULT OFF ⇒ no measurement, byte-identical. Host-only, no wire.
+    /// "almost-static editing" case. DEFAULT OFF ⇒ no measurement, no behaviour change. Host-only, no wire.
     /// `SLOPDESK_ADAPTIVE_QP=1`; `SLOPDESK_AQP_SHARP` (sharp ceiling, default 22),
     /// `SLOPDESK_AQP_BLO_MILLI`/`_BHI_MILLI` (change-fraction band ×1000, default 20/300).
-    /// W12: routed through `EnvConfig` so a GUI setting can drive it; the default-OFF (`== "1"`) idiom is
-    /// preserved via `boolDefaultOff`, an EMPTY overlay byte-identical to the old `ProcessInfo` read.
+    /// Resolved through `EnvConfig` so a GUI setting can drive it; `boolDefaultOff` preserves the
+    /// default-OFF (`== "1"`) idiom, and an EMPTY overlay reads exactly like a bare `ProcessInfo` lookup.
     private static let adaptiveQPEnabled =
         EnvConfig.boolDefaultOff("SLOPDESK_ADAPTIVE_QP")
     private static let adaptiveQPSharp: Int = {
@@ -170,8 +169,8 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// How fast the smoothed QP eases UP toward a coarser target on motion onset: the per-frame step is
     /// `(rawQP - smoothed) / N`. `N == 1` (default) ⇒ INSTANT — the QP jumps to the motion target on
     /// the very first scroll frame, so a quick push-scroll's burst-START frames are already coarse
-    /// (small) instead of fat (the slow ease-up left the first ~6 frames sharp ⇒ ~80 KB ⇒ scroll
-    /// "nặng"). Re-sharpen on STOP is always instant (the snap-down is unconditional). A larger `N`
+    /// (small). A slow ease-up would leave the first ~6 frames sharp ⇒ ~80 KB each ⇒ a sluggish scroll.
+    /// Re-sharpen on STOP is separate (see `adaptiveQPDownStep`). A larger `N`
     /// (`SLOPDESK_AQP_UP_RAMP=2/3`) trades responsiveness for less QP shimmer if the coarsen-snap
     /// ever looks abrupt. Clamped ≥ 1.
     private static let adaptiveQPUpRamp: Int = {
@@ -183,10 +182,10 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
 
     /// How fast the smoothed QP eases DOWN toward the sharp floor when motion STOPS: at most this many
     /// QP per frame. A straight snap-to-floor (40→24 in one frame) re-encodes the whole settled
-    /// viewport SHARP in a single ~80 KB frame — the scroll-STOP "khựng". Stepping down by a few QP
+    /// viewport SHARP in a single ~80 KB frame — the scroll-STOP stutter. Stepping down by a few QP
     /// spreads that re-sharpen over a handful of small frames (no hitch) while still reaching full
     /// sharpness within ~60-80 ms (imperceptible). `SLOPDESK_AQP_DOWN_STEP` overrides; `≥ 51` (or a
-    /// huge value) restores the old instant snap-down. Clamped ≥ 1.
+    /// huge value) makes the snap-down instant again. Clamped ≥ 1.
     private static let adaptiveQPDownStep: Int = {
         if let s = ProcessInfo.processInfo.environment["SLOPDESK_AQP_DOWN_STEP"], let v = Int(s), v >= 1 {
             return v
@@ -214,13 +213,13 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// pays. When enabled, a frame the adaptive-QP NEON measurement reports as TRULY idle
     /// (`measured && changeMilli == 0`, every row-hash identical to the previous frame) carrying no pending
     /// obligation (keyframe / recovery / heartbeat — peeked, never drained) is dropped before the encode
-    /// hand-off. CRITICAL: a skipped frame does NOT re-anchor `staticIDRDecider` (the quiet-window clock is
-    /// allowed to go stale) so the ~300ms crisp refresh still fires on a genuinely-static window — the
-    /// exact invariant the retired `STATIC_SUPPRESS` gate violated (it re-anchored on every dropped
-    /// duplicate → the quiet window never opened → the stream froze). REUSES the adaptive-QP measurement,
-    /// so it needs `SLOPDESK_ADAPTIVE_QP=1` too. OFF ⇒ `idleSkip` always false ⇒ byte-identical.
-    /// `SLOPDESK_IDLE_SKIP=1`. W12: routed through `EnvConfig` so a GUI setting can drive it; default-OFF
-    /// (`== "1"`) preserved via `boolDefaultOff`, empty overlay byte-identical to the old `ProcessInfo` read.
+    /// hand-off. CRITICAL: a skipped frame does NOT re-anchor `staticIDRDecider` (its quiet-window clock is
+    /// deliberately allowed to go stale) so the ~300ms crisp refresh still fires on a genuinely-static
+    /// window. Re-anchoring on every dropped duplicate — as `STATIC_SUPPRESS` does — keeps the quiet window
+    /// from ever opening and the stream freezes. REUSES the adaptive-QP measurement, so it needs
+    /// `SLOPDESK_ADAPTIVE_QP=1` too. OFF ⇒ `idleSkip` always false ⇒ no behaviour change.
+    /// `SLOPDESK_IDLE_SKIP=1`. Resolved through `EnvConfig` so a GUI setting can drive it; `boolDefaultOff`
+    /// preserves the default-OFF (`== "1"`) idiom, and an empty overlay reads like a bare `ProcessInfo` lookup.
     private static let idleSkipEnabled =
         EnvConfig.boolDefaultOff("SLOPDESK_IDLE_SKIP")
 
@@ -256,10 +255,10 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// frame is never dropped).
     static let scrollMotionSustainFrames = 2
 
-    /// SCStream `queueDepth` (default 5, was 3). The VT encode runs synchronously on the capture
-    /// sample-handler queue, so a deeper SCK surface queue prevents a single slow (fat scroll-burst)
-    /// encode from stalling the next capture delivery (the measured capture-gap). `SLOPDESK_CAPTURE_QUEUE_DEPTH`
-    /// overrides (clamp 2…12).
+    /// SCStream `queueDepth` (default 5). The VT encode runs synchronously on the capture sample-handler
+    /// queue, so a deeper SCK surface queue keeps a single slow (fat scroll-burst) encode from stalling
+    /// the next capture delivery (the measured capture-gap). `SLOPDESK_CAPTURE_QUEUE_DEPTH` overrides
+    /// (clamp 2…12).
     static let captureQueueDepth: Int = {
         if let s = ProcessInfo.processInfo.environment["SLOPDESK_CAPTURE_QUEUE_DEPTH"], let v = Int(s) {
             return min(12, max(2, v))
@@ -270,7 +269,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// ENCODE DECOUPLING (default OFF, A/B via `SLOPDESK_ENCODE_OFFQUEUE=1`). The VT encode runs
     /// SYNCHRONOUSLY in the SCStream sample handler, so during heavy scroll a per-frame encode that
     /// spikes past the ~16ms budget makes the handler fall progressively behind → SCStream holds
-    /// surfaces → the measured 150–230ms capture gaps (the frame-smoothness "giật"). When ON, the
+    /// surfaces → the measured 150–230ms capture gaps (the frame-smoothness judder). When ON, the
     /// handler instead COPIES the frame (~1ms) and hands the encode to a dedicated serial queue, then
     /// returns immediately → SCStream delivers at a steady 60Hz; encode runs in parallel, in PTS order.
     /// A bounded pending count drops ordinary deltas (never forced/recovery frames) if the encoder
@@ -278,9 +277,9 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// intact, so no client decode break). `SLOPDESK_ENCODE_QUEUE_MAX` overrides the bound (clamp 1…12).
     static let encodeOffQueueEnabled =
         ProcessInfo.processInfo.environment["SLOPDESK_ENCODE_OFFQUEUE"] == "1"
-    /// DIAGNOSTIC (overnight capture-cadence root-cause): force a compact recovery IDR every Nth live
-    /// frame, so the loss-driven recovery-IDR storm is reproducible deterministically on localhost
-    /// (no real loss needed). `SLOPDESK_FORCE_COMPACT_EVERY=N`; 0/unset = off (byte-identical).
+    /// DIAGNOSTIC: force a compact recovery IDR every Nth live frame, so the loss-driven recovery-IDR
+    /// storm reproduces deterministically on localhost (no real loss needed).
+    /// `SLOPDESK_FORCE_COMPACT_EVERY=N`; 0/unset = off.
     static let forceCompactEvery: Int = {
         if let s = ProcessInfo.processInfo.environment["SLOPDESK_FORCE_COMPACT_EVERY"], let v = Int(s), v > 0 {
             return v
@@ -297,7 +296,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         return 3
     }()
 
-    /// SELF-HEAL cadence (2026-06-11, Parsec-style ack-anchored healing — HW-validated in
+    /// SELF-HEAL cadence (Parsec-style ack-anchored healing — HW-validated in
     /// `slopdesk-loopback-validate --ack-ref` arms L/M/N/O): every `selfHealEvery`-th LIVE delta is
     /// encoded as a `ForceLTRRefresh` P-frame, which VideoToolbox anchors to the newest LTR the
     /// client has ACKNOWLEDGED (proven: burst-killing the 5 frames before a refresh leaves the
@@ -317,11 +316,11 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             if v == 0 { return 0 }
             return min(120, max(2, v))
         }
-        // Default raised 6 → 30 (2026-06-16 latency-first reframe). Self-heal protects in-MOTION frames,
-        // which the coding reframe deliberately lets blur/drop and re-sharpen — so heal far less often
-        // (~+1.6% stream bytes at K=30 vs +8.2% at K=6). The static-window crisp re-anchor (~300ms,
-        // StaticIDRDecider) already covers the "stop and read" case faster; a lost motion frame just
-        // waits at most K frames (~1s @30fps) for the next refresh, which is acceptable while moving.
+        // K=30, not a tight 6: self-heal protects in-MOTION frames, which a coding tool deliberately
+        // lets blur/drop and re-sharpen — so heal far less often (~+1.6% stream bytes at K=30 vs
+        // +8.2% at K=6). The static-window crisp re-anchor (~300ms, StaticIDRDecider) covers the
+        // "stop and read" case faster anyway; a lost motion frame waits at most K frames (~1s @30fps)
+        // for the next refresh, which is acceptable while moving.
         return 30
     }()
 
@@ -336,7 +335,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
 
     /// ENCODE DECOUPLING (gated): a dedicated SERIAL queue the encode runs on when
     /// `encodeOffQueueEnabled`, so the capture handler returns immediately (no synchronous encode
-    /// blocking SCStream delivery). nil ⇒ inline encode on the capture queue (legacy). `userInteractive`
+    /// blocking SCStream delivery). nil ⇒ inline encode on the capture queue. `userInteractive`
     /// to match the capture queue's priority.
     private lazy var encodeQueue: DispatchQueue? =
         Self.encodeOffQueueEnabled ? DispatchQueue(label: "com.slopdesk.encode", qos: .userInteractive) : nil
@@ -346,8 +345,8 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     private var encodePending = 0
     private var encodeBacklogDropped = 0
 
-    /// Hand a frame to the encoder — inline (legacy) or, when `encodeOffQueueEnabled`, COPIED and
-    /// dispatched to the serial `encodeQueue` so capture delivery is never blocked by encode time.
+    /// Hand a frame to the encoder — inline on the capture queue, or, when `encodeOffQueueEnabled`,
+    /// COPIED and dispatched to the serial `encodeQueue` so capture delivery is never blocked by encode time.
     /// Ordinary deltas are DROPPED when the encode backlog is full (`maxEncodePending`); a forced
     /// keyframe/crisp/compact/LTR-refresh is always submitted (recovery/sharpness anchor).
     private func handOffToEncoder(
@@ -397,24 +396,22 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// Last time we forced a heartbeat IDR (uptime seconds).
     private var lastHeartbeat: TimeInterval = 0
     private var hasEmittedFirstFrame = false
-    /// Uptime seconds of the last EMITTED keyframe (any reason) — drives the F1 recovery-IDR cooldown.
+    /// Uptime seconds of the last EMITTED keyframe (any reason) — drives the recovery-IDR cooldown.
     /// frameQueue-owned (set on both the live path and the timer path, both on frameQueue).
     private var lastKeyframeEmit: TimeInterval = 0
-    /// F1 (flicker fix, 2026-06-08): minimum spacing (seconds) between RECOVERY-driven (latch) IDRs, to
-    /// collapse a self-sustaining recovery-IDR storm (each big IDR is a UDP burst → loss → another recovery
-    /// request → another IDR). A latch-only force within this window of the last emitted keyframe ships a
-    /// P-frame instead: the recent keyframe already re-anchored the client, and the client's 2·RTT
-    /// escalation re-requests later (OUTSIDE the window) if that one was also lost — so recovery is
-    /// de-bursted, never dropped. NEVER gates the first-frame or heartbeat IDR. 0 disables. Env
-    /// `SLOPDESK_MIN_IDR_MS`.
+    /// Minimum spacing (seconds) between RECOVERY-driven (latch) IDRs, to collapse a self-sustaining
+    /// recovery-IDR storm (each big IDR is a UDP burst → loss → another recovery request → another IDR).
+    /// A latch-only force within this window of the last emitted keyframe ships a P-frame instead: the
+    /// recent keyframe already re-anchored the client, and the client's 2·RTT escalation re-requests
+    /// later (OUTSIDE the window) if that one was also lost — so recovery is de-bursted, never dropped.
+    /// NEVER gates the first-frame or heartbeat IDR. 0 disables. Env `SLOPDESK_MIN_IDR_MS`.
     ///
-    /// COMPONENT 2 (delivery-keyed cooldown, 2026-06-11): with `SLOPDESK_RECOVERY_IDR_V2` ON (the
-    /// default) this legacy SENT-keyed gate is INERT (0) — the session actor's ``RecoveryIDRPolicy``
-    /// (delivery-keyed + casualty bypass + token bucket) is the single admission authority, and it
-    /// suppresses BEFORE latching, so a granted latch is never dropped here (the forced-frame
-    /// invariant). `SLOPDESK_RECOVERY_IDR_V2=0` restores today's 500 ms behaviour byte-for-byte. An
-    /// EXPLICIT `SLOPDESK_MIN_IDR_MS` always wins — even with V2 on (a valid belt-and-suspenders
-    /// double-gating A/B configuration).
+    /// With `SLOPDESK_RECOVERY_IDR_V2` ON (the default) this SENT-keyed gate is INERT (0): the session
+    /// actor's ``RecoveryIDRPolicy`` (delivery-keyed + casualty bypass + token bucket) is then the single
+    /// admission authority, and it suppresses BEFORE latching, so a granted latch is never dropped here
+    /// (the forced-frame invariant). `SLOPDESK_RECOVERY_IDR_V2=0` falls back to the 500 ms sent-keyed
+    /// spacing. An EXPLICIT `SLOPDESK_MIN_IDR_MS` always wins — even with V2 on (a valid
+    /// belt-and-suspenders double-gating A/B configuration).
     private static let minRecoveryIDRInterval: TimeInterval = {
         if let s = ProcessInfo.processInfo.environment["SLOPDESK_MIN_IDR_MS"], let v = Double(s), v >= 0,
            v <= 5000 { return v / 1000.0 }
@@ -427,7 +424,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// an `NSLock` is enough here (set rarely, read once per frame).
     private let keyframeLock = NSLock()
     private var pendingForcedKeyframe = false
-    /// WF-8: latched when the host chose an LTR-refresh recovery (``SlopDeskVideoHostSession`` `.refreshLTR`
+    /// Latched when the host chose an LTR-refresh recovery (``SlopDeskVideoHostSession`` `.refreshLTR`
     /// → ``requestLTRRefresh()``) instead of a forced IDR. The next LIVE frame encodes a cheap
     /// ForceLTRRefresh P-frame and clears it; on a STATIC window the timer drains it and re-anchors
     /// with a crisp/compact IDR instead (an LTR refresh has no live delta to ride). Distinct from
@@ -440,21 +437,21 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// acked LTRs; a cadence refresh would then be VT's IDR fallback every K frames). Under
     /// `keyframeLock` (set rarely off-queue, read once per frame — same discipline as the latches).
     private var selfHealEligible = false
-    /// FPS-GOVERNOR (2026-06-11): the governed encode fps the session actor latches via
-    /// ``setGovernedFPS(_:)``. Equals `fps` (ungoverned, gate inert) until the governor steps.
-    /// Under `keyframeLock` (set rarely off-queue, read once per frame — the `setSelfHealEligible`
-    /// discipline). SCStream delivery stays at the FULL capture rate either way — the governor
-    /// actuates at the capture→encode hand-off (``EncodeCadenceGate``), never by reconfiguring
-    /// `minimumFrameInterval` (a governed 30 fps against a 60 Hz ceiling is exactly the slot-beat
-    /// trap the 2× capture ceiling was raised to kill).
+    /// FPS-GOVERNOR: the governed encode fps the session actor latches via ``setGovernedFPS(_:)``.
+    /// Equals `fps` (ungoverned, gate inert) until the governor steps. Under `keyframeLock` (set rarely
+    /// off-queue, read once per frame — the `setSelfHealEligible` discipline). SCStream delivery stays at
+    /// the FULL capture rate either way: the governor actuates at the capture→encode hand-off
+    /// (``EncodeCadenceGate``), NEVER by reconfiguring `minimumFrameInterval` — lowering the capture
+    /// ceiling to the governed rate reintroduces exactly the slot-beat quantization the 2× capture
+    /// ceiling exists to avoid (see `resolveCaptureHz`).
     private var governedFPS: Int
     /// FPS-GOVERNOR: the schedule-anchored regular-cadence admit gate. frameQueue-owned (only
     /// touched in the SCStream callback).
     private var cadenceGate = EncodeCadenceGate()
-    /// GATED-TAIL FLUSH (2026-06-11): one-shot encode of the cached latest frame at the gate's
-    /// next slot boundary, armed when a delivery is REJECTED by the cadence gate. Without it the
-    /// LAST frame of a motion burst that lands on a gated slot waits for the ~1-1.25 s static
-    /// crisp refresh — a visible stale tail at scroll end. frameQueue-owned (armed in the SCStream
+    /// GATED-TAIL FLUSH: one-shot encode of the cached latest frame at the gate's next slot
+    /// boundary, armed when a delivery is REJECTED by the cadence gate. Without it the LAST frame
+    /// of a motion burst that lands on a gated slot waits for the ~1-1.25 s static crisp refresh
+    /// — a visible stale tail at scroll end. frameQueue-owned (armed in the SCStream
     /// callback, fired on `frameQueue` via `asyncAfter`, replaced by any fresh `.complete`
     /// delivery, cancelled in ``stop()``'s `frameQueue.sync` teardown).
     private var pendingGatedFlush: DispatchWorkItem?
@@ -507,15 +504,15 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// (`bandTop`/`bandBottom`, ten-thousandths of height; `0,0` ⇒ no band) when scrolling — the session
     /// sends it as a `ScrollOffset` control message. `nil` ⇒ no send. frameQueue-confined.
     var onScrollOffset: (@Sendable (Int16, Int16, UInt16, UInt16) -> Void)?
-    /// CAPTURE-DEATH callback (stability audit 2026-07-10): invoked exactly ONCE, on `frameQueue`,
-    /// after the SCStream stopped ITSELF with an error (`didStopWithError` — shared window/app
-    /// closed, display unplugged, Screen-Recording TCC revoked, WindowServer/GPU reset) and this
-    /// capturer's synthetic-frame machinery has been quiesced (IDR timer cancelled, cached frame
-    /// dropped). Without it the IDR timer kept re-encoding the LAST cached frame as heartbeat/crisp
-    /// IDRs forever — the client "decoded video" (a frozen frame), the host heartbeat kept its
-    /// stall scrim disarmed, and the pane froze permanently and silently. The session wires this
-    /// (like `onScrollOffset`, at install time, BEFORE `start()`) to a `bye` + session teardown.
-    /// NEVER invoked after a deliberate ``stop()`` (see `captureStopped`). `nil` ⇒ quiesce only.
+    /// CAPTURE-DEATH callback: invoked exactly ONCE, on `frameQueue`, after the SCStream stopped
+    /// ITSELF with an error (`didStopWithError` — shared window/app closed, display unplugged,
+    /// Screen-Recording TCC revoked, WindowServer/GPU reset) and this capturer's synthetic-frame
+    /// machinery has been quiesced (IDR timer cancelled, cached frame dropped). Without it the IDR
+    /// timer would re-encode the LAST cached frame as heartbeat/crisp IDRs forever — the client
+    /// "decodes video" (a frozen frame), the host heartbeat keeps its stall scrim disarmed, and the
+    /// pane freezes permanently and silently. The session wires this (like `onScrollOffset`, at
+    /// install time, BEFORE `start()`) to a `bye` + session teardown. NEVER invoked after a
+    /// deliberate ``stop()`` (see `captureStopped`). `nil` ⇒ quiesce only.
     var onCaptureFailed: (@Sendable () -> Void)?
     /// True while the last sent scroll offset was non-zero — so exactly one `(0,0)` is emitted when
     /// scroll stops (arming the client reprojector's decay) instead of spamming it on every static frame.
@@ -526,7 +523,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// Asymmetric-EMA'd adaptive QP ceiling — snaps DOWN to a sharper ceiling instantly, eases UP to a
     /// blurrier one over ~3 frames (avoids QP shimmer on borderline activity). frameQueue-owned.
     private var adaptiveQPSmoothed: Int?
-    /// KHỰNG-ladder stage 1 (SLOPDESK_VIDEO_DEBUG): last DELIVERED-frame time, frameQueue-owned.
+    /// Capture-gap diagnostics (`SLOPDESK_VIDEO_DEBUG`): last DELIVERED-frame time, frameQueue-owned.
     static let dbgGapEnabled = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil
     private var lastDeliveredAt: Double = 0
     /// Highest PTS handed to the encoder by EITHER path, in the 90 kHz synthetic timescale,
@@ -544,7 +541,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         keyframeLock.unlock()
     }
 
-    /// WF-8: requests a cheap LTR refresh on the next captured frame (host `.refreshLTR` recovery
+    /// Requests a cheap LTR refresh on the next captured frame (host `.refreshLTR` recovery
     /// decision when the ACKED-ONLY gate holds). Thread-safe; called from the orchestrator actor.
     public func requestLTRRefresh() {
         keyframeLock.lock()
@@ -627,7 +624,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         return pending
     }
 
-    /// WF-8: atomically reads + clears the pending-LTR-refresh latch.
+    /// Atomically reads + clears the pending-LTR-refresh latch.
     private func takePendingLTRRefresh() -> Bool {
         keyframeLock.lock()
         defer { keyframeLock.unlock() }
@@ -663,12 +660,12 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             )
             return
         }
-        let forcedKeyframe = takePendingForcedKeyframe() // drain the keyframe latch
-        // WF-8: a STATIC window has no live delta to ride an LTR refresh, so on this path an LTR
+        let forcedKeyframe = takePendingForcedKeyframe()
+        // A STATIC window has no live delta to ride an LTR refresh, so on this path an LTR
         // request degrades to the same crisp/compact re-anchor as a forced keyframe — drain it and
         // fold it into `forced` (but the frameHandler is still called with ltrRefresh=false: the
         // static path never issues an actual ForceLTRRefresh, it re-encodes the cached frame crisp).
-        // Always false when SLOPDESK_LTR is off ⇒ `forced` is byte-identical to today.
+        // Always false when SLOPDESK_LTR is off.
         let forcedLTR = takePendingLTRRefresh()
         let forced = forcedKeyframe || forcedLTR
         guard staticIDRDecider.shouldReencode(
@@ -689,12 +686,11 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             return
         }
         staticIDRDecider.recordSynthetic(now: now)
-        lastKeyframeEmit = now // F1: the timer ALWAYS emits a keyframe → anchor the recovery cooldown
-        // The window is at rest (the live path is quiet — that is why this timer fired), so upgrade
-        // the re-encode to a CRISP near-lossless intra refresh for razor-sharp static text (Design A,
-        // same live session → no client decoder rebuild). `SLOPDESK_CRISP=0` falls back to a plain IDR.
-        // Static (at-rest) path: crisp (sharp) when enabled, never compact — at rest there is no live
-        // delta competing for the wire, so the larger near-lossless IDR is not a burst-loss risk.
+        lastKeyframeEmit = now // the timer ALWAYS emits a keyframe → anchor the recovery cooldown
+        // The window is at rest (a quiet live path is why this timer fired), so upgrade the re-encode
+        // to a CRISP near-lossless intra refresh for razor-sharp static text (same live session → no
+        // client decoder rebuild); `SLOPDESK_CRISP=0` falls back to a plain IDR. Never compact: at rest
+        // no live delta competes for the wire, so the larger near-lossless IDR is no burst-loss risk.
         handOffToEncoder(
             buf,
             pts: syntheticPTS(),
@@ -724,15 +720,15 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// `sourceRect` in POINTS (`pixelDim / captureScale`) — the source crop is point-space while
     /// `config.width/height` are pixel-space.
     private let captureScale: Double
-    /// WF-6 (#8): capture NV12 in the FULL-RANGE pixel-format variant when true (else the VideoRange
-    /// variant — today). Threaded into ``makeConfiguration``; default false ⇒ byte-identical capture.
+    /// Capture NV12 in the FULL-RANGE pixel-format variant when true, else the VideoRange variant.
+    /// Threaded into ``makeConfiguration``; default false ⇒ VideoRange.
     private let fullRange: Bool
     /// Prefer display-anchored capture (`.displayIncluding`) over the per-window compositor
     /// (`.window`) when no env override is set — see ``resolveCaptureMode(envValue:preferDisplayAnchored:)``.
     /// The live session passes `true`: display-anchored is ≈15ms lower glass-to-glass (one 60Hz slot)
     /// AND occlusion-proof (composites only the target window + children), so it is the default for
-    /// every served window. `SLOPDESK_DISPLAY_CAPTURE=window` forces the old per-window path; the
-    /// init default stays `false` so the bare check-video CLI keeps `.window`.
+    /// every served window. `SLOPDESK_DISPLAY_CAPTURE=window` forces the per-window path; the init
+    /// default stays `false` so the bare check-video CLI keeps `.window`.
     private let preferDisplayAnchored: Bool
 
     public init(
@@ -752,9 +748,9 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         self.captureScale = max(1.0, captureScale)
         self.fullRange = fullRange
         self.frameHandler = frameHandler
-        // Quiet window gates shouldReencode (the crisp re-anchor): coding-tool reframe defaults it to
-        // 300ms (was 1.0s) so text re-sharpens fast after motion stops, clamped to the heartbeat so a
-        // longer heartbeat never stretches the timer-path recovery-suppression window. SLOPDESK_QUIET_MS.
+        // Quiet window gates shouldReencode (the crisp re-anchor): 300ms, so text re-sharpens fast after
+        // motion stops, clamped to the heartbeat so a longer heartbeat never stretches the timer-path
+        // recovery-suppression window. SLOPDESK_QUIET_MS.
         staticIDRDecider = StaticIDRDecider(
             heartbeat: Self.heartbeatIDRInterval,
             quietWindow: Self.resolveQuietWindow(
@@ -783,10 +779,10 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         fullRange: Bool = false,
     ) -> SCStreamConfiguration {
         let config = SCStreamConfiguration()
-        // NV12 zero-copy (doc 02 §3.1). WF-6 (#8): the luma RANGE is carried by the pixel-format
-        // VARIANT (FullRange vs VideoRange) — THIS is the capture-side range knob; VT reads it to
-        // stamp the SPS `video_full_range_flag`. R8/RG8 plane layout is identical for both NV12
-        // variants, so the client's makeTexture is unaffected. Default VideoRange ⇒ today, byte-identical.
+        // NV12 zero-copy (doc 02 §3.1). The luma RANGE is carried by the pixel-format VARIANT
+        // (FullRange vs VideoRange) — THIS is the capture-side range knob; VT reads it to stamp the
+        // SPS `video_full_range_flag`. R8/RG8 plane layout is identical for both NV12 variants, so the
+        // client's makeTexture is unaffected either way. Default: VideoRange.
         config.pixelFormat = fullRange
             ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
             : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
@@ -800,32 +796,30 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // resolveCaptureHz) so a changed frame (e.g. a typed character) is still picked up within ~16ms
         // and not quantized to the 33ms encode slot; only the ENCODE rate (and thus bitrate) drops.
         // macOS 15+ silently defaults to 1/60; idle-skip keeps a static window near-zero regardless (doc 02 §3.1).
-        // LAT (2026-06-10, env SLOPDESK_CAPTURE_HZ): the capture min-interval normally matches the
-        // encode fps, which QUANTIZES when SCK may deliver a fresh composite (a change landing
-        // just after a slot waits out the rest of it). A HIGHER capture ceiling lets SCK hand
-        // over a changed frame sooner WITHOUT raising the encode rate (delivery stays
-        // content-driven; idle windows still deliver nothing). NOTE: `--fps 120` (raising BOTH)
-        // measured WORSE glass-to-glass (+18ms p50) — only decouple the capture side.
-        // DEFAULT 2× the encode fps since 2026-06-11 (HW-validated): at a 60Hz ceiling SCK's slot
-        // quantization beat against the source compositor's commit time ate ~3fps (framewatch: eff
-        // 57.2 → 60.0fps, p99 cadence 24.2 → 19.8ms) and the live host log showed 144-161 clustered
-        // ~30ms double-slot capture gaps per scroll session — ZERO after the raise (14.6k-frame
-        // user session). Capture-side only: encode fps (and thus bitrate) unchanged.
+        // A capture min-interval EQUAL to the encode fps QUANTIZES when SCK may deliver a fresh composite
+        // (a change landing just after a slot waits out the rest of it), so the ceiling is 2× the encode
+        // fps (`SLOPDESK_CAPTURE_HZ`, see resolveCaptureHz): SCK hands over a changed frame sooner WITHOUT
+        // raising the encode rate (delivery stays content-driven; idle windows still deliver nothing).
+        // ⚠️ Decouple the CAPTURE side only — `--fps 120` (raising both) measures WORSE glass-to-glass
+        // (+18ms p50). At a 1× (60Hz) ceiling SCK's slot quantization beats against the source
+        // compositor's commit time and eats ~3fps (framewatch: eff 57.2 vs 60.0fps, p99 cadence 24.2 vs
+        // 19.8ms), with 144-161 clustered ~30ms double-slot capture gaps per scroll session — zero at 2×
+        // (14.6k-frame HW session). Encode fps (and thus bitrate) is unaffected.
         let captureHz = resolveCaptureHz(
             envValue: ProcessInfo.processInfo.environment["SLOPDESK_CAPTURE_HZ"],
             fps: fps,
         )
         config.minimumFrameInterval = CMTime(value: 1, timescale: Int32(captureHz))
-        // queueDepth 3 → 5 (2026-06-17): the encode runs SYNCHRONOUSLY on this SCStream sample-handler
-        // queue, so one fat scroll-burst frame's `VTCompressionSessionEncodeFrame` blocked the next
-        // capture delivery once it over-ran ~`interval × (depth−1)` → the measured 61ms capture-gap.
-        // A deeper queue lets SCK buffer more surfaces while an encode is in flight, so a single slow
-        // frame becomes a brief blur instead of a capture freeze. `SLOPDESK_CAPTURE_QUEUE_DEPTH` overrides.
+        // The encode runs SYNCHRONOUSLY on this SCStream sample-handler queue, so one fat scroll-burst
+        // frame's `VTCompressionSessionEncodeFrame` blocks the next capture delivery as soon as it
+        // over-runs ~`interval × (depth−1)` (a measured 61ms capture-gap at depth 3). A deeper queue lets
+        // SCK buffer more surfaces while an encode is in flight, so a single slow frame becomes a brief
+        // blur instead of a capture freeze. `SLOPDESK_CAPTURE_QUEUE_DEPTH` overrides.
         config.queueDepth = Self.captureQueueDepth
         config.width = width
         config.height = height
         config.colorSpaceName = CGColorSpace.sRGB
-        // ── BLUR-ON-TOOLTIP FIX (HW-root-caused 2026-06-08) ────────────────────────────────
+        // ── BLUR-ON-TOOLTIP ────────────────────────────────────────────────────────────────
         // With `SCContentFilter(desktopIndependentWindow:)`, SCK composites the target window's
         // CHILD/associated windows into the captured BOUNDING rect (SCStreamFrameInfoBoundingRect =
         // "smallest box containing all captured windows"). Chrome's link-URL status bubble is a
@@ -834,9 +828,9 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // the now-larger union rect DOWN to fit the fixed buffer (contentScale drops below 1.0) — so
         // the ENTIRE composited frame, all static text included, is sampled into fewer pixels and the
         // whole pane goes soft, snapping back to sharp the instant the bubble hides. This is upstream
-        // of the encoder, which is why neither raising the live bitrate (12→40 Mbps, keyframes stayed
-        // a constant ~52 KB) nor lowering the QP ceiling (32→22) had ANY effect — the detail was gone
-        // before encode (HW A/B confirmed).
+        // of the encoder — no encoder knob touches it (HW A/B: raising the live bitrate 12→40 Mbps left
+        // keyframes at a constant ~52 KB; lowering the QP ceiling 32→22 changed nothing) because the
+        // detail is gone BEFORE encode.
         //
         // We KEEP child windows (so the URL tooltip / popovers still render) but PIN the sampled
         // region to the window's own frame via `sourceRect`: SCK then maps exactly (0,0,W,H) points
@@ -844,11 +838,11 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // contentScale stays at 1.0 (sharp). A child window that overlaps the frame is shown; the part
         // (if any) below the frame edge is simply cropped — never downscaled. `sourceRect` is in
         // POINTS, so divide the pixel dims by `captureScale`.
-        // NOTE (HW 2026-06-08): with child windows included, the crop anchors a couple points off the
-        // window's own top-left (a child window's geometry nudges the capture origin), so the image
-        // sits a hair to the right while the child is up. This residual only applies to `.window`
-        // mode: since 2026-06-12 a VD-parked window defaults to `.displayIncluding`, whose crop is
-        // DISPLAY-anchored — HW-probed dx=+1px here vs dx=0 there, tooltip kept (see ``CaptureMode``).
+        // ⚠️ Residual, `.window` mode only: with child windows included the crop anchors a couple of
+        // points off the window's own top-left (a child window's geometry nudges the capture origin),
+        // so the image sits a hair to the right while the child is up (HW-probed dx=+1px). A VD-parked
+        // window defaults to `.displayIncluding`, whose crop is DISPLAY-anchored (dx=0) and still keeps
+        // the tooltip — see ``CaptureMode``.
         let pointW = Double(width) / max(1.0, captureScale)
         let pointH = Double(height) / max(1.0, captureScale)
         config.sourceRect = CGRect(x: 0, y: 0, width: pointW, height: pointH)
@@ -859,22 +853,22 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         return config
     }
 
-    /// PURE capture-ceiling resolution (refactored out of ``makeConfiguration`` so it is
-    /// unit-testable): `SLOPDESK_CAPTURE_HZ` overrides, clamped [15, 240]; default 2× the encode
-    /// fps, ceilinged at 240 (see the LAT note above — decouple the capture side only).
+    /// PURE capture-ceiling resolution (split out of ``makeConfiguration`` so it is unit-testable):
+    /// `SLOPDESK_CAPTURE_HZ` overrides, clamped [15, 240]; default 2× the encode fps, ceilinged at
+    /// 240 (see the capture-ceiling note in ``makeConfiguration`` — decouple the capture side only).
     static func resolveCaptureHz(envValue: String?, fps: Int) -> Int {
         if let envValue, let v = Int(envValue) { return min(240, max(15, v)) }
         return min(240, max(1, fps) * 2)
     }
 
-    /// PURE quiet-window resolution (CRISP re-sharpen latency, 2026-06-16 latency-first reframe).
+    /// PURE quiet-window resolution (CRISP re-sharpen latency).
     ///
     /// How long after the last real `.complete` frame the static-IDR timer waits before emitting the
-    /// crisp near-lossless re-anchor. Lower = text sharpens sooner after a scroll/motion burst stops
-    /// ("vừa dừng là nét"); too low risks firing crisp during a one-frame pause mid-motion. The coding
-    /// reframe drops it 1.0s → 300ms (the explicit re-sharpen target). `SLOPDESK_QUIET_MS` overrides
-    /// (MILLISECONDS), clamped [50ms, heartbeat] — never longer than the heartbeat (a longer window would
-    /// stretch the timer-path recovery suppression; see `StaticIDRDecider`).
+    /// crisp near-lossless re-anchor. Lower = text sharpens sooner after a scroll/motion burst stops;
+    /// too low risks firing crisp during a one-frame pause MID-motion. 300ms is the re-sharpen target.
+    /// `SLOPDESK_QUIET_MS` overrides (MILLISECONDS), clamped [50ms, heartbeat] — never longer than the
+    /// heartbeat, since a longer window stretches the timer-path recovery suppression (see
+    /// `StaticIDRDecider`).
     static func resolveQuietWindow(envValue: String?, heartbeat: TimeInterval) -> TimeInterval {
         let floor = 0.05
         let ceil = max(floor, heartbeat)
@@ -886,8 +880,8 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
 
     /// PURE static-IDR poll-tick resolution. The frameQueue timer polls the decider (recovery latch +
     /// idle service + the crisp re-anchor) every tick; the decider only EMITS when due, so sub-cadence
-    /// ticks are cheap no-ops. Tightened 250ms → 80ms (2026-06-16) so worst-case time-to-crisp ≈
-    /// quietWindow + tick ≈ 0.38s. `SLOPDESK_IDR_TICK_MS` overrides (MILLISECONDS), clamped [20ms, 1s].
+    /// ticks are cheap no-ops. 80ms keeps worst-case time-to-crisp ≈ quietWindow + tick ≈ 0.38s.
+    /// `SLOPDESK_IDR_TICK_MS` overrides (MILLISECONDS), clamped [20ms, 1s].
     static func resolveIDRPollTick(envValue: String?) -> TimeInterval {
         let floor = 0.02
         let ceil = 1.0
@@ -909,12 +903,12 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         /// `SCContentFilter(desktopIndependentWindow:)` — follows the window anywhere, but the
         /// capture is anchored to the BOUNDING rect (window ∪ child windows), so a child window
         /// (Chrome's link-URL bubble) that overhangs the frame nudges the crop origin and the
-        /// whole image shifts ~1px while the child is up (the 2026-06-08 sourceRect-pin tradeoff).
+        /// whole image shifts ~1px while the child is up (the sourceRect-pin tradeoff).
         case window
         /// `SCContentFilter(display:excludingWindows:[])` cropped to the window frame
         /// (display-local points). Immune to the child-window nudge, ~5ms faster p50 (framewatch
-        /// signed A/B, n=51, 2026-06-10) — but EVERYTHING overlapping the rect is captured, so it
-        /// is only correct when the window is alone on the display.
+        /// signed A/B, n=51) — but EVERYTHING overlapping the rect is captured, so it is only
+        /// correct when the window is alone on the display.
         case displayExcluding
         /// `SCContentFilter(display:including:[window])` cropped to the window frame. The crop is
         /// display-anchored (no child-window nudge) AND only the target window + its children are
@@ -922,18 +916,18 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         /// windows ride along per the SDK ("display bound windows… Child windows are included by
         /// default"), kept explicit via `includeChildWindows`. Non-included area is empty per the
         /// SDK ("Display including content filters do not contain the desktop and dock").
-        /// LATENCY (framewatch flasher, Studio loopback VD 2×, 2026-06-12, 3×~92 paired flips):
-        /// glass-to-glass p50 35.8/36.0ms vs `.window` 50.7/51.2ms (≈ one 60Hz slot saved — the
-        /// per-window composite path costs it), p90 equal (~53ms); matches `.displayExcluding`
-        /// (35.7ms) — the include-list adds nothing measurable.
+        /// LATENCY (framewatch flasher, Studio loopback VD 2×, 3×~92 paired flips): glass-to-glass
+        /// p50 35.8/36.0ms vs `.window` 50.7/51.2ms (≈ one 60Hz slot saved — the per-window composite
+        /// path costs it), p90 equal (~53ms); matches `.displayExcluding` (35.7ms) — the include-list
+        /// adds nothing measurable.
         case displayIncluding
     }
 
     /// PURE mode resolution (unit-tested). `SLOPDESK_DISPLAY_CAPTURE` forces a mode for A/B:
     /// `window`/`0` → `.window`, `1`/`display` → `.displayExcluding`, `include` → `.displayIncluding`.
     /// Unset: `.displayIncluding` when the daemon parked the window on the virtual display
-    /// (`preferDisplayAnchored` — HW-verified 2026-06-12: kills the tooltip 1px shift, keeps the
-    /// tooltip, no multi-window bleed), else `.window` (off-VD the window may move/overlap freely).
+    /// (`preferDisplayAnchored` — HW-verified: kills the tooltip 1px shift, keeps the tooltip, no
+    /// multi-window bleed), else `.window` (off-VD the window may move/overlap freely).
     static func resolveCaptureMode(envValue: String?, preferDisplayAnchored: Bool) -> CaptureMode {
         switch envValue {
         case "window",
@@ -1006,8 +1000,8 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // A union region only makes sense in the display-including mode (it relies on
         // includeChildWindows compositing the dialog); force that mode when a region is supplied.
         let mode: CaptureMode = region != nil ? .displayIncluding
-            // W12: resolve through `EnvConfig` (ProcessInfo env → overlay) so a GUI setting can force
-            // the capture filter; an EMPTY overlay is byte-identical to the previous `ProcessInfo` read.
+            // Resolved through `EnvConfig` (ProcessInfo env → overlay) so a GUI setting can force the
+            // capture filter; an EMPTY overlay reads exactly like a bare `ProcessInfo` lookup.
             : Self.resolveCaptureMode(
                 envValue: EnvConfig.string("SLOPDESK_DISPLAY_CAPTURE"),
                 preferDisplayAnchored: preferDisplayAnchored,
@@ -1071,10 +1065,10 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // static window (only `.idle` frames) this is the ONLY path that can produce an IDR for
         // a joining / loss-recovering client.
         //
-        // Small poll, DECOUPLED from the heartbeat (F2): with a multi-second heartbeat the timer must
-        // still poll the recovery latch + service a truly-idle window promptly. The decider only EMITS
-        // when due, so sub-cadence ticks are cheap no-ops. Tightened 0.25s → 80ms (2026-06-16) so the
-        // crisp re-anchor lands ≈ quietWindow + tick (~0.38s) after motion stops. SLOPDESK_IDR_TICK_MS.
+        // The poll is DECOUPLED from the heartbeat: with a multi-second heartbeat the timer must still
+        // poll the recovery latch + service a truly-idle window promptly. The decider only EMITS when
+        // due, so sub-cadence ticks are cheap no-ops. At an 80ms tick the crisp re-anchor lands
+        // ≈ quietWindow + tick (~0.38s) after motion stops. SLOPDESK_IDR_TICK_MS.
         let tick = Self.resolveIDRPollTick(envValue: ProcessInfo.processInfo.environment["SLOPDESK_IDR_TICK_MS"])
         let leewayMs = max(8, Int((tick * 1000.0) / 4.0))
         let timer = DispatchSource.makeTimerSource(queue: frameQueue)
@@ -1250,16 +1244,15 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         }
         guard status == .complete else {
             // .idle / .blank / .suspended / .started → no NEW pixels to encode, so skip.
-            // ⚠️ VIDEO-HOST-1 (audit — docs/25 §4): on a STATIC window only `.idle` frames
-            // arrive, so the forced-keyframe latch (`takePendingForcedKeyframe`) AND the ~1s
-            // heartbeat IDR — BOTH below this guard — never run, and a client that requests
-            // loss-recovery (or joins) while the host window is unchanging gets no IDR and
-            // freezes on the last good frame. FIX (see StaticIDRDecider): `start()` arms a
-            // heartbeat timer on `frameQueue` that re-encodes the cached last-`.complete` COPY
-            // (`copyPixelBuffer`) as a forced IDR via `onIDRTimerTick`, so the latch + heartbeat
-            // have a second drainer while the live path is quiet. The ON path needs Mac Studio
-            // bring-up (real GUI + TCC) — the SCStream IOSurface / queue-depth interaction is
-            // unobservable headlessly; only the pure decider/PTS pieces are unit-tested.
+            // ⚠️ VIDEO-HOST-1 (docs/25 §4): on a STATIC window only `.idle` frames arrive, so the
+            // forced-keyframe latch (`takePendingForcedKeyframe`) AND the heartbeat IDR — BOTH
+            // below this guard — never run; a client that requests loss-recovery (or joins) while
+            // the host window is unchanging would get no IDR and freeze on the last good frame.
+            // That is why `start()` arms a heartbeat timer on `frameQueue` (see StaticIDRDecider)
+            // that re-encodes the cached last-`.complete` COPY (`copyPixelBuffer`) as a forced IDR
+            // via `onIDRTimerTick` — the latch + heartbeat get a second drainer while the live path
+            // is quiet. The SCStream IOSurface / queue-depth interaction is unobservable headlessly,
+            // so only the pure decider/PTS pieces are unit-tested; the rest needs a real GUI + TCC.
             return
         }
 
@@ -1269,10 +1262,10 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // `now` (computed here for both the heartbeat block and the static-IDR caching below).
         let now = Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) / 1_000_000_000.0
 
-        // KHỰNG LADDER stage 1 (2026-06-10, SLOPDESK_VIDEO_DEBUG): a >28ms gap between two DELIVERED
-        // frames during continuous motion means SCK itself stalled (or idle-skipped a changing
-        // frame) — anything downstream can only inherit this hole. Idle pages legitimately gap;
-        // read these lines only against a continuous-motion test (testufo).
+        // SLOPDESK_VIDEO_DEBUG: a >28ms gap between two DELIVERED frames during continuous motion
+        // means SCK itself stalled (or idle-skipped a changing frame) — anything downstream can only
+        // inherit this hole. Idle pages legitimately gap; read these lines only against a
+        // continuous-motion test (testufo).
         if Self.dbgGapEnabled {
             if lastDeliveredAt > 0, now - lastDeliveredAt > 0.028 {
                 FileHandle.standardError
@@ -1326,7 +1319,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
                         } else {
                             // Re-sharpen on STOP by at most downStep QP/frame: a snap straight to the
                             // floor re-encodes the whole settled viewport in ONE ~80 KB frame (the
-                            // scroll-stop "khựng"); stepping spreads it over a few small frames.
+                            // scroll-stop stutter); stepping spreads it over a few small frames.
                             max(rawQP, s - Self.adaptiveQPDownStep)
                         }
                     } else {
@@ -1344,13 +1337,13 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         } else {
             pendingAdaptiveQP = nil
         }
-        // LATENCY (2026-06-18, Rank 1): defer the `cachedPixelBuffer` COPY to function exit so it no longer
-        // blocks the encode-submit critical path. The cache (IDR-heartbeat / crisp / dialog-union) is read
-        // only on LATER timer ticks, never by THIS frame's encode (which is handed `pixelBuffer` directly).
-        // `defer` fires on EVERY exit — idle-skip / scroll-fps / static-suppress / governor-gate returns AND
-        // the encode path — so the cache updates on all paths exactly as before; only its ORDER vs the inline
-        // encode changes (the encoder sees the frame ~0.5–2ms sooner). Placed AFTER the measure-vs-prev reads
-        // above so scroll-reproject + adaptive-QP still compare against the PREVIOUS frame.
+        // LATENCY: the `cachedPixelBuffer` COPY is DEFERRED to function exit so it stays off the
+        // encode-submit critical path (the encoder sees the frame ~0.5–2ms sooner). The cache
+        // (IDR-heartbeat / crisp / dialog-union) is read only on LATER timer ticks, never by THIS
+        // frame's encode, which is handed `pixelBuffer` directly. `defer` fires on EVERY exit —
+        // idle-skip / scroll-fps / static-suppress / governor-gate returns AND the encode path — so
+        // every path caches. ⚠️ It must stay BELOW the measure-vs-prev reads above: they compare this
+        // frame against the PREVIOUS one, which is still what `cachedPixelBuffer` holds up here.
         defer { cachedPixelBuffer = Self.copyPixelBuffer(pixelBuffer) }
 
         // TRUE IDLE-SKIP decision (default OFF): drop a frame ONLY when it is byte-identical to the
@@ -1358,8 +1351,8 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // syntax-highlight color flip, theme toggle) is NOT mistaken for idle (the luma-only `changeMilli`
         // would miss it) — AND it carries no pending obligation. The cheap luma `idleSkipEligible`
         // pre-check (the adaptive-QP changed-row fraction) gates the full-hash compute. A skipped frame
-        // must NOT re-anchor `staticIDRDecider` below — leaving the quiet-window clock stale lets the
-        // ~300ms crisp refresh fire on a static window (the anti-freeze invariant STATIC_SUPPRESS violated).
+        // must NOT re-anchor `staticIDRDecider` below — leaving the quiet-window clock stale is what lets
+        // the ~300ms crisp refresh fire on a static window (the anti-freeze invariant STATIC_SUPPRESS breaks).
         var idleSkip = false
         if Self.idleSkipEnabled,
            Self.idleSkipEligible(measured: measured, changeMilli: changeMilli),
@@ -1441,7 +1434,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // is pending, drop it here — before any PTS bookkeeping or the encode hand-off — so a SCK
         // `.complete` re-delivery of unchanged pixels never re-encodes/re-sends. The cache + decider
         // clock above ARE updated first, so the static-IDR timer still re-anchors on a quiet window.
-        // Gate OFF ⇒ this block is skipped entirely (no hash, byte-identical to today).
+        // Gate OFF ⇒ this block is skipped entirely (no hash computed).
         if Self.staticSuppressEnabled,
            let frameHash = Self.hashFrame(pixelBuffer),
            frameHash != FrameHash.SENTINEL,
@@ -1475,18 +1468,18 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // Clamp the value ACTUALLY handed to the encoder up to the high-water mark — not just
         // the tracker — so a real frame can never reverse a prior synthetic IDR's PTS (the
         // live session has AllowFrameReordering=false), and both paths feed VT a single uniform
-        // 90 kHz timescale (review finding, VIDEO-HOST-1 §5).
+        // 90 kHz timescale (VIDEO-HOST-1 §5).
         lastEmittedPTS = CMTimeMaximum(lastEmittedPTS, pts90k)
         let encodePTS = lastEmittedPTS
 
-        // FPS-GOVERNOR cadence gate (2026-06-11): when governed below the base fps, admit
-        // deliveries on the drift-free schedule (every 2nd/3rd/4th delivery slot — metronome-
-        // regular, NOT the retired alternating skip). Placement invariants (each load-bearing):
+        // FPS-GOVERNOR cadence gate: when governed below the base fps, admit deliveries on the
+        // drift-free schedule (every 2nd/3rd/4th delivery slot — metronome-regular; an alternating
+        // skip would beat audibly against motion). Placement invariants (each load-bearing):
         //  - the cachedPixelBuffer copy + staticIDRDecider.onCompleteFrame above MUST run for
         //    gated frames too. Cache: otherwise the static-timer crisp refresh would re-ship a
         //    stale pre-final frame after motion stops on a gated frame (permanent stale screen).
         //    Decider: otherwise the timer would think the live path quiet and fire crisp IDRs
-        //    MID-motion. Cost unchanged vs today (every delivered frame is copied today already).
+        //    MID-motion. Costs nothing extra — every delivered frame is copied anyway.
         //  - the gate sits ABOVE the latch DRAIN and uses a PEEK for `forced`, so a gated return
         //    is impossible while a recovery latch is pending / before the first frame — recovery
         //    converts to the NEXT delivery (≤1 delivery interval, deliveries stay at full rate).
@@ -1523,10 +1516,10 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// heartbeat / recovery-cooldown keyframe resolution, compact IDR, LTR refresh + self-heal
     /// cadence). frameQueue-owned.
     private func encodeBelowGate(pixelBuffer: CVPixelBuffer, encodePTS: CMTime, now: TimeInterval, governed: Int) {
-        // Heartbeat IDR ~1s, plus a forced keyframe on the very first delivered frame,
-        // plus any client-requested IDR (loss recovery, doc 17 §3.6).
+        // Heartbeat IDR, plus a forced keyframe on the very first delivered frame, plus any
+        // client-requested IDR (loss recovery, doc 17 §3.6).
         let latched = takePendingForcedKeyframe()
-        // WF-8: drain the LTR-refresh latch too (always false when SLOPDESK_LTR is off ⇒ byte-identical).
+        // Drain the LTR-refresh latch too (always false when SLOPDESK_LTR is off).
         let ltrLatched = takePendingLTRRefresh()
         var forceKeyframe = latched
         var isFirstFrame = false
@@ -1536,13 +1529,13 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             isFirstFrame = true
             hasEmittedFirstFrame = true
         } else if Self.motionHeartbeatEnabled, now - lastHeartbeat >= Self.heartbeatIDRInterval {
-            // CAD-3: the periodic motion-heartbeat IDR is gated OFF by default (it was the 2.5s scroll
-            // hitch — see `motionHeartbeatEnabled`). When off, `lastHeartbeat` is anchored only on the
-            // first-frame + recovery IDRs (below), and the static-timer re-anchors on motion pause.
+            // The periodic motion-heartbeat IDR is gated OFF by default (it is the 2.5s scroll hitch —
+            // see `motionHeartbeatEnabled`). When off, `lastHeartbeat` is anchored only by the
+            // first-frame + recovery IDRs below, and the static timer re-anchors on motion pause.
             forceKeyframe = true
             isHeartbeat = true
         }
-        // F1: collapse a recovery-IDR storm. If the ONLY reason is the recovery latch AND a keyframe was
+        // Collapse a recovery-IDR storm. If the ONLY reason is the recovery latch AND a keyframe was
         // emitted < cooldown ago, ship a P-frame instead — the recent keyframe already re-anchored the
         // client; if it was ALSO lost, the client's 2·RTT escalation re-requests later (outside the
         // cooldown) and is honored. Never gates the first-frame or heartbeat IDR. The dropped force is NOT
@@ -1556,13 +1549,13 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         if forceKeyframe { lastHeartbeat = now
             lastKeyframeEmit = now
         }
-        // COMPACT IDR (2026-06-08 motion-smoothness): a forced IDR on the LIVE (active) path — recovery
-        // (client-requested after loss) or heartbeat — is encoded SMALL+coarse (encodeCompactKeyframe)
-        // so it survives a UDP burst instead of re-triggering the recovery-IDR loop that shows as a
-        // periodic motion hitch. The FIRST frame stays full quality (one-time, no loop); the static
-        // timer path stays CRISP. `compact ⟹ forceKeyframe` by construction.
+        // COMPACT IDR: a forced IDR on the LIVE (active) path — recovery (client-requested after loss)
+        // or heartbeat — is encoded SMALL+coarse (encodeCompactKeyframe) so it survives a UDP burst
+        // instead of re-triggering the recovery-IDR loop, which shows up as a periodic motion hitch.
+        // The FIRST frame stays full quality (one-time, no loop); the static timer path stays CRISP.
+        // `compact ⟹ forceKeyframe` by construction.
         let compact = forceKeyframe && !isFirstFrame
-        // WF-8: send a cheap LTR refresh ONLY when we are NOT already sending a keyframe — a keyframe
+        // Send a cheap LTR refresh ONLY when we are NOT already sending a keyframe — a keyframe
         // (first/heartbeat/recovery IDR) is a superset recovery and wins, so an LTR refresh latched
         // alongside it is simply consumed (the keyframe re-anchors the client). If `forceKeyframe`
         // ended up false but an LTR refresh was latched, ship the small ForceLTRRefresh P-frame.
@@ -1617,7 +1610,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         )
     }
 
-    // MARK: GATED-TAIL FLUSH (FPS governor, 2026-06-11)
+    // MARK: GATED-TAIL FLUSH (FPS governor)
 
     /// Arms (REPLACING any prior one — repeated gated deliveries re-arm) the one-shot flush at the
     /// cadence gate's next-due boundary. The work item runs on `frameQueue`, so it is serialized
@@ -1660,11 +1653,11 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     // MARK: SCStreamDelegate
 
     public func stream(_: SCStream, didStopWithError error: Error) {
-        // CAPTURE-DEATH (stability audit 2026-07-10): the stream is DEAD (shared window/app closed,
-        // display unplugged, Screen-Recording TCC revoked, WindowServer/GPU reset). This used to
-        // ONLY log — the IDR timer then kept re-encoding the stale `cachedPixelBuffer` as periodic
-        // heartbeat/crisp IDRs, so the client "decoded video" (a frozen frame) with no error and
-        // its stall scrim never engaged. Quiesce + notify instead.
+        // CAPTURE-DEATH: the stream is DEAD (shared window/app closed, display unplugged,
+        // Screen-Recording TCC revoked, WindowServer/GPU reset). Logging alone is NOT enough — the
+        // IDR timer would keep re-encoding the stale `cachedPixelBuffer` as periodic heartbeat/crisp
+        // IDRs, so the client "decodes video" (a frozen frame) with no error and its stall scrim
+        // never engages. Quiesce + notify.
         log.error("SCStream stopped with error: \(error.localizedDescription)")
         handleCaptureFailure()
     }
@@ -1703,10 +1696,10 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
 
     /// Deep-copies an NV12 `CVPixelBuffer` into a fresh IOSurface-backed buffer the capturer
     /// owns indefinitely, so the SCStream-delivered surface can be returned to the pool
-    /// immediately (queueDepth=3, WWDC22 s10155 — permanently retaining one would shrink the
-    /// live pool to 2 and risk a capture stall). Returns nil on alloc/lock failure (caller then
-    /// simply has no cached buffer → the decider returns false, no synthetic IDR — safe). The
-    /// copy is IOSurface-backed so the synthetic re-encode stays zero-copy into VT, like live.
+    /// immediately (WWDC22 s10155 — permanently retaining one would shrink the live pool by a
+    /// slot and risk a capture stall). Returns nil on alloc/lock failure (the caller then simply
+    /// has no cached buffer → the decider returns false, no synthetic IDR — safe). The copy is
+    /// IOSurface-backed so the synthetic re-encode stays zero-copy into VT, like live.
     private static func copyPixelBuffer(_ src: CVPixelBuffer) -> CVPixelBuffer? {
         let w = CVPixelBufferGetWidth(src), h = CVPixelBufferGetHeight(src)
         let fmt = CVPixelBufferGetPixelFormatType(src)
@@ -1721,7 +1714,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // chroma location): CVPixelBufferCreate yields a buffer with NONE, and VT derives the
         // encoded color metadata from the input buffer — so without this the synthetic IDR would
         // encode with default color and a decoding client could see a brief tone shift versus the
-        // surrounding live frames (review finding, VIDEO-HOST-1).
+        // surrounding live frames.
         if let attachments = CVBufferCopyAttachments(src, .shouldPropagate) {
             CVBufferSetAttachments(dst, attachments, .shouldPropagate)
         }
@@ -1750,12 +1743,6 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
 
     // MARK: STATIC-FRAME SUPPRESSION pixel-buffer hash
 
-    /// Hashes the NV12 `pixelBuffer`'s luma + interleaved-chroma planes into one 64-bit value via the
-    /// native ``FrameHasher/hashNV12(y:yStride:width:height:cbcr:cbcrStride:)`` NEON kernel, ZERO-COPY: it locks the buffer read-only,
-    /// passes the locked plane base addresses + their `bytesPerRow` strides straight to Rust (which
-    /// borrows them for the call only), then unlocks. The hash reads only the VISIBLE `width` bytes
-    /// of each row, so it is independent of plane padding. Returns nil on a lock failure / missing
-    /// luma plane (the caller then simply does not suppress). Called only when suppression is enabled.
     /// SCROLL REPROJECTION: measure the dominant per-frame VERTICAL content shift between `prev` and
     /// `cur` (NV12 luma planes), returned as a signed NORMALIZED offset in ten-thousandths of the frame
     /// HEIGHT (×10000), PLUS the moving-content vertical band (`bandTop`/`bandBottom`, also in
@@ -1851,6 +1838,12 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         return (Int(qp), changeMilli)
     }
 
+    /// Hashes the NV12 `pixelBuffer`'s luma + interleaved-chroma planes into one 64-bit value via the
+    /// native ``FrameHasher/hashNV12(y:yStride:width:height:cbcr:cbcrStride:)`` NEON kernel, ZERO-COPY:
+    /// it locks the buffer read-only, passes the locked plane base addresses + their `bytesPerRow`
+    /// strides straight to the kernel (which borrows them for the call only), then unlocks. Only the
+    /// VISIBLE `width` bytes of each row are hashed, so the result is independent of plane padding.
+    /// Returns nil on a lock failure / missing luma plane (the caller then simply does not suppress).
     private static func hashFrame(_ pixelBuffer: CVPixelBuffer) -> UInt64? {
         guard CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly) == kCVReturnSuccess else { return nil }
         defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }

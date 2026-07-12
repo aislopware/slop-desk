@@ -3,7 +3,7 @@ import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E10 WI-7 — the CLIENT half of the side-effecting host path verbs (``MetadataVerb/openPath`` = 9 /
+/// The CLIENT half of the side-effecting host path verbs (``MetadataVerb/openPath`` = 9 /
 /// ``MetadataVerb/revealPath`` = 10): ``MetadataClient/openPath(_:)`` / ``MetadataClient/revealPath(_:)``
 /// must encode the right verb byte + the path as a RAW-UTF-8 request payload, and surface the host's
 /// `ok`/`notFound`/`error` status as a `Bool` (true ONLY on `.ok`). Each behavior has a test that FAILS

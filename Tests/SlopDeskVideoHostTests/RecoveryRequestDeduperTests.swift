@@ -2,11 +2,9 @@ import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// Component 5 (recovery-redundancy, 2026-06-11): the host-side dedup window that collapses the
-/// client's byte-identical redundant recovery-request copies (3× spaced 3 ms) to ONE host action.
-/// `now` injected, keyed on FULL raw datagram bytes (zero wire-layout coupling). The dedup logic
-/// now lives in the Rust core (`slopdesk_core::recovery_request_deduper`); this exercises the
-/// host-side handle over the C-ABI, so these cases double as an FFI round-trip check.
+/// The host-side dedup window that collapses the client's byte-identical redundant
+/// recovery-request copies (3× spaced 3 ms) to ONE host action. `now` injected, keyed on FULL raw
+/// datagram bytes (zero wire-layout coupling).
 final class RecoveryRequestDeduperTests: XCTestCase {
     private func idrWire(lastDecoded: UInt32 = 400) -> Data {
         RecoveryMessage.requestIDR(lastDecodedFrameID: lastDecoded).encode()

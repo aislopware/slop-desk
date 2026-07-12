@@ -15,13 +15,13 @@ import SlopDeskVideoProtocol
 @MainActor
 public enum AppearanceApplier {
     /// Registered by `SlopDeskClientUI` at app launch. Receives the WHOLE selected ``AppearancePreferences``
-    /// (E15 WI-3 widened it from a bare ``ThemeChoice?``) so the GUI layer resolves the full dual-slot /
-    /// custom-slug / follow-OS selection via `ThemeStore.shared.apply(appearance:)` + re-pins the window
+    /// (not a bare ``ThemeChoice?``) so the GUI layer resolves the full dual-slot / custom-slug / follow-OS
+    /// selection via `ThemeStore.shared.apply(appearance:)` + re-pins the window
     /// appearance. `nil` here ⇒ headless / pre-launch ⇒ the theme side is skipped.
     public static var apply: ((AppearancePreferences) -> Void)?
 
     /// Registered by `SlopDeskClientUI`: returns the CURRENTLY-active theme's terminal-cell palette — the
-    /// libghostty `background`/`foreground` (6-hex, no `#`) PLUS (E15 WI-3) the 16-entry ANSI `palette` and
+    /// libghostty `background`/`foreground` (6-hex, no `#`) plus the 16-entry ANSI `palette` and
     /// `selection-background` — read from `ThemeStore.shared.active`, which already resolves the dual-slot /
     /// `.system` selection to a concrete light/dark theme. ``PreferencesStore`` consults this when rebuilding
     /// the terminal config so the terminal CELLS adopt the same flat palette as the chrome (a flat, gradient-free design).
@@ -32,15 +32,15 @@ public enum AppearanceApplier {
     /// — `ThemeStore.shared.active.id`, which already resolves the dual-slot / `.system` selection to a concrete
     /// light/dark theme (built-in id or custom slug). ``PreferencesStore`` keys the per-theme font override
     /// (`appearance.themeFonts[slug]`) by this when rebuilding the terminal config, so the Font → Light/Dark
-    /// scope font reaches the live terminal (E15 ES-E15-4 — pure ``FontScopeResolver`` precedence). `nil`
+    /// scope font reaches the live terminal (pure ``FontScopeResolver`` precedence). `nil`
     /// (headless / pre-launch) ⇒ no per-scope lookup, the Global ``TerminalPreferences/fontFamily`` stands.
     public static var resolveActiveThemeSlug: (() -> String?)?
 }
 
 /// The active theme's TERMINAL-cell colours, resolved by the GUI layer for ``PreferencesStore`` to thread into
-/// ``TerminalConfigBuilder`` (E15 WI-3). `background`/`foreground` are 6-hex (no `#`); the optional `palette`
-/// (exactly 16 entries when present) and `selectionBackground` ride the WI-2 builder overrides — `nil` for
-/// either ⇒ the builder emits no `palette`/`selection-background` line (byte-identical to the pre-E15 path).
+/// ``TerminalConfigBuilder``. `background`/`foreground` are 6-hex (no `#`); the optional `palette`
+/// (exactly 16 entries when present) and `selectionBackground` ride the builder overrides — `nil` for
+/// either ⇒ the builder emits no `palette`/`selection-background` line.
 ///
 /// PURE client chrome: it carries colour strings only, never reaches the wire / `EnvConfig` / sidecar.
 public struct ResolvedTerminalTheme: Sendable, Equatable {

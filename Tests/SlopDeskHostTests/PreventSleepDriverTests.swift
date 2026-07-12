@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskHost
 
-/// E13 WI-3 (ES-E13-3): the prevent-sleep DRIVER's apply-under-lock invariant. ``PreventSleepDriver`` is fed
+/// The prevent-sleep DRIVER's apply-under-lock invariant. ``PreventSleepDriver`` is fed
 /// by the host agent-status fan-out, which calls its observers OUTSIDE its own lock and from MULTIPLE threads
 /// (foreground-poll + the mux teardown fan). If the driver applied the assertion OUTSIDE its own lock, two
 /// interleaved `note()` calls could push a STALE state — leaving the assertion HELD while no pane works (a

@@ -4,7 +4,7 @@ import XCTest
 /// ``PromptEOLMarkStripper`` — the zsh PROMPT_SP cluster (`%B%S%#%s%b` mark + a COLUMNS-wide
 /// space fill + PROMPT_CR) is width-dependent: replayed into a grid narrower than the recording
 /// width the space fill wraps for real and the `%` mark surfaces as a stray line (the reconnect
-/// "kí tự lạ %" bug). These pins use the EXACT byte shape captured from a live journal
+/// stray-`%`-character bug). These pins use the EXACT byte shape captured from a live journal
 /// (`\e[1m\e[7m%\e[27m\e[1m\e[0m` + SP×N + `\r \r` immediately before the shim's `133;D`/`133;A`).
 final class PromptEOLMarkStripperTests: XCTestCase {
     /// The captured mark bytes: bold+standout `%`, standout-off, bold, reset.
@@ -78,7 +78,7 @@ final class PromptEOLMarkStripperTests: XCTestCase {
         XCTAssertEqual(strip(input), "out\r\n" + reset + aMark)
     }
 
-    // MARK: Adversarial-review regressions (2026-07-12 workflow findings)
+    // MARK: Adversarial-review regressions
 
     func testBareMarkWithoutSGRIsADeliberateMiss() {
         // The two-sided SGR requirement: a plain `%` + fill + CR abutting the anchor is REAL

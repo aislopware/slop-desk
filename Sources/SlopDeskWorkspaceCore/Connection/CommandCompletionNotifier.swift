@@ -29,7 +29,7 @@ public enum PaneCompletionBadge: Equatable, Sendable {
 }
 
 /// The PURE decision shared by BOTH the background-pane completion badge AND the long-command
-/// notification's focus gate (the B3 gate). UN-free + clock-free so it is unit-tested without touching
+/// notification's focus gate. UN-free + clock-free so it is unit-tested without touching
 /// `UNUserNotificationCenter` (matching ``CommandNotificationPolicy``). The threshold is reused from
 /// ``CommandNotificationPolicy/longRunningThresholdMS`` so "long" means one thing everywhere.
 ///
@@ -37,7 +37,7 @@ public enum PaneCompletionBadge: Equatable, Sendable {
 ///  - **badge**: shows on an UNFOCUSED pane. A FAILURE badges immediately (even a quick failing `make`
 ///    is worth surfacing on a backgrounded pane); a SUCCESS badges only when it was LONG, so a quick
 ///    background `ls`/`cd` does not litter the sidebar.
-///  - **shouldNotify**: the B3 focus gate — a desktop notification fires only for an UNFOCUSED, LONG
+///  - **shouldNotify**: the focus gate — a desktop notification fires only for an UNFOCUSED, LONG
 ///    command while notifications are enabled (a foreground long command must not spam).
 public enum BackgroundCompletionPolicy {
     /// The completion badge for a finished command, or `nil` for "no badge":
@@ -57,7 +57,7 @@ public enum BackgroundCompletionPolicy {
         return durationMS >= longThresholdMS ? .success : nil
     }
 
-    /// The B3 focus gate for the long-command desktop notification: notify ONLY when the pane is
+    /// The focus gate for the long-command desktop notification: notify ONLY when the pane is
     /// UNFOCUSED, the command was LONG (≥ `longThresholdMS`), and notifications are enabled. A foreground
     /// long command (you watched it run) never notifies; a disabled toggle never notifies.
     public static func shouldNotify(
@@ -172,17 +172,17 @@ public final class CommandCompletionNotifier {
     /// rate-limited by the ~10s threshold, so it is not gated.)
     private var explicitLimiter = NotificationRateLimiter(now: ProcessInfo.processInfo.systemUptime)
 
-    /// The K8 dock-bounce seam (E14/WI-5): called when a notification is DELIVERED while the app is not
+    /// The dock-bounce seam: called when a notification is DELIVERED while the app is not
     /// active. The bounce rides the notification OSCs, NOT the bell — so it fires on every delivered
-    /// banner. WI-5 wires this to `NSApp.requestUserAttention(.informationalRequest)` (gated by the
-    /// "Bounce Dock Icon" toggle); the default is a no-op so the pre-WI-5 build (and tests) never bounce.
+    /// banner. The app wires this to `NSApp.requestUserAttention(.informationalRequest)` (gated by the
+    /// "Bounce Dock Icon" toggle); the default is a no-op so tests never bounce.
     public var bounceDock: () -> Void = {}
 
     public init() {}
 
-    /// Posts a "command finished" notification IFF the E14/K9 ``NotificationPolicy`` allows it (Notify on Finish
+    /// Posts a "command finished" notification IFF the ``NotificationPolicy`` allows it (Notify on Finish
     /// for a clean exit / Notify on Error Exit for a non-zero exit, then the Notify-While-Foreground tri-state
-    /// with the store-supplied `appActive` + `sourcePaneFocused`). M1: there is NO LONGER a long-running floor —
+    /// with the store-supplied `appActive` + `sourcePaneFocused`). There is no long-running floor here —
     /// the per-command gate is applied UPSTREAM in ``WorkspaceStore/handleCommandCompleted`` (the same policy,
     /// per-command + any duration), so a SHORT failing command notifies. This poster re-applies the policy as the
     /// foreground-gate actuator (defence-in-depth, agreeing with the store). `paneIDKey` (the
@@ -197,13 +197,13 @@ public final class CommandCompletionNotifier {
         sourcePaneFocused: Bool,
         settings: NotificationSettings,
     ) {
-        // M1 (E14): the ~10s long-running FLOOR is gone here — the per-command gate now lives UPSTREAM in the
+        // There is no ~10s long-running floor here — the per-command gate lives UPSTREAM in the
         // store (``WorkspaceStore/handleCommandCompleted``), which routes finish/error through the SAME pure
         // ``NotificationPolicy`` per-command (any duration). Re-imposing a floor here would silently drop the
         // short failing `make` the store just authorised. The poster re-applies the policy as the foreground-gate
         // actuator (defence-in-depth — agreeing with the store), then auth + post.
-        // E14/K9: the per-event toggle (Notify on Finish / Error) + the Notify-While-Foreground gate.
-        // A clean exit is `notifyOnFinish` (default OFF — so a clean long command no longer posts a banner);
+        // The per-event toggle (Notify on Finish / Error) + the Notify-While-Foreground gate.
+        // A clean exit is `notifyOnFinish` (default OFF — so a clean long command does not post a banner);
         // a non-zero exit is `notifyOnError` (default ON).
         guard NotificationPolicy.shouldDeliver(
             event: .commandFinish(exit: exitCode),
@@ -228,8 +228,8 @@ public final class CommandCompletionNotifier {
         }
     }
 
-    /// Fires the K8 dock-bounce seam iff the app is NOT active (a delivered banner the user can't see in
-    /// the foreground earns a bounce). A no-op while the app is active or until WI-5 wires ``bounceDock``.
+    /// Fires the dock-bounce seam iff the app is NOT active (a delivered banner the user can't see in
+    /// the foreground earns a bounce). A no-op while the app is active or if the app leaves ``bounceDock`` unwired.
     private func bounceDockIfBackgrounded(appActive: Bool) {
         if !appActive { bounceDock() }
     }
@@ -257,7 +257,7 @@ public final class CommandCompletionNotifier {
 
     /// Posts an EXPLICIT (OSC 9 / 777 / 99) child-requested notification — OR a Claude agent edge (the
     /// `event` distinguishes them) — carrying `paneIDKey` in `userInfo` so a click can focus the originating
-    /// pane (see ``PaneNotificationRouter``). Gated by the E14/K9 ``NotificationPolicy`` (the per-event toggle
+    /// pane (see ``PaneNotificationRouter``). Gated by the ``NotificationPolicy`` (the per-event toggle
     /// + the Notify-While-Foreground tri-state) with the store-supplied `appActive` + `sourcePaneFocused`,
     /// then the anti-flood limiter. Lazy-auth + best-effort like the long-command path; resolves the title
     /// fallback via the pure ``ExplicitNotificationContent``.
@@ -271,7 +271,7 @@ public final class CommandCompletionNotifier {
         sourcePaneFocused: Bool,
         settings: NotificationSettings,
     ) {
-        // E14/K9: the per-event toggle (explicit OSC rides "Allow App Notifications"; an agent edge rides its
+        // The per-event toggle (explicit OSC rides "Allow App Notifications"; an agent edge rides its
         // own toggle) + the Notify-While-Foreground gate. Checked FIRST so a suppressed notification neither
         // consumes a rate-limit token nor triggers the auth prompt.
         guard NotificationPolicy.shouldDeliver(

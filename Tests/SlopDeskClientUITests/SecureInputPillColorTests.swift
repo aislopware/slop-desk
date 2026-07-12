@@ -1,10 +1,10 @@
-// SecureInputPillColorTests — pins the E17 / ES-E17-4 secure-input pill fill to the FIXED security-blue
-// token, theme-INDEPENDENT, so it can never collapse into the theme accent (the cluster-1 fidelity fix).
+// SecureInputPillColorTests — pins the secure-input pill fill to the FIXED security-blue
+// token, theme-INDEPENDENT, so it can never collapse into the theme accent.
 //
 // The view and this test read the SAME source (`SecureInputPill.fillColor` → `Slate.Status.secureInput`),
 // the `ToastStackView.tint(for:)` pattern, so the rendered colour can't drift from the asserted contract.
 //
-// Revert-to-confirm-fail: re-routing the fill back to the theme-derived `Slate.Status.info` (the old bug)
+// Revert-to-confirm-fail: re-routing the fill back to the theme-derived `Slate.Status.info`
 // makes `fillColor` equal the Monokai accent under the default theme → `testSecureInputPillIsFixedBlueNotAccent`
 // fails on its `assertNotEqual(... accent)` leg. Headless / pure-token — no SCStream/VT/Metal touched.
 

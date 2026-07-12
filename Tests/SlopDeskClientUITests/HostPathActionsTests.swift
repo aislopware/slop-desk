@@ -3,7 +3,7 @@ import SlopDeskWorkspaceCore
 import XCTest
 @testable import SlopDeskClientUI
 
-/// E10 WI-7 (ES-E10-2 / ES-E10-6) — the FINAL client connection between the pane model's host path callbacks
+/// The client-side connection between the pane model's host path callbacks
 /// (`onRequestOpenHostPath` / `onRequestRevealHostPath`, fired by the renderer ⌘click / ⌘⇧click, the Jump-To
 /// open/reveal, and the Hint-to-open/reveal actuator) and the pane's ``MetadataClient`` (verb 9 `openPath` /
 /// verb 10 `revealPath`). Before this wiring the two callbacks were NEVER assigned, so every host open/reveal

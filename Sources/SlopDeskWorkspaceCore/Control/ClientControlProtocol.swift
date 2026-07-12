@@ -1,6 +1,6 @@
 import Foundation
 
-// E20 WI-2 — Client control protocol.
+// Client control protocol.
 //
 // The method-name vocabulary + param builders for the CLIENT-side control socket — the
 // runtime-control surface the new `slopdesk` CLI uses to drive the running client GUI

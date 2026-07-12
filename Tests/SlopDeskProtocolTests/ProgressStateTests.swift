@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskProtocol
 
-/// E14 / K1 — the pure progress model `ProgressState` + the OSC 9;4 parser `ProgressOSCParser`
+/// The pure progress model `ProgressState` + the OSC 9;4 parser `ProgressOSCParser`
 /// (`SlopDeskProtocol`, shared host + client). These pin:
 ///
 /// - `ProgressState(wire:)` maps the four known discriminants (0/1/2/3) and DROPS (`nil`) every
@@ -10,7 +10,7 @@ import XCTest
 ///   percent to 0…100, and DROPS every malformed shape (unknown state, non-integer percent, empty,
 ///   bare/over-long forms).
 ///
-/// REVERT-TO-CONFIRM-FAIL: before WI-1 there was no `ProgressState`/`ProgressOSCParser` at all — this
+/// REVERT-TO-CONFIRM-FAIL: without this code there is no `ProgressState`/`ProgressOSCParser` at all — this
 /// file does not compile against the un-fixed tree, and each assertion exercises a real branch (an
 /// unknown state really must map to `nil`, a `250` percent really must clamp to `100`).
 final class ProgressStateTests: XCTestCase {

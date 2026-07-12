@@ -7,8 +7,8 @@ import SlopDeskProtocol
 /// PATH 1 streams raw VT bytes from the host PTY to the client; **how** those bytes
 /// become pixels is hidden behind this protocol. The production renderer is
 /// **libghostty** (see `DECISIONS.md`): a
-/// `GhosttySurface` conforming to `TerminalSurface` lives in the GUI app target
-/// (WF-5), where it owns a `ghostty_surface_t` in a Metal view. The headless core
+/// `GhosttySurface` conforming to `TerminalSurface` lives in the GUI app target,
+/// where it owns a `ghostty_surface_t` in a Metal view. The headless core
 /// here never links libghostty.
 ///
 /// ``HeadlessTerminalSurface`` is the in-package conformer used by tests and the
@@ -56,9 +56,9 @@ public extension TerminalSurface {
     }
 }
 
-// MARK: - TerminalSurfaceActions (the W14 editor-action capability seam)
+// MARK: - TerminalSurfaceActions (the editor-action capability seam)
 
-/// The OPTIONAL capability seam (docs/42 W14) the right-click context menu and the ⌘F find bar drive: a
+/// The OPTIONAL capability seam (docs/42) the right-click context menu and the ⌘F find bar drive: a
 /// renderer that wraps a real terminal (``GhosttySurface``) exposes selection state + named keybinding
 /// actions + scrollback search through these, so the SwiftUI find bar / `NSMenu` route through the SEAM
 /// instead of importing libghostty. Headless conformers (tests, the CLI) DO NOT conform — the GUI probes
@@ -97,10 +97,10 @@ public extension TerminalSurfaceActions {
     func scrollbackGridColumns() -> Int { 0 }
 }
 
-// MARK: - TerminalViewportSnapshotting (the E10 WI-2 overlay-geometry capability seam)
+// MARK: - TerminalViewportSnapshotting (the overlay-geometry capability seam)
 
-/// The VISIBLE-grid geometry of a live terminal surface, in **points** (not pixels), used by the E10
-/// link-underline (WI-5) and Hint Mode (WI-9) overlays to map a detected `(row, colStart ..< colEnd)`
+/// The VISIBLE-grid geometry of a live terminal surface, in **points** (not pixels), used by the
+/// link-underline and Hint Mode overlays to map a detected `(row, colStart ..< colEnd)`
 /// span (``TerminalLinkDetector``'s display-cell columns) straight to a `CGRect` in the view's
 /// coordinate space.
 ///
@@ -158,11 +158,11 @@ public struct TerminalCellMetrics: Sendable, Equatable {
     /// The ``rect(row:colStart:colEnd:)`` for a span CLAMPED to the visible grid, or `nil` when the span
     /// starts at or beyond the last visible column (`colStart >= cols`) — so a decoration is NEVER drawn
     /// off-screen-right. `colEnd` is clamped to ``cols`` (a span that runs past the grid edge is trimmed to
-    /// the edge). The E10 overlays (WI-5 underline, WI-9 hint labels) map every span through THIS, not the
-    /// raw ``rect`` — defence in depth for the per-grid-row viewport read (FINDING 3): even if a span's
-    /// `colStart` lands past the grid width (e.g. a long line whose own `colStart` would otherwise overshoot)
-    /// it is skipped rather than painted in the void. A degenerate clamp (`colEnd <= colStart` after
-    /// clamping) also returns `nil`.
+    /// the edge). The overlays (underline, hint labels) map every span through THIS, not the
+    /// raw ``rect`` — defence in depth for the per-grid-row viewport read: even if a span's `colStart`
+    /// lands past the grid width (e.g. a long line whose own `colStart` would otherwise overshoot) it is
+    /// skipped rather than painted in the void. A degenerate clamp (`colEnd <= colStart` after clamping)
+    /// also returns `nil`.
     public func clampedRect(row: Int, colStart: Int, colEnd: Int) -> CGRect? {
         guard cols > 0, colStart >= 0, colStart < cols else { return nil }
         let clampedEnd = min(colEnd, cols)
@@ -172,7 +172,7 @@ public struct TerminalCellMetrics: Sendable, Equatable {
 }
 
 /// The OPTIONAL capability seam (mirrors ``TerminalSurfaceActions``) that exposes the visible
-/// viewport's text + geometry so the E10 overlays render at the exact cell.
+/// viewport's text + geometry so the overlays render at the exact cell.
 ///
 /// Like ``TerminalSurfaceActions`` this is a SEPARATE protocol the GUI probes with
 /// `as? TerminalViewportSnapshotting`: the libghostty-backed `GhosttySurface` conforms (app target),

@@ -2,9 +2,9 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E19/A18 — pins the PURE vertical-sidebar single-tab auto-hide decision (``SidebarAutoHidePolicy``) + the
+/// Pins the PURE vertical-sidebar single-tab auto-hide decision (``SidebarAutoHidePolicy``) + the
 /// ``AutoHideTabsPanelMode`` enum and its persisted-`Defaults` round-trip / repair. Headless: the policy is
-/// the tested unit; the view-side glue that conditionally drives `chrome.sidebarCollapsed` (WI-7) reads this
+/// the tested unit; the view-side glue that conditionally drives `chrome.sidebarCollapsed` reads this
 /// same decision. No `NSWindow`/view instantiation.
 @MainActor
 final class SidebarAutoHidePolicyTests: XCTestCase {

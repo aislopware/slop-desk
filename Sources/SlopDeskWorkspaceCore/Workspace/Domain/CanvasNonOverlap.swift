@@ -4,8 +4,8 @@ import Foundation
 // MARK: - CanvasNonOverlap (pure non-overlapping layout solver for canvas drags)
 
 /// Pure non-overlap layout for canvas move/resize drags: the dragged body **slides flush** along its
-/// neighbours' boundaries instead of overlapping ("trượt theo boundary"), and on an insert-intent drop
-/// the surrounded neighbours **part to make room** ("tự dịch ra để có khoảng trống"). The companion to
+/// neighbours' boundaries instead of overlapping, and on an insert-intent drop
+/// the surrounded neighbours **part to make room**. The companion to
 /// ``CanvasSnap`` — it runs STRICTLY AFTER it, consuming the snapped frame as the dragged body's target,
 /// and shares the same 16pt gutter so a gutter-snapped box is already at the non-overlap boundary (the
 /// slide is then a no-op at a snap line — the two solvers reinforce, never fight).

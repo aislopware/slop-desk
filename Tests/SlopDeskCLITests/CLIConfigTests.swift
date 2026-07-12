@@ -2,12 +2,12 @@ import SlopDeskCLICore
 import SlopDeskVideoProtocol
 import XCTest
 
-// Hang-safe tests for the `slopdesk config path | validate` PURE helpers (E20, WI-4). No
+// Hang-safe tests for the `slopdesk config path | validate` PURE helpers. No
 // file I/O: the path resolver takes its environment as a parameter, and the validator takes the file
 // contents as a string. The malformed-line assertions are genuine behavioral contracts (the validator
 // must reject them) — not tautologies against the validator's own output.
 //
-// `validate` is checked against the REAL keybind grammar (M2 fix): the production parser
+// `validate` is checked against the REAL keybind grammar: the production parser
 // `KeybindGrammar.parseLine` is injected, so a line the launch bridge would silently ignore
 // (`font-size = 14`) MUST be rejected — proving the validator no longer reports such files "valid".
 
@@ -55,7 +55,7 @@ final class CLIConfigTests: XCTestCase {
         XCTAssertTrue(CLIConfig.validate(contents, isValidKeybindValue: isRealKeybind).isEmpty)
     }
 
-    // The core M2 contract: an app-store key the launch bridge SILENTLY IGNORES must be REJECTED, not
+    // The core contract: an app-store key the launch bridge SILENTLY IGNORES must be REJECTED, not
     // reported "valid". (The old generic `key = value` validator passed this — revert-to-confirm-fail.)
     func testValidateRejectsKeyTheAppIgnores() {
         let errors = CLIConfig.validate("font-size = 14", isValidKeybindValue: isRealKeybind)

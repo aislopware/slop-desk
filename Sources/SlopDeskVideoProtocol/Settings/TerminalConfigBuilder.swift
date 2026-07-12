@@ -1,6 +1,6 @@
 import Foundation
 
-/// PURE, headless builder: ``TerminalPreferences`` → a libghostty config string (W13).
+/// PURE, headless builder: ``TerminalPreferences`` → a libghostty config string.
 ///
 /// libghostty's `ghostty_config_load_string` (header 1133) accepts the SAME newline-separated
 /// `key = value` syntax as `~/.config/ghostty/config`. `GhosttyTerminalView` feeds ``string(for:)``'s
@@ -43,20 +43,20 @@ public enum TerminalConfigBuilder {
     /// `backgroundOverride` / `foregroundOverride` (6-hex, no `#`) — a non-empty value REPLACES the pref's
     /// own `background`/`foreground`; the seam the active THEME drives (``PreferencesStore`` passes
     /// `terminalBackgroundHex`/`terminalForegroundHex`). Omit (`nil`) to keep the pref's colours.
-    /// `controls` (E8 WI-2) — non-nil APPENDS the E8 control passthrough block after the render lines; `nil`
-    /// (default) reproduces the pre-E8 output BYTE-FOR-BYTE (wire / golden corpus untouched — client-side).
-    /// `paletteOverride` (E15 WI-2) — the theme's 16-entry ANSI palette. Valid (exactly ``paletteCount``
+    /// `controls` — non-nil APPENDS the control passthrough block after the render lines; `nil`
+    /// (default) reproduces the base output BYTE-FOR-BYTE (wire / golden corpus untouched — client-side).
+    /// `paletteOverride` — the theme's 16-entry ANSI palette. Valid (exactly ``paletteCount``
     /// clean 6-hex entries) → `palette = N=hex` lines (0–15) AFTER `foreground`; `nil`/malformed emits none.
-    /// `selectionBackgroundOverride` (E15 WI-2) — valid 6-hex → `selection-background` after the palette;
+    /// `selectionBackgroundOverride` — valid 6-hex → `selection-background` after the palette;
     /// `nil` / malformed ⇒ no line. Always pairs with `selection-foreground = cell-foreground` so each cell
     /// keeps its original glyph colour under the highlight (libghostty v1.2+ token; NOT `auto` — that is
     /// invalid and silently drops, restoring the default window fg↔bg invert).
-    /// FONT-PARITY keys (E15 WI-2) read from `prefs`: all EXCEPT `font-feature` emit only for a non-default
+    /// FONT-PARITY keys read from `prefs`: all EXCEPT `font-feature` emit only for a non-default
     /// value; `font-feature` emits UNCONDITIONALLY (ligatures-off's `-calt,-liga,-dlig` must always be sent
     /// to un-ligate `calt`-on GSUB fonts — see ``appendFontParity``). So a default `prefs` gains exactly ONE
-    /// line vs pre-E15 — NOT byte-identical — but this string is CLIENT-only, so the golden corpus is
+    /// line beyond the base render — NOT byte-identical — but this string is CLIENT-only, so the golden corpus is
     /// unaffected. Underline-off / SGR blink / `srgb-over`·`linear`·`perceptual` blending are PERSISTED but
-    /// NOT emitted (no verified libghostty key — deferred-apply; decision #5).
+    /// NOT emitted (no verified libghostty key — deferred-apply).
     public static func string(
         for prefs: TerminalPreferences,
         keybinds: [String] = [],
@@ -75,9 +75,9 @@ public enum TerminalConfigBuilder {
         let family = resolved(fontFamilyOverride, or: prefs.fontFamily)
         if !family.isEmpty {
             lines.append("font-family = \(family)")
-            // E15 (font-fallback fix): ghostty has NO `font-family-fallback` key — `font-family` is a
+            // ghostty has NO `font-family-fallback` key — `font-family` is a
             // `RepeatableString`, so the FALLBACK CHAIN is REPEATED `font-family` lines, in order, AFTER the
-            // primary (J5 CJK/Nerd-Font coverage). Only emitted when the primary is present (the first
+            // primary (covering CJK / Nerd Font glyphs). Only emitted when the primary is present (the first
             // `font-family` must be the primary).
             for fallback in fallbackFamilies(prefs.fontFamilyFallback) {
                 lines.append("font-family = \(fallback)")
@@ -86,7 +86,7 @@ public enum TerminalConfigBuilder {
         lines.append("font-size = \(formatSize(prefs.fontSize))")
         let weight = prefs.fontWeight.trimmingCharacters(in: .whitespaces)
         if !weight.isEmpty { lines.append("font-style = \(weight)") }
-        // E15 WI-2: the font-parity block (per-face families / ligatures / bold-italic mode / line-height /
+        // The font-parity block (per-face families / ligatures / bold-italic mode / line-height /
         // blending). All gated on non-default EXCEPT `font-feature` — see ``appendFontParity`` and the doc above.
         appendFontParity(&lines, prefs: prefs)
         let theme = prefs.theme.trimmingCharacters(in: .whitespaces)
@@ -97,7 +97,7 @@ public enum TerminalConfigBuilder {
         if !background.isEmpty { lines.append("background = \(background)") }
         let foreground = resolved(foregroundOverride, or: prefs.foreground)
         if !foreground.isEmpty { lines.append("foreground = \(foreground)") }
-        // E15 WI-2: theme ANSI palette + selection colour, AFTER bg/fg. Both validate-then-drop — nil /
+        // Theme ANSI palette + selection colour, AFTER bg/fg. Both validate-then-drop — nil /
         // malformed emits nothing.
         appendPalette(
             &lines,
@@ -120,19 +120,19 @@ public enum TerminalConfigBuilder {
             lines.append("keybind = \(kb)")
         }
 
-        // E8 WI-2: control passthrough block — emitted ONLY when `controls` is supplied, so a `nil` build
-        // stays byte-identical to pre-E8 (regression guard for the frozen golden corpus).
+        // Control passthrough block — emitted ONLY when `controls` is supplied, so a `nil` build
+        // stays byte-identical (regression guard for the frozen golden corpus).
         if let controls { appendControls(&lines, controls: controls, prefs: prefs) }
 
         return lines.joined(separator: "\n")
     }
 
-    /// Append the E15 FONT-PARITY lines (per-face families, `font-feature`, `font-style-bold/italic` +
+    /// Append the FONT-PARITY lines (per-face families, `font-feature`, `font-style-bold/italic` +
     /// `font-synthetic-style`, `adjust-cell-height`, `font-thicken`) from `prefs`. The fallback chain is NOT
     /// here — it rides repeated `font-family` lines in ``string(for:)`` (no `font-family-fallback` key).
     /// `font-feature` is ALWAYS emitted (off = the disabling set); the rest GATED on a NON-default value.
     /// Underline-off / SGR blink / `srgb-over`·`linear`·`perceptual` blending are persisted but NOT emitted
-    /// (deferred-apply — decision #5).
+    /// (deferred-apply).
     private static func appendFontParity(_ lines: inout [String], prefs: TerminalPreferences) {
         // Explicit per-face families surface ONLY when "Auto-match weight & style" is OFF (the three manual
         // pickers show only then); each empty face is skipped.
@@ -193,7 +193,7 @@ public enum TerminalConfigBuilder {
         return true
     }
 
-    /// Append the E15 theme PALETTE lines (`palette = N=hex`, 0–15) + selection highlight.
+    /// Append the theme PALETTE lines (`palette = N=hex`, 0–15) + selection highlight.
     /// Palette validate-then-drop: only when exactly ``paletteCount`` clean 6-hex entries.
     /// Selection: always emit `selection-foreground = cell-foreground` (libghostty v1.2+ — keep each
     /// cell's original glyph colour under the highlight; the default null path uses the *window*
@@ -220,7 +220,7 @@ public enum TerminalConfigBuilder {
         }
     }
 
-    /// Append the E8 *control* passthrough lines (selection / copy / paste / mouse / scroll knobs + cursor
+    /// Append the *control* passthrough lines (selection / copy / paste / mouse / scroll knobs + cursor
     /// colour/opacity/text + the ⇧+arrow `adjust_selection` keybinds), STABLE order after the render lines.
     /// Every token is a verified libghostty value (see ``TerminalControlsConfig``); cursor colours come from
     /// `prefs` under the same "empty ⇒ skip" rule as `background` / `foreground`.
@@ -246,10 +246,10 @@ public enum TerminalConfigBuilder {
         lines.append("mouse-shift-capture = \(c.mouseShiftCaptureToken)")
         lines.append("cursor-click-to-move = \(boolToken(c.clickToMove))")
         lines.append("mouse-reporting = \(boolToken(c.allowMouseCapture))")
-        // Right-Click Action (H7/H8) — libghostty OWNS the bare-right-click dispatch. The token is the
+        // Right-Click Action — libghostty OWNS the bare-right-click dispatch. The token is the
         // `right-click-action` enum value 1:1 (`RightClickAction.rawValue` = the Zig enum names), so the
         // surface performs the action — the GUI view no longer re-reads `hasSelection()` after the surface
-        // has already word-selected under the cursor (the WI-7 race). The view keeps ONLY the
+        // has already word-selected under the cursor (a race). The view keeps ONLY the
         // ⌃-right-always-menu override.
         lines.append("right-click-action = \(c.rightClickActionToken)")
         // One multiplier drives BOTH precision + discrete factors, PRESERVING libghostty's native per-axis
@@ -315,7 +315,7 @@ public enum TerminalConfigBuilder {
 
 // MARK: - TerminalControlsConfig (the leaf, libghostty-token mirror the builder consumes)
 
-/// The PURE, libghostty-token mirror of the fire-time terminal CONTROL knobs (E8 WI-2), defined HERE in the
+/// The PURE, libghostty-token mirror of the fire-time terminal CONTROL knobs, defined HERE in the
 /// leaf ``SlopDeskVideoProtocol`` so ``TerminalConfigBuilder`` (and its headless test) can emit the control
 /// lines WITHOUT importing `SlopDeskWorkspaceCore.TerminalControls` (which carries the `Defaults`-backed
 /// `from(defaults:)` factory + multi-state enums `ClipboardAccess`, `MouseShiftCapture`, …). The module
@@ -328,36 +328,36 @@ public enum TerminalConfigBuilder {
 /// The init defaults MIRROR `TerminalControls`' defaults, so a default value is a faithful "factory" bundle
 /// and a test can vary one field at a time.
 public struct TerminalControlsConfig: Sendable, Equatable {
-    /// Copy-on-Select (I4) — ON → libghostty `copy-on-select = clipboard`, OFF → `false`.
+    /// Copy-on-Select — ON → libghostty `copy-on-select = clipboard`, OFF → `false`.
     public var copyOnSelect: Bool
-    /// Trim-Trailing-Spaces (I5) — `clipboard-trim-trailing-spaces`.
+    /// Trim-Trailing-Spaces — `clipboard-trim-trailing-spaces`.
     public var trimTrailing: Bool
-    /// Clear-Selection-on-Typing (I6) — `selection-clear-on-typing`.
+    /// Clear-Selection-on-Typing — `selection-clear-on-typing`.
     public var clearOnTyping: Bool
-    /// Clear-Selection-on-Copy (I6) — `selection-clear-on-copy`.
+    /// Clear-Selection-on-Copy — `selection-clear-on-copy`.
     public var clearOnCopy: Bool
-    /// Paste-Protection (I9) — `clipboard-paste-protection`.
+    /// Paste-Protection — `clipboard-paste-protection`.
     public var pasteProtection: Bool
-    /// Paste-Bracketed-Safe (I9) — `clipboard-paste-bracketed-safe`.
+    /// Paste-Bracketed-Safe — `clipboard-paste-bracketed-safe`.
     public var bracketedSafe: Bool
-    /// OSC-52 READ access token (I11) — emitted verbatim as `clipboard-read` (libghostty `allow`/`deny`/`ask`).
+    /// OSC-52 READ access token — emitted verbatim as `clipboard-read` (libghostty `allow`/`deny`/`ask`).
     public var clipboardReadToken: String
-    /// OSC-52 WRITE access token (I11) — emitted verbatim as `clipboard-write`.
+    /// OSC-52 WRITE access token — emitted verbatim as `clipboard-write`.
     public var clipboardWriteToken: String
-    /// Hide-Mouse-When-Typing (H9) — `mouse-hide-while-typing`.
+    /// Hide-Mouse-When-Typing — `mouse-hide-while-typing`.
     public var hideMouseWhileTyping: Bool
-    /// Allow-Shift-with-Mouse-Click (H-shift) token — emitted verbatim as `mouse-shift-capture`
+    /// Allow-Shift-with-Mouse-Click token — emitted verbatim as `mouse-shift-capture`
     /// (libghostty `false`/`true`/`always`/`never`).
     public var mouseShiftCaptureToken: String
     /// Cursor-Click-to-Move — `cursor-click-to-move`.
     public var clickToMove: Bool
     /// Allow-Mouse-Capture — `mouse-reporting`.
     public var allowMouseCapture: Bool
-    /// Right-Click Action (H7/H8) token — emitted verbatim as `right-click-action` so libghostty owns the
+    /// Right-Click Action token — emitted verbatim as `right-click-action` so libghostty owns the
     /// bare-right-click dispatch (libghostty `ignore`/`paste`/`copy`/`copy-or-paste`/`context-menu`, default
     /// `context-menu`). The GUI view keeps only the ⌃-right-always-menu override.
     public var rightClickActionToken: String
-    /// Shift+Arrow-Select (I2) — ON emits four `shift+<dir>=adjust_selection:<dir>` keybinds; OFF emits
+    /// Shift+Arrow-Select — ON emits four `shift+<dir>=adjust_selection:<dir>` keybinds; OFF emits
     /// four `shift+<dir>=unbind` (the fork binds them by default, so OFF must unbind to forward to the program).
     public var shiftArrowSelect: Bool
     /// Scroll-Multiplier — drives BOTH `mouse-scroll-multiplier` precision + discrete factors.

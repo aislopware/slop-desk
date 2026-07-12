@@ -1,19 +1,19 @@
 import Foundation
 
-// E15 (WI-2) — the leaf-level FONT-PARITY model: the four font-appearance enums + their libghostty token
+// The leaf-level FONT-PARITY model: the four font-appearance enums + their libghostty token
 // mapping, plus the pure `FontScopeResolver`.
 //
 // WHY a separate leaf file: `TerminalConfigBuilder` (also in this leaf `SlopDeskVideoProtocol`) must turn
 // these settings into libghostty `key = value` lines WITHOUT importing any UI; the font UI
-// (`FontSettingsView`, WI-8, up in `SlopDeskClientUI`) binds the SAME enums. Keeping them here keeps the
+// (`FontSettingsView`, up in `SlopDeskClientUI`) binds the SAME enums. Keeping them here keeps the
 // mapping pure + headlessly testable (no SwiftUI, no libghostty surface — the hang-safety rule).
 //
 // GOLDEN-SAFETY: this config string is CLIENT-only (the libghostty surface) and NEVER on the wire, so it
 // can never move a golden vector regardless of what it emits. Most settings still map to a libghostty line
 // ONLY for their NON-default value; the ONE exception is `font-feature`, emitted UNCONDITIONALLY (ligatures
 // default `.off` ⇒ the disabling set `-calt,-liga,-dlig` must always be sent). So a default-constructed
-// `TerminalPreferences` is NOT byte-identical to the pre-E15 builder output — it gains exactly the one
-// `font-feature = -calt,-liga,-dlig` line (pinned by `TerminalConfigBuilderTests`). The two controls that
+// `TerminalPreferences` is NOT byte-identical to a builder that skips defaults entirely — it gains exactly
+// the one `font-feature = -calt,-liga,-dlig` line (pinned by `TerminalConfigBuilderTests`). The two controls that
 // have no STOCK ghostty key (SGR underline-off, SGR blink) and the three blending modes that have no
 // verified key (`srgb-over` / `linear` / `perceptual`) are PERSISTED + surfaced but deliberately NOT emitted
 // — we only emit keys verified to exist (an unknown key risks a config-load warning). See
@@ -152,7 +152,7 @@ public enum FontBlending: String, Codable, Sendable, Equatable, CaseIterable {
 /// PRECEDENCE: an explicitly-set ACTIVE-slot per-theme font (`appearance.themeFonts[slug]`) WINS; else the
 /// Global family; else the bundled default — `scopeFont ?? globalFont ?? bundled`.
 ///
-/// WHY scope-over-Global (E15 review #4): the Global slot (`terminal.fontFamily`) carries a NON-EMPTY
+/// WHY scope-over-Global: the Global slot (`terminal.fontFamily`) carries a NON-EMPTY
 /// default (the bundled JetBrains Mono is a fallback value, not an explicit override), so it can't represent
 /// "unset". Under a naive "Global wins everywhere" rule that non-empty default would permanently SHADOW a
 /// per-theme font, so setting a Dark-theme font while Global sat at its default did NOTHING (the
@@ -180,7 +180,7 @@ public enum FontScopeResolver {
         return fallback
     }
 
-    // MARK: Per-slot slug resolution (the Light / Dark / Computed scope tabs, WI-8)
+    // MARK: Per-slot slug resolution (the Light / Dark / Computed scope tabs)
 
     /// The theme-font key (slug) the Font → **Light Theme** scope tab writes under: the built-in id the light
     /// slot's ``AppearancePreferences/theme`` choice resolves to under OS-light (so a `.system` light slot

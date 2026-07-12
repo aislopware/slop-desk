@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - WorkspaceStore × close-confirmation resolution (E3 WI-4)
+// MARK: - WorkspaceStore × close-confirmation resolution
 
 /// The parked-close RESOLUTION cluster — confirm/cancel + the two mutually-exclusive park helpers + the
 /// dialog's spec lookup — split into their own extension so the (already large) ``WorkspaceStore`` body stays
@@ -8,9 +8,9 @@ import Foundation
 /// exist). The parked STATE (``WorkspaceStore/pendingClose`` / ``WorkspaceStore/pendingTabCloseID``) stays a
 /// stored property on the main type; everything that arms or resolves it lives here.
 public extension WorkspaceStore {
-    /// Confirms the parked close in whichever live model is current (W5, ITEM A1 / E3 WI-4). A parked TAB
-    /// close (``pendingTabCloseID``) drops the WHOLE tab via ``closeTab(_:)`` — NOT a single leaf — so a
-    /// multi-pane tab no longer keeps its siblings; it is checked first since the two parks are mutually
+    /// Confirms the parked close in whichever live model is current. A parked TAB close
+    /// (``pendingTabCloseID``) drops the WHOLE tab via ``closeTab(_:)`` — NOT a single leaf — so a
+    /// multi-pane tab does not keep its siblings; it is checked first since the two parks are mutually
     /// exclusive. Otherwise the parked pane id closes via ``closePaneTree(_:)`` under ``LiveModel/tree`` (the
     /// canvas ``closePane(_:)`` would early-return on a tree id, silently dropping the close) or
     /// ``closePane(_:)`` under ``LiveModel/canvas``. No-op when nothing is pending (the unit was already
@@ -36,8 +36,8 @@ public extension WorkspaceStore {
     }
 
     /// The ``PaneSpec`` of the pane awaiting a busy-close confirmation, resolved from whichever live model
-    /// is current (W5, ITEM A1) — the tree's side table under ``LiveModel/tree``, else the canvas. Lets the
-    /// confirmation dialog name the leaf it would close on EITHER shell (the old canvas-only lookup showed a
+    /// is current — the tree's side table under ``LiveModel/tree``, else the canvas. Lets the
+    /// confirmation dialog name the leaf it would close on EITHER shell (a canvas-only lookup would show a
     /// generic title under `.tree`). `nil` when nothing is pending or the pane vanished (a parked TAB close
     /// carries no pane spec — the dialog titles it generically off ``pendingTabCloseID``).
     var pendingCloseSpec: PaneSpec? {
@@ -49,10 +49,10 @@ public extension WorkspaceStore {
     }
 
     /// The close-confirmation policy that GATED the currently-parked close — drives the in-app
-    /// ``CloseConfirmationPanel`` subtitle (E7 carry-over #4) so it reads accurately (a `.process` park says "a
+    /// ``CloseConfirmationPanel`` subtitle so it reads accurately (a `.process` park says "a
     /// process is still running", an `.always`/`.multiple_tabs` park does not). A parked PANE close reports its
     /// EFFECTIVE gating policy (``WorkspaceStore/effectivePanePolicy(for:)`` — `.process` for a non-cascading
-    /// mid-tab close, else the Tab/Window policy, exactly the #8 guard); a parked TAB close reports
+    /// mid-tab close, else the Tab/Window policy); a parked TAB close reports
     /// ``SettingsKey/closeConfirmTab``. `nil` when nothing is parked.
     var pendingCloseReasonPolicy: CloseConfirmationPolicy? {
         if pendingTabCloseID != nil { return SettingsKey.closeConfirmTab }

@@ -2,14 +2,14 @@ import Foundation
 import XCTest
 @testable import SlopDeskProtocol
 
-/// E4 / WI-2 — the per-verb `MetadataCodec` payload codecs that ride INSIDE the opaque
+/// The per-verb `MetadataCodec` payload codecs that ride INSIDE the opaque
 /// `metadataResponse` payload (`ProcessList` / `PortList` / `DirListing` / `GitStatus` /
 /// `AgentSessionList`). These prove:
 ///
 /// - **byte-exact layout** (hand-computed expected bytes, independent of the golden corpus, so a
 ///   refactor that shifts a field is caught here too — not a tautology against the codec's own output);
 /// - **encode↔decode round-trips** for representative, empty, Unicode, and forward-tolerant values;
-/// - **validate-then-drop (ES-E4-5):** a declared count/length larger than the body throws
+/// - **validate-then-drop:** a declared count/length larger than the body throws
 ///   ``SlopDeskError/truncated`` with NO allocation (count-before-alloc); a non-UTF-8 string field
 ///   throws ``SlopDeskError/malformedBody(_:)``; a fuzz-ish table of truncated/garbage buffers each
 ///   throws and NEVER traps;
@@ -165,7 +165,7 @@ final class MetadataCodecTests: XCTestCase {
             hasRepo: true,
             branch: "main",
             remoteURL: "git@github.com:aislopware/slop-desk.git",
-            repoRoot: "/Users/me/slopdesk", // E6 WI-7 — the precise By-Project key survives the round-trip
+            repoRoot: "/Users/me/slopdesk", // the precise By-Project key survives the round-trip
             ahead: 3,
             behind: -2, // negative survives (Int32 BE)
             stashCount: 4, // rides the round-trip right after behind
@@ -180,7 +180,7 @@ final class MetadataCodecTests: XCTestCase {
     }
 
     func testGitStatusRepoRootExactBytes() {
-        // E6 WI-7 — the repoRoot string rides length-prefixed UTF-8 RIGHT AFTER remoteURL (and only when
+        // The repoRoot string rides length-prefixed UTF-8 RIGHT AFTER remoteURL (and only when
         // hasRepo). Hand-computed bytes (independent of the codec's own output) pin the layout:
         // hasRepo=1, branch "a", remote "", repoRoot "/r", ahead 0, behind 0, stash 7, 0 files. The `stash`
         // Int32 rides right after `behind` (before the file count).
@@ -218,7 +218,7 @@ final class MetadataCodecTests: XCTestCase {
             0x07, // hasRepo (truthy)
             0x00, 0x01, 0x61, // branch "a"
             0x00, 0x00, // remote ""
-            0x00, 0x00, // repoRoot "" (E6 WI-7 — between remote and ahead)
+            0x00, 0x00, // repoRoot "" (between remote and ahead)
             0x00, 0x00, 0x00, 0x00, // ahead = 0
             0x00, 0x00, 0x00, 0x00, // behind = 0
             0x00, 0x00, 0x00, 0x00, // stash = 0 (rides after behind, before the file count)
@@ -235,7 +235,7 @@ final class MetadataCodecTests: XCTestCase {
             0x01, // hasRepo
             0x00, 0x00, // branch ""
             0x00, 0x00, // remote ""
-            0x00, 0x00, // repoRoot "" (E6 WI-7)
+            0x00, 0x00, // repoRoot ""
             0x00, 0x00, 0x00, 0x00, // ahead
             0x00, 0x00, 0x00, 0x00, // behind
             0x00, 0x00, 0x00, 0x00, // stash

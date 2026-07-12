@@ -3,13 +3,13 @@ import SlopDeskTransport
 import XCTest
 @testable import SlopDeskHost
 
-/// 2026-07-10 — the host is the single source of truth for the sidebar's By-Project key (wire type
+/// The host is the single source of truth for the sidebar's By-Project key (wire type
 /// 34): it derives the pane's cwd (OSC-7 sniff, else a prompt-edge probe), resolves the git
 /// toplevel with a pure walk, emits ONLY on change edges, and re-asserts the latched truth on
 /// reattach — so a reconnecting client renders the final sections immediately, with no `gitStatus`
-/// RPC sweep and no cwd-fallback→toplevel re-bucketing flash (the reported "nháy 1 cái").
+/// RPC sweep and no cwd-fallback→toplevel re-bucketing flash.
 ///
-/// 2026-07-11 (findings 2+3) — the derivation is now split: the SYNC part (warm-up gate, cwd scan,
+/// The derivation is split: the SYNC part (warm-up gate, cwd scan,
 /// prompt-edge probe preference, `lastCwdTruth` latch) runs on the read-loop thread; the resolver's
 /// blocking `stat(2)` walk runs asynchronously (production: `metadataQueue`; tests inject
 /// `projectKeyResolveExecutorOverride`) and its type-34 lands on the CONTROL sender — so a cwd on a
@@ -17,7 +17,7 @@ import XCTest
 /// first command edge (plugin-manager pre-prompt `cd` noise), and at a prompt edge the probe beats
 /// a same-batch, possibly-stale OSC-7.
 ///
-/// 2026-07-11 (stale-cwd-after-reconnect fix) — type 33 `.cwd` is now host-gated SINGLE-SOURCE
+/// Type 33 `.cwd` is host-gated SINGLE-SOURCE
 /// through the same derivation: an ACCEPTED cwd-truth change emits `.cwd` synchronously at the
 /// latch (before the async key resolve), the raw sniffed OSC-7 no longer rides the output FIFO,
 /// and the client applies type-33 ungated (its startup-noise gate is retired — the warm-up gate +
@@ -49,7 +49,7 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
     /// A BEL-terminated OSC sequence as raw PTY bytes (`ESC ] <body> BEL`).
     private func osc(_ body: String) -> Data { Data("\u{1B}]\(body)\u{07}".utf8) }
 
-    /// Warm the session past the first command edge (finding 3a): OSC-7-only batches are ignored
+    /// Warm the session past the first command edge: OSC-7-only batches are ignored
     /// until a `.commandStatus` has been observed, so every test that feeds `.cwd(...)` alone must
     /// first cross this gate — exactly like a real shell printing its first prompt. On an
     /// unspawned PTY the prompt-edge probe answers nil, so the warm-up itself derives nothing.
@@ -225,7 +225,7 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
         )
     }
 
-    // MARK: - Finding 2 (2026-07-11) — the resolver walk must never block the read-loop thread
+    // MARK: - the resolver walk must never block the read-loop thread
 
     /// The stat-walk can hang indefinitely (dead NFS/SMB/FUSE mount). A resolve that has not
     /// completed must not stop `ingestPTYChunk` from returning — the bytes flow, and the type-34
@@ -287,7 +287,7 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
         )
     }
 
-    // MARK: - Finding 3 (2026-07-11) — warm-up gate + probe-beats-stale-OSC-7 at prompt edges
+    // MARK: - warm-up gate + probe-beats-stale-OSC-7 at prompt edges
 
     /// (a) A plugin manager that `cd`s into its git-cloned cache dir BEFORE the first prompt emits
     /// OSC-7 for a directory the user was never in; latching it persisted a bogus sidebar section

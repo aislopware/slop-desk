@@ -1,9 +1,9 @@
 import CoreGraphics
 import Foundation
 
-// MARK: - SplitTreeRenderModel (the pure render seam for the IDE split view — W5)
+// MARK: - SplitTreeRenderModel (the pure render seam for the IDE split view)
 
-/// The **pure** placement model the `SplitTreeView` renders from (docs/42 §"W5 — First-test": the
+/// The **pure** placement model the `SplitTreeView` renders from (docs/42 §"First-test": the
 /// "which pane → which rect, zoom → full rect, dividers between adjacent children" headless seam).
 /// Given a ``Tab`` (or a ``SplitNode`` + its zoom state) and a bounding `CGRect`, it produces:
 ///
@@ -82,7 +82,7 @@ public enum SplitTreeRenderModel {
         /// rendering the dividers MUST key on this, NOT `\.self`: `DividerHandle`'s synthesized `==`
         /// includes `rect`+`leadingWeight`, which change on EVERY live-drag frame, so a `\.self` id changes
         /// every frame → SwiftUI tears down + recreates the divider view mid-drag and CANCELS the in-flight
-        /// resize gesture (the drag "khựng" — stalls partway — and fires its release early, so the final
+        /// resize gesture (the drag stalls partway and fires its release early, so the final
         /// reflow never lands). Keyed on `key`, the view keeps its identity and the gesture tracks to the
         /// clamp. There is at most one divider per `(split, leading-index)`, so this is unique per layout.
         public struct Key: Hashable, Sendable {
@@ -140,7 +140,7 @@ public enum SplitTreeRenderModel {
         /// The tiled (+ zoom-hidden) leaves as ONE ordered, `PaneID`-keyed sequence (visible leaves first;
         /// hidden leaves trail — their order is irrelevant at `opacity 0`). The compositor renders EVERY
         /// pane from this single `ForEach` so the zoom hidden↔visible flip stays within one keyed
-        /// collection and the pane's hosted surface is never torn down (E21 F4 / WI-6). A pane is in
+        /// collection and the pane's hosted surface is never torn down. A pane is in
         /// EXACTLY one of `leaves` / `hiddenLeaves`, so each `PaneID` appears exactly once here.
         public var compositorLeaves: [CompositorLeaf] {
             leaves.map { CompositorLeaf(leaf: $0) } + hiddenLeaves

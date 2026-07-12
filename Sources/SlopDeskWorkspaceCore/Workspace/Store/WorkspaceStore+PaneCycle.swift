@@ -1,13 +1,13 @@
 import Foundation
 
-// MARK: - WorkspaceStore × Sequential pane cycle + reopen-closed (E1 ES-E1-2 store hooks)
+// MARK: - WorkspaceStore × Sequential pane cycle + reopen-closed (store hooks)
 
-/// The E1 sequential-pane-cycle (⌘]/⌘[) and reopen-closed-pane (⌘⇧T) store hooks, split into their own
+/// The sequential-pane-cycle (⌘]/⌘[) and reopen-closed-pane (⌘⇧T) store hooks, split into their own
 /// extension so the (already large) ``WorkspaceStore`` body stays under the lint type-body ceiling — the
 /// same reason ``WorkspaceStore+FontScroll`` and ``WorkspaceStore+Blocks`` exist.
 public extension WorkspaceStore {
     /// Sequentially cycles focus through the ACTIVE TAB's panes in pre-order DFS — the ⌘]/⌘[ "focus next/
-    /// previous pane" chord (E1 ES-E1-2; distinct from ⌘⇧]/⌘⇧[ tab cycling). `forward == true` steps to the
+    /// previous pane" chord (distinct from ⌘⇧]/⌘⇧[ tab cycling). `forward == true` steps to the
     /// next leaf in DFS order, `false` to the previous; the walk WRAPS (last → first / first → last). A no-op
     /// when the active tab has fewer than two panes (nothing to cycle to). Routes the resolved target through
     /// ``focusPaneTree(_:)`` so it shares the focus/raise/reconcile path of every other tree-focus change.
@@ -20,14 +20,14 @@ public extension WorkspaceStore {
     /// effect) so the `count > 1` wrap guard is unit-testable in isolation — mirrors
     /// ``recentPaneTarget(forward:)`` / ``inGroupCycleTarget(forward:)``.
     ///
-    /// Delegates straight to the pure ``WorkspaceTreeOps/cyclePaneTarget(forward:in:)`` (E3 WI-5) so the
+    /// Delegates straight to the pure ``WorkspaceTreeOps/cyclePaneTarget(forward:in:)`` so the
     /// DFS-wrap math has ONE source — the order is the active tab's ``Tab/allPaneIDs()`` (pre-order DFS),
     /// the same order the reconcile diff + carousel read.
     internal func paneCycleTreeTarget(forward: Bool) -> PaneID? {
         WorkspaceTreeOps.cyclePaneTarget(forward: forward, in: tree)
     }
 
-    /// Reopens the most recently CLOSED tree tab (the ⌘⇧T "Reopen Closed Tab" chord, E3 WI-3). Delegates to
+    /// Reopens the most recently CLOSED tree tab (the ⌘⇧T "Reopen Closed Tab" chord). Delegates to
     /// the index-addressed ``reopenClosedTab(at:)`` with LIFO index `0` (the top of the stack — the tab a
     /// `popLast()` would have returned), so the chord and the Open-Quickly "Recent" rows share ONE reopen
     /// path. A graceful no-op when the LIFO is empty.

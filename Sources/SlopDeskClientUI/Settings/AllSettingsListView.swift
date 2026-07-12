@@ -1,4 +1,4 @@
-// AllSettingsListView — the Advanced → "All Settings" searchable list (E7 WI-3).
+// AllSettingsListView — the Advanced → "All Settings" searchable list.
 //
 // A searchable, scrollable list of every client-side config key (driven by the headless
 // `AllSettingsCatalog`), rendered into the Advanced `Form` as a `Group` of `Section`s. Matches the design
@@ -10,7 +10,7 @@
 //
 // The catalog is the single source of WHAT to show; this view owns the `Defaults.Key` bindings + the
 // cross-tab jump (it sets the shared `selectedSection`). Cross-tab HIGHLIGHT of the target control is
-// deferred (the jump alone is the E7 deliverable). Slate.* tokens only (no raw font/radius literals).
+// deferred (only the jump itself ships here). Slate.* tokens only (no raw font/radius literals).
 
 #if canImport(SwiftUI)
 import Defaults
@@ -56,7 +56,7 @@ struct AllSettingsListView: View {
     @Default(.showBlockDividers) private var showBlockDividers
     @Default(.autoSwitchLayouts) private var autoSwitchLayouts
     @Default(.recordClipboardHistory) private var recordClipboardHistory
-    // E8 WI-3: the remaining Controls / Mouse / Scroll knobs + the OSC-52 read/write access pickers (the
+    // The remaining Controls / Mouse / Scroll knobs + the OSC-52 read/write access pickers (the
     // clipboard-read/write gates live under Advanced → All Settings — `copy-and-paste` spec). Mirror the
     // catalog rows here so every `.advancedOnly` entry has an inline editor instead of falling to plain text.
     @Default(.clearSelectionOnTyping) private var clearSelectionOnTyping
@@ -75,7 +75,7 @@ struct AllSettingsListView: View {
     @Default(.optionAsAlt) private var optionAsAlt
     @Default(.scrollPastLastLine) private var scrollPastLastLine
     @Default(.scrollPastFirstLine) private var scrollPastFirstLine
-    // E10 (Path/link detection — Settings → Controls → Open With / Link Schemes). Client-side link
+    // Path/link detection (Settings → Controls → Open With / Link Schemes). Client-side link
     // knobs, so no `refresh:` config rebuild on change.
     @Default(.linkDetection) private var linkDetection
     @Default(.linkCmdClick) private var linkCmdClick
@@ -96,7 +96,7 @@ struct AllSettingsListView: View {
     @Default(.soundOnErrorExit) private var soundOnErrorExit
     @Default(.agentNotifyTaskComplete) private var agentNotifyTaskComplete
     @Default(.agentNotifyAwaitInput) private var agentNotifyAwaitInput
-    // E14 privilege surface (title gates + OSC-52 master) + IPC guards + auto-progress list — these are the
+    // The privilege surface (title gates + OSC-52 master) + IPC guards + auto-progress list — these are the
     // genuinely advanced-only keys (Advanced → Privileges); the IPC + auto-progress keys have NO other edit
     // surface, so the inline control here is their ONLY editor.
     @Default(.titleShellControlled) private var titleShellControlled
@@ -327,7 +327,7 @@ struct AllSettingsListView: View {
         case SettingsKey.workingDirectoryNewWindowKey: workingDirControl($workingDirNewWindow)
         case SettingsKey.workingDirectoryNewTabKey: workingDirControl($workingDirNewTab)
         case SettingsKey.workingDirectoryNewSplitKey: workingDirControl($workingDirNewSplit)
-        // E10 link interaction — client-side knobs (no config rebuild on change).
+        // Link interaction — client-side knobs (no config rebuild on change).
         case SettingsKey.linkDetection: boolControl($linkDetection)
         case SettingsKey.linkCmdClickKey:
             menuPicker($linkCmdClick) {
@@ -366,7 +366,7 @@ struct AllSettingsListView: View {
         case SettingsKey.soundOnErrorExit: boolControl($soundOnErrorExit)
         case SettingsKey.agentNotifyTaskComplete: boolControl($agentNotifyTaskComplete)
         case SettingsKey.agentNotifyAwaitInput: boolControl($agentNotifyAwaitInput)
-        // E14 privilege surface. `clipboardShellControlled` is the OSC-52 master gate that feeds the libghostty
+        // The privilege surface. `clipboardShellControlled` is the OSC-52 master gate that feeds the libghostty
         // clipboard-read/write tokens, so it refreshes the live config; the title gates + IPC guards are read
         // fire-time (no config rebuild).
         case SettingsKey.titleShellControlled: boolControl($titleShellControlled)
@@ -403,7 +403,7 @@ struct AllSettingsListView: View {
     }
 
     /// Wrap a fire-time `Defaults` control binding so an inline edit ALSO re-applies the live terminal config
-    /// (the E8 Controls passthrough), matching the Controls tab's `.onChange → refreshTerminalControls()`. The
+    /// (the Controls passthrough), matching the Controls tab's `.onChange → refreshTerminalControls()`. The
     /// global toggles live in `Defaults.standard`; the store stays isolated on its injected `UserDefaults`, so
     /// the explicit refresh is the seam that re-reads them.
     private func refreshing<V: Equatable>(_ binding: Binding<V>) -> Binding<V> {

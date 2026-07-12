@@ -8,7 +8,7 @@ import Foundation
 /// until its newline arrives. Pulling this logic out of the I/O lets us test the hard
 /// part (partial line, burst, multi-byte boundary) with zero file system.
 public struct LineAccumulator {
-    /// Hard cap on the buffered partial line (R17 INSP-PARSE-1). The transcript is UNTRUSTED
+    /// Hard cap on the buffered partial line (INSP-PARSE-1). The transcript is UNTRUSTED
     /// append-only NDJSON; a line that never terminates with a newline (a corrupt/truncated feed, or a
     /// deliberately huge single line) would otherwise grow ``pending`` without bound — exhausting host
     /// RAM (a DoS by transcript content alone). Once the partial tail passes this, we enter SKIP mode:
@@ -45,10 +45,10 @@ public struct LineAccumulator {
     private mutating func drainCompleteLines() -> [String] {
         var lines: [String] = []
         let newline = UInt8(ascii: "\n")
-        // Single linear pass (R17 INSP-PARSE-2): advance a search cursor and slice each complete line,
-        // then drop the whole consumed prefix ONCE at the end. The old code did `removeSubrange` from
-        // the FRONT of `pending` per line — each front removal memmoves the entire tail, making a
-        // newline-dense delta O(n²) (a 1 MB all-newlines poll took ~10s and blocked the tailer actor).
+        // Single linear pass (INSP-PARSE-2): advance a search cursor and slice each complete line,
+        // then drop the whole consumed prefix ONCE at the end. Removing from the FRONT of `pending`
+        // per line would memmove the entire tail on each removal, making a newline-dense delta O(n²)
+        // (a 1 MB all-newlines poll would take ~10s and block the tailer actor).
         var searchStart = pending.startIndex
         while let nlIndex = pending[searchStart...].firstIndex(of: newline) {
             if skippingOverlongLine {

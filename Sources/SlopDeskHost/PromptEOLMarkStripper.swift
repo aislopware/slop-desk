@@ -12,7 +12,7 @@ import Foundation
 /// once and leaves the mark on the partial line. The trick is WIDTH-DEPENDENT: replayed into a
 /// grid narrower than the recording width (the pane was resized/split since, or history spans
 /// several widths) the fill wraps for real and every prompt in the restored transcript grows a
-/// stray `%` line — the reconnect "kí tự lạ %" bug.
+/// stray `%` line — the stray-`%`-character bug seen on reconnect.
 ///
 /// ## What
 /// A cluster is matched ONLY when it immediately precedes the shim's `133;D` / `133;A` OSC (zsh's

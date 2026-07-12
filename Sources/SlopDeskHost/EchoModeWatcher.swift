@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 import SlopDeskProtocol
 
-/// E17 / I22 — host PTY-echo watch (the AUTO Secure-Keyboard-Entry signal source). The host
+/// Host PTY-echo watch (the AUTO Secure-Keyboard-Entry signal source). The host
 /// resolves each terminal pane/PTY's termios `ECHO` line-discipline flag and drives a type-31
 /// ``WireMessage/inputEcho(enabled:)`` on the CONTROL channel so the macOS client can engage
 /// `EnableSecureEventInput` automatically while the remote shell shows a hidden-password prompt
@@ -11,7 +11,7 @@ import SlopDeskProtocol
 /// **Why a wire signal at all.** termios `ECHO` is a HOST-side line-discipline attribute the child
 /// sets — it is **not in the output byte stream** (unlike DECSET/DECRST/OSC-133, which the client
 /// parses). So the client cannot derive the no-echo state itself; the AUTO path genuinely needs this
-/// host→client message (see `docs/20-wire-protocol.md` / `DECISIONS.md` E17 WI-6).
+/// host→client message (see `docs/20-wire-protocol.md` and `DECISIONS.md`).
 ///
 /// **Pure core / thin shim split (hang-safety).** This file is TWO pieces, mirroring
 /// ``ForegroundProcessDetector`` / ``PTYForegroundProbe``:
@@ -59,7 +59,7 @@ public struct EchoModeDetector: Sendable {
     public var currentEcho: Bool { lastEmitted }
 }
 
-/// E17 / I22 — the THIN OS shim that reads a PTY master's termios line-discipline flags and feeds the
+/// The THIN OS shim that reads a PTY master's termios line-discipline flags and feeds the
 /// pure ``EchoModeDetector``. **Compiled + code-reviewed ONLY** — never instantiated in a unit test (the
 /// hang-safety rule). A straight translation of a single Darwin syscall into a bool, plus the pure
 /// ``echoOn(echoBitSet:canonicalBitSet:)`` classifier (which IS unit-tested).

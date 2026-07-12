@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - E13 WI-3 (ES-E13-3): the prevent-sleep DRIVER (cross-platform, testable)
+// MARK: - The prevent-sleep DRIVER (cross-platform, testable)
 
 /// The minimal sink the prevent-sleep driver drives: set the desired held state of a system-sleep assertion.
 /// The macOS glue (``PreventSleepAssertion``) is the production conformer; a unit test supplies a fake so the

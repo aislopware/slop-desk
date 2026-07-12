@@ -152,7 +152,7 @@ final class ScrollbackDistillerTests: XCTestCase {
         XCTAssertTrue(result.hasSuffix("out\n"))
     }
 
-    // MARK: Input-span flush on D / A (no C) — the "never lost output" fallback (Bug 3)
+    // MARK: Input-span flush on D / A (no C) — the "never lost output" fallback
 
     func testEmptyEnterSpanFlushedOnD() {
         // An empty-Enter line: `B` (from $PROMPT) → the accept-line "\r\n" echo → precmd `D;0` (NO preexec,
@@ -169,7 +169,7 @@ final class ScrollbackDistillerTests: XCTestCase {
         XCTAssertEqual(distill(input), "\(mark("A"))$ sleep 99^C\r\n\(mark("A"))$ ")
     }
 
-    // MARK: DCS/SOS/PM/APC string-swallow (R9 #4 parity with HostOutputSniffer) (Bug 4)
+    // MARK: DCS/SOS/PM/APC string-swallow — parity with HostOutputSniffer
 
     func testDCSStringBodyDoesNotSpoofMarkAndOutputSurvives() {
         // A DCS passthrough string whose BODY contains an `ESC]133;B` must NOT flip the distiller into

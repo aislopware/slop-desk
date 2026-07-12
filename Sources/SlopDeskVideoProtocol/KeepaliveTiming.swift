@@ -35,14 +35,13 @@ public enum KeepaliveTiming {
     /// worst-case reclaim latency is `idleTimeout + reaperTick` ≤ 35 s.
     public static let reaperTick: TimeInterval = 5.0
 
-    /// HOST→client heartbeat cadence (seconds) — the stall-scrim liveness signal (the counterpart of
-    /// the client keepalive above, added 2026-07-03 with the reconnect-wedge closure). While a session
-    /// streams, the host sends a zero-body `keepalive` on the control channel every second so the
-    /// client can tell a healthily-IDLE window (idle-skip suppresses frames by design) from a DEAD /
-    /// unreachable host (nothing arrives at all) and overlay its "Reconnecting…" scrim. Reuses wire
-    /// type 6 — keepalive is documented wire-safe in BOTH directions (an old peer drops it inertly),
-    /// so this is behaviour-only, no wire-format change. 1 s ⇒ the client's 3 s
-    /// ``StreamStallPolicy/threshold`` tolerates two consecutive losses before declaring a stall,
-    /// at a cost of one ~21-byte datagram per second per session.
+    /// HOST→client heartbeat cadence (seconds) — the stall-scrim liveness signal, the counterpart of
+    /// the client keepalive above. While a session streams, the host sends a zero-body `keepalive` on
+    /// the control channel every second so the client can tell a healthily-IDLE window (idle-skip
+    /// suppresses frames by design) from a DEAD / unreachable host (nothing arrives at all) and overlay
+    /// its "Reconnecting…" scrim. Reuses wire type 6 — keepalive is documented wire-safe in BOTH
+    /// directions (an old peer drops it inertly), so this is behaviour-only, no wire-format change.
+    /// 1 s ⇒ the client's 3 s ``StreamStallPolicy/threshold`` tolerates two consecutive losses before
+    /// declaring a stall, at a cost of one ~21-byte datagram per second per session.
     public static let hostHeartbeatInterval: TimeInterval = 1.0
 }

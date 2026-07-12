@@ -1,8 +1,8 @@
 import XCTest
 @testable import SlopDeskVideoProtocol
 
-/// AUDIT FIX (stability): `fragCount` must be PINNED from the FIRST fragment seen for a frame,
-/// exactly like the WF-4 `fecTier` pin. Every boundary decision — `resolvedDataCount`, the
+/// `fragCount` must be PINNED from the FIRST fragment seen for a frame,
+/// exactly like the `fecTier` pin. Every boundary decision — `resolvedDataCount`, the
 /// parity-slot mapping, `canEventuallyComplete`, `assemble`, the hopeless sweep — derives the
 /// data/parity split from `fragCount`, so a later fragment for the SAME pending frameID carrying a
 /// DIFFERENT fragCount (corrupt or hostile UDP — it passes the per-fragment `fragIndex < fragCount`

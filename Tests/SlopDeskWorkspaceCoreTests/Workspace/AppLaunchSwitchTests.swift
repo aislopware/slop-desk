@@ -78,7 +78,7 @@ final class AppLaunchSwitchTests: XCTestCase {
         XCTAssertEqual(decoded.layoutPresets.first?.triggerAppName, "Grafana")
     }
 
-    /// Hunt 2026-06-13, finding #3: across a disconnect the monitor's `lastApps` (and the store's auto-switch
+    /// Across a disconnect the monitor's `lastApps` (and the store's auto-switch
     /// latch) must be FORGOTTEN, so a reconnect re-evaluates from scratch. Without the fix, a trigger app
     /// that was already in `lastApps` before the drop is diffed away as "already seen" on reconnect and its
     /// layout switch is silently missed. Drives `AppLaunchMonitor.pollOnce()` directly across a connected →

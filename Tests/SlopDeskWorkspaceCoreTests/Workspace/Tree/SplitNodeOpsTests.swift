@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// The pure ``SplitNode`` operation layer (W2, docs/42 §"Pure ops" — `SplitNode+Ops.swift`): split a
+/// The pure ``SplitNode`` operation layer (docs/42 §"Pure ops" — `SplitNode+Ops.swift`): split a
 /// leaf, remove a leaf (collapse + rebalance), resize a divider (sum-preserve + clamp), swap. These pin
 /// the tree algebra directly, independent of the ``WorkspaceTreeOps`` facade, so a regression in the
 /// recursion is caught at its source. Each asserts a real structural/numeric outcome (no tautology).
@@ -260,8 +260,8 @@ final class SplitNodeOpsTests: XCTestCase {
 
     func testInsertingCrossAxisNestsAtTheTargetSlot() {
         // [a | b] horizontal; insert s beside b along the OTHER axis → b's slot becomes a nested vertical
-        // split [s, b] (before:true), so dropping a pane on b's TOP edge stacks it above b. This is the
-        // "side-by-side (horizontal) → stacked (vertical)" the user asked for.
+        // split [s, b] (before:true), so dropping a pane on b's TOP edge stacks it above b. This delivers
+        // the side-by-side-to-stacked transition the user asked for.
         let a = PaneID(), b = PaneID(), s = PaneID()
         let two = SplitNode.split(id: SplitNodeID(), axis: .horizontal, children: [
             .init(weight: .flex(1), node: .leaf(a)),

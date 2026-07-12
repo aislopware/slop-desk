@@ -36,7 +36,7 @@ public struct ChannelTable: Sendable, Equatable {
     /// or ``ChannelState/closed``). Terminal entries are otherwise retained forever (so a monotonic id
     /// is never reused), but on the HOST the PEER chooses ids, so sustained channelOpen→channelClose
     /// CHURN with a fresh id each cycle would grow `states` without bound — the live-channel cap never
-    /// trips because the live count returns to ~0 between cycles (R12 #1). This ring bounds the retained
+    /// trips because the live count returns to ~0 between cycles. This ring bounds the retained
     /// terminal entries: once full, recording a new terminal id EVICTS the oldest terminal id from
     /// `states`. Sized >= `maxChannelsPerConnection` so legitimate churn is never evicted while still
     /// routable; an evicted id's late frame hits `state(of:) == nil` and is dropped as unknown (never a
@@ -105,11 +105,11 @@ public struct ChannelTable: Sendable, Equatable {
     /// opened, so there is NO half-close handshake — the id goes straight to
     /// ``ChannelState/closed`` (retained, never reused, like any closed id).
     ///
-    /// Accepts the transition from `.idle` AND `.open` (audit 2026-07-10 #7): the production
-    /// client marks a channel `.open` OPTIMISTICALLY in `openChannel()` — before the frame is
-    /// even sent — so by ack time the state is never `.idle`. The old `.idle`-only guard made a
-    /// real host refusal (`stopping`, reattach-key race) a silent no-op: the router reported
-    /// `.open`, the sub-channels were never finished, and the pane hung open + silent forever.
+    /// Accepts the transition from BOTH `.idle` AND `.open`: the production client marks a
+    /// channel `.open` OPTIMISTICALLY in `openChannel()` — before the frame is even sent — so by
+    /// ack time the state is never `.idle`. An `.idle`-only guard would make a real host refusal
+    /// (`stopping`, reattach-key race) a silent no-op: the router would report `.open`, the
+    /// sub-channels would never finish, and the pane would hang open + silent forever.
     /// A no-op for an id already closing/closed or never allocated (a stray refusal for an
     /// unknown id creates no entry). Returns the resulting state.
     @discardableResult
@@ -150,7 +150,7 @@ public struct ChannelTable: Sendable, Equatable {
         case .idle,
              .open:
             states[id] = .halfClosed // first close from either side
-            noteTerminal(id) // newly terminal — bound the retained entries (R12 #1)
+            noteTerminal(id) // newly terminal — bound the retained entries
             return .halfClosed
         case .halfClosed:
             states[id] = .closed // second close — both sides done (already ring-recorded at half-close)
@@ -158,11 +158,12 @@ public struct ChannelTable: Sendable, Equatable {
         case .closed:
             return .closed // already dead
         case .none:
-            // A close for an id we NEVER registered must create NO entry. The prior code inserted
-            // `states[id] = .closed`, so a hostile peer could grow `states` without bound by spamming
-            // `channelClose` for arbitrary peer-chosen ids — a small-frame-in / permanent-allocation-out
-            // router memory-DoS. The monotonic-no-reuse guarantee only needs to cover LOCALLY-allocated
-            // ids (which are always registered via `allocate`/`open`), never unknown peer ids.
+            // A close for an id we NEVER registered must create NO entry. Inserting
+            // `states[id] = .closed` here would let a hostile peer grow `states` without bound by
+            // spamming `channelClose` for arbitrary peer-chosen ids — a small-frame-in /
+            // permanent-allocation-out router memory-DoS. The monotonic-no-reuse guarantee only
+            // needs to cover LOCALLY-allocated ids (which are always registered via
+            // `allocate`/`open`), never unknown peer ids.
             return .closed
         }
     }
@@ -187,6 +188,6 @@ public struct ChannelTable: Sendable, Equatable {
     }
 
     /// Total number of retained id entries (live + closed). Diagnostics / tests — used to assert the
-    /// router table cannot be grown without bound by hostile channelOpen/Close spam (R6 #5 / R7 #6).
+    /// router table cannot be grown without bound by hostile channelOpen/Close spam.
     public var stateCount: Int { states.count }
 }

@@ -1,11 +1,11 @@
 import Foundation
 
-/// E1/WI-6 — the PURE, platform-neutral parser for ONE config keybinding line.
+/// The PURE, platform-neutral parser for ONE config keybinding line.
 ///
 /// `~/.config/slopdesk/config.toml` lets a user author bindings as `keybind = <chord>:<action>`
 /// (see `spec/customization__custom-keybindings.md`). This grammar parses the right-hand side of one
 /// such entry — the `<chord>:<action>` text — into a serialisable chord + a typed action. It owns NO
-/// state and reaches NO I/O: the dispatcher (WI-7) feeds it the user string, persists the result into
+/// state and reaches NO I/O: the dispatcher feeds it the user string, persists the result into
 /// ``KeybindingPreferences`` (`textBindings` / `unbinds`), and injects literal-byte actions through the
 /// existing `sendBytes` path. There is no new wire message and no golden key (CLAUDE.md §1 N/A here).
 ///
@@ -221,12 +221,12 @@ public enum KeybindGrammar {
     /// so a parsed chord can later resolve to a registry `Key`). A multi-char token that is NOT a named key
     /// is rejected (validate-then-drop) rather than stored as an unmappable chord.
     ///
-    /// **E7/WI-6 (carry-over #3):** `space`, `escape`/`esc`, `delete`, `backspace`, and `forwarddelete` are
-    /// DELIBERATELY excluded — neither `mapKey` nor the registry's `KeyChord.Key` enum has a case for them, so
-    /// a config line binding one of these parsed but could NEVER resolve (a silent no-op). Validate-then-drop
+    /// `space`, `escape`/`esc`, `delete`, `backspace`, and `forwarddelete` are DELIBERATELY excluded —
+    /// neither `mapKey` nor the registry's `KeyChord.Key` enum has a case for them, so a config line
+    /// binding one of these would parse but could NEVER resolve (a silent no-op). Validate-then-drop
     /// (CLAUDE.md §3) means rejecting them HERE rather than storing an unresolvable chord; this keeps
-    /// `isValidBaseKey` and `mapKey` in lock-step. (Adding the five `KeyChord.Key` cases end-to-end — glyph,
-    /// dispatcher, `mapKey` — is the alternative, deferred out of E7 to avoid touching the live keyboard path.)
+    /// `isValidBaseKey` and `mapKey` in lock-step. (Adding the five `KeyChord.Key` cases end-to-end —
+    /// glyph, dispatcher, `mapKey` — is the alternative, deferred to avoid touching the live keyboard path.)
     static func isValidBaseKey(_ key: String) -> Bool {
         if key.count == 1 { return true }
         switch key {

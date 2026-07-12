@@ -12,8 +12,8 @@ import Foundation
 ///   hidden `UITextView` proxy → `insertText(_:)` → bytes (`ghostty_surface_text`), so a
 ///   multi-stage CJK composition commits correctly.
 ///
-/// Doc 17 §2.5: *"Ctrl/Alt+letter route thẳng `ghostty_surface_key`; còn lại qua IME proxy →
-/// `ghostty_surface_text`."* Putting a hidden `UITextView` and the `pressesBegan` responder on
+/// Doc 17 §2.5: Ctrl/Alt+letter routes straight to `ghostty_surface_key`; everything else goes
+/// through the IME proxy → `ghostty_surface_text`. Putting a hidden `UITextView` and the `pressesBegan` responder on
 /// the **same** view breaks CJK (undefined responder order), so the routing decision is
 /// modelled here as a pure function the iOS layer consults; it holds no UIKit type and is
 /// unit-tested on macOS.
@@ -30,7 +30,7 @@ public enum InputRouting {
         /// Shift. Deliberately NOT consulted by ``route(_:)`` (a shifted printable letter must still
         /// flow through the IME proxy), only by the special-key byte encoder — UIKit reports the same
         /// `characters` for Tab with or without Shift, so this is the only way to tell Shift+Tab
-        /// (back-tab `ESC [ Z`) from a forward Tab (R12 #6).
+        /// (back-tab `ESC [ Z`) from a forward Tab.
         public var shift: Bool
         /// True for a non-printable special key (arrows, Esc, Tab, Return, Delete, F-keys).
         public var isSpecial: Bool
@@ -81,7 +81,7 @@ public enum InputRouting {
         route(press) == .keyEncoding
     }
 
-    /// WS-B / B7 — map a `KeyPress` to the framework-neutral ``KeyChord`` the ``TerminalKeyInterceptor``
+    /// Maps a `KeyPress` to the framework-neutral ``KeyChord`` the ``TerminalKeyInterceptor``
     /// keys on, or `nil` for a key it cannot classify (which the iOS responder then routes normally —
     /// never swallows). The iOS UIKit responder (`pressesBegan`) consults this BEFORE ``route(_:)`` /
     /// ``KeyEncoding/encode(_:arrowFallback:)`` so the SAME pure prefix machine + override-aware

@@ -23,10 +23,10 @@ public final class ConnectionViewModel {
 
     // MARK: Target (app-global)
 
-    /// Resolves the CURRENT app-global ``ConnectionTarget`` at connect-time. The pane no longer carries
-    /// its own host/port (docs/31): every channel rides the one shared mux at the app target, read fresh
-    /// here so changing the host + reconnecting re-targets every pane. Injected (not a stored host/port)
-    /// so a later host change is picked up without rebuilding the session.
+    /// Resolves the CURRENT app-global ``ConnectionTarget`` at connect-time. The pane carries no host/port
+    /// of its own (docs/31): every channel rides the one shared mux at the app target, read fresh here so
+    /// changing the host + reconnecting re-targets every pane. Injected (not a stored host/port) so a
+    /// later host change is picked up without rebuilding the session.
     private let target: @MainActor () -> ConnectionTarget
     private let initialCwd: String?
 
@@ -93,8 +93,8 @@ public final class ConnectionViewModel {
 
     /// A Claude-Code agent-detection signal (wire types 26/27 — `.foregroundProcess` / `.claudeStatus`).
     /// The store wires this to the owning pane's ``LivePaneSession`` so it folds the signal into the
-    /// pane's `ClaudeStatusMachine` and pushes the result to ``WorkspaceStore/setAgentStatus(_:for:)``
-    /// (W11). `nil` ⇒ no observer (dropped). Only these two agent-detect events are forwarded here;
+    /// pane's `ClaudeStatusMachine` and pushes the result to ``WorkspaceStore/setAgentStatus(_:for:)``.
+    /// `nil` ⇒ no observer (dropped). Only these two agent-detect events are forwarded here;
     /// all others still drive the chrome/terminal.
     public var onAgentSignal: ((_ event: SlopDeskClient.Event) -> Void)?
 
@@ -111,7 +111,7 @@ public final class ConnectionViewModel {
     /// no observer. The running/idle indicator itself is still folded by the terminal model via `terminal.handle`.
     public var onCommandStarted: (() -> Void)?
 
-    /// An OSC 9;4 taskbar-style PROGRESS update (E14/K1, wire type 32). The store wires this to
+    /// An OSC 9;4 taskbar-style PROGRESS update (wire type 32). The store wires this to
     /// ``WorkspaceStore/handleProgress(_:for:)`` so the validated state lands in the per-pane `paneProgress`
     /// mirror (→ the sidebar tab badge + the macOS Dock aggregate). A ``ProgressState/clear`` arrives as
     /// `nil` (remove the indicator). `nil` ⇒ no observer (dropped); the terminal model still folds its own
@@ -135,11 +135,11 @@ public final class ConnectionViewModel {
     public var onProjectKeyChanged: ((_ key: String) -> Void)?
 
     private var client: SlopDeskClient?
-    /// The pane's typed metadata façade (E4), created on connect bound to the live ``client``, torn down
+    /// The pane's typed metadata façade, created on connect bound to the live ``client``, torn down
     /// on disconnect. Drives the sidebar git line + Open-Quickly/path actions; this VM folds inbound
     /// `.metadataResponse` events into its pending-request registry. `nil` while disconnected.
     private var metadataClient: MetadataClient?
-    /// Monotonic connect-attempt counter (R6 #1 — the VM analogue of `SlopDeskClient.connectGeneration`).
+    /// Monotonic connect-attempt counter — the VM analogue of `SlopDeskClient.connectGeneration`.
     /// `connect()`/`resume()` capture it before the long handshake `await`; a teardown / reconnect /
     /// second connect landing during that suspension means the post-await `status`/`sessionID` writes
     /// belong to a SUPERSEDED attempt and must be discarded. Needed because `SlopDeskClient.connect` now
@@ -147,7 +147,7 @@ public final class ConnectionViewModel {
     /// an already-torn-down pane to `.connected` (and overwrites `sessionID`).
     private var connectGeneration = 0
     private var reconnect: ReconnectManager?
-    /// Single-flight guard for ``connect()`` (R-lifecycle #4). `connect()` is `@MainActor`, but its body
+    /// Single-flight guard for ``connect()``. `connect()` is `@MainActor`, but its body
     /// SUSPENDS at `await teardown()` (which awaits `outDrainTask?.value` / `client?.close()`), so two
     /// overlapping calls — a double / key-repeated "Reconnect Pane" — could interleave: the second call's
     /// teardown cancel-prefix runs BEFORE the first built its client/observe/output/supervisor tasks,
@@ -224,8 +224,8 @@ public final class ConnectionViewModel {
     }
 
     /// Normalizes the `.input` payloads of an (already-coalesced) batch: MERGES adjacent tiny inputs
-    /// (key repeats, mouse-report storms — each used to pay a full actor-hop + send round trip) and
-    /// SPLITS oversized ones, emitting `.input` frames of at most `maxInputFrameBytes`. `.resize` passes
+    /// (key repeats, mouse-report storms — each would otherwise pay a full actor-hop + send round trip)
+    /// and SPLITS oversized ones, emitting `.input` frames of at most `maxInputFrameBytes`. `.resize` passes
     /// through as a HARD BARRIER (input bytes never cross it — the ``coalesceOut(_:)`` ordering contract).
     /// Concatenation byte-identity holds by construction: the emitted input payloads concatenate to
     /// exactly the input payloads, in order.
@@ -313,7 +313,7 @@ public final class ConnectionViewModel {
     /// The live client (so the input bar can `sendInput`). `nil` while disconnected.
     public var activeClient: SlopDeskClient? { client }
 
-    /// The pane's typed metadata façade (E4), or `nil` while disconnected. The sidebar git line,
+    /// The pane's typed metadata façade, or `nil` while disconnected. The sidebar git line,
     /// Open-Quickly, and host-path actions bind to this to fetch cwd/git status over the wire.
     public var activeMetadataClient: MetadataClient? { metadataClient }
 
@@ -321,9 +321,9 @@ public final class ConnectionViewModel {
 
     /// Opens this pane's CHANNEL on the shared mux at the current app target, starting reconnect
     /// supervision + stream observation. Host/port come from the app-global ``ConnectionTarget`` (the
-    /// connect-gate dialled them) — the pane no longer has its own form.
+    /// connect-gate dialled them) — the pane has no host/port form of its own.
     ///
-    /// SINGLE-FLIGHT (R-lifecycle #4): the real work is ``performConnect()``; this wrapper CHAINS each
+    /// SINGLE-FLIGHT: the real work is ``performConnect()``; this wrapper CHAINS each
     /// attempt after any in-flight one so two overlapping calls (a double / held ⇧⌘R "Reconnect Pane")
     /// can't interleave their teardown/build and leak a live zombie client into the pane. The synchronous
     /// `status = .connecting` lands BEFORE the first `await` so a re-entrant ``connectIfNeeded()`` sees
@@ -357,7 +357,7 @@ public final class ConnectionViewModel {
 
         let client = makeClient()
         self.client = client
-        // Claim a generation for THIS attempt (R6 #1). A teardown/reconnect/second connect during the
+        // Claim a generation for THIS attempt. A teardown/reconnect/second connect during the
         // handshake `await` below supersedes us; the post-await status writes are then discarded.
         connectGeneration &+= 1
         let myGeneration = connectGeneration
@@ -373,9 +373,9 @@ public final class ConnectionViewModel {
         let (outWakeups, outWake) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
         outWakeContinuation = outWake
         // OFF-MAIN drain: appends stay on the main actor (true call order) but the consumer runs DETACHED,
-        // hopping to main ONLY to atomically swap out the batch array — so a keystroke's send no longer
-        // queues behind flood-ingest/render main-actor work (input latency used to track main-thread depth
-        // during a flood). The ordering invariant needs ONE serial consumer, not main-actor residence:
+        // hopping to main ONLY to atomically swap out the batch array — so a keystroke's send does not
+        // queue behind flood-ingest/render main-actor work (an on-main consumer would tie input latency to
+        // main-thread depth during a flood). The ordering invariant needs ONE serial consumer, not main-actor residence:
         // (i) appends are serial on the main actor in call order, (ii) the batch take is atomic on the
         // main actor, (iii) this single task awaits sends sequentially.
         outDrainTask = Task.detached(priority: .userInitiated) { [weak self, weak client] in
@@ -403,7 +403,7 @@ public final class ConnectionViewModel {
             outQueue.append(.resize(cols: cols, rows: rows))
             outWakeContinuation?.yield()
         }
-        // WB2: the Block-output request sink (wire type 15), fired by the terminal model's copy-output flow
+        // The Block-output request sink (wire type 15), fired by the terminal model's copy-output flow
         // (``TerminalViewModel/copyBlockOutput(index:onResult:)``). Rides CONTROL, not the windowed OUT
         // FIFO — a single small control frame whose reply (type 29) the inbound pump surfaces; it never
         // needs to order against keystrokes/resizes. Fire-and-forget: a dropped request resolves via the
@@ -418,7 +418,7 @@ public final class ConnectionViewModel {
             self?.onResumeOutcomeResolved?(outcome)
         }
 
-        // E4: the pane's metadata façade. Its `send` seam fires a `requestMetadata` on the CONTROL channel
+        // The pane's metadata façade. Its `send` seam fires a `requestMetadata` on the CONTROL channel
         // (wire type 16); the reply (type 30) is surfaced as a `.metadataResponse` event and folded into
         // this façade's registry by `foldEvent` below. Captures `weak client`; the registry's timeout + a
         // teardown `cancelAll()` guarantee no await hangs.
@@ -453,7 +453,7 @@ public final class ConnectionViewModel {
         )
         reconnect = manager
 
-        // DEAD-HOST TIMEOUT: the ~10s ceiling now lives at the TRANSPORT layer
+        // DEAD-HOST TIMEOUT: the ~10s ceiling lives at the TRANSPORT layer
         // (`LiveMuxConnectionFactory.makeConnection` → `withMuxConnectTimeout`), NOT here. Do NOT re-add a
         // `withThrowingTaskGroup` racing `client.connect` against a `Task.sleep` at THIS level: that
         // deadlocked the connect on the Mac Studio (connect() entered and never returned; the host never
@@ -463,8 +463,8 @@ public final class ConnectionViewModel {
         // and we surface `.failed` instead of hanging at "connecting" forever.
         // Start the reconnect supervisor BEFORE `connect()` so its subscription to `client.events`
         // (registered eagerly in `manager.start`) is live before any drop. Starting it AFTER a successful
-        // connect (the old order) left a window where a fast `.disconnected` was yielded to no subscriber
-        // and LOST — the pane then stuck at "reconnecting" with no retry ([6]). The supervisor only ACTS
+        // connect opens a window where a fast `.disconnected` is yielded to no subscriber and LOST — the
+        // pane then sticks at "reconnecting" with no retry. The supervisor only ACTS
         // on a `.disconnected`; before/around connect there are none, so this is inert until a real drop.
         // On an initial-connect failure there is no session to resume, so it is cancelled in the catch.
         let supervisor = manager.start(host: host, port: port)
@@ -529,11 +529,11 @@ public final class ConnectionViewModel {
     /// channel dials. `.reconnecting` is owned by the supervisor (its backoff campaign is mid-flight), so
     /// it is left alone too — a remount must not short-circuit it.
     ///
-    /// Regression guard (the "switch tab thì mất toàn bộ history" report): before this, the leaf's `.task`
-    /// called ``connect()`` unconditionally on every remount, so a tab switch tore down a healthy session
-    /// and `terminal.reset()` emptied the ring → the pane came back blank + re-dialed a fresh host shell.
-    /// The explicit reconnect paths ("Reconnect Pane", the connect-gate) still call ``connect()`` directly,
-    /// so their force-redial semantics are unaffected.
+    /// Regression guard: calling ``connect()`` unconditionally from the leaf's `.task` on every remount
+    /// would tear down a healthy session on every tab switch — `terminal.reset()` empties the ring, so the
+    /// pane comes back blank and re-dials a fresh host shell, losing all scrollback history. The explicit
+    /// reconnect paths ("Reconnect Pane", the connect-gate) still call ``connect()`` directly, so their
+    /// force-redial semantics are unaffected.
     public func connectIfNeeded() async {
         switch status {
         case .disconnected,
@@ -592,7 +592,7 @@ public final class ConnectionViewModel {
             }
         do {
             try await client.resume()
-            // Same supersede guard as connect() (R6 #1): a teardown/reconnect during resume's handshake
+            // Same supersede guard as connect(): a teardown/reconnect during resume's handshake
             // nils/replaces `self.client`, so don't whitewash a torn-down pane to `.connected`.
             guard self.client === client else { return }
             if wasLive { status = .connected }
@@ -621,7 +621,7 @@ public final class ConnectionViewModel {
 
     /// Folds one client event into the chrome `status`, then forwards EVERY event to the terminal model so
     /// its status / title / bell / exit / resume-seq stay consistent with the chrome. Extracted from
-    /// `observeEvents` so the deliberate-close guards are unit-testable synchronously (R13 #3).
+    /// `observeEvents` so the deliberate-close guards are unit-testable synchronously.
     private func foldEvent(_ event: SlopDeskClient.Event) {
         switch event {
         case .disconnected:
@@ -644,7 +644,7 @@ public final class ConnectionViewModel {
             // the .disconnected + applyReconnect* guards so it cannot whitewash a deliberately-closed pane
             // back to green .connected with a stale sessionID + dead transport. `return` (not break) also
             // skips the terminal.handle(event) forward below, which would otherwise wedge the terminal
-            // model's connectionStatus to .connected past disconnect()'s terminal.reset() (R13 #3).
+            // model's connectionStatus to .connected past disconnect()'s terminal.reset().
             if deliberatelyClosed { return }
             self.sessionID = sessionID
             effectiveSessionID = sessionID
@@ -653,7 +653,7 @@ public final class ConnectionViewModel {
             // C3 BUG C a: a genuine reconnect edge — let the store unconditionally refresh drift-prone
             // state (the sidebar git line) that the ~3 s snapshot only re-fetches under a staleness window.
             onReconnected?()
-            // RECONNECT GRID RE-ASSERT (the "render bị xô lệch khi reconnect" fix). A reconnect spawns a
+            // RECONNECT GRID RE-ASSERT (fixes the misaligned/garbled render on reconnect). A reconnect spawns a
             // BRAND-NEW host shell (the mux path has no server-side resume — see
             // `TerminalViewModel.markReconnecting`), whose PTY starts at its 80×24 init size. connect()'s
             // grid re-assert (resendCurrentSize + a +400ms re-assert) runs ONLY on the initial connect,
@@ -717,11 +717,11 @@ public final class ConnectionViewModel {
             onAgentSignal?(event)
         case .commandBlock,
              .blockOutput:
-            // WB2 Warp-style Blocks (wire types 28/29): folded into the terminal model's per-pane block
+            // Warp-style Blocks (wire types 28/29): folded into the terminal model's per-pane block
             // store below (terminal.handle). Chrome status unaffected.
             break
         case let .metadataResponse(requestID, status, payload):
-            // E4 host metadata reply (wire type 30): correlate it to the pending request in the pane's
+            // Host metadata reply (wire type 30): correlate it to the pending request in the pane's
             // metadata façade (the typed MetadataClient decodes the payload for the Details Panel). Chrome
             // status unaffected. A reply for an unknown/already-resolved id is dropped by the registry, so
             // a stale type-30 after a pane switch is harmless.
@@ -729,19 +729,19 @@ public final class ConnectionViewModel {
         case let .title(text):
             // Persist the live shell title into the pane spec so a relaunch can restore it. Empty strings
             // suppressed — the host emits "" on connect before the shell sets a real one.
-            // M4 (E14/K11) "Title — Shell Controlled" (default ON): when OFF, the SAME fire-time gate the VM
+            // "Title — Shell Controlled" (default ON): when OFF, the SAME fire-time gate the VM
             // applies to `TerminalViewModel.handle(.title)` must ALSO gate this PERSISTENCE path — otherwise
             // a remote OSC 0/2 title still writes `spec.lastKnownTitle` and leaks onto the sidebar rail
             // (which sources its row title from `lastKnownTitle`). Gating here keeps the rail + the relaunch
             // restore consistent with the VM display gate.
             if SettingsKey.titleShellControlledEnabled, !text.isEmpty { onTitleChanged?(text) }
         case .inputEcho:
-            // Secure input (E17 ES-E17-4, wire type 31): the host PTY echo edge. The terminal model folds it
+            // Secure input (wire type 31): the host PTY echo edge. The terminal model folds it
             // (`terminal.handle` below) into `hostNoEcho` → the `secureInputActive` pill mirror + the macOS
             // leaf's `SecureKeyboardEntryController`. No connection-layer side effect.
             break
         case let .progress(state, percent):
-            // OSC 9;4 PROGRESS (E14/K1, wire type 32): route the validated taskbar-style progress to the
+            // OSC 9;4 PROGRESS (wire type 32): route the validated taskbar-style progress to the
             // store's per-pane mirror (→ the sidebar tab badge + the macOS Dock aggregate). The terminal
             // model ALSO folds it (`terminal.handle` below) into its observable `progress` mirror for the
             // pane status strip / Dock read. `PaneProgress(state:percent:)` maps a `.clear` to `nil`.
@@ -751,7 +751,7 @@ public final class ConnectionViewModel {
             // write sink, UNGATED — the host is the single type-33 source (warm-up-gated change edges +
             // the reattach re-assert; `MuxChannelSession.deriveProjectKey`), so a client-side
             // first-command gate would only re-drop the re-assert and leave the tab's cwd line stale
-            // across a reconnect (the 2026-07-11 stale-cwd bug). Plugin-dir poison is dropped at
+            // across a reconnect. Plugin-dir poison is dropped at
             // ``WorkspaceStore/setLastKnownCwd(_:for:)``, mirroring `.projectKey` below.
             guard !path.isEmpty else { break }
             onWorkingDirectoryChanged?(path)
@@ -771,7 +771,7 @@ public final class ConnectionViewModel {
     #if DEBUG
     /// Test hook (no production caller): fold one event synchronously through the SAME path
     /// `observeEvents` uses, so a unit test can assert the deliberate-close guards without driving the
-    /// async event stream (R13 #3). `internal` + `DEBUG`-gated so it never leaks into release API.
+    /// async event stream. `internal` + `DEBUG`-gated so it never leaks into release API.
     func foldEventForTesting(_ event: SlopDeskClient.Event) { foldEvent(event) }
     #endif
 
@@ -831,10 +831,10 @@ public final class ConnectionViewModel {
         // cannot route keystrokes/resizes into a closed client.
         terminal.inputSink = nil
         terminal.resizeSink = nil
-        // WB2: drop the Block-output request sink too — a copy-output request after teardown then resolves
+        // Drop the Block-output request sink too — a copy-output request after teardown then resolves
         // immediately as "unavailable" (no live client to ask) rather than targeting a closed client.
         terminal.requestBlockOutputSink = nil
-        // E4: cancel every in-flight metadata request (each resolves to empty so a Details-Panel fetch
+        // Cancel every in-flight metadata request (each resolves to empty so a Details-Panel fetch
         // mid-teardown unblocks at once, not after the 5 s timeout) and drop the façade.
         metadataClient?.cancelAll()
         metadataClient = nil

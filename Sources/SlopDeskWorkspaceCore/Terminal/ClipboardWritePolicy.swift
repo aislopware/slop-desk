@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - E8 WI-2 (I11): the embedder side of the clipboard-WRITE "Ask" gate
+// MARK: - The embedder side of the clipboard-WRITE "Ask" gate
 
 /// What the terminal embedder should do when libghostty asks it to WRITE the pasteboard — a
 /// `copy_to_clipboard` binding action or, the security-relevant case, a remote program's OSC-52 WRITE.
@@ -20,12 +20,12 @@ public enum ClipboardWriteDecision: Equatable, Sendable {
 /// The PURE, headless decision behind the **clipboard-write = ask** gate at the libghostty `write_clipboard_cb`.
 ///
 /// ## Why this exists (the inert-"Ask" bug)
-/// E8 surfaces a clipboard-write Allow / Deny / Ask picker and the config builder emits `clipboard-write =
+/// The clipboard-write Allow / Deny / Ask picker and the config builder emit `clipboard-write =
 /// ask`. libghostty enforces `deny` itself (it never calls the write callback) and `allow` itself (it calls
 /// the callback with `confirm == false`), but `ask` is DELEGATED to the embedder: libghostty calls
-/// `write_clipboard_cb` with `confirm == true` and trusts the embedder to gate the write. The old callback
-/// IGNORED that `confirm` argument and wrote the pasteboard unconditionally — so "Ask" silently behaved like
-/// "Allow", and any remote OSC-52 could overwrite the system clipboard with no prompt.
+/// `write_clipboard_cb` with `confirm == true` and trusts the embedder to gate the write. A callback that
+/// ignores that `confirm` argument writes the pasteboard unconditionally — so "Ask" would silently behave
+/// like "Allow", and any remote OSC-52 could overwrite the system clipboard with no prompt.
 ///
 /// This enum is the **testable heart** of the fix; the GUI surface (`GhosttyTerminalView.write_clipboard_cb`,
 /// compile-only behind `#if canImport(CGhostty)`) is the thin actuator that reads the C `confirm` bool,

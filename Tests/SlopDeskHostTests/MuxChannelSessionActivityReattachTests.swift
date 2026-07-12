@@ -3,7 +3,7 @@ import SlopDeskTransport
 import XCTest
 @testable import SlopDeskHost
 
-/// 2026-07-10 — the tab-row activity indicators must survive a client restart/reattach. `sleep 300`
+/// The tab-row activity indicators must survive a client restart/reattach. `sleep 300`
 /// shows the busy dot + "sleep" label live, but after quitting and reopening the client (the command
 /// still running on the host) the returning client showed NOTHING: the busy bit (type-23), the
 /// foreground-process name (type-26), the agent status (type-27), and the OSC 9;4 progress (type-32)

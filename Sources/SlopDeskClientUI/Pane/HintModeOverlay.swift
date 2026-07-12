@@ -1,9 +1,9 @@
-// HintModeOverlay — the Vimium-style Hint Mode VIEW layer (E10 WI-9 / ES-E10-6, `terminal-features__hint-mode`).
+// HintModeOverlay — the Vimium-style Hint Mode VIEW layer (`terminal-features__hint-mode`).
 //
 // A DECORATION overlay layered OVER the terminal surface in `TerminalLeafView` (never a content branch — the
 // libghostty-freeze guardrail): while the pane model has an armed intent (``TerminalViewModel/hintMode``), it
 // DIMS the surface (so labels pop), draws a yellow 2-letter badge at each detected target —
-// mapped to points by the WI-2 ``TerminalCellMetrics`` (the SAME geometry seam the ⌘-hold underline uses) — and
+// mapped to points by ``TerminalCellMetrics`` (the SAME geometry seam the ⌘-hold underline uses) — and
 // shows a `HINTS · <intent> · Esc Exit` badge top-trailing (the `hint-mode.png` chrome; slopdesk has no
 // titlebar, so it floats in the pane like the vi-mode / read-only pills).
 //
@@ -61,8 +61,8 @@ struct HintModeOverlay: View {
                 // + `.offset` so each badge's top-left lands at its `(colStart, row)` cell — plain `*`/`+` cell
                 // math lives in `TerminalCellMetrics.rect`). Dimmed when the typed first letter rules it out.
                 ForEach(Array(zip(targets, labels).enumerated()), id: \.offset) { _, pair in
-                    // CLAMP to the visible grid (FINDING 3 defence): a target whose first cell lands
-                    // off-screen-right (a soft-wrap-shifted span) is SKIPPED, never anchored in the void.
+                    // CLAMP to the visible grid: a target whose first cell lands off-screen-right
+                    // (a soft-wrap-shifted span) is SKIPPED, never anchored in the void.
                     if let rect = metrics.clampedRect(
                         row: pair.0.row, colStart: pair.0.colStart, colEnd: pair.0.colEnd,
                     ) {
@@ -76,8 +76,8 @@ struct HintModeOverlay: View {
                 HintModeBadge(intent: intent, typed: typed, onExit: { model.cancelHintMode() })
                     .padding(Slate.Metric.space2)
             }
-            // Belt-and-suspenders Escape dismiss (C4): the primary cancel is the renderer's `keyDown` →
-            // `cancelHintMode()` once the terminal is first responder (the routing now nudges focus there). This
+            // Belt-and-suspenders Escape dismiss: the primary cancel is the renderer's `keyDown` →
+            // `cancelHintMode()` once the terminal is first responder (the key-routing nudges focus there). This
             // safety net — if Escape lands in the overlay's responder chain instead of the surface — still cancels
             // the mode (the same idiom PaletteView / OpenQuicklyView use: macOS `onExitCommand`, which is
             // unavailable on iOS, so the iOS slice uses the equivalent `.onKeyPress(.escape)`).

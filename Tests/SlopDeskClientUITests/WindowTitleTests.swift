@@ -1,7 +1,7 @@
 // WindowTitleTests — pins `WorkspaceRootView.windowTitle(for:)`, the pure map from the live store to the
-// macOS WINDOW title (Window menu / Mission Control / screenshot names). The window used to stay a static
-// "Terminal"; the title must now track the FOCUSED pane — its folder-name label (reusing the sidebar's
-// `RailRowsBuilder.rowTitle`) and it must change when the active tab/pane changes.
+// macOS WINDOW title (Window menu / Mission Control / screenshot names). The title tracks the FOCUSED pane
+// — its folder-name label (reusing the sidebar's `RailRowsBuilder.rowTitle`) — and changes whenever the
+// active tab/pane changes.
 //
 // Headless: a tree-model `WorkspaceStore` over the tiny `MountTestPaneSession` fake (no socket / video /
 // Metal — the hang-safety rule), exactly like `RailRowBuilderTests`. Each assertion pins a concrete string,
@@ -40,8 +40,8 @@ final class WindowTitleTests: XCTestCase {
         XCTAssertEqual(WorkspaceRootView.windowTitle(for: store), "project-alpha")
     }
 
-    /// The core of the report ("không update theo pane"): switching the active tab RE-TITLES the window to the
-    /// newly-focused pane. Two tabs at distinct cwds; the title follows `selectTab`.
+    /// Switching the active tab RE-TITLES the window to the newly-focused pane. Two tabs at distinct cwds;
+    /// the title follows `selectTab`.
     func testWindowTitleFollowsActivePaneSwitch() throws {
         let store = makeStore()
         // Tab 0's pane → "alpha".
@@ -73,13 +73,13 @@ final class WindowTitleTests: XCTestCase {
         XCTAssertEqual(WorkspaceRootView.windowTitle(for: store), "build box")
     }
 
-    // MARK: - A4 process fallback (perf audit 2026-07-11: the `paneForegroundProcess` read is now GUARDED
+    // MARK: - Process fallback
 
-    // by `RailStructureKey.titledByProcess` — these pin that the guard is behavior-preserving, not just a
-    // read-count optimization)
+    // The `paneForegroundProcess` read is GUARDED by `RailStructureKey.titledByProcess` — these pin that
+    // the guard is behavior-preserving, not just a read-count optimization.
 
     /// A cwd-less, non-renamed pane still titles the WINDOW by its foreground process — the guard must
-    /// not silently drop the A4 fallback while skipping the dict read for every other pane shape.
+    /// not silently drop that fallback while skipping the dict read for every other pane shape.
     func testWindowTitleFallsBackToForegroundProcessWhenCwdless() throws {
         let store = makeStore()
         let pane = try activePane(store)

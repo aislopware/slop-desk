@@ -1,7 +1,7 @@
 // WorkspaceControlBackendTreeTests — pins the REAL `WorkspaceControlBackend` (not the dispatcher's FAKE
-// backend) on the E20 ES-E20-1 / -3 surfaces the FAKE cannot catch: the tree → window/tab/pane mapping,
-// the SHELL-QUOTED `jump` cd bytes (M7), the view/edit shim's new-leaf placement + quoted launch bytes,
-// scrollback capture, the named-key send-keys table, and the font system/user scope classifier (M4).
+// backend) on the surfaces the FAKE cannot catch: the tree → window/tab/pane mapping,
+// the SHELL-QUOTED `jump` cd bytes, the view/edit shim's new-leaf placement + quoted launch bytes,
+// scrollback capture, the named-key send-keys table, and the font system/user scope classifier.
 //
 // Revert-to-confirm-fail: every quoting assertion fails on the pre-fix backend (which emitted
 // `cd /Users/x/My Project` / `less /tmp/my file.txt` raw, word-splitting on the space), and the scope
@@ -87,7 +87,7 @@ final class WorkspaceControlBackendTreeTests: XCTestCase {
         try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
     }
 
-    // MARK: - (a) tree → window / tab / pane mapping (ES-E20-1)
+    // MARK: - (a) tree → window / tab / pane mapping
 
     func testTreeMapsToWindowsTabsPanes() throws {
         let store = makeStore()
@@ -115,7 +115,7 @@ final class WorkspaceControlBackendTreeTests: XCTestCase {
         XCTAssertEqual(pane.kind, PaneKind.terminal.rawValue, "kind maps from PaneSpec.kind")
     }
 
-    // MARK: - (b) jump emits a SHELL-QUOTED `cd -- '…'` (M7)
+    // MARK: - (b) jump emits a SHELL-QUOTED `cd -- '…'`
 
     func testJumpQuotesPathWithSpace() throws {
         let store = makeStore()
@@ -191,10 +191,10 @@ final class WorkspaceControlBackendTreeTests: XCTestCase {
         )
     }
 
-    /// C8 improvement 2 (re-scope): `--new-window` no longer mints a NEW SESSION (with the session switcher
-    /// pruned that would strand the user) — it degrades to a NEW TAB in the CURRENT session. The session count
+    /// `--new-window` does not mint a NEW SESSION (the session switcher is gone, and a new session would
+    /// strand the user) — it degrades to a NEW TAB in the CURRENT session. The session count
     /// must stay 1 and the active session gains one tab; the shim command still lands on the new leaf.
-    /// REVERT-TO-FAIL: the pre-fix `store.newSession(...)` arm makes `sessions.count` 2 (a new orphan session).
+    /// REVERT-TO-FAIL: a `store.newSession(...)` arm would make `sessions.count` 2 (a new orphan session).
     func testNewWindowPlacementOpensTabInCurrentSession() async throws {
         let store = makeStore()
         let backend = makeBackend(store, shimGrace: .milliseconds(5))
@@ -249,7 +249,7 @@ final class WorkspaceControlBackendTreeTests: XCTestCase {
         )
     }
 
-    // MARK: - (f) font scope classifier (M4)
+    // MARK: - (f) font scope classifier
 
     #if canImport(AppKit)
     func testIsUserFontClassifierByDirectory() {

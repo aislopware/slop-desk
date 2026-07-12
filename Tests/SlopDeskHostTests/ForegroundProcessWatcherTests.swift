@@ -3,7 +3,7 @@ import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskHost
 
-/// W10 — the PURE ``ForegroundProcessDetector`` core (no real PTY / syscall / socket; the
+/// The PURE ``ForegroundProcessDetector`` core (no real PTY / syscall / socket; the
 /// `PTYForegroundProbe` OS shim is compiled + code-reviewed only). Drives the detector with an
 /// INJECTED foreground-process-name source and asserts the type-26 / type-27 emit decisions,
 /// the embedded state-machine transitions, and the edge/dedupe behaviour.

@@ -2,13 +2,13 @@ import Foundation
 
 // MARK: - TerminalContextMenu (pure right-click menu model + enablement)
 
-/// The PURE model behind the terminal right-click context menu (docs/42 W14 #10, Ghostty/Warp parity):
+/// The PURE model behind the terminal right-click context menu (Ghostty/Warp parity):
 /// the ordered item list and — the testable heart — each item's **enablement** for the current pane
 /// state (copy needs a selection, paste needs clipboard text, splits need a connected pane). The GUI
 /// `NSMenu` built in `GhosttyLayerBackedView.menu(for:)` is a thin renderer over this; routing each item
 /// to libghostty (`copy_to_clipboard` / `paste_from_clipboard` / `select_all` / `clear_screen` binding
 /// actions) and to the ``WorkspaceStore`` split/find ops is compile-only. Factoring enablement here keeps
-/// it unit-testable with no view (the W14 brief's explicit ask).
+/// it unit-testable with no view.
 public enum TerminalContextMenu {
     /// One menu action. Raw `String` so the GUI can tag each `NSMenuItem.representedObject` and dispatch
     /// without a parallel switch, and so the cheat-sheet/tests reference stable ids.
@@ -17,7 +17,7 @@ public enum TerminalContextMenu {
         case cut // ⌘X — copies the selection and (at an editable prompt) deletes it; read-only → copy only
         case paste
         case pasteAsKeystrokes
-        // E8 / ES-E8-4 — the "Paste as…" submenu variants. These are NOT in the top-level
+        // The "Paste as…" submenu variants. These are NOT in the top-level
         // `items` list; they hang off the `pasteAsItems` submenu (see `pasteAsSubmenuTitle`).
         case pasteSelection // pastes the current selection instead of the clipboard (X11 middle-click)
         case pasteFileBase64 // base64-encodes a chosen file's bytes and types them
@@ -25,7 +25,7 @@ public enum TerminalContextMenu {
         case pasteBracketed // forces DEC bracketed-paste framing even if the program didn't ask
         case selectAll
         case clear
-        case copyOutput // WB2: copy the latest command BLOCK's output (request type 15 → VT-strip → clipboard)
+        case copyOutput // copy the latest command BLOCK's output (request type 15 → VT-strip → clipboard)
         case splitRight
         case splitDown
         case find
@@ -93,7 +93,7 @@ public enum TerminalContextMenu {
         /// stay enabled here because they target the WORKSPACE, not the byte stream; only the byte-stream
         /// items gate on it). Kept for symmetry / future gating.
         public var paneConnected: Bool
-        /// WB2: the pane has at least one completed command BLOCK whose output can be fetched (gates
+        /// The pane has at least one completed command BLOCK whose output can be fetched (gates
         /// "Copy Command Output"). The request still tolerates an empty reply, but greying it out when there
         /// is no block at all is the honest affordance.
         public var hasCommandOutput: Bool
@@ -119,7 +119,7 @@ public enum TerminalContextMenu {
         .splitRight, .splitDown, .find,
     ]
 
-    /// E8 / ES-E8-4: the "Paste as…" submenu items, in display order (`spec/terminal-features__copy-and-paste`):
+    /// The "Paste as…" submenu items, in display order (`spec/terminal-features__copy-and-paste`):
     /// Paste Selection · Paste File Base64-Encoded… · Paste Escaping Special Characters · Bracketed Paste.
     public static let pasteAsItems: [Item] = [
         .pasteSelection, .pasteFileBase64, .pasteEscaped, .pasteBracketed,
@@ -128,7 +128,7 @@ public enum TerminalContextMenu {
     /// The title of the "Paste as…" submenu (Edit ▸ Paste ▸ Paste as), referenced by the GUI renderer.
     public static let pasteAsSubmenuTitle = "Paste as…"
 
-    // MARK: - E10 WI-6 (ES-E10-2): path / URL link items (right-click ON a detected link)
+    // MARK: - Path / URL link items (right-click ON a detected link)
 
     /// A right-click context-menu item shown ONLY when the click lands on a detected path / URL span
     /// (`docs/ui-shell/spec/user-interface__files-and-links.md` §"Right-click Context Menu Items"). These are
@@ -141,7 +141,7 @@ public enum TerminalContextMenu {
     /// Only a functional subset of link actions is offered — *Open With…* (host app enumeration) and
     /// *Open in [target app]* (a remote-file pane needs a file-transfer sub-protocol that does not exist yet;
     /// see the files-and-links mapping notes #2/#3) are deliberately omitted rather than shipped as dead
-    /// controls (the WI-3 honesty discipline; tracked in `docs/DECISIONS.md`).
+    /// controls (tracked in `docs/DECISIONS.md`).
     public enum LinkItem: String, CaseIterable, Sendable, Equatable {
         /// Open the path in its best HOST handler, or the URL on the client ("Open Link" / "Open").
         case open
@@ -187,9 +187,9 @@ public enum TerminalContextMenu {
     /// Whether `item` is enabled for `context` — the testable enablement rule:
     /// - **Copy / Cut** need a live selection.
     /// - **Paste / Paste as Keystrokes** need non-empty clipboard text.
-    /// - **Paste as…** (ES-E8-4): *Paste Selection* needs a selection; *Paste File Base64* is always live
+    /// - **Paste as…**: *Paste Selection* needs a selection; *Paste File Base64* is always live
     ///   (it picks its own file); *Paste Escaping* / *Bracketed Paste* need clipboard text.
-    /// - **Copy Command Output** (WB2) needs a completed command block to fetch.
+    /// - **Copy Command Output** needs a completed command block to fetch.
     /// - **Select All / Clear / Split Right / Split Down / Find** are always available (Select-All/Clear
     ///   act on the surface regardless of selection; splits + find act on the workspace).
     public static func isEnabled(_ item: Item, context: Context) -> Bool {

@@ -1,11 +1,10 @@
 // The pure GF(2^8) linear algebra behind the systematic Reed-Solomon code in `FECScheme`:
 // the parity coefficient matrix (a Cauchy block) and a Gauss-Jordan inverse.
 //
-// This is the resurrected, native-Swift port of the Rust `slopdesk-core::rs_matrix` reference
-// (the all-Swift migration deletes the Rust core + FFI boundary). It is a FAITHFUL, bit-for-bit
-// translation: same matrix build order, same pivot selection, same row operations — so the
-// recovered parity coefficients and matrix inverse match the old wire exactly. All field
-// arithmetic routes through the existing `GF256` tables (`GF256.mul`/`GF256.inv`); no second table.
+// Matrix build order, pivot selection, and row operations are pinned exactly as written: any of
+// them determines the recovered parity coefficients and the matrix inverse, so changing the order
+// changes the wire output. All field arithmetic routes through the existing `GF256` tables
+// (`GF256.mul`/`GF256.inv`); no second table.
 //
 // ## The encoder matrix
 //

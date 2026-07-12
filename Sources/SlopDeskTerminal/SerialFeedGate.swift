@@ -1,9 +1,9 @@
 import Foundation
 
-/// The off-main feed mechanism behind `GhosttySurface.feed`/`feedBatch` (docs/31
-/// follow-up #5), extracted into the headless package so the ordering / teardown /
-/// backpressure logic is testable without linking libghostty (the GUI binding file is
-/// outside the `swift test` build graph).
+/// The off-main feed mechanism behind `GhosttySurface.feed`/`feedBatch`, extracted into
+/// the headless package so the ordering / teardown / backpressure logic is testable
+/// without linking libghostty (the GUI binding file is outside the `swift test` build
+/// graph).
 ///
 /// ## What it provides
 /// 1. **Per-surface serialization** — one serial `DispatchQueue` runs every enqueued
@@ -17,8 +17,8 @@ import Foundation
 ///      every previously-enqueued block has completed. NON-BLOCKING by design: a feed
 ///      block can transitively wait on the MAIN thread (libghostty's `write_output` can
 ///      park on its 64-slot app mailbox, whose only consumer is `ghostty_app_tick` on
-///      main — review finding), so a `queue.sync` from main here could deadlock the app
-///      forever. The caller defers the resource free into `onDrained` instead.
+///      main), so a `queue.sync` from main here could deadlock the app forever. The
+///      caller defers the resource free into `onDrained` instead.
 ///    - ``closeBarrier()`` (SYNCHRONOUS): same guarantees, but blocks the caller until
 ///      the drain. Safe ONLY when the caller can tolerate waiting on a possibly
 ///      main-dependent block — kept for the deinit safety net (which cannot defer; see

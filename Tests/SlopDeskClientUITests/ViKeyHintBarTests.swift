@@ -1,4 +1,4 @@
-// ViKeyHintBarTests (E17 ES-E17-2 / WI-5) — the HONESTY invariant of the vi key-hint bar: it advertises ONLY
+// ViKeyHintBarTests — the HONESTY invariant of the vi key-hint bar: it advertises ONLY
 // keys slopdesk's copy-mode engine actually wires (a faithful subset of full vi), never a dead key. Pure
 // data assertion over ``ViKeyHintBar/advertisedKeys`` (the same static arrays the view body renders from), so
 // no SwiftUI view is constructed and nothing renderer/VT/Metal is touched.
@@ -10,7 +10,7 @@ import XCTest
 @MainActor
 final class ViKeyHintBarTests: XCTestCase {
     /// The bar must NOT list `o` ("Swap ends"): the pinned libghostty fork exposes no swap-ends / set-selection
-    /// action, so `handleCopyModeKey`'s `o` case is a documented NO-OP (DECISIONS.md E17). Advertising it would
+    /// action, so `handleCopyModeKey`'s `o` case is a documented NO-OP (see DECISIONS.md). Advertising it would
     /// claim a dead key — the exact dishonesty the bar avoids for the other unwired motions (h/l/w/b/e/…).
     /// Revert-to-confirm-fail: the pre-fix `selection` column carried `Hint(keys: ["o"], label: "Swap ends")`,
     /// so this assertion fails on it.
@@ -31,10 +31,10 @@ final class ViKeyHintBarTests: XCTestCase {
 
     /// Positive control (guards against the test passing by listing nothing): the keys copy-mode DOES wire — the
     /// scroll/visual motions, yank, and BOTH search directions `/` and `?` — are present. `?` in particular pins
-    /// that the bar reflects the now-wired backward-find (ES-E17-3), not just a forward `/`.
+    /// that the bar reflects the wired backward-find, not just a forward `/`.
     func testHintBarAdvertisesTheWiredKeys() {
         let keys = Set(ViKeyHintBar.advertisedKeys)
-        // `f` (Enter Hint Mode) is included: it is wired via `beginHint(.open)` (the E10 overlay, not the blocked
+        // `f` (Enter Hint Mode) is included: it is wired via `beginHint(.open)` (the hint overlay, not the blocked
         // cursor-move action), so the bar honestly advertises it. Revert-to-confirm-fail: drop the `f` entry from
         // `ViKeyHintBar.selection` and this fails.
         for wired in ["j", "k", "g", "G", "v", "V", "y", "/", "?", "n", "N", "f"] {

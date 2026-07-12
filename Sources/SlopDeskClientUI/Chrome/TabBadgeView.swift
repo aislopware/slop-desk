@@ -1,4 +1,4 @@
-// TabBadgeView — the single trailing status badge on a sidebar tab row (E6 WI-4). Maps a pure
+// TabBadgeView — the single trailing status badge on a sidebar tab row. Maps a pure
 // ``TabBadgeKind`` to its glyph via ``StatusPresentation/tabBadge(_:)``. ONE dot language on the agent
 // palette (docs/42: working🟡 done🔵 needs🔴) — the colour carries the state, a spinner ring means "live
 // right now", and the dot never resizes between the two:

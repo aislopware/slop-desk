@@ -1,10 +1,9 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E4 WI-5: pins ``WorkspaceStore/setLastKnownCwd(_:for:)`` — the live-model-aware write path the Details
+/// Pins ``WorkspaceStore/setLastKnownCwd(_:for:)`` — the live-model-aware write path the Details
 /// Panel's Info tab uses to mirror the host-resolved `cwd` verb into ``PaneSpec/lastKnownCwd`` (which the
-/// titlebar / rail / palette read). Before E4 `lastKnownCwd` was decode-only with NO runtime writer, so this
-/// is a real new behaviour: the method must persist a value on a `.tree`-live store and GUARD an unchanged
+/// titlebar / rail / palette read). The method must persist a value on a `.tree`-live store and GUARD an unchanged
 /// re-set (a re-focus must not spend a reconcile). `.tree`-live + `FakePaneSession` — no real client / view.
 @MainActor
 final class SetLastKnownCwdTests: XCTestCase {

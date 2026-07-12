@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskHost
 
-/// E13 WI-3 (ES-E13-3): the pure prevent-sleep decision. Asserts iff the feature is enabled AND at least one
+/// The pure prevent-sleep decision. Asserts iff the feature is enabled AND at least one
 /// agent is currently working; releases otherwise. Headless (no `IOPMAssertion` — the glue is code-reviewed).
 final class PreventSleepPolicyTests: XCTestCase {
     func testAssertsOnlyWhenEnabledAndWorking() {

@@ -1,13 +1,12 @@
 import Foundation
 import SlopDeskVideoProtocol
 
-/// Dedicated serial executor for the CPU-heavy encoded-frame → wire-datagram step (the
-/// keystroke-latency fix, 2026-07-11).
+/// Dedicated serial executor for the CPU-heavy encoded-frame → wire-datagram step.
 ///
-/// Measured defect this fixes: `onEncodedFrame` ran `packetizeRaw` (hundreds of MTU-split `Data`
-/// slice copies + RS-FEC parity) + the wire-encode map SYNCHRONOUSLY on the session actor — the
-/// SAME actor that runs the inbound input consumer — so a keystroke arriving mid-packetize of a
-/// large IDR waited several ms for `CGEventPost`, directly on the keystroke-to-echo path.
+/// Running `packetizeRaw` (hundreds of MTU-split `Data` slice copies + RS-FEC parity) and the
+/// wire-encode map synchronously on the session actor would block the SAME actor that runs the
+/// inbound input consumer — a keystroke arriving mid-packetize of a large IDR would wait several
+/// ms for `CGEventPost`, directly on the keystroke-to-echo path.
 ///
 /// This actor owns the ``VideoPacketizer`` (its monotonic `frameID`/`streamSeq` counters) plus a
 /// stateless ``VideoSendScheduler`` end-to-end, and the session actor `await`s ``packetize`` — the
@@ -23,7 +22,7 @@ import SlopDeskVideoProtocol
 ///   golden vectors and `PacketizeLaneTests`' byte-identity pin).
 /// - **Race-free bookkeeping**: the assigned `frameID` is returned WITH the datagrams (assigned
 ///   and consumed atomically inside one actor hop), so the session actor's LTR / recovery-IDR /
-///   retransmit-ring records no longer depend on a peek-before-increment discipline.
+///   retransmit-ring records never need a separate peek-before-increment step.
 public actor PacketizeLane {
     private let packetizer: VideoPacketizer
     private let scheduler = VideoSendScheduler()
@@ -49,8 +48,8 @@ public actor PacketizeLane {
 
     /// MTU-split + FEC-parity + wire-encode one encoded frame — the exact
     /// ``VideoPacketizer/packetizeRaw(frame:keyframe:crisp:hostSendTsMillis:fecTier:isLTR:ackedAnchored:interleave:)``
-    /// + ``VideoSendScheduler/scheduleFrameRaw(_:)`` composition `onEncodedFrame` used to run
-    /// inline, now isolated here so the session actor is free (suspended) while it runs.
+    /// + ``VideoSendScheduler/scheduleFrameRaw(_:)`` composition `onEncodedFrame` needs, isolated
+    /// here so the session actor is free (suspended) while it runs.
     public func packetize(
         frame: Data,
         keyframe: Bool,

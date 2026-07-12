@@ -1,7 +1,7 @@
 import Foundation
 import SlopDeskProtocol
 
-/// E4 — the host's query seam for the metadata RPC. The set of OS lookups a
+/// The host's query seam for the metadata RPC. The set of OS lookups a
 /// ``WireMessage/metadataRequest(requestID:verb:payload:)`` may need, abstracted behind a protocol
 /// so ``MetadataResponseBuilder`` is a PURE value-in/value-out reducer (unit-tested with an injected
 /// fake — `MetadataResponseBuilderTests`). The real ``HostMetadataProbe`` (`#if os(macOS)`) does the
@@ -37,7 +37,7 @@ protocol MetadataQuerying {
     func hostName() -> String?
 }
 
-/// E4 — the PURE host responder for the metadata RPC. Maps a request `(verb, payload)` to a
+/// The PURE host responder for the metadata RPC. Maps a request `(verb, payload)` to a
 /// ``WireMessage/metadataResponse(requestID:status:payload:)`` over an injected ``MetadataQuerying``,
 /// doing NO syscalls itself: it decodes the request's UTF-8 path/id argument, CONFINES it against the
 /// pane cwd subtree, enforces the count/byte CAPS, calls the (fakeable) query, and encodes the result
@@ -161,7 +161,7 @@ struct MetadataResponseBuilder {
 
         case .openPath,
              .revealPath:
-            // E10 WI-7: the side-effecting path verbs are NOT this READ-ONLY builder's job —
+            // The side-effecting path verbs are NOT this READ-ONLY builder's job —
             // `MuxChannelSession.serveMetadata` routes them to `HostPathActionPerformer` BEFORE the
             // builder, so they never reach here in production. Reaching this case is a routing bug;
             // answer `.error` defensively (this pure reducer must NEVER perform a host side effect).
@@ -170,7 +170,7 @@ struct MetadataResponseBuilder {
         case .installAgentHooks,
              .uninstallAgentHooks,
              .agentHookStatus:
-            // E13 WI-1: the agent-hooks verbs are likewise NOT this READ-ONLY builder's job —
+            // The agent-hooks verbs are likewise NOT this READ-ONLY builder's job —
             // `MuxChannelSession.serveMetadata` routes them to `HostAgentActionPerformer` BEFORE the
             // builder (install/uninstall touch the host's `~/.claude/settings.json`; status reads the
             // marker), so they never reach here in production. Reaching this case is a routing bug;

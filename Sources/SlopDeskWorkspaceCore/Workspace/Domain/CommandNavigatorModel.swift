@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - E10 WI-10 (G8): the pure Command Navigator filter (⌃⌘O / view.commandNavigator)
+// MARK: - The pure Command Navigator filter (⌃⌘O / view.commandNavigator)
 
 /// The PURE fuzzy filter behind the Command Navigator overlay (⌃⌘O). The navigator shows the active pane's
 /// recent OSC-133 command blocks — the already-pure ``TerminalBlockModel`` (`navigatorBlocks`, newest-first,

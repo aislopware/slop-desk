@@ -3,12 +3,11 @@ import Foundation
 // MARK: - ConnectionTarget (the ONE app-global host the whole app connects to)
 
 /// The single host the whole app connects to (docs/31 app-global connection): the TCP-mux terminal
-/// port AND the two UDP video ports all live on ONE host. Replaces the old per-pane ``Endpoint`` /
-/// ``VideoEndpoint`` host/port fields — every terminal/Claude pane now opens a *channel* on the one
-/// shared mux at `host:port`, and every `.remoteGUI` pane opens a *lane* on the one shared UDP flow at
-/// `host:mediaPort`/`cursorPort` (the transport already pools both per-host — see `ConnectionRegistry`
-/// / `VideoConnectionRegistry`). Only the per-pane `windowID` (which remote window to mirror) stays on
-/// the pane (``VideoEndpoint``).
+/// port AND the two UDP video ports all live on ONE host. Per-pane host/port fields are avoided —
+/// every terminal/Claude pane opens a *channel* on the one shared mux at `host:port`, and every
+/// `.remoteGUI` pane opens a *lane* on the one shared UDP flow at `host:mediaPort`/`cursorPort` (the
+/// transport already pools both per-host — see `ConnectionRegistry` / `VideoConnectionRegistry`).
+/// Only the per-pane `windowID` (which remote window to mirror) stays on the pane (``VideoEndpoint``).
 ///
 /// Value-typed + `Codable` so it persists once at the ``Workspace`` level and is the *intent* the
 /// ``AppConnection`` model dials from the connect-gate. The tree never holds the live connection.

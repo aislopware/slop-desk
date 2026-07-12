@@ -3,7 +3,7 @@ import SlopDeskTerminal
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E10 WI-5 (ES-E10-4): the PURE ⌘-hover hit-test
+/// The PURE ⌘-hover hit-test
 /// ``TerminalViewModel/hoveredLinkPath(rows:cwd:schemes:metrics:pointX:pointY:)`` — the headless heart of the
 /// status-bar full-path preview (`full-path-hover.png`). The macOS renderer is the compile-only actuator (the
 /// real surface hangs without a window server — the hang-safety rule), so the cell math + link resolution are

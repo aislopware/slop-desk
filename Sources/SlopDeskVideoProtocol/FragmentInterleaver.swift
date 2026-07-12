@@ -1,14 +1,13 @@
 import Foundation
 
-/// PURE transmission-order interleaver for a frame's fragments (2026-06-08 — flicker fix).
+/// PURE transmission-order interleaver for a frame's fragments.
 ///
 /// WHY: ``XORParityFEC`` recovers exactly ONE lost fragment per group of `groupSize` CONSECUTIVE
-/// data fragments (group g = data[g·k … g·k+k−1]). The host previously transmitted fragments in
-/// that same consecutive order (`onEncodedFrame`'s tight send loop), so a burst that drops just 2
-/// ADJACENT datagrams lands two losses in the SAME group → unrecoverable → a corrupt/partial decode
-/// that the next frame only half-fixes → visible FLICKER on fast scroll. Raising the bitrate for the
-/// 2× HiDPI display made each frame ~4× more fragments → ~4× more adjacent-loss chances → the flicker
-/// the user reported.
+/// data fragments (group g = data[g·k … g·k+k−1]). Sending fragments in that same consecutive order
+/// (`onEncodedFrame`'s tight send loop) means a burst that drops just 2 ADJACENT datagrams lands two
+/// losses in the SAME group → unrecoverable → a corrupt/partial decode that the next frame only
+/// half-fixes → visible FLICKER on fast scroll. This bites hardest at high bitrate / HiDPI, where
+/// each frame fragments into many more pieces and adjacent-loss odds rise accordingly.
 ///
 /// WHAT: reorder TRANSMISSION (not the fragments' `fragIndex` — those are untouched) into column-major
 /// "one-per-group" order, so consecutive datagrams on the wire belong to DIFFERENT FEC groups. A burst

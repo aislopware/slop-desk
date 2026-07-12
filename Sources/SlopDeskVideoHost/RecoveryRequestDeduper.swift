@@ -1,9 +1,9 @@
 import Foundation
 
-/// Component 5 (recovery-redundancy, 2026-06-11): host-side dedup window for recovery-request
-/// datagrams. The client now sends each logical `requestLTRRefresh` / `requestIDR` as N
-/// byte-identical copies spaced ~3 ms apart (``SlopDeskVideoProtocol/RecoveryRequestRedundancy``);
-/// this collapses those copies back to ONE host action.
+/// Host-side dedup window for recovery-request datagrams. The client sends each logical
+/// `requestLTRRefresh` / `requestIDR` as N byte-identical copies spaced ~3 ms apart
+/// (``SlopDeskVideoProtocol/RecoveryRequestRedundancy``); this collapses those copies back to ONE
+/// host action.
 ///
 /// WHY the host needs it (and the capturer latch alone is not enough): same-frame duplicates
 /// dedup via the capturer's Bool latch, but copies STRADDLING a capture-frame boundary re-latch
@@ -21,9 +21,8 @@ import Foundation
 /// ages back to admissible one `windowSeconds` after the FIRST sighting, never starved by its
 /// own copies.
 ///
-/// Native Swift, the single source of truth (no wall clock — the caller injects `now` in seconds).
-/// It is a `final class` (not the former value struct) so the host session owns it by reference
-/// without a `let`→`var` ripple.
+/// No wall clock — the caller injects `now` in seconds. A `final class` (not a value struct) so
+/// the host session can own it by reference without a `let`→`var` ripple.
 ///
 /// `@unchecked Sendable`: the internal ring is not thread-safe, but every use is single-owner — the
 /// host session holds it as an actor-isolated property and the loopback validator / tests drive it

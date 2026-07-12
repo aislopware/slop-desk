@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E3 WI-4 (ES-E3-4): the PURE close-confirmation policy — the `process` / `always` / `multiple_tabs`
+/// The PURE close-confirmation policy — the `process` / `always` / `multiple_tabs`
 /// truth table and the validate-then-repair `init(rawValue:)`. The store wiring (which policy a scope reads,
 /// where the parked confirmation lands) is pinned separately in ``CloseConfirmationStoreTests``; here the
 /// decision math is isolated from any store/UI.
@@ -62,7 +62,7 @@ final class CloseConfirmationPolicyTests: XCTestCase {
     }
 }
 
-/// E3 WI-4 store wiring: ``WorkspaceStore/requestCloseWindow()`` parks ``WorkspaceStore/pendingWindowClose``
+/// Store wiring: ``WorkspaceStore/requestCloseWindow()`` parks ``WorkspaceStore/pendingWindowClose``
 /// EXACTLY when the configured ``SettingsKey/closeConfirmWindow`` policy says so (evaluated against the
 /// active session's tab count + any busy pane), and the pane-close guards now honour
 /// ``SettingsKey/closeConfirmTab``. Drives a LIVE `.tree` store through the `FakePaneSession` seam.
@@ -111,10 +111,10 @@ final class CloseConfirmationStoreTests: XCTestCase {
     // MARK: - SettingsKey defaults + wire keys + Defaults round-trip
 
     func testCloseConfirmDefaultsAndKeyStringsAndRepair() {
-        // Unset → default `.process` (the pre-E3 busy-only guard, byte-identical behaviour).
+        // Unset → default `.process` (the busy-only guard, byte-identical behaviour).
         XCTAssertEqual(SettingsKey.closeConfirmTab, .process)
         XCTAssertEqual(SettingsKey.closeConfirmWindow, .process)
-        // The wire key strings are the single source of truth shared with the E7 Settings UI — a rename that
+        // The wire key strings are the single source of truth shared with the Settings UI — a rename that
         // split-brained the picker from these fire-sites fails here.
         XCTAssertEqual(SettingsKey.closeConfirmTabKey, "shell.closeConfirm.tab")
         XCTAssertEqual(SettingsKey.closeConfirmWindowKey, "shell.closeConfirm.window")
@@ -127,7 +127,7 @@ final class CloseConfirmationStoreTests: XCTestCase {
         XCTAssertEqual(SettingsKey.closeConfirmWindow, .process, "an invalid stored value repairs to process")
     }
 
-    // MARK: - requestCloseWindow parks per policy (ES-E3-4)
+    // MARK: - requestCloseWindow parks per policy
 
     func testProcessPolicyIdleDoesNotParkWindowClose() {
         SettingsKey.store.set("process", forKey: SettingsKey.closeConfirmWindowKey)
@@ -206,11 +206,10 @@ final class CloseConfirmationStoreTests: XCTestCase {
         XCTAssertEqual(Set(store.tree.allPaneIDs()), Set(panes), "cancel leaves the session intact")
     }
 
-    // MARK: - pane-close guard now honours the tab policy (was busy-only)
+    // MARK: - pane-close guard honours the tab policy, not just a busy shell
 
     func testAlwaysTabPolicyParksAnIdlePaneClose() {
-        // PRE-FIX: `requestCloseActivePaneTree` parked ONLY on a busy shell; an idle pane closed immediately.
-        // With the tab policy = always, an idle close must now PARK behind `pendingClose`.
+        // With the tab policy = always, an idle close parks behind `pendingClose`, not just a busy-shell close.
         SettingsKey.store.set("always", forKey: SettingsKey.closeConfirmTabKey)
         let (tree, panes) = multiTabWorkspace(tabCount: 2)
         let store = makeTreeStore(restoringTree: tree)
@@ -222,8 +221,8 @@ final class CloseConfirmationStoreTests: XCTestCase {
     }
 
     func testDefaultProcessPolicyIdlePaneClosesImmediately() {
-        // The default (unset) `.process` policy preserves the pre-E3 behaviour: an idle pane closes without
-        // a confirmation (only a busy shell parks).
+        // The default (unset) `.process` policy: an idle pane closes without a confirmation (only a busy
+        // shell parks).
         let (tree, panes) = multiTabWorkspace(tabCount: 2)
         let store = makeTreeStore(restoringTree: tree)
 
@@ -233,12 +232,11 @@ final class CloseConfirmationStoreTests: XCTestCase {
         XCTAssertEqual(store.tree.allPaneIDs().count, panes.count - 1, "the idle pane was closed")
     }
 
-    // MARK: - pane close gates by the Tab policy ONLY on a CASCADING close (E7 carry-over #8)
+    // MARK: - pane close gates by the Tab policy ONLY on a CASCADING close
 
     /// A NON-cascading mid-tab pane close (the pane has tiled siblings, so its tab SURVIVES) must fall back to
-    /// the `.process` busy-shell guard ALONE — it must NOT inherit the Tab policy. REVERT-TO-CONFIRM-FAIL: the
-    /// pre-fix `.pane` arm read `closeConfirmTab` unconditionally, so `.always` returned `true` even for an idle
-    /// non-cascading close; with the fix an idle non-cascading pane close needs no confirmation under `.always`.
+    /// the `.process` busy-shell guard ALONE — it must NOT inherit the Tab policy: an idle non-cascading pane
+    /// close needs no confirmation under `.always`.
     func testNonCascadingPaneCloseUsesProcessGuardOnly() throws {
         SettingsKey.store.set("always", forKey: SettingsKey.closeConfirmTabKey)
         // One tab split into TWO panes, so closing the active pane leaves the tab alive (a non-cascading close).
@@ -274,11 +272,11 @@ final class CloseConfirmationStoreTests: XCTestCase {
 
     // MARK: - Close Tab (⌘⇧W) confirmation closes the WHOLE tab, not just the active pane
 
-    /// REGRESSION (review finding): a confirmed ``WorkspaceStore/closeActiveTab()`` on a MULTI-PANE tab must
-    /// drop the entire tab — both panes — not just one leaf. Fires under the DEFAULT `.process` policy as
-    /// soon as a pane in the tab is busy (a split coding tab running a command). PRE-FIX `closeActiveTab`
-    /// parked the tab as its active LEAF (`pendingClose`) and `confirmPendingClose` resolved it through
-    /// `closePaneTree`, closing ONE pane and leaving the sibling alive (the tab survived).
+    /// A confirmed ``WorkspaceStore/closeActiveTab()`` on a MULTI-PANE tab must drop the entire tab — both
+    /// panes — not just one leaf. Fires under the DEFAULT `.process` policy as soon as a pane in the tab is
+    /// busy (a split coding tab running a command). Guards against `closeActiveTab` parking the tab as its
+    /// active LEAF (`pendingClose`) and `confirmPendingClose` resolving it through `closePaneTree`, which
+    /// would close ONE pane and leave the sibling alive (the tab surviving).
     func testCloseActiveTabConfirmClosesWholeMultiPaneTab() throws {
         // Two single-pane tabs; the active tab becomes a 2-pane split below so a sibling tab survives the
         // close (a clean "the tab is gone" assertion, no last-tab re-seed).

@@ -1,4 +1,4 @@
-// WorkspaceControlBackendTabBadgeTests — pins the E20 ES-E20-3 `tab badge --kind` write path on the REAL
+// WorkspaceControlBackendTabBadgeTests — pins the `tab badge --kind` write path on the REAL
 // `WorkspaceControlBackend` (not the dispatcher's FAKE backend, whose `recordedBadgeKind` masks this gap).
 // The pre-fix backend dropped `kind` entirely and only checked the tab existed, so `setTabBadge` reported
 // success while no badge was ever set; each assertion below fails on that pre-fix backend (the override is

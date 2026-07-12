@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskVideoClient
 
-/// Adaptive playout (2026-06-15): the deadline pacer's jitter buffer auto-tunes to the LIVE network
+/// Adaptive playout: the deadline pacer's jitter buffer auto-tunes to the LIVE network
 /// jitter via the rust-core law (`clamp(k·jitter + base, [floor, ceil])`, grow-fast / shrink-slow),
 /// so a fixed value isn't hand-tuned per link. Driven through the headless test seams
 /// (`notePlayoutJitterForTest` / `playoutDelayMsForTest`) — no display-link; the REAL rust-core law

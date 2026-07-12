@@ -3,13 +3,13 @@ import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E13 WI-1 — the CLIENT half of the agent-hooks host verbs (``MetadataVerb/installAgentHooks`` = 11 /
+/// The CLIENT half of the agent-hooks host verbs (``MetadataVerb/installAgentHooks`` = 11 /
 /// ``MetadataVerb/uninstallAgentHooks`` = 12 / ``MetadataVerb/agentHookStatus`` = 13): the typed
 /// ``MetadataClient`` methods must encode the right verb byte with an EMPTY request payload, surface the
 /// host's `ok`/`error` status as a `Bool` (true ONLY on `.ok`) for install/uninstall, and decode the
-/// 2-byte `[installed][listenerActive]` flags for `agentHookStatus` (queue-safety cluster 2026-07-02;
-/// a missing/short payload beyond byte 0 conservatively reads listener-INACTIVE, an absent byte 0 ⇒
-/// `nil`). Each behavior has a test that FAILS on the un-fixed code:
+/// 2-byte `[installed][listenerActive]` flags for `agentHookStatus` (a missing/short payload beyond
+/// byte 0 conservatively reads listener-INACTIVE, an absent byte 0 ⇒ `nil`). Each behavior has a test
+/// that FAILS on the un-fixed code:
 /// - send the wrong verb byte / a non-empty payload → the verb/payload-capture assertions fail;
 /// - return `true` on a non-`.ok` status → the error/unsupported tests fail;
 /// - decode the flags without the `payload.first`/`status == .ok` gate → the nil / 0-byte tests fail;
@@ -103,7 +103,7 @@ final class MetadataClientAgentHooksTests: XCTestCase {
         )
     }
 
-    /// Queue-safety cluster (2026-07-02): installed-but-INACTIVE — the false-green bug. The hooks are
+    /// Installed-but-INACTIVE — the false-green bug. The hooks are
     /// in settings.json but the host's hook listener is unbound; the second flag byte carries that
     /// truth so the card can warn instead of showing "✓ Installed" over a dead integration.
     func testStatusInstalledButListenerInactiveDecodes() async {

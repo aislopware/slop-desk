@@ -56,8 +56,8 @@ public final class AppConnection {
     /// shell wires this to ``WorkspaceStore/redialDisconnectedPanes()`` so that panes stranded in
     /// `.failed`/`.unreachable` (e.g. every restored terminal pane dialled while the host was down, then given
     /// up) are RE-DIALLED the moment the app-global connection (re)establishes. Without it the pill turns green
-    /// but every pre-existing pane stays a dead, blank terminal until a manual per-pane Reconnect (R-lifecycle
-    /// #1). `nil` in tests / headless ⇒ no fan-out.
+    /// but every pre-existing pane stays a dead, blank terminal until a manual per-pane Reconnect.
+    /// `nil` in tests / headless ⇒ no fan-out.
     public var onConnectionEstablished: (@MainActor () -> Void)?
 
     /// Sets `status = .connected` and fires ``onConnectionEstablished`` ONLY on the transition INTO connected

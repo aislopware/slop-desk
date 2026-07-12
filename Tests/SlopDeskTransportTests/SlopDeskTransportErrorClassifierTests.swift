@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskTransport
 
-/// R15 #6 regression: the EADDRINUSE classifier the host-app uses to say "Port N is already in use"
+/// Regression: the EADDRINUSE classifier the host-app uses to say "Port N is already in use"
 /// must NOT misfire on unrelated errors whose text merely embeds the digits "48" (a port like 4843,
 /// a different errno like 148, a buffer size like 1048576). The errno is matched only as a
 /// digit-bounded standalone token, plus the canonical "in use" phrase.

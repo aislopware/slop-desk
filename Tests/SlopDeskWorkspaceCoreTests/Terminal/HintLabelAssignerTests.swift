@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E10 WI-9 (ES-E10-6): pins the PURE Hint Mode engine ``HintLabelAssigner`` — Vimium-style 2-letter label
+/// Pins the PURE Hint Mode engine ``HintLabelAssigner`` — Vimium-style 2-letter label
 /// assignment, the type-to-filter resolve, and hintable-target detection (links via the shared detector, plus
 /// git-hash / IPv4 / user `hint-pattern` forms with overlap dedupe + cell-accurate columns).
 ///

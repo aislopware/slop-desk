@@ -1,11 +1,12 @@
-// RailRowsMemo — the sidebar's row-model cache (perf audit, Option B memoization).
+// RailRowsMemo — the sidebar's row-model cache, memoizing `RailRowsBuilder.rows(for:)` against a
+// structural fingerprint.
 //
-// PROBLEM: `NavigatorColumn`'s body called `RailRowsBuilder.rows(for:)` directly. That walk reads every
-// volatile per-pane store dictionary (`paneAgentStatus`, `paneGitSummary`, `panePendingCompletion`,
+// PROBLEM: if `NavigatorColumn`'s body called `RailRowsBuilder.rows(for:)` directly, that walk would read
+// every volatile per-pane store dictionary (`paneAgentStatus`, `paneGitSummary`, `panePendingCompletion`,
 // `paneForegroundProcess`, progress, gates, read-only, `completionFlashTick`, …). Observation tracks at
 // PROPERTY granularity — reading `dict[oneKey]` depends on the WHOLE dict — so ANY pane's status tick
-// invalidated the whole sidebar body: a full O(panes) row rebuild + `disambiguated()` + sectioning + list
-// diff on the main thread, keystroke-adjacent.
+// would invalidate the whole sidebar body: a full O(panes) row rebuild + `disambiguated()` + sectioning +
+// list diff on the main thread, keystroke-adjacent.
 //
 // FIX SHAPE: the body asks THIS memo for the rows. The memo compares a STRUCTURAL fingerprint
 // (`RailStructureKey` — tab/pane identity + specs + project keys + the A4 title-process fallback) and
@@ -78,10 +79,10 @@ struct RailStructureKey: Equatable {
     /// only when it has a spec, is NOT user-renamed, and has no cwd folder name — exactly the case where a
     /// process change changes the TITLE (structural). The ONE guard deciding whether reading
     /// `store.paneForegroundProcess[id]` is even worthwhile — shared by this fingerprint AND the titlebar /
-    /// window-title reads (``SlateTitlebar``'s `activeTitle`, `WorkspaceRootView.windowTitle(for:)`; perf
-    /// audit 2026-07-11) so all three title sites register the volatile process dict as an Observation
-    /// dependency ONLY for a pane that would actually retitle by it — a background pane's process tick
-    /// otherwise re-evaluates a body/view that can never change as a result.
+    /// window-title reads (``SlateTitlebar``'s `activeTitle`, `WorkspaceRootView.windowTitle(for:)`) so all
+    /// three title sites register the volatile process dict as an Observation dependency ONLY for a pane
+    /// that would actually retitle by it — a background pane's process tick otherwise re-evaluates a
+    /// body/view that can never change as a result.
     static func titledByProcess(kind: PaneKind, spec: PaneSpec?) -> Bool {
         kind == .terminal
             && spec != nil

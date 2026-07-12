@@ -188,7 +188,7 @@ let reconnect = ReconnectManager(client: client, onLog: { stderrLine($0) })
 
 // Headless surface so the client also drives a TerminalSurface (the libghostty seam);
 // in the CLI we render via the raw `output` stream, but wiring the surface proves the
-// path and is what the GUI client (WF-5/8) will use.
+// path and is what the GUI client will use.
 let surface = HeadlessTerminalSurface()
 
 // The exit-code the process will return; set when the remote shell exits.
@@ -311,10 +311,10 @@ Task {
     }
 
     // 2. Start the reconnect supervisor (byte-exact resume on drop). RETAIN the task so the shutdown
-    //    sequence can CANCEL it (R16 CLI-1) — otherwise it free-runs and can pop a buffered
+    //    sequence can CANCEL it — otherwise it free-runs and can pop a buffered
     //    `.disconnected` (which `handleStreamEnded` yields on EVERY clean stream end, remote-shell-exit
     //    included) and fire a doomed `connect()` racing the process `exit()`, orphaning a freshly
-    //    spawned host shell. (The client's own `isClosed` guard from R15 #1 also defends this, but the
+    //    spawned host shell. (The client's own `isClosed` guard also defends this, but the
     //    supervisor can win the `isClosed` read before `close()` sets it; cancelling is the clean stop.)
     let supervisor = reconnect.start(host: args.host, port: args.port)
 
@@ -385,20 +385,20 @@ Task {
                 break
             case .commandBlock,
                  .blockOutput:
-                // WB2 Warp-style Blocks (wire types 28/29) are a GUI-client affordance (the Command
+                // Warp-style Blocks (wire types 28/29) are a GUI-client affordance (the Command
                 // Navigator / sticky header / copy-output). The raw-mode interactive CLI's local terminal
                 // already renders the OSC 133 marks natively, so the structured events are a no-op here.
                 break
             case .metadataResponse:
-                // E4 host metadata replies (wire type 30) back the GUI Details Panel. The raw-mode CLI
+                // Host metadata replies (wire type 30) back the GUI Details Panel. The raw-mode CLI
                 // never issues a metadata request, so a reply is a no-op here.
                 break
             case .inputEcho:
-                // Secure input (wire type 31, E17) drives the GUI client's Secure Keyboard Entry. The raw-mode
+                // Secure input (wire type 31) drives the GUI client's Secure Keyboard Entry. The raw-mode
                 // interactive CLI relies on the host PTY's own no-echo line discipline, so this is a no-op here.
                 break
             case .progress:
-                // OSC 9;4 taskbar-style progress (wire type 32, E14) drives the GUI client's per-pane tab
+                // OSC 9;4 taskbar-style progress (wire type 32) drives the GUI client's per-pane tab
                 // badge + the macOS Dock aggregate. The raw-mode interactive CLI has no badge/Dock surface —
                 // the local terminal already shows the program's own progress natively — so this is a no-op
                 // here (mirrors the `.inputEcho` no-op).
@@ -431,7 +431,7 @@ Task {
     //    task drains sequentially (awaiting `sendInput` one at a time). A `Task` per chunk
     //    would NOT preserve order — independent tasks hop onto the actor in scheduler
     //    order, not creation order — which would scramble keystrokes. (Same lesson as the
-    //    WF-3 host output relay.)
+    //    host output relay.)
     //
     //    Backpressure: the hand-off is a BoundedInputPipe, not an unbounded AsyncStream.
     //    When `sendInput` parks in the mux credit window (half-open link during a wifi
@@ -525,7 +525,7 @@ Task {
         stderrLine("session ending (output)")
     }
 
-    supervisor.cancel() // R16 CLI-1: stop the reconnect supervisor BEFORE close() so it can't dial during exit.
+    supervisor.cancel() // Stop the reconnect supervisor BEFORE close() so it can't dial during exit.
     eventsTask.cancel()
     resizeTask.cancel()
     // Unpark a reader thread blocked at the pipe's capacity bound (piped mode ending while

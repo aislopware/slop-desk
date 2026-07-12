@@ -1,20 +1,19 @@
-// SlateDesign — the minimalist design-token layer (REBUILD-V2, L5/L6).
+// SlateDesign — the minimalist design-token layer.
 //
 // A THIN, headless token layer: no separate SPM target (`SlopDeskDesignSystem` stays deleted) — just
 // `Color`/`CGFloat`/`Animation` constants compiled into `SlopDeskClientUI`. Source of truth for the tokens:
 // the theme structs below, `.paper`'s hand-tuned light palette, and `Slate.Anim`'s timing curves (no
 // springs anywhere).
 //
-// Design DNA — "clean / modern / minimalist", FLAT, relit by MERIDIAN L5 (2026-07-04):
+// Design DNA — "clean / modern / minimalist", FLAT, relit by MERIDIAN L5:
 //   - FLAT pane: the terminal viewport fills its leaf edge-to-edge, NO corner radius, NO card; adjacent
 //     split panes are separated only by the hairline `PaneDivider`.
 //   - MERIDIAN L5 (depth by light, not lines): the SIDEBAR column sits ONE luminance step BELOW the pane
 //     surface (`card`/`content` = the seed background) — pane = lit face, sidebar = unlit housing. The step
-//     IS the structure; no divider between. SCOPE (user report "title màu khác với pane… lạc quẻ"): the
-//     CONTENT column is lit end-to-end — its titlebar band paints the pane tone, because panes sit flush
-//     under it (no gap/radius) and a darker strip there reads as a mispainted header. `window` (== sidebar
-//     tone) stays the ground of AUXILIARY windows (Settings / first-launch / overlays), which are chrome,
-//     not pane.
+//     IS the structure; no divider between. SCOPE: the CONTENT column is lit end-to-end — its titlebar band
+//     paints the pane tone, because panes sit flush under it (no gap/radius) and a darker strip there would
+//     read as a mispainted header. `window` (== sidebar tone) stays the ground of AUXILIARY windows
+//     (Settings / first-launch / overlays), which are chrome, not pane.
 //   - 8pt grid; ultra-thin structure: borders ~6% opacity, hover ~4–5% — low contrast = minimalist.
 //   - Minimal palette: three text levels + an accent used ONLY for active state.
 //
@@ -142,8 +141,8 @@ struct SlateTheme: Equatable {
 
     /// Dark — neutral grays + system-blue accent, opacity-based structure.
     static let dark = Self(
-        // MERIDIAN L5: chrome DARKER than the pane surface (0x161616) — inverted from the old
-        // sidebar-lighter-than-window layout so the pane reads as the lit face.
+        // MERIDIAN L5: chrome DARKER than the pane surface (0x161616) — a sidebar-lighter-than-window
+        // layout would read as the wrong face lit, so the pane stays the brighter one.
         ground: Color(slateHex: 0x111111),
         face: Color(slateHex: 0x161616),
         raised: Color(slateHex: 0x2A2A2A), // active-tab card / popover / inset controls, one step lifted
@@ -212,9 +211,9 @@ struct SlateTheme: Equatable {
     private static func monokai(_ s: MonokaiSeed) -> Self {
         // Structure tints (divider / borders / hover / selection) DERIVE from the palette, not a hardcoded
         // black/white: a DARK filter seeds them from its FOREGROUND so every variant's hairline carries that
-        // filter's own hue (teal-white Machine, warm-rose Ristretto, cool-violet Spectrum) instead of one
-        // flat `Color.white` outlier shared by all five — the "divider của dark theme đang màu trắng /
-        // hardcode" report. Light filters keep a near-black structure line.
+        // filter's own hue (teal-white Machine, warm-rose Ristretto, cool-violet Spectrum) instead of a flat
+        // `Color.white` shared by all five, which would read as a hardcoded white divider regardless of the
+        // filter. Light filters keep a near-black structure line.
         let line = Color(slateHex: s.isLight ? 0x000000 : s.foreground)
         return Self(
             // MERIDIAN L5 (depth by light, not lines): chrome `ground` (sidebar column; auxiliary windows)
@@ -282,10 +281,10 @@ struct SlateTheme: Equatable {
         orange: 0xFC9867, purple: 0xAB9DF2, isLight: false,
     ))
 
-    // P5 (Phase-C GUI audit): navigator `sidebar` read dim/cool vs the intended warm cream. Nudged
-    // 0xEDE7E5 → 0xF1EBE8 — brighter + a hair warmer, HUE-PRESERVING (keeps the seed's rose R>G>B ratio,
-    // closer to `background`) so it reads as warm paper, not grey. Only `sidebar` moves; `background` /
-    // `elevated` (flat backdrop + active-tab card) untouched, so no surface ripples.
+    // navigator `sidebar` is brighter and a hair warmer than the seed's raw dimmed tone would give — kept
+    // HUE-PRESERVING (the seed's rose R>G>B ratio, closer to `background`) so it reads as warm paper, not
+    // grey/cool. Only `sidebar` carries this nudge; `background` / `elevated` (flat backdrop + active-tab
+    // card) stay untouched, so no other surface ripples.
     /// Monokai Pro Light (Classic Light) — the warm off-white light filter.
     static let monokaiProClassicLight = monokai(MonokaiSeed(
         name: "classic-light", background: 0xFAF4F2, sidebar: 0xF1EBE8, elevated: 0xFFFFFF,
@@ -332,8 +331,8 @@ struct SlateTheme: Equatable {
 enum Slate {
     /// The active theme. Indirected through ``ThemeStore/shared`` (D3) so runtime theme switching repoints
     /// every token live — `@MainActor` because the store is, and every read site is a SwiftUI `body` /
-    /// AppKit lifecycle hook (all MainActor). Default Paper (the store's default) ⇒ a headless / no-store
-    /// render resolves the SAME palette as the old `static let theme = .paper`, byte-identical.
+    /// AppKit lifecycle hook (all MainActor). ``ThemeStore``'s default (`.monokaiProClassic`) means a
+    /// headless / no-store render still resolves a real, deterministic palette.
     @MainActor static var theme: SlateTheme { ThemeStore.shared.active }
 
     /// The preferred SwiftUI colour scheme for the active theme (drives `.preferredColorScheme`).
@@ -444,8 +443,9 @@ enum Slate {
         static let cardBorderWidth: CGFloat = 1
         static let dividerHoverWidth: CGFloat = 2
         /// Active-pane focus marker: leg length (points) of the small FILLED accent triangle in the focused
-        /// pane's TOP-LEFT corner (Warp-style — the kept treatment after box / bracket / underline / dot /
-        /// top-bar iterations, replacing the old unfocused-dim).
+        /// pane's TOP-LEFT corner (Warp-style), not a box/bracket/underline/dot/top-bar outline and not
+        /// dimming the unfocused panes — a small corner mark signals focus without adding a border to the
+        /// FLAT pane or making idle panes look disabled.
         static let focusCornerSize: CGFloat = 12
 
         // Control plate (PlateIconButton) — rides the ladder's control rung.

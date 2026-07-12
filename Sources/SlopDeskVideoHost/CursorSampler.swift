@@ -71,13 +71,13 @@ public final class CursorSampler: @unchecked Sendable {
     /// Counts cursor-queue ticks for the shape-refresh policy's fallback/safety cadences.
     /// Touched only on the serial cursor queue.
     private var tickCount = 0
-    /// SHAPE-LAG FIX (2026-06-10): the window server's cursor SEED — a counter that increments
-    /// whenever the DISPLAYED system cursor image changes. Polling it is a cheap off-main mach call,
-    /// so the 120 Hz cursor-queue tick can detect a shape change the same tick it happens and hop to
-    /// main ONLY then — instead of the old unconditional every-4th-tick (30 Hz) main-thread refresh
-    /// whose worst case (33 ms + main-queue delay) made the client's cursor shape visibly lag Parsec.
-    /// Private CGS API (re-exported from SkyLight; probed FOUND on this OS) resolved via `dlsym` with
-    /// a graceful fallback: symbol missing ⇒ the policy reverts to the legacy 30 Hz cadence.
+    /// The window server's cursor SEED — a counter that increments whenever the DISPLAYED system
+    /// cursor image changes. Polling it is a cheap off-main mach call, so the 120 Hz cursor-queue
+    /// tick can detect a shape change the same tick it happens and hop to main ONLY then; an
+    /// unconditional every-4th-tick (30 Hz) main-thread refresh would cap worst-case detection at
+    /// 33 ms + main-queue delay, visibly lagging the cursor shape behind the mouse. Private CGS API
+    /// (re-exported from SkyLight; probed FOUND on this OS) resolved via `dlsym` with a graceful
+    /// fallback: symbol missing ⇒ the policy falls back to an unconditional ~30 Hz cadence.
     private typealias CursorSeedFn = @convention(c) () -> Int32
     private static let currentCursorSeed: CursorSeedFn? = {
         let rtldDefault = UnsafeMutableRawPointer(bitPattern: -2) // RTLD_DEFAULT
@@ -92,13 +92,13 @@ public final class CursorSampler: @unchecked Sendable {
     /// Pure seed→refresh decision state (touched only on the serial cursor queue).
     private var shapeRefreshPolicy = ShapeRefreshPolicy()
     /// The already-encoded ``CursorShapeMessage`` per `shapeID`, retained so a client that
-    /// LOST the one-shot shipment can ask for it again (FIX B self-heal — `reshipShape`). Guarded
+    /// LOST the one-shot shipment can ask for it again via ``reshipShape(_:)``. Guarded
     /// by `shapeLock` because `reshipShape` may be called off the main actor (the recovery path).
     private var shapeMessages: [UInt16: CursorShapeMessage] = [:]
     private let shapeLock = NSLock()
     /// Opt-in stderr trace (`SLOPDESK_VIDEO_DEBUG=1`): logs each NEWLY-minted cursor shapeID so a HW run
-    /// can confirm distinct shapes (I-beam / hand / resize) are actually being detected and shipped —
-    /// the symptom of the `NSCursor.current` → `currentSystem` fix. Fires only on a new shape (rare).
+    /// can confirm distinct shapes (I-beam / hand / resize) are actually detected and shipped via
+    /// `NSCursor.currentSystem` (see ``refreshShapeAndScreen()``). Fires only on a new shape (rare).
     private static let debugStderr = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil
 
     public init(windowBoundsCG: VideoRect, updateHandler: @escaping UpdateHandler, shapeHandler: ShapeHandler? = nil) {
@@ -107,10 +107,10 @@ public final class CursorSampler: @unchecked Sendable {
         self.shapeHandler = shapeHandler
     }
 
-    /// FIX B self-heal: re-emit the already-cached shape bitmap for `shapeID` on the OOB shape
-    /// channel (a client whose one-shot shipment was lost / over-MTU re-requested it via the
-    /// recovery channel). No-op if the id was never shipped (nothing to re-send) or there is no
-    /// shape handler. Safe to call off the main actor — `shapeMessages` is lock-guarded and the
+    /// Re-emits the already-cached shape bitmap for `shapeID` on the OOB shape channel, for a
+    /// client whose one-shot shipment was lost / over-MTU and re-requested it via the recovery
+    /// channel. No-op if the id was never shipped (nothing to re-send) or there is no shape
+    /// handler. Safe to call off the main actor — `shapeMessages` is lock-guarded and the
     /// `CursorShapeMessage` value is `Sendable`, so re-shipping needs no `NSCursor` re-read.
     public func reshipShape(_ shapeID: UInt16) {
         shapeLock.lock()
@@ -152,7 +152,7 @@ public final class CursorSampler: @unchecked Sendable {
     /// cursor never freezes during a main-thread window raise, and refreshes the cold shape/screen
     /// state on main per ``ShapeRefreshPolicy``: the SAME tick the window-server cursor seed changes
     /// (shape-change detection ≤ 8.3 ms), at ~1 Hz as a safety net while the seed is stable, or at
-    /// the legacy ~30 Hz when the seed symbol is unavailable.
+    /// a fallback ~30 Hz when the seed symbol is unavailable.
     private func tick() {
         emitPositionOffMain()
         tickCount &+= 1
@@ -219,8 +219,8 @@ public final class CursorSampler: @unchecked Sendable {
         cachedHotspot = hotspot
         shapePrimed = true
         stateLock.unlock()
-        // SHAPE-LAG FIX: the client switches its local pointer on the NEXT CursorUpdate that carries
-        // the new shapeID. Emit one immediately on a shape CHANGE (on the cursor queue, where every
+        // The client switches its local pointer on the NEXT CursorUpdate that carries the new
+        // shapeID, so emit one immediately on a shape CHANGE (on the cursor queue, where every
         // other emission runs) instead of waiting up to 8.3 ms for the next 120 Hz position tick.
         if idChanged {
             queue.async { [weak self] in self?.emitPositionOffMain() }
@@ -252,7 +252,7 @@ public final class CursorSampler: @unchecked Sendable {
         // appears, ship its bitmap + hotspot ONCE so the client caches it by `id` and
         // composites the pointer itself (`showsCursor` stays false on capture). The
         // hot per-sample message stays position-only. The encoded message is also RETAINED
-        // (FIX B) so a client that loses this one-shot shipment can re-request it.
+        // so a client that loses this one-shot shipment can re-request it via ``reshipShape(_:)``.
         if let shapeHandler, let message = Self.encodeShape(image, shapeID: id, hotspot: hotspot) {
             shapeLock.lock()
             shapeMessages[id] = message
@@ -263,21 +263,21 @@ public final class CursorSampler: @unchecked Sendable {
     }
 
     /// The single-datagram budget for a cursor shape: the video packetizer's MTU cap minus the
-    /// shape message header. A shape PNG larger than this would be IP-fragmented (loss of ANY
-    /// fragment loses the whole shape, amplifying the lost-shape hazard FIX B heals), so a too-big
-    /// bitmap is DOWNSCALED to fit before send.
+    /// shape message header. A shape PNG larger than this would be IP-fragmented — loss of ANY
+    /// fragment loses the whole shape, and a lost shape means the client re-requests it via
+    /// ``reshipShape(_:)`` — so a too-big bitmap is DOWNSCALED to fit before send.
     static let maxShapeBitmapBytes = VideoPacketizer.maxDatagramSize - CursorShapeMessage.headerSize
 
     /// Encodes an `NSImage` cursor bitmap as a PNG ``CursorShapeMessage`` for the OOB
     /// shape channel. Returns `nil` if the image yields no bitmap representation.
     ///
-    /// FIX B size guard: a typical cursor PNG is well under the single-datagram budget, but a
-    /// large/HiDPI custom cursor could exceed it. If the PNG does not fit one datagram, the bitmap
-    /// is progressively DOWNSCALED (halving the pixel dimensions) until it fits, so the shape
-    /// always rides ONE datagram and is never IP-fragmented. The reported `size`/`hotspot` stay in
-    /// the ORIGINAL points (the client composites at the logical cursor size; the bitmap is
-    /// self-describing and the client scales it to `bounds`), so a downscale is a pure
-    /// transport-fit optimisation that does not move the hotspot.
+    /// A typical cursor PNG is well under the single-datagram budget, but a large/HiDPI custom
+    /// cursor could exceed it. If the PNG does not fit one datagram, the bitmap is progressively
+    /// DOWNSCALED (halving the pixel dimensions) until it fits, so the shape always rides ONE
+    /// datagram and is never IP-fragmented. The reported `size`/`hotspot` stay in the ORIGINAL
+    /// points (the client composites at the logical cursor size; the bitmap is self-describing
+    /// and the client scales it to `bounds`), so a downscale is a pure transport-fit optimisation
+    /// that does not move the hotspot.
     @MainActor
     static func encodeShape(_ image: NSImage, shapeID: UInt16, hotspot: VideoPoint) -> CursorShapeMessage? {
         guard let png = pngFittingDatagram(image) else { return nil }
@@ -294,13 +294,14 @@ public final class CursorSampler: @unchecked Sendable {
     ///
     /// The target is the cursor's LOGICAL size at Retina (`size × 2`), capped to the native pixel rep so we
     /// never upscale. Crucially it does NOT start from the native rep: some system cursors hand back a
-    /// huge native image (100s of KB — measured 583 KB on a HiDPI/large-pointer host), and the old code
-    /// blindly HALVED that down (380px → ~23px) → a tiny, blurry, "wrong"-looking cursor, plus ~9 redraws
-    /// on the main actor (which lagged the shape refresh). Instead, render once at the Retina-logical target
-    /// (high interpolation) and, only if that PNG is still over budget, shrink it ~20%/pass — sparse cursors
-    /// fit at ~40-48px, dense ones land a little smaller but stay legible. Returns `nil` only if no bitmap
-    /// representation exists. (Full-quality cursors above one datagram would need fragmentation — a larger
-    /// change; this keeps the single-datagram channel but stops crushing the common cursors.)
+    /// huge native image (100s of KB — measured 583 KB on a HiDPI/large-pointer host), and repeatedly
+    /// halving from there to reach budget (380px → ~23px) would land on a tiny, blurry, "wrong"-looking
+    /// cursor after ~9 redraws on the main actor (each one delaying the shape refresh). Instead, render
+    /// once at the Retina-logical target (high interpolation) and, only if that PNG is still over budget,
+    /// shrink it ~20%/pass — sparse cursors fit at ~40-48px, dense ones land a little smaller but stay
+    /// legible. Returns `nil` only if no bitmap representation exists. Full-quality cursors above one
+    /// datagram would need fragmentation (a larger change); this keeps the single-datagram channel but
+    /// stops crushing the common cursors.
     @MainActor
     private static func pngFittingDatagram(_ image: NSImage) -> Data? {
         guard let tiff = image.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) else {
@@ -361,7 +362,7 @@ public final class CursorSampler: @unchecked Sendable {
 ///   seed changes — shape-change detection within one 120 Hz tick (≤ 8.3 ms) — plus a slow ~1 Hz
 ///   safety refresh (`safetyDivisor`) so screen-height changes (the Y-flip input) and any seed edge
 ///   case the API misses still converge.
-/// - `seed == nil` (symbol unavailable on this OS): the legacy unconditional ~30 Hz cadence
+/// - `seed == nil` (symbol unavailable on this OS): an unconditional ~30 Hz cadence
 ///   (`fallbackDivisor`, every 4th 120 Hz tick).
 ///
 /// The FIRST call with a non-nil seed always refreshes (`lastSeed` starts nil ≠ any seed) — that is

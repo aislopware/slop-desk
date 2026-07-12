@@ -3,7 +3,7 @@ import SlopDeskTransport
 import XCTest
 @testable import SlopDeskHost
 
-/// E17 / ES-E17-4 — AUTO Secure Keyboard Entry must survive a reconnect/reattach while a no-echo password
+/// AUTO Secure Keyboard Entry must survive a reconnect/reattach while a no-echo password
 /// prompt is up. The host's ``EchoModeDetector`` is edge-triggered, and the client resets `hostNoEcho = false`
 /// on reconnect, so without a forced re-emit a prompt that spans the reattach would leave the client's
 /// `EnableSecureEventInput` DISENGAGED (keystrokes unprotected). ``MuxChannelSession/reestablishEchoOnReattach``
@@ -28,7 +28,7 @@ final class MuxChannelSessionEchoReattachTests: XCTestCase {
     func testReattachReemitsNoEchoTruthAcrossControlQueueClear() {
         let session = makeSession()
 
-        // C3 warm-up: the shell is at a normal echo-on prompt first. The connect-time path honors a
+        // Warm-up: the shell is at a normal echo-on prompt first. The connect-time path honors a
         // no-echo edge only AFTER a confirmed echo-ON sample, so establish that baseline before the
         // sudo/ssh prompt appears (echo-on folds to nothing — the steady state is silent).
         session.foldEchoSampleForTesting(echoOn: true)
@@ -66,9 +66,9 @@ final class MuxChannelSessionEchoReattachTests: XCTestCase {
         )
     }
 
-    // MARK: C3 — a transient startup no-echo must not latch the Secure-Input pill
+    // MARK: A transient startup no-echo must not latch the Secure-Input pill
 
-    /// C3 (Phase-C GUI audit). The reported bug: the "SECURE INPUT" pill shows at launch on a NORMAL
+    /// The reported bug: the "SECURE INPUT" pill shows at launch on a NORMAL
     /// echo-on shell prompt and stays on. ROOT CAUSE is host-side — a freshly connected PTY master can
     /// read `ECHO`-cleared for a sample or two before the shell's termios settles to echo-on, and the
     /// edge-triggered ``EchoModeDetector`` (anchored echo-on) would fold that transient as a real edge,

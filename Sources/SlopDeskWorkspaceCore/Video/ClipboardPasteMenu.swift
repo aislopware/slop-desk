@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - Clipboard "Paste as Keystrokes" menu model (C7, 2026-07-03)
+// MARK: - Clipboard "Paste as Keystrokes" menu model
 
 /// The PURE model behind the remote-GUI pane's clipboard affordances (the "Paste as Keystrokes" item +
 /// the "Clipboard Ring" submenu): given the LOCAL clipboard ring + whether the live pane can type, it

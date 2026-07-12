@@ -1,4 +1,4 @@
-// WindowCloseGateTests — E3 WI-4. Proves the macOS window-close gate (`WindowCloseGate`, the pure logic
+// WindowCloseGateTests proves the macOS window-close gate (`WindowCloseGate`, the pure logic
 // behind `WindowCloseConfirmationDelegate.windowShouldClose`) can NEVER strand the window.
 //
 // The regression this guards: the old delegate returned a bare `false` whenever a confirmation parked, with

@@ -1,6 +1,6 @@
 import Foundation
 
-/// The HOST-side, PURE auto-progress command matcher (E14/K2 — "Auto Progress-Bar Commands").
+/// The HOST-side, PURE auto-progress command matcher ("Auto Progress-Bar Commands").
 ///
 /// When shell integration is active, SlopDesk auto-wraps a built-in list of slow commands to emit an
 /// INDETERMINATE OSC-9;4 spinner while they run (no program changes needed). It works

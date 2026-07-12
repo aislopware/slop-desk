@@ -1,8 +1,8 @@
 import Foundation
 
-// MARK: - E8 WI-8 (H6): mouse-over-to-focus decision
+// MARK: - Mouse-over-to-focus decision
 
-/// The PURE, headless decision behind "Mouse-over-to-focus" / `focus-follows-mouse` (H6): given the
+/// The PURE, headless decision behind "Mouse-over-to-focus" / `focus-follows-mouse`: given the
 /// live setting and whether THIS pane is already the focused one, should hovering it claim the workspace
 /// focus?
 ///
@@ -12,8 +12,8 @@ import Foundation
 /// The GUI view (`GhosttyTerminalView`, compile-only behind `#if canImport(CGhostty)`) is the thin actuator:
 /// its `mouseEntered` / `mouseMoved` consult this policy and, on `true`, fire `TerminalViewModel.onRequestFocus`.
 ///
-/// The ``shouldRequestFocus(focusFollowsMouse:isAlreadyFocused:)`` AND-gate's `!isAlreadyFocused` term is the
-/// LOAD-BEARING short-circuit the plan calls out: `mouseMoved` fires on every pointer motion, so without it
+/// The ``shouldRequestFocus(focusFollowsMouse:isAlreadyFocused:)`` AND-gate's `!isAlreadyFocused` term is a
+/// LOAD-BEARING short-circuit: `mouseMoved` fires on every pointer motion, so without it
 /// an already-focused pane would re-fire `onRequestFocus` on every move, thrashing the workspace focus and
 /// redrawing the title bar (the "flicker"). Pinned by `FocusFollowsMousePolicyTests` so a refactor that drops
 /// the short-circuit fails the suite — the GUI view itself is outside the headless build and cannot be tested.

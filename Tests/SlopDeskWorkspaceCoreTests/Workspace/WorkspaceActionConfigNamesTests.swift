@@ -1,10 +1,9 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E1 / WI-1 (epic E1 — "Default-keymap parity & command-routing completion"): pins the config
-/// action-name → registry-bindingID resolver — ``WorkspaceBindingRegistry/bindingID(forConfigName:arg:)``
-/// — that closes the N5 gap (named / parameterized config bindings are PARSED by ``KeybindGrammar`` but
-/// were dropped end-to-end for want of a name table).
+/// Pins the config action-name → registry-bindingID resolver — ``WorkspaceBindingRegistry/bindingID(forConfigName:arg:)``
+/// — that closes the gap where named / parameterized config bindings are PARSED by ``KeybindGrammar`` but
+/// were dropped end-to-end for want of a name table.
 ///
 /// The names come from the config grammar (`docs/ui-shell/spec/reference__keybindings.md` "Config keys" +
 /// `docs/ui-shell/spec/customization__custom-keybindings.md`): `cmd+t:new_tab`, `cmd+w:close_pane`,
@@ -91,7 +90,7 @@ final class WorkspaceActionConfigNamesTests: XCTestCase {
         XCTAssertNil(WorkspaceBindingRegistry.bindingID(forConfigName: "frobnicate", arg: nil))
         XCTAssertNil(WorkspaceBindingRegistry.bindingID(forConfigName: "", arg: nil))
         // libghostty's own responder actions — they have NO WorkspaceAction (TerminalContextMenu handles
-        // them), so the registry must DROP them, not invent an id (E1 trap).
+        // them), so the registry must DROP them, not invent an id.
         XCTAssertNil(WorkspaceBindingRegistry.bindingID(forConfigName: "copy_to_clipboard", arg: nil))
         XCTAssertNil(WorkspaceBindingRegistry.bindingID(forConfigName: "paste_from_clipboard", arg: nil))
         XCTAssertNil(WorkspaceBindingRegistry.bindingID(forConfigName: "select_all", arg: nil))

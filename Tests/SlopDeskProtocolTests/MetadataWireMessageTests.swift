@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskProtocol
 
-/// E4 — the generic host-metadata RPC envelope (terminal CONTROL channel):
+/// The generic host-metadata RPC envelope (terminal CONTROL channel):
 ///
 /// - **type 16** `metadataRequest(requestID:verb:payload:)` — client → host. Body =
 ///   `[UInt32 BE requestID][UInt8 verb][UInt32 BE payloadLen][payload bytes]`.
@@ -190,12 +190,13 @@ final class MetadataWireMessageTests: XCTestCase {
         }
     }
 
-    // MARK: GitStatus repoRoot survives the full envelope (E6 WI-7 end-to-end)
+    // MARK: GitStatus repoRoot survives the full envelope end-to-end
 
     func testGitStatusRepoRootRidesMetadataResponseEnvelope() throws {
-        // The E4 gitStatus payload (now carrying E6 WI-7's repoRoot) is OPAQUE to the type-30 envelope; it
+        // The gitStatus payload (which carries repoRoot) is OPAQUE to the type-30 envelope; it
         // must survive a real FrameDecoder round-trip and decode back with repoRoot intact — the wire path
-        // end-to-end, not just the isolated codec. Fails on the un-fixed code (no repoRoot on the wire).
+        // end-to-end, not just the isolated codec. Regression guard: a repoRoot that never reaches the
+        // wire fails this even when the isolated codec round-trips it.
         let payload = MetadataCodec.GitStatusPayload(
             hasRepo: true, branch: "main", remoteURL: "",
             repoRoot: "/Users/me/slopdesk", ahead: 0, behind: 0, files: [],
@@ -217,8 +218,8 @@ final class MetadataWireMessageTests: XCTestCase {
 
     func testUnknownTypeDropsNotTraps() throws {
         // A peer that does not know 16/30 DROPS the frame via unknownMessageType, never traps. (17 and 35
-        // are still-unassigned "next free" bytes — 31 became inputEcho in E17, 32 became progress in E14,
-        // 33 became cwd (OSC 7), 34 became projectKey; 99 is arbitrary.)
+        // are still-unassigned "next free" bytes — 31 is inputEcho, 32 is progress, 33 is cwd (OSC 7),
+        // 34 is projectKey; 99 is arbitrary.)
         for unknown: UInt8 in [17, 35, 99] {
             XCTAssertThrowsError(try decodePayload([unknown, 0xAB, 0xCD])) { error in
                 XCTAssertEqual(error as? SlopDeskError, .unknownMessageType(unknown))
@@ -253,15 +254,15 @@ final class MetadataWireMessageTests: XCTestCase {
         XCTAssertEqual(MetadataVerb.listDirectory.rawValue, 6)
         XCTAssertEqual(MetadataVerb.listAgentSessions.rawValue, 7)
         XCTAssertEqual(MetadataVerb.readAgentSession.rawValue, 8)
-        // E10 WI-7: the two side-effecting path verbs.
+        // The two side-effecting path verbs.
         XCTAssertEqual(MetadataVerb.openPath.rawValue, 9)
         XCTAssertEqual(MetadataVerb.revealPath.rawValue, 10)
-        // E13 WI-1: the three agent-hooks verbs (11/12 side-effecting, 13 a pure flag read — the
+        // The three agent-hooks verbs (11/12 side-effecting, 13 a pure flag read — the
         // 2-byte [installed][listenerActive] payload, docs/20).
         XCTAssertEqual(MetadataVerb.installAgentHooks.rawValue, 11)
         XCTAssertEqual(MetadataVerb.uninstallAgentHooks.rawValue, 12)
         XCTAssertEqual(MetadataVerb.agentHookStatus.rawValue, 13)
-        // MERIDIAN C2: the host-identity pure read (raw UTF-8 hostname payload, docs/20).
+        // The host-identity pure read (raw UTF-8 hostname payload, docs/20).
         XCTAssertEqual(MetadataVerb.hostInfo.rawValue, 14)
         // Unknown verb bytes map to nil (caller answers unsupportedVerb) — never a trap.
         XCTAssertNil(MetadataVerb(rawValue: 0))

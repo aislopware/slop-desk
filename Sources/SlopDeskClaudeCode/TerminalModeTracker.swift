@@ -51,7 +51,7 @@ public final class TerminalModeTracker {
     /// set on `ESC[?1h`, cleared on `ESC[?1l`. Same passive-flag contract as ``bracketedPasteActive``
     /// (NO event, so the frozen differential oracle stays byte-exact). Read by the iOS hand-rolled key
     /// encoder to pick SS3 (`ESC O A`) over CSI (`ESC [ A`) arrows — the macOS path never needs it
-    /// (libghostty's surface owns true DECCKM there). Docs/29 backlog #6.
+    /// (libghostty's surface owns true DECCKM there); see docs/29 for the encoder contract.
     public private(set) var cursorKeysApplication = false
 
     public init() {}
@@ -72,7 +72,7 @@ public final class TerminalModeTracker {
         /// Inside an OSC and the previous byte was `ESC` — waiting to see if it is the
         /// `\` that completes an `ST` terminator (`ESC\`), or a new sequence start.
         case oscEscape
-        /// Inside a DCS/SOS/PM/APC string sequence (R9 #4): swallow the body to ST/BEL, tracking nothing.
+        /// Inside a DCS/SOS/PM/APC string sequence: swallow the body to ST/BEL, tracking nothing.
         /// An embedded `ESC[?1049h` (alt-screen) / `ESC]133;…` in a string body must NOT flip the mode —
         /// a conformant terminal treats the whole string as opaque. Unlike OSC, an embedded non-`\` ESC
         /// stays INSIDE the string (it does not start a new sequence), so this never re-classifies.
@@ -101,7 +101,7 @@ public final class TerminalModeTracker {
     private static let leftBracket: UInt8 = 0x5B // '['
     private static let rightBracket: UInt8 = 0x5D // ']'
     private static let backslash: UInt8 = 0x5C // '\'
-    // String-sequence introducers (R9 #4): DCS `ESC P`, SOS `ESC X`, PM `ESC ^`, APC `ESC _`.
+    // String-sequence introducers: DCS `ESC P`, SOS `ESC X`, PM `ESC ^`, APC `ESC _`.
     private static let dcs: UInt8 = 0x50 // 'P'
     private static let sos: UInt8 = 0x58 // 'X'
     private static let pm: UInt8 = 0x5E // '^'
@@ -208,7 +208,7 @@ public final class TerminalModeTracker {
                  Self.sos,
                  Self.pm,
                  Self.apc:
-                // R9 #4: a DCS/SOS/PM/APC string body is opaque to a conformant terminal — swallow it to
+                // A DCS/SOS/PM/APC string body is opaque to a conformant terminal — swallow it to
                 // ST/BEL so an embedded `ESC[?1049h` / `ESC]133;…` can't flip the tracked mode.
                 state = .stringConsume
             case Self.esc:
@@ -271,7 +271,7 @@ public final class TerminalModeTracker {
             }
 
         case .stringConsume:
-            // R9 #4: swallow a DCS/SOS/PM/APC string body. Terminators are ST/BEL; an embedded ESC that
+            // Swallow a DCS/SOS/PM/APC string body. Terminators are ST/BEL; an embedded ESC that
             // is not `\` stays INSIDE the opaque string (it never starts a new tracked sequence).
             switch byte {
             case Self.bel:

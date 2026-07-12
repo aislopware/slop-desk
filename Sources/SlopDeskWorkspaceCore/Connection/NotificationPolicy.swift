@@ -1,7 +1,7 @@
 import Foundation
 import SlopDeskProtocol
 
-// MARK: - NotificationPolicy (E14/K9 — the PURE "should this notification be delivered" decision)
+// MARK: - NotificationPolicy (the PURE "should this notification be delivered" decision)
 
 /// The **Notify While Foreground** tri-state (`notification-while-foreground`) — how a system
 /// notification banner behaves while slopdesk is the FRONTMOST app. macOS otherwise suppresses banners
@@ -36,10 +36,10 @@ public enum NotificationEvent: Sendable, Equatable {
     /// A command finished (OSC 133;D). `exit == nil` / `0` is a clean finish (gated by Notify on Finish);
     /// a non-zero exit is an error (gated by Notify on Error Exit).
     case commandFinish(exit: Int32?)
-    /// An `slopdesk watch`-wrapped command finished. The SOURCE (the watch command emitting the finish
-    /// edge) is E20 territory; the toggle + policy ship now and parse-only is wired (see DECISIONS.md).
+    /// An `slopdesk watch`-wrapped command finished. Detecting the SOURCE (the watch command emitting the
+    /// finish edge) is out of scope here; the toggle + policy ship now and parse-only is wired (see DECISIONS.md).
     case watchFinish
-    /// A code agent (Claude Code only — see the E14 scope exclusion) finished its task and went idle.
+    /// A code agent (Claude Code only) finished its task and went idle.
     case agentTaskComplete
     /// A code agent is awaiting approval / input.
     case agentAwaitInput
@@ -108,7 +108,7 @@ public struct NotificationSettings: Sendable, Equatable {
 ///     relevant while the app is frontmost; when the app is backgrounded the OS shows the banner normally,
 ///     so the gate is a pass-through.
 ///
-/// This is the carryover "the foreground gate must ACTUALLY gate" requirement, made a pure function.
+/// The foreground gate must ACTUALLY gate — kept as a pure function so the invariant is directly testable.
 public enum NotificationPolicy {
     /// Whether `event` is delivered given the live focus/app-active state and the resolved `settings`.
     public static func shouldDeliver(

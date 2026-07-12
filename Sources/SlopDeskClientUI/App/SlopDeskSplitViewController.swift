@@ -1,10 +1,10 @@
-// SlopDeskSplitViewController — the macOS shell (REBUILD-V2, L1). An `NSSplitViewController` with
+// SlopDeskSplitViewController — the macOS shell. An `NSSplitViewController` with
 // two `NSSplitViewItem`s (sidebar | content), each an `NSHostingController` over a SwiftUI
 // column. Modelled on CodeEdit's `CodeEditSplitViewController`: an AppKit split shell with SwiftUI INSIDE
 // each column. Keeping the split in AppKit (not a SwiftUI `HSplitView` that rebuilds subtrees) is the
 // load-bearing no-teardown choice for L2's libghostty panes — a torn-down NSView kills the surface.
-// (The old right-hand inspector / Details column is REMOVED — the app is keyboard-centric; its surviving
-// surface, the Git details window, opens from the palette / View menu instead.)
+// There is no right-hand inspector / Details column — the app is keyboard-centric; the Git details
+// window opens from the palette / View menu instead.
 
 #if os(macOS)
 import AppKit
@@ -17,13 +17,13 @@ final class SlopDeskSplitViewController: NSSplitViewController {
     private let connection: AppConnection
     private let chrome: WorkspaceChromeState
     /// The live ``PreferencesStore`` — forwarded into the sidebar's ``NavigatorColumn`` so the tab context menu
-    /// can surface the host-LOCAL "Prevent Sleep While Processing" flag (Batch 4). The sidebar is hosted in a
+    /// can surface the host-LOCAL "Prevent Sleep While Processing" flag. The sidebar is hosted in a
     /// SEPARATE `NSHostingController` that does not inherit the WindowGroup `\.preferencesStore` environment, so
     /// it is threaded explicitly. `nil` (a preview / pre-injection scene) hides the Prevent-Sleep row.
     private let preferences: PreferencesStore?
-    /// Opens the Connect-to-Host editor — wired into the titlebar's connection-status cluster (ES-E2-6,
-    /// reseated from the old sidebar footer). The shell binds this to `overlay.openConnect()`; the no-op
-    /// default keeps the controller buildable without an overlay.
+    /// Opens the Connect-to-Host editor — wired into the titlebar's connection-status cluster. The shell
+    /// binds this to `overlay.openConnect()`; the no-op default keeps the controller buildable without
+    /// an overlay.
     private let onConnect: () -> Void
 
     /// Retained so the titlebar toggle can animate its collapse (set in `viewDidLoad`).
@@ -36,7 +36,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
     /// skips mounting the rail entirely.
     private let hostWindowFeed: HostWindowFeed?
 
-    /// E19 WI-4 (A29) — the sidebar (TABS panel) default thickness, shared with
+    /// The sidebar (TABS panel) default thickness, shared with
     /// the window-size glue (`SlopDeskClientApp.applyInitialWindowSize`) so the `grid` mode's `chromeOverhead`
     /// uses the SAME width the split item adopts (no magic-number drift between the layout and the math).
     static let defaultSidebarWidth: CGFloat = 220
@@ -74,7 +74,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
 
         splitView.dividerStyle = .thin
         // FLAT DIVIDER: the default `.thin` NSSplitView draws its divider PURE BLACK in `drawDivider(in:)`,
-        // a harsh "đen xì" seam on the lighter Monokai chrome. We cannot subclass `NSSplitView` via `loadView`
+        // a harsh blacked-out seam on the lighter Monokai chrome. We cannot subclass `NSSplitView` via `loadView`
         // (it traps `_setupSplitView` during the controller's constraint setup — see the OBSERVE note below),
         // so we let the controller build its default split view, then ISA-SWIZZLE that fully-set-up instance
         // to a subclass that ONLY overrides `drawDivider(in:)` to fill the divider with the flat theme
@@ -298,11 +298,11 @@ private final class FlatDividerSplitView: NSSplitView {
 /// ONE luminance step, NO divider line. So the 1px split gap must NOT be a hairline lighter/darker than both
 /// surfaces — it must blend into the sidebar so only the natural ground→face step reads as the seam.
 ///
-/// Why not composite the `Slate.Line.divider` hairline here (as an earlier pass did): the sidebar seam borders
+/// Why not composite the `Slate.Line.divider` hairline here: the sidebar seam borders
 /// the DARKER `ground` on one side and the LIGHTER `face` on the other, and the hairline's tint FLIPS per
 /// appearance (near-white on dark, near-black on light). Over `face` the white hairline read as a bright
-/// near-white seam against the dark sidebar ("divider sáng quá / màu trắng"); over `ground` the black hairline
-/// read as a heavy dark line on the light chrome ("divider đen đậm"). No single composite base is faint against
+/// near-white seam against the dark sidebar; over `ground` the black hairline
+/// read as a heavy dark line on the light chrome. No single composite base is faint against
 /// BOTH a dark-ish and a light-ish neighbour, so we draw NO line at all — the gap is `ground`, and the seam is
 /// purely the ground→face luminance step, faint and clean in both appearances (the pane-grid dividers keep
 /// their own faint hairline; the sidebar boundary is chrome, not a content split).
@@ -319,7 +319,7 @@ private func flatDividerTone() -> NSColor {
 private extension NSColor {
     /// Concrete sRGB `NSColor` from a 6-hex backdrop string (the theme's flat window tone). Avoids the
     /// appearance-sensitivity of `NSColor(_: SwiftUI.Color)` — a plain sRGB triple resolves identically in
-    /// `.aqua` and `.darkAqua`, so the flat divider no longer reads black on the light themes.
+    /// `.aqua` and `.darkAqua`, so the flat divider doesn't read black on the light themes.
     convenience init(slateHex6 hex: String) {
         let v = UInt64(hex, radix: 16) ?? 0
         self.init(

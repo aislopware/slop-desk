@@ -3,7 +3,7 @@ import SlopDeskTerminal
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-// MARK: - TerminalViewModelHintTests (E10 WI-9 / ES-E10-6 — the Hint Mode key-dispatch orchestration)
+// MARK: - TerminalViewModelHintTests (the Hint Mode key-dispatch orchestration)
 
 /// Exercises the PURE Hint Mode key dispatch on ``TerminalViewModel`` — `beginHint` → `handleHintKey`
 /// (type → confirm) → `confirmHintTarget` / `cancelHintMode` — entirely in-memory: a fake surface
@@ -234,7 +234,7 @@ final class TerminalViewModelHintTests: XCTestCase {
 
     /// The vi-mode spec lists `f` → Enter Hint Mode (keyboard-driven link clicking). Pressing `f` in copy-mode
     /// must arm Hint Mode over the live viewport via the SAME `beginHint(.open)` seam the ⌘⇧J chord uses — Hint
-    /// Mode is a separate E10 overlay, NOT blocked by the libghostty cursor-move ceiling. Revert-to-confirm-fail:
+    /// Mode is a separate overlay, NOT blocked by the libghostty cursor-move ceiling. Revert-to-confirm-fail:
     /// before the `f` case was added to `handleCopyModeKey`, `f` hit `default: break` and was swallowed, so
     /// `hintMode` stayed `nil` and the targets/labels were never populated — every assert below fails.
     func testCopyModeFKeyEntersHintMode() {

@@ -3,7 +3,7 @@ import Darwin
 import Foundation
 import SlopDeskProtocol
 
-/// E4 — the THIN OS shim that backs the host metadata RPC by running the real git/lsof/proc/FileManager
+/// The THIN OS shim that backs the host metadata RPC by running the real git/lsof/proc/FileManager
 /// queries for ONE pane (its PTY master fd + shell pid). It conforms to ``MetadataQuerying`` so the PURE
 /// ``MetadataResponseBuilder`` can drive it; **compiled + code-reviewed ONLY** — never instantiated in a
 /// unit test (the hang-safety rule, exactly like ``PTYForegroundProbe``: real subprocess / `proc_*` work
@@ -177,7 +177,7 @@ struct HostMetadataProbe: MetadataQuerying {
         guard hasRepo else { return .noRepo }
         let remote = Self.runProcessString(Self.gitPath, ["-C", cwd, "remote", "get-url", "origin"])?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        // E6 WI-7: the precise By-Project grouping key — the repo's absolute toplevel. Best-effort like
+        // The precise By-Project grouping key — the repo's absolute toplevel. Best-effort like
         // every other probe (a missing binary / non-repo / detached state → empty; the client then falls
         // back to the pane cwd).
         let toplevel = Self.gitToplevel(cwd: cwd) ?? ""
@@ -290,7 +290,7 @@ struct HostMetadataProbe: MetadataQuerying {
         return MetadataCodec.GitFileChange(statusCode: packStatus(x, y), path: path)
     }
 
-    /// Maps a porcelain status char to a 4-bit code. **The client (WI-5) MUST mirror this inverse** to
+    /// Maps a porcelain status char to a 4-bit code. **The client MUST mirror this inverse** to
     /// render the change category. Convention: space=0 M=1 A=2 D=3 R=4 C=5 U=6 ?=7 !=8 T=9 (other=15).
     static func statusNibble(_ char: Character) -> UInt8 {
         switch char {
@@ -341,9 +341,9 @@ struct HostMetadataProbe: MetadataQuerying {
     /// There is deliberately no `codexSessions` enumerator here, so a `~/.codex/sessions` transcript is never
     /// auto-discovered into this list. The codex scaffolding is kept intact ON PURPOSE — ``AgentKind`` still
     /// carries `.codex`, ``sessionRoots()`` still lists the codex root, and ``readAgentSession(id:)`` still
-    /// serves an EXPLICIT absolute codex session id (the shipped E4 on-disk read capability). So only the
-    /// auto-discovery half is deferred; the explicit-id read path stays live. E9 surfaces only Claude as the
-    /// first-class agent. (E9 carry-over #3 — see `docs/DECISIONS.md`.)
+    /// serves an EXPLICIT absolute codex session id (the on-disk read capability). So only the
+    /// auto-discovery half is deferred; the explicit-id read path stays live. Only Claude surfaces as the
+    /// first-class agent — see `docs/DECISIONS.md`.
     func listAgentSessions(project: String) -> [MetadataCodec.AgentSessionInfo] {
         var out = Self.claudeSessions(project: project)
         out.append(contentsOf: Self.opencodeSessions(project: project))
@@ -401,7 +401,7 @@ struct HostMetadataProbe: MetadataQuerying {
     }
 
     /// Claude Code: `~/.claude/projects/<slug>/*.jsonl` where the slug is ``claudeProjectSlug(_:)``.
-    /// Title is best-effort (filled by the viewer epic).
+    /// Title is best-effort (left blank for a future session viewer to fill).
     private static func claudeSessions(project: String) -> [MetadataCodec.AgentSessionInfo] {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let dir = "\(home)/.claude/projects/\(claudeProjectSlug(project))"

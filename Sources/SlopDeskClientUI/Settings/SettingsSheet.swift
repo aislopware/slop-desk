@@ -1,4 +1,4 @@
-// SettingsSheet — the iOS settings host (E7 WI-5, ES-E7-5 / N13).
+// SettingsSheet — the iOS settings host.
 //
 // iOS has no `Settings` scene (⌘, opens a separate, system-chromed window only on macOS), so the client's
 // settings surface on iOS is an in-app SHEET, presented from the `WorkspaceRootView` toolbar gear. The
@@ -16,7 +16,7 @@
 // The single live `PreferencesStore` is handed in by `WorkspaceRootView` (read there from
 // `\.preferencesStore`).
 //
-// E13 (ES-E13-1/ES-E13-2 iOS halves): the app-owned `AgentHooksController` is THREADED in here and injected
+// The app-owned `AgentHooksController` is THREADED in here and injected
 // onto the section content via `.agentHooksController(_:)`, mirroring the macOS `SlopDeskSettingsScene`.
 // Without it the Agents card was permanently `.disconnected` and the entire Agent-Behaviour toggle block was
 // greyed out on iOS (the controller's `@Environment` resolved nil).
@@ -40,7 +40,7 @@ struct SettingsSheet: View {
     /// and the `@Observable` store re-renders whichever leaf reads a changed field.
     let store: PreferencesStore
 
-    /// E13: the app-owned Agents install-hooks controller, threaded from `SlopDeskClientApp` (held as
+    /// The app-owned Agents install-hooks controller, threaded from `SlopDeskClientApp` (held as
     /// `@State` on every platform) so the iOS Agents card's Install/Uninstall/Status round-trips AND the
     /// gated Agent-Behaviour toggles are LIVE — mirrors the macOS `SlopDeskSettingsScene` injection. `nil`
     /// (a preview / no scene) → the card renders the disabled "Connect a session" state rather than crashing.
@@ -50,7 +50,7 @@ struct SettingsSheet: View {
 
     /// A local selected-section state ONLY to satisfy the All-Settings ✎ jump binding. On the compact iOS
     /// list a jump cannot repoint a `TabView` (there is none) — the cross-section jump/highlight is deferred
-    /// (recorded as a nice-to-have in WI-3), so on iOS setting this is a harmless no-op.
+    /// (a known follow-up), so on iOS setting this is a harmless no-op.
     @State private var selectedSection: SettingsSection = .general
 
     init(store: PreferencesStore, agentHooks: AgentHooksController? = nil) {
@@ -66,7 +66,7 @@ struct SettingsSheet: View {
                         SettingsSectionContent(
                             section: section, store: store, selectedSection: $selectedSection,
                         )
-                        // E13: thread the app-owned controller into the pushed section so the Agents card +
+                        // Thread the app-owned controller into the pushed section so the Agents card +
                         // behaviour toggles resolve a live `@Environment(\.agentHooksController)` on iOS too.
                         .agentHooksController(agentHooks)
                         .navigationTitle(section.title)

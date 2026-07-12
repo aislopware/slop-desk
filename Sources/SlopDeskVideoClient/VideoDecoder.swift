@@ -51,20 +51,20 @@ public final class VideoDecoder: @unchecked Sendable {
     private var formatDescription: CMFormatDescription?
     /// The parameter sets the running ``session`` was configured from, cached so a
     /// byte-identical keyframe (the ~1s heartbeat IDR, every forced-recovery IDR) does
-    /// NOT tear down + recreate the `VTDecompressionSession` (BUG-I): teardown/warmup
-    /// every second stalled an otherwise-healthy stream. Reconfigure only when the
+    /// NOT tear down + recreate the `VTDecompressionSession`: a teardown/warmup on every
+    /// heartbeat would stall an otherwise-healthy stream. Reconfigure only when the
     /// extracted sets actually DIFFER (a real resolution / SPS change). `nil` until the
     /// first keyframe configures the session.
     private var currentParameterSets: HEVCParameterSets.ParameterSets?
 
-    /// Test seam (FIX #3): the parameter sets the live session is currently built from,
+    /// Test seam: the parameter sets the live session is currently built from,
     /// or `nil` if there is no session (e.g. after ``invalidateSession()``). Lets a unit
     /// test assert the cache state — and therefore that the NEXT byte-identical keyframe
     /// would reconfigure (`needsReconfigure(current: nil, ...) == true`) after a hard
     /// failure — WITHOUT creating a real `VTDecompressionSession` or driving a decode.
     var cachedParameterSetsForTesting: HEVCParameterSets.ParameterSets? { currentParameterSets }
 
-    /// Test seam (FIX #3): seeds the cached parameter sets WITHOUT building a real
+    /// Test seam: seeds the cached parameter sets WITHOUT building a real
     /// `VTDecompressionSession`, so a unit test can model a healthy, configured decoder
     /// and then verify that ``invalidateSession()`` (the hard-failure path) clears the
     /// cache — forcing the next byte-identical keyframe to reconfigure. Never used in
@@ -73,8 +73,8 @@ public final class VideoDecoder: @unchecked Sendable {
         currentParameterSets = sets
     }
 
-    /// WF-6 (#8): request the FULL-RANGE NV12 output variant when true (else the VideoRange variant —
-    /// today). Set from the stream's negotiated `helloAck.fullRange` BEFORE the first `configure`: the
+    /// Requests the FULL-RANGE NV12 output variant when true (else the VideoRange variant).
+    /// Set from the stream's negotiated `helloAck.fullRange` BEFORE the first `configure`: the
     /// session configures lazily on the first keyframe, and `helloAck` always arrives before any media,
     /// so the ordering is safe. Default false ⇒ byte-identical output. R8/RG8 plane layout is identical
     /// for both NV12 variants, so the renderer's makeTexture is unaffected — only the requested range
@@ -115,7 +115,7 @@ public final class VideoDecoder: @unchecked Sendable {
         }
         try configure(formatDescription: formatDescription)
         // Cache the sets the live session is now built from so a byte-identical keyframe
-        // can reuse the session instead of recreating it (BUG-I). Set AFTER a successful
+        // can reuse the session instead of recreating it. Set AFTER a successful
         // configure so a throw leaves the cache matching the still-running session.
         currentParameterSets = parameterSets
     }
@@ -124,7 +124,7 @@ public final class VideoDecoder: @unchecked Sendable {
     /// is no session yet, or the incoming sets differ byte-for-byte from the ones the
     /// running session was built from. Pure (only compares `Equatable` value types) so
     /// the "identical IDR does not reconfigure" decision is unit-testable with ZERO
-    /// VideoToolbox dependency. The session-reuse fix for BUG-I.
+    /// VideoToolbox dependency.
     public static func needsReconfigure(
         current: HEVCParameterSets.ParameterSets?,
         incoming: HEVCParameterSets.ParameterSets,
@@ -134,16 +134,15 @@ public final class VideoDecoder: @unchecked Sendable {
 
     /// Force-tears the live `VTDecompressionSession` down so the NEXT keyframe — even one
     /// whose VPS/SPS/PPS are byte-identical to the current ones — re-runs `configure()`
-    /// and builds a FRESH session (FIX #3). Without this, a HARD decode failure on a
-    /// fixed-capture-size stream was unrecoverable: the forced-recovery IDR carries
-    /// byte-identical parameter sets, so
-    /// `needsReconfigure` returned `false` and the SAME malfunctioning session was reused
+    /// and builds a FRESH session. Without this, a HARD decode failure on a fixed-capture-size
+    /// stream is unrecoverable: the forced-recovery IDR carries byte-identical parameter sets, so
+    /// `needsReconfigure` would return `false` and the SAME malfunctioning session would be reused
     /// forever, freezing the pane permanently. The caller (``SlopDeskVideoClientSession``'s
     /// decode `catch`) invokes this BEFORE `requestIDR()` so the next keyframe rebuilds.
     ///
     /// Clears `currentParameterSets` too, so the byte-identical recovery keyframe is seen
     /// as a reconfigure (`current == nil` ⇒ `needsReconfigure == true`). This is ONLY
-    /// called on a decode FAILURE — the healthy heartbeat-IDR reuse path (BUG-I) keeps
+    /// called on a decode FAILURE — the healthy heartbeat-IDR reuse path keeps
     /// the cached sets on a SUCCESSFUL decode and is untouched.
     public func invalidateSession() {
         if let session {
@@ -166,8 +165,8 @@ public final class VideoDecoder: @unchecked Sendable {
         // `configure(parameterSets:)` path re-populates the cache after this returns.
         currentParameterSets = nil
 
-        // WF-6 (#8): request the NV12 variant matching the stream's negotiated luma range (set from
-        // helloAck before this lazy first configure). Default VideoRange ⇒ today, byte-identical.
+        // Request the NV12 variant matching the stream's negotiated luma range (set from
+        // helloAck before this lazy first configure). Default VideoRange ⇒ byte-identical output.
         let pixelFormat = outputFullRange
             ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
             : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
@@ -200,7 +199,7 @@ public final class VideoDecoder: @unchecked Sendable {
     /// before any IDR cannot be decoded — it throws ``VideoDecoderError/awaitingKeyframe``
     /// so the caller drops it and requests recovery.
     public func decode(_ frame: ReassembledFrame) throws {
-        // R15 #9: triage a ZERO-byte frame BEFORE building a (degenerate, zero-length) CMSampleBuffer.
+        // Triage a ZERO-byte frame BEFORE building a (degenerate, zero-length) CMSampleBuffer.
         // Submitting an empty sample buffer to VTDecompressionSessionDecodeFrame fails the decode and
         // drives the caller's hard-failure recovery (invalidateSession + IDR) — a needless session
         // teardown + visible stall for what is really a corrupt/empty fragment. An empty delta is
@@ -212,9 +211,9 @@ public final class VideoDecoder: @unchecked Sendable {
         }
         if frame.keyframe, let sets = HEVCParameterSets.extract(from: frame.avcc) {
             // Only rebuild the VTDecompressionSession when the parameter sets actually
-            // changed (BUG-I). The heartbeat IDR (~1×/sec) and every forced-recovery IDR
+            // changed. The heartbeat IDR (~1×/sec) and every forced-recovery IDR
             // carry byte-identical VPS/SPS/PPS on a steady stream — recreating the
-            // session for each one caused a teardown/warmup stall once a second. A
+            // session for each one would cause a teardown/warmup stall once a second. A
             // matching keyframe keeps the existing session and just decodes below.
             if Self.needsReconfigure(current: currentParameterSets, incoming: sets) {
                 try configure(parameterSets: sets)
@@ -228,9 +227,9 @@ public final class VideoDecoder: @unchecked Sendable {
         // kVTVideoDecoderMalfunctionErr) via the output callback's `status`, NOT the submission
         // return value. The decode is SYNCHRONOUS (`flags: []`), so this callback runs on THIS thread
         // before `VTDecompressionSessionDecodeFrame` returns — so reading `callbackStatus` after is
-        // race-free. Swallowing a callback error (the old `guard status == noErr … else { return }`)
-        // produced NO pixels and NO throw, so the caller's recovery (`invalidateSession` + `requestIDR`)
-        // never armed and the pane froze on the last good frame — exactly the packet-loss / FEC
+        // race-free. Swallowing a callback error (a bare `guard status == noErr … else { return }`)
+        // would produce NO pixels and NO throw, so the caller's recovery (`invalidateSession` + `requestIDR`)
+        // would never arm and the pane would freeze on the last good frame — exactly the packet-loss / FEC
         // mis-recovery case. Surface it so the caller re-anchors the stream.
         // A Sendable box for the callback status (the output handler is `@Sendable`; the decode is
         // synchronous so the write-then-read is race-free, but the box keeps the capture Sendable-clean).

@@ -1,20 +1,20 @@
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// PURE resolution of the crisp re-sharpen timing knobs (2026-06-16 latency-first reframe).
+/// PURE resolution of the crisp re-sharpen timing knobs.
 ///
 /// The static-IDR timer re-encodes the cached frame as a crisp near-lossless IDR once the screen
-/// has been quiet for `quietWindow`, polled every `tick`. The coding-tool reframe wants "vừa dừng
-/// là nét" — text crisp ~300ms after motion stops, not the old ~1s. These two resolvers own the
-/// defaults + clamps so the change is one tested place (mirrors `resolveCaptureHz`). Pure, no
-/// SCStream/VT — safe under `swift test --filter CrispReSharpenResolutionTests`.
+/// has been quiet for `quietWindow`, polled every `tick`. Text should turn crisp the instant motion
+/// stops, within ~300ms. These two resolvers own the defaults + clamps so the change is one tested
+/// place (mirrors `resolveCaptureHz`). Pure, no SCStream/VT — safe under
+/// `swift test --filter CrispReSharpenResolutionTests`.
 final class CrispReSharpenResolutionTests: XCTestCase {
     private let heartbeat: TimeInterval = 2.5
 
     // MARK: quiet window (SLOPDESK_QUIET_MS, milliseconds)
 
     func testQuietWindowDefaultIs300ms() {
-        // The reframe: default crisp-after-stop window is 300ms (was min(1.0, heartbeat) = 1.0s).
+        // Default crisp-after-stop window is 300ms.
         XCTAssertEqual(WindowCapturer.resolveQuietWindow(envValue: nil, heartbeat: heartbeat), 0.3, accuracy: 1e-9)
     }
 
@@ -47,7 +47,7 @@ final class CrispReSharpenResolutionTests: XCTestCase {
     // MARK: IDR poll tick (SLOPDESK_IDR_TICK_MS, milliseconds)
 
     func testPollTickDefaultIs80ms() {
-        // Tightened 250ms → 80ms so worst-case time-to-crisp ≈ quietWindow + tick ≈ 0.38s.
+        // Default poll tick is 80ms so worst-case time-to-crisp ≈ quietWindow + tick ≈ 0.38s.
         XCTAssertEqual(WindowCapturer.resolveIDRPollTick(envValue: nil), 0.08, accuracy: 1e-9)
     }
 

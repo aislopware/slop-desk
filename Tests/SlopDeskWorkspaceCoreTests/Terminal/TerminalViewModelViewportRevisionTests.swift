@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-// MARK: - TerminalViewModelViewportRevisionTests (E10 WI-5 — the local-scroll re-detect signal)
+// MARK: - TerminalViewModelViewportRevisionTests (the local-scroll re-detect signal)
 
 /// The `LinkHighlightOverlay` re-runs link detection while ⌘ is held on TWO observable signals:
 /// `bytesReceived` (new streaming output) and `viewportRevision` (a LOCAL scrollback scroll, which moves

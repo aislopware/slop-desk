@@ -5,8 +5,8 @@ import XCTest
 @testable import SlopDeskHost
 @testable import SlopDeskTransport
 
-/// W10 hook-sink lifetime (session-lifecycle audit): the `AgentHookListener` routing key must be
-/// STABLE for the life of the session.
+/// Hook-sink lifetime: the `AgentHookListener` routing key must be STABLE for the life of the
+/// session.
 ///
 /// The pane id is exported ONCE into the child env as `SLOPDESK_PANE_ID` at fresh spawn and is
 /// immutable for the shell's life — the agent's hook POSTs are forever tagged with the ORIGINAL
@@ -15,8 +15,8 @@ import XCTest
 /// weeks) and (b) was functionally dead anyway — only the original key ever routes.
 ///
 /// Deliberate design (do not regress): detach does NOT unregister — hook records must keep
-/// folding into the detector while the session is parked (the detached-window status-change
-/// hole, fixed 2026-07-10).
+/// folding into the detector while the session is parked, so a status change during the
+/// detached window is re-asserted on reattach rather than lost.
 ///
 /// All headless: unspawned PTYs, no socket bind, no NWListener (hang-safety) — the listener's
 /// router is driven via `routeRecordForTesting`, the host paths via the `…ForTesting` seams

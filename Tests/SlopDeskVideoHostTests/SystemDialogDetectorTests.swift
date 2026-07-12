@@ -5,7 +5,7 @@ import XCTest
 
 /// `SystemDialogDetector` — the pure classifier that decides which on-screen windows are system
 /// prompts to surface in their own pane (the user's case: a SecurityAgent login/password dialog).
-/// Values mirror the HW probe (2026-06-12): SecurityAgent prompt at layer 1000, 260×312, onScreen.
+/// Values mirror the HW probe: SecurityAgent prompt at layer 1000, 260×312, onScreen.
 final class SystemDialogDetectorTests: XCTestCase {
     private typealias Snap = SystemDialogDetector.WindowSnapshot
 

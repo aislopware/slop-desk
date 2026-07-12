@@ -38,7 +38,7 @@ enum ScrollbackDistiller {
     private static let backslash: UInt8 = 0x5C
     private static let rightBracket: UInt8 = 0x5D
     private static let semicolon: UInt8 = 0x3B
-    // String-sequence introducers (R9 #4, mirrors ``HostOutputSniffer``): DCS `ESC P`, SOS `ESC X`,
+    // String-sequence introducers (mirrors ``HostOutputSniffer``): DCS `ESC P`, SOS `ESC X`,
     // PM `ESC ^`, APC `ESC _`. A conformant terminal swallows their body to the ST/BEL terminator; an
     // embedded `ESC]133;…` in that body must NEVER be read as a mark (else it flips the distiller phase).
     private static let dcs: UInt8 = 0x50 // 'P'
@@ -64,7 +64,7 @@ enum ScrollbackDistiller {
         case oscEsc // inside an OSC, last byte was ESC — looking for `\` (ST)
         case oscDiscard // OSC over the cap — swallow to the terminator
         case oscDiscardEsc
-        // Inside a DCS/SOS/PM/APC string body (R9 #4): its bytes PASS THROUGH verbatim (honoring phase)
+        // Inside a DCS/SOS/PM/APC string body: its bytes PASS THROUGH verbatim (honoring phase)
         // but are NEVER parsed for marks — an embedded `ESC]133;…` there can't flip the phase.
         case stringConsume
         case stringConsumeEsc // inside a string body, last byte was ESC — looking for `\` (ST)
@@ -212,7 +212,7 @@ enum ScrollbackDistiller {
         }
 
         // Classifies the byte AFTER an ESC (the introducer already pushed onto `pending`): `]` → OSC,
-        // `P`/`X`/`^`/`_` → a DCS/SOS/PM/APC string body (R9 #4), a second ESC → re-introduce, else a
+        // `P`/`X`/`^`/`_` → a DCS/SOS/PM/APC string body, a second ESC → re-introduce, else a
         // CSI / short escape flushed to ground. Shared by the main `.afterEsc` arm and the two stray-ESC
         // re-entry arms (post-OSC / post-oscDiscard) so all three treat string introducers identically.
         func handleAfterEsc(_ b: UInt8) {
@@ -226,7 +226,7 @@ enum ScrollbackDistiller {
                  pm,
                  apc:
                 // A string sequence: emit the introducer verbatim (honoring phase), then pass the body
-                // through in `.stringConsume` WITHOUT parsing marks — mirrors ``HostOutputSniffer`` R9 #4.
+                // through in `.stringConsume` WITHOUT parsing marks — mirrors ``HostOutputSniffer``.
                 emitPending()
                 state = .stringConsume
             case esc: // consecutive ESC — flush the first, keep this one as the new introducer.

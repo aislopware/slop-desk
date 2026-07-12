@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskVideoClient
 
-/// WF-5 (#7) PURE input-motion-interval resolution. The motion pump flushes the most-recent deferred
+/// Pure input-motion-interval resolution. The motion pump flushes the most-recent deferred
 /// pointer move once per this interval (most-recent-wins; absolute coords; NO delta-summing). The
 /// pump/pipeline are @MainActor + view-owned and never instantiated here; this pins the env→interval
 /// math: the new responsive default and the HZ/MS precedence + clamp.

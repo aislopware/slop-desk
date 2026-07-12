@@ -102,7 +102,7 @@ final class SubprocessE2ETests: XCTestCase {
         )
     }
 
-    // MARK: - Disk-scrollback restore across a hostd RESTART (the "reconnect mất history" case)
+    // MARK: - Disk-scrollback restore across a hostd RESTART (the scrollback-lost-on-reconnect case)
 
     /// THE user scenario, end-to-end on the SHIPPED binaries: hostd #1 journals a marker to the
     /// disk scrollback (`SLOPDESK_SCROLLBACK_DIR` → temp dir), dies; hostd #2 (a brand-new

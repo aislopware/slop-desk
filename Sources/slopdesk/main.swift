@@ -8,7 +8,7 @@ import CoreText
 import Darwin
 import Foundation
 
-// slopdesk — the user-facing CLI (E20). One binary, a superset of `slopdesk-ctl`:
+// slopdesk — the user-facing CLI. One binary, a superset of `slopdesk-ctl`:
 //
 //   slopdesk                     launch the client GUI (like bare xterm/alacritty/ghostty)
 //   slopdesk -e <cmd> [args...]  launch the GUI + run <cmd> in the first pane (xterm `-e`)
@@ -16,10 +16,9 @@ import Foundation
 //   slopdesk completions <shell> print a shell completion script                 (local, no socket)
 //   slopdesk -h | --help         usage
 //
-// App-driving subcommands (window/tab/pane/jump/view/edit/config/theme/font/keybind/watch/…) and
-// the legacy agent ops (ipc/state:claude) are added by later E20 work items; this WI-1 scaffold
-// lands the router + the local/GUI-launch ops. Unimplemented subcommands exit non-zero with a
-// clear message rather than silently doing nothing.
+// This scaffold covers the router plus the local/GUI-launch ops; the agent ops (ipc/state:claude)
+// are not yet wired up. Unimplemented subcommands exit non-zero with a clear message rather than
+// silently doing nothing.
 //
 // All socket I/O / GUI launch lives here (the compiled-only shell); the pure parse/version/
 // completion logic lives in `SlopDeskCLICore` and is exhaustively unit-tested (hang-safety rule).
@@ -962,7 +961,7 @@ func cmdIgnore(_ rest: [String]) -> Never {
     exit(0) // silent on success
 }
 
-// MARK: - view / edit (E20 WI-6)
+// MARK: - view / edit
 
 /// Parse a `view`/`edit` invocation into `(target, placement)`: one positional `<path|url>` plus an optional
 /// placement flag (`--new-tab` default / `--new-window` / `--left` / `--right` / `--top` / `--bottom`). Dies
@@ -1008,7 +1007,7 @@ func cmdEdit(_ rest: [String]) -> Never {
     exit(0) // silent on success
 }
 
-// MARK: - watch (E20 WI-7)
+// MARK: - watch
 
 /// Write raw bytes to this process's stdout (the controlling terminal / host PTY, where the host's
 /// OSC sniffer reads them). Compiled-only — `watch` is never unit-tested (it spawns a subprocess).
@@ -1092,7 +1091,7 @@ func runWatch(command: [String], quiet: Bool) -> Never {
     finish(exitCode: exitCode)
 }
 
-// MARK: - watch:claude (E20 WI-8)
+// MARK: - watch:claude
 
 /// `slopdesk watch:claude <id> [--block-timeout <ms>]` — block until the Claude session `<id>` reaches
 /// an at-rest state (idle / done / closed), then exit. Polls the running app's `agent-status` method and
@@ -1102,8 +1101,8 @@ func runWatch(command: [String], quiet: Bool) -> Never {
 ///
 /// The block is UNBOUNDED by default (the spec's "block until idle"); the global `--timeout` bounds each
 /// poll's IPC recv/send ONLY, never the block (a normal Claude turn far outlasts the 3 s IPC default).
-/// `--block-timeout <ms>` opts into a bounded block (yielding exit `9`). Claude-only — there is no
-/// `watch:codex`/`watch:opencode` (E20 exclusion §4). Requires a running SlopDesk app.
+/// `--block-timeout <ms>` opts into a bounded block (yielding exit `9`). Claude-only by design —
+/// there is no `watch:codex`/`watch:opencode`. Requires a running SlopDesk app.
 func cmdWatchClaude(_ rest: [String]) -> Never {
     var sessionId: String?
     var blockTimeoutMs: Int?
@@ -1256,6 +1255,6 @@ case "watch":
 case "watch:claude":
     cmdWatchClaude(invocation.rest)
 default:
-    // ipc/state:claude land in later E20 work items.
+    // ipc/state:claude are not yet implemented.
     die("subcommand '\(invocation.subcommand)' is not available yet (run with --help)", code: 2)
 }

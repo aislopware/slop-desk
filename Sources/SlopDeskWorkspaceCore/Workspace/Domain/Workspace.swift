@@ -9,11 +9,11 @@ import Foundation
 /// object. ``WorkspaceStore`` owns one of these as its single source of truth and reconciles the
 /// liveness registry against it after every mutation.
 ///
-/// ### Tabs are gone (docs/31)
-/// The old `[Tab]` layer (one canvas per tab, an `activeTabID`) is removed: everything lives on ONE
-/// canvas. Tab switching used to unmount/rebuild the active tab's libghostty surfaces (a naive
-/// byte-ring replay → render corruption); a single always-mounted canvas removes that path entirely.
-/// Organization that tabs provided is now ``groups`` — pure sidebar/box metadata, NOT a layout layer.
+/// ### No tabs (docs/31)
+/// There is no `[Tab]` layer (one canvas per tab, an `activeTabID`): everything lives on ONE canvas.
+/// A per-tab layer would unmount/rebuild the active tab's libghostty surfaces on switch (a naive
+/// byte-ring replay → render corruption); a single always-mounted canvas avoids that path entirely.
+/// ``groups`` gives the same organization tabs would have — pure sidebar/box metadata, NOT a layout layer.
 ///
 /// All workspace-level arithmetic lives here as **pure functions returning a new `Workspace`** (group
 /// CRUD + the normalizing repairs). The canvas-level ops (move/resize/raise/camera/…) live on
@@ -23,22 +23,22 @@ public struct Workspace: Codable, Sendable, Equatable {
     /// changes; an unknown/old version simply falls back to ``defaultWorkspace()`` (this is a
     /// single-user project — there is deliberately NO backward-compat migration path).
     public var schemaVersion: Int
-    /// THE single infinite plane of free-floating panes (was one `Canvas` per tab).
+    /// THE single infinite plane of free-floating panes — the whole workspace lives on this one canvas.
     public var canvas: Canvas
     /// The pane that currently has focus, or `nil` when the canvas is empty. Kept valid by the ops below
     /// + ``normalizingFocus()`` (a closed / dangling focus repoints to a surviving pane).
     public var focusedPane: PaneID?
     /// `nil` = normal canvas; non-nil = that pane is maximized to fill the viewport (a pure presentation
-    /// flag — no model surgery, registry untouched, the proven no-teardown property of the old
-    /// `zoomedPane`).
+    /// flag — no model surgery, registry untouched, so maximizing never tears down and rebuilds the
+    /// pane's live surface).
     public var maximizedPane: PaneID?
     /// The named groups panes can be organized into, in sidebar order. Pure metadata: a pane's
     /// membership lives on its ``CanvasItem/groupID``; a `PaneGroup` here only carries id + name.
     public var groups: [PaneGroup]
     /// The ONE app-global host the whole app connects to (docs/31): every terminal pane is a channel on
-    /// the shared mux at this host, every video pane a lane on the shared UDP flow at this host. Replaces
-    /// the old per-pane `PaneSpec.endpoint`. Persisted so the connect-gate prefills the last-used host;
-    /// `nil` until the user first connects (the gate then shows ``ConnectionTarget/default``).
+    /// the shared mux at this host, every video pane a lane on the shared UDP flow at this host — there is
+    /// no per-pane endpoint. Persisted so the connect-gate prefills the last-used host; `nil` until the
+    /// user first connects (the gate then shows ``ConnectionTarget/default``).
     public var connection: ConnectionTarget?
     /// Viewport bookmarks by slot (1–9): ⇧⌘n saves, ⌘n recalls — the single-key spatial jumps of the
     /// daily loop (terminal → browser pane → Claude pane) on a pan-only canvas.
@@ -128,12 +128,12 @@ public extension Workspace {
     /// The schema version this build writes (the single-canvas + groups shape, docs/31). A
     /// higher/unrecognized version — or any older on-disk shape that no longer decodes — falls back to
     /// ``defaultWorkspace()``. Single-user project: there is no backward-compatibility path by design.
-    /// 5 (2026-06-12): `VideoEndpoint` gained `appName` (pane rebind by app+title).
-    /// 6 (2026-06-12): ``Workspace/bookmarks`` (viewport bookmarks, ⇧⌘n/⌘n).
-    /// 7 (2026-06-13): ``Workspace/layoutPresets`` (named savable canvas layouts).
-    /// 8 (2026-06-13): ``LayoutPreset/triggerAppName`` (auto-switch a layout on host app launch).
-    /// 9 (2026-06-13): `snippets` (saved command macros; feature REMOVED 2026-07-03 — the stale
-    ///   persisted key decode-ignores, so the version was not bumped).
+    /// 5: `VideoEndpoint` gained `appName` (pane rebind by app+title).
+    /// 6: ``Workspace/bookmarks`` (viewport bookmarks, ⇧⌘n/⌘n).
+    /// 7: ``Workspace/layoutPresets`` (named savable canvas layouts).
+    /// 8: ``LayoutPreset/triggerAppName`` (auto-switch a layout on host app launch).
+    /// 9: `snippets` (saved command macros). That field is gone from this struct, but the version stays
+    ///   unbumped — the stale persisted key just decode-ignores, so no bump was needed to drop it.
     static let currentSchemaVersion = 9
 
     /// The fresh-launch / decode-failure fallback: one terminal pane at the origin, focused, ungrouped.
@@ -171,7 +171,7 @@ public extension Workspace {
     /// Repairs the `focusedPane` / `maximizedPane` invariants: a focus pointing at a pane no longer on
     /// the canvas repoints to the first pane (or `nil` when empty); a dangling maximize clears. Applied
     /// on persistence load so keyboard focus is never pinned to a ghost pane and no stale maximize
-    /// survives (R13, ported to the single canvas).
+    /// survives.
     func normalizingFocus() -> Workspace {
         var copy = self
         let ids = canvas.allIDs()

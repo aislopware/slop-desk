@@ -1,16 +1,16 @@
-// PaneDropReceiverActuateTests (E18 WI-6) — the drop ACTUATOR must act on the pane the cursor was dropped
+// PaneDropReceiverActuateTests — the drop ACTUATOR must act on the pane the cursor was dropped
 // ONTO, not whichever pane happens to be focused. `PaneDropReceiver` carries no focus signal of its own and a
-// drop never moves focus (a pane is focused only on tap), so a Split-Left/Right or Open-In-Place drop onto a
-// NON-focused sibling used to split / replace the FOCUSED pane instead — a split-brained actuation (the
-// verbatim-inject / host-open arms already targeted the dropped pane's own terminal model, while the
-// `splitActivePane` arm read the ACTIVE pane). The fix threads the dropped-on pane's `PaneID`
+// drop never moves focus (a pane is focused only on tap), so without care a Split-Left/Right or Open-In-Place
+// drop onto a NON-focused sibling would split / replace the FOCUSED pane instead — a split-brained actuation
+// (the verbatim-inject / host-open arms already target the dropped pane's own terminal model, while the
+// `splitActivePane` arm reads the ACTIVE pane). The fix threads the dropped-on pane's `PaneID`
 // into `actuate` and focuses it FIRST, so every active-pane-reading ingress resolves to the dropped-on pane.
 //
 // These drive the `@MainActor` `PaneDropReceiver.actuate` directly (a real `DropInfo` can't be synthesized in
 // a unit test) on a MULTI-pane tree whose focused pane (A) is NOT the drop target (B), and assert the new
 // split is a direct sibling of B — NOT A. Revert-to-confirm-fail: drop the `store.focusPaneTree(paneID)` line
 // from `actuate` and the split test fails (the new split lands beside the focused A instead of the dropped-on
-// B). The earlier store-level tests only ever exercised a single-pane store, so the bug slipped through.
+// B). A store-level test that only ever exercises a single-pane store would miss this class of bug.
 
 #if canImport(SwiftUI)
 import XCTest
@@ -56,7 +56,7 @@ final class PaneDropReceiverActuateTests: XCTestCase {
         return (a, b)
     }
 
-    // MARK: Read-only gate — a read-only terminal pane is INERT to drops (E17 parity with the paste halt)
+    // MARK: Read-only gate — a read-only terminal pane is INERT to drops (parity with the paste halt)
 
     /// An Open-In-Place (`hostOpen`) drop onto a READ-ONLY terminal pane must NOT fire the host-open verb —
     /// `hostOpen` (unlike `injectText` → `sendInput`) does not self-gate read-only, so without the actuator

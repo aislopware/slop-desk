@@ -2,13 +2,12 @@ import CoreVideo
 import XCTest
 @testable import SlopDeskVideoClient
 
-/// Component 4 (adaptive pacer depth): FramePacer wiring tests via the INTERNAL now-injection
-/// seams (`submitForTest` / `frameForVSyncForTest` / `noteNetworkLateForTest`) — promote re-primes
-/// + boosts `liveDepth`, demote restores depth 1 (re-arming present-on-arrival), default-off pins
-/// the depth while telemetry still counts, the depth policy disables v1, and manual depth ≥2 is
-/// telemetry-only. v3 (2026-06-12): promotion is driven by NETWORK-late events
-/// (`noteNetworkLate`), never by present gaps. No display link, no env vars — everything is
-/// injected at construction.
+/// FramePacer wiring tests via the INTERNAL now-injection seams (`submitForTest` /
+/// `frameForVSyncForTest` / `noteNetworkLateForTest`) — promote re-primes + boosts `liveDepth`,
+/// demote restores depth 1 (re-arming present-on-arrival), default-off pins the depth while
+/// telemetry still counts, the depth policy disables v1, and manual depth ≥2 is telemetry-only.
+/// v3: promotion is driven by NETWORK-late events (`noteNetworkLate`), never by present gaps.
+/// No display link, no env vars — everything is injected at construction.
 final class FramePacerDepthV2Tests: XCTestCase {
     private func makePixelBuffer() -> CVPixelBuffer {
         var pb: CVPixelBuffer?
@@ -47,7 +46,7 @@ final class FramePacerDepthV2Tests: XCTestCase {
 
     func testPromoteReprimesAndBoostsLiveDepth() {
         let pacer = FramePacer(targetDepth: 1, adaptiveDepth: true, renderCallback: { _ in })
-        var t = driveClean(pacer, from: 0, frames: 130) // ~2.2s — past the fix-2c promote warmup
+        var t = driveClean(pacer, from: 0, frames: 130) // ~2.2s — past the promote warmup
         XCTAssertEqual(pacer.currentDepth, 1)
         pacer.noteNetworkLateForTest(now: t) // network late #1 (owd spike)
         XCTAssertEqual(pacer.currentDepth, 1, "one late never promotes")
@@ -70,7 +69,7 @@ final class FramePacerDepthV2Tests: XCTestCase {
 
     func testDemoteRestoresDepthOneAndPresentOnArrival() {
         let pacer = FramePacer(targetDepth: 1, adaptiveDepth: true, renderCallback: { _ in })
-        var t = driveClean(pacer, from: 0, frames: 130) // past the fix-2c promote warmup
+        var t = driveClean(pacer, from: 0, frames: 130) // past the promote warmup
         pacer.noteNetworkLateForTest(now: t)
         t = driveClean(pacer, from: t, frames: 24)
         pacer.noteNetworkLateForTest(now: t)
@@ -94,8 +93,8 @@ final class FramePacerDepthV2Tests: XCTestCase {
         ))
     }
 
-    /// v3 REGRESSION (the 2026-06-11/12 pinning bug, at the pacer level): genuine present-gap
-    /// lates — skipped slots in dense flow — must neither count `lateFrames` nor move the depth.
+    /// v3: genuine present-gap lates — skipped slots in dense flow — must neither count
+    /// `lateFrames` nor move the depth.
     func testPresentGapsNeverPromote() {
         let pacer = FramePacer(targetDepth: 1, adaptiveDepth: true, renderCallback: { _ in })
         var t = driveClean(pacer, from: 0, frames: 130)

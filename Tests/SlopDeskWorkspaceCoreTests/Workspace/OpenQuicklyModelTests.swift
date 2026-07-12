@@ -3,7 +3,7 @@ import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E11 WI-3 (ES-E11-1..4): the PURE Open-Quickly model — the `⌘⇧O` multi-source switcher's taxonomy +
+/// The PURE Open-Quickly model — the `⌘⇧O` multi-source switcher's taxonomy +
 /// merge/rank/section/cycle/quick-pick logic, with zero SwiftUI/store coupling. These pin:
 /// - the pill set (SSH + Recipes are product cuts — no enum case exists for either);
 /// - the per-filter pill metadata (label / icon / picker-chord) + the `.all` default;
@@ -68,7 +68,7 @@ final class OpenQuicklyModelTests: XCTestCase {
         return 1000 - (firstMatch ?? 0)
     }
 
-    // MARK: - Pill taxonomy (ES-E11-1)
+    // MARK: - Pill taxonomy
 
     /// REVERT-TO-CONFIRM-FAIL: re-adding an SSH or Recipes case grows `allCases` past 7 (the 7th is
     /// the deliberate Host pill, docs/45); dropping a live pill fails the order assertion.
@@ -112,7 +112,7 @@ final class OpenQuicklyModelTests: XCTestCase {
         XCTAssertEqual(OpenQuicklyFilter.opened.sectionHeader, "OPENED")
     }
 
-    // MARK: - Filter cycling (ES-E11-2)
+    // MARK: - Filter cycling
 
     func testNextFilterWrapsForward() {
         XCTAssertEqual(OpenQuicklyModel.nextFilter(.all), .opened)
@@ -125,7 +125,7 @@ final class OpenQuicklyModelTests: XCTestCase {
         XCTAssertEqual(OpenQuicklyModel.prevFilter(.all), .current, "⇧Tab wraps from the first pill to the last")
     }
 
-    // MARK: - sectioned: merge + headers (ES-E11-2)
+    // MARK: - sectioned: merge + headers
 
     func testSectionedAllMergesSourcesUnderAllCapsHeadersInCanonicalOrder() {
         let sources: [OpenQuicklyFilter: [OpenQuicklyItem]] = [
@@ -175,7 +175,7 @@ final class OpenQuicklyModelTests: XCTestCase {
         XCTAssertTrue(sections.isEmpty, "an all-empty All list shows the global empty-state, no stray headers")
     }
 
-    // MARK: - sectioned: rank within a section (ES-E11-2)
+    // MARK: - sectioned: rank within a section
 
     func testSectionedRanksAndDropsNonMatchesWithinSection() {
         let sources: [OpenQuicklyFilter: [OpenQuicklyItem]] = [
@@ -238,7 +238,7 @@ final class OpenQuicklyModelTests: XCTestCase {
         )
     }
 
-    // MARK: - selectable + quick-pick (ES-E11-2 / ES-E11-3)
+    // MARK: - selectable + quick-pick
 
     func testSelectableFlattensSectionsInOrderSkippingHeaders() {
         let sources: [OpenQuicklyFilter: [OpenQuicklyItem]] = [
@@ -346,7 +346,7 @@ final class OpenQuicklyModelTests: XCTestCase {
         XCTAssertEqual(out.map(\.title), ["x-alpha", "x-beta"])
     }
 
-    // MARK: - Agents builder: Claude-only (ES-E11-4)
+    // MARK: - Agents builder: Claude-only
 
     func testAgentItemsDropNonClaudeKinds() {
         let sessions = [
@@ -378,7 +378,7 @@ final class OpenQuicklyModelTests: XCTestCase {
         XCTAssertNil(items.first?.subtitle, "an empty cwd is no subtitle, not a blank one")
     }
 
-    // MARK: - Folders builder (ES-E11-4)
+    // MARK: - Folders builder
 
     func testFolderItemsMapNameAndFullPath() {
         let entries = [FolderEntry(path: "/Users/abc/Workplace/myproject", accessCount: 3, lastAccess: t0)]
@@ -404,7 +404,7 @@ final class OpenQuicklyModelTests: XCTestCase {
         XCTAssertEqual(root.first?.title, "/", "the root path keeps a non-empty display name")
     }
 
-    // MARK: - Current builder (reuses JumpToModel — ES-E11-2 / ES-E11-3)
+    // MARK: - Current builder (reuses JumpToModel)
 
     func testCurrentItemsWrapJumpToActsVerbatim() {
         let jump = JumpToModel.items(
@@ -455,7 +455,7 @@ final class OpenQuicklyModelTests: XCTestCase {
         XCTAssertEqual(OpenQuicklyKind(jumpTo: .prompt), .prompt)
     }
 
-    // MARK: - Opened / Recent factories (ES-E11-2)
+    // MARK: - Opened / Recent factories
 
     func testPaneItemFactory() {
         let pid = PaneID(raw: UUID())
@@ -485,7 +485,7 @@ final class OpenQuicklyModelTests: XCTestCase {
         }
     }
 
-    // MARK: - Composite source builders (whole-tree / whole-LIFO — E11 WI-6)
+    // MARK: - Composite source builders (whole-tree / whole-LIFO)
 
     /// Builds a one-leaf tab + its spec for the Opened/Recent enumeration fixtures.
     private func leafTab(
@@ -581,12 +581,12 @@ final class OpenQuicklyModelTests: XCTestCase {
         )
     }
 
-    // MARK: - E21 WI-2: remote-window / system-dialog differentiation in the Opened list
+    // MARK: - Remote-window / system-dialog differentiation in the Opened list
 
     /// A backing terminal pane (the default `paneKind`) keeps the GENERIC pane chrome — the split glyph, the
-    /// "Pane" badge, and a cwd subtitle. Pins the un-changed path so the WI-2 differentiation can be added
-    /// without regressing the common terminal row. Revert-to-confirm-fail: a model that always emitted the
-    /// window glyph/badge would fail here.
+    /// "Pane" badge, and a cwd subtitle. Pins the unchanged terminal path so the video-pane differentiation
+    /// coexists without regressing the common terminal row. Revert-to-confirm-fail: a model that always emitted
+    /// the window glyph/badge would fail here.
     func testPaneItemBackingTerminalKeepsGenericPaneChrome() {
         let pid = PaneID(raw: UUID())
         let row = OpenQuicklyModel.paneItem(paneID: pid, title: "zsh", cwd: "/work")
@@ -600,8 +600,8 @@ final class OpenQuicklyModelTests: XCTestCase {
     /// A `.remoteGUI` backing pane reads as a WINDOW: the window glyph (`display`), a "Window" badge, and the
     /// kind-generic `.focusPane` `Act` (`↩` focuses it exactly as a terminal row). With NO app name threaded
     /// AND no cwd, the subtitle is NIL — a single line, never an echo of the window title already on line 1
-    /// (Batch-4 item 4: the host app shows on line 2 ONLY when it is distinct; a window-title "fallback" would
-    /// merely duplicate line 1). The host-app subtitle for a real binding is covered by
+    /// (the host app shows on line 2 ONLY when it is distinct; a window-title "fallback" would merely
+    /// duplicate line 1). The host-app subtitle for a real binding is covered by
     /// `RemoteGUIFirstClassPeerTests.testOpenedItemsDifferentiatesTheRemoteWindowRow` (appName threaded).
     func testPaneItemRemoteGUIReadsAsAWindow() {
         let pid = PaneID(raw: UUID())
@@ -620,7 +620,7 @@ final class OpenQuicklyModelTests: XCTestCase {
 
     /// The auto `.systemDialog` video pane is differentiated too — the same window glyph, but a "Dialog" badge
     /// (it streams a host SYSTEM prompt, not a user-picked window). Total mapping: both video kinds are windows.
-    /// With no app name threaded the subtitle is nil (single line, no window-title echo — item 4).
+    /// With no app name threaded the subtitle is nil (single line, no window-title echo).
     func testPaneItemSystemDialogReadsAsADialog() {
         let pid = PaneID(raw: UUID())
         let row = OpenQuicklyModel.paneItem(paneID: pid, title: "Authenticate", cwd: nil, paneKind: .systemDialog)
@@ -655,8 +655,9 @@ final class OpenQuicklyModelTests: XCTestCase {
 
     /// `openedItems` threads `spec.kind` so a mixed tree yields a differentiated row per pane: the terminal row
     /// keeps its generic chrome + cwd; the `.remoteGUI` row reads as a window (glyph + "Window" badge + a
-    /// host/window subtitle). End-to-end pin of the WI-2 thread. Revert-to-confirm-fail: dropping the `paneKind:`
-    /// argument in `openedItems` reverts the video row to "Pane"/split/nil and fails the window assertions.
+    /// host/window subtitle). End-to-end pin of the `paneKind` thread. Revert-to-confirm-fail: dropping the
+    /// `paneKind:` argument in `openedItems` reverts the video row to "Pane"/split/nil and fails the window
+    /// assertions.
     func testOpenedItemsDifferentiatesVideoPanesFromTerminalPanes() {
         let termID = PaneID(raw: UUID())
         let videoID = PaneID(raw: UUID())
@@ -685,9 +686,9 @@ final class OpenQuicklyModelTests: XCTestCase {
         XCTAssertEqual(videoRow?.paneKind, .remoteGUI, "openedItems threaded the spec's `.remoteGUI` kind")
         XCTAssertEqual(videoRow?.badge, "Window", "the `.remoteGUI` row is badged a 'Window'")
         XCTAssertEqual(videoRow?.symbol, "display", "the `.remoteGUI` row uses the window glyph")
-        // F2: no cwd ⇒ the subtitle is the host-side APP name (line 2), NOT an echo of the window title on
-        // line 1. Pre-fix `paneRowSubtitle` returned the title, printing identical text on both lines.
+        // No cwd ⇒ the subtitle is the host-side APP name (line 2), NOT an echo of the window title on line 1
+        // — a `paneRowSubtitle` that falls back to the title would print identical text on both lines.
         XCTAssertEqual(videoRow?.subtitle, "Safari", "no cwd ⇒ the host app name is the subtitle (not the title)")
-        XCTAssertNotEqual(videoRow?.subtitle, videoRow?.title, "F2: the subtitle must not echo the row title")
+        XCTAssertNotEqual(videoRow?.subtitle, videoRow?.title, "the subtitle must not echo the row title")
     }
 }

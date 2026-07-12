@@ -1,10 +1,10 @@
 import Foundation
 import SlopDeskAgentDetect
 
-// E20 WI-2 — Client control backend seam.
+// Client control backend seam.
 //
 // The protocol the ``ClientControlDispatcher`` calls to actually drive the running client GUI.
-// The concrete conformance (`WorkspaceControlBackend`, WI-3) adapts `WorkspaceStore` /
+// The concrete conformance (`WorkspaceControlBackend`) adapts `WorkspaceStore` /
 // `PreferencesStore` / `ThemeStore` / `WorkspaceBindingRegistry` / `FolderFrecencyStore`; the
 // dispatcher is unit-tested against a FAKE conformance (no GUI, no socket — hang-safety).
 //

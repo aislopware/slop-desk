@@ -2,7 +2,7 @@
 import XCTest
 @testable import SlopDeskClientUI
 
-/// The quit-confirmation decision (2026-07-11: a stray ⌘Q — `performKeyEquivalent: → terminate:` in
+/// The quit-confirmation decision (a stray ⌘Q — `performKeyEquivalent: → terminate:` in
 /// the log — killed the client mid-scroll and read as a CRASH). Pure policy; the NSAlert is GUI.
 final class QuitConfirmPolicyTests: XCTestCase {
     func testInteractiveQuitWithOpenTabsConfirms() {

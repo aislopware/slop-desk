@@ -2,7 +2,7 @@ import SlopDeskInspector
 import XCTest
 @testable import SlopDeskHost
 
-/// W10 — the PURE ``AgentInstaller`` merge / unmerge logic (no disk; the thin
+/// Tests the PURE ``AgentInstaller`` merge / unmerge logic (no disk; the thin
 /// `install`/`uninstall` file shim is exercised via a tmp dir at the end). Proves the three
 /// invariants the installer must hold: idempotent merge, preserve-existing, and removable.
 final class AgentInstallerTests: XCTestCase {

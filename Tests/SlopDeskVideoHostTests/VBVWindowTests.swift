@@ -2,7 +2,7 @@
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// WF-5 (#5) PURE VBV-window math. The encoder it feeds is HW-gated and never instantiated here; this
+/// PURE VBV-window math. The encoder it feeds is HW-gated and never instantiated here; this
 /// covers the arithmetic that builds `DataRateLimits = [maxBytes, seconds]` so every set-site stays
 /// consistent and the default path (T=1.0) is byte-identical to before the tunable window landed.
 final class VBVWindowTests: XCTestCase {
@@ -76,11 +76,11 @@ final class VBVWindowTests: XCTestCase {
 
     // MARK: dataRateLimits CFArray bridge (default-path byte identity)
 
-    // 2026-06-11 defaults consolidation: PURE VBR is the default (`SLOPDESK_PURE_VBR` unset ⇒ the
-    // hard cap never binds — VT's DataRateLimits enforcement silently DROPS frames over the
-    // window budget, the R7-HW-measured khựng factory). The bridged CFArray keeps the exact
-    // [bytes (Int), seconds (Double)] shape; the byte element is the unbound sentinel regardless
-    // of the requested rate (AverageBitRate alone steers — the Parsec rate-control model).
+    // PURE VBR is the default (`SLOPDESK_PURE_VBR` unset ⇒ the hard cap never binds — VT's
+    // DataRateLimits enforcement silently DROPS frames over the window budget, a stutter
+    // factory). The bridged CFArray keeps the exact [bytes (Int), seconds (Double)] shape; the
+    // byte element is the unbound sentinel regardless of the requested rate (AverageBitRate
+    // alone steers — the Parsec rate-control model).
     func testDataRateLimitsDefaultIsPureVBRUnbound() {
         XCTAssertEqual(VideoEncoder.vbvWindowSeconds, 1.0, "test env must not set SLOPDESK_VBV_WINDOW")
         guard let arr = VideoEncoder.dataRateLimits(bytesPerSecond: 1_500_000) as? [Any] else {

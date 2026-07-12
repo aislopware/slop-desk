@@ -39,8 +39,8 @@ public final class VideoMuxSinkTable: @unchecked Sendable {
 
     public var count: Int { lock.withLock { sinks.count } }
 
-    /// The registered channelIDs (C6 BUG A: the VD-termination policy's live-lane snapshot input —
-    /// a lane's sink registers inside `session.start()` and unregisters on retire).
+    /// The registered channelIDs — the VD-termination policy's live-lane snapshot input; a lane's
+    /// sink registers inside `session.start()` and unregisters on retire.
     public var channelIDs: Set<UInt32> { lock.withLock { Set(sinks.keys) } }
 }
 
@@ -157,12 +157,12 @@ public actor VideoMuxSessionRegistry {
                 // Mint failed (window gone / malformed hello). Answer the arrival flow with a
                 // TERMINAL refusal — the EXISTING `helloAck(accepted: false)` wire message (no new
                 // format; golden-pinned wire untouched) — so the client's FSM resolves `.rejected`
-                // and stops hello-retrying instead of re-driving this doomed mint every ≤5 s
-                // forever (black pane, no scrim: the old SILENT drop). Sent BEFORE forgetLane:
-                // `forgetLane` (transport retire) drops the reply-flow stamp the bootstrap hello
-                // left, after which there is no flow to answer on. Fire-and-forget UDP — a lost
-                // refusal is re-triggered by the client's next hello retry (which re-fails the
-                // mint and re-refuses).
+                // and stops hello-retrying. A silent drop here would leave the client re-driving
+                // this doomed mint every ≤5 s forever (black pane, no scrim). Sent BEFORE
+                // forgetLane: `forgetLane` (transport retire) drops the reply-flow stamp the
+                // bootstrap hello left, after which there is no flow to answer on. Fire-and-forget
+                // UDP — a lost refusal is re-triggered by the client's next hello retry (which
+                // re-fails the mint and re-refuses).
                 sendControl(channelID, VideoControlMessage.helloAck(
                     accepted: false,
                     streamID: 0,
@@ -185,22 +185,23 @@ public actor VideoMuxSessionRegistry {
     /// unregistered its sink). Clears the mint mark + session map so a reconnect re-mints. Sibling
     /// lanes are untouched. Idempotent.
     ///
-    /// ⚠️ Does NOT call `session.stop()` — historically this was the clean-bye path where the lane
-    /// transport had already torn itself down. For the crash-without-bye reaper (and a clean
-    /// last-lane close) use ``retireAndStop(_:)``, which also STOPS the session so capture actually
-    /// stops; otherwise the minted ``SlopDeskVideoHostSession`` keeps its SCStream/encoder running with
-    /// no client (the CONCURRENCY-HOST-1 mux leak).
+    /// ⚠️ Does NOT call `session.stop()` — this is the clean-bye path, where the lane transport has
+    /// already torn itself down. For the crash-without-bye reaper (and a clean last-lane close) use
+    /// ``retireAndStop(_:)``, which also STOPS the session so capture actually stops; otherwise the
+    /// minted ``SlopDeskVideoHostSession`` keeps its SCStream/encoder running with no client (a mux
+    /// leak).
     public func retire(_ channelID: UInt32) {
         sinkTable.unregister(channelID)
         minting.remove(channelID)
         sessions.removeValue(forKey: channelID)
     }
 
-    /// CONCURRENCY-HOST-1 crash-without-bye (mux analogue): retire the lane bookkeeping AND stop its
-    /// session so capture/encode actually stops — the gap ``retire(_:)`` leaves (it only forgets the
-    /// sink). This is the async hop the transport's reaper drives via `onReapLane`. Snapshots the
-    /// session BEFORE `retire` clears the map, then awaits its `stop()` (stops the SCStream /
-    /// VTCompressionSession / timers). Idempotent — a no-op `stop()` on an already-gone session.
+    /// Crash-without-bye handling (mux analogue of the PTY reaper): retires the lane bookkeeping AND
+    /// stops its session so capture/encode actually stops — the gap ``retire(_:)`` leaves (it only
+    /// forgets the sink). This is the async hop the transport's reaper drives via `onReapLane`.
+    /// Snapshots the session BEFORE `retire` clears the map, then awaits its `stop()` (stops the
+    /// SCStream / VTCompressionSession / timers). Idempotent — a no-op `stop()` on an already-gone
+    /// session.
     public func retireAndStop(_ channelID: UInt32) async {
         let session = sessions[channelID]
         retire(channelID) // sink unregister + minting/sessions map clear
@@ -218,8 +219,8 @@ public actor VideoMuxSessionRegistry {
     /// The number of live lanes (for a test / lsof-style assertion).
     public var liveChannelCount: Int { sinkTable.count }
 
-    /// The live lanes' channelIDs (C6 BUG A: the daemon intersects these with the parking ledger's
-    /// channel bindings to decide which sessions a VD termination must bye + stop).
+    /// The live lanes' channelIDs — the daemon intersects these with the parking ledger's channel
+    /// bindings to decide which sessions a VD termination must bye + stop.
     public var liveChannelIDs: Set<UInt32> { sinkTable.channelIDs }
 }
 #endif

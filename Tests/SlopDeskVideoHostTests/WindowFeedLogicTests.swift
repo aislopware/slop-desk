@@ -51,7 +51,7 @@ final class WindowFeedLogicTests: XCTestCase {
     }
 
     func testOffScreenWindowsNeedAXEvidence() {
-        // The phantom-window junk filter (user report 2026-07-11: 16 of 27 records were Chrome tab
+        // The phantom-window junk filter (real captures showed 16 of 27 records were Chrome tab
         // caches / panel services / `loginwindow`): an OFF-SCREEN window is listed only with AX
         // evidence — its app's `kAXWindows` sweep returned it (axListed) or called it minimized.
         // On-screen windows never need evidence.
@@ -67,7 +67,7 @@ final class WindowFeedLogicTests: XCTestCase {
     }
 
     func testOverlayAppsAndAsverifyPhantomsAreExcluded() {
-        // User report 2026-07-12: two survivors of the AX-evidence gate were still junk — the
+        // Two survivors of the AX-evidence gate were still junk — the
         // "Cua Driver" automation overlay (a REAL on-screen window, but a transparent full-display
         // cursor overlay — nothing to stream) and Finder's App Store `asverify` receipt-verification
         // window (AX-listed, never rendered).

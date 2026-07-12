@@ -1,7 +1,7 @@
 import Foundation
 
 /// What the external input box should offer the user right now — derived from the
-/// terminal mode (doc 14 §"Ô input ngoài", decision **A + B1**). Logic-only; no SwiftUI.
+/// terminal mode (doc 14 § external input box, decision **A + B1**). Logic-only; no SwiftUI.
 public enum InputAffordance: Sendable, Equatable {
     /// **A — shell command box.** At a shell prompt: the box sends a whole line on Enter
     /// and a block boundary is marked at the prompt (OSC 133). Echo flows normally in the

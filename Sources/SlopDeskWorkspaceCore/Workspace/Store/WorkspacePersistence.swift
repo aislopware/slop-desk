@@ -75,9 +75,9 @@ public struct WorkspacePersistence: @unchecked Sendable {
         try data.write(to: fileURL, options: [.atomic])
     }
 
-    /// W5: encodes the v10 ``TreeWorkspace`` atomically to ``fileURL`` — the live save path after the
-    /// cutover (the tree IS the persisted source of truth now). Same atomic / sorted-keys discipline as
-    /// the canvas ``save(_:)``. A thrown error keeps the previous good file.
+    /// Encodes the ``TreeWorkspace`` atomically to ``fileURL`` — the live save path, since the tree is
+    /// the persisted source of truth. Same atomic / sorted-keys discipline as the canvas ``save(_:)``.
+    /// A thrown error keeps the previous good file.
     public func save(_ tree: TreeWorkspace) throws {
         let directory = fileURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -113,10 +113,10 @@ public struct WorkspacePersistence: @unchecked Sendable {
         }
         // Repair DUPLICATE item PaneIDs (the liveness registry is keyed 1:1 by PaneID, so duplicates
         // would collapse two panes onto one session) by RE-MINTING in place — lossless, since restored
-        // sessions start idle (UI/UX pass-3 #5). Then repair a dangling/nil focusedPane + maximizedPane
-        // (focus never pinned to a ghost pane) and any item pointing at a vanished group (R13, ported to
-        // the single canvas). An absurd item count would make the store eagerly allocate a session per
-        // item on the main actor — fall back to default rather than freeze on launch.
+        // sessions start idle. Then repair a dangling/nil focusedPane + maximizedPane (focus never
+        // pinned to a ghost pane) and any item pointing at a vanished group. An absurd item count would
+        // make the store eagerly allocate a session per item on the main actor — fall back to default
+        // rather than freeze on launch.
         guard migrated.canvas.items.count <= Self.maxItems,
               migrated.groups.count <= Self.maxItems,
               migrated.layoutPresets.count <= Self.maxItems else { return resetToDefault() }
@@ -127,11 +127,11 @@ public struct WorkspacePersistence: @unchecked Sendable {
         return repaired.normalizingCollections().normalizingFocus().normalizingGroups()
     }
 
-    // MARK: Load (tree — W5 LIVE path)
+    // MARK: Load (tree — LIVE path)
 
-    /// W5 — the LIVE load path after the IDE-shell cutover: reads the file, peeks its `schemaVersion` off
-    /// the raw bytes (a v10/v11 ``TreeWorkspace`` file has no `canvas`/`groups` and would fail the typed
-    /// v9 decode), and branches:
+    /// The LIVE load path for the IDE-shell tree: reads the file, peeks its `schemaVersion` off the raw
+    /// bytes (a v10/v11 ``TreeWorkspace`` file has no `canvas`/`groups` and would fail the typed v9
+    /// decode), and branches:
     /// - `== 11` → typed-decode the ``TreeWorkspace`` directly (steady-state).
     /// - `== 10` → identity-decode through ``WorkspaceSchemaMigration/migrateToTree(_:from:)`` (v10 is
     ///   structurally identical to v11; the four new optional ``PaneSpec`` fields decode as `nil` via
@@ -199,7 +199,7 @@ public struct WorkspacePersistence: @unchecked Sendable {
 
     /// Pure value transform: for each pane whose ``PaneSpec/title`` is still default `"Terminal"` AND
     /// whose ``PaneSpec/lastKnownTitle`` is non-nil, promote `lastKnownTitle` into `title`. User-renamed
-    /// panes are untouched — gated on the explicit ``PaneSpec/userRenamed`` flag (B2), NOT `title !=
+    /// panes are untouched — gated on the explicit ``PaneSpec/userRenamed`` flag, NOT `title !=
     /// "Terminal"`, so a pane the user deliberately renamed TO `"Terminal"` keeps that chosen label instead
     /// of being clobbered by a promoted shell title. Called once on the loaded + normalized tree.
     static func promotingLastKnownTitles(in tree: TreeWorkspace) -> TreeWorkspace {
@@ -218,7 +218,7 @@ public struct WorkspacePersistence: @unchecked Sendable {
         return result
     }
 
-    // MARK: On-Launch behaviour (O1 — the `On Launch` general setting → actual launch behaviour)
+    // MARK: On-Launch behaviour (the `On Launch` general setting → actual launch behaviour)
 
     /// Resolves the tree the store seeds on launch, honouring the `On Launch` general setting
     /// (``OnLaunchBehavior``, persisted under ``SettingsKey/onLaunchKey``) — the wiring that makes the
@@ -341,28 +341,28 @@ public struct WorkspacePersistence: @unchecked Sendable {
         return .defaultWorkspace()
     }
 
-    // MARK: Version peek + v9→v10 step (W3 — exposed, wired into loadTree() in W5)
+    // MARK: Version peek + v9→v10 step
 
     /// Peeks ONLY the `schemaVersion` off raw bytes WITHOUT a full typed decode (docs/42 §Migration: "a
     /// pre-decode raw-JSON version peek"). A v10 ``TreeWorkspace`` file has no `canvas`/`groups`, so it
     /// would FAIL the typed v9 ``Workspace`` decode — the load path must branch on the version *before*
     /// choosing a decoder. Returns `nil` for non-JSON / a missing `schemaVersion` (a corrupt file the
-    /// caller resets aside). **Additive (W3): the live `load()` doesn't yet call this** — the decoder-branch
-    /// cutover is W4.
+    /// caller resets aside). The legacy canvas `load()` predates this version-based branch and decodes
+    /// straight to ``Workspace``; only ``loadTree()`` peeks first.
     public static func peekSchemaVersion(in data: Data) -> Int? {
         struct VersionPeek: Decodable { let schemaVersion: Int }
         return (try? JSONDecoder().decode(VersionPeek.self, from: data))?.schemaVersion
     }
 
-    // L0 / D2: `migrateV9toV10` (canvas-era v5–v9 → tree migration through the frozen `WorkspaceV9`
-    // shadow) is DELETED per the "No backcompat / single-user" directive — a stale v5–v9 file now
-    // decode-fails to the default workspace instead.
+    // No `migrateV9toV10` here: per the "no backcompat / single-user" directive, canvas-era v5–v9 files
+    // aren't migrated through a frozen `WorkspaceV9` shadow — a stale v5–v9 file simply decode-fails to
+    // the default workspace.
 
     /// Best-effort copy the unrestorable file aside BEFORE the next `save()` overwrites it, so a
     /// merely-unreadable-by-THIS-build file (a future schemaVersion after a downgrade) or a hard-corrupt
-    /// one is recoverable, not silently destroyed (UI/UX pass-3 #2). Bounded to a single fixed-name
-    /// `.corrupt` sidecar (overwrites any prior backup). Only the decode / migrate failure paths reach
-    /// here; the missing-file path has nothing to copy.
+    /// one is recoverable, not silently destroyed. Bounded to a single fixed-name `.corrupt` sidecar
+    /// (overwrites any prior backup). Only the decode / migrate failure paths reach here; the
+    /// missing-file path has nothing to copy.
     private func resetToDefault() -> Workspace {
         let backup = fileURL.appendingPathExtension("corrupt")
         try? FileManager.default.removeItem(at: backup)

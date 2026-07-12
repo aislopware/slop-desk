@@ -2,7 +2,7 @@
 import Foundation
 import SlopDeskProtocol
 
-/// E13 WI-1 — the THIN macOS shim that actuates the THREE agent-hooks metadata verbs
+/// The THIN macOS shim that actuates the THREE agent-hooks metadata verbs
 /// (``MetadataVerb/installAgentHooks`` = 11 / ``MetadataVerb/uninstallAgentHooks`` = 12 /
 /// ``MetadataVerb/agentHookStatus`` = 13) on the HOST's own `~/.claude/settings.json`. It is the
 /// install/uninstall twin of ``HostPathActionPerformer``: ``MuxChannelSession/serveMetadata`` routes a
@@ -34,11 +34,11 @@ enum HostAgentActionPerformer {
     /// ``MetadataResponseBuilder`` unchanged — keeping this shim's responsibility to ONLY the three
     /// agent-hooks verbs. The request `payload` is intentionally ignored (host-global, empty by contract).
     ///
-    /// `hookListenerActive` is the LIVE bind state of the hostd hook listener (queue-safety cluster,
-    /// 2026-07-02): verb 13's reply now carries it as a second flag byte so the client can distinguish
-    /// "hooks written to settings.json" from "hooks actually flowing" — the listener binds only when
-    /// hostd was LAUNCHED with `SLOPDESK_AGENT_HOOKS=1`, so a green "Installed" without it was a lie
-    /// (every installed hook exits silently without `$SLOPDESK_SOCKET_PATH`).
+    /// `hookListenerActive` is the LIVE bind state of the hostd hook listener: verb 13's reply carries it
+    /// as a second flag byte so the client can distinguish "hooks written to settings.json" from "hooks
+    /// actually flowing" — the listener binds only when hostd was LAUNCHED with `SLOPDESK_AGENT_HOOKS=1`,
+    /// so a green "Installed" without it would be a lie (every installed hook exits silently without
+    /// `$SLOPDESK_SOCKET_PATH`).
     static func response(
         requestID: UInt32, verb: UInt8, payload _: Data, hookListenerActive: Bool = false,
     ) -> WireMessage? {

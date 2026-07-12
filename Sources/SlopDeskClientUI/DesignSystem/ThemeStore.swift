@@ -1,5 +1,5 @@
 // ThemeStore — the runtime theme holder that defeats the STATIC `Slate.theme` across the AppKit
-// `NSSplitViewController` boundary (REBUILD-V2, WS-D / D3).
+// `NSSplitViewController` boundary.
 //
 // WHY a store and not a SwiftUI Environment value: the three columns are hosted in `NSHostingController`s
 // inside `SlopDeskSplitViewController`, so a `.preferredColorScheme` / `@Environment` set on
@@ -13,7 +13,7 @@
 // Classic palette. The golden corpus is unaffected — chrome colour never crosses into the wire vectors
 // (appearance is pure client chrome, never folded into `EnvConfig`/the sidecar).
 //
-// E15 WI-3 — DUAL-SLOT FOLLOW-OS: `apply(appearance:)` resolves the active built-in theme id for the
+// DUAL-SLOT FOLLOW-OS: `apply(appearance:)` resolves the active built-in theme id for the
 // CURRENT OS appearance (via the pure leaf `ThemeResolution`) and repoints `active`. A macOS OS-appearance
 // observer re-resolves LIVE on a system light/dark switch, so a follow-OS (or legacy `.system`) user sees
 // the theme flip without a restart.
@@ -35,7 +35,7 @@ final class ThemeStore {
 
     /// Posted AFTER ``active`` changes so the AppKit shell (``SlopDeskSplitViewController``) can re-pin
     /// `NSWindow.appearance` + nudge the hosted columns — the cross-`NSHostingController` repaint SwiftUI's
-    /// `@Observable` observation does not reach (D3).
+    /// `@Observable` observation does not reach.
     static let didChangeNotification = Notification.Name("SlopDeskThemeStoreDidChange")
 
     /// The active theme. Default Monokai Pro Classic (dark) — the product default; a no-store / headless
@@ -61,7 +61,7 @@ final class ThemeStore {
 
     // MARK: - Apply
 
-    /// Apply the whole ``AppearancePreferences`` (E15 WI-3): resolve the active built-in theme id for the
+    /// Apply the whole ``AppearancePreferences``: resolve the active built-in theme id for the
     /// CURRENT OS appearance (dual-slot / follow-OS — ``ThemeResolution``) and repoint ``active``. Remembers
     /// the model so the OS observer can re-resolve live on a system light/dark switch.
     func apply(appearance: AppearancePreferences) {

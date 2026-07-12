@@ -1,4 +1,4 @@
-// SecureKeyboardEntryController — the macOS Secure Keyboard Entry actuator (E17 ES-E17-4 / WI-7).
+// SecureKeyboardEntryController — the macOS Secure Keyboard Entry actuator.
 //
 // "Secure Keyboard Entry" engages macOS's PROCESS-GLOBAL `EnableSecureEventInput()` so no other
 // process can sniff keystrokes while the remote shell is at a hidden-password prompt (`sudo` / `ssh` /
@@ -25,7 +25,7 @@ import AppKit // NSApplication.didResign/BecomeActiveNotification — the app-fr
 import Carbon
 #endif
 
-/// Reference-balanced owner of macOS Secure Keyboard Entry for ONE pane (E17 ES-E17-4 / WI-7). Engages
+/// Reference-balanced owner of macOS Secure Keyboard Entry for ONE pane. Engages
 /// `EnableSecureEventInput()` iff `(autoSecureInput && hostNoEcho) || manualOn` while the app is active, and
 /// guarantees a single balanced `DisableSecureEventInput()` on the inverse edge / pane teardown / app resign
 /// / echo restored. The process-global API is injected so tests assert the enable/disable BALANCE without

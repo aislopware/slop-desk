@@ -1,10 +1,10 @@
 import Foundation
 
-/// PURE Long-Term-Reference (LTR) recovery bookkeeping for the live HEVC stream (WF-8, 2026-06-09).
+/// PURE Long-Term-Reference (LTR) recovery bookkeeping for the live HEVC stream.
 ///
-/// WHY: WF-7's HW probe confirmed that, on this host, a low-latency HEVC `VTCompressionSession`
-/// accepts `kVTCompressionPropertyKey_EnableLTR` and emits LTR frames carrying
-/// `kVTSampleAttachmentKey_RequireLTRAcknowledgementToken`. WF-8 uses that to recover a client that
+/// WHY: on this host, a low-latency HEVC `VTCompressionSession` accepts
+/// `kVTCompressionPropertyKey_EnableLTR` and emits LTR frames carrying
+/// `kVTSampleAttachmentKey_RequireLTRAcknowledgementToken`. That lets us recover a client that
 /// lost frames with a CHEAP P-frame referencing an *acknowledged* long-term reference
 /// (`ForceLTRRefresh`) instead of a full IDR — no decoder flush, a fraction of the bytes.
 ///
@@ -78,7 +78,7 @@ public struct LTRController: Sendable, Equatable {
     }
 
     /// Folds a client acknowledgement of `frameID` (the `RecoveryMessage.ack` UInt32 field carries a
-    /// frameID for WF-8, NOT a streamSeq): if that frameID maps to a recorded token, add the token to
+    /// frameID, NOT a streamSeq): if that frameID maps to a recorded token, add the token to
     /// the acknowledged set (keep-most-recent, dedup) and RETURN it so the actor can stage it onto the
     /// encoder. An unknown / already-evicted / duplicate frameID returns nil — a safe no-op, never a
     /// crash or unbounded growth.
@@ -123,7 +123,7 @@ public struct LTRController: Sendable, Equatable {
     /// THE recovery decision. A `requestIDR` ALWAYS forces a real IDR (the guaranteed-recovery
     /// escalation must never degrade to an LTR refresh). A `requestLTRRefresh` becomes an `.ltrRefresh`
     /// ONLY when EnableLTR is on AND at least one token has been acknowledged (the ACKED-ONLY
-    /// invariant); otherwise it falls back to `.idr` — exactly today's behaviour when LTR is off.
+    /// invariant); otherwise it falls back to `.idr` — the same behavior as when LTR is off.
     public func recoveryDecision(request: Request, hasEnableLTR: Bool) -> RecoveryAction {
         guard request == .ltrRefresh else { return .idr }
         guard hasEnableLTR, hasAckedToken else { return .idr }

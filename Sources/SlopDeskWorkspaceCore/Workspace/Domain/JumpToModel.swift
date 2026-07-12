@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - E10 WI-8 (ES-E10-5): the pure Jump-To panel model (⌘J)
+// MARK: - The pure Jump-To panel model (⌘J)
 
 /// The classification of one ``JumpToItem`` — drives the row's type badge + icon (`jump-to.png`:
 /// File / Folder / URL / Cmd / Prompt). The pure detector cannot `stat` a path to know file-vs-folder
@@ -53,8 +53,8 @@ public struct BlockSummary: Equatable, Hashable, Sendable {
     /// The typed command line (or agent prompt text). An empty string is skipped by ``JumpToModel/items``.
     public var commandText: String
     /// Whether this is an agent HISTORY PROMPT rather than a shell command (`outline.md`: a supported code
-    /// agent session also lists prompts). SlopDesk carries no prompt-mark on the wire today (E9 Outline
-    /// DECISIONS — `no prompt row is invented`), so production feeds only `false` rows; the model supports
+    /// agent session also lists prompts). SlopDesk carries no prompt-mark on the wire today (see
+    /// DECISIONS.md — `no prompt row is invented`), so production feeds only `false` rows; the model supports
     /// both kinds for when an agent-prompt source lands.
     public var isPrompt: Bool
     /// The CLIENT-RECEIVE first-seen time (the relative-timestamp source, per the outline mapping — the
@@ -107,7 +107,7 @@ public struct JumpToItem: Identifiable, Equatable, Hashable, Sendable {
     }
 }
 
-/// The PURE builder + filter for the Jump-To panel (ES-E10-5): assemble the focused pane's detected links
+/// The PURE builder + filter for the Jump-To panel: assemble the focused pane's detected links
 /// (paths/URLs) + its OSC-133 command/prompt index into ``JumpToItem`` rows, then fuzzy-filter them.
 ///
 /// ## Why a pure enum

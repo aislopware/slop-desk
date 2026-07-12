@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskClaudeCode
 
-/// WF-7 terminal-mode sniffer tests. The crown jewel is the SPLIT-BOUNDARY suite:
+/// Terminal-mode sniffer tests. The crown jewel is the SPLIT-BOUNDARY suite:
 /// feeding the SAME stream chunked at every adversarial boundary (mid-ESC, mid-CSI,
 /// mid-OSC, one byte at a time) MUST produce identical events to feeding it whole.
 final class TerminalModeTrackerTests: XCTestCase {
@@ -98,7 +98,7 @@ final class TerminalModeTrackerTests: XCTestCase {
         XCTAssertFalse(t.bracketedPasteActive)
     }
 
-    // MARK: DECCKM application cursor keys (DECSET/DECRST 1) — docs/29 #6
+    // MARK: DECCKM application cursor keys (DECSET/DECRST 1) — docs/29-NIGHT-HANDOFF.md
 
     /// `ESC[?1h` enables application cursor keys; `ESC[?1l` disables them. Passive flag (no event),
     /// same contract as bracketed paste.
@@ -330,7 +330,7 @@ final class TerminalModeTrackerTests: XCTestCase {
         XCTAssertEqual(t.mode, .altScreen)
     }
 
-    // MARK: Unterminated OSC abutting an ESC-introduced sequence (issue #1)
+    // MARK: Unterminated OSC abutting an ESC-introduced sequence
 
     func testUnterminatedOSCThenAltScreenEnterNotLost() {
         // `ESC]133` (no terminator) directly followed by `ESC[?1049h`. The stray ESC ends
@@ -405,7 +405,7 @@ final class TerminalModeTrackerTests: XCTestCase {
         XCTAssertEqual(collected, [.promptStart, .enteredAltScreen, .exitedAltScreen])
     }
 
-    /// R9 #4 (security): a DCS/SOS/PM/APC string body is opaque — an `ESC[?1049h` (alt-screen) embedded in
+    /// Security: a DCS/SOS/PM/APC string body is opaque — an `ESC[?1049h` (alt-screen) embedded in
     /// one must NOT flip the tracked mode (else a malicious program could force the input box's mode). A
     /// REAL alt-screen sequence after the swallowed string still works (clean resync), and the spoof stays
     /// split-boundary-equivalent.

@@ -21,7 +21,7 @@ import SlopDeskProtocol
 ///   minutes-long backoff). Each successful reconnect resets the delay.
 /// - **Lifecycle:** `start()` launches a supervising task that consumes the client's
 ///   `events`; `stop()` cancels it. App background/foreground is handled by the client's
-///   `pause()`/`resume()` seam (WF-8), not here.
+///   `pause()`/`resume()` seam, not here.
 ///
 /// Lifecycle hooks (UIKit `didEnterBackground` + `beginBackgroundTask`) belong to the
 /// client app target; this type owns only the retry policy + supervising task.
@@ -87,7 +87,7 @@ public final class ReconnectManager: Sendable {
     private let onProgress: (@Sendable (_ attempt: Int, _ nextRetryAt: Date?) -> Void)?
     /// Fired ONCE when a reconnect campaign exhausts ``maxReconnectAttempts`` without reconnecting —
     /// the terminal "could not reach the host" signal. The UI flips to a terminal `.unreachable` state
-    /// instead of a frozen "reconnecting" dot (the previously-invisible WF3 give-up path).
+    /// instead of a frozen "reconnecting" dot.
     private let onGaveUp: (@Sendable () -> Void)?
 
     @preconcurrency
@@ -155,9 +155,9 @@ public final class ReconnectManager: Sendable {
     /// Maximum number of reconnect attempts in a single campaign before giving up — the SINGLE source of
     /// truth for the give-up ceiling. The app-global supervisor (`AppConnection`) and the UI's
     /// "attempt N of M" copy (`ConnectionPresenter.maxReconnectAttempts`) both mirror this value, so the
-    /// per-pane transport campaign and the displayed cap can never diverge (they used to: 30 here vs a
-    /// displayed 20, so a per-pane campaign would render an impossible "attempt 25 of 20"). It lives here,
-    /// in the lower module, because `ConnectionPresenter` (upper) can read down but not vice-versa.
+    /// per-pane transport campaign and the displayed cap can never diverge (a mismatch would render an
+    /// impossible "attempt 25 of 20"). It lives here, in the lower module, because `ConnectionPresenter`
+    /// (upper) can read down but not vice-versa.
     /// With the default backoff (initial 250ms, max 2s, multiplier 2.0) this is roughly 35s of wall-clock:
     /// 250+500+1000+2000+… ≈ 35s for 20 attempts.
     public static let maxReconnectAttempts = 20
@@ -199,8 +199,7 @@ public final class ReconnectManager: Sendable {
             // Cap: stop after maxReconnectAttempts so a permanently-gone host does not
             // keep the pane stuck in "reconnecting" forever. Surface a log line so
             // ConnectionViewModel.lastLog (shown in the chrome) escapes the loop, AND fire
-            // `onGaveUp` so the UI flips to a terminal `.unreachable` state (the WF3 give-up
-            // path that was previously invisible).
+            // `onGaveUp` so the UI flips to a terminal `.unreachable` state.
             if attempt > maxReconnectAttempts {
                 onLog?("reconnect: gave up after \(maxReconnectAttempts) attempt(s) — could not reach \(host):\(port)")
                 onGaveUp?()

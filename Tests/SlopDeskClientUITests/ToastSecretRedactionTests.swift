@@ -2,11 +2,10 @@
 // `redactSecrets` (default ON) is set, at the SAME ingress as the macOS Notification-Center banner
 // (`CommandCompletionNotifier`) and the redacted sidebar/pill title (`PanePresentation`).
 //
-// Audit finding `redactsecrets-bypassed-by-osc-notification-toast`: the toast push sat OUTSIDE the
-// `#if os(macOS)` redaction guard, so the toast — the ONLY notification surface on iOS — rendered an
-// OSC-supplied API key / token VERBATIM. Revert-to-confirm-fail: remove the `SecretRedactor.redact`
-// call inside `Toast.explicitOSC` / `Toast.redactSecretsIfEnabled` and `testOSCToastMasksSecretWhenOn`
-// fails (the AWS key appears verbatim in the constructed Toast's title).
+// The toast push sat OUTSIDE the `#if os(macOS)` redaction guard, so the toast — the ONLY notification
+// surface on iOS — rendered an OSC-supplied API key / token VERBATIM. Revert-to-confirm-fail: remove the
+// `SecretRedactor.redact` call inside `Toast.explicitOSC` / `Toast.redactSecretsIfEnabled` and
+// `testOSCToastMasksSecretWhenOn` fails (the AWS key appears verbatim in the constructed Toast's title).
 //
 // Pure value-type construction — no view, no SCStream/VT/Metal (hang-safe).
 
@@ -64,7 +63,7 @@ final class ToastSecretRedactionTests: XCTestCase {
         XCTAssertEqual(toast.title, "Deploy complete \(secretKey)", "OFF ⇒ verbatim title")
     }
 
-    // MARK: - Long-command completion toast (the iOS-only notification surface, Batch 3 finding 1)
+    // MARK: - Long-command completion toast (the iOS-only notification surface)
 
     /// The LONG-command "your build finished" toast carries the live OSC 0/2 pane title (`mysql -pSECRET` and
     /// the like). With redaction ON it must be masked at the `Toast.longCommand` construction site — the same

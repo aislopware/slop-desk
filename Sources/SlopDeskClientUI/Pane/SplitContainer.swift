@@ -1,4 +1,4 @@
-// SplitContainer — renders EVERY tab's pane tree, revealing only the active one (REBUILD-V2, L2). The
+// SplitContainer — renders EVERY tab's pane tree, revealing only the active one. The
 // IDENTITY-PRESERVING compositor. Keeping all tabs mounted at opacity(0) (never unmounting an inactive tab's
 // subtree) is the documented invariant that keeps a libghostty surface ALIVE across a tab switch — so
 // switching tabs shows each pane's CURRENT screen with no teardown / soft-reset / lossy ring-replay.
@@ -30,7 +30,7 @@ struct SplitContainer: View {
     @State private var move: PaneMoveDrag?
 
     #if os(macOS)
-    /// Live rail-window drop (a HOST WINDOW row dragged off the right rail — docs/45 round 3).
+    /// Live rail-window drop (a HOST WINDOW row dragged off the right rail — see docs/45-host-windows-rail.md).
     /// View-local like `move`: the store is untouched until `performDrop` commits exactly ONE op.
     @State private var windowDrop: HostWindowDropDrag?
     #endif
@@ -38,8 +38,8 @@ struct SplitContainer: View {
     /// EVERY tab of every RETAINED session (the active session + the LRU-retained previous ones — see
     /// ``WorkspaceStore/retainedSessionIDs``), in session-then-tab-bar order. We render ALL of them (see
     /// `body`), revealing only the active session's active tab, so NEITHER a tab switch NOR an A→B→A session
-    /// switch unmounts a pane subtree (R-lifecycle #3 — a session switch used to dismantle every outgoing
-    /// surface and repaint via the lossy ring replay). Stale retained ids (a since-closed session) are dropped
+    /// switch unmounts a pane subtree — unmounting on a session switch would dismantle every outgoing
+    /// surface and force a repaint via the lossy ring replay. Stale retained ids (a since-closed session) are dropped
     /// by the `tree.sessions` intersection; the active session is always included even before the first switch
     /// (when the retention set is still empty).
     private var tabs: [SlopDeskWorkspaceCore.Tab] {
@@ -56,9 +56,9 @@ struct SplitContainer: View {
     var body: some View {
         GeometryReader { geo in
             let bounds = CGRect(origin: .zero, size: geo.size)
-            // KEEP-ALL-MOUNTED (restores the documented "all tabs mounted at opacity(0), never tear down the
-            // libghostty surface" invariant the L2 rebuild silently dropped): render a layer for EVERY tab of
-            // the active session, but reveal + hit-test only the selected one. A hidden tab's panes stay
+            // KEEP-ALL-MOUNTED: every tab of the active session stays mounted at opacity(0), never torn down —
+            // dropping this invariant would kill the libghostty surface on every hidden tab. Render a layer for
+            // EVERY tab of the active session, but reveal + hit-test only the selected one. A hidden tab's panes stay
             // on-window, so their ghostty surfaces keep ticking + repainting from live host output — switching
             // to a tab shows its CURRENT screen with NO teardown/soft-reset/ring-replay (the replay is a lossy
             // re-feed that dropped an unfocused pane's prompt). PaneIDs are unique across a session's tabs, so
@@ -136,7 +136,7 @@ struct SplitContainer: View {
                     // A zoom-hidden pane must never claim first responder (mirrors the keep-all-mounted
                     // focus-steal guard for hidden tabs).
                     isFocused: !entry.isHidden && Self.isPaneFocused(entry.id, in: tab, activeTabID: activeTabID),
-                    // ON-SCREEN gate (A2/R-lifecycle #2): visible ⟺ the pane's tab is the active tab AND it is
+                    // ON-SCREEN gate: visible ⟺ the pane's tab is the active tab AND it is
                     // not zoom-hidden. A `.remoteGUI` pane drives its `liveVideoCap` activation off THIS — a
                     // hidden tab / zoom-collapsed sibling releases its slot + stops the UDP/VT/Metal pipeline,
                     // re-activating when it returns (onDisappear never fires under keep-all-mounted).
@@ -171,9 +171,9 @@ struct SplitContainer: View {
         }
         .frame(width: bounds.width, height: bounds.height, alignment: .topLeading)
         .coordinateSpace(name: PaneMoveSpace.name)
-        // Report the ACTIVE tab's solved leaf rects to the store (`updateSolvedLayout`) — the production
-        // wiring the L0/L2 rewrite dropped with `SplitTreeView`, which left `lastSolvedLayout` forever nil
-        // and the ⌃⌘arrow / ⌥⌘⇧arrow chords resolving against the store's nominal fallback. View-only state;
+        // Report the ACTIVE tab's solved leaf rects to the store (`updateSolvedLayout`) — required wiring:
+        // without it `lastSolvedLayout` stays forever nil and the ⌃⌘arrow / ⌥⌘⇧arrow chords resolve against
+        // the store's nominal fallback instead of the real geometry. View-only state;
         // never reconciles. Skipped for hidden tabs (only the visible geometry counts) + the static path.
         .onAppear { reportSolvedLayout(frames, isActive: isActive) }
         .onChange(of: frames) { _, newFrames in reportSolvedLayout(newFrames, isActive: isActive) }
@@ -206,8 +206,8 @@ struct SplitContainer: View {
     /// NOT interrupt the drag because (a) the `ForEach` keys on the STABLE `handle.key` so the view identity
     /// survives the per-frame weight mutation (no teardown), and (b) `PaneDivider` reads its translation in
     /// the fixed `PaneMoveSpace.name` coordinate space, so the cursor delta is correct regardless of where
-    /// the handle has slid. (No frozen-host / `.offset` dance: that treated a symptom of the OLD `id: \.self`
-    /// identity churn, which keying on `handle.key` fixes at the source.)
+    /// the handle has slid. (A frozen-host / `.offset` dance is unnecessary and would only treat a symptom —
+    /// keying on the stable `handle.key` instead of `id: \.self` fixes the identity churn at the source.)
     private func dividerView(_ handle: SplitTreeRenderModel.DividerHandle) -> some View {
         PaneDivider(
             handle: handle,
@@ -421,7 +421,7 @@ struct SplitContainer: View {
 
     #if os(macOS)
 
-    // MARK: - Rail-window drop (docs/45 round 3 — drag a HOST WINDOW row onto the canvas)
+    // MARK: - Rail-window drop (drag a HOST WINDOW row onto the canvas — docs/45-host-windows-rail.md)
 
     /// The ACTIVE tab's solved leaf rects (the overlay + the zone resolver read the SAME geometry the
     /// user sees). Recomputed per call — the solver is pure rect math over ≤ a handful of leaves.

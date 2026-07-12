@@ -7,7 +7,7 @@ import SlopDeskTerminal
 import AppKit
 #endif
 
-/// The per-pane OSC 9;4 PROGRESS mirror (E14/K1) read by the tab badge resolver, macOS Dock aggregate, and
+/// The per-pane OSC 9;4 PROGRESS mirror read by the tab badge resolver, macOS Dock aggregate, and
 /// pane status strip. A pure value from the VALIDATED ``ProgressState`` + clamped percent; ``ProgressState/clear``
 /// maps to the ABSENCE of progress (`nil`), not a case here. Lives next to ``TerminalViewModel`` (whose
 /// observable `progress` holds it) so resolver / store / Dock share one vocabulary and can't drift.
@@ -112,7 +112,7 @@ public final class TerminalViewModel {
     /// `nil` until the first command completes.
     public private(set) var lastCommand: (exitCode: Int32?, durationMS: UInt32)?
 
-    /// The per-pane OSC 9;4 PROGRESS mirror (E14/K1, wire type 32): `nil` when there is no active indicator
+    /// The per-pane OSC 9;4 PROGRESS mirror (wire type 32): `nil` when there is no active indicator
     /// (a `9;4;0` clear, or none ever reported), else the determinate / indeterminate / error state. OBSERVABLE
     /// so the pane status strip + macOS Dock aggregate update reactively. ``WorkspaceStore`` ALSO holds a
     /// per-pane mirror (`paneProgress`, same `.progress` event) feeding the sidebar tab badge + Dock rollup;
@@ -121,7 +121,7 @@ public final class TerminalViewModel {
     /// stuck spinner.
     public private(set) var progress: PaneProgress?
 
-    /// The per-pane Warp-style "Blocks" store (WB2): the host's `commandBlock` metadata (wire type 28)
+    /// The per-pane Warp-style "Blocks" store: the host's `commandBlock` metadata (wire type 28)
     /// folded into an ordered, bounded `[CommandBlock]`. Drives the Command Navigator, sticky command header,
     /// and chrome status chip. Captured output is fetched on demand (``copyBlockOutput(index:onResult:)``).
     /// Observed so the navigator/header re-render as blocks land.
@@ -165,7 +165,7 @@ public final class TerminalViewModel {
     /// Wiring it (on connect) FLUSHES the latest grid the renderer derived: libghostty's `resize_callback`
     /// fires during surface creation / initial layout — BEFORE `connect()` wires this sink — so those early
     /// grids would otherwise be lost and the host PTY would stay at its 80×24 init size while libghostty renders
-    /// the real grid (the "render lộn xộn" / overlapping-glyph bug: zsh wraps at 80 cols, fzf draws at row 24,
+    /// the real grid (the garbled-render / overlapping-glyph bug: zsh wraps at 80 cols, fzf draws at row 24,
     /// but the surface is a different size). `didSet` delivers the pending size the instant a sink appears, so
     /// the host always learns the real grid even when no further resize happens after connect.
     @ObservationIgnored public var resizeSink: ((UInt16, UInt16) -> Void)? {
@@ -195,7 +195,7 @@ public final class TerminalViewModel {
     @ObservationIgnored private var resizeDeliverySuspended = false
 
     /// Click-to-focus hook (macOS). The terminal NSView (`GhosttyLayerBackedView`) installs `mouseDown`, which
-    /// CONSUMES the click the pane's `.onTapGesture { store.focus(id) }` used to receive — so a body click
+    /// CONSUMES the click the pane's `.onTapGesture { store.focus(id) }` would otherwise receive — so a body click
     /// would start a libghostty selection but NOT focus the pane (no focus ring, keyboard stuck on the old
     /// pane). The renderer calls this at the TOP of `mouseDown`; the leaf wires it to `store.focus(paneID)` so
     /// the click ALSO transfers workspace focus. `@ObservationIgnored`: wiring, not view state. Nil for headless
@@ -217,31 +217,31 @@ public final class TerminalViewModel {
     /// for headless/preview callers (never invoked).
     @ObservationIgnored public var broadcastTap: ((Data) -> Void)?
 
-    /// W14 #10: the terminal right-click menu's "Split Right / Split Down" item — the renderer's `menu(for:)`
+    /// The terminal right-click menu's "Split Right / Split Down" item — the renderer's `menu(for:)`
     /// calls this with the chosen axis; the leaf wires it to `store.splitPaneTree(paneID, …)`. `true` =
     /// horizontal (side-by-side), `false` = vertical (stacked). `@ObservationIgnored`: wiring, not view state.
     /// Nil for headless/preview callers (never invoked).
     @ObservationIgnored public var onContextMenuSplit: ((_ horizontal: Bool) -> Void)?
 
-    /// E10 WI-6 (ES-E10-2): the ⌘click / right-click "Open" action on a detected PATH — the file lives on the
+    /// The ⌘click / right-click "Open" action on a detected PATH — the file lives on the
     /// HOST Mac, so the renderer resolves ``LinkActionPolicy`` to ``LinkAction/openHost(_:)`` and fires this
-    /// with the resolved absolute path; the leaf wires it to the host open RPC (E10 WI-7 — the new `openPath`
-    /// ``MetadataVerb`` over the existing metadata channel). `nil` until WI-7 lands the host performer, so
+    /// with the resolved absolute path; the leaf wires it to the host open RPC (the `openPath`
+    /// ``MetadataVerb`` over the existing metadata channel). `nil` until the host performer lands, so
     /// open-on-host is a graceful no-op (copy / cd / URL still work). `@ObservationIgnored`: wiring, not view state.
     @ObservationIgnored public var onRequestOpenHostPath: ((_ path: String) -> Void)?
 
-    /// E10 WI-6 (ES-E10-2): the ⌘⇧click / right-click "Reveal in Finder" action on a detected PATH —
+    /// The ⌘⇧click / right-click "Reveal in Finder" action on a detected PATH —
     /// host-side `activateFileViewerSelecting`, so the renderer fires this with the resolved absolute path
-    /// and the leaf wires it to the host reveal RPC (E10 WI-7 `revealPath` ``MetadataVerb``). `nil` until
-    /// WI-7 lands ⇒ a graceful no-op. `@ObservationIgnored`: wiring, not view state.
+    /// and the leaf wires it to the host reveal RPC (`revealPath` ``MetadataVerb``). `nil` until
+    /// the host performer lands ⇒ a graceful no-op. `@ObservationIgnored`: wiring, not view state.
     @ObservationIgnored public var onRequestRevealHostPath: ((_ path: String) -> Void)?
 
-    /// W14 #5: the ⌘F / right-click "Find…" action — opens the find-in-terminal bar over THIS pane. The
+    /// The ⌘F / right-click "Find…" action — opens the find-in-terminal bar over THIS pane. The
     /// renderer's menu (and the `find:` responder selector) call it; the leaf wires it to the find-bar
     /// `@State`. `@ObservationIgnored`: wiring, not view state. Nil for headless/preview callers.
     @ObservationIgnored public var onRequestFind: (() -> Void)?
 
-    /// E5 ES-E5-3: the ⌘G "Find Next" / ⇧⌘G "Find Previous" actions — advance / retreat the find bar's match
+    /// The ⌘G "Find Next" / ⇧⌘G "Find Previous" actions — advance / retreat the find bar's match
     /// over THIS pane (and OPEN the bar when closed). The leaf wires these to its find-bar `@State`
     /// (next()/previous() + the libghostty `navigate_search:` highlight); the store reaches them via
     /// ``WorkspaceStore/requestFindNextInActivePane()`` / `requestFindPrevInActivePane()`, falling back to
@@ -250,7 +250,7 @@ public final class TerminalViewModel {
     @ObservationIgnored public var onRequestFindNext: (() -> Void)?
     @ObservationIgnored public var onRequestFindPrev: (() -> Void)?
 
-    /// C8 improvement 1: fired ONCE per RECONNECT the instant the fresh-vs-resumed verdict resolves
+    /// Fired ONCE per RECONNECT the instant the fresh-vs-resumed verdict resolves
     /// (``SlopDeskClient/SessionResumeOutcome``) — `.resumedSession` (same live shell reattached,
     /// scrollback/history intact) or `.freshShell` (fresh shell; the previous session ended). ``ConnectionViewModel``
     /// forwards it to the store, which surfaces a small transient toast so the user knows WHICH happened (a
@@ -259,7 +259,7 @@ public final class TerminalViewModel {
     /// never a launch surprise. `@ObservationIgnored`: wiring, not view state; nil for headless/preview callers.
     @ObservationIgnored public var onResumeOutcomeResolved: ((SlopDeskClient.SessionResumeOutcome) -> Void)?
 
-    /// E5 (find + global search) surface seams over the active ``TerminalSurfaceActions`` conformer (production
+    /// Find + global search surface seams over the active ``TerminalSurfaceActions`` conformer (production
     /// ``GhosttySurface``): the flat scrollback text mirror the find bar / global search scan, and the
     /// passthrough to libghostty's own in-surface search bindings (`search:`/`navigate_search:`/`end_search`/
     /// `scroll_to_row`, which own the amber highlight + scroll-to-match). A headless / preview surface does NOT
@@ -282,7 +282,7 @@ public final class TerminalViewModel {
         (surface as? TerminalSurfaceActions)?.scrollbackGridColumns() ?? 0
     }
 
-    /// E5 (find bar close → return keyboard focus to the surface): the renderer wires this in `attach(model:)`
+    /// Find bar close → return keyboard focus to the surface: the renderer wires this in `attach(model:)`
     /// so the pane's ghostty NSView re-claims the window's first responder. Needed because closing the find bar
     /// tears down the focused query `TextField` WITHOUT any workspace-focus change — the surface's own reclaim
     /// paths (`isFocusedPane` didSet, mount, mouseDown, focus-follows-mouse) all gate on a focus TRANSITION or a
@@ -295,7 +295,7 @@ public final class TerminalViewModel {
     /// workspace-focus change). No-op on a headless / preview model (``onReclaimKeyboardFocus`` unset).
     public func reclaimKeyboardFocus() { onReclaimKeyboardFocus?() }
 
-    /// E13 WI-5 (Send to Chat): the active mouse-made libghostty selection text, or `nil` when there is no
+    /// Send to Chat: the active mouse-made libghostty selection text, or `nil` when there is no
     /// selection (or it is empty). Reads libghostty truth ONLY through the same ``TerminalSurfaceActions`` seam
     /// copy-mode uses (``copyCurrentSelectionOrScrollback``) — never a client-guessed range, never a hang-prone
     /// real surface in a test (a headless / preview surface does not conform → `nil`). The Send-to-Chat capture
@@ -306,17 +306,17 @@ public final class TerminalViewModel {
         return selection
     }
 
-    /// WS-B / B4·B5: the PURE keybinding interceptor (prefix engine + override-aware single-chord table) the
+    /// The PURE keybinding interceptor (prefix engine + override-aware single-chord table) the
     /// libghostty surface's `keyDown` consults BEFORE its raw-byte branches. The store wires it (in
     /// `wireMaterializedLeaf`) so a tmux-style prefix sequence and a rebindable ⌘D/⌘⇧D split are owned by the
-    /// shared engine (B5 removed the hard-coded split branch). `nil` for headless/preview callers (no store),
+    /// shared engine rather than a hard-coded split branch. `nil` for headless/preview callers (no store),
     /// where the surface keeps its plain libghostty path. `@ObservationIgnored`: wiring, not view state.
     @ObservationIgnored public var keyInterceptor: TerminalKeyInterceptor?
 
     /// Fired the instant an interactive resize ENDS — i.e. ``setResizeSuspended(false)`` flushes the
     /// settled grid to the host. The renderer wires it to RE-ARM its post-resize present burst.
     ///
-    /// Why this is needed (the intermittent "kéo xong không re-render" race): the renderer keeps the
+    /// Why this is needed (the intermittent doesn't-re-render-after-the-drag-ends race): the renderer keeps the
     /// size-unconditional sync-present path alive for a bounded window (~400 ms) ANCHORED to its last
     /// `layout()`, so a late reflow frame / late host-redraw bytes get painted after the initial present ticks
     /// drain. But with the live-resize design the host `TIOCSWINSZ` is DEFERRED to release — so the host's
@@ -329,7 +329,7 @@ public final class TerminalViewModel {
     /// headless/preview callers (never invoked).
     @ObservationIgnored public var onResizeSettled: (() -> Void)?
 
-    // MARK: Copy-mode (P5b — modal keyboard scrollback navigation)
+    // MARK: Copy-mode (modal keyboard scrollback navigation)
 
     /// TRUE while this pane is in modal keyboard COPY-MODE (tmux/zellij parity): every keystroke this pane's
     /// `keyDown` sees is routed through ``handleCopyModeKey(_:)`` (navigation / search / copy / exit) instead
@@ -347,13 +347,13 @@ public final class TerminalViewModel {
     /// ``isCopyMode``'s `didSet`.
     public private(set) var copyModeBadgeActive = false
 
-    /// P5b: the ⌘⇧C entry / Pane-menu "Copy Mode" / `q`·Esc exit hook — toggles the ``CopyModeOverlay``
+    /// The ⌘⇧C entry / Pane-menu "Copy Mode" / `q`·Esc exit hook — toggles the ``CopyModeOverlay``
     /// `@State` in ``TerminalScreenView`` (set there so the closure captures THIS pane's overlay state, the
     /// exact ``onRequestFind`` pattern). The store reaches it via `requestCopyModeInActivePane()`.
     /// `@ObservationIgnored`: wiring, not view state. Nil for headless/preview callers (never invoked).
     @ObservationIgnored public var onRequestCopyMode: (() -> Void)?
 
-    /// P5b: a brief "copied" confirmation flash hook the ``CopyModeOverlay`` wires to a transient `@State`
+    /// A brief "copied" confirmation flash hook the ``CopyModeOverlay`` wires to a transient `@State`
     /// toast (<=0.22s). Fired by ``handleCopyModeKey`` after a successful `y`/Enter copy.
     /// `@ObservationIgnored`: wiring, not view state. Nil for headless/preview callers.
     @ObservationIgnored public var onCopyConfirmation: (() -> Void)?
@@ -367,11 +367,11 @@ public final class TerminalViewModel {
         #endif
     }
 
-    // MARK: Vi/copy-mode repeat-count + visual-mode (E17 WI-4 — pure, NSEvent-free)
+    // MARK: Vi/copy-mode repeat-count + visual-mode (pure, NSEvent-free)
 
     /// The three vi visual-selection modes plus `.none` (plain scrollback navigation). Drives
     /// the ``ViModeOverlay`` pill label AND switches the line-motion handler from scroll (`scroll_page_lines`)
-    /// to selection-EXTEND (`adjust_selection:<dir>`). Public so the GUI overlay (WI-5) reads ``viVisualMode``.
+    /// to selection-EXTEND (`adjust_selection:<dir>`). Public so the GUI overlay reads ``viVisualMode``.
     public enum VisualMode: Equatable, Sendable {
         case none
         case char
@@ -430,7 +430,7 @@ public final class TerminalViewModel {
     /// `VISUAL BLOCK`). `.none` outside a visual selection. Kept in lock-step by ``syncViObservables()``.
     public private(set) var viVisualMode: VisualMode = .none
 
-    /// Vi-mode key-hint bar visibility (the `⌘/` reference card; WI-5 renders the bar). Observable so the GUI
+    /// Vi-mode key-hint bar visibility (the `⌘/` reference card). Observable so the GUI
     /// hint bar shows/hides; toggled per copy-mode session via ``toggleViKeyHints()`` and reset on enter/exit
     /// (off by default — hints show on demand only).
     public private(set) var showViKeyHints = false
@@ -441,7 +441,7 @@ public final class TerminalViewModel {
     @ObservationIgnored public var onRequestViKeyHints: (() -> Void)?
 
     /// `?` find-backward hook: the copy-mode `?` key opens the SAME find bar as `/` but biased BACKWARD so
-    /// `n`/`N` step against the search direction (WI-5 wires it to `TerminalFindBarModel.open(backward:)`).
+    /// `n`/`N` step against the search direction (wired to `TerminalFindBarModel.open(backward:)`).
     /// Falls back to ``onRequestFind`` when unset, so `?` still opens the bar before the backward bias is
     /// wired. `@ObservationIgnored`: wiring, not view state. Nil for headless/preview callers.
     @ObservationIgnored public var onRequestFindBackward: (() -> Void)?
@@ -507,7 +507,7 @@ public final class TerminalViewModel {
     }
     #endif
 
-    /// The PURE copy-mode dispatch (P5b + E17 WI-4): maps an abstract ``CopyModeKey`` to a navigation /
+    /// The PURE copy-mode dispatch: maps an abstract ``CopyModeKey`` to a navigation /
     /// repeat-count / visual-mode / search / copy / exit intent, driving the active surface's
     /// ``TerminalSurfaceActions`` seam (scroll/jump/search/adjust-selection bindings) or the find / copy / exit
     /// hooks. Everything else is SWALLOWED (consumed while armed → nothing leaks to the shell). No `NSEvent` /
@@ -529,8 +529,8 @@ public final class TerminalViewModel {
     /// visual-char-select. The pill shows TRUE mode state; selection-extend (`adjust_selection`) and yank work
     /// only against an anchored mouse-made selection. `y`/Enter copies the MOUSE-made libghostty selection
     /// (``TerminalSurfaceActions/readSelection``) when one exists, else the visible scrollback text — never a
-    /// client-guessed character range (the anti-"rung lắc" rule: never claim a position libghostty can
-    /// contradict) — then EXITS vi mode (spec). See DECISIONS.md (E17) for the precise ceiling.
+    /// client-guessed character range (the anti-jitter rule: never claim a position libghostty can
+    /// contradict) — then EXITS vi mode (spec). See DECISIONS.md for the precise ceiling.
     ///
     /// Scroll-sign convention (Binding.zig): NEGATIVE = UP toward older scrollback, so `j`/↓ = `+1` (down),
     /// `k`/↑ = `-1` (up). `jump_to_prompt`/scroll actions are re-resolved every call (the seam reads live
@@ -605,7 +605,7 @@ public final class TerminalViewModel {
             copyModeState.pendingCount = nil
         // Hint Mode (vi-mode spec §Action list: `f` enters Hint Mode for keyboard-driven link clicking). UNLIKE
         // the cursor / set-selection motions, Hint Mode is NOT blocked by the libghostty char-range ceiling — it
-        // is a separate visible-viewport label overlay (E10), driven by the same ``beginHint(_:)`` seam the
+        // is a separate visible-viewport label overlay, driven by the same ``beginHint(_:)`` seam the
         // ⌘⇧J chord uses. A count on a non-motion is meaningless, so it is dropped first; `beginHint(.open)` is
         // itself a clean no-op when there is no live surface / no hintable target (so `f` never enters an empty
         // mode). The renderer routes subsequent keys to ``handleHintKey(_:)`` while `hintMode` is armed.
@@ -641,12 +641,12 @@ public final class TerminalViewModel {
     }
 
     /// vi `n` / `N` — step the find IN (`reverse: false`) or AGAINST (`reverse: true`) the find bar's current
-    /// SEARCH DIRECTION (E17 ES-E17-2 / WI-5). Routes through the SAME direction-aware seam as ⌘G / ⇧⌘G
+    /// SEARCH DIRECTION. Routes through the SAME direction-aware seam as ⌘G / ⇧⌘G
     /// (``onRequestFindNext`` / ``onRequestFindPrev`` → the find bar's `next()` / `previous()`, biased on
     /// `searchBackward`), so after a copy-mode `?foo` the bar — not this handler — owns the concrete direction:
     /// `n` walks UP the buffer and `N` walks down (vim parity). Must NOT hardcode `navigate_search:next`, which
     /// always steps forward regardless of how the search was opened. Falls back to libghostty's own forward/back
-    /// nav (pre-E17) ONLY when no find bar is wired (headless / preview), where there is no search direction to
+    /// nav ONLY when no find bar is wired (headless / preview), where there is no search direction to
     /// honor anyway.
     private func stepFindInSearchDirection(_ actions: TerminalSurfaceActions?, reverse: Bool) {
         if let hook = reverse ? onRequestFindPrev : onRequestFindNext {
@@ -717,7 +717,7 @@ public final class TerminalViewModel {
         onRequestCopyMode?()
     }
 
-    // MARK: Read-only mode (E17 ES-E17-1 — per-pane user-toggled input gate)
+    // MARK: Read-only mode (per-pane user-toggled input gate)
 
     /// TRUE while this pane is READ-ONLY: the single input ingress seam ``sendInput(_:)`` drops every
     /// outbound byte (keys / paste / IME commit / mouse-report / click-to-move / iOS input-bar /
@@ -729,7 +729,7 @@ public final class TerminalViewModel {
     /// update path (the infinite-render-loop hazard documented on ``surface``), so it must not register a
     /// SwiftUI dependency. The pill reads the observable ``readOnlyBadgeActive`` mirror instead, kept in
     /// lock-step by this `didSet`, which ALSO fires ``onReadOnlyChanged`` so the pill `×`, the menu, and the
-    /// command-palette term converge to one source of truth through the store (WI-2).
+    /// command-palette term converge to one source of truth through the store.
     @ObservationIgnored public var isReadOnly = false {
         didSet {
             readOnlyBadgeActive = isReadOnly
@@ -797,7 +797,7 @@ public final class TerminalViewModel {
         if isReadOnly { exitReadOnly() } else { enterReadOnly() }
     }
 
-    // MARK: Secure input (E17 ES-E17-4 — auto password-prompt + manual secure keyboard entry)
+    // MARK: Secure input (auto password-prompt + manual secure keyboard entry)
 
     /// TRUE while the HOST shell is at a no-echo (hidden-password) prompt — the inverse of the host PTY's
     /// termios `ECHO` flag, signalled over wire type 31 (``WireMessage/inputEcho(enabled:)``) and routed here
@@ -855,8 +855,8 @@ public final class TerminalViewModel {
         if secureInputActive != value { secureInputActive = value }
     }
 
-    /// Re-evaluates the `🛡 SECURE INPUT` pill mirror after a LIVE "Auto Secure Input" settings change (E17
-    /// ES-E17-4 / WI-7). ``refreshSecureInput()`` reads the setting live but is only re-invoked from the
+    /// Re-evaluates the `🛡 SECURE INPUT` pill mirror after a LIVE "Auto Secure Input" settings change.
+    /// ``refreshSecureInput()`` reads the setting live but is only re-invoked from the
     /// `hostNoEcho` / `manualSecureInput` `didSet`s — never on a settings-toggle edge — so an engaged pill would
     /// otherwise linger (auto on + host no-echo) until the next echo edge even after the user turned the setting
     /// OFF. The leaf observes the `autoSecureInput` default and calls this (alongside the controller's
@@ -873,25 +873,25 @@ public final class TerminalViewModel {
         manualSecureInput.toggle()
     }
 
-    /// WB2: the "Command Navigator" toggle (⌃⌘O / the chrome chip / a menu item) — opens the searchable
+    /// The "Command Navigator" toggle (⌃⌘O / the chrome chip / a menu item) — opens the searchable
     /// recent-blocks popover over THIS pane. The leaf wires it to the navigator `@State` (the ``onRequestFind``
     /// pattern). `@ObservationIgnored`: wiring, not view state. Nil for headless/preview callers.
     @ObservationIgnored public var onRequestBlockNavigator: (() -> Void)?
 
-    /// WB2: the OUT-path sink that fires a `requestBlockOutput(index)` (wire type 15) on the live client. Set by
+    /// The OUT-path sink that fires a `requestBlockOutput(index)` (wire type 15) on the live client. Set by
     /// ``ConnectionViewModel`` on connect (forwards to ``SlopDeskClient/requestBlockOutput(index:)``), cleared
     /// on teardown; while `nil` (disconnected) a copy-output request resolves immediately as "unavailable"
     /// rather than hanging. `@ObservationIgnored`: wiring, not view state.
     @ObservationIgnored public var requestBlockOutputSink: ((UInt32) -> Void)?
 
-    // MARK: E10 link interaction (WI-5 — ⌘-hold underline + full-path hover)
+    // MARK: Link interaction (⌘-hold underline + full-path hover)
 
     /// TRUE while ⌘ is held over this pane's terminal (set by the macOS renderer's `flagsChanged`). Drives the
     /// ``LinkHighlightOverlay``, which underlines every detected path/URL in the visible viewport. OBSERVABLE
     /// (a normal `@Observable` property, NOT `@ObservationIgnored`) so the overlay reveals / clears reactively —
     /// and WRITTEN from the renderer's `flagsChanged` handler (NOT from inside an `updateNSView` / AttributeGraph
     /// pass, unlike ``isReadOnly``), so there is no infinite-render hazard. Always FALSE on iOS — no ⌘ modifier,
-    /// so the overlay is inert there (the iOS affordance is tap-on-label / long-press in WI-9, not ⌘-hold).
+    /// so the overlay is inert there (the iOS affordance is tap-on-label / long-press, not ⌘-hold).
     public var linkHighlightActive = false
 
     /// A monotonic tick bumped whenever the LOCAL viewport scrolls (mouse-wheel / trackpad scrollback
@@ -911,7 +911,7 @@ public final class TerminalViewModel {
     public func noteViewportScrolled() { viewportRevision &+= 1 }
 
     /// The resolved absolute path (or raw text, when it cannot be resolved purely — a `~`-path, a bare URL) of
-    /// the detected link the pointer is ⌘-hovering (ES-E10-4), or `nil` when not hovering one. Set by the macOS
+    /// the detected link the pointer is ⌘-hovering, or `nil` when not hovering one. Set by the macOS
     /// renderer's `mouseMoved`/`flagsChanged` hit-test; cleared on ⌘ release / pointer-exit / a move off any
     /// link. DORMANT SEAM: its only consumer was the per-pane status bar's full-path preview, removed with the
     /// status strip — the renderer still resolves it (cheaply, only while ⌘ is held over a terminal) so a future
@@ -924,13 +924,13 @@ public final class TerminalViewModel {
     /// SwiftUI ``LinkHighlightOverlay`` takes cwd as a parameter — only the renderer reads this.
     @ObservationIgnored public var linkCwd: String?
 
-    /// Pure ⌘-hover hit-test (E10 WI-5 / ES-E10-4): map a top-left-origin POINT (in points, the surface's
+    /// Pure ⌘-hover hit-test: map a top-left-origin POINT (in points, the surface's
     /// coordinate space) to the detected link under it, returning that link's resolved absolute path — or its
     /// raw text when no pure resolution exists (a `~`-path, a plain URL). `nil` when the point is over no
     /// detected link, or the geometry is degenerate.
     ///
     /// `nonisolated` + `static` so it is unit-testable headlessly (``LinkHoverHitTestTests``) without a window
-    /// server — the renderer is only the thin actuator feeding it the live `viewportTextRows()` + the WI-2
+    /// server — the renderer is only the thin actuator feeding it the live `viewportTextRows()` + the
     /// ``TerminalCellMetrics``. Plain separate `/` cell math (NEVER `addingProduct`/`fma`, CLAUDE.md §2 habit —
     /// view geometry, not the codec/controller cluster, but the habit is kept). `Int(_:)` of a
     /// guaranteed-non-negative ratio truncates toward zero, i.e. floors, giving the 0-based cell index.
@@ -954,7 +954,7 @@ public final class TerminalViewModel {
         return nil
     }
 
-    // MARK: E10 Hint Mode (WI-9 — ES-E10-6)
+    // MARK: Hint Mode
 
     /// The armed Hint Mode intent (open / copy / reveal), or `nil` when not in hint mode. OBSERVABLE so the
     /// ``HintModeOverlay`` reveals / clears reactively, and the renderer's `keyDown` reads it to ROUTE keys to
@@ -981,7 +981,7 @@ public final class TerminalViewModel {
     @ObservationIgnored public var onHintConfirmed: ((HintTarget, HintIntent) -> Void)?
 
     /// Arm Hint Mode over the VISIBLE viewport for `intent` (⌘⇧J open / ⌘⇧Y copy / reveal). Reads the live
-    /// surface's viewport rows (WI-2 ``TerminalViewportSnapshotting``), detects every hintable target
+    /// surface's viewport rows (``TerminalViewportSnapshotting``), detects every hintable target
     /// (``HintLabelAssigner/targets(rows:cwd:schemes:patterns:maxScanColumns:)``), and assigns collision-free
     /// 2-letter labels. A NO-OP when there is no live surface (headless / placeholder), when the surface is on
     /// the ALT screen (don't fight a TUI), or when no target is found — so the chord never enters an empty mode.
@@ -1142,7 +1142,7 @@ public final class TerminalViewModel {
     /// later batch. `@ObservationIgnored`: control flag.
     @ObservationIgnored private var awaitingResumeOutcome = false
 
-    /// C8 improvement 1: whether the NEXT resolved resume verdict should fire ``onResumeOutcomeResolved``.
+    /// Whether the NEXT resolved resume verdict should fire ``onResumeOutcomeResolved``.
     /// Armed by ``markReconnecting`` (a genuine drop being retried), CLEARED by ``reset`` (a fresh connect
     /// target / deliberate reconnect), so the user-facing "reattached vs fresh shell" toast fires only after an
     /// UNEXPECTED reconnect — never on first launch, never on a self-initiated ⇧⌘R. One-shot: cleared the moment
@@ -1158,7 +1158,7 @@ public final class TerminalViewModel {
     /// Routes terminal OUT bytes (keystrokes libghostty encoded) to the live client. A no-op while disconnected
     /// (``inputSink`` is `nil`). Called on the main actor by the renderer's `GhosttySurface.onWrite` bridge.
     public func sendInput(_ data: Data) {
-        // READ-ONLY gate (E17): this is the SINGLE outbound ingress seam — every key/paste/IME-commit/
+        // READ-ONLY gate: this is the SINGLE outbound ingress seam — every key/paste/IME-commit/
         // mouse-report/click-to-move byte libghostty encodes funnels here via `onWrite`, plus the iOS
         // input-bar submit, the Ctrl+C0 raw fast-path, and the synchronized-input broadcast. Dropping at the
         // top (before `inputSink`/`broadcastTap`, before any echo-probe / glitch-caret bookkeeping) blocks
@@ -1238,7 +1238,7 @@ public final class TerminalViewModel {
     @ObservationIgnored public private(set) var paneLatencyMS: Double?
     /// Client-side `TerminalModeTracker` (DECSET/DECRST 1049/47/1047 + OSC-133) fed UNCONDITIONALLY in
     /// ``ingestPass`` — backs BOTH the glitch-caret alt-screen gate and the public ``isAlternateScreen``
-    /// accessor the E8 paste / backspace / scroll-past gates read. Its `memchr` skim fast path makes a pass
+    /// accessor the paste / backspace / scroll-past gates read. Its `memchr` skim fast path makes a pass
     /// while every feature is off one `memchr` per chunk; tracking always keeps the alt-screen truth fresh even
     /// with the glitch caret disabled (its default).
     @ObservationIgnored private let modeTracker = TerminalModeTracker()
@@ -1246,13 +1246,13 @@ public final class TerminalViewModel {
     /// TRUE while the host terminal is on the ALTERNATE screen — a full-screen TUI (vim, htop, less, a
     /// fullscreen Claude Code) owns the viewport. Derived from ``modeTracker`` (the real DECSET 1049/47/1047
     /// parse), NOT the coarse `shellActivity == .running` proxy — which is true for ANY foreground command
-    /// (cat, a Python REPL, `npm install`), so using it as the alt-screen flag would over-suppress E8's
-    /// paste-protection / backspace gates inside ordinary running commands. The E8 GUI gates read this so they
+    /// (cat, a Python REPL, `npm install`), so using it as the alt-screen flag would over-suppress the
+    /// paste-protection / backspace gates inside ordinary running commands. Those GUI gates read this so they
     /// suppress ONLY inside a true full-screen TUI.
     public var isAlternateScreen: Bool { modeTracker.mode == .altScreen }
 
     /// TRUE while the foreground program has bracketed-paste mode (DECSET `?2004h`) enabled — the real
-    /// parse from the host output stream (the same bracketed state libghostty's surface derives). The E8
+    /// parse from the host output stream (the same bracketed state libghostty's surface derives). The
     /// paste-protection pre-check reads this as `programAdvertisedBracketed`: with the "Paste Bracketed
     /// Safe" setting on, a program that frames the paste as an inert bracketed block does not trip the
     /// sheet, matching libghostty's own `clipboard-paste-bracketed-safe` gate that the embedder preempts.
@@ -1380,7 +1380,7 @@ public final class TerminalViewModel {
     /// AFTER the client finishes connecting: a resize delivered to the OUT drain DURING the mux handshake makes
     /// `SlopDeskClient.sendResize` throw `invalidState("sendResize before connect")`, which the drain's `try?`
     /// silently swallows — yet `lastSentSize` was already recorded, so the dedup would block every later send
-    /// and the host PTY would stay at its 80×24 init grid (the "render lộn xộn" / overlapping-glyph bug).
+    /// and the host PTY would stay at its 80×24 init grid (the garbled-render / overlapping-glyph bug).
     /// Re-arming + re-delivering here sends the real grid once the host is ready to accept it.
     public func resendCurrentSize() {
         lastSentSize = nil
@@ -1450,7 +1450,7 @@ public final class TerminalViewModel {
         // FINAL DRAIN: a tail appended just before the wake stream finished (exit/close) has no wake left to
         // announce it — take it explicitly. ONLY on a natural finish: a CANCELLED observe (teardown/reconnect
         // replaced this pump) must NOT take — it would paint the dead session's tail into the freshly-reset
-        // pane and credit those bytes to the wrong (new) transport (night-review finding).
+        // pane and credit those bytes to the wrong (new) transport.
         guard !Task.isCancelled else { return }
         let tailEpoch = sessionEpoch
         let tail = await client.takeOutputBatch()
@@ -1486,7 +1486,7 @@ public final class TerminalViewModel {
         }
     }
 
-    /// C8 improvement 1: surface the resolved fresh-vs-resumed verdict to the UI (via ``onResumeOutcomeResolved``)
+    /// Surfaces the resolved fresh-vs-resumed verdict to the UI (via ``onResumeOutcomeResolved``)
     /// ONCE per reconnect. A no-op unless ``resumeOutcomeNotifiable`` is armed (only ``markReconnecting`` arms
     /// it; ``reset`` clears it), so a first-ever connect / deliberate ⇧⌘R never fires a toast. One-shot: disarm
     /// before firing so one reconnect yields exactly one notification.
@@ -1520,7 +1520,7 @@ public final class TerminalViewModel {
     /// the credit → the wire window holds the flood at the host, end-to-end. Synchronous surfaces (tests,
     /// headless) don't conform — no await.
     ///
-    /// STALE-BATCH GUARDS (review round): the backpressure park is a long suspension that lands exactly when
+    /// STALE-BATCH GUARDS: the backpressure park is a long suspension that lands exactly when
     /// floods (and therefore drops/reconnects) happen, so after EVERY await the batch must re-earn the right to
     /// paint: `Task.isCancelled` covers a replaced pump (teardown/reconnect cancelled it), and the `epoch` check
     /// covers a supervisor reconnect that does NOT cancel the pump — either way a dead session's in-hand bytes
@@ -1572,7 +1572,7 @@ public final class TerminalViewModel {
             let ms = Double(elapsed.seconds) * 1000 + Double(elapsed.attoseconds) / 1e15
             FileHandle.standardError.write(Data(String(format: "[echo-probe] key→ingest %.1fms\n", ms).utf8))
         }
-        // Alt-screen tracking is fed UNCONDITIONALLY: the public `isAlternateScreen` accessor (read by the E8
+        // Alt-screen tracking is fed UNCONDITIONALLY: the public `isAlternateScreen` accessor (read by the
         // paste / backspace / scroll-past gates) must be fresh even when the glitch caret is off (its default).
         // The tracker's `memchr` skim makes a ground-content pass one `memchr` per chunk.
         for chunk in chunks {
@@ -1695,12 +1695,12 @@ public final class TerminalViewModel {
             // Empty-body OSC title messages (e.g. zsh/p10k prompt redraws) are silently dropped; only a
             // non-empty string updates the stored title, preserving the previous real title across command
             // boundaries.
-            // E14/K11 "Title — Shell Controlled" (default ON): when OFF, the client DROPS the OSC 0/2 title
+            // "Title — Shell Controlled" (default ON): when OFF, the client DROPS the OSC 0/2 title
             // update so a remote program cannot rewrite the tab/window title (the privilege gate).
             if SettingsKey.titleShellControlledEnabled, !text.isEmpty { title = text }
         case .bell:
             bellPending = true
-            // "Sound — Shell Controlled" (E14/K10): a BEL rings the system beep (audio-only — no visual bell is
+            // "Sound — Shell Controlled": a BEL rings the system beep (audio-only — no visual bell is
             // implemented). The pure ``BellPolicy`` gates it on the `soundShellControlled` toggle (default ON);
             // the injected ``beep`` seam actuates (so tests count without a real NSSound).
             if BellPolicy.shouldBeep(soundShellControlled: SettingsKey.soundShellControlledEnabled) {
@@ -1713,12 +1713,12 @@ public final class TerminalViewModel {
             case let .idle(exitCode, durationMS):
                 shellActivity = .idle
                 lastCommand = (exitCode, durationMS)
-                // M3 (E14): OSC 133;D ≡ the OSC 9;4;5 "remove" state. A program that drove a 9;4 bar/spinner and
+                // OSC 133;D ≡ the OSC 9;4;5 "remove" state. A program that drove a 9;4 bar/spinner and
                 // finished WITHOUT an explicit 9;4;0 (or was killed mid-progress) must not leave a stuck
                 // determinate/indeterminate badge — `ProgressOSCParser` DROPS state 5, so this completion edge
                 // clears it. The store mirror is cleared on the same edge (handleCommandCompleted).
                 progress = nil
-                // "Sound on Error Exit" (E14/K10): a non-zero exit beeps when enabled (default OFF; requires the
+                // "Sound on Error Exit": a non-zero exit beeps when enabled (default OFF; requires the
                 // OSC-133 shell-integration mark that carries the exit code). Pure ``ErrorSoundPolicy`` → the
                 // `soundOnErrorExit` toggle + a non-zero exit. Same `beep` seam.
                 if ErrorSoundPolicy.shouldBeep(
@@ -1740,11 +1740,11 @@ public final class TerminalViewModel {
             break
         case .commandBlock,
              .blockOutput:
-            // WB2 Warp-style Blocks (wire types 28/29): the metadata upsert + the output-request resolve both
+            // Warp-style Blocks (wire types 28/29): the metadata upsert + the output-request resolve both
             // fold into the per-pane block store, which drives the navigator / sticky header / chip.
             blocks.handle(event)
         case .metadataResponse:
-            // Host metadata reply (E4 wire type 30): correlated + decoded at the connection layer
+            // Host metadata reply (wire type 30): correlated + decoded at the connection layer
             // (ConnectionViewModel folds it into the pane's MetadataRequestRegistry). The terminal model holds
             // no state for it.
             break
@@ -1782,14 +1782,14 @@ public final class TerminalViewModel {
                 rttGateOpen = false
             }
         case let .inputEcho(enabled):
-            // Secure input (E17 ES-E17-4, wire type 31): the host signalled its PTY termios `ECHO` edge —
+            // Secure input (wire type 31): the host signalled its PTY termios `ECHO` edge —
             // `enabled == false` means a no-echo password prompt is up. Fold into `hostNoEcho` (inverse); its
             // `didSet` refreshes the `secureInputActive` pill mirror and fires `onHostEchoChanged`, which the
             // macOS leaf forwards to the pane's `SecureKeyboardEntryController` to engage / disengage
             // process-global secure event input. Echo-on (the canonical default) clears it.
             hostNoEcho = !enabled
         case let .progress(state, percent):
-            // OSC 9;4 PROGRESS (E14/K1, wire type 32): the host parsed the taskbar-style progress subtype out of
+            // OSC 9;4 PROGRESS (wire type 32): the host parsed the taskbar-style progress subtype out of
             // the OSC-9 stream, state validated at the client boundary. Fold into the observable `progress`
             // mirror — a `.clear` removes the indicator (`nil`), every other state sets the determinate /
             // indeterminate / error value the pane status strip + Dock read.
@@ -1802,7 +1802,7 @@ public final class TerminalViewModel {
         }
     }
 
-    // MARK: WB2 Blocks — copy-output flow
+    // MARK: Blocks — copy-output flow
 
     /// How long to wait for a `blockOutput` reply before giving up (the belt-and-braces guard so the copy UI
     /// never spins forever if the host drops the type-29). The empty-reply path is the common case and resolves
@@ -1842,7 +1842,7 @@ public final class TerminalViewModel {
         )
         // Belt-and-braces timeout: if the host never replies, resolve the request as unavailable so the copy
         // UI's spinner can't spin forever. A no-op once the real reply resolves it. The captured `generation`
-        // gates the timeout (#5): a stale timer from a prior copy of the SAME block can't resolve a fresh copy
+        // gates the timeout: a stale timer from a prior copy of the SAME block can't resolve a fresh copy
         // that opened a newer request after this one already resolved.
         Task { [weak self] in
             try? await Task.sleep(for: Self.blockOutputTimeout)
@@ -1864,7 +1864,7 @@ public final class TerminalViewModel {
         // first post-reconnect batch is ingested (see ``resolveResumeOutcomeIfNeeded(client:epoch:batchIsEmpty:)``).
         pendingFreshSessionReset = true
         awaitingResumeOutcome = true
-        // C8 improvement 1: a GENUINE drop being retried — arm the user-facing "reattached vs fresh shell"
+        // A GENUINE drop being retried — arm the user-facing "reattached vs fresh shell"
         // toast so the resolved verdict surfaces once the first post-reconnect output lands.
         resumeOutcomeNotifiable = true
         sessionEpoch += 1 // in-hand batches taken from the dead session stop painting
@@ -1912,11 +1912,11 @@ public final class TerminalViewModel {
         // the recovery banner's Retry) of an exited/failed pane keeps the dead session's framebuffer on screen
         // — the new shell's prompt would graft onto the old screen. Arming the wipe makes the first fresh output
         // RIS-clear the surface first. Harmless on a first-ever connect (surface already empty), and the
-        // deliberate path now matches the transient-reconnect path — including the resume-outcome resolution (a
+        // deliberate path matches the transient-reconnect path — including the resume-outcome resolution (a
         // deliberate retry that lands on a PATH-A reattach must not wipe the surviving screen either).
         pendingFreshSessionReset = true
         awaitingResumeOutcome = true
-        // C8 improvement 1: a fresh connect target / deliberate reconnect (⇧⌘R) must NOT fire the "reattached
+        // A fresh connect target / deliberate reconnect (⇧⌘R) must NOT fire the "reattached
         // vs fresh shell" toast — that surface is for UNEXPECTED drops (``markReconnecting``) only, so disarm
         // the notification even though the wipe arms exactly like a reconnect.
         resumeOutcomeNotifiable = false

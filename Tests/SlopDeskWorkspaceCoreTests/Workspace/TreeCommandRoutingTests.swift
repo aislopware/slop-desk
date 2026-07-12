@@ -6,7 +6,7 @@ import XCTest
 import SwiftUI
 #endif
 
-/// W6 (docs/42 §"W6 — Keybindings + command palette + cheat sheet"): pins the **tree-command-routing**
+/// (see docs/42 §"Keybindings + command palette + cheat sheet"): pins the **tree-command-routing**
 /// contract — the single ``WorkspaceBindingRegistry`` source the menu bar, ⌘K palette, ⌘/ cheat sheet, AND
 /// this test all read. Each ``WorkspaceAction`` routed through ``WorkspaceBindingRegistry/route(_:to:)`` on
 /// a `.tree`-live store must land on the intended store TREE op — asserted through the resulting
@@ -345,7 +345,8 @@ final class TreeCommandRoutingTests: XCTestCase {
     /// `store.moveLeafTree(source, beside: target, axis:before:)` is the drag-to-EDGE-drop commit: it prunes
     /// `source` and re-inserts it beside `target` on the requested side, KEEPING both ids (reconcile is a
     /// registry no-op — no surface teardown). Here a side-by-side `[a | b]` becomes a STACKED split when `a`
-    /// is dropped on `b`'s TOP edge (axis `.vertical`, `before: true`) — the user's "dọc → ngang". Proven to
+    /// is dropped on `b`'s TOP edge (axis `.vertical`, `before: true`) — re-splitting the pair along the
+    /// perpendicular axis, as the user requested. Proven to
     /// fail before the store method relocates.
     func testMoveLeafTreeReSplitsAlongTheOtherAxisKeepingHandles() {
         let store = makeTreeStore()
@@ -426,7 +427,7 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(idBefore, idAfter, "a structural no-op must not rebuild the split (no reconcile churn)")
     }
 
-    // MARK: - Rail-drag inserts (docs/45 round 3 — drop a HOST WINDOW from the rail onto the canvas)
+    // MARK: - Rail-drag inserts (docs/45 — drop a HOST WINDOW from the rail onto the canvas)
 
     /// `store.newRemoteWindowSplit(windowID:title:appName:beside:axis:before:)` is the rail-drag
     /// edge-band drop commit: a NEW `.remoteGUI` leaf PRE-BOUND to the host window lands on the named
@@ -579,11 +580,11 @@ final class TreeCommandRoutingTests: XCTestCase {
         )
     }
 
-    // MARK: - Tabs: Close Window (⌘⇧W) routes to the window-close gate (E7 carry-over #5)
+    // MARK: - Tabs: Close Window (⌘⇧W) routes to the window-close gate
 
     /// `.closeWindow` (⌘⇧W) routes to `store.requestCloseWindow()` — parking `pendingWindowClose` for the
     /// active session when the close must confirm (here: a busy pane under the default `.process` window
-    /// policy). Proven to fail before `.closeWindow` exists / is routed (the pre-E7 ⌘⇧W closed the TAB instead).
+    /// policy). Proven to fail if `.closeWindow` doesn't exist / isn't routed (⌘⇧W closing the TAB instead).
     @MainActor
     func testCloseWindowRoutesToRequestCloseWindow() throws {
         // Self-contained: the default `.process` policy + a busy pane must park the window close.
@@ -630,9 +631,9 @@ final class TreeCommandRoutingTests: XCTestCase {
         )
     }
 
-    // MARK: - Rename: ⌘⇧R targets the active TAB on the tree shell (ITEM B1)
+    // MARK: - Rename: ⌘⇧R targets the active TAB on the tree shell
 
-    /// B1: `.renamePane` on a `.tree` store records the active TAB as the pending tab-rename target (the
+    /// `.renamePane` on a `.tree` store records the active TAB as the pending tab-rename target (the
     /// `TabBarView` inline field opens) — the tree/registry are untouched, a command-layer UI nudge. It must
     /// NOT set `pendingRename` (the canvas pane-rename request no tree view observes — the old dead-end).
     func testRenameActionTargetsActiveTab() throws {
@@ -651,7 +652,7 @@ final class TreeCommandRoutingTests: XCTestCase {
 
     // MARK: - Registry integrity (the single source of truth)
 
-    /// C1: every binding the DISPATCHER sees (``allBindings`` — incl. the nine generated ⌘1…⌘9 select-tab
+    /// Every binding the DISPATCHER sees (``allBindings`` — incl. the nine generated ⌘1…⌘9 select-tab
     /// chords the `bindings` table omits) has a unique id and (for chord-carrying ones) a unique chord.
     /// Iterating only `bindings` (the old test) missed the nine digit chords, so a collision among them — or
     /// with a ⌘-digit elsewhere — could slip past. ALSO asserts `chordTable.count == #chord-bearing
@@ -701,13 +702,13 @@ final class TreeCommandRoutingTests: XCTestCase {
         )
     }
 
-    /// C1: every chord-carrying binding the DISPATCHER sees (``allBindings``) is ⌘- or ⌥-prefixed (the
+    /// Every chord-carrying binding the DISPATCHER sees (``allBindings``) is ⌘- or ⌥-prefixed (the
     /// load-bearing §5 conflict rule: a bare key / Ctrl-letter must fall through to the focused terminal).
     /// Iterating `allBindings` (not just `bindings`) covers the nine ⌘-digit select-tab chords too.
     func testEveryChordIsCommandOrOptionPrefixed() {
         for binding in WorkspaceBindingRegistry.allBindings {
             guard let chord = binding.chord else { continue }
-            // E1 exemption: a NON-PRINTABLE named navigation key (PageUp/PageDown/Home/End) cannot steal a
+            // A NON-PRINTABLE named navigation key (PageUp/PageDown/Home/End) cannot steal a
             // printable terminal letter, so a ⇧-prefixed scroll chord (⇧PageUp, ⇧Home, …) is allowed even
             // though it is not ⌘/⌥-prefixed. The §5 rule still binds EVERY printable-key chord (below).
             switch chord.key {
@@ -726,7 +727,7 @@ final class TreeCommandRoutingTests: XCTestCase {
         }
     }
 
-    /// E17 ES-E17-2 / WI-5: the Vi Mode entry chord ⌃⇧Space resolves (through the dispatcher's
+    /// The Vi Mode entry chord ⌃⇧Space resolves (through the dispatcher's
     /// ``resolvedChordTable``, which folds ``aliasChords``) to `.toggleCopyMode` — the SAME action as the
     /// canonical ⌘⇧C display chord. Space is the NAMED `.space` key (keyCode 49), and ⌃⇧Space must be free.
     /// Revert-to-confirm-fail: before the alias existed, ⌃⇧Space resolved to `nil` and the command was titled
@@ -751,7 +752,7 @@ final class TreeCommandRoutingTests: XCTestCase {
         )
     }
 
-    /// E17 ES-E17-2 / WI-5: the "Vi Mode Key Hints" command is DISCOVERABLE (a registry row in the View group,
+    /// The "Vi Mode Key Hints" command is DISCOVERABLE (a registry row in the View group,
     /// chord-less because `⌘/` is owned by the cheat sheet) and routes to the active pane's hint-bar toggle.
     /// Revert-to-confirm-fail: before this fix there was no `.toggleViKeyHints` action / row, so the hint bar was
     /// reachable only via the contextual `⌘/` while already in vi mode (binding(for:) would be `nil`).
@@ -786,17 +787,17 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(chord(.splitDown), KeyChord(character: "d", [.command, .shift]), "split down = ⌘⇧D")
         XCTAssertEqual(chord(.focusLeft), KeyChord(.leftArrow, [.control, .command]), "focus left = ⌃⌘←")
         XCTAssertEqual(chord(.toggleZoom), KeyChord(.return, [.command, .shift]), "zoom = ⌘⇧↩")
-        // E1 re-scope (ES-E1-2 / DECISIONS): tab cycling moved to ⌘⇧]/⌘⇧[ (was ⌘]/⌘[ under the old Muxy
-        // parity); plain ⌘]/⌘[ now drive sequential PANE cycling (`focus.cycleNext`/`focus.cyclePrev`). These
-        // pins are ours to re-scope.
+        // Tab cycling lives on ⌘⇧]/⌘⇧[ (not ⌘]/⌘[, which the old Muxy parity used); plain ⌘]/⌘[ now drive
+        // sequential PANE cycling (`focus.cycleNext`/`focus.cyclePrev`). See DECISIONS.md — these pins are
+        // ours to re-scope.
         XCTAssertEqual(chord(.nextTab), KeyChord(character: "]", [.command, .shift]), "next tab = ⌘⇧] (E1 re-scope)")
         XCTAssertEqual(chord(.prevTab), KeyChord(character: "[", [.command, .shift]), "prev tab = ⌘⇧[ (E1 re-scope)")
-        // E7 carry-over #5 / DECISIONS: ⌘⇧W reconciled Close Tab → Close WINDOW. Close Tab is now CHORD-LESS
+        // ⌘⇧W reconciled Close Tab → Close WINDOW (see DECISIONS.md). Close Tab is now CHORD-LESS
         // (reachable via the ⌘W cascade + palette/menu — Close Tab ships with no dedicated chord); ⌘⇧W = Close
         // Window.
         XCTAssertNil(chord(.closeTab), "close tab is chord-less (E7: ⌘⇧W moved to Close Window)")
         XCTAssertEqual(chord(.closeWindow), KeyChord(character: "w", [.command, .shift]), "close window = ⌘⇧W (E7)")
-        // E1 review fix: the sidebar toggle was ⌘B, which routed to the LEGACY
+        // The sidebar toggle was ⌘B, which routed to the LEGACY
         // `store.sidebarCollapsed` the native split shell never reads (a DEAD chord). Re-bound to
         // ⌘⇧L "Toggle Tabs Panel" (docs/ui-shell/spec/reference__keybindings.md:66), routed through a `chrome`
         // view-closure.
@@ -806,7 +807,7 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(chord(.selectTab(1)), KeyChord(character: "1", [.command]), "select tab 1 = ⌘1")
         XCTAssertEqual(chord(.selectTab(9)), KeyChord(character: "9", [.command]), "select tab 9 = ⌘9")
         XCTAssertEqual(chord(.find), KeyChord(character: "f", [.command]), "find = ⌘F (W14)")
-        // WB2 Warp-style Blocks chords.
+        // Warp-style Blocks chords.
         XCTAssertEqual(
             chord(.commandNavigator), KeyChord(character: "o", [.control, .command]), "navigator = ⌃⌘O",
         )
@@ -818,9 +819,9 @@ final class TreeCommandRoutingTests: XCTestCase {
         )
     }
 
-    // MARK: - View: WB2 block actions route to the active-pane store hooks
+    // MARK: - View: Warp-style block actions route to the active-pane store hooks
 
-    /// The WB2 navigator / jump-to-block actions route to the store's active-pane hooks (no closure path) —
+    /// The Warp-style navigator / jump-to-block actions route to the store's active-pane hooks (no closure path) —
     /// a no-op against a FakePaneSession (not a live terminal), but they must not trap or mutate the tree.
     /// Pins that the three new actions are wired to the store, not dropped. Proven to fail before routing.
     @MainActor
@@ -833,7 +834,7 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(store.tree, before, "the WB2 block actions are active-pane affordances — the tree is unchanged")
     }
 
-    /// WB3: the re-run-last + jump-to-failed actions route to the store's active-pane hooks WITHOUT trapping
+    /// The re-run-last + jump-to-failed actions route to the store's active-pane hooks WITHOUT trapping
     /// or mutating the tree. Against a `FakePaneSession` (not a live terminal) the hooks no-op, so this only
     /// pins tree-immutability + trap-freedom — it is BLIND to which store hook fires or the forward/backward
     /// mapping. The BEHAVIORAL dispatch (re-run bytes, the `.jumpPreviousFailed`/`.jumpNextFailed` direction
@@ -848,7 +849,7 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(store.tree, before, "the WB3 block actions are active-pane affordances — the tree is unchanged")
     }
 
-    /// WB3: pins the three new chords are exactly ⌃⌘R / ⌃⌘⇧[ / ⌃⌘⇧] (and so distinct from the existing
+    /// Pins the three new chords are exactly ⌃⌘R / ⌃⌘⇧[ / ⌃⌘⇧] (and so distinct from the existing
     /// ⌃⌘[ / ⌃⌘] block-jump + ⌘[ / ⌘] tab-cycle chords). The generic uniqueness guard
     /// (`testRegistryBindingsHaveUniqueIDsAndChords`) catches a collision; this pins the intended values.
     @MainActor
@@ -865,7 +866,7 @@ final class TreeCommandRoutingTests: XCTestCase {
         )
     }
 
-    // MARK: - View: find routes to the overlay toggle (W14 #5)
+    // MARK: - View: find routes to the overlay toggle
 
     /// `.find` with an explicit `toggleFind` override fires the closure (the root view's find-bar `@State`),
     /// NOT a store mutation — and leaves the tree untouched. Proven to fail before `.find` is routed.
@@ -890,9 +891,9 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(store.tree, before, "the store find path leaves the tree unchanged")
     }
 
-    // MARK: - View: E5 find-nav (⌘G/⇧⌘G) + global search (⇧⌘F) — chords + routing
+    // MARK: - View: find-nav (⌘G/⇧⌘G) + global search (⇧⌘F) — chords + routing
 
-    /// E5: pins the three new chords to their documented free defaults — ⌘G Find Next, ⇧⌘G Find Previous,
+    /// Pins the three new chords to their documented free defaults — ⌘G Find Next, ⇧⌘G Find Previous,
     /// ⇧⌘F Global Search. The generic uniqueness guard catches a COLLISION; this pins the intended values so a
     /// transposed modifier can't slip past it.
     func testE5FindNavAndGlobalSearchChordsAreTheDocumentedDefaults() {
@@ -904,7 +905,7 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(chord(.globalSearch), KeyChord(character: "f", [.command, .shift]), "global search = ⇧⌘F")
     }
 
-    /// E5: the find/search chords must be present in ``allBindings`` AND chord-unique against the whole
+    /// The find/search chords must be present in ``allBindings`` AND chord-unique against the whole
     /// table. The generic uniqueness test asserts no two share a chord over the FULL set; this adds the
     /// explicit presence of the `f`/`g` family.
     func testE5NewChordsArePresentAndChordUnique() {
@@ -957,14 +958,14 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(store.tree, before, "global search with no closure leaves the tree unchanged")
     }
 
-    // MARK: - View: Open Quickly (⌘⇧O) + the folded-in Jump-To (⌘J) (E11/WI-7)
+    // MARK: - View: Open Quickly (⌘⇧O) + the folded-in Jump-To (⌘J)
 
     /// `.openQuickly` WITH an explicit `openQuickly` override fires the closure (the app binds it to
     /// `overlay.toggleOpenQuickly(filter: .all)` — the merged All pill) and does NOT mutate the tree. The
     /// chord is GLOBAL (owned by the NSEvent dispatcher) only while the picker is HIDDEN; once it is open the
     /// dispatcher's `isOverlayCapturingKeys` gate yields the keyboard to the picker, so the pill / ⌘1–9 / Tab /
-    /// ⌘K chords are picker-local and never reach `route`. FAILS on pre-WI-7 code (`.openQuickly` was a dead
-    /// `break`, no closure arg).
+    /// ⌘K chords are picker-local and never reach `route`. Fails if `.openQuickly` regresses to a dead
+    /// `break` with no closure arg.
     @MainActor
     func testOpenQuicklyFiresToggleClosureAndDoesNotMutateTree() {
         let store = makeTreeStore()
@@ -1013,7 +1014,7 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(store.tree, before, "both are view overlays — the tree is unchanged")
     }
 
-    // MARK: - View: read-only (E17 ES-E17-1) — chord-less registry pin + active-pane routing
+    // MARK: - View: read-only — chord-less registry pin + active-pane routing
 
     /// `.toggleReadOnly` is registered, in the View category, and CHORD-LESS by design — it must never
     /// collide with a chord yet must not be a dead row. Revert-to-confirm-fail by
@@ -1043,7 +1044,7 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(store.tree, treeBefore, "read-only is a view-state gate — the tree is unchanged")
     }
 
-    // MARK: - View: Release Stuck Input (C5) — chord-less registry pin + active-pane routing
+    // MARK: - View: Release Stuck Input — chord-less registry pin + active-pane routing
 
     /// `.releaseStuckInput` is registered, in the View category, and CHORD-LESS by design (the chord-less
     /// idiom — like `view.readOnly`). Revert-to-confirm-fail by removing the registry case.
@@ -1075,7 +1076,7 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(store.tree, treeBefore, "a synthetic input release never mutates the tree")
     }
 
-    // MARK: - View: Paste as Keystrokes (C7) — ⌥⌘V registry pin + active-pane clipboard routing
+    // MARK: - View: Paste as Keystrokes — ⌥⌘V registry pin + active-pane clipboard routing
 
     /// `.pasteAsKeystrokes` is registered, in the View category, and bound to ⌥⌘V (FREE — `v` is in no other
     /// chord); the chord table resolves ⌥⌘V to it. Revert-to-confirm-fail by removing the registry row.
@@ -1166,9 +1167,9 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(activePane(store), firstPane, "⌘⌥J without an overlay jumps to the blocked pane")
     }
 
-    // MARK: - View: Hint Mode (E10 WI-9, ES-E10-6) — chord pins + active-pane routing
+    // MARK: - View: Hint Mode — chord pins + active-pane routing
 
-    /// Pins the three Hint Mode chords to their E10 defaults: ⌘⇧J Hint to Open, ⌘⇧Y Hint to Copy, and Hint to
+    /// Pins the three Hint Mode chords to their documented defaults: ⌘⇧J Hint to Open, ⌘⇧Y Hint to Copy, and Hint to
     /// Reveal CHORD-LESS (⌘⇧R is already slopdesk's Toggle Details chord). ALSO pins that peek-and-reply RE-POINTED
     /// ⌘⇧J → ⌘⌥J so Hint to Open could own ⌘⇧J (the carryover binding). The generic uniqueness guard catches a
     /// COLLISION; this pins the intended values so a transposed modifier can't slip past it. Revert-to-confirm-fail
@@ -1187,7 +1188,7 @@ final class TreeCommandRoutingTests: XCTestCase {
     }
 
     /// The four `j`/`y` chords must coexist chord-uniquely: ⌘J jump-to, ⌘⇧J hint-open, ⌘⌥J peek-and-reply, and
-    /// ⌘⇧Y hint-copy — the exact set E10 reshuffled. The generic uniqueness test asserts no two share a chord;
+    /// ⌘⇧Y hint-copy — the exact set the Hint Mode chords reshuffled. The generic uniqueness test asserts no two share a chord;
     /// this adds the explicit presence + disambiguation so the re-point can't silently drop or collide a chord.
     func testHintModeChordsArePresentAndChordUnique() {
         let chords = WorkspaceBindingRegistry.allBindings.compactMap(\.chord)
@@ -1212,9 +1213,9 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(store.tree, before, "the hint actions are active-pane affordances — the tree is unchanged")
     }
 
-    // L0: the cheat-sheet drift-guard tests (testTreeCheatSheetChordsEqualRegistryChords /
-    // testTreeCheatSheetSectionsAreWellFormed) were DELETED — they generated from
+    // The cheat-sheet drift-guard tests (testTreeCheatSheetChordsEqualRegistryChords /
+    // testTreeCheatSheetSectionsAreWellFormed) were removed — they generated from
     // `KeyboardCheatSheet.treeSections()`, a static on the deleted SwiftUI cheat-sheet overlay. The
     // registry chords themselves stay pinned by the other tests in this file; the rebuilt cheat sheet
-    // (L5) re-asserts the registry→sheet generation.
+    // re-asserts the registry→sheet generation.
 }

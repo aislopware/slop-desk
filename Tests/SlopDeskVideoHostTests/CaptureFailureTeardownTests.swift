@@ -2,17 +2,17 @@ import CoreVideo
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// CAPTURE-DEATH regression (stability audit 2026-07-10): `SCStreamDelegate`'s
-/// `stream(_:didStopWithError:)` used to ONLY log — the IDR heartbeat timer kept re-encoding the
-/// stale `cachedPixelBuffer` as synthetic crisp IDRs forever (window closed / display unplugged /
-/// TCC revoked / WindowServer reset), the session stayed `.streaming` (1 s heartbeat kept the
-/// client's stall scrim disarmed), and the pane froze permanently and silently.
+/// CAPTURE-DEATH regression: `SCStreamDelegate`'s `stream(_:didStopWithError:)` must not ONLY log
+/// — if the IDR heartbeat timer kept re-encoding the stale `cachedPixelBuffer` as synthetic crisp
+/// IDRs forever (window closed / display unplugged / TCC revoked / WindowServer reset), the
+/// session would stay `.streaming` (1 s heartbeat kept the client's stall scrim disarmed), and the
+/// pane would freeze permanently and silently.
 ///
 /// A real SCStream can NEVER exist under XCTest (hang-safety), so these tests drive the
 /// frameQueue-confined failure path through `WindowCapturer`'s headless test seams
 /// (`handleCaptureFailure` is exactly what the delegate callback invokes) and pin the session's
 /// pure teardown gate (`shouldDisconnectOnCaptureFailure`) the actor consults before reusing the
-/// C6 last-rung bye+stop teardown.
+/// last-rung bye+stop teardown.
 final class CaptureFailureTeardownTests: XCTestCase {
     /// Thread-safe counter for the `@Sendable` frame-handler / failure-callback closures.
     private final class Counter: @unchecked Sendable {

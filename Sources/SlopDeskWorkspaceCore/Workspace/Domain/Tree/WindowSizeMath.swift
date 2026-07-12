@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 import SlopDeskTerminal
 
-// MARK: - WindowSizeMath (E19 A29: pure window-sizing arithmetic)
+// MARK: - WindowSizeMath (pure window-sizing arithmetic)
 
 /// PURE window-sizing arithmetic for the `window-size` modes (`grid` / `frame` / `remember`). The
 /// single source of truth the (macOS-only, hang-unsafe) `NSWindow` glue calls to decide a new window's
@@ -57,9 +57,9 @@ public enum WindowSizeMath {
 
     /// The per-cell advance ratios used to DERIVE a fallback ``TerminalCellMetrics`` from the configured
     /// terminal font point size when no laid-out surface is available yet (so the grid math is right for the
-    /// user's actual font, not a hard-coded 8×16). Tuned so the default 13pt font resolves to ≈ 8×16pt — the
-    /// old hard-coded fallback — while a larger/smaller font scales proportionally (a typical monospace cell
-    /// is ≈ 0.6× the point size wide and ≈ 1.2× tall).
+    /// user's actual font, not a hard-coded 8×16). Tuned so the default 13pt font resolves to ≈ 8×16pt, while
+    /// a larger/smaller font scales proportionally (a typical monospace cell is ≈ 0.6× the point size wide and
+    /// ≈ 1.2× tall).
     public static let fallbackCellWidthRatio: CGFloat = 8.0 / 13.0
     public static let fallbackCellHeightRatio: CGFloat = 16.0 / 13.0
     /// The inclusive font-size band the fallback derivation clamps into — mirrors `PreferencesStore`'s
@@ -68,8 +68,9 @@ public enum WindowSizeMath {
     public static let maxFontPointSize: CGFloat = 32
 
     /// Derive a fallback ``TerminalCellMetrics`` from `fontPointSize` — used by the macOS window-size glue
-    /// ONLY before the active terminal surface has reported its real cell advance, so a non-default font no
-    /// longer falls back to a wrong 8×16. The font size is clamped into ``minFontPointSize`` …
+    /// ONLY before the active terminal surface has reported its real cell advance, so a non-default font still
+    /// resolves to a correctly-scaled cell instead of a hard-coded 8×16. The font size is clamped into
+    /// ``minFontPointSize`` …
     /// ``maxFontPointSize`` (ordered TERNARY clamp, NaN-faithful) before the ratios apply; the cell extents
     /// are a separate `*` per axis (NEVER `fma` — CLAUDE.md §2). `cols`/`rows` are placeholders (unused by the
     /// grid extent, which reads only `cellWidth`/`cellHeight`).
@@ -130,7 +131,7 @@ public enum WindowSizeMath {
     // swiftlint:disable function_parameter_count
 
     /// Resolve the CONTENT size a newly opened window should adopt, or `nil` when the autosaved frame should
-    /// stand (the `.remember` path). The ONE function the macOS `NSWindow` glue (WI-4) calls:
+    /// stand (the `.remember` path). The ONE function the macOS `NSWindow` glue calls:
     ///
     /// - ``WindowSizeMode/remember`` → `nil` — let `setFrameAutosaveName` restore the last frame; apply no
     ///   explicit size.

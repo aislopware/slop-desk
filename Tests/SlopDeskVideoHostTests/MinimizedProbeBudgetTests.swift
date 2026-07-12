@@ -26,8 +26,8 @@ final class MinimizedProbeBudgetTests: XCTestCase {
     }
 }
 
-/// PURE per-window AX-evidence ledger behind the probe (the phantom-window junk filter,
-/// 2026-07-11): fold semantics, the explicit not-listed verdict for swept-but-absent ids, and the
+/// PURE per-window AX-evidence ledger behind the probe (the phantom-window junk filter):
+/// fold semantics, the explicit not-listed verdict for swept-but-absent ids, and the
 /// closed-window prune. Headless — no AX.
 final class WindowAXLedgerTests: XCTestCase {
     func testFoldMarksSweptWindowsListedAndAbsentOffScreenOnesPhantom() {

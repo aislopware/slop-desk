@@ -54,7 +54,7 @@ final class OwdLateDetectorTests: XCTestCase {
         XCTAssertGreaterThan(over ?? 0, 10) // 40 − threshold(25) = 15
     }
 
-    /// THE MEASURED FALSE-LATE BAND (2026-06-12 live): packetize-stamped frames pick up 10-20ms
+    /// THE MEASURED FALSE-LATE BAND: packetize-stamped frames pick up 10-20ms
     /// of VideoSendLane pacing wobble during dense scroll — that band must never classify late
     /// (at the first deploy's 10ms floor it produced 153 lates/90s and depth flapping).
     func testPacingWobbleBandNeverLate() {

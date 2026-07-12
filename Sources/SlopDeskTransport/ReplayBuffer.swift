@@ -29,7 +29,7 @@ import SlopDeskProtocol
 /// - **INVARIANT — never silently drop un-acked data.** Dropping un-acked output to meet
 ///   the 256 MiB cap would break byte-exact resume (an unrecoverable client gap), so the
 ///   buffer **never evicts un-acked entries**. Offline memory is bounded *instead* by
-///   ``shouldPauseDrain``: when asserted, the host relay (WF-3) stops reading the PTY, so
+///   ``shouldPauseDrain``: when asserted, the host relay stops reading the PTY, so
 ///   the kernel PTY buffer backpressures the shell and **no droppable output is produced**.
 /// - **INVARIANT — dead-channel send = retain, never throw.** A retained entry is removed
 ///   only by a client ``ack(upTo:)``, never by a failed wire send. The host relay retains
@@ -161,7 +161,7 @@ public struct ReplayBuffer: Sendable {
     /// 2. retained bytes reached ``maxBackupBytes`` (256 MiB) regardless of online state — the
     ///    slow-consumer guard; still never drop un-acked data, hold the pause until acks drain.
     ///
-    /// While `true` the host (WF-3) stops `read()`ing the PTY master, so the kernel PTY buffer
+    /// While `true` the host stops `read()`ing the PTY master, so the kernel PTY buffer
     /// fills and backpressures the child — no droppable output is generated. This is what bounds
     /// memory while honoring the never-drop invariant.
     public var shouldPauseDrain: Bool {
@@ -195,7 +195,7 @@ public struct ReplayBuffer: Sendable {
     ///
     /// Idempotent and monotonic: a stale/duplicate ack (`seq <= ackedSeq`) is a no-op;
     /// ``ackedSeq`` only advances. Acking past ``highestSeq`` clears everything but CLAMPS
-    /// `ackedSeq` to ``highestSeq`` (audit 2026-07-10): the ack seq arrives unvalidated off the
+    /// `ackedSeq` to ``highestSeq``: the ack seq arrives unvalidated off the
     /// wire (WireMessage case 12 → MuxChannelSession → here), and an unclamped far-future value
     /// (e.g. `Int64.max` from a buggy/corrupt peer) would make every later legitimate ack fall
     /// into the `seq <= ackedSeq` no-op, so nothing is ever released again — append() accumulates
@@ -243,9 +243,9 @@ public struct ReplayBuffer: Sendable {
     /// line longer than the cap can't be split usefully, and the following entry already starts clean).
     private mutating func evictScrollbackToFit() {
         guard scrollbackBytes > scrollbackBytesCap, !scrollbackRing.isEmpty else { return }
-        // Count the eviction prefix WITHOUT mutating, then remove it in ONE bulk removeFirst
-        // (audit 2026-07-10 perf): per-entry removeFirst() in the loop was O(k*n) memmoves under
-        // the shared replayLock. The mux FIFO in ack(upTo:) already uses the same bulk idiom.
+        // Count the eviction prefix WITHOUT mutating, then remove it in ONE bulk removeFirst:
+        // per-entry removeFirst() in a loop would be O(k*n) memmoves under the shared replayLock.
+        // The mux FIFO in ack(upTo:) uses the same bulk idiom.
         var dropCount = 0
         var droppedBytes = 0
         while scrollbackBytes - droppedBytes > scrollbackBytesCap, dropCount < scrollbackRing.count {
@@ -301,7 +301,7 @@ public struct ReplayBuffer: Sendable {
         return result
     }
 
-    // MARK: Compatibility API (used by SlopDeskHost WF-3 stub + transport)
+    // MARK: Compatibility API (used by SlopDeskHost stub + transport)
 
     /// Assigns the next seq, retains the payload, and reports the resulting ``DrainState`` — the
     /// convenience form the host relay uses to act on backpressure in the same call.
@@ -353,13 +353,12 @@ public struct ReplayBuffer: Sendable {
     /// absorbs the remainder so every byte is emitted and no seq is reused. Empty `data` ⇒ no messages
     /// (the client's forward-jump tolerance in `deliverOutput` handles the seq gap).
     ///
-    /// The chunk size is CLAMPED to ``MuxFlowControl/maxOutputFramePayloadBytes`` (audit
-    /// 2026-07-10 #5): every emitted frame must satisfy the credit progress invariant
-    /// (wire bytes ≤ window/2), exactly like the live drain's `takeMergedFrame` cap. The old
-    /// hardcoded `max(32 KiB, …)` floor emitted 32768-byte payloads — 32781 wire bytes, 13 over
-    /// window/2: the documented "dead zone" that can park the sender against a receiver whose
-    /// pending credit never crosses the grant threshold (a silent pane right after cold
-    /// reattach). The clamp is safe on the seq budget: every ring entry was appended at
+    /// The chunk size is CLAMPED to ``MuxFlowControl/maxOutputFramePayloadBytes``: every emitted
+    /// frame must satisfy the credit progress invariant (wire bytes ≤ window/2), exactly like the
+    /// live drain's `takeMergedFrame` cap. Without the clamp, the `max(32 KiB, …)` floor alone can
+    /// emit 32768-byte payloads — 32781 wire bytes, 13 over window/2: the "dead zone" that can park
+    /// the sender against a receiver whose pending credit never crosses the grant threshold (a
+    /// silent pane right after cold reattach). The clamp is safe on the seq budget: every ring entry was appended at
     /// ≤ the same cap, so `ceil(count / maxChunks)` ≤ cap and the chunk count stays
     /// ≤ `maxChunks` even at the clamped size; the last-chunk absorb then never exceeds the
     /// cap either.

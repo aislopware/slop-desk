@@ -44,7 +44,7 @@ final class VideoMuxHeaderCodecTests: XCTestCase {
     }
 
     func testMuxFrameFragmentHeaderSizeIs23() {
-        // 19-byte live FrameFragmentHeader (grew from 15 with the host-send-timestamp) + 4-byte channelID.
+        // 19-byte live FrameFragmentHeader (15-byte base + 4-byte host-send-timestamp) + 4-byte channelID.
         XCTAssertEqual(MuxFrameFragmentHeader.size, 23)
         XCTAssertEqual(MuxFrameFragmentHeader.size, FrameFragmentHeader.size + 4)
     }
@@ -147,7 +147,7 @@ final class VideoMuxHeaderCodecTests: XCTestCase {
         XCTAssertEqual(rest, inner, "peeling the channelID yields the byte-identical today [tag][payload]")
     }
 
-    // MARK: Send/receive framing pins (copy-elimination refactor, 2026-07-10)
+    // MARK: Send/receive framing pins (copy-elimination)
 
     // These pin the EXACT wire bytes both transports construct, against an INDEPENDENT manual
     // construction (never the code under test called twice), so the single-allocation send path
@@ -263,12 +263,11 @@ final class VideoMuxHeaderCodecTests: XCTestCase {
         XCTAssertEqual(reader.remaining(), Data(), "a second remaining() is empty")
     }
 
-    // MARK: Differential — the Rust-routed codec is byte-identical to the prior native framing
+    // MARK: Differential — the codec is byte-identical to an independent reference implementation
 
-    /// The OLD native framing, reproduced verbatim from the pre-port `VideoMuxHeaderCodec` body
-    /// (`appendBE` for encode, `VideoByteReader` for decode). The live `VideoMuxHeaderCodec` now
-    /// delegates to the Rust core; this reference exists ONLY so the differential below can prove
-    /// the new path is byte-for-byte the same as the framing it replaced.
+    /// A framing implementation built independently of `VideoMuxHeaderCodec`
+    /// (`appendBE` for encode, `VideoByteReader` for decode), kept ONLY so the differential below can
+    /// prove the codec under test matches it byte-for-byte rather than trusting the codec to check itself.
     private enum NativeMuxReference {
         static func encode(channelID: UInt32, payload: Data) -> Data {
             var out = Data(capacity: 4 + payload.count)
@@ -297,13 +296,13 @@ final class VideoMuxHeaderCodecTests: XCTestCase {
         ]
         for channelID in channelIDs {
             for payload in payloads {
-                // Encode: the Rust-routed wire is byte-identical to the native reference.
+                // Encode: the codec's wire output is byte-identical to the independent reference.
                 let rust = VideoMuxHeaderCodec.encode(channelID: channelID, payload: payload)
                 let native = NativeMuxReference.encode(channelID: channelID, payload: payload)
                 XCTAssertEqual(rust, native, "encode differs for channelID \(channelID), \(payload.count)B")
 
-                // Decode the native bytes through the Rust path: same channelID + payload as the
-                // native decoder, proving the borrow+offset decode reproduces `remaining()`.
+                // Decode the reference-encoded bytes through the codec under test: same channelID +
+                // payload as the reference decoder, proving the borrow+offset decode reproduces `remaining()`.
                 let (rustID, rustPayload) = try VideoMuxHeaderCodec.decode(native)
                 let (nativeID, nativePayload) = try NativeMuxReference.decode(native)
                 XCTAssertEqual(rustID, nativeID)

@@ -1,8 +1,8 @@
 import Foundation
 
 /// The macOS virtual keyCodes of the **held** modifier keys — the ONE shared vocabulary for every
-/// input-path policy that treats a modifier key edge specially (C5, 2026-07-03). Pure data, no wire
-/// impact: keyCodes ride the existing `InputEvent.key` message unchanged.
+/// input-path policy that treats a modifier key edge specially. Pure data, no wire impact: keyCodes
+/// ride the existing `InputEvent.key` message unchanged.
 ///
 /// Used on BOTH ends of the GUI-video input path:
 /// - **Client** (`SlopDeskVideoClientSession.keySendCount`): a modifier key-UP is sent with the same

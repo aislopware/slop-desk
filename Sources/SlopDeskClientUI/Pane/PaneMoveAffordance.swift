@@ -1,15 +1,16 @@
-// PaneMoveAffordance — the "grab the pane and move it" affordance (REBUILD-V2).
+// PaneMoveAffordance — the "grab the pane and move it" affordance.
 //
 // A short drag handle (a `-` pill) is revealed near the TOP of a pane on hover; you grab it to move the
 // pane. Adapted to the remote-app rule: the drag mutates NOTHING in the store — it only
 // updates a view-local `PaneMoveDrag` that drives an overlay. Only on release does `SplitContainer` commit
 // exactly ONE store op, so the layout / terminal-grid / remote-window redraw fires once, not per drag frame.
 //
-// The drop is no longer just a swap. The cursor's position over the canvas resolves to a `PaneDropZone`:
+// The drop is not just a swap. The cursor's position over the canvas resolves to a `PaneDropZone`:
 //   • CENTER of a target pane  → SWAP the two panes (the original behaviour).
 //   • an EDGE band of a target  → RE-SPLIT: the dragged pane becomes a new column (left/right) or row
 //     (top/bottom) beside the target — dropping a side-by-side pair on each other's TOP/BOTTOM edge turns
-//     the side-by-side (`.horizontal`) split into a stacked (`.vertical`) one (the user's "dọc → ngang").
+//     the side-by-side (`.horizontal`) split into a stacked (`.vertical`) one — the re-orientation between
+//     side-by-side and stacked layout the user asked for.
 //   • the CONTAINER's outer gutter → DOCK: the pane becomes a full-span column/row on that whole edge.
 // Each zone draws a visually distinct preview so the committed action reads before release.
 //
@@ -79,8 +80,8 @@ struct PaneMoveHandle: View {
     /// overlaps the side dividers. Short panes get a proportionally smaller strip.
     private var stripWidth: CGFloat { Double.minimum(160, Double.maximum(56, Double(leafSize.width) * 0.4)) }
     /// 14pt strip flush to the leaf's top edge → the pill's centre sits 7pt in, INSIDE the pane's
-    /// top padding band. The old 3pt inset + 22pt strip put the pill at ~14pt — over the first line
-    /// of terminal text (user report 2026-07-12 "anchor đè content").
+    /// top padding band. A 3pt inset + 22pt strip would put the pill at ~14pt — over the first line
+    /// of terminal text, where it overlaps the pane's content.
     private let stripHeight: CGFloat = 14
 
     private var revealed: Bool { hovering || isDragging }
@@ -141,8 +142,9 @@ struct PaneMoveOverlay: View {
     // MARK: Zone-specific drop preview
 
     /// A distinct identity per resolved zone (incl. each re-split EDGE) so a zone change CROSS-FADES rather
-    /// than interpolating the half-pane slab's frame across the pane. The old morph swept a big rectangle
-    /// from one edge to another (heavy / dated); a quick opacity snap reads modern and stays out of the way.
+    /// than interpolating the half-pane slab's frame across the pane — animating the slab's frame across
+    /// edges would sweep a big rectangle around the pane, which reads as heavy; a quick opacity snap stays
+    /// out of the way.
     private var zoneKey: String {
         switch drag.zone {
         case .none: "none"

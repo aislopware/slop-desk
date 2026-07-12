@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskVideoProtocol
 
-/// E15 WI-2 — the pure ``FontScopeResolver`` that computes the "Computed" Font-Family scope value from the
+/// The pure ``FontScopeResolver`` that computes the "Computed" Font-Family scope value from the
 /// Global / per-theme / default layers. Pins the precedence (an explicitly-set active-slot per-theme font >
 /// Global > bundled default — `scopeFont ?? globalFont ?? bundled`; see the resolver doc for WHY scope wins
 /// over Global in slopdesk), headlessly. Each case checks the resolved family against the INDEPENDENTLY-known
@@ -11,7 +11,7 @@ import XCTest
 final class FontScopeResolverTests: XCTestCase {
     private let fallback = "SF Mono"
 
-    /// E15 review #4: an explicitly-set ACTIVE-slot per-theme font WINS over a non-empty Global value (so the
+    /// An explicitly-set ACTIVE-slot per-theme font WINS over a non-empty Global value (so the
     /// non-empty Global DEFAULT can no longer silently shadow a per-scope font).
     func testExplicitPerScopeFontWinsOverGlobal() {
         let resolved = FontScopeResolver.resolvedFamily(
@@ -23,7 +23,7 @@ final class FontScopeResolverTests: XCTestCase {
         XCTAssertEqual(resolved, "IBM Plex Mono", "an explicit per-scope font wins over the Global value")
     }
 
-    /// THE E15 review #4 regression: Global sits at its non-empty bundled DEFAULT (the caller passes the same
+    /// Regression guard: Global sits at its non-empty bundled DEFAULT (the caller passes the same
     /// value as both `global` and `fallback`), the user sets a Dark-scope font, and the active appearance is
     /// dark. The resolved family MUST be the Dark-scope font, not the Global default. FAILS on the old
     /// "Global wins everywhere" resolver (which returned the Global default ⇒ the Dark-scope font did nothing).
@@ -110,7 +110,7 @@ final class FontScopeResolverTests: XCTestCase {
         )
     }
 
-    // MARK: - Per-slot slug resolution (WI-8 scope tabs)
+    // MARK: - Per-slot slug resolution (scope tabs)
 
     /// The Light Theme tab keys `themeFonts` by the built-in id the light slot's `theme` resolves to under
     /// OS-light (`.system` → the OS-light default).
@@ -173,8 +173,8 @@ final class FontScopeResolverTests: XCTestCase {
             ),
             "JetBrains Mono", "OS-dark ⇒ the dark slot's per-theme font",
         )
-        // And an explicit active-slot per-theme font wins EVEN when Global is also set (E15 review #4 — scope
-        // over Global, so the non-empty Global default can't shadow it).
+        // And an explicit active-slot per-theme font wins EVEN when Global is also set — scope
+        // wins over Global, so the non-empty Global default can't shadow it.
         XCTAssertEqual(
             FontScopeResolver.resolvedFamily(
                 global: "Menlo", themeFonts: dual.themeFonts,

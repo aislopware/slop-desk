@@ -1,4 +1,4 @@
-// DispatcherTextBindingTests (E1/WI-7) — the ClientUI half of the dispatcher's text-binding / unbind branch:
+// DispatcherTextBindingTests — the ClientUI half of the dispatcher's text-binding / unbind branch:
 // the `KeyChordNormalizer` → `WorkspaceBindingRegistry.textBinding(for:)` / `isUnbound(_:)` chain the live
 // `WorkspaceKeyDispatcher.handle` walks BEFORE the action table. Exercised headlessly — the normalizer is
 // AppKit-free (takes the destructured NSEvent fields), so no `NSEvent` / monitor is constructed and the
@@ -6,7 +6,7 @@
 // (normalized from raw NSEvent fields) resolves the SAME persisted-chord-keyed text binding / unbind the
 // config parser stored — i.e. the reverse chord bridge lines up end to end at the ClientUI boundary.
 //
-// FAILS on the pre-WI-7 code: `textBinding(for:)` / `isUnbound(_:)` did not exist (the dispatcher had no
+// FAILS without `textBinding(for:)` / `isUnbound(_:)` (the dispatcher would have no
 // literal-byte / unbind branch).
 
 #if os(macOS)

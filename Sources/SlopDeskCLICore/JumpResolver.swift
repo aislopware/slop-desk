@@ -1,7 +1,7 @@
 import Foundation
 import SlopDeskWorkspaceCore
 
-// E20 WI-5 — `slopdesk jump` path resolution (PURE).
+// `slopdesk jump` path resolution (PURE).
 //
 // The headless core of the `jump [query]` / `--no-cd` command (see `docs/ui-shell/spec/reference__cli.md`): resolve a
 // target directory over the client's frecency database. No I/O, no store, no socket, no SwiftUI — the

@@ -1,21 +1,19 @@
 // A strong, SIMD-friendly 64-bit hash of an NV12 video frame, used by the host to detect a
 // pixel-identical re-delivery and skip re-encoding it (static-frame suppression).
 //
-// This is the resurrected, native-Swift port of the Rust `slopdesk-core::frame_hash` reference
-// (`StreamHasher` / `hash_nv12`) — the all-Swift migration deletes the Rust core + FFI boundary.
-// The entire hash is PURE SCALAR Swift: the lane seeding, the 32-byte main loop, the `< 32`-byte
-// tail, the cross-row buffering, and the finalize all run in `StreamHasher` here.
+// The algorithm mirrors the reference xxHash64 (`StreamHasher` / `hash_nv12` naming). The entire
+// hash is PURE SCALAR Swift: the lane seeding, the 32-byte main loop, the `< 32`-byte tail, the
+// cross-row buffering, and the finalize all run in `StreamHasher` here.
 //
 // ## Why no NEON kernel
 //
-// An xxHash64-block NEON kernel once folded the aligned 32-byte blocks via `CSlopDeskSIMD`, but
-// it was MEASURED 3.4× SLOWER than the scalar fold on Apple Silicon (≈730µs vs 213µs per 1080p
-// frame): xxHash64 is 64-bit-multiply-heavy and aarch64 NEON has no native 64-bit lane multiply
-// (the kernel had to synthesize each `vmulq_u64` from ~6 ops), while the scalar `mul` is 1–3
-// cycles. So frame hashing runs scalar; the NEON kernel and its `updateNeon`/`foldAlignedBlocks`
-// seam were removed. (The GF(2^8) NEON kernel STAYS — byte-table lookup IS NEON-friendly.) The two
-// public entry points (`hashNV12` pointer, `hashNV12Scalar` array) both fold scalar and are proven
-// byte-identical by `FrameHashNeonDifferentialTests`.
+// A NEON kernel folding the aligned 32-byte xxHash64 blocks via `CSlopDeskSIMD` would be 3.4×
+// SLOWER than the scalar fold on Apple Silicon (≈730µs vs 213µs per 1080p frame): xxHash64 is
+// 64-bit-multiply-heavy and aarch64 NEON has no native 64-bit lane multiply (each `vmulq_u64`
+// synthesizes from ~6 ops), while the scalar `mul` is 1–3 cycles. So frame hashing stays scalar-only
+// — no `updateNeon`/`foldAlignedBlocks` seam. (The GF(2^8) NEON kernel is a different case: byte-table
+// lookup IS NEON-friendly.) The two public entry points (`hashNV12` pointer, `hashNV12Scalar` array)
+// both fold scalar and are proven byte-identical by `FrameHashNeonDifferentialTests`.
 //
 // ## Why this exists
 //
@@ -273,7 +271,7 @@ func finalizeTail(_ hash0: UInt64, _ tail: UnsafeBufferPointer<UInt8>, _ totalLe
 /// the array-based `hashNV12Scalar` (drives the same `StreamHasher` walk from Swift arrays so the
 /// test can exercise it without raw pointers). The differential test pins the two equal.
 public enum FrameHasher {
-    // MARK: - Pointer public entry (matches the old `aisd_frame_hash_nv12` ABI)
+    // MARK: - Pointer public entry (matches the `aisd_frame_hash_nv12` ABI naming)
 
     /// Hashes an NV12 frame's already-locked luma + interleaved-chroma planes into one strong 64-bit
     /// value over BORROWED plane pointers (zero-copy). Reads ONLY the first `width` bytes of each

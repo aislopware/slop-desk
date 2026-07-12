@@ -1,8 +1,8 @@
-// LinkActionActuatorTests (E11 WI-4) — pin the extracted `LinkActionActuator`, the ONE thin platform dispatch
-// the Jump-To / Open-Quickly "Current" rows share. WI-4 is a behavior-preserving MOVE out of `JumpToView`, so
+// LinkActionActuatorTests — pin the extracted `LinkActionActuator`, the ONE thin platform dispatch
+// the Jump-To / Open-Quickly "Current" rows share. This is a behavior-preserving MOVE out of `JumpToView`, so
 // these tests assert the *routing* the extraction must preserve (not the move itself):
 //   - `.changeDirectoryPTY` injects the VERBATIM `cd <quoted>` line that falls back to the PARENT for a file
-//     (the E10 review fix) down the pane's `inputSink` — proven through the FULL `rowActions` → `LinkActionPolicy`
+//     down the pane's `inputSink` — proven through the FULL `rowActions` → `LinkActionPolicy`
 //     → `actuate` path, so a regression to a bare `cd '<file>'` flips the test (revert-to-confirm-fail);
 //   - `.openHost` / `.revealHost` fire the pane model's host-RPC callbacks (verbs 9 / 10) with the raw path;
 //   - `.copyPathClient` writes the CLIENT pasteboard; `.nothing` is a true no-op (no sink / callback / clip);
@@ -53,7 +53,7 @@ final class LinkActionActuatorTests: XCTestCase {
         )
     }
 
-    /// `.openHost` fires the pane model's host-open callback (E10 verb 9) with the raw path.
+    /// `.openHost` fires the pane model's host-open callback (verb 9) with the raw path.
     func testOpenHostFiresHostOpenCallbackWithRawPath() {
         let model = TerminalViewModel()
         var opened: [String] = []
@@ -64,7 +64,7 @@ final class LinkActionActuatorTests: XCTestCase {
         XCTAssertEqual(opened, ["/Users/me/main.swift"], "open routes to the host-open seam, raw path")
     }
 
-    /// `.revealHost` fires the pane model's host-reveal callback (E10 verb 10) with the raw path.
+    /// `.revealHost` fires the pane model's host-reveal callback (verb 10) with the raw path.
     func testRevealHostFiresHostRevealCallbackWithRawPath() {
         let model = TerminalViewModel()
         var revealed: [String] = []

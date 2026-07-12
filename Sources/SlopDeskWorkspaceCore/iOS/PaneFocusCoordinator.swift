@@ -135,14 +135,15 @@ public final class PaneFocusCoordinator {
         scheduleBecome(incoming, id: id, token: token)
     }
 
-    /// Re-asserts first responder for `id` even when the bookkeeping already records it as focused
-    /// (BUG-K). `focus(_:)` short-circuits a redundant re-claim via `syncFocusCoordinator`'s
-    /// `focusedPane != focused` guard; but on a TAB SWITCH the new tab's host can register while the
-    /// coordinator's `focusedPane` still equals the new id from a prior life (or be (re)mounted without
-    /// holding UIKit first responder), so a guarded `focus(_:)` would skip the claim and the new tab's
-    /// terminal never takes the keyboard. This forces a fresh generation + re-claim regardless of the
-    /// current bookkeeping; the ``FocusGenerationGuard`` token semantics are unchanged (still minted by
-    /// `begin()`, still reject a superseded async callback), so a later `focus(_:)` still wins.
+    /// Re-asserts first responder for `id` even when the bookkeeping already records it as focused.
+    /// `focus(_:)` short-circuits a redundant re-claim via `syncFocusCoordinator`'s
+    /// `focusedPane != focused` guard, which is wrong on a tab switch: the new tab's host can
+    /// register while the coordinator's `focusedPane` still equals the new id from a prior life (or
+    /// gets (re)mounted without holding UIKit first responder), so a guarded `focus(_:)` would skip
+    /// the claim and the new tab's terminal never takes the keyboard. This forces a fresh generation
+    /// + re-claim regardless of the current bookkeeping; the ``FocusGenerationGuard`` token semantics
+    /// are unchanged (still minted by `begin()`, still reject a superseded async callback), so a
+    /// later `focus(_:)` still wins.
     public func reassertFocus(_ id: PaneID) {
         let token = guardState.begin()
         if let outgoing = focusedPane, outgoing != id {

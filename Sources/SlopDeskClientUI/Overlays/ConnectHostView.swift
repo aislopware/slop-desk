@@ -1,4 +1,4 @@
-// ConnectHostView — the Connect-to-Host editor (E2 / WI-5, ES-E2-6), NATIVE SwiftUI. Everything OUTSIDE the
+// ConnectHostView — the Connect-to-Host editor, NATIVE SwiftUI. Everything OUTSIDE the
 // workspace + panes is native chrome (the directive that also made Settings a native `NavigationSplitView`):
 // so this is a native `.sheet` body — a grouped `Form` of native `TextField`s + a native button bar — NOT the
 // old bespoke `Scrim` + `OverlayPanel` card. Presented as a real macOS sheet by `OverlayHostView`.
@@ -26,7 +26,7 @@ struct ConnectHostView: View {
     @State private var showAdvanced = false
     /// Pre-focuses the host field on appear (the first thing a user edits).
     @FocusState private var hostFocused: Bool
-    /// The in-flight connect Task (stability audit). Stored so Cancel / sheet teardown CANCEL it — the old
+    /// The in-flight connect Task. Stored so Cancel / sheet teardown CANCEL it — the old
     /// fire-and-forget `Task { await connect(); closeConnect() }` outlived the sheet and, when a slow
     /// connect finally resolved, unconditionally dismissed a freshly REOPENED sheet mid-edit. Belt and
     /// suspenders with the ``OverlayCoordinator/connectGeneration`` completion guard below.
@@ -89,7 +89,7 @@ struct ConnectHostView: View {
 
     /// Validate-then-connect: no-op unless the form parses (the button is also disabled then), then fire the
     /// app's `connect()` and close. Never force-unwraps — `canConnect` gates here and `connect()` re-guards
-    /// the parse internally. The close is DOUBLE-guarded (stability audit): the Task is stored + cancelled on
+    /// the parse internally. The close is DOUBLE-guarded: the Task is stored + cancelled on
     /// Cancel/teardown, AND the completion only closes if the coordinator's `connectGeneration` still matches
     /// the presentation this Task started under — a slow connect resolving after cancel + reopen must not
     /// dismiss the fresh sheet.

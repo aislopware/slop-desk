@@ -2,12 +2,12 @@ import Foundation
 
 /// Forward-error-correction over a frame's data fragments.
 ///
-/// doc 17 §3.6 calls for ~20% parity per frame (Sunshine default). The live engine is a native
-/// Swift systematic Reed-Solomon erasure codec over GF(2^8) (the all-Swift migration deletes the
-/// former Rust core + FFI boundary): ``RustReedSolomonFEC`` is the production ``FECScheme``. With
-/// `m == 1` (one parity per group) it is **byte-identical** to the legacy XOR/length-prefix wire
-/// format, so a mixed fleet still interoperates and the golden vectors are unchanged. Multi-loss
-/// (`m >= 2`) recovers up to `m` lost fragments per group.
+/// doc 17 §3.6 calls for ~20% parity per frame (Sunshine default). ``RustReedSolomonFEC`` is the
+/// production ``FECScheme``: a native Swift systematic Reed-Solomon erasure codec over GF(2^8) —
+/// the name is a holdover, there is no Rust or FFI boundary in this path. With `m == 1` (one
+/// parity per group) it is **byte-identical** to the plain XOR/length-prefix wire format, so a
+/// mixed fleet still interoperates and the golden vectors hold. Multi-loss (`m >= 2`) recovers up
+/// to `m` lost fragments per group.
 ///
 /// Contract: ``parity(forDataFragments:)`` produces parity fragments from the frame's data
 /// fragments; ``recover(dataFragments:parityFragments:)`` fills any `nil` (lost) data fragment it
@@ -16,7 +16,7 @@ import Foundation
 public protocol FECScheme: Sendable {
     /// The DEFAULT group size: how many data fragments share one parity fragment when no explicit
     /// per-frame group size is supplied. With `groupSize = 5` the overhead is 1/5 = 20% parity,
-    /// matching the doc-17 target. WF-4 adaptive FEC drives a per-frame group size through the
+    /// matching the doc-17 target. Adaptive FEC drives a per-frame group size through the
     /// `groupSize:`-parameterized methods; this value is the tier-0 / convenience default.
     var groupSize: Int { get }
 
@@ -35,8 +35,8 @@ public protocol FECScheme: Sendable {
 }
 
 public extension FECScheme {
-    /// Convenience: parity using the scheme's configured default ``groupSize``. Keeps pre-WF-4
-    /// callers (no explicit group size) compiling and behaving identically.
+    /// Convenience: parity using the scheme's configured default ``groupSize``. Keeps
+    /// callers with no explicit group size compiling and behaving identically.
     func parity(forDataFragments dataFragments: [Data]) -> [Data] {
         parity(forDataFragments: dataFragments, groupSize: groupSize)
     }
@@ -183,9 +183,9 @@ public final class RustReedSolomonFEC: FECScheme, @unchecked Sendable {
     }
 
     /// XOR of the length-prefixed encodings of a group (`data[range]`), zero-padded to the longest
-    /// member, folded through the GF backend's `xorAdd`. Byte-identical to the legacy
-    /// `XORParityFEC.xorEncoded` (field addition is XOR regardless of the backend). Frames each
-    /// member directly into the accumulator with no per-member `[UInt8]` array kept around.
+    /// member, folded through the GF backend's `xorAdd`. Byte-identical to a plain length-prefixed
+    /// XOR encode (field addition is XOR regardless of the backend). Frames each member directly
+    /// into the accumulator with no per-member `[UInt8]` array kept around.
     private func gfXorEncoded(_ data: [Data], range: Range<Int>) -> Data {
         // Width = the widest length-prefixed member = 4 + max member byte count.
         var maxLen = 0
@@ -220,11 +220,11 @@ public final class RustReedSolomonFEC: FECScheme, @unchecked Sendable {
     }
 
     /// `parity XOR (encoded survivors)` = the encoded form of the single missing member, zero-padded,
-    /// then length-stripped → the recovered shard. Byte-identical to the legacy
-    /// `XORParityFEC.xorRecover` but folds straight from the `Data` survivors (`data[range]`, present
-    /// only) + the parity `Data`, with NO `[UInt8]`↔`Data` round-trips and ONE reused accumulator.
-    /// Survivors are length-prefixed on the fly into the accumulator; `nil` on a corrupt length
-    /// prefix (validate-then-drop), identical to the old strip step.
+    /// then length-stripped → the recovered shard. Byte-identical to a plain XOR recover but folds
+    /// straight from the `Data` survivors (`data[range]`, present only) + the parity `Data`, with NO
+    /// `[UInt8]`↔`Data` round-trips and ONE reused accumulator. Survivors are length-prefixed on the
+    /// fly into the accumulator; `nil` on a corrupt length prefix (validate-then-drop), matching
+    /// ``stripLengthPrefix(_:)``'s semantics.
     private func gfXorRecoverHole(parity: Data, data: [Data?], range: Range<Int>) -> Data? {
         // Width = max(parity.count, max over present survivors of 4 + survivor.count).
         var width = parity.count
@@ -436,7 +436,7 @@ public final class RustReedSolomonFEC: FECScheme, @unchecked Sendable {
     }
 }
 
-/// Compatibility alias: the legacy name maps to the native Reed-Solomon scheme so the many
-/// `XORParityFEC(...)` construction/test sites keep building UNCHANGED while the live FEC engine is
-/// the native Swift codec. `m == 1` keeps the wire byte-identical to the old native Swift XOR.
+/// Compatibility alias: `XORParityFEC` names the type so the many `XORParityFEC(...)` construction
+/// and test sites keep building unchanged, even though the FEC engine behind it is this native
+/// Swift Reed-Solomon codec. `m == 1` keeps the wire byte-identical to plain XOR.
 public typealias XORParityFEC = RustReedSolomonFEC

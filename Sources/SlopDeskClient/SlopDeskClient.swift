@@ -39,7 +39,7 @@ import SlopDeskTransport
 /// ``connect(...)`` must become conditional on a host-authoritative returning flag.
 ///
 /// ### iOS lifecycle seam ([17] §2.5, [18] §H)
-/// ``pause()`` / ``resume()`` are the hooks WF-8 wires to UIKit `didEnterBackground` /
+/// ``pause()`` / ``resume()`` are the hooks wired to UIKit `didEnterBackground` /
 /// `willEnterForeground`. `pause()` proactively closes the transport (iOS tears the TCP down a
 /// few seconds after backgrounding anyway — see DECISIONS §reconnect); `resume()` triggers a
 /// reconnect with the preserved `sessionID` + seq. Per the reconnect note above, on the mux path
@@ -70,7 +70,7 @@ public actor SlopDeskClient {
         /// (`0 none / 1 permission / 2 waitingForInput / 3 other`), `label` an optional human chip
         /// string. Surfaced verbatim; the UI maps `state`/`kind` back to a `ClaudeStatus`.
         case claudeStatus(state: UInt8, kind: UInt8, label: String)
-        /// A per-command Warp-style "Block" METADATA update (WB1 wire type 28, host → client). The
+        /// A per-command Warp-style "Block" METADATA update (wire type 28, host → client). The
         /// host segments the outbound PTY byte stream into per-command blocks and emits this on each
         /// create / update / complete; it carries ONLY the metadata (NOT the output bytes). The UI
         /// upserts a per-pane block keyed by `index` (the request key for ``blockOutput``). A running
@@ -87,12 +87,12 @@ public actor SlopDeskClient {
             commandText: String,
             promptOrdinal: UInt32,
         )
-        /// A Block's captured OUTPUT bytes (WB1 wire type 29, host → client), in reply to a
+        /// A Block's captured OUTPUT bytes (wire type 29, host → client), in reply to a
         /// ``requestBlockOutput(index:)``. `output` is the RAW captured VT bytes (control sequences
         /// preserved — the UI strips them for clipboard). An EMPTY `output` means the block was evicted
         /// from the host's ring or never existed → the UI shows "output no longer available", never hangs.
         case blockOutput(index: UInt32, output: Data)
-        /// A host metadata reply (E4 wire type 30, host → client), in reply to a
+        /// A host metadata reply (wire type 30, host → client), in reply to a
         /// ``requestMetadata(requestID:verb:payload:)``. `requestID` echoes the request so the client's
         /// ``MetadataRequestRegistry`` correlates it to one of several in-flight requests; `status` is the
         /// raw ``MetadataStatus`` byte (0 ok / 1 notFound / 2 error / 3 unsupportedVerb — an unknown
@@ -107,12 +107,12 @@ public actor SlopDeskClient {
         /// channel). Surfaced so the chrome can show a latency badge and lag can be
         /// attributed (network RTT vs host stall vs client render).
         case rtt(milliseconds: Double)
-        /// The host PTY's termios `ECHO` edge (E17 ES-E17-4, wire type 31, host → client). `enabled == true`
+        /// The host PTY's termios `ECHO` edge (wire type 31, host → client). `enabled == true`
         /// is the canonical echoing prompt; `enabled == false` is a no-echo hidden-password prompt (`sudo` /
         /// `ssh` / `read -s`). The macOS UI engages process-global Secure Keyboard Entry while `false`. Emitted
         /// only on the edge (the host's `EchoModeDetector` suppresses chatter).
         case inputEcho(enabled: Bool)
-        /// An OSC 9;4 taskbar-style PROGRESS update (E14/K1, wire type 32, host → client). The host parses
+        /// An OSC 9;4 taskbar-style PROGRESS update (wire type 32, host → client). The host parses
         /// the `ESC]9;4;<state>[;<pct>]` subtype out of the OSC-9 stream and forwards it on the CONTROL
         /// channel. The decoder carries the RAW state byte verbatim (a faithful byte round-trip keeps the
         /// golden vector stable); this event carries the byte VALIDATED at the client boundary
@@ -173,7 +173,7 @@ public actor SlopDeskClient {
     // MARK: Surfaced streams
 
     /// Inbox of delivered-but-not-yet-consumed `output` payloads, drained in batches by the
-    /// single consumer via ``takeOutputBatch()``. Replaces the old per-chunk `AsyncStream<Data>`
+    /// single consumer via ``takeOutputBatch()``. Batched rather than a per-chunk `AsyncStream<Data>`
     /// so a backlog crosses to the consumer as ONE batch (one MainActor hop, one render flush)
     /// instead of one job per wire chunk. Each entry carries its wire byte count: taking a batch
     /// CREDITS those bytes back to the host (credit-at-consumption), so the inbox can never hold
@@ -190,7 +190,7 @@ public actor SlopDeskClient {
 
     /// Wakeups for the output inbox: one (coalesced) signal per append burst.
     ///
-    /// **SINGLE consumer only** (same contract the old `output` stream had): the consumer
+    /// **SINGLE consumer only**: the consumer
     /// loops `for await _ in outputWakeups { await takeOutputBatch() … }` and MUST do one
     /// final ``takeOutputBatch()`` after the loop exits — a tail appended immediately
     /// before the stream finishes (exit/close) is otherwise lost. `bufferingNewest(1)`
@@ -219,7 +219,7 @@ public actor SlopDeskClient {
     /// (the reconnect supervisor, the chrome view-model, …) sees *every* event. This is a
     /// live multicast: a late subscriber sees only events from its subscription point on.
     /// (It is NOT a single shared `AsyncStream`; that would deliver each event to exactly
-    /// one of the loops, nondeterministically — the bug this replaces.)
+    /// one of the loops, nondeterministically.)
     public nonisolated var events: AsyncStream<Event> { eventBroadcaster.subscribe() }
 
     // MARK: Connection target (remembered for reconnect)
@@ -297,10 +297,10 @@ public actor SlopDeskClient {
     /// real drop path (``forceDropForTesting()`` / transport failing on its own) leaves this `false`.
     /// DEPTH counter, not a bare Bool: two overlapping teardowns — a reentrant connect()/pause() whose
     /// teardownTransport awaits across another — must not clobber each other's suppression window. A
-    /// shared Bool let the inner scope's `= false` clear the outer's `= true`, briefly un-suppressing
-    /// handleStreamEnded so a self-inflicted stream-end surfaced a spurious `.disconnected` + redundant
-    /// reconnect. Each scope inc/decrements only its own, so depth stays > 0 for the whole span any
-    /// teardown is in flight (R13 #11).
+    /// shared Bool would let the inner scope's `= false` clear the outer's `= true`, briefly
+    /// un-suppressing handleStreamEnded so a self-inflicted stream-end surfaces a spurious
+    /// `.disconnected` + redundant reconnect. Each scope inc/decrements only its own, so depth stays
+    /// > 0 for the whole span any teardown is in flight.
     private var tearingDownDepth = 0
     private var tearingDown: Bool { tearingDownDepth > 0 }
     private var lastSentResize: (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)?
@@ -314,13 +314,13 @@ public actor SlopDeskClient {
     /// concurrent caller. Mirrors exactly the trio ``seedResumeIdentity(sessionID:seq:)`` mutates
     /// (`sessionID`, `highestContiguousSeq`, `highestSeqFed`).
     ///
-    /// Closes seed-resume-identity-race (docs/DECISIONS 2026-07-11): the OLD production path built
-    /// the client, then fired an UNAWAITED `Task { await c.seedResumeIdentity(...) }` before
-    /// returning it — nothing ordered that seed job's actor-hop before a separately-scheduled
-    /// `connect()` Task's OWN actor-hop, so a cold-launch restore of many panes could lose the race
-    /// and silently start a fresh session instead of reattaching. Seeding inside `init` removes the
-    /// async gap entirely: there is no point after construction where the fields are still
-    /// unseeded, so a racing `connect()` can never observe stale state.
+    /// Seeds inside `init` to close a race (docs/DECISIONS, seed-resume-identity): seeding via an
+    /// UNAWAITED `Task { await c.seedResumeIdentity(...) }` after construction orders nothing between
+    /// that seed job's actor-hop and a separately-scheduled `connect()` Task's OWN actor-hop, so a
+    /// cold-launch restore of many panes can lose the race and silently start a fresh session instead
+    /// of reattaching. Init-time seeding removes the async gap entirely: there is no point after
+    /// construction where the fields are still unseeded, so a racing `connect()` can never observe
+    /// stale state.
     public typealias ResumeSeed = (sessionID: UUID, lastSeq: Int64)
 
     /// - Parameters:
@@ -330,7 +330,7 @@ public actor SlopDeskClient {
     ///     `WorkspaceStore.liveMakeSession` construction site, never on the hot path.
     ///   - resumeSeed: an optional restored-pane identity, applied synchronously before this
     ///     initializer returns (see ``ResumeSeed``). `nil` (the default) is the ordinary fresh-shell
-    ///     path — no behavior change from before this parameter existed.
+    ///     path.
     @preconcurrency
     public init(
         ackInterval: Duration = SlopDeskClient.defaultAckInterval,
@@ -350,7 +350,7 @@ public actor SlopDeskClient {
 
     /// Attaches a feeder that mirrors every delivered `output` payload to a terminal
     /// surface (in addition to the ``output`` stream). The closure runs on the actor;
-    /// for the GUI surface WF-5 will hop to `@MainActor` inside it.
+    /// a GUI surface should hop to `@MainActor` inside it.
     @preconcurrency
     public func setSurfaceFeed(_ feed: @escaping @Sendable (Data) -> Void) {
         surfaceFeed = feed
@@ -361,19 +361,18 @@ public actor SlopDeskClient {
     /// Pre-seeds the resume identity so the NEXT ``connect(...)`` presents this session
     /// UUID and last-received seq to the host (the SLOPDESK_DETACH_ENABLED path).
     ///
-    /// NOT the production restore-a-pane path anymore (seed-resume-identity-race,
-    /// docs/DECISIONS 2026-07-11): ``LivePaneSession/makeTerminal(_:makeClient:makeInspector:target:)``
-    /// now threads a restored ``PaneSpec/resumeSessionID`` through
-    /// ``init(ackInterval:makeTransport:resumeSeed:)`` instead, because calling this method requires
-    /// an actor hop (`await`) that a separately-scheduled `connect()` Task is not ordered against —
-    /// exactly the race this method's doc used to wave off as "the only safe window". Init-time
-    /// seeding has no such window: the fields are set before the object is ever handed to a second
-    /// caller. This method remains for the CLI (`slopdesk-client`, a single sequential `Task` with no
-    /// competing connect job — not racy there) and for tests that seed after construction.
+    /// NOT the production restore-a-pane path (seed-resume-identity-race, docs/DECISIONS):
+    /// ``LivePaneSession/makeTerminal(_:makeClient:makeInspector:target:)`` threads a restored
+    /// ``PaneSpec/resumeSessionID`` through ``init(ackInterval:makeTransport:resumeSeed:)`` instead,
+    /// because calling this method requires an actor hop (`await`) that a separately-scheduled
+    /// `connect()` Task is not ordered against. Init-time seeding has no such window: the fields are
+    /// set before the object is ever handed to a second caller. This method remains for the CLI
+    /// (`slopdesk-client`, a single sequential `Task` with no competing connect job — not racy there)
+    /// and for tests that seed after construction.
     ///
     /// Design: seeding into the existing actor state (`sessionID` / `highestContiguousSeq`)
     /// means the established ``connect(...)`` line `let resume = sessionID ?? WireMessage.newSessionID`
-    /// picks it up with no new parameter — the connect path is unmodified. Calling this BEFORE
+    /// picks it up with no new parameter — the connect path needs no change. Calling this BEFORE
     /// `connect()` is the only safe window: `connect()` immediately reads both fields on the fast
     /// (pre-suspension) path. Calling it after `connect()` has no effect (the live session has
     /// already presented its own learned identity). Must only be called before the first connect.
@@ -429,9 +428,9 @@ public actor SlopDeskClient {
             // reattach (PATH A, `performReattach`) never reads `channelOpen.initialCwd` — it rebinds the
             // live shell, so the hint is ignored and the shell's real cwd is preserved. Only a FRESH
             // respawn (PATH B/C, `spawnFreshShell`, taken when the detached session is gone / TTL-expired)
-            // reads it — and there we WANT the pane's project dir. Nil-ing it on reconnect (the old
-            // behavior) made every fresh respawn land in `$HOME`, losing the working directory and
-            // collapsing the cwd-derived pane/tab title to "Terminal".
+            // reads it — and there we WANT the pane's project dir. Nil-ing it on reconnect would make
+            // every fresh respawn land in `$HOME`, losing the working directory and collapsing the
+            // cwd-derived pane/tab title to "Terminal".
             await configurable.setInitialCwd(initialCwd)
         }
         do {
@@ -472,7 +471,7 @@ public actor SlopDeskClient {
         //
         // The correct signal is the HOST-AUTHORITATIVE `resumeFromSeq` from the handshake ack, NOT
         // the client-side `returningClient` flag (computed as `resume != newSessionID`, so ALWAYS
-        // true on reconnect — the old `!returning` gate skipped the reset exactly when it was most
+        // true on reconnect — a `!returning` gate would skip the reset exactly when it is most
         // needed; the dedup-regression test pins this).
         //
         //   • resumeFromSeq == 0  →  the mux path's constant answer (the openAck carries only
@@ -490,17 +489,16 @@ public actor SlopDeskClient {
             highestSeqFed = 0
             highestContiguousSeq = 0
             ackPending = false
-            // KEEP the un-consumed inbox bytes (audit 2026-07-10 #6). `deliverOutput` advanced
-            // `highestContiguousSeq` at wire-ARRIVAL time, and this connect already presented it
-            // as `lastReceivedSeq` — so on a genuine reattach the host will NEVER resend these
-            // bytes: the inbox copy is the only copy, and the old `removeAll()` here made a
-            // silent, permanent scrollback gap at every reconnect that raced an undrained burst
-            // (deterministically so on iOS pause→resume). The entries stay FIFO-ahead of the new
-            // life's output — correct for PATH A (tail of the same shell) and for PATH B (the
-            // grid keeps the old session's content; its tail still belongs before the fresh
-            // shell's bytes). Their wire-credit is ZEROED because `takeOutputBatch` credits taken
-            // entries to the CURRENT transport — the old wipe's actual motivation — and the NEW
-            // channel's peer never sent those bytes (a phantom windowAdjust over-grant otherwise).
+            // KEEP the un-consumed inbox bytes. `deliverOutput` advanced `highestContiguousSeq` at
+            // wire-ARRIVAL time, and this connect already presented it as `lastReceivedSeq` — so on a
+            // genuine reattach the host will NEVER resend these bytes: the inbox copy is the only copy,
+            // and a `removeAll()` here would make a silent, permanent scrollback gap at every reconnect
+            // that races an undrained burst (deterministically so on iOS pause→resume). The entries
+            // stay FIFO-ahead of the new life's output — correct for PATH A (tail of the same shell)
+            // and for PATH B (the grid keeps the old session's content; its tail still belongs before
+            // the fresh shell's bytes). Their wire-credit is ZEROED because `takeOutputBatch` credits
+            // taken entries to the CURRENT transport, and the NEW channel's peer never sent those bytes
+            // (a phantom windowAdjust over-grant otherwise).
             if !outputInbox.isEmpty {
                 outputInbox = outputInbox.map { (bytes: $0.bytes, wireBytes: 0) }
             }
@@ -519,7 +517,7 @@ public actor SlopDeskClient {
             try? await transport.sendResize(cols: size.cols, rows: size.rows, pxWidth: size.px, pxHeight: size.py)
         }
 
-        // POST-ADOPTION re-check (R13 #2): the line-238 check ran BEFORE four more cross-actor awaits
+        // POST-ADOPTION re-check: the post-handshake check above ran BEFORE four more cross-actor awaits
         // (transport.sessionID/resumeFromSeq/returningClient/sendResize), each a reentrancy window. If a
         // deliberate close()/pause() landed during any of them, teardownTransport() already cancelled +
         // niled the pumps and closed this transport — re-creating the pumps here would leak a forever-
@@ -615,17 +613,17 @@ public actor SlopDeskClient {
             // UI resolves the pending request (empty == evicted/unknown — the UI must not hang).
             eventBroadcaster.yield(.blockOutput(index: index, output: output))
         case let .metadataResponse(requestID, status, payload):
-            // METADATA reply (type 30, E4): the reply to a requestMetadata. Surface the raw status byte +
+            // METADATA reply (type 30): the reply to a requestMetadata. Surface the raw status byte +
             // opaque payload verbatim; the UI's MetadataRequestRegistry correlates it by requestID and the
             // typed MetadataClient decodes the payload (SlopDeskClient does not depend on MetadataCodec).
             eventBroadcaster.yield(.metadataResponse(requestID: requestID, status: status, payload: payload))
         case let .inputEcho(enabled):
-            // SECURE INPUT (type 31, E17): surface the host PTY termios `ECHO` edge so the macOS UI can engage
+            // SECURE INPUT (type 31): surface the host PTY termios `ECHO` edge so the macOS UI can engage
             // process-global Secure Keyboard Entry while the remote shell is at a no-echo password prompt.
             // Rides CONTROL; never blocks output.
             eventBroadcaster.yield(.inputEcho(enabled: enabled))
         case let .progress(state, percent):
-            // OSC 9;4 PROGRESS (type 32, E14): the decoder carried the RAW state byte verbatim (a faithful
+            // OSC 9;4 PROGRESS (type 32): the decoder carried the RAW state byte verbatim (a faithful
             // byte round-trip keeps the golden vector stable); VALIDATE it HERE at the boundary and DROP an
             // unknown discriminant (4/5/…/255) rather than forwarding a byte the UI cannot map. The
             // host-clamped `percent` (0…100) rides through. Only a known state reaches the UI's badge/Dock.
@@ -795,7 +793,7 @@ public actor SlopDeskClient {
         try await transport.sendResize(cols: cols, rows: rows, pxWidth: pxWidth, pxHeight: pxHeight)
     }
 
-    /// Requests a Block's captured OUTPUT bytes (WB2, wire type 15) — fired when the user copies/expands a
+    /// Requests a Block's captured OUTPUT bytes (wire type 15) — fired when the user copies/expands a
     /// block whose `index` came from a `.commandBlock` event. The host replies with a `.blockOutput`
     /// (type 29) the inbound pump surfaces as a `.blockOutput` event (empty == evicted/unknown). Rides the
     /// CONTROL channel, so it never head-of-line-blocks behind an output flood on DATA.
@@ -804,7 +802,7 @@ public actor SlopDeskClient {
         try await transport.sendRequestBlockOutput(index: index)
     }
 
-    /// Requests host-side pane metadata (E4, wire type 16) — fired by the typed ``MetadataClient`` façade
+    /// Requests host-side pane metadata (wire type 16) — fired by the typed ``MetadataClient`` façade
     /// behind the Details Panel. `verb` selects the operation (``MetadataVerb``), `requestID` is a
     /// client-chosen monotonic id the host echoes so the registry can correlate the reply, and `payload`
     /// carries the verb's argument (empty for the pane-scoped verbs — the pane rides the channel

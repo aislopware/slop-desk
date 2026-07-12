@@ -51,12 +51,12 @@ public final class InputBarModel {
     /// The single OUT sink: every send funnels SYNCHRONOUSLY through here, on the main
     /// actor, in true call order — wired by the pane session to
     /// `TerminalViewModel.sendInput` so input-bar bytes ride the SAME per-pane ordered OUT
-    /// FIFO as renderer keystrokes (ONE drain per pane). This kills the old second/third
-    /// OUT paths (the iOS Coordinator's own drain + macOS per-submit `Task { await
-    /// client.sendInput }`) that raced the reentrant client actor — the repo's recurring
-    /// unstructured-Task reorder class (docs/29). `nil` while the pane is disconnected —
-    /// sends drop, the designed disconnected semantic. `@ObservationIgnored`: wiring, not
-    /// view state.
+    /// FIFO as renderer keystrokes (ONE drain per pane). A second OUT path — e.g. the iOS
+    /// Coordinator running its own drain, or a per-submit `Task { await client.sendInput }`
+    /// on macOS — would race the reentrant client actor and reorder bytes; that's the repo's
+    /// recurring unstructured-Task reorder class (docs/29), so all sends must share this one
+    /// FIFO. `nil` while the pane is disconnected — sends drop, the designed disconnected
+    /// semantic. `@ObservationIgnored`: wiring, not view state.
     @ObservationIgnored public var sendSink: ((Data) -> Void)?
 
     public init(box: InputBoxModel = InputBoxModel()) {
@@ -97,7 +97,8 @@ public final class InputBarModel {
     /// Submits the compose field through ``sendSink`` and clears it. In B1 the sent bytes
     /// are already recorded for echo-dedup by ``encodeSubmit()``. SYNCHRONOUS on the main
     /// actor: record-then-enqueue happens atomically in call order, so the dedup ring can
-    /// never desync from wire order (the bug the old per-submit `Task` allowed).
+    /// never desync from wire order (a per-submit `Task` would let record and enqueue
+    /// interleave across submits and desync the two).
     public func submit() {
         guard let bytes = encodeSubmit() else { return }
         compose = ""

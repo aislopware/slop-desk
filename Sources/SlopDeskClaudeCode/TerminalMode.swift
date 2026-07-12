@@ -1,7 +1,7 @@
 import Foundation
 
 /// Which screen the host's terminal is currently presenting, as derived from the
-/// host->client output byte stream (doc 14 §"Ô input ngoài" A: sniff DECSET/DECRST 1049
+/// host->client output byte stream (doc 14 §"External input box" A: sniff DECSET/DECRST 1049
 /// before feeding ghostty — libghostty's surface is opaque, so we sniff ourselves).
 public enum TerminalMode: Sendable, Equatable {
     /// Main screen — a shell prompt / inline content. The external input box runs in

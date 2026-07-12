@@ -32,7 +32,7 @@ final class FramePacketizerTests: XCTestCase {
         XCTAssertFalse(reassembled.isLTR, "no isLTR by default")
     }
 
-    // MARK: WF-8 isLTR flag (bit 6)
+    // MARK: isLTR flag (bit 6)
 
     /// An LTR-flagged frame round-trips bit 6 through wire encode/decode and reassembly: every
     /// fragment carries `.isLTR`, and the completed frame reports `isLTR == true` so the client knows
@@ -57,7 +57,7 @@ final class FramePacketizerTests: XCTestCase {
         XCTAssertEqual(completed?.isLTR, true, "the reassembled frame is marked an LTR frame")
     }
 
-    // MARK: ackedAnchored flag (bit 7, 2026-06-12)
+    // MARK: ackedAnchored flag (bit 7)
 
     /// A `ForceLTRRefresh` product round-trips bit 7 through wire encode/decode and reassembly —
     /// every fragment carries `.ackedAnchored`, the completed frame reports it, and bit 6 rides
@@ -266,14 +266,14 @@ final class FramePacketizerTests: XCTestCase {
         }
     }
 
-    // MARK: WIRE-IDENTITY DIFFERENTIAL (the send path is now Rust-backed)
+    // MARK: WIRE-IDENTITY DIFFERENTIAL
 
-    /// Independently reconstructs the exact wire datagrams the Rust-backed ``VideoPacketizer`` must
-    /// emit (the 19-byte big-endian header + payload, per the documented format) and asserts the
-    /// live packetizer reproduces them BYTE-FOR-BYTE — a differential against a hand-computed
-    /// reference that pins the m=1 wire so the Rust port cannot silently change a single byte. A
-    /// round-trip alone could miss a symmetric bug; a known-byte vector cannot. Two fragments + FEC,
-    /// tier 0, with the LTR + ts fields exercised so the whole header is covered.
+    /// Independently reconstructs the exact wire datagrams ``VideoPacketizer`` must emit (the
+    /// 19-byte big-endian header + payload, per the documented format) and asserts the live
+    /// packetizer reproduces them BYTE-FOR-BYTE — a differential against a hand-computed reference
+    /// that pins the m=1 wire so a future change cannot silently alter a single byte. A round-trip
+    /// alone could miss a symmetric bug; a known-byte vector cannot. Two fragments + FEC, tier 0,
+    /// with the LTR + ts fields exercised so the whole header is covered.
     func testRustBackedPacketizerIsWireIdenticalToTheReferenceFormat() {
         let groupSize = 5
         let packetizer = VideoPacketizer(fec: XORParityFEC(groupSize: groupSize))

@@ -1,14 +1,14 @@
 import Foundation
 
-// MARK: - Terminal-rooted external-drop ingress (E18 WI-6)
+// MARK: - Terminal-rooted external-drop ingress
 
-/// The `WorkspaceStore` entry point the external-drag actuator (E18 WI-6, the ``PaneDropReceiver``) calls to
+/// The `WorkspaceStore` entry point the external-drag actuator (the ``PaneDropReceiver``) calls to
 /// land a dropped folder/file in a FRESH terminal — a new tab (the New-Tab zone) or a side split
 /// (Split-Left / Split-Right) — and then point that terminal at the dropped path.
 ///
-/// It is lifted OUT of the view layer (it lived inline in `PaneContainer` during WI-5) precisely so the
+/// It lives OUT of the view layer precisely so the
 /// `cd`-actuation is unit-testable at the store level against the `FakePaneSession` sink
-/// (`OpenTerminalRootedStoreTests`), exactly like the A26 cwd-inheritance ``setLastKnownCwd(_:for:)`` /
+/// (`OpenTerminalRootedStoreTests`), exactly like the cwd-inheritance ``setLastKnownCwd(_:for:)`` /
 /// `deferInheritedCwd` deferred send is.
 ///
 /// REUSES the existing actuators verbatim — ``newTab(kind:)`` / ``splitActivePane(axis:kind:leading:)`` mint

@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E20 WI-9 (ES-E20-4) — the first-launch gating model is PURE and headless-pinned. These cover the three
+/// The first-launch gating model is PURE and headless-pinned. These cover the three
 /// jobs `FirstLaunchModel` owns: (1) the present-once gate (`shouldPresent`, suppressed under automation),
 /// (2) the platform-filtered step set (macOS: all five; iOS: the three cross-platform steps), and (3) the
 /// navigation + completion + finish state machine. No view / NSWindow / SCStream / VT is constructed

@@ -1,8 +1,8 @@
 import Foundation
 
-// MARK: - OSC 9;4 progress state (E14/K1 — per-pane tab-badge + Dock aggregate)
+// MARK: - OSC 9;4 progress state (per-pane tab-badge + Dock aggregate)
 
-/// The E14 OSC 9;4 progress wiring in the store, factored out of ``WorkspaceStore`` so the class body stays
+/// The OSC 9;4 progress wiring in the store, factored out of ``WorkspaceStore`` so the class body stays
 /// under the type-body-length ceiling (like `WorkspaceStore+Completion.swift`). The stored `paneProgress`
 /// dict lives on the class (`@Observable` synthesises on it); only the methods are here.
 ///
@@ -19,7 +19,7 @@ public extension WorkspaceStore {
 
     /// Sets the per-pane OSC 9;4 progress mirror. Idempotent (a no-op when unchanged so it never churns the
     /// views); `nil` (a `9;4;0` clear) removes the key. Mirrors ``setCompletionBadge(_:for:)`` /
-    /// ``setForegroundProcess(_:for:)``. On a genuine edge it bumps ``completionFlashTick`` — the E6 re-render
+    /// ``setForegroundProcess(_:for:)``. On a genuine edge it bumps ``completionFlashTick`` — the re-render
     /// seam the sidebar rail already observes — so the row recomputes its fused badge even when ONLY the
     /// progress changed (the badge reads `paneProgress` through the pure resolver, so the rail must repaint).
     func handleProgress(_ progress: PaneProgress?, for id: PaneID) {
@@ -49,7 +49,7 @@ public extension WorkspaceStore {
         return nil
     }
 
-    // MARK: - macOS Dock aggregate (E14/K5/K8 — process-global tile, every session)
+    // MARK: - macOS Dock aggregate (process-global tile, every session)
 
     /// The cross-session OSC 9;4 progress rollup — the macOS Dock aggregate over EVERY live pane (not one
     /// session). Error-dominant with the same precedence as ``rollupProgress(forSession:)``: any `.error`
@@ -66,7 +66,7 @@ public extension WorkspaceStore {
         panePendingCompletion.values.contains(.failure)
     }
 
-    /// The resolved macOS Dock tile state (E14/K5/K8) — the SINGLE `@Observable`-derived value the macOS
+    /// The resolved macOS Dock tile state — the SINGLE `@Observable`-derived value the macOS
     /// ``DockProgressController`` consumes. It reads ``paneProgress`` + ``panePendingCompletion`` (both
     /// `@Observable`), so a progress/completion EDGE re-renders the app shell, which re-applies the tile (and a
     /// last-session-end edge resolves to ``DockTileModel/inert`` → the controller CLEARS — the carryover "no
@@ -81,7 +81,7 @@ public extension WorkspaceStore {
         )
     }
 
-    /// The K5/K8 Dock-click action: reveal the NEXT failing tab/pane — a pane in `.error` progress or carrying
+    /// The Dock-click action: reveal the NEXT failing tab/pane — a pane in `.error` progress or carrying
     /// a `.failure` completion badge — cycling forward from the focused one, and ACKNOWLEDGE it (clear its
     /// error signals) so repeated clicks step through every failing tab and the red tint clears once the last
     /// is visited (clicking the Dock icon jumps to the next failing tab and clears the tint). A

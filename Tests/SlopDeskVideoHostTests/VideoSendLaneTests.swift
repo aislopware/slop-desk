@@ -1,9 +1,9 @@
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// LOSS-TOLERANCE #1 (2026-06-10): the dedicated paced-send lane. Socket-free — the lane's send
-/// closure records into a locked recorder; pacing gaps are kept small and assertions use generous
-/// tolerances + polling so the tests are timing-robust on a loaded CI box.
+/// Tests for the dedicated paced-send lane. Socket-free — the lane's send closure records into a
+/// locked recorder; pacing gaps are kept small and assertions use generous tolerances + polling
+/// so the tests are timing-robust on a loaded CI box.
 final class VideoSendLaneTests: XCTestCase {
     private final class SendRecorder: @unchecked Sendable {
         private let lock = NSLock()
@@ -103,7 +103,7 @@ final class VideoSendLaneTests: XCTestCase {
         XCTAssertEqual(recorder.count, 0, "enqueue after close must be a no-op")
     }
 
-    /// F3 kfDup, lane edition: the duplicate copy's leading delay time-separates the two copies.
+    /// The duplicate copy's leading delay time-separates the two copies.
     func testLeadingDelaySeparatesDuplicateCopy() async {
         let recorder = SendRecorder()
         let lane = makeLane(recorder)
@@ -154,7 +154,7 @@ final class VideoSendLaneTests: XCTestCase {
         }
     }
 
-    /// RANK-2 inline fast path: an idle lane sends the datagrams SYNCHRONOUSLY on the caller's thread
+    /// The inline fast path: an idle lane sends the datagrams SYNCHRONOUSLY on the caller's thread
     /// (no consumer hop) and reports `true`.
     func testTrySendInlineOnIdleLaneSendsImmediately() {
         let recorder = SendRecorder()

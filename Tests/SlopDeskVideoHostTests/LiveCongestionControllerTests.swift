@@ -2,7 +2,7 @@
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// PURE AIMD congestion-control law for WF-2 adaptive bitrate. The ``VideoEncoder`` it drives is
+/// PURE AIMD congestion-control law for adaptive bitrate. The ``VideoEncoder`` it drives is
 /// HW-gated and never instantiated in a test, so this is the only headlessly-verifiable layer — it
 /// covers the decision math (warmup gate, multiplicative decrease, severe-loss halving, hold-down,
 /// additive recovery, [floor, ceiling] clamps, never-0, never-above-ceiling) plus the host's
@@ -191,10 +191,10 @@ final class LiveCongestionControllerTests: XCTestCase {
         )
     }
 
-    /// REGRESSION (2026-06-10 live log): a clean low-latency LAN (minRTT ≈ 5ms, smoothedRTT wobbling
-    /// 7–12ms from scheduling noise, jitter gradient flapping ~50/50, loss 0.000 on ALL reports) must
-    /// NEVER decrease. The old predicate (`minRTT × 1.25` + per-report gradient flag) pinned the rate
-    /// at the FLOOR for an entire session on exactly this input shape.
+    /// REGRESSION (live log): a clean low-latency LAN (minRTT ≈ 5ms, smoothedRTT wobbling 7–12ms from
+    /// scheduling noise, jitter gradient flapping ~50/50, loss 0.000 on ALL reports) must NEVER
+    /// decrease. A predicate of `minRTT × 1.25` plus a per-report gradient flag alone pins the rate at
+    /// the FLOOR for an entire session on exactly this input shape.
     func testCleanLANJitterNeverDecreases() {
         var ctrl = LiveCongestionController(ceiling: ceiling)
         var est = NetworkEstimate()
@@ -217,7 +217,7 @@ final class LiveCongestionControllerTests: XCTestCase {
         }
     }
 
-    /// REGRESSION (EWMA cascade, re-stated for DELAY-TARGETING 2026-06-11): one sustained real
+    /// REGRESSION (EWMA cascade, DELAY-TARGETING): one sustained real
     /// inflation episode must back off ONE `cutHoldTicks` window at a time — never per-report — and
     /// every RTT decrease must be PROPORTIONAL to the queue the acting report shows
     /// (`(minRTT + slack) / smoothedRTT`, clamped). A genuinely PERSISTENT queue is now CHASED
@@ -427,13 +427,13 @@ final class LiveCongestionControllerTests: XCTestCase {
         XCTAssertNil(ctrl.kneeBps, "an unconfirmed knee expires after its TTL")
     }
 
-    // NOTE (2026-06-11): an "escalating caution" knee variant (confirmation-count doubling the
-    // above-knee divisor) was built, deployed and REVERTED the same day — two live 4G sessions
-    // showed cellular RTT wobble is rate-independent, so any climb slower than the base ÷8 cannot
-    // cross the material-actuation gap between wobble trims and the rate pins at the floor (soft
-    // image, zero latency benefit). See LiveCongestionController.kneeExpiresAtTick doc.
+    // NOTE: an "escalating caution" knee variant (confirmation-count doubling the above-knee
+    // divisor) is deliberately NOT used — two live 4G sessions showed cellular RTT wobble is
+    // rate-independent, so any climb slower than the base ÷8 cannot cross the material-actuation
+    // gap between wobble trims and the rate pins at the floor (soft image, zero latency benefit).
+    // See LiveCongestionController.kneeExpiresAtTick doc.
 
-    // MARK: Baseline-proportional slack (2026-06-11, cellular wobble fix)
+    // MARK: Baseline-proportional slack (cellular wobble fix)
 
     /// CELLULAR WOBBLE (measured live on 4G, minRTT ≈ 40ms): smoothed RTT floating in the
     /// `min×1.25 < smoothed < min×1.75` band is rate-independent path texture — it must NOT cut.
@@ -585,7 +585,7 @@ final class LiveCongestionControllerTests: XCTestCase {
         XCTAssertEqual(ctrl.current, ceiling, "additive recovery clamps at the ceiling, never above")
     }
 
-    // MARK: Transient-spike resilience (WF-2 self-audit — raw-sample decrease, no EWMA cascade)
+    // MARK: Transient-spike resilience (raw-sample decrease, no EWMA cascade)
 
     /// Drives the controller exactly like the host: ONE persistent ``NetworkEstimate`` folded once per
     /// report (so the EWMA carries across reports), then `onReport`. Warms past warmup with clean folds.
@@ -596,11 +596,11 @@ final class LiveCongestionControllerTests: XCTestCase {
         }
     }
 
-    /// LOSS-TOLERANCE #4 (philosophy change, 2026-06-10): a SINGLE transient loss spike at FLAT RTT
+    /// LOSS-TOLERANCE: a SINGLE transient loss spike at FLAT RTT
     /// is WEATHER — a burst the FEC/LTR/kfDup machinery absorbs — and must cause ZERO decreases.
     /// (Raw sample 100% but no RTT corroboration; the EWMA only moves to ~12.5%, under the
-    /// catastrophic gate. The old behaviour spent one decrease per spike; on the measured path —
-    /// spikes many times a minute, rate-independent — that compounded into the ABR sawtooth.)
+    /// catastrophic gate. A decrease per spike would compound into an ABR sawtooth on the measured
+    /// path, where spikes recur many times a minute and are rate-independent.)
     func testSingleTransientSpikeAtFlatRTTNeverDecreases() {
         var ctrl = LiveCongestionController(ceiling: ceiling)
         var est = NetworkEstimate()
@@ -652,7 +652,7 @@ final class LiveCongestionControllerTests: XCTestCase {
         )
     }
 
-    /// REGRESSION (finding 3): a no-op decrease at the floor must NOT re-arm the hold-down. Once the
+    /// REGRESSION: a no-op decrease at the floor must NOT re-arm the hold-down. Once the
     /// rate is floored by sustained loss, the controller climbs the instant the link clears — it does
     /// not sit for an extra hold-down window re-armed by no-op decreases.
     func testNoOpDecreaseAtFloorDoesNotExtendHoldDown() {
@@ -687,7 +687,7 @@ final class LiveCongestionControllerTests: XCTestCase {
 
     // MARK: LOSS-TOLERANCE #4 — weather loss (rate-independent, flat RTT) never gives up bitrate
 
-    /// THE 2026-06-10 measured path shape (iperf3, inter-ISP FPT↔Viettel): loss ~0.6–9% bursts with
+    /// THE measured path shape (iperf3, inter-ISP FPT↔Viettel): loss ~0.6–9% bursts with
     /// COMPLETELY FLAT RTT (jitter 0.3ms). Backing off cannot reduce it (identical loss at 5 and
     /// 30Mbps), so the controller must hold the rate and let FEC/LTR/kfDup absorb the weather.
     func testWeatherLossFlatRTTNeverDecreases() {
@@ -739,15 +739,15 @@ final class LiveCongestionControllerTests: XCTestCase {
         )
     }
 
-    // MARK: CUT-CASCADE FIX (2026-06-11) — one multiplicative cut per spacing window, loss included
+    // MARK: CUT-CASCADE FIX — one multiplicative cut per spacing window, loss included
 
-    /// LIVE-SESSION REPLAY (2026-06-11 VD session): a weather burst spanning several consecutive
+    /// LIVE-SESSION REPLAY (VD session): a weather burst spanning several consecutive
     /// lossy reports — the measured FPT↔Viettel shape: 130–500ms episodes = 2–10 reports whose raw
     /// samples read 0.33–0.5 ONLY because a ~50ms report holds ~3 frames, with smoothed RTT pushed
     /// just past the gate by WiFi airtime noise — must cost exactly ONE ×0.85 cut per `cutHoldTicks`
-    /// window. The old per-report severe-halve cascaded 29M→14M→floor inside 2 ticks, 31 times in a
-    /// 4-minute session, while FEC recovered every single lost frame (unrecovered=0 — the cuts
-    /// bought nothing).
+    /// window. A per-report severe-halve would cascade 29M→14M→floor inside 2 ticks, dozens of times
+    /// in a 4-minute session, while FEC recovers every single lost frame (unrecovered=0 — such cuts
+    /// buy nothing).
     func testWeatherBurstSpanningReportsCutsOncePerWindow() {
         var ctrl = LiveCongestionController(ceiling: ceiling)
         var est = NetworkEstimate()
@@ -1119,7 +1119,7 @@ final class LiveCongestionControllerTests: XCTestCase {
         XCTAssertLessThan(ctrl.onReport(est), ceiling, "the first post-warmup overusing report cuts")
     }
 
-    // MARK: Fix 4 (2026-06-11) — cut-reason attribution (telemetry only, zero behaviour change)
+    // MARK: Cut-reason attribution (telemetry only, zero behaviour change)
 
     /// THE attribution pin the host log needs: a gradient-authorized cut reports `.gradient`, an
     /// RTT-streak (proportional) cut reports `.rttStreak` — and `decide` is behaviour-identical to
@@ -1136,7 +1136,7 @@ final class LiveCongestionControllerTests: XCTestCase {
         XCTAssertEqual(
             gDecision.target,
             control.onReport(gEst),
-            "decide() and onReport() are the same control law (fix 4 changes no behaviour)",
+            "decide() and onReport() are the same control law (cut-reason attribution changes no behaviour)",
         )
 
         // RTT-streak arm (gradient gate OFF, no trend fields): sustained smoothed inflation for

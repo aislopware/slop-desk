@@ -1,14 +1,13 @@
 import Foundation
 import SlopDeskVideoProtocol
 
-/// LOSS-TOLERANCE #1 (2026-06-10): a dedicated PACED-SEND lane that decouples wire pacing from the
-/// encoder-output pump.
+/// A dedicated PACED-SEND lane that decouples wire pacing from the encoder-output pump.
 ///
-/// Measured defect this fixes: `onEncodedFrame` used to `await sendPaced(...)` — the inter-chunk
-/// pacing sleeps ran INSIDE the ordered encoder-output pump, so pacing frame N delayed the SEND of
+/// If `onEncodedFrame` instead awaited `sendPaced(...)` directly, the inter-chunk pacing sleeps
+/// would run INSIDE the ordered encoder-output pump, so pacing frame N would delay the SEND of
 /// frames N+1..N+k. A large recovery IDR paced at a post-backoff ABR rate (gap ceiling 40ms/chunk)
-/// serialized over 100s of ms, and the measured result on the real inter-ISP path was send gaps of
-/// 28–179ms (179ms ≈ 11 dropped frame slots = the visible khựng). The loss itself is path weather
+/// would serialize over 100s of ms — on the real inter-ISP path that produces send gaps of
+/// 28–179ms (179ms ≈ 11 dropped frame slots = visible stutter). The loss itself is path weather
 /// (rate-independent ~1% + multi-second 3–9% bursts); what the host CAN control is not amplifying
 /// one lost packet into an 11-frame send hole.
 ///
@@ -104,10 +103,10 @@ public final class VideoSendLane: @unchecked Sendable {
     /// ONLY when the lane is fully drained; returns `true` if it sent, `false` if the caller must
     /// ``enqueue(_:)`` instead.
     ///
-    /// RANK-2 INPUT LATENCY (2026-06-18): the lane exists to keep PACING sleeps off the encoder pump
-    /// (see the type doc). A tiny single-shot delta — the typing-idle keystroke frame — has no sleeps:
-    /// the consumer would just `send()` it in a loop. Yet it still pays a Task hop (~0.1–1 ms) to
-    /// reach that consumer. When the wire is idle we run that same loop right here and save the hop.
+    /// The lane exists to keep PACING sleeps off the encoder pump (see the type doc). A tiny
+    /// single-shot delta — the typing-idle keystroke frame — has no sleeps: the consumer would just
+    /// `send()` it in a loop. Yet it still pays a Task hop (~0.1–1 ms) to reach that consumer. When
+    /// the wire is idle this runs that same loop right here and saves the hop.
     ///
     /// The idleness test reads `fifo.isEmpty && !transmitting` UNDER THE LOCK. `transmitting` is true
     /// for the WHOLE span a consumer drains a job (set in ``popNext`` before its lock-free send loop,
@@ -174,15 +173,15 @@ public final class VideoSendLane: @unchecked Sendable {
     /// aborting if the lane is flushed/closed at a chunk boundary (the `mediaFlowing` re-check
     /// equivalent).
     ///
-    /// DEADLINE PACING (latency audit, 2026-06-11): the original per-gap
-    /// `Task.sleep(nanoseconds: gapNanos)` was RELATIVE — Darwin's ~1ms timer quantum turns a
-    /// 0.7ms gap request into a 1–2ms actual sleep, and with 6+ gaps per 50KB frame the overshoot
-    /// ACCUMULATED to +3–4ms of serialization per frame (and, worse, per-frame VARIANCE that
-    /// surfaced as present-cadence jitter at the depth-1 present-on-arrival client). Chunk k's
-    /// deadline is now `start + k × gap` on the continuous clock: an oversleep eats into the NEXT
-    /// gap instead of pushing the whole schedule right, and a behind-schedule chunk sends
-    /// immediately with no sleep (catch-up). Total serialization ≈ theoretical + ONE quantum,
-    /// regardless of fragment count; the average wire rate is unchanged.
+    /// DEADLINE PACING: a per-gap `Task.sleep(nanoseconds: gapNanos)` would be RELATIVE — Darwin's
+    /// ~1ms timer quantum turns a 0.7ms gap request into a 1–2ms actual sleep, and with 6+ gaps per
+    /// 50KB frame the overshoot ACCUMULATES to +3–4ms of serialization per frame (and, worse,
+    /// per-frame VARIANCE that surfaces as present-cadence jitter at the depth-1
+    /// present-on-arrival client). Instead chunk k's deadline is `start + k × gap` on the
+    /// continuous clock: an oversleep eats into the NEXT gap instead of pushing the whole schedule
+    /// right, and a behind-schedule chunk sends immediately with no sleep (catch-up). Total
+    /// serialization ≈ theoretical + ONE quantum, regardless of fragment count; the average wire
+    /// rate is unchanged.
     private func transmit(_ job: Job, generation gen: UInt64) async {
         if job.leadingDelayNanos > 0 {
             try? await Task.sleep(nanoseconds: job.leadingDelayNanos)

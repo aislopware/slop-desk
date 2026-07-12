@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E8 (H9, ES-E8-6): pins the pure ``MouseVisibilityMapping`` decision that the GUI surface
+/// Pins the pure ``MouseVisibilityMapping`` decision that the GUI surface
 /// (`GhosttyTerminalView`, compile-only behind `#if canImport(CGhostty)`) uses to actuate
 /// `mouse-hide-while-typing`. libghostty's `mouse-hide-while-typing` config only DECIDES to hide the
 /// pointer; it delegates the hide/show to the embedder via a `GHOSTTY_ACTION_MOUSE_VISIBILITY` action, so

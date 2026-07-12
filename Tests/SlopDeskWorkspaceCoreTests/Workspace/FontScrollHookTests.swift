@@ -2,13 +2,13 @@ import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E1 WI-3 — the BEHAVIORAL dispatch of the active-pane font-size + viewport-scroll store hooks
+/// The BEHAVIORAL dispatch of the active-pane font-size + viewport-scroll store hooks
 /// (``WorkspaceStore/increaseFontInActivePane()`` / `decreaseFontInActivePane` / `resetFontInActivePane` /
 /// ``WorkspaceStore/scrollActivePane(_:)``), observed on a ``RecordingTerminalPaneSession`` that carries a
 /// REAL ``TerminalViewModel`` whose `surface` is a recording ``TerminalSurfaceActions``.
 ///
 /// The SCROLL hooks pin the EXACT libghostty named binding action (`scroll_page_fractional:-0.9`,
-/// `scroll_to_top`, …) — a swapped page sign would fail here. The FONT hooks (E15 item 9) no longer touch the
+/// `scroll_to_top`, …) — a swapped page sign would fail here. The FONT hooks no longer touch the
 /// surface: they route ⌘±/⌘0 through the ``WorkspaceStore/onFontSizeStep`` seam to the single source of truth
 /// (`PreferencesStore.terminal.fontSize`, the Settings "Size" stepper's value), so they are pinned on the
 /// seam + the persisted size. They drive the store methods DIRECTLY (the registry routing is pinned elsewhere).
@@ -40,7 +40,7 @@ final class FontScrollHookTests: XCTestCase {
         try XCTUnwrap(activeSession(store).surfaceRecorder)
     }
 
-    // MARK: - Font size (ES-E1-4 / E15 item 9 — single source of truth)
+    // MARK: - Font size (single source of truth)
 
     private func makeIsolatedDefaults(_ name: String = #function) -> UserDefaults {
         let suite = "FontScrollHookTest." + name
@@ -67,7 +67,7 @@ final class FontScrollHookTests: XCTestCase {
         XCTAssertTrue(recorder.actions.isEmpty, "font zoom no longer drives libghostty's internal font size")
     }
 
-    /// THE item-9 regression test: a ⌘±/⌘0 zoom UPDATES the persisted Settings font size (the single source of
+    /// THE regression test: a ⌘±/⌘0 zoom UPDATES the persisted Settings font size (the single source of
     /// truth the "Size" stepper binds), so the two never desync. Wires the seam to a live ``PreferencesStore``
     /// exactly as the app shell does. ⌘+ bumps +1, ⌘- back, ⌘0 resets to the default size.
     func testFontZoomUpdatesPreferencesFontSizeSingleSourceOfTruth() {
@@ -92,7 +92,7 @@ final class FontScrollHookTests: XCTestCase {
         XCTAssertEqual(prefs.terminal.fontSize, TerminalPreferences().fontSize, "⌘0 resets to the default size")
     }
 
-    // MARK: - Viewport scroll (ES-E1-3)
+    // MARK: - Viewport scroll
 
     /// Each ``ScrollAction`` fires its mapped action string — pins the page up/down SIGN (negative = up
     /// toward older scrollback) and the top/bottom buffer-end actions. A swapped page sign fails here.

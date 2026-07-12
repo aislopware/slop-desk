@@ -3,7 +3,7 @@ import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E7 WI-3: pins the headless ``AllSettingsCatalog`` (filter + full client-key coverage + buckets) and the
+/// Pins the headless ``AllSettingsCatalog`` (filter + full client-key coverage + buckets) and the
 /// ``PreferencesStore`` reset behaviour the Advanced "All Settings" panel drives. All headless — no view.
 @MainActor
 final class AllSettingsCatalogTests: XCTestCase {
@@ -30,7 +30,7 @@ final class AllSettingsCatalogTests: XCTestCase {
         XCTAssertEqual(AllSettingsCatalog.filter("").count, AllSettingsCatalog.entries.count)
         XCTAssertEqual(AllSettingsCatalog.filter("   ").count, AllSettingsCatalog.entries.count)
 
-        // `cursor` → the two cursor render-pref rows PLUS the E8 "Cursor Click-to-Move" control row; all
+        // `cursor` → the two cursor render-pref rows PLUS the "Cursor Click-to-Move" control row; all
         // three legitimately contain "cursor" in their key / label / description. The render rows are always
         // present (superset pin), and the faithfully-named Click-to-Move row now also matches.
         let cursorKeys = Set(AllSettingsCatalog.filter("cursor").map(\.key))
@@ -76,19 +76,19 @@ final class AllSettingsCatalogTests: XCTestCase {
             SettingsKey.copyOnSelect, SettingsKey.trimTrailingSpacesOnCopy, SettingsKey.pasteProtection,
             SettingsKey.mouseHideWhileTyping, SettingsKey.focusFollowsMouse, SettingsKey.scrollOnOutput,
             SettingsKey.scrollMultiplier, SettingsKey.systemDialogPanes,
-            // E8 WI-1: the remaining Controls / Mouse / Scroll knobs
+            // The remaining Controls / Mouse / Scroll knobs
             SettingsKey.clearSelectionOnTyping, SettingsKey.clearSelectionOnCopy,
             SettingsKey.backspaceDeletesSelection, SettingsKey.shiftArrowSelect, SettingsKey.pasteBracketedSafe,
             SettingsKey.clipboardReadKey, SettingsKey.clipboardWriteKey, SettingsKey.allowMouseCapture,
             SettingsKey.allowShiftClickKey, SettingsKey.clickToMove, SettingsKey.rightClickActionKey,
             SettingsKey.scrollPastLastLineKey, SettingsKey.scrollPastFirstLineKey, SettingsKey.smoothScroll,
             SettingsKey.undoAtPrompt,
-            // E10 (Path/link detection — Open With / Link Schemes)
+            // Path/link detection — Open With / Link Schemes
             SettingsKey.linkDetection, SettingsKey.linkCmdClickKey, SettingsKey.linkCmdShiftClickKey,
             SettingsKey.autoDetectLinkSchemesKey, SettingsKey.customLinkSchemes,
-            // E14/K11-K12 (privilege surface — title gates + OSC-52 master switch — Advanced)
+            // Privilege surface — title gates + OSC-52 master switch — Advanced
             SettingsKey.titleShellControlled, SettingsKey.titleReport, SettingsKey.clipboardShellControlled,
-            // E14/K13 (IPC guards on the agent-control ctl socket — Advanced)
+            // IPC guards on the agent-control ctl socket — Advanced
             SettingsKey.ipcAllowSendKeys, SettingsKey.ipcAllowSensitiveSessions,
             // Appearance (New Tab Position — tab-setting.png — + chrome orphans + density)
             SettingsKey.newTabPositionKey, SettingsKey.showBlockDividers,
@@ -138,7 +138,7 @@ final class AllSettingsCatalogTests: XCTestCase {
         }
     }
 
-    /// E7 fidelity fix: the ✎ jump destinations match the section taxonomy proven by the screenshots
+    /// The ✎ jump destinations match the section taxonomy proven by the screenshots
     /// (`docs/ui-shell/screenshots/font-setting.png` shows FONT FAMILY under Appearance;
     /// `cursor-style.png` shows the CURSOR group under Appearance; `terminal-features__scroll.md` puts
     /// Scrollback under Controls → Scroll). Pins — against an INDEPENDENT expectation table, not the catalog's
@@ -169,7 +169,7 @@ final class AllSettingsCatalogTests: XCTestCase {
         }
     }
 
-    /// M2: the Dock-icon toggles are surfaced under **Appearance → Dock Icon**, so their searchable All-Settings
+    /// The Dock-icon toggles are surfaced under **Appearance → Dock Icon**, so their searchable All-Settings
     /// rows must JUMP to the Appearance section (`hasDedicatedTab` → `appearance`) rather than rendering a
     /// duplicate inline control. Revert-to-confirm-fail: the un-fixed catalog declared both keys `.advancedOnly`
     /// with a `nil` targetSection (so a search landed on a bare inline toggle, never the Appearance group) —
@@ -240,7 +240,7 @@ final class AllSettingsCatalogTests: XCTestCase {
     }
 
     /// "Reset All Settings" returns EVERYTHING to defaults — the typed models AND a flipped global orphan
-    /// toggle (`showBlockDividers`, default ON). Revert-to-fail: before WI-1 extended `resetAll()`, the
+    /// toggle (`showBlockDividers`, default ON). Revert-to-fail: before `resetAll()` was extended to cover it, the
     /// `Defaults.Keys` toggle survived a reset.
     func testResetAllRestoresOrphanToggleToDefault() {
         let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil, applyOnInit: false)
@@ -258,7 +258,7 @@ final class AllSettingsCatalogTests: XCTestCase {
     }
 
     /// "Reset All Settings" returns the keys the old 23-entry hand-list MISSED — the ~35 advanced + Controls +
-    /// notification keys that were never reset. Asserts a representative spread from EVERY previously-missed
+    /// notification keys that were never reset. Asserts a representative spread from EVERY missed
     /// cluster returns to its declared default: a Controls enum (`rightClickAction`), a Controls bool
     /// (`smoothScroll`), a Shell notification bool (`notifyOnFinish` default OFF flipped ON), a privilege
     /// gate (`titleShellControlled`), an OSC-52 tri-state (`clipboardRead`), an IPC guard (`ipcAllowSendKeys`),
@@ -397,7 +397,7 @@ final class AllSettingsCatalogTests: XCTestCase {
         XCTAssertTrue(tabReachable.isDisjoint(with: advancedOnly), "a key is in BOTH reset sets")
     }
 
-    // MARK: - No dead static rows (finding #3)
+    // MARK: - No dead static rows
 
     /// Every `.advancedOnly` catalog row renders a real INLINE control in `AllSettingsListView`, never a dead
     /// default-value label. The view's `inlineControl(for:)` switch is mirrored by the pure

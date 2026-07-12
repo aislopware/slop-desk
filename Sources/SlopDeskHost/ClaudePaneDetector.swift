@@ -3,23 +3,23 @@ import SlopDeskAgentDetect
 import SlopDeskInspector
 import SlopDeskProtocol
 
-/// W10/P1 — the SINGLE per-pane Claude-Code detector: ONE ``ClaudeStatusMachine`` fed by ALL the
-/// host's detection inputs, so the host is the **single source of truth** and the client is a passive
-/// display (adversarial-review findings #1–#4, #9).
+/// The SINGLE per-pane Claude-Code detector: ONE ``ClaudeStatusMachine`` fed by ALL the host's
+/// detection inputs, so the host is the **single source of truth** and the client is a passive
+/// display.
 ///
-/// ## Why one detector (the architectural fix)
-/// The pre-P1 host ran TWO independent machines — ``ForegroundProcessDetector`` (foreground watch) and
-/// ``AgentHookHandler`` (hook socket) — that BOTH emitted type-27 with no reconciliation, so they fought
-/// (a hook `.working` and a foreground-poll `.idle` clobbered each other down the one CONTROL stream).
-/// And NOBODY drove `.tick(at:)`, so the `.done → .idle` decay never fired (a finished turn stayed 🔵
-/// forever). This type fuses every input into ONE machine, with ONE type-27 dedupe anchor and ONE
-/// type-26 edge anchor → one machine, one type-27 stream.
+/// ## Why one detector
+/// Splitting detection across two independent machines — ``ForegroundProcessDetector`` (foreground
+/// watch) and ``AgentHookHandler`` (hook socket) — would have BOTH emit type-27 with no
+/// reconciliation, so they fight (a hook `.working` and a foreground-poll `.idle` clobber each other
+/// down the one CONTROL stream), and with no owner driving `.tick(at:)` the `.done → .idle` decay
+/// never fires (a finished turn stays 🔵 forever). Fusing every input into ONE machine gives ONE
+/// type-27 dedupe anchor and ONE type-26 edge anchor → one machine, one type-27 stream.
 ///
-/// ## Inputs (folded through the ONE machine, in the W7 precedence order)
+/// ## Inputs (folded through the ONE machine, in the machine's precedence order)
 /// - ``sample(name:at:)`` — the ~1 Hz foreground poll: `.processPresent(isClaude)` (exact-basename
 ///   classified via ``ClaudeManifestMatcher``) drives the presence FLOOR, and emits type-26 on a
 ///   basename EDGE (a coarse process-name hint for display, NOT a status source).
-/// - ``hook(bytes:at:)`` — the hook socket: parsed via the W8 ``HookParser`` and folded as `.hook(event)`.
+/// - ``hook(bytes:at:)`` — the hook socket: parsed via ``HookParser`` and folded as `.hook(event)`.
 /// - ``tick(at:)`` — the per-poll clock tick (~1 Hz) that drives the `.done → .idle` decay.
 /// - ``manifestVerdict(_:at:)`` — the no-hooks screen-text/title fallback (Decision #5 signal 3).
 ///
@@ -29,10 +29,10 @@ import SlopDeskProtocol
 /// `Double` seconds); the machine never reads a wall clock.
 public struct ClaudePaneDetector: Sendable {
     /// The matcher used to classify a foreground basename as `claude` (exact basename — no
-    /// `claudefoo` false positive). One classifier, reused from W7.
+    /// `claudefoo` false positive). One classifier.
     private let matcher: ClaudeManifestMatcher
 
-    /// The ONE per-pane state machine — every signal folds through this single instance (the fix).
+    /// The ONE per-pane state machine — every signal folds through this single instance.
     private var machine: ClaudeStatusMachine
 
     /// The last foreground basename a type-26 was emitted for (`nil` before the first sample). A new
@@ -44,13 +44,13 @@ public struct ClaudePaneDetector: Sendable {
     private var lastEmittedStatus: ForegroundProcessDetector.StatusTriple?
 
     /// Absolute time (injected `now`) of the LAST authoritative fold — a ctl self-report (the P1
-    /// `report` verb) OR a parsed HOOK event (queue-safety fix, 2026-07-02) — or `nil` if none.
+    /// `report` verb) OR a parsed HOOK event — or `nil` if none.
     /// Within ``reportGraceWindow`` seconds of this, a foreground-presence ABSENCE (`sample(name:)`
     /// with a non-claude/empty basename) must NOT terminate the machine — both are the same
     /// precedence-2 authoritative signal, and a custom orchestrator / node-wrapped CLI will not
     /// classify as `claude`, so the ~1 Hz poll would otherwise wipe a just-set state on the very
-    /// next tick (pre-fix only `report` stamped this, so a wrapper-launched claude's hook status
-    /// flapped none↔working every second).
+    /// next tick. A hook must stamp this too, not only `report`: otherwise a wrapper-launched
+    /// claude's hook status flaps none↔working every second.
     private var lastAuthoritativeAt: TimeInterval?
 
     /// TRUE while the machine's current (non-`.none`) status was established by an authoritative
@@ -80,8 +80,8 @@ public struct ClaudePaneDetector: Sendable {
         lastEmittedStatus = nil
     }
 
-    /// One decision: the (possibly empty) CONTROL messages to enqueue for this fold. Identical shape to
-    /// ``ForegroundProcessDetector/Emission`` so the live wiring is unchanged.
+    /// One decision: the (possibly empty) CONTROL messages to enqueue for this fold. Shape-identical to
+    /// ``ForegroundProcessDetector/Emission`` so both drive the same `enqueueControl` wiring.
     public struct Emission: Sendable, Equatable {
         /// The type-26 `foregroundProcess(name:)` to send, or `nil` (no basename edge).
         public var foreground: WireMessage?
@@ -116,18 +116,18 @@ public struct ClaudePaneDetector: Sendable {
             emission.foreground = .foregroundProcess(name: base)
         }
         let present = matcher.isClaudeRunning(processName: base)
-        // Stickiness (review finding + queue-safety fix 2026-07-02): a recent authoritative fold
-        // (ctl self-report OR hook event) must not be wiped by a foreground-presence ABSENCE — the
-        // common supervised agent (a custom orchestrator, node-wrapped CLI, any non-`claude`
-        // basename) sets `working`/`blocked` authoritatively, and the ~1 Hz poll's
-        // `present == false` would otherwise terminate it on the next tick. Two suppressors:
+        // Stickiness: a recent authoritative fold (ctl self-report OR hook event) must not be wiped
+        // by a foreground-presence ABSENCE — the common supervised agent (a custom orchestrator,
+        // node-wrapped CLI, any non-`claude` basename) sets `working`/`blocked` authoritatively, and
+        // the ~1 Hz poll's `present == false` would otherwise terminate it on the next tick. Two
+        // suppressors:
         // (a) within the grace window of the last authoritative fold, ANY absence is dropped;
         // (b) while a hook/report-established status is live (`hookAuthority`), an absence whose
         //     basename is a known WRAPPER (`node`/`npx`/`bun`/`deno`/`mise`) is dropped even past
         //     the window — a wrapper-launched claude sitting quietly between turns (no hook traffic
         //     to re-stamp the window) must not flap to `.none` while the wrapper still holds the
         //     PTY foreground. A wrapper never LIFTS the floor (absence cannot lift `.none`).
-        // Once neither holds, absence terminates as before (a genuinely exited agent decays).
+        // Once neither holds, absence terminates normally (a genuinely exited agent decays).
         // Ordered comparison (NaN-faithful) — never a bare `<` ternary.
         let absenceSuppressed: Bool = {
             guard !present else { return false }
@@ -156,7 +156,7 @@ public struct ClaudePaneDetector: Sendable {
         return emission
     }
 
-    /// Fold one received hook record (raw POST body bytes) at `now`. Parses via the W8 ``HookParser``
+    /// Fold one received hook record (raw POST body bytes) at `now`. Parses via ``HookParser``
     /// (validate-then-drop: malformed/short/non-JSON bytes change nothing) and folds the event through
     /// the SAME machine. Emits type-27 iff the status triple changed; never a type-26 (the foreground
     /// process did not change).
@@ -164,11 +164,11 @@ public struct ClaudePaneDetector: Sendable {
         var emission = Emission()
         guard let payload = HookParser.parse(bytes) else { return emission } // validate-then-drop
         let (event, kindByte) = AgentHookHandler.mapToHookEvent(payload)
-        // Queue-safety fix (2026-07-02): a REAL hook is the same precedence-2 authoritative signal
-        // as a ctl report, so it stamps the SAME stickiness anchor — otherwise the ~1 Hz foreground
-        // poll terminates a hook-set status within a second whenever claude runs under a wrapper
-        // (node/npx/mise) whose basename never classifies as `claude`. Stamped on every parsed
-        // record (Pre/PostToolUse traffic keeps a long turn's window fresh).
+        // A REAL hook is the same precedence-2 authoritative signal as a ctl report, so it stamps
+        // the SAME stickiness anchor — otherwise the ~1 Hz foreground poll terminates a hook-set
+        // status within a second whenever claude runs under a wrapper (node/npx/mise) whose basename
+        // never classifies as `claude`. Stamped on every parsed record (Pre/PostToolUse traffic
+        // keeps a long turn's window fresh).
         lastAuthoritativeAt = now
         machine.reduce(.hook(event), at: now)
         hookAuthority = machine.status != .none // SessionEnd terminates → authority is gone with it
@@ -253,7 +253,7 @@ public struct ClaudePaneDetector: Sendable {
         return emission
     }
 
-    /// Reattach re-assert (2026-07-10 — the type-26/27 sibling of the echo re-anchor): the detector's
+    /// Reattach re-assert (the type-26/27 sibling of the echo re-anchor): the detector's
     /// CURRENT truth as fresh messages for a returning client whose per-pane mirrors reset to none on
     /// reconnect. Both streams are edge-triggered against the `lastEmitted*` anchors, so after
     /// `rebindRelay` wiped the control-out queue nothing would ever re-tell the new client about a

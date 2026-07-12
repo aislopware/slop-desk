@@ -1,13 +1,13 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E8 WI-1: pins the pure ``TerminalControls`` bundle — the `from(defaults:)` factory's key→field mapping
+/// Pins the pure ``TerminalControls`` bundle — the `from(defaults:)` factory's key→field mapping
 /// (anti-mapping-error: every field is set to a NON-default value, so a swapped / dropped key fails), the
-/// new control enums' raw values + non-failable repair + the bare-rawValue persistence the
+/// control enums' raw values + non-failable repair + the bare-rawValue persistence the
 /// `Defaults.PreferRawRepresentable` bridge round-trips, and the `MouseShiftCapture.configValue` libghostty
-/// tokens WI-2 emits. All headless — an injected `UserDefaults` suite isolates the round-trips from the dev
-/// machine's real defaults, and the suite is written through RAW `UserDefaults` (the file's established
-/// no-`import Defaults` convention, exactly like `SettingsKeyTests`).
+/// tokens the config builder emits. All headless — an injected `UserDefaults` suite isolates the round-trips
+/// from the dev machine's real defaults, and the suite is written through RAW `UserDefaults` (the file's
+/// established no-`import Defaults` convention, exactly like `SettingsKeyTests`).
 @MainActor
 final class TerminalControlsTests: XCTestCase {
     /// An isolated `UserDefaults` suite so the round-trips never touch `.standard`.
@@ -99,7 +99,7 @@ final class TerminalControlsTests: XCTestCase {
 
     /// The control enums' raw values are slopdesk's own config tokens (the persisted strings + the
     /// libghostty `clipboard-read/write` tokens). A rename here would split-brain persistence from the
-    /// config builder (WI-2) → pinned.
+    /// config builder → pinned.
     func testEnumRawValuesArePinned() {
         XCTAssertEqual(ClipboardAccess.allCases.map(\.rawValue), ["allow", "deny", "ask"])
         XCTAssertEqual(RightClickAction.contextMenu.rawValue, "context-menu")
@@ -130,7 +130,7 @@ final class TerminalControlsTests: XCTestCase {
         XCTAssertEqual(MouseShiftCapture(rawValue: "nope"), .enabled)
     }
 
-    /// `MouseShiftCapture.configValue` is the libghostty `mouse-shift-capture` token WI-2 emits. This is a
+    /// `MouseShiftCapture.configValue` is the libghostty `mouse-shift-capture` token the config builder emits. This is a
     /// REAL ORACLE, not a restatement of the mapping: the "Allow Shift with Mouse Click" setting's axis ("hold ⇧ to
     /// *select text* even when the running app captures the mouse") is the INVERSE of libghostty's
     /// `mouse-shift-capture` axis (whether ⇧ is *captured into the mouse protocol and sent to the program*).
@@ -193,7 +193,7 @@ final class TerminalControlsTests: XCTestCase {
     }
 
     /// `OptionAsAlt`'s raw values are slopdesk's own kebab-readable persistence tokens; `configValue` is the
-    /// libghostty `macos-option-as-alt` token (`false`/`true`/`left`/`right`) the config builder (WI-2) emits.
+    /// libghostty `macos-option-as-alt` token (`false`/`true`/`left`/`right`) the config builder emits.
     /// The two axes DIFFER (`both` persists as `both`, emits `true`), so this is a real oracle, not a restate of
     /// the rawValue. The factory keeps OFF (Option composes accented characters by default).
     func testOptionAsAltRawValuesAndConfigValue() {
@@ -218,9 +218,9 @@ final class TerminalControlsTests: XCTestCase {
         XCTAssertEqual(TerminalControls.from(defaults: defaults).optionAsAlt, .left)
     }
 
-    // MARK: - OSC-52 read confirm decision (WI-6)
+    // MARK: - OSC-52 read confirm decision
 
-    /// The pure OSC-52 clipboard-READ resolution the embedder's GUI-only `confirm_read_clipboard_cb` (WI-6)
+    /// The pure OSC-52 clipboard-READ resolution the embedder's GUI-only `confirm_read_clipboard_cb`
     /// drives. ``ClipboardAccess/silentClipboardRead(text:)`` decides the SILENT (no-dialog) outcome:
     /// ``ClipboardAccess/allow`` hands the program the real clipboard text, ``ClipboardAccess/deny`` hands
     /// back EMPTY (a well-formed but empty OSC-52 reply — the clipboard is never leaked), and

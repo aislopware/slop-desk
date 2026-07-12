@@ -26,23 +26,23 @@ public final class HostServer: @unchecked Sendable {
 
     /// What every new channel spawns: a plain login shell. Not a daemon mode — a Claude session is
     /// just a `.terminal` pane running `claude`, auto-detected by the host foreground-process watch
-    /// + hook listener (W11, Decision #5/#9). The curated env is a client-side launch preset, not a
+    /// + hook listener (Decision #5/#9). The curated env is a client-side launch preset, not a
     /// host launch mode.
     public enum LaunchMode: Sendable, Equatable {
-        /// Plain login shell (the WF-3 path): `[shell] argv0=-shell`, curated generic env.
+        /// Plain login shell: `[shell] argv0=-shell`, curated generic env.
         case shell
     }
 
     /// The launch mode for new channels.
     public let launchMode: LaunchMode
 
-    /// W10 — whether new channels run the host-side foreground-process watch (the PRIMARY,
+    /// Whether new channels run the host-side foreground-process watch (the PRIMARY,
     /// zero-config Claude-Code detection signal, Decision #5). Resolved by the daemon from
     /// `SLOPDESK_AGENT_DETECT` (default-ON; only `"0"` disables). When false, the channel's byte
-    /// pipeline is byte-identical to pre-W10.
+    /// pipeline is byte-identical to one with no watch at all.
     public let agentDetectEnabled: Bool
 
-    /// W10 — the OPT-IN Claude-hook listener (the `AF_UNIX` socket), or `nil` when hooks are
+    /// The OPT-IN Claude-hook listener (the `AF_UNIX` socket), or `nil` when hooks are
     /// disabled (Decision #5: hooks are SECOND/opt-in — the foreground watcher runs regardless).
     /// When set, each new channel exports the socket path + a pane id into its PTY env and
     /// registers a per-pane sink; an installed hook then POSTs status events for that pane.
@@ -70,7 +70,7 @@ public final class HostServer: @unchecked Sendable {
     /// `muxSessions` so no orphan PTY outlives the daemon.
     private var controlSessions: [UUID: MuxChannelSession] = [:]
 
-    /// P1 supervision — server-level cross-pane `agent_status_changed` observers, keyed by a
+    /// Server-level cross-pane `agent_status_changed` observers, keyed by a
     /// per-subscription `UUID`, guarded by `agentStatusObserversLock`. Each ``MuxChannelSession``
     /// (mux OR control) is wired with an `onAgentStatusChanged` closure that calls
     /// ``fanAgentStatusChanged(paneId:title:status:)``, which snapshots this map and invokes every
@@ -95,13 +95,13 @@ public final class HostServer: @unchecked Sendable {
     /// client. Namespacing by the per-connection identity gives each connection its own keyspace.
     private var muxSessions: [MuxSessionKey: MuxChannelSession] = [:]
 
-    /// Accepted shared mux connections, keyed by their stable `connectionID`, guarded by `lock`
-    /// (R5 rank 3). The host must RETAIN every accepted ``MuxNWConnection`` so it can `close()` it —
+    /// Accepted shared mux connections, keyed by their stable `connectionID`, guarded by `lock`.
+    /// The host must RETAIN every accepted ``MuxNWConnection`` so it can `close()` it —
     /// cancelling its 2 receive loops + 2 `NWConnection`s/sockets — on ``stop()`` or link drop.
-    /// Without this map, `stop()` closed nothing and the open-handler captured the connection strongly
-    /// (a retain cycle), so every Start→Stop cycle on the long-lived menu-bar host abandoned one live
-    /// connection + 2 sockets + 2 tasks, accumulating toward EMFILE. The map is also the strong ref the
-    /// open handler resolves the connection from (instead of capturing it).
+    /// Without this map, `stop()` would close nothing and the open handler would capture the connection
+    /// strongly (a retain cycle), so every Start→Stop cycle on the long-lived menu-bar host would abandon
+    /// one live connection + 2 sockets + 2 tasks, accumulating toward EMFILE. The map is also the strong
+    /// ref the open handler resolves the connection from (instead of capturing it).
     private var muxConnections: [UUID: MuxNWConnection] = [:]
 
     /// Set true by ``stop()`` (under `lock`) before draining sessions. The accepted connections' receive
@@ -113,12 +113,12 @@ public final class HostServer: @unchecked Sendable {
     /// by `lock`.
     private var stopping = false
 
-    /// W10 — the ORIGINAL hook-routing pane id per live session, keyed by the session's stable
+    /// The ORIGINAL hook-routing pane id per live session, keyed by the session's stable
     /// `sessionID`, guarded by `lock`. The pane id is exported ONCE into the child env as
     /// `SLOPDESK_PANE_ID` at fresh spawn and is immutable for the shell's life — the agent's
     /// hook POSTs are forever tagged with it, so the ``AgentHookListener`` sink key must stay
     /// pinned to this original id across every detach/reattach cycle (a per-reattach
-    /// new-connection key both LEAKED one dead sink per cycle and could never route). Entries
+    /// new-connection key would both leak one dead sink per cycle and never route). Entries
     /// are removed on every end of life: deliberate close (``removeMuxSession``), detached exit,
     /// TTL/overflow eviction (``DetachedSessionStore/onEvicted``), and the failed-rebind
     /// dead-child reap.
@@ -127,8 +127,8 @@ public final class HostServer: @unchecked Sendable {
     /// Cache of the resolved effective TERM keyed by `requested|explicitOverride`, guarded by `lock`.
     /// The host's terminfo state doesn't change during a session, so the (possibly `infocmp`-spawning)
     /// probe runs at most ~once per key instead of on EVERY channel-open (new pane/tab), and the
-    /// fallback diagnostic is logged exactly once. (Review #5/#6: avoid per-open re-probe + unbounded
-    /// synchronous infocmp on the channel-open path.)
+    /// fallback diagnostic is logged exactly once — no per-open re-probe, no unbounded synchronous
+    /// `infocmp` on the channel-open path.
     private var resolvedTermCache: [String: ClaudeCodeProfile.Term] = [:]
 
     /// A hook the daemon can set to log session lifecycle to stderr.
@@ -145,32 +145,33 @@ public final class HostServer: @unchecked Sendable {
     /// actor (from the lock-guarded spawn/remove paths) — the app hops to its actor before touching UI.
     public var onConnectionCountChanged: (@Sendable (Int) -> Void)?
 
-    /// Fired when the listener fails AFTER it became ready (R15 #2) — a post-bind interface drop /
+    /// Fired when the listener fails AFTER it became ready — a post-bind interface drop /
     /// socket error that the one-shot `start()` result cannot report. Purely observational and
     /// ADDITIVE (defaults `nil`, so the headless `slopdesk-hostd` daemon is byte-identical): the
     /// menu-bar host app sets it to re-classify its "running" badge to "failed" when the listener
     /// silently dies. May be invoked off the main actor; the app hops to its actor.
     public var onListenerFailed: (@Sendable (SlopDeskTransportError) -> Void)?
 
-    /// WB1 — whether new channels run the additive "Blocks" tap (the ``CommandBlockSegmenter`` +
+    /// Whether new channels run the additive "Blocks" tap (the ``CommandBlockSegmenter`` +
     /// the type-28/29 wire). Resolved from `SLOPDESK_BLOCKS` (default-ON; only `"0"` disables) by
-    /// the daemon and passed in. When false, a channel's byte pipeline is byte-identical to pre-WB1.
+    /// the daemon and passed in. When false, a channel's byte pipeline is byte-identical to one with
+    /// no Blocks tap at all.
     public let blocksEnabled: Bool
 
-    /// S3 — whether detach/reattach is enabled (env `SLOPDESK_DETACH_ENABLED`). Default-ON idiom:
+    /// Whether detach/reattach is enabled (env `SLOPDESK_DETACH_ENABLED`). Default-ON idiom:
     /// when the env var equals `"0"`, detach is off and a disconnect routes to the existing immediate
-    /// shutdown (S1 behavior). Any other value (or absence) enables detach. Resolved once at init so
+    /// shutdown. Any other value (or absence) enables detach. Resolved once at init so
     /// every handler reads a single immutable Bool.
     public let detachEnabled: Bool
 
-    /// S3 — how long a detached session's shell survives before being killed, or `nil` for
+    /// How long a detached session's shell survives before being killed, or `nil` for
     /// INDEFINITELY (the tmux/zellij semantics — a detached session lives until the daemon dies,
     /// the client explicitly ends it, or the ``DetachedSessionStore`` 64-session cap evicts the
     /// oldest). Env `SLOPDESK_DETACH_TTL_SECS`: unset or `0` = never (the default); a positive
     /// value opts back into timed eviction. Resolved once at init.
     public let detachTTL: Duration?
 
-    /// E13 WI-3 (ES-E13-6) — the "Resume Session on Recovery" host policy (client toggle
+    /// The "Resume Session on Recovery" host policy (client toggle
     /// ``AgentPreferences/resumeOnRecovery`` → `SLOPDESK_AGENT_RESUME_ON_RECOVERY`, default-ON `!= "0"`).
     /// Maps onto ``DetachedSessionStore`` (spec `getting-started__first-launch` §"Resume Session on
     /// Recovery"): ON → a recovered terminal reattaches to the still-running detached session; OFF →
@@ -178,13 +179,13 @@ public final class HostServer: @unchecked Sendable {
     /// and AND-ed into ``detachEnabled`` (the single reattach gate) so this flag actuates.
     public let resumeOnRecovery: Bool
 
-    /// S3 — resolved detached-session cap: `nil` = UNBOUNDED (the default — tmux/zellij have no
+    /// Resolved detached-session cap: `nil` = UNBOUNDED (the default — tmux/zellij have no
     /// session cap and never silently kill a live detached session; per-session byte caps + the
     /// fd headroom are the real bounds). A positive `SLOPDESK_DETACH_MAX_SESSIONS` opts into
     /// oldest-evicted capping. See ``DetachedSessionStore/maxSessions``.
     public let detachMaxSessionsResolved: Int?
 
-    /// S3 — the store for detached sessions. `nil` when `detachEnabled == false`.
+    /// The store for detached sessions. `nil` when `detachEnabled == false`.
     private let detachedStore: DetachedSessionStore?
 
     /// Disk scrollback journals (history that survives the daemon — see ``ScrollbackJournalStore``).
@@ -235,9 +236,9 @@ public final class HostServer: @unchecked Sendable {
         self.scrollbackSweepInterval = scrollbackSweepInterval
         transport = HostTransport()
 
-        // S3: resolve detach from env (default-ON: only "0" disables) unless overridden by the caller.
+        // Resolve detach from env (default-ON: only "0" disables) unless overridden by the caller.
         let envDetach = ProcessInfo.processInfo.environment["SLOPDESK_DETACH_ENABLED"]
-        // E13 WI-3 (ES-E13-6): "Resume on Recovery" gates the SAME reattach machinery. AND it into the
+        // "Resume on Recovery" gates the SAME reattach machinery. AND it into the
         // detach gate — when OFF, detached sessions are neither kept (handleLinkDown hard-shuts down) nor
         // reattached (spawnMuxChannel sees a nil store), so recovery yields a fresh shell.
         let effectiveResume = resumeOnRecovery ?? HostEnvironment.agentResumeOnRecoveryEnabled()
@@ -319,7 +320,7 @@ public final class HostServer: @unchecked Sendable {
     /// Starts the listener and begins accepting shared mux connections. Returns once the listener
     /// is ready (so the caller can read ``boundPort()``).
     public func start() async throws {
-        // Forward a POST-ready listener failure (R15 #2) to this server's hook. Read the hook lazily
+        // Forward a POST-ready listener failure to this server's hook. Read the hook lazily
         // at failure time (`self?.onListenerFailed`) so the app's assignment after init is honoured;
         // `[weak self]` avoids retaining the server through the transport's listener handler.
         try await transport.start(port: port, onListenerFailed: { [weak self] err in
@@ -328,7 +329,7 @@ public final class HostServer: @unchecked Sendable {
         // Pre-warm the terminfo resolution OFF any connection's receive loop: the resolution can run a
         // directory probe and (on a host lacking the ghostty terminfo) spawn `infocmp`, which done lazily
         // inside `spawnMuxChannel` would block the MuxNWConnection actor's receive loop on the first
-        // channel-open (review #5). Resolving the common key (.ghostty, false) here in a detached task
+        // channel-open. Resolving the common key (.ghostty, false) here in a detached task
         // warms `resolvedTermCache`, so `spawnMuxChannel` reads it with no probe/IO on the connection's
         // actor. (The .xterm256-explicit path short-circuits the probe entirely.)
         Task.detached(priority: .utility) { [weak self] in
@@ -352,9 +353,9 @@ public final class HostServer: @unchecked Sendable {
         journalSweepTask?.cancel()
         journalSweepTask = nil
         await transport.stop()
-        // R5 rank 8: tear the channels down in PARALLEL on the concurrent teardown queue instead of
-        // serially (each `shutdown()` blocks up to ~0.25s for an interactive shell that ignores SIGTERM,
-        // so N panes took ~N×0.25s serially while parking a cooperative-pool thread). `shutdownDetached`
+        // Tear the channels down in PARALLEL on the concurrent teardown queue rather than serially:
+        // each `shutdown()` blocks up to ~0.25s for an interactive shell that ignores SIGTERM, so N
+        // panes would cost ~N×0.25s serially while parking a cooperative-pool thread. `shutdownDetached`
         // runs each on `MuxChannelSession.teardownQueue` (concurrent); we still AWAIT every completion
         // before returning, preserving the CLI reap-before-exit invariant (children fully reaped + master
         // fds closed before `slopdesk-hostd` calls `exit(0)`).
@@ -370,11 +371,11 @@ public final class HostServer: @unchecked Sendable {
             }
             await group.waitForAll()
         }
-        // S3: kill every detached session — shells that were kept alive across a client disconnect.
+        // Kill every detached session — shells that were kept alive across a client disconnect.
         detachedStore?.drainAll()
-        // R5 rank 3: close every accepted connection so its 2 receive loops + 2 NWConnections/sockets
-        // are torn down (and its handler retain cycle broken). Without this each Start→Stop cycle on the
-        // long-lived menu-bar host abandoned one live connection → accumulation toward EMFILE.
+        // Close every accepted connection so its 2 receive loops + 2 NWConnections/sockets are torn
+        // down (and its handler retain cycle broken). Without this, each Start→Stop cycle on the
+        // long-lived menu-bar host abandons one live connection → accumulation toward EMFILE.
         let liveConns = drainMuxConnections()
         for conn in liveConns { await conn.close() }
     }
@@ -407,8 +408,8 @@ public final class HostServer: @unchecked Sendable {
         return live
     }
 
-    /// Synchronously removes and returns every retained accepted connection (R5 rank 3). The caller
-    /// `close()`s them outside the lock (cancelling receive loops + sockets + breaking the handler cycle).
+    /// Synchronously removes and returns every retained accepted connection. The caller `close()`s them
+    /// outside the lock (cancelling receive loops + sockets + breaking the handler cycle).
     private func drainMuxConnections() -> [MuxNWConnection] {
         lock.lock()
         let live = Array(muxConnections.values)
@@ -461,13 +462,12 @@ public final class HostServer: @unchecked Sendable {
     /// section), then re-parks or reaps the session. NSLock is unavailable from the async
     /// ``performReattach`` directly — same discipline as ``markStopping()`` / ``drainMuxSessions()``.
     ///
-    /// Recovery contract (audit 2026-07-10 round 2 #0 — CRITICAL): the claim removed the
-    /// session from the store, so merely unregistering the map key (the old behavior) left a
-    /// live shell + running agent in NO map and NO store — unreachable by `stop()`, TTL,
-    /// `killPaneForControl`, and every future reconnect, forever (PTY + master fd + read-loop/
-    /// reaper threads leaked per wifi flap, and the replacement fresh shell double-wrote the
-    /// same sessionID journal). One `lock` snapshot decides — atomic w.r.t. `spawnMuxChannel`'s
-    /// claim critical section, so no reconnect can claim mid-decision:
+    /// Recovery contract: the claim already removed the session from the store, so merely
+    /// unregistering the map key would strand a live shell + running agent in NO map and NO store
+    /// — unreachable by `stop()`, TTL, `killPaneForControl`, and every future reconnect, forever
+    /// (PTY + master fd + read-loop/reaper threads leaked per wifi flap, and the replacement fresh
+    /// shell double-writing the same sessionID journal). One `lock` snapshot decides — atomic
+    /// w.r.t. `spawnMuxChannel`'s claim critical section, so no reconnect can claim mid-decision:
     /// - attached under another key → a later reconnect owns it; leave it alone.
     /// - already back in the store → `handleLinkDown` won the race and re-parked it; done.
     /// - child exited → reap it (nothing left to park).
@@ -515,35 +515,35 @@ public final class HostServer: @unchecked Sendable {
     /// connection allocates `channelID` 1 for its first pane.
     private func handleNewMuxConnection(_ connection: MuxNWConnection) async {
         let connectionID = connection.connectionID
-        // S3: tell MuxNWConnection whether a whole-link DROP should route to detach (skip the S1
+        // Tell MuxNWConnection whether a whole-link DROP should route to detach (skip the
         // per-channel hostCloseHandler kill loop and fire linkDownHandler for BOTH clean FIN and
-        // hard error). When detach is disabled the connection keeps exact S1 behaviour.
+        // hard error). When detach is disabled the connection keeps exact no-detach behaviour.
         await connection.setDetachShellsOnLinkDrop(detachEnabled)
-        // R5 rank 3: RETAIN the connection so stop()/link-drop can close it (frees its 2 receive loops +
-        // 2 NWConnections). This map is also the strong ref the open handler resolves the connection from.
+        // RETAIN the connection so stop()/link-drop can close it (frees its 2 receive loops + 2
+        // NWConnections). This map is also the strong ref the open handler resolves the connection from.
         retainMuxConnection(connectionID, connection)
         await connection.setHostOpenHandler { [weak self] open in
-            // R5 rank 6: hop the blocking PTY spawn OFF the mux actor's receive loop. `spawnMuxChannel`
-            // runs a synchronous `openpty()` + `fork()` (+ reaper-thread spawn) that would otherwise
-            // stall the receive loop — and thus input echo / resize / output for EVERY OTHER pane riding
-            // this shared connection — for the spawn's duration. The channel's sub-channels are already
-            // registered on `connection`, so any inbound frame that arrives during the spawn is buffered
-            // on them and lost nothing; `sendOpenAck` already completes asynchronously.
+            // Hop the blocking PTY spawn OFF the mux actor's receive loop. `spawnMuxChannel` runs a
+            // synchronous `openpty()` + `fork()` (+ reaper-thread spawn) that would otherwise stall the
+            // receive loop — and thus input echo / resize / output for EVERY OTHER pane riding this
+            // shared connection — for the spawn's duration. The channel's sub-channels are already
+            // registered on `connection`, so any inbound frame arriving during the spawn is buffered on
+            // them and nothing is lost; `sendOpenAck` already completes asynchronously.
             //
             // Resolve the connection from the retention map by id rather than CAPTURING it strongly — a
-            // strong capture forms a connection → hostOpenHandler → connection retain cycle (R5 rank 3).
+            // strong capture forms a connection → hostOpenHandler → connection retain cycle.
             Task.detached(priority: .userInitiated) { [weak self] in
                 guard let self, let conn = muxConnection(for: connectionID) else { return }
                 spawnMuxChannel(open, on: conn, connectionID: connectionID)
             }
         }
-        // S3: a clean peer `channelClose` means the client is done with the pane — no detach, just shut
-        // it down (S1 behavior). A link DROP (peer crash / TCP reset) triggers detach: the client MAY
+        // A clean peer `channelClose` means the client is done with the pane — no detach, just shut
+        // it down. A link DROP (peer crash / TCP reset) triggers detach: the client MAY
         // reconnect. So: channelClose = hard kill; link-down = soft detach (if enabled) or kill.
         await connection.setHostCloseHandler { [weak self] channelID in
             self?.removeMuxSession(MuxSessionKey(connectionID: connectionID, channelID: channelID))
         }
-        // R5 rank 3: when the whole physical link drops (peer crash / TCP reset), detach every live
+        // When the whole physical link drops (peer crash / TCP reset), detach every live
         // session on this connection (if detach is enabled) so their shells survive for the client
         // to reconnect to, then reap the connection itself (frees sockets + receive tasks).
         await connection.setLinkDownHandler { [weak self] in
@@ -552,29 +552,29 @@ public final class HostServer: @unchecked Sendable {
         onLog?("mux connection \(connectionID) accepted (shared)")
     }
 
-    /// Handles an incoming `channelOpen` with three-path routing (S3).
+    /// Handles an incoming `channelOpen` with three-path routing.
     ///
     /// - **PATH A — reattach**: the store holds a live detached session for `open.sessionID`
     ///   and the child is still alive. Rebind the relay to the new sub-channels, replay the
-    ///   ReplayBuffer tail (C4), rewire `onExit`, remove from the store, and ack accepted.
+    ///   ReplayBuffer tail, rewire `onExit`, remove from the store, and ack accepted.
     /// - **PATH B — new shell**: no detached session found (first connect, or detach disabled).
     ///   Spawn a fresh shell exactly as before.
     /// - **PATH C — child-exited**: the store lookup auto-evicts a dead session; falls through
     ///   to PATH B (fresh shell). The client MUST reset its seq to 0 — the existing ack path
     ///   with `resumeFromSeq=0` (the `sendOpenAck` with `accepted: true` on a fresh shell)
-    ///   signals this (C4: client resets its seq to 0 on a fresh-shell ack).
+    ///   signals this.
     private func spawnMuxChannel(_ open: MuxChannelOpen, on connection: MuxNWConnection, connectionID: UUID) {
         let key = MuxSessionKey(connectionID: connectionID, channelID: open.channelID)
         // (`hasRealSessionID` compares the ZERO sentinel `WireMessage.newSessionID` — a
         // first-connect preamble from a raw/old client. Our mux client replaces the sentinel
         // with a fresh real UUID before sending, so this is normally always true.)
         let hasRealSessionID = open.sessionID != WireMessage.newSessionID
-        // ONE critical section decides the route (audit 2026-07-10 #0/#9/#12): the composite-key
-        // idempotency guard, the stopping gate, the "sessionID already attached elsewhere"
-        // refusal, and the exclusive detached-store claim all happen under `lock` — paired with
-        // `detachMuxSession`'s synchronous insert, no two channelOpens can ever route the same
-        // sessionID to two attachments (the double-attach alias that let one client's later
-        // close kill the OTHER client's live PTY and delete its scrollback journal).
+        // ONE critical section decides the route: the composite-key idempotency guard, the stopping
+        // gate, the "sessionID already attached elsewhere" refusal, and the exclusive detached-store
+        // claim all happen under `lock` — paired with `detachMuxSession`'s synchronous insert, no two
+        // channelOpens can ever route the same sessionID to two attachments. That double-attach alias
+        // would let one client's later close kill the OTHER client's live PTY and delete its
+        // scrollback journal.
         lock.lock()
         let isStopping = stopping
         // Idempotency guard (defense-in-depth with the `isNewChannel` gate in `MuxNWConnection.route`):
@@ -584,13 +584,13 @@ public final class HostServer: @unchecked Sendable {
         let alreadyLive = muxSessions[key] != nil
         // Same sessionID already LIVE under a DIFFERENT composite key (a second connection /
         // window presenting a persisted id that is still attached): refuse. Aliasing one live
-        // session under two keys (the old behavior's effective outcome) froze the loser AND made
-        // its close path kill the winner's PTY; spawning a duplicate fresh shell instead would
-        // interleave two writers into the one sessionID-keyed journal. One attachment per
-        // sessionID, ever — the loser gets `accepted: false` and may retry with a fresh id.
+        // session under two keys would freeze the loser AND make its close path kill the winner's
+        // PTY; spawning a duplicate fresh shell instead would interleave two writers into the one
+        // sessionID-keyed journal. One attachment per sessionID, ever — the loser gets
+        // `accepted: false` and may retry with a fresh id.
         let attachedElsewhere = !isStopping && !alreadyLive && hasRealSessionID
             && muxSessions.contains { $0.key != key && $0.value.sessionID == open.sessionID }
-        // S3 PATH A claim: exclusively TAKE the detached session (removes the entry + cancels
+        // PATH A claim: exclusively TAKE the detached session (removes the entry + cancels
         // its TTL task atomically — `claim` auto-evicts a child-exited entry and returns nil,
         // PATH C → falls to B). Registering the claimed session under its NEW key in this same
         // critical section makes the sessionID immediately visible as "attached" to every later
@@ -631,7 +631,7 @@ public final class HostServer: @unchecked Sendable {
                 )
             }
         } else {
-            // PATH B/C: no detached session (or child exited), S3 disabled, or zero UUID
+            // PATH B/C: no detached session (or child exited), detach disabled, or zero UUID
             // (first connect) — spawn fresh.
             spawnFreshShell(open: open, connection: connection, connectionID: connectionID, key: key)
         }
@@ -651,10 +651,10 @@ public final class HostServer: @unchecked Sendable {
     ) async {
         let key = MuxSessionKey(connectionID: connectionID, channelID: open.channelID)
         // Replay the buffered tail to the NEW data sub-channel BEFORE rebinding so live output
-        // does not interleave with the replay (the rebind starts the live drain). C4: the client
+        // does not interleave with the replay (the rebind starts the live drain). The client
         // sent `lastReceivedSeq` so we can skip already-received messages.
         await session.replayTail(after: open.lastReceivedSeq, on: open.data)
-        // Rebind the relay: swap sub-channels, clear stale queues, restart relay tasks (C3).
+        // Rebind the relay: swap sub-channels, clear stale queues, restart relay tasks.
         // onExit is threaded INTO rebindRelay so it is assigned under taskLock, atomically with
         // the exitTask (re)start — closing the race where a shell that exits between rebindRelay
         // returning and a post-call `session.onExit =` assignment would fire the stale
@@ -681,7 +681,7 @@ public final class HostServer: @unchecked Sendable {
             return
         }
         emitConnectionCount()
-        // W10: refresh the hook sink under the session's ORIGINAL (env-baked) pane id — never
+        // Refresh the hook sink under the session's ORIGINAL (env-baked) pane id — never
         // the new connection's key (see `refreshHookSinkOnReattach`).
         refreshHookSinkOnReattach(session: session)
         Task { await connection.sendOpenAck(open.channelID, accepted: true) }
@@ -697,7 +697,7 @@ public final class HostServer: @unchecked Sendable {
         }
     }
 
-    /// PATH B/C: spawn a fresh shell (original S1 logic).
+    /// PATH B/C: spawn a fresh shell (the no-detach path).
     private func spawnFreshShell(
         open: MuxChannelOpen,
         connection: MuxNWConnection,
@@ -718,24 +718,24 @@ public final class HostServer: @unchecked Sendable {
         let journal = hasResumableID ? scrollbackJournals?.journal(for: open.sessionID) : nil
 
         let pty = PTYProcess()
-        // R8 #3: the per-session ZDOTDIR shim dir (if the zsh shim is installed) — captured so the
-        // session can delete it when the child exits, instead of leaking one temp dir per pane forever.
+        // The per-session ZDOTDIR shim dir (if the zsh shim is installed) — captured so the session can
+        // delete it when the child exits, instead of leaking one temp dir per pane forever.
         var shimDir: URL?
         do {
             let argv0 = HostEnvironment.loginArgv0(forShell: shellPath)
             switch launchMode {
             case .shell:
-                // WF4: layer the zsh shell-integration shim (a generated ZDOTDIR) so the
+                // Layer the zsh shell-integration shim (a generated ZDOTDIR) so the
                 // interactive shell reprints its prompt after a resize. Opt-out via
                 // SLOPDESK_SHELL_INTEGRATION=0; non-zsh shells are left untouched. The shim sources
                 // the user's real startup files, so their env / prompt is preserved.
                 //
-                // Audit #17: resolve the effective TERM against the host's terminfo DB. The
-                // plain-shell default is `xterm-ghostty`, but on a host that cannot resolve
-                // that entry we auto-fall back to `xterm-256color` (#54700) so vim/htop/less/
-                // tmux/top don't degrade. No explicit override exists on the plain-shell path.
+                // Resolve the effective TERM against the host's terminfo DB. The plain-shell
+                // default is `xterm-ghostty`, but on a host that cannot resolve that entry we
+                // auto-fall back to `xterm-256color` (#54700) so vim/htop/less/tmux/top don't
+                // degrade. No explicit override exists on the plain-shell path.
                 let term = resolveEffectiveTerm(requested: .ghostty, explicitOverride: false)
-                // W10: when the opt-in hook listener is bound, export its socket path + this
+                // When the opt-in hook listener is bound, export its socket path + this
                 // pane's id so an installed Claude hook can POST status events for this pane.
                 let paneID = Self.paneID(connectionID: connectionID, channelID: open.channelID)
                 var env = HostEnvironment.curated(
@@ -752,17 +752,17 @@ public final class HostServer: @unchecked Sendable {
                 ) {
                     for (k, value) in overrides { env[k] = value }
                     // The shim's ZDOTDIR override IS the generated `slopdesk-zdotdir-*` dir — track it so the
-                    // session deletes it on the child's exit (R8 #3).
+                    // session deletes it on the child's exit.
                     shimDir = overrides["ZDOTDIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
                 }
                 try pty.spawn(shellPath, environment: env, argv0: argv0, cwd: open.initialCwd)
             }
         } catch {
             onLog?("mux channel \(open.channelID) (conn \(connectionID)): shell spawn failed: \(error)")
-            // R9 self-audit: the ZDOTDIR shim dir is written BEFORE the spawn, so a spawn failure (e.g.
-            // EMFILE / fork failure — conditions that can REPEAT) would leak it (no MuxChannelSession is
-            // created on this path to delete it later). Clean it up here so R8 #3's "no leaked shim dir
-            // per pane" guarantee holds on the failure path too.
+            // The ZDOTDIR shim dir is written BEFORE the spawn, so a spawn failure (e.g. EMFILE / fork
+            // failure — conditions that can REPEAT) would leak it: no MuxChannelSession is created on
+            // this path to delete it later. Clean it up here so the "no leaked shim dir per pane"
+            // guarantee holds on the failure path too.
             if let shimDir { try? FileManager.default.removeItem(at: shimDir) }
             // Refuse the channel so the client's router marks it dead and never routes data to it.
             Task { await connection.sendOpenAck(open.channelID, accepted: false) }
@@ -777,9 +777,9 @@ public final class HostServer: @unchecked Sendable {
             sessionID: open.sessionID,
             shimDir: shimDir,
             agentDetectEnabled: agentDetectEnabled,
-            // Queue-safety cluster (2026-07-02): verb 13 reports the LIVE hook-listener bind state.
-            // Probed at request time (weak — the listener outlives sessions anyway) so a bind failure
-            // reads honest-false, never a stale construction-time snapshot.
+            // Verb 13 reports the LIVE hook-listener bind state. Probed at request time (weak — the
+            // listener outlives sessions anyway) so a bind failure reads honest-false, never a stale
+            // construction-time snapshot.
             agentHookListenerActive: { [weak listener = agentHookListener] in listener?.isListening ?? false },
             blocksEnabled: blocksEnabled,
             scrollbackJournal: journal,
@@ -803,14 +803,14 @@ public final class HostServer: @unchecked Sendable {
         lock.unlock()
         emitConnectionCount()
         session.startRelay()
-        // W10: register this pane's hook sink so an installed Claude hook POSTing to the host
+        // Register this pane's hook sink so an installed Claude hook POSTing to the host
         // socket (with this pane's id) routes into THIS channel's per-pane status handler.
         registerHookSink(session: session, connectionID: connectionID, channelID: open.channelID)
         Task { await connection.sendOpenAck(open.channelID, accepted: true) }
         onLog?("mux channel \(open.channelID) (conn \(connectionID)): shell \(shellPath) (pid \(pty.pid)) attached")
     }
 
-    /// W10: registers the per-pane hook sink on the coordinator listener so a Claude hook POST
+    /// Registers the per-pane hook sink on the coordinator listener so a Claude hook POST
     /// carrying this pane's id routes into the session's `ingestAgentHookRecord`.
     ///
     /// FRESH-SPAWN ONLY — `(connectionID, channelID)` here is the identity `spawnFreshShell`
@@ -829,10 +829,10 @@ public final class HostServer: @unchecked Sendable {
         }
     }
 
-    /// W10 reattach edge: re-registers the session's ORIGINAL hook key (a harmless refresh of
+    /// Reattach edge: re-registers the session's ORIGINAL hook key (a harmless refresh of
     /// the sink closure — same session object). It must NOT register the new connection's
     /// composite key: the agent's hook POSTs carry the env-baked ORIGINAL pane id, so a
-    /// per-reattach key could never route AND leaked one dead sink per detach/reattach cycle
+    /// per-reattach key could never route AND would leak one dead sink per detach/reattach cycle
     /// (one String key + closure per wifi flap, for the daemon's lifetime).
     private func refreshHookSinkOnReattach(session: MuxChannelSession) {
         guard let agentHookListener else { return }
@@ -845,11 +845,11 @@ public final class HostServer: @unchecked Sendable {
         }
     }
 
-    /// W10 teardown: drops the session's ORIGINAL hook key + its bookkeeping entry. Called from
+    /// Teardown: drops the session's ORIGINAL hook key + its bookkeeping entry. Called from
     /// EVERY end of life — deliberate close (``removeMuxSession``), detached exit, TTL/overflow
     /// eviction (via ``DetachedSessionStore/onEvicted``), and the failed-rebind dead-child reap
     /// — but NEVER on a mere detach: hook records must keep folding into the detector while the
-    /// session is parked (the detached-window status hole, closed 2026-07-10). Idempotent.
+    /// session is parked, or a detached window's status goes stale. Idempotent.
     private func unregisterHookSink(sessionID: UUID) {
         lock.lock()
         let paneID = hookPaneIDsBySession.removeValue(forKey: sessionID)
@@ -857,8 +857,8 @@ public final class HostServer: @unchecked Sendable {
         if let paneID { agentHookListener?.unregister(paneID: paneID) }
     }
 
-    /// Resolves the effective `TERM` for a new PTY against the host's terminfo database
-    /// (audit #17), logging the auto-fallback exactly when it fires.
+    /// Resolves the effective `TERM` for a new PTY against the host's terminfo database, logging
+    /// the auto-fallback exactly when it fires.
     ///
     /// Delegates to ``TerminfoResolver``. When the host cannot resolve `xterm-ghostty` and no explicit
     /// `.xterm256` override is in effect, the resolver returns `.xterm256` with `fellBack == true`; we
@@ -902,8 +902,8 @@ public final class HostServer: @unchecked Sendable {
         return result.term
     }
 
-    /// S3: handles a physical link drop — either detaches all live sessions on this connection
-    /// (when detach is enabled) so their shells survive, or shuts them down (S1 behavior).
+    /// Handles a physical link drop — either detaches all live sessions on this connection
+    /// (when detach is enabled) so their shells survive, or shuts them down.
     /// Then removes the connection from the retention map.
     private func handleLinkDown(connectionID: UUID) {
         if detachEnabled {
@@ -928,7 +928,7 @@ public final class HostServer: @unchecked Sendable {
         removeMuxConnection(connectionID)
     }
 
-    /// S3: detaches `session` from its current transport and inserts it into the detached store.
+    /// Detaches `session` from its current transport and inserts it into the detached store.
     ///
     /// Called from ``handleLinkDown`` when the physical link drops. Unlike ``removeMuxSession``
     /// (which kills the shell), this keeps the shell alive so a returning client can reattach.
@@ -944,10 +944,10 @@ public final class HostServer: @unchecked Sendable {
         let sessionID = session.sessionID
         let ttl = detachTTL
         session.detach { [weak self, weak store, weak session] id in
-            // C2: shell exited while in the store — remove the entry (TTL cancelled) and
+            // Shell exited while in the store — remove the entry (TTL cancelled) and
             // close the master fd. The shell is already dead, so no kill needed.
             store?.remove(id)
-            // E13 WI-3 (prevent-sleep strict balance): a parked shell that exits mid-turn never
+            // Prevent-sleep strict balance: a parked shell that exits mid-turn never
             // delivered a non-working transition — fan a final `.none` so a `.working` observer clears it.
             if let session { self?.fanAgentTeardown(session) }
             // shutdownDetached is safe on an already-dead shell (idempotent fd close).
@@ -960,10 +960,10 @@ public final class HostServer: @unchecked Sendable {
             self?.unregisterHookSink(sessionID: id)
             self?.onLog?("detached session \(id): shell exited while parked")
         }
-        // SYNCHRONOUS insert (audit #9): the old `Task { await store.insert }` fire-and-forget
-        // could lose to a fast reconnect, whose claim then missed the store and spawned a SECOND
-        // shell under the same sessionID (orphaned live PTY + two writers interleaving the one
-        // sessionID-keyed journal). By the time this method returns, the session is claimable.
+        // SYNCHRONOUS insert: a fire-and-forget `Task { await store.insert }` could lose to a fast
+        // reconnect, whose claim would then miss the store and spawn a SECOND shell under the same
+        // sessionID (orphaned live PTY + two writers interleaving the one sessionID-keyed journal).
+        // By the time this method returns, the session is claimable.
         store.insert(session, key: key, ttl: ttl)
         onLog?("mux channel \(key.channelID) (conn \(key.connectionID)): detached session \(sessionID)")
     }
@@ -983,7 +983,7 @@ public final class HostServer: @unchecked Sendable {
         if let session, !isStopping {
             scrollbackJournals?.delete(sessionID: session.sessionID)
         }
-        // W10: drop this pane's hook sink so a late hook POST for a closed pane is dropped.
+        // Drop this pane's hook sink so a late hook POST for a closed pane is dropped.
         // Keyed by the session's ORIGINAL pane id (not this close's composite key — after a
         // reattach cycle they differ, and unregistering the current key leaked the original).
         if let session { unregisterHookSink(sessionID: session.sessionID) }
@@ -991,7 +991,7 @@ public final class HostServer: @unchecked Sendable {
         // peer-close / child-exit race, so a second remove of the same key is a no-op and must
         // not re-emit an unchanged count).
         if session != nil { emitConnectionCount() }
-        // E13 WI-3 (prevent-sleep strict balance): a pane closed WHILE its agent is working never
+        // Prevent-sleep strict balance: a pane closed WHILE its agent is working never
         // delivers a non-working transition on its own — fan a final `.none` so observers clear it.
         // Guarded by the map-removal idempotency above (a second remove sees `nil` → no double-fan).
         if let session { fanAgentTeardown(session) }
@@ -1014,7 +1014,7 @@ public final class HostServer: @unchecked Sendable {
         public let title: String // last sniffed OSC title (empty if none)
         public let pid: Int32 // child PID (-1 if exited)
         public let isAlive: Bool // child still running
-        /// P1 supervision state — the per-pane Claude agent state mapped to the ctl wire
+        /// Supervision state — the per-pane Claude agent state mapped to the ctl wire
         /// vocabulary (`idle`/`working`/`done`/`blocked`). A live pane with no detected
         /// `claude` reports `idle` (see ``AgentControlState``).
         public let state: String
@@ -1038,7 +1038,7 @@ public final class HostServer: @unchecked Sendable {
         }
     }
 
-    // MARK: - P1 cross-pane agent-status fan-out
+    // MARK: - Cross-pane agent-status fan-out
 
     /// Registers a cross-pane `agent_status_changed` observer and returns its dedupe key. Called
     /// by the top-level (no-paneId) `subscribe` handler. The observer is invoked with
@@ -1059,9 +1059,9 @@ public final class HostServer: @unchecked Sendable {
         agentStatusObserversLock.unlock()
     }
 
-    /// E13 WI-3 — registers a PROCESS-LIFETIME observer of cross-pane agent-status transitions, the public
+    /// Registers a PROCESS-LIFETIME observer of cross-pane agent-status transitions, the public
     /// seam `slopdesk-hostd` uses to drive the prevent-sleep `IOPMAssertion` off the `.working` aggregate.
-    /// Reuses the existing P1 fan-out (``registerAgentStatusObserver(id:_:)``); the observer receives
+    /// Reuses the existing fan-out (``registerAgentStatusObserver(id:_:)``); the observer receives
     /// `(paneId, state)` where `state` is the stable ctl supervision string (``AgentControlState`` — `"working"`
     /// while a turn runs). No deregistration is exposed: the daemon holds it for its whole lifetime.
     @preconcurrency
@@ -1096,14 +1096,14 @@ public final class HostServer: @unchecked Sendable {
         }
     }
 
-    /// E13 WI-3 (prevent-sleep STRICT BALANCE): fans a FINAL `.none` agent status for a pane torn down
+    /// Prevent-sleep STRICT BALANCE: fans a FINAL `.none` agent status for a pane torn down
     /// WHILE it still carries a non-`.none` status. A pane normally delivers its own `working → done/idle`
     /// transition (detector poll / hook), but one CLOSED mid-turn — tab close (`removeMuxSession`), child
     /// exit (`removeMuxSession`/`removeControlSession`), link drop, or ctl `kill` (`killPaneForControl`) —
     /// never does. Without this fan, a `.working`-tracking observer (the `slopdesk-hostd` prevent-sleep
     /// driver) keeps that dead paneId forever, `anyAgentWorking` stays true, and the `IOPMAssertion` is
     /// held for the daemon's whole lifetime — a leaked assertion keeping the Mac awake forever. Reuses the
-    /// P1 fan-out so EVERY observer (prevent-sleep + cross-pane subscribers) clears the pane uniformly.
+    /// fan-out so EVERY observer (prevent-sleep + cross-pane subscribers) clears the pane uniformly.
     /// Gated on a non-`.none` prior status so a plain shell with no agent never emits a spurious teardown.
     private func fanAgentTeardown(_ session: MuxChannelSession) {
         guard session.agentStatusForControl != .none else { return }
@@ -1139,7 +1139,7 @@ public final class HostServer: @unchecked Sendable {
         for (key, session) in muxSessions where session.sessionID.uuidString == paneId {
             muxSessions.removeValue(forKey: key)
             lock.unlock()
-            // E13 WI-3 (prevent-sleep strict balance): clear a working pane killed mid-turn by ctl.
+            // Prevent-sleep strict balance: clear a working pane killed mid-turn by ctl.
             fanAgentTeardown(session)
             session.shutdownDetached()
             return true
@@ -1148,7 +1148,7 @@ public final class HostServer: @unchecked Sendable {
         for (id, session) in controlSessions where id.uuidString == paneId {
             controlSessions.removeValue(forKey: id)
             lock.unlock()
-            // E13 WI-3 (prevent-sleep strict balance): clear a working pane killed mid-turn by ctl.
+            // Prevent-sleep strict balance: clear a working pane killed mid-turn by ctl.
             fanAgentTeardown(session)
             session.shutdownDetached()
             return true
@@ -1193,7 +1193,7 @@ public final class HostServer: @unchecked Sendable {
         if let extraEnv { for (k, v) in extraEnv { environ[k] = v } }
         // Inject the pane self-id (same contract as a mux-spawned pane).
         environ[HostEnvironment.agentPaneIDEnvKey] = sessionID.uuidString
-        // P1 full self-orientation sentinel: an agent inside a spawned pane knows it is under
+        // Full self-orientation sentinel: an agent inside a spawned pane knows it is under
         // slopdesk control (SLOPDESK_CTL=1) and where the ctl binary is, with zero discovery.
         environ[HostEnvironment.ctlSentinelEnvKey] = "1"
         if !ctlBinaryPath.isEmpty { environ[HostEnvironment.ctlBinaryEnvKey] = ctlBinaryPath }
@@ -1269,7 +1269,7 @@ public final class HostServer: @unchecked Sendable {
         lock.lock()
         let session = controlSessions.removeValue(forKey: id)
         lock.unlock()
-        // E13 WI-3 (prevent-sleep strict balance): a standalone pane whose child exits mid-turn never
+        // Prevent-sleep strict balance: a standalone pane whose child exits mid-turn never
         // delivers a non-working transition — fan a final `.none` so a `.working` observer clears it.
         if let session { fanAgentTeardown(session) }
     }
@@ -1279,7 +1279,7 @@ public final class HostServer: @unchecked Sendable {
         case serverStopping
     }
 
-    // MARK: - Test seams (reattach-orphan recovery — audit 2026-07-10 round 2 #0)
+    // MARK: - Test seams (reattach-orphan recovery)
 
     // These drive the REAL private detach/reattach state machine (`detachMuxSession`,
     // `handleLinkDown`, `recoverFailedRebind`, the store, and the live map) headlessly —

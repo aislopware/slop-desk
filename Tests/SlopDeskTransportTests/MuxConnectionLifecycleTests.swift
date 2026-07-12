@@ -2,7 +2,7 @@ import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskTransport
 
-/// Lifecycle tests for ``MuxNWConnection`` host-side teardown (deep-hunt R5, rank 3): the host
+/// Lifecycle tests for ``MuxNWConnection`` host-side teardown: the host
 /// open/close/link-down handlers must NOT keep a connection alive forever, and a hard link drop must
 /// fire the connection-death hook so the host can reap the connection (free its 2 sockets + 2 receive
 /// loops). These prove the primitives the ``HostServer`` retention-map fix is built on, headlessly
@@ -77,7 +77,7 @@ final class MuxConnectionLifecycleTests: XCTestCase {
         _ = (cc, cd)
     }
 
-    /// R6 self-audit regression: `close()` reached via the link-down reap (e.g. the CONTROL link fails
+    /// `close()` reached via the link-down reap (e.g. the CONTROL link fails
     /// FIRST, so its `finishLink` schedules `close()` which cancels the DATA receive loop before that
     /// loop could fire `hostCloseHandler`) must REAP every live host channel itself — otherwise the
     /// per-channel PTY + master fd + child + reaper thread leaks. We register a live channel, close the
@@ -111,7 +111,7 @@ final class MuxConnectionLifecycleTests: XCTestCase {
         _ = (cc, cd) // keep the client ends alive for the test
     }
 
-    /// R6 #6 regression: the host must REFUSE channelOpens past the per-connection cap so a hostile peer
+    /// The host must REFUSE channelOpens past the per-connection cap so a hostile peer
     /// cannot fork an unbounded PTY+reaper-thread per peer-chosen channelID (fork-bomb DoS). The
     /// open-handler fires once per NEW channel, so it must fire exactly `maxChannelsPerConnection` times
     /// even when the client opens well past the cap.
@@ -138,7 +138,7 @@ final class MuxConnectionLifecycleTests: XCTestCase {
             cap,
             "the host registers at most \(cap) channels and refuses opens past the cap (fork-bomb cap)",
         )
-        // R7 #6: the ROUTER TABLE must also stay bounded — a refused open must NOT grow dataTable.states
+        // The ROUTER TABLE must also stay bounded — a refused open must NOT grow dataTable.states
         // (the cap check now runs BEFORE the router records the id). Without the fix it would be cap+25.
         let tableCount = await host.dataTableStateCountForTesting
         XCTAssertLessThanOrEqual(
@@ -149,7 +149,7 @@ final class MuxConnectionLifecycleTests: XCTestCase {
         _ = (cc, cd)
     }
 
-    /// R8 #8: a `channelOpen` whose DATA-link send FAILS must UNDO its partial registration — otherwise
+    /// A `channelOpen` whose DATA-link send FAILS must UNDO its partial registration — otherwise
     /// the just-registered sub-channels (decoder + inbound continuation + window accountant) leak forever
     /// and keep `hasLiveChannels` true. We open a channel on a connection whose data link throws on send,
     /// then assert no ghost channel was left behind.

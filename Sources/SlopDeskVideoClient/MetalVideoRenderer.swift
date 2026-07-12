@@ -50,7 +50,7 @@ public final class MetalVideoRenderer {
     /// offset law lives in the Rust core (`ScrollReprojector`); this is just the GPU application. Stays
     /// exactly `(0, 0)` when off ⇒ sampled UV and rendered bytes byte-identical to before this feature.
     public var reprojectionOffset: SIMD2<Float> = .zero
-    /// CHROME-REGION REPROJECT MASK (host-measured, 2026-06-18): the moving-content vertical band as
+    /// CHROME-REGION REPROJECT MASK (host-measured): the moving-content vertical band as
     /// normalized sample-UV `y` bounds `(top, bottom)`. The reproject offset applies ONLY to samples
     /// with `uv.y` inside this band (editor body), and the shifted sample is CLAMPED to it, so static
     /// chrome (toolbars/tabs/status bar) above and below keeps its un-shifted UV and does NOT slide with
@@ -65,14 +65,14 @@ public final class MetalVideoRenderer {
     /// toggle never desyncs click mapping.
     public var contentMode: VideoContentMode = .fit
 
-    /// WF-6 (#8): the negotiated luma range driving the YCbCr→RGB shader coefficients. Set before the
+    /// The negotiated luma range driving the YCbCr→RGB shader coefficients. Set before the
     /// first render from the stream's `helloAck.fullRange` (via the pipeline's `setColorRange` hook).
     /// Default `.video` ⇒ GPU output byte-identical to today — `.video` coefficients ARE the prior
     /// hardcoded shader literals. ONE pipeline state (same matrix); only the per-frame coefficient
     /// uniform values differ, so no shader recompile.
     public var colorRange: ColorRange = .video
 
-    /// CONTENT MASK (transparency, 2026-06-17): the opaque-content rects (capture PIXELS, top-left)
+    /// CONTENT MASK (transparency): the opaque-content rects (capture PIXELS, top-left)
     /// the host sent after a DIALOG-EXPAND region change — the window block + each popup. The shader
     /// masks every sample OUTSIDE these rects to alpha 0, so a popup overhanging the window floats over
     /// the canvas instead of a black bar. EMPTY ⇒ no mask (whole frame opaque, the default). Setting it
@@ -93,11 +93,10 @@ public final class MetalVideoRenderer {
     /// (read per-render). `0` ⇒ byte-identical to before (no sharpen).
     static let sharpenStrength: Float = resolveSharpenStrength()
 
-    /// Resolve `SLOPDESK_SHARPEN` through ``EnvConfig`` (ProcessInfo env → settings overlay) — W12 —
-    /// so a GUI slider can override it. EXACT parse/clamp of the old inline `static let` (parse `Float`;
-    /// reject `<= 0` → 0 off; clamp `> 4` → 4): empty overlay + no env ⇒ `0`, byte-identical to before.
-    /// A named function so the reaches-consumer test can drive it via the overlay without instantiating
-    /// the (Metal-touching) renderer type.
+    /// Resolves `SLOPDESK_SHARPEN` through ``EnvConfig`` (ProcessInfo env → settings overlay) so a GUI
+    /// slider can override it. Parse/clamp: `Float`; `<= 0` → 0 (off); `> 4` clamps to `4`; empty
+    /// overlay + no env ⇒ `0`, the default off state. A named function so the reaches-consumer test can
+    /// drive it via the overlay without instantiating the (Metal-touching) renderer type.
     static func resolveSharpenStrength() -> Float {
         guard let s = EnvConfig.string("SLOPDESK_SHARPEN"), let v = Float(s), v > 0
         else { return 0 }
@@ -137,11 +136,11 @@ public final class MetalVideoRenderer {
         metalLayer.pixelFormat = .bgra8Unorm
         metalLayer.framebufferOnly = true
         metalLayer.maximumDrawableCount = 2 // ~1 vsync latency (doc 04)
-        // LAT (2026-06-10 loopback hunt, env SLOPDESK_NO_VSYNC=1): present the drawable as soon as the
-        // GPU finishes instead of holding for the next refresh — shaves the 0-16.7ms (avg ~8)
-        // composite-alignment wait at the cost of possible mid-scan tearing. Default ON-vsync; opt-in.
-        // macOS-only: `displaySyncEnabled` does not exist on iOS (shipped ungated in R4-R7b, broke the
-        // iOS app build — caught + gated 2026-06-11).
+        // env SLOPDESK_NO_VSYNC=1: present the drawable as soon as the GPU finishes instead of holding
+        // for the next refresh — shaves the 0-16.7ms (avg ~8) composite-alignment wait at the cost of
+        // possible mid-scan tearing. Default ON-vsync; opt-in.
+        // macOS-only: `displaySyncEnabled` does not exist on iOS — must stay `#if os(macOS)`-gated or
+        // the iOS app build breaks.
         #if os(macOS)
         if ProcessInfo.processInfo.environment["SLOPDESK_NO_VSYNC"] == "1" {
             metalLayer.displaySyncEnabled = false
@@ -237,8 +236,8 @@ public final class MetalVideoRenderer {
         // Pin the viewport to the drawable's PIXEL size. The default viewport for a CAMetalLayer render
         // target resolves to the layer's POINT bounds (656×433), not the drawable texture's pixels
         // (1312×866) on a 2× display — so the full-size quad rendered into the top-left half, rest
-        // cleared black, then stretched to fill: video landed in the top-left QUARTER ("nhỏ 1 góc" +
-        // half-scale). libghostty sets its own viewport, so the terminal never showed this. Explicit
+        // cleared black, then stretched to fill: video landed in the top-left QUARTER (shrunk into one
+        // corner at half-scale). libghostty sets its own viewport, so the terminal never showed this. Explicit
         // texture-size viewport makes the quad cover the whole drawable. (drawable.texture matches
         // metalLayer.drawableSize.)
         encoder.setViewport(MTLViewport(
@@ -339,9 +338,9 @@ public final class MetalVideoRenderer {
                 if let base = raw.baseAddress { encoder.setFragmentBytes(base, length: raw.count, index: 3) }
             }
         }
-        // WF-6 (#8): YCbCr→RGB coefficients for the negotiated luma range, from the single source of
-        // truth (YCbCrConversion). For `.video` exactly the prior hardcoded shader literals →
-        // byte-identical GPU input on the default-OFF path. Only luma scale/bias differ for `.full`.
+        // YCbCr→RGB coefficients for the negotiated luma range, from the single source of truth
+        // (YCbCrConversion). For `.video` these are exactly the shader's original hardcoded literals,
+        // so the default-OFF path gets byte-identical GPU input. Only luma scale/bias differ for `.full`.
         // Packed as two `float4` (8th lane padding) for Metal's 16-byte alignment.
         let coeffs = YCbCrConversion.coefficients(colorRange)
         var ycbcr = YCbCrCoeffsUniform(
@@ -396,7 +395,7 @@ public final class MetalVideoRenderer {
         let pixelBuffer: CVPixelBuffer
     }
 
-    /// WF-6 (#8) fragment uniform mirroring the Metal `YCbCrCoeffs` struct (two `float4`): the seven
+    /// Fragment uniform mirroring the Metal `YCbCrCoeffs` struct (two `float4`): the seven
     /// YCbCr→RGB coefficients (lumaScale, lumaBias, chromaBias, crToR | cbToG, crToG, cbToB, _pad). Two
     /// `SIMD4<Float>` guarantee the 16-byte alignment Metal uses for `float4`, so the `setFragmentBytes`
     /// byte layout matches the shader's struct exactly.
@@ -405,16 +404,15 @@ public final class MetalVideoRenderer {
         var c1: SIMD4<Float>
     }
 
-    /// Inline Metal shader: full-screen triangle-strip quad + BT.709 NV12 YCbCr→RGB
-    /// conversion driven by a coefficient uniform (WF-6 #8 — `.video` values reproduce the
-    /// prior hardcoded video-range literals exactly). Kept inline so the target needs no
-    /// `.metal` resource.
+    /// Inline Metal shader: full-screen triangle-strip quad + BT.709 NV12 YCbCr→RGB conversion driven
+    /// by a coefficient uniform (`.video` values reproduce the shader's original hardcoded video-range
+    /// literals exactly). Kept inline so the target needs no `.metal` resource.
     static let shaderSource = """
     #include <metal_stdlib>
     using namespace metal;
 
     struct VertexOut { float4 position [[position]]; float2 uv; };
-    // WF-6 (#8): the seven YCbCr->RGB coefficients (lumaScale, lumaBias, chromaBias, crToR |
+    // The seven YCbCr->RGB coefficients (lumaScale, lumaBias, chromaBias, crToR |
     // cbToG, crToG, cbToB, _pad), fed from SlopDeskVideoProtocol.YCbCrConversion.
     struct YCbCrCoeffs { float4 c0; float4 c1; };
 
@@ -450,7 +448,7 @@ public final class MetalVideoRenderer {
         // frame translates between codec frames. reprojOffset is (0,0) when the feature is off ⇒ uv
         // unchanged ⇒ byte-identical output. The newly-revealed disocclusion edge now samples via the
         // sampler's clamp_to_edge (the editor's near-uniform background row ≈ invisible) rather than hard
-        // BLACK — the black gutter was the single most objectionable scroll artifact (2026-06-16 reframe).
+        // BLACK — a black gutter would be the single most objectionable scroll artifact.
         //
         // CHROME-REGION MASK: warp ONLY the host-measured moving-content band [reprojBand.x, reprojBand.y]
         // (normalized y). Rows outside it — the static toolbars/tabs/status bar — keep their un-shifted UV
@@ -482,10 +480,10 @@ public final class MetalVideoRenderer {
             float localMean = 0.25 * (up + dn + lf + rt);
             float effSharpen = sharpen * (1.0 + dark * (1.0 - localMean));
             float sharpened = y + effSharpen * (y - localMean);
-            // RCAS-family RINGING LIMITER (2026-06-17, from the client-text-SR research): clamp the
-            // sharpened luma to the LOCAL 5-tap [min,max] so it can never overshoot the neighbourhood
-            // → no halos/ringing around high-contrast glyph or HEVC-block edges (the failure mode of a
-            // plain clamp-to-[0,1] unsharp). Same cost (reuses the 4 taps); steepens edges, invents nothing.
+            // RCAS-family RINGING LIMITER: clamp the sharpened luma to the LOCAL 5-tap [min,max] so it
+            // can never overshoot the neighbourhood → no halos/ringing around high-contrast glyph or
+            // HEVC-block edges (the failure mode of a plain clamp-to-[0,1] unsharp). Same cost (reuses
+            // the 4 taps); steepens edges, invents nothing.
             float mn = min(y, min(min(up, dn), min(lf, rt)));
             float mx = max(y, max(max(up, dn), max(lf, rt)));
             // PUNCH widens the limiter from the local [mn,mx] (ringing-free) toward [0,1] (crisp/punchy).
@@ -509,8 +507,8 @@ public final class MetalVideoRenderer {
             float2 cmx = max(cbcr, max(max(cu, cd), max(cl, crt)));
             cbcr = clamp(csharp, mix(cmn, float2(0.0), punch), mix(cmx, float2(1.0), punch));
         }
-        // BT.709 YCbCr -> RGB, coefficient-driven (WF-6 #8). For .video the values are the prior
-        // hardcoded literals (lumaScale 255/219, lumaBias 16/255, chromaBias 128/255, crToR 1.5748,
+        // BT.709 YCbCr -> RGB, coefficient-driven. For .video the values equal the original hardcoded
+        // literals (lumaScale 255/219, lumaBias 16/255, chromaBias 128/255, crToR 1.5748,
         // cbToG 0.1873, crToG 0.4681, cbToB 1.8556) -> identical output. .full changes ONLY luma.
         float lumaScale = coeffs.c0.x, lumaBias = coeffs.c0.y, chromaBias = coeffs.c0.z, crToR = coeffs.c0.w;
         float cbToG = coeffs.c1.x, crToG = coeffs.c1.y, cbToB = coeffs.c1.z;

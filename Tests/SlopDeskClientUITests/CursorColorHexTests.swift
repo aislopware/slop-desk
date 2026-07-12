@@ -1,4 +1,4 @@
-// CursorColorHexTests (E8 WI-3) — pins the pure 6-hex ↔ RGB bridge that `CursorPreviewView`'s color wells
+// CursorColorHexTests — pins the pure 6-hex ↔ RGB bridge that `CursorPreviewView`'s color wells
 // use to read/write the `TerminalPreferences.cursorColor` / `cursorTextColor` fields. The helper is AppKit-
 // free so it runs headlessly on the macOS `swift test` host. Each case asserts against an INDEPENDENT
 // expected value (not the helper's own derivation), so a broken parse / format / clamp fails the build.

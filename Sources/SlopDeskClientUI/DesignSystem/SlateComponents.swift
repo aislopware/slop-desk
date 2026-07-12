@@ -1,4 +1,4 @@
-// SlateComponents — the reusable chrome component kit on the token layer (REBUILD-V2, L9).
+// SlateComponents — the reusable chrome component kit on the token layer.
 //
 // Small, composable pieces factored out of the chrome so every surface stays consistent and new views are
 // quick to assemble: a status dot, a key/value row, a pill/badge, and an `.slateCard()` surface modifier.
@@ -11,7 +11,8 @@ import SwiftUI
 
 /// A small status dot. State changes are a HARD CUT by design (MERIDIAN L3: a dot never glows, pops or
 /// pulses on a state flip — animation is reserved for sustained "live" signals, of which there are none
-/// at rest). This removed the last Pow `changeEffect` in the design system.
+/// at rest). Don't reach for a Pow `changeEffect` here — none exist in the design system and a state
+/// flip must stay a hard cut.
 struct SlateStatusDot: View {
     let color: Color
     var size: CGFloat = 7
@@ -23,11 +24,12 @@ struct SlateStatusDot: View {
 
 /// The AGENT-working indicator (MERIDIAN L3 exception — "animation is reserved for sustained live signals"):
 /// a smooth "comet" arc, a ~260° stroked ring whose angular gradient fades solid→transparent (the comet tail)
-/// and rotates continuously. This premium vector spinner replaced the `ProgressView`/braille rings and is
-/// reserved for a WORKING AI agent — a plain command uses the quiet muted dot instead — so a spinning arc
-/// always means "the agent is thinking". Rotation rides the WALL CLOCK via ``TimelineView`` (no `@State`), so
-/// a list re-render — the rail rebuilds on every store tick — can't reset the spin. It stays within `size`, so
-/// swapping it for a settled dot never shifts a tab row's height. Pure SwiftUI; no video/capture (hang-safety #6).
+/// and rotates continuously. A generic `ProgressView`/braille ring is avoided in favor of this premium vector
+/// spinner, which is reserved for a WORKING AI agent — a plain command uses the quiet muted dot instead — so
+/// a spinning arc always means "the agent is thinking". Rotation rides the WALL CLOCK via ``TimelineView``
+/// (no `@State`), so a list re-render — the rail rebuilds on every store tick — can't reset the spin. It
+/// stays within `size`, so swapping it for a settled dot never shifts a tab row's height. Pure SwiftUI;
+/// no video/capture (hang-safety #6).
 struct SlateCometArc: View {
     let color: Color
     var size: CGFloat = 13
@@ -89,8 +91,8 @@ struct SlatePingDot: View {
 /// container rotation, while within each ~1.35s cycle the HEAD lunges ahead with cubic ease-in-out over
 /// the first half and the TAIL chases with the same easing over the second — the arc grows to ~270°,
 /// then reels in, and the whole figure keeps gliding. At the cycle seam the arc length is ~0, which is
-/// exactly when a 270° re-anchor lands, so the loop is seamless. This replaced a cosine-breathing arc
-/// (2026-07-10: read as unnatural next to the familiar spinners). Uniform colour, no gradient. Two
+/// exactly when a 270° re-anchor lands, so the loop is seamless. A cosine-breathing arc is avoided here —
+/// it reads unnatural next to the familiar spinners this pattern mimics. Uniform colour, no gradient. Two
 /// wearers: a WORKING agent (status amber) and an OSC 9;4 progress load (muted). All phases ride the
 /// WALL CLOCK (``TimelineView`` — a rail re-render can't reset them) and stay within `ringSize`. Pure
 /// SwiftUI; no video/capture (hang-safety #6).

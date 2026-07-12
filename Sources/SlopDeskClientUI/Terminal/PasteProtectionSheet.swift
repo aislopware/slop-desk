@@ -1,10 +1,10 @@
-// PasteProtectionSheet — the macOS confirmation surface for Paste Protection (E8 / ES-E8-3).
+// PasteProtectionSheet — the macOS confirmation surface for Paste Protection.
 //
 // libghostty already TRIPS the gate (`clipboard-paste-protection`) and hands the embedder an
 // approve/deny decision via `confirm_read_clipboard_cb`; this is the user-facing dialog that decision
 // renders. It shows a preview of the clipboard content + the flagged dangers (from the pure
 // `PasteSafetyAnalyzer`) and resolves to "Paste Anyway" / "Cancel". The same surface is reused by the
-// OSC-52 read "ask" path (WI-6) with different copy via ``Kind``.
+// OSC-52 read "ask" path with different copy via ``Kind``.
 //
 // macOS-only (NSAlert). iOS auto-approves the paste in the embedder (no sheet) — see GhosttyTerminalView.
 
@@ -19,8 +19,8 @@ import SlopDeskWorkspaceCore
 @MainActor
 public enum PasteProtectionSheet {
     /// Which confirmation copy to render. `.unsafePaste` is the ⌘V protection dialog; `.clipboardRead`
-    /// is the OSC-52 "a program wants to read your clipboard" ask (WI-6); `.clipboardWrite` is the OSC-52
-    /// "a program wants to set your clipboard" ask (`clipboard-write = ask`, WI-2) — all reuse this surface.
+    /// is the OSC-52 "a program wants to read your clipboard" ask; `.clipboardWrite` is the OSC-52
+    /// "a program wants to set your clipboard" ask (`clipboard-write = ask`) — all reuse this surface.
     public enum Kind: Sendable {
         case unsafePaste
         case clipboardRead

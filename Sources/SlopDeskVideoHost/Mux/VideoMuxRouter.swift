@@ -24,10 +24,10 @@ import SlopDeskVideoProtocol
 /// Native Swift, the single source of truth (shared logic with Android, re-ported there). Uses a
 /// Swift `Set` for each lane set: membership is order-INDEPENDENT, so no iteration order leaks into
 /// any wire/decision (the retired prune filters by the wrap-aware high-water mark, never by order).
-/// It is a `final class` (not the former value struct) so the single owner
-/// (``NWVideoMuxDatagramTransport``) holds it by reference without a `let`→`var` ripple.
-/// `@unchecked Sendable` is sound because that owner serializes every call under its mux `lock` (and
-/// the tests run on one thread), so no two threads race the state.
+/// A `final class`, not a value struct, so the single owner (``NWVideoMuxDatagramTransport``) holds
+/// it by reference without a `let`→`var` ripple. `@unchecked Sendable` is sound because that owner
+/// serializes every call under its mux `lock` (and the tests run on one thread), so no two threads
+/// race the state.
 public final class VideoMuxRouter: @unchecked Sendable {
     /// Currently-admitted lanes (one per live session). Routable for data.
     private var admitted: Set<UInt32> = []
@@ -41,16 +41,17 @@ public final class VideoMuxRouter: @unchecked Sendable {
     /// `retired`. While draining, EVERY datagram (including a `hello`) drops — so a reconnect that
     /// races the async teardown is neither delivered to the dying session's still-registered sink (a
     /// false accept) nor prematurely re-minted (which the later `endDrain`/retire would then kill).
-    /// `endDrain` transitions draining → retired, after which FIX #2's hello-re-admit applies.
+    /// `endDrain` transitions draining → retired, after which the retired-lane hello-re-admit rule
+    /// below applies.
     private var draining: Set<UInt32> = []
 
-    /// FIX #4: bound the `retired` set exactly like ``FrameReassembler`` bounds its retired
-    /// frame ids (cap at 512, prune to within 256 of the high-water mark). The client allocator
-    /// is monotonic so a retired id is otherwise never re-admitted ⇒ one entry per pane/reconnect
-    /// leaks for the daemon lifetime. channelIDs are monotonic, so an id far BELOW the high-water
-    /// mark can have no in-flight datagram left — dropping it from `retired` is safe: it falls back
-    /// to ``Decision/rejectUnadmitted`` (a clean drop for an unknown lane), and with FIX #2 a fresh
-    /// hello for such an id still re-admits cleanly.
+    /// Bounds the `retired` set exactly like ``FrameReassembler`` bounds its retired frame ids
+    /// (cap at 512, prune to within 256 of the high-water mark). The client allocator is monotonic
+    /// so a retired id is otherwise never re-admitted ⇒ one entry per pane/reconnect leaks for the
+    /// daemon lifetime. channelIDs are monotonic, so an id far BELOW the high-water mark can have no
+    /// in-flight datagram left — dropping it from `retired` is safe: it falls back to
+    /// ``Decision/rejectUnadmitted`` (a clean drop for an unknown lane), and a fresh hello for such
+    /// an id still re-admits cleanly.
     static let retiredCap = 512
     static let retiredPruneWindow: Int = 256
 
@@ -90,7 +91,7 @@ public final class VideoMuxRouter: @unchecked Sendable {
         admitted.remove(channelID)
         retired.insert(channelID)
         // Track the wrap-aware high-water mark (a fresh id with no prior mark, or one strictly ahead
-        // of the current mark, advances it), then bound the set (FIX #4).
+        // of the current mark, advances it), then bound the set.
         if let high = highestRetired {
             if channelID.distanceWrapped(from: high) > 0 { highestRetired = channelID }
         } else {
@@ -110,7 +111,7 @@ public final class VideoMuxRouter: @unchecked Sendable {
     }
 
     /// Finish a reaper teardown: the session is stopped, so move the lane draining → retired (where a
-    /// fresh `hello` may now re-admit it, FIX #2). Idempotent if the lane was not draining.
+    /// fresh `hello` may now re-admit it). Idempotent if the lane was not draining.
     public func endDrain(_ channelID: UInt32) {
         draining.remove(channelID)
         retire(channelID)
@@ -146,13 +147,13 @@ public final class VideoMuxRouter: @unchecked Sendable {
     /// caller and passed in as `payloadIsHello`) so it is unit-testable without a socket — the
     /// "decider beside the actor" pattern.
     ///
-    /// - FIX #2: a RETIRED channelID re-admits ONLY when its `.control` datagram is an actual hello
+    /// - A RETIRED channelID re-admits ONLY when its `.control` datagram is an actual hello
     ///   (cross-process channelID reuse after a client restart — the dead old process has no
     ///   in-flight old-gen datagrams left, so an explicit hello is a safe re-admission). A non-hello
     ///   for a retired id still drops (reconnect-generation safety: stale old-gen video/input must
     ///   never reach a survivor). A `RequestIdr` / recovery datagram rides the `.recovery` channel,
     ///   never `.control`, so it can NEVER bootstrap (and never degrade to an LTR re-admit).
-    /// - FIX #6: an UNADMITTED (`.rejectUnadmitted`) lane bootstraps (and the transport stamps its
+    /// - An UNADMITTED (`.rejectUnadmitted`) lane bootstraps (and the transport stamps its
     ///   reply flow) ONLY when its first `.control` datagram is a hello — a stray/adversarial
     ///   non-hello control datagram drops WITHOUT the transport remembering its flow (which would
     ///   otherwise leak `channelMediaConn` for never-helloed ids).

@@ -27,8 +27,8 @@ final class DetachedSessionStoreTests: XCTestCase {
     // MARK: Basic insert / claim
 
     /// `claim` hands back the inserted session AND removes the entry — the exclusive
-    /// hand-off contract (audit #0/#12: `lookup` used to leave the entry in place, letting
-    /// two concurrent reconnects both obtain the same session).
+    /// hand-off contract (a `lookup` that left the entry in place would let two concurrent
+    /// reconnects both obtain the same session).
     func testInsertAndClaimReturnsSessionExactlyOnce() {
         let store = DetachedSessionStore()
         let id = UUID()
@@ -47,8 +47,8 @@ final class DetachedSessionStoreTests: XCTestCase {
         XCTAssertNil(result, "unknown sessionID must return nil")
     }
 
-    /// Many concurrent claims for ONE stored session: exactly one wins (audit #12 — the
-    /// two-racing-reconnects case). The losers get nil and would fall through to the
+    /// Many concurrent claims for ONE stored session: exactly one wins (the two-racing-
+    /// reconnects case). The losers get nil and would fall through to the
     /// fresh-shell path, where HostServer's live-sessionID guard refuses the duplicate.
     func testConcurrentClaimsExactlyOneWinner() async {
         let store = DetachedSessionStore()
@@ -150,7 +150,7 @@ final class DetachedSessionStoreTests: XCTestCase {
         )
     }
 
-    /// Claiming CANCELS the armed TTL task (audit #4/#9): after a claim, the stale timer can
+    /// Claiming CANCELS the armed TTL task: after a claim, the stale timer can
     /// neither kill the just-reattached PTY nor hijack a LATER entry re-inserted under the
     /// same sessionID (the same shell detaching again). We prove the second, observable half:
     /// re-insert the same id with `ttl: nil` and wait far past the original 10ms TTL — if the
@@ -192,7 +192,7 @@ final class DetachedSessionStoreTests: XCTestCase {
         XCTAssertTrue(stored.contains(id3), "newly-inserted session must be present")
     }
 
-    // MARK: Duplicate insert (failed-rebind re-park racing handleLinkDown — audit r2 #0)
+    // MARK: Duplicate insert (failed-rebind re-park racing handleLinkDown)
 
     /// Re-inserting the SAME session under its id must be idempotent: the ORIGINAL entry (and
     /// its TTL arming) is kept. The old dictionary overwrite left the first entry's TTL task
@@ -514,7 +514,7 @@ final class RebindRelayOnExitAtomicityTests: XCTestCase {
 
     /// Calling ``rebindRelay(data:control:onExit:)`` on a NON-detached session (guard path)
     /// must be a no-op that reports FAILURE (`false`) — the caller (``HostServer/performReattach``)
-    /// uses that to refuse the channel instead of acking a pane wired to someone else (audit #0).
+    /// uses that to refuse the channel instead of acking a pane wired to someone else.
     func testRebindRelayIsNoOpAndReportsFalseOnLiveSession() {
         final class Box: @unchecked Sendable { var fired = false }
         let box = Box()

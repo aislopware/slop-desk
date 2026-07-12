@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskVideoClient
 
-/// R15 #9 regression: a ZERO-byte reassembled frame must be triaged BEFORE the decoder, never
+/// A ZERO-byte reassembled frame must be triaged BEFORE the decoder, never
 /// submitted as a degenerate zero-length sample buffer (which fails the decode and drives a
 /// needless invalidateSession + IDR recovery churn). The triage is pure — no VideoToolbox.
 final class FrameDecodabilityTests: XCTestCase {

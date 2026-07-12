@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E8 WI-11 (I18): pins the pure ``PromptEditPolicy`` — the testable heart of "Undo at prompt". The
+/// Pins the pure ``PromptEditPolicy`` — the testable heart of "Undo at prompt". The
 /// GUI surface (`GhosttyTerminalView`, compile-only behind `#if canImport(CGhostty)`) is a thin actuator that
 /// maps the NSEvent → the (undo, redo) flags and sends the returned bytes, so the decision (incl. the
 /// prompt-zone gate and the redo omission) is pinned here.

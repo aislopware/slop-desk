@@ -35,7 +35,7 @@ public final class NWVideoMuxClientFlow: @unchecked Sendable {
     private let queue = DispatchQueue(label: "slopdesk.video.client.transport.mux", qos: .userInteractive)
 
     private let lock = NSLock()
-    /// KHỰNG-ladder stage 3 (SLOPDESK_VIDEO_DEBUG): last VIDEO-datagram socket-arrival time.
+    /// Stutter-ladder stage 3 (SLOPDESK_VIDEO_DEBUG): last VIDEO-datagram socket-arrival time.
     /// Owned by the serial receive queue — no lock needed.
     static let dbgGapEnabled = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil
     private var dbgLastVideoRxAt: Double = 0
@@ -179,9 +179,9 @@ public final class NWVideoMuxClientFlow: @unchecked Sendable {
         let conn = mediaConn
         lock.unlock()
         guard let conn else { return }
-        // Single-allocation framing (copy-elimination, 2026-07-10): byte-identical to the old inner
-        // `[tag][payload]` + prefix-encode two-step (pinned in
-        // `VideoMuxHeaderCodecTests.testMediaSendShapePinsManualWireBytes`).
+        // Single-allocation framing: a separate `[tag][payload]` build followed by a prefix-encode
+        // step would double the allocations for no wire difference — byte-identical output is pinned
+        // in `VideoMuxHeaderCodecTests.testMediaSendShapePinsManualWireBytes`.
         let framed = VideoMuxHeaderCodec.encodeMedia(channelID: channelID, tag: channel.rawValue, payload: datagram)
         conn.send(content: framed, completion: .contentProcessed { [weak self] error in
             if let error {
@@ -201,10 +201,10 @@ public final class NWVideoMuxClientFlow: @unchecked Sendable {
             if let data, let (channelID, rest) = try? VideoMuxHeaderCodec.decode(data), rest.count >= 1 {
                 let tag = rest[rest.startIndex]
                 if let channel = VideoChannel(rawValue: tag) {
-                    // KHỰNG-ladder stage 3 (SLOPDESK_VIDEO_DEBUG): a >28ms hole between MEDIA datagrams at
-                    // the SOCKET (before any actor hop) during continuous motion = the hole already
-                    // existed on the wire (host stall or path stall) — stages 4/5 can only inherit it.
-                    // Serial receive queue ⇒ the stamp needs no lock.
+                    // Stutter-ladder stage 3 (SLOPDESK_VIDEO_DEBUG): a >28ms hole between MEDIA datagrams
+                    // at the SOCKET (before any actor hop) during continuous motion means the hole
+                    // already existed on the wire (host stall or path stall) — stages 4/5 can only
+                    // inherit it, never introduce it. Serial receive queue ⇒ the stamp needs no lock.
                     if Self.dbgGapEnabled, channel == .video {
                         let now = ProcessInfo.processInfo.systemUptime
                         if dbgLastVideoRxAt > 0, now - dbgLastVideoRxAt > 0.028 {
@@ -216,11 +216,10 @@ public final class NWVideoMuxClientFlow: @unchecked Sendable {
                         }
                         dbgLastVideoRxAt = now
                     }
-                    // Tag-stripped SLICE, not a copy (copy-elimination, 2026-07-10): the sink
-                    // enqueues it briefly (session inbound queue — bounded by the one parent
-                    // datagram it pins) and every decode is startIndex-relative
-                    // (`VideoByteReader`); durable bytes (e.g. a fragment payload) come from
-                    // `readBytes` copies, so nothing retains the slice past decode.
+                    // Tag-stripped SLICE, not a copy: the sink enqueues it briefly (session inbound
+                    // queue — bounded by the one parent datagram it pins) and every decode is
+                    // startIndex-relative (`VideoByteReader`); durable bytes (e.g. a fragment payload)
+                    // come from `readBytes` copies, so nothing retains the slice past decode.
                     let payload = rest[(rest.startIndex + 1)...]
                     let sink = lock.withLock { self.mediaSinks[channelID] }
                     sink?(channel, payload) // a datagram for a closed/unknown lane is dropped (loss isolation)

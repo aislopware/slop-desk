@@ -3,7 +3,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-// MARK: - TerminalViewModelSecureInputTests (E17 ES-E17-4 / WI-7 — the LIVE Auto-Secure-Input pill reconcile)
+// MARK: - TerminalViewModelSecureInputTests (the LIVE Auto-Secure-Input pill reconcile)
 
 /// Pins the `🛡 SECURE INPUT` pill mirror's reaction to a LIVE "Auto Secure Input" settings change. The model's
 /// `refreshSecureInput()` reads the setting live, but it is only re-invoked from the `hostNoEcho` /
@@ -30,8 +30,8 @@ final class TerminalViewModelSecureInputTests: XCTestCase {
     #if os(macOS)
     /// Turning "Auto Secure Input" OFF live hides the pill AT ONCE on a pane already engaged on the AUTO path
     /// (host at a no-echo prompt). Revert-to-confirm-fail: with an empty `reconcileSecureInputSetting()` body the
-    /// pill mirror stays lit after the setting flips, so the final assert fails — exactly the E17 footgun (the
-    /// process-global lock + the pill linger against the user's just-expressed OFF preference).
+    /// pill mirror stays lit after the setting flips, so the final assert fails — exactly the footgun of the
+    /// process-global lock plus the pill lingering against the user's just-expressed OFF preference.
     func testReconcileHidesPillWhenAutoTurnedOffLive() {
         Defaults[.autoSecureInput] = true
         let model = TerminalViewModel()

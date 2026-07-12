@@ -16,8 +16,8 @@
 // PURITY: this file imports only Foundation. It owns a clock-injected `PrefixStateMachine` (B2) and folds:
 //   1. the tmux/zellij multi-key PREFIX path (arm → resolve → send-prefix double-tap → escape-timeout →
 //      tmux-faithful unbound-swallow), and
-//   2. the SINGLE-CHORD workspace table (the override-aware `resolvedChordTable`, so B5's removed hard-coded
-//      ⌘D/⌘⇧D split is owned here and a rebind takes effect),
+//   2. the SINGLE-CHORD workspace table (the override-aware `resolvedChordTable`, so B5's ⌘D/⌘⇧D split is
+//      resolved here rather than hard-coded, and a rebind takes effect),
 // into ONE `Disposition` the view maps to swallow / forward / send-literal-bytes. The view does NOTHING but
 // (a) map its native event → `KeyChord` and (b) act on the returned `Disposition`. No transition logic, no
 // table knowledge, and no AppKit/UIKit live in the view.
@@ -106,7 +106,7 @@ public final class TerminalKeyInterceptor {
     /// Order mirrors ``WorkspaceKeyDispatcher/handle`` exactly so B3 (the app monitor) and this fallback
     /// agree on what a chord means:
     ///   • idle + the prefix            → arm + swallow
-    ///   • idle + a bound single chord  → dispatch + swallow (this is where B5's removed ⌘D branch lives)
+    ///   • idle + a bound single chord  → dispatch + swallow (B5's ⌘D binding is resolved here, not hard-coded)
     ///   • idle + a bare/unbound key    → FORWARD (never swallow normal typing)
     ///   • armed + a bound key/sequence → dispatch + swallow
     ///   • armed + the prefix again     → send the literal prefix byte (double-tap), disarm

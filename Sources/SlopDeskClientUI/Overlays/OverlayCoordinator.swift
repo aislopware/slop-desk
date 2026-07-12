@@ -13,10 +13,10 @@ import Observation
 import SlopDeskAgentDetect
 import SlopDeskWorkspaceCore
 
-/// How the palette was opened (warp-overlays-actions.md §2.1) — governs only the friendly omnibar label now.
+/// How the palette was opened (warp-overlays-actions.md §2.1) — governs only the friendly omnibar label.
 /// BOTH entry points are the verbs-only ⌘⇧P Command Palette; the multi-source ⌘⇧O Open-Quickly jump-to is
-/// its OWN surface (`OpenQuicklyView`/`OpenQuicklyModel`), NOT a palette mode — so no `openQuickly` case /
-/// `multiSource` flag here (E11 / WI-5 removed the dead palette jump-to path).
+/// its OWN surface (`OpenQuicklyView`/`OpenQuicklyModel`), NOT a palette mode — so there is no `openQuickly`
+/// case / `multiSource` flag here.
 public enum PaletteMode: Sendable, Equatable {
     /// ⌘⇧P — the verbs-only Command Palette (actions/verbs grouped by category; NO filter chips).
     case command
@@ -35,7 +35,7 @@ public final class OverlayCoordinator {
     /// The mode the palette was opened in (cosmetic).
     public private(set) var paletteMode: PaletteMode = .command
     /// The live query text (the palette search field binds this). Editing it RESETS the keyboard selection to
-    /// row 0 (E2 fix): the ranked set changes each keystroke, so a parked index could point past the end after
+    /// row 0: the ranked set changes each keystroke, so a parked index could point past the end after
     /// a narrowing edit — the highlight would vanish and ↩ silently no-op (`acceptSelected` guards
     /// `selection < rows.count`). Row 0 is always the first selectable row (separators excluded from the index).
     public var paletteQuery = "" {
@@ -66,7 +66,7 @@ public final class OverlayCoordinator {
     public private(set) var connectVisible = false
 
     /// Monotonic Connect-sheet PRESENTATION generation — bumped by every ``openConnect()`` AND
-    /// ``closeConnect()`` (stability audit). ``ConnectHostView``'s async connect Task captures it at start
+    /// ``closeConnect()``. ``ConnectHostView``'s async connect Task captures it at start
     /// and finishes through ``closeConnect(ifCurrent:)``, so a SLOW connect that resolves after the sheet
     /// was cancelled and REOPENED can no longer dismiss the fresh sheet mid-edit.
     public private(set) var connectGeneration = 0
@@ -77,19 +77,19 @@ public final class OverlayCoordinator {
     /// ``WorkspaceBindingRegistry/groupedForDisplay`` so the displayed glyphs can't drift from the chords.
     public private(set) var cheatSheetVisible = false
 
-    // MARK: Global Search state (E5 / WI-4)
+    // MARK: Global Search state
 
     /// Whether the cross-tab Global Search surface (⇧⌘F) is presented. UNLIKE the four scrimmed panels this is
-    /// a NON-modal, NON-scrimmed surface (E5 divergence #1), so it must NOT dim the workspace and is
+    /// deliberately a NON-modal, NON-scrimmed surface, so it must NOT dim the workspace and is
     /// deliberately EXCLUDED from ``anyModalVisible``; ``OverlayHostView`` mounts it WITHOUT a ``Scrim`` and
     /// gates hit-testing on this flag directly. Reopening RESTORES the store's last in-memory results
     /// (``WorkspaceStore/globalSearch``) until the query is re-run.
     public private(set) var globalSearchVisible = false
 
-    // MARK: Open-Quickly state (E11 / WI-5)
+    // MARK: Open-Quickly state
 
     /// Whether the Open-Quickly picker (⌘⇧O All / ⌘J Current) is presented. A floating, centered, SCRIMMED
-    /// quick-switcher card (folds in E10's Jump-To), so it is in ``anyModalVisible`` and mounted behind a
+    /// quick-switcher card, so it is in ``anyModalVisible`` and mounted behind a
     /// ``Scrim``. The picker reads its own sources (open panes / recents / folders / agents / the focused
     /// pane's links + OSC-133 command index) — like Global Search, the coordinator owns only the flag + pill.
     public private(set) var openQuicklyVisible = false
@@ -99,21 +99,21 @@ public final class OverlayCoordinator {
     /// is open. Defaults to ``.all`` (the ⌘⇧O entry).
     public private(set) var openQuicklyFilter: OpenQuicklyFilter = .all
 
-    // MARK: Peek & Reply state (P4 / E13 WI-8 — answer a blocked agent INLINE, ⌘⌥J)
+    // MARK: Peek & Reply state (answer a blocked agent INLINE, ⌘⌥J)
 
     /// Whether the Peek & Reply overlay (⌘⌥J) is presented. A centered, SCRIMMED card over the oldest pane
     /// needing attention (``WorkspaceStore/peekReplyTargetPane(excluding:)``) that answers a blocked agent
-    /// INLINE — observe + reply, **NEVER an approval gate** (E13 binding directive 2; the agent is never paused
-    /// pending a slopdesk confirmation). In ``anyModalVisible``, mounted behind a ``Scrim``.
+    /// INLINE — observe + reply, **NEVER an approval gate**: the agent is never paused
+    /// pending a slopdesk confirmation. In ``anyModalVisible``, mounted behind a ``Scrim``.
     public private(set) var peekReplyVisible = false
 
-    /// The advance-to-next exclusion set accumulated while the overlay is open (E13 WI-8): each answered pane
+    /// The advance-to-next exclusion set accumulated while the overlay is open: each answered pane
     /// is added so ``peekReplyTarget()`` skips it on the immediate advance (a just-answered pane may still
     /// report `.needsPermission` until the host re-reports). Reset on every open/close so a fresh open
     /// re-targets cleanly.
     public private(set) var peekReplyExcluding: Set<PaneID> = []
 
-    // MARK: Remote-window picker state (L6)
+    // MARK: Remote-window picker state
 
     /// Whether the Remote-Window picker modal is presented (the `/remote-control` pill + the "New Remote
     /// Window Tab" palette action open it; a pick opens a `.remoteGUI` pane).
@@ -137,7 +137,7 @@ public final class OverlayCoordinator {
     /// Toggles the RIGHT Host Windows rail (docs/45, ⌘⇧R) — bound by the root view to the live
     /// `chrome.toggleHostWindows()` so the palette row, the chord, and the rail button flip ONE flag.
     @ObservationIgnored public var toggleHostWindows: @MainActor () -> Void = {}
-    /// E19/A30 (WI-4): toggles the window-pin flag (View ▸ Pin Window). Bound by ``WorkspaceRootView`` to
+    /// Toggles the window-pin flag (View ▸ Pin Window). Bound by ``WorkspaceRootView`` to
     /// `chrome.togglePin()` so any surface routed here flips the SAME live `WorkspaceChromeState.pinned` the
     /// menu Button + the macOS `NSWindow.level` glue read. No-op by default (iOS / tests / previews).
     @ObservationIgnored public var togglePinWindow: @MainActor () -> Void = {}
@@ -146,12 +146,12 @@ public final class OverlayCoordinator {
     /// `nil` (iOS / tests / a pre-`onAppear` scene) falls back to ``WorkspaceStore/requestCloseWindow()`` — the
     /// SAME parked-confirmation fallback the ⌘⇧W route arm uses, never a dead control.
     @ObservationIgnored public var closeWindow: (@MainActor () -> Void)?
-    /// Theme parity (Batch 4): switches the active local theme (the palette "Switch Theme" row). Bound app-side
+    /// Switches the active local theme (the palette "Switch Theme" row). Bound app-side
     /// to ``PreferencesStore`` (advances the primary slot through the built-in themes), so the row retints
     /// chrome + terminal cells through the SAME live `appearance.theme` that Settings → Appearance edits. No-op
     /// by default (tests / previews), so the row is never a trap.
     @ObservationIgnored public var switchTheme: @MainActor () -> Void = {}
-    /// Batch-5b (A): EAGERLY resolve the focused pane's cwd (host `cwd()` RPC →
+    /// EAGERLY resolve the focused pane's cwd (host `cwd()` RPC →
     /// ``WorkspaceStore/setLastKnownCwd(_:for:)``) so the WORKING DIRECTORY header's cwd pill is populated the
     /// moment the palette opens. Bound by ``WorkspaceRootView`` to the live ``MetadataClient``. WITHOUT this
     /// the pill stayed blank on a freshly-connected pane at a prompt: the only other `lastKnownCwd` writer — a
@@ -177,11 +177,11 @@ public final class OverlayCoordinator {
 
     // MARK: Modal gate
 
-    /// Whether ANY focus-stealing modal overlay is presented — the `OverlayHostView` hit-testing gate (E2/WI-5).
+    /// Whether ANY focus-stealing modal overlay is presented — the `OverlayHostView` hit-testing gate.
     /// True ⇒ the host's ZStack swallows clicks (scrim + centered panel); false ⇒ the host is transparent to
     /// hits so the workspace stays interactive (the always-mounted toast stack is NOT a modal, gated separately
-    /// on `!toasts.isEmpty`). Excludes Settings AND the non-scrimmed Global Search surface (E5, must not dim the
-    /// workspace) — the host gates Global Search's hit-testing separately on ``globalSearchVisible``.
+    /// on `!toasts.isEmpty`). Excludes Settings AND the non-scrimmed Global Search surface (which must not dim
+    /// the workspace) — the host gates Global Search's hit-testing separately on ``globalSearchVisible``.
     public var anyModalVisible: Bool {
         paletteVisible || cheatSheetVisible || connectVisible || remotePickerVisible || openQuicklyVisible
             || peekReplyVisible
@@ -191,8 +191,8 @@ public final class OverlayCoordinator {
     /// reads so the global ``WorkspaceKeyDispatcher`` NSEvent monitor (which PREEMPTS the responder chain)
     /// YIELDS modeled chords to the focused card instead of resolving them behind it. Without this, a modeled
     /// ⌘W / ⌘1–9 / ⌘T leaking past a scrimmed card would DESTRUCTIVELY close / switch / mutate the BACKGROUND
-    /// tree the user can't see — the recurring E11 ⌘W class. Mirrors ``anyModalVisible`` exactly PLUS the
-    /// non-scrimmed Global Search surface (E5), whose focused query field (``GlobalSearchView``) must likewise
+    /// tree the user can't see. Mirrors ``anyModalVisible`` exactly PLUS the
+    /// non-scrimmed Global Search surface, whose focused query field (``GlobalSearchView``) must likewise
     /// keep ⌘W from the workspace. SINGLE source of truth for that gate, so adding an overlay to
     /// ``anyModalVisible`` keeps the dispatcher honest without duplicating it.
     public var capturesKeyboardWhileVisible: Bool {
@@ -213,7 +213,7 @@ public final class OverlayCoordinator {
 
     private weak var store: WorkspaceStore?
 
-    /// The app-owned Folders frecency store (E11 / WI-5) — backs the Open-Quickly **Folders** pill (`⌘Z`).
+    /// The app-owned Folders frecency store — backs the Open-Quickly **Folders** pill (`⌘Z`).
     /// Held weakly (the app owns it; attached once by the root like ``store``). `nil` on iOS / tests / previews
     /// ⇒ the Folders source is simply empty there.
     @ObservationIgnored public private(set) weak var folders: FolderFrecencyStore?
@@ -240,7 +240,7 @@ public final class OverlayCoordinator {
         paletteQuery = query
         paletteSelection = 0
         paletteVisible = true
-        // Batch-5b (A): kick the focused pane's cwd resolution so the WORKING DIRECTORY header's cwd pill
+        // Kick the focused pane's cwd resolution so the WORKING DIRECTORY header's cwd pill
         // populates (~1 RTT, reactively) even on a fresh prompt where no command has completed.
         resolveActiveCwd()
     }
@@ -258,9 +258,8 @@ public final class OverlayCoordinator {
     }
 
     /// Rebuild the verbs-only ⌘⇧P mixer: the action catalog grouped into fixed categories (Working Directory /
-    /// Window / Pane / Tab / View / Shell / Settings), one section header each. (E11 / WI-5: the old
-    /// multi-source Open-Quickly branch was removed; that jump-to is now `OpenQuicklyView`/`OpenQuicklyModel`,
-    /// NOT a palette mode.)
+    /// Window / Pane / Tab / View / Shell / Settings), one section header each. The multi-source jump-to lives
+    /// entirely in `OpenQuicklyView`/`OpenQuicklyModel`, NOT here — this mixer stays verbs-only.
     public func rebuildMixer() {
         // The verb-catalog categories, one section header each.
         mixer = SearchMixer(sources: ActionsPaletteSource.categorySources())
@@ -299,7 +298,7 @@ public final class OverlayCoordinator {
     /// `mixer.ranked("")`) so the slopdesk-only Recents block can interleave after Working Directory.
     private func zeroStateResults() -> [PaletteItem] {
         var out: [PaletteItem] = []
-        // Working Directory first — its header carries the cwd badge; Copy Path (+ TODO(E10) host rows) below.
+        // Working Directory first — its header carries the cwd badge; Copy Path (+ TODO: host rows) below.
         let workingDir = ActionsPaletteSource.items(in: .workingDirectory)
         if !workingDir.isEmpty {
             out.append(.separator(PaletteCategory.workingDirectory.label, filter: .actions))
@@ -377,7 +376,7 @@ public final class OverlayCoordinator {
     }
 
     /// Accept the keyboard-selected row but KEEP the palette open (the ⌘↩ chord) so the user can chain actions
-    /// without re-opening (Warp command-chaining — spec §Behaviors / ES-E2-2). Runs with `keepOpen: true` so a
+    /// without re-opening (Warp command-chaining — spec §Behaviors). Runs with `keepOpen: true` so a
     /// `.store`/`.command` row mutates WITHOUT closing; the query is left intact for the next ⌘↩, and the
     /// selection is re-clamped in case the selectable set shrank.
     public func acceptSelectedKeepingOpen() {
@@ -432,7 +431,7 @@ public final class OverlayCoordinator {
         case .openRemotePicker:
             closePalette()
             openRemotePicker()
-        // Theme parity (Batch 4): a live theme switch — chainable (⌘↩ keep-open) like `.store` rows, so the
+        // A live theme switch — chainable (⌘↩ keep-open) like `.store` rows, so the
         // user can cycle themes without re-opening. No-op by default (tests / previews).
         case .switchTheme:
             switchTheme()
@@ -482,14 +481,15 @@ public final class OverlayCoordinator {
 
     // MARK: Global Search (⇧⌘F)
 
-    /// Present the cross-tab Global Search surface (E5 ES-E5-5). `seed` = the active pane's current selection
+    /// Present the cross-tab Global Search surface. `seed` = the active pane's current selection
     /// when a caller has one: a non-empty seed differing from the last query immediately runs
     /// ``WorkspaceStore/runGlobalSearch(query:caseSensitive:isRegex:)`` (reusing the store's last `Aa`/`.*`
-    /// flags); a nil / empty seed leaves the store's last results so ⇧⌘F REOPENS onto them (E5 divergence #1).
+    /// flags); a nil / empty seed leaves the store's last results so ⇧⌘F REOPENS onto them (deliberately
+    /// diverging from the scrimmed pickers, which always reset on open).
     /// The view restores its field + pills from the store's retained query/flags on appear, then live-re-runs.
     public func openGlobalSearch(seed: String? = nil) {
         if let store {
-            // E5 perf: snapshot every pane's scrollback ONCE per open; the seed run + every keystroke then
+            // Snapshot every pane's scrollback ONCE per open; the seed run + every keystroke then
             // re-run only the in-memory match pass over this cache (no per-keystroke cross-seam re-mirroring).
             store.beginGlobalSearchSession()
             if let trimmed = seed?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -507,7 +507,7 @@ public final class OverlayCoordinator {
 
     public func closeGlobalSearch() {
         globalSearchVisible = false
-        store?.endGlobalSearchSession() // E5 perf: drop the cached scrollback so the next open re-snapshots.
+        store?.endGlobalSearchSession() // Drop the cached scrollback so the next open re-snapshots.
     }
 
     /// Toggle the Global Search surface (the ⇧⌘F binding the app threads into the key dispatcher + menu).
@@ -516,7 +516,7 @@ public final class OverlayCoordinator {
         if globalSearchVisible { closeGlobalSearch() } else { openGlobalSearch() }
     }
 
-    // MARK: Open-Quickly (⌘⇧O — All · ⌘J — Current · E11 / WI-5)
+    // MARK: Open-Quickly (⌘⇧O — All · ⌘J — Current)
 
     /// Present the Open-Quickly picker at `filter` (⌘⇧O → ``OpenQuicklyFilter/all``; ⌘J → ``.current``). The
     /// picker resolves its own sources (open panes / recents / folders / agents / the focused pane's links +
@@ -540,7 +540,7 @@ public final class OverlayCoordinator {
         openQuicklyFilter = filter
     }
 
-    // MARK: Peek & Reply (⌘⌥J — answer a blocked agent INLINE · E13 WI-8 / P4)
+    // MARK: Peek & Reply (⌘⌥J — answer a blocked agent INLINE)
 
     /// Present the Peek & Reply overlay over the oldest pane needing attention. HONEST no-op when nothing needs
     /// attention (no target ⇒ empty card), so ⌘⌥J on a calm workspace does nothing rather than flashing an
@@ -587,14 +587,14 @@ public final class OverlayCoordinator {
         if peekReplyTarget() == nil { closePeekReply() }
     }
 
-    // MARK: Remote-window picker (L6 / W1)
+    // MARK: Remote-window picker
 
     /// Present the Remote-Window picker (the `/remote-control` pill + the "New Remote Window Tab" action).
     /// Builds a fresh discovery-driving ``RemoteWindowModel`` bound to the live app target so its
     /// `refresh()` lists the current host's windows.
     public func openRemotePicker() {
         let model = RemoteWindowModel(target: connectionTarget)
-        // Phase-3 consolidation (docs/45): the LIVE push feed pre-warms the picker so it renders
+        // docs/45: the LIVE push feed pre-warms the picker so it renders
         // instantly from ≤2 s-fresh data; the panel's on-appear refresh still re-validates.
         if let feed = hostWindowFeed, feed.isLive {
             model.prewarm(feed.structure.map { identity in

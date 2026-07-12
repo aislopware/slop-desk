@@ -2,7 +2,7 @@
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// PURE resolution-aware live-bitrate math (2026-06-08 scroll-smoothness fix). The encoder it feeds
+/// PURE resolution-aware live-bitrate math. The encoder it feeds
 /// is HW-gated and never instantiated in a test; this covers the arithmetic that decides the live
 /// `AverageBitRate`/`DataRateLimits` so the 2× HiDPI window is provisioned proportionally (a flat
 /// 1080p-tuned cap starved scroll frames → drops → stutter).

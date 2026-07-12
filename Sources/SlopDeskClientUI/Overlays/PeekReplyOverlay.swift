@@ -1,11 +1,11 @@
-// PeekReplyOverlay — the "Peek & Reply" card (P4 / E13 WI-8, ⌘⌥J), NATIVE SwiftUI. Everything outside the
+// PeekReplyOverlay — the "Peek & Reply" card (⌘⌥J), NATIVE SwiftUI. Everything outside the
 // workspace + panes is native chrome, so this is a native `.sheet` body (native title / status / `Divider` /
-// `TextField` / prominent send button) — NOT the old bespoke `Slate.Surface.face` panel. It targets the
+// `TextField` / prominent send button) — NOT a bespoke `Slate.Surface.face` panel. It targets the
 // OLDEST pane needing attention (`WorkspaceStore.peekReplyTargetPane`), shows that pane's cheap headless
 // `PeekContent` (title + the agent's blocking question + a few recent command-block lines), and offers a
 // reply field — so the user can ANSWER a blocked agent INLINE without a full tab/context switch.
 //
-// **Observe + reply, NEVER an approval gate** (E13 binding directive 2): the agent is never paused pending an
+// **Observe + reply, NEVER an approval gate**: the agent is never paused pending an
 // slopdesk confirmation. On submit the typed line is formatted by the pure `PeekReplyFormatter` (plain /
 // `!`-shell / digit), which appends the single trailing newline, and sent VERBATIM down the pane's PTY
 // (`OverlayCoordinator.deliverPeekReply` → `WorkspaceStore.sendPeekReply`) — NEVER through `SendKeysParser`.

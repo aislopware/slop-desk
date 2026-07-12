@@ -4,7 +4,7 @@ import ApplicationServices
 import Foundation
 import SlopDeskVideoProtocol
 
-/// PURE display-pick math for host-window-resize (2026-06-30, unit-tested): given a window frame and
+/// PURE display-pick math for host-window-resize (unit-tested): given a window frame and
 /// the active displays' bounds (all CG global POINTS, top-left origin), pick the display the window
 /// sits on. Two callers: the resize MAX reported to the client (`displayMax` = display point size,
 /// caps the "Resize…" popover) and the reposition-to-display-ORIGIN before an AX resize (else macOS
@@ -44,10 +44,10 @@ public enum WindowDisplayResolver {
 /// `CGRect` — not reinvented here.
 ///
 /// Association is by **owning process**: the open/save panel is attributed to the host app's own pid
-/// (HW-verified 2026-06-12: a Chrome file dialog enumerates as `pid==Chrome, layer==0, name=="Open"`).
+/// (HW-verified: a Chrome file dialog enumerates as `pid==Chrome, layer==0, name=="Open"`).
 /// A panel qualifies when it is a DIFFERENT window, SAME pid, on an *associatable* layer
-/// (``isAssociatableLayer``: `0` sheets/dialogs, `101` pop-up / context menus — HW-verified 2026-06-17
-/// a VS Code gear menu is `pid==Code, layer==101`), overlapping the target by ≥ `minOverlapFraction`
+/// (``isAssociatableLayer``: `0` sheets/dialogs, `101` pop-up / context menus — HW-verified a VS
+/// Code gear menu is `pid==Code, layer==101`), overlapping the target by ≥ `minOverlapFraction`
 /// of the smaller rect's area.
 public enum CaptureRegionMath {
     /// Minimum overlap fraction (of the smaller rect's area) for a same-pid front window to count
@@ -63,7 +63,7 @@ public enum CaptureRegionMath {
     ///
     /// `0` (`kCGNormalWindowLevel`) — file/save/print sheets & dialogs, attributed to the app's own
     /// pid. `101` (`kCGPopUpMenuWindowLevel`) — pop-up / context / dropdown menus that render as a
-    /// SEPARATE same-pid window and can overhang the streamed window (HW-measured 2026-06-17: VS Code's
+    /// SEPARATE same-pid window and can overhang the streamed window (HW-measured: VS Code's
     /// gear "Manage" menu enumerates at layer `101`).
     ///
     /// DELIBERATELY excludes menu bar (`24`), Dock (`20`), tooltips / status windows (`25`): system
@@ -367,9 +367,8 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         var windowsRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &windowsRef) == .success,
               let axWindows = windowsRef as? [AXUIElement] else { return }
-        // Match the EXACT window by CGWindowID via ``axWindowID(of:)`` — robust when windows share a
-        // frame (panes stacked at one origin on the shared VD); the old frame-equality heuristic bound
-        // the WRONG window there.
+        // Match the EXACT window by CGWindowID via ``axWindowID(of:)``: a frame-equality match binds
+        // the WRONG window when panes stack at one origin on the shared VD.
         for axWindow in axWindows where axWindowID(of: axWindow) == windowID {
             var titleRef: CFTypeRef?
             if AXUIElementCopyAttributeValue(axWindow, kAXTitleAttribute as CFString, &titleRef) == .success,
@@ -403,11 +402,10 @@ public final class WindowGeometryWatcher: @unchecked Sendable {
         var windowsRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &windowsRef) == .success,
               let axWindows = windowsRef as? [AXUIElement] else { return nil }
-        // Match the EXACT window by CGWindowID via ``axWindowID(of:)`` — robust when windows share a
-        // frame; the prior frame-equality lookup could resize the WRONG window when panes stack at one
-        // origin on the shared VD.
+        // Match the EXACT window by CGWindowID via ``axWindowID(of:)``: a frame-equality lookup can
+        // resize the WRONG window when panes stack at one origin on the shared VD.
         for axWindow in axWindows where axWindowID(of: axWindow) == windowID {
-            // RESIZE-TO-ORIGIN (2026-06-30): re-anchor at the display's TOP-LEFT BEFORE the size write.
+            // RESIZE-TO-ORIGIN: re-anchor at the display's TOP-LEFT BEFORE the size write.
             // macOS clamps an AX size-set to keep the window on-screen from its CURRENT position, so a
             // window parked mid-screen can't grow to the full display; moving it to the display origin
             // first lets the requested size take. Best-effort — a window that refuses the position write

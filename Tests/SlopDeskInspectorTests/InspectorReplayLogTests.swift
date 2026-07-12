@@ -1,8 +1,8 @@
 import XCTest
 @testable import SlopDeskInspector
 
-/// Replay-then-live + fan-out semantics of ``InspectorReplayLog`` (PIECE A, resolves
-/// BUG-B). Pure: no transport, no HostServer — just the actor + AsyncStreams.
+/// Replay-then-live + fan-out semantics of ``InspectorReplayLog``. Pure: no transport,
+/// no HostServer — just the actor + AsyncStreams.
 final class InspectorReplayLogTests: XCTestCase {
     /// A few distinct, order-bearing events to assert exact sequence.
     private func msg(_ text: String) -> InspectorEvent {
@@ -89,8 +89,8 @@ final class InspectorReplayLogTests: XCTestCase {
     }
 
     /// A reconnect resume (fromSeq:N) SKIPS the already-rendered prefix `0..<N` and
-    /// replays only `history[N...]`, then streams live. (This is the BUG-B fix: fromSeq
-    /// is honoured, not decoded-then-ignored.)
+    /// replays only `history[N...]`, then streams live. `fromSeq` is honoured, not
+    /// decoded-then-ignored.
     func testFromSeqResumeSkipsReplayedPrefix() async throws {
         let log = InspectorReplayLog()
         for i in 0..<4 { await log.append(msg("e\(i)")) } // seq 0,1,2,3
@@ -148,7 +148,7 @@ final class InspectorReplayLogTests: XCTestCase {
         XCTAssertEqual(got, [msg("u0"), msg("u1")])
     }
 
-    /// R6 #4: the retained history is BOUNDED. Appending past the cap drops the oldest, but
+    /// The retained history is BOUNDED. Appending past the cap drops the oldest, but
     /// `historyCount` (the absolute next-seq) keeps climbing and `subscribe(fromSeq:)` maps the ABSOLUTE
     /// seq through the dropped base — the live tail is exact, and a stale `fromSeq` below the base clamps
     /// (no crash) instead of leaking the whole history forever.
@@ -227,7 +227,7 @@ final class InspectorReplayLogTests: XCTestCase {
         XCTAssertEqual(got.last, msg("e\(total - 1)"))
     }
 
-    /// R7 #6 regression: once `baseSeq` has advanced (events dropped), a hostile/unauthenticated
+    /// Once `baseSeq` has advanced (events dropped), a hostile/unauthenticated
     /// `subscribe(fromSeq: Int64.min)` must NOT overflow-trap the host (`Int(fromSeq) - baseSeq`
     /// underflow) — it saturates to "everything retained". `Int64.max` (past the end) → empty replay.
     func testSubscribeWithHostileFromSeqDoesNotCrash() async throws {

@@ -1,7 +1,7 @@
 import Foundation
 import SlopDeskVideoProtocol
 
-/// PURE libwebrtc-trendline-style one-way-delay-GRADIENT detector (component 3, 2026-06-11).
+/// PURE libwebrtc-trendline-style one-way-delay-GRADIENT detector.
 ///
 /// WHY: the ABR's smoothed-RTT path needs ~250-300ms from congestion onset to its first cut (EWMA
 /// crossing + `rttStreakTicks` + not-improving guard). The queue's *slope* is visible much earlier

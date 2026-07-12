@@ -52,12 +52,12 @@ struct PaneContainer: View {
     /// through. Gating on a real size-change keeps it scoped to the panes actually being resized.
     @State private var resizedDuringDrag = false
 
-    /// The external-drag state for THIS pane (E18 WI-5): the classified payload of a hovering drag + the
+    /// The external-drag state for THIS pane: the classified payload of a hovering drag + the
     /// zone under the cursor. Drives ``PaneDropOverlay`` (which zones to show / highlight) and is mutated by
     /// the ``PaneDropReceiver`` `DropDelegate`. Per-pane (the whole pane is `.id(PaneID)`-keyed).
     @State private var dropModel = PaneDropOverlayModel()
 
-    /// The scene-root overlay coordinator (E18 WI-6): the receiver pushes the host-resolved advisory toast
+    /// The scene-root overlay coordinator: the receiver pushes the host-resolved advisory toast
     /// for a folder → New-Tab `cd` into it. `nil` outside the scene root (tests / the static mirror), where
     /// the toast is a no-op.
     @Environment(\.overlayCoordinator) private var overlayCoordinator
@@ -96,8 +96,8 @@ struct PaneContainer: View {
     }
 
     /// Whether the focus-corner marker shows: the pane is focused AND its tab actually has siblings to
-    /// disambiguate from (2026-07-10: a single-pane tab needs no "which pane is active" answer — the
-    /// marker there was pure ornament). Pure + static so the gate is unit-pinned.
+    /// disambiguate from — a single-pane tab needs no "which pane is active" answer, so the marker there
+    /// would be pure ornament. Pure + static so the gate is unit-pinned.
     static func showsFocusCorner(isFocused: Bool, tabPaneCount: Int) -> Bool {
         isFocused && tabPaneCount > 1
     }
@@ -134,12 +134,12 @@ struct PaneContainer: View {
                 live: live,
                 isFocused: isFocused,
                 staticMirror: staticMirror,
-                // E10 WI-4 (ES-E10-3): feed the bottom status bar. cwd is the host-reported OSC-7 dir kept on
+                // Feeds the bottom status bar. cwd is the host-reported OSC-7 dir kept on
                 // the spec (reactive — reading it here re-renders on change); host is the app-global
                 // connection target persisted on the active session.
                 cwd: spec?.lastKnownCwd,
                 host: store.tree.activeSession?.connection?.host ?? "",
-                // E10 WI-10 (G8): the Command Navigator (⌃⌘O) jumps the scrollback through the store.
+                // The Command Navigator (⌃⌘O) jumps the scrollback through the store.
                 store: store,
             )
         }
@@ -158,7 +158,7 @@ struct PaneContainer: View {
                     .allowsHitTesting(false)
                     .animation(Slate.Anim.reveal, value: showResizeScrim)
             }
-            // E18 WI-5: the external-drag drop-zone overlay. Kept in the tree at opacity 0 (cheap, never
+            // The external-drag drop-zone overlay. Kept in the tree at opacity 0 (cheap, never
             // hit-tests) and faded in only while a supported drag hovers the pane (`dropModel.isActive`). It
             // DRAWS from the same ``PaneDropZoneLayout`` the ``PaneDropReceiver`` below hit-tests against, so
             // the highlighted blob is exactly the zone the cursor is over (draw == hit).
@@ -209,7 +209,7 @@ struct PaneContainer: View {
             // panes are separated only by the `PaneDivider` hairline `SplitContainer` places between leaves.
             .contentShape(Rectangle())
             .onTapGesture { store.focusPaneTree(paneID) }
-            // E18 WI-5/WI-6: accept external file/folder/URL/text drags. The receiver is disabled on the
+            // Accepts external file/folder/URL/text drags. The receiver is disabled on the
             // static snapshot path (`!staticMirror`); it gates the overlay above and on `performDrop` FOCUSES
             // THIS pane (`paneID`) then actuates against the store (terminal-rooted `cd` ingress),
             // THIS (dropped-on) pane's live terminal (verbatim inject / host-open), and the overlay
@@ -224,9 +224,8 @@ struct PaneContainer: View {
                 terminalModel: live?.terminalModel,
                 overlayCoordinator: overlayCoordinator,
             ))
-            // FOCUS = a small FILLED accent triangle tucked into the active pane's TOP-LEFT corner (Warp-style,
-            // the KEPT marker after the box/bracket/underline/dot/top-bar iterations). `Slate.State.accent`,
-            // faded in only while focused AND the tab is actually SPLIT (`showsFocusCorner` — a single-pane
+            // FOCUS = a small FILLED accent triangle tucked into the active pane's TOP-LEFT corner (Warp-style).
+            // `Slate.State.accent`, faded in only while focused AND the tab is actually SPLIT (`showsFocusCorner` — a single-pane
             // tab has no sibling to disambiguate, so it stays bare); the unfocused panes render at FULL
             // opacity (no dim — it washed out live content). `allowsHitTesting(false)` so taps / the divider
             // gesture pass through. OUTERMOST overlay → above the resize-scrim + drop-zone overlays.

@@ -1,4 +1,4 @@
-// TerminalLeafView — the terminal pane leaf's content (REBUILD-V2, L2 MINIMAL): the terminal surface
+// TerminalLeafView — the terminal pane leaf's content, minimal by design: the terminal surface
 // seam (TerminalRendererFactory.make, else BuildStatusPlaceholderView).
 // No persistent cwd chrome (the cwd chip only appears in menus/overlays), no bottom cwd pill, no mounted
 // bottom command-input row; text delivery (incl. Peek & Reply) routes through `InputBarModel` headlessly.
@@ -10,11 +10,11 @@
 // panes). The leaf is keyed `.id(PaneID)` by PaneContainer so the surface / connection is never reused
 // across panes (identity hazard). SYSTEM colours only.
 //
-// DEFERRED (clean seams, do NOT wire in L2):
-//   - TODO(L3): the `TerminalBlocksView` command-block decoration overlay.
+// DEFERRED (clean seam, not wired yet):
+//   - TODO: the `TerminalBlocksView` command-block decoration overlay.
 
 #if canImport(SwiftUI)
-import Defaults // E17 ES-E17-4 / WI-7: observe the Auto-Secure-Input / indicator defaults so the toggle is LIVE.
+import Defaults // observe the Auto-Secure-Input / indicator defaults so the toggle is LIVE.
 import Foundation
 import SlopDeskWorkspaceCore
 import SwiftUI
@@ -33,25 +33,25 @@ struct TerminalLeafView: View {
     /// EAGER/STATIC render path for headless ImageRenderer snapshots.
     var staticMirror: Bool = false
 
-    /// E10 WI-4 (ES-E10-3): the host-reported working directory (`PaneSpec.lastKnownCwd`, live-set from OSC 7)
+    /// The host-reported working directory (`PaneSpec.lastKnownCwd`, live-set from OSC 7)
     /// for the bottom status bar's left field. Resolved by ``PaneContainer`` from the store's spec so it stays
     /// reactive; `nil` until the host first reports a cwd.
     let cwd: String?
-    /// E10 WI-4 (ES-E10-3): the app-global connection host (`ConnectionTarget.host`) for the status bar's
+    /// The app-global connection host (`ConnectionTarget.host`) for the status bar's
     /// right field. Empty when not yet connected / unknown (the strip then omits the host).
     let host: String
 
-    /// E10 WI-10 (G8): the live workspace store, needed by the per-pane Command Navigator (⌃⌘O). Its row jump
+    /// The live workspace store, needed by the per-pane Command Navigator (⌃⌘O). Its row jump
     /// routes through ``WorkspaceStore/jumpToNavigatorBlockInActivePane(index:)`` (the shared ``BlockJump``
     /// re-anchor engine, which resolves the ACTIVE pane = the pane the navigator is over). Passed from ``PaneContainer``.
     let store: WorkspaceStore
 
-    /// E5 ES-E5-1..4: the in-pane ⌘F find bar's view-model (pure ``TerminalSearchController`` + the libghostty
+    /// The in-pane ⌘F find bar's view-model (pure ``TerminalSearchController`` + the libghostty
     /// `search:` passthrough). Wired to the pane's `onRequestFind*` callbacks in `.task`; per-pane `@State`
     /// (the leaf is `.id(PaneID)`-keyed), so no cross-pane bleed.
     @State private var findBar = TerminalFindBarModel()
 
-    /// E17 ES-E17-4 / WI-7: the per-pane macOS Secure Keyboard Entry actuator. Driven (in `wirePaneCallbacks`)
+    /// The per-pane macOS Secure Keyboard Entry actuator. Driven (in `wirePaneCallbacks`)
     /// from the model's `onHostEchoChanged` (auto, on a host no-echo password prompt) + the manual
     /// `onManualSecureInputChanged` toggle, it engages / disengages process-global `EnableSecureEventInput`
     /// with a strict single-reference balance. It also observes the app-frontmost edge
@@ -60,24 +60,24 @@ struct TerminalLeafView: View {
     /// Torn down on disappear so the lock can't leak past a pane close either. Inert off macOS (no-op controller).
     @State private var secureInput = SecureKeyboardEntryController()
 
-    /// E17 ES-E17-4 / WI-7: the LIVE "Auto Secure Input" setting, OBSERVED (not just read at wire time) so a
+    /// The LIVE "Auto Secure Input" setting, OBSERVED (not just read at wire time) so a
     /// Settings toggle reconciles every open pane at once. Reading it as `@Default` registers observation, so the
     /// body re-renders on the change edge and ``onChange(of:)`` pushes the new value into this pane's
     /// ``SecureKeyboardEntryController`` (releasing an engaged process-global lock when turned OFF) AND the model's
-    /// pill mirror — the "live" contract the Settings footer claims (the E17 carryover footgun).
+    /// pill mirror — the "live" contract the Settings footer claims (watch for the carryover footgun).
     @Default(.autoSecureInput) private var autoSecureInput
-    /// E17 ES-E17-4 / WI-7: the LIVE "Show Secure Input Indicator" setting. OBSERVED so flipping it re-renders the
+    /// The LIVE "Show Secure Input Indicator" setting. OBSERVED so flipping it re-renders the
     /// leaf and `showSecureInputPill` re-evaluates at once — turning the pill off mid-prompt without waiting for a
     /// pane swap or the next echo edge.
     @Default(.secureInputIndicator) private var secureInputIndicator
 
-    /// E10 WI-10 (G8): the per-leaf Command Navigator (⌃⌘O) chrome the model's `onRequestBlockNavigator` callback
+    /// The per-leaf Command Navigator (⌃⌘O) chrome the model's `onRequestBlockNavigator` callback
     /// TOGGLES. A reference type so the `@MainActor` closure can flip it (the find-bar idiom); per-pane
     /// (`.id(PaneID)`-keyed), so no cross-pane bleed, and the modal only opens over the pane the store fired — the
     /// active pane.
     @State private var navigatorChrome = CommandNavigatorChrome()
 
-    /// E10 WI-7 (ES-E10-2 / ES-E10-6): the single overlay coordinator, used ONLY to surface a transient error
+    /// The single overlay coordinator, used ONLY to surface a transient error
     /// toast when a host open/reveal RPC fails — so the action is never a SILENT no-op. `nil` outside the app
     /// scene root (tests/previews) ⇒ the failure is swallowed there, never a crash.
     @Environment(\.overlayCoordinator) private var overlayCoordinator
@@ -87,13 +87,13 @@ struct TerminalLeafView: View {
             terminalSurface
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // Inner breathing room so terminal content isn't flush against the pane edges / split divider
-                // (issue: "thêm padding vào các pane"). `NativePaneColor.terminalBackground` on the VStack fills
+                // (issue: the user asked for padding around the panes). `NativePaneColor.terminalBackground` on the VStack fills
                 // the inset gutter (flat, no card). NB the inset shrinks the libghostty surface, so the host PTY
                 // grid loses ~1 col/row each side — it reflows through the existing PaneContainer.size →
                 // resize-scrim → host TIOCSWINSZ path, no new signal needed.
                 .padding(Slate.Metric.space2)
-            // NO per-pane status strip on a TERMINAL pane (issue: "pane footer cho terminal không có giá trị
-            // gì lắm, nên bỏ đi"). The cwd / exit / progress cues are low-value; host + connection status now
+            // NO per-pane status strip on a TERMINAL pane (issue: the user judged the terminal pane footer
+            // low-value and asked to drop it). The cwd / exit / progress cues are low-value; host + connection status now
             // live ONCE in the sidebar footer (`NavigatorColumn` → `ConnectionCluster`; titlebar trailing when collapsed), not per pane. The
             // GUI/window pane keeps a bottom bar, but as a CONTROL bar (resize / lock / zoom), not a status strip.
         }
@@ -103,14 +103,14 @@ struct TerminalLeafView: View {
         // fires once up-front, then on each `live?.id` change). Synchronous `@MainActor` closure — no actor
         // hop, unlike the `@Sendable async` `.task` above.
         .onChange(of: live?.id, initial: true) { wirePaneCallbacks() }
-        // E17 ES-E17-4 / WI-7: keep Secure Input LIVE to a Settings toggle. `wireSecureInputCallbacks()` only
+        // Keep Secure Input LIVE to a Settings toggle. `wireSecureInputCallbacks()` only
         // re-syncs on a pane swap, so without this an engaged process-global lock + the pill would linger past
         // the user turning "Auto Secure Input" OFF — the carryover footgun. Pushing the new value into BOTH the
         // controller (releases the lock on the OFF edge) AND the model's pill mirror reconciles them at once.
         // The indicator change needs no push — `secureInputIndicator` as `@Default` already re-renders
         // `showSecureInputPill`; the reconcile keeps the model mirror authoritative if a future read moves off it.
         .onChange(of: autoSecureInput) { reconcileSecureInputSetting() }
-        // E10 WI-5 (ES-E10-4): mirror the host cwd onto the model so the AppKit renderer's ⌘-hover hit-test can
+        // Mirror the host cwd onto the model so the AppKit renderer's ⌘-hover hit-test can
         // resolve a RELATIVE detected path to its absolute form. The cwd arrives reactively from `PaneContainer`
         // (OSC 7) and changes independently of the live-session id, so it gets its own `onChange`; `initial: true`
         // seeds it once on mount. No-op when no model yet.
@@ -135,22 +135,22 @@ struct TerminalLeafView: View {
                 } else {
                     BuildStatusPlaceholderView(model: model)
                 }
-                // E10 WI-5 (ES-E10-1): the ⌘-hold link underline, a DECORATION overlay over the surface (never a
+                // The ⌘-hold link underline, a DECORATION overlay over the surface (never a
                 // content branch — libghostty-freeze guardrail). Coincident with the surface (both fill this
-                // top-leading ZStack), so the WI-2 cell metrics (origin 0,0 = surface top-left) map straight to
+                // top-leading ZStack), so the cell metrics (origin 0,0 = surface top-left) map straight to
                 // the Canvas. Inert unless the renderer set `linkHighlightActive` (macOS ⌘); a placeholder
                 // surface doesn't conform to the viewport seam, so it draws nothing.
                 if !staticMirror {
                     LinkHighlightOverlay(model: model, cwd: cwd)
                 }
-                // E10 WI-9 (ES-E10-6): the Vimium Hint Mode overlay — dims the surface + draws yellow 2-letter
+                // The Vimium Hint Mode overlay — dims the surface + draws yellow 2-letter
                 // labels when armed (⌘⇧J open / ⌘⇧Y copy / reveal). Also a DECORATION overlay coincident with the
                 // surface (origin 0,0). Inert unless the renderer armed `hintMode` (or an iOS tap-on-label); a
                 // placeholder surface draws nothing.
                 if !staticMirror {
                     HintModeOverlay(model: model)
                 }
-                // E10 WI-10 (G8): the Command Navigator (⌃⌘O) — a scrimmed, centered card listing the pane's
+                // The Command Navigator (⌃⌘O) — a scrimmed, centered card listing the pane's
                 // recent OSC-133 command blocks (search + All/Failed/Bookmarked filter), jumping the scrollback
                 // on ↩. Toggled by `onRequestBlockNavigator` (wired in `wireNavigatorCallbacks`); the store fires
                 // that only on the ACTIVE pane, so this card only mounts over the focused pane. Never in the
@@ -169,8 +169,8 @@ struct TerminalLeafView: View {
                 Color.clear
             }
         }
-        // ONE top-trailing overlay holds the vi-mode pill (E17 WI-5), read-only pill (E17 WI-3), SECURE INPUT
-        // pill (E17 WI-7) and find bar (E5), stacked top→down so an open find bar reflows BELOW the persistent
+        // ONE top-trailing overlay holds the vi-mode pill, read-only pill, SECURE INPUT
+        // pill and find bar, stacked top→down so an open find bar reflows BELOW the persistent
         // pills instead of overlapping them. slopdesk has no persistent titlebar, so the pane hosts these pills
         // directly (see `PaneStatusPills.swift` / `ViModeOverlay.swift`). The vi pill and read-only pill are
         // mutually exclusive: `showReadOnlyPill` is gated `!copyModeBadgeActive`, so the lock pill steps aside
@@ -196,7 +196,7 @@ struct TerminalLeafView: View {
             }
             .padding(Slate.Metric.space2)
         }
-        // The vi key-hint bar (E17 WI-5) floats along the pane BOTTOM when `⌘/` has toggled it on during a vi
+        // The vi key-hint bar floats along the pane BOTTOM when `⌘/` has toggled it on during a vi
         // session — `showViHintBar` gates it on `copyModeBadgeActive` so it tears down the instant vi mode exits
         // (which also resets `showViKeyHints`).
         .overlay(alignment: .bottom) {
@@ -214,7 +214,7 @@ struct TerminalLeafView: View {
         .animation(Slate.Anim.reveal, value: navigatorChrome.isVisible)
     }
 
-    /// Whether the `🛡 SECURE INPUT` pill is shown (E17 ES-E17-4 / WI-7). Visible iff secure input is active
+    /// Whether the `🛡 SECURE INPUT` pill is shown. Visible iff secure input is active
     /// (``TerminalViewModel/secureInputActive`` — auto password-prompt path or manual toggle), the indicator
     /// setting is on, AND the pane is NOT read-only (under read-only no input can fire, so the cue is moot —
     /// spec). `secureInputActive` is always `false` off macOS, so the pill never lights on iOS. `false` for a
@@ -227,7 +227,7 @@ struct TerminalLeafView: View {
         return model.secureInputActive && secureInputIndicator && !model.readOnlyBadgeActive
     }
 
-    /// Whether the `🔒 READ ONLY ×` pill is shown (E17 ES-E17-1 / WI-3). Reads the model's OBSERVABLE mirrors so
+    /// Whether the `🔒 READ ONLY ×` pill is shown. Reads the model's OBSERVABLE mirrors so
     /// it lights / clears reactively: visible iff the input gate is armed (``TerminalViewModel/readOnlyBadgeActive``)
     /// AND NOT in vi / copy mode (``TerminalViewModel/copyModeBadgeActive``) — copy mode hides the pill per spec
     /// (its keybindings drive selection, not the shell, so the lock isn't needed). `false` for a non-terminal /
@@ -237,14 +237,14 @@ struct TerminalLeafView: View {
         return model.readOnlyBadgeActive && !model.copyModeBadgeActive
     }
 
-    /// Whether the vi-mode pill (E17 ES-E17-2 / WI-5) is shown. Reads the OBSERVABLE
+    /// Whether the vi-mode pill is shown. Reads the OBSERVABLE
     /// ``TerminalViewModel/copyModeBadgeActive`` mirror (NOT the `@ObservationIgnored` `isCopyMode` the keyDown
     /// path reads) so the pill lights / clears reactively. `false` for a non-terminal / not-yet-live pane.
     private var showViModePill: Bool {
         live?.terminalModel?.copyModeBadgeActive == true
     }
 
-    /// Whether the vi key-hint bar (E17 ES-E17-2 / WI-5) is shown: in vi mode AND the per-session `⌘/` toggle is
+    /// Whether the vi key-hint bar is shown: in vi mode AND the per-session `⌘/` toggle is
     /// on. Both reads are OBSERVABLE mirrors, so it reveals / hides reactively; the `copyModeBadgeActive` gate
     /// makes teardown unconditional so it can never linger after vi mode exits (``TerminalViewModel/exitCopyMode()``
     /// also resets ``TerminalViewModel/showViKeyHints``).
@@ -272,7 +272,7 @@ struct TerminalLeafView: View {
         clearPathActionCallbacks()
     }
 
-    /// Wire the pane's host OPEN / REVEAL path callbacks (E10 WI-7 / ES-E10-2 / ES-E10-6) to the live
+    /// Wire the pane's host OPEN / REVEAL path callbacks to the live
     /// ``MetadataClient`` — so ⌘click "Open", ⌘⇧click "Reveal in Finder", the right-click Open / Reveal items,
     /// Jump-To open/reveal, and Hint-to-open/reveal on a detected PATH all route to the HOST Mac's Finder/app (a
     /// path lives on the host, not the client). The client provider captures `live` WEAKLY (so the model-stored
@@ -303,7 +303,7 @@ struct TerminalLeafView: View {
         HostPathActions.clear(model: model)
     }
 
-    /// Wire the pane's Command Navigator toggle (E10 WI-10 / G8): ⌃⌘O routes through the store
+    /// Wire the pane's Command Navigator toggle: ⌃⌘O routes through the store
     /// (`requestBlockNavigatorInActivePane` → `activeTerminalModel.onRequestBlockNavigator`), so this closure
     /// fires only when THIS pane is active. It TOGGLES the per-leaf ``CommandNavigatorChrome``. No `[weak chrome]`
     /// needed: the chrome is the leaf's own `@State`, not the model, so there is no model→leaf retain cycle
@@ -320,7 +320,7 @@ struct TerminalLeafView: View {
         live?.terminalModel?.onRequestBlockNavigator = nil
     }
 
-    /// Wire the pane's Hint Mode actuation (E10 WI-9 / ES-E10-6): the model resolves a label (macOS key-resolve
+    /// Wire the pane's Hint Mode actuation: the model resolves a label (macOS key-resolve
     /// or iOS tap-on-label) and fires ``TerminalViewModel/onHintConfirmed`` with the target + intent; the view is
     /// the thin platform actuator (open path → host RPC, open URL → client, copy → client pasteboard, reveal →
     /// host RPC — the SAME `LinkActionPolicy` the ⌘click / Jump-To paths use). `[weak model]` so the closure never
@@ -346,13 +346,13 @@ struct TerminalLeafView: View {
         let bar = findBar
         bar.attach(model)
         model.onRequestFind = { bar.open() }
-        // E17 ES-E17-2 / WI-5: copy-mode `?` opens the SAME bar biased BACKWARD so its `n`/`N` step against the
+        // Copy-mode `?` opens the SAME bar biased BACKWARD so its `n`/`N` step against the
         // forward sense (vim parity). Without this the `?` handler falls back to `onRequestFind` (forward) and
         // the backward bias never lands.
         model.onRequestFindBackward = { bar.open(backward: true) }
         model.onRequestFindNext = { bar.next() }
         model.onRequestFindPrev = { bar.previous() }
-        // E5 "search all tabs" (find.png's `rectangle.stack` button): escalate the in-pane find to cross-tab
+        // "Search all tabs" (find.png's `rectangle.stack` button): escalate the in-pane find to cross-tab
         // Global Search (⇧⌘F), seeded with the live query. The coordinator is captured by value (a long-lived
         // scene object); `nil` outside the app scene (tests/previews) ⇒ the button just dismisses the bar.
         bar.onSearchAllTabs = { [overlayCoordinator] seed in
@@ -371,7 +371,7 @@ struct TerminalLeafView: View {
         model.onRequestFindPrev = nil
     }
 
-    /// Wire the pane's SECURE-INPUT actuator (E17 ES-E17-4 / WI-7): sync the controller to the model's current
+    /// Wire the pane's SECURE-INPUT actuator: sync the controller to the model's current
     /// secure-input inputs + the live Auto-Secure-Input setting, then drive it on each change so macOS
     /// process-global Secure Keyboard Entry engages on a host no-echo password prompt (auto) or the manual toggle
     /// and disengages on the inverse edge. Also starts the controller observing the app-frontmost edge
@@ -389,7 +389,7 @@ struct TerminalLeafView: View {
         model.onManualSecureInputChanged = { controller.setManualOn($0) }
     }
 
-    /// Reconcile this pane's Secure Input to a LIVE "Auto Secure Input" settings change (E17 ES-E17-4 / WI-7).
+    /// Reconcile this pane's Secure Input to a LIVE "Auto Secure Input" settings change.
     /// Driven by `.onChange(of: autoSecureInput)`, it pushes the new value into BOTH the actuator and the pill
     /// mirror so an engaged process-global `EnableSecureEventInput` lock is RELEASED (and the pill hidden) the
     /// instant the setting turns OFF — never lingering until the next pane swap / echo edge. No-op for a
@@ -415,16 +415,14 @@ struct TerminalLeafView: View {
         // IDEMPOTENT: SwiftUI re-fires this `.task` on every remount — including a pane REMOUNT on a TAB switch
         // (the inactive tab's subtree is unmounted, then remounted on return). Route through the model's
         // `connectIfNeeded()`, which no-ops on a live/in-flight/supervised channel, so a tab switch never tears
-        // down a healthy session or wipes the replay ring (the "switch tab mất history" regression). A genuinely
+        // down a healthy session or wipes the replay ring (the scrollback-lost-on-tab-switch regression). A genuinely
         // idle/dead channel still dials.
         await live?.connection?.connectIfNeeded()
         await runAutotypeIfRequested()
     }
 
-    /// The `SLOPDESK_AUTOTYPE` OUT-path proof seam (docs/22 §7) — RESTORED (again): the consumer was
-    /// first lost in the REBUILD-V2 L0 UI deletion, restored in `453b5e61`, then wiped by the 07-04 v6
-    /// full reset to the otty base — leaving `LivePaneSession.isAutotypeTarget` written-but-never-read
-    /// and `check-macos.sh --connect`'s OUT-path proof permanently red. After tab0/pane0's terminal
+    /// The `SLOPDESK_AUTOTYPE` OUT-path proof seam (docs/22 §7): keeps `LivePaneSession.isAutotypeTarget`
+    /// actually consumed so `check-macos.sh --connect`'s OUT-path proof stays green. After tab0/pane0's terminal
     /// connects, if `SLOPDESK_AUTOTYPE` is set, push the command bytes through the REAL OUT path —
     /// `terminalModel.sendInput` → the ordered drain → host PTY: the exact keystroke→host chain the
     /// renderer drives, so the typed command actually executes on the host and renders back. IDEMPOTENT
@@ -444,12 +442,12 @@ struct TerminalLeafView: View {
     /// and the proof command must land exactly once. `@MainActor`-confined (the leaf body/task both are).
     @MainActor private static var autotypeFired = false
 
-    // MARK: - Hint Mode actuation (E10 WI-9 / ES-E10-6)
+    // MARK: - Hint Mode actuation
 
     /// Actuate a resolved hint `target` for `intent`. A path/URL link routes through the SAME pure
     /// ``LinkActionPolicy`` the ⌘click / Jump-To paths use (no parallel mapping to drift); an IP OPENS
     /// (`http://<ip>`) on Hint-to-Open and copies otherwise; a git-hash copies its text on every intent (no open
-    /// target for a bare hash — a deliberate gap, see DECISIONS.md E10); a custom `hint-pattern` runs its `{0}`
+    /// target for a bare hash — a deliberate gap, see DECISIONS.md); a custom `hint-pattern` runs its `{0}`
     /// action template (a known-safe `open <url>` on the client, else verbatim on the HOST shell — the mapping
     /// note's "arbitrary shell strings run on the host"). `static` so the closure needs no leaf `self`.
     private static func performHintAction(_ target: HintTarget, intent: HintIntent, model: TerminalViewModel) {
@@ -467,7 +465,7 @@ struct TerminalLeafView: View {
             }
         case .gitHash:
             // A bare commit hash has NO open target (no repo URL to resolve it against), so every intent copies
-            // the text — a deliberate gap in docs/DECISIONS.md (E10) rather than faking an open.
+            // the text — a deliberate gap in docs/DECISIONS.md rather than faking an open.
             copyToPasteboard(target.raw)
         case let .custom(actionTemplate):
             switch intent {
@@ -482,7 +480,7 @@ struct TerminalLeafView: View {
     /// the Jump-To (copy) / ⌘⇧click (reveal) paths use — open = best handler, copy = copy path/URL, reveal =
     /// reveal-in-Finder (a no-op for a URL). The OPEN intent is an EXPLICIT open (⌘⇧J Hint-to-Open), so it routes
     /// through the config-INDEPENDENT ``LinkActionPolicy/explicitOpenAction`` — NOT the configurable ⌘click
-    /// gesture, which would silently copy / no-op under `link-cmd-click = copy/nothing` (the E10 review bug). The
+    /// gesture, which would silently copy / no-op under `link-cmd-click = copy/nothing`. The
     /// renderer's mouse ⌘click / ⌘⇧click keeps the gesture path.
     private static func linkAction(for intent: HintIntent, link: DetectedLink) -> LinkAction {
         switch intent {

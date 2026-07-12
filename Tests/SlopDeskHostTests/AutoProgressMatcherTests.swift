@@ -3,7 +3,7 @@ import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskHost
 
-/// E14/K2 — the host-side auto-progress feature: the PURE ``AutoProgressMatcher`` ("Auto
+/// The host-side auto-progress feature: the PURE ``AutoProgressMatcher`` ("Auto
 /// Progress-Bar Commands") + its wiring into the ``CommandBlockSegmenter`` C / D marks, which
 /// synthesizes an INDETERMINATE OSC-9;4 spinner for a configured slow command and clears it on exit.
 ///
@@ -144,7 +144,7 @@ final class AutoProgressMatcherTests: XCTestCase {
         // Realistic ordering: the spinner is emitted at C; the program THEN drives its own 9;4 in the
         // output, so the synthetic CLEAR at D is suppressed (no double-driving). With the synthetic clear
         // gone, the badge is cleared by the program's own 9;4;0 if it sends one — and FAILING THAT, by the
-        // CLIENT on the OSC-133-D command-finish edge (M3: `TerminalViewModel` resets `progress` on `.idle`,
+        // CLIENT on the OSC-133-D command-finish edge (`TerminalViewModel` resets `progress` on `.idle`,
         // and `WorkspaceStore.handleCommandCompleted` clears the per-pane mirror), so no stuck spinner remains.
         var seg = CommandBlockSegmenter(autoProgressPrefixes: ["curl"])
         _ = seg.ingest(bytes(b() + "curl https://x" + c() + "start" + progress9("4;1;50") + "done\n" + d(0)))

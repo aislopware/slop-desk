@@ -1,5 +1,5 @@
 // WorkspaceStore+RemoteWindow — the LIVE tree-path entry point for opening a remote-GUI (PATH 2 video)
-// pane PRE-BOUND to a host window (the L6 Remote-Window picker / `/remote-control` pill / "New Remote
+// pane PRE-BOUND to a host window (the Remote-Window picker / `/remote-control` pill / "New Remote
 // Window Tab" action). The canvas-era counterpart is ``WorkspaceStore/addRemoteWindowPane(windowID:title:
 // appName:)``; this one reshapes the TREE so it works under the IDE shell.
 
@@ -40,7 +40,7 @@ public extension WorkspaceStore {
     }
 
     /// Splits a SPECIFIC `target` pane along `axis`, inserting a `.remoteGUI` leaf PRE-BOUND to host
-    /// window `windowID` on the `before` side — the rail-DRAG drop commit (docs/45 round 3: the drop
+    /// window `windowID` on the `before` side — the rail-DRAG drop commit (docs/45: the drop
     /// names the pane under the cursor + the edge; the context-verb overload above always splits the
     /// ACTIVE pane, trailing). Same endpoint persistence + cap gating; the new leaf lands focused.
     /// A vanished `target` (closed mid-drag) makes the underlying op a no-op. Returns the new pane id.
@@ -60,7 +60,7 @@ public extension WorkspaceStore {
     }
 
     /// Docks a NEW `.remoteGUI` pane PRE-BOUND to host window `windowID` at the ACTIVE tab's outermost
-    /// `edge` — the rail-DRAG container-gutter drop commit (docs/45 round 3): the window opens as a
+    /// `edge` — the rail-DRAG container-gutter drop commit (docs/45): the window opens as a
     /// full-span column/row on that whole edge. Same endpoint persistence + cap gating as the tab
     /// path; the new leaf lands focused. Returns the new pane id.
     @discardableResult
@@ -87,7 +87,7 @@ public extension WorkspaceStore {
         )
     }
 
-    /// RELEASE STUCK INPUT (C5, the palette's `view.releaseStuckInput`): fire the ACTIVE pane's
+    /// RELEASE STUCK INPUT (the palette's `view.releaseStuckInput`): fire the ACTIVE pane's
     /// synthetic-release escape hatch — a key-up for every held modifier + a mouse-up for every button
     /// through the remote-GUI pane's existing release send paths — for when the host is left holding
     /// input (a latched ⌘/⇧/button) despite the automatic redundancy+dedup. Routed through the
@@ -98,7 +98,7 @@ public extension WorkspaceStore {
         handle(for: id)?.releaseStuckInput()
     }
 
-    /// PASTE AS KEYSTROKES (C7, the ⌥⌘V chord + the pane context menu): type the CURRENT local clipboard
+    /// PASTE AS KEYSTROKES (the ⌥⌘V chord + the pane context menu): type the CURRENT local clipboard
     /// into the ACTIVE remote-GUI pane's host window as paced per-key `CGEvent`s. Reads the live clipboard
     /// through ``currentLocalClipboard()`` (works even when clipboard-history recording is off), then routes
     /// to the active pane's handle — a graceful no-op for a terminal / empty / read-only / not-streaming
@@ -109,7 +109,7 @@ public extension WorkspaceStore {
         pasteAsKeystrokesInActivePane(text)
     }
 
-    /// PASTE AS KEYSTROKES (C7): type an EXPLICIT `text` (a chosen "Clipboard Ring" entry) into the ACTIVE
+    /// PASTE AS KEYSTROKES: type an EXPLICIT `text` (a chosen "Clipboard Ring" entry) into the ACTIVE
     /// remote-GUI pane's host window. Routed through the ``PaneSessionHandle`` seam, so it is a graceful
     /// no-op for a terminal / empty / read-only / not-streaming active pane.
     func pasteAsKeystrokesInActivePane(_ text: String) {

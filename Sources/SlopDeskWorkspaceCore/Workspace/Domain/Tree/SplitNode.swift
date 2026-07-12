@@ -22,7 +22,8 @@ public enum SplitAxis: String, Codable, Sendable, Equatable {
 /// and the insertion side, so the UI hit-test and the pure tree ops read ONE source of truth and the
 /// edge→axis mapping can never drift (the easy place to invert it). `.left`/`.right` form COLUMNS (a
 /// `.horizontal` split partitions width); `.top`/`.bottom` form ROWS (a `.vertical` split partitions
-/// height) — so dropping a side-by-side pane on another's TOP edge stacks them (the user's "dọc → ngang").
+/// height) — so dropping a side-by-side pane on another's TOP edge stacks them vertically, as the user
+/// requested for the re-split gesture.
 public enum PaneDropEdge: String, Sendable, Equatable, CaseIterable {
     case left
     case right

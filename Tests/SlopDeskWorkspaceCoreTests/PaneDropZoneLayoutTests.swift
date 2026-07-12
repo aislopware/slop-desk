@@ -2,7 +2,7 @@ import CoreGraphics
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Tests for ``PaneDropZoneLayout`` (E18 WI-1) — the pure overlay geometry that both the overlay DRAWS
+/// Tests for ``PaneDropZoneLayout`` — the pure overlay geometry that both the overlay DRAWS
 /// and the drop receiver HIT-TESTS, so draw == hit (the `.contentShape`-before-`.position` trap is
 /// mooted by sharing one source of truth). Geometry matches `screenshots/drop-overlay-frame-action.png`:
 /// a central column (New Tab → Insert Path → Open In-Place, top-to-bottom) plus two side-edge ellipses.

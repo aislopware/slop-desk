@@ -3,7 +3,7 @@ import SlopDeskClient
 
 // MARK: - CommandBlock (one Warp-style per-command block, client-side)
 
-/// One Warp-style "Block" as the client knows it (WB2): a per-command record built from the host's
+/// One Warp-style "Block" as the client knows it: a per-command record built from the host's
 /// `commandBlock` metadata (wire type 28). Metadata ONLY — the captured OUTPUT bytes are fetched on
 /// demand (``TerminalBlockModel/requestOutput(index:send:)`` → wire type 15 → 29) so the CONTROL
 /// channel never floods with command output.
@@ -118,7 +118,7 @@ public struct CommandBlock: Equatable, Sendable, Identifiable {
 
 // MARK: - TerminalBlockModel (the per-pane ordered, bounded block store)
 
-/// The per-pane block store (WB2): an ORDERED, BOUNDED `[CommandBlock]` keyed by `index`, upserted from
+/// The per-pane block store: an ORDERED, BOUNDED `[CommandBlock]` keyed by `index`, upserted from
 /// the host's `commandBlock` metadata (wire type 28), plus a pending-output-request registry resolved by
 /// `blockOutput` (type 29) — empty-eviction handled so it never hangs.
 ///
@@ -147,14 +147,14 @@ public final class TerminalBlockModel {
 
     public init() {}
 
-    // MARK: First-seen timestamps (E9 Outline — per-index client-receive time)
+    // MARK: First-seen timestamps (per-index client-receive time, for the Outline tab)
 
     /// The CLIENT-RECEIVE time of the FIRST `commandBlock` update per block index — the Outline tab's
     /// per-row relative-timestamp source. A SIDE-MAP (not a ``CommandBlock`` field) so its many call sites
     /// + its `Equatable` stay untouched. Captured ONCE on the new-index upsert (a later in-place
     /// running→complete update does NOT move it), dropped on eviction + ``reset()``. Client-receive rather
-    /// than the host clock because host time would differ by the link RTT and there's no wire timestamp
-    /// (E9 makes no wire change).
+    /// than the host clock because host time would differ by the link RTT and there is no wire timestamp
+    /// to use instead.
     @ObservationIgnored private var firstSeenByIndex: [UInt32: Date] = [:]
 
     /// The clock first-seen capture reads — injectable so a unit test pins a fixed time (production default
@@ -165,7 +165,7 @@ public final class TerminalBlockModel {
     /// the Outline row's relative-timestamp source (rendered via ``OutlinePresentation/relativeTime(from:now:)``).
     public func firstSeen(index: UInt32) -> Date? { firstSeenByIndex[index] }
 
-    // MARK: Bookmarks (WB3 — star a block)
+    // MARK: Bookmarks (star a block)
 
     /// Cap on bookmarks per pane so a long-lived session can't grow the set unbounded. Over the cap, the
     /// OLDEST-inserted bookmark is evicted (FIFO). Generous enough no real session hits it.
@@ -220,7 +220,7 @@ public final class TerminalBlockModel {
         }
     }
 
-    // MARK: Filtered views (WB3 — status / bookmark navigator filter)
+    // MARK: Filtered views (status / bookmark navigator filter)
 
     /// The blocks NEWEST-FIRST matching `filter` — the navigator's filtered list (intersected with its text
     /// query in the view). `.all` is every block; `.failed` is completed non-zero exits (a RUNNING block is
@@ -339,9 +339,9 @@ public final class TerminalBlockModel {
     /// Monotonic per-index REQUEST GENERATION, bumped each time a brand-new pending slot opens for an
     /// index (NOT on a coalesced piggy-back). A timeout `Task` captures the generation it armed for and
     /// passes it to ``timeoutPending(index:generation:)``; the timeout only fires if THAT generation is
-    /// still the live one — so a stale timer from request #1 can never resolve a fresh request #2 for the
-    /// same index (the #5 race). Resolving / timing out a slot leaves the counter alone (it only ever
-    /// advances), so the next request gets a strictly newer token.
+    /// still the live one — so a stale timer from an earlier request can never resolve a later request for
+    /// the same index. Resolving / timing out a slot leaves the counter alone (it only ever advances), so
+    /// the next request gets a strictly newer token.
     @ObservationIgnored private var requestGeneration: [UInt32: UInt64] = [:]
 
     /// The generation currently armed for an in-flight request at `index`, or `nil` if none is pending —
@@ -354,7 +354,7 @@ public final class TerminalBlockModel {
     /// (or `nil` on an EMPTY reply = evicted/unknown). `send` fires the wire request (the injected
     /// `SlopDeskClient.requestBlockOutput`, so the model stays pure / testable); an already-pending index
     /// does NOT re-send (it coalesces). Returns the request GENERATION to pass to
-    /// ``timeoutPending(index:generation:)`` so a stale timer can't kill a later request (#5). NEVER hangs:
+    /// ``timeoutPending(index:generation:)`` so a stale timer can't kill a later request. NEVER hangs:
     /// a `blockOutput` always resolves it (empty → `nil`), and the generation-gated timeout guards a
     /// dropped reply.
     @discardableResult
@@ -395,7 +395,7 @@ public final class TerminalBlockModel {
     /// belt-and-braces guard for a host that drops the reply (so the UI's copy spinner never spins
     /// forever). A no-op if the request already resolved.
     ///
-    /// GENERATION-GATED (#5): fires ONLY if `generation` is still the live token for this index. A copy
+    /// GENERATION-GATED: fires ONLY if `generation` is still the live token for this index. A copy
     /// request resolves its slot and a SECOND copy of the same block opens a NEW slot with a NEWER
     /// generation; the first copy's parked timeout then carries a STALE generation and is correctly
     /// ignored, so it can't resolve the fresh request as "unavailable". Passing `nil` keeps the old
@@ -407,9 +407,9 @@ public final class TerminalBlockModel {
     }
 }
 
-// MARK: - BlockNavigatorFilter (WB3 — the navigator's status / bookmark segment)
+// MARK: - BlockNavigatorFilter (the navigator's status / bookmark segment)
 
-/// The Command Navigator's filter segment (WB3): all recent blocks, only FAILED ones (jump-to-error), or
+/// The Command Navigator's filter segment: all recent blocks, only FAILED ones (jump-to-error), or
 /// only BOOKMARKED ones. A pure value enum so the model query (``TerminalBlockModel/blocks(filter:)``) and
 /// the segmented control read one vocabulary. `CaseIterable` so the segmented control enumerates it.
 public enum BlockNavigatorFilter: String, CaseIterable, Sendable, Hashable {
@@ -436,9 +436,9 @@ public enum BlockNavigatorFilter: String, CaseIterable, Sendable, Hashable {
     }
 }
 
-// MARK: - BlockNavigation (WB3 — jump-to-failed cursor stepping)
+// MARK: - BlockNavigation (jump-to-failed cursor stepping)
 
-/// PURE jump-to-failed navigation over a newest-first block list (WB3). Given the navigator's newest-first
+/// PURE jump-to-failed navigation over a newest-first block list. Given the navigator's newest-first
 /// `blocks`, a cursor (a block INDEX, or `nil` = start from the newest end), and a direction, it finds the
 /// next/prev FAILED block — STOPPING at the ends (never wraps). Used by the active-pane "Jump to
 /// Previous/Next Failed" store ops; kept pure + `nonisolated` so it unit-tests with no view / actor.

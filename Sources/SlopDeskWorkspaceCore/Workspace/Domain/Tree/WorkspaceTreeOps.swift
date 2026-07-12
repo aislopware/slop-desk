@@ -6,7 +6,7 @@ import Foundation
 /// Pure operation facade over the tree-rooted ``TreeWorkspace`` (docs/42 §"Pure ops"). Every method
 /// returns a NEW ``TreeWorkspace`` (some also the minted ``PaneID``) — no in-place mutation, no I/O, no
 /// GUI. Each op preserves the **specs == leafIDs invariant** and the active-selection invariants (active
-/// session / tab / pane never dangle), so the store cutover (W4) wraps these directly before `reconcile()`.
+/// session / tab / pane never dangle), so the store wraps these directly before `reconcile()`.
 ///
 /// Float math follows the house idiom: separate `*`/`+`/`/` (never `addingProduct`/`fma`) and
 /// NaN-faithful ordered `Double.maximum`/`Double.minimum`.
@@ -208,7 +208,7 @@ public enum WorkspaceTreeOps {
     /// re-inserted as `target`'s sibling **keeping its `PaneID`** — so reconcile is a registry no-op (no
     /// surface teardown, the remote stream survives) and only the geometry changes. `source` stays active.
     /// Dropping side-by-side panes onto each other's TOP/BOTTOM edge flips a `.horizontal` split to
-    /// `.vertical` (and vice-versa) — the user's "dọc → ngang".
+    /// `.vertical` (and vice-versa) — the vertical-to-horizontal reorientation the user asked for.
     ///
     /// No-op if `source == target`, either is absent, or they're in different tabs (cross-tab relocation
     /// isn't attempted — matches ``swapPanes(_:_:in:)``). Preserves the **specs == leafIDs invariant** (leaf
@@ -273,7 +273,7 @@ public enum WorkspaceTreeOps {
     }
 
     /// Inserts a NEW leaf carrying `spec` at the OUTERMOST `edge` of the ACTIVE tab — the rail-drag
-    /// "drop a host window into the container gutter" commit (docs/45 round 3). The mint-a-pane sibling
+    /// "drop a host window into the container gutter" commit (docs/45). The mint-a-pane sibling
     /// of ``moveLeafToRootEdge(_:edge:in:)``: same root prepend/append/wrap, but creating a leaf instead
     /// of relocating one — so it also works on a lone-leaf tab (a split against the only pane). The new
     /// pane is focused; a zoom is exited (the new focused pane must be visible — mirrors
@@ -609,7 +609,7 @@ public enum WorkspaceTreeOps {
         return focusPane(next, in: ws)
     }
 
-    /// The pane a sequential ⌘]/⌘[ pane-cycle step (E1 ES-E1-2 / E3 ES-E3-5) would focus, or `nil` for a
+    /// The pane a sequential ⌘]/⌘[ pane-cycle step would focus, or `nil` for a
     /// no-op — the **single source** of the DFS-wrap math the store delegates to
     /// (``WorkspaceStore/paneCycleTreeTarget(forward:)``). Walks the active session's active tab in
     /// ``Tab/allPaneIDs()`` order (pre-order DFS — the same order reconcile + the carousel read);
@@ -646,7 +646,7 @@ public enum WorkspaceTreeOps {
     /// Returns the new workspace + the new pane's id. No-op (returns a throw-away id) if there is no active
     /// session.
     ///
-    /// `position` defaults to ``NewTabPosition/end`` so existing call sites stay byte-identical to the pre-E3
+    /// `position` defaults to ``NewTabPosition/end`` so existing call sites stay byte-identical to a plain
     /// `tabs.append(...)` (end index = append, selected index = `tabs.count - 1`). Only the ⌘T path passes a
     /// configured ``NewTabPosition``.
     public static func newTab(
@@ -669,7 +669,7 @@ public enum WorkspaceTreeOps {
     }
 
     /// Inserts a PRE-BUILT `tab` (its split tree + every pane's ``PaneSpec`` in `specs`) into the active
-    /// session at `position` and selects it — the reopen-last-closed restore (E3 WI-3). Merges `specs` into
+    /// session at `position` and selects it — the reopen-last-closed restore. Merges `specs` into
     /// the active session's side table so the **specs == leafIDs invariant** holds for the restored leaves;
     /// `normalizingSpecs()` repairs any leaf whose spec went missing (re-seeding a default), so the result
     /// always holds the invariant. Pure. No-op if there is no active session.

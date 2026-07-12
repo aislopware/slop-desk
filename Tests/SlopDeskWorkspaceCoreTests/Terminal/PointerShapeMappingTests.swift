@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E8 WI-9 (H14, ES-E8-6): pins the pure OSC-22 ``PointerShapeMapping`` table. The GUI surface
+/// Pins the pure OSC-22 ``PointerShapeMapping`` table. The GUI surface
 /// (`GhosttyTerminalView`, compile-only behind `#if canImport(CGhostty)`) is a thin actuator that turns the
 /// resolved ``PointerShapeToken`` into an `NSCursor`, so the faithful shape→token table is pinned here.
 ///

@@ -1,7 +1,7 @@
-// ViModeOverlay — the vi / copy-mode VIEW layer (E17 ES-E17-2/3 / WI-5): the per-pane ``ViModePill`` (the
+// ViModeOverlay — the vi / copy-mode VIEW layer: the per-pane ``ViModePill`` (the
 // persistent mode badge with a live repeat-count + an `×` exit) and the on-demand ``ViKeyHintBar`` (the `⌘/`
 // reference card). This is the copy-mode overlay that the REBUILD-V2 leaf was missing — it rides the EXISTING
-// pure copy-mode engine in ``TerminalViewModel`` (WI-4): both views read the OBSERVABLE mirrors
+// pure copy-mode engine in ``TerminalViewModel``: both views read the OBSERVABLE mirrors
 // (``TerminalViewModel/viVisualMode`` / ``viPendingCount`` / ``showViKeyHints`` / ``copyModeBadgeActive``),
 // never the `@ObservationIgnored` `isCopyMode` flag the renderer's keyDown path reads, so they re-render
 // reactively without ever touching the keyDown intercept's AttributeGraph hazard.
@@ -19,10 +19,10 @@
 // ONLY the keys ``TerminalViewModel/handleCopyModeKey(_:)`` actually wires in slopdesk's copy-mode — a faithful
 // SUBSET of full vi. Column / word / screen motions (`h`/`l`, `w`/`b`/`e`, `0`/`$`/`^`, `H`/`M`/`L`) AND the
 // visual anchor-swap (`o`) are NOT wired — the pinned fork exposes no programmatic cursor-move / set-selection /
-// swap-ends action (Binding.zig has `adjust_selection` + `select_all` but no swap-ends; see DECISIONS.md E17,
+// swap-ends action (Binding.zig has `adjust_selection` + `select_all` but no swap-ends; see DECISIONS.md,
 // which pins `o` as a documented NO-OP) — so they are deliberately omitted rather than advertised as dead keys.
 // Hint Mode (`f`), by contrast, IS wired and IS listed: it does NOT depend on that cursor-move ceiling — it is a
-// separate visible-viewport label overlay (E10) armed via ``TerminalViewModel/beginHint(_:)``, the same seam the
+// separate visible-viewport label overlay armed via ``TerminalViewModel/beginHint(_:)``, the same seam the
 // ⌘⇧J chord uses — so `f` is an honest entry, not a faked motion.
 
 #if canImport(SwiftUI)
@@ -30,7 +30,7 @@ import SFSafeSymbols
 import SlopDeskWorkspaceCore
 import SwiftUI
 
-/// The vi-mode pill (E17 ES-E17-2 / WI-5) — the persistent badge shown in the pane's top-trailing overlay while
+/// The vi-mode pill — the persistent badge shown in the pane's top-trailing overlay while
 /// the pane is in vi / copy-mode. Faithful to the vi-mode spec's pill description: the current MODE label
 /// (`VI` for plain scrollback navigation, `VISUAL` / `VISUAL LINE` / `VISUAL BLOCK` in a visual selection) + the
 /// LIVE pending repeat-count digits (shown in the accent tone as the user types `5` before a motion) + an `×`
@@ -94,7 +94,7 @@ struct ViModePill: View {
         .shadow(color: Slate.State.shadow, radius: 4, x: 0, y: 1)
         .animation(Slate.Anim.smallFade, value: model.viPendingCount)
         .animation(Slate.Anim.smallFade, value: model.viVisualMode)
-        // Belt-and-suspenders Escape dismiss (C5): the primary exit is the renderer's `keyDown` →
+        // Belt-and-suspenders Escape dismiss: the primary exit is the renderer's `keyDown` →
         // `exitCopyMode()` once the terminal is first responder (the routing now nudges focus there on arm).
         // This safety net — if Escape lands in the pill's responder chain instead of the surface — still leaves
         // vi/copy-mode via the SAME `onExit` seam the `×` fires (macOS `onExitCommand`, which is unavailable on
@@ -141,7 +141,7 @@ struct ViModePill: View {
 
 // MARK: - Key-hint bar
 
-/// The vi key-hint bar (E17 ES-E17-2 / WI-5) — the on-demand reference card toggled by `⌘/` while in vi mode
+/// The vi key-hint bar — the on-demand reference card toggled by `⌘/` while in vi mode
 /// (off by default; ``TerminalViewModel/showViKeyHints`` drives its visibility, flipped by
 /// ``TerminalViewModel/toggleViKeyHints()``). Floats along the pane BOTTOM (the spec's likely position) and
 /// lists, in compact columns, the keys slopdesk's copy-mode ACTUALLY wires — a faithful subset of full vi
@@ -164,9 +164,9 @@ struct ViKeyHintBar: View {
     ]
 
     // `o` (swap selection ends) is DELIBERATELY ABSENT: it is a documented NO-OP (the pinned libghostty fork
-    // exposes no swap-ends / set-selection action — see the file header + DECISIONS.md E17), so listing it would
+    // exposes no swap-ends / set-selection action — see the file header and DECISIONS.md), so listing it would
     // advertise a dead key, exactly the omission this bar makes for the other unwired vi motions (h/l/w/b/e/…).
-    // `f` (Enter Hint Mode) IS listed — unlike the cursor motions it is wired (it rides the E10 Hint Mode
+    // `f` (Enter Hint Mode) IS listed — unlike the cursor motions it is wired (it rides the Hint Mode
     // overlay via `beginHint`, NOT the blocked cursor-move action), so advertising it is honest, not a dead key.
     private static let selection: [Hint] = [
         Hint(keys: ["v"], label: "Visual"),

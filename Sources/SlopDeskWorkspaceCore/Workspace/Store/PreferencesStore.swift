@@ -2,18 +2,18 @@ import Defaults
 import Foundation
 import Observation
 
-// L0 / G2: de-SwiftUI'd — UserDefaults-backed (no `@AppStorage`), headless in `SlopDeskWorkspaceCore`.
+// De-SwiftUI'd — UserDefaults-backed (no `@AppStorage`), headless in `SlopDeskWorkspaceCore`.
 // No `import SwiftUI` / `#if canImport(SwiftUI)` guard; `@MainActor`/`@Observable` come from Observation.
 import SlopDeskVideoProtocol
 
 // MARK: - PreferencesStore (the one live settings owner)
 
-/// The single live source of truth for the GUI Settings system (W13). A `@MainActor @Observable`
-/// store owning the four W12 `Codable` models — ``VideoPreferences``, ``TerminalPreferences``,
+/// The single live source of truth for the GUI Settings system. A `@MainActor @Observable`
+/// store owning the four `Codable` models — ``VideoPreferences``, ``TerminalPreferences``,
 /// ``AgentPreferences``, ``KeybindingPreferences`` — persisting each to `UserDefaults` (client/terminal
 /// prefs) PLUS the `video-prefs.json` sidecar (the daemon-at-launch bridge for video/agent host flags).
 ///
-/// FOUR apply paths (decision #6 / #10):
+/// FOUR apply paths (see `DECISIONS.md`):
 ///   1. **Live client/agent prefs → ``EnvConfig/overlay``.** `sharpen` + the CLIENT-read agent gates fold
 ///      into the process-wide overlay, overriding the compile-time default WITHOUT an env var.
 ///   2. **Video prefs → the `video-prefs.json` SIDECAR (no live apply).** The ~80 video flags are read at
@@ -22,7 +22,7 @@ import SlopDeskVideoProtocol
 ///   3. **Terminal prefs → the live terminal reload.** Rebuilds the libghostty config string
 ///      (``TerminalConfigBuilder``) and bumps ``TerminalConfigBroadcaster`` so the (Xcode-app-target-
 ///      only) `GhosttyTerminalView` re-applies it via `ghostty_config_load_string` + a PTY grid resize.
-///   4. **Keybinding prefs → the W6 registry overrides.** Publishes the current ``KeybindingPreferences``
+///   4. **Keybinding prefs → the registry overrides.** Publishes the current ``KeybindingPreferences``
 ///      to ``WorkspaceBindingRegistry`` (via ``WorkspaceBindingRegistry/activeOverrides``) so a chord
 ///      resolves with the user override — the registry stays the single binding TABLE; this only supplies
 ///      overrides.
@@ -59,7 +59,7 @@ public final class PreferencesStore {
         } }
     }
 
-    /// User keybinding overrides (`bindingID → chord`). A `didSet` republishes them to the W6 registry.
+    /// User keybinding overrides (`bindingID → chord`). A `didSet` republishes them to the registry.
     public var keybindings: KeybindingPreferences {
         didSet { if keybindings != oldValue { persistKeybindings()
             applyKeybindings()
@@ -100,11 +100,11 @@ public final class PreferencesStore {
         static let appearance = "settings.appearance.v1"
         static let rawOverrides = "settings.rawOverrides.v1"
         static let blockBookmarks = "settings.blockBookmarks.v1"
-        /// L4 / W4: dismissed agent-notification suggestion chips, keyed by agent display-name. A plain
+        /// Dismissed agent-notification suggestion chips, keyed by agent display-name. A plain
         /// `[agentName: true]` JSON map so a dismissed pill stays dismissed across launches (Warp persists
         /// this in `AISSettings` keyed by agent+host).
         static let notificationChipDismissed = "settings.agentNotificationDismissed.v1"
-        /// L4 / W4: agents for which the user ENABLED rich notifications (clicked the green pill). No host
+        /// Agents for which the user ENABLED rich notifications (clicked the green pill). No host
         /// wire exists for the OSC/notification-enable path, so this records intent + drives the chip's
         /// "already enabled ⇒ hide" behaviour. `[agentName: true]`.
         static let notificationChipEnabled = "settings.agentNotificationEnabled.v1"
@@ -158,24 +158,24 @@ public final class PreferencesStore {
     // MARK: Apply paths
 
     /// Rebuild the libghostty config string from the live terminal prefs (+ any terminal keybind lines + the
-    /// E8 fire-time Controls toggles) and bump the broadcaster so the (Xcode-only) `GhosttyTerminalView`
+    /// fire-time Controls toggles) and bump the broadcaster so the (Xcode-only) `GhosttyTerminalView`
     /// re-applies it live.
     private func applyTerminal() {
         // The active THEME pins the terminal CELL bg/fg (flat design) — `resolveTerminalColors` reads
         // the resolved `ThemeStore.active` (GUI only; `nil` headless ⇒ the pref's own colours stand).
         let themeColors = AppearanceApplier.resolveTerminalColors?()
-        // E8 WI-2: resolve the fire-time Controls bundle (`copy-on-select` / `clipboard-*` / `mouse-*` /
+        // Resolve the fire-time Controls bundle (`copy-on-select` / `clipboard-*` / `mouse-*` /
         // ⇧+arrow select). The Controls toggles live in the global `SettingsKey.store` namespace (NOT the
         // per-instance injected `defaults`, which stays test-isolated for the typed models), so read from
         // `SettingsKey.store`; the builder maps an absent key to its declared default.
         let controls = TerminalControls.from(defaults: SettingsKey.store)
-        // E15 ES-E15-4: resolve the per-SCOPE font family. The Font → Light/Dark-Theme tabs persist a font
+        // Resolve the per-SCOPE font family. The Font → Light/Dark-Theme tabs persist a font
         // keyed by the slot's theme slug in `appearance.themeFonts`; that override never reached the live
         // terminal before (the builder read `terminal.fontFamily` raw). Resolve via the pure
         // ``FontScopeResolver`` precedence (explicit ACTIVE-slot per-theme font WINS; else Global
         // `terminal.fontFamily`; else the bundled fallback), keyed by the GUI-resolved active theme slug.
         // Scope-over-Global is deliberate: slopdesk's Global default is non-empty, so "Global wins
-        // everywhere" would silently SHADOW a per-theme font (E15 review #4 — see ``FontScopeResolver``).
+        // everywhere" would silently SHADOW a per-theme font (see ``FontScopeResolver``).
         // `nil` hook (headless) ⇒ no slug ⇒ Global stands, so a default build is byte-identical.
         let resolvedFontFamily = FontScopeResolver.resolvedFamily(
             global: terminal.fontFamily,
@@ -188,9 +188,9 @@ public final class PreferencesStore {
             backgroundOverride: themeColors?.background,
             foregroundOverride: themeColors?.foreground,
             fontFamilyOverride: resolvedFontFamily,
-            // E15 WI-3: the active theme's ANSI palette + selection colour reach the terminal cells. Both are
+            // The active theme's ANSI palette + selection colour reach the terminal cells. Both are
             // optional and validate-then-drop in the builder, so a `nil` themeColors (headless / no GUI hook)
-            // or a theme with no palette is byte-identical to the pre-E15 build.
+            // or a theme with no palette is byte-identical.
             paletteOverride: themeColors?.palette,
             selectionBackgroundOverride: themeColors?.selectionBackground,
             controls: Self.controlsConfig(from: controls),
@@ -270,7 +270,7 @@ public final class PreferencesStore {
     ///
     /// WITHIN the overlay: typed-prefs (video ∪ agent) THEN the raw power-user overrides on top, so a hand-
     /// typed `SLOPDESK_*` in the raw-overrides box wins over the matching toggle. ACROSS tiers: a real
-    /// `ProcessInfo` env var STILL wins over the whole overlay (decision #16, `env → overlay → default`) —
+    /// `ProcessInfo` env var STILL wins over the whole overlay (see `DECISIONS.md`, `env → overlay → default`) —
     /// ``EnvConfig/string(_:)`` checks the real env var FIRST, so a deliberate `launchctl`/`--args` env on
     /// the CLIENT is never clobbered by a persisted setting — consistent with the host sidecar's gap-fill.
     private func applyVideoAndAgent() {
@@ -289,7 +289,7 @@ public final class PreferencesStore {
         try? EnvBridge.writeSidecar(sidecar, to: url)
     }
 
-    /// Publish the live keybinding overrides to the W6 registry so a chord resolves with the user
+    /// Publish the live keybinding overrides to the registry so a chord resolves with the user
     /// override when present (the registry stays the single binding TABLE; this supplies the overrides).
     private func applyKeybindings() {
         WorkspaceBindingRegistry.activeOverrides = keybindings
@@ -300,7 +300,7 @@ public final class PreferencesStore {
     ///
     /// GOLDEN-SAFE BY CONSTRUCTION: appearance NEVER touches ``EnvConfig/overlay`` nor the sidecar — pure
     /// client chrome. A `nil` density leaves the key untouched (default ``AppearancePreferences`` is a pure
-    /// no-op, behaviour-preserving). The theme hook gets the WHOLE model (E15 WI-3 — the GUI layer resolves
+    /// no-op, behaviour-preserving). The theme hook gets the WHOLE model (the GUI layer resolves
     /// the dual-slot / custom-slug / follow-OS selection) so it can fall back to its compile-time default
     /// when appearance is reset.
     private func applyAppearance() {
@@ -314,7 +314,7 @@ public final class PreferencesStore {
     }
 
     /// Re-fire the live CLIENT apply paths (theme retint + terminal reflow + keybinding overrides) WITHOUT
-    /// mutating any model — the effect behind `slopdesk config reload` (E20). Deliberately SKIPS
+    /// mutating any model — the effect behind `slopdesk config reload`. Deliberately SKIPS
     /// ``applyVideoAndAgent()``: those host flags are "applies on reconnect", and the path rewrites the
     /// process-wide ``EnvConfig/overlay`` (a `nonisolated(unsafe)` static the realtime pipeline reads), so a
     /// reload must not race-rewrite it. ``applyAppearance()`` already rebuilds the terminal config, so chrome
@@ -331,7 +331,7 @@ public final class PreferencesStore {
     /// sidecar override), exactly as a fresh install. ALSO clears EVERY `.standard`-backed global
     /// `Defaults.Keys` user setting — tab-reachable toggles AND advanced-only privilege/IPC keys — so it
     /// returns the whole catalog (every Advanced → All Settings row) to default, not just the five typed
-    /// models (E7 / `customization__advanced-settings.md`). Non-setting STATE keys (first-launch flag,
+    /// models (see `customization__advanced-settings.md`). Non-setting STATE keys (first-launch flag,
     /// CLI-installed flag, window geometry, tab sort/grouping) are deliberately excluded — app state, not
     /// user-editable settings.
     public func resetAll() {
@@ -371,7 +371,7 @@ public final class PreferencesStore {
     }
 
     /// The `.standard`-backed global `Defaults.Keys` settings that ONLY surface in the Advanced panel (no
-    /// dedicated tab) — reset by BOTH ``resetAll()`` and ``resetAdvancedOnly()``. The E14 privilege gates
+    /// dedicated tab) — reset by BOTH ``resetAll()`` and ``resetAdvancedOnly()``. The privilege gates
     /// (`title*` / `clipboard-shell-controlled` / the OSC-52 read+write tri-state), the agent-control IPC
     /// guards, and the auto-progress command list — all edited solely from the Advanced → Privileges section
     /// / the All-Settings inline list, so resetting them never destroys a tab choice.
@@ -421,7 +421,7 @@ public final class PreferencesStore {
         .agentBadgeWhileProcessing, .agentBadgeWhenComplete, .agentBadgeWhenAwaitingInput,
     ]
 
-    // MARK: Block bookmarks (WB3 — per-session starred command blocks)
+    // MARK: Block bookmarks (per-session starred command blocks)
 
     /// The persisted per-session block bookmarks: `sessionUUID → [block index]`. A separate `UserDefaults`
     /// key (`settings.blockBookmarks.v1`) holding a plain `[String: [UInt32]]` JSON map — NOT part of the
@@ -445,10 +445,10 @@ public final class PreferencesStore {
         Self.encode(map, defaults, Key.blockBookmarks)
     }
 
-    // MARK: Agent notification suggestion chip (L4 / W4 — green "Enable … notifications" pill)
+    // MARK: Agent notification suggestion chip (green "Enable … notifications" pill)
 
     /// Whether the green suggestion chip for `agent` has been dismissed (the trailing ✕). Persisted so a
-    /// dismissed chip does not reappear on the next launch (W4). An unknown agent reads `false`.
+    /// dismissed chip does not reappear on the next launch. An unknown agent reads `false`.
     public func isNotificationChipDismissed(for agent: String) -> Bool {
         notificationChipMap(Key.notificationChipDismissed)[agent] ?? false
     }
@@ -472,12 +472,12 @@ public final class PreferencesStore {
     /// back ON. Hides the chip via the per-agent flag.
     public func enableNotifications(for agent: String) {
         setNotificationChipFlag(true, for: agent, key: Key.notificationChipEnabled)
-        // W4: deliver on the promise — re-enable the global OSC/notification delivery gate.
+        // Deliver on the promise — re-enable the global OSC/notification delivery gate.
         defaults.set(true, forKey: SettingsKey.oscNotifications)
     }
 
     /// Whether the green suggestion chip should be SHOWN for `agent`: not already dismissed and not
-    /// already enabled (W4 + Warp's "hide once a plugin connects or the user dismisses it" rule).
+    /// already enabled (Warp's "hide once a plugin connects or the user dismisses it" rule).
     public func shouldShowNotificationChip(for agent: String) -> Bool {
         !isNotificationChipDismissed(for: agent) && !isNotificationChipEnabled(for: agent)
     }
@@ -493,8 +493,8 @@ public final class PreferencesStore {
         Self.encode(map, defaults, key)
     }
 
-    /// The keybinding conflicts the UI highlights — DISTINCT ids resolving to the same chord (W12
-    /// ``KeybindingPreferences/conflicts()``). Only explicit overrides collide here; the registry
+    /// The keybinding conflicts the UI highlights — DISTINCT ids resolving to the same chord
+    /// (``KeybindingPreferences/conflicts()``). Only explicit overrides collide here; the registry
     /// defaults are conflict-free by construction (pinned by `TreeCommandRoutingTests`).
     public func keybindingConflicts() -> [String: [String]] { keybindings.conflicts() }
 }

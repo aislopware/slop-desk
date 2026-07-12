@@ -6,9 +6,9 @@
 //
 // All sources here are SYNCHRONOUS over a store SNAPSHOT (taken on the @MainActor) so the mixing/ranking is
 // pure + unit-testable without a view. The ⌘⇧P palette is verbs-only (the ACTIONS catalog grouped by
-// category); the multi-source jump-to (panes/recents/folders/agents/files) lives on its OWN E11 surface
+// category); the multi-source jump-to (panes/recents/folders/agents/files) lives on its OWN surface
 // (`OpenQuicklyModel`/`OpenQuicklyView`), so the former `files`/`conversations`/`repos` empty-stub sources
-// were removed here (E11 / WI-5) — they were never reachable.
+// were removed here — they were never reachable.
 
 import Foundation
 import SlopDeskAgentDetect
@@ -37,7 +37,7 @@ public protocol PaletteDataSource: Sendable {
 
 /// The action catalog source (warp-overlays-actions.md §4.4) — the workspace verbs (new tab, close pane,
 /// split H/V, toggle sidebar, open settings, …). Each row runs a tree-path store mutation directly (under
-/// `.tree`, per logic-api §7.5 / W6) and records a recent command where the verb is recents-worthy. REAL
+/// `.tree`, per logic-api §7.5) and records a recent command where the verb is recents-worthy. REAL
 /// (the only fully client-side-wired source besides TABS).
 public struct ActionsPaletteSource: PaletteDataSource {
     public let filters: Set<QueryFilter> = [.actions]
@@ -59,7 +59,7 @@ public struct ActionsPaletteSource: PaletteDataSource {
         // WORKING DIRECTORY — leads the palette (the section header OWNS the cwd badge in the view). "Copy
         // Path" is a CLIENT-side write of the focused pane's cwd to the platform
         // pasteboard. Sibling "Reveal in Finder" / "Open in…" rows are host-routed —
-        // TODO(E10): add them once the host can resolve a local Finder/Open path over the control channel.
+        // TODO: add them once the host can resolve a local Finder/Open path over the control channel.
         item(
             id: "action.copyPath", icon: "doc.on.doc", title: "Copy Path",
             category: .workingDirectory,
@@ -78,7 +78,7 @@ public struct ActionsPaletteSource: PaletteDataSource {
                 store.recordRecentCommand(.newPane(.terminal))
             },
         ),
-        // L6 / W1: "New Remote Window Tab" opens the Remote-Window picker (the host window list) rather
+        // "New Remote Window Tab" opens the Remote-Window picker (the host window list) rather
         // than minting an UNBOUND `.remoteGUI` pane — the pick then opens a pre-bound streaming pane. The
         // overlay coordinator handles `.openRemotePicker` (it records the recent command on open). No
         // registry chord exists for it ⇒ no hint.
@@ -156,7 +156,7 @@ public struct ActionsPaletteSource: PaletteDataSource {
             shortcut: glyph(.toggleHostWindows), filter: .actions, category: .view,
             action: .toggleHostWindows,
         ),
-        // Read Only (E17 ES-E17-1): toggle the active pane's input gate. Under the SHELL section as the
+        // Read Only: toggle the active pane's input gate. Under the SHELL section as the
         // first shell verb in the catalog. The spec accepts
         // "read only" plus the synonyms `readonly` / `lock` / `freeze` / `view only` — folded into the row's
         // HIDDEN `keywords` so they search without being rendered. No registry chord is registered for this
@@ -167,7 +167,7 @@ public struct ActionsPaletteSource: PaletteDataSource {
             shortcut: glyph(.toggleReadOnly), category: .shell,
             run: { store in store.toggleReadOnlyInActivePane() },
         ),
-        // Secure Keyboard Entry (E17 ES-E17-4): the MANUAL toggle for macOS process-global secure event input
+        // Secure Keyboard Entry: the MANUAL toggle for macOS process-global secure event input
         // over the active pane. Under the SHELL section beside Read Only.
         // No registry chord is registered for this verb ⇒ the glyph resolves to nil ⇒ no hint chip. Drives the store
         // seam that flips the active model's manual flag (→ the pill + the leaf's controller).
@@ -264,8 +264,8 @@ public struct ActionsPaletteSource: PaletteDataSource {
             id: "action.connect", icon: "network", title: "Connect to Host…",
             subtitle: nil, shortcut: nil, filter: .actions, category: .window, action: .openConnect,
         ),
-        // E19 WI-4: Pin Window (float the window above all other apps). A CHECKABLE
-        // toggle (ES-E2-3): `OverlayHostView.toggledState(for:)` lights the ✓ gutter when `chrome.pinned`.
+        // Pin Window (float the window above all other apps). A CHECKABLE
+        // toggle: `OverlayHostView.toggledState(for:)` lights the ✓ gutter when `chrome.pinned`.
         // CHORD-LESS (no registry chord is registered) ⇒ `shortcut: nil` ⇒ no hint chip; routed by the coordinator to the
         // injected `togglePinWindow` closure (the SAME live `chrome.pinned` the View menu + the `NSWindow.level`
         // glue read). macOS-meaningful (iOS has no window level — a documented no-op).
@@ -277,7 +277,7 @@ public struct ActionsPaletteSource: PaletteDataSource {
             id: "action.openSettings", icon: "slider.horizontal.3", title: "Open Settings",
             subtitle: nil, shortcut: nil, filter: .actions, category: .settings, action: .openSettings,
         ),
-        // Theme verb (Batch 4 catalog-completeness) — the "Switch Theme" row. Theme is LOCAL client state in
+        // Theme verb — the "Switch Theme" row. Theme is LOCAL client state in
         // slopdesk (``ThemeStore`` / ``PreferencesStore``), so this is a pure client action routed by the
         // coordinator to the injected handler (the SAME live `appearance` Settings → Appearance edits).
         // Chord-less ⇒ no hint chip. Grouped under the SETTINGS section (slopdesk has no separate Theme
@@ -314,7 +314,7 @@ public struct ActionsPaletteSource: PaletteDataSource {
     }
 
     /// Write `string` to the platform pasteboard — the client-side local clipboard
-    /// write. Host-routed Reveal/Open land in E10.
+    /// write. Host-routed Reveal/Open are a future addition.
     private static func copyToPasteboard(_ string: String) {
         #if canImport(AppKit)
         ClientPasteboard.write(string)
@@ -486,7 +486,7 @@ public struct SearchMixer: Sendable {
                     if let subtitle = item.subtitle, let sub = FuzzyMatcher.score(query, subtitle) {
                         return (RankedRow(item: item), sub.score, 0, offset)
                     }
-                    // HIDDEN synonyms (E17): a row's `keywords` (e.g. "Read Only" accepting `lock` / `freeze`
+                    // HIDDEN synonyms: a row's `keywords` (e.g. "Read Only" accepting `lock` / `freeze`
                     // / `view only`) are searchable but never rendered, so a keyword hit sits at tier -1 —
                     // below every title (1) and subtitle (0) hit — and carries NO title highlight ranges.
                     if let keywords = item.keywords, let kw = FuzzyMatcher.score(query, keywords) {

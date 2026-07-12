@@ -34,10 +34,10 @@ public struct VideoSessionStateMachine: Sendable {
     /// reconnecting client distinguish a fresh session).
     private var nextStreamID: UInt32
 
-    /// WF-6 (#8): whether this host encodes FULL-RANGE luma. Stamped into every accepted
-    /// `helloAck` (and the duplicate re-ack, which MUST echo the same value) so the client
-    /// derives the decoder pixel-format + shader coefficients. A reject always sends
-    /// `fullRange: false`. Default false ⇒ today's video-range, byte-identical.
+    /// Whether this host encodes FULL-RANGE luma. Stamped into every accepted `helloAck` (and
+    /// into the duplicate re-ack, which MUST echo the same value) so the client derives the
+    /// decoder pixel-format + shader coefficients. A reject always sends `fullRange: false`;
+    /// the default (false) keeps the stream in video-range.
     public let fullRange: Bool
 
     public init(nextStreamID: UInt32 = 1, fullRange: Bool = false) {
@@ -87,7 +87,7 @@ public struct VideoSessionStateMachine: Sendable {
     ///     streaming `windowID`) → the clamped capture size to adopt (the actor runs
     ///     ``SizeNegotiation/clamp(desired:min:max:)`` against the live window min/max).
     ///     `nil` rejects the resize (window gone / out of policy) so capture stays put.
-    ///     Defaulted so existing hello/bye call sites are unchanged.
+    ///     Defaulted so hello/bye-only call sites need not supply it.
     public mutating func handleControl(
         _ message: VideoControlMessage,
         windowBoundsCG: VideoRect,
@@ -159,11 +159,11 @@ public struct VideoSessionStateMachine: Sendable {
                 .startCapture(windowID: requestedWindowID, width: w, height: h),
             ]
         case .bye:
-            // A client bye re-arms the session so a fresh hello can reconnect WITHOUT a
-            // daemon restart (#8). Return to .listening and stop capture only if it was
-            // streaming. The next hello mints a fresh streamID + re-resolves capture size,
-            // so a re-accepted session is fully re-initialised. (Local stop() — which also
-            // closes the UDP sockets — stays terminal .stopped, NOT re-armable.)
+            // A client bye re-arms the session so a fresh hello can reconnect WITHOUT a daemon
+            // restart: return to .listening and stop capture only if it was streaming. The next
+            // hello mints a fresh streamID + re-resolves capture size, so a re-accepted session is
+            // fully re-initialised. (Local stop() — which also closes the UDP sockets — stays
+            // terminal .stopped, NOT re-armable.)
             let wasStreaming = state == .streaming
             guard state == .streaming || state == .listening else { return [] }
             state = .listening
@@ -192,10 +192,10 @@ public struct VideoSessionStateMachine: Sendable {
             return []
         case .keepalive,
              .focusWindow:
-            // `keepalive` (CONCURRENCY-HOST-1) carries NO state-machine semantics — its only
-            // effect is the transport-level `lastInbound` stamp the reaper reads. `focusWindow`
-            // is actioned at the ACTOR level (``SlopDeskVideoHostSession/handleControl`` raises
-            // the captured window) with no SM/capture-state effect. Both are no-ops here.
+            // `keepalive` carries NO state-machine semantics — its only effect is the
+            // transport-level `lastInbound` stamp the reaper reads. `focusWindow` is actioned at
+            // the ACTOR level (``SlopDeskVideoHostSession/handleControl`` raises the captured
+            // window) with no SM/capture-state effect. Both are no-ops here.
             return []
         case .listWindows,
              .windowList,
@@ -332,11 +332,11 @@ public struct InputDatagramRouter: Sendable {
         return false
     }
 
-    /// Whether `event` is EXEMPT from the armed raise latch (the scroll-latency fix). A scroll is
-    /// dispatched by the window server to the window UNDER THE CURSOR regardless of key focus, so it
-    /// never needs the (expensive: ~6–10 synchronous AX IPC round-trips) re-raise — even when the
-    /// post-click latch is armed by ``rearmRaiseAfter(_:)`` (the "click a pane, then scroll" gesture
-    /// used to pay a full AX raise on that first scroll — "scroll bị delay"). A `mouseDown` still
+    /// Whether `event` is EXEMPT from the armed raise latch. A scroll is dispatched by the window
+    /// server to the window UNDER THE CURSOR regardless of key focus, so it never needs the
+    /// (expensive: ~6–10 synchronous AX IPC round-trips) re-raise — even when the post-click latch
+    /// is armed by ``rearmRaiseAfter(_:)``. Without the exemption a click-a-pane-then-scroll gesture
+    /// pays a full AX raise on that first scroll and the scroll feels delayed. A `mouseDown` still
     /// always raises (``alwaysRaises(_:)``); a key/text with the latch armed still raises (needs key
     /// focus). An exempt scroll does NOT satisfy `raiseFirst`, so the actor never clears the latch on
     /// it and a key arriving AFTER the scroll still re-raises.
@@ -354,12 +354,12 @@ public struct InputDatagramRouter: Sendable {
     }
 }
 
-/// Pure policy for the host's activate-then-control window raise (the CLICK-latency fix). The
-/// injector's `raiseTargetWindow()` runs ~6–10 SYNCHRONOUS cross-process Accessibility IPC calls
-/// (each capped at the 0.25 s messaging timeout) that the input consumer AWAITS before the click is
-/// posted, so paying the full chain on EVERY click of an already-frontmost window is the dominant
-/// felt input latency ("click bị delay 1 lúc"). This decides, from a CHEAP non-AX frontmost-app
-/// read, whether the full AX raise is actually needed. Pure ⇒ headlessly testable without AX/TCC.
+/// Pure policy for the host's activate-then-control window raise. The injector's
+/// `raiseTargetWindow()` runs ~6–10 SYNCHRONOUS cross-process Accessibility IPC calls (each capped
+/// at the 0.25 s messaging timeout) that the input consumer AWAITS before the click is posted, so
+/// paying the full chain on EVERY click of an already-frontmost window is the dominant felt input
+/// latency. This decides, from a CHEAP non-AX frontmost-app read, whether the full AX raise is
+/// actually needed. Pure ⇒ headlessly testable without AX/TCC.
 public enum InputInjectorRaisePolicy {
     /// Whether to run the full AX raise chain. Skips it ONLY when the target app is ALREADY frontmost
     /// AND this is not the first interaction (the first interaction always raises, to set
@@ -375,15 +375,14 @@ public enum InputInjectorRaisePolicy {
 
 /// Pure button-balance bookkeeping for input injection (testable WITHOUT CGEvents).
 ///
-/// The reorder fix (ordered inbound consumer) keeps a single interaction's down→drag→up in
-/// order, but cannot conjure a `mouseUp` the wire DROPPED or a flaky gesture never sent. A
-/// target app that got a `mouseDown` with no matching `mouseUp` stays stuck mid-selection, so
-/// the NEXT click "đã bắt đầu selection rồi". This tracks which buttons are logically HELD so a
-/// fresh `mouseDown` for an already-held button emits a synthetic release FIRST — a click never
-/// begins inside a stuck selection. Only down/up mutate the held set; moves/drags/scroll/text
-/// pass through. MODIFIER key edges (C5 BUG B) get the same idempotence via ``heldModifierKeys``
-/// — the client's redundant modifier key-up burst collapses to one post; ordinary keys and Caps
-/// Lock pass through.
+/// The ordered inbound consumer keeps a single interaction's down→drag→up in order, but cannot
+/// conjure a `mouseUp` the wire DROPPED or a flaky gesture never sent. A target app that got a
+/// `mouseDown` with no matching `mouseUp` stays stuck mid-selection, so the NEXT click lands inside
+/// an already-started selection. This tracks which buttons are logically HELD so a fresh
+/// `mouseDown` for an already-held button emits a synthetic release FIRST — a click never begins
+/// inside a stuck selection. Only down/up mutate the held set; moves/drags/scroll/text pass
+/// through. MODIFIER key edges get the same idempotence via ``heldModifierKeys`` — the client's
+/// redundant modifier key-up burst collapses to one post; ordinary keys and Caps Lock pass through.
 ///
 /// The held set is keyed on ``MouseButton`` (a `UInt8`-backed enum, left=0/right=1/other=2), the
 /// SINGLE SOURCE OF TRUTH for the fold — only `mouseDown`/`mouseUp` mutate it. A value `struct`
@@ -394,8 +393,8 @@ public struct InputButtonBalance: Sendable, Equatable {
     /// The logically-held buttons (keyed on ``MouseButton``; the golden-parity tests read
     /// `held.contains` / `held.isEmpty` / `held`).
     public private(set) var held: Set<MouseButton> = []
-    /// The logically-held MODIFIER keys (C5 BUG B, keyed on the exact keyCode — left/right variants
-    /// are distinct latched flags). The client sends a modifier key-UP redundantly (a lost release
+    /// The logically-held MODIFIER keys (keyed on the exact keyCode — left/right variants are
+    /// distinct latched flags). The client sends a modifier key-UP redundantly (a lost release
     /// latches the modifier on the shared `hidSystemState` source until the user re-presses it); this
     /// set collapses that burst to ONE posted CGEvent, like `held` does for mouse ups. Only
     /// ``InputModifierKeys/heldModifierKeyCodes`` enter it — ordinary keys (auto-repeat as identical
@@ -437,7 +436,7 @@ public struct InputButtonBalance: Sendable, Equatable {
             }
             return Plan(suppress: true) // duplicate / orphan up — drop it (idempotent)
         case let .key(keyCode, down, _, _):
-            // MODIFIER dedup (C5 BUG B): the client's redundant modifier key-up burst must post ONCE.
+            // MODIFIER dedup: the client's redundant modifier key-up burst must post ONCE.
             // Ordinary keys (auto-repeat = identical downs) and Caps Lock (a toggle — state keyed on
             // down/up would desync from the host's actual Caps state) pass through untouched.
             guard InputModifierKeys.isHeldModifier(keyCode) else { return Plan() }
@@ -459,14 +458,14 @@ public struct InputButtonBalance: Sendable, Equatable {
     }
 }
 
-/// Pure, order-preserving pointer-motion coalescer (the input-latency fix).
+/// Pure, order-preserving pointer-motion coalescer.
 ///
-/// A remote pointer stream is ~99% motion: a real loopback trace was 1664 `mouseMove` +
+/// A remote pointer stream is ~99% motion: a real loopback trace carries 1664 `mouseMove` +
 /// 163 `mouseDrag` against only 11 `mouseDown` (≈150:1). The host injects every event behind
 /// synchronous WindowServer IPC (`CGWarpMouseCursorPosition` +
 /// `CGAssociateMouseAndMouseCursorPosition` + `CGEvent.post`, three round-trips), so when the
 /// serial inbound consumer falls behind a flood it replays every STALE intermediate position in
-/// FIFO order — the cursor crawls through old positions seconds behind the user ("delay vài giây").
+/// FIFO order — the cursor then crawls through old positions seconds behind the user.
 ///
 /// This collapses each RUN of consecutive same-class motion events to its LATEST — the only
 /// position that still matters (a hover/drag target is absolute) — while passing every button /
@@ -495,12 +494,11 @@ public struct InputMotionCoalescer: Sendable {
         case .mouseMove: .move
         case .mouseDrag: .drag
         case let .scroll(_, _, _, scrollPhase, momentumPhase, continuous, _):
-            // SCROLL COALESCING (2026-06-17): a fast trackpad scroll + its OS momentum coast is a
-            // ~200/s flood; uncoalesced each becomes one synchronous `CGEvent.post` → WindowServer
-            // saturation → SCStream capture stalls (measured 61ms capture-gap / 1210ms send-gap →
-            // the reversal hitch). Parsec/Sunshine (and macOS itself) downsample scroll to the
-            // refresh rate. When enabled scroll is a coalescible class; OFF ⇒ `nil` ⇒ scroll stays
-            // a hard barrier (byte-identical to the pre-fix behaviour).
+            // A fast trackpad scroll + its OS momentum coast is a ~200/s flood; uncoalesced each
+            // becomes one synchronous `CGEvent.post` → WindowServer saturation → SCStream capture
+            // stalls (measured 61ms capture-gap / 1210ms send-gap → the reversal hitch).
+            // Parsec/Sunshine (and macOS itself) downsample scroll to the refresh rate. When
+            // enabled scroll is a coalescible class; OFF ⇒ `nil` ⇒ scroll stays a hard barrier.
             coalesceScroll
                 ? .scroll(phase: scrollPhase, momentum: momentumPhase, continuous: continuous)
                 : nil
@@ -537,13 +535,12 @@ public struct InputMotionCoalescer: Sendable {
     /// Collapse consecutive same-class motion runs in `batch` to their latest, preserving the
     /// relative order of every non-motion (barrier) event and of motion vs barriers.
     ///
-    /// INVARIANT (the correctness the ordered consumer won must not regress): a
-    /// `.mouseDown`/`.mouseUp`/`.key`/`.scroll`/`.text` is a hard barrier — any buffered motion
-    /// flushes BEFORE it, so a move that physically preceded a click is never emitted after the
-    /// click. That keeps down→drag→up framing, ``InputButtonBalance``, and the stateless-drag
-    /// contract intact (every down/up still reaches the injector exactly once, in order).
-    /// `coalesceScroll` (default false ⇒ byte-identical legacy behaviour) additionally collapses
-    /// consecutive same-phase SCROLL runs by summing their deltas (the scroll-flood fix).
+    /// INVARIANT: a `.mouseDown`/`.mouseUp`/`.key`/`.scroll`/`.text` is a hard barrier — any
+    /// buffered motion flushes BEFORE it, so a move that physically preceded a click is never
+    /// emitted after the click. That keeps down→drag→up framing, ``InputButtonBalance``, and the
+    /// stateless-drag contract intact (every down/up still reaches the injector exactly once, in
+    /// order). `coalesceScroll` (default false ⇒ scroll stays a hard barrier) additionally
+    /// collapses consecutive same-phase SCROLL runs by summing their deltas.
     public static func coalesce(_ batch: [InputEvent], coalesceScroll: Bool = false) -> [InputEvent] {
         guard batch.count > 1 else { return batch }
         var output: [InputEvent] = []
@@ -576,9 +573,9 @@ public struct InputMotionCoalescer: Sendable {
 /// Pure fold of the session actor's scroll-accumulating coalesced-inject pipeline (the stateful
 /// half of `injectCoalesced`, extracted so its flush reachability is unit-testable).
 ///
-/// SCROLL COALESCING (2026-06-17): continuous-phase scroll deltas are SUMMED into a time-gated
-/// accumulator (held ACROSS runs) and emitted ≤ once per `injectInterval`, ending the ~200/s
-/// `CGEvent` flood that saturated the WindowServer → SCStream capture stalls. A gesture boundary
+/// Continuous-phase scroll deltas are SUMMED into a time-gated accumulator (held ACROSS runs) and
+/// emitted ≤ once per `injectInterval`. Uncoalesced, the ~200/s `CGEvent` flood saturates the
+/// WindowServer and stalls SCStream capture. A gesture boundary
 /// (began/ended/wheel) or any non-scroll event flushes the accumulator FIRST, in order; a
 /// trailing flush covers a run that ends mid-gesture. ``plan(run:now:)`` returns the exact
 /// ordered events the actor must inject; the actor applies its raise latch per returned event,
@@ -613,10 +610,10 @@ public struct ScrollCoalescePlanner: Sendable {
     /// scroll accumulates (emitted at most once per `injectInterval`); everything else passes
     /// through with any pending residual flushed FIRST (order-preserving).
     public mutating func plan(run: [InputEvent], now: Double) -> [InputEvent] {
-        // NO empty-run early return (2026-07-11 fix): an empty run (a drain that carried only
-        // control/recovery datagrams — e.g. the ~20/s netstats batches) must still reach the
-        // trailing flush below, or a residual stranded by a LOST gesture-`ended` datagram waits
-        // for the next unrelated input event.
+        // NO empty-run early return: an empty run (a drain that carried only control/recovery
+        // datagrams — e.g. the ~20/s netstats batches) must still reach the trailing flush below,
+        // or a residual stranded by a LOST gesture-`ended` datagram waits for the next unrelated
+        // input event.
         var out: [InputEvent] = []
         for event in InputMotionCoalescer.coalesce(run, coalesceScroll: coalesceScroll) {
             if coalesceScroll,
@@ -687,27 +684,27 @@ public struct RecoveryDatagramRouter: Sendable {
         /// escalation (`requestIDR`): a true keyframe unconditionally re-anchors a desynced client.
         /// Kept distinct from ``refreshLTR`` so the escalation can never degrade to an LTR refresh.
         /// Carries the client's decode frontier (`nil` ⇔ wire sentinel "nothing decoded yet") for
-        /// the actor's delivery-keyed `RecoveryIDRPolicy` (component 2, 2026-06-11).
+        /// the actor's delivery-keyed `RecoveryIDRPolicy`.
         case forceKeyframe(lastDecodedFrameID: UInt32?)
-        /// WF-8: the client requested an LTR refresh (`requestLTRRefresh`). The ACTOR decides at
+        /// The client requested an LTR refresh (`requestLTRRefresh`). The ACTOR decides at
         /// runtime — via ``LTRController/recoveryDecision(request:hasEnableLTR:)`` — whether to issue a
         /// cheap `ForceLTRRefresh` (only when `SLOPDESK_LTR` is on AND a token has been acknowledged: the
-        /// ACKED-ONLY invariant) or fall back to a real IDR. When LTR is off this folds to
-        /// `requestKeyframe()` — exactly today's requestLTRRefresh→IDR behaviour. Carries the
-        /// client's decode frontier like ``forceKeyframe(lastDecodedFrameID:)`` — consumed ONLY by
-        /// the `.idr` fallback path (an LTR refresh is never policy-gated).
+        /// ACKED-ONLY invariant) or fall back to a real IDR. With LTR off this folds to
+        /// `requestKeyframe()`, i.e. requestLTRRefresh→IDR. Carries the client's decode frontier
+        /// like ``forceKeyframe(lastDecodedFrameID:)`` — consumed ONLY by the `.idr` fallback path
+        /// (an LTR refresh is never policy-gated).
         case refreshLTR(lastDecodedFrameID: UInt32?)
         /// A durable-receipt ack: the host may advance its retransmit/LTR-pin window.
         /// No live effect yet (no retransmit buffer); recorded for the docs/escalation.
         case ack(streamSeq: UInt32)
-        /// Re-ship the cursor SHAPE bitmap for `shapeID` (FIX B self-heal): the client is
-        /// missing it (its one-shot shape datagram was lost / over-MTU). The actor asks the
+        /// Re-ship the cursor SHAPE bitmap for `shapeID` — a self-heal for a client that is missing
+        /// it (its one-shot shape datagram was lost / over-MTU). The actor asks the
         /// ``CursorSampler`` to re-emit that shape on the cursor socket; the client cache
         /// re-insert is idempotent.
         case reshipCursorShape(shapeID: UInt16)
         /// A periodic client network-feedback report (loss/FEC counters + host-send-ts echo +
-        /// client hold + jitter). The actor folds it into its ``NetworkEstimate`` and logs —
-        /// MAINTAIN+LOG only, no stream-behaviour change this phase.
+        /// client hold + jitter). The actor folds it into its ``NetworkEstimate`` and logs it;
+        /// nothing changes stream behaviour off the back of it.
         case networkStats(NetworkStatsReport)
         /// NACK / selective ARQ: the client is missing specific DATA fragments of `frameID` and asks
         /// the host to retransmit them. The actor looks each up by `(frameID, fragIndex)` in its
@@ -747,9 +744,9 @@ public struct RecoveryDatagramRouter: Sendable {
             return .forceKeyframe(lastDecodedFrameID:
                 lastDecoded == RecoveryMessage.noFrameDecodedSentinel ? nil : lastDecoded)
         case let .requestLTRRefresh(_, _, lastDecoded):
-            // WF-8: defer the LTR-refresh-vs-IDR choice to the actor (it owns the runtime acked-token
-            // state + the SLOPDESK_LTR gate). With LTR off the actor folds this to a real IDR — today's
-            // behaviour exactly. Same sentinel→nil mapping as `.requestIDR`.
+            // Defer the LTR-refresh-vs-IDR choice to the actor (it owns the runtime acked-token
+            // state + the SLOPDESK_LTR gate). With LTR off the actor folds this to a real IDR.
+            // Same sentinel→nil mapping as `.requestIDR`.
             return .refreshLTR(lastDecodedFrameID:
                 lastDecoded == RecoveryMessage.noFrameDecodedSentinel ? nil : lastDecoded)
         case let .ack(streamSeq):
@@ -769,8 +766,7 @@ public struct RecoveryDatagramRouter: Sendable {
 
 /// Pure, host-clock-only network estimate folded from the client's periodic ``NetworkStatsReport``
 /// (the network-feedback channel). NO wall-clock and NO I/O (timestamps are injected as parameters),
-/// so the RTT / loss / OWD-gradient math is deterministic and headlessly unit-testable. MAINTAINS+LOGS
-/// only this phase: nothing consumes the estimate to change stream behaviour yet.
+/// so the RTT / loss / OWD-gradient math is deterministic and headlessly unit-testable.
 ///
 /// ⚠️ CLOCK-SKEW DISCIPLINE (the central trap): RTT is computed ENTIRELY in the host's own clock —
 /// `(hostNow − latestHostSendTs) − clientHoldMs`, where `latestHostSendTs` is the host's OWN stamp
@@ -783,22 +779,22 @@ public struct NetworkEstimate: Sendable, Equatable {
     public private(set) var smoothedRTTMillis: Double = 0
     /// Windowed minimum RTT (ms) — the path's no-queue baseline. `.infinity` until the first sample.
     public private(set) var minRTTMillis: Double = .infinity
-    /// EWMA loss rate in [0, 1] (unrecovered / framesReceived per report). RETAINED for logging /
-    /// telemetry trend — but the WF-2 controller does NOT key its decrease on this (see ``lastLossSample``).
+    /// EWMA loss rate in [0, 1] (unrecovered / framesReceived per report). For logging / telemetry
+    /// trend only — the controller does NOT key its decrease on this (see ``lastLossSample``).
     public private(set) var lossRate: Double = 0
     /// RAW per-report loss fraction from the MOST RECENT fold (unrecovered / framesReceived), in [0, 1].
     /// Unlike ``lossRate`` (EWMA-damped, alpha 0.125) this is the INSTANTANEOUS sample, so a clean
-    /// report reads 0 even while the EWMA tail of a prior spike is still decaying above threshold. The
-    /// WF-2 ``LiveCongestionController`` keys its multiplicative decrease on THIS, so a single transient
+    /// report reads 0 even while the EWMA tail of a prior spike is still decaying above threshold.
+    /// ``LiveCongestionController`` keys its multiplicative decrease on THIS, so a single transient
     /// loss spike causes exactly ONE decrease — not a multi-report cascade driven by the slowly-decaying
     /// EWMA re-tripping the threshold on subsequent perfectly-clean reports.
     public private(set) var lastLossSample: Double = 0
     /// Whether the most recent OWD-jitter sample rose vs the previous (a congestion-onset hint).
     public private(set) var owdGradientRising: Bool = false
-    /// Component 3 (delay-gradient, 2026-06-11): the client trendline detector read OVERUSING on the
-    /// most recent report — monotone delay growth over a full regression window, sustained past the
-    /// adaptive threshold. THIS (not `owdGradientRising`, the abandoned 2-sample coin flip) is the
-    /// gradient signal ``LiveCongestionController``'s early-cut path consumes.
+    /// The client trendline detector read OVERUSING on the most recent report — monotone delay
+    /// growth over a full regression window, sustained past the adaptive threshold. THIS, not
+    /// `owdGradientRising` (a 2-sample coin flip), is the gradient signal
+    /// ``LiveCongestionController``'s early-cut path consumes.
     public private(set) var owdTrendOverusing = false
     /// The detector's modified trend (ms-of-delay per ms, ×scale ×gain) from the most recent report
     /// — logging/diagnostics only.
@@ -843,8 +839,8 @@ public struct NetworkEstimate: Sendable, Equatable {
 
     /// Folds one report. `rttMillis == nil` (rejected by ``computeRTTMillis``) skips the RTT/min-RTT
     /// update but still folds loss + jitter (so disabling the RTT loop never blinds the rest).
-    /// Component 3: the trend params are DEFAULTED so pre-trend call sites (and tests) fold
-    /// byte-identically — state 0 reads "normal" and the gradient fields stay inert.
+    /// The trend params are DEFAULTED so a caller with no trend data (and the tests) folds
+    /// unchanged — state 0 reads "normal" and the gradient fields stay inert.
     public mutating func fold(
         rttMillis: Int?,
         framesReceived: UInt32,
@@ -884,23 +880,22 @@ public struct NetworkEstimate: Sendable, Equatable {
     }
 }
 
-/// Pure decider for the static-window forced-IDR heartbeat (VIDEO-HOST-1). Holds the
-/// cadence anchors and answers: "given the clock and what was last encoded, should the
-/// frameQueue timer re-encode the cached buffer as a forced IDR right now?". No I/O — the
-/// caller owns the retained buffer, the timer, and the encode. The methods are called
-/// only on the capture `frameQueue` (single-threaded), so the single instance is never raced.
+/// Pure decider for the static-window forced-IDR heartbeat. Holds the cadence anchors and answers:
+/// "given the clock and what was last encoded, should the frameQueue timer re-encode the cached
+/// buffer as a forced IDR right now?". No I/O — the caller owns the retained buffer, the timer, and
+/// the encode. The methods are called only on the capture `frameQueue` (single-threaded), so the
+/// single instance is never raced.
 ///
 /// The policy is pure and headlessly unit-testable (injected `now`) while the side effects (retain,
 /// timer, encode) stay thin in `WindowCapturer`. The capture path calls ``onCompleteFrame(now:)`` on
 /// every real frame; the timer calls ``shouldReencode(now:forcedLatched:hasRetainedBuffer:)`` then
 /// ``recordSynthetic(now:)`` when it fires.
 ///
-/// The decision ALGORITHM (quiet-window + synthetic-anchor heartbeat) is native Swift here, the
-/// single source of truth for the host. It is a `final class` (not the former value struct) so the
-/// cadence anchors mutate through the shared reference held by ``WindowCapturer`` without rippling
-/// `let`→`var` through every call site. `@unchecked Sendable` is sound because the single owner only
-/// touches it on `frameQueue` (and the loopback/tests from one thread), so no two threads race the
-/// state. `Equatable` compares the four observable anchors; used only by the golden-parity sanity test.
+/// A `final class`, not a value struct, so the cadence anchors mutate through the shared reference
+/// held by ``WindowCapturer`` without rippling `let`→`var` through every call site.
+/// `@unchecked Sendable` is sound because the single owner only touches it on `frameQueue` (and the
+/// loopback/tests from one thread), so no two threads race the state. `Equatable` compares the four
+/// observable anchors; used only by the golden-parity sanity test.
 public final class StaticIDRDecider: @unchecked Sendable, Equatable {
     /// Heartbeat cadence (seconds). Mirrors `WindowCapturer.heartbeatIDRInterval` (1.0).
     public let heartbeat: TimeInterval
@@ -947,18 +942,17 @@ public final class StaticIDRDecider: @unchecked Sendable, Equatable {
         // Recovery request always wins once the live path is quiet (latency-critical: a client
         // is frozen). Fire regardless of heartbeat phase.
         if forcedLatched { return true }
-        // Otherwise: heartbeat — measured from the last SYNTHETIC emission only (SHARPNESS,
-        // 2026-06-10; was `max(lastComplete, lastSynthetic)`). Measuring from the last REAL frame
-        // made the first crisp re-anchor after a scroll wait a full heartbeat even though the quiet
-        // window had long passed (Parsec re-sharpens in ~1 s). Synthetic-only fires the first crisp
-        // as soon as the quiet window clears (~1 s after motion stops), while steady-state static
-        // cadence stays one `heartbeat` apart.
+        // Otherwise: heartbeat — measured from the last SYNTHETIC emission ONLY. Anchoring on
+        // `max(lastComplete, lastSynthetic)` would make the first crisp re-anchor after a scroll
+        // wait a full heartbeat even though the quiet window had long passed (Parsec re-sharpens in
+        // ~1 s). Synthetic-only fires the first crisp as soon as the quiet window clears (~1 s after
+        // motion stops), while steady-state static cadence stays one `heartbeat` apart.
         if lastSyntheticEncode == 0 { return true } // armed, none emitted yet, quiet ⇒ fire now
         return (now - lastSyntheticEncode) >= heartbeat
     }
 
-    /// Value-equal iff all four observable anchors match (the former value struct's synthesized
-    /// `Equatable`); used only by the golden-parity sanity test, never in live control flow.
+    /// Value-equal iff all four observable anchors match; used only by the golden-parity sanity
+    /// test, never in live control flow.
     public static func == (lhs: StaticIDRDecider, rhs: StaticIDRDecider) -> Bool {
         lhs.heartbeat == rhs.heartbeat && lhs.quietWindow == rhs.quietWindow
             && lhs.lastCompleteEncode == rhs.lastCompleteEncode

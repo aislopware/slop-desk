@@ -1,14 +1,14 @@
 import SlopDeskVideoProtocol
 
-/// IN-ORDER decode admission (2026-06-12) — the fix for the `frontier = N−2` failure class.
+/// IN-ORDER decode admission — closes the `frontier = N−2` failure class.
 ///
 /// WHY: the reassembler completes frames in ARRIVAL/RECOVERY order, not frameID order — its own
 /// `fecReorderGrace` doc describes the canonical case: frame N−1 waits for late parity while
-/// frame N (small, one datagram) completes first. The decode path used to submit completion-order
-/// straight into VT, so the out-of-order frame N referenced a not-yet-decoded N−1 and threw
-/// -12909 → `invalidateSession` → forced IDR — a ~150 ms freeze for a frame that was about to
-/// complete anyway. Measured live (loss-free wire!): every remaining hard fail had
-/// `frontier = N−2` — N−1 still pending at N's submit.
+/// frame N (small, one datagram) completes first. Submitting completion order straight into VT
+/// lets the out-of-order frame N reference a not-yet-decoded N−1, which throws -12909 →
+/// `invalidateSession` → forced IDR — a ~150 ms freeze for a frame that was about to complete
+/// anyway. Every hard fail on a loss-free wire has `frontier = N−2` — N−1 still pending at N's
+/// submit — which is exactly the case this sequencer closes.
 ///
 /// THE SEQUENCER: frames are released to the decoder strictly in frameID order. A frame ahead of
 /// the expectation is HELD (bounded); the gap closes when the missing frame completes (released

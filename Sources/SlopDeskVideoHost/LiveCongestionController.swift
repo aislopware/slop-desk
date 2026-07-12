@@ -1,7 +1,7 @@
 import Foundation
 import SlopDeskVideoProtocol
 
-/// PURE AIMD congestion controller for the live HEVC stream (WF-2 adaptive bitrate, 2026-06-09).
+/// PURE AIMD congestion controller for the live HEVC stream (adaptive bitrate).
 ///
 /// Consumes the clock-skew-free ``NetworkEstimate`` (RTT / loss / OWD-gradient, folded by the host
 /// from the client's periodic ``NetworkStatsReport``) and decides a new live target bitrate, which the
@@ -38,39 +38,37 @@ import SlopDeskVideoProtocol
 ///  - The RTT signal must be SUSTAINED (`rttStreakTicks` consecutive inflated reports, ~150ms) before
 ///    it may decrease — a one-report blip never acts. The per-report `owdGradientRising` flag is
 ///    deliberately NOT consulted: it compares only two adjacent jitter samples, so on a steady link it
-///    flaps ~50/50 (measured live 2026-06-10) — a coin flip, not a signal.
-///  - RTT-triggered decreases are PROPORTIONAL to the measured queue (DELAY-TARGETING, 2026-06-11):
+///    flaps ~50/50 (measured live) — a coin flip, not a signal.
+///  - RTT-triggered decreases are PROPORTIONAL to the measured queue (DELAY-TARGETING):
 ///    `factor = (minRTT + slack) / smoothedRTT` clamped to `[rttDecreaseFloorFactor,
 ///    rttDecreaseCapFactor]` — a large standing queue cuts hard in one step, the post-congestion EWMA
-///    decay tail trims at most −5%, so the 2026-06-09 "×0.85 every 50ms to the floor" cascade is
-///    structurally impossible; the RTT path may re-decrease on the SHORT `cutHoldTicks` spacing (fresh
-///    streak each time) instead of the full increase hold-down.
-///  - ONE MULTIPLICATIVE CUT PER `cutHoldTicks` WINDOW — loss cuts included (CUT-CASCADE FIX,
-///    2026-06-11 VD session): the loss branch used to fire on EVERY report over the threshold, but
-///    measured inter-ISP weather bursts span 2-10 consecutive ~50ms reports, so one 130ms burst
-///    cascaded 29M→14M→floor in 2 ticks (31 such drops in a 4-minute session) while FEC recovered
-///    every lost frame (cutting bought nothing). Halve once per WINDOW, not once per loss — the first
-///    cut of an episode is still immediate; a burst persisting past ~400ms cuts again.
-///  - NO "severe raw-sample" fast-halve (same fix): the ~50ms report window holds only ~3 frames, so
-///    ONE lost frame reads as a 33% raw sample — quantization noise, not severity (the catastrophic
-///    branch documents exactly this, yet the old severe branch keyed on it and halved). The depth of a
-///    corroborated cut now comes from the MEASURED QUEUE (proportional RTT sizing) with the classic
-///    ×0.85 as the loss-path step; a true collapse is the EWMA-keyed catastrophic halve, needing
-///    ~300ms of sustained ≥50% loss to arm.
+///    decay tail trims at most −5%, so a "×0.85 every 50ms to the floor" cascade is structurally
+///    impossible; the RTT path may re-decrease on the SHORT `cutHoldTicks` spacing (fresh streak each
+///    time) instead of the full increase hold-down.
+///  - ONE MULTIPLICATIVE CUT PER `cutHoldTicks` WINDOW — loss cuts included. A loss branch that fires
+///    on EVERY report over the threshold cascades: measured inter-ISP weather bursts span 2-10
+///    consecutive ~50ms reports, so one 130ms burst drops 29M→14M→floor in 2 ticks (31 such drops in a
+///    4-minute session) while FEC recovers every lost frame (cutting buys nothing). Cut once per
+///    WINDOW, not once per loss — the first cut of an episode is still immediate; a burst persisting
+///    past ~400ms cuts again.
+///  - NO "severe raw-sample" fast-halve: the ~50ms report window holds only ~3 frames, so ONE lost
+///    frame reads as a 33% raw sample — quantization noise, not severity. The depth of a corroborated
+///    cut comes from the MEASURED QUEUE (proportional RTT sizing) with the classic ×0.85 as the
+///    loss-path step; a true collapse is the EWMA-keyed catastrophic halve, needing ~300ms of
+///    sustained ≥50% loss to arm.
 ///  - A queue-corroborated decrease remembers the landed-on rate as the KNEE (ssthresh, `kneeBps`):
 ///    additive increase at/above it runs ÷`kneeCautionDivisor` so recovery hovers under the rate that
 ///    built the queue instead of re-bashing it every second (the felt 25↔40Mbps pumping). The knee
 ///    expires after `kneeTTLTicks` without re-confirmation — path conditions drift.
-///  - DELAY-GRADIENT EARLY CUT (component 3, 2026-06-11, default OFF — `SLOPDESK_ABR_GRAD=1`): the
-///    client's libwebrtc-style trendline (per-FRAME OWD slope, adaptive threshold, sustained overuse)
-///    ships its verdict in every report; when it reads OVERUSING **and** the SAME report's RAW RTT
-///    sample clears the factor+slack gates (fresh level evidence — no EWMA lag, no streak), ONE
-///    multiplicative ×`gradientDecreaseFactor` cut is authorized after a single report (~100-170ms
-///    from onset vs ~250-300ms for the smoothed path). It shares `cutHoldTicks` spacing with every
-///    other cut (the cut-cascade invariant extends, never regresses), sets NO knee (an onset reflex is
-///    not capacity knowledge — the proportional path sets it if the queue is real), and while overuse
-///    is detected the additive probe is suppressed (never climb INTO a detected overuse during the
-///    cut hold).
+///  - DELAY-GRADIENT EARLY CUT (default OFF — `SLOPDESK_ABR_GRAD=1`): the client's libwebrtc-style
+///    trendline (per-FRAME OWD slope, adaptive threshold, sustained overuse) ships its verdict in every
+///    report; when it reads OVERUSING **and** the SAME report's RAW RTT sample clears the factor+slack
+///    gates (fresh level evidence — no EWMA lag, no streak), ONE multiplicative
+///    ×`gradientDecreaseFactor` cut is authorized after a single report (~100-170ms from onset vs
+///    ~250-300ms for the smoothed path). It shares `cutHoldTicks` spacing with every other cut (the
+///    cut-cascade invariant extends, never regresses), sets NO knee (an onset reflex is not capacity
+///    knowledge — the proportional path sets it if the queue is real), and while overuse is detected
+///    the additive probe is suppressed (never climb INTO a detected overuse during the cut hold).
 ///
 /// SAFE WHEN TELEMETRY OFF: with `loss == 0` and no valid RTT (`minRTTMillis == .infinity`) the
 /// congestion predicate is always false, so the controller can only additively increase — but it
@@ -83,17 +81,18 @@ public struct LiveCongestionController: Sendable, Equatable {
 
     /// Reports to fold before ANY action — the cold-start guard (~10 × 50ms ≈ 500ms). `SLOPDESK_ABR_WARMUP`.
     public static let warmupTicks: Int = envInt("SLOPDESK_ABR_WARMUP", 10, min: 0, max: 100_000)
-    /// EWMA loss-rate above which the link is "congested" → multiplicative decrease. `SLOPDESK_ABR_LOSS`.
+    /// RAW per-report loss sample above which the link is "congested" → multiplicative decrease
+    /// (see the type doc on why the raw sample, not the EWMA). `SLOPDESK_ABR_LOSS`.
     public static let lossThreshold: Double = envDouble("SLOPDESK_ABR_LOSS", 0.02, min: 0, max: 1)
-    /// EWMA loss-rate above which the link is "severely congested" → halve immediately. `SLOPDESK_ABR_SEVERE`.
+    /// Raw-sample gate the catastrophic halve ALSO requires: the halve needs a sustained EWMA collapse
+    /// (``catastrophicLossThreshold``) AND a currently-hot report. `SLOPDESK_ABR_SEVERE`.
     public static let severeLossThreshold: Double = envDouble("SLOPDESK_ABR_SEVERE", 0.10, min: 0, max: 1)
-    /// LOSS-TOLERANCE #4 (2026-06-10): loss below ``catastrophicLossThreshold`` decreases ONLY when
-    /// CORROBORATED by RTT inflation (both gates of the RTT predicate on the same report). Measured on
-    /// the real inter-ISP path (iperf3, 1200B datagrams): loss is ~0.6–1.1% at 5, 12 AND 30Mbps —
-    /// rate-INDEPENDENT weather, with multi-second 3–9% burst episodes at FLAT RTT (jitter 0.3ms).
-    /// Backing off cannot reduce that loss; it only degrades quality and (pre-#1) paced the recovery
-    /// IDR at the collapsed rate. Loss WITH RTT inflation = a building queue = real congestion → the
-    /// classic AIMD response stays. `SLOPDESK_ABR_LOSS_NEEDS_RTT=0` reverts.
+    /// LOSS TOLERANCE: loss below ``catastrophicLossThreshold`` decreases ONLY when CORROBORATED by RTT
+    /// inflation (both gates of the RTT predicate on the same report). Measured on the real inter-ISP
+    /// path (iperf3, 1200B datagrams): loss is ~0.6–1.1% at 5, 12 AND 30Mbps — rate-INDEPENDENT
+    /// weather, with multi-second 3–9% burst episodes at FLAT RTT (jitter 0.3ms). Backing off cannot
+    /// reduce that loss; it only degrades quality. Loss WITH RTT inflation = a building queue = real
+    /// congestion → the classic AIMD response stays. `SLOPDESK_ABR_LOSS_NEEDS_RTT=0` disables.
     public static let lossNeedsRTTCorroboration = EnvConfig.boolDefaultOn("SLOPDESK_ABR_LOSS_NEEDS_RTT")
     /// EWMA loss-rate above THIS halves even at flat RTT: a queue-less policer / true link collapse
     /// drops without inflating RTT, and at a SUSTAINED ≥25% the stream is unusable regardless of
@@ -106,7 +105,7 @@ public struct LiveCongestionController: Sendable, Equatable {
     public static let catastrophicLossThreshold: Double = envDouble("SLOPDESK_ABR_CATASTROPHIC", 0.25, min: 0, max: 1)
     /// Multiplicative decrease factor on ordinary congestion (0.85 = drop to 85%). `SLOPDESK_ABR_DEC`.
     public static let decreaseFactor: Double = envDouble("SLOPDESK_ABR_DEC", 0.85, min: 0.05, max: 0.999)
-    /// Multiplicative decrease factor on SEVERE loss (0.5 = halve). `SLOPDESK_ABR_SEVERE_DEC`.
+    /// Multiplicative decrease factor on the catastrophic branch (0.5 = halve). `SLOPDESK_ABR_SEVERE_DEC`.
     public static let severeDecreaseFactor: Double = envDouble("SLOPDESK_ABR_SEVERE_DEC", 0.5, min: 0.05, max: 0.999)
     /// Additive-increase step = `ceiling / increaseDivisor` per clean tick (32 ⇒ ~3% of ceiling). `SLOPDESK_ABR_INC_DIV`.
     public static let increaseDivisor: Int = envInt("SLOPDESK_ABR_INC_DIV", 32, min: 1, max: 100_000)
@@ -136,14 +135,14 @@ public struct LiveCongestionController: Sendable, Equatable {
     /// ABSOLUTE smoothed-RTT inflation over the baseline (ms) ALSO required before the RTT path may
     /// signal congestion — keeps LAN scheduling wobble (a few ms on a ~5ms baseline) sub-threshold. `SLOPDESK_ABR_SLACK`.
     public static let rttSlackMillis: Double = envDouble("SLOPDESK_ABR_SLACK", 15.0, min: 0, max: 10000)
-    /// BASELINE-PROPORTIONAL slack (2026-06-11, cellular wobble fix): effective slack is
-    /// `max(rttSlackMillis, slackFraction × minRTT)`. The fixed 15ms was tuned for ~5-10ms LAN
-    /// baselines; on the measured 4G path (minRTT ≈ 40-44ms) cellular scheduler wobble of ±50% is
-    /// RATE-INDEPENDENT path texture (identical at 3M and 11.5M actuated), yet 44→60ms tripped
-    /// `min+15` constantly → perpetual −5% trims pinned the average at ~3.5M on a path carrying 8M+
-    /// (soft image, zero latency gain). 0.75 reclassifies the sub-`1.75×min` band as weather while a
-    /// REAL queue (smoothed ≥ ~1.75× baseline) still cuts; LAN/WiFi baselines are unaffected
-    /// (0.75×10ms < 15ms absolute floor). `SLOPDESK_ABR_SLACK_FRAC`.
+    /// BASELINE-PROPORTIONAL slack (cellular wobble): effective slack is
+    /// `max(rttSlackMillis, slackFraction × minRTT)`. The fixed 15ms suits ~5-10ms LAN baselines, but
+    /// on the measured 4G path (minRTT ≈ 40-44ms) cellular scheduler wobble of ±50% is RATE-INDEPENDENT
+    /// path texture (identical at 3M and 11.5M actuated), and 44→60ms trips a bare `min+15` constantly
+    /// → perpetual −5% trims pin the average at ~3.5M on a path carrying 8M+ (soft image, zero latency
+    /// gain). 0.75 reclassifies the sub-`1.75×min` band as weather while a REAL queue (smoothed ≥
+    /// ~1.75× baseline) still cuts; LAN/WiFi baselines are unaffected (0.75×10ms < 15ms absolute
+    /// floor). `SLOPDESK_ABR_SLACK_FRAC`.
     public static let rttSlackFraction: Double = envDouble("SLOPDESK_ABR_SLACK_FRAC", 0.75, min: 0, max: 10)
 
     /// The effective absolute-slack gate for a given path baseline (see ``rttSlackFraction``):
@@ -169,17 +168,16 @@ public struct LiveCongestionController: Sendable, Equatable {
     /// CONSECUTIVE inflated reports required before the RTT path decreases (~N × 50ms). `SLOPDESK_ABR_RTT_N`.
     public static let rttStreakTicks: Int = envInt("SLOPDESK_ABR_RTT_N", 3, min: 1, max: 100_000)
     /// Reports between ANY multiplicative decreases — RTT-path AND loss-path (~8 × 50ms ≈ 400ms).
-    /// DELAY-TARGETING (2026-06-11): the full `holdTicks` (~1s) between RTT decreases was the right
-    /// anti-cascade guard for a FIXED ×0.85 step, but a REAL persistent queue (scroll demand > path
-    /// capacity, measured live: RTT p90 80ms during scroll vs 11ms idle on the FPT↔Viettel path) then
-    /// drained at one small step per second — multi-second 50–100ms latency episodes. The decrease is
-    /// now PROPORTIONAL to the measured queue (see ``onReport``), so the EWMA-tail cascade this hold
-    /// guarded against is self-limiting (a draining queue yields factors → ``rttDecreaseCapFactor``);
-    /// the shorter spacing lets the controller chase a real queue. The streak also resets on every
-    /// decrease, so each RTT re-decrease needs a FRESH `rttStreakTicks` run of inflated reports.
-    /// CUT-CASCADE FIX (2026-06-11, was `rttHoldTicks`): the LOSS path now shares this spacing — a
-    /// multi-report weather burst costs ONE cut per window, not one per report (see type doc).
-    /// `SLOPDESK_ABR_CUT_HOLD`.
+    /// A full `holdTicks` (~1s) spacing would be the right anti-cascade guard for a FIXED ×0.85 step,
+    /// but a REAL persistent queue (scroll demand > path capacity, measured live: RTT p90 80ms during
+    /// scroll vs 11ms idle on the FPT↔Viettel path) then drains at one small step per second —
+    /// multi-second 50–100ms latency episodes. The decrease is PROPORTIONAL to the measured queue (see
+    /// ``onReport``), so the EWMA-tail cascade a long hold guards against is self-limiting anyway (a
+    /// draining queue yields factors → ``rttDecreaseCapFactor``); the shorter spacing lets the
+    /// controller chase a real queue. The streak also resets on every decrease, so each RTT
+    /// re-decrease needs a FRESH `rttStreakTicks` run of inflated reports. The LOSS path shares this
+    /// spacing — a multi-report weather burst costs ONE cut per window, not one per report (see type
+    /// doc). `SLOPDESK_ABR_CUT_HOLD`.
     public static let cutHoldTicks: Int = envInt("SLOPDESK_ABR_CUT_HOLD", 8, min: 0, max: 100_000)
     /// Hardest single proportional RTT decrease (0.6 = at most −40% in one step). `SLOPDESK_ABR_RTT_DEC_MIN`.
     public static let rttDecreaseFloorFactor: Double = envDouble(
@@ -214,8 +212,8 @@ public struct LiveCongestionController: Sendable, Equatable {
         min: 0,
         max: 1_000_000_000,
     )
-    /// DELAY-GRADIENT EARLY CUT (component 3) — DEFAULT OFF until the HW feel-test (repo convention:
-    /// two prior delay designs were falsified live by rate-independent 4G wobble). `SLOPDESK_ABR_GRAD=1`
+    /// DELAY-GRADIENT EARLY CUT — DEFAULT OFF until the HW feel-test: delay-keyed designs are the ones
+    /// live 4G wobble (rate-independent) falsifies, so this one must earn its arm. `SLOPDESK_ABR_GRAD=1`
     /// enables on the host; the client-side estimator + wire fields are pure telemetry and default ON.
     public static let gradientCutEnabledDefault = EnvConfig.boolDefaultOff("SLOPDESK_ABR_GRAD")
     /// Multiplicative factor for a gradient-authorized cut. 0.85 = GCC overuse beta (libwebrtc
@@ -235,7 +233,7 @@ public struct LiveCongestionController: Sendable, Equatable {
     /// INSTANCE-level (injected at construction, env default in production) so the loopback harness
     /// and tests can A/B both arms in one process without env games.
     public let gradientCutEnabled: Bool
-    /// Current target bitrate (bps). Seeded to `ceiling` (open-loop start = today's behaviour).
+    /// Current target bitrate (bps). Seeded to `ceiling` — an open-loop start.
     public private(set) var current: Int
     /// Folded-report count — the controller's "clock" (see type doc).
     public private(set) var ticks = 0
@@ -252,10 +250,9 @@ public struct LiveCongestionController: Sendable, Equatable {
     /// The previous report's smoothed RTT — the one-report delay TREND. An RTT-path decrease
     /// additionally requires the smoothed RTT to be NOT IMPROVING (within 1ms) vs the last report: a
     /// queue already DRAINING (rate under capacity, the level is just the backlog flushing out) must
-    /// not keep triggering cuts — that was the measured undershoot-to-the-floor while a ~900ms warmup
-    /// backlog drained. A standing or growing queue reads flat/rising and keeps cutting. (The sound
-    /// version of the abandoned per-report `owdGradientRising` coin-flip: smoothed-EWMA vs
-    /// smoothed-EWMA, not jitter-sample vs jitter-sample.)
+    /// not keep triggering cuts, or a ~900ms warmup backlog draining walks the rate down to the floor.
+    /// A standing or growing queue reads flat/rising and keeps cutting. This is smoothed-EWMA vs
+    /// smoothed-EWMA — NOT the per-report `owdGradientRising` jitter-sample coin-flip.
     public private(set) var prevSmoothedRTTMillis = 0.0
     /// The remembered "knee" (ssthresh): the rate the controller landed on after the most recent
     /// queue-corroborated decrease. Additive increase at/above this rate uses the cautious step
@@ -264,14 +261,14 @@ public struct LiveCongestionController: Sendable, Equatable {
     public private(set) var kneeBps: Int?
     /// Tick at which the knee memory expires (refreshed by every queue-corroborated decrease).
     ///
-    /// NOTE (2026-06-11): an "escalating caution" variant — doubling the above-knee divisor per knee
-    /// re-confirmation (÷8→÷16→÷32→÷64) — was built, deployed and REVERTED the same day. Two live 4G
-    /// sessions falsified it: cellular RTT wobble (p50 46 → p90 68ms) is largely rate-INDEPENDENT
-    /// (identical profile at 3M and 11.5M), so each wobble trims −5% and resets the hold; any climb
-    /// slower than the base ÷8 (~0.94M/s at a 12M ceiling) cannot cross the material-actuation gap
-    /// between wobble cuts and the rate PINS near the floor (3.45M for 91% of a session, soft image,
-    /// zero latency benefit). The constant ÷8 caution rides through the wobble and breathes 3–11M —
-    /// measurably better quality at the same RTT. Keep the knee simple.
+    /// The caution divisor is CONSTANT on purpose. An "escalating caution" variant — doubling the
+    /// above-knee divisor per knee re-confirmation (÷8→÷16→÷32→÷64) — is falsified by live 4G:
+    /// cellular RTT wobble (p50 46 → p90 68ms) is largely rate-INDEPENDENT (identical profile at 3M and
+    /// 11.5M), so each wobble trims −5% and resets the hold; any climb slower than the base ÷8
+    /// (~0.94M/s at a 12M ceiling) cannot cross the material-actuation gap between wobble cuts and the
+    /// rate PINS near the floor (3.45M for 91% of a session, soft image, zero latency benefit). The
+    /// constant ÷8 caution rides through the wobble and breathes 3–11M — better quality at the same
+    /// RTT. Keep the knee simple.
     public private(set) var kneeExpiresAtTick = 0
 
     // MARK: Init
@@ -299,10 +296,10 @@ public struct LiveCongestionController: Sendable, Equatable {
 
     // MARK: Control law
 
-    /// CUT-REASON ATTRIBUTION (fix 4, 2026-06-11 telemetry round — observability only, zero behaviour
-    /// change): WHY the controller moved (or held) this tick, carried on the returned ``Decision`` so
-    /// the host's `abr: actuate` debug line can attribute a cut to its trigger — without it the
-    /// gradient path's (`SLOPDESK_ABR_GRAD`) efficacy is unmeasurable from logs.
+    /// CUT-REASON ATTRIBUTION (observability only, zero behaviour change): WHY the controller moved (or
+    /// held) this tick, carried on the returned ``Decision`` so the host's `abr: actuate` debug line can
+    /// attribute a cut to its trigger — without it the gradient path's (`SLOPDESK_ABR_GRAD`) efficacy is
+    /// unmeasurable from logs.
     public enum CutReason: String, Sendable, Equatable {
         /// Cold-start guard — no action possible.
         case warmup
@@ -340,26 +337,25 @@ public struct LiveCongestionController: Sendable, Equatable {
     }
 
     /// Folds one network estimate and returns the (possibly unchanged) new target bitrate.
-    /// Compatibility wrapper over ``decide(_:)`` — every pre-fix-4 call site keeps its shape.
+    /// Thin wrapper over ``decide(_:)`` for call sites that don't want the reason.
     @discardableResult
     public mutating func onReport(_ e: NetworkEstimate) -> Int {
         decide(e).target
     }
 
-    /// Folds one network estimate and returns the new target bitrate PLUS the attributed reason
-    /// (fix 4). When several cut branches fire the reason names the branch that set the FINAL (lowest)
-    /// target; on a tie the stronger evidence wins (rttStreak > lossCorroborated > gradient — the code
-    /// order below).
+    /// Folds one network estimate and returns the new target bitrate PLUS the attributed reason.
+    /// When several cut branches fire the reason names the branch that set the FINAL (lowest) target;
+    /// on a tie the stronger evidence wins (rttStreak > lossCorroborated > gradient — the code order
+    /// below).
     ///
-    /// Decision order: warmup → severe-loss halve → ordinary-congestion multiplicative decrease →
+    /// Decision order: warmup → catastrophic halve → ordinary-congestion multiplicative decrease →
     /// (past hold-down) additive increase. The result is ALWAYS within `[floor, ceiling]`.
     ///
     /// `offeredBps` is the host's recent encoded throughput (bytes/frame × 8 × fps). When supplied and
     /// the stream is APPLICATION-limited (offered far below `current` — an idle / near-static screen),
     /// the additive increase is SUPPRESSED so an idle period can't inflate the target into phantom
     /// headroom a sudden burst then overshoots into bufferbloat. `nil` (the default) ⇒ no utilization
-    /// gate ⇒ probe exactly as before (every pre-fix call site keeps its behaviour). Core mirror:
-    /// `LiveCongestionController::decide_with_utilization`.
+    /// gate ⇒ always probe. Core mirror: `LiveCongestionController::decide_with_utilization`.
     @discardableResult
     public mutating func decide(_ e: NetworkEstimate, offeredBps: Double? = nil) -> Decision {
         // Native AIMD control law — mirrors `LiveCongestionController::decide_with_config`
@@ -516,7 +512,7 @@ public struct LiveCongestionController: Sendable, Equatable {
            !(gradientCutEnabled && e.owdTrendOverusing)
         {
             // Clean link past the hold-down: RAMP if using the allocation; DECAY while deeply idle;
-            // else hold. With no utilization signal this is always a ramp (the legacy path).
+            // else hold. With no utilization signal this is always a ramp.
             if utilizationPermitsRamp(offeredBps) {
                 let cautious: Bool = {
                     guard let knee = kneeBps else { return false }
@@ -559,11 +555,10 @@ public struct LiveCongestionController: Sendable, Equatable {
 
     // MARK: Env parsing helpers
 
-    // W12: resolve through `EnvConfig` (ProcessInfo env → overlay) so a GUI setting can override these
-    // tunables. With an EMPTY overlay `EnvConfig.string(key)` is byte-identical to the previous
-    // `ProcessInfo.processInfo.environment[key]`, so the validate-then-default law below — and the
-    // golden corpus that pins these defaults — is unchanged. (Validate-then-default: out-of-range or
-    // garbage falls back to `fallback`, never traps.)
+    // Resolve through `EnvConfig` (ProcessInfo env → overlay) so a GUI setting can override these
+    // tunables. With an EMPTY overlay `EnvConfig.string(key)` is byte-identical to a raw
+    // `ProcessInfo.processInfo.environment[key]` lookup, so the golden corpus pinning these defaults
+    // holds. Validate-then-default: out-of-range or garbage falls back to `fallback`, never traps.
     private static func envInt(_ key: String, _ fallback: Int, min lo: Int, max hi: Int) -> Int {
         guard let s = EnvConfig.string(key), let v = Int(s), v >= lo,
               v <= hi else { return fallback }

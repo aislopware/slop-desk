@@ -84,9 +84,9 @@ public final class SystemDialogMonitor {
             manuallyClosedAt.removeValue(forKey: wid)
         }
         // 2. Detect a MANUAL close: a still-present dialog whose pane is no longer on the canvas (the
-        //    user closed it). Drop it from `spawned` and start its grace timer — so it is eligible to
-        //    re-spawn after the suppression window rather than lingering as a dead id (the old bug:
-        //    spawned[wid] kept a closed pane's id, so the dialog was unrecoverable).
+        //    user closed it). Drop it from `spawned` and start its grace timer — leaving `spawned[wid]`
+        //    pointing at the closed pane's id would make the dialog permanently unrecoverable, since step
+        //    3 only spawns a dialog whose windowID is absent from `spawned`.
         for (wid, id) in spawned where !store.isSystemDialogPaneLive(id) {
             spawned.removeValue(forKey: wid)
             if manuallyClosedAt[wid] == nil { manuallyClosedAt[wid] = clock() }

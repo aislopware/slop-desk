@@ -1,10 +1,10 @@
-/// PANE REBIND (2026-06-12): pure stale-binding resolution for a restored `.remoteGUI` pane.
+/// PANE REBIND: pure stale-binding resolution for a restored `.remoteGUI` pane.
 ///
 /// WHY: a pane persists the host's CGWindowID, but CGWindowIDs die with the window (host restart,
 /// app relaunch) AND macOS recycles the 32-bit ids — after a restart the same number can belong to
-/// a DIFFERENT app's window. A stale binding used to stream a dead/black window silently (the
-/// host's `helloAck(accepted:false)` produces zero client effects). The endpoint now also persists
-/// the owning app's name + the title at pick time, and on the first open the live window list is
+/// a DIFFERENT app's window. Trusting the raw id would stream a dead/black window silently (the
+/// host's `helloAck(accepted:false)` produces zero client effects), so the endpoint also persists
+/// the owning app's name + the title at pick time. On the first open the live window list is
 /// consulted: the id is KEPT only if it still exists AND still belongs to the same app; otherwise
 /// the binding re-resolves by app name with the title as tiebreaker.
 ///

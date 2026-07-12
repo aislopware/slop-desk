@@ -261,9 +261,9 @@ final class CommandBlockSegmenterTests: XCTestCase {
     func testPhantomDInCommandPhaseAfterEmptyEnterDropped() {
         // The zsh shim emits `D;$?` from precmd on EVERY prompt cycle (before A), so an empty Enter
         // at the prompt fires a `D` while the block is still in the `.command` phase — B fired (the
-        // prompt) but preexec/`C` did NOT (no command executed). Before the fix the `D` arm gated
-        // only on `hasOpenBlock` and minted a "completed" phantom block with empty commandText and
-        // the PREVIOUS command's exit code, piling "(no command)" rows into the Commands / Outline.
+        // prompt) but preexec/`C` did NOT (no command executed). The `D` arm must not gate
+        // only on `hasOpenBlock` — doing so mints a "completed" phantom block with empty commandText
+        // and the PREVIOUS command's exit code, piling "(no command)" rows into the Commands / Outline.
         let stream =
             cycle(prompt: "$ ", command: "false", output: "", exit: 1) // one real failed command
                 + a() + "$ " + b() // new prompt: block opens (.command phase)
@@ -278,8 +278,8 @@ final class CommandBlockSegmenterTests: XCTestCase {
 
     func testCtrlCLineAbortDropsPhantomBlock() {
         // A Ctrl-C at the prompt aborts the line: zsh echoes `^C`, runs precmd (`D;130`) but NOT
-        // preexec — no `C`, so the open block stayed in the `.command` phase. Before the fix this
-        // minted a phantom completed "foo^C" block shown as FAILED (exit 130) though nothing ran.
+        // preexec — no `C`, so the open block stays in the `.command` phase. Naively closing it on
+        // `D` would mint a phantom completed "foo^C" block shown as FAILED (exit 130) though nothing ran.
         let stream =
             a() + "$ " + b() + "foo" + "^C\n" // typed "foo", then Ctrl-C abort (no preexec / C)
             + d(130) // precmd D;130 — abort exit, no command executed
@@ -295,7 +295,7 @@ final class CommandBlockSegmenterTests: XCTestCase {
         // (a nested shell / ssh whose inner shell emits its own OSC-133) is closed as INCOMPLETE. It
         // must carry a NON-nil durationMS so the close is distinguishable from the running peek —
         // otherwise the tracker's dedup (which compares only exit/duration/text for a running block)
-        // suppresses the final emit and the client shows the row "running…" forever (Bug 3).
+        // suppresses the final emit and the client shows the row "running…" forever.
         let clock = TestClock()
         var seg = CommandBlockSegmenter(clock: clock.date)
         _ = seg.ingest(bytes(a() + "$ " + b() + "ssh host" + c())) // reaches .output, runningSince set
@@ -377,12 +377,12 @@ final class CommandBlockSegmenterTests: XCTestCase {
 
     // MARK: 7b. Explicit command-line mark (133;E) — immune to line-editor redraw pollution
 
-    /// THE Bug-A regression. Under zsh-autosuggestions + zsh-syntax-highlighting + starship, the command
+    /// Under zsh-autosuggestions + zsh-syntax-highlighting + starship, the command
     /// region is repainted many times as the user types: ghost-suggestion text is printed, the line is
     /// re-colored, the cursor jumps back — so the raw ECHO between `B` and `C` is a soup of every glyph ever
     /// painted there (`ll ~/Library/Group\ Containers/... ll ll` etc.). The explicit `133;E` mark carries the
-    /// EXACT typed command, so `commandText` must be the clean command, NOT the echo soup. FAILS on the
-    /// pre-fix segmenter (which had no `E` arm and fell back to the polluted echo bytes).
+    /// EXACT typed command, so `commandText` must be the clean command, NOT the echo soup — a segmenter with
+    /// no `E` arm falls back to the polluted echo bytes.
     func testExplicitCommandMarkOverridesGarbledEcho() {
         // The echo between B and C is deliberate garbage (what a redraw-heavy line editor actually emits).
         let garbage = "l l ll  ll ~/Library/Group\\ Containers ll ll  ec  ho SHIPPED"
@@ -420,7 +420,8 @@ final class CommandBlockSegmenterTests: XCTestCase {
 
     /// A re-fired `B` (prompt redraw on resize) that RE-ARMS the open block does not discard an explicit
     /// command captured for THIS execution: E arrives after the FINAL B (at preexec), so the redraw B's
-    /// come before E and the explicit text still wins. Composes the Bug-A fix with the redraw-dedup fix.
+    /// come before E and the explicit text still wins. Combines the explicit-command override with the
+    /// redraw-dedup handling.
     func testExplicitCommandSurvivesPromptRedrawBeforeExecution() {
         // Two redraw B's (resize) at the idle prompt, THEN the real preexec E + C.
         let stream = a() + "$ " + b() + b() + "gar" + b() + e("git status") + c() + "clean\n" + d(0)

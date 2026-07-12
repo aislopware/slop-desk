@@ -68,7 +68,7 @@ public struct RemotePaneContext {
     /// Whether this pane is the workspace's active/focused pane. The video view forwards pointer/scroll
     /// to the remote window ONLY when active; a non-active pane routes scroll to ``onCanvasScroll``.
     public var isActive: Bool
-    /// READ-ONLY INPUT GATE (E21 WI-3). `false` ⇒ a read-only `.remoteGUI` pane: the app-target video client
+    /// READ-ONLY INPUT GATE. `false` ⇒ a read-only `.remoteGUI` pane: the app-target video client
     /// forwards NEITHER pointer/scroll NOR keycodes to the host while `!inputEnabled` — it gates every forward
     /// on `isActive && inputEnabled` (a click may still ACTIVATE the workspace pane, but nothing is relayed to
     /// the remote window, the host window is not raised, and the paste-as-keystrokes sink is cleared).
@@ -102,7 +102,7 @@ public struct RemotePaneContext {
     /// Pure CLIENT compositor ops (no host input), so — unlike ``onResizeInjectorReady`` — NOT withheld while
     /// read-only. `nil` (standalone default) ⇒ no canvas to receive it.
     public var onViewportInjectorReady: ((((_ command: UInt8) -> Void)?) -> Void)?
-    /// RELEASE STUCK INPUT (C5, manual escape hatch): the live video view publishes a zero-arg release closure
+    /// RELEASE STUCK INPUT (manual escape hatch): the live video view publishes a zero-arg release closure
     /// here (`nil` on teardown) that synthesizes a key-UP for every held modifier + a mouse-UP for every
     /// button through the synthetic-release send paths — the palette's "Release Stuck Input" drives it when
     /// the host is left with a latched modifier / button despite the automatic redundancy+dedup. SENDS host
@@ -119,11 +119,11 @@ public struct RemotePaneContext {
     /// the host's FPS governor announces a new value, feeding the sidebar's per-pane "FPS" row. Informational
     /// view→model push (never reaches the host), so NOT read-only-gated. `nil` ⇒ none.
     public var onStreamCadenceChanged: ((_ fps: Int) -> Void)?
-    /// CONNECTION STATS (2026-07-04): the live video view PUSHES the client-measured video PAYLOAD bitrate
+    /// CONNECTION STATS: the live video view PUSHES the client-measured video PAYLOAD bitrate
     /// (kilobits/sec, ~1 Hz) — the titlebar cluster's stream-weight complication. Informational view→model
     /// push (never reaches the host), so NOT read-only-gated. `nil` ⇒ none.
     public var onStreamBitrateChanged: ((_ kbps: Int) -> Void)?
-    /// STALL SCRIM (2026-07-03): the live video view PUSHES the stream's stall state when it FLIPS — `true` ⇒
+    /// STALL SCRIM: the live video view PUSHES the stream's stall state when it FLIPS — `true` ⇒
     /// host silent past the stall threshold (pane overlays "Reconnecting…"), `false` ⇒ traffic resumed.
     /// Informational view→model push (never reaches the host), so NOT read-only-gated. `nil` ⇒ none.
     public var onStreamStallChanged: ((_ stalled: Bool) -> Void)?
@@ -171,7 +171,7 @@ public struct RemotePaneContext {
     /// previews / sheet hosts that render a `RemoteWindowPanel` directly.
     public static var standalone: Self { Self() }
 
-    /// **E21 WI-3 — the read-only-gated video-leaf context derivation (the pure seam the leaf and its tests
+    /// **The read-only-gated video-leaf context derivation (the pure seam the leaf and its tests
     /// share).** Maps a pane's `readOnly` policy onto the two input gates a `.remoteGUI` leaf needs, so
     /// `GuiLeafView` stays a thin renderer and the policy is unit-testable headlessly (no Metal/VT):
     ///   • `inputEnabled = !readOnly` — the app-target client gates forwarding on `isActive && inputEnabled`,
@@ -339,7 +339,7 @@ public final class SystemDialogDiscovery {
         -> [SystemDialogInfo])?
 }
 
-// L0 / A2 SEAM SPLIT: the SwiftUI `RemoteWindowPlaceholderView` body has been DELETED from the headless
-// `SlopDeskWorkspaceCore`. The rebuilt `SlopDeskClientUI` provides the real placeholder body; the
-// Xcode app target injects the production `VideoWindowView` via `VideoWindowFactory`.
+// SEAM SPLIT: the headless `SlopDeskWorkspaceCore` carries no SwiftUI `RemoteWindowPlaceholderView` body —
+// `SlopDeskClientUI` provides the real placeholder body; the Xcode app target injects the production
+// `VideoWindowView` via `VideoWindowFactory`.
 #endif

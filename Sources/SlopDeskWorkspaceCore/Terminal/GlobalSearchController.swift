@@ -6,7 +6,7 @@ import Foundation
 /// pane's tree identity (so a result row can jump back to the exact session → tab → pane) plus the flat
 /// scrollback text mirror to scan. The store builds one per *live terminal* pane off
 /// ``TerminalViewModel/searchScrollbackLines()``; a pane that never received bytes contributes `lines: []`
-/// and is simply absent from the results (see the E5 plan, divergence #5).
+/// and is simply absent from the results.
 public struct GlobalSearchSource: Equatable, Sendable {
     /// The join key back to the live-session registry (the pane to focus when a hit is clicked).
     public let paneID: PaneID
@@ -151,7 +151,7 @@ public struct GlobalSearchCollapseState: Equatable, Sendable {
 /// each pane's scrollback, the jump) lives in `WorkspaceStore`; THIS is the single, fully unit-testable core,
 /// reusing the SAME match math as the in-pane find bar so the two never drift.
 ///
-/// Behaviour (E5 WI-1):
+/// Behaviour:
 /// - Reuses ``TerminalSearchController/computeMatches(lines:query:caseSensitive:isRegex:)`` per source —
 ///   no second matcher to keep in sync.
 /// - Drops sources with zero hits; `tabCount` is therefore the number of surviving `groups`.
@@ -215,9 +215,8 @@ public enum GlobalSearchController {
         return GlobalSearchResults(groups: groups, totalMatches: totalMatches, tabCount: groups.count)
     }
 
-    /// E5 ES-E5-5 (click-to-line): the ORDERED libghostty surface-action sequence that lands the in-pane
-    /// viewport on the CLICKED `hit` — correct in EVERY mode (literal case-insensitive, literal case-sensitive,
-    /// and regex).
+    /// The ORDERED libghostty surface-action sequence (click-to-line) that lands the in-pane viewport on the
+    /// CLICKED `hit` — correct in EVERY mode (literal case-insensitive, literal case-sensitive, and regex).
     ///
     /// LANDING is mode-INDEPENDENT and viewport-INDEPENDENT: ALWAYS scroll the viewport straight to the clicked
     /// hit's row via `scroll_to_row:<physicalRow>`. `hit.line` indexes the LOGICAL (unwrapped)
@@ -226,10 +225,10 @@ public enum GlobalSearchController {
     /// ``ScrollbackWrapMapper/physicalRow(forLogicalLine:in:columns:)`` (passing the source `lines` + grid
     /// `columns`) before scrolling, landing the clicked row regardless of case-sensitivity, regex, wrapped
     /// output, or where the viewport currently sits. When `columns <= 0` (grid width unknown) the mapping is
-    /// the identity, matching the pre-wrap-fix behaviour. This replaces the old ordinal `navigate_search:next` walk,
-    /// which was fragile (viewport-relative, so a mid-buffer viewport mis-landed) and WRONG in case-SENSITIVE
-    /// mode: this engine counts hits case-sensitively, but libghostty `search:` is case-INSENSITIVE, so the
-    /// clicked hit's case-sensitive ordinal did NOT map to libghostty's larger case-insensitive match cursor.
+    /// the identity (row treated as unwrapped). An ordinal `navigate_search:next` walk is avoided: it is
+    /// viewport-relative, so a mid-buffer viewport mis-lands, and it is WRONG in case-SENSITIVE mode — this
+    /// engine counts hits case-sensitively, but libghostty `search:` is case-INSENSITIVE, so a case-sensitive
+    /// ordinal does not map to libghostty's larger case-insensitive match cursor.
     ///
     /// The literal `search:<query>` matcher is armed ONLY as an amber-highlight aid in the one mode where it is
     /// FAITHFUL — literal + case-INSENSITIVE (libghostty's `changeNeedle` compares needles case-insensitively).

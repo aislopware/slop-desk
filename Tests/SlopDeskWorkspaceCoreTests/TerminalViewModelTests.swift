@@ -53,9 +53,9 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertEqual(model.title, "~/proj — zsh")
     }
 
-    /// Regression: an empty .title("") used to store "" which PanePresentation.displayTitle
-    /// discards — effectively silently clobbering the last real title.  After the fix an empty
-    /// title message collapses to nil so the previous non-empty title is preserved.
+    /// An empty .title("") must not store "" — PanePresentation.displayTitle discards an empty
+    /// string, which would silently clobber the last real title. An empty title message collapses
+    /// to nil so the previous non-empty title is preserved.
     func testEmptyTitleDoesNotClobberPriorRealTitle() {
         let model = TerminalViewModel()
         // Establish a real title first.
@@ -70,7 +70,7 @@ final class TerminalViewModelTests: XCTestCase {
         )
     }
 
-    /// E14/K11 "Title — Shell Controlled" (default ON): when the toggle is OFF, an OSC 0/2 `.title` event is
+    /// "Title — Shell Controlled" (default ON): when the toggle is OFF, an OSC 0/2 `.title` event is
     /// DROPPED client-side so a remote program cannot rewrite the tab/window title; when ON (the default), the
     /// title updates as before. Revert-to-confirm-fail: the un-gated `.title` handler updates the title
     /// regardless of the toggle, so the "OFF must not change" assert fails on it.
@@ -122,7 +122,7 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertEqual(model.lastResumeSeq, 42)
     }
 
-    // MARK: OSC 133 shell activity (WF11)
+    // MARK: OSC 133 shell activity
 
     func testCommandStatusRunningSetsRunningActivity() {
         let model = TerminalViewModel()
@@ -309,7 +309,7 @@ final class TerminalViewModelTests: XCTestCase {
     /// The renderer re-arms its post-resize present burst via `onResizeSettled`, fired exactly once when an
     /// interactive resize ENDS — and AFTER the settled grid has been flushed to the host, so the burst it
     /// arms can cover the host's SIGWINCH-redraw bytes (which that flush triggers, ~1 RTT later). Pins the
-    /// "kéo xong không re-render" hardening: without the hook those late bytes can land after the
+    /// no-re-render-after-drag hardening: without the hook those late bytes can land after the
     /// layout-anchored burst has expired and never get presented (intermittent blank after resize).
     func testResizeSettledFiresOnceOnReleaseAfterFlush() {
         let model = TerminalViewModel()
@@ -446,12 +446,12 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertEqual(calls, 2, "reset re-arms coalescing so the same size re-sends on reconnect")
     }
 
-    /// REGRESSION (render lộn xộn, 2026-06-07): libghostty's `resize_callback` fires during surface
-    /// creation / initial layout — BEFORE `ConnectionViewModel.connect()` wires `resizeSink`. The old
-    /// `sendResize` recorded `lastSentSize` even with a nil sink, so the grid was dropped AND the dedup
-    /// then suppressed the real send once the sink appeared → the host PTY stayed at its 80×24 init
-    /// size while libghostty rendered the true grid (overlapping glyphs, fzf drawn at the wrong row).
-    /// Wiring the sink must FLUSH the latest pre-connect grid.
+    /// libghostty's `resize_callback` fires during surface creation / initial layout — BEFORE
+    /// `ConnectionViewModel.connect()` wires `resizeSink`. If `sendResize` recorded `lastSentSize`
+    /// even with a nil sink, the grid would be dropped AND the dedup would then suppress the real
+    /// send once the sink appeared → the host PTY would stay at its 80×24 init size while libghostty
+    /// rendered the true grid (overlapping glyphs, fzf drawn at the wrong row). Wiring the sink must
+    /// FLUSH the latest pre-connect grid.
     func testPreConnectResizeIsFlushedWhenSinkWired() {
         let model = TerminalViewModel()
         var calls: [(cols: UInt16, rows: UInt16)] = []
@@ -668,7 +668,7 @@ final class TerminalViewModelTests: XCTestCase {
         )
     }
 
-    // MARK: WB2 — copyBlockOutput (request → sanitized clipboard text; unavailable; #5 stale-timer)
+    // MARK: copyBlockOutput (request → sanitized clipboard text; unavailable; stale-timer)
 
     func testCopyBlockOutputRequestsThenSanitizesReply() {
         // With a live sink wired, copyBlockOutput fires a type-15 request for the index, and when the

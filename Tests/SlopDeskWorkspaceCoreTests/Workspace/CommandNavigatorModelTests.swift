@@ -2,10 +2,10 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E10 WI-10 (G8): the pure Command Navigator filter (⌃⌘O). These pin the FILTER contract — an injected
+/// The pure Command Navigator filter (⌃⌘O). These pin the FILTER contract — an injected
 /// scorer drops non-matches AND still-forming (empty-command) blocks, orders survivors by score descending
 /// with a STABLE tie-break that keeps the caller's newest-first order, and an empty query returns the list
-/// unchanged — plus the ⌃⌘O binding the WI reuses (presence + collision-freedom).
+/// unchanged — plus the ⌃⌘O binding it reuses (presence + collision-freedom).
 ///
 /// Each assertion is revert-to-confirm-fail: it fails on a filter that forgets to drop a non-match, emits a
 /// row for an empty (still-forming) command when querying, mis-orders by score, or breaks a score tie out of

@@ -2,8 +2,8 @@ import CoreGraphics
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Pins the live SCROLL-pan accumulator (``WorkspaceStore/scrollPan(by:)`` / ``commitScrollPan()``) — the
-/// 2026-06-08 BUG-2/BUG-1 freeze fix. A trackpad/wheel pan no longer calls ``commitCamera(_:)`` per step
+/// Pins the live SCROLL-pan accumulator (``WorkspaceStore/scrollPan(by:)`` / ``commitScrollPan()``). A
+/// trackpad/wheel pan no longer calls ``commitCamera(_:)`` per step
 /// (which thrashed the `report()` cascade → main-thread block → frozen video/cursor); instead it
 /// accumulates a VISUAL-only ``liveCameraOffset`` and commits ONCE. These tests pin the two invariants
 /// that keep that safe: (1) a step does NOT move the real camera, and (2) the commit folds the exact total
@@ -80,7 +80,7 @@ final class CanvasScrollPanTests: XCTestCase {
 
     /// Switching to a saved layout preset sets the camera ABSOLUTELY (the preset's saved camera), so it must
     /// discard a still-pending live scroll — else a late `commitScrollPan()` folds a stale relative delta
-    /// onto the restored camera, jumping the viewport off the saved layout (hunt 2026-06-13, finding #2).
+    /// onto the restored camera, jumping the viewport off the saved layout.
     func testSwitchToLayoutPresetDiscardsPendingLiveScroll() {
         let store = makeStore()
         store.addPane(kind: .terminal)
@@ -98,8 +98,8 @@ final class CanvasScrollPanTests: XCTestCase {
     }
 
     /// The in-view-guarantee re-center in the placement paths (add / duplicate / reopen / system-dialog) is
-    /// also an ABSOLUTE camera set, so it too must discard a pending live scroll when it fires (hunt
-    /// 2026-06-13, finding #6). Drives the off-viewport branch by committing the camera far from where panes
+    /// also an ABSOLUTE camera set, so it too must discard a pending live scroll when it fires.
+    /// Drives the off-viewport branch by committing the camera far from where panes
     /// land, then adding a pane mid-scroll.
     func testOffscreenPlacementRecenterDiscardsPendingLiveScroll() {
         let store = makeStore()

@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E3 WI-2 (ES-E3-2): the store-side A26 cwd-inheritance — `splitActivePane` / `newTab` resolve the
+/// The store-side cwd-inheritance — `splitActivePane` / `newTab` resolve the
 /// configured ``WorkingDirectoryPolicy`` against the active pane's ``PaneSpec/lastKnownCwd``, STAMP the
 /// result on the new pane's spec, and relies on host-side spawn cwd rather than typing a visible
 /// `cd '<cwd>'\n` into the session. Drives a LIVE `.tree` store through the `FakePaneSession` seam — no real client / view.
@@ -237,7 +237,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
         )
     }
 
-    // MARK: - Host-authoritative cwd pull on attach (A1 populate-once gate)
+    // MARK: - Host-authoritative cwd pull on attach (populate-once gate)
 
     // A shell that emits no OSC-7 (Starship / hookless) never reports its cwd until a command completes, so a
     // freshly-connected pane's title sits at the "Terminal" fallback. `shouldRefreshCwdOnAttach` gates a
@@ -320,7 +320,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
         XCTAssertEqual(newFake?.sentBytes ?? [], [], "no inherit source → no `cd`")
     }
 
-    // MARK: - The PRIMARY ⌘T / ⌘D chooser flow preserves cwd without a startup `cd` (ES-E3-2)
+    // MARK: - The PRIMARY ⌘T / ⌘D chooser flow preserves cwd without a startup `cd`
 
     // The dominant new-tab / split gestures route through a `.chooser` pane (`openChooserPane`), NOT a direct
     // `.terminal` `newTab` / `splitActivePane`. The cwd hint must stay on the chooser spec so that when the
@@ -447,10 +447,10 @@ final class CwdInheritanceStoreTests: XCTestCase {
         )
     }
 
-    // MARK: - New session ("New Window") working-directory policy (E7 carry-over #7)
+    // MARK: - New session ("New Window") working-directory policy
 
-    // `SettingsKey.workingDirectoryNewWindow` was a DEAD accessor read NOWHERE before E7. These pin that
-    // `newSession` now resolves + stamps it the same way `newTab` / `splitActivePane` do: inherit stamps the
+    // `SettingsKey.workingDirectoryNewWindow` was a dead accessor read nowhere. These pin that
+    // `newSession` resolves + stamps it the same way `newTab` / `splitActivePane` do: inherit stamps the
     // active pane's cwd on the new session's leaf, `home` stamps nil + sends nothing, and terminal panes use
     // host-side spawn cwd instead of a visible `cd`. FAIL on the pre-fix `newSession` (it built a bare spec,
     // never reading the policy).

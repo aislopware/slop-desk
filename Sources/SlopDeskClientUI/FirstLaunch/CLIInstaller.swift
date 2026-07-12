@@ -1,10 +1,10 @@
-// E20 WI-9 (ES-E20-4) — the macOS "Install SlopDesk CLI" controller.
+// The macOS "Install SlopDesk CLI" controller.
 //
 // The "Install the CLI" flow (`spec/getting-started__first-launch.md` §3): symlink the bundled
 // `slopdesk` executable to `/usr/local/bin/slopdesk` (a one-shot ADMIN escalation — a system privilege
-// via `osascript … with administrator privileges`, NOT app crypto, per CLAUDE.md #8 / E20 carry-over §3),
-// the **Omit Prefix** shell-function injection (the `edit`/`view`/`watch`/`jump`/`learn` bare functions —
-// built by the PURE `CLIShellShim` in `SlopDeskWorkspaceCore`), and the **Allow Overwrite** toggle.
+// via `osascript … with administrator privileges`, NOT app crypto, per CLAUDE.md #8), the **Omit
+// Prefix** shell-function injection (the `edit`/`view`/`watch`/`jump`/`learn` bare functions — built
+// by the PURE `CLIShellShim` in `SlopDeskWorkspaceCore`), and the **Allow Overwrite** toggle.
 //
 // ## Hang-safety / compiled-only
 // This controller spawns `osascript` (the admin prompt) + touches the filesystem; it is **compiled +
@@ -102,9 +102,9 @@ public final class CLIInstaller {
 
     /// Persist + actuate the "Omit Prefix" / "Allow Overwrite" toggles: write the `CLIShellShim` snippet
     /// to the app-support shim file when enabled, or remove it when disabled. NO admin needed (a user-dir
-    /// write). The host-side sourcing of this file into app-launched (remote) shells is the documented
-    /// follow-up (E20 carry-over §1 "remote shells … host side"); the toggle + the real artifact are honest
-    /// today (the file appears / disappears with the toggle, with the correct guarded/unguarded definitions).
+    /// write). Sourcing this file into app-launched (remote) shells is the host's responsibility, not this
+    /// controller's; the toggle here stays honest regardless — the file appears / disappears with the
+    /// toggle, with the correct guarded/unguarded definitions.
     public func applyOmitPrefix(enabled: Bool, allowOverwrite: Bool) {
         let url = Self.shimFileURL()
         if enabled {

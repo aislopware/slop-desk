@@ -48,12 +48,12 @@ enum MuxRoutingCore {
             // complete or FAIL the openChannel() caller.
             let state: ChannelState
             if accepted {
-                // R9 #1: advance ONLY an id we ALREADY track. The client records the id as `.open` at
+                // Advance ONLY an id we ALREADY track. The client records the id as `.open` at
                 // openChannel() time (allocate + dataTable/controlTable.open) BEFORE sending channelOpen,
                 // so a LEGITIMATE ack always lands on an existing entry. An ack for an UNKNOWN id is
                 // spurious/hostile — `table.open(id)` would materialize a permanent phantom `.open` entry
-                // (the same unbounded router-table memory-DoS already closed for channelClose [R6 #5] and
-                // channelOpen [R7 #6]; the openAck path was missed). Don't create an entry for it.
+                // (the same unbounded router-table memory-DoS closed for channelClose and channelOpen;
+                // the openAck path was missed). Don't create an entry for it.
                 if table.state(of: id) != nil { table.open(id) }
                 state = table.state(of: id) ?? .closed
             } else {

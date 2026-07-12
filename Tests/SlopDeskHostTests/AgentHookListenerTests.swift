@@ -4,7 +4,7 @@ import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskHost
 
-/// W10 — the PURE ``AgentHookHandler`` core (no real socket; the `UnixSocketAcceptor` shim is
+/// The PURE ``AgentHookHandler`` core (no real socket; the `UnixSocketAcceptor` shim is
 /// compiled + code-reviewed only). Feeds REAL Claude Code hook JSON bytes directly and asserts
 /// the correct type-27 ``WireMessage/claudeStatus`` emission + the embedded machine state, plus
 /// validate-then-drop on malformed bytes.
@@ -118,7 +118,7 @@ final class AgentHookListenerTests: XCTestCase {
         XCTAssertEqual(decayed, .claudeStatus(state: 1, kind: 0, label: ""), "done → idle decay emits type 27")
     }
 
-    // MARK: payload → event mapping unit (the W10 adapter)
+    // MARK: payload → event mapping unit (the adapter)
 
     func testNotificationKindByteMapping() {
         XCTAssertEqual(AgentHookHandler.notificationKindByte(.permission), 1)

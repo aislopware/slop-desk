@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Tests for ``DropActionResolver`` (E18 WI-1) — the full (zone × content) policy table from
+/// Tests for ``DropActionResolver`` — the full (zone × content) policy table from
 /// `docs/ui-shell/spec/user-interface__drag-and-drop.md`, including the disabled green-half cells (file/URL on New
 /// Tab). Each expected ``DropAction`` is hand-specified from the spec, independent of the resolver's
 /// own derivation (no tautology).
@@ -108,7 +108,7 @@ final class DropActionResolverTests: XCTestCase {
         XCTAssertEqual(resolve(.splitRight, text), .injectText("echo hi"))
     }
 
-    // MARK: - allowedZones (E18 WI-5: the overlay-gating contract)
+    // MARK: - allowedZones (the overlay-gating contract)
 
     // The set of zones the drop overlay lights up / lets the cursor target for each content kind. Hand-
     // specified from the spec table (NOT derived from the resolver inside the assert), so a regression that

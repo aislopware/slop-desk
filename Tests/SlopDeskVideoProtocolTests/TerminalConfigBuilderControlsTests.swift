@@ -2,13 +2,13 @@ import Foundation
 import XCTest
 @testable import SlopDeskVideoProtocol
 
-/// E8 WI-2 — the CONTROL passthrough leg of the pure `TerminalPreferences`/`TerminalControlsConfig` →
-/// libghostty config-string builder. Pins every E8 control field to its exact libghostty config line
+/// The CONTROL passthrough leg of the pure `TerminalPreferences`/`TerminalControlsConfig` →
+/// libghostty config-string builder. Pins every control field to its exact libghostty config line
 /// (`copy-on-select`, `clipboard-*`, `selection-clear-*`, `mouse-*`, `cursor-*` + the ⇧+arrow
 /// `adjust_selection` keybinds), on AND off, headlessly (no libghostty surface — the hang-safety rule).
 ///
-/// The load-bearing regression guard: a `controls: nil` build is BYTE-FOR-BYTE the pre-E8 output (so the
-/// existing `TerminalConfigBuilderTests` and the frozen golden corpus are untouched — this epic does not
+/// The load-bearing regression guard: a `controls: nil` build is BYTE-FOR-BYTE the no-controls output (so the
+/// existing `TerminalConfigBuilderTests` and the frozen golden corpus are untouched — controls do not
 /// touch the wire). Each control assertion checks the line against the INDEPENDENTLY-known libghostty key +
 /// token (not the builder's own derivation), so every case FAILS on a builder that does not emit the key.
 final class TerminalConfigBuilderControlsTests: XCTestCase {
@@ -32,7 +32,7 @@ final class TerminalConfigBuilderControlsTests: XCTestCase {
             .map { String($0.dropFirst("keybind = ".count)) }
     }
 
-    // MARK: controls: nil — the regression guard (byte-for-byte the pre-E8 output)
+    // MARK: controls: nil — the regression guard (byte-for-byte the no-controls output)
 
     func testControlsNilIsByteForByteTheNoControlsBuild() {
         // Default prefs.
@@ -74,7 +74,7 @@ final class TerminalConfigBuilderControlsTests: XCTestCase {
         XCTAssertTrue(keybindLines(TerminalConfigBuilder.string(for: TerminalPreferences(), controls: nil)).isEmpty)
     }
 
-    // MARK: Copy-on-select (I4) + trim (I5)
+    // MARK: Copy-on-select + trim
 
     func testCopyOnSelectOnEmitsClipboardOffEmitsFalse() {
         let on = parse(TerminalConfigBuilder.string(
@@ -98,7 +98,7 @@ final class TerminalConfigBuilderControlsTests: XCTestCase {
         XCTAssertEqual(off["clipboard-trim-trailing-spaces"], "false")
     }
 
-    // MARK: Clear-on-typing / clear-on-copy (I6)
+    // MARK: Clear-on-typing / clear-on-copy
 
     func testSelectionClearKeys() {
         let map = parse(TerminalConfigBuilder.string(
@@ -109,7 +109,7 @@ final class TerminalConfigBuilderControlsTests: XCTestCase {
         XCTAssertEqual(map["selection-clear-on-copy"], "true")
     }
 
-    // MARK: Paste protection (I9)
+    // MARK: Paste protection
 
     func testPasteProtectionAndBracketedSafe() {
         let map = parse(TerminalConfigBuilder.string(
@@ -120,7 +120,7 @@ final class TerminalConfigBuilderControlsTests: XCTestCase {
         XCTAssertEqual(map["clipboard-paste-bracketed-safe"], "false")
     }
 
-    // MARK: OSC-52 access (I11)
+    // MARK: OSC-52 access
 
     func testClipboardReadWriteTokensPassThroughVerbatim() {
         let map = parse(TerminalConfigBuilder.string(
@@ -137,7 +137,7 @@ final class TerminalConfigBuilderControlsTests: XCTestCase {
         XCTAssertEqual(defaults["clipboard-write"], "allow")
     }
 
-    // MARK: Mouse knobs (H9 / H-shift / click-to-move / mouse-reporting)
+    // MARK: Mouse knobs (hide-while-typing / shift-capture / click-to-move / mouse-reporting)
 
     func testMouseControlKeys() {
         let map = parse(TerminalConfigBuilder.string(
@@ -168,13 +168,13 @@ final class TerminalConfigBuilderControlsTests: XCTestCase {
         )
     }
 
-    // MARK: Right-Click Action (H7/H8) — libghostty owns the dispatch via `right-click-action`
+    // MARK: Right-Click Action — libghostty owns the dispatch via `right-click-action`
 
     /// The Right-Click Action token passes through verbatim as libghostty's `right-click-action`, so the
-    /// surface itself performs Copy / Paste / Copy-or-Paste / Ignore / Context-Menu (the WI-7 fix — the GUI
-    /// view no longer re-reads `hasSelection()` after libghostty has already word-selected). FAILS before the
-    /// fix: the builder emitted NO `right-click-action` line, so libghostty stayed at its default Context-Menu
-    /// and word-selected on every bare right-click. Each token is one of the libghostty enum values 1:1.
+    /// surface itself performs Copy / Paste / Copy-or-Paste / Ignore / Context-Menu — the GUI view no longer
+    /// re-reads `hasSelection()` after libghostty has already word-selected. FAILS without this: the builder
+    /// would emit NO `right-click-action` line, so libghostty stays at its default Context-Menu
+    /// and word-selects on every bare right-click. Each token is one of the libghostty enum values 1:1.
     func testRightClickActionTokenPassesThroughVerbatim() {
         for token in ["context-menu", "copy", "paste", "copy-or-paste", "ignore"] {
             let map = parse(TerminalConfigBuilder.string(
@@ -238,7 +238,7 @@ final class TerminalConfigBuilderControlsTests: XCTestCase {
         XCTAssertEqual(map["macos-option-as-alt"], "false")
     }
 
-    // MARK: Cursor color / text / opacity (H4 / H5) — from TerminalPreferences
+    // MARK: Cursor color / text / opacity — from TerminalPreferences
 
     func testCursorColorOpacityTextEmittedFromPrefs() {
         let prefs = TerminalPreferences(cursorColor: "FF8800", cursorTextColor: "111111", cursorOpacity: 0.6)
@@ -256,7 +256,7 @@ final class TerminalConfigBuilderControlsTests: XCTestCase {
         XCTAssertEqual(map["cursor-opacity"], "1", "opacity always emits (default 1.0 → `1`)")
     }
 
-    // MARK: Shift+Arrow select (I2)
+    // MARK: Shift+Arrow select
 
     func testShiftArrowSelectOnEmitsFourAdjustSelectionKeybinds() {
         let config = TerminalConfigBuilder.string(

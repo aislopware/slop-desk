@@ -5,8 +5,8 @@ import XCTest
 @testable import SlopDeskHost
 
 /// Disk scrollback journal: the transcript must survive the DAEMON (hostd restart / reboot /
-/// TTL eviction all end in `spawnFreshShell`, which used to start an empty transcript — the
-/// "reconnect lại thì bị mất history" loss case).
+/// TTL eviction all end in `spawnFreshShell`, which starts an empty transcript — without the
+/// journal, scrollback history is lost on reconnect).
 ///
 /// Two `ScrollbackJournalStore` instances over the SAME directory model two daemon lives; the
 /// `MuxChannelSession` tests drive the REAL production paths via the `ingestPTYChunkForTesting` /
@@ -214,7 +214,7 @@ final class ScrollbackJournalTests: XCTestCase {
         XCTAssertEqual(survivors.count, 1, "keepNewest must bound the file count")
     }
 
-    /// Audit 2026-07-10 #10: sweep must NEVER unlink a file a LIVE writer holds open — POSIX
+    /// Sweep must NEVER unlink a file a LIVE writer holds open — POSIX
     /// `write()` to an unlinked inode keeps succeeding silently, so the pane would keep
     /// journaling into a file nobody can ever restore (the whole transcript silently lost).
     /// A reconnect can vend the writer while the startup sweep is still scanning; even a

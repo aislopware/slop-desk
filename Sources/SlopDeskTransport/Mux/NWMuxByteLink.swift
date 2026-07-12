@@ -75,15 +75,15 @@ public final class NWMuxByteLink: MuxByteLink, @unchecked Sendable {
                 if let error {
                     chunkContinuation
                         .finish(throwing: SlopDeskTransportError.receiveFailed(String(describing: error)))
-                    connection.cancel() // R11: free the socket fd — finishing the stream alone leaves the
-                    return // NWConnection (and its fd) alive (the R6 #10 fix, missed on the mux link).
+                    connection.cancel() // Free the socket fd — finishing the stream alone leaves the
+                    return // NWConnection (and its fd) alive otherwise, a gap also present on the mux link.
                 }
                 if let data, !data.isEmpty {
                     chunkContinuation.yield(data)
                 }
                 if isComplete {
                     chunkContinuation.finish()
-                    connection.cancel() // R11: a CLEAN FIN must also release the fd — the host's connection
+                    connection.cancel() // A CLEAN FIN must also release the fd — the host's connection
                     return // reap (linkDownHandler) only fires on `error != nil`, so a graceful
                         // client disconnect would otherwise leak both sockets + the MuxNWConnection.
                 }
@@ -145,7 +145,7 @@ public enum LiveMuxConnectionFactory {
                 await connection.start()
                 return connection
             } catch {
-                // R11: cancel any half-built sockets before rethrowing. Once `controlConn` is `.ready` it
+                // Cancel any half-built sockets before rethrowing. Once `controlConn` is `.ready` it
                 // is a live fd; if DATA establishment then fails (flaky/dead host), the caller
                 // (ConnectionRegistry's `makeConnection`) only sees the error and has NO handle to these
                 // sockets — so without this they leak, accumulating toward fd exhaustion on every retry.

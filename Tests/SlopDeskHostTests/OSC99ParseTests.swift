@@ -3,11 +3,11 @@ import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskHost
 
-/// E14 / WI-6 (K6): the kitty desktop-notification protocol (OSC 99) parse in ``HostOutputSniffer``.
+/// The kitty desktop-notification protocol (OSC 99) parse in ``HostOutputSniffer``.
 ///
 /// The host turns `ESC ] 99 ; <metadata> ; <payload> ST` into the EXISTING type-25
 /// ``WireMessage/notification(title:body:)`` (no new wire). These tests pin the BOUNDED,
-/// validate-then-drop subset the plan specifies — title/body, base64 (`e=1`), and the
+/// validate-then-drop subset supported — title/body, base64 (`e=1`), and the
 /// `i=<id>` replace-by-id / `d=0` chunked-continuation assembly — plus the documented ceiling
 /// (an unsupported `p`/`e`, a malformed shape, or an oversized payload is DROPPED, never trusted).
 ///
@@ -37,7 +37,7 @@ final class OSC99ParseTests: XCTestCase {
     func testKittyPlainPayloadEmitsNotificationBody() {
         // `ESC]99;;Build finished ESC\` — empty metadata, a single (default-title) payload. We fold a
         // title-only kitty notification into the .notification BODY (empty title → client pane-title
-        // fallback), matching the OSC-9 path and the plan's expected `body == "Build finished"`.
+        // fallback), matching the OSC-9 path.
         XCTAssertEqual(
             observeWhole("\(ESC)]99;;Build finished\(ST)"),
             [.notification(title: "", body: "Build finished")],
@@ -164,7 +164,7 @@ final class OSC99ParseTests: XCTestCase {
 
     func testKittyEmbeddedInStringSequenceSwallowed() {
         // `ESC P` (DCS) … `ESC]99;;spoof` … `ESC \` (ST): a conformant terminal swallows the whole
-        // string body — the embedded OSC 99 must NOT fire a phantom notification (R9 #4 parity).
+        // string body — the embedded OSC 99 must NOT fire a phantom notification.
         let dcsSpoof = "\(ESC)P\(ESC)]99;;spoof\(ST)"
         XCTAssertEqual(notificationsOnly(observeWhole(dcsSpoof)), [])
         // A real OSC 99 after the swallowed string still fires (clean resync).

@@ -26,29 +26,29 @@ struct RouteToggles {
     /// a graceful no-op, never a dead chord.
     var hostWindows: (() -> Void)?
     var globalSearch: (() -> Void)?
-    /// Toggles the Jump-To affordance (E10 WI-8, ⌘J). A VIEW overlay (like `globalSearch`), passed in as a
-    /// closure; `nil` (headless / test default) is a graceful no-op, never a dead chord. E11 (WI-5/WI-7)
-    /// folded Jump-To into the Open-Quickly picker: the app re-points this to
+    /// Toggles the Jump-To affordance (⌘J). A VIEW overlay (like `globalSearch`), passed in as a
+    /// closure; `nil` (headless / test default) is a graceful no-op, never a dead chord. Jump-To
+    /// folds into the Open-Quickly picker: the app re-points this to
     /// `OverlayCoordinator.toggleOpenQuickly(filter: .current)`, but routing keeps it the distinct
     /// `.jumpTo`-action toggle (separate from `openQuickly` below).
     var jumpTo: (() -> Void)?
-    /// Toggles the Open-Quickly picker at the merged `.all` pill (E11 WI-7, ⌘⇧O). A VIEW overlay (the
+    /// Toggles the Open-Quickly picker at the merged `.all` pill (⌘⇧O). A VIEW overlay (the
     /// `OverlayCoordinator` owns `openQuicklyVisible`/`openQuicklyFilter`), passed in as a closure (like
     /// `jumpTo`); `nil` (headless / test default) is a graceful no-op, never a dead chord. Only ⌘⇧O (this)
     /// and ⌘J (`jumpTo`, → `.current`) are GLOBAL; the pill / ⌘1–9 / Tab / ⌘K chords are PICKER-LOCAL
     /// (handled by `OpenQuicklyView.onKeyPress`, never registered here).
     var openQuickly: (() -> Void)?
-    /// Toggles "Pin Window" (E19 WI-3, View ▸ Pin Window). A macOS `NSWindow.level` concern, passed in as a
+    /// Toggles "Pin Window" (View ▸ Pin Window). A macOS `NSWindow.level` concern, passed in as a
     /// closure (like `sidebar`; the live app flips `WorkspaceChromeState.pinned`); `nil` (headless / test /
     /// iOS default) is a graceful no-op, never a dead chord.
     var pinWindow: (() -> Void)?
-    /// Actuates a real window close (⌘⇧W / View ▸ Close Window, E3 WI-4 audit fix). A macOS
-    /// `NSWindow.performClose(_:)` concern, passed in as a closure (like `pinWindow`); the live app wires it
-    /// to `window.performClose(nil)`, firing the native `windowShouldClose` → the existing `WindowCloseGate`
-    /// confirmation (preserving the configured ``CloseConfirmationPolicy``). `nil` (headless / test default)
-    /// falls back to ``WorkspaceStore/requestCloseWindow()`` — parks the confirmation rather than trapping,
-    /// never a dead chord. (The bare-park path had no SwiftUI observer, so ⌘⇧W never actually closed the
-    /// window — the regression this routes around.)
+    /// Actuates a real window close (⌘⇧W / View ▸ Close Window). A macOS `NSWindow.performClose(_:)`
+    /// concern, passed in as a closure (like `pinWindow`); the live app wires it to `window.performClose(nil)`,
+    /// firing the native `windowShouldClose` → the existing `WindowCloseGate` confirmation (preserving the
+    /// configured ``CloseConfirmationPolicy``). `nil` (headless / test default) falls back to
+    /// ``WorkspaceStore/requestCloseWindow()`` — parks the confirmation rather than trapping, never a dead
+    /// chord. A bare park has no SwiftUI observer on it, so without this closure ⌘⇧W would silently fail to
+    /// close the window.
     var closeWindow: (() -> Void)?
 }
 
@@ -102,7 +102,7 @@ public extension WorkspaceBindingRegistry {
             store.openChooserPane(.split(axis: .horizontal))
         case .splitDown:
             store.openChooserPane(.split(axis: .vertical))
-        // Split-left / split-up (E1 ES-E1-1): same chooser-split as right/down, but `leading: true` inserts
+        // Split-left / split-up: same chooser-split as right/down, but `leading: true` inserts
         // the new `.chooser` leaf on the LEADING side of the active pane (left of a horizontal split / above a
         // vertical one). The new pane is focused, same as right/down.
         case .splitLeft:
@@ -132,13 +132,13 @@ public extension WorkspaceBindingRegistry {
         case .focusRight: store.moveFocusTreeUsingReportedLayout(.right)
         case .focusUp: store.moveFocusTreeUsingReportedLayout(.up)
         case .focusDown: store.moveFocusTreeUsingReportedLayout(.down)
-        // Sequential pane cycle (E1 ES-E1-2): step focus through the active tab's panes in DFS order (wraps).
+        // Sequential pane cycle: step focus through the active tab's panes in DFS order (wraps).
         case .cyclePaneNext: store.cyclePaneFocusTree(forward: true)
         case .cyclePanePrev: store.cyclePaneFocusTree(forward: false)
         // View
         case .toggleZoom: store.toggleZoomActivePane()
         case .commandPalette: toggles.palette?()
-        // Cheat sheet / vi key hints (E17 ES-E17-2 / WI-5): `⌘/` is CONTEXTUAL. In vi / copy-mode it toggles
+        // Cheat sheet / vi key hints: `⌘/` is CONTEXTUAL. In vi / copy-mode it toggles
         // the pane's vi KEY-HINT BAR (reference card) instead of the global cheat sheet — ONE binding, no new
         // chord, no conflict. Out of copy-mode it falls through to the view-owned cheat-sheet toggle.
         case .cheatSheet:
@@ -150,23 +150,23 @@ public extension WorkspaceBindingRegistry {
         // Find opens the active pane's find bar via the store (so the menu + chord work without threading a
         // view closure); an explicit `toggleFind` override wins when supplied.
         case .find: if let f = toggles.find { f() } else { store.requestFindInActivePane() }
-        // Find Next / Previous (E5 ES-E5-3): advance/retreat the active pane's find match. The store opens the
+        // Find Next / Previous: advance/retreat the active pane's find match. The store opens the
         // bar (via `onRequestFind`) when closed — so ⌘G means "find next opens find". Always a store path (no
         // view closure): match nav is owned by the per-pane TerminalViewModel callback.
         case .findNext: store.requestFindNextInActivePane()
         case .findPrev: store.requestFindPrevInActivePane()
-        // Global Search (E5 ES-E5-5): a VIEW overlay (OverlayCoordinator owns it), passed in as a closure like
+        // Global Search: a VIEW overlay (OverlayCoordinator owns it), passed in as a closure like
         // the palette. `nil` (headless / test default) is a graceful no-op, never a dead chord.
         case .globalSearch: toggles.globalSearch?()
-        // Jump-To (E10 WI-8 / ES-E10-5): a VIEW overlay (OverlayCoordinator owns it) that scans the ACTIVE
+        // Jump-To: a VIEW overlay (OverlayCoordinator owns it) that scans the ACTIVE
         // pane, passed in as a closure. `nil` (headless / test default) is a graceful no-op, never a dead chord.
         case .jumpTo: toggles.jumpTo?()
-        // Hint Mode (E10 WI-9 / ES-E10-6): arm 2-letter Vimium hints over the ACTIVE terminal pane's viewport
+        // Hint Mode: arm 2-letter Vimium hints over the ACTIVE terminal pane's viewport
         // for the chosen intent (open / copy / reveal). The mode lives on the pane's `TerminalViewModel`
         // (`beginHint(_:)`) so key capture + overlay read ONE source; a no-op for a non-terminal / empty /
         // headless / alt-screen pane. After arming, NUDGE first-responder to the terminal (`onRequestFocus`)
         // so Escape reaches `keyDown` → `cancelHintMode()` — else, if focus was elsewhere when the chord
-        // fired, Escape never routes to the surface and the badge can't be dismissed (C4).
+        // fired, Escape never routes to the surface and the badge can't be dismissed.
         case .hintToOpen:
             store.activeTerminalModel?.beginHint(.open)
             store.activeTerminalModel?.onRequestFocus?()
@@ -176,27 +176,27 @@ public extension WorkspaceBindingRegistry {
         case .hintToReveal:
             store.activeTerminalModel?.beginHint(.reveal)
             store.activeTerminalModel?.onRequestFocus?()
-        // Copy Mode (P5b): arm modal keyboard scrollback navigation over the active terminal pane. As with hint
-        // mode, focus the terminal after arming so Escape reaches `keyDown` → `exitCopyMode()` (C5).
+        // Copy Mode: arm modal keyboard scrollback navigation over the active terminal pane. As with hint
+        // mode, focus the terminal after arming so Escape reaches `keyDown` → `exitCopyMode()`.
         case .toggleCopyMode:
             store.requestCopyModeInActivePane()
             store.activeTerminalModel?.onRequestFocus?()
-        // Vi Mode Key Hints (E17 ES-E17-2 / WI-5): the discoverable palette / menu command toggles the active
+        // Vi Mode Key Hints: the discoverable palette / menu command toggles the active
         // pane's vi key-hint bar directly (the same seam the contextual `⌘/` fires). A no-op for an empty /
         // non-terminal pane; outside vi mode the bar stays gated off.
         case .toggleViKeyHints: store.toggleViKeyHintsInActivePane()
-        // Read-Only (E17 ES-E17-1): toggle the active pane's input gate via the store (so the pill ×, the
+        // Read-Only: toggle the active pane's input gate via the store (so the pill ×, the
         // View-menu item, and the palette term all converge on the one `paneReadOnly` source of truth). A
         // no-op for an empty / non-terminal shell.
         case .toggleReadOnly: store.toggleReadOnlyInActivePane()
-        // Secure Keyboard Entry (E17 ES-E17-4): toggle MANUAL macOS secure event input over the active pane
+        // Secure Keyboard Entry: toggle MANUAL macOS secure event input over the active pane
         // (the auto path engages on a host no-echo prompt without an action). A no-op for an empty /
         // non-terminal shell; the macOS leaf's `SecureKeyboardEntryController` actuates the process-global API.
         case .secureKeyboardEntry: store.toggleSecureKeyboardEntryInActivePane()
-        // Release Stuck Input (C5): fire the active remote-GUI pane's synthetic-release escape hatch (all
+        // Release Stuck Input: fire the active remote-GUI pane's synthetic-release escape hatch (all
         // modifiers up + all buttons up). A graceful no-op for a terminal / empty / read-only active pane.
         case .releaseStuckInput: store.releaseStuckInputInActivePane()
-        // Paste as Keystrokes (C7, ⌥⌘V): type the CURRENT local clipboard into the active remote-GUI pane's
+        // Paste as Keystrokes (⌥⌘V): type the CURRENT local clipboard into the active remote-GUI pane's
         // host window (paced per-key CGEvents). A graceful no-op for a terminal / empty / read-only pane, or
         // when the local clipboard is empty. The store reads the live clipboard via `currentLocalClipboard()`.
         case .pasteAsKeystrokes: store.pasteAsKeystrokesInActivePane()
@@ -211,7 +211,7 @@ public extension WorkspaceBindingRegistry {
         // (`WorkspaceChromeState.hostRailCollapsed`, read by the native split controller) — a passed-in
         // closure like `.toggleSidebar`; `nil` (headless / test / iOS default) is a graceful no-op.
         case .toggleHostWindows: toggles.hostWindows?()
-        // Pin Window (E19 ES-E19-1 / WI-3): float the window above all other apps. A macOS NSWindow.level
+        // Pin Window: float the window above all other apps. A macOS NSWindow.level
         // concern (VIEW @State `WorkspaceChromeState.pinned`), passed in as a closure like `.toggleSidebar`;
         // `nil` (headless / test / iOS default) is a graceful no-op, never a dead chord.
         case .pinWindow: toggles.pinWindow?()
@@ -224,21 +224,21 @@ public extension WorkspaceBindingRegistry {
         // toward OLDER blocks (forward).
         case .jumpPreviousFailed: store.jumpToFailedBlockInActivePane(forward: false)
         case .jumpNextFailed: store.jumpToFailedBlockInActivePane(forward: true)
-        // E1 viewport scroll (ES-E1-3): ⇧PageUp/Down page-scroll, ⇧Home/End jump to buffer ends — through the
+        // Viewport scroll: ⇧PageUp/Down page-scroll, ⇧Home/End jump to buffer ends — through the
         // active pane's `TerminalSurfaceActions` seam (the WorkspaceStore+FontScroll hooks). No-op off-terminal.
         case .scrollPageUp: store.scrollActivePane(.pageUp)
         case .scrollPageDown: store.scrollActivePane(.pageDown)
         case .scrollToTop: store.scrollActivePane(.top)
         case .scrollToBottom: store.scrollActivePane(.bottom)
-        // E1 command jumps (ES-E1-3): ⌘PageUp/Down REUSE the OSC-133 command-jump (prev/next prompt), NOT scroll.
+        // Command jumps: ⌘PageUp/Down REUSE the OSC-133 command-jump (prev/next prompt), NOT scroll.
         case .commandJumpPrev: store.jumpToBlockInActivePane(delta: -1)
         case .commandJumpNext: store.jumpToBlockInActivePane(delta: 1)
-        // E1 font size (ES-E1-4): ⌘=/⌘-/⌘0 rescale the active pane's render font — the cell box resizes, so the
+        // Font size: ⌘=/⌘-/⌘0 rescale the active pane's render font — the cell box resizes, so the
         // remote PTY grid REFLOWS (SIGWINCH); not grid-preserving. No-op off-terminal.
         case .increaseFontSize: store.increaseFontInActivePane()
         case .decreaseFontSize: store.decreaseFontInActivePane()
         case .resetFontSize: store.resetFontInActivePane()
-        // Open Quickly (E1-registered, E11 WI-7): ⌘⇧O opens the fuzzy multi-source switcher at the merged
+        // Open Quickly: ⌘⇧O opens the fuzzy multi-source switcher at the merged
         // `.all` pill. A VIEW overlay (`OverlayCoordinator` owns the picker), passed in as a closure; the app
         // binds it to `overlay.toggleOpenQuickly(filter: .all)`. The pill / ⌘1–9 / Tab / ⌘K chords stay
         // PICKER-LOCAL (handled in the panel, never routed here). `nil` (headless / test default) is a
@@ -254,26 +254,25 @@ public extension WorkspaceBindingRegistry {
         case .prevTab: store.cycleTab(by: -1)
         case let .selectTab(n): store.selectTabNumber(n)
         case .closeTab: store.closeActiveTab()
-        // Close Window (⌘⇧W / View ▸ Close Window, E7 carry-over #5; E3 WI-4 audit fix): a window maps to a
-        // ``Session``. ACTUATE the close through the passed-in closure — the live app wires it to
-        // `window.performClose(nil)`, firing the native `windowShouldClose` → the existing ``WindowCloseGate``
-        // confirmation (preserving the configured ``CloseConfirmationPolicy``). When NO closure is supplied
-        // (headless / test / iOS) fall back to ``WorkspaceStore/requestCloseWindow()`` — still PARKS the
-        // confirmation, never a dead chord. The audit found the bare-park path had no SwiftUI observer (under
-        // the default `.process` policy with an idle shell it parked `nil` and nothing closed), so ⌘⇧W was a
-        // dead control until this closure made it actuate.
+        // Close Window (⌘⇧W / View ▸ Close Window): a window maps to a ``Session``. ACTUATE the close
+        // through the passed-in closure — the live app wires it to `window.performClose(nil)`, firing the
+        // native `windowShouldClose` → the existing ``WindowCloseGate`` confirmation (preserving the
+        // configured ``CloseConfirmationPolicy``). When NO closure is supplied (headless / test / iOS) fall
+        // back to ``WorkspaceStore/requestCloseWindow()`` — still PARKS the confirmation, never a dead chord.
+        // A bare park has no SwiftUI observer on it — under the default `.process` policy with an idle shell
+        // it parks `nil` and nothing closes — so without this closure ⌘⇧W would be a dead control.
         case .closeWindow:
             if let close = toggles.closeWindow { close() } else { store.requestCloseWindow() }
-        // Reopen the most recently closed TAB (E1 ES-E1-5 chord; E3 WI-3 behaviour): pops the tree shell's
+        // Reopen the most recently closed TAB: pops the tree shell's
         // in-memory ``WorkspaceStore/recentlyClosedTabs`` LIFO and re-inserts the tab. A no-op when the LIFO
         // is empty — live, never dead.
         case .reopenClosed: store.reopenLastClosedPane()
         // Synchronized input (Zellij ToggleActiveSyncTab)
         case .toggleSyncInput:
             if let tabID = store.tree.activeSession?.activeTab?.id { store.toggleSyncInput(tabID: tabID) }
-        // Supervision (P3): focus the oldest pane needing attention across all tabs/sessions.
+        // Supervision: focus the oldest pane needing attention across all tabs/sessions.
         case .jumpToAttention: store.jumpToOldestAttentionPane()
-        // Supervision (P4): open the Peek & Reply overlay (a VIEW @State toggle, like the palette) over the
+        // Supervision: open the Peek & Reply overlay (a VIEW @State toggle, like the palette) over the
         // oldest pane needing attention. The toggle closure no-ops when nothing needs attention. When no
         // overlay closure is supplied, the chord must not be DEAD — fall back to focusing the oldest attention
         // pane (mirrors the `.find` fallback to `requestFindInActivePane()`), so ⌘⇧J does something useful.
@@ -300,7 +299,7 @@ public extension WorkspaceBindingRegistry {
             apply(.newPaneDefault, to: store)
         case .closePane: apply(.closePane, to: store)
         // Reopen the last closed pane: the canvas has its own retained single-slot reopen (distinct from the
-        // tree shell's E3 LIFO) — route to it so the canvas path still responds.
+        // tree shell's LIFO stack) — route to it so the canvas path still responds.
         case .reopenClosed: apply(.reopenClosedPane, to: store)
         case .renamePane: apply(.renamePane, to: store)
         case .breakPaneToTab: break // no canvas analogue
@@ -326,7 +325,7 @@ public extension WorkspaceBindingRegistry {
         case .cyclePanePrev: apply(.cycleFocus(forward: false), to: store)
         case .toggleZoom: apply(.toggleZoom, to: store)
         case .commandPalette: toggles.palette?()
-        // Cheat sheet / vi key hints (E17 ES-E17-2 / WI-5): same CONTEXTUAL `⌘/` as the tree path — in vi /
+        // Cheat sheet / vi key hints: same CONTEXTUAL `⌘/` as the tree path — in vi /
         // copy-mode (the canvas also arms it via `.toggleCopyMode`) the chord toggles the pane's vi key-hint
         // bar; otherwise it forwards to the view-owned cheat-sheet toggle.
         case .cheatSheet:
@@ -342,12 +341,12 @@ public extension WorkspaceBindingRegistry {
         case .findPrev: store.requestFindPrevInActivePane()
         // Global Search is a view overlay (tree-shell chrome); the canvas path still toggles it via the closure.
         case .globalSearch: toggles.globalSearch?()
-        // Jump-To (E10 WI-8): a view overlay; the canvas path still toggles it via the closure (a graceful
+        // Jump-To: a view overlay; the canvas path still toggles it via the closure (a graceful
         // no-op when none is supplied, like the palette / global search).
         case .jumpTo: toggles.jumpTo?()
-        // Hint Mode (E10 WI-9): the canvas path resolves the active pane via canvas focus, so the same model
+        // Hint Mode: the canvas path resolves the active pane via canvas focus, so the same model
         // seam arms hints there too (a no-op for a non-terminal active pane / empty shell / alt-screen TUI).
-        // Focus the terminal after arming so Escape reaches `keyDown` → `cancelHintMode()` (C4) — same fix as tree.
+        // Focus the terminal after arming so Escape reaches `keyDown` → `cancelHintMode()` — same fix as tree.
         case .hintToOpen:
             store.activeTerminalModel?.beginHint(.open)
             store.activeTerminalModel?.onRequestFocus?()
@@ -357,25 +356,25 @@ public extension WorkspaceBindingRegistry {
         case .hintToReveal:
             store.activeTerminalModel?.beginHint(.reveal)
             store.activeTerminalModel?.onRequestFocus?()
-        // Copy Mode (P5b): the canvas path resolves the active pane via canvas focus, so the same store hook
+        // Copy Mode: the canvas path resolves the active pane via canvas focus, so the same store hook
         // arms copy-mode there too (a no-op for a non-terminal active pane / empty shell). Focus the terminal
-        // after arming so Escape reaches `keyDown` → `exitCopyMode()` (C5).
+        // after arming so Escape reaches `keyDown` → `exitCopyMode()`.
         case .toggleCopyMode:
             store.requestCopyModeInActivePane()
             store.activeTerminalModel?.onRequestFocus?()
-        // Vi Mode Key Hints (E17 ES-E17-2 / WI-5): the canvas path uses the SAME store seam as the tree path to
+        // Vi Mode Key Hints: the canvas path uses the SAME store seam as the tree path to
         // toggle the active pane's vi key-hint bar (a no-op for a non-terminal / empty active pane).
         case .toggleViKeyHints: store.toggleViKeyHintsInActivePane()
-        // Read-Only (E17 ES-E17-1): the canvas path resolves the active pane via canvas focus, so the same
+        // Read-Only: the canvas path resolves the active pane via canvas focus, so the same
         // store seam toggles the input gate there too (a no-op for a non-terminal active pane / empty shell).
         case .toggleReadOnly: store.toggleReadOnlyInActivePane()
-        // Secure Keyboard Entry (E17 ES-E17-4): the canvas path resolves the active pane via canvas focus, so
+        // Secure Keyboard Entry: the canvas path resolves the active pane via canvas focus, so
         // the same store seam toggles manual secure input there too (a no-op for a non-terminal / empty shell).
         case .secureKeyboardEntry: store.toggleSecureKeyboardEntryInActivePane()
-        // Release Stuck Input (C5): the same store seam fires the active remote-GUI pane's synthetic-release
+        // Release Stuck Input: the same store seam fires the active remote-GUI pane's synthetic-release
         // escape hatch on the canvas path too (a no-op for a non-video / empty / read-only active pane).
         case .releaseStuckInput: store.releaseStuckInputInActivePane()
-        // Paste as Keystrokes (C7): the same store seam types the local clipboard into the active remote-GUI
+        // Paste as Keystrokes: the same store seam types the local clipboard into the active remote-GUI
         // pane on the canvas path too (a no-op for a non-video / empty / read-only pane or empty clipboard).
         case .pasteAsKeystrokes: store.pasteAsKeystrokesInActivePane()
         // Sidebar is the tree-shell chrome; the canvas path still toggles it via the closure (the live macOS
@@ -394,7 +393,7 @@ public extension WorkspaceBindingRegistry {
         case .reRunLastCommand: store.reRunLastCommandInActivePane()
         case .jumpPreviousFailed: store.jumpToFailedBlockInActivePane(forward: false)
         case .jumpNextFailed: store.jumpToFailedBlockInActivePane(forward: true)
-        // E1 scroll / font / command-jump: route through the SAME active-pane store hooks (they resolve the
+        // Scroll / font / command-jump: route through the SAME active-pane store hooks (they resolve the
         // active pane via the canvas focus, so they no-op gracefully for a non-terminal / empty canvas).
         case .scrollPageUp: store.scrollActivePane(.pageUp)
         case .scrollPageDown: store.scrollActivePane(.pageDown)
@@ -412,13 +411,13 @@ public extension WorkspaceBindingRegistry {
              .prevTab,
              .selectTab,
              .closeTab: break // no canvas tab model (the tree shell owns sessions)
-        // Close Window (E3 WI-4 audit fix): a window-level `NSWindow.performClose` concern (not a model op),
+        // Close Window: a window-level `NSWindow.performClose` concern (not a model op),
         // so the canvas path forwards the SAME actuator closure as the tree path — a graceful no-op when none
         // is supplied (the canvas test default), never a dead chord.
         case .closeWindow: toggles.closeWindow?()
         case .toggleSyncInput: break // no canvas analogue (tab-scoped, tree-only)
         case .jumpToAttention: break // tree-only (no canvas attention rollup)
-        // P4 Peek & Reply is a view overlay; the canvas path still toggles it (the overlay's own selector
+        // Peek & Reply is a view overlay; the canvas path still toggles it (the overlay's own selector
         // returns nil under .canvas, where there is no attention rollup, so it opens read-only / no-ops).
         case .peekAndReply: toggles.peekReply?()
         }

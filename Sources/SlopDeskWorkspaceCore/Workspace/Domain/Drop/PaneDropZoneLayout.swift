@@ -57,7 +57,7 @@ public struct DropZoneShape: Equatable, Sendable {
 // MARK: - Pane drop-zone layout
 
 /// The PURE geometry of the external-drop overlay for a pane of a given `size`. It is the single source
-/// of truth the overlay draws from and the drop receiver hit-tests against (E18 WI-1). Headless: no
+/// of truth the overlay draws from and the drop receiver hit-tests against. Headless: no
 /// AppKit, no view code — proportions only, so the layout is unit-testable and identical on macOS/iOS.
 ///
 /// Layout (fractions of the pane box, matching `drop-overlay-frame-action.png`):

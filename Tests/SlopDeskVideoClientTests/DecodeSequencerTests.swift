@@ -104,7 +104,7 @@ final class DecodeSequencerTests: XCTestCase {
         XCTAssertEqual(sq.nextExpected, 1)
     }
 
-    /// NACK/retransmit regression (2026-07-10 audit): with `SLOPDESK_NACK=1` the reassembler HOLDS a
+    /// NACK/retransmit regression: with `SLOPDESK_NACK=1` the reassembler HOLDS a
     /// FEC-unrecoverable frame N for `nackGraceFrames` (default 8) frame-ids — neither `.completed`
     /// nor `.dropped`, so the sequencer is never notified about N — while newer completions pile into
     /// `held`. The sequencer's patience must out-wait that grace: nothing may release before N

@@ -101,9 +101,9 @@ public enum MuxEnvelopeCodec {
     /// 4-byte prefix — exactly what ``MuxFrameDecoder`` expects.
     public static func encode(_ frame: MuxFrame) -> Data {
         // Build the whole envelope in ONE buffer: a 4-byte muxFrameLength placeholder, then the inner
-        // run [channelID][muxType][body…], then BACK-PATCH the prefix. This avoids the intermediate
-        // `inner` Data and the extra whole-payload copy it forced — the up-to-128 KiB `.channelData`
-        // payload under a flood was previously memcpy'd into `inner` and then again into `frameData`.
+        // run [channelID][muxType][body…], then BACK-PATCH the prefix. A separate `inner` Data would
+        // force an extra whole-payload copy — the up-to-128 KiB `.channelData` payload under a flood
+        // would get memcpy'd twice (once into `inner`, once into the final buffer) for no reason.
         var out = Data()
         out.append(contentsOf: [0, 0, 0, 0]) // muxFrameLength placeholder (back-patched below)
         out.appendBE(frame.channelID)
@@ -134,7 +134,7 @@ public enum MuxEnvelopeCodec {
         }
 
         // muxFrameLength counts the inner run [channelID][muxType][body] — everything after the 4-byte
-        // prefix — exactly the value the old `UInt32(inner.count)` carried.
+        // prefix.
         let innerLength = UInt32(out.count - prefixLength)
         let s = out.startIndex
         out[s] = UInt8(truncatingIfNeeded: innerLength >> 24)

@@ -7,8 +7,8 @@ import XCTest
 ///
 /// - ⌘N and ⌘T both map to `.newPane(.terminal)` (⌘N is the macOS-native "new" — the File menu
 ///   replaces the default New-Window item; ⌘T is the muscle-memory alias carried by the Pane menu).
-/// - ⌥⌘N → `.newPane(.remoteGUI)`. (W11: the retired Claude Code kind freed ⇧⌘N — a `claude` running
-///   in any terminal is auto-detected, so there is no per-kind Claude creation chord.)
+/// - ⌥⌘N → `.newPane(.remoteGUI)`. The retired Claude Code kind freed ⇧⌘N — a `claude` running
+///   in any terminal is auto-detected, so there is no per-kind Claude creation chord.
 /// - ``CommandInterpreter/defaultChords(for:)`` is DETERMINISTIC (fewest modifiers, then lexicographic)
 ///   so menu items and palette hints can never flap with dictionary order: ⌘N is the canonical chord.
 /// - `duplicatePane` copies the spec verbatim (title, kind, committed video endpoint), lands beside
@@ -36,7 +36,7 @@ final class PaneCreationCommandTests: XCTestCase {
         )
         XCTAssertNil(
             interpreter.feed(KeyChord(character: "n", [.command, .shift])),
-            "⇧⌘N is unbound (W11 retired the Claude Code pane kind)",
+            "⇧⌘N is unbound (the Claude Code pane kind is retired)",
         )
         XCTAssertEqual(interpreter.feed(KeyChord(character: "n", [.command, .option])), .newPane(.remoteGUI))
         XCTAssertEqual(interpreter.feed(KeyChord(character: "d", [.command])), .duplicatePane)

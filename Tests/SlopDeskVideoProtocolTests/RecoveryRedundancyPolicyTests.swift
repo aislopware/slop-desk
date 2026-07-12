@@ -1,10 +1,10 @@
 import XCTest
 @testable import SlopDeskVideoProtocol
 
-/// Component 5 (recovery-redundancy, 2026-06-11): the three pure types that remove the
-/// request-loss freeze tail — `RecoveryRequestRedundancy` (3× spaced byte-identical sends + the
-/// before/after freeze math), the `RecoveryPolicy` loss-adaptive (halved) escalation clock, and
-/// the `LossObservationWindow` predicate gating it. All headless (no transport / wall clock).
+/// The three pure types that remove the request-loss freeze tail — `RecoveryRequestRedundancy`
+/// (3× spaced byte-identical sends + the before/after freeze math), the `RecoveryPolicy`
+/// loss-adaptive (halved) escalation clock, and the `LossObservationWindow` predicate gating it.
+/// All headless (no transport / wall clock).
 final class RecoveryRedundancyPolicyTests: XCTestCase {
     // MARK: RecoveryRequestRedundancy — offsets + clamps
 
@@ -91,7 +91,7 @@ final class RecoveryRedundancyPolicyTests: XCTestCase {
         }
     }
 
-    /// FIX 3 (2026-06-11): the lossy deadline is `max(1·RTT, 60 ms, 1.5·RTT)` — at rtt=50 ms the
+    /// The lossy deadline is `max(1·RTT, 60 ms, 1.5·RTT)` — at rtt=50 ms the
     /// 1.5·RTT term dominates (75 ms), still strictly faster than the normal 2·RTT (100 ms).
     func testLossyClockFiresAtFloorOfOneAndAHalfRTT() {
         let policy = RecoveryPolicy()

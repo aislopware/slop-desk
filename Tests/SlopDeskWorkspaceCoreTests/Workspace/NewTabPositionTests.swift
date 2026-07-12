@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E3 WI-1 (ES-E3-3): pins the `new-tab-position` policy — the pure
+/// Pins the `new-tab-position` policy — the pure
 /// ``NewTabPosition/insertionIndex(activeTabIndex:tabCount:)`` math, the `at:`-aware
 /// ``WorkspaceTreeOps/newTab(in:spec:at:)`` / ``WorkspaceTreeOps/insertTab(_:specs:at:in:)`` placement, and
 /// the `SettingsKey.newTabPosition` Defaults bridge.

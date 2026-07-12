@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskVideoProtocol
 
-/// Round-trip + default tests for the four W12 settings models. Each model is a pure `Codable` value
+/// Round-trip + default tests for the four settings models. Each model is a pure `Codable` value
 /// type; this proves `encode |> decode == value`, that defaults are sensible, and (for keybindings)
 /// the chord canonicalisation + conflict detection.
 final class PreferencesTests: XCTestCase {
@@ -28,14 +28,14 @@ final class PreferencesTests: XCTestCase {
         XCTAssertEqual(def.scrollbackLines, 10000)
         XCTAssertEqual(def.cursorStyle, .block)
         XCTAssertEqual(def.cursorBlink, .default) // tri-state default = defer to DEC mode 12
-        // E8 WI-1: cursor color/text/opacity/animation render-pref defaults (empty colour = follow theme,
+        // Cursor color/text/opacity/animation render-pref defaults (empty colour = follow theme,
         // opacity 1.0, animation Off — the "Default" state).
         XCTAssertEqual(def.cursorColor, "")
         XCTAssertEqual(def.cursorTextColor, "")
         XCTAssertEqual(def.cursorOpacity, 1.0)
         XCTAssertEqual(def.cursorAnimation, .off)
-        // E15 WI-2: the font-parity defaults — every one is the value that emits NO new libghostty line, so
-        // a default-constructed prefs stays byte-identical to the pre-E15 builder output.
+        // The font-parity defaults — every one is the value that emits NO new libghostty line, so
+        // a default-constructed prefs stays byte-identical to the builder output without these fields.
         XCTAssertEqual(def.fontFamilyFallback, "")
         XCTAssertEqual(def.fontFamilyBold, "")
         XCTAssertEqual(def.fontFamilyItalic, "")
@@ -72,7 +72,7 @@ final class PreferencesTests: XCTestCase {
         XCTAssertEqual(try roundTrip(custom), custom)
     }
 
-    // MARK: Appearance (D2 — client chrome, golden-irrelevant)
+    // MARK: Appearance (client chrome, golden-irrelevant)
 
     func testAppearancePreferencesDefaultIsAllNil() {
         let def = AppearancePreferences()
@@ -119,7 +119,7 @@ final class PreferencesTests: XCTestCase {
         XCTAssertEqual(c.canonical, "shift+cmd+d") // stable modifier order
     }
 
-    /// P4 #15: a PERSISTED / hand-edited file with an UPPERCASE `key` must DECODE to the lowercase form
+    /// A PERSISTED / hand-edited file with an UPPERCASE `key` must DECODE to the lowercase form
     /// (the synthesised decoder would have stored "D" verbatim — a silently-dead override, since
     /// `canonical` would be "cmd+D" and never match the lowercase chord the lookup compares). The custom
     /// `init(from:)` normalises on decode. (Fails on the synthesised decoder.)
@@ -134,7 +134,7 @@ final class PreferencesTests: XCTestCase {
 
     /// The same normalisation applies through a full `KeybindingPreferences` decode + the `chord(for:)`
     /// lookup, so an uppercase override in a persisted prefs file resolves correctly. The blob carries the
-    /// CURRENT `schemaVersion` (3, bumped by E1/WI-6) — no-backcompat: a versionless / stale blob is
+    /// CURRENT `schemaVersion` (3) — no-backcompat: a versionless / stale blob is
     /// rejected (see below).
     func testKeybindingPreferencesDecodeNormalisesKey() throws {
         let json = Data(#"{"schemaVersion":3,"overrides":{"pane.splitRight":{"key":"D","command":true}}}"#.utf8)
@@ -143,16 +143,16 @@ final class PreferencesTests: XCTestCase {
         XCTAssertEqual(prefs.chord(for: "pane.splitRight")?.canonical, "cmd+d")
     }
 
-    /// No-backcompat (single-user): a persisted blob MISSING the schema version (the pre-W-B shape) or
+    /// No-backcompat (single-user): a persisted blob MISSING the schema version or
     /// carrying a STALE version decode-FAILS — the store's `try? decode ?? .init()` then lands on the empty
     /// default rather than importing a stale shape. (FAILS on the un-versioned model: it would decode fine.)
-    /// E1/WI-6 bumped the current version to 3, so a v1 AND a v2 blob are now both stale and rejected.
+    /// The current version is 3, so a v1 AND a v2 blob are both stale and rejected.
     func testKeybindingPreferencesStaleSchemaDecodeFails() {
         let versionless = Data(#"{"overrides":{"pane.splitRight":{"key":"d","command":true}}}"#.utf8)
         XCTAssertThrowsError(try JSONDecoder().decode(KeybindingPreferences.self, from: versionless))
         let stale = Data(#"{"schemaVersion":1,"overrides":{"pane.splitRight":{"key":"d","command":true}}}"#.utf8)
         XCTAssertThrowsError(try JSONDecoder().decode(KeybindingPreferences.self, from: stale))
-        // The previous (W-B) version 2 blob is ALSO rejected now that WI-6 advanced the schema to 3.
+        // The previous version 2 blob is ALSO rejected now that the schema is at 3.
         let v2 = Data(#"{"schemaVersion":2,"overrides":{"pane.splitRight":{"key":"d","command":true}}}"#.utf8)
         XCTAssertThrowsError(try JSONDecoder().decode(KeybindingPreferences.self, from: v2))
     }
@@ -203,12 +203,12 @@ final class PreferencesTests: XCTestCase {
         XCTAssertNil(prefs.chord(for: "pane.notOverridden"))
     }
 
-    // MARK: Keybindings — E1/WI-6 text bindings + unbinds (schema v3)
+    // MARK: Keybindings — text bindings + unbinds (schema v3)
 
     /// The new `textBindings` (chord → literal bytes) and `unbinds` (suppressed-default chords) maps
     /// round-trip through the v3 schema. The `textBindings` map is keyed by a non-`String` `KeyChord`, so
     /// JSON encodes it as a flat key/value array — this asserts that survives a full encode→decode.
-    /// (FAILS on the pre-WI-6 model: no `textBindings` / `unbinds` fields, schema still 2.)
+    /// (FAILS on a model with no `textBindings` / `unbinds` fields and schema still 2.)
     func testTextBindingsAndUnbindsRoundTrip() throws {
         let prefs = KeybindingPreferences(
             textBindings: [
@@ -230,7 +230,7 @@ final class PreferencesTests: XCTestCase {
     /// `conflicts()` folds text bindings + unbinds into the chord namespace: a text binding on a chord an
     /// action override ALSO resolves to is a real clash, and so is a text-binding-vs-unbind on the same
     /// chord. A text binding on its own (unique chord) is NOT a conflict.
-    /// (FAILS on the pre-WI-6 `conflicts()`: it ignored text bindings + unbinds entirely.)
+    /// (FAILS on a `conflicts()` that ignores text bindings + unbinds entirely.)
     func testTextBindingAndUnbindConflictFold() {
         // An action override `⌘X` and a text binding on the SAME chord ⌘X collide.
         let clash = KeybindingPreferences(

@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskVideoClient
 
-/// DEADLINE PACER (2026-06-10 Parsec-smoothness research): presentation deadlines anchored to
+/// DEADLINE PACER: presentation deadlines anchored to
 /// the CONTENT rhythm (lastDeadline + interval), not arrival times — so ±network jitter cannot
 /// modulate inter-presentation spacing (the "bunched frame" 8/8/17ms stutter). Pure-math tests;
 /// the GUI tick wiring follows the same decision functions.

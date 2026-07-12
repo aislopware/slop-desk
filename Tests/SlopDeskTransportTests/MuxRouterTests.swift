@@ -151,9 +151,9 @@ final class MuxRouterTests: XCTestCase {
         XCTAssertEqual(router.allocateChannel(), 3)
     }
 
-    /// R9 #1: a `channelOpenAck(accepted: true)` for an id we NEVER allocated is spurious/hostile — it
+    /// A `channelOpenAck(accepted: true)` for an id we NEVER allocated is spurious/hostile — it
     /// must NOT materialize a permanent phantom `.open` table entry (the same unbounded router-table
-    /// memory-DoS already closed for channelClose [R6 #5] and channelOpen [R7 #6]). A legit ack always
+    /// memory-DoS already closed for channelClose and channelOpen). A legit ack always
     /// lands on an id the client recorded `.open` at openChannel time, so an unknown-id ack is rejected.
     func testOpenAckForUnknownIdCreatesNoPhantomChannel() {
         var router = MuxRouter()

@@ -1,4 +1,4 @@
-// WorkspaceChromeState — the small @Observable chrome model the toolbar toggles drive (REBUILD-V2, L4a).
+// WorkspaceChromeState — the small @Observable chrome model the toolbar toggles drive.
 //
 // Owns the sidebar collapse flag the sidebar's own toggle (and the titlebar's collapsed-state reopen
 // button) flips. The macOS
@@ -22,14 +22,14 @@ final class WorkspaceChromeState {
     /// writes the choice back so it survives relaunch. Unlike the left sidebar there is no
     /// auto-hide policy — the ONE owner of this flag is the user's toggle.
     var hostRailCollapsed = Defaults[.hostWindowsRailCollapsed]
-    /// E19/A30: whether the window is PINNED (View ▸ Pin Window — keep-on-top). Lives with the other
+    /// Whether the window is PINNED (View ▸ Pin Window — keep-on-top). Lives with the other
     /// chrome flags so reading it in the SwiftUI scene body re-invalidates the introspect-bearing scene; the
-    /// macOS `NSWindow` glue (E19 WI-4) maps it to `NSWindow.level` (`.floating` ⇄ `.normal`). Pure view
+    /// macOS `NSWindow` glue maps it to `NSWindow.level` (`.floating` ⇄ `.normal`). Pure view
     /// state — `false` resting (a fresh window is not pinned), no wire / persistence. iOS has no resizable
     /// floating window, so the flag is inert there (documented no-op, never a dead toggle).
     var pinned = false
 
-    /// E19/WI-7 (auto-hide-tabs-panel): set whenever the user MANUALLY toggles the TABS panel — on macOS ⌘⇧L,
+    /// Auto-hide-tabs-panel: set whenever the user MANUALLY toggles the TABS panel — on macOS ⌘⇧L,
     /// the titlebar button, and the palette row all flip the flag through ``toggleSidebar()``; on iPad a swipe of
     /// the leading column routes through `WorkspaceRootView.applySidebarVisibility`, the SECOND manual entry
     /// point (both record this override; the auto-hide policy writes `sidebarCollapsed` DIRECTLY, never via
@@ -47,7 +47,7 @@ final class WorkspaceChromeState {
 
     /// Manual entry point for the TABS-panel toggle (⌘⇧L / titlebar / palette; the iPad column swipe is the other,
     /// via `WorkspaceRootView.applySidebarVisibility`). Records the manual override so the auto-hide policy won't
-    /// revert it on an unrelated tab open/close (E19 WI-7: "do NOT fight a manual ⌘⇧L").
+    /// revert it on an unrelated tab open/close ("do NOT fight a manual ⌘⇧L").
     func toggleSidebar() {
         sidebarCollapsed.toggle()
         manualSidebarOverride = true

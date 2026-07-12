@@ -1,11 +1,11 @@
-// RemoteWindowPickerModal — the Remote-Window picker, NATIVE SwiftUI (E2 / WI-5, ES-E2-6 second clause).
+// RemoteWindowPickerModal — the Remote-Window picker, native SwiftUI.
 // Opened by the palette's "New Remote Window Tab" action (`openRemotePicker()`), it lists the host's
 // shareable windows and, on pick, opens a NEW `.remoteGUI` tab pre-bound to that window — the app-global
 // counterpart of the in-pane ``RemoteWindowPickerView``.
 //
 // Everything outside the workspace + panes is native chrome, so this is a native `.sheet` body — a grouped
 // `Form` (a filter field + a `Button` row per discovered window + a manual-id fallback section) with a native
-// title + Cancel bar — NOT the old bespoke `OverlayPanel` card. Presented as a real sheet by ``OverlayHostView``.
+// title + Cancel bar, not a bespoke `OverlayPanel` card. Presented as a real sheet by ``OverlayHostView``.
 //
 // Bound to ``OverlayCoordinator/remotePickerModel`` (a fresh ``RemoteWindowModel`` built per open against the
 // live app target), it routes a pick through ``OverlayCoordinator/openRemoteWindow(_:)`` (open a tab + close

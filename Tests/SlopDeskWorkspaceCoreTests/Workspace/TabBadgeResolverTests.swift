@@ -2,7 +2,7 @@ import SlopDeskAgentDetect
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Tests for ``TabBadgeResolver`` — the PURE fusion policy (E6 plan WI-1) that collapses the four
+/// Tests for ``TabBadgeResolver`` — the PURE fusion policy that collapses the four
 /// per-pane badge signals into the single ``TabBadgeKind`` a sidebar tab row shows. The contract is a
 /// **fixed precedence** (most-urgent wins, distilled from `progress-state.md` + `parallel-tasks.md`):
 ///
@@ -44,8 +44,8 @@ final class TabBadgeResolverTests: XCTestCase {
     }
 
     /// A merely-busy shell ⇒ the bare static busy dot (`.commandBusy`, no spinner); an explicit OSC 9;4
-    /// progress report ⇒ the spinner marker (`.commandRunning`), which outranks the busy dot (2026-07-10
-    /// round 3: the ring is earned by an explicit progress report).
+    /// progress report ⇒ the spinner marker (`.commandRunning`), which outranks the busy dot — the ring
+    /// is earned by an explicit progress report.
     func testBusyShellIsBareDotProgressIsSpinner() {
         XCTAssertEqual(badge(isBusy: true), .commandBusy)
         XCTAssertEqual(badge(isBusy: true, progress: .indeterminate), .commandRunning)
@@ -69,9 +69,9 @@ final class TabBadgeResolverTests: XCTestCase {
     }
 
     /// A SETTLED clean exit ⇒ the accent dot (finished) — the persistent "unread output" marker once the
-    /// flash decays. This exercises the previously-UNREACHABLE `.finished` state: a resolver that mapped
-    /// BOTH freshness states to `.completed` (the pre-fix behaviour) FAILS this assertion
-    /// (revert-to-confirm-fail), so it is not tautological.
+    /// flash decays. This exercises the `.finished` state, which is otherwise unreachable: a resolver that
+    /// maps BOTH freshness states to `.completed` FAILS this assertion (revert-to-confirm-fail), so it is
+    /// not tautological.
     func testSettledSuccessCompletionMapsToFinished() {
         XCTAssertEqual(badge(completion: .success, completionFreshness: .settled), .finished)
     }
@@ -82,7 +82,7 @@ final class TabBadgeResolverTests: XCTestCase {
     }
 
     /// A SETTLED idle/done agent that is still unread ⇒ the accent dot (finished) — a dot when the agent goes
-    /// idle. Also fails on the pre-fix both-to-`.completed` resolver (revert-to-confirm-fail).
+    /// idle. Also fails on a resolver that maps both freshness states to `.completed` (revert-to-confirm-fail).
     func testSettledDoneAgentMapsToFinished() {
         XCTAssertEqual(badge(agent: .done, completionFreshness: .settled), .finished)
     }

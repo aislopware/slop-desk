@@ -114,7 +114,7 @@ final class ClaudeManifestMatcherTests: XCTestCase {
         XCTAssertEqual(m.coarseStatus(screen: "   \n\t\n   "), Optional.none)
     }
 
-    // MARK: Wrapper classification (queue-safety fix, 2026-07-02)
+    // MARK: Wrapper classification (queue-safety)
 
     /// The known launcher/runtime basenames that commonly host a wrapped `claude` classify as
     /// wrappers (path or bare basename) — and a wrapper is NOT claude presence.

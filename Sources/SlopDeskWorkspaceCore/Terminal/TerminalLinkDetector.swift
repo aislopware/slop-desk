@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - E10 WI-1 (ES-E10-1 / ES-E10-2): pure path / URL / link detector over the terminal grid
+// MARK: - Pure path / URL / link detector over the terminal grid
 
 /// The classification of a span detected by ``TerminalLinkDetector``. Mirrors the
 /// `docs/ui-shell/spec/user-interface__files-and-links.md` "Path and Link Detection" list.
@@ -27,7 +27,7 @@ public enum DetectedLinkKind: Equatable, Hashable, Sendable, CaseIterable {
 /// One detected interactive span in a terminal row.
 ///
 /// `colStart ..< colEnd` are **display cell columns** (East-Asian-wide / fullwidth glyphs count as 2
-/// cells, combining marks as the base) so the WI-2 geometry seam can map a match straight to a
+/// cells, combining marks as the base) so the geometry seam can map a match straight to a
 /// `CGRect` (`originX + cellWidth * colStart`, width `cellWidth * (colEnd − colStart)`) without a
 /// second width pass. `colEnd` is exclusive. `raw` is the exact matched substring (line/col suffix
 /// included). `resolvedAbsolute` is the absolute filesystem path when it can be derived PURELY (an
@@ -70,16 +70,15 @@ public enum LinkSchemePolicy: Equatable, Hashable, Sendable {
     case custom([String])
 }
 
-/// The PURE, headless heart of the terminal's path/URL/link detection (E10 ES-E10-1/2): scan
+/// The PURE, headless heart of the terminal's path/URL/link detection: scan
 /// `[String]` rows and return every detected path, `path:line:col`, URL, `file://`, and `mailto:`
 /// span with its cell columns and (where derivable) resolved absolute path.
 ///
 /// ## Why a pure enum
-/// Detection is a deterministic text scan with **no host round-trip** (the slopdesk mapping note
-/// confirms it: the client already tracks the pane cwd via OSC 7). Keeping it a pure, environment-free
-/// function makes it unit-testable headless and lets the same code drive the ⌘-hold underline (WI-5),
-/// Jump-To (WI-8), and Hint Mode (WI-9) overlays. The thin GUI surfaces feed it
-/// `viewportTextRows()` (WI-2) and map `colStart ..< colEnd` to pixels.
+/// Detection is a deterministic text scan with **no host round-trip** (the client already tracks
+/// the pane cwd via OSC 7). Keeping it a pure, environment-free function makes it unit-testable
+/// headless and lets the same code drive the ⌘-hold underline, Jump-To, and Hint Mode overlays.
+/// The thin GUI surfaces feed it `viewportTextRows()` and map `colStart ..< colEnd` to pixels.
 ///
 /// ## Validate-then-drop & bounds (CLAUDE.md §3 habit, applied to untrusted terminal bytes)
 /// Terminal output is attacker-influenced (a remote program prints whatever it likes), so the scan is
@@ -289,10 +288,6 @@ public enum TerminalLinkDetector {
         // compiler-diagnostic form `path:line:col:` whose trailing `:` would otherwise defeat splitLineCol,
         // leaving `:line:col` baked into the resolved path so open/reveal fails), THEN split the numeric
         // `:line[:col]` suffix off the cleaned token so `path:line:col:` resolves as `.pathLineCol`.
-        // Strip trailing colons FIRST (a log "/path:" or "Error:", and — critically — the standard
-        // compiler-diagnostic form `path:line:col:` whose trailing `:` would otherwise defeat splitLineCol,
-        // leaving `:line:col` baked into the resolved path so open/reveal fails), THEN split the numeric
-        // `:line[:col]` suffix off the cleaned token so `path:line:col:` resolves as `.pathLineCol`.
         var cleaned = core
         while cleaned.hasSuffix(":") { cleaned.removeLast() }
         let (pathPart, suffix) = splitLineCol(cleaned)
@@ -340,7 +335,7 @@ public enum TerminalLinkDetector {
     }
 
     /// Resolve to an absolute path PURELY (no `$HOME` / disk access). Tilde paths stay unresolved —
-    /// `~` expansion needs the host `$HOME`, done host-side in the open/reveal action (WI-6/WI-7).
+    /// `~` expansion needs the host `$HOME`, done host-side in the open/reveal action.
     private static func resolvePath(_ path: String, shape: PathShape, cwd: String?) -> String? {
         if shape == .absolute { return lexicallyNormalize(path) }
         if shape == .tilde { return nil } // ~ expansion is host-side, not pure
@@ -490,7 +485,7 @@ public enum TerminalLinkDetector {
     }
 }
 
-// MARK: - Display-cell width (shared with E10 Hint Mode, WI-9)
+// MARK: - Display-cell width (shared with Hint Mode)
 
 public extension TerminalLinkDetector {
     /// Display width of `character` in terminal cells (0 zero-width, 2 East-Asian-wide / fullwidth / emoji,

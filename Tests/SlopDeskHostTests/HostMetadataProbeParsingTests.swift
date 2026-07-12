@@ -3,7 +3,7 @@ import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskHost
 
-/// E9 / WI-1 — the PURE `String → struct` parsers that feed the Details panel's Info-ports + Git data:
+/// The PURE `String → struct` parsers that feed the Details panel's Info-ports + Git data:
 /// `parseLsof`, `parseBranchHeader`, `parseStatusLine`, `packStatus`, `statusNibble`. They take NO syscall
 /// (no subprocess / PTY / proc query), so the hang-safety rule does NOT apply — they are unit-tested here
 /// directly (the surrounding `HostMetadataProbe` I/O paths stay compiled-and-reviewed only).
@@ -234,7 +234,7 @@ final class HostMetadataProbeParsingTests: XCTestCase {
         XCTAssertEqual(ports[0].procName, "")
     }
 
-    // MARK: - opaqueBudgetExceeded (WI-2 — the PURE byte-budget predicate behind the bounded reads)
+    // MARK: - opaqueBudgetExceeded (the PURE byte-budget predicate behind the bounded reads)
 
     /// The source-side opaque-read budget (`readAgentSession` / `gitDiff` drain loop) is bounded at the
     /// builder's 15 MiB opaque cap: exactly `cap` bytes is WITHIN budget (false), `cap + 1` EXCEEDS it
@@ -269,10 +269,10 @@ final class HostMetadataProbeParsingTests: XCTestCase {
         }
     }
 
-    /// FINDING 1 (subdir): the pane cwd is a SUBDIR (`/repo/docs`) while the modified file is REPO-ROOT
+    /// The pane cwd is a SUBDIR (`/repo/docs`) while the modified file is REPO-ROOT
     /// relative (`README.md`). `rev-parse --show-toplevel` resolves `/repo`, and the diff MUST run rooted at
     /// `/repo`, not `/repo/docs` — a root-relative pathspec under the subdir matches nothing. The fake only
-    /// answers a diff for `-C /repo`; on the pre-fix code (which ran `git -C <cwd> diff -- file`) the
+    /// answers a diff for `-C /repo`; if the diff regresses to running `git -C <cwd> diff -- file`, the
     /// `-C /repo/docs` argv has no reply → empty, so this assertion FAILS (revert-to-confirm-fail).
     func testResolveGitDiffRunsAtRepoToplevelNotSubdirCwd() {
         let body = Data("diff --git a/README.md b/README.md\n@@ -1 +1 @@\n-old\n+new\n".utf8)
@@ -292,15 +292,15 @@ final class HostMetadataProbeParsingTests: XCTestCase {
         )
     }
 
-    /// FINDING 2 (staged): a STAGED/index-only file — `git diff` (unstaged) is EMPTY but `git diff HEAD`
+    /// A STAGED/index-only file — `git diff` (unstaged) is EMPTY but `git diff HEAD`
     /// shows the combined change. The fake returns empty for the plain unstaged base and the staged body for
-    /// `diff HEAD`; the resolver returns the HEAD body. Pre-fix code ran ONLY `git diff -- file` (no
-    /// HEAD/--cached) → empty → the medium finding's blank diff, so this FAILS on the un-fixed path.
+    /// `diff HEAD`; the resolver returns the HEAD body. Running ONLY `git diff -- file` (no
+    /// HEAD/--cached) would come back empty, so this FAILS if the resolver drops the HEAD base.
     func testResolveGitDiffShowsStagedChangeViaHeadBase() {
         let staged = Data("diff --git a/staged.txt b/staged.txt\n@@ -0,0 +1 @@\n+line\n".utf8)
         let runner = FakeGitRunner([
             ["-C", "/repo", "rev-parse", "--show-toplevel"]: Data("/repo\n".utf8),
-            // The plain unstaged diff is empty for an index-only change (the pre-fix sole command).
+            // The plain unstaged diff is empty for an index-only change.
             ["-C", "/repo", "diff", "--", "staged.txt"]: Data(),
             ["-C", "/repo", "diff", "HEAD", "--", "staged.txt"]: staged,
         ])

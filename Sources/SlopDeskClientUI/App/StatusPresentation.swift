@@ -62,7 +62,7 @@ enum StatusPresentation {
         status.displayLabel
     }
 
-    // MARK: Tab badge (E6 sidebar row, WI-4)
+    // MARK: Tab badge
 
     /// How a sidebar tab's fused ``TabBadgeKind`` renders — the glyph map, kept next to ``agentSymbol``
     /// so the two status vocabularies can't drift (`terminal-features__progress-state.md` "The full badge
@@ -73,7 +73,7 @@ enum StatusPresentation {
         switch kind {
         // ONE dot language on the agent palette (docs/42: working🟡 done🔵 needs🔴 idle🟢) — the COLOUR
         // carries the state, a spinner ring means "live right now", and no badge is ever a character glyph
-        // (the old checkmark/triangle/hand SF-symbols read as foreign next to the dots). Only the at-rest
+        // (a checkmark/triangle/hand SF-symbol would read as foreign next to the dots). Only the at-rest
         // privilege markers stay symbols (a shield/cup IS their meaning).
         //
         // Agent WORKING — amber dot + spinner ring (live).
@@ -111,7 +111,7 @@ enum StatusPresentation {
         }
     }
 
-    // MARK: Progress (E14/K1 — OSC 9;4 taskbar-style readout)
+    // MARK: Progress (OSC 9;4 taskbar-style readout)
 
     /// The taskbar-style percent readout for a pane's OSC 9;4 progress, or `nil` when there is no number to
     /// show. Only a DETERMINATE state (`9;4;1;<pct>`) carries a meaningful "taskbar" percent — an
@@ -122,7 +122,7 @@ enum StatusPresentation {
         return nil
     }
 
-    /// How a pane's OSC 9;4 progress renders in the status presentation (E14/K1) — a pure value (no view) so
+    /// How a pane's OSC 9;4 progress renders in the status presentation — a pure value (no view) so
     /// the status strip's progress affordance and the Dock have one source. A determinate state carries its
     /// 0…1 bar fraction PLUS the "NN%" readout; an indeterminate state is the bare spinner; an error holds
     /// red; `nil` = nothing. The 0…1 fraction is plain view geometry (a single `/`, no fused multiply).

@@ -1,9 +1,9 @@
-// DispatcherOverlayYieldTests (E11 review fix) — the live `WorkspaceKeyDispatcher`'s MODAL-YIELD gate pinned
+// DispatcherOverlayYieldTests — the live `WorkspaceKeyDispatcher`'s MODAL-YIELD gate pinned
 // headlessly: while a keyboard-capturing overlay (the Open-Quickly picker) is presented, the app NSEvent
 // monitor must NOT resolve the GLOBAL chord table behind it. Before the fix the monitor — which PREEMPTS the
 // responder chain — swallowed any bound ⌘-chord before the picker's `.onKeyPress` ran, so ⌘1–9 switched the
 // BACKGROUND tab (instead of quick-picking the Nth result) and ⌘W DESTRUCTIVELY closed the focused pane behind
-// the open picker (ES-E11-3). These drive the dispatcher's real `handle(_:)` with a synthetic NSEvent (no
+// the open picker. These drive the dispatcher's real `handle(_:)` with a synthetic NSEvent (no
 // window-server resource — the hang-safety rule is about SCStream/VT/Metal, not NSEvent) and assert the gate
 // yields the keyboard to the picker (passthrough), and — as the load-bearing control — that with the picker
 // HIDDEN the very same chord is still owned (swallowed + dispatched) by the monitor.
@@ -46,8 +46,8 @@ final class DispatcherOverlayYieldTests: XCTestCase {
 
     /// While the picker is visible, ⌘W is PASSED THROUGH to the focused overlay (handle returns the event,
     /// not `nil`) and does NOT close the pane behind it — neither a park nor a leaf drop. This is the core
-    /// destructive-action regression (ES-E11-3: ⌘W must select the Opened pill in the picker, never destroy
-    /// the focused pane/session).
+    /// destructive-action regression: ⌘W must select the Opened pill in the picker, never destroy
+    /// the focused pane/session.
     func testPickerVisibleYieldsCloseChordAndDoesNotDestroyPane() {
         let store = makeTwoLeafStore()
         let dispatcher = WorkspaceKeyDispatcher(store: store, isOverlayCapturingKeys: { true })
@@ -74,7 +74,7 @@ final class DispatcherOverlayYieldTests: XCTestCase {
     }
 
     /// While the picker is visible, ⌘2 (a global `.selectTab(2)` chord) is PASSED THROUGH to the picker (so
-    /// `OpenQuicklyView.onKeyPress` can quick-pick the 2nd result — ES-E11-3) instead of being resolved as the
+    /// `OpenQuicklyView.onKeyPress` can quick-pick the 2nd result) instead of being resolved as the
     /// background tab-switch. Asserted via the swallow/passthrough contract: handle returns the event.
     func testPickerVisibleYieldsQuickPickDigitChord() {
         let store = makeTwoLeafStore()

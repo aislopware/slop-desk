@@ -1,10 +1,10 @@
 import Foundation
 
-/// E1/WI-6 (production wiring) — the loader that turns a `~/.config/slopdesk/config.toml`
-/// into live ``KeybindingPreferences``. It is the MISSING population path: ``KeybindGrammar`` parses one
-/// `keybind` line and the dispatcher (WI-7) already consults ``KeybindingPreferences/textBindings`` /
-/// ``KeybindingPreferences/unbinds``, but until now NOTHING wrote those maps — so the `text:` / `csi:` /
-/// `esc:` / `unbind:` half of ES-E1-6 was unreachable end-to-end. This loader closes that gap: it reads the
+/// The loader that turns a `~/.config/slopdesk/config.toml`
+/// into live ``KeybindingPreferences``. It is the population path: ``KeybindGrammar`` parses one
+/// `keybind` line and the dispatcher already consults ``KeybindingPreferences/textBindings`` /
+/// ``KeybindingPreferences/unbinds``, but nothing else writes those maps — so the `text:` / `csi:` /
+/// `esc:` / `unbind:` config directives would otherwise be unreachable end-to-end. This loader closes that gap: it reads the
 /// flat `key = value` config (`spec/reference__config-file-format.md`), parses
 /// every `keybind = <chord>:<action>` line via ``KeybindGrammar/parseLine``, and FOLDS the result into a
 /// ``KeybindingPreferences`` the app publishes into ``WorkspaceBindingRegistry/activeOverrides``.
@@ -20,12 +20,12 @@ import Foundation
 /// transform unit-tested without touching disk. Literal-byte actions resolve their bytes at parse time (in
 /// ``KeybindGrammar``), so this only routes the already-resolved payload into the right map.
 ///
-/// **Named actions** (`cmd+1:goto_tab:1`, `cmd+t:new_tab`) need the W6 registry's action-id → `bindingID`
+/// **Named actions** (`cmd+1:goto_tab:1`, `cmd+t:new_tab`) need the registry's action-id → `bindingID`
 /// mapping, which lives in `SlopDeskWorkspaceCore` (this module cannot import it). The fold therefore takes
 /// an optional `resolveNamedBinding` hook: when supplied, a `named` action whose `(id, arg)` the caller maps
 /// to a `(bindingID, chord)` is written into ``KeybindingPreferences/overrides``; when `nil` (or when the
 /// caller returns `nil` for an unknown action id), the named line is dropped. The `text:` / `csi:` / `esc:` /
-/// `unbind:` directives need NO registry and are handled here unconditionally — that is the ES-E1-6 core.
+/// `unbind:` directives need NO registry and are handled here unconditionally — that is the core of this loader.
 public enum KeybindConfigLoader {
     /// The default config path: `~/.config/slopdesk/config.toml`. Honours `XDG_CONFIG_HOME` when set (the
     /// freedesktop convention the `~/.config` base follows); falls back to `$HOME/.config`. Returns `nil` when
@@ -85,7 +85,7 @@ public enum KeybindConfigLoader {
     ///
     /// The parsed action routes by kind:
     ///   - `text:` / `csi:` / `esc:` → a ``KeybindingPreferences/TextBinding`` keyed by the trigger chord in
-    ///     ``KeybindingPreferences/textBindings`` (the literal-byte half of ES-E1-6).
+    ///     ``KeybindingPreferences/textBindings`` (the literal-byte directives).
     ///   - `unbind:<chord>` → the chord is inserted into ``KeybindingPreferences/unbinds``.
     ///   - a named action → routed through `resolveNamedBinding` (caller-supplied) into
     ///     ``KeybindingPreferences/overrides`` when it resolves to a `bindingID`, else dropped.

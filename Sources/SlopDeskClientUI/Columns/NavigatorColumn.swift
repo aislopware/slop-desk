@@ -1,9 +1,9 @@
 // NavigatorColumn — the left sidebar navigator. macOS renders a flat "TABS" panel on a warm
 // `Slate.Surface.ground` background (NOT native `.sidebar` vibrancy/inset-grouped selection — the host split
 // item is a PLAIN item), a "TABS" header, a flat search field, and the active session's tabs as
-// `SlateTabRow`s — ALWAYS grouped into By-Project `SlateSectionHeader` sections (the 2026-07-10 re-scope:
-// the grouping/sort hamburger and manual drag-reorder are deleted; sections and rows follow creation
-// order, and each pane's key is HOST-pushed — see `WorkspaceStore.paneProjectKey`). Top 40pt is reserved
+// `SlateTabRow`s — ALWAYS grouped into By-Project `SlateSectionHeader` sections (no grouping/sort hamburger
+// or manual drag-reorder: sections and rows simply follow creation order, and each pane's key is
+// HOST-pushed — see `WorkspaceStore.paneProjectKey`). Top 40pt is reserved
 // for the traffic lights under the hidden titlebar.
 //
 //   • the flat search field filters via the pure ``RailRowsBuilder/filtered(_:query:)`` (reused, not rebuilt);
@@ -18,7 +18,7 @@
 #if canImport(SwiftUI)
 import Defaults
 import SFSafeSymbols
-import SlopDeskVideoProtocol // AgentPreferences — the `preventSleep` flag the tab context menu toggles (B4)
+import SlopDeskVideoProtocol // AgentPreferences — the `preventSleep` flag the tab context menu toggles
 import SlopDeskWorkspaceCore
 import SwiftUI
 
@@ -26,7 +26,7 @@ struct NavigatorColumn: View {
     let store: WorkspaceStore
 
     /// The live ``PreferencesStore`` — threaded in so the tab context menu can surface the host-LOCAL
-    /// **Prevent Sleep While Processing** flag (Batch 4; `docs/ui-shell/screenshots/open-code-agent-history.png`
+    /// **Prevent Sleep While Processing** flag (`docs/ui-shell/screenshots/open-code-agent-history.png`
     /// shows it on the tab menu). The macOS sidebar is hosted in a SEPARATE `NSHostingController` that does not
     /// inherit the WindowGroup environment, so the split-view host passes it explicitly (`nil` on a preview /
     /// pre-injection ⇒ the Prevent-Sleep row is hidden, never a dead control). iOS inherits it via the
@@ -48,11 +48,11 @@ struct NavigatorColumn: View {
     /// Tapping the cluster opens the Connect-to-Host editor (``OverlayCoordinator/openConnect()``).
     var onConnect: () -> Void = {}
 
-    /// The transient sidebar search query — narrows the rows via the pure ``RailRowsBuilder/filtered`` (E6
-    /// WI-5). View-local `@State`: it is a presentational filter, NOT row order (which lives on the store).
+    /// The transient sidebar search query — narrows the rows via the pure ``RailRowsBuilder/filtered``.
+    /// View-local `@State`: it is a presentational filter, NOT row order (which lives on the store).
     @State private var query = ""
 
-    /// The memoized row model (perf audit): the sidebar body reads its rows from HERE so a settled body
+    /// The memoized row model: the sidebar body reads its rows from HERE so a settled body
     /// registers NO Observation dependency on the store's volatile per-pane dicts — a status/git/progress
     /// tick then re-renders only the cheap ``SidebarLiveRow`` leaves (which read their own pane's chrome
     /// live), never the whole rows + `disambiguated()` + sectioning + list-diff pass. Plain class in
@@ -60,18 +60,18 @@ struct NavigatorColumn: View {
     @State private var rowsMemo = RailRowsMemo()
 
     #if os(macOS)
-    /// Pointer-in-strip — the collapse toggle's hover-reveal gate (the otty behavior, 2026-07-11).
+    /// Pointer-in-strip — the collapse toggle's hover-reveal gate.
     @State private var stripHover = false
     #endif
 
     /// The rows the sidebar renders this eval — ALWAYS the memoized structural rows. The query filter
     /// (``RailRowsBuilder/filtered``) applies DOWNSTREAM over these same rows (`windowRows(from:)` +
     /// `sectionedByProject(_:tabOrder:query:)`), so search composes over the memo rather than bypassing it.
-    /// The old non-empty-query arm called `RailRowsBuilder.rows(for: store)` directly, which re-registered
+    /// Calling `RailRowsBuilder.rows(for: store)` directly for a non-empty query instead would re-register
     /// every volatile store dict as an Observation dependency of this body — while a query sat in the field
-    /// (it is never auto-cleared) EVERY agent/progress/git tick on ANY pane re-ran the full O(panes) build +
-    /// sectioning + list diff on the main thread: exactly the storm ``RailRowsMemo`` exists to kill.
-    /// Trade-off accepted: the filter now matches the CACHED copies of the volatile match fields (git-line
+    /// (it is never auto-cleared) EVERY agent/progress/git tick on ANY pane would re-run the full O(panes)
+    /// build + sectioning + list diff on the main thread: exactly the storm ``RailRowsMemo`` exists to kill.
+    /// Trade-off accepted: the filter matches the CACHED copies of the volatile match fields (git-line
     /// subtitle / process label), which can be one memo generation stale — same staleness contract as the
     /// rest of the cached row chrome. The structural match fields (title / cwd) re-key the memo on every
     /// change, so they are never stale. Parity + memo-hit pinned in `RailRowsMemoTests`.
@@ -81,14 +81,14 @@ struct NavigatorColumn: View {
 
     /// The active tab's active pane — drives which row reads as selected. iOS-only consumer (the system
     /// `List(selection:)` binding); the macOS rows read selection LIVE inside ``SidebarLiveRow`` so a focus
-    /// change repaints the two affected leaves directly — passing it down as an init param left the OLD
-    /// selected row's raised card on screen (the same lazy-container stale-value class as the 2026-07-11
-    /// "row title frozen at first render" fix; see ``RailRow/leafIdentity``).
+    /// change repaints the two affected leaves directly — passing it down as an init param would leave the OLD
+    /// selected row's raised card on screen (the same lazy-container stale-value class as the "row title
+    /// frozen at first render" fix; see ``RailRow/leafIdentity``).
     private var selectedPane: PaneID? {
         store.tree.activeSession?.activeTab?.activePane
     }
 
-    // MARK: - WINDOWS section (MERIDIAN C4)
+    // MARK: - WINDOWS section
 
     /// The remote-GUI pane rows, rendered as the sidebar's SECOND section (TABS · WINDOWS — same row anatomy,
     /// spec §3.6): the only difference is the leading identity monogram. Narrowed by the same search query as
@@ -167,7 +167,7 @@ struct NavigatorColumn: View {
     /// native vibrancy/rounding).
     private var macSidebar: some View {
         let allRows = renderedRows
-        // TABS · WINDOWS (MERIDIAN C4): remote-GUI pane rows leave the tab list for their own section
+        // TABS · WINDOWS: remote-GUI pane rows leave the tab list for their own section
         // below — same anatomy, the leading identity monogram is the only difference (spec §3.6).
         let tabRows = allRows.filter { $0.kind != .remoteGUI }
         let windows = windowRows(from: allRows)
@@ -181,9 +181,9 @@ struct NavigatorColumn: View {
             // visible mid-slide it glides with the moving edge and reads as a flash. So it shows only in the
             // SETTLED expanded state: hides INSTANTLY when the collapse flag flips (before the slide starts)
             // and, on expand, fades back only after the slide settles (0.25 clears the ~0.25s NSSplitView
-            // collapse animation; 0.15 still caught the tail). On top of that it is HOVER-REVEALED
-            // (2026-07-11, the otty behavior): at rest the strip is empty; the pointer entering the strip
-            // fades it in (`HoverSensor` — hit-test-transparent, the strip stays draggable).
+            // collapse animation; 0.15 still caught the tail). On top of that it is HOVER-REVEALED:
+            // at rest the strip is empty; the pointer entering the strip fades it in (`HoverSensor` —
+            // hit-test-transparent, the strip stays draggable).
             ZStack(alignment: .topTrailing) {
                 Color.clear
                 if let chrome {
@@ -202,7 +202,7 @@ struct NavigatorColumn: View {
             .frame(height: Slate.Metric.titlebarHeight)
             .background(HoverSensor { stripHover = $0 })
             HStack(spacing: 0) {
-                // MERIDIAN L2: the panel label speaks the INSTRUMENT voice (mono + wide tracking) — same
+                // The panel label speaks the INSTRUMENT voice (mono + wide tracking) — same
                 // register as `SlateSectionHeader`, one size up for the panel-level label.
                 Text("TABS")
                     .font(Slate.Typeface.instrument(Slate.Typeface.footnote, weight: .semibold))
@@ -234,7 +234,7 @@ struct NavigatorColumn: View {
                                 macRow(row)
                             }
                         }
-                        // The WINDOWS section (MERIDIAN C4): open remote-window panes, same row anatomy
+                        // The WINDOWS section: open remote-window panes, same row anatomy
                         // with the identity monogram; a window row's home is this derived section.
                         if !windows.isEmpty {
                             SlateSectionHeader("Windows")
@@ -257,8 +257,8 @@ struct NavigatorColumn: View {
                     .fill(Slate.Line.subtle)
                     .frame(maxWidth: .infinity)
                     .frame(height: Slate.Metric.hairline)
-                // The telemetry (ping / fps / kbps, ~1 Hz) is read inside `SidebarConnectionFooter` (perf
-                // audit) so its per-second ticks re-render that leaf, never this sidebar body.
+                // The telemetry (ping / fps / kbps, ~1 Hz) is read inside `SidebarConnectionFooter` so
+                // its per-second ticks re-render that leaf, never this sidebar body.
                 SidebarConnectionFooter(store: store, connection: connection, onConnect: onConnect)
                     .padding(.horizontal, Slate.Metric.space2)
                     .padding(.vertical, Slate.Metric.space2)
@@ -269,7 +269,7 @@ struct NavigatorColumn: View {
     }
 
     /// One macOS tab row: the full chrome (badge / subtitle / process label). The VOLATILE chrome
-    /// is read inside ``SidebarLiveRow`` (perf audit), so a pane's status tick re-renders that one leaf, not
+    /// is read inside ``SidebarLiveRow``, so a pane's status tick re-renders that one leaf, not
     /// this sidebar body.
     private func macRow(_ row: RailRow) -> some View {
         SidebarLiveRow(
@@ -282,16 +282,15 @@ struct NavigatorColumn: View {
             onRename: { commitRename(row, to: $0) },
             onCancelRename: { store.clearTabRenameRequest() },
         )
-        // The "row title frozen at first render" fix (2026-07-11): key the leaf's identity on the
-        // memoized fields it renders (``RailRow/leafIdentity``) so a structural rebuild that retitles
-        // this row (cwd landed / chooser resolved / rename) replaces the leaf instead of leaving the
-        // first-render title on screen. Volatile chrome — including SELECTION — is read live inside
-        // the leaf; focus-only changes keep the same identity (no churn).
+        // Keys the leaf's identity on the memoized fields it renders (``RailRow/leafIdentity``) so a
+        // structural rebuild that retitles this row (cwd landed / chooser resolved / rename) replaces
+        // the leaf instead of leaving the first-render title on screen. Volatile chrome — including
+        // SELECTION — is read live inside the leaf; focus-only changes keep the same identity (no churn).
         .id(row.leafIdentity)
         .contextMenu { rowContextMenu(row) }
     }
 
-    /// One macOS WINDOWS row (MERIDIAN C4): the SAME `SlateTabRow` chrome as a tab row (rename / badge /
+    /// One macOS WINDOWS row: the SAME `SlateTabRow` chrome as a tab row (rename / badge /
     /// hover close / context menu) — name-first like every other row (the thumbnail, then the monogram, were
     /// both pruned by user verdict); the owning APP is the instrument-voice subtitle (read live inside
     /// ``SidebarLiveRow`` so the model's own updates stay leaf-local).
@@ -324,7 +323,7 @@ struct NavigatorColumn: View {
     /// grouped `Section`s, and badge.
     private var iosSidebar: some View {
         let allRows = renderedRows
-        // TABS · WINDOWS (MERIDIAN C4) — same split as the macOS panel: remote-GUI pane rows render in
+        // TABS · WINDOWS — same split as the macOS panel: remote-GUI pane rows render in
         // their own trailing section (iOS keeps the system list rows).
         let tabRows = allRows.filter { $0.kind != .remoteGUI }
         let windows = windowRows(from: allRows)
@@ -371,7 +370,7 @@ struct NavigatorColumn: View {
 
     /// One iOS list row: the system `Label` (navigation wiring via `.tag`) plus the trailing fused badge.
     /// The VOLATILE chrome (badge / lock / rename mode)
-    /// is read inside ``IOSSidebarLiveRow`` (perf audit), so a pane's status tick re-renders that one leaf,
+    /// is read inside ``IOSSidebarLiveRow``, so a pane's status tick re-renders that one leaf,
     /// not this sidebar body. The rename commit reuses ``commitRename(_:to:)`` so the iOS + macOS paths
     /// share the same semantics (rename the pane so the row title wins, then dismiss the field).
     private func iosRow(_ row: RailRow) -> some View {
@@ -390,7 +389,7 @@ struct NavigatorColumn: View {
     }
     #endif
 
-    /// Commit an inline row rename (C3 BUG B): rename the pane (so ``RailRowsBuilder/rowTitle`` — which reads
+    /// Commit an inline row rename: rename the pane (so ``RailRowsBuilder/rowTitle`` — which reads
     /// the pane spec — surfaces it, winning over the folder name) then clear the pending state so the field
     /// closes. A blank draft renames nothing (``WorkspaceStore/renamePane(_:to:)`` no-ops), keeping the folder
     /// name; the pending state still clears so the field dismisses. Shared across the macOS + iOS row builders
@@ -400,7 +399,7 @@ struct NavigatorColumn: View {
         store.clearTabRenameRequest()
     }
 
-    // MARK: - Tab context menu (E13 WI-3 — Clear Badge + per-pane badge overrides + notify toggles)
+    // MARK: - Tab context menu (Clear Badge + per-pane badge overrides + notify toggles)
 
     /// The right-click / long-press menu for a sidebar row (`docs/ui-shell/screenshots/open-code-agent-history.png`):
     /// the Agent-Behaviour toggles surfaced on the tab. "Clear Badge" acknowledges the pane's completion/attention;
@@ -408,16 +407,16 @@ struct NavigatorColumn: View {
     /// the first flip preserves the other two — an absent override follows the global Settings → Agents
     /// default); the two NOTIFY items toggle the GLOBAL fire-time keys (notify prefs are global, not per-pane).
     /// Claude-only.
-    /// **Prevent Sleep While Processing** (Batch 4) is a host-LOCAL `AgentPreferences` flag in
+    /// **Prevent Sleep While Processing** is a host-LOCAL `AgentPreferences` flag in
     /// `PreferencesStore` (rides the sidecar → applies on reconnect; default-OFF). Surfaced only when the store
     /// is threaded in (the split-view host now does), bound to the SAME global `agent.preventSleep` Settings →
     /// Agent Behaviour edits. A `nil` store (preview / pre-injection) hides the row.
     @ViewBuilder
     private func rowContextMenu(_ row: RailRow) -> some View {
-        // C3 BUG B: a mouse-reachable "Rename" — sets the pending-rename for THIS row's tab so its inline
+        // A mouse-reachable "Rename" — sets the pending-rename for THIS row's tab so its inline
         // field opens (even on a background tab). Twin of the ⌘R / palette "Rename Pane" entry.
         Button("Rename") { store.requestRenameTab(row.tabID) }
-        // C3 BUG C d: an on-demand git-line re-probe for a terminal row (a video pane has no git surface).
+        // An on-demand git-line re-probe for a terminal row (a video pane has no git surface).
         if row.kind == .terminal {
             Button("Refresh Git Status") { store.refreshGitSummary(for: row.id) }
         }
@@ -444,7 +443,7 @@ struct NavigatorColumn: View {
             get: { Defaults[.agentNotifyAwaitInput] },
             set: { Defaults[.agentNotifyAwaitInput] = $0 },
         ))
-        // Prevent Sleep While Processing (E13 ES-E13-3) — the host-LOCAL system-sleep assertion gate. Bound to
+        // Prevent Sleep While Processing — the host-LOCAL system-sleep assertion gate. Bound to
         // the GLOBAL `agent.preventSleep` flag (the SAME Settings → Agent Behaviour edits), shown only when the
         // live store is threaded in. `?? false` mirrors the daemon default-OFF (`nil` ⇒ unset).
         if let preferences {
@@ -502,7 +501,7 @@ struct NavigatorColumn: View {
     }
 }
 
-/// One LIVE sidebar row (perf audit): the STRUCTURAL identity (pane id / title / cwd / kind) rides the
+/// One LIVE sidebar row: the STRUCTURAL identity (pane id / title / cwd / kind) rides the
 /// memoized ``RailRow``, while every VOLATILE field — the fused badge, git-line subtitle, foreground-process
 /// label, read-only lock, inline-rename mode — is read fresh HERE via
 /// ``RailRowsBuilder/liveChrome(for:store:)``. Observation still invalidates each row body when ANY pane's
@@ -513,7 +512,7 @@ private struct SidebarLiveRow: View {
     let row: RailRow
     /// The kind's generic title (``PaneChooserRegistry``) when the row title is empty.
     let fallbackTitle: String
-    /// MERIDIAN C4: a WINDOWS-section row prefers the live ``RemoteWindowModel`` app name for line 2.
+    /// A WINDOWS-section row prefers the live ``RemoteWindowModel`` app name for line 2.
     let isWindowRow: Bool
     let onSelect: () -> Void
     let onClose: () -> Void
@@ -521,8 +520,8 @@ private struct SidebarLiveRow: View {
     let onCancelRename: () -> Void
 
     var body: some View {
-        // FIX 1, relocated from the (now memoized) rows build: observe the flash-decay tick at ROW scope so
-        // a quiet completed pane still decays its brief `.completed` checkmark to the `.finished` dot —
+        // Observes the flash-decay tick at ROW scope (not in the memoized rows build) so a quiet
+        // completed pane still decays its brief `.completed` checkmark to the `.finished` dot —
         // `completionFreshness` reads the wall clock, not an `@Observable` dependency, so without this read
         // nothing would re-render this row at the flash-window boundary. `let _` (not a bare `_ =`) is
         // required — a `@ViewBuilder` rejects a bare Void discard statement.
@@ -553,7 +552,7 @@ private struct SidebarLiveRow: View {
         )
     }
 
-    /// The live remote-window model's owning app name (E21 WI-5) — the same store-registry lookup
+    /// The live remote-window model's owning app name — the same store-registry lookup
     /// ``ConnectionTelemetry`` uses, read at row scope so the model's own updates stay leaf-local.
     private var remoteAppName: String? {
         guard let model = (store.handle(for: row.id) as? LivePaneSession)?.remoteWindow,
@@ -563,8 +562,8 @@ private struct SidebarLiveRow: View {
 }
 
 /// The iOS twin of ``SidebarLiveRow``: the system `Label` row with the trailing lock + fused badge, its
-/// volatile chrome read fresh at row scope (perf audit). The layout is byte-identical to the pre-memo
-/// inline `HStack` — only WHERE the volatile fields are read moved.
+/// volatile chrome read fresh at row scope, keeping the layout equivalent to a plain inline `HStack`
+/// while only WHERE the volatile fields are read differs.
 private struct IOSSidebarLiveRow: View {
     let store: WorkspaceStore
     let row: RailRow
@@ -574,14 +573,14 @@ private struct IOSSidebarLiveRow: View {
     let onCancelRename: () -> Void
 
     var body: some View {
-        // FIX 1 at row scope — see ``SidebarLiveRow/body``.
+        // Same flash-decay-tick read at row scope — see ``SidebarLiveRow/body``.
         // swiftlint:disable:next redundant_discardable_let
         let _ = store.completionFlashTick
         let chrome = RailRowsBuilder.liveChrome(for: row, store: store)
         HStack(spacing: 8) {
             Label {
                 if chrome.isEditing {
-                    // The iOS inline-rename field (C3 BUG B) — commits on submit/blur (escape is macOS-only).
+                    // The iOS inline-rename field — commits on submit/blur (escape is macOS-only).
                     InlineRenameField(
                         seed: row.title.isEmpty ? fallbackTitle : row.title,
                         onCommit: onRename,
@@ -608,7 +607,7 @@ private struct IOSSidebarLiveRow: View {
     }
 }
 
-/// The sidebar's connection footer, split into its own leaf (perf audit): the ``ConnectionTelemetry``
+/// The sidebar's connection footer, split into its own leaf: the ``ConnectionTelemetry``
 /// reads (ping / fps / kbps) tick at ~1 Hz off the live session models — read HERE so each tick re-renders
 /// this footer only, never the sidebar body (which would re-derive the whole rail every second).
 private struct SidebarConnectionFooter: View {
@@ -628,7 +627,7 @@ private struct SidebarConnectionFooter: View {
     }
 }
 
-/// A small self-focusing inline rename `TextField` (C3 BUG B, iOS list rows) — owns its own draft `@State` so
+/// A small self-focusing inline rename `TextField` (iOS list rows) — owns its own draft `@State` so
 /// a `@ViewBuilder` row helper (which cannot hold state) can drop it in. Seeds from `seed` on open, commits on
 /// Return / focus-loss (`onCommit`), and — on macOS only — cancels on Escape (`onCancel`). A blank commit is a
 /// no-op rename downstream, so the field never blanks the row.

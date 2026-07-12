@@ -1,11 +1,11 @@
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// FPS GOVERNOR (2026-06-11): the regular-cadence content/congestion-adaptive fps policy that
-/// replaced the retired `AdaptiveFPSController` alternating skip. Pure value types — ladder +
-/// asymmetric hysteresis + budget test (`FPSGovernor`), schedule-anchored admit
-/// (`EncodeCadenceGate`), time-equivalent self-heal K (`SelfHealCadence`). All tests assume the
-/// default env tunables (warmup 10, downN 3, downHold 8, upN 60, headroom 1.2, minFps 15).
+/// FPS GOVERNOR: the regular-cadence content/congestion-adaptive fps policy — not an alternating
+/// skip. Pure value types — ladder + asymmetric hysteresis + budget test (`FPSGovernor`),
+/// schedule-anchored admit (`EncodeCadenceGate`), time-equivalent self-heal K (`SelfHealCadence`).
+/// All tests assume the default env tunables (warmup 10, downN 3, downHold 8, upN 60, headroom
+/// 1.2, minFps 15).
 final class FPSGovernorTests: XCTestCase {
     // MARK: Ladder
 

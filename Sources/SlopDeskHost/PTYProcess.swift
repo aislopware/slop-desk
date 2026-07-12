@@ -23,14 +23,14 @@ import SlopDeskProtocol
 /// A session leader acquires its ctty only by `open()`ing a tty WITHOUT `O_NOCTTY` *after*
 /// `setsid`. A `posix_spawn(POSIX_SPAWN_SETSID)` child only `dup2`s the already-open slave
 /// onto fd 0/1/2 — never `open()`s the tty — so for some programs the slave never becomes the
-/// ctty. Empirically (WF10, macOS 26.5.1) a `posix_spawn`ed **interactive zsh** ends up ctty-less
+/// ctty. Empirically, on macOS 26.5.1 a `posix_spawn`ed **interactive zsh** ends up ctty-less
 /// (`ps` shows `TTY=??`, `TPGID=0`): job control and `SIGWINCH` delivery are both broken, so a
 /// `TIOCSWINSZ` on the master delivers no resize signal and the post-resize prompt blanks with
-/// zero reprint bytes. (`/bin/sh -c …` happened to acquire it — why the old `testControllingTTY`
-/// over `/bin/sh` passed while the live interactive shell was broken.) `login_tty` claims the ctty
-/// explicitly, fixing this. Verified by `SlopDeskHostTests.testControllingTTY` over **interactive
-/// zsh** (`tty </dev/tty` resolves; `stty size` reflects the openpty winsize; `TIOCSWINSZ` +
-/// `SIGWINCH` reflow works).
+/// zero reprint bytes. (`/bin/sh -c …` acquires a ctty on its own, so testing only over `/bin/sh`
+/// would pass even with the interactive-shell path broken — it doesn't exercise the failure.)
+/// `login_tty` claims the ctty explicitly, fixing this. Verified by
+/// `SlopDeskHostTests.testControllingTTY` over **interactive zsh** (`tty </dev/tty` resolves;
+/// `stty size` reflects the openpty winsize; `TIOCSWINSZ` + `SIGWINCH` reflow works).
 ///
 /// `setBlocking(true)` clears `O_NONBLOCK` on the master FD around spawn — a
 /// non-blocking master breaks the blocking read relay (Happy #301).
@@ -65,7 +65,7 @@ public final class PTYProcess: @unchecked Sendable {
     ///   - executable: absolute path to the program (e.g. the user's `$SHELL`).
     ///   - arguments: argv (excluding argv[0]; pass `argv0` to override argv[0],
     ///     e.g. `-zsh` for a login shell).
-    ///   - environment: full environment for the child. Pass a curated env (WF-7 owns
+    ///   - environment: full environment for the child. Pass a curated env (the caller owns
     ///     `TERM=xterm-ghostty`, `CLAUDE_CODE_NO_FLICKER=1`, etc.).
     ///   - argv0: the value for `argv[0]`. Defaults to `executable`. A login shell uses
     ///     a leading `-` (e.g. `-zsh`).
@@ -247,7 +247,7 @@ public final class PTYProcess: @unchecked Sendable {
     // MARK: setBlocking
 
     /// Clears `O_NONBLOCK` on `fd` so reads/writes block (Happy #301).
-    /// Exposed for WF-3 wiring and tests.
+    /// Exposed for wiring and tests.
     public static func setBlocking(_ fd: Int32) {
         let flags = fcntl(fd, F_GETFL)
         if flags >= 0 {
@@ -281,7 +281,7 @@ public final class PTYProcess: @unchecked Sendable {
         // same lock, then closes the fd) cannot null + recycle the fd between this read and the syscall —
         // otherwise the TIOCSWINSZ could land on an unrelated, just-reopened fd with the same number (a
         // TOCTOU). Safe/non-deadlocking: TIOCSWINSZ is a microsecond non-blocking syscall that never
-        // re-enters PTYProcess (R13 #12).
+        // re-enters PTYProcess.
         exitLock.lock()
         defer { exitLock.unlock() }
         guard masterFD >= 0 else { return }
@@ -415,7 +415,7 @@ public final class PTYProcess: @unchecked Sendable {
     }
 
     /// Non-blocking peek at the exit code, or `nil` if the child is still running /
-    /// not yet reaped. (Retained for diagnostics / the WF-3 seam contract.)
+    /// not yet reaped. (Retained for diagnostics / the seam contract.)
     public func waitExitCode() -> Int32? {
         exitLock.lock()
         defer { exitLock.unlock() }

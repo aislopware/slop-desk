@@ -5,7 +5,7 @@ import SlopDeskAgentDetect
 /// `docs/ui-shell/spec/terminal-features__progress-state.md`, "Tab badges reflect the current progress state per tab").
 ///
 /// PURE value type, **no SwiftUI**: the SF-symbol + tint mapping lives in the view layer
-/// (`SlopDeskClientUI` `TabBadgeView`, WI-4) so this resolver unit-tests headless. There is
+/// (`SlopDeskClientUI` `TabBadgeView`) so this resolver unit-tests headless. There is
 /// deliberately **no `.none` case** — the absence of a badge is `TabBadgeKind?` `nil`, not a sentinel.
 ///
 /// Each case maps to a badge described in `progress-state.md` → "The full badge set".
@@ -21,9 +21,9 @@ public enum TabBadgeKind: Equatable, Sendable {
     /// ``running`` and above ``commandBusy``.
     case commandRunning
     /// **Busy (command)** — a plain busy shell (`isBusy`, no OSC 9;4 report): a foreground command is
-    /// running, nothing more is known. The static muted dot, NO spinner (2026-07-10 round 3: a bare busy
-    /// dot yes, an always-spinning ring no — the ring is reserved for an explicit progress report / a
-    /// working agent). Ranks just below ``commandRunning`` and above the privilege badges.
+    /// running, nothing more is known. The static muted dot, NO spinner — the ring is reserved for an
+    /// explicit progress report or a working agent, not a bare busy bit. Ranks just below
+    /// ``commandRunning`` and above the privilege badges.
     case commandBusy
     /// **Completed** — the green checkmark. The brief success flash a command shows on a clean exit
     /// (`OSC 133;D` exit 0) before it settles to ``finished``. This resolver emits ``completed`` for a
@@ -74,7 +74,7 @@ public enum TabBadgeKind: Equatable, Sendable {
 /// The PURE fusion policy that collapses the four per-pane badge signals into the single
 /// ``TabBadgeKind`` a tab row shows. One badge per row; most-urgent wins.
 ///
-/// **Fixed precedence** (E6 plan Design #5, distilled from `progress-state.md` + `parallel-tasks.md`):
+/// **Fixed precedence** (distilled from `progress-state.md` + `parallel-tasks.md`):
 ///
 /// ```
 /// awaitingInput  >  error  >  running(agent)  >  commandRunning  >  commandBusy  >  sudo  >  caffeinate  >  completed/finished  >  nil
@@ -123,7 +123,7 @@ public enum TabBadgeResolver {
     ///     ``CompletionFreshness/fresh`` checkmark FLASH or has ``CompletionFreshness/settled`` into the
     ///     accent dot. Supplied by the store (an ephemeral `completedAt` vs "now"); defaults to
     ///     ``CompletionFreshness/settled`` so an un-stamped completion shows the persistent marker.
-    ///   - progress: the live OSC 9;4 ``PaneProgress`` (E14/K1, wire type 32), or `nil` when there is no
+    ///   - progress: the live OSC 9;4 ``PaneProgress`` (wire type 32), or `nil` when there is no
     ///     active indicator. ``PaneProgress/error`` resolves to the ``error`` alert (a held-red `9;4;2`,
     ///     ranked with a failed exit); an active ``PaneProgress/indeterminate``/``PaneProgress/determinate``
     ///     resolves to the ``running`` spinner — reusing the EXISTING tiers, no new badge kind. Outranks a
@@ -148,9 +148,9 @@ public enum TabBadgeResolver {
 
         // 3. Activity — a WORKING agent gets the loud agent badge (``running``); an active OSC 9;4;1/3
         // progress gets the QUIET spinner marker (``commandRunning``); a merely-busy shell gets the bare
-        // static busy dot (``commandBusy`` — 2026-07-10 round 3: a quiet dot yes, a spinner only for an
-        // explicit progress report). Most-informative wins. (A progress `.error` already returned at the
-        // error tier above, so `isRunning` here is exactly the "still going" states.)
+        // static busy dot (``commandBusy`` — a spinner is earned only by an explicit progress report or
+        // a working agent, never by the bare busy bit alone). Most-informative wins. (A progress `.error`
+        // already returned at the error tier above, so `isRunning` here is exactly the "still going" states.)
         if agent == .working { return .running }
         if let progress, progress.isRunning { return .commandRunning }
         if isBusy { return .commandBusy }

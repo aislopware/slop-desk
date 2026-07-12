@@ -122,9 +122,9 @@ final class InputMechanicsTests: XCTestCase {
 
     // MARK: KeyEncoding — the platform-agnostic terminal byte mapping (the headless-testable core of
 
-    // the iOS key path; the UIKit `TerminalInputResponderView` forwards to it). R12 #3 / #5 / #6.
+    // the iOS key path; the UIKit `TerminalInputResponderView` forwards to it).
 
-    // #3 — Ctrl maps the full C0 control range, not just letters.
+    // Ctrl maps the full C0 control range, not just letters.
 
     func testControlCodeMapsLetters() {
         XCTAssertEqual(KeyEncoding.controlCode(for: "a"), [0x01])
@@ -152,7 +152,7 @@ final class InputMechanicsTests: XCTestCase {
         XCTAssertEqual(KeyEncoding.encode(press), [0x1B])
     }
 
-    // #5 — Option + special key applies the xterm meta/ESC prefix (was dropped → bare key).
+    // Option + special key applies the xterm meta/ESC prefix (was dropped → bare key).
 
     func testOptionBackspaceEmitsMetaDEL() {
         let press = InputRouting.KeyPress(characters: "\u{7F}", option: true, isSpecial: true)
@@ -169,7 +169,7 @@ final class InputMechanicsTests: XCTestCase {
         XCTAssertEqual(KeyEncoding.encode(press), [0x1B, 0x0D])
     }
 
-    // #6 — Shift+Tab is back-tab (CBT, ESC [ Z); plain Tab stays forward TAB.
+    // Shift+Tab is back-tab (CBT, ESC [ Z); plain Tab stays forward TAB.
 
     func testShiftTabEncodesBackTab() {
         let press = InputRouting.KeyPress(characters: "\t", shift: true, isSpecial: true)
@@ -193,7 +193,7 @@ final class InputMechanicsTests: XCTestCase {
         XCTAssertNil(KeyEncoding.encode(press))
     }
 
-    // R13 #5 — Ctrl+Option+letter keeps the meta/ESC prefix (was dropping Option → bare Ctrl code).
+    // Ctrl+Option+letter keeps the meta/ESC prefix (was dropping Option → bare Ctrl code).
 
     func testEncodeCtrlOptionLetterMetaControlPrefix() {
         let press = InputRouting.KeyPress(
@@ -207,7 +207,7 @@ final class InputMechanicsTests: XCTestCase {
         XCTAssertEqual(KeyEncoding.encode(press), [0x03]) // non-regression: bare Ctrl-C
     }
 
-    // R13 #6 — accessory-bar Ctrl fold for soft-keyboard text (was a dead no-op → Ctrl-C impossible).
+    // Accessory-bar Ctrl fold for soft-keyboard text (was a dead no-op → Ctrl-C impossible).
 
     func testFoldArmedControlFoldsFirstScalar() {
         let folded = KeyEncoding.foldArmedControl("c", armed: true)
@@ -240,7 +240,7 @@ final class InputMechanicsTests: XCTestCase {
         XCTAssertEqual(KeyEncoding.encode(optUp, arrowFallback: fallback), [0x1B, 0x1B, 0x5B, 0x41])
     }
 
-    // MARK: DECCKM-aware arrows (docs/29 #6) — the pure tables, no iOS-layer fallback needed
+    // MARK: DECCKM-aware arrows (docs/29-NIGHT-HANDOFF.md) — the pure tables, no iOS-layer fallback needed
 
     private func arrowPress(_ characters: String, option: Bool = false) -> InputRouting.KeyPress {
         InputRouting.KeyPress(characters: characters, option: option, isSpecial: true)
@@ -248,7 +248,7 @@ final class InputMechanicsTests: XCTestCase {
 
     func testEncodeArrowsNormalModeAreCSI() {
         // DECCKM reset (the default): arrows are CSI `ESC [ A…D` — resolved by the pure table,
-        // WITHOUT an injected fallback (pre-#6 these all returned nil and the key died).
+        // WITHOUT an injected fallback (a missing table entry returns nil and the key dies).
         XCTAssertEqual(KeyEncoding.encode(arrowPress("\u{F700}")), [0x1B, 0x5B, 0x41]) // Up
         XCTAssertEqual(KeyEncoding.encode(arrowPress("\u{F701}")), [0x1B, 0x5B, 0x42]) // Down
         XCTAssertEqual(KeyEncoding.encode(arrowPress("\u{F703}")), [0x1B, 0x5B, 0x43]) // Right
@@ -256,8 +256,8 @@ final class InputMechanicsTests: XCTestCase {
     }
 
     func testEncodeArrowsApplicationModeAreSS3() {
-        // DECCKM set (vim/less/htop): arrows must switch to SS3 `ESC O A…D` — the #6 bug was
-        // emitting CSI unconditionally.
+        // DECCKM set (vim/less/htop): arrows must switch to SS3 `ESC O A…D`, not emit CSI
+        // unconditionally.
         XCTAssertEqual(KeyEncoding.encode(arrowPress("\u{F700}"), applicationCursorKeys: true), [0x1B, 0x4F, 0x41])
         XCTAssertEqual(KeyEncoding.encode(arrowPress("\u{F701}"), applicationCursorKeys: true), [0x1B, 0x4F, 0x42])
         XCTAssertEqual(KeyEncoding.encode(arrowPress("\u{F703}"), applicationCursorKeys: true), [0x1B, 0x4F, 0x43])
@@ -265,7 +265,7 @@ final class InputMechanicsTests: XCTestCase {
     }
 
     func testEncodeOptionArrowKeepsMetaPrefixInBothModes() {
-        // Option+arrow takes the same metaSendsEscape prefix as every special key (R12 #5), around
+        // Option+arrow takes the same metaSendsEscape prefix as every special key, around
         // whichever introducer the mode picked.
         XCTAssertEqual(KeyEncoding.encode(arrowPress("\u{F700}", option: true)), [0x1B, 0x1B, 0x5B, 0x41])
         XCTAssertEqual(

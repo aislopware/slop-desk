@@ -1,4 +1,4 @@
-// Visual-verification harness (L10) — renders a chrome showcase to a PNG via ImageRenderer so the
+// Visual-verification harness — renders a chrome showcase to a PNG via ImageRenderer so the
 // palette + component kit can be eyeballed headlessly (no GUI/TCC). Opt-in: INERT unless the env var
 // `SLOPDESK_SNAPSHOT_OUT=<path.png>` is set, so `swift test` / `make check` never write a file. Run on demand:
 //   SLOPDESK_SNAPSHOT_OUT="$PWD/.build/showcase.png" swift test --filter SlateSnapshotRender
@@ -34,10 +34,10 @@ final class SlateSnapshotRender: XCTestCase {
         print("SLOPDESK_SNAPSHOT_WRITTEN \(out)")
     }
 
-    // MARK: - E2 / WI-6: opt-in render of the new overlay panels (palette + cheat sheet)
+    // MARK: - Opt-in render of the overlay panels (palette + cheat sheet)
 
     /// Renders the live ``PaletteView`` (typed query, fzf-highlighted rows, a ✓ toggled gutter) and the
-    /// ``KeyboardCheatSheetView`` (the full grouped binding table) on a dimmed scrim so the E2 overlays can be
+    /// ``KeyboardCheatSheetView`` (the full grouped binding table) on a dimmed scrim so the overlays can be
     /// eyeballed headlessly — the SAME `ImageRenderer` opt-in idiom as `testRenderSlateShowcase`, NO CI gate.
     /// Opt-in via a directory (not the showcase's single-file `SLOPDESK_SNAPSHOT_OUT`, which it would otherwise
     /// clobber): `SLOPDESK_OVERLAY_SNAPSHOT_DIR=<dir>` writes `palette.png` + `cheatsheet.png` into it. Inert
@@ -46,7 +46,7 @@ final class SlateSnapshotRender: XCTestCase {
     @MainActor
     func testRenderOverlayPanels() throws {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_OVERLAY_SNAPSHOT_DIR"] else {
-            throw XCTSkip("set SLOPDESK_OVERLAY_SNAPSHOT_DIR=<dir> to render the E2 overlay panels")
+            throw XCTSkip("set SLOPDESK_OVERLAY_SNAPSHOT_DIR=<dir> to render the overlay panels")
         }
 
         let store = WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
@@ -66,16 +66,16 @@ final class SlateSnapshotRender: XCTestCase {
         try render(scrimmed(cheat), size: CGSize(width: 920, height: 700), to: dir, named: "cheatsheet.png")
     }
 
-    // MARK: - E6 / WI-4: opt-in render of the sidebar tab-row badge states
+    // MARK: - Opt-in render of the sidebar tab-row badge states
 
     /// Renders `SlateTabRow` in each badge state (spinner / error / hand / check / accent dot) plus the active
-    /// white card with a subtitle + process label — the visual lock for the E6 sidebar row. SAME
+    /// white card with a subtitle + process label — the visual lock for the sidebar row. SAME
     /// `ImageRenderer` opt-in idiom as the showcase; inert (skipped) unless `SLOPDESK_TABROW_SNAPSHOT_DIR=<dir>`
     /// is set, where it writes `tab-row-badges.png`. NO video/Metal — a badge is pure SwiftUI.
     @MainActor
     func testRenderTabRowBadges() throws {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
-            throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the E6 tab-row badge states")
+            throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the tab-row badge states")
         }
         let panel = VStack(alignment: .leading, spacing: 2) {
             badgeRow("full-release.sh", badge: .running)
@@ -106,10 +106,10 @@ final class SlateSnapshotRender: XCTestCase {
         SlateTabRow(title: title, active: false, badge: badge, onSelect: {}, onClose: {})
     }
 
-    // MARK: - E6 / WI-5: opt-in render of the grouped NavigatorColumn (search + By-Project sections)
+    // MARK: - Opt-in render of the grouped NavigatorColumn (search + By-Project sections)
 
     /// Renders the live ``NavigatorColumn`` over a headless store grouped By-Project — the visual lock for the
-    /// E6 WI-5 sidebar: the "TABS" header + sort hamburger, the flat search field, and the tabs bucketed into
+    /// sidebar: the "TABS" header + sort hamburger, the flat search field, and the tabs bucketed into
     /// `SlateSectionHeader` sections (project basenames) with the per-row `#N` / badge chrome. SAME
     /// `ImageRenderer` opt-in idiom as the badge render; writes `navigator-grouped.png` into
     /// `SLOPDESK_TABROW_SNAPSHOT_DIR`. Headless: a `.tree` store over `MountTestPaneSession` (no socket / video /
@@ -117,7 +117,7 @@ final class SlateSnapshotRender: XCTestCase {
     @MainActor
     func testRenderNavigatorGrouped() throws {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
-            throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the E6 grouped navigator")
+            throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the grouped navigator")
         }
         let nav = NavigatorColumn(store: makeGroupedNavigatorStore())
         try render(nav, size: CGSize(width: 240, height: 470), to: dir, named: "navigator-grouped.png")

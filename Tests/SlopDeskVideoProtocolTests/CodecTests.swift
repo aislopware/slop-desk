@@ -47,8 +47,8 @@ final class CodecTests: XCTestCase {
         // Symmetric to testInputEventRejectsNonFiniteFloatFields (host-bound): the CLIENT-bound cursor
         // codec must also reject NaN/±inf. A non-finite position/hotspot off the wire would propagate
         // NaN through the client's aspect-fit math into a CALayer frame → uncaught CALayerInvalidGeometry
-        // crash. Decode must throw .malformed so receiveCursor drops the single packet (audit FIX:
-        // cursor-NaN client crash). Encode/decode round-trips the raw IEEE-754 bits, so we can craft one.
+        // crash. Decode must throw .malformed so receiveCursor drops the single packet.
+        // Encode/decode round-trips the raw IEEE-754 bits, so we can craft one.
         let nonFinite: [CursorUpdate] = [
             CursorUpdate(position: VideoPoint(x: .nan, y: 0), shapeID: 1, hotspot: VideoPoint(x: 0, y: 0)),
             CursorUpdate(position: VideoPoint(x: 0, y: .infinity), shapeID: 1, hotspot: VideoPoint(x: 0, y: 0)),
@@ -250,7 +250,7 @@ final class CodecTests: XCTestCase {
         let cases: [RecoveryMessage] = [
             .ack(streamSeq: 0),
             .ack(streamSeq: .max),
-            // Component 2: both loss-recovery requests carry the client's decode frontier
+            // Both loss-recovery requests carry the client's decode frontier
             // (lastDecodedFrameID), incl. the "nothing decoded yet" wire sentinel.
             .requestLTRRefresh(fromFrameID: 10, toFrameID: 14, lastDecodedFrameID: 9),
             .requestLTRRefresh(
@@ -264,11 +264,11 @@ final class CodecTests: XCTestCase {
             .requestCursorShape(shapeID: 0),
             .requestCursorShape(shapeID: .max),
             // Network-feedback telemetry: a mix of 0 / .max / mid field values to exercise the
-            // 11-UInt32 body byte-for-byte (the network-feedback channel). Component 3 appends the
-            // trend fields: the defaulted-0 case, .max, and a NEGATIVE modified-trend Int32
-            // bit-pattern (an underusing/draining detector reading) with packed state+deltas flags.
-            // Component 4 appends the pacer presentation-health fields (late/gaps/depth) — the
-            // all-defaulted, .max and mid cases exercise them 0 / saturated / realistic.
+            // 11-UInt32 body byte-for-byte (the network-feedback channel). The trend fields get
+            // the defaulted-0 case, .max, and a NEGATIVE modified-trend Int32 bit-pattern (an
+            // underusing/draining detector reading) with packed state+deltas flags. The pacer
+            // presentation-health fields (late/gaps/depth) get all-defaulted, .max, and mid
+            // cases to exercise them 0 / saturated / realistic.
             .networkStats(NetworkStatsReport(
                 framesReceived: 0,
                 fecRecovered: 0,
@@ -326,10 +326,10 @@ final class CodecTests: XCTestCase {
         XCTAssertThrowsError(try RecoveryMessage.decode(Data([99])))
     }
 
-    /// WF-8: the client sends `ack` carrying a FRAME ID (the dead ack path repurposed — the
+    /// The client sends `ack` carrying a FRAME ID (the dead ack path repurposed — the
     /// `streamSeq` field name is historical) after decoding an LTR-flagged frame. It is the same wire
     /// shape as the legacy ack, so it round-trips byte-for-byte; the host reinterprets the UInt32 as a
-    /// frameID. This documents that no new message type / header growth is needed for WF-8.
+    /// frameID. This documents that LTR acknowledgement needs no new message type or header growth.
     func testWF8AckCarriesFrameIDRoundTrip() throws {
         for frameID: UInt32 in [0, 1, 12345, .max] {
             let message = RecoveryMessage.ack(streamSeq: frameID)
@@ -344,9 +344,9 @@ final class CodecTests: XCTestCase {
 
     /// A NetworkStats datagram with a body shorter than the fixed 44-byte (11×UInt32) payload must
     /// throw `.truncated` so the router drops it — a malformed stats packet never crashes the host.
-    /// (Component 3 grew the body 24→32: owdTrendMilli + owdTrendFlags appended; component 4 grew
-    /// it 32→44: pacerLateFrames/pacerPresentGaps/pacerDepth appended. Each previous full length —
-    /// 25 and 33 — is now itself a truncated prefix.)
+    /// (The body grew 24→32 with owdTrendMilli + owdTrendFlags, then 32→44 with
+    /// pacerLateFrames/pacerPresentGaps/pacerDepth. Each earlier full length — 25 and 33 —
+    /// is now itself a truncated prefix.)
     func testNetworkStatsRejectsTruncatedBody() {
         let full = RecoveryMessage.networkStats(NetworkStatsReport(
             framesReceived: 1,
@@ -370,13 +370,13 @@ final class CodecTests: XCTestCase {
         }
     }
 
-    /// Component 2: the 12-byte requestLTRRefresh body (3×UInt32) and the 4-byte requestIDR body
+    /// The 12-byte requestLTRRefresh body (3×UInt32) and the 4-byte requestIDR body
     /// (1×UInt32) both throw `.truncated` on every short prefix — the router drops, never crashes.
     func testRecoveryRequestsRejectTruncatedBodies() {
         let ltr = RecoveryMessage.requestLTRRefresh(fromFrameID: 1, toFrameID: 2, lastDecodedFrameID: 3).encode()
         XCTAssertEqual(ltr.count, 13, "type byte + 3 UInt32 = 13 bytes")
-        // 9 = the PRE-component-2 full requestLTRRefresh length (type byte + 2 UInt32, before
-        // lastDecodedFrameID grew the body) — the most regression-prone boundary in the sweep.
+        // 9 = the requestLTRRefresh length before lastDecodedFrameID grew the body (type byte +
+        // 2 UInt32) — the most regression-prone boundary in the sweep.
         for prefix in [1, 4, 8, 9, 12] {
             XCTAssertThrowsError(try RecoveryMessage.decode(ltr.prefix(prefix))) { error in
                 XCTAssertEqual(error as? VideoProtocolError, .truncated, "LTR prefix \(prefix) should be .truncated")
@@ -436,7 +436,7 @@ final class CodecTests: XCTestCase {
     func testRecoveryPolicyPrefersLTRThenEscalatesAfterTwoRTT() {
         let policy = RecoveryPolicy(idrTimeoutRTTMultiple: 2.0)
         // First response to a loss is an LTR refresh, not an IDR — and it passes the client's
-        // decode frontier through verbatim (component 2).
+        // decode frontier through verbatim.
         XCTAssertEqual(
             policy.initialRequest(lostFrom: 5, lostTo: 8, lastDecoded: 4),
             .requestLTRRefresh(fromFrameID: 5, toFrameID: 8, lastDecodedFrameID: 4),

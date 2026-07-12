@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E11 WI-1 — the Folders frecency engine + persisted store.
+/// The Folders frecency engine + persisted store.
 ///
 /// Two surfaces under test:
 /// - ``FolderFrecency`` (PURE): `score(entry:now:)` = frequency × bucketed-recency, and `ranked(...)`

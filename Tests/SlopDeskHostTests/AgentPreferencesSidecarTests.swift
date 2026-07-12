@@ -2,7 +2,7 @@ import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskHost
 
-/// E13 WI-3 (ES-E13-3): the two new host-LOCAL agent flags (prevent-sleep, resume-on-recovery) round-trip
+/// The two host-LOCAL agent flags (prevent-sleep, resume-on-recovery) round-trip
 /// from the ``AgentPreferences`` sidecar through ``EnvBridge`` into the ``HostEnvironment`` readers, with the
 /// correct default idiom on each (prevent-sleep DEFAULT-OFF `== "1"`, resume-on-recovery DEFAULT-ON `!= "0"`).
 final class AgentPreferencesSidecarTests: XCTestCase {
@@ -55,7 +55,7 @@ final class AgentPreferencesSidecarTests: XCTestCase {
     }
 
     /// A default (all-`nil`) ``AgentPreferences`` contributes NO entries, so the readers keep their compile-time
-    /// defaults (prevent-sleep OFF, resume-on-recovery ON) — the W12 empty-overlay behaviour-preservation rule.
+    /// defaults (prevent-sleep OFF, resume-on-recovery ON) — the empty-overlay behaviour-preservation rule.
     func testDefaultPreferencesLeaveCompileTimeDefaults() {
         let env = EnvBridge.toEnv(AgentPreferences())
         XCTAssertNil(env["SLOPDESK_AGENT_PREVENT_SLEEP"])
@@ -64,13 +64,12 @@ final class AgentPreferencesSidecarTests: XCTestCase {
         XCTAssertTrue(HostEnvironment.agentResumeOnRecoveryEnabled(environment: env))
     }
 
-    // The flag was a live, enabled UI toggle whose host reader had ZERO consumers (a no-op). "Resume
-    // Session on Recovery" maps onto `DetachedSessionStore`, so the actuation AND-s the flag into
+    // "Resume Session on Recovery" maps onto `DetachedSessionStore`, so the actuation AND-s the flag into
     // `HostServer.detachEnabled` — the single reattach gate. These pin that the consumer exists: OFF forces
-    // detach off (a recovered terminal spawns a fresh shell instead of reattaching), ON leaves it on. Both
-    // FAIL on the un-fixed code, where `detachEnabled` ignored the flag and stayed ON regardless.
+    // detach off (a recovered terminal spawns a fresh shell instead of reattaching), ON leaves it on.
+    // Regression guard: a `detachEnabled` that ignores the flag and stays ON regardless fails both.
 
-    // MARK: - ES-E13-6 ACTUATION — `resumeOnRecovery` gates `HostServer.detachEnabled` (the reattach machinery)
+    // MARK: - ACTUATION — `resumeOnRecovery` gates `HostServer.detachEnabled` (the reattach machinery)
 
     /// Explicit override: `resumeOnRecovery: false` forces `detachEnabled` off even when detach is requested.
     func testResumeOffForcesDetachOffViaInitOverride() {

@@ -4,7 +4,7 @@ import XCTest
 import AppKit // NSApplication.didResign/BecomeActiveNotification — the real app-frontmost edge under test
 #endif
 
-/// E17 ES-E17-4 / WI-7 — the ``SecureKeyboardEntryController`` BALANCE invariant for macOS Secure Keyboard
+/// The ``SecureKeyboardEntryController`` BALANCE invariant for macOS Secure Keyboard
 /// Entry. The process-global `EnableSecureEventInput()` is reference-counted: a leaked / doubled call secures
 /// (or unbalances) the whole machine's keyboard, so the controller MUST call `enable` exactly once on the
 /// false→true engage edge and `disable` exactly once on the true→false disengage edge — never twice the same
@@ -132,7 +132,7 @@ final class SecureKeyboardEntryControllerTests: XCTestCase {
     }
 
     #if os(macOS)
-    /// The LEAK guard the review flagged: an engaged secure-input hold MUST be released when the app stops
+    /// The LEAK guard: an engaged secure-input hold MUST be released when the app stops
     /// being frontmost (the user ⌘-Tabs away — e.g. to a password manager — while a remote no-echo prompt is
     /// still up), driven by the REAL `NSApplication` active/resign notifications the controller observes via
     /// ``SecureKeyboardEntryController/observeAppActivity()`` — not just by a hand-called `setAppActive`. Posts

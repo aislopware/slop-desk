@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E17 ES-E17-1 / WI-2 — the per-pane READ-ONLY store seams (``WorkspaceStore/setPaneReadOnly(_:_:)`` /
+/// The per-pane READ-ONLY store seams (``WorkspaceStore/setPaneReadOnly(_:_:)`` /
 /// ``WorkspaceStore/toggleReadOnlyInActivePane()`` / ``WorkspaceStore/isReadOnly(for:)``) and their
 /// CONVERGENCE onto the single ``WorkspaceStore/paneReadOnly`` source of truth the pill `×`, the View menu,
 /// and the command-palette term all funnel to.
@@ -143,10 +143,10 @@ final class ReadOnlyStoreTests: XCTestCase {
         XCTAssertTrue(store.paneReadOnly.contains(a), "the survivor keeps its lock")
     }
 
-    // MARK: - E21 WI-3 — read-only DRIVES the `.remoteGUI` video-input gate (the load-bearing one)
+    // MARK: - Read-only DRIVES the `.remoteGUI` video-input gate (the load-bearing one)
 
     #if canImport(SwiftUI)
-    /// **E21 WI-3 — the read-only INPUT gate on the video seam.** A `.remoteGUI` pane has no live terminal
+    /// **The read-only INPUT gate on the video seam.** A `.remoteGUI` pane has no live terminal
     /// model, so `setPaneReadOnly` lands purely in the convergent ``WorkspaceStore/paneReadOnly`` set (the
     /// set-only path). The pure ``RemotePaneContext/videoLeaf(isActive:readOnly:...)`` derivation `GuiLeafView`
     /// uses maps that policy onto the app-target client's gate: `inputEnabled == !readOnly`. So a locked remote
@@ -174,7 +174,7 @@ final class ReadOnlyStoreTests: XCTestCase {
         XCTAssertFalse(locked.inputEnabled, "a read-only `.remoteGUI` pane forwards NO input (the app-target gate)")
     }
 
-    /// **E21 WI-3 — read-only CLEARS the paste-as-keystrokes sink at the seam (no model→store coupling).**
+    /// **Read-only CLEARS the paste-as-keystrokes sink at the seam (no model→store coupling).**
     /// The video view publishes a live key-injection sink through ``RemotePaneContext/onKeyInjectorReady``;
     /// the `.videoLeaf` derivation hands the model a `nil` sink instead while read-only, so the model's
     /// ``RemoteWindowModel/canPasteKeystrokes`` is `false` and ``RemoteWindowModel/pasteAsKeystrokes(_:)`` is
@@ -201,7 +201,7 @@ final class ReadOnlyStoreTests: XCTestCase {
         XCTAssertFalse(model.canPasteKeystrokes, "read-only: paste-as-keystrokes is inert")
     }
 
-    /// **C5 — read-only WITHHOLDS the Release-Stuck-Input sink at the seam.** The escape hatch sends
+    /// **Read-only WITHHOLDS the Release-Stuck-Input sink at the seam.** The escape hatch sends
     /// host input (synthetic key/mouse releases), so — exactly like the paste-as-keystrokes sink — the
     /// `.videoLeaf` derivation binds `nil` while read-only: the palette row is inert on a locked pane
     /// (`canReleaseStuckInput == false`) without the model ever learning the read-only state.

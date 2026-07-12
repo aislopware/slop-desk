@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskHost
 
-/// E13 WI-1 — the PURE ``AgentInstaller/isInstalled(settingsPath:fileManager:)`` marker read that backs
+/// The PURE ``AgentInstaller/isInstalled(settingsPath:fileManager:)`` marker read that backs
 /// the host's `agentHookStatus` (verb 13) wire reply + the Agents settings card's status row. Proves it
 /// is `true` only after a real install, `false` after uninstall, and TOLERANT of a missing / hook-less /
 /// corrupt settings file (returns `false`, never traps). Every assertion reverts-to-confirm-fail:
@@ -80,13 +80,14 @@ final class AgentInstallerStatusTests: XCTestCase {
         XCTAssertFalse(AgentInstaller.isInstalled(settingsPath: settings))
     }
 
-    // MARK: - verb-13 flag payload (queue-safety cluster, 2026-07-02)
+    // MARK: - verb-13 flag payload
 
     /// The exact `[installed][listenerActive]` byte shape of the `agentHookStatus` (13) reply
     /// (docs/20), pinned via the PURE `HostAgentActionPerformer.statusFlags` (no disk — the
     /// disk-touching verbs stay compiled + code-reviewed only). The second byte is the LIVE
     /// listener-bind truth: `[1,0]` is the installed-but-INACTIVE case the Settings card warns on —
-    /// pre-fix the payload was one byte and the card showed a false green over a dead integration.
+    /// a single-byte payload can't distinguish this from a healthy install, which would show a false
+    /// green over a dead integration.
     func testAgentHookStatusFlagsPayloadShape() {
         XCTAssertEqual(
             Array(HostAgentActionPerformer.statusFlags(installed: true, listenerActive: true)), [1, 1],

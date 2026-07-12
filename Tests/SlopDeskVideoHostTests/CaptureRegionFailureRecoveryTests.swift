@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// C6 BUG B — the PURE decision ladder for a failed DIALOG-EXPAND capture rebuild
+/// The PURE decision ladder for a failed DIALOG-EXPAND capture rebuild
 /// (`applyCaptureRegion`'s `newCapturer.start` threw AFTER the old capturer was stopped): degrade
 /// to a plain window-frame capturer; if even that fallback fails, send `.bye` + stop (a visible
 /// disconnect the client's reconnect UI handles) — NEVER leave a `.streaming` session with

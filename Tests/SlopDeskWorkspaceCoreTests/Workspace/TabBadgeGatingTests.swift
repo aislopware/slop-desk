@@ -12,7 +12,7 @@ final class TabBadgeGatingTests: XCTestCase {
         badgeWhileProcessing: false, badgeWhenComplete: true, badgeWhenAwaitingInput: true,
     )
 
-    // MARK: - The separation (finding: agent-while-processing conflates the OSC 9;4 spinner)
+    // MARK: - The separation (agent-while-processing conflates the OSC 9;4 spinner)
 
     /// agent "while processing" OFF drops the AGENT thinking spinner.
     func testAgentSpinnerGateDropsAgentWorkingSpinner() {
@@ -25,8 +25,8 @@ final class TabBadgeGatingTests: XCTestCase {
 
     /// …but the SAME gate must NOT hide a PROGRAM's progress marker. Revert-to-confirm-fail: a post-fuse
     /// gate that drops the agent badge returns nil here — masking by source keeps the program's own
-    /// `.commandRunning`. (A merely-busy shell with no OSC 9;4 report shows nothing at all since
-    /// 2026-07-10, so the program marker under test is the explicit progress report.)
+    /// `.commandRunning`. (A merely-busy shell with no OSC 9;4 report shows nothing at all, so the
+    /// program marker under test is the explicit progress report.)
     func testAgentSpinnerGateKeepsProgramProgressSpinner() {
         let badge = TabBadgeGating.resolve(
             agent: .none, completion: nil, isBusy: true, foregroundProcess: nil,

@@ -3,7 +3,7 @@ import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskHost
 
-/// E4 / WI-3 — the PURE host responder ``MetadataResponseBuilder`` over an injected fake
+/// Exercises the PURE host responder ``MetadataResponseBuilder`` over an injected fake
 /// ``MetadataQuerying``. NO subprocess, NO PTY, NO syscall — the real ``HostMetadataProbe`` is
 /// compiled + reviewed only (hang-safety; the ``PTYForegroundProbe`` precedent). These tests pin:
 ///
@@ -143,7 +143,7 @@ final class MetadataResponseBuilderTests: XCTestCase {
         let fake = FakeQuery()
         fake.gitStatusPayload = .init(
             hasRepo: true, branch: "main", remoteURL: "https://github.com/x/y",
-            repoRoot: "/Users/me/x", // E6 WI-7 — the pure builder passes repoRoot through verbatim
+            repoRoot: "/Users/me/x", // the pure builder passes repoRoot through verbatim
             ahead: 2, behind: 1, files: [.init(statusCode: 0x11, path: "a.swift")],
         )
         let ok = response(MetadataResponseBuilder(query: fake), .gitStatus)
@@ -341,7 +341,7 @@ final class MetadataResponseBuilderTests: XCTestCase {
         XCTAssertEqual(r.status, MetadataStatus.unsupportedVerb.rawValue)
     }
 
-    // MARK: - Side-effecting path verbs are NOT this read-only builder's job (E10 WI-7)
+    // MARK: - Side-effecting path verbs are NOT this read-only builder's job
 
     func testSideEffectingPathVerbsReachingTheReadOnlyBuilderReturnError() {
         // openPath (9) / revealPath (10) are routed to `HostPathActionPerformer` by `serveMetadata`
@@ -360,7 +360,7 @@ final class MetadataResponseBuilderTests: XCTestCase {
         }
     }
 
-    // MARK: - Agent-hooks verbs are NOT this read-only builder's job (E13 WI-1)
+    // MARK: - Agent-hooks verbs are NOT this read-only builder's job
 
     func testAgentHooksVerbsReachingTheReadOnlyBuilderReturnError() {
         // installAgentHooks (11) / uninstallAgentHooks (12) / agentHookStatus (13) are routed to

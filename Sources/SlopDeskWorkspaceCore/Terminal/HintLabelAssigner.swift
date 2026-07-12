@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - E10 WI-9 (ES-E10-6): pure Hint Mode target detection + Vimium-style 2-letter label assignment
+// MARK: - Pure Hint Mode target detection + Vimium-style 2-letter label assignment
 
 /// Which hint action the user armed — the "Hint to …" family (`docs/ui-shell/spec/terminal-features__hint-mode.md`).
 ///
@@ -63,7 +63,7 @@ public struct HintTarget: Equatable, Sendable {
     }
 }
 
-/// The PURE heart of Hint Mode (E10 ES-E10-6): scan the visible viewport rows for every hintable
+/// The PURE heart of Hint Mode: scan the visible viewport rows for every hintable
 /// target (paths/URLs via the shared ``TerminalLinkDetector``, plus git-hash / IPv4 / user `hint-pattern`
 /// forms), then assign **collision-free 2-letter** Vimium labels and filter them as the user types.
 ///
@@ -71,7 +71,7 @@ public struct HintTarget: Equatable, Sendable {
 /// Like ``TerminalLinkDetector``, hint target detection + label assignment is a deterministic text scan with
 /// no host round-trip, so keeping it environment-free makes it headless-unit-testable (``HintLabelAssignerTests``)
 /// and lets the macOS renderer (key capture) and the iOS overlay (tap-on-label) share ONE engine. The thin
-/// ``HintModeOverlay`` feeds it `viewportTextRows()` (WI-2) and maps `colStart ..< colEnd` to pixels via
+/// ``HintModeOverlay`` feeds it `viewportTextRows()` and maps `colStart ..< colEnd` to pixels via
 /// ``TerminalCellMetrics``.
 ///
 /// ## Validate-then-drop & bounds (CLAUDE.md §3 habit, applied to untrusted terminal bytes)

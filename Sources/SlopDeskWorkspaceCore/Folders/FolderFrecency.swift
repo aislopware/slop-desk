@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - E11 WI-1: Folders frecency (pure scoring)
+// MARK: - Folders frecency (pure scoring)
 
 /// One persisted folder record: a visited working directory, how often it has been visited, and when it
 /// was last visited. The store keys entries by ``path``; ``accessCount`` is the frequency term and

@@ -222,7 +222,7 @@ public final class UnixSocketAcceptor: @unchecked Sendable {
 
     /// TRUE while the socket is bound + accepting (between a successful ``start(path:)`` and
     /// ``stop()``). The LIVE truth the `agentHookStatus` metadata verb reports so the Settings card
-    /// can show installed-but-inactive instead of a false green (queue-safety cluster, 2026-07-02).
+    /// can show installed-but-inactive instead of a false green.
     public var isListening: Bool {
         lock.lock()
         defer { lock.unlock() }

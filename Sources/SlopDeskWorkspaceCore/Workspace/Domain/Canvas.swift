@@ -29,12 +29,12 @@ public struct CanvasCamera: Codable, Sendable, Equatable {
 
 // MARK: - One item on the plane
 
-/// One pane placed on a tab's infinite plane (replaces a `PaneNode` leaf). Pure value type holding
-/// no live object (docs/30 §2).
+/// One pane placed on a tab's infinite plane — the plane's counterpart to a `PaneNode` leaf. Pure
+/// value type holding no live object (docs/30 §2).
 ///
 /// The `id` is the SAME ``PaneID`` join key the registry / `reconcile()` / `.id(PaneID)` view
-/// identity all reuse verbatim — only the *source* of "all pane ids" moved from `PaneNode.allLeafIDs`
-/// to ``Canvas/allIDs()``. The `frame`'s width/height ARE the pane's 1:1 on-screen size, which drives
+/// identity all reuse verbatim; the source of "all pane ids" is ``Canvas/allIDs()``, not
+/// `PaneNode.allLeafIDs`. The `frame`'s width/height ARE the pane's 1:1 on-screen size, which drives
 /// the terminal host's `.frame` → `layout()` → `setPixelSize` → cols×rows reflow (the existing resize
 /// path; there is no new resize API). Stacking is the explicit `z` (NOT array order — see ``Canvas``).
 public struct CanvasItem: Identifiable, Codable, Sendable, Equatable {
@@ -62,12 +62,12 @@ public struct CanvasItem: Identifiable, Codable, Sendable, Equatable {
     }
 }
 
-// MARK: - The free 2D plane (replaces PaneNode as a Tab's layout model)
+// MARK: - The free 2D plane (a Tab's layout model, in place of PaneNode)
 
 /// One ``Tab``'s infinite plane: a flat set of free-floating ``CanvasItem``s plus the pan
 /// ``CanvasCamera`` (docs/30 §2). Pure value type, `Codable`, the persistence format, holding no live
-/// object — every mutation is a pure function returning a NEW `Canvas` (so ~85% of the canvas logic is
-/// deterministically unit-testable with no client, exactly as the old `PaneNode` tree was).
+/// object — every mutation is a pure function returning a NEW `Canvas`, so ~85% of the canvas logic is
+/// deterministically unit-testable with no client (the same property `PaneNode` trees had).
 ///
 /// Flat-not-recursive is the whole point: it removes the only reason `PaneNode`'s `Codable` had to be
 /// hand-written (a recursive `indirect enum`), so the synthesized `Codable` is safe here (a thin
@@ -84,7 +84,7 @@ public struct Canvas: Codable, Sendable, Equatable {
     /// All items on the plane. Array order is **NOT** z-order — ``CanvasItem/z`` is the render order,
     /// so a re-mint / dedup / future reorder of this array can never silently restack the panes.
     public var items: [CanvasItem]
-    /// The pan offset (view-state that also persists, debounced — exactly as split `fractions` did).
+    /// The pan offset (view-state that also persists, debounced — same treatment as split `fractions`).
     public var camera: CanvasCamera
 
     public init(items: [CanvasItem], camera: CanvasCamera = .zero) {

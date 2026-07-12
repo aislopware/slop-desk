@@ -1,19 +1,19 @@
-// DockProgressController — E14/K5/K8, macOS-only. Owns `NSApp.dockTile` and actuates the cross-session
+// DockProgressController, macOS-only. Owns `NSApp.dockTile` and actuates the cross-session
 // progress/error aggregate onto it: an animate-on-progress bar (gated by `dock-icon-animate-progress`), a
-// red-on-error tint (gated by `dock-icon-error-badge`), and the K8 `requestUserAttention` bounce driven from
+// red-on-error tint (gated by `dock-icon-error-badge`), and a `requestUserAttention` bounce driven from
 // the notification OSCs (NOT the bell — wired off `CommandCompletionNotifier.bounceDock`). Every DECISION is
-// the pure ``DockTintPolicy`` (unit-pinned headlessly, ES-E14-3); this file is ONLY the AppKit drawing +
+// the pure ``DockTintPolicy`` (unit-pinned headlessly); this file is ONLY the AppKit drawing +
 // bounce + the dock-reveal hook. iOS no-ops (there is no Dock) — the file is `#if os(macOS)` and the shared
 // aggregate state lives in ``WorkspaceStore`` (``WorkspaceStore/dockTileModel``), consumed only here.
 //
-// HANG-SAFETY (ES-E14-3): never instantiate `NSDockTile` in a test — the pure decision is pinned by
-// `DockTintPolicyTests`; this actuation is GUI-verified (Phase-3 `check-macos.sh` screenshot) only.
+// HANG-SAFETY: never instantiate `NSDockTile` in a test — the pure decision is pinned by
+// `DockTintPolicyTests`; this actuation is GUI-verified (`check-macos.sh` screenshot) only.
 
 #if os(macOS)
 import AppKit
 import SlopDeskWorkspaceCore
 
-/// Drives the macOS Dock tile from the workspace's rolled-up OSC 9;4 progress / error aggregate (E14/K5/K8).
+/// Drives the macOS Dock tile from the workspace's rolled-up OSC 9;4 progress / error aggregate.
 /// Process-global mutable state (one Dock per app), so the app feeds it the resolved ``DockTileModel`` on every
 /// progress/completion edge and a last-session-end edge resolves to ``DockTileModel/inert`` → ``clear()`` (the
 /// carryover "no stuck red tile after the failing pane closes" trap).
@@ -53,7 +53,7 @@ public final class DockProgressController {
         if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) }
     }
 
-    /// Applies the resolved Dock-tile state (E14/K5/K8). Idempotent — a no-op when unchanged so the tile is
+    /// Applies the resolved Dock-tile state. Idempotent — a no-op when unchanged so the tile is
     /// never redrawn on a non-edge. An ``DockTileModel/inert`` model restores the default Dock icon (the
     /// last-session-end CLEAR). Otherwise it draws the icon + progress bar + error tint and arms/stops the
     /// indeterminate sweep animation. The DECISION already happened in ``DockTintPolicy`` (in the store's
@@ -74,7 +74,7 @@ public final class DockProgressController {
         updateAnimation(model.animatesProgress && model.determinateFraction == nil)
     }
 
-    /// The K8 Dock bounce: `requestUserAttention(.informationalRequest)`. Called from the notifier's
+    /// The Dock bounce: `requestUserAttention(.informationalRequest)`. Called from the notifier's
     /// ``CommandCompletionNotifier/bounceDock`` seam (gated by the "Bounce Dock Icon" toggle at the wire site),
     /// so the bounce rides a DELIVERED notification banner, not the bell.
     public func bounce() {
@@ -124,10 +124,10 @@ public final class DockProgressController {
     }
 }
 
-/// The custom `NSDockTile` content view (E14/K5/K8). Draws the app icon, an animate-on-progress bar (a
+/// The custom `NSDockTile` content view. Draws the app icon, an animate-on-progress bar (a
 /// determinate fill or an indeterminate sweep keyed by ``phase``), and a red error wash — all decided upstream
 /// by ``DockTintPolicy`` and carried in ``model``. Drawing-only; no state beyond the resolved model + the
-/// sweep phase. GUI-verified (Phase-3) only — never instantiated in a test (the hang-safety rule). `NSView`
+/// sweep phase. GUI-verified only — never instantiated in a test (the hang-safety rule). `NSView`
 /// is already `@MainActor`-isolated, so the subclass inherits it (no explicit annotation needed).
 private final class DockProgressContentView: NSView {
     var model: DockTileModel = .inert

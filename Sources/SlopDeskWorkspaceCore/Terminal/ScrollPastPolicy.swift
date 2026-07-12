@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - E8 WI-12 (I14/I15, ES-E8-5): scroll-past-last / scroll-past-first overscroll anchors
+// MARK: - scroll-past-last / scroll-past-first overscroll anchors
 
 /// The PURE, headless decision behind **Scroll Past Last Line** (I14) and **Scroll Past First Line**
 /// (I15): given the buffer geometry, the viewport size, and whether a full-screen program owns the screen,

@@ -2,7 +2,7 @@ import SlopDeskAgentDetect
 import SlopDeskCLICore
 import XCTest
 
-// `slopdesk watch:claude <id>` exit-code state machine (ui-shell E20, WI-8).
+// `slopdesk watch:claude <id>` exit-code state machine.
 //
 // The EXPECTED exit codes / steps are authored INDEPENDENTLY here (literal `0`/`4`/`9` and the
 // hand-written at-rest classification), not derived from `WatchClaudeOutcome`'s own output, so a
@@ -47,7 +47,7 @@ final class WatchClaudeOutcomeTests: XCTestCase {
     }
 
     func testObservationSeenWithNoTokenIsSeenNoStatusNotNone() {
-        // M6 regression: `seen:true` with a MISSING status token = the pane exists but the agent has not
+        // `seen:true` with a MISSING status token = the pane exists but the agent has not
         // reported yet (the startup window). It must decode to `.seenNoStatus`, NOT `.status(.none)` — the
         // latter is "at rest" (settled) and would exit a still-starting agent immediately.
         XCTAssertEqual(Outcome.observation(seen: true, statusToken: nil), .seenNoStatus)
@@ -100,7 +100,7 @@ final class WatchClaudeOutcomeTests: XCTestCase {
     // MARK: - seenNoStatus — pane exists, agent not reporting yet (startup window) → keep polling
 
     func testSeenNoStatusOnFirstPollKeepsPollingNotNeverSeen() {
-        // M6 root cause: `watch:claude <id>` right after spawning Claude — the pane EXISTS but has not
+        // `watch:claude <id>` right after spawning Claude — the pane EXISTS but has not
         // reported a status yet. The first poll is `.seenNoStatus` with hasEverBeenSeen:false; it must keep
         // polling (block until idle), NOT decide `.neverSeen` (exit 4).
         let step = Outcome.decide(observation: .seenNoStatus, hasEverBeenSeen: false, deadlineExceeded: false)
@@ -197,12 +197,12 @@ final class WatchClaudeOutcomeTests: XCTestCase {
         }
     }
 
-    // MARK: - Block deadline is DECOUPLED from the per-IPC --timeout (review fix)
+    // MARK: - Block deadline is DECOUPLED from the per-IPC --timeout
 
     /// The DEFAULT `watch:claude` block is UNBOUNDED — it must NOT inherit the per-IPC `--timeout`
-    /// (default 3000 ms) as its block deadline. The pre-fix poll loop computed
-    /// `deadlineNs = start + invocation.timeoutMs * 1e6`, so the default exited 9 after 3 s while Claude
-    /// was still working; this pins that the default block produces NO deadline at all.
+    /// (default 3000 ms) as its block deadline. Computing `deadlineNs = start + invocation.timeoutMs *
+    /// 1e6` for the unflagged case would exit 9 after 3 s while Claude was still working; this pins that
+    /// the default block produces NO deadline at all.
     func testDefaultBlockIsUnboundedNotThreeSeconds() {
         // No `--block-timeout` ⇒ nil ⇒ no deadline ⇒ never a deadline-driven exit 9.
         XCTAssertNil(Outcome.blockDeadlineNanos(startNanos: 1_000_000_000, blockTimeoutMs: nil))

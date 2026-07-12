@@ -1,8 +1,8 @@
-// RailRowsMemoTests — pins the sidebar perf fix (audit: NavigatorColumn rebuilt the WHOLE rail model on
+// RailRowsMemoTests — pins the sidebar perf fix (NavigatorColumn rebuilt the WHOLE rail model on
 // every per-pane status tick, because `RailRowsBuilder.rows(for:)` reads every volatile store dictionary
 // inside the view body). The fix is Option B memoization:
 //   • `RailRowsMemo` caches the built `[RailRow]` keyed by a STRUCTURAL fingerprint (tab/pane ids, specs,
-//     project keys, the A4 title-process fallback) — a VOLATILE tick (agent status, completion badge,
+//     project keys, the title-process fallback) — a VOLATILE tick (agent status, completion badge,
 //     git summary, OSC 9;4 progress, read-only flip, foreground process of a cwd-titled pane) is a cache
 //     HIT (no O(panes) rebuild, and crucially no volatile-dict READ, so Observation stops invalidating the
 //     sidebar body on those ticks), while a STRUCTURAL change (tab open/close, cwd, rename) rebuilds;
@@ -43,7 +43,7 @@ final class RailRowsMemoTests: XCTestCase {
         return store
     }
 
-    /// REPRO 2026-07-11 (user screenshot): ⌘T chooser → pick Terminal — the rail row must retitle
+    /// ⌘T chooser → pick Terminal — the rail row must retitle
     /// from "New Pane" to the cwd folder name on the very next memo read.
     func testChooserResolveRebuildsMemoRowTitle() throws {
         let store = makeStore()
@@ -135,7 +135,7 @@ final class RailRowsMemoTests: XCTestCase {
         XCTAssertEqual(afterRename[4].title, "deploy box")
     }
 
-    /// A4 asymmetry: a CWD-LESS pane titles itself by its foreground process, so a process change on such a
+    /// Title-resolution asymmetry: a CWD-LESS pane titles itself by its foreground process, so a process change on such a
     /// pane IS structural (rebuild, new title) — while the same mutation on a cwd-titled pane stays a cache
     /// hit (pinned above). This is the one volatile dict the key may read, and only for panes that need it.
     func testForegroundProcessRebuildsOnlyForCwdlessPaneTitle() {
@@ -258,7 +258,7 @@ final class RailRowsMemoTests: XCTestCase {
         }
     }
 
-    /// The manual per-tab badge override (E20) lands on the REPRESENTATIVE pane row only — through
+    /// The manual per-tab badge override lands on the REPRESENTATIVE pane row only — through
     /// `liveChrome`, exactly as through the builder (the split-tab pin from `RailRowBuilderTests`).
     func testLiveChromeManualOverrideOnRepresentativeOnly() {
         let store = makeStore()
@@ -270,7 +270,7 @@ final class RailRowsMemoTests: XCTestCase {
         XCTAssertEqual(badged.map(\.id), representative.map { [$0] } ?? [], "override on the representative only")
     }
 
-    // MARK: - `RailStructureKey.titledByProcess` (perf audit 2026-07-11)
+    // MARK: - `RailStructureKey.titledByProcess`
 
     /// Pins the pure escape-order guard shared by the memo AND the titlebar / window-title reads
     /// (``SlateTitlebar``'s `activeTitle`, `WorkspaceRootView.windowTitle(for:)`): only a terminal pane with

@@ -1,5 +1,5 @@
-// PaneDropReceiver — the SwiftUI `DropDelegate` behind the external-drag overlay on a pane (E18 WI-5;
-// see `docs/ui-shell/spec/user-interface__drag-and-drop.md`, `screenshots/drop-overlay-frame-action.png`).
+// PaneDropReceiver — the SwiftUI `DropDelegate` behind the external-drag overlay on a pane
+// (see `docs/ui-shell/spec/user-interface__drag-and-drop.md`, `screenshots/drop-overlay-frame-action.png`).
 //
 // One receiver is attached per ``PaneContainer`` via `.onDrop(of:delegate:)`. It owns the drag lifecycle:
 //   1. validate — a drag must carry a supported type (`.fileURL` / `.url` / `.text`), else the receiver
@@ -13,9 +13,9 @@
 //      the `.contentShape`-before-`.position` trap is mooted) and lights the zone the cursor is over, but
 //      ONLY if that zone is allowed for the dragged content (a file can't land on the green New-Tab half).
 //   4. commit — `performDrop` resolves the `(zone, content)` cell to a ``DropAction`` and actuates it against
-//      the injected store / live terminal / overlay (E18 WI-6): a verbatim PTY inject, a terminal-rooted new
+//      the injected store / live terminal / overlay: a verbatim PTY inject, a terminal-rooted new
 //      tab / split (the store's ``WorkspaceStore/openTerminalRooted(at:split:leading:launchGrace:)`` ingress,
-//      with the host-resolved advisory toast), or the E10 host-open verb. Nothing is actuated on hover —
+//      with the host-resolved advisory toast), or the host-open verb. Nothing is actuated on hover —
 //      commit-on-`performDrop` only.
 //
 // HEADLESS-SAFE: the receiver itself imports no AppKit-private. The geometry + policy are the pure
@@ -118,7 +118,7 @@ struct PaneDropReceiver: DropDelegate {
     /// existing `openTerminalRooted` ingress.
     let store: WorkspaceStore
     /// THIS (dropped-on) pane's live terminal model (`nil` for a chooser pane): the verbatim PTY funnel
-    /// for `injectText` + the E10 host-open callback for `hostOpen`. Since commit focuses ``paneID`` first,
+    /// for `injectText` + the host-open callback for `hostOpen`. Since commit focuses ``paneID`` first,
     /// this is also the active pane by the time the action runs. The receiver never builds a `cd` itself; the
     /// canonical `cd` idiom lives in the store ingress (``LinkActionPolicy/changeDirectoryCommandLine(_:)``).
     let terminalModel: TerminalViewModel?
@@ -134,7 +134,7 @@ struct PaneDropReceiver: DropDelegate {
     // MARK: Lifecycle
 
     /// Accept the drag iff it is enabled, the dropped-on terminal pane is NOT read-only, AND it carries a
-    /// supported type — otherwise decline so no overlay shows (validate-then-drop). READ-ONLY gate (E17 parity
+    /// supported type — otherwise decline so no overlay shows (validate-then-drop). READ-ONLY gate (parity
     /// with the ``TerminalViewModel/sendInput(_:)`` paste halt): a read-only pane refuses every drop, so the
     /// affordance never appears and no inject / open-in-place can land. `terminalModel` is nil for a
     /// chooser pane (read-only doesn't apply). `hasItemsConforming(to:)` is a pure query; the read-only read
@@ -210,11 +210,11 @@ struct PaneDropReceiver: DropDelegate {
         }
     }
 
-    // MARK: - Actuation (E18 WI-6)
+    // MARK: - Actuation
 
     /// Carry out a resolved ``DropAction`` against the store / live terminal / overlay. The pure policy
     /// (``DropActionResolver``) decided WHAT; this turns it into the concrete call, reusing the existing
-    /// actuators (the verbatim PTY funnel, the store's terminal-rooted `cd` ingress, the E10 host-open verb)
+    /// actuators (the verbatim PTY funnel, the store's terminal-rooted `cd` ingress, the host-open verb)
     /// — no new engine — and layers the host-resolved advisory toast on the
     /// folder → New-Tab `cd`. `static` so it captures no non-Sendable `self`.
     ///
@@ -232,7 +232,7 @@ struct PaneDropReceiver: DropDelegate {
         overlay: OverlayCoordinator?,
         paneID: PaneID,
     ) {
-        // READ-ONLY gate (E17 parity with the paste halt): a read-only terminal pane is inert to drops — no
+        // READ-ONLY gate (parity with the paste halt): a read-only terminal pane is inert to drops — no
         // verbatim inject, no open-in-place host verb, no terminal-rooted tab/split. Belt-and-suspenders with
         // `validateDrop` (which suppresses the overlay) AND the single defence on the open-in-place `hostOpen`
         // path, which — unlike `injectText` → `sendInput` — does NOT self-gate read-only. `terminalModel` is
@@ -251,13 +251,13 @@ struct PaneDropReceiver: DropDelegate {
         case let .splitInjectPath(path, leading):
             store.openTerminalRooted(at: path, split: true, leading: leading)
         case let .hostOpen(path):
-            // Open-In-Place on the HOST — fire the SAME host-open verb (E10 verb 9, `MetadataClient.openPath`)
+            // Open-In-Place on the HOST — fire the SAME host-open verb (verb 9, `MetadataClient.openPath`)
             // the ⌘-click path uses; `TerminalLeafView` has already wired this callback (+ its failure toast).
             terminalModel?.onRequestOpenHostPath?(path)
         }
     }
 
-    /// The host-resolved advisory toast for a dropped folder → New-Tab `cd` (E18 ES-E18-2): we are a REMOTE
+    /// The host-resolved advisory toast for a dropped folder → New-Tab `cd`: we are a REMOTE
     /// terminal, so the dropped path is resolved on the HOST and may not exist there — advise,
     /// never block. A fixed `id` de-dupes repeated drops to one toast (the warp `object_id` discipline).
     @MainActor

@@ -2,8 +2,8 @@ import CoreGraphics
 import SlopDeskTerminal
 import XCTest
 
-/// E10 WI-2 (the overlay-geometry seam): pins ``TerminalCellMetrics/rect(row:colStart:colEnd:)`` — the
-/// SINGLE source of truth the ⌘-hold link underline (WI-5) and the Hint Mode labels (WI-9) both map a
+/// Pins ``TerminalCellMetrics/rect(row:colStart:colEnd:)`` — the
+/// SINGLE source of truth the ⌘-hold link underline and the Hint Mode labels both map a
 /// detected `(row, colStart ..< colEnd)` cell span through. The live `GhosttySurface` conformer is
 /// compile-only (the real surface hangs without a window server — the hang-safety rule), so the pure
 /// rect arithmetic is pinned HERE.
@@ -82,7 +82,7 @@ final class TerminalCellMetricsTests: XCTestCase {
         XCTAssertEqual(moved, CGRect(x: 116, y: 216, width: 8, height: 16))
     }
 
-    // MARK: - clampedRect (FINDING 3 defence — never draw a span off-screen-right)
+    // MARK: - clampedRect (never draw a span off-screen-right)
 
     /// A span fully inside the grid is unchanged — `clampedRect` equals the raw `rect`.
     func testClampedRectInsideGridEqualsRawRect() {

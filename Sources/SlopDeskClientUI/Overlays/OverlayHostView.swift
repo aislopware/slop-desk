@@ -1,6 +1,6 @@
 // OverlayHostView — the single mount point that presents EVERY floating overlay above the workspace as
-// NATIVE SwiftUI chrome (the "everything outside the workspace + panes is native" directive). It owns NO
-// bespoke `Scrim` + hand-drawn card any more: each overlay is a real system `.sheet` driven by the injected
+// NATIVE SwiftUI chrome (the "everything outside the workspace + panes is native" directive). It owns no
+// bespoke `Scrim` or hand-drawn card: each overlay is a real system `.sheet` driven by the injected
 // ``OverlayCoordinator`` flags, and the pane/tab close confirmation is a native `.alert` driven off the
 // store's `pendingClose*` parks. The always-mounted ``ToastStackView`` (which renders nothing when empty)
 // is the host's only in-tree content — transient notifications float over the workspace without a modal.
@@ -37,7 +37,7 @@ struct OverlayHostView: View {
     /// (see ``OverlayHostView/toggledState(for:store:)``) so the pure coordinator stays chrome-agnostic.
     /// Defaults to "nothing toggled" (iOS / previews).
     var toggledState: @MainActor (PaletteItem) -> Bool = { _ in false }
-    /// C8 improvement 3: whether the tabs panel (sidebar) is currently collapsed — the root passes the live
+    /// Whether the tabs panel (sidebar) is currently collapsed — the root passes the live
     /// `chrome.sidebarCollapsed`. The durable connection indicator shows ONLY while collapsed (an open sidebar
     /// is the user's normal per-pane surface); default `false` (iOS/previews/tests) keeps it hidden.
     var sidebarCollapsed: Bool = false
@@ -49,7 +49,7 @@ struct OverlayHostView: View {
         ToastStackView(coordinator: coordinator)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .allowsHitTesting(!coordinator.toasts.isEmpty)
-            // Keyboard improvement: the "prefix armed" chip — a minimal bottom-LEADING glyph shown only while
+            // The "prefix armed" chip — a minimal bottom-LEADING glyph shown only while
             // the ⌃A prefix machine awaits its follow-up key (`coordinator.prefixArmed`, driven by the app
             // dispatcher's armed edges: arm lights it; fire / unbound / double-tap / timeout clear it). The
             // bottom-TRAILING corner belongs to the toast stack; the chip never takes hits, so the workspace
@@ -63,7 +63,7 @@ struct OverlayHostView: View {
                 }
             }
             .animation(Slate.Anim.smallFade, value: coordinator.prefixArmed)
-            // C8 improvement 3: the durable connection indicator — a compact amber/red chip shown at the
+            // The durable connection indicator — a compact amber/red chip shown at the
             // bottom ONLY while the tabs panel is collapsed AND some pane is unhealthy. With the sidebar hidden
             // a dropped/reconnecting pane otherwise has no per-pane surface; clicking the chip focuses the worst
             // affected pane. Hidden entirely when all panes are healthy (`connectionAlert()` returns nil).
@@ -87,7 +87,7 @@ struct OverlayHostView: View {
                 actions: {
                     // "Close" is the destructive action (it stops a running command / discards the pane/tab);
                     // Cancel is the safe default. Native roles give the macOS alert its standard button
-                    // placement + tinting, replacing the old hand-drawn warn-tinted button row.
+                    // placement + tinting.
                     Button("Close", role: .destructive) { store.confirmPendingClose() }
                     Button("Cancel", role: .cancel) { store.cancelPendingClose() }
                 },
@@ -103,7 +103,7 @@ struct OverlayHostView: View {
             .tint(nil)
     }
 
-    /// C8 improvement 3: the live connection-health fold, read once per body evaluation so the indicator
+    /// The live connection-health fold, read once per body evaluation so the indicator
     /// overlay and its fade animation agree on the same value. Reading `store.connectionAlert()` registers
     /// observation on each pane's `ConnectionViewModel.status`, so the chip appears / updates / disappears as
     /// panes drop and recover.
@@ -196,7 +196,7 @@ struct OverlayHostView: View {
         return "Close this tab?"
     }
 
-    /// The policy-aware alert body (E3 carry-over #4): branch the copy on the policy that ACTUALLY gated the
+    /// The policy-aware alert body: branch the copy on the policy that ACTUALLY gated the
     /// park, scoped to pane vs tab. Reuses the pure ``CloseConfirmationPanel/reason(for:scope:)`` copy the
     /// tests pin, so the wording can't drift from the pinned strings.
     private var closeAlertMessage: String {
@@ -207,9 +207,9 @@ struct OverlayHostView: View {
 
     /// The toggled-state predicate the root hands to ``PaletteView`` — built from the live chrome so the
     /// palette's ✓ gutter reflects the real sidebar visibility (a visible panel ⇒ ✓ on its toggle
-    /// row). Pure + `static` so it is unit-pinnable without instantiating the view (E2 / WI-6). `@MainActor`
+    /// row). Pure + `static` so it is unit-pinnable without instantiating the view. `@MainActor`
     /// because it reads the `@MainActor` ``WorkspaceChromeState``. Resolves the checkable View toggles — Toggle
-    /// Tabs Panel, Pin Window — PLUS the two E17 Shell toggles whose live state lives on
+    /// Tabs Panel, Pin Window — PLUS the two Shell toggles whose live state lives on
     /// the active pane (Read Only / Secure Keyboard Entry), read off the `store` so the ✓ tracks the real pane
     /// input gate / secure-entry state rather than staying perpetually dark.
     @MainActor
@@ -222,11 +222,11 @@ struct OverlayHostView: View {
             // The Host Windows rail (docs/45): ✓ while the rail is REVEALED — same live-chrome read
             // as the Tabs panel, so the palette, the ⌘⇧R chord, and the rail button stay in lockstep.
             case "action.toggleHostWindows": !chrome.hostRailCollapsed
-            // E19 WI-4: Pin Window is a CHECKABLE toggle — light the ✓ gutter while the window is pinned, so the
+            // Pin Window is a CHECKABLE toggle — light the ✓ gutter while the window is pinned, so the
             // palette (and the View menu) tell the user the current pinned state. Mirrors the sidebar
             // treatment, reading the SAME live `chrome.pinned` the menu Button + the `NSWindow.level` glue flip.
             case "action.pinWindow": chrome.pinned
-            // E17 (audit fix): Read Only / Secure Keyboard Entry are CHECKABLE toggles whose live state lives on
+            // Read Only / Secure Keyboard Entry are CHECKABLE toggles whose live state lives on
             // the ACTIVE pane (the convergent `paneReadOnly` set / the model's `secureInputActive` mirror), NOT
             // on `chrome` — so the ✓ tracks the real input gate / secure-entry state instead of never lighting.
             case "action.toggleReadOnly": store.isActivePaneReadOnly()
@@ -268,7 +268,7 @@ private struct PrefixArmedChip: View {
 
 // MARK: - ConnectionAlertChip (the durable collapsed-sidebar connection indicator)
 
-/// The compact connection-health chip (C8 improvement 3): an amber/red status dot + a count label
+/// The compact connection-health chip: an amber/red status dot + a count label
 /// ("1 reconnecting" / "2 disconnected") shown at the bottom while the tabs panel is collapsed and some pane
 /// is unhealthy. A `Button` (unlike the non-interactive prefix chip) so a click focuses the worst-affected
 /// pane. `Slate.*` tokens only (the ds-leaks ratchet); the dot colour reuses the shared status roles.
@@ -312,8 +312,8 @@ private struct ConnectionAlertChip: View {
 
 // MARK: - CloseConfirmationPanel (close-confirmation COPY — the pure wording the native `.alert` renders)
 
-/// The pure close-confirmation copy (E3 carry-over #4). Once a hand-drawn panel, now a caseless namespace for
-/// the wording ONLY — the confirmation itself is a native `.alert` (``OverlayHostView``). Kept as a static
+/// The pure close-confirmation copy — a caseless namespace for the wording ONLY; the confirmation itself is a
+/// native `.alert` (``OverlayHostView``). Kept as a static
 /// helper so ``CloseConfirmationPanelTests`` still pins the policy→copy mapping without instantiating a view.
 enum CloseConfirmationPanel {
     /// The close-confirmation subtitle for a given resolved policy + close scope. PURE — unit-pinnable. The

@@ -30,7 +30,7 @@ public actor NWByteChannel: ByteChannel {
             )
         }
         inboundContinuation = cont
-        // R17 INSP-WIRE-2: if the inbound consumer cancels its iteration WITHOUT calling close() (e.g.
+        // If the inbound consumer cancels its iteration WITHOUT calling close() (e.g.
         // its draining task is cancelled), cancel the NWConnection so its fd is released deterministically
         // rather than lingering until the actor deallocs. Capture `connection` (not self) so the handler
         // does not retain the actor; cancel() is idempotent vs. the other finish paths.
@@ -101,7 +101,7 @@ public actor NWByteChannel: ByteChannel {
     private func handleReceive(data: Data?, isComplete: Bool, error: NWError?) {
         if let error {
             inboundContinuation.finish(throwing: error)
-            connection.cancel() // R6 #10: free the socket fd — finishing the stream alone leaves the
+            connection.cancel() // free the socket fd — finishing the stream alone leaves the
             return // NWConnection (and its fd) alive until the actor deallocs.
         }
         if let data, !data.isEmpty {
@@ -109,7 +109,7 @@ public actor NWByteChannel: ByteChannel {
         }
         if isComplete {
             inboundContinuation.finish()
-            connection.cancel() // R6 #10: the peer/host closed the channel → cancel to release the fd
+            connection.cancel() // the peer/host closed the channel → cancel to release the fd
             return // (idempotent vs. the stateUpdateHandler's `.cancelled` finish).
         }
         receiveLoop()

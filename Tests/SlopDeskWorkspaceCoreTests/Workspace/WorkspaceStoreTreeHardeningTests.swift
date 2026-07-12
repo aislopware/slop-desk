@@ -2,12 +2,11 @@ import CoreGraphics
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// W5 HARDENING (2026-06-20): pins the post-cutover fix that the LIVE tree-shell features which had been
-/// silently routing to the retained-but-dead canvas (a guarded-no-op `reconcile()` under `.tree`) now act
-/// on the TREE. Each test below is proven to FAIL on the un-fixed code (the canvas path early-returned for
-/// a tree id, so the feature was a no-op): A1 busy-pane close + confirm, A2 system-dialog auto-panes +
-/// app-launch presets, A3 chrome-close busy guard, B1 ⌘⇧R → tab rename, plus the parking-branch and live
-/// init-branch coverage (C4/C6).
+/// Pins the fix ensuring the LIVE tree-shell features — which had been silently routing to the
+/// retained-but-dead canvas (a guarded-no-op `reconcile()` under `.tree`) — now act on the TREE. Each test
+/// below fails against the regressed code (the canvas path early-returns for a tree id, so the feature
+/// becomes a no-op): busy-pane close + confirm, system-dialog auto-panes + app-launch presets, chrome-close
+/// busy guard, ⌘⇧R tab rename, plus the parking-branch and live init-branch coverage.
 ///
 /// Built on the spec-only `FakePaneSession` seam with `liveModel: .tree` so init reconciles the TREE — no
 /// SwiftUI view, no real client/host (the hang-safety rule).
@@ -36,11 +35,11 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
         store.tree.allPaneIDs().filter { store.tree.spec(for: $0)?.kind == .systemDialog }
     }
 
-    // MARK: - A1 — busy-pane close + confirm closes the TREE leaf (was a no-op on .tree)
+    // MARK: - Busy-pane close + confirm closes the TREE leaf (was a no-op on .tree)
 
     /// Parking a busy close on a tree leaf then CONFIRMING must close that leaf + tear its handle down.
-    /// PRE-FIX: `confirmPendingClose()` called the canvas `closePane(id)` which `guard`s on
-    /// `workspace.canvas.contains(id)` → early-returns for a tree id, so the pane stayed registered.
+    /// A regression here routes back through the canvas `closePane(id)`, which `guard`s on
+    /// `workspace.canvas.contains(id)` → early-returns for a tree id, leaving the pane stuck registered.
     func testConfirmBusyCloseClosesTreeLeafAndTearsDown() async throws {
         let store = makeTreeStore()
         // Two leaves in one tab so closing one is a clean leaf-close (not a last-pane re-seed).
@@ -64,7 +63,7 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
     }
 
     /// `pendingCloseSpec` resolves from the TREE under `.tree` so the confirmation dialog can name the leaf.
-    /// PRE-FIX the view read `workspace.canvas.spec(for:)` → nil for a tree id → a generic "Close Pane?".
+    /// A regression here has the view read `workspace.canvas.spec(for:)` → nil for a tree id → a generic "Close Pane?".
     func testPendingCloseSpecResolvesFromTree() throws {
         let store = makeTreeStore()
         store.splitActivePane(axis: .horizontal, kind: .remoteGUI)
@@ -76,10 +75,10 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
         XCTAssertEqual(spec.kind, .remoteGUI, "the spec is the parked TREE leaf's, not a canvas fallback")
     }
 
-    // MARK: - C4 — requestCloseActivePaneTree PARKS (not closes) a busy pane
+    // MARK: - requestCloseActivePaneTree PARKS (not closes) a busy pane
 
-    /// An idle active pane closes immediately; a mid-command one PARKS. Pins both branches of the W6
-    /// busy-shell guard so the parking path the A1 confirm exercises is asserted independently.
+    /// An idle active pane closes immediately; a mid-command one PARKS. Pins both branches of the
+    /// busy-shell guard so the parking path the confirm test above exercises is asserted independently.
     func testRequestCloseActivePaneTreeParksWhenBusyClosesWhenIdle() throws {
         let store = makeTreeStore()
         store.splitActivePane(axis: .horizontal, kind: .terminal)
@@ -99,10 +98,10 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
         XCTAssertFalse(store.tree.contains(busy), "an idle active pane closes immediately")
     }
 
-    // MARK: - A3 — chrome-style busy guard parks (requestClosePaneTree)
+    // MARK: - Chrome-style busy guard parks (requestClosePaneTree)
 
     /// `requestClosePaneTree(_:)` (the chrome close button's route) PARKS a busy-shell leaf instead of
-    /// closing it raw. PRE-FIX the chrome called `closePaneTree` directly, skipping the guard.
+    /// closing it raw. A regression here has the chrome call `closePaneTree` directly, skipping the guard.
     func testRequestClosePaneTreeParksBusyLeaf() throws {
         let store = makeTreeStore()
         store.splitActivePane(axis: .horizontal, kind: .terminal)
@@ -128,11 +127,11 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
         XCTAssertFalse(store.tree.contains(leaf), "the idle leaf closed immediately")
     }
 
-    // MARK: - A2 — system-dialog auto-pane materializes IN THE TREE
+    // MARK: - System-dialog auto-pane materializes IN THE TREE
 
     /// `addSystemDialogPane(...)` on a `.tree` store inserts an ephemeral `.systemDialog` leaf into the
-    /// TREE (a new tab of the active session) + the registry. PRE-FIX it mutated `workspace.canvas` and
-    /// ended in the guarded-no-op canvas `reconcile()`, so no leaf ever appeared on the tree shell.
+    /// TREE (a new tab of the active session) + the registry. A regression here mutates `workspace.canvas`
+    /// and ends in the guarded-no-op canvas `reconcile()`, so no leaf ever appears on the tree shell.
     func testSystemDialogPaneMaterializesInTree() {
         let store = makeTreeStore()
         let tabsBefore = store.tree.activeSession?.tabs.count ?? 0
@@ -162,7 +161,7 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
     }
 
     /// END-TO-END via the actual `SystemDialogMonitor` diff (the production caller): a dialog appearing →
-    /// a tree leaf materialized; the dialog leaving → it is removed. PRE-FIX both were canvas no-ops.
+    /// a tree leaf materialized; the dialog leaving → it is removed. A regression here makes both canvas no-ops.
     func testSystemDialogMonitorDrivesTheTreeShell() {
         let store = makeTreeStore()
         let monitor = SystemDialogMonitor(store: store, isConnected: { true }, target: { .default })
@@ -183,9 +182,9 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
         XCTAssertEqual(dialogLeaves(store).count, 0, "the tree leaf was removed when the dialog left")
     }
 
-    /// A2 (AppLaunchMonitor side): `liveLayoutPresets` resolves from the TREE under `.tree`, and
+    /// AppLaunchMonitor side: `liveLayoutPresets` resolves from the TREE under `.tree`, and
     /// `presetForLaunchedApp` matches against it — so a tree-carried trigger preset is reachable while a
-    /// canvas one is dead. PRE-FIX the monitor read `workspace.layoutPresets` (the dead canvas's, empty).
+    /// canvas one is dead. A regression here has the monitor read `workspace.layoutPresets` (the dead canvas's, empty).
     func testLiveLayoutPresetsResolveFromTree() {
         var tree = TreeWorkspace.defaultWorkspace()
         tree.layoutPresets = [LayoutPreset(
@@ -202,11 +201,11 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
         XCTAssertNil(store.presetForLaunchedApp("nope"), "no spurious match")
     }
 
-    // MARK: - B1 — ⌘⇧R renames the active TAB (was a dead-end on .tree)
+    // MARK: - ⌘⇧R renames the active TAB (was a dead-end on .tree)
 
     /// Routing `.renamePane` on a `.tree` store records the active TAB as the pending rename target (the
     /// `TabBarView` inline field opens) — NOT `pendingRename` (the canvas pane rename, which no tree view
-    /// observed). PRE-FIX it set `pendingRename` to a PaneID that nothing on the tree shell consumed.
+    /// observes). A regression here sets `pendingRename` to a PaneID that nothing on the tree shell consumes.
     func testRenameActionTargetsActiveTabOnTree() throws {
         let store = makeTreeStore()
         let activeTab = try XCTUnwrap(store.tree.activeSession?.activeTab?.id)
@@ -228,7 +227,7 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
         XCTAssertNil(store.pendingTabRename, "the request is consumed")
     }
 
-    // MARK: - B3 — one default-session-name source
+    // MARK: - One default-session-name source
 
     /// The store's `defaultSessionName` is the single source every session-minting path (agent control
     /// backend, session templates) names through — "Session N", N one past the count.
@@ -239,7 +238,7 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
         XCTAssertEqual(store.defaultSessionName, "Session 3", "two sessions ⇒ next is Session 3")
     }
 
-    // MARK: - C6 — the live tree branches of bootstrap + commitConnectionTarget
+    // MARK: - The live tree branches of bootstrap + commitConnectionTarget
 
     /// `bootstrapFromEnvironment(.tree)` reshapes the TREE from the autoconnect env (one session/tab/leaf
     /// carrying the spec + the per-session connection) and materializes it — not the canvas.

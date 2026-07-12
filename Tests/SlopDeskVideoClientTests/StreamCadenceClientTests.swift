@@ -3,7 +3,7 @@ import XCTest
 @testable import SlopDeskVideoClient
 @testable import SlopDeskVideoProtocol
 
-/// Client-side fold of the `streamCadence` control message (FPS governor, 2026-06-11): the pure
+/// Client-side fold of the `streamCadence` control message (FPS governor): the pure
 /// state machine emits `.applyStreamCadence` only while streaming, and `FramePacer.setContentFps`
 /// rebases the deadline-mode rhythm + the adaptive jitter controller (preserving live depth).
 final class StreamCadenceClientTests: XCTestCase {

@@ -1,14 +1,14 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E14/K5/K8 WI-5 — the PURE macOS Dock-tile decision (``DockTintPolicy``) + the store aggregate it reads.
+/// The PURE macOS Dock-tile decision (``DockTintPolicy``) + the store aggregate it reads.
 /// The AppKit actuation (`DockProgressController` drawing the `NSDockTile` + the `requestUserAttention` bounce)
-/// is GUI-verified only (ES-E14-3 — never instantiate an `NSDockTile` in a test); EVERY decision the controller
+/// is GUI-verified only (never instantiate an `NSDockTile` in a test); EVERY decision the controller
 /// makes is one of these pure functions, pinned here. Headless: pure static + a `FakePaneSession` store (no
 /// AppKit, no socket).
 @MainActor
 final class DockTintPolicyTests: XCTestCase {
-    // MARK: - tint(forRollup:) — the plan-pinned WI-5 function
+    // MARK: - tint(forRollup:) — the plan-pinned function
 
     /// An `.error` rollup tints red; an in-progress / indeterminate / cleared rollup leaves it untinted. This
     /// is the decision the Dock red-on-error reads. Revert-to-confirm-fail: collapsing `tint` to always-`.none`

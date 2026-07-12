@@ -192,7 +192,7 @@ final class SerialFeedGateTests: XCTestCase {
         XCTAssertEqual(gate.pendingFeedBytes, 0, "all accepted work drained")
     }
 
-    // MARK: Non-blocking close (the production teardown — review-round deadlock fix)
+    // MARK: Non-blocking close (the production teardown — avoids the close-path deadlock)
 
     func testAsyncCloseRunsCompletionAfterInFlightWork() {
         let gate = SerialFeedGate(label: "test.aclose")

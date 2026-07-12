@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// The pure ⇧⌘F Global Search engine (E5 WI-1): runs ``TerminalSearchController/computeMatches`` over every
+/// The pure ⇧⌘F Global Search engine: runs ``TerminalSearchController/computeMatches`` over every
 /// terminal pane's scrollback mirror, drops zero-hit sources, groups by source, builds full-line excerpts with
 /// UTF-16 highlight ranges, and produces the `N results — M tabs` summary. All against in-memory sources — no
 /// view, no store, no libghostty.
@@ -145,7 +145,7 @@ final class GlobalSearchControllerTests: XCTestCase {
         XCTAssertEqual(results.summary, "0 results — 0 tabs")
     }
 
-    // MARK: Click-to-line navigation (ES-E5-5)
+    // MARK: Click-to-line navigation
 
     /// The DEFINITIVE click-to-line invariant: two DIFFERENT hits on DIFFERENT lines in the SAME pane must
     /// `scroll_to_row` to those two DISTINCT lines in ALL THREE modes (literal case-insensitive, literal
@@ -218,7 +218,7 @@ final class GlobalSearchControllerTests: XCTestCase {
         XCTAssertFalse(rxThird.contains("navigate_search:previous"))
     }
 
-    /// Bug 1 (soft-wrap coordinate mapping): the click-to-line `scroll_to_row` must target the PHYSICAL grid
+    /// Soft-wrap coordinate mapping: the click-to-line `scroll_to_row` must target the PHYSICAL grid
     /// row, not the logical (unwrapped) mirror index. When the caller passes the source `lines` + grid
     /// `columns`, a wide (wrapped) line above the hit shifts its physical row down. Revert-to-confirm-fail:
     /// the un-fixed `navigationActions` emitted `scroll_to_row:<hit.line>` (the logical index), one row too

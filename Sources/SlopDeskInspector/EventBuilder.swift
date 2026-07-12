@@ -29,11 +29,11 @@ public struct EventBuilder {
     /// orphan results) would otherwise be retained forever; we evict oldest past the cap.
     static let pendingResultCap = 4096
 
-    /// Cap on the number of distinct SUBAGENT ids retained (R17 INSP-LEAK-1, the host analogue of the
-    /// client's R13 #4 ``InspectorViewModel`` agent cap). The per-subagent maps below (`subagents`,
+    /// Cap on the number of distinct SUBAGENT ids retained — the host analogue of the
+    /// client's ``InspectorViewModel`` agent cap. The per-subagent maps below (`subagents`,
     /// `subagentOpenCards`, `subagentPendingResults`, `subagentPendingResultOrder`) are keyed by
-    /// agentID and were never evicted on the agentID DIMENSION — so a long session (or an adversarial
-    /// transcript declaring many distinct subagent ids) grew them for the host's whole lifetime. Once
+    /// agentID; without a cap on that dimension a long session (or an adversarial transcript
+    /// declaring many distinct subagent ids) would grow them for the host's whole lifetime. Once
     /// past ``maxAgents`` the oldest agents are dropped to ``agentRetainTarget`` in one batch, removing
     /// all of their per-agent state together.
     static let maxAgents = 2000
@@ -70,7 +70,7 @@ public struct EventBuilder {
     /// Known subagent nodes by id (so a status change re-emits the same node).
     private var subagents: [String: SubagentNode] = [:]
 
-    /// Distinct subagent ids seen, in first-sight order, for the drop-oldest agent cap (INSP-LEAK-1).
+    /// Distinct subagent ids seen, in first-sight order, for the drop-oldest agent cap.
     private var seenAgents: Set<String> = []
     private var agentOrder: [String] = []
 
@@ -157,7 +157,7 @@ public struct EventBuilder {
 
     /// Records a (possibly new) agentID and, once past ``maxAgents``, evicts the OLDEST agents to
     /// ``agentRetainTarget`` — removing ALL of their per-agent state together so no per-agent map leaks
-    /// the agentID dimension over a long session (INSP-LEAK-1). Idempotent for an already-seen id.
+    /// the agentID dimension over a long session. Idempotent for an already-seen id.
     private mutating func noteAgent(_ agentID: String) {
         guard seenAgents.insert(agentID).inserted else { return }
         agentOrder.append(agentID)

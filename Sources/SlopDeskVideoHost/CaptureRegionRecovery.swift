@@ -1,7 +1,7 @@
-// C6 BUG B (2026-07-03): the PURE decision ladder for a failed DIALOG-EXPAND capture rebuild.
+// The PURE decision ladder for a failed DIALOG-EXPAND capture rebuild.
 // `applyCaptureRegion` stops the OLD capturer before starting the new region-override capturer; if
-// that start throws, the session used to be left `.streaming` with capturer/encoder nil — a silent
-// forever-freeze with no recovery path (contrast `applyResize`'s rollBackWindow +
+// that start throws and nothing intervenes, the session is left `.streaming` with capturer/encoder
+// nil — a silent forever-freeze with no recovery path (contrast `applyResize`'s rollBackWindow +
 // restartOldSizeCapture). The ladder: try the union → degrade to a plain window-frame capturer →
 // as the last resort send `.bye` + stop (a visible disconnect the client's reconnect UI handles
 // beats a silent freeze). The SCK/VT side effects stay in the actor

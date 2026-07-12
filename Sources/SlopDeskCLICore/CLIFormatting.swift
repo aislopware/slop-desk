@@ -1,6 +1,6 @@
 import Foundation
 
-// `slopdesk` list/inspect output formatting (E20, WI-4). PURE: every formatter is a
+// `slopdesk` list/inspect output formatting. PURE: every formatter is a
 // deterministic value transform over the decoded NDJSON `result` rows — no socket, no I/O — so the
 // whole table/JSON surface is exhaustively unit-tested without a running app (hang-safety rule).
 //

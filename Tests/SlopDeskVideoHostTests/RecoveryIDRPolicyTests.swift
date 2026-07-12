@@ -2,9 +2,9 @@ import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// Component 2 (2026-06-11): the DELIVERY-KEYED recovery-IDR admission policy. Pure wall-clock
+/// The DELIVERY-KEYED recovery-IDR admission policy. Pure wall-clock
 /// decision logic — every verdict, the token accounting, the wrap-aware id compares, the grace
-/// clamp and the grant-pending timeout are exercised headlessly (the F1 capturer gate this
+/// clamp and the grant-pending timeout are exercised headlessly (the capturer gate this
 /// replaces had ZERO test coverage — it was SCK-bound).
 final class RecoveryIDRPolicyTests: XCTestCase {
     /// A fresh policy (no keyframe ever sent) grants immediately and spends a token.

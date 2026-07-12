@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Tests for ``DropPayloadClassifier`` (E18 WI-1) — the pure mapping of an inspected drag pasteboard
+/// Tests for ``DropPayloadClassifier`` — the pure mapping of an inspected drag pasteboard
 /// onto a single ``DroppedContent`` with file → url → text precedence and validate-then-drop on an
 /// unsupported / empty drag. No AppKit, no disk: `isDirectory` is supplied by the caller.
 final class DropPayloadClassifierTests: XCTestCase {

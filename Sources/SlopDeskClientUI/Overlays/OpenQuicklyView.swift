@@ -1,5 +1,5 @@
-// OpenQuicklyView — the floating Open-Quickly picker (E11 / WI-6), an Xcode-style `⌘⇧O` multi-source quick
-// switcher (`open-quickly.png`) that folds in the E10 Jump-To panel: pre-focused search field, filter pills
+// OpenQuicklyView — the floating Open-Quickly picker, an Xcode-style `⌘⇧O` multi-source quick
+// switcher (`open-quickly.png`) that folds in the Jump-To panel: pre-focused search field, filter pills
 // (All / Opened / Recent / Folders / Agents / Current — SSH absent by product decision), a sectioned +
 // fuzzy-ranked result list, per-row `⌘K` Actions popover, footer hint bar. `⌘⇧O` opens on **All**; `⌘J`
 // opens on **Current** (the Jump-To scope).
@@ -572,7 +572,8 @@ struct OpenQuicklyView: View {
             return actions
         case let .reopenRecentTab(index):
             // Reopen EXACTLY this row's tab by its carried LIFO index (row N reopens tab N) — NOT always the
-            // most-recently-closed one the old `reopenLastClosedPane()` popped regardless of which row fired.
+            // most-recently-closed one, which is what `reopenLastClosedPane()` (⇧⌘T) pops regardless of which
+            // row fired.
             var actions = [RowAction(title: "Reopen Tab", symbol: "arrow.uturn.left") {
                 store.reopenClosedTab(at: index)
             }]
@@ -787,7 +788,7 @@ struct OpenQuicklyView: View {
 
     /// Snapshot the focused pane into ``currentJumpItems`` ONCE on appear: run the link detector over its
     /// scrollback (only when link detection is enabled) + map its OSC-133 command index, assembled by the pure
-    /// `JumpToModel` (identical to the old Jump-To panel's snapshot).
+    /// `JumpToModel`.
     private func snapshotCurrent() {
         guard let model = activeModel else {
             currentJumpItems = []
@@ -920,8 +921,8 @@ struct OpenQuicklyView: View {
     }
 
     /// Run a row's DEFAULT action then close. Each `Act` routes through the shared `LinkActionActuator` (or a
-    /// store op), so Open-Quickly and the old Jump-To panel actuate identically. ↩ on a Current LINK is an
-    /// EXPLICIT open intent (config-INDEPENDENT — never the configurable ⌘click gesture), matching the E10 fix.
+    /// store op), so every pill's rows actuate identically. ↩ on a Current LINK is an EXPLICIT open intent
+    /// (config-INDEPENDENT — never the configurable ⌘click gesture).
     private func act(_ item: OpenQuicklyItem) {
         switch item.act {
         case let .focusPane(id):

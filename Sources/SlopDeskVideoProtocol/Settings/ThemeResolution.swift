@@ -1,6 +1,6 @@
 import Foundation
 
-/// The PURE dual-slot follow-OS resolver (E15 WI-3 / ES-E15-1). Picks the active built-in theme id for the
+/// The PURE dual-slot follow-OS resolver. Picks the active built-in theme id for the
 /// current OS appearance from an ``AppearancePreferences`` — headlessly testable (no `NSApp`, no SwiftUI).
 /// The caller (``ThemeStore`` on macOS) supplies `osIsDark` from the live OS appearance and re-runs this on
 /// every OS-appearance change, so the theme switches LIVE with the system colour scheme.
@@ -39,7 +39,7 @@ public enum ThemeResolution {
     ///   - `nil` (unset slot — the FRESH-INSTALL default) ⇒ FOLLOWS the OS (dark → ``defaultDarkID``, light →
     ///     ``defaultLightID``), matching the Theme picker, which presents an unset light slot as "System"; a
     ///     fresh install therefore renders the light default in light mode and the dark default in dark mode,
-    ///     rather than a fixed dark theme regardless of OS appearance (ES-E15);
+    ///     rather than a fixed dark theme regardless of OS appearance;
     ///   - `.system` ⇒ likewise FOLLOWS the OS (dark → ``defaultDarkID``, light → ``defaultLightID``);
     ///   - any concrete choice ⇒ its fixed `SlateTheme.id` (via ``ThemeChoice/builtinID``).
     public static func builtinID(for choice: ThemeChoice?, osIsDark: Bool) -> String {

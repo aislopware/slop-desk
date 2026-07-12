@@ -1,9 +1,9 @@
 import Foundation
 
-// MARK: - WorkspaceStore × Read-only mode (E17 ES-E17-1 / WI-2)
+// MARK: - WorkspaceStore × Read-only mode
 
 /// The per-pane READ-ONLY ops, split into their own extension so the (already large) ``WorkspaceStore``
-/// body stays under the lint ceiling. They mirror the WB2 active-pane ops
+/// body stays under the lint ceiling. They mirror the active-pane ops
 /// (``WorkspaceStore/requestCopyModeInActivePane()``): resolve the active pane's live ``TerminalViewModel``
 /// (in whichever live model is active), flip its ``TerminalViewModel/isReadOnly`` input gate, AND record
 /// the pane in the observable ``WorkspaceStore/paneReadOnly`` set — the SINGLE source of truth the
@@ -76,7 +76,7 @@ public extension WorkspaceStore {
         setPaneReadOnly(id, !paneReadOnly.contains(id))
     }
 
-    /// TOGGLES the vi KEY-HINT BAR over the active pane (E17 ES-E17-2 / WI-5). The `⌘/` chord routes here ONLY
+    /// TOGGLES the vi KEY-HINT BAR over the active pane. The `⌘/` chord routes here ONLY
     /// while the active pane is in vi / copy-mode (``WorkspaceBindingRegistry`` `route` resolves the contextual
     /// branch — out of copy-mode, `⌘/` stays the global keyboard cheat sheet). Drives the MODEL as the single
     /// source of truth — ``TerminalViewModel/toggleViKeyHints()`` flips its observable
@@ -86,7 +86,7 @@ public extension WorkspaceStore {
         activeTerminalModel?.toggleViKeyHints()
     }
 
-    /// TOGGLES MANUAL Secure Keyboard Entry over the ACTIVE pane (E17 ES-E17-4 / WI-7 — the
+    /// TOGGLES MANUAL Secure Keyboard Entry over the ACTIVE pane (the
     /// `.secureKeyboardEntry` action / the Edit ▸ Secure Keyboard Entry menu item / the palette term). Flips the active
     /// terminal model's ``TerminalViewModel/manualSecureInput``, whose `didSet` refreshes the
     /// ``TerminalViewModel/secureInputActive`` pill mirror and fires `onManualSecureInputChanged` — the macOS

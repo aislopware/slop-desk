@@ -1,8 +1,8 @@
-// SidebarAutoHideWiringTests — pins the E19 / WI-7 view-side ACTUATION of the `auto-hide-tabs-panel` policy
+// SidebarAutoHideWiringTests — pins the view-side ACTUATION of the `auto-hide-tabs-panel` policy
 // WITHOUT a live view or an NSWindow.
 //
 // The pure decision (`SidebarAutoHidePolicy.desiredCollapsed`) is pinned headlessly in
-// `SidebarAutoHidePolicyTests` (WI-2). What this suite pins is the thin view-side glue WI-7 adds in
+// `SidebarAutoHidePolicyTests`. What this suite pins is the thin view-side glue in
 // `WorkspaceRootView`: the static `applyAutoHide(mode:tabCount:chrome:)` that the `.onChange(of:)` observers
 // call, and the iOS `sidebarVisibility(sidebarCollapsed:)` column mapping that makes the shared
 // `chrome.sidebarCollapsed` flag honored on iPad (not a dead toggle). Both are pure + cross-platform so the
@@ -20,7 +20,7 @@ final class SidebarAutoHideWiringTests: XCTestCase {
     /// `.auto` COLLAPSES the sidebar when the active session drops to ≤1 tab. Start REVEALED, apply the policy
     /// at one tab, and the live chrome flag flips to collapsed — the actuation the `.onChange(of:)` observer
     /// performs on a tab-close transition. REVERT-TO-CONFIRM-FAIL: `applyAutoHide` does not exist on the
-    /// un-fixed `WorkspaceRootView`, so this fails to compile-then-pass only once WI-7 adds it.
+    /// un-fixed `WorkspaceRootView`, so this fails to compile-then-pass only once it's added.
     func testAutoModeCollapsesWhenDownToOneTab() {
         let chrome = WorkspaceChromeState()
         chrome.sidebarCollapsed = false // resting: sidebar revealed
@@ -49,7 +49,7 @@ final class SidebarAutoHideWiringTests: XCTestCase {
         XCTAssertTrue(chrome.sidebarCollapsed, ".auto at 0 tabs collapses (nothing to switch between)")
     }
 
-    /// THE launch-path pin (M2): a fresh window rests with `sidebarCollapsed == false` (revealed), so a launch
+    /// THE launch-path pin: a fresh window rests with `sidebarCollapsed == false` (revealed), so a launch
     /// with a persisted `.auto` mode + a single-tab session must collapse the TABS panel AT LAUNCH — not wait
     /// for a tab add/remove. This pins what the `.onChange(of: activeTabCount, initial: true)` observer drives on
     /// first render: starting from the DEFAULT chrome state, applying the policy at one tab collapses it.
@@ -115,15 +115,14 @@ final class SidebarAutoHideWiringTests: XCTestCase {
         XCTAssertTrue(collapsed.sidebarCollapsed, "already-collapsed at ≤1 tab stays collapsed")
     }
 
-    // MARK: - applyAutoHide: a manual ⌘⇧L is NOT fought by an unrelated tab open/close (E19 WI-7)
+    // MARK: - applyAutoHide: a manual ⌘⇧L is NOT fought by an unrelated tab open/close
 
     /// THE manual-override pin (revert-to-confirm-fail): in `.auto`, a manual ⌘⇧L collapse at >1 tabs SURVIVES
     /// an unrelated tab OPEN that stays within the same >1 regime. Reveal at 2 tabs, manually collapse (the real
     /// `chrome.toggleSidebar()` entry point that records the override), then open a 3rd tab — the sidebar must
     /// STAY collapsed. REVERT-TO-CONFIRM-FAIL: the pre-fix `applyAutoHide` (only a `!= desired` de-dup, no
     /// override / regime-edge gate) recomputed `desired == false` at 3 tabs, saw it differ from the manual
-    /// `true`, and REVERTED the collapse to revealed — failing this assertion. (E19-carryovers WI-7: "do NOT
-    /// fight a manual ⌘⇧L".)
+    /// `true`, and REVERTED the collapse to revealed — failing this assertion.
     func testManualOverrideSurvivesUnrelatedTabOpenWithinRegime() {
         let chrome = WorkspaceChromeState()
         chrome.sidebarCollapsed = false // resting revealed
@@ -185,7 +184,7 @@ final class SidebarAutoHideWiringTests: XCTestCase {
 
     /// The pure map the iOS `sidebarColumnVisibility` binding uses: a collapsed sidebar hides the leading TABS
     /// column (`.detailOnly` — the shell is TWO columns now that the inspector is removed), a revealed
-    /// sidebar shows `.all`. Pins that the WI-7 policy
+    /// sidebar shows `.all`. Pins that the policy
     /// (which sets `chrome.sidebarCollapsed`) actually hides/reveals the panel on iPad — the shared flag is not
     /// a dead toggle there. Cross-platform (`NavigationSplitViewVisibility` exists on macOS) so it runs in the
     /// macOS Gate.
@@ -200,7 +199,7 @@ final class SidebarAutoHideWiringTests: XCTestCase {
         )
     }
 
-    // MARK: - applySidebarVisibility: the iPad swipe is the SECOND manual entry point (Batch 3 finding 2)
+    // MARK: - applySidebarVisibility: the iPad swipe is the SECOND manual entry point
 
     /// A user SWIPE that collapses the leading column (revealed → `.detailOnly`) is a genuine manual choice:
     /// it writes the shared flag AND records the override, so the policy honors it like ⌘⇧L. REVERT-TO-CONFIRM-
@@ -236,7 +235,7 @@ final class SidebarAutoHideWiringTests: XCTestCase {
         XCTAssertFalse(chrome.manualSidebarOverride, "an echo of the policy's own value is NOT a manual override")
     }
 
-    /// THE end-to-end pin (the WI-7 regression finding 2 closes): an iPad user who SWIPES the panel away at >1
+    /// THE end-to-end pin: an iPad user who SWIPES the panel away at >1
     /// tabs keeps it hidden across an unrelated within-regime tab open — exactly as a ⌘⇧L collapse does. REVERT-
     /// TO-CONFIRM-FAIL: with the pre-fix setter (no override recorded) `applyAutoHide` at 3 tabs sees no override,
     /// recomputes `desired=false`, and FORCIBLY reveals the panel — failing this assertion.

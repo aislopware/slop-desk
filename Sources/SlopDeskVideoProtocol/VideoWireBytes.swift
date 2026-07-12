@@ -99,8 +99,8 @@ struct VideoByteReader {
     /// assigning a NaN layer geometry raises an uncaught `CALayerInvalidGeometry` exception that
     /// kills the process. Treating a non-finite field as malformed lets the router DROP the single
     /// packet (same contract as the reassembler / `InputDatagramRouter.route`) — a corrupt datagram
-    /// must never crash the receiver, host- OR client-bound. (Shared by every wire-float codec so
-    /// the host- and client-bound paths stay symmetric — see VIDEO cursor-NaN audit finding.)
+    /// must never crash the receiver, host- OR client-bound. Shared by every wire-float codec so
+    /// the host- and client-bound paths stay symmetric.
     mutating func readFiniteFloat64(_ field: String) throws -> Double {
         let value = try readFloat64()
         guard value.isFinite else { throw VideoProtocolError.malformed("non-finite \(field)") }
@@ -118,7 +118,7 @@ struct VideoByteReader {
     /// Consumes and returns everything after the current offset as a SLICE of the input
     /// (no copy — the result may have a nonzero `startIndex` and retains the parent buffer).
     ///
-    /// Copy-elimination contract (receive-path audit, 2026-07-10): every caller either
+    /// Copy-elimination contract: every caller either
     /// transforms the bytes immediately (`String(data:encoding:)` in the input/geometry
     /// codecs) or hands them straight to a further decode whose durable fields come from
     /// `readBytes` copies (`VideoMuxHeaderCodec.decode` → transports → per-message codecs).

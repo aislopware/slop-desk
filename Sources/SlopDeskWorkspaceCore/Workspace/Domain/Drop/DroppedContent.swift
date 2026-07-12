@@ -4,13 +4,13 @@ import Foundation
 
 /// What an external drag is carrying, once the platform pasteboard has been inspected and reduced to a
 /// single semantic value (see `docs/ui-shell/spec/user-interface__drag-and-drop.md`). This is the PURE value the
-/// drop policy reasons over — the AppKit / SwiftUI drop layer (E18 WI-5) extracts the raw pasteboard,
+/// drop policy reasons over — the AppKit / SwiftUI drop layer extracts the raw pasteboard,
 /// hands it to ``DropPayloadClassifier``, and gets one of these back (or `nil` for an unsupported /
 /// empty drag — validate-then-drop).
 ///
 /// `folder` vs `file` is decided by the platform layer from the file URL's `isDirectory` resource value
 /// (this pure layer NEVER touches the disk); `url` is a non-file web URL string; `text` is a plain
-/// snippet. The path/URL/text strings are carried verbatim so the actuator (WI-6) can inject them
+/// snippet. The path/URL/text strings are carried verbatim so the actuator can inject them
 /// through the existing PTY funnel as VERBATIM UTF-8.
 public enum DroppedContent: Equatable, Sendable {
     /// A directory path (host-resolved on actuation; a `cd` / open-in-place target).
@@ -29,7 +29,7 @@ public enum DroppedContent: Equatable, Sendable {
 /// unsupported UTType or an empty/whitespace value yields `nil`, never a crash — CLAUDE.md untrusted
 /// input contract; a hostile/empty drag is the normal case, not a fault).
 ///
-/// PURE and headless: it imports no AppKit / UniformTypeIdentifiers. The platform drop layer (WI-5)
+/// PURE and headless: it imports no AppKit / UniformTypeIdentifiers. The platform drop layer
 /// resolves the real pasteboard types — file URLs (with `isDirectory`), web URLs, plain text — into a
 /// ``Payload`` and calls ``classify(_:)``. Precedence is **file → url → text**: a Finder file drag also
 /// exposes a text representation of its path, but the file semantics win (you dropped a file, not a

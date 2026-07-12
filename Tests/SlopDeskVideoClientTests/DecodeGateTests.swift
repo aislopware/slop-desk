@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskVideoClient
 
-/// Drop-until-anchor admission (decode-fail cascade fix, 2026-06-12). Pure value type —
+/// Drop-until-anchor admission (decode-fail cascade fix). Pure value type —
 /// the wrap-aware sequence discipline mirrors `LTREscalationTracker`.
 final class DecodeGateTests: XCTestCase {
     // MARK: Open gate

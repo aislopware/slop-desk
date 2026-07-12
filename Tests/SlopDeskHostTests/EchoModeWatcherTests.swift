@@ -2,7 +2,7 @@ import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskHost
 
-/// E17 / I22 — the PURE ``EchoModeDetector`` core (no real PTY / `tcgetattr`; the `PTYEchoProbe` OS
+/// The PURE ``EchoModeDetector`` core (no real PTY / `tcgetattr`; the `PTYEchoProbe` OS
 /// shim is compiled + code-reviewed only). Drives the detector with INJECTED `echoOn` bools and
 /// asserts the type-31 ``WireMessage/inputEcho`` emit decisions: edge-only emission, the echo-on
 /// anchor (silent steady state), dedupe, and the no-echo → restore cycle.

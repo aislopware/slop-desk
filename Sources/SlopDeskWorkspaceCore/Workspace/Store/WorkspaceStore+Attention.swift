@@ -1,9 +1,9 @@
 import Foundation
 import SlopDeskAgentDetect
 
-// MARK: - Supervision cockpit (P3 — attention edge, jump-to-unread, sidebar summary + liveness)
+// MARK: - Supervision cockpit — attention edge, jump-to-unread, sidebar summary + liveness
 
-/// The P3 supervision logic factored out of ``WorkspaceStore`` so the class body stays under the
+/// The supervision logic factored out of ``WorkspaceStore`` so the class body stays under the
 /// type-body-length ceiling (like `WorkspaceStore+Completion.swift` / `WorkspaceStore+Blocks.swift`).
 /// The stored state (`paneAgentLabel`, `lastNotifiedStatus`, `onAgentAttention`) lives on the class —
 /// `@Observable` synthesises on it; only the derivations + actions are here.
@@ -15,7 +15,8 @@ import SlopDeskAgentDetect
 public extension WorkspaceStore {
     // MARK: Per-pane status / label reads
 
-    /// The rolled-up agent status for `id` (`.none` when unknown — the common case until W10/W11).
+    /// The rolled-up agent status for `id` (`.none` when unknown — the common case before an agent-status
+    /// detector has attached to the pane).
     func agentStatus(for id: PaneID) -> ClaudeStatus {
         paneAgentStatus[id] ?? .none
     }
@@ -25,10 +26,10 @@ public extension WorkspaceStore {
         paneAgentLabel[id]
     }
 
-    /// Sets the per-pane agent status (the W10/W11 detection sink — the sidebar/chrome dots' write path).
+    /// Sets the per-pane agent status (the detection sink — the sidebar/chrome dots' write path).
     /// Idempotent: a no-op when unchanged so it never churns the views.
     ///
-    /// P3: this is the SINGLE centralized chokepoint for every per-pane status write, so the attention
+    /// This is the SINGLE centralized chokepoint for every per-pane status write, so the attention
     /// EDGE detection runs here. It captures the last-notified state before the mutation and, after
     /// committing, runs ``applyAttentionEdge(for:lastNotified:status:)`` — a genuine entry into
     /// needsPermission/done notifies once (coalesced), a flap does not.
@@ -45,7 +46,7 @@ public extension WorkspaceStore {
         // the ephemeral `completedAt` (brief `.completed` flash, settling to `.finished`). Only the
         // positive edge stamps — a stale stamp is harmless (the resolver reads it ONLY in the
         // completed/finished branch, it is refreshed on the next `.done`/`.success`, and pruned on
-        // reconcile), so this never clobbers a coexisting completion-badge stamp. FIX 1: arm the one-shot
+        // reconcile), so this never clobbers a coexisting completion-badge stamp. Arms the one-shot
         // that decays the flash so a quiet `.done` row settles to the dot without a further mutation.
         if status == .done {
             paneCompletedAt[id] = date
@@ -54,7 +55,7 @@ public extension WorkspaceStore {
     }
 
     /// Sets (or clears, on empty) the per-pane host agent label. Idempotent. The cheap activity summary
-    /// the sidebar surfaces (P3 piece 5).
+    /// the sidebar surfaces.
     func setAgentLabel(_ label: String?, for id: PaneID) {
         let trimmed = label?.trimmingCharacters(in: .whitespacesAndNewlines)
         let value = (trimmed?.isEmpty == false) ? trimmed : nil
@@ -63,7 +64,7 @@ public extension WorkspaceStore {
     }
 
     /// Sets (or clears, on empty / whitespace) the per-pane COARSE foreground-process name (wire type 26) —
-    /// the trailing process label the E6 sidebar rail shows and the input the ``TabBadgeResolver`` classifies
+    /// the trailing process label the sidebar rail shows and the input the ``TabBadgeResolver`` classifies
     /// into a `caffeinate`/`sudo` badge. Idempotent (a no-op when unchanged so it never churns the sidebar);
     /// an empty / whitespace-only name removes the key (treated as "no process"). Mirrors ``setAgentLabel``;
     /// the stored ``WorkspaceStore/paneForegroundProcess`` is PRUNED to the live leaf set on reconcile.
@@ -74,7 +75,7 @@ public extension WorkspaceStore {
         if let value { paneForegroundProcess[id] = value } else { paneForegroundProcess.removeValue(forKey: id) }
     }
 
-    // MARK: E13 WI-3 — agent-badge gating (per-pane override + Clear-Badge)
+    // MARK: Agent-badge gating (per-pane override + Clear-Badge)
 
     /// The effective ``AgentBadgeGates`` for pane `id`: the per-pane OVERRIDE if one is set (the tab
     /// context-menu badge toggles), else the GLOBAL default from ``SettingsKey/agentBadgeGates``. One of the
@@ -102,7 +103,7 @@ public extension WorkspaceStore {
         setAgentBadgeOverride(agentBadgeGates(for: id).toggling(gate), for: id)
     }
 
-    // MARK: E20 ES-E20-3 — manual per-tab status-badge override (the `tab badge --kind` CLI)
+    // MARK: Manual per-tab status-badge override (the `tab badge --kind` CLI)
 
     /// The MANUAL status-badge override for tab `id` (`nil` ⇒ the tab follows its DERIVED per-pane badge).
     /// Set by the client-control `tab badge --kind` verb (``setTabBadgeOverride(_:for:)``); consulted by
@@ -114,8 +115,8 @@ public extension WorkspaceStore {
 
     /// Sets (or clears, on `nil`) tab `id`'s MANUAL status-badge override (the `tab badge --kind` CLI).
     /// Idempotent (a no-op when unchanged so it never churns the rail). Passing `nil` drops the override so
-    /// the tab follows its derived per-pane badge again. This is the seam the E20 client-control backend
-    /// writes — the override the rail/`tab list` actually render, so `tab badge --kind` is no longer a no-op.
+    /// the tab follows its derived per-pane badge again. This is the seam the client-control backend
+    /// writes — the override the rail/`tab list` actually render, so `tab badge --kind` takes effect here.
     func setTabBadgeOverride(_ kind: TabBadgeKind?, for id: TabID) {
         guard tabBadgeOverrides[id] != kind else { return }
         if let kind { tabBadgeOverrides[id] = kind } else { tabBadgeOverrides.removeValue(forKey: id) }
@@ -164,7 +165,7 @@ public extension WorkspaceStore {
     /// rail only shows the active one) and resolves each pane through the SAME gated pipeline the rail
     /// renders (``TabBadgeGating/resolve(...)`` + the manual ``tabBadgeOverride(for:)`` on the tab's
     /// representative pane), so this and the sidebar can never disagree — a badge the user silenced never
-    /// lights the dot or lists here. The focused leaf is excluded via the B3 gate (``isPaneFocused(_:)``):
+    /// lights the dot or lists here. The focused leaf is excluded via ``isPaneFocused(_:)``:
     /// while the app is inactive nothing is focused, so even the active leaf counts until the user
     /// returns. Freshness is pinned ``TabBadgeResolver/CompletionFreshness/settled`` — `.completed` and
     /// `.finished` are BOTH attention-class, so the flash clock cannot change the verdict (no `Date()`
@@ -246,7 +247,7 @@ public extension WorkspaceStore {
 
     // MARK: Jump-to-unread (⌘⇧U)
 
-    /// Jump-to-unread (⌘⇧U, P3 piece 4): focuses the OLDEST pane currently needing attention across ALL
+    /// Jump-to-unread (⌘⇧U): focuses the OLDEST pane currently needing attention across ALL
     /// sessions/tabs — ``ClaudeStatus/needsPermission`` (blocked) first, then ``ClaudeStatus/done``, each
     /// in canonical traversal order (`tree.allPaneIDs()` is session → tab → pre-order DFS, so the first is
     /// the oldest/top-most). Switches session + tab as needed via ``focusPaneTree(_:)``. A no-op when no
@@ -259,9 +260,9 @@ public extension WorkspaceStore {
         focusPaneTree(target)
     }
 
-    // MARK: Peek & Reply (⌘⇧J, P4 — answer a blocked agent INLINE)
+    // MARK: Peek & Reply (⌘⇧J — answer a blocked agent INLINE)
 
-    /// The pane the P4 "Peek & Reply" overlay (⌘⇧J) should target: the FOCUSED pane when it is itself
+    /// The pane the "Peek & Reply" overlay (⌘⇧J) should target: the FOCUSED pane when it is itself
     /// blocked (`.needsPermission` — you are already looking at it), else the oldest attention pane across
     /// all tabs/sessions (``AttentionJump`` order: needsPermission before done, oldest-first). `nil` when
     /// nothing needs attention. The selection is the pure ``PeekReplyTarget`` so it is unit-tested without
@@ -279,7 +280,7 @@ public extension WorkspaceStore {
         )
     }
 
-    /// The cheap, headless peek DTO for pane `id` (P4 piece 2): its display name, its host-provided blocking
+    /// The cheap, headless peek DTO for pane `id`: its display name, its host-provided blocking
     /// question (the type-27 ``paneAgentLabel``, or `nil`), and the last few command-block lines as the
     /// "recent output" stand-in. ALL client-side + swift-build-visible — the spec title from the tree, the
     /// label from ``agentLabel(for:)``, and the recent lines from the per-pane ``TerminalBlockModel`` (no
@@ -302,8 +303,8 @@ public extension WorkspaceStore {
         return PeekContent.recentLines(from: model.blocks.blocks, limit: limit)
     }
 
-    /// Sends `text` (plus one trailing newline) to pane `id`'s PTY — the ONE testable chokepoint the P4
-    /// overlay routes every reply through, so the view never touches the private `registry`. Goes through
+    /// Sends `text` (plus one trailing newline) to pane `id`'s PTY — the ONE testable chokepoint the Peek &
+    /// Reply overlay routes every reply through, so the view never touches the private `registry`. Goes through
     /// the public ``handle(for:)`` to the same `sendText` per-pane funnel the broadcast / sync-input fan-out
     /// uses — so a reply reaches a pane that is NOT focused. A no-op for an unmaterialized / non-text pane
     /// (``LivePaneSession`` / ``FakePaneSession`` drop text for video kinds).
@@ -315,7 +316,7 @@ public extension WorkspaceStore {
         handle(for: id)?.sendText(text)
     }
 
-    // MARK: Sidebar activity summary + liveness (P3 piece 5)
+    // MARK: Sidebar activity summary + liveness
 
     /// A coarse session liveness verdict for the sidebar glyph: `alive` when ANY pane in the session has a
     /// live (connected) connection, else `exitedResumable` (every pane disconnected/failed/unreachable —
@@ -323,7 +324,7 @@ public extension WorkspaceStore {
     /// client already holds (no host round-trip, no new wire field).
     enum SessionLiveness: Sendable, Equatable { case alive, exitedResumable }
 
-    /// The session's liveness (P3 piece 5): `alive` iff at least one of its panes is connected.
+    /// The session's liveness: `alive` iff at least one of its panes is connected.
     func sessionLiveness(forSession sessionID: SessionID) -> SessionLiveness {
         guard let session = tree.sessions.first(where: { $0.id == sessionID }) else { return .exitedResumable }
         for id in session.allPaneIDs() {
@@ -332,7 +333,7 @@ public extension WorkspaceStore {
         return .exitedResumable
     }
 
-    /// The cheap one-line activity summary for a session row (P3 piece 5): the rolled-up MOST-URGENT
+    /// The cheap one-line activity summary for a session row: the rolled-up MOST-URGENT
     /// pane's host-provided label (the type-27 blocking prompt / last assistant line) when present —
     /// genuinely cheap (no scrollback, no LLM, no round-trip). When no pane carries a label, falls back to
     /// the human STATE label ("needs permission" / "working" / "done" / "idle"). `nil` when the session is

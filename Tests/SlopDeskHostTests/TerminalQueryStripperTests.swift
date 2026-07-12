@@ -50,7 +50,7 @@ final class TerminalQueryStripperTests: XCTestCase {
         XCTAssertEqual(strip("a\u{1B}]104\u{07}b"), "ab", "palette reset")
     }
 
-    /// Audit 2026-07-10 #1: the ECHOED RESPONSES of DECRQSS (`DCS {0|1} $ r … ST`, ghostty's
+    /// The ECHOED RESPONSES of DECRQSS (`DCS {0|1} $ r … ST`, ghostty's
     /// `stream_handler` reply format) and XTGETTCAP (`DCS {0|1} + r … ST`, ghostty's terminfo
     /// reply format) must be stripped like their query halves — a poisoned transcript carrying
     /// them re-emits raw DCS garbage on the fresh command line at cold reattach (the exact bug
@@ -62,7 +62,7 @@ final class TerminalQueryStripperTests: XCTestCase {
         XCTAssertEqual(strip("a\u{1B}P0+r\u{1B}\\b"), "ab", "XTGETTCAP miss response")
     }
 
-    /// Audit 2026-07-10 #2: OSC 21 (kitty color protocol) is a live query/response OSC in
+    /// OSC 21 (kitty color protocol) is a live query/response OSC in
     /// ghostty — same shape and delivery mechanism as the already-guarded OSC 10/11/12. Both
     /// forms must be stripped so a recorded probe is never re-answered into the shell's stdin.
     func testStripsOSC21KittyColorProtocol() {
@@ -105,7 +105,7 @@ final class TerminalQueryStripperTests: XCTestCase {
     }
 
     /// An `ESC[` embedded in a DCS body must not be parsed as a CSI (string-sequence swallow —
-    /// mirrors the distiller's R9 #4 rule). Sixel-style DCS is kept whole.
+    /// mirrors the distiller's rule). Sixel-style DCS is kept whole.
     func testDCSBodySwallowsEmbeddedCSI() {
         let sixel = "a\u{1B}Pq#0;2;0;0;0\u{1B}[c-not-a-query\u{1B}\\b"
         XCTAssertEqual(strip(sixel), sixel)
@@ -162,8 +162,8 @@ final class TerminalQueryStripperTests: XCTestCase {
     /// construction time and the expected output is the concatenation of the KEPT pieces — so any
     /// internal refactor (lazy String building, slice-based CSI parsing) that changes a single
     /// output byte or a single strip decision fails here. Covers SGR-heavy colored output, CSI
-    /// with params + intermediates, the full query/response set incl. the 2026-07-10 additions
-    /// (DCS `$r`/`+r` responses, OSC 21), OSC/DCS/APC string bodies, raw multi-byte UTF-8, and a
+    /// with params + intermediates, the full query/response set including the DCS `$r`/`+r`
+    /// responses and OSC 21, OSC/DCS/APC string bodies, raw multi-byte UTF-8, and a
     /// truncated trailing escape.
     func testNastyCorpusExactBytesPinned() {
         // (piece, keep) — keep == true ⇒ the piece must appear VERBATIM in the output.
@@ -211,10 +211,10 @@ final class TerminalQueryStripperTests: XCTestCase {
             ("\u{1B}P+q544e\u{1B}\\", false), // XTGETTCAP query
             ("\u{1B}P$qm\u{1B}\\", false), // DECRQSS query
             ("\u{1B}P>|ghostty 1.3.1\u{1B}\\", false), // echoed XTVERSION response
-            ("\u{1B}P1$rm\u{1B}\\", false), // DECRQSS hit response (214be586)
-            ("\u{1B}P0$r\u{1B}\\", false), // DECRQSS miss response (214be586)
-            ("\u{1B}P1+r524742=3838\u{1B}\\", false), // XTGETTCAP hit response (214be586)
-            ("\u{1B}P0+r\u{1B}\\", false), // XTGETTCAP miss response (214be586)
+            ("\u{1B}P1$rm\u{1B}\\", false), // DECRQSS hit response
+            ("\u{1B}P0$r\u{1B}\\", false), // DECRQSS miss response
+            ("\u{1B}P1+r524742=3838\u{1B}\\", false), // XTGETTCAP hit response
+            ("\u{1B}P0+r\u{1B}\\", false), // XTGETTCAP miss response
             ("\u{1B}_Gf=100;payload\u{1B}\\", true), // APC kept whole
             ("\u{1B}(B\u{1B}=\u{1B}M", true), // 2-byte ESC pairs
             ("\u{1B}[1;5H\u{1B}[2J\u{1B}[0K", true), // cursor move / clears

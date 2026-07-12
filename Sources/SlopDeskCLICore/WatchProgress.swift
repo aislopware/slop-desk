@@ -1,7 +1,7 @@
 import Foundation
 import SlopDeskProtocol
 
-// `slopdesk watch <cmd>` (ui-shell E20, WI-7) — the PURE byte vocabulary the watch wrapper
+// `slopdesk watch <cmd>` — the PURE byte vocabulary the watch wrapper
 // prints to its controlling terminal so the host's OSC sniffer turns it into a tab spinner/badge.
 //
 // `watch` shows an indeterminate spinner while the wrapped command runs, then a success or

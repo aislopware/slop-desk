@@ -29,7 +29,7 @@ public struct WindowFeedSourceWindow: Equatable, Sendable {
     public var isAppHidden: Bool
     /// Whether the owning app is `NSWorkspace.frontmostApplication`.
     public var isFrontmostApp: Bool
-    /// `AXMinimized` (best-effort, budgeted — Phase 5; false when not probed).
+    /// `AXMinimized` (best-effort, budgeted probe; false when not probed).
     public var isMinimized: Bool
     /// Whether the AX probe has seen this window in its app's `kAXWindows` list (best-effort,
     /// budgeted; false when not probed). Off-screen windows need this evidence to be listed — see
@@ -72,7 +72,8 @@ public struct WindowFeedSourceWindow: Equatable, Sendable {
 public enum WindowFeedInclusionPolicy {
     /// System apps whose windows are never useful to stream (docs/31): desktop chrome, indicators.
     /// "Cua Driver" is the cua automation agent's transparent full-display cursor overlay — a real
-    /// on-screen layer-0 window with nothing visible in it (user report 2026-07-12).
+    /// on-screen layer-0 window with nothing visible in it, so it must be excluded by name rather
+    /// than by any visual heuristic.
     public static let excludedSystemApps: Set<String> = [
         "", "Window Server", "Control Center", "Dock", "Notification Center", "Spotlight", "Wallpaper",
         "Cua Driver",
@@ -80,8 +81,8 @@ public enum WindowFeedInclusionPolicy {
 
     /// Phantom utility windows that survive the off-screen AX-evidence gate because their app
     /// genuinely lists them in `kAXWindows` yet they never render: Finder's App Store `asverify`
-    /// receipt-verification window (user report 2026-07-12). Keyed (ownerName → titles) to stay
-    /// surgical — real windows of the same app are untouched.
+    /// receipt-verification window. Keyed (ownerName → titles) to stay surgical — real windows of
+    /// the same app are untouched.
     static let junkTitlesByOwner: [String: Set<String>] = ["Finder": ["asverify"]]
 
     /// Windows under this size (points) are tiny indicators/popups, not streamable app windows.
@@ -117,12 +118,13 @@ public enum WindowFeedSnapshotBuilder {
                       ownerName: w.ownerName, title: w.title, widthPt: w.widthPt, heightPt: w.heightPt,
                   )
             else { continue }
-            // Off-screen windows need AX EVIDENCE to be listed (user report 2026-07-11: the rail
-            // drowned in `.optionAll` phantoms — Chrome tab caches, panel services, `loginwindow`,
-            // 16 of 27 records). A REAL off-screen window (minimized, other Space, hidden app) shows
-            // up in its app's `kAXWindows`; phantom caches never do. Alpha/sharing-state were dead
-            // ends (all 1.0/1). Cold cost: a real off-screen window may hide for the probe's first
-            // few budgeted ticks (≤3 pids/s, 3 s TTL) before appearing — junk-free beats instant.
+            // Off-screen windows need AX EVIDENCE to be listed: `.optionAll` enumeration is full of
+            // phantoms — Chrome tab caches, panel services, `loginwindow` — that would otherwise
+            // drown the rail. A REAL off-screen window (minimized, other Space, hidden app) shows up
+            // in its app's `kAXWindows`; phantom caches never do. Alpha/sharing-state are not usable
+            // signals here (phantoms report the same 1.0/1 as real windows). Cold cost: a real
+            // off-screen window may hide for the probe's first few budgeted ticks (≤3 pids/s, 3 s
+            // TTL) before appearing — junk-free beats instant.
             guard w.isOnScreen || w.isMinimized || w.isAXListed else { continue }
             var flags: HostWindowFlags = []
             if w.isOnScreen { flags.insert(.onScreen) }

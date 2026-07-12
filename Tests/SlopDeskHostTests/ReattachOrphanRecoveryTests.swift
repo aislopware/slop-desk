@@ -4,19 +4,19 @@ import XCTest
 @testable import SlopDeskHost
 @testable import SlopDeskTransport
 
-/// Reattach-vs-linkDown orphan cluster (audit 2026-07-10 round 2 #0 — CRITICAL).
+/// Reattach-vs-linkDown orphan cluster (CRITICAL).
 ///
 /// The poison sequence: `performReattach` claims a detached session, then runs the LONG
 /// credit-paced `replayTail`. If the new link dies in that window, `finishLink` finishes the
 /// sub-channels FIRST and `handleLinkDown` re-parks the session in ``DetachedSessionStore``
-/// (isDetached stays true) — but `rebindRelay`'s only guard used to be `guard isDetached`, so
-/// the still-running reattach then rebound onto the DEAD channels and flipped
-/// `isDetached = false` while the session sat in the store. The NEXT reconnect claimed that
-/// poisoned session, `rebindRelay` refused (`isDetached == false`), and the failed-rebind path
-/// only unregistered the map key — the session ended in NO map and NO store: a live shell +
-/// running agent that `stop()`, TTL, and every future reconnect could never reach again (PTY +
-/// master fd + read-loop/reaper threads leaked per flap; the replacement shell double-wrote the
-/// same sessionID journal). Under a flapping wifi link this repeats every few seconds.
+/// (isDetached stays true) — but if `rebindRelay`'s only guard is `guard isDetached`, then
+/// the still-running reattach rebinds onto the DEAD channels and flips
+/// `isDetached = false` while the session sits in the store. The NEXT reconnect claims that
+/// poisoned session, `rebindRelay` refuses (`isDetached == false`), and the failed-rebind path
+/// only unregisters the map key — the session ends up in NO map and NO store: a live shell +
+/// running agent that `stop()`, TTL, and every future reconnect can never reach again (PTY +
+/// master fd + read-loop/reaper threads leak per flap; the replacement shell double-writes the
+/// same sessionID journal). Under a flapping wifi link this would repeat every few seconds.
 ///
 /// Three pinned layers (defense in depth):
 /// 1. `rebindRelay` refuses (returns false) when its target sub-channels are already finished.

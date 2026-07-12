@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - Paste-protection danger analyzer (E8 / ES-E8-3)
+// MARK: - Paste-protection danger analyzer
 
 /// PURE analyzer for the **Paste Protection** safety net (Settings ▸ Controls). It classifies a
 /// clipboard payload against the four dangers the confirmation dialog flags and decides whether the

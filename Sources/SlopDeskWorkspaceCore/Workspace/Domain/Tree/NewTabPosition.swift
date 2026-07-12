@@ -7,8 +7,7 @@ import Foundation
 /// `after-current`).
 ///
 /// - ``auto``: context-aware. The default; with no surrounding window context to consult the sane
-///   default is to **append** — which is also exactly what `WorkspaceTreeOps.newTab` did before
-///   E3, so `.auto` is byte-identical to the old `tabs.append(...)`.
+///   default is to **append**, so `.auto` is byte-identical to plain `tabs.append(...)`.
 /// - ``end``: always append to the end of the tab list.
 /// - ``afterCurrent``: insert immediately after the active tab (its raw value is `after-current`).
 ///

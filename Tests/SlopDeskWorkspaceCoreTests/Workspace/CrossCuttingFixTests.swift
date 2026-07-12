@@ -2,7 +2,7 @@ import CoreGraphics
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Pins the cross-cutting state-lifecycle fixes (2026-06-13 cross-cutting hunt): a whole-canvas swap
+/// Pins the cross-cutting state-lifecycle fixes: a whole-canvas swap
 /// (switchToLayoutPreset) must invalidate the workspace-global transients that anchor to the OLD canvas —
 /// viewport bookmarks and the close-undo.
 @MainActor

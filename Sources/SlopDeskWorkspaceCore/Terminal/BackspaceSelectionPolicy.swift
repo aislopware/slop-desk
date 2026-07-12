@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - E8 WI-10 (I7): backspace-deletes-selection decision
+// MARK: - Backspace-deletes-selection decision
 
 /// What the terminal view should do when ``BackspaceSelectionPolicy`` is consulted on a Backspace press
 /// with the live selection / setting / mode state.
@@ -24,7 +24,7 @@ public enum BackspaceAction: Equatable, Sendable {
     case forward
 }
 
-/// The PURE, headless decision behind the "Backspace deletes selection" feature (I7): given the live selection
+/// The PURE, headless decision behind the "Backspace deletes selection" feature: given the live selection
 /// state, the setting, and whether a full-screen program owns the screen / the terminal is at an editable
 /// shell prompt, what should a Backspace press do?
 ///
@@ -44,7 +44,7 @@ public enum BackspaceAction: Equatable, Sendable {
 ///    the highlight on the keystroke; we add nothing.
 /// 3. **A full-screen / foreground program owns the screen** (`isAlternateScreen`) → ``BackspaceAction/forward``:
 ///    NEVER intercept — the key belongs to the program (vim's own Backspace, a TUI's line editor). This is the
-///    "repeat inside `vim` → single-char passthrough" leg of ES-E8-2.
+///    "repeat inside `vim` → single-char passthrough" case.
 /// 4. Otherwise (selection present, feature on, primary screen):
 ///    - **at an editable prompt** (`isPromptZone`) → ``BackspaceAction/deleteSelection`` (the feature).
 ///    - **off the prompt** → ``BackspaceAction/clearThenSingle`` (the safe fallback where DEL bytes can't be
@@ -89,7 +89,7 @@ public enum BackspaceSelectionPolicy {
     /// ``BackspaceAction/deleteSelection`` decision, BEFORE the fall-through Backspace keystroke (which
     /// sends the final DEL and clears the highlight via libghostty's default-ON `selection-clear-on-typing`).
     ///
-    /// ## The data-loss trap this guards (ES-E8-2)
+    /// ## The data-loss trap this guards
     /// DEL bytes ALWAYS erase the characters immediately BEFORE the host cursor — so pre-sending
     /// `count − 1` DELs only erases the *selected* run when that run **ends at the cursor**. The pinned
     /// libghostty fork exposes no set-selection / cursor-geometry API, so the embedder CANNOT verify that.

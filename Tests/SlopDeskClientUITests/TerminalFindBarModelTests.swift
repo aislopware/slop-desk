@@ -1,11 +1,11 @@
-// TerminalFindBarModelTests — E5 / WI-3. Pins the in-pane find bar's view-model (``TerminalFindBarModel``):
+// TerminalFindBarModelTests pins the in-pane find bar's view-model (``TerminalFindBarModel``):
 // the driver over the PURE ``TerminalSearchController`` (count / N-of-M / next-prev-wrap) + the libghostty
 // `search:` / `navigate_search:` / `end_search` passthrough. The model is HEADLESS — its only renderer touch
 // is `surface as? TerminalSurfaceActions`, which a pure in-memory ``FakeSearchSurface`` satisfies (NO real
 // `GhosttySurface` / VideoToolbox / Metal — the hang-safety rule; this mirrors the existing
 // `CapturingSurface`/`RecordingSurface` fakes in `TerminalViewModelTests`).
 //
-// Every case FAILS on the un-fixed tree (the model did not exist before WI-3) and asserts an observable state
+// Every case FAILS on a tree without this model and asserts an observable state
 // transition (visibility / query / flags / `N of M` / the fired bind-action strings) against expected values,
 // never against the output's own derivation.
 
@@ -68,7 +68,7 @@ final class TerminalFindBarModelTests: XCTestCase {
         withExtendedLifetime((vm, surface)) {}
     }
 
-    /// ES-E5-1/2: `open()` shows the bar; typing live-counts every match over the snapshot mirror (`N of M`).
+    /// `open()` shows the bar; typing live-counts every match over the snapshot mirror (`N of M`).
     func testOpenShowsBarAndCountsMatches() {
         withBar(lines: ["read the docs here", "no hits", "more docs and docs"]) { bar, _ in
             XCTAssertFalse(bar.visible)
@@ -82,7 +82,7 @@ final class TerminalFindBarModelTests: XCTestCase {
         }
     }
 
-    /// ES-E5-3: ↩/⌘G next + ⇧↩/⇧⌘G prev advance + wrap the selection AND fire the libghostty nav bind-actions.
+    /// ↩/⌘G next + ⇧↩/⇧⌘G prev advance + wrap the selection AND fire the libghostty nav bind-actions.
     func testNextPreviousWrapAndFireSurfaceNav() {
         withBar(lines: ["docs", "docs", "docs"]) { bar, surface in
             bar.open()
@@ -102,7 +102,7 @@ final class TerminalFindBarModelTests: XCTestCase {
         }
     }
 
-    /// E17 ES-E17-2 / WI-5: a copy-mode `?` opens the bar in BACKWARD direction (``open(backward:)``), and the
+    /// A copy-mode `?` opens the bar in BACKWARD direction (``open(backward:)``), and the
     /// bar's vi `n`/`N` then step RELATIVE to that direction — `n` (``next()``) walks AGAINST the natural sense
     /// (`navigate_search:previous`, up the buffer) and `N` (``previous()``) WITH it (`navigate_search:next`,
     /// down). Vim parity: `n` repeats a search in its original direction, `N` opposite.
@@ -143,7 +143,7 @@ final class TerminalFindBarModelTests: XCTestCase {
         }
     }
 
-    /// ES-E5-3 (find-next-opens-find): ⌘G with the bar closed OPENS it.
+    /// Find-next-opens-find: ⌘G with the bar closed OPENS it.
     func testNextOpensBarWhenClosed() {
         withBar(lines: ["docs"]) { bar, _ in
             XCTAssertFalse(bar.visible)
@@ -152,7 +152,7 @@ final class TerminalFindBarModelTests: XCTestCase {
         }
     }
 
-    /// ES-E5-3 (Esc/×): close clears the query + matches, hides the bar, and ENDS the surface search (drops the
+    /// Esc/×: close clears the query + matches, hides the bar, and ENDS the surface search (drops the
     /// in-buffer highlights).
     func testCloseClearsQueryHidesBarAndEndsSurfaceSearch() {
         withBar(lines: ["docs"]) { bar, surface in
@@ -168,7 +168,7 @@ final class TerminalFindBarModelTests: XCTestCase {
         }
     }
 
-    /// ES-E5-4 (`Aa`): the case toggle flips the flag, refreshes the mirror, and narrows the match set.
+    /// `Aa`: the case toggle flips the flag, refreshes the mirror, and narrows the match set.
     func testCaseToggleNarrowsMatches() {
         withBar(lines: ["DOCS docs Docs"]) { bar, _ in
             bar.open()
@@ -181,7 +181,7 @@ final class TerminalFindBarModelTests: XCTestCase {
         }
     }
 
-    /// ES-E5-4 (`.*`): the regex toggle flips the flag and switches literal → ICU pattern matching.
+    /// `.*`: the regex toggle flips the flag and switches literal → ICU pattern matching.
     func testRegexToggleSwitchesToPatternMatching() {
         withBar(lines: ["a1 b2 c3"]) { bar, _ in
             bar.open()
@@ -194,7 +194,7 @@ final class TerminalFindBarModelTests: XCTestCase {
         }
     }
 
-    /// ES-E5-4 (regex-mode honesty fix): in `.*` mode the bar must NOT arm libghostty's LITERAL search
+    /// Regex-mode honesty: in `.*` mode the bar must NOT arm libghostty's LITERAL search
     /// (`search:<pattern>` / `navigate_search:`) — that matcher has no regex engine, so it would paint a
     /// misleading literal highlight beside the controller's correct regex count and leave the chevrons dead.
     /// Instead each open / next / previous drives in-grid navigation from the controller's own match rows via
@@ -271,7 +271,7 @@ final class TerminalFindBarModelTests: XCTestCase {
     }
 
     /// Companion guard: LITERAL mode is UNCHANGED by the regex fix — it still arms `search:` and steps
-    /// libghostty's own `navigate_search:next`/`previous` (the ac2c7a8 fix), and never falls back to scroll_to_row.
+    /// libghostty's own `navigate_search:next`/`previous`, and never falls back to scroll_to_row.
     func testLiteralModeStillArmsSearchAndNavigateSearch() {
         withBar(lines: ["docs", "docs"]) { bar, surface in
             bar.open()
@@ -289,13 +289,13 @@ final class TerminalFindBarModelTests: XCTestCase {
         }
     }
 
-    /// Batch-5: the find bar's `rectangle.stack` "search all tabs" button escalates to cross-tab Global Search
+    /// The find bar's `rectangle.stack` "search all tabs" button escalates to cross-tab Global Search
     /// SEEDED with the current query, then dismisses the in-pane bar. The button's function is pinned
     /// (`SearchIconButton("rectangle.stack") // search all tabs`), placed between the next-match
     /// chevron and the close ×.
     ///
-    /// Revert-to-confirm-fail: before this batch the model had NO `searchAllTabs()` / `onSearchAllTabs` seam
-    /// (the button was a deliberate omission), so neither the seeded escalation nor the auto-dismiss existed.
+    /// Revert-to-confirm-fail: without `searchAllTabs()` / `onSearchAllTabs` on the model, neither the seeded
+    /// escalation nor the auto-dismiss exists.
     func testSearchAllTabsEscalatesWithSeededQueryThenCloses() {
         withBar(lines: ["read the docs", "more docs"]) { bar, _ in
             var seeded: String?
@@ -309,7 +309,7 @@ final class TerminalFindBarModelTests: XCTestCase {
         }
     }
 
-    /// Bug 2 (Aa case-sensitive honesty): libghostty's in-surface matcher is HARD-WIRED case-insensitive, so
+    /// Aa case-sensitive honesty: libghostty's in-surface matcher is HARD-WIRED case-insensitive, so
     /// case-SENSITIVE literal mode must NOT arm `search:` / `navigate_search:` (they would highlight + step
     /// case-folded occurrences the case-sensitive counter says don't exist). Like regex / whole-word, it drives
     /// the viewport from the controller's own match rows via `scroll_to_row` (end_search clears any stale
@@ -343,7 +343,7 @@ final class TerminalFindBarModelTests: XCTestCase {
         }
     }
 
-    /// Bug 1 (soft-wrap coordinate mapping): a row-driven `scroll_to_row` must target the PHYSICAL grid row,
+    /// Soft-wrap coordinate mapping: a row-driven `scroll_to_row` must target the PHYSICAL grid row,
     /// not the logical (unwrapped) mirror index — every soft-wrapped continuation row ABOVE the match shifts
     /// the physical row down. With a known grid width, a wide line above the hit adds its wrap rows.
     /// Revert-to-confirm-fail: the un-fixed `scrollToCurrentMatchRow` emitted `scroll_to_row:<Match.line>`
@@ -371,7 +371,7 @@ final class TerminalFindBarModelTests: XCTestCase {
         withExtendedLifetime((vm, surface)) {}
     }
 
-    /// Bug 3 (find bar close returns keyboard focus): closing the bar (Esc / × / search-all-tabs) must ask the
+    /// Find bar close returns keyboard focus: closing the bar (Esc / × / search-all-tabs) must ask the
     /// surface to re-claim the window's first responder — closing tears down the focused query field without a
     /// workspace-focus change, so nothing else reclaims it and typing would go nowhere until the pane is clicked.
     /// Revert-to-confirm-fail: the un-fixed `close()` never called `reclaimKeyboardFocus()`, so `reclaimed`

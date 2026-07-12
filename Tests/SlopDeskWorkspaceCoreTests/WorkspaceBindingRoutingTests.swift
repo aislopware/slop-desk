@@ -58,7 +58,7 @@ final class WorkspaceBindingRoutingTests: XCTestCase {
         XCTAssertEqual(focused, 1, ".toggleCopyMode nudges first responder to the terminal so Escape can dismiss (C5)")
     }
 
-    // MARK: - .pinWindow (E19 ES-E19-1 / WI-3 — Pin Window)
+    // MARK: - .pinWindow (Pin Window)
 
     /// `.pinWindow` FORWARDS to the passed `togglePinWindow` closure EXACTLY once (the macOS window-level
     /// concern the live app flips `WorkspaceChromeState.pinned` from) and never mutates the tree.

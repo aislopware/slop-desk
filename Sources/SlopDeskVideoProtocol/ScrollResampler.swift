@@ -1,13 +1,13 @@
 // Resamples a bursty, low-rate remote scroll stream into a STEADY high-rate (≈250 Hz) output so a
 // captured Chromium/Electron window renders smooth-scroll at the full display rate.
 //
-// ## Why this exists (HW-measured 2026-06-19)
+// ## Why this exists
 //
 // Chromium renders SYNTHETIC (injected) smooth-scroll at a rate that climbs with the INJECTION event
 // rate, only saturating at the display's 60 fps around ~250 Hz (4× vsync): 60 Hz-inject → 20 fps,
 // 125 Hz → 35 fps, 250 Hz → 60 fps. Below ~3× vsync the events alias with the compositor and most
 // 16.7 ms frames land zero events. The remote scroll path injects at the client trackpad rate
-// (~60–120 Hz), made burstier by network jitter, so VS Code scroll renders ~20–35 fps → "giật".
+// (~60–120 Hz), made burstier by network jitter, so VS Code scroll renders a juddery ~20–35 fps.
 // (Capture and encode are already 60 fps; the source app CAN render 60 fps — it's the inject rate.)
 //
 // ## What it does — pure, deterministic, total-preserving

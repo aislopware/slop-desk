@@ -3,9 +3,9 @@ import SlopDeskTerminal
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E19/A29 — pins the PURE window-sizing arithmetic (``WindowSizeMath``) + the ``WindowSizeMode`` enum and
+/// Pins the PURE window-sizing arithmetic (``WindowSizeMath``) + the ``WindowSizeMode`` enum and
 /// its persisted-`Defaults` round-trip / repair. No `NSWindow` instantiation (hang-safe): the math is the
-/// tested unit; the macOS glue (WI-4) is compiled + GUI-verified only.
+/// tested unit; the macOS glue is compiled + GUI-verified only.
 @MainActor
 final class WindowSizeMathTests: XCTestCase {
     /// The default cell advance used across the grid math (a typical monospace cell ≈ 8×16pt).
@@ -147,7 +147,7 @@ final class WindowSizeMathTests: XCTestCase {
         XCTAssertEqual(frame, CGSize(width: 200, height: 120), "a 0-px frame floors, never 0")
     }
 
-    // MARK: chromeOverhead (E19/A29 — grid sizes the TERMINAL, not the whole content view)
+    // MARK: chromeOverhead (grid sizes the TERMINAL, not the whole content view)
 
     /// `.grid` ADDS `chromeOverhead` (the revealed sidebar + shown inspector widths) to the grid extent so the
     /// resolved WINDOW content yields a TERMINAL of exactly cols×rows. 80×24 at 8×16 = 640×384 terminal; with a
@@ -176,7 +176,7 @@ final class WindowSizeMathTests: XCTestCase {
         XCTAssertEqual(size, CGSize(width: 1000, height: 600), "frame is the whole-window px size; overhead unused")
     }
 
-    // MARK: fallbackCell (E19/A29 — font-derived cell advance, NOT a hard 8×16)
+    // MARK: fallbackCell (font-derived cell advance, NOT a hard 8×16)
 
     /// The default 13pt font derives ≈ 8×16pt — the old hard-coded fallback — so a default-font launch is
     /// unchanged. (The ratios are 8/13 × 16/13, so 13pt resolves EXACTLY to 8×16.)

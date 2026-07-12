@@ -2,10 +2,10 @@ import CoreGraphics
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E1 (epic E1 — "Default-keymap parity & command-routing completion"): pins the NEW keymap-parity
-/// contract WI-4 adds to the single-source-of-truth ``WorkspaceBindingRegistry`` — every clone action
-/// registered with its collision-checked chord, the tab-cycle re-point (⌘]/⌘[ → sequential PANE cycle,
-/// tab cycling moved to ⌘⇧]/⌘⇧[), the named-key scroll chords, the font chords, and the agent stubs.
+/// Pins the keymap-parity contract in the single-source-of-truth ``WorkspaceBindingRegistry``: every
+/// clone action registered with its collision-checked chord, the tab-cycle re-point (⌘]/⌘[ → sequential
+/// PANE cycle, tab cycling moved to ⌘⇧]/⌘⇧[), the named-key scroll chords, the font chords, and the agent
+/// stubs.
 ///
 /// Mirrors ``TreeCommandRoutingTests`` (same `makeTreeStore` / `route` harness): each new action must
 /// resolve to its documented chord AND route through ``WorkspaceBindingRegistry/route(_:to:)`` on a
@@ -35,11 +35,11 @@ final class E1KeymapParityTests: XCTestCase {
         WorkspaceBindingRegistry.binding(for: action)?.chord
     }
 
-    // MARK: - ES-E1-1: split-left / split-up insert the LEADING leaf and focus it
+    // MARK: - split-left / split-up insert the LEADING leaf and focus it
 
     /// `.splitLeft` splits the active pane and inserts the new `.chooser` leaf on the LEADING (DFS-first)
     /// side, focused. (The leaf is a `.chooser`, which materializes no session until `choosePaneKind`, so we
-    /// assert on the tree structure, not a fake handle — the chooser-split itself is the WI-4/WI-5 contract.)
+    /// assert on the tree structure, not a fake handle — the chooser-split itself is the contract under test.)
     /// FAILS on the pre-E1 code: there is no `.splitLeft` action / routing case.
     func testSplitLeftInsertsLeadingLeafAndFocuses() throws {
         let store = makeTreeStore()
@@ -74,7 +74,7 @@ final class E1KeymapParityTests: XCTestCase {
         }
     }
 
-    // MARK: - ES-E1-2: sequential pane cycle walks DFS and wraps
+    // MARK: - sequential pane cycle walks DFS and wraps
 
     /// `.cyclePaneNext` steps the active pane through the active tab's panes in DFS order and WRAPS at the
     /// end; `.cyclePanePrev` reverses. A 3-pane tab proves both the step and the wrap. FAILS on the pre-E1
@@ -104,9 +104,9 @@ final class E1KeymapParityTests: XCTestCase {
         XCTAssertEqual(activePane(store), order[1], "cyclePrev → second pane (reverse DFS)")
     }
 
-    // MARK: - Chord table: re-point + new chords match the collision-checked E1 table
+    // MARK: - Chord table: re-point + new chords match the collision-checked table
 
-    /// The tab-cycle RE-POINT (ES-E1-2 / DECISIONS): `nextTab`/`prevTab` moved to ⌘⇧]/⌘⇧[, and the FREED
+    /// The tab-cycle RE-POINT (see DECISIONS.md): `nextTab`/`prevTab` moved to ⌘⇧]/⌘⇧[, and the FREED
     /// ⌘]/⌘[ now drive sequential PANE cycling. A transposed-modifier typo would slip past the uniqueness
     /// guard (it only catches a COLLISION), so pin the exact values. FAILS on the pre-E1 chords.
     func testTabCycleMovedToShiftBracketAndPaneCycleOnPlainBracket() {
@@ -147,13 +147,13 @@ final class E1KeymapParityTests: XCTestCase {
         XCTAssertEqual(chord(.toggleZoom), KeyChord(.return, [.command, .shift]), "zoom = ⌘⇧↩")
     }
 
-    /// The split-left/up chords (ES-E1-1): ⌘⌥D / ⌘⌥⇧D — ⌥+ the ⌘D / ⌘⇧D right/down splits.
+    /// The split-left/up chords: ⌘⌥D / ⌘⌥⇧D — ⌥+ the ⌘D / ⌘⇧D right/down splits.
     func testSplitLeftUpChordsMatchTable() {
         XCTAssertEqual(chord(.splitLeft), KeyChord(character: "d", [.command, .option]), "split left = ⌘⌥D")
         XCTAssertEqual(chord(.splitUp), KeyChord(character: "d", [.command, .option, .shift]), "split up = ⌘⌥⇧D")
     }
 
-    /// The eight scroll/command-jump chords + three font chords (ES-E1-3 / ES-E1-4) match the table.
+    /// The eight scroll/command-jump chords + three font chords match the table.
     func testScrollAndFontChordsMatchTable() {
         XCTAssertEqual(chord(.scrollPageUp), KeyChord(.pageUp, [.shift]), "scroll page up = ⇧PageUp")
         XCTAssertEqual(chord(.scrollPageDown), KeyChord(.pageDown, [.shift]), "scroll page down = ⇧PageDown")
@@ -166,7 +166,7 @@ final class E1KeymapParityTests: XCTestCase {
         XCTAssertEqual(chord(.resetFontSize), KeyChord(character: "0", [.command]), "font reset = ⌘0")
     }
 
-    /// ES-E1-4 requires "when I press ⌘+ … the terminal font grows". The canonical chord is ⌘= (no ⇧), but on
+    /// Pressing ⌘+ must grow the terminal font. The canonical chord is ⌘= (no ⇧), but on
     /// a US/ANSI layout `+` IS Shift-`=`: `charactersIgnoringModifiers` ignores ⌘/⌥/⌃ but NOT ⇧, so physically
     /// pressing ⌘+ delivers the character `"+"` with ⇧ set — `KeyChord(character: "+", [.command, .shift])` —
     /// NOT ⌘=. Without an alias that chord is unbound and ⌘+ leaks to the PTY. The registry's `aliasChords`
@@ -254,7 +254,7 @@ final class E1KeymapParityTests: XCTestCase {
         XCTAssertNil(rename?.chord, "rename carries NO default chord")
     }
 
-    /// E1 review fix: ⌘B "Toggle Sidebar" was a DEAD chord on macOS — it routed to
+    /// ⌘B "Toggle Sidebar" was a DEAD chord on macOS — it routed to
     /// `store.toggleSidebarCollapsed()`, a LEGACY flag the native split shell never reads (the macOS sidebar
     /// collapse is `WorkspaceChromeState.sidebarCollapsed`). Re-bound to ⌘⇧L "Toggle Tabs Panel" and
     /// routed through a `toggleSidebar` VIEW closure the live app wires to
@@ -296,7 +296,7 @@ final class E1KeymapParityTests: XCTestCase {
         XCTAssertEqual(store.sidebarCollapsed, !before, "the no-closure fallback still flips the store flag (no trap)")
     }
 
-    /// The delegated-stub chords (ES-E1-5): reopen ⌘⇧T, open-quickly ⌘⇧O — registered with the exact
+    /// The delegated-stub chords: reopen ⌘⇧T, open-quickly ⌘⇧O — registered with the exact
     /// collision-checked chords.
     func testDelegatedStubChordsMatchTable() {
         XCTAssertEqual(chord(.reopenClosed), KeyChord(character: "t", [.command, .shift]), "reopen closed = ⌘⇧T")

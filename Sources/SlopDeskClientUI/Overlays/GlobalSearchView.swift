@@ -1,5 +1,5 @@
-// GlobalSearchView — the cross-tab Global Search results surface (E5 / WI-4), opened by ⇧⌘F. A LARGE,
-// content-area-filling, NON-scrimmed card (E5 divergence #1: a dedicated results *overlay* rather than a
+// GlobalSearchView — the cross-tab Global Search results surface, opened by ⇧⌘F. A LARGE,
+// content-area-filling, NON-scrimmed card (a dedicated results *overlay* rather than a
 // results *tab*, which we do not add to avoid blast-radius across every `switch PaneKind` site).
 // Presented as a NATIVE `.sheet` by ``OverlayHostView`` — a large results window on macOS (system chrome).
 //
@@ -19,7 +19,7 @@
 // `globalSearchQuery`/flags so a re-open restores them); ALL match math runs in the store via the PURE
 // ``GlobalSearchController`` (``WorkspaceStore/runGlobalSearch``) — never a second matcher. A row tap jumps via
 // ``WorkspaceStore/jumpToGlobalSearchResult(_:)`` then closes through the coordinator. The amber highlight is
-// the in-buffer `GlobalSearchHit.highlight` UTF-16 range tinted on the excerpt (divergence #2: the counter /
+// the in-buffer `GlobalSearchHit.highlight` UTF-16 range tinted on the excerpt (the counter /
 // excerpt come from the scrollback mirror; the live in-pane highlight is libghostty's on jump).
 
 #if canImport(SwiftUI)
@@ -36,13 +36,13 @@ struct GlobalSearchView: View {
     let coordinator: OverlayCoordinator
 
     /// The transient query field — mirrors ``WorkspaceStore/globalSearchQuery`` (restored on appear) and writes
-    /// back through ``WorkspaceStore/runGlobalSearch`` on every keystroke (live re-run, ES-E5-5).
+    /// back through ``WorkspaceStore/runGlobalSearch`` on every keystroke (live re-run).
     @State private var query = ""
     /// `Aa` / `.*` mirrors of the store's retained flags (restored on appear; a toggle re-runs).
     @State private var caseSensitive = false
     @State private var isRegex = false
 
-    /// Per-group collapse state (E5: `user-interface__find.md` — each tab group is a COLLAPSIBLE group with a
+    /// Per-group collapse state (`user-interface__find.md` — each tab group is a COLLAPSIBLE group with a
     /// leading disclosure control). Keyed by ``PaneID`` so a live re-run that re-orders/drops groups carries
     /// the collapse intent to surviving panes and lets a vanished pane's id fall away. Default = all expanded.
     @State private var collapse = GlobalSearchCollapseState()
@@ -99,7 +99,7 @@ struct GlobalSearchView: View {
                 // The query text sits inside a FILLED, hairline-bordered rounded plate (global-search.png): a
                 // `Surface.face` fill + `radiusSmall` + its own `Line.subtle` hairline, because this overlay's
                 // field sits on bare `Surface.ground` and needs the ring to read as a field plate. The find bar's
-                // sibling field (`TerminalFindBar.queryField`) ALSO wears a `Line.subtle` hairline now (Batch-5b),
+                // sibling field (`TerminalFindBar.queryField`) ALSO wears a `Line.subtle` hairline,
                 // but its FILL is `State.selected`, not `Surface.face` — that fill difference is the INTENTIONAL
                 // context delta (the find-bar field sits on the elevated, borderless `Surface.raised` card whose
                 // `State.selected` wash inverts contrast by theme, so the hairline delineates it regardless of
@@ -259,7 +259,7 @@ struct GlobalSearchView: View {
     // MARK: - Actions
 
     /// Two-way binding into the query field — read the live `@State`, write it through `runGlobalSearch` so each
-    /// keystroke re-runs the cross-tab search (live results, ES-E5-5).
+    /// keystroke re-runs the cross-tab search (live results).
     private var queryBinding: Binding<String> {
         Binding(get: { query }, set: { query = $0
             rerun()
@@ -270,8 +270,8 @@ struct GlobalSearchView: View {
         store.runGlobalSearch(query: query, caseSensitive: caseSensitive, isRegex: isRegex)
     }
 
-    /// Restore the field + pills from the store's retained query/flags so a ⇧⌘F re-open shows the last search
-    /// (E5 divergence #1). Does NOT re-run on its own — the store already holds the last results to display.
+    /// Restore the field + pills from the store's retained query/flags so a ⇧⌘F re-open shows the last search.
+    /// Does NOT re-run on its own — the store already holds the last results to display.
     private func restoreFromStore() {
         query = store.globalSearchQuery
         caseSensitive = store.globalSearchCaseSensitive

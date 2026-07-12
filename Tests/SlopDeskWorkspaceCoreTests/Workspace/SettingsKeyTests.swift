@@ -10,7 +10,7 @@ final class SettingsKeyTests: XCTestCase {
         [
             SettingsKey.oscNotifications,
             SettingsKey.longCommandNotifications,
-            // E14/K9 notification policy keys.
+            // Notification policy keys.
             SettingsKey.notifyOnFinish,
             SettingsKey.notifyOnError,
             SettingsKey.notifyOnWatchFinish,
@@ -20,7 +20,7 @@ final class SettingsKeyTests: XCTestCase {
             SettingsKey.soundOnErrorExit,
             SettingsKey.agentNotifyTaskComplete,
             SettingsKey.agentNotifyAwaitInput,
-            // E13/WI-3 agent badge gates.
+            // Agent badge gates.
             SettingsKey.agentBadgeWhileProcessing,
             SettingsKey.agentBadgeWhenComplete,
             SettingsKey.agentBadgeWhenAwaitingInput,
@@ -42,7 +42,7 @@ final class SettingsKeyTests: XCTestCase {
             SettingsKey.focusFollowsMouse,
             SettingsKey.scrollOnOutput,
             SettingsKey.scrollMultiplier,
-            // E8 WI-1: the remaining Controls / Mouse / Scroll knobs.
+            // The remaining Controls / Mouse / Scroll knobs.
             SettingsKey.clearSelectionOnTyping,
             SettingsKey.clearSelectionOnCopy,
             SettingsKey.backspaceDeletesSelection,
@@ -54,18 +54,18 @@ final class SettingsKeyTests: XCTestCase {
             SettingsKey.undoAtPrompt,
             SettingsKey.clipboardReadKey,
             SettingsKey.clipboardWriteKey,
-            // E14/K11-K12: privilege surface (title gates + OSC-52 master switch).
+            // Privilege surface (title gates + OSC-52 master switch).
             SettingsKey.titleShellControlled,
             SettingsKey.titleReport,
             SettingsKey.clipboardShellControlled,
-            // E14/K13: IPC guards on the agent-control ctl socket.
+            // IPC guards on the agent-control ctl socket.
             SettingsKey.ipcAllowSendKeys,
             SettingsKey.ipcAllowSensitiveSessions,
             SettingsKey.allowShiftClickKey,
             SettingsKey.rightClickActionKey,
             SettingsKey.scrollPastLastLineKey,
             SettingsKey.scrollPastFirstLineKey,
-            // E10 WI-3: link & status-bar config keys.
+            // Link & status-bar config keys.
             SettingsKey.linkDetection,
             SettingsKey.linkCmdClickKey,
             SettingsKey.linkCmdShiftClickKey,
@@ -73,7 +73,7 @@ final class SettingsKeyTests: XCTestCase {
             SettingsKey.customLinkSchemes,
             SettingsKey.hintPatterns,
             SettingsKey.hintPatternActions,
-            // E19/A29 + A18: window-size + auto-hide-tabs-panel keys.
+            // Window-size + auto-hide-tabs-panel keys.
             SettingsKey.windowSizeKey,
             SettingsKey.windowColsKey,
             SettingsKey.windowRowsKey,
@@ -130,7 +130,7 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(SettingsKey.defaultPaneKind, .terminal)
         SettingsKey.store.set(PaneKind.remoteGUI.rawValue, forKey: SettingsKey.defaultPaneKindKey)
         XCTAssertEqual(SettingsKey.defaultPaneKind, .remoteGUI)
-        // W11: a stale persisted `claudeCode` value (the retired kind) is no longer a valid raw value
+        // A stale persisted `claudeCode` value (the retired kind) is no longer a valid raw value
         // here → falls back to `.terminal` (the safe default), like any other invalid raw value.
         SettingsKey.store.set("claudeCode", forKey: SettingsKey.defaultPaneKindKey)
         XCTAssertEqual(SettingsKey.defaultPaneKind, .terminal, "a retired/invalid raw value falls back to terminal")
@@ -138,9 +138,9 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(SettingsKey.defaultPaneKind, .terminal, "an invalid raw value falls back to terminal")
     }
 
-    // MARK: - E14/K9: notification policy keys + the resolved `notificationSettings` bundle
+    // MARK: - Notification policy keys + the resolved `notificationSettings` bundle
 
-    /// The new E14 notification keys read their notification-setting.png defaults when unset, and the
+    /// The notification keys read their notification-setting.png defaults when unset, and the
     /// resolved ``SettingsKey/notificationSettings`` bundle (which the macOS poster consumes) matches the
     /// spec baseline `NotificationSettings()`. This pins the `Defaults.Key` defaults against an INDEPENDENT
     /// expectation (the struct defaults), catching a divergence between the two sources. Round-trips the
@@ -155,7 +155,7 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertFalse(SettingsKey.soundOnErrorExitEnabled, "Sound on Error Exit defaults OFF")
         XCTAssertTrue(SettingsKey.agentNotifyTaskCompleteEnabled, "Agent task-complete defaults ON")
         XCTAssertTrue(SettingsKey.agentNotifyAwaitInputEnabled, "Agent await-input defaults ON")
-        // E13/WI-3 agent badge gates: "while processing" defaults OFF (progress-state.md "off by default"),
+        // Agent badge gates: "while processing" defaults OFF (progress-state.md "off by default"),
         // the other two ON.
         XCTAssertFalse(SettingsKey.agentBadgeWhileProcessingEnabled, "Badge while processing defaults OFF (spec)")
         XCTAssertTrue(SettingsKey.agentBadgeWhenCompleteEnabled, "Badge when complete defaults ON")
@@ -182,8 +182,8 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertTrue(SettingsKey.notificationSettings.notifyOnFinish)
     }
 
-    /// The new E14 wire key strings are the single source of truth shared with every `@Default`/`@AppStorage`
-    /// consumer + the All-Settings catalog + the WI-7 navigator — a rename that would split-brain them fails
+    /// The wire key strings are the single source of truth shared with every `@Default`/`@AppStorage`
+    /// consumer + the All-Settings catalog + the navigator — a rename that would split-brain them fails
     /// this pin. The `notifyWhileForeground` enum raw values are the declared persisted config tokens.
     func testNotificationKeyStringsAreStable() {
         XCTAssertEqual(SettingsKey.notifyOnFinish, "notifications.onFinish")
@@ -206,7 +206,7 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(NotifyWhileForeground.tabUnfocused.rawValue, "tab-unfocused")
     }
 
-    // MARK: - PreferencesStore (W13) — the live source the Settings panels bind to
+    // MARK: - PreferencesStore — the live source the Settings panels bind to
 
     /// An isolated `UserDefaults` suite so the round-trips don't touch the real defaults.
     private func makeIsolatedDefaults(_ name: String = #function) -> UserDefaults {
@@ -259,9 +259,9 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertTrue(EnvBridge.toEnv(store.video).isEmpty)
     }
 
-    // MARK: - E7 WI-1: On-Launch behaviour + new Controls/Scroll/Copy toggles
+    // MARK: - On-Launch behaviour + Controls/Scroll/Copy toggles
 
-    /// O1: the `On Launch` general setting defaults to ``OnLaunchBehavior/restoreLastSession`` (the existing
+    /// The `On Launch` general setting defaults to ``OnLaunchBehavior/restoreLastSession`` (the existing
     /// launch behaviour — the store already restores the persisted tree), round-trips ``newWindow`` through
     /// the persisted raw string, and a stale / junk persisted raw value repairs to `.restoreLastSession`
     /// (validate-then-repair, never traps). Read through the public ``SettingsKey/onLaunch`` accessor + the
@@ -281,9 +281,9 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(SettingsKey.onLaunch, .restoreLastSession, "an invalid raw value repairs to restore")
     }
 
-    /// The new E8-consumed Controls/Scroll/Copy toggles each read their declared default when unset (they are
-    /// fire-time `Defaults.Keys` flags, not typed-model fields → golden-safe). E8 owns the behaviour; this
-    /// pins the persisted defaults + round-trip so the Controls picker is faithful today.
+    /// The Controls/Scroll/Copy toggles each read their declared default when unset (they are
+    /// fire-time `Defaults.Keys` flags, not typed-model fields → golden-safe). This
+    /// pins the persisted defaults + round-trip so the Controls picker is faithful.
     func testNewControlsToggleDefaults() {
         // Declared defaults for the Controls config values.
         XCTAssertFalse(SettingsKey.copyOnSelectEnabled, "copy-on-select defaults OFF")
@@ -302,8 +302,8 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(SettingsKey.scrollMultiplierValue, 2.5)
     }
 
-    /// The new E7 wire key strings are the single source of truth shared with every `@Default`/`@AppStorage`
-    /// consumer — a rename that would split-brain the Settings UI from the (E8) fire-sites fails this pin.
+    /// The wire key strings are the single source of truth shared with every `@Default`/`@AppStorage`
+    /// consumer — a rename that would split-brain the Settings UI from the fire-sites fails this pin.
     func testSettingsKeyStringsAreStable() {
         XCTAssertEqual(SettingsKey.onLaunchKey, "general.onLaunch")
         XCTAssertEqual(SettingsKey.copyOnSelect, "controls.copyOnSelect")
@@ -315,17 +315,17 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(SettingsKey.scrollMultiplier, "controls.scrollMultiplier")
     }
 
-    // MARK: - E8 WI-1: the remaining Controls / Mouse / Scroll knobs
+    // MARK: - The remaining Controls / Mouse / Scroll knobs
 
-    /// The new E8 Bool toggles each read their declared default when unset, and respect a persisted explicit
+    /// The Bool toggles each read their declared default when unset, and respect a persisted explicit
     /// value (the toggle-persistence proof). These are fire-time `Defaults.Keys` flags (never folded into a
-    /// typed prefs model → golden-safe). E8 owns the behaviour; this pins the persisted defaults today.
+    /// typed prefs model → golden-safe). This pins the persisted defaults.
     func testE8BoolToggleDefaults() {
         XCTAssertTrue(SettingsKey.clearSelectionOnTypingEnabled, "clear-on-typing defaults ON")
         XCTAssertFalse(SettingsKey.clearSelectionOnCopyEnabled, "clear-on-copy defaults OFF")
         // Backspace-deletes-selection ships default OFF: with no libghostty selection-geometry API it cannot
         // faithfully delete the run (it degrades to a single-char Backspace, indistinguishable from OFF), so
-        // it is NOT presented as a default-ON toggle that does nothing (honest-disclosure, docs/DECISIONS E8).
+        // it is NOT presented as a default-ON toggle that does nothing (honest-disclosure, docs/DECISIONS).
         XCTAssertFalse(SettingsKey.backspaceDeletesSelectionEnabled, "backspace-deletes-selection defaults OFF")
         XCTAssertTrue(SettingsKey.shiftArrowSelectEnabled, "shift-arrow-select defaults ON")
         XCTAssertTrue(SettingsKey.pasteBracketedSafeEnabled, "paste-bracketed-safe defaults ON")
@@ -342,7 +342,7 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertFalse(SettingsKey.smoothScrollEnabled)
     }
 
-    /// The new enum-valued knobs default to the declared value when unset, round-trip the alternative case via
+    /// The enum-valued knobs default to the declared value when unset, round-trip the alternative case via
     /// the persisted raw string (`Defaults.PreferRawRepresentable` → `RawRepresentableBridge`), and repair a
     /// stale / hostile persisted raw value to the default rather than trapping (the non-failable
     /// `init(rawValue:)`). Read through the public typed accessors + the raw `UserDefaults` the
@@ -376,7 +376,7 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(SettingsKey.rightClickAction, .contextMenu, "an invalid raw value repairs to context menu")
     }
 
-    /// The new E8 wire key strings are the single source of truth shared with every `@Default`/`@AppStorage`
+    /// The wire key strings are the single source of truth shared with every `@Default`/`@AppStorage`
     /// consumer + the fire-sites — a rename that would split-brain the Settings UI from the fire-sites fails
     /// this pin.
     func testE8SettingsKeyStringsAreStable() {
@@ -397,9 +397,9 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(SettingsKey.scrollPastFirstLineKey, "controls.scrollPastFirstLine")
     }
 
-    // MARK: - E10 WI-3: link & status-bar config keys
+    // MARK: - Link & status-bar config keys
 
-    /// The new E10 link-interaction keys read their declared defaults when unset, round-trip the alternative
+    /// The link-interaction keys read their declared defaults when unset, round-trip the alternative
     /// case via the persisted raw value (`Defaults.PreferRawRepresentable` → `RawRepresentableBridge`), and
     /// repair a stale / hostile persisted raw value to the default rather than trapping (the non-failable
     /// `init(rawValue:)`). ``SettingsKey/linkSchemePolicy`` bridges the persisted mode + custom list into the
@@ -435,8 +435,8 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(SettingsKey.autoDetectLinkSchemes, .all, "an invalid raw value repairs to all")
     }
 
-    /// The new E10 wire key strings are the single source of truth shared with every `@Default`/`@AppStorage`
-    /// consumer + the All-Settings catalog + the (E10 WI-5/6/8/9) fire-sites — a rename that would split-brain
+    /// The wire key strings are the single source of truth shared with every `@Default`/`@AppStorage`
+    /// consumer + the All-Settings catalog + the fire-sites — a rename that would split-brain
     /// the Settings UI from the fire-sites fails this pin. The enum raw values are the declared config tokens
     /// (shared with the host-route dispatch + `docs/20-wire-protocol.md`).
     func testE10LinkKeyStringsAreStable() {
@@ -455,9 +455,9 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(AutoDetectLinkSchemes.custom.rawValue, "custom")
     }
 
-    // MARK: - E14/K11-K12: privilege surface (title gates + OSC-52 master switch)
+    // MARK: - Privilege surface (title gates + OSC-52 master switch)
 
-    /// The new E14 privilege keys read their notification-setting.png defaults when unset (Title — Shell
+    /// The privilege keys read their notification-setting.png defaults when unset (Title — Shell
     /// Controlled ON, Title Report OFF, Clipboard — Shell Controlled ON), respect an explicit persisted value,
     /// and their wire key strings are the single source of truth shared with the navigator + the All-Settings
     /// catalog (a rename that would split-brain them fails this pin).
@@ -499,9 +499,9 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(offControls.clipboardWrite, .deny, "master OFF denies clipboard write")
     }
 
-    // MARK: - E14/K13: IPC guards on the agent-control ctl socket (client edit surface)
+    // MARK: - IPC guards on the agent-control ctl socket (client edit surface)
 
-    /// The two E14/K13 IPC-guard keys are the CLIENT edit/display surface for the HOST ctl-socket guards
+    /// The two IPC-guard keys are the CLIENT edit/display surface for the HOST ctl-socket guards
     /// (enforced host-side via the SLOPDESK_IPC_ALLOW_* env bridge). They default OFF (conservative —
     /// mutation / sensitive-session access is opt-in), respect an explicit persisted value, and their wire
     /// strings are the single source of truth shared with the All-Settings catalog.
@@ -519,9 +519,9 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(SettingsKey.ipcAllowSensitiveSessions, "advanced.ipcAllowSensitiveSessions")
     }
 
-    // MARK: - E19/A29 + A18: window-size + auto-hide-tabs-panel keys (surfaced by the Appearance WI-6 rows)
+    // MARK: - Window-size + auto-hide-tabs-panel keys (surfaced by the Appearance rows)
 
-    /// The E19 window-size + auto-hide keys read their declared defaults when unset (`.remember`, 80, 24,
+    /// The window-size + auto-hide keys read their declared defaults when unset (`.remember`, 80, 24,
     /// 1000, 600, `.default`), round-trip a written value via the persisted raw, and a stale / hostile persisted
     /// ENUM raw repairs to the default rather than trapping (the `Defaults.PreferRawRepresentable` bridge — a
     /// failable `init(rawValue:)` would otherwise return nil; the bridge falls back to the key default). The
@@ -556,8 +556,8 @@ final class SettingsKeyTests: XCTestCase {
         XCTAssertEqual(SettingsKey.autoHideTabsPanel, .default, "an invalid raw value repairs to default")
     }
 
-    /// The new E19 wire key strings are the single source of truth shared with every `@Default`/`@AppStorage`
-    /// consumer (the Appearance Window + Auto Hide Tabs Panel rows, the WI-7 auto-hide glue, the macOS NSWindow
+    /// The wire key strings are the single source of truth shared with every `@Default`/`@AppStorage`
+    /// consumer (the Appearance Window + Auto Hide Tabs Panel rows, the auto-hide glue, the macOS NSWindow
     /// size glue) — a rename that would split-brain them fails this pin. The enum raw values are the declared
     /// config tokens (`window-size` = `remember`/`grid`/`frame`; `auto-hide-tabs-panel` = `default`/`always`/`auto`).
     func testWindowSizeAndAutoHideKeyStringsAreStable() {

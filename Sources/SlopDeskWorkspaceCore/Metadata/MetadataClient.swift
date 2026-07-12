@@ -2,7 +2,7 @@ import Foundation
 import SlopDeskClient
 import SlopDeskProtocol
 
-/// The typed façade over ``SlopDeskClient/requestMetadata(requestID:verb:payload:)`` (E4): each method
+/// The typed façade over ``SlopDeskClient/requestMetadata(requestID:verb:payload:)``: each method
 /// builds a verb's request payload, mints a correlation id from its ``MetadataRequestRegistry``, fires the
 /// wire request through an injected `send` seam, awaits the reply, and decodes the opaque
 /// ``WireMessage/metadataResponse(requestID:status:payload:)`` payload into the verb's
@@ -16,8 +16,8 @@ import SlopDeskProtocol
 /// **Validate-then-drop, never throws to the caller.** A non-`ok` status (notFound / error /
 /// unsupportedVerb / an unknown future byte → clamped to error) returns empty/`nil`; an `ok` status whose
 /// payload fails to decode (a malformed / truncated `MetadataCodec` body) is ALSO swallowed to empty/`nil`
-/// — the Details Panel must never hang or crash on a hostile/garbled reply (ES-E4-5). The 5 s registry
-/// timeout is the final guard for a dropped reply.
+/// — the Details Panel must never hang or crash on a hostile/garbled reply. The 5 s registry timeout is
+/// the final guard for a dropped reply.
 ///
 /// `@MainActor` (like the rest of the view-model layer); the `send` seam keeps it injectable so a unit
 /// test drives the façade with a fake transport that echoes canned replies (no live socket).
@@ -136,7 +136,7 @@ public final class MetadataClient {
         return payload
     }
 
-    /// E10 WI-7 — opens `path` in its default app / Finder ON THE HOST (``MetadataVerb/openPath``; the
+    /// Opens `path` in its default app / Finder ON THE HOST (``MetadataVerb/openPath``; the
     /// ⌘click action). `path` is the resolved ABSOLUTE host path. Returns `true` only on a host
     /// `.ok`; `false` for `.notFound` (the path is gone) / `.error` (open failed) / a dropped reply
     /// (the registry's 5 s timeout → `.error`). The response payload is empty (side-effect-only verb).
@@ -145,7 +145,7 @@ public final class MetadataClient {
         return status == .ok
     }
 
-    /// E10 WI-7 — reveals `path` in the HOST's Finder (``MetadataVerb/revealPath``; the ⌘⇧click
+    /// Reveals `path` in the HOST's Finder (``MetadataVerb/revealPath``; the ⌘⇧click
     /// action). `path` is the resolved ABSOLUTE host path. Returns `true` only on a host `.ok`; `false`
     /// for `.notFound` / `.error` / a dropped reply (timed out to `.error`). The response payload is empty.
     public func revealPath(_ path: String) async -> Bool {
@@ -153,7 +153,7 @@ public final class MetadataClient {
         return status == .ok
     }
 
-    /// E13 WI-1 — installs the slopdesk Claude Code hooks ON THE HOST (``MetadataVerb/installAgentHooks``;
+    /// Installs the slopdesk Claude Code hooks ON THE HOST (``MetadataVerb/installAgentHooks``;
     /// the Agents settings-card "Install" action). Host-global (acts on `~/.claude/settings.json`
     /// regardless of this pane), so the request carries an EMPTY payload. Returns `true` only on a host
     /// `.ok`; `false` for `.error` (the install threw) / an unsupported verb / a dropped reply (the
@@ -163,7 +163,7 @@ public final class MetadataClient {
         return status == .ok
     }
 
-    /// E13 WI-1 — uninstalls the slopdesk Claude Code hooks ON THE HOST (``MetadataVerb/uninstallAgentHooks``;
+    /// Uninstalls the slopdesk Claude Code hooks ON THE HOST (``MetadataVerb/uninstallAgentHooks``;
     /// the Agents settings-card "Uninstall" action). Strips exactly our entries, leaving the user's own
     /// hooks intact. Empty request payload (host-global). Returns `true` only on a host `.ok`; `false`
     /// otherwise (timeout → `.error`). The response payload is empty.
@@ -172,10 +172,10 @@ public final class MetadataClient {
         return status == .ok
     }
 
-    /// E13 WI-1 — reports the host's slopdesk Claude Code hooks state
+    /// Reports the host's slopdesk Claude Code hooks state
     /// (``MetadataVerb/agentHookStatus``; drives the Agents card's status row). Empty request payload.
-    /// The reply payload is `[installed][listenerActive]` (docs/20, queue-safety cluster 2026-07-02):
-    /// byte 0 is the `settings.json` install marker; byte 1 is the LIVE bind state of the hostd hook
+    /// The reply payload is `[installed][listenerActive]` (see docs/20): byte 0 is the
+    /// `settings.json` install marker; byte 1 is the LIVE bind state of the hostd hook
     /// listener — so the card can show installed-but-INACTIVE (hooks written but hostd wasn't launched
     /// with `SLOPDESK_AGENT_HOOKS=1` → every hook exits silently) instead of a false green.
     /// Returns `nil` on ANY non-decodable outcome — a non-`.ok` status, an empty payload, an
@@ -201,8 +201,8 @@ public final class MetadataClient {
 
     // MARK: Core round-trip
 
-    /// The decoded `agentHookStatus` (verb 13) reply — the two flag bytes, typed (queue-safety
-    /// cluster, 2026-07-02). `installed` alone is NOT "the integration works": without
+    /// The decoded `agentHookStatus` (verb 13) reply — the two flag bytes, typed.
+    /// `installed` alone is NOT "the integration works": without
     /// `listenerActive` every installed hook no-ops (`[ -z "$sock" ] && exit 0`), so the card must
     /// render installed-but-inactive with the hostd-restart instruction.
     public struct AgentHookStatusReport: Equatable, Sendable {

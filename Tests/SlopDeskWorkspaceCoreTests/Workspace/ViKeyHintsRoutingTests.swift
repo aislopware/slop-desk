@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E17 ES-E17-2 / WI-5 — the CONTEXTUAL `⌘/` binding + the ``WorkspaceStore/toggleViKeyHintsInActivePane()``
+/// The CONTEXTUAL `⌘/` binding + the ``WorkspaceStore/toggleViKeyHintsInActivePane()``
 /// store seam that the vi key-hint bar (the `ViKeyHintBar` view) reads through
 /// ``TerminalViewModel/showViKeyHints``.
 ///
@@ -63,7 +63,7 @@ final class ViKeyHintsRoutingTests: XCTestCase {
         XCTAssertEqual(cheatSheetToggles, 0, "and does NOT open the global keyboard cheat sheet")
     }
 
-    /// E17 ES-E17-2 / WI-5: the DISCOVERABLE "Vi Mode Key Hints" command (`.toggleViKeyHints`, palette / menu —
+    /// The DISCOVERABLE "Vi Mode Key Hints" command (`.toggleViKeyHints`, palette / menu —
     /// distinct from the contextual `⌘/`) routes to the active pane's hint-bar toggle and is its own inverse, so
     /// the bar is reachable WITHOUT first being in vi mode via the contextual chord. Revert-to-fail: before the
     /// action / route existed this case won't compile (and there was no palette-discoverable hint-bar command).

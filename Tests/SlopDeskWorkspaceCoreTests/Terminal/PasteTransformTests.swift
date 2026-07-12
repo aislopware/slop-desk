@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// The PURE "Paste as…" clipboard transforms (E8 / ES-E8-4): the bracketed-paste wrap, the POSIX
+/// The PURE "Paste as…" clipboard transforms: the bracketed-paste wrap, the POSIX
 /// shell escape, and the file → base64 encode. Each case pins the transform against a HAND-WRITTEN
 /// expected string (never the function's own derivation), so a broken transform fails loudly.
 final class PasteTransformTests: XCTestCase {

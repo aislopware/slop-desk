@@ -3,7 +3,7 @@ import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskVideoClient
 
-/// BUG-H regression: the LTR→IDR escalation must fire 2·RTT after the FIRST outstanding
+/// The LTR→IDR escalation must fire 2·RTT after the FIRST outstanding
 /// recovery request, not be perpetually pushed out by each new per-frame loss.
 ///
 /// The old `SlopDeskVideoClientSession` reset its `lastRecoveryRequestTime` on EVERY
@@ -80,12 +80,12 @@ final class LTREscalationTrackerTests: XCTestCase {
         XCTAssertEqual(tracker.firstRequestTime, 0)
     }
 
-    // MARK: F7 — coalesce post-escalation IDR requests
+    // MARK: coalesce post-escalation IDR requests
 
     /// After a forced-IDR escalation FIRES, the drain loop calls `noteEscalated(now:)`
     /// to re-anchor the clock. A second escalation must then NOT fire again until another
     /// full 2·RTT has elapsed — otherwise every subsequent dropped frame in the same loss
-    /// episode resends a redundant `requestIDR` (F7).
+    /// episode resends a redundant `requestIDR`.
     func testEscalationCoalescesUntilAnotherTwoRTTElapses() {
         var tracker = LTREscalationTracker()
         tracker.noteRequestSent(now: 0) // first LTR request, t=0
@@ -105,13 +105,13 @@ final class LTREscalationTrackerTests: XCTestCase {
         XCTAssertTrue(tracker.shouldEscalate(now: 0.20, rtt: rtt, policy: policy))
     }
 
-    /// F7 must NOT break BUG-H: an ORDINARY recovery request (`noteRequestSent`) still
+    /// An ORDINARY recovery request (`noteRequestSent`) still
     /// does not move the first-request clock, so the FIRST escalation under sustained
     /// loss still fires 2·RTT after the first request.
     func testOrdinaryLossStillEscalatesTheFirstTime() {
         var tracker = LTREscalationTracker()
         tracker.noteRequestSent(now: 0)
-        // Repeated ordinary requests must not push the clock (BUG-H invariant preserved).
+        // Repeated ordinary requests must not push the clock.
         tracker.noteRequestSent(now: 0.03)
         tracker.noteRequestSent(now: 0.06)
         XCTAssertEqual(tracker.firstRequestTime, 0)
@@ -132,9 +132,9 @@ final class LTREscalationTrackerTests: XCTestCase {
         XCTAssertFalse(tracker.shouldEscalate(now: 1.0, rtt: rtt, policy: policy))
     }
 
-    // MARK: SELF-HEAL (2026-06-11) — a decoded P-frame newer than every loss ends the episode
+    // MARK: SELF-HEAL — a decoded P-frame newer than every loss ends the episode
 
-    /// THE self-heal fix: the WF-8 LTR-refresh recovery frame (and every cadence refresh) is a
+    /// The self-heal fix: the LTR-refresh recovery frame (and every cadence refresh) is a
     /// P-frame, `keyframe=false` on the wire. The OLD tracker cleared only on a keyframe, so a
     /// recovery that SUCCEEDED via refresh still fired a spurious forced IDR 2·RTT later. A
     /// successfully-decoded frame strictly NEWER than every recorded loss must end the episode.
@@ -200,10 +200,10 @@ final class LTREscalationTrackerTests: XCTestCase {
         XCTAssertFalse(tracker.hasOutstandingRequest)
     }
 
-    // MARK: Component 5 (2026-06-11) — loss-adaptive (halved) escalation clock
+    // MARK: loss-adaptive (halved) escalation clock
 
-    // FIX 3 (same day, telemetry round): the lossy floor is max(60 ms, 1.5·RTT) — at rtt=50 ms
-    // the lossy deadline is 75 ms (was 50 ms), still strictly under the normal 100 ms.
+    // The lossy floor is max(60 ms, 1.5·RTT) — at rtt=50 ms
+    // the lossy deadline is 75 ms, still strictly under the normal 100 ms.
 
     /// While OBSERVING LOSS the escalation fires at the halved clock's floor (1.5·RTT here) with
     /// an outstanding request; the same instant without the loss signal still waits the full 2·RTT.
@@ -232,7 +232,7 @@ final class LTREscalationTrackerTests: XCTestCase {
         XCTAssertFalse(tracker.shouldEscalate(now: 100, rtt: rtt, policy: policy, observingLoss: true))
     }
 
-    /// F7 interplay: after a fired escalation re-anchors the clock, the next LOSSY escalation
+    /// After a fired escalation re-anchors the clock, the next LOSSY escalation
     /// only fires ≥ one full lossy deadline (75 ms at rtt=50 ms) after the re-anchor — the halved
     /// clock never reopens the per-dropped-frame requestIDR spam that noteEscalated exists to close.
     func testLossyEscalationCoalescesAfterNoteEscalated() {
@@ -248,7 +248,7 @@ final class LTREscalationTrackerTests: XCTestCase {
         )
     }
 
-    /// FIX 3: the 60 ms floor flows through the tracker. At rtt=10 ms a lossy escalation waits
+    /// The 60 ms floor flows through the tracker. At rtt=10 ms a lossy escalation waits
     /// 60 ms from the first request, not 10/30 ms (a refresh physically cannot arrive faster).
     func testLossyFloorThroughTracker() {
         var tracker = LTREscalationTracker()
@@ -258,7 +258,7 @@ final class LTREscalationTrackerTests: XCTestCase {
         XCTAssertTrue(tracker.shouldEscalate(now: 0.060, rtt: 0.01, policy: policy, observingLoss: true))
     }
 
-    /// FIX 3 measured-defect pin through the tracker: at rtt=20 ms — the live path's band — the
+    /// Measured-defect pin through the tracker: at rtt=20 ms — the live path's band — the
     /// loss-state-halved deadline never drops below 60 ms (the old 30 ms floor escalated to a
     /// forced IDR before the LTR refresh could physically land: 202 requestIDR vs 100 refreshes).
     func testLossyDeadlineNeverBelow60msAtRtt20() {

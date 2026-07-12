@@ -21,7 +21,7 @@ struct ContentColumn: View {
     var body: some View {
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // MERIDIAN L5, scoped by user report ("title màu khác với pane ở dưới nhìn rất lạc quẻ"):
+            // MERIDIAN L5, scoped by the user reporting that a titlebar tone differing from the pane below it read as jarringly out of place:
             // the content column is the LIT FACE end-to-end — the titlebar band paints the PANE tone
             // (`card`), never the dimmed chrome `window` tone. Panes are flush under the band (no gap, no
             // radius), so a darker strip here reads as a mispainted header, not a housing; the dimmed

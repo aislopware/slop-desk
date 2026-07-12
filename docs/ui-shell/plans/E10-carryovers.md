@@ -56,8 +56,8 @@ path-detection + host-action + status-bar + hint-mode work.
   Honour the **`hideStatusBar`** config key (don't ship one that can't be hidden). ES-E10-3/-4 are
   partly unit-testable (cwd/exit derivation) + partly GUI.
 - **⌘-hold link underline / 2-letter hint mode are NOT the reverted titlebar hint-chips.** Memory
-  [[slopdesk-keyboard-hints-prefix-substitute-2026-06-25]]: the user disliked ⌘-hold **keybinding
-  hint keycaps in the titlebar** ("không đẹp") — **REVERTED**. E10's ⌘-hold **path/URL underline**
+  [[slopdesk-keyboard-hints-prefix-substitute-2026-06-25]]: the user found the ⌘-hold **keybinding
+  hint keycaps in the titlebar** unattractive — **REVERTED**. E10's ⌘-hold **path/URL underline**
   (ES-E10-1) and **2-letter link-hint mode** (ES-E10-6, Vimium-style) are DIFFERENT, legitimate
   features over the terminal grid — build per `files-and-links.png` / `links-schemes.png` /
   `hint-mode.png`. Do **NOT** reintroduce or restyle the reverted titlebar keybinding-hint chips, and

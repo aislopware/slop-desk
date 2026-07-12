@@ -86,7 +86,7 @@ final class ChannelTableTests: XCTestCase {
         XCTAssertEqual(table.state(of: id), .closed)
     }
 
-    /// Audit 2026-07-10 #7: the production client marks a channel `.open` OPTIMISTICALLY in
+    /// The production client marks a channel `.open` OPTIMISTICALLY in
     /// `openChannel()` before the frame is even sent, so a refusal always finds `.open`, never
     /// `.idle`. `reject` must close from BOTH — the old `.idle`-only guard made a real host
     /// refusal a silent no-op (the pane hung open + silent forever).
@@ -133,7 +133,7 @@ final class ChannelTableTests: XCTestCase {
         XCTAssertFalse(table.isOpen(42))
     }
 
-    /// R6 #5 regression: a `channelClose` for an id that was NEVER registered must create NO table
+    /// A `channelClose` for an id that was NEVER registered must create NO table
     /// entry — otherwise a hostile peer grows `states` without bound by spamming closes for arbitrary
     /// peer-chosen ids (a router memory-DoS). The close still reports `.closed`, it just leaves no
     /// permanent allocation behind.

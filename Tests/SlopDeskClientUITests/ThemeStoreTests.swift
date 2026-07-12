@@ -1,4 +1,4 @@
-// ThemeStore tests (WS-D / D3) — the runtime theme holder that defeats the STATIC `Slate.theme` across the
+// ThemeStore tests — the runtime theme holder that defeats the STATIC `Slate.theme` across the
 // AppKit `NSSplitViewController` boundary. Pure logic only: `apply(_:)` mapping, the default Monokai Pro
 // Classic invariant, and the IDENTITY-keyed cross-boundary change notification (so a same-lightness variant
 // switch still repaints). NO SCStream/VT/Metal/VideoWindowView is touched.
@@ -76,7 +76,7 @@ final class ThemeStoreTests: XCTestCase {
         XCTAssertEqual(posts, 2)
     }
 
-    // MARK: E15 WI-3 — dual-slot follow-OS + cross-module id round-trip
+    // MARK: - dual-slot follow-OS + cross-module id round-trip
 
     /// With "Use separated theme for dark mode" ON, the OS appearance SELECTS the slot (light → primary
     /// `theme`, dark → `themeDark`) and an OS flip re-resolves LIVE. The `osIsDark` probe is stubbed (no NSApp).

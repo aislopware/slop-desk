@@ -4,14 +4,13 @@ import SlopDeskTransport
 import XCTest
 @testable import SlopDeskClient
 
-/// Audit 2026-07-10 #6 regression: the reconnect reset branch (`resumeFromSeq == 0`, which the
-/// mux path takes on EVERY connect — the openAck carries only `accepted: Bool`) used to
-/// `outputInbox.removeAll()`, discarding bytes that had ARRIVED over the wire but had not yet
-/// been CONSUMED by the UI (`takeOutputBatch`). Those bytes were already claimed to the host:
-/// `deliverOutput` advances `highestContiguousSeq` at wire-arrival time, and `connect()` presents
-/// it as `lastReceivedSeq` — so on a genuine PATH-A reattach the host never resends them. Wiping
-/// the client's only copy made the loss silent and permanent: a scrollback gap exactly at the
-/// reconnect boundary.
+/// The reconnect reset branch (`resumeFromSeq == 0`, which the mux path takes on EVERY connect —
+/// the openAck carries only `accepted: Bool`) must not `outputInbox.removeAll()`: that would
+/// discard bytes that have ARRIVED over the wire but have not yet been CONSUMED by the UI
+/// (`takeOutputBatch`). Those bytes are already claimed to the host: `deliverOutput` advances
+/// `highestContiguousSeq` at wire-arrival time, and `connect()` presents it as `lastReceivedSeq`
+/// — so on a genuine PATH-A reattach the host never resends them. Wiping the client's only copy
+/// would make the loss silent and permanent: a scrollback gap exactly at the reconnect boundary.
 ///
 /// The fix keeps the undelivered bytes across the reset (they are the tail of what the old life
 /// produced, valid for both PATH A reattach and PATH B fresh-shell-with-kept-grid) and zeroes

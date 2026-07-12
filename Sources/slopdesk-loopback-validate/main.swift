@@ -8,7 +8,7 @@
 //     -> FrameFragment.encode()/decode() wire round-trip on survivors
 //     -> FrameReassembler.ingest (FEC single-hole recovery + per-frame tier split + isLTR latch)
 //     -> REAL HW VideoDecoder.decode (VTDecompressionSession) -> decoded CVPixelBuffer count
-//   PLUS the pure WF-1..WF-8 controllers driven on synthetic telemetry:
+//   PLUS the pure rate-control/FEC/jitter/LTR controllers driven on synthetic telemetry:
 //     NetworkEstimate.fold / computeRTTMillis, LiveCongestionController.onReport,
 //     AdaptiveFECPolicy.tier, OWDJitterEstimator + AdaptiveJitterController, LTRController.
 //
@@ -455,12 +455,6 @@ func runLTRHWScenario(frames: Int) -> ScenarioStats {
 
 // MARK: - ACK-REFERENCED ENCODING probe (Parsec model: every delta references only ACKED LTRs)
 
-/// One arm of the ack-ref experiment. `ackRef=true` encodes EVERY delta with `ForceLTRRefresh`
-/// (so VT references only acknowledged LTR frames — the Parsec "ack-referenced" model) and feeds
-/// client acks back with a simulated `ackLagFrames` round-trip. `dropEveryN>0` drops one WHOLE frame
-/// per N on the wire (the client never sees it, never acks it). `recoverOnFail` mirrors production
-/// (decode failure → forced IDR re-anchor); the ack-ref loss arm runs with it OFF to prove the chain
-/// needs no recovery at all.
 /// LOW-MOTION variant of ``fillFrame``: the checkerboard+gradient background is FROZEN (no `i` term)
 /// and only the small high-contrast block moves. Mirrors real desktop content (mostly static) — the
 /// discriminator between "ack-ref frames are P (tiny deltas on static content)" and "ack-ref frames
@@ -604,8 +598,15 @@ struct AckRefArmResult {
     var avgFrameBytes: Int { encoded > 0 ? (deltaBytesTotal + kfBytesTotal) / encoded : 0 }
 }
 
+/// One arm of the ack-ref experiment. `ackRef=true` encodes EVERY delta with `ForceLTRRefresh`
+/// (so VT references only acknowledged LTR frames — the Parsec "ack-referenced" model) and feeds
+/// client acks back with a simulated `ackLagFrames` round-trip. `dropEveryN>0` drops one WHOLE frame
+/// per N on the wire (the client never sees it, never acks it). `recoverOnFail` mirrors production
+/// (decode failure → forced IDR re-anchor); the ack-ref loss arm runs with it OFF to prove the chain
+/// needs no recovery at all.
+///
 /// `refreshEvery > 0` switches the arm from PER-FRAME refresh to SPARSE: normal P-chain deltas with
-/// one `encodeLiveLTRRefresh` every `refreshEvery` frames (the WF-8 recovery shape) — sizes of those
+/// one `encodeLiveLTRRefresh` every `refreshEvery` frames (the sparse recovery shape) — sizes of those
 /// refresh frames land in `refreshBytesTotal` (P-sized ⇒ genuine LTR reference; intra-sized ⇒ VT's
 /// "LTR refresh" is just a coarse intra and the LTR API never yields real long-term P references).
 func runAckRefArm(
@@ -886,7 +887,7 @@ func runAckRefProbe(frames: Int) {
         recoverOnFail: true,
         lowMotion: true,
     )
-    // SPARSE refresh (the WF-8 recovery shape): normal P-chain + ForceLTRRefresh every 30 frames.
+    // SPARSE refresh: normal P-chain + ForceLTRRefresh every 30 frames.
     // Refresh frame P-sized (~few KB on low-motion) ⇒ VT emits a GENUINE P against the acked LTR;
     // intra-sized (~25KB) ⇒ even sparse "LTR refresh" is a coarse intra (= compact-IDR equivalent).
     let sparse = runAckRefArm(
@@ -1066,7 +1067,7 @@ func runAckRefProbe(frames: Int) {
 ///   client AdaptiveJitterController.noteFrame(jitterSeconds:) → playout depth.
 ///
 /// This mirrors EXACTLY the orchestration in SlopDeskVideoClientSession.sendNetworkStatsIfStreaming /
-/// ingestVideo and SlopDeskVideoHostSession.handleRecovery(.networkStats) (read 2026-06-09). Loss/jitter
+/// ingestVideo and SlopDeskVideoHostSession.handleRecovery(.networkStats). Loss/jitter
 /// are injected in code, but every estimate, wire message, controller tick and the encoder bitrate
 /// mutation are the REAL ones. Three phases: CLEAN → ADVERSE (loss + arrival jitter) → CLEAN, so each
 /// controller must move AWAY from baseline under stress and BACK afterwards. Deterministic (no RNG, a
@@ -1082,17 +1083,17 @@ struct ClosedLoopResult {
     var phasePeakDepthV2: [Int] = []
     var phaseUnrecovered: [Int] = []
     var phaseAvgEncBytes: [Int] = []
-    /// FIX 1 (2026-06-11, FEC ladder floor): whether the adaptive tier EVER selected OFF during
-    /// the run — the floor's contract is that it never does (without SLOPDESK_FEC_ALLOW_OFF).
+    /// Whether the adaptive tier EVER selected OFF during the run — the FEC ladder floor's contract
+    /// is that it never does (without SLOPDESK_FEC_ALLOW_OFF).
     var sawOffTier = false
     var adverseUnrecSecondHalf = 0 // steady-state (after the FEC climb settles) — the fair A/B window
     var bitrateFellInAdverse = false
     var bitrateRecoveredAfter = false
     /// Bitrate at the END of the recovery phase. The recovery VERDICT keys on this vs the adverse
     /// TROUGH, not the adverse phase average: by design the climb starts only after the RTT-EWMA
-    /// decays (~0.7s) + the hold-down (~1s), and DELAY-TARGETING (2026-06-11) deliberately climbs
-    /// CAUTIOUSLY above the remembered knee — "recovered" means the climb is underway (end above the
-    /// trough), not "back at the ceiling within a 1.5s window" (that fast reclimb WAS the pumping).
+    /// decays (~0.7s) + the hold-down (~1s), and DELAY-TARGETING deliberately climbs CAUTIOUSLY above
+    /// the remembered knee — "recovered" means the climb is underway (end above the trough), not
+    /// "back at the ceiling within a 1.5s window": that fast reclimb IS the pumping.
     var endBitrateMbps = 0.0
     /// Lowest actuated bitrate during the adverse phase (the trough the recovery verdict compares to).
     var adverseTroughMbps = Double.infinity
@@ -1101,7 +1102,7 @@ struct ClosedLoopResult {
 /// `fixedTier != nil` pins the FEC tier (non-adaptive baseline); `nil` lets AdaptiveFECPolicy drive it.
 /// `congestRTTInAdverse`: when true the adverse phase ALSO inflates the one-way delay (queue
 /// build-up → measured RTT ~90ms vs ~10ms baseline) so the loss is CORROBORATED — real congestion.
-/// When false the adverse phase is WEATHER loss (loss at flat RTT, the 2026-06-10 measured path
+/// When false the adverse phase is WEATHER loss (loss at flat RTT — the measured inter-ISP path
 /// shape) and the LOSS-TOLERANCE #4 controller must HOLD the bitrate.
 func runClosedLoopAdaptation(
     framesPerPhase: Int,
@@ -1362,7 +1363,7 @@ func runClosedLoopAdaptation(
     return result
 }
 
-// MARK: - Bottleneck-queue scenario (DELAY-TARGETING, 2026-06-11)
+// MARK: - Bottleneck-queue scenario (DELAY-TARGETING)
 
 /// Result of ``runBottleneckQueueScenario``.
 struct BottleneckResult {
@@ -1377,10 +1378,10 @@ struct BottleneckResult {
 /// The scenario the scripted ADVERSE phase cannot express: a REAL feedback loop. The link is a fluid
 /// bottleneck (capacity C, FIFO queue) — the queue grows when the encoder's actual bytes exceed C and
 /// drains otherwise, and the RTT the controller sees IS `base + queue/C`. This is the measured
-/// 2026-06-11 inter-ISP path shape (RTT 11ms idle → 80–110ms during scroll at loss=0.000): pure
-/// bufferbloat, zero loss. Open-loop (ABR off / old once-per-second ×0.85) lets the queue stand for
-/// seconds; the DELAY-TARGETING controller must (a) converge the rate under C quickly, (b) end with a
-/// near-drained queue, (c) not pump back above C over and over (knee memory).
+/// inter-ISP path shape (RTT 11ms idle → 80–110ms during scroll at loss=0.000): pure bufferbloat,
+/// zero loss. An open-loop rate policy (ABR off, or a once-per-second ×0.85 backoff) lets the queue
+/// stand for seconds; the DELAY-TARGETING controller must (a) converge the rate under C quickly,
+/// (b) end with a near-drained queue, (c) not pump back above C over and over (knee memory).
 func runBottleneckQueueScenario(frames: Int, verbose: Bool) -> BottleneckResult {
     var result = BottleneckResult()
 
@@ -1543,7 +1544,7 @@ func runBottleneckQueueScenario(frames: Int, verbose: Bool) -> BottleneckResult 
     return result
 }
 
-// MARK: - Delay-gradient onset scenario (component 3, 2026-06-11)
+// MARK: - Delay-gradient onset scenario (component 3)
 
 /// One arm's trace from ``runGradientOnsetArm``.
 struct GradientArmTrace {
@@ -1754,9 +1755,9 @@ func runGradientOnsetArm(gradientEnabled: Bool, verbose: Bool) -> GradientArmTra
 }
 
 /// False-positive guard sub-run: FLAT ample capacity + an alternating ±4ms arrival wobble (an ~8ms
-/// owd saw, zero net ramp — the rate-independent path texture that falsified two fixed-threshold
-/// delay designs). The gradient-armed controller must record ZERO cuts: the adaptive threshold
-/// rides above the saw and the raw-RTT corroboration never clears the slack gate.
+/// owd saw, zero net ramp — the rate-independent path texture that ANY fixed-threshold delay design
+/// misreads as congestion). The gradient-armed controller must record ZERO cuts: the adaptive
+/// threshold rides above the saw and the raw-RTT corroboration never clears the slack gate.
 func runGradientWobbleArm(frames: Int, verbose: Bool) -> Int {
     let ceiling = LiveBitratePolicy.targetBitrate(pixelWidth: kWidth, pixelHeight: kHeight, fps: kFPS, floor: 2_000_000)
     let pk = VideoPacketizer(fec: XORParityFEC(groupSize: 5))
@@ -1916,7 +1917,7 @@ func runGradientOnsetScenario(frames: Int, verbose: Bool) -> GradientOnsetResult
     return result
 }
 
-// MARK: - FPS-GOVERNOR cliff scenario (component 1, 2026-06-11)
+// MARK: - FPS-GOVERNOR cliff scenario (component 1)
 
 /// Deterministic per-pixel LCG noise — UNCOMPRESSIBLE content with a real QP51 byte floor (the
 /// high-entropy-scroll analog). The structured ``fillFrame`` checkerboard compresses far too well
@@ -1929,8 +1930,8 @@ func fillFrameNoise(_ pb: CVPixelBuffer, _ i: Int) {
     let h = CVPixelBufferGetHeight(pb)
     var state = UInt64(truncatingIfNeeded: Int64(i) &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407)
     // 8 bytes of noise per LCG step, stored as aligned UInt64 words (row bases are 16+-aligned,
-    // strides keep multiples of 8 aligned) — a per-BYTE closure was measured pathologically slow
-    // in a -Onone build (heap-boxed captured state), wedging the suite for minutes per phase.
+    // strides keep multiples of 8 aligned). A per-BYTE closure is pathologically slow in a -Onone
+    // build (heap-boxed captured state) — it wedges the suite for minutes per phase.
     func fillPlane(_ base: UnsafeMutableRawPointer, stride: Int, rows: Int, widthBytes: Int, _ state: inout UInt64) {
         for y in 0..<rows {
             let row = base + y * stride
@@ -1966,11 +1967,11 @@ struct FPSGovResult {
     /// The ABR actually collapsed below its ceiling during the cliff (the governor's evidence).
     var abrCollapsedInCliff = false
     /// Within every ≥1 s fps plateau, max |inter-ADMIT Δt − 1/fps| ≤ half a 120 Hz capture slot —
-    /// the gate's metronome property (the anti-trap the retired alternating skip violated). PLUS
-    /// the same bound on ENCODER-OUTPUT times in the final (non-starved) plateau. VT-output gaps
+    /// the gate's metronome property (an alternating skip pattern would violate it by construction).
+    /// PLUS the same bound on ENCODER-OUTPUT times in the final (non-starved) plateau. VT-output gaps
     /// inside the cliff are deliberately NOT asserted: noise at the ABR floor is 6-12× past the
-    /// QP51 entropy floor, where VT drops frames silently (the measured R7 behaviour) — the
-    /// governor exists to relieve exactly that, and real content at a governed fps fits.
+    /// QP51 entropy floor, where VT silently drops frames — the governor exists to relieve exactly
+    /// that, and real content at a governed fps fits.
     var cadenceRegular = true
     var worstCadenceErrMs = 0.0 // admit-schedule, all plateaus (asserted)
     var worstFitEncodeErrMs = 0.0 // encoder-output, final plateau (asserted)
@@ -2227,10 +2228,10 @@ func runFPSGovernorCliffScenario(verbose: Bool) -> FPSGovResult {
     }
 
     // Cadence regularity (see FPSGovResult doc): the gate's ADMIT schedule must be metronome-
-    // regular inside every ≥1 s fps plateau — the anti-trap property the retired alternating skip
-    // violated by construction. Encoder-OUTPUT cadence is additionally asserted in the FINAL
-    // plateau (content fits the rate there, so VT emits every admitted frame); inside the cliff
-    // VT's starvation drops are expected and only reported.
+    // regular inside every ≥1 s fps plateau — the property that rules out an alternating skip.
+    // Encoder-OUTPUT cadence is additionally asserted in the FINAL plateau (content fits the rate
+    // there, so VT emits every admitted frame); inside the cliff VT's starvation drops are expected
+    // and only reported.
     let halfSlotMs = 0.5 / 120.0 * 1000.0
     var segments = fpsChanges
     segments.append((clockMs + slotMs, governedFps))
@@ -2267,7 +2268,7 @@ struct FPSGovWeatherResult {
 }
 
 /// The weather control arm (#6b): 3% per-fragment loss at FLAT RTT with ample capacity — the
-/// measured 2026-06-10 inter-ISP path shape. The ABR HOLDS (loss needs RTT corroboration) and the
+/// measured inter-ISP path shape. The ABR HOLDS (loss needs RTT corroboration) and the
 /// governor must HOLD 60: loss alone trips its `congested` arm, but the stream FITS the actuated
 /// rate, so the `overBudget AND congested` step-down gate never fires — fps is never sacrificed
 /// to weather.
@@ -2427,7 +2428,7 @@ func runFPSGovernorWeatherArm(frames: Int, verbose: Bool) -> FPSGovWeatherResult
     return result
 }
 
-// MARK: - RECOVERY-IDR delivery-keyed cooldown scenario (component 2, 2026-06-11)
+// MARK: - RECOVERY-IDR delivery-keyed cooldown scenario (component 2)
 
 struct RecoveryIDRResult {
     // Phase A — the ~600 ms kfDup-double-loss bug, V2 vs legacy on the SAME escalation trace.
@@ -2551,7 +2552,7 @@ func simulateDoubleLossRecovery(
 func runRecoveryIDRCooldownScenario(verbose: Bool) -> RecoveryIDRResult {
     var result = RecoveryIDRResult()
 
-    // ── Phase A: the ~600 ms bug, before/after on the identical trace ──
+    // ── Phase A: the ~600 ms kfDup double-loss freeze — v2 vs legacy on the identical trace ──
     let v2 = simulateDoubleLossRecovery(mode: .v2, rtt: 0.05, verbose: verbose)
     let legacy = simulateDoubleLossRecovery(mode: .legacy, rtt: 0.05, verbose: verbose)
     result.v2UnfreezeMs = v2.unfreezeMs
@@ -2674,7 +2675,7 @@ func maxTier(_ a: UInt8, _ b: UInt8) -> UInt8 {
     return g(b) > g(a) ? b : a
 }
 
-// MARK: - Adaptive pacer depth scenario (component 4, 2026-06-11)
+// MARK: - Adaptive pacer depth scenario (component 4)
 
 /// Result of ``runPacerDepthScenario``.
 struct PacerDepthScenarioResult {
@@ -2700,13 +2701,13 @@ struct PacerDepthScenarioResult {
 
 /// Component 4 closed-loop reflex check — PURE virtual clock, fully deterministic (no HW, no RNG).
 /// Models the depth-1 present-on-arrival pacer: a delivered frame ARRIVES and PRESENTS at the same
-/// instant; 120 Hz re-show ticks run between presents. v3 (2026-06-12): the depth ACTION runs on
-/// NETWORK lates — the REAL `OwdLateDetector` consumes the synthetic send/arrival stamps and its
-/// verdicts feed `noteNetworkLate`, exactly the production session→pacer wiring. Phases:
+/// instant; 120 Hz re-show ticks run between presents. The depth ACTION runs on NETWORK lates — the
+/// REAL `OwdLateDetector` consumes the synthetic send/arrival stamps and its verdicts feed
+/// `noteNetworkLate`, exactly the production session→pacer wiring. Phases:
 ///   A 3s clean 60fps              → never engages (late=0, gaps=0, depth=1)
 ///   B 10s, +35ms owd spike every  → promotes ≤1.5s after onset, holds depth 2 to phase end
 ///     20th frame (Wi-Fi burst)      (NO present gaps in this phase — promotion is owd-only)
-///   C 8s clean                    → demotes 2-4s after the last late (fix-2b tolerance anchors
+///   C 8s clean                    → demotes 2-4s after the last late (the demote tolerance anchors
 ///                                   the dwell at the 2nd-most-recent late), depth 1 at end
 ///   D 60→30fps downshift, no loss → ≤1 crossover CLASSIFIER late (telemetry), NO promotion
 ///   E motion stop + typing (180ms)→ zero lates (idle + dense gates)
@@ -2835,7 +2836,7 @@ func runPacerDepthScenario(verbose: Bool) -> PacerDepthScenarioResult {
     return r
 }
 
-// MARK: - Recovery-request redundancy scenario (component 5, 2026-06-11)
+// MARK: - Recovery-request redundancy scenario (component 5)
 
 /// Result of one request-loss timing arm (``runRecoveryRequestLossArm``).
 struct RecoveryRequestLossArmResult {
@@ -2856,7 +2857,7 @@ struct RecoveryRequestLossArmResult {
 /// boundaries, mirroring WindowCapturer's drain; SCStream needs GUI/TCC so the real capturer
 /// cannot run headless).
 /// - Parameters:
-///   - copies: client redundancy (1 = today's single send).
+///   - copies: client redundancy (1 = a single unprotected send).
 ///   - dropInitialCopies: copy indices of the INITIAL logical request the wire eats.
 ///   - fastEscalation: the `SLOPDESK_FAST_ESCALATION` gate (observingLoss forced false when off).
 ///   - seedLossEvents: FEC-recovered early-warning events seeded into the loss window at t=0.
@@ -2999,13 +3000,13 @@ struct RecoveryDedupArmResult {
 /// 3 byte-identical copies at t=10/15/20 ms — the 16.7 ms @60fps capture boundary falls BETWEEN
 /// copy 2 and copy 3. The capturer latch (modeled Bool, drained per frame exactly like
 /// WindowCapturer) dedups same-frame copies, but the post-boundary copy RE-LATCHES — without the
-/// host deduper that encodes a SECOND ForceLTRRefresh (the pre-existing straddle bug; no cooldown
-/// exists on the LTR path). Every drain drives `encodeLiveLTRRefresh` on a REAL VTCompressionSession
-/// so "recovery encode" = a real encoded frame, not a counter.
+/// host deduper that encodes a SECOND ForceLTRRefresh (the straddle bug: no cooldown exists on the
+/// LTR path). Every drain drives `encodeLiveLTRRefresh` on a REAL VTCompressionSession so "recovery
+/// encode" = a real encoded frame, not a counter.
 func runRecoveryDedupStraddleArm(dedupOn: Bool, verbose: Bool) -> RecoveryDedupArmResult {
     var r = RecoveryDedupArmResult()
     let router = RecoveryDatagramRouter()
-    let deduper = RecoveryRequestDeduper(windowSeconds: dedupOn ? 0.020 : 0) // 0 = the kill switch ⇒ today's behaviour
+    let deduper = RecoveryRequestDeduper(windowSeconds: dedupOn ? 0.020 : 0) // 0 = the kill switch ⇒ no dedup
     var ltrCtl = LTRController()
     ltrCtl.recordLTRFrame(frameID: 0, token: 1)
     _ = ltrCtl.ackFrame(frameID: 0) // acked token ⇒ refreshLTR resolves to .ltrRefresh (the no-cooldown path)
@@ -3073,7 +3074,7 @@ func runRecoveryDedupStraddleArm(dedupOn: Bool, verbose: Bool) -> RecoveryDedupA
 
 /// Aggregate result of the component-5 scenario (``runRecoveryRequestLossScenario``).
 struct RecoveryRedundancyScenarioResult {
-    var baseline = RecoveryRequestLossArmResult() // arm 1: copies=1, request lost (today)
+    var baseline = RecoveryRequestLossArmResult() // arm 1: copies=1, request lost
     var redundant = RecoveryRequestLossArmResult() // arm 2: copies=3, first copy lost
     var dedupOn = RecoveryDedupArmResult() // arm 3: straddle, deduper on
     var dedupOff = RecoveryDedupArmResult() // arm 3 control: straddle, deduper off
@@ -3134,11 +3135,11 @@ func printRecoveryRedundancyVerdict(_ rr: RecoveryRedundancyScenarioResult) {
         && rr.redundant.hostDuplicatesDropped >= 1 // host absorbed the copies
         && rr.redundant.hostAdmitted == 1 // exactly one action
     let rrDedup = rr.dedupOn.recoveryEncodes == 1 && rr.dedupOff.recoveryEncodes >= 2
-    // FIX 3 (2026-06-11): the lossy clock is now max(1·RTT, 60ms, 1.5·RTT) — at the arm's
-    // rtt=50ms that is 75ms vs the normal 100ms, so the ON−OFF escalation-deadline gap is ~25ms
-    // (was ~50ms at the old 30ms floor), of which the host's 60fps frame-boundary quantization
-    // can eat up to one frame interval (16.7ms) — measured 152 vs 168ms. The shrunken margin is
-    // the deliberate price of never escalating before an LTR refresh can physically land.
+    // The lossy clock is max(1·RTT, 60ms, 1.5·RTT) — at the arm's rtt=50ms that is 75ms vs the
+    // normal 100ms, so the ON−OFF escalation-deadline gap is only ~25ms, of which the host's 60fps
+    // frame-boundary quantization can eat up to one frame interval (16.7ms) — measured 152 vs
+    // 168ms. That thin margin is the deliberate price of a 60ms floor: never escalate before an LTR
+    // refresh can physically land. A lower floor would widen the gap and re-open the storm.
     let rrFast = rr.fastOn.freezeMs + 8 <= rr.fastOff.freezeMs // ≥ 25 − 16.7 ms
     print(
         "    #9 recovery-redundancy: lost-request freeze 3×-copies beats single ≥40%=\(rrRedundant ? "YES" : "no")  straddle dedup ON=1/OFF≥2 HW encodes=\(rrDedup ? "YES" : "no")  lossy clock ≥8ms faster when all copies lost=\(rrFast ? "YES" : "no")  \(rrRedundant && rrDedup && rrFast ? "✅" : "⚠️")",
@@ -3336,13 +3337,13 @@ func runClosedLoopSuite(framesPerPhase: Int) {
     print(
         "    #2b weather   : bitrate HELD under uncorroborated weather loss (flat RTT)=\(weatherHeld ? "YES" : "no")  \(weatherHeld ? "✅" : "⚠️")",
     )
-    // FIX 1 (2026-06-11, FEC ladder floor): pre-floor, the clean phase walked the tier to OFF, so
-    // the adverse onset landed on an UNPROTECTED stream — visible unrecovered loss, then a
-    // tier climb (the old "tier escalated under loss" check). With the floor the stream enters
-    // the adverse phase already holding g10, which absorbs the scripted one-hole-per-group loss
-    // COMPLETELY: the loss EWMA never rises and there is nothing to escalate from. The verdict
-    // now pins the floor's contract: never OFF, adverse fully recovered at the standing floor,
-    // and never worse than the pinned-g5 baseline.
+    // The FEC ladder FLOOR is why this verdict does NOT check "tier escalated under loss": without
+    // a floor the clean phase walks the tier to OFF and the adverse onset lands on an UNPROTECTED
+    // stream (unrecovered loss, then a climb). With it the stream enters the adverse phase already
+    // holding g10, which absorbs the scripted one-hole-per-group loss COMPLETELY — the loss EWMA
+    // never rises, so there is nothing to escalate from. What is pinned instead is the floor's
+    // contract: never OFF, adverse fully recovered at the standing floor, never worse than the
+    // pinned-g5 baseline.
     let fecNeverOff = !on.sawOffTier
     let fecAbsorbed = on.phaseUnrecovered[1] == 0
     print(
@@ -3352,9 +3353,9 @@ func runClosedLoopSuite(framesPerPhase: Int) {
     print("    #4 adaptiveJit: playout depth grew under jitter=\(depthGrew ? "YES" : "no")  \(depthGrew ? "✅" : "⚠️")")
     let pdClean = pd.cleanLates == 0 && pd.cleanGaps == 0 && pd.cleanDepthStayed1
     let pdPromote = (pd.promoteAfterOnsetMs ?? .infinity) <= 1500 && pd.heldThroughBurst
-    // FIX 2b (2026-06-11): the default demote tolerance (1) anchors the dwell at the SECOND-most-
-    // recent late — with the burst's ~333ms late spacing the earliest demote is ~dwell−333 ≈
-    // 2.2s after the LAST late (was a strict ≥2.5s at tolerance 0).
+    // Why the band opens at 2s and not a strict 2.5s: the default demote tolerance (1) anchors the
+    // dwell at the SECOND-most-recent late, and at the burst's ~333ms late spacing that puts the
+    // earliest demote at ~dwell−333 ≈ 2.2s after the LAST late.
     let pdDemote = pd.demoteAfterLastLateMs.map { $0 >= 2000 && $0 <= 4000 } ?? false
     let pdImmune = pd.downshiftLates <= 1 && !pd.downshiftPromoted && pd.downshiftHintLates == 0 && pd.typingLates == 0
     print(
@@ -3657,9 +3658,7 @@ if args.contains("--pacer-depth") {
     let pd = runPacerDepthScenario(verbose: true)
     let pdClean = pd.cleanLates == 0 && pd.cleanGaps == 0 && pd.cleanDepthStayed1
     let pdPromote = (pd.promoteAfterOnsetMs ?? .infinity) <= 1500 && pd.heldThroughBurst
-    // FIX 2b (2026-06-11): the default demote tolerance (1) anchors the dwell at the SECOND-most-
-    // recent late — with the burst's ~333ms late spacing the earliest demote is ~dwell−333 ≈
-    // 2.2s after the LAST late (was a strict ≥2.5s at tolerance 0).
+    // The 2-4s demote band is the same one the #4b verdict in runClosedLoopSuite justifies.
     let pdDemote = pd.demoteAfterLastLateMs.map { $0 >= 2000 && $0 <= 4000 } ?? false
     let pdImmune = pd.downshiftLates <= 1 && !pd.downshiftPromoted && pd.downshiftHintLates == 0 && pd.typingLates == 0
     print(

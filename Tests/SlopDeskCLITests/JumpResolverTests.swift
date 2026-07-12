@@ -2,7 +2,7 @@ import SlopDeskCLICore
 import SlopDeskWorkspaceCore
 import XCTest
 
-// E20 WI-5 — `JumpResolver` tests.
+// `JumpResolver` tests.
 //
 // The PURE `slopdesk jump` path resolver: frecency rank (query jumps), the `$HOME`↔last-jump-source
 // toggle (no-query jumps), and the `--no-cd` non-committing preview. No socket, no store, no GUI — the

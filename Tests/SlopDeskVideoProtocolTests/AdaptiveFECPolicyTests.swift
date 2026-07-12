@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskVideoProtocol
 
-/// WF-4 adaptive FEC. The policy is two PURE concerns: a wire codec (tier → group size, used by
+/// Adaptive FEC. The policy is two PURE concerns: a wire codec (tier → group size, used by
 /// BOTH ends) and a host-only loss → tier decision (hysteretic, one-step-clamped). These tests pin
 /// the wire-codec totality + byte-identity invariants and the decision's hysteresis/anti-flap.
 final class AdaptiveFECPolicyTests: XCTestCase {
@@ -63,7 +63,7 @@ final class AdaptiveFECPolicyTests: XCTestCase {
         }
     }
 
-    /// Tier 0 leaves the spare bits zero → the flags byte is the pre-WF-4 byte (byte-identity gate-off).
+    /// Tier 0 leaves the spare bits zero → the flags byte stays identical to the non-tiered format (byte-identity gate-off).
     func testTierZeroLeavesFlagsBitsUntouched() {
         var flags: FrameFragmentHeader.Flags = [.keyframe]
         let before = flags.rawValue
@@ -87,9 +87,9 @@ final class AdaptiveFECPolicyTests: XCTestCase {
         XCTAssertEqual(tier, 4, "saturated at the most-redundant level")
     }
 
-    /// Sustained clean link relaxes DOWN one level per call but FLOORS at g10 (tier 2) — the
-    /// 2026-06-11 FEC-ladder-floor fix: on a path with nonzero baseline loss the OFF tier is never
-    /// safe (measured: 18 OFF visits → 102 unrecovered / 65 decode-fails in 169s).
+    /// Sustained clean link relaxes DOWN one level per call but FLOORS at g10 (tier 2): on a path
+    /// with nonzero baseline loss the OFF tier is never safe (measured: 18 OFF visits → 102
+    /// unrecovered / 65 decode-fails in 169s).
     func testTierRampsDownOneLevelPerCallAndFloorsAtG10() {
         var tier: UInt8 = 4 // start at the most-redundant level (g2)
         let loss = 0.0
@@ -170,7 +170,7 @@ final class AdaptiveFECPolicyTests: XCTestCase {
         XCTAssertEqual(AdaptiveFECPolicy.tier(forLossRate: 0.03, previousTier: 1), 2)
     }
 
-    // MARK: Relax dwell (2026-06-11, 4G burst-flap fix)
+    // MARK: Relax dwell (4G burst-flap fix)
 
     /// Escalation through the dwell-gated entry point stays IMMEDIATE — one level per report,
     /// exactly like the plain function — and resets the relax streak.
@@ -236,7 +236,7 @@ final class AdaptiveFECPolicyTests: XCTestCase {
         XCTAssertEqual(s.tier, 1, "allowOff restores the relax-to-OFF walk")
     }
 
-    // MARK: Sticky relax (2026-06-11, doubled dwell after unrecovered loss)
+    // MARK: Sticky relax (doubled dwell after unrecovered loss)
 
     /// A report carrying unrecovered loss DOUBLES the relax dwell for the sticky window: the
     /// streak that would have relaxed at `dwell` keeps holding until `2×dwell`.

@@ -1,6 +1,6 @@
 import Foundation
 
-// MARK: - Keyboard-map audit 2026-07-07: PUA function-key text filter
+// MARK: - PUA function-key text filter
 
 /// The PURE, headless decision behind **what `text` a key event may carry into libghostty's encoder**
 /// (`ghostty_input_key_s.text`): given the raw `NSEvent.characters` of a key press, return the text the

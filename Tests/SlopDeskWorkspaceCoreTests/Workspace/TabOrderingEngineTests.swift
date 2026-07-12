@@ -2,9 +2,9 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Tests for ``TabOrderingEngine`` — after the 2026-07-10 re-scope (always By-Project, creation order;
-/// the grouping/sort hamburger and its `groups(...)` derivation are deleted) the engine is two PURE key
-/// helpers shared by every sectioning caller: ``TabOrderingEngine/normalizedProjectKey(_:)`` (the bucketing
+/// Tests for ``TabOrderingEngine`` — sectioning is always By-Project in creation order, with no
+/// grouping/sort hamburger, so the engine is two PURE key helpers shared by every sectioning caller:
+/// ``TabOrderingEngine/normalizedProjectKey(_:)`` (the bucketing
 /// key) and ``TabOrderingEngine/projectSectionHeader(for:)`` (the section title). Headless: no SwiftUI, no
 /// I/O — plain statics over plain values. The full per-pane bucketing over these helpers is pinned in
 /// `RailRowBuilderTests` (`sectionedByProject`).

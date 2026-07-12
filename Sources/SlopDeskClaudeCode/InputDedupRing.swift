@@ -1,8 +1,8 @@
 import Foundation
 
 /// Suppresses the PTY's echo of bytes the compose-box (input-box B1) just sent, so a
-/// prompt the user typed in the overlay is not shown twice (doc 14 §"Thực thi B1" —
-/// "Duplicate prompt dedup (BẮT BUỘC, bài học Happy/Happier"). The compose-box writes
+/// prompt the user typed in the overlay is not shown twice (doc 14, B1 execution —
+/// mandatory duplicate-prompt dedup, per the Happy/Happier lesson). The compose-box writes
 /// input to the PTY *and* optimistically renders it; the PTY then echoes the same bytes
 /// back in the output stream. This ring records recently-sent input and strips the
 /// echoed copy out of incoming output.

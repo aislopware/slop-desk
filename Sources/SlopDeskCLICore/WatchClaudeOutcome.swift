@@ -1,6 +1,6 @@
 import SlopDeskAgentDetect
 
-// `slopdesk watch:claude <id>` (ui-shell E20, WI-8) — the PURE exit-code state machine.
+// `slopdesk watch:claude <id>` — the PURE exit-code state machine.
 //
 // `watch:claude <id>` blocks until the named Claude session reaches an at-rest state, then exits.
 // Spec (reference__cli.md §CLI): exit `0` = idle or session closed, `4` = session id never seen,
@@ -78,9 +78,9 @@ public enum WatchClaudeOutcome {
     /// The BLOCK deadline (in `DispatchTime` uptime nanoseconds), DECOUPLED from the per-IPC `--timeout`.
     ///
     /// `watch:claude` blocks until the session settles (spec: "block until idle"); the per-IPC `--timeout`
-    /// (default 3000 ms) bounds each poll's socket recv/send ONLY, NOT the block — the old code fed
-    /// `--timeout` straight into the block deadline, so the default exited `9` after 3 s while Claude was
-    /// still working (shorter than essentially any real turn). The block is therefore UNBOUNDED by default
+    /// (default 3000 ms) bounds each poll's socket recv/send ONLY, NOT the block — feeding `--timeout`
+    /// straight into the block deadline would make the default exit `9` after 3 s while Claude is still
+    /// working (shorter than essentially any real turn). The block is therefore UNBOUNDED by default
     /// (`blockTimeoutMs == nil` ⇒ `nil` ⇒ no deadline-driven exit `9`); a caller-supplied `--block-timeout`
     /// bounds it. A non-positive value also yields `nil` (treated as unbounded — never an instant timeout).
     public static func blockDeadlineNanos(startNanos: UInt64, blockTimeoutMs: Int?) -> UInt64? {

@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E10 WI-6 (ES-E10-2): the pure link gesture/menu → action mapping. These pin the "Click Actions"
+/// The pure link gesture/menu → action mapping. These pin the "Click Actions"
 /// table (`docs/ui-shell/spec/user-interface__files-and-links.md`): a plain click does nothing; ⌘click opens
 /// (host for a path, client for a URL) / copies / nothing per `link-cmd-click`; ⌘⇧click reveals-in-Finder or
 /// opens-default (paths) but COPIES a URL; and the right-click items route through the same logic. Each
@@ -195,7 +195,7 @@ final class LinkActionPolicyTests: XCTestCase {
         XCTAssertEqual(LinkActionConfig.default.cmdShiftClick, .revealFinder)
     }
 
-    // MARK: - Explicit open intent (⌘⇧J Hint-to-Open, Jump-To ↩) ignores `link-cmd-click` (review finding 4)
+    // MARK: - Explicit open intent (⌘⇧J Hint-to-Open, Jump-To ↩) ignores `link-cmd-click`
 
     /// The EXPLICIT open affordances (Hint-to-Open, Jump-To ↩) must OPEN regardless of `link-cmd-click` — that
     /// setting governs only the MOUSE ⌘click gesture. Revert-to-confirm-fail: it fails on the old actuators
@@ -227,7 +227,7 @@ final class LinkActionPolicyTests: XCTestCase {
         }
     }
 
-    // MARK: - "Change Directory Here" → parent folder for a FILE (review finding 1)
+    // MARK: - "Change Directory Here" → parent folder for a FILE
 
     func testPosixParentDropsLastComponent() {
         XCTAssertEqual(LinkActionPolicy.posixParent("/a/b/c"), "/a/b")

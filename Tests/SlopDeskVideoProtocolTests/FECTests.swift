@@ -197,19 +197,19 @@ final class FECTests: XCTestCase {
         )
     }
 
-    /// FIX #1 (empirically reproduced): the reassembler must NOT trust the lowest
-    /// observed parity `fragIndex` as the data boundary when an FEC scheme is present.
-    /// The packetizer assigns parity `fragIndex = trueDataCount + groupOrder`, so if the
-    /// GROUP-0 parity is lost and a LATER group's parity arrives first, the lowest
-    /// surviving parity fragIndex EXCEEDS the true dataCount. The old code set the
-    /// boundary to that inflated value, treating a real data fragment as parity → the
-    /// frame could never complete even though every data fragment eventually arrived.
+    /// The reassembler must NOT trust the lowest observed parity `fragIndex` as the data
+    /// boundary when an FEC scheme is present. The packetizer assigns parity
+    /// `fragIndex = trueDataCount + groupOrder`, so if the GROUP-0 parity is lost and a
+    /// LATER group's parity arrives first, the lowest surviving parity fragIndex EXCEEDS
+    /// the true dataCount. Trusting that inflated value as the boundary would treat a real
+    /// data fragment as parity → the frame could never complete even though every data
+    /// fragment eventually arrived.
     ///
     /// Repro: a 10-data-fragment frame (groupSize 5 → 2 parity groups) delivered as
     /// data[0..8], then GROUP-1 parity (group-0 parity LOST), then data[9]. The frame
-    /// MUST complete (it previously returned nil forever — the inflated boundary treated
-    /// data[9] as parity). Here NO parity for the group containing the hole arrives until
-    /// data[9] itself does, so completion is by all-data-present, not FEC recovery.
+    /// MUST complete (an inflated boundary would treat data[9] as parity and return nil
+    /// forever). Here NO parity for the group containing the hole arrives until data[9]
+    /// itself does, so completion is by all-data-present, not FEC recovery.
     func testFrameCompletesWhenGroup0ParityLostButAllDataArrives() {
         let fec = XORParityFEC(groupSize: 5)
         let packetizer = VideoPacketizer(fec: fec)
@@ -252,7 +252,7 @@ final class FECTests: XCTestCase {
         XCTAssertNil(reassembler.nextDroppedFrame(), "a fully-arrived frame is never dropped")
     }
 
-    /// FIX #1 companion: a SINGLE data loss in group 1, recovered by group-1 parity, while
+    /// A SINGLE data loss in group 1, recovered by group-1 parity, while
     /// the GROUP-0 parity is lost. The group-0 parity loss is irrelevant (group 0 has no
     /// hole) and must NOT misalign the surviving group-1 parity. Keying parity by GROUP
     /// ORDER means group-1 parity lands at slot 1 (where recover() expects it), not shifted.
@@ -285,7 +285,7 @@ final class FECTests: XCTestCase {
     }
 
     /// With FEC, losing a data fragment AND its group's parity is unrecoverable. With
-    /// the reorder grace DISABLED (`fecReorderGrace: 0`, the old immediate-sweep
+    /// the reorder grace DISABLED (`fecReorderGrace: 0`, the immediate-sweep
     /// behavior) the frame is dropped as soon as a newer frame arrives.
     func testReassemblerDropsWhenFECCannotRecover() {
         let fec = XORParityFEC(groupSize: 5)
@@ -297,7 +297,7 @@ final class FECTests: XCTestCase {
 
         let data0 = frame0.filter { !$0.header.flags.contains(.parity) }
         // Deliver data fragments except the first, and NO parity → unrecoverable.
-        // Grace 0 = the legacy "sweep the instant the frontier advances" behavior.
+        // Grace 0 = sweep the instant the frontier advances.
         var reassembler = FrameReassembler(fec: fec, fecReorderGrace: 0)
         for fragment in data0.dropFirst() { _ = reassembler.ingest(fragment) }
         // The newer single-fragment frame completes; the unrecoverable older frame is
@@ -307,7 +307,7 @@ final class FECTests: XCTestCase {
         XCTAssertEqual(reassembler.nextDroppedFrame(), data0[0].header.frameID)
     }
 
-    // MARK: WF-4 adaptive FEC — host encodes at a wire tier, the client reads the tier per-frame
+    // MARK: adaptive FEC — host encodes at a wire tier, the client reads the tier per-frame
 
     /// A frame sized to split into exactly `target` data fragments (`target-1` full payloads + 1 partial).
     private func adaptiveFrame(dataFragmentTarget target: Int) -> Data {
@@ -393,7 +393,7 @@ final class FECTests: XCTestCase {
         expectedGroupSize: 2,
     ) }
 
-    /// Tier 0 (the default + gate-off value) is BYTE-IDENTICAL to the pre-WF-4 no-tier packetize: same
+    /// Tier 0 (the default + gate-off value) is BYTE-IDENTICAL to the no-tier packetize path: same
     /// flags byte (spare bits zero), same parity shape, same fragCount. This is the gate-off invariant.
     func testTierZeroPacketizeIsByteIdenticalToPreWF4() {
         let fec = XORParityFEC(groupSize: 5)

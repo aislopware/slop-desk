@@ -3,11 +3,11 @@ import Foundation
 // MARK: - Resolved drop action
 
 /// The concrete action a `(zone, content)` pair resolves to — the PURE output of the drop policy, an
-/// instruction the actuator (E18 WI-6) carries out against the store / live terminal / metadata client.
+/// instruction the actuator carries out against the store / live terminal / metadata client.
 /// Carrying the action as a value (not actuating here) keeps the policy headless + table-testable.
 ///
-/// The case set is terminal-only — there is intentionally NO remote-window (`.remoteGUI`) creator (E21
-/// WI-7): a streamed host window is minted solely by the picker, never by a drop (see ``DropActionResolver``).
+/// The case set is terminal-only — there is intentionally NO remote-window (`.remoteGUI`) creator: a
+/// streamed host window is minted solely by the picker, never by a drop (see ``DropActionResolver``).
 public enum DropAction: Equatable, Sendable {
     /// Paste this text/path VERBATIM into the focused terminal (`TerminalViewModel.sendInput`, never
     /// `SendKeysParser`).
@@ -46,7 +46,7 @@ public enum DropAction: Equatable, Sendable {
 /// Text always pastes into the focused terminal regardless of zone (the spec lists identical green/blue
 /// behavior for a text snippet), so it is handled first as a catch-all.
 ///
-/// **E21 exclusion — no drop-to-create a remote window (`.remoteGUI`).** A `.remoteGUI` pane is a real host
+/// **No drop-to-create a remote window (`.remoteGUI`).** A `.remoteGUI` pane is a real host
 /// window streamed over the PATH-2 UDP video path; it is minted ONLY by the picker / connect overlay
 /// (`WorkspaceStore.newRemoteWindowTab(windowID:title:appName:)`), NEVER by a file / URL / text drop. There is
 /// deliberately no remote-window arm in this table — ``DropAction`` carries terminal cases only — so no
@@ -55,7 +55,7 @@ public enum DropAction: Equatable, Sendable {
 /// holds a `nil` `terminalModel` for a video pane and every terminal actuator is `terminalModel?.…`
 /// (optional-chained), so the terminal-targeting actions (`injectText` / `hostOpen`) no-op without a crash,
 /// while the store-level split / reorder geometry stays kind-generic (a video pane tiles and splits as a
-/// first-class peer once minted — see `WorkspaceTreeOps.splitPane`). E21 WI-7.
+/// first-class peer once minted — see `WorkspaceTreeOps.splitPane`).
 public enum DropActionResolver {
     public static func resolve(zone: DropZone, content: DroppedContent) -> DropAction? {
         // Text snippet: pastes into the focused terminal in EVERY zone ("Same" for both halves).
@@ -99,7 +99,7 @@ public enum DropActionResolver {
     }
 
     /// The set of zones that can ACT on `content` — i.e. the zones whose `(zone, content)` cell resolves to
-    /// a non-`nil` ``DropAction``. The single source of truth the drop overlay (E18 WI-5) uses to gate which
+    /// a non-`nil` ``DropAction``. The single source of truth the drop overlay uses to gate which
     /// blobs are targetable / highlightable: a disabled cell (a file or URL over New Tab — there is no
     /// "open as terminal") is NOT in the set, so the overlay renders it muted and the receiver never lets it
     /// become the active zone. Derived from ``resolve(zone:content:)`` so the overlay gating can never drift

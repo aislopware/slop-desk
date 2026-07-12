@@ -30,15 +30,15 @@ public extension WorkspaceStore {
         // `.success` records the instant (brief `.completed` flash, settling to `.finished`). Only the
         // positive `.success` edge stamps; a `.failure` (→ `.error`) or a clear leaves any prior stamp
         // (harmless — the resolver reads it only in the completed/finished branch, and reconcile prunes
-        // it), so it never clobbers a coexisting agent `.done` stamp. FIX 1: arm the one-shot that decays
-        // the flash to the `.finished` dot — without it the rail never re-renders past the flash window.
+        // it), so it never clobbers a coexisting agent `.done` stamp. Arm the one-shot that decays the
+        // flash to the `.finished` dot — without it the rail never re-renders past the flash window.
         if badge == .success {
             paneCompletedAt[id] = date
             armCompletionFlashDecay()
         }
     }
 
-    /// Arms the FIX-1 one-shot that decays a just-stamped clean completion from the brief
+    /// Arms the one-shot that decays a just-stamped clean completion from the brief
     /// ``TabBadgeKind/completed`` checkmark to the persistent ``TabBadgeKind/finished`` dot. Called right
     /// after a POSITIVE completion edge (`.success` / agent ``ClaudeStatus/done``) stamps
     /// ``paneCompletedAt``; after ``completedFlashWindow`` it bumps ``completionFlashTick`` so the sidebar
@@ -53,7 +53,7 @@ public extension WorkspaceStore {
         }
     }
 
-    /// The default ``flashDecayScheduler`` (FIX 1): a real per-completion one-shot on the main run loop. A
+    /// The default ``flashDecayScheduler``: a real per-completion one-shot on the main run loop. A
     /// `@MainActor`-isolated `bump` is implicitly `Sendable`, so it hops onto the captured main-queue
     /// closure (which `assumeIsolated` runs back on the main actor). Lives in this extension (not the class
     /// body) so the closure literal stays off the `type_body_length` ledger.
@@ -126,15 +126,15 @@ public extension WorkspaceStore {
             exitCode: exitCode, durationMS: durationMS, isPaneFocused: focused, longThresholdMS: threshold,
         )
         if let badge { setCompletionBadge(badge, for: id) }
-        // M1 (E14): a finished command (OSC 133;D) clears any stuck OSC 9;4 badge on this pane — the
-        // documented `9;4;5`-equivalent (a program that finished without an explicit `9;4;0`, or was killed
-        // mid-progress, must not leave the rail showing a spinner over a completed command). Idempotent.
+        // A finished command (OSC 133;D) clears any stuck OSC 9;4 badge on this pane — the documented
+        // `9;4;5`-equivalent (a program that finished without an explicit `9;4;0`, or was killed mid-progress,
+        // must not leave the rail showing a spinner over a completed command). Idempotent.
         handleProgress(nil, for: id)
-        // M1 (E14): the PER-COMMAND finish/error gate is the PRIMARY authority. Route through the pure
+        // The PER-COMMAND finish/error gate (E14/K9) is the PRIMARY authority. Route through the pure
         // ``NotificationPolicy`` — Notify on Error (non-zero exit) / Notify on Finish (clean exit) + the
         // Notify-While-Foreground tri-state — per-command, ANY exit code, ANY duration. This is DECOUPLED from
-        // both the ~10s long-running floor AND slopdesk's own "Long-Command Completion" master, so a short
-        // failing `make` still notifies (the old over-gating dropped it).
+        // both the ~10s long-running floor AND slopdesk's own "Long-Command Completion" master: gating a short
+        // failing `make` behind the long-running floor or the master toggle would silently drop it.
         let perCommand = NotificationPolicy.shouldDeliver(
             event: .commandFinish(exit: exitCode),
             appActive: isAppActive,
@@ -165,7 +165,7 @@ public extension WorkspaceStore {
     ///
     /// Also stamps ``WorkspaceStore/paneCommandStartedAt`` (the busy-dot reveal clock — the plain
     /// ``TabBadgeKind/commandBusy`` dot shows only once the command outlives the configured delay, so a
-    /// fast `ls` never flashes the rail) and arms the FIX-1 one-shot that re-renders the rail at the
+    /// fast `ls` never flashes the rail) and arms the one-shot that re-renders the rail at the
     /// reveal boundary — ``WorkspaceStore/paneShowsBusyDot(_:now:)`` reads the wall clock, not an
     /// `@Observable` dependency, so without the tick nothing would repaint the row when the delay elapses.
     /// `at` is injectable for deterministic tests.

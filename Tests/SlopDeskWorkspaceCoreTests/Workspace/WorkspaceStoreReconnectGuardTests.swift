@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// R16 WS-1 regression: `reconnect(id)` resolves the handle synchronously but DIALS in a detached
+/// Regression: `reconnect(id)` resolves the handle synchronously but DIALS in a detached
 /// Task. If the pane is closed (reconcile-removed + torn down) in the interim, reviving the captured
 /// connection would clear `deliberatelyClosed` and strand a live, supervised, reconnecting connection
 /// for a pane that no longer exists. The fix re-checks `paneStillRegistered(id, as: handle)` on the

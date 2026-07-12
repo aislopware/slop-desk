@@ -1,9 +1,9 @@
 import Foundation
 import SlopDeskClaudeCode
 
-/// VERBATIM copy of `TerminalModeTracker` as it stood BEFORE the memchr fast path
-/// (2026-06-12, docs/31 follow-up #6) — the naive `for byte in bytes { step(byte) }`
-/// consume loop over the identical 7-state transition table.
+/// VERBATIM copy of `TerminalModeTracker` as it stood BEFORE the memchr fast path —
+/// the naive `for byte in bytes { step(byte) }` consume loop over the identical
+/// 7-state transition table.
 ///
 /// Kept ONLY as the differential test oracle (the same discipline as
 /// `Tests/SlopDeskHostTests/Support/HostTitleBellSniffer.swift` et al. for the fused

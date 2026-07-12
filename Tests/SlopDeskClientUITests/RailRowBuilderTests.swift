@@ -1,12 +1,12 @@
-// RailRowBuilderTests — pins the E6 WI-2 enrichment of `RailRow`: every rail row now carries the 1-based
+// RailRowBuilderTests — pins the enrichment of `RailRow`: every rail row carries the 1-based
 // tab shortcut number (`#N`), the host-reported foreground-process label, and the single fused status badge
 // from the pure `TabBadgeResolver`, in addition to the title/cwd-subtitle the filter narrows on.
 //
 // Headless: a tree-model `WorkspaceStore` over the tiny `MountTestPaneSession` fake (no socket, no video,
 // no Metal/SCStream — per the hang-safety rule). The badge inputs are seeded through the store's PUBLIC
 // mutators (`setAgentStatus` / `setCompletionBadge` / `setForegroundProcess`) so the test never touches a
-// real `LivePaneSession`. Each assertion fails on the pre-WI-2 `RailRow` (which carried none of these
-// fields), so none is tautological.
+// real `LivePaneSession`. Each assertion fails on a `RailRow` that carries none of these
+// fields, so none is tautological.
 
 import XCTest
 @testable import SlopDeskClientUI
@@ -37,7 +37,7 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertEqual(rows.map(\.tabNumber), [1, 2, 3], "tabNumber == tabIndex + 1 in tab order")
     }
 
-    /// Both panes of a SPLIT tab share the SAME `#N` (it is a tab number, not a pane number — plan Design #1).
+    /// Both panes of a SPLIT tab share the SAME `#N` (it is a tab number, not a pane number).
     func testSplitTabPanesShareTabNumber() {
         let store = makeStore()
         store.newTab(kind: .terminal, launchGrace: .zero) // a 2nd tab so the split tab is `#1` and `#2` differ
@@ -106,7 +106,7 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertEqual(RailRowsBuilder.rows(for: store)[0].badge, .awaitingInput)
     }
 
-    // MARK: - E20 ES-E20-3: manual `tab badge --kind` override on the representative row
+    // MARK: - Manual `tab badge --kind` override on the representative row
 
     /// A manual tab-badge override (the store seam the `tab badge --kind` CLI writes) renders on the tab's
     /// REPRESENTATIVE pane row, winning over the derived badge — proving the command is no longer a no-op
@@ -234,11 +234,11 @@ final class RailRowBuilderTests: XCTestCase {
         )
     }
 
-    // MARK: - E17 WI-3: the read-only lock flag (sidebar indicator ⟂ pane pill, one source of truth)
+    // MARK: - The read-only lock flag (sidebar indicator ⟂ pane pill, one source of truth)
 
     /// A row's `readOnly` mirrors the store's convergent ``WorkspaceStore/paneReadOnly`` set, so the sidebar
     /// lock glyph and the pane's `🔒 READ ONLY ×` pill read ONE truth. Locking the pane lights the flag;
-    /// unlocking clears it. Fails on the pre-WI-3 `RailRow` (no `readOnly` field ⇒ won't compile) and on a
+    /// unlocking clears it. Fails on a `RailRow` with no `readOnly` field (⇒ won't compile) and on a
     /// build that derived the flag from anything but the store set (the assertion checks the row against the
     /// store's `isReadOnly(for:)`, not against its own input).
     func testReadOnlyFlagMirrorsTheStoreSet() {
@@ -314,7 +314,7 @@ final class RailRowBuilderTests: XCTestCase {
     /// The title precedence for a terminal row: an EXPLICIT rename beats the folder name, the folder
     /// name beats the shell-title chain, and a cwd-less pane keeps the old fallback ("Terminal").
     func testRowTitlePrecedence() {
-        // B2: a rename now rides the explicit `userRenamed` flag (set by `renamePane`), not a title-vs-cwd
+        // A rename rides the explicit `userRenamed` flag (set by `renamePane`), not a title-vs-cwd
         // heuristic — so the folder name is overridden only for a genuinely user-renamed pane.
         let renamed = PaneSpec(kind: .terminal, title: "build box", lastKnownCwd: "/srv/app", userRenamed: true)
         XCTAssertEqual(RailRowsBuilder.rowTitle(kind: .terminal, spec: renamed), "build box")
@@ -332,15 +332,15 @@ final class RailRowBuilderTests: XCTestCase {
         let noCwd = PaneSpec(kind: .terminal, title: "Terminal")
         XCTAssertEqual(RailRowsBuilder.rowTitle(kind: .terminal, spec: noCwd), "Terminal")
 
-        // Non-terminal kinds keep the E21 chain untouched.
+        // Non-terminal kinds keep the title-fallback chain untouched.
         let video = PaneSpec(kind: .remoteGUI, title: "Docs", lastKnownTitle: "Docs — Safari")
         XCTAssertEqual(RailRowsBuilder.rowTitle(kind: .remoteGUI, spec: video), "Docs — Safari")
     }
 
-    /// B2 regression: the OLD heuristic (`title != lastKnownTitle`) MISFIRED once a shell emitted a SECOND
-    /// OSC title — `title` stayed the load-time-promoted first title while `lastKnownTitle` advanced, so the
-    /// stale promoted title latched as a phantom "rename". With the explicit `userRenamed` flag (false here),
-    /// the FOLDER NAME wins. Revert-to-confirm-fail: the pre-B2 code returned "zsh — proj-v1" for this spec.
+    /// Regression: a `title != lastKnownTitle` heuristic MISFIRES once a shell emits a SECOND
+    /// OSC title — `title` stays the load-time-promoted first title while `lastKnownTitle` advances, so the
+    /// stale promoted title would latch as a phantom "rename". With the explicit `userRenamed` flag (false here),
+    /// the FOLDER NAME wins. Revert-to-confirm-fail: that heuristic returns "zsh — proj-v1" for this spec.
     func testRowTitleDoesNotMisfireAsRenameWhenShellEmitsSecondOSCTitle() {
         let secondTitle = PaneSpec(
             kind: .terminal, title: "zsh — proj-v1", lastKnownCwd: "/srv/app",
@@ -352,7 +352,7 @@ final class RailRowBuilderTests: XCTestCase {
         )
     }
 
-    /// A4: a cwd-less pane running a real foreground program titles itself by that program (host wire type
+    /// A cwd-less pane running a real foreground program titles itself by that program (host wire type
     /// 26), while a bare login shell is suppressed (titling a pane "zsh" is no better than "Terminal").
     func testRowTitleFallsBackToForegroundProcessWhenNoCwd() {
         let spec = PaneSpec(kind: .terminal, title: "Terminal") // no cwd, no live title
@@ -387,13 +387,13 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertNil(RailRowsBuilder.cwdFolderName(nil))
     }
 
-    // MARK: - E21 WI-5: a `.remoteGUI` pane reads as a labelled window in the rail
+    // MARK: - A `.remoteGUI` pane reads as a labelled window in the rail
 
     /// A remote-window (`.remoteGUI`) pane is a first-class rail peer: its row carries the host-side APP name
-    /// as the muted second line — a video pane has no shell cwd, so the pre-E21-WI-5 builder (`spec?.lastKnownCwd`)
-    /// produced a `nil` subtitle (a bare single-line window row). The window title stays on line 1, and the
-    /// read-only lock flag still mirrors the store's convergent set kind-generically. Fails on the pre-WI-5
-    /// builder (nil video subtitle), so it is not tautological.
+    /// as the muted second line — a video pane has no shell cwd, so a builder that fell back to
+    /// `spec?.lastKnownCwd` would produce a `nil` subtitle (a bare single-line window row). The window title
+    /// stays on line 1, and the read-only lock flag still mirrors the store's convergent set kind-generically.
+    /// Fails on a builder that emits a nil video subtitle, so it is not tautological.
     func testRemoteWindowRowGetsHostAppSubtitleAndLock() throws {
         let store = makeStore()
         let video = store.newRemoteWindowTab(windowID: 4242, title: "Docs", appName: "Safari")
@@ -404,7 +404,7 @@ final class RailRowBuilderTests: XCTestCase {
         )
         XCTAssertEqual(row.kind, .remoteGUI, "the row keeps its video kind")
         XCTAssertEqual(row.title, "Docs", "line 1 is the window title")
-        XCTAssertEqual(row.subtitle, "Safari", "line 2 is the host-side app name (was nil pre-WI-5)")
+        XCTAssertEqual(row.subtitle, "Safari", "line 2 is the host-side app name")
         XCTAssertFalse(row.readOnly, "a fresh remote window is writable")
 
         store.setPaneReadOnly(video, true)
@@ -412,11 +412,10 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertTrue(locked.readOnly, "the read-only lock flag is kind-generic on a video pane")
     }
 
-    // MARK: - E21 ES-E21-2/-4: a split `.remoteGUI` pane stays a first-class peer (rail + palette)
+    // MARK: - A split `.remoteGUI` pane stays a first-class peer (rail + palette)
 
     /// A `.remoteGUI` remote window sharing its tab with a terminal sibling must NOT vanish from the
-    /// sidebar rail or the ⌘K jump-to-pane palette — ES-E21-2 ("a remote window must appear in palette …
-    /// the sidebar") and the ES-E21-4 peer-drop sweep. Asserts it remains in BOTH `RailRowsBuilder.rows`
+    /// sidebar rail or the ⌘K jump-to-pane palette. Asserts it remains in BOTH `RailRowsBuilder.rows`
     /// and `TabsPaletteSource.snapshot(...).candidates`.
     func testSplitRemoteWindowStaysInRailAndPalette() {
         let store = makeStore()
@@ -428,7 +427,7 @@ final class RailRowBuilderTests: XCTestCase {
         // Rail: the remote pane is still a row.
         XCTAssertNotNil(
             RailRowsBuilder.rows(for: store).first { $0.id == remote },
-            "a split remote window must stay in the sidebar rail (ES-E21-2)",
+            "a split remote window must stay in the sidebar rail",
         )
 
         // Palette: the remote pane is still a jump-to-pane candidate.
@@ -437,7 +436,7 @@ final class RailRowBuilderTests: XCTestCase {
             .map(\.id)
         XCTAssertTrue(
             paletteIDs.contains("tab.\(remote.raw.uuidString)"),
-            "a split remote window must stay in the ⌘K jump-to-pane palette (ES-E21-2)",
+            "a split remote window must stay in the ⌘K jump-to-pane palette",
         )
     }
 
@@ -600,11 +599,11 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertEqual(sections[0].rows.count, 2, "both panes land in the single api section")
     }
 
-    // MARK: - C3 BUG A: path-searchable row + collision disambiguation
+    // MARK: - Path-searchable row + collision disambiguation
 
     /// A git-repo row's VISIBLE subtitle is the git line (not the path), yet the row stays searchable BY PATH
-    /// via the hidden `cwd` key — the C3 BUG A fix. Fails on the pre-fix builder, whose filter only matched
-    /// title + subtitle, so a path query against a git row returned nothing.
+    /// via the hidden `cwd` key. Fails on a builder whose filter only matches title + subtitle, so a path
+    /// query against a git row returns nothing.
     func testFilterMatchesCwdEvenWhenSubtitleIsGitLine() {
         let store = makeStore()
         let pane = paneID(store, row: 0)
@@ -630,8 +629,8 @@ final class RailRowBuilderTests: XCTestCase {
     }
 
     /// Two panes whose cwd folder name COLLIDES (`…/feature-a/myapp` vs `…/feature-b/myapp`) are disambiguated
-    /// by their parent segment, so the sidebar shows `feature-a/myapp` vs `feature-b/myapp` — the C3 BUG A
-    /// worktree-distinctiveness fix. Fails on the pre-fix builder (both rows read the bare `myapp`).
+    /// by their parent segment, so the sidebar shows `feature-a/myapp` vs `feature-b/myapp` — a
+    /// worktree-distinctiveness fix. Fails on a builder that leaves both rows reading the bare `myapp`.
     func testCollidingFolderNamesDisambiguatedByParentSegment() {
         let store = makeStore()
         store.newTab(kind: .terminal, launchGrace: .zero) // 2nd tab
@@ -683,10 +682,10 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertNil(RailRowsBuilder.parentQualifiedTitle(cwd: nil, title: "repo"))
     }
 
-    // MARK: - C3 BUG B: the row exposes inline-rename mode
+    // MARK: - The row exposes inline-rename mode
 
     /// A pending tab-rename lights the `isEditing` flag on that tab's REPRESENTATIVE (active) pane row only;
-    /// clearing the pending state closes it. Fails on the pre-C3 `RailRow` (no `isEditing` field).
+    /// clearing the pending state closes it. Fails on a `RailRow` with no `isEditing` field.
     func testPendingTabRenameExposesEditingOnRepresentativeRow() throws {
         let store = makeStore()
         store.splitActivePane(axis: .horizontal, kind: .terminal, leading: false, launchGrace: .zero)

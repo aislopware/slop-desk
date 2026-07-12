@@ -1,7 +1,7 @@
 import Foundation
 import SlopDeskAgentDetect
 
-// MARK: - E13 WI-3 (ES-E13-2): the per-pane agent-badge gating policy (Claude-only)
+// MARK: - Per-pane agent-badge gating policy (Claude-only)
 
 /// The three "Agent Behaviour" badge toggles, distilled into a pure value the sidebar feeds to
 /// ``TabBadgeGating/resolve(agent:completion:isBusy:foregroundProcess:completionFreshness:progress:agentGates:commandGates:)``,
@@ -10,7 +10,7 @@ import SlopDeskAgentDetect
 /// the effective gates for a pane (override else global default).
 ///
 /// **Why mask inputs, not the fused badge.** ``TabBadgeResolver/badge(...)`` stays PURE + signal-only
-/// (E6) — it knows nothing about user preferences. Applying the gates by masking the resolver INPUTS (rather
+/// — it knows nothing about user preferences. Applying the gates by masking the resolver INPUTS (rather
 /// than the single fused ``TabBadgeKind``) keeps the policy at the source: gating the agent's own
 /// ``ClaudeStatus/working`` spinner (→ `.idle`) lets a still-busy shell fall through to the quiet
 /// ``TabBadgeKind/commandRunning`` marker, since `isBusy` / `progress` are left untouched — the agent badge is
@@ -48,7 +48,7 @@ public struct AgentBadgeGates: Equatable, Sendable {
     }
 
     /// All three gates ON — the explicit "show every agent badge" baseline (the seed a per-pane override
-    /// toggles from, and the pre-E13 rail). NOTE: this is NOT the SHIPPED global default — `whileProcessing`
+    /// toggles from). NOTE: this is NOT the SHIPPED global default — `whileProcessing`
     /// ships OFF (resolved from ``SettingsKey/agentBadgeGates``); `allOn` is the explicit all-on constant.
     public static let allOn = Self()
 
@@ -114,8 +114,7 @@ public struct CommandBadgeGates: Equatable, Sendable {
 /// agent (``AgentBadgeGates``) and command (``CommandBadgeGates``) toggles. It masks the ``TabBadgeResolver``
 /// INPUTS by source — so the (pure, precedence-pinned) resolver is untouched — and the program-progress
 /// signals (`isBusy` / OSC 9;4 spinner / OSC 9;4;2 error) are NEVER masked (they have no opt-out per the
-/// spec). This is what fixes the old conflation where turning off the agent spinner also hid a program's
-/// OSC 9;4 progress badge.
+/// spec) — otherwise turning off the agent spinner would also hide a program's own OSC 9;4 progress badge.
 public enum TabBadgeGating {
     /// Resolve the gated badge for a pane. The agent gates suppress only their own agent signal; the command
     /// gates suppress only the matching COMMAND-exit badge; everything else flows through the resolver as-is.

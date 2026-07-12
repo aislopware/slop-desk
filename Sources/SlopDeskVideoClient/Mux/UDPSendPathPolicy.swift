@@ -27,7 +27,7 @@ public enum UDPSendPathPolicy {
     /// reading. `.ready` restores viability; `.waiting` (dead path, sends would buffer
     /// in-process) and `.failed`/`.cancelled` (dead connection) revoke it; the bring-up
     /// states (`.setup`/`.preparing`) leave it unchanged — initial viability is optimistic
-    /// (true) so bring-up sends behave exactly as today.
+    /// (true) so sends during connection bring-up are not held back.
     public static func viability(after state: StateKind) -> Bool? {
         switch state {
         case .ready:

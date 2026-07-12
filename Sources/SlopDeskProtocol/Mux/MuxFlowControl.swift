@@ -6,14 +6,14 @@ import Foundation
 /// sender's initial ``FlowCreditPolicy`` window, a receiver's ``ReceiveWindowAccountant`` window,
 /// and the host's ``BoundedQueuePolicy`` capacity are all sized from ``MuxFlowControl``.
 public enum MuxFlowControl {
-    /// Initial per-channel send/receive window, in bytes. 64 KiB, sized for LATENCY now that
-    /// credit is granted at CONSUMPTION (the client's render drain), not at demux: every
-    /// in-flight byte is committed ahead of fresh output, so the window bounds both client
-    /// RAM per flooding pane AND the echo head-of-line delay (~44 ms at the measured
-    /// ~12 Mbps inter-ISP path; the old 256 KiB ≈ 175 ms). Still far above what an
-    /// interactive pane ever has outstanding, so flow control stays invisible on the
-    /// common path. Throughput ceiling = window per grant round-trip (~17 Mbps at 30 ms
-    /// WAN RTT, ~hundreds of Mbps on LAN) — ample for terminal bytes.
+    /// Initial per-channel send/receive window, in bytes. 64 KiB, sized for LATENCY: credit is
+    /// granted at CONSUMPTION (the client's render drain), not at demux, so every in-flight byte
+    /// is committed ahead of fresh output and the window bounds both client RAM per flooding pane
+    /// AND the echo head-of-line delay (~44 ms at the measured ~12 Mbps inter-ISP path — a 256 KiB
+    /// window would cost ~175 ms instead). Still far above what an interactive pane ever has
+    /// outstanding, so flow control stays invisible on the common path. Throughput ceiling =
+    /// window per grant round-trip (~17 Mbps at 30 ms WAN RTT, ~hundreds of Mbps on LAN) — ample
+    /// for terminal bytes.
     ///
     /// PROGRESS INVARIANT (credit-at-consumption): every DATA inner frame must satisfy
     /// `frame wire bytes ≤ window/2` — the receiver can only consume (and thus re-grant)
@@ -29,10 +29,10 @@ public enum MuxFlowControl {
     public static let initialWindowBytes =
         envInt("SLOPDESK_MUX_WINDOW", 64 * 1024, min: 16 * 1024, max: 16 * 1024 * 1024)
 
-    /// Split cap for client→host `.input` frames (paste). One paste used to travel as ONE
-    /// inner frame (up to 16 MiB): the host writes nothing to the PTY until the WHOLE frame
-    /// reassembles, and under credit-at-consumption a frame ≥ the window would deadlock
-    /// (see the progress invariant above). 16 KiB ≪ window/2 streams a paste progressively
+    /// Split cap for client→host `.input` frames (paste). Sending a whole paste as ONE inner
+    /// frame (up to 16 MiB) is avoided because the host writes nothing to the PTY until the
+    /// WHOLE frame reassembles, and under credit-at-consumption a frame ≥ the window would
+    /// deadlock (see the progress invariant above). 16 KiB ≪ window/2 streams a paste progressively
     /// and keeps interleave granularity fine. Splitting a byte stream is transparent to the
     /// PTY (frames carry no semantics; order is preserved by the per-channel send gate).
     /// Cross-clamped against the (env-tunable) window so an `SLOPDESK_MUX_WINDOW` at the
@@ -45,7 +45,7 @@ public enum MuxFlowControl {
     /// throughput: every byte enqueued-not-yet-sent here is committed AHEAD of fresh output
     /// (a keystroke echo, the post-flood prompt), so on a slow link the queue bound IS the
     /// in-host head-of-line delay. 64 KiB ≈ 44 ms at the measured ~12 Mbps inter-ISP path
-    /// (vs ~175 ms at the old 256 KiB) while still amortizing the pause/resume gate to one
+    /// (vs ~175 ms at a 256 KiB bound) while still amortizing the pause/resume gate to one
     /// NSCondition signal per ~64 KiB drained. The PTY pause → kernel-buffer → shell
     /// backpressure chain (never-drop) is unchanged — only the trigger point moves.
     /// Host-local only (no protocol interaction) → unilaterally safe to tune via
@@ -79,9 +79,10 @@ public enum MuxFlowControl {
     /// can park permanently: at a credit park the receiver can only re-grant bytes of
     /// COMPLETE decoded frames, and the partial frame buried in its FrameDecoder is
     /// uncreditable — if that partial prefix alone exceeds the grant threshold (window/2),
-    /// `pendingCredit` never crosses it and no windowAdjust is ever emitted (a permanent
-    /// pane wedge the night review caught: a 32 KiB PAYLOAD cap put the max .output frame
-    /// at 32 KiB + 13 header bytes = 32781 > 32768, a 13-byte dead zone).
+    /// `pendingCredit` never crosses it and no windowAdjust is ever emitted. This is a real
+    /// trap, not a theoretical one: a 32 KiB PAYLOAD cap puts the max .output frame at
+    /// 32 KiB + 13 header bytes = 32781 > 32768, a 13-byte dead zone that permanently wedges
+    /// the pane.
     ///
     /// So the cap is in PAYLOAD bytes but accounts the frame overhead: window/2 minus a
     /// 16-byte margin (≥ the 13-byte `.output` header: 4 length + 1 type + 8 seq, with
@@ -91,8 +92,8 @@ public enum MuxFlowControl {
         min(hostMergeCapBytes, initialWindowBytes / 2 - 16)
     }
 
-    /// Max number of LIVE logical channels (panes) one physical connection may hold open at once
-    /// (R6 #6). A hostile/buggy peer can otherwise spam distinct `channelOpen` ids and make the host
+    /// Max number of LIVE logical channels (panes) one physical connection may hold open at once.
+    /// A hostile/buggy peer can otherwise spam distinct `channelOpen` ids and make the host
     /// `openpty()`+`fork()` a shell per id without bound — a fork-bomb that exhausts fds/processes/RAM.
     /// The host refuses a NEW channel past this cap. 256 is far above any real multi-pane session (a
     /// few dozen panes), so legitimate use never approaches it.

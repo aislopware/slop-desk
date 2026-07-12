@@ -5,10 +5,10 @@ import XCTest
 @testable import SlopDeskClient
 @testable import SlopDeskWorkspaceCore
 
-/// Regression for the "switch tab thì mất toàn bộ history" report. A pane's SwiftUI `.task(id:)` re-fires
-/// on every REMOUNT — including a mere pane remount when the user switches TABS — and used to call
-/// `connect()` unconditionally, tearing down a healthy channel and wiping the terminal replay ring so the
-/// pane came back blank. `ConnectionViewModel.connectIfNeeded()` is the idempotent guard: it dials only a
+/// Regression for the report that switching tabs lost the entire scrollback history. A pane's SwiftUI `.task(id:)` re-fires
+/// on every REMOUNT — including a mere pane remount when the user switches TABS — so calling
+/// `connect()` unconditionally would tear down a healthy channel and wipe the terminal replay ring, leaving the
+/// pane blank. `ConnectionViewModel.connectIfNeeded()` is the idempotent guard: it dials only a
 /// genuinely idle/dead channel and NO-OPS on a live/in-flight/supervised one, leaving the ring intact.
 @MainActor
 final class ConnectionViewModelConnectIfNeededTests: XCTestCase {

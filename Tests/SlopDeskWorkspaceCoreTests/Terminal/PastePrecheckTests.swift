@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E8 WI-4 (ES-E8-3): pins the pure ``PastePrecheck`` — the embedder's paste entry-point decision that makes
+/// Pins the pure ``PastePrecheck`` — the embedder's paste entry-point decision that makes
 /// paste-protection reachable for the danger classes libghostty's own (narrower) `isSafe` gate misses.
 ///
 /// The bug this guards: libghostty trips `confirm_read_clipboard_cb` (the only old caller of

@@ -1,12 +1,12 @@
 import SlopDeskVideoProtocol
 
-/// PRE-EMPTIVE drop-until-anchor decode admission (decode-fail cascade fix, 2026-06-12).
+/// PRE-EMPTIVE drop-until-anchor decode admission.
 ///
 /// WHY: a delta that (transitively) references an unrecoverably-lost frame cannot decode — VT
-/// throws -12909 (HW-measured, 9/9 in the self-heal probe). The client used to learn that the
-/// hard way, PER FRAME: every post-loss delta was submitted, failed, tore down the
-/// `VTDecompressionSession` (`invalidateSession`), and fired its own `requestIDR` — measured live
-/// (139s parity session): 9 wire losses amplified into 23 decode-fails + 63 IDR re-requests. The
+/// throws -12909 (HW-measured, 9/9 in the self-heal probe). Without this gate the client learns
+/// that the hard way, PER FRAME: every post-loss delta gets submitted, fails, tears down the
+/// `VTDecompressionSession` (`invalidateSession`), and fires its own `requestIDR` — measured
+/// (139s parity session): 9 wire losses amplify into 23 decode-fails + 63 IDR re-requests. The
 /// session teardown is the expensive part: it wipes the decoder's reference state (killing the
 /// LTR recovery path's anchor) and forces a full reconfigure on the next keyframe.
 ///
@@ -19,9 +19,9 @@ import SlopDeskVideoProtocol
 ///    the gate kept garbage out of VT), or
 ///  - a delta OLDER than the oldest loss of the episode (its references predate the break).
 /// NOTE bit 6 (`isLTR`) is NOT an anchor: VT surfaces an ack token on virtually EVERY frame once
-/// LTR is enabled (measured live 2026-06-12: 7865/7874 frames) — bit 6 means "ack me on decode",
-/// not "decodable past a loss". The first gate deploy admitted bit 6 and ate exactly one VT
-/// failure per loss episode through ordinary chain deltas.
+/// LTR is enabled (measured live: 7865/7874 frames) — bit 6 means "ack me on decode", not
+/// "decodable past a loss". Treating bit 6 as an anchor would admit ordinary chain deltas past
+/// a break and eat exactly one VT failure per loss episode.
 ///
 /// TWO BROKEN MODES — the anchor set differs:
 ///  - ``Mode/brokenChain``: the decoder session is alive (references survive) → keyframe OR LTR.

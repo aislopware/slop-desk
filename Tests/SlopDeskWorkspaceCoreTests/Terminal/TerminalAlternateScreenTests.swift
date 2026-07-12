@@ -2,8 +2,8 @@ import Foundation
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// E8 (WI-5 cluster): `TerminalViewModel.isAlternateScreen` — the REAL alt-screen flag the E8 paste /
-/// backspace / scroll-past GUI gates read instead of the coarse `shellActivity == .running` proxy.
+/// `TerminalViewModel.isAlternateScreen` is the REAL alt-screen flag the paste / backspace /
+/// scroll-past GUI gates read instead of the coarse `shellActivity == .running` proxy.
 ///
 /// The flag is derived from the client `TerminalModeTracker` (DECSET 1049/47/1047) fed in `ingestPass`.
 /// The load-bearing fix is that the tracker is fed UNCONDITIONALLY — the old code only fed it while the
@@ -58,7 +58,7 @@ final class TerminalAlternateScreenTests: XCTestCase {
         XCTAssertTrue(model.isAlternateScreen, "the completed sequence flips the flag")
     }
 
-    /// `isCursorKeysApplication` (docs/29 #6) is derived from the same unconditionally-fed tracker:
+    /// `isCursorKeysApplication` is derived from the same unconditionally-fed tracker:
     /// DECSET `?1h` in the ingested output flips it, `?1l` clears it — this is the live DECCKM state
     /// the iOS key path threads into `KeyEncoding.encode` / `FloatingCursorMapping.bytes`.
     func testCursorKeysApplicationTrackedFromIngest() {

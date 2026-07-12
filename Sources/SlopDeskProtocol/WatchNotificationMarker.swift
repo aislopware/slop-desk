@@ -1,6 +1,6 @@
 import Foundation
 
-// The private sentinel that lets `slopdesk watch` (E20, WI-7) route its finish banner to the
+// The private sentinel that lets `slopdesk watch` route its finish banner to the
 // dedicated "Notify on Watch Finish" toggle instead of the generic "Allow App Notifications" master switch.
 //
 // `watch` finishes a wrapped command by emitting an OSC 777 desktop-notification whose TITLE field is this

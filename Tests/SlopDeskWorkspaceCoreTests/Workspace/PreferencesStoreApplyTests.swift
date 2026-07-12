@@ -2,8 +2,8 @@ import SlopDeskVideoProtocol
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// W13 — the ``PreferencesStore`` APPLY paths (live env overlay, sidecar, terminal broadcast, keybinding
-/// overrides) + the W6 ``WorkspaceBindingRegistry`` consulting ``KeybindingPreferences``. These prove the
+/// The ``PreferencesStore`` APPLY paths (live env overlay, sidecar, terminal broadcast, keybinding
+/// overrides) + the ``WorkspaceBindingRegistry`` consulting ``KeybindingPreferences``. These prove the
 /// wiring, not just the round-trip (which `SettingsKeyTests` covers).
 @MainActor
 final class PreferencesStoreApplyTests: XCTestCase {
@@ -68,7 +68,7 @@ final class PreferencesStoreApplyTests: XCTestCase {
     }
 
     /// Raw overrides typed in the free-text box are serialised into the sidecar the HOST daemon reads —
-    /// not only the client's in-process overlay — so a host-only knob actually reaches the daemon (BUG B).
+    /// not only the client's in-process overlay — so a host-only knob actually reaches the daemon.
     func testRawOverridesReachTheSidecar() {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("slopdesk-prefs-test-\(UUID().uuidString).json")
@@ -98,10 +98,10 @@ final class PreferencesStoreApplyTests: XCTestCase {
         XCTAssertTrue(TerminalConfigBroadcaster.shared.configString.contains("font-size = 16"))
     }
 
-    /// E8 WI-2: `applyTerminal()` now resolves the fire-time Controls bundle and passes it to the builder,
-    /// so the published config carries the control passthrough block — and `refreshTerminalControls()`
+    /// `applyTerminal()` resolves the fire-time Controls bundle and passes it to the builder, so the
+    /// published config carries the control passthrough block — and `refreshTerminalControls()`
     /// re-publishes it live. Asserts the KEY's PRESENCE (value depends on `Defaults.standard`, the global
-    /// toggle store), which is absent on the pre-WI-2 `controls: nil` build — revert-to-confirm-fail.
+    /// toggle store), which is absent when the builder passes `controls: nil` — revert-to-confirm-fail.
     func testTerminalBroadcastCarriesTheControlPassthrough() {
         let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil)
         let afterInit = TerminalConfigBroadcaster.shared.generation
@@ -113,10 +113,10 @@ final class PreferencesStoreApplyTests: XCTestCase {
         XCTAssertTrue(config.contains("keybind = shift+left="), "the ⇧+arrow select keybind is emitted")
     }
 
-    /// E15 item 8: the per-SCOPE (Light/Dark-theme) font override REACHES the live terminal. With Global
+    /// The per-SCOPE (Light/Dark-theme) font override REACHES the live terminal. With Global
     /// (`terminal.fontFamily`) unset, the active slot's `appearance.themeFonts[slug]` resolves into the
-    /// builder's primary `font-family` line. Pre-fix the override was persisted but the builder read the raw
-    /// `terminal.fontFamily`, so the per-scope font never applied (revert-to-confirm-fail).
+    /// builder's primary `font-family` line. If the builder instead read the raw `terminal.fontFamily`,
+    /// the per-scope font would never apply (revert-to-confirm-fail).
     func testPerScopeThemeFontReachesTheBuilderOutput() {
         // The GUI hook reports the active slot's resolved theme slug.
         AppearanceApplier.resolveActiveThemeSlug = { "dracula" }
@@ -133,9 +133,9 @@ final class PreferencesStoreApplyTests: XCTestCase {
         )
     }
 
-    /// E15 review #4: an explicitly-set per-SCOPE font WINS over a non-empty Global `terminal.fontFamily` — so
+    /// An explicitly-set per-SCOPE font WINS over a non-empty Global `terminal.fontFamily` — so
     /// the non-empty Global DEFAULT can never silently shadow a Light/Dark-theme font. The builder emits the
-    /// per-theme family, not the Global one. FAILS on the old "Global overrides theme" resolver.
+    /// per-theme family, not the Global one. FAILS on a "Global overrides theme" resolver.
     func testPerScopeFontWinsOverSetGlobalFont() {
         AppearanceApplier.resolveActiveThemeSlug = { "dracula" }
         let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil)
@@ -150,7 +150,7 @@ final class PreferencesStoreApplyTests: XCTestCase {
         )
     }
 
-    // MARK: Appearance (D2 — client chrome; NEVER touches the overlay/sidecar)
+    // MARK: Appearance (client chrome; NEVER touches the overlay/sidecar)
 
     /// A default ``AppearancePreferences`` + a default ``PreferencesStore`` leaves ``EnvConfig/overlay``
     /// empty — the GOLDEN CANARY. Appearance is pure client chrome; if it ever leaked into the overlay the
@@ -164,8 +164,8 @@ final class PreferencesStoreApplyTests: XCTestCase {
 
     func testAppearanceApplyRepointsThemeAndWritesDensityWithoutOverlayOrSidecar() {
         EnvConfig.overlay = [:]
-        // Capture the WHOLE model the GUI-layer ThemeStore hook receives (E15 WI-3 widened the seam from a
-        // bare `ThemeChoice?` to the full `AppearancePreferences`; the store can't import ClientUI).
+        // Capture the WHOLE model the GUI-layer ThemeStore hook receives (the seam passes the full
+        // `AppearancePreferences`, not a bare `ThemeChoice?`; the store can't import ClientUI).
         var appliedAppearance: AppearancePreferences?
         AppearanceApplier.apply = { appliedAppearance = $0 }
 
@@ -206,7 +206,7 @@ final class PreferencesStoreApplyTests: XCTestCase {
         XCTAssertEqual(sidecarAfter, sidecarBefore, "an appearance change must not rewrite the sidecar")
     }
 
-    /// E15 WI-3 golden-safety: the NEW dual-slot / follow-OS / per-theme-font appearance fields
+    /// Golden-safety: the dual-slot / follow-OS / per-theme-font appearance fields
     /// are PURE client chrome — setting them must NOT mutate ``EnvConfig/overlay`` nor rewrite the sidecar (the
     /// frozen golden corpus would shift otherwise). The whole model still reaches the GUI hook for resolution.
     func testDualSlotAppearanceFieldsStayOutOfOverlayAndSidecar() {
@@ -261,7 +261,7 @@ final class PreferencesStoreApplyTests: XCTestCase {
         XCTAssertEqual(store.appearance, AppearancePreferences(), "a malformed blob decode-fails to default")
     }
 
-    // MARK: Keybinding overrides → the W6 registry
+    // MARK: Keybinding overrides → the registry
 
     func testStorePublishesKeybindingOverridesToTheRegistry() {
         let store = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil)

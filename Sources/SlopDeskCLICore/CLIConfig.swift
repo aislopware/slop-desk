@@ -1,13 +1,13 @@
 import Foundation
 
-// `slopdesk config path | edit | validate` — the LOCAL (no-socket) config-file ops (E20,
-// WI-4). These operate on the optional user config FILE (XDG-style: `~/.config/slopdesk/`), which
+// `slopdesk config path | edit | validate` — the LOCAL (no-socket) config-file ops. These operate
+// on the optional user config FILE (XDG-style: `~/.config/slopdesk/`), which
 // is the persisted source a launch-time bridge reads. The RUNNING-app config ops
 // (`get`/`set`/`unset`/`show`/`reload`, incl. `--transient`) go over the control socket instead;
 // only `path`/`edit`/`validate` are pure file ops, so the path resolution + the validator live here,
 // PURE and unit-tested (the `edit` $EDITOR spawn lives in the compiled-only `main.swift`).
 //
-// **The split is deliberate and documented (M2 fix): not every `config` subcommand acts on the
+// **The split is deliberate and documented: not every `config` subcommand acts on the
 // SAME file.** slopdesk's launch-time bridge (`KeybindConfigLoader`) reads ONLY the
 // `keybind = <chord>:<action>` lines of `config.toml`; every other key (font-size, theme, …) is
 // silently ignored there and instead lives in the running app's `PreferencesStore`, reached by
@@ -53,7 +53,7 @@ public enum CLIConfig {
         }
     }
 
-    /// Validate the file against the ACTUAL keybind-file grammar the launch bridge honours (M2 fix).
+    /// Validate the file against the ACTUAL keybind-file grammar the launch bridge honours.
     ///
     /// The app's `KeybindConfigLoader` reads ONLY `keybind = <chord>:<action>` lines from `config.toml`
     /// and silently ignores every other key, so a generic `key = value` check would falsely call a file

@@ -104,7 +104,7 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
         XCTAssertTrue(session.sentInput.isEmpty, "no blocks ⇒ no re-run")
     }
 
-    // MARK: - Re-run an EXPLICIT command (E11 Open-Quickly Command-row "Re-Run in Current Pane")
+    // MARK: - Re-run an EXPLICIT command (Open-Quickly Command-row "Re-Run in Current Pane")
 
     /// `reRunCommandInActivePane(_:)` re-injects an EXPLICIT command text (the picked Current Command row,
     /// not the latest block) verbatim + one newline — the Open-Quickly Command-row "Re-Run in Current
@@ -375,9 +375,9 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
         )
     }
 
-    // MARK: - E9: Jump to a specific Outline block (jumpToNavigatorBlockInActivePane)
+    // MARK: - Jump to a specific Outline block (jumpToNavigatorBlockInActivePane)
 
-    /// E9 (ES-E9-2): clicking a Commands row jumps the scrollback to that block via
+    /// Clicking a Commands row jumps the scrollback to that block via
     /// `jumpToNavigatorBlockInActivePane(index:)`, driven by the block's HOST-STAMPED prompt ordinal —
     /// NOT its position among the blocks. Seed ordinals ≠ indices (ordinal 2 was an empty-Enter cycle
     /// with no block): jumping to block index 2 (ordinal 3) must step `3 − 1 = 2` prompts below the

@@ -17,8 +17,8 @@ import Foundation
 /// A pane's ``PaneSpec`` is **not** stored here — the split tree holds only identity/geometry; specs live
 /// in the owning ``Session/specs`` side table (so a rename never churns a tree diff).
 ///
-/// A stale `floatingPanes` key (floating-pane feature removed 2026-07-03) in a persisted file is simply
-/// not a stored property → decode-ignored; the ids it named are then dropped as orphan specs by
+/// A stale `floatingPanes` key from an older persisted file (the floating-pane feature no longer exists)
+/// is simply not a stored property → decode-ignored; the ids it named are then dropped as orphan specs by
 /// ``TreeWorkspace/normalizingSpecs()`` (the tiled tree survives intact).
 public struct Tab: Identifiable, Codable, Sendable, Equatable {
     public let id: TabID

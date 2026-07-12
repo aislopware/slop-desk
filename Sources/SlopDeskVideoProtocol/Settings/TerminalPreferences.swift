@@ -1,11 +1,11 @@
 import Foundation
 
 /// Live, client-side terminal-render preferences (decision #6: these DO apply live, unlike the video
-/// flags). Persisted via `@AppStorage` / `UserDefaults` (the model is the source of truth); W13 applies
-/// font/theme live via `ghostty_config_load_string` before `ghostty_config_finalize`.
+/// flags). Persisted via `@AppStorage` / `UserDefaults` (the model is the source of truth); font/theme
+/// apply live via `ghostty_config_load_string` before `ghostty_config_finalize`.
 ///
 /// Pure `Codable` value type — no SwiftUI import, so it is headlessly testable and the libghostty
-/// config-string builder (`ghosttyConfigString()`, W13) can be unit-tested without a surface. Every
+/// config-string builder (`ghosttyConfigString()`) can be unit-tested without a surface. Every
 /// field has a real default (these are render prefs, not env overrides), so a default-constructed
 /// value is a sensible terminal.
 public struct TerminalPreferences: Codable, Sendable, Equatable {
@@ -73,11 +73,11 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
         case off
         /// Glide the caret on same-row moves and add a small elastic overshoot on click / focus. A
         /// CLIENT-side render layer (the pinned libghostty fork exposes no cursor-animation key, so the
-        /// glide is the documented ceiling, deferred — E8 DECISIONS); the value persists + surfaces today.
+        /// glide is the documented ceiling, deferred — see `DECISIONS.md`); the value persists + surfaces today.
         case smooth
     }
 
-    // E8 WI-1: cursor color / text-under / opacity / animation render prefs (Appearance → Cursor). These
+    // Cursor color / text-under / opacity / animation render prefs (Appearance → Cursor). These
     // are render prefs with real defaults — applied live exactly like `cursorStyle` / `cursorBlink` — NOT
     // env overrides, so they never reach the EnvConfig overlay. Empty colour strings mean "follow the
     // theme" (the builder skips an empty `cursor-color` / `cursor-text` line — the "unset honoured" rule).
@@ -92,11 +92,11 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
     /// Cursor glide animation (`cursor.animation`), default ``CursorAnimation/off``.
     public var cursorAnimation: CursorAnimation
 
-    // E15 (WI-2): FONT-PARITY render prefs (Appearance → Font). Like the cursor render fields these are
+    // FONT-PARITY render prefs (Appearance → Font). Like the cursor render fields these are
     // pure-chrome prefs with real defaults — applied live via `TerminalConfigBuilder` → libghostty — NEVER
     // env overrides / `video-prefs.json` / golden corpus. Every default value below is the one that emits NO
-    // new libghostty line, so a default-constructed value stays byte-identical to the pre-E15 builder output
-    // (the regression guard). The enums + their token mapping live in ``TerminalFontSettings``.
+    // new libghostty line, so a default-constructed value stays byte-identical to the builder output before
+    // these fields existed (the regression guard). The enums + their token mapping live in ``TerminalFontSettings``.
     /// Comma-separated fallback font families; used when the primary font lacks a glyph (CJK, Nerd-Font
     /// icons). ghostty has NO `font-family-fallback` key — each entry is emitted as a REPEATED `font-family`
     /// line after the primary (`font-family` is a `RepeatableString`; see ``TerminalConfigBuilder``). Empty
@@ -221,7 +221,7 @@ public struct TerminalPreferences: Codable, Sendable, Equatable {
 
     /// ADDITIVE-TOLERANT decoding (NOT a migration — no-backcompat rule preserved). Each field is
     /// `decodeIfPresent ?? <default>`, so a stored blob written before a field existed (e.g. an existing
-    /// user's terminal prefs from before the E15 font-parity fields landed) DECODES SUCCESSFULLY with the
+    /// user's terminal prefs from before the font-parity fields landed) DECODES SUCCESSFULLY with the
     /// new fields defaulted — it does NOT decode-fail and reset every terminal pref once on upgrade. The
     /// defaults are sourced from a default-constructed value so they can never drift from the memberwise
     /// init. GENUINE corruption still resets: a key that is PRESENT but holds an invalid value (e.g. an

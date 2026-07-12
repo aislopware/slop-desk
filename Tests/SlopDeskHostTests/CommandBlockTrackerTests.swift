@@ -3,7 +3,7 @@ import SlopDeskProtocol
 import XCTest
 @testable import SlopDeskHost
 
-/// WB1 — the host ``CommandBlockTracker``: the live glue between the pure ``CommandBlockSegmenter``
+/// The host ``CommandBlockTracker``: the live glue between the pure ``CommandBlockSegmenter``
 /// and the wire. Proves it (a) emits a type-28 `commandBlock` METADATA update per block create /
 /// update / complete, DEDUPED; (b) retains each completed block's output in a BOUNDED ring and
 /// serves it as type-29 `blockOutput`; (c) evicts oldest-first under both bounds; (d) returns an
@@ -85,14 +85,14 @@ final class CommandBlockTrackerTests: XCTestCase {
         XCTAssertEqual(opened.last(where: { !$0.complete })?.cmd, "tail -f log", "running block opened + emitted")
 
         // A 2nd chunk that adds NO new output and no new mark → the RUNNING block is unchanged →
-        // NOTHING re-emitted. (This drives the dedup compare directly: without the #8 churn guard the
+        // NOTHING re-emitted. (This drives the dedup compare directly: without the churn guard the
         // running block would re-emit on the previous chunk's outputLen alone — but here outputLen is
         // also unchanged, so even the un-fixed dedup must stay quiet; this is the floor.)
         let noChange = tracker.ingest(bytes("\u{1B}]0;a title\u{07}")) // a non-133 OSC = no block change
         XCTAssertTrue(commandBlocks(noChange).isEmpty, "running block unchanged → nothing re-emitted")
 
         // A chunk that GROWS the running block's output (more output bytes, still no D) must NOT
-        // re-emit a type-28 — this is the #8 churn guard. Mutation test: if the guard is removed
+        // re-emit a type-28 — this is the churn guard. Mutation test: if the guard is removed
         // (outputLen back in the running dedup key) this WILL emit and the assert fails.
         let grew = tracker.ingest(bytes("line 2\n"))
         XCTAssertTrue(
@@ -150,7 +150,7 @@ final class CommandBlockTrackerTests: XCTestCase {
     }
 
     func testInterruptedRunningBlockEmitsFinalUpdate() {
-        // Bug 3: a running block (surfaced at C) interrupted by a fresh prompt (A/B with no D — a
+        // A running block (surfaced at C) interrupted by a fresh prompt (A/B with no D — a
         // nested shell / ssh whose inner shell emits its own OSC-133) is closed INCOMPLETE on the
         // host. The close must STILL emit a type-28 so the client's spinner can end. Before the fix
         // the segmenter closed it with a nil duration, so the tracker's dedup saw "both running" with
