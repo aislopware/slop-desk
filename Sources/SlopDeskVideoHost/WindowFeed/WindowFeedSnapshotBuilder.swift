@@ -71,16 +71,26 @@ public struct WindowFeedSourceWindow: Equatable, Sendable {
 /// the picker's `pickerSummary` so the two surfaces can never drift (docs/45 §6).
 public enum WindowFeedInclusionPolicy {
     /// System apps whose windows are never useful to stream (docs/31): desktop chrome, indicators.
+    /// "Cua Driver" is the cua automation agent's transparent full-display cursor overlay — a real
+    /// on-screen layer-0 window with nothing visible in it (user report 2026-07-12).
     public static let excludedSystemApps: Set<String> = [
         "", "Window Server", "Control Center", "Dock", "Notification Center", "Spotlight", "Wallpaper",
+        "Cua Driver",
     ]
+
+    /// Phantom utility windows that survive the off-screen AX-evidence gate because their app
+    /// genuinely lists them in `kAXWindows` yet they never render: Finder's App Store `asverify`
+    /// receipt-verification window (user report 2026-07-12). Keyed (ownerName → titles) to stay
+    /// surgical — real windows of the same app are untouched.
+    static let junkTitlesByOwner: [String: Set<String>] = ["Finder": ["asverify"]]
 
     /// Windows under this size (points) are tiny indicators/popups, not streamable app windows.
     public static let minDimensionPt = 80
 
     /// The shared picker/feed verdict for one window.
-    public static func includes(ownerName: String, widthPt: Int, heightPt: Int) -> Bool {
+    public static func includes(ownerName: String, title: String = "", widthPt: Int, heightPt: Int) -> Bool {
         !excludedSystemApps.contains(ownerName)
+            && junkTitlesByOwner[ownerName]?.contains(title) != true
             && widthPt >= minDimensionPt && heightPt >= minDimensionPt
     }
 }
@@ -104,7 +114,7 @@ public enum WindowFeedSnapshotBuilder {
         for w in windows {
             guard w.layer == 0,
                   WindowFeedInclusionPolicy.includes(
-                      ownerName: w.ownerName, widthPt: w.widthPt, heightPt: w.heightPt,
+                      ownerName: w.ownerName, title: w.title, widthPt: w.widthPt, heightPt: w.heightPt,
                   )
             else { continue }
             // Off-screen windows need AX EVIDENCE to be listed (user report 2026-07-11: the rail

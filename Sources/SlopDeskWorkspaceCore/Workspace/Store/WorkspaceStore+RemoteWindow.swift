@@ -13,13 +13,9 @@ public extension WorkspaceStore {
     /// Selected + focused like ``newTab(kind:)``. Returns the new pane id.
     @discardableResult
     func newRemoteWindowTab(windowID: UInt32, title: String, appName: String) -> PaneID {
-        let label = title.isEmpty ? (appName.isEmpty ? "Remote window" : appName) : title
-        let spec = PaneSpec(
-            kind: .remoteGUI,
-            title: label,
-            video: VideoEndpoint(windowID: windowID, title: label, appName: appName),
+        let (next, id) = WorkspaceTreeOps.newTab(
+            in: tree, spec: Self.remoteWindowSpec(windowID: windowID, title: title, appName: appName),
         )
-        let (next, id) = WorkspaceTreeOps.newTab(in: tree, spec: spec)
         tree = next
         reconcileTree()
         return id
@@ -37,16 +33,58 @@ public extension WorkspaceStore {
         guard let active = tree.activeSession?.activeTab?.activePane else {
             return newRemoteWindowTab(windowID: windowID, title: title, appName: appName)
         }
+        return newRemoteWindowSplit(
+            windowID: windowID, title: title, appName: appName,
+            beside: active, axis: axis, before: false,
+        )
+    }
+
+    /// Splits a SPECIFIC `target` pane along `axis`, inserting a `.remoteGUI` leaf PRE-BOUND to host
+    /// window `windowID` on the `before` side — the rail-DRAG drop commit (docs/45 round 3: the drop
+    /// names the pane under the cursor + the edge; the context-verb overload above always splits the
+    /// ACTIVE pane, trailing). Same endpoint persistence + cap gating; the new leaf lands focused.
+    /// A vanished `target` (closed mid-drag) makes the underlying op a no-op. Returns the new pane id.
+    @discardableResult
+    func newRemoteWindowSplit(
+        windowID: UInt32, title: String, appName: String,
+        beside target: PaneID, axis: SplitAxis, before: Bool,
+    ) -> PaneID {
+        let (next, id) = WorkspaceTreeOps.splitPane(
+            target, axis: axis,
+            newSpec: Self.remoteWindowSpec(windowID: windowID, title: title, appName: appName),
+            before: before, in: tree,
+        )
+        tree = next
+        reconcileTree()
+        return id
+    }
+
+    /// Docks a NEW `.remoteGUI` pane PRE-BOUND to host window `windowID` at the ACTIVE tab's outermost
+    /// `edge` — the rail-DRAG container-gutter drop commit (docs/45 round 3): the window opens as a
+    /// full-span column/row on that whole edge. Same endpoint persistence + cap gating as the tab
+    /// path; the new leaf lands focused. Returns the new pane id.
+    @discardableResult
+    func newRemoteWindowAtRootEdge(
+        windowID: UInt32, title: String, appName: String, edge: PaneDropEdge,
+    ) -> PaneID {
+        let (next, id) = WorkspaceTreeOps.insertPaneAtRootEdge(
+            spec: Self.remoteWindowSpec(windowID: windowID, title: title, appName: appName),
+            edge: edge, in: tree,
+        )
+        tree = next
+        reconcileTree()
+        return id
+    }
+
+    /// The ONE `.remoteGUI` spec shape every remote-window ingress mints: label falls back
+    /// title → appName → "Remote window"; the ``VideoEndpoint`` carries the rebind identity.
+    private static func remoteWindowSpec(windowID: UInt32, title: String, appName: String) -> PaneSpec {
         let label = title.isEmpty ? (appName.isEmpty ? "Remote window" : appName) : title
-        let spec = PaneSpec(
+        return PaneSpec(
             kind: .remoteGUI,
             title: label,
             video: VideoEndpoint(windowID: windowID, title: label, appName: appName),
         )
-        let (next, id) = WorkspaceTreeOps.splitPane(active, axis: axis, newSpec: spec, in: tree)
-        tree = next
-        reconcileTree()
-        return id
     }
 
     /// RELEASE STUCK INPUT (C5, the palette's `view.releaseStuckInput`): fire the ACTIVE pane's

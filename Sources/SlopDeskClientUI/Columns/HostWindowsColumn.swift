@@ -376,6 +376,30 @@ private struct HostWindowLiveRow: View {
         )
         .help(tooltip(title: title, state: state))
         .contextMenu { contextMenu(streamed: streamed) }
+        // DRAG SOURCE (docs/45 round 3): drag the row onto the canvas to place the window — the
+        // canvas previews split/dock/new-tab zones (`HostWindowDropAffordance`). AppKit DnD because
+        // the rail and the canvas live in different hosting views; the payload ALSO parks in the
+        // in-process ``HostWindowDragSession`` (providers are sealed until drop).
+        .onDrag {
+            let payload = HostWindowDragPayload(
+                windowID: identity.windowID,
+                title: feed.titles[identity.windowID] ?? "",
+                appName: identity.appName,
+                bundleID: identity.bundleID,
+            )
+            HostWindowDragSession.shared.payload = payload
+            let provider = NSItemProvider()
+            provider.registerDataRepresentation(
+                forTypeIdentifier: HostWindowDragPayload.utType.identifier,
+                visibility: .all,
+            ) { completion in
+                completion(payload.encoded(), nil)
+                return nil
+            }
+            return provider
+        } preview: {
+            HostWindowDragChip(identity: identity, title: feed.titles[identity.windowID] ?? "")
+        }
     }
 
     /// The 16pt app icon — resolved LOCALLY by bundleID (the client is a Mac too; most apps match).
@@ -441,6 +465,46 @@ private struct HostWindowLiveRow: View {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(title.isEmpty ? identity.appName : title, forType: .string)
         }
+    }
+}
+
+// MARK: - Drag preview chip
+
+/// The drag preview AppKit renders at the cursor — the row distilled to icon + name (the same
+/// resolution ladder as the row's leading icon).
+private struct HostWindowDragChip: View {
+    let identity: HostWindowIdentity
+    let title: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let icon = HostAppIconCache.shared.icon(forBundleID: identity.bundleID) {
+                Image(nsImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 16, height: 16)
+            } else {
+                Image(systemSymbol: .macwindow)
+                    .font(.system(size: Slate.Typeface.iconSizeFallback))
+                    .foregroundStyle(Slate.Text.icon)
+            }
+            Text(title.isEmpty ? identity.appName : title)
+                .font(.system(size: Slate.Typeface.body))
+                .foregroundStyle(Slate.Text.primary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: 240)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            Capsule(style: .continuous)
+                .fill(Slate.Surface.face)
+                .overlay(
+                    Capsule(style: .continuous)
+                        .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
+                ),
+        )
     }
 }
 

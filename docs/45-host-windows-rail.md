@@ -19,6 +19,17 @@
 > ones go); the rail's toggles wear `macwindow.on.rectangle` (distinct from the left `sidebar.left`)
 > and ALL top-strip toggles are hover-revealed (otty behavior); a stray ⌘Q (read as a "crash")
 > gained a confirm-quit dialog when tabs are open.
+>
+> **Round 3 (2026-07-12, user-tested):** two NAME-based junk exclusions joined the inclusion policy —
+> the "Cua Driver" automation overlay (a real on-screen transparent full-display window) and Finder's
+> App Store `asverify` window (genuinely AX-listed, never rendered; keyed owner+title so real Finder
+> windows stay). Rows are now DRAG SOURCES: drag one onto the canvas and the pane-move zone language
+> previews the landing — pane edge band → split beside that pane, container gutter → full-span dock,
+> anywhere else → new tab (the click verb). Rides AppKit DnD (`com.slopdesk.host-window` +
+> `HostWindowDragSession` side channel) because rail and canvas are separate hosting views; commits
+> exactly one store op (`newRemoteWindowSplit(beside:)` / `newRemoteWindowAtRootEdge` /
+> `newRemoteWindowTab`). The pane-move grab pill also rose to 7pt from the leaf top (was ~14pt, over
+> the first text row).
 
 
 The right sidebar that mirrors the host machine's desktop. Synthesized from three designs and nine critiques; every critical/major flaw is resolved inline, every contested call adjudicated.

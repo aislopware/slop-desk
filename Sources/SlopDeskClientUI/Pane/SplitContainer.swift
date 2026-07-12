@@ -29,6 +29,12 @@ struct SplitContainer: View {
     /// terminal-grid / remote-window redraw fires once on commit, not per drag frame.
     @State private var move: PaneMoveDrag?
 
+    #if os(macOS)
+    /// Live rail-window drop (a HOST WINDOW row dragged off the right rail — docs/45 round 3).
+    /// View-local like `move`: the store is untouched until `performDrop` commits exactly ONE op.
+    @State private var windowDrop: HostWindowDropDrag?
+    #endif
+
     /// EVERY tab of every RETAINED session (the active session + the LRU-retained previous ones — see
     /// ``WorkspaceStore/retainedSessionIDs``), in session-then-tab-bar order. We render ALL of them (see
     /// `body`), revealing only the active session's active tab, so NEITHER a tab switch NOR an A→B→A session
@@ -66,13 +72,49 @@ struct SplitContainer: View {
                         .accessibilityHidden(!isActive)
                         .id(tab.id) // OUTER key only — inner pane leaves stay keyed by PaneID
                 }
+                #if os(macOS)
+                // Rail-window drop preview — ABOVE every tab layer (purely visual; the receiver on
+                // the compositor below owns the drag lifecycle).
+                if let windowDrop {
+                    HostWindowDropOverlay(
+                        drag: windowDrop,
+                        frames: activeLeafFrames(in: bounds),
+                        container: bounds,
+                    )
+                    .allowsHitTesting(false)
+                    .animation(Slate.Anim.smallFade, value: windowDrop.zone)
+                    .zIndex(1)
+                }
+                #endif
             }
             .frame(width: bounds.width, height: bounds.height, alignment: .topLeading)
-            // Report the full container bounds — the geometric ops' fallback before the first solved-layout
-            // report. View-only — never reconciles. Skipped on the static snapshot path. Fires ONCE at the
-            // container level, not per tab.
-            .onAppear { if !staticMirror { store.updateContainerBounds(bounds) } }
-            .onChange(of: bounds) { _, newBounds in if !staticMirror { store.updateContainerBounds(newBounds) } }
+            #if os(macOS)
+                // Rail-window drags land HERE (the pane-level E18 receivers decline this UTType, so the
+                // drop bubbles up to the compositor, whose local space == the solver's leaf-rect space).
+                .onDrop(
+                    of: [HostWindowDragPayload.utType],
+                    delegate: HostWindowDropReceiver(
+                        enabled: !staticMirror,
+                        onUpdate: { location in
+                            windowDrop = HostWindowDropDrag(
+                                location: location,
+                                zone: resolveWindowDropZone(at: location, in: bounds),
+                            )
+                        },
+                        onExit: { windowDrop = nil },
+                        onPerform: { location in
+                            let zone = resolveWindowDropZone(at: location, in: bounds)
+                            windowDrop = nil
+                            return commitWindowDrop(zone)
+                        },
+                    ),
+                )
+            #endif
+                // Report the full container bounds — the geometric ops' fallback before the first solved-layout
+                // report. View-only — never reconciles. Skipped on the static snapshot path. Fires ONCE at the
+                // container level, not per tab.
+                .onAppear { if !staticMirror { store.updateContainerBounds(bounds) } }
+                .onChange(of: bounds) { _, newBounds in if !staticMirror { store.updateContainerBounds(newBounds) } }
         }
         .background(NativePaneColor.window)
     }
@@ -281,11 +323,11 @@ struct SplitContainer: View {
     ) -> PaneDropZone {
         // 1) Container outer gutter → dock. Suppress an edge the source ALREADY fully spans (docking there is
         //    a visual no-op — also keeps grabbing the top/edge pane from instantly previewing a dock).
-        if let edge = containerEdge(at: location, container: container, sourceRect: sourceRect) {
+        if let edge = Self.containerEdge(at: location, container: container, sourceRect: sourceRect) {
             return .dock(edge: edge)
         }
         // 2) Over a target leaf (not the source): centre → swap, edge band → re-split.
-        guard let (target, rect) = leaf(at: location, in: leaves, excluding: source),
+        guard let (target, rect) = Self.leaf(at: location, in: leaves, excluding: source),
               rect.width > 0, rect.height > 0
         else {
             return .none
@@ -298,16 +340,17 @@ struct SplitContainer: View {
         if inCentreX, inCentreY {
             return .swap(target: target)
         }
-        return .resplit(target: target, edge: dominantEdge(u: u, v: v, band: band))
+        return .resplit(target: target, edge: Self.dominantEdge(u: u, v: v, band: band))
     }
 
-    /// The first leaf (in solver DFS order) whose rect contains `location`, excluding the dragged `source`.
-    /// Iterating the ORDERED leaves (not the unordered `frames` dict) keeps the resolved target deterministic
-    /// if a min-clamped, over-subscribed layout ever overlaps two rects.
-    private func leaf(
+    /// The first leaf (in solver DFS order) whose rect contains `location`, excluding the dragged `source`
+    /// (`nil` for an INSERT drag — a rail-window drop has no source pane to exclude). Iterating the ORDERED
+    /// leaves (not the unordered `frames` dict) keeps the resolved target deterministic if a min-clamped,
+    /// over-subscribed layout ever overlaps two rects.
+    private static func leaf(
         at location: CGPoint,
         in leaves: [SplitTreeRenderModel.PlacedLeaf],
-        excluding source: PaneID,
+        excluding source: PaneID?,
     ) -> (PaneID, CGRect)? {
         for placed in leaves where placed.id != source && placed.rect.contains(location) {
             return (placed.id, placed.rect)
@@ -317,8 +360,10 @@ struct SplitContainer: View {
 
     /// The container outer edge whose gutter contains `location` (deepest wins; tie → a vertical left/right
     /// edge), or `nil` if the cursor is in no gutter. An edge the `sourceRect` already fully spans is skipped
-    /// (docking there changes nothing).
-    private func containerEdge(at location: CGPoint, container: CGRect, sourceRect: CGRect) -> PaneDropEdge? {
+    /// (docking there changes nothing); `nil` for an INSERT drag — every edge is meaningful then.
+    private static func containerEdge(
+        at location: CGPoint, container: CGRect, sourceRect: CGRect?,
+    ) -> PaneDropEdge? {
         guard container.width > 0, container.height > 0 else { return nil }
         let gutter = Double.minimum(
             Double(PaneDropMetrics.containerGutterMax),
@@ -332,7 +377,8 @@ struct SplitContainer: View {
             (.bottom, container.maxY - location.y),
         ]
         var best: (edge: PaneDropEdge, dist: CGFloat)?
-        for entry in distances where !sourceSpans(sourceRect, entry.edge, container) {
+        for entry in distances {
+            if let sourceRect, sourceSpans(sourceRect, entry.edge, container) { continue }
             guard entry.dist >= 0, Double(entry.dist) <= gutter else { continue }
             // Deepest into the gutter (smallest distance) wins; iteration order left,right,top,bottom makes a
             // vertical edge win an exact tie (matches the default mental model).
@@ -346,7 +392,7 @@ struct SplitContainer: View {
     }
 
     /// Whether `rect` already fully spans the container `edge` (so docking the pane there would be a no-op).
-    private func sourceSpans(_ rect: CGRect, _ edge: PaneDropEdge, _ container: CGRect) -> Bool {
+    private static func sourceSpans(_ rect: CGRect, _ edge: PaneDropEdge, _ container: CGRect) -> Bool {
         let eps: CGFloat = 1
         switch edge {
         case .left:
@@ -363,7 +409,7 @@ struct SplitContainer: View {
     /// The edge band the cursor (normalized `u`,`v` in the target) has penetrated deepest. Called only when
     /// the cursor is NOT in the centre box, so at least one penetration is positive. Exact tie → a vertical
     /// (left/right) edge.
-    private func dominantEdge(u: CGFloat, v: CGFloat, band: CGFloat) -> PaneDropEdge {
+    private static func dominantEdge(u: CGFloat, v: CGFloat, band: CGFloat) -> PaneDropEdge {
         let penetrations: [(edge: PaneDropEdge, pen: CGFloat)] = [
             (.left, band - u),
             (.right, u - (1 - band)),
@@ -374,5 +420,78 @@ struct SplitContainer: View {
         for entry in penetrations.dropFirst() where entry.pen > best.pen { best = entry }
         return best.edge
     }
+
+    #if os(macOS)
+
+    // MARK: - Rail-window drop (docs/45 round 3 — drag a HOST WINDOW row onto the canvas)
+
+    /// The ACTIVE tab's solved leaf rects (the overlay + the zone resolver read the SAME geometry the
+    /// user sees). Recomputed per call — the solver is pure rect math over ≤ a handful of leaves.
+    private func activeLeafFrames(in bounds: CGRect) -> [PaneID: CGRect] {
+        guard let tab = store.tree.activeSession?.activeTab else { return [:] }
+        let layout = SplitTreeRenderModel.layout(for: tab, in: bounds)
+        return Dictionary(layout.leaves.map { ($0.id, $0.rect) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    private func resolveWindowDropZone(at location: CGPoint, in bounds: CGRect) -> HostWindowDropZone {
+        guard let tab = store.tree.activeSession?.activeTab else { return .newTab }
+        let layout = SplitTreeRenderModel.layout(for: tab, in: bounds)
+        return Self.resolveWindowDropZone(at: location, leaves: layout.leaves, container: bounds)
+    }
+
+    /// Resolves the cursor `location` of a rail-window drag to the ``HostWindowDropZone`` a release
+    /// would commit — the insert-drag mirror of `resolveZone`: same gutter/edge-band geometry, no
+    /// source to exclude, and the CENTRE box / any gap falls back to `.newTab` (the rail click's
+    /// verb) instead of swap/cancel — every point of the canvas is a valid landing. `static` + pure
+    /// so `HostWindowDropZoneTests` pins the mapping headlessly.
+    static func resolveWindowDropZone(
+        at location: CGPoint,
+        leaves: [SplitTreeRenderModel.PlacedLeaf],
+        container: CGRect,
+    ) -> HostWindowDropZone {
+        if let edge = containerEdge(at: location, container: container, sourceRect: nil) {
+            return .dock(edge: edge)
+        }
+        guard let (target, rect) = leaf(at: location, in: leaves, excluding: nil),
+              rect.width > 0, rect.height > 0
+        else {
+            return .newTab
+        }
+        let u = (location.x - rect.minX) / rect.width
+        let v = (location.y - rect.minY) / rect.height
+        let band = PaneDropMetrics.edgeBandFraction
+        let inCentreX = u >= band && u <= 1 - band
+        let inCentreY = v >= band && v <= 1 - band
+        if inCentreX, inCentreY {
+            return .newTab
+        }
+        return .resplit(target: target, edge: dominantEdge(u: u, v: v, band: band))
+    }
+
+    /// Commits a rail-window drop: reads the in-flight payload off the ``HostWindowDragSession`` side
+    /// channel (NSItemProvider data is drop-time-async, and only rail rows vend this UTType) and opens
+    /// the pane at the resolved zone — exactly ONE store op, matching the pane-move rule.
+    private func commitWindowDrop(_ zone: HostWindowDropZone) -> Bool {
+        guard let payload = HostWindowDragSession.shared.payload else { return false }
+        HostWindowDragSession.shared.payload = nil
+        switch zone {
+        case .newTab:
+            store.newRemoteWindowTab(
+                windowID: payload.windowID, title: payload.title, appName: payload.appName,
+            )
+        case let .resplit(target, edge):
+            store.newRemoteWindowSplit(
+                windowID: payload.windowID, title: payload.title, appName: payload.appName,
+                beside: target, axis: edge.axis, before: edge.insertsBefore,
+            )
+        case let .dock(edge):
+            store.newRemoteWindowAtRootEdge(
+                windowID: payload.windowID, title: payload.title, appName: payload.appName, edge: edge,
+            )
+        }
+        store.recordRecentCommand(.newPane(.remoteGUI))
+        return true
+    }
+    #endif
 }
 #endif

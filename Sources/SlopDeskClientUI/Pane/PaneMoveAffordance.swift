@@ -78,14 +78,16 @@ struct PaneMoveHandle: View {
     /// The grab strip is centred + width-limited so it covers minimal terminal real estate and never
     /// overlaps the side dividers. Short panes get a proportionally smaller strip.
     private var stripWidth: CGFloat { Double.minimum(160, Double.maximum(56, Double(leafSize.width) * 0.4)) }
-    private let stripHeight: CGFloat = 22
+    /// 14pt strip flush to the leaf's top edge → the pill's centre sits 7pt in, INSIDE the pane's
+    /// top padding band. The old 3pt inset + 22pt strip put the pill at ~14pt — over the first line
+    /// of terminal text (user report 2026-07-12 "anchor đè content").
+    private let stripHeight: CGFloat = 14
 
     private var revealed: Bool { hovering || isDragging }
 
     var body: some View {
         VStack(spacing: 0) {
             strip
-                .padding(.top, 3)
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -162,16 +164,19 @@ struct PaneMoveOverlay: View {
         case .none:
             EmptyView()
         case let .swap(target):
-            if let rect = frames[target] { swapWash(rect) }
+            if let rect = frames[target] { Self.washPreview(rect) }
         case let .resplit(target, edge):
-            if let rect = frames[target] { resplitSlab(in: rect, edge: edge) }
+            if let rect = frames[target] { Self.slabPreview(in: rect, edge: edge) }
         case let .dock(edge):
-            dockRail(edge: edge)
+            Self.railPreview(in: container, edge: edge)
         }
     }
 
-    /// SWAP: a wash + border over the WHOLE target rect (the original look) — "these two exchange".
-    private func swapWash(_ rect: CGRect) -> some View {
+    // The three zone previews are `static` so the rail-drag overlay (``HostWindowDropOverlay``)
+    // draws the SAME visual language — one drop vocabulary across both drag systems.
+
+    /// SWAP / whole-area wash: a wash + border over the WHOLE rect — "this entire area".
+    static func washPreview(_ rect: CGRect) -> some View {
         RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
             .fill(Slate.State.accentMuted)
             .overlay(
@@ -184,7 +189,7 @@ struct PaneMoveOverlay: View {
 
     /// RE-SPLIT: an accent SLAB over the drop-side HALF of the target, with a bright seam line on the inner
     /// boundary where the new divider lands — the user literally sees a column vs a row form.
-    private func resplitSlab(in rect: CGRect, edge: PaneDropEdge) -> some View {
+    static func slabPreview(in rect: CGRect, edge: PaneDropEdge) -> some View {
         let slab = Self.slabRect(in: rect, edge: edge)
         return ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
@@ -205,7 +210,7 @@ struct PaneMoveOverlay: View {
 
     /// DOCK: a full-length accent RAIL pinned to the whole container edge — "full span, tab-wide", visually
     /// distinct from the per-pane half-slab.
-    private func dockRail(edge: PaneDropEdge) -> some View {
+    static func railPreview(in container: CGRect, edge: PaneDropEdge) -> some View {
         let rail = Self.railRect(in: container, edge: edge)
         return RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
             .fill(Slate.State.accentMuted)

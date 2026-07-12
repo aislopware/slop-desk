@@ -272,6 +272,36 @@ public enum WorkspaceTreeOps {
         return copy
     }
 
+    /// Inserts a NEW leaf carrying `spec` at the OUTERMOST `edge` of the ACTIVE tab — the rail-drag
+    /// "drop a host window into the container gutter" commit (docs/45 round 3). The mint-a-pane sibling
+    /// of ``moveLeafToRootEdge(_:edge:in:)``: same root prepend/append/wrap, but creating a leaf instead
+    /// of relocating one — so it also works on a lone-leaf tab (a split against the only pane). The new
+    /// pane is focused; a zoom is exited (the new focused pane must be visible — mirrors
+    /// ``splitPane(_:axis:newSpec:before:in:)``). Returns the new workspace + minted ``PaneID``. No-op
+    /// (returns `ws` with a throw-away id not in the tree) when there is no active tab or the insert
+    /// would breach ``SplitNode/maxDepth``. Preserves the **specs == leafIDs invariant**.
+    public static func insertPaneAtRootEdge(
+        spec: PaneSpec,
+        edge: PaneDropEdge,
+        in ws: TreeWorkspace,
+    ) -> (TreeWorkspace, PaneID) {
+        let newID = PaneID()
+        guard let sIdx = ws.activeSessionIndex else { return (ws, newID) }
+        var copy = ws
+        var session = copy.sessions[sIdx]
+        guard session.tabs.indices.contains(session.activeTabIndex) else { return (ws, newID) }
+        var tab = session.tabs[session.activeTabIndex]
+        let grown = tab.root.insertingAtRoot(newID, axis: edge.axis, before: edge.insertsBefore)
+        guard grown.depth <= SplitNode.maxDepth else { return (ws, newID) }
+        tab.root = grown
+        tab.activePane = newID
+        tab.zoomedPane = nil
+        session.tabs[session.activeTabIndex] = tab
+        session.specs[newID] = spec // keep the specs == leafIDs invariant
+        copy.sessions[sIdx] = session
+        return (copy, newID)
+    }
+
     /// Moves pane `pane` in `direction` by EXCHANGING it with its geometric neighbour on that side (Zellij
     /// "move pane"): resolves the neighbour against the active tab solved into `bounds` (the geometry the
     /// user sees + ``moveFocus(_:bounds:in:)`` reads), then ``swapPanes(_:_:in:)`` the two. `.next`/`.previous`

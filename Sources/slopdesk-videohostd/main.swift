@@ -379,7 +379,9 @@ func describe(_ w: SCWindow) -> String {
 func pickerSummary(_ w: SCWindow) -> WindowSummary? {
     let app = w.owningApplication?.applicationName ?? ""
     let width = Int(w.frame.width.rounded()), height = Int(w.frame.height.rounded())
-    guard WindowFeedInclusionPolicy.includes(ownerName: app, widthPt: width, heightPt: height)
+    guard WindowFeedInclusionPolicy.includes(
+        ownerName: app, title: w.title ?? "", widthPt: width, heightPt: height,
+    )
     else { return nil }
     return WindowSummary(
         windowID: w.windowID,
