@@ -313,6 +313,64 @@ final class SplitTreeRenderModelTests: XCTestCase {
         XCTAssertEqual(handle.leadingWeight, 0, "a fixed leading child reports 0 (unresizable)")
     }
 
+    /// The handle also carries the TRAILING child's flex weight — the other half of the drag clamp's
+    /// pair, feeding the hover cursor's movability. Per-seam like `leadingWeight`; a layout that dropped
+    /// it (leaving the default 0) would read every seam as one-way-immovable.
+    func testDividerTrailingWeightMirrorsTheNextChildFlexWeight() {
+        let a = PaneID(), b = PaneID(), c = PaneID()
+        let root = SplitNode.split(id: SplitNodeID(), axis: .horizontal, children: [
+            WeightedChild(weight: .flex(1), node: .leaf(a)),
+            WeightedChild(weight: .flex(3), node: .leaf(b)),
+            WeightedChild(weight: .flex(2), node: .leaf(c)),
+        ])
+        let bounds = CGRect(x: 0, y: 0, width: 800, height: 300)
+        let dividers = SplitTreeRenderModel.layout(root: root, zoomedPane: nil, in: bounds).dividers
+            .sorted { $0.childIndex < $1.childIndex }
+
+        XCTAssertEqual(dividers.count, 2)
+        XCTAssertEqual(dividers[0].trailingWeight, 3, accuracy: 1e-9, "seam 0's trailing child is weight 3")
+        XCTAssertEqual(dividers[1].trailingWeight, 2, accuracy: 1e-9, "seam 1's trailing child is weight 2")
+    }
+
+    // MARK: - Divider movability (the hover cursor's one-way vs two-way truth)
+
+    /// Mid-range weights: both directions live — the two-way resize cursor.
+    func testDividerMovabilityBothWaysMidRange() {
+        let handle = movabilityHandle(leading: 1, trailing: 1)
+        XCTAssertTrue(handle.canMoveTowardLeading)
+        XCTAssertTrue(handle.canMoveTowardTrailing)
+    }
+
+    /// The LEADING child parked AT the ``SplitWeight/minWeight`` floor (where the live-drag clamp
+    /// leaves it): the seam can no longer move toward it — the cursor must drop to the one-way arrow.
+    func testDividerMovabilityDeadTowardLeadingAtFloor() {
+        let handle = movabilityHandle(leading: SplitWeight.minWeight, trailing: 1.95)
+        XCTAssertFalse(handle.canMoveTowardLeading, "leading child at the floor — that direction is dead")
+        XCTAssertTrue(handle.canMoveTowardTrailing)
+    }
+
+    /// The TRAILING child at the floor — the mirror case.
+    func testDividerMovabilityDeadTowardTrailingAtFloor() {
+        let handle = movabilityHandle(leading: 1.95, trailing: SplitWeight.minWeight)
+        XCTAssertTrue(handle.canMoveTowardLeading)
+        XCTAssertFalse(handle.canMoveTowardTrailing, "trailing child at the floor — that direction is dead")
+    }
+
+    /// A `.fixed` side (weight sentinel 0) kills BOTH directions — the seam is not resizable at all.
+    func testDividerMovabilityDeadForFixedSide() {
+        let handle = movabilityHandle(leading: 0, trailing: 1)
+        XCTAssertFalse(handle.canMoveTowardLeading)
+        XCTAssertFalse(handle.canMoveTowardTrailing)
+    }
+
+    private func movabilityHandle(leading: Double, trailing: Double) -> SplitTreeRenderModel.DividerHandle {
+        SplitTreeRenderModel.DividerHandle(
+            splitID: SplitNodeID(), childIndex: 0, axis: .horizontal, rect: .zero,
+            parentSpan: 800, flexSum: leading + trailing,
+            leadingWeight: leading, trailingWeight: trailing,
+        )
+    }
+
     // MARK: - Stable identity key (load-bearing for the live-drag ForEach)
 
     /// The divider's `key` MUST be invariant to the live `rect`/`leadingWeight`: it's the SwiftUI identity the

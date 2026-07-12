@@ -59,6 +59,10 @@ public enum SplitTreeRenderModel {
         /// (cursor-matched, drift-free; the store clamps it at ``SplitWeight/minWeight`` so the seam stops on
         /// the neighbour). `0` when the leading child is `.fixed` (the divider is not resizable).
         public let leadingWeight: Double
+        /// The TRAILING child's current `.flex` weight (the child at ``childIndex` + 1``) — the other half
+        /// of the pair the drag clamp reads (`[minWeight, pairSum − minWeight]`), carried so the hover
+        /// cursor can tell one-way from two-way movability. `0` when that child is `.fixed`.
+        public let trailingWeight: Double
         public init(
             splitID: SplitNodeID,
             childIndex: Int,
@@ -67,6 +71,7 @@ public enum SplitTreeRenderModel {
             parentSpan: CGFloat = 0,
             flexSum: CGFloat = 1,
             leadingWeight: Double = 0,
+            trailingWeight: Double = 0,
         ) {
             self.splitID = splitID
             self.childIndex = childIndex
@@ -75,6 +80,23 @@ public enum SplitTreeRenderModel {
             self.parentSpan = parentSpan
             self.flexSum = flexSum
             self.leadingWeight = leadingWeight
+            self.trailingWeight = trailingWeight
+        }
+
+        /// Whether the divider can move TOWARD the leading child (left for a column seam, up for a row
+        /// seam) — shrinking the leading child, growing the trailing one. The live drag clamps the leading
+        /// weight into `[minWeight, pairSum − minWeight]` (``SplitNode/settingDividerWeight``), so this
+        /// direction is dead once the leading child sits at the floor; a `.fixed` neighbour (weight
+        /// sentinel `0`) kills it too. The half-thousandth slack absorbs float residue from repeated
+        /// drags — a weight parked AT the floor must read as immovable, not "movable by 1e-16".
+        public var canMoveTowardLeading: Bool {
+            leadingWeight > SplitWeight.minWeight + 0.0005 && trailingWeight > 0
+        }
+
+        /// The mirror of ``canMoveTowardLeading``: movable toward the TRAILING child (right/down),
+        /// which shrinks the trailing child — dead once IT sits at the ``SplitWeight/minWeight`` floor.
+        public var canMoveTowardTrailing: Bool {
+            trailingWeight > SplitWeight.minWeight + 0.0005 && leadingWeight > 0
         }
 
         /// A **stable** SwiftUI identity for the handle — its STRUCTURAL position in the tree
@@ -249,8 +271,10 @@ public enum SplitTreeRenderModel {
             // A handle band centered on each interior seam (between child i and i+1).
             for i in 0..<(children.count - 1) {
                 let seam = trailingEdge(of: childRects[i], axis: axis)
-                // The leading child's flex weight is the live-drag anchor; 0 for a `.fixed` (unresizable) seam.
+                // The pair's flex weights: leading is the live-drag anchor, both feed the hover cursor's
+                // movability; 0 for a `.fixed` (unresizable) side.
                 let leadingWeight: Double = if case let .flex(w) = children[i].weight { w } else { 0 }
+                let trailingWeight: Double = if case let .flex(w) = children[i + 1].weight { w } else { 0 }
                 out.append(DividerHandle(
                     splitID: id,
                     childIndex: i,
@@ -259,6 +283,7 @@ public enum SplitTreeRenderModel {
                     parentSpan: parentSpan,
                     flexSum: flexSum,
                     leadingWeight: leadingWeight,
+                    trailingWeight: trailingWeight,
                 ))
             }
             // Recurse into the children for nested splits.

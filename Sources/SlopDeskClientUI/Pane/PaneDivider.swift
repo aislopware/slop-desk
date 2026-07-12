@@ -61,7 +61,7 @@ struct PaneDivider: View {
         }
         .frame(width: handle.rect.width, height: handle.rect.height)
         #if os(macOS)
-            .pointerStyle(handle.axis == .horizontal ? .columnResize : .rowResize)
+            .pointerStyle(resizePointerStyle)
         #endif
             .gesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .named(PaneMoveSpace.name))
@@ -87,6 +87,33 @@ struct PaneDivider: View {
             }
             .animation(Slate.Anim.dividerHover, value: gestureActive)
     }
+
+    #if os(macOS)
+    /// The hover cursor, telling the truth at the clamp (the same rule as the shell's column
+    /// dividers): a seam whose neighbour sits at the ``SplitWeight/minWeight`` floor shows the
+    /// ONE-WAY resize arrow for the only direction the drag still has. Movability comes from the
+    /// handle's pair weights (``SplitTreeRenderModel/DividerHandle/canMoveTowardLeading``), the
+    /// exact quantities the drag clamp reads, so the glyph can never disagree with the gesture.
+    /// A dead seam (both at the floor, or a `.fixed` side) keeps the two-way glyph — there is no
+    /// "no resize" pointer, and a plain arrow over a seam reads as a dead zone.
+    private var resizePointerStyle: PointerStyle {
+        let toLeading = handle.canMoveTowardLeading
+        let toTrailing = handle.canMoveTowardTrailing
+        if handle.axis == .horizontal {
+            switch (toLeading, toTrailing) {
+            case (true, false): return .columnResize(directions: .leading)
+            case (false, true): return .columnResize(directions: .trailing)
+            default: return .columnResize
+            }
+        } else {
+            switch (toLeading, toTrailing) {
+            case (true, false): return .rowResize(directions: .up)
+            case (false, true): return .rowResize(directions: .down)
+            default: return .rowResize
+            }
+        }
+    }
+    #endif
 
     /// The absolute leading weight for a cursor translation of `translation` points along the split axis:
     /// `startLead +` the translation converted to weight via ``PaneMath/weightDelta(pixelIncrement:axisSpan:flexSum:)``
