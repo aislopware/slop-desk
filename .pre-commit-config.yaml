@@ -86,10 +86,20 @@ repos:
       # ============================== LINT (check) ===========================
       - id: swiftlint
         name: swiftlint --strict
-        entry: swiftlint lint --strict --quiet
+        # `--force-exclude` is REQUIRED here, unlike in `make lint`. SwiftLint honours the config's
+        # `excluded:` only when it discovers files itself; a path passed explicitly on the command line
+        # overrides it. This hook passes the staged paths, so without the flag it strict-lints the
+        # dev-exec harnesses that `.swiftlint.yml` deliberately excludes — a false failure that forces
+        # a `--no-verify` bypass.
+        entry: swiftlint lint --strict --quiet --force-exclude
         language: system
         # product trees only — matches the .swiftlint.yml `included:` (Sources/Tests/Apps).
         files: '^(Sources|Tests|Apps)/.*\.swift$'
+        # Mirrors the dev-exec entries of .swiftlint.yml `excluded:`. Needed IN ADDITION to
+        # `--force-exclude`: if every staged path were an excluded one, swiftlint would be handed a
+        # file list it fully discards and exit 1 ("No lintable files found"). Dropping them here means
+        # prek skips the hook outright instead.
+        exclude: '^Sources/slopdesk-(loopback-validate|capture-probe|fake-client)/'
 
       - id: clippy
         name: cargo clippy -D warnings
