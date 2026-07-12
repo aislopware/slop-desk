@@ -387,56 +387,47 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertNil(RailRowsBuilder.cwdFolderName(nil))
     }
 
-    // MARK: - A `.remoteGUI` pane reads as a labelled window in the rail
+    // MARK: - `.remoteGUI` panes are the RIGHT rail's rows, never the left rail's
 
-    /// A remote-window (`.remoteGUI`) pane is a first-class rail peer: its row carries the host-side APP name
-    /// as the muted second line — a video pane has no shell cwd, so a builder that fell back to
-    /// `spec?.lastKnownCwd` would produce a `nil` subtitle (a bare single-line window row). The window title
-    /// stays on line 1, and the read-only lock flag still mirrors the store's convergent set kind-generically.
-    /// Fails on a builder that emits a nil video subtitle, so it is not tautological.
-    func testRemoteWindowRowGetsHostAppSubtitleAndLock() throws {
+    /// The left rail tracks TERMINAL panes only: an open remote window's one home is the right rail
+    /// (`HostWindowsColumn` — streamed marker / focus state / drag-to-move), so the builder must skip
+    /// `.remoteGUI` panes entirely — a whole-tab window AND one split beside a terminal sibling. The
+    /// terminal rows around it are untouched. Fails on the old builder, which listed the same pane in
+    /// two sidebars.
+    func testRemoteWindowPanesAreNotRailRows() {
         let store = makeStore()
-        let video = store.newRemoteWindowTab(windowID: 4242, title: "Docs", appName: "Safari")
+        let remote = store.newRemoteWindowTab(windowID: 4242, title: "Docs", appName: "Safari")
 
-        let row = try XCTUnwrap(
-            RailRowsBuilder.rows(for: store).first { $0.id == video },
-            "the minted remote-window pane is enumerated as a first-class rail row",
+        XCTAssertNil(
+            RailRowsBuilder.rows(for: store).first { $0.id == remote },
+            "a whole-tab remote window has no left-rail row",
         )
-        XCTAssertEqual(row.kind, .remoteGUI, "the row keeps its video kind")
-        XCTAssertEqual(row.title, "Docs", "line 1 is the window title")
-        XCTAssertEqual(row.subtitle, "Safari", "line 2 is the host-side app name")
-        XCTAssertFalse(row.readOnly, "a fresh remote window is writable")
 
-        store.setPaneReadOnly(video, true)
-        let locked = try XCTUnwrap(RailRowsBuilder.rows(for: store).first { $0.id == video })
-        XCTAssertTrue(locked.readOnly, "the read-only lock flag is kind-generic on a video pane")
+        // Split a terminal beside it: the terminal sibling IS a row, the window pane still is not.
+        store.splitActivePane(axis: .horizontal, kind: .terminal, leading: false, launchGrace: .zero)
+        let rows = RailRowsBuilder.rows(for: store)
+        XCTAssertNil(rows.first { $0.id == remote }, "a split remote window has no left-rail row either")
+        XCTAssertTrue(rows.allSatisfy { $0.kind != .remoteGUI }, "no `.remoteGUI` row survives the builder")
+        XCTAssertNotNil(
+            rows.first { $0.tabNumber == 2 },
+            "the window tab's TERMINAL sibling still gets its row",
+        )
     }
 
-    // MARK: - A split `.remoteGUI` pane stays a first-class peer (rail + palette)
-
-    /// A `.remoteGUI` remote window sharing its tab with a terminal sibling must NOT vanish from the
-    /// sidebar rail or the ⌘K jump-to-pane palette. Asserts it remains in BOTH `RailRowsBuilder.rows`
-    /// and `TabsPaletteSource.snapshot(...).candidates`.
-    func testSplitRemoteWindowStaysInRailAndPalette() {
+    /// Skipping window panes in the RAIL must not touch the ⌘K jump-to-pane palette, which enumerates
+    /// panes itself — a remote window stays jumpable even though it is no longer listed on the left.
+    func testRemoteWindowPanesStayInTheJumpPalette() {
         let store = makeStore()
         let remote = store.newRemoteWindowTab(windowID: 7777, title: "Docs", appName: "Safari")
-        // Add a terminal sibling so the remote pane is one of several leaves in its tab.
         store.splitActivePane(axis: .horizontal, kind: .terminal, leading: false, launchGrace: .zero)
         store.focusPaneTree(remote)
 
-        // Rail: the remote pane is still a row.
-        XCTAssertNotNil(
-            RailRowsBuilder.rows(for: store).first { $0.id == remote },
-            "a split remote window must stay in the sidebar rail",
-        )
-
-        // Palette: the remote pane is still a jump-to-pane candidate.
         let paletteIDs = TabsPaletteSource.snapshot(store)
             .candidates(query: "")
             .map(\.id)
         XCTAssertTrue(
             paletteIDs.contains("tab.\(remote.raw.uuidString)"),
-            "a split remote window must stay in the ⌘K jump-to-pane palette",
+            "a remote window must stay in the ⌘K jump-to-pane palette",
         )
     }
 

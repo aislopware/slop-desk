@@ -32,6 +32,23 @@
 > Live-verified on mac-studio: edge drop split the hovered pane, centre drop opened a new tab, both
 > streams live. The pane-move grab pill also rose to 7pt from the leaf top (was ~14pt, over the
 > first text row), and the rail list no longer draws the system focus ring on click.
+>
+> **Round 4 (2026-07-12): the rail IS the open windows' tracker.** The left sidebar is now
+> TERMINAL-only (`RailRowsBuilder.rows` excludes `.remoteGUI`; its "Windows" section is gone — the
+> same pane no longer answers to two sidebars), so an open remote window's one home is its host row
+> here. Three upgrades follow: (1) a streamed row whose pane is the workspace's FOCUSED pane wears
+> the raised card (restyle-in-place; the keyboard cursor keeps its own raised card), and its click
+> verb is `revealPaneTree` — tab switch + focus + the switched-to tab's badge auto-clear, exactly a
+> left-rail row click; the context menu gains `Close Pane`. (2) Dragging an ALREADY-STREAMED row
+> onto the canvas MOVES its existing pane through the same zones (cross-tab included — new pure ops
+> `moveLeafAcrossTabs` / `moveLeafToActiveTabRootEdge`, `PaneID` preserved so the live stream
+> survives; a sole-leaf source tab closes) instead of minting a duplicate; the chip verbs read
+> "move …", the lifted pane gets the pane-move dashed outline, and its own rect resolves the new
+> `.keep` zone (release = no-op — the `.newTab` fallback would have EJECTED the pane to a new tab
+> when the user just put it back down). ⌘-click / "Open Another Pane" remain the deliberate
+> duplicate paths. (3) The streamed derivation is the store's one rule
+> (`WorkspaceStore.streamedWindowPane(for:)`) shared by rows, click, Open Quickly, and the
+> move-vs-mint drop commit.
 
 
 The right sidebar that mirrors the host machine's desktop. Synthesized from three designs and nine critiques; every critical/major flaw is resolved inline, every contested call adjudicated.

@@ -272,6 +272,98 @@ public enum WorkspaceTreeOps {
         return copy
     }
 
+    /// Relocates leaf `source` beside leaf `target` along `axis` — the CROSS-TAB superset of
+    /// ``moveLeaf(_:beside:axis:before:in:)``, backing the rail-drag MOVE of an already-streamed window
+    /// (docs/45): the dragged window's existing pane leaves its tab and lands beside the pane under the
+    /// cursor. Same tab delegates to `moveLeaf` (keeping its no-op rules); across tabs of the SAME session
+    /// the source is pruned from its tab — a tab it was the sole leaf of is removed outright — and
+    /// re-inserted beside `target`, KEEPING its `PaneID` (reconcile is a registry no-op: the live video
+    /// session survives the move). The destination tab is selected with `source` focused and any zoom
+    /// exited (the moved-in pane must be visible). No-op if either id is absent, they live in different
+    /// SESSIONS (specs cannot cross the per-session side table), or the insert would breach
+    /// ``SplitNode/maxDepth``. Preserves the **specs == leafIDs invariant** (the pane stays in its
+    /// session; only its tab changes).
+    public static func moveLeafAcrossTabs(
+        _ source: PaneID,
+        beside target: PaneID,
+        axis: SplitAxis,
+        before: Bool,
+        in ws: TreeWorkspace,
+    ) -> TreeWorkspace {
+        guard source != target,
+              let (ss, st) = locate(source, in: ws), let (ts, tt) = locate(target, in: ws),
+              ss == ts
+        else { return ws }
+        if st == tt { return moveLeaf(source, beside: target, axis: axis, before: before, in: ws) }
+        var copy = ws
+        var session = copy.sessions[ss]
+        var destTab = session.tabs[tt]
+        // Validate the destination BEFORE touching the source tab, so a rejected insert leaves `ws` intact.
+        guard let grown = destTab.root.inserting(source, beside: target, axis: axis, before: before),
+              grown.depth <= SplitNode.maxDepth
+        else { return ws }
+        pruneLeafFromTab(source, at: st, in: &session)
+        destTab.root = grown
+        destTab.activePane = source
+        destTab.zoomedPane = nil
+        // The source tab's removal may have shifted the destination's index — re-resolve by id.
+        guard let destIndex = session.tabs.firstIndex(where: { $0.id == destTab.id }) else { return ws }
+        session.tabs[destIndex] = destTab
+        session.activeTabIndex = destIndex
+        copy.sessions[ss] = session
+        return copy
+    }
+
+    /// Docks leaf `source` at the OUTERMOST `edge` of its session's ACTIVE tab — the cross-tab superset of
+    /// ``moveLeafToRootEdge(_:edge:in:)``, backing the rail-drag MOVE gutter drop (docs/45): the dragged
+    /// window's existing pane leaves its tab and becomes a full-span column/row of the tab under the
+    /// cursor. Source already in the active tab delegates to `moveLeafToRootEdge` (same no-op rules);
+    /// from another tab of the SAME session the source is pruned (a sole-leaf tab is removed) and
+    /// root-inserted into the active tab — which, unlike the same-tab dock, works against a lone-leaf
+    /// active tab (there IS something to dock beside: the destination's own leaf). KEEPS `PaneID`; the
+    /// active tab keeps selection with `source` focused and zoom exited. No-op if `source` is absent, its
+    /// session is not the ACTIVE session, or the dock would breach ``SplitNode/maxDepth``. Preserves the
+    /// **specs == leafIDs invariant**.
+    public static func moveLeafToActiveTabRootEdge(
+        _ source: PaneID,
+        edge: PaneDropEdge,
+        in ws: TreeWorkspace,
+    ) -> TreeWorkspace {
+        guard let (ss, st) = locate(source, in: ws), ws.activeSessionIndex == ss else { return ws }
+        var copy = ws
+        var session = copy.sessions[ss]
+        guard session.tabs.indices.contains(session.activeTabIndex) else { return ws }
+        if st == session.activeTabIndex { return moveLeafToRootEdge(source, edge: edge, in: ws) }
+        var destTab = session.tabs[session.activeTabIndex]
+        let grown = destTab.root.insertingAtRoot(source, axis: edge.axis, before: edge.insertsBefore)
+        guard grown.depth <= SplitNode.maxDepth else { return ws }
+        pruneLeafFromTab(source, at: st, in: &session)
+        destTab.root = grown
+        destTab.activePane = source
+        destTab.zoomedPane = nil
+        guard let destIndex = session.tabs.firstIndex(where: { $0.id == destTab.id }) else { return ws }
+        session.tabs[destIndex] = destTab
+        session.activeTabIndex = destIndex
+        copy.sessions[ss] = session
+        return copy
+    }
+
+    /// Removes leaf `source` from `session.tabs[index]` for a cross-tab move: the tab shrinks
+    /// (dangling zoom cleared, focus repointed) or — when `source` was its sole leaf — is removed
+    /// outright. The caller re-resolves any tab INDEX it holds afterwards (a removal shifts them) and
+    /// owns `activeTabIndex`. The spec is deliberately NOT dropped — the pane lives on in another tab.
+    private static func pruneLeafFromTab(_ source: PaneID, at index: Int, in session: inout Session) {
+        var tab = session.tabs[index]
+        if let prunedRoot = tab.root.removing(source) {
+            if tab.zoomedPane == source { tab.zoomedPane = nil }
+            if tab.activePane == source { tab.activePane = prunedRoot.firstLeafID }
+            tab.root = prunedRoot
+            session.tabs[index] = tab
+        } else {
+            session.tabs.remove(at: index)
+        }
+    }
+
     /// Inserts a NEW leaf carrying `spec` at the OUTERMOST `edge` of the ACTIVE tab — the rail-drag
     /// "drop a host window into the container gutter" commit (docs/45). The mint-a-pane sibling
     /// of ``moveLeafToRootEdge(_:edge:in:)``: same root prepend/append/wrap, but creating a leaf instead

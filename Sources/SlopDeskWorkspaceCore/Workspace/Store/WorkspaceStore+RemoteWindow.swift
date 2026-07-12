@@ -5,6 +5,18 @@
 
 import Foundation
 
+/// One already-streaming host window's place in the workspace: the `.remoteGUI` pane mirroring it and
+/// that pane's 1-based tab ordinal in the active session (the right rail's accent marker).
+public struct StreamedWindowRef: Equatable, Sendable {
+    public let paneID: PaneID
+    public let tabOrdinal: Int
+
+    public init(paneID: PaneID, tabOrdinal: Int) {
+        self.paneID = paneID
+        self.tabOrdinal = tabOrdinal
+    }
+}
+
 public extension WorkspaceStore {
     /// Opens a NEW `.remoteGUI` tab PRE-BOUND to host window `windowID` on the LIVE tree shell — the
     /// tree-path counterpart of the canvas-era ``addRemoteWindowPane(windowID:title:appName:)``. The spec
@@ -74,6 +86,25 @@ public extension WorkspaceStore {
         tree = next
         reconcileTree()
         return id
+    }
+
+    /// Where host window `windowID` is already streaming: the pane + its 1-based tab ordinal in the
+    /// ACTIVE session. The earliest tab wins for a window streamed twice (⌘-click duplicates are
+    /// secondary). Reads `PaneSpec.video` — the binding `RemoteWindowModel` persists on every
+    /// open/rebind, so the answer self-corrects through `WindowRebind` after a host restart. This is the
+    /// ONE "is it already open?" rule the right rail's rows, its click verb, and the rail-drag
+    /// move-vs-mint commit all share (two resolutions would drift). Active-session-only ON PURPOSE:
+    /// every consumer acts on the visible workspace, and the move ops cannot cross a session anyway.
+    func streamedWindowPane(for windowID: UInt32) -> StreamedWindowRef? {
+        guard let session = tree.activeSession else { return nil }
+        for (index, tab) in session.tabs.enumerated() {
+            for paneID in tab.allPaneIDs() {
+                guard let spec = session.specs[paneID], spec.kind == .remoteGUI,
+                      spec.video?.windowID == windowID else { continue }
+                return StreamedWindowRef(paneID: paneID, tabOrdinal: index + 1)
+            }
+        }
+        return nil
     }
 
     /// The ONE `.remoteGUI` spec shape every remote-window ingress mints: label falls back

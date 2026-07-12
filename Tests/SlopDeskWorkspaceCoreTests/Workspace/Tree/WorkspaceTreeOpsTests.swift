@@ -356,6 +356,118 @@ final class WorkspaceTreeOpsTests: XCTestCase {
         XCTAssertEqual(after, ws, "breaking out a pane not in the workspace is a no-op")
     }
 
+    // MARK: Move a leaf ACROSS tabs (the rail-drag MOVE of an already-streamed pane, docs/45)
+
+    func testMoveLeafAcrossTabsRelocatesBesideTargetAndRemovesTheEmptiedSourceTab() {
+        // Tab 0: a | b. Tab 1: c alone (active). Move c beside a, before → the destination tab
+        // becomes c | a | b with c focused + selected, c's emptied tab is gone, and c KEEPS its
+        // PaneID + spec (the live-stream-survives contract).
+        let (ws, a) = singleLeaf()
+        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let (s2, c) = WorkspaceTreeOps.newTab(in: s1, spec: termSpec("c"))
+        XCTAssertEqual(s2.sessions[0].activeTabIndex, 1, "precondition: the fresh tab is active")
+
+        let s3 = WorkspaceTreeOps.moveLeafAcrossTabs(c, beside: a, axis: .horizontal, before: true, in: s2)
+        XCTAssertEqual(s3.sessions[0].tabs.count, 1, "the emptied source tab is removed")
+        XCTAssertEqual(s3.sessions[0].tabs[0].root.allPaneIDs(), [c, a, b])
+        XCTAssertEqual(s3.sessions[0].tabs[0].activePane, c, "the moved pane keeps focus")
+        XCTAssertEqual(s3.sessions[0].activeTabIndex, 0, "the destination tab is selected")
+        XCTAssertEqual(s3.spec(for: c)?.title, "c", "the moved pane keeps its PaneID + spec")
+        assertInvariant(s3)
+    }
+
+    func testMoveLeafAcrossTabsShrinksAMultiPaneSourceTabAndRepointsItsFocus() {
+        // Tab 0: a (dest). Tab 1: b | c with c active. Move c beside a → tab 1 survives holding b
+        // (its focus repointed off the departed pane), the destination is selected with c focused.
+        let (ws, a) = singleLeaf()
+        let (s1, b) = WorkspaceTreeOps.newTab(in: ws, spec: termSpec("b"))
+        let (s2, c) = WorkspaceTreeOps.splitPane(b, axis: .horizontal, newSpec: termSpec("c"), in: s1)
+        XCTAssertEqual(s2.sessions[0].tabs[1].activePane, c, "precondition: the split pane is active")
+
+        let s3 = WorkspaceTreeOps.moveLeafAcrossTabs(c, beside: a, axis: .vertical, before: false, in: s2)
+        XCTAssertEqual(s3.sessions[0].tabs.count, 2, "a multi-pane source tab survives")
+        XCTAssertEqual(s3.sessions[0].tabs[0].root.allPaneIDs(), [a, c])
+        XCTAssertEqual(s3.sessions[0].tabs[0].activePane, c)
+        XCTAssertEqual(s3.sessions[0].activeTabIndex, 0)
+        XCTAssertEqual(s3.sessions[0].tabs[1].root.allPaneIDs(), [b])
+        XCTAssertEqual(s3.sessions[0].tabs[1].activePane, b, "the source tab's focus repoints to a survivor")
+        assertInvariant(s3)
+    }
+
+    func testMoveLeafAcrossTabsSameTabDelegatesToMoveLeaf() {
+        // Both ids in one tab → the plain same-tab relocation (one rule, two entries). Compared
+        // STRUCTURALLY: each rebuild mints fresh split ids, so two invocations are never `==`.
+        let (ws, a) = singleLeaf()
+        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .horizontal, newSpec: termSpec("b"), in: ws)
+        let across = WorkspaceTreeOps.moveLeafAcrossTabs(b, beside: a, axis: .vertical, before: true, in: s1)
+        let plain = WorkspaceTreeOps.moveLeaf(b, beside: a, axis: .vertical, before: true, in: s1)
+        XCTAssertTrue(
+            across.sessions[0].tabs[0].root.isStructurallyEqual(to: plain.sessions[0].tabs[0].root),
+            "the same-tab path lands the identical tree shape",
+        )
+        XCTAssertEqual(across.sessions[0].tabs[0].activePane, plain.sessions[0].tabs[0].activePane)
+        assertInvariant(across)
+    }
+
+    func testMoveLeafAcrossTabsIsNoOpAcrossSessionsAndForAbsentIDs() {
+        // Sessions own their spec side tables — a pane never crosses one. Absent ids change nothing.
+        let (ws, a) = singleLeaf()
+        let (s1, d) = WorkspaceTreeOps.newSession(in: ws, name: "s2", spec: termSpec("d"))
+        XCTAssertEqual(
+            WorkspaceTreeOps.moveLeafAcrossTabs(d, beside: a, axis: .horizontal, before: false, in: s1),
+            s1, "a cross-SESSION move is a no-op",
+        )
+        XCTAssertEqual(
+            WorkspaceTreeOps.moveLeafAcrossTabs(PaneID(), beside: a, axis: .horizontal, before: false, in: s1),
+            s1, "an absent source is a no-op",
+        )
+    }
+
+    func testMoveLeafToActiveTabRootEdgeAdoptsAPaneFromABackgroundTab() {
+        // Tab 0: a. Tab 1: b alone (active). Dock a at the active tab's LEFT edge → the active tab
+        // becomes a | b (a full-span column against a LONE-leaf tab — the case the same-tab dock
+        // rejects), a's emptied tab is gone, a focused.
+        let (ws, a) = singleLeaf()
+        let (s1, b) = WorkspaceTreeOps.newTab(in: ws, spec: termSpec("b"))
+        XCTAssertEqual(s1.sessions[0].activeTabIndex, 1, "precondition: the fresh tab is active")
+
+        let s2 = WorkspaceTreeOps.moveLeafToActiveTabRootEdge(a, edge: .left, in: s1)
+        XCTAssertEqual(s2.sessions[0].tabs.count, 1, "the emptied source tab is removed")
+        XCTAssertEqual(s2.sessions[0].tabs[0].root.allPaneIDs(), [a, b])
+        XCTAssertEqual(s2.sessions[0].tabs[0].activePane, a, "the docked pane keeps focus")
+        XCTAssertEqual(s2.sessions[0].activeTabIndex, 0)
+        assertInvariant(s2)
+    }
+
+    func testMoveLeafToActiveTabRootEdgeSameTabDelegatesToMoveLeafToRootEdge() {
+        // Source already in the active tab → the same-tab dock (incl. its no-ops). Compared
+        // STRUCTURALLY — fresh split ids per rebuild, see the moveLeafAcrossTabs twin above.
+        let (ws, a) = singleLeaf()
+        let (s1, b) = WorkspaceTreeOps.splitPane(a, axis: .vertical, newSpec: termSpec("b"), in: ws)
+        let viaActive = WorkspaceTreeOps.moveLeafToActiveTabRootEdge(b, edge: .left, in: s1)
+        let plain = WorkspaceTreeOps.moveLeafToRootEdge(b, edge: .left, in: s1)
+        XCTAssertTrue(
+            viaActive.sessions[0].tabs[0].root.isStructurallyEqual(to: plain.sessions[0].tabs[0].root),
+            "the same-tab path lands the identical tree shape",
+        )
+        XCTAssertEqual(viaActive.sessions[0].tabs[0].activePane, plain.sessions[0].tabs[0].activePane)
+        assertInvariant(viaActive)
+    }
+
+    func testMoveLeafToActiveTabRootEdgeIsNoOpOutsideTheActiveSession() {
+        // The op targets the ACTIVE session's active tab; a source in another session never moves.
+        let (ws, a) = singleLeaf()
+        let (s1, _) = WorkspaceTreeOps.newSession(in: ws, name: "s2", spec: termSpec("d"))
+        XCTAssertEqual(
+            WorkspaceTreeOps.moveLeafToActiveTabRootEdge(a, edge: .right, in: s1),
+            s1, "a itself lives in the now-BACKGROUND session — no move",
+        )
+        XCTAssertEqual(
+            WorkspaceTreeOps.moveLeafToActiveTabRootEdge(PaneID(), edge: .right, in: s1),
+            s1, "an absent source is a no-op",
+        )
+    }
+
     // MARK: moveFocus facade (directional + cycle)
 
     func testMoveFocusDirectionalResolvesGeometricNeighbour() throws {

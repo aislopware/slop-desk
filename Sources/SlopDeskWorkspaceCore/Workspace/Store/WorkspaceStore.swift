@@ -3725,6 +3725,46 @@ public extension WorkspaceStore {
         reconcileTree()
     }
 
+    /// Relocates `source` beside `target` — ACROSS tabs of the same session when needed. The commit for a
+    /// rail-drag MOVE of an already-streamed window dropped on a pane's edge band (docs/45): the window's
+    /// existing pane leaves its tab (a sole-leaf tab closes) and lands beside the pane under the cursor,
+    /// KEEPING its `PaneID` so reconcile tears down nothing — the live stream survives the move. ONE
+    /// reconcile on release. Same-tab drops keep `moveLeafTree`'s no-op rules; cross-session moves are
+    /// no-ops (the pane's spec cannot leave its session's side table).
+    func moveLeafAcrossTabsTree(_ source: PaneID, beside target: PaneID, axis: SplitAxis, before: Bool) {
+        guard source != target else { return }
+        let next = WorkspaceTreeOps.moveLeafAcrossTabs(source, beside: target, axis: axis, before: before, in: tree)
+        guard next != tree else { return }
+        tree = next
+        reconcileTree()
+    }
+
+    /// Docks `source` at the ACTIVE tab's outermost `edge` — across tabs of the same session when needed.
+    /// The commit for a rail-drag MOVE of an already-streamed window dropped in the container gutter
+    /// (docs/45). KEEPS `PaneID` (no surface teardown); ONE reconcile on release; no-op when nothing
+    /// would change (already docked there / sole pane of the active tab).
+    func moveLeafToActiveTabRootEdgeTree(_ source: PaneID, edge: PaneDropEdge) {
+        let next = WorkspaceTreeOps.moveLeafToActiveTabRootEdge(source, edge: edge, in: tree)
+        guard next != tree else { return }
+        tree = next
+        reconcileTree()
+    }
+
+    /// Brings pane `id` fully into view — the one-call "take me to this pane" the right rail's streamed
+    /// rows and the rail-drag move commit share. A background-tab pane routes through ``selectTab(_:)``
+    /// FIRST: `focusPaneTree` alone would also land on the right tab (`focusPane` repoints session + tab),
+    /// but it skips `selectTab`'s badge auto-clear — and a tab the user was just taken to has been seen,
+    /// the same rule a left-rail row click applies.
+    func revealPaneTree(_ id: PaneID) {
+        if let session = tree.activeSession,
+           let index = session.tabIndex(containing: id),
+           index != session.activeTabIndex
+        {
+            selectTab(index)
+        }
+        focusPaneTree(id)
+    }
+
     /// Suspends/resumes host grid-resize delivery for EVERY live terminal pane — the shell raises this for
     /// the duration of a sidebar/inspector-divider drag. Dragging an AppKit `NSSplitView` divider
     /// live-resizes the content column every cell-step; for a remote terminal each forward is a host PTY

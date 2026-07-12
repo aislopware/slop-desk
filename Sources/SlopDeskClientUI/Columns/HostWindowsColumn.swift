@@ -3,6 +3,11 @@
 // rows at radius 7. A supervision instrument, not a picker: every row is one click from becoming a
 // pane, and every already-streamed window points back at its pane (trailing accent tab ordinal).
 //
+// This rail is ALSO the workspace's window TRACKER: the left rail lists terminal panes only
+// (`RailRowsBuilder.rows` excludes `.remoteGUI`), so an open remote window's ONE home is its host
+// row here — streamed = accent ordinal, focused = the raised card, click = reveal the pane (tab
+// switch included), drag = MOVE the existing pane (never a duplicate), close = the context menu.
+//
 // STABILITY IS THE UX (docs/45 §1): sections are alphabetical by app, rows keep first-seen order —
 // nothing reorders on host focus flips / title churn / refresh ticks; state restyles in place
 // (weight, dimming, ordinal), never by motion or position.
@@ -275,12 +280,14 @@ struct HostWindowsColumn: View {
 
     // MARK: - Acting (the ONE verb, state-aware — docs/45 §4)
 
-    /// Single-click / ⏎: focus the streaming pane when the window is already in the workspace, else
-    /// open a new pane. `duplicate` (⌘-click / ⌘⏎) deliberately opens ANOTHER pane of the same window.
+    /// Single-click / ⏎: REVEAL the streaming pane when the window is already in the workspace —
+    /// tab switch, focus, and the switched-to tab's badge auto-clear, exactly what a left-rail row
+    /// click does — else open a new pane. `duplicate` (⌘-click / ⌘⏎) deliberately opens ANOTHER pane
+    /// of the same window.
     private func act(on identity: HostWindowIdentity, duplicate: Bool) {
         cursor = identity
-        if !duplicate, let ref = Self.streamedRef(for: identity.windowID, in: store) {
-            store.focusPaneTree(ref.paneID)
+        if !duplicate, let ref = store.streamedWindowPane(for: identity.windowID) {
+            store.revealPaneTree(ref.paneID)
             return
         }
         openPane(for: identity)
@@ -303,29 +310,6 @@ struct HostWindowsColumn: View {
         let next = ((current ?? (delta > 0 ? -1 : flat.count)) + delta + flat.count) % flat.count
         cursor = flat[next]
         return .handled
-    }
-
-    // MARK: - Streamed derivation (client-side, live-read by leaves)
-
-    /// Where a host window is already streaming: the pane + its 1-based tab ordinal in the ACTIVE
-    /// session. The earliest tab wins for a window streamed twice (⌘-click duplicates are
-    /// secondary). Reads `PaneSpec.video` — the binding `RemoteWindowModel` persists on every
-    /// open/rebind, so markers self-correct through `WindowRebind` after a host restart.
-    static func streamedRef(for windowID: UInt32, in store: WorkspaceStore) -> StreamedRef? {
-        guard let session = store.tree.activeSession else { return nil }
-        for (index, tab) in session.tabs.enumerated() {
-            for paneID in tab.allPaneIDs() {
-                guard let spec = session.specs[paneID], spec.kind == .remoteGUI,
-                      spec.video?.windowID == windowID else { continue }
-                return StreamedRef(paneID: paneID, tabOrdinal: index + 1)
-            }
-        }
-        return nil
-    }
-
-    struct StreamedRef: Equatable {
-        let paneID: PaneID
-        let tabOrdinal: Int
     }
 }
 
@@ -354,9 +338,15 @@ private struct HostWindowLiveRow: View {
         let state = feed.states[identity.windowID]
         let dimmed = state?.isDimmed ?? false
         let isFrontmost = feed.frontmostWindowID == identity.windowID
-        let streamed = HostWindowsColumn.streamedRef(for: identity.windowID, in: store)
+        let streamed = store.streamedWindowPane(for: identity.windowID)
+        // This rail is the open window's ONE tracker (the left rail is terminal-only), so a streamed
+        // row whose pane is the workspace's FOCUSED pane wears the raised card — the same selection
+        // truth the left rail paints for the focused terminal. Live-read here (never an init param) so
+        // a focus flip repaints exactly the two affected leaves; restyle-in-place, the row never moves.
+        let isFocusedPane = streamed != nil
+            && streamed?.paneID == store.tree.activeSession?.activeTab?.activePane
         SlateListRow(
-            active: isCursor,
+            active: isCursor || isFocusedPane,
             onTap: { onAct(NSEvent.modifierFlags.contains(.command)) },
             leading: { icon(dimmed: dimmed) },
             title: {
@@ -450,7 +440,7 @@ private struct HostWindowLiveRow: View {
     }
 
     @ViewBuilder
-    private func contextMenu(streamed: HostWindowsColumn.StreamedRef?) -> some View {
+    private func contextMenu(streamed: StreamedWindowRef?) -> some View {
         if streamed != nil {
             Button("Focus Pane") { onAct(false) }
             Button("Open Another Pane") { onAct(true) }
@@ -465,6 +455,13 @@ private struct HostWindowLiveRow: View {
             Button("Peek") { onPeek() }
         }
         Divider()
+        // The tracker's close verb: with the left rail terminal-only this row is the ONE place an
+        // open window pane is listed, so it must also be closable here (the request flow — not a hard
+        // close — so the pane's own confirm/teardown rules apply).
+        if let streamed {
+            Button("Close Pane") { store.requestClosePaneTree(streamed.paneID) }
+            Divider()
+        }
         Button("Copy Window Title") {
             let title = feed.titles[identity.windowID] ?? ""
             NSPasteboard.general.clearContents()

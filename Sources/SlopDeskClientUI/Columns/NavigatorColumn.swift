@@ -65,8 +65,8 @@ struct NavigatorColumn: View {
     #endif
 
     /// The rows the sidebar renders this eval — ALWAYS the memoized structural rows. The query filter
-    /// (``RailRowsBuilder/filtered``) applies DOWNSTREAM over these same rows (`windowRows(from:)` +
-    /// `sectionedByProject(_:tabOrder:query:)`), so search composes over the memo rather than bypassing it.
+    /// (``RailRowsBuilder/filtered``) applies DOWNSTREAM over these same rows
+    /// (`sectionedByProject(_:tabOrder:query:)`), so search composes over the memo rather than bypassing it.
     /// Calling `RailRowsBuilder.rows(for: store)` directly for a non-empty query instead would re-register
     /// every volatile store dict as an Observation dependency of this body — while a query sat in the field
     /// (it is never auto-cleared) EVERY agent/progress/git tick on ANY pane would re-run the full O(panes)
@@ -86,15 +86,6 @@ struct NavigatorColumn: View {
     /// frozen at first render" fix; see ``RailRow/leafIdentity``).
     private var selectedPane: PaneID? {
         store.tree.activeSession?.activeTab?.activePane
-    }
-
-    // MARK: - WINDOWS section
-
-    /// The remote-GUI pane rows, rendered as the sidebar's SECOND section (TABS · WINDOWS — same row anatomy,
-    /// spec §3.6): the only difference is the leading identity monogram. Narrowed by the same search query as
-    /// the tab rows.
-    private func windowRows(from allRows: [RailRow]) -> [RailRow] {
-        RailRowsBuilder.filtered(allRows.filter { $0.kind == .remoteGUI }, query: query)
     }
 
     var body: some View {
@@ -166,12 +157,10 @@ struct NavigatorColumn: View {
     /// sections. Paints its own warm background (the host `NSSplitViewItem` is a plain item, so there is no
     /// native vibrancy/rounding).
     private var macSidebar: some View {
+        // TERMINAL panes only — an open remote window is tracked by the RIGHT rail
+        // (`HostWindowsColumn`), never listed here too (`RailRowsBuilder.rows` excludes `.remoteGUI`).
         let allRows = renderedRows
-        // TABS · WINDOWS: remote-GUI pane rows leave the tab list for their own section
-        // below — same anatomy, the leading identity monogram is the only difference (spec §3.6).
-        let tabRows = allRows.filter { $0.kind != .remoteGUI }
-        let windows = windowRows(from: allRows)
-        let sections = buildSections(tabRows, query: query)
+        let sections = buildSections(allRows, query: query)
         return VStack(alignment: .leading, spacing: 0) {
             // Traffic-light strip: ONLY the sidebar-collapse toggle (top-trailing). Connection lives in the
             // footer below — the lights strip is too narrow for host + metrics and always looked jammed.
@@ -223,7 +212,7 @@ struct NavigatorColumn: View {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     if allRows.isEmpty {
                         emptyLabel("No tabs open")
-                    } else if sections.isEmpty, windows.isEmpty {
+                    } else if sections.isEmpty {
                         emptyLabel("No matches")
                     } else {
                         ForEach(sections) { section in
@@ -232,14 +221,6 @@ struct NavigatorColumn: View {
                             }
                             ForEach(section.rows) { row in
                                 macRow(row)
-                            }
-                        }
-                        // The WINDOWS section: open remote-window panes, same row anatomy
-                        // with the identity monogram; a window row's home is this derived section.
-                        if !windows.isEmpty {
-                            SlateSectionHeader("Windows")
-                            ForEach(windows) { row in
-                                windowRow(row)
                             }
                         }
                     }
@@ -276,7 +257,6 @@ struct NavigatorColumn: View {
             store: store,
             row: row,
             fallbackTitle: defaultTitle(for: row.kind),
-            isWindowRow: false,
             onSelect: { select(row.id) },
             onClose: { store.requestClosePaneTree(row.id) },
             onRename: { commitRename(row, to: $0) },
@@ -286,26 +266,6 @@ struct NavigatorColumn: View {
         // structural rebuild that retitles this row (cwd landed / chooser resolved / rename) replaces
         // the leaf instead of leaving the first-render title on screen. Volatile chrome — including
         // SELECTION — is read live inside the leaf; focus-only changes keep the same identity (no churn).
-        .id(row.leafIdentity)
-        .contextMenu { rowContextMenu(row) }
-    }
-
-    /// One macOS WINDOWS row: the SAME `SlateTabRow` chrome as a tab row (rename / badge /
-    /// hover close / context menu) — name-first like every other row (the thumbnail, then the monogram, were
-    /// both pruned by user verdict); the owning APP is the instrument-voice subtitle (read live inside
-    /// ``SidebarLiveRow`` so the model's own updates stay leaf-local).
-    private func windowRow(_ row: RailRow) -> some View {
-        SidebarLiveRow(
-            store: store,
-            row: row,
-            fallbackTitle: defaultTitle(for: row.kind),
-            isWindowRow: true,
-            onSelect: { select(row.id) },
-            onClose: { store.requestClosePaneTree(row.id) },
-            onRename: { commitRename(row, to: $0) },
-            onCancelRename: { store.clearTabRenameRequest() },
-        )
-        // Same leaf-identity key as ``macRow(_:)`` — see there.
         .id(row.leafIdentity)
         .contextMenu { rowContextMenu(row) }
     }
@@ -322,12 +282,9 @@ struct NavigatorColumn: View {
     /// the system `.searchable` field (keeps the `List` as the column root so the navigation push is unchanged),
     /// grouped `Section`s, and badge.
     private var iosSidebar: some View {
+        // TERMINAL panes only, matching the macOS panel — see `macSidebar`.
         let allRows = renderedRows
-        // TABS · WINDOWS — same split as the macOS panel: remote-GUI pane rows render in
-        // their own trailing section (iOS keeps the system list rows).
-        let tabRows = allRows.filter { $0.kind != .remoteGUI }
-        let windows = windowRows(from: allRows)
-        let sections = buildSections(tabRows, query: query)
+        let sections = buildSections(allRows, query: query)
         let selection = Binding<PaneID?>(
             get: { selectedPane },
             set: { if let paneID = $0 { select(paneID) } },
@@ -336,20 +293,13 @@ struct NavigatorColumn: View {
             if allRows.isEmpty {
                 Label("No tabs open", systemSymbol: .squareSplit2x1)
                     .foregroundStyle(Slate.Text.secondary)
-            } else if sections.isEmpty, windows.isEmpty {
+            } else if sections.isEmpty {
                 Label("No matches", systemSymbol: .magnifyingglass)
                     .foregroundStyle(Slate.Text.secondary)
             } else {
                 ForEach(sections) { section in
                     Section(section.header ?? "Tabs") {
                         ForEach(section.rows) { row in
-                            iosRow(row)
-                        }
-                    }
-                }
-                if !windows.isEmpty {
-                    Section("Windows") {
-                        ForEach(windows) { row in
                             iosRow(row)
                         }
                     }
@@ -512,8 +462,6 @@ private struct SidebarLiveRow: View {
     let row: RailRow
     /// The kind's generic title (``PaneChooserRegistry``) when the row title is empty.
     let fallbackTitle: String
-    /// A WINDOWS-section row prefers the live ``RemoteWindowModel`` app name for line 2.
-    let isWindowRow: Bool
     let onSelect: () -> Void
     let onClose: () -> Void
     let onRename: (String) -> Void
@@ -538,7 +486,7 @@ private struct SidebarLiveRow: View {
         SlateTabRow(
             title: row.title.isEmpty ? fallbackTitle : row.title,
             active: active,
-            subtitle: (isWindowRow ? remoteAppName : nil) ?? chrome.subtitle,
+            subtitle: chrome.subtitle,
             gitSummary: chrome.gitSummary,
             processLabel: chrome.processLabel,
             badge: chrome.badge,
@@ -550,14 +498,6 @@ private struct SidebarLiveRow: View {
             onRename: onRename,
             onCancelRename: onCancelRename,
         )
-    }
-
-    /// The live remote-window model's owning app name — the same store-registry lookup
-    /// ``ConnectionTelemetry`` uses, read at row scope so the model's own updates stay leaf-local.
-    private var remoteAppName: String? {
-        guard let model = (store.handle(for: row.id) as? LivePaneSession)?.remoteWindow,
-              !model.appName.isEmpty else { return nil }
-        return model.appName
     }
 }
 

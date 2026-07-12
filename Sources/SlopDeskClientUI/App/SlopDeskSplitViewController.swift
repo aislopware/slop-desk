@@ -1,10 +1,12 @@
 // SlopDeskSplitViewController — the macOS shell. An `NSSplitViewController` with
-// two `NSSplitViewItem`s (sidebar | content), each an `NSHostingController` over a SwiftUI
-// column. Modelled on CodeEdit's `CodeEditSplitViewController`: an AppKit split shell with SwiftUI INSIDE
-// each column. Keeping the split in AppKit (not a SwiftUI `HSplitView` that rebuilds subtrees) is the
+// three `NSSplitViewItem`s (sidebar | content | host-windows rail), each an `NSHostingController` over a
+// SwiftUI column. Modelled on CodeEdit's `CodeEditSplitViewController`: an AppKit split shell with SwiftUI
+// INSIDE each column. Keeping the split in AppKit (not a SwiftUI `HSplitView` that rebuilds subtrees) is the
 // load-bearing no-teardown choice for L2's libghostty panes — a torn-down NSView kills the surface.
-// There is no right-hand inspector / Details column — the app is keyboard-centric; the Git details
-// window opens from the palette / View menu instead.
+// The LEFT sidebar tracks terminal panes; the RIGHT rail (docs/45) is the host-window list AND the open
+// remote windows' tracker — a plain item, never `.inspector` (that unmounts content and kills live video).
+// There is no Details column — the app is keyboard-centric; the Git details window opens from the
+// palette / View menu instead.
 
 #if os(macOS)
 import AppKit

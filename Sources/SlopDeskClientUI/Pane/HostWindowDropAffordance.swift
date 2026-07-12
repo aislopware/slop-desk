@@ -5,6 +5,12 @@
 //   • the container's outer gutter  → DOCK: a full-span column/row on that whole edge;
 //   • anywhere else (a pane's centre, a divider gap) → NEW TAB (the rail click's verb).
 //
+// A window that is ALREADY streaming resolves the same zones but the release MOVES its existing pane
+// there (cross-tab included) — never a duplicate: the right rail is the open window's tracker, so
+// dragging its row is picking the pane up. Its own rect resolves `.keep` (release changes nothing);
+// the canvas dash-outlines the pane being lifted and the chip verbs read "move …". A deliberate
+// second pane of the same window stays available via ⌘-click / the row's context menu.
+//
 // Unlike the pane-move drag (a SwiftUI `DragGesture` confined to one hosting view's coordinate
 // space), the rail and the canvas live in DIFFERENT NSSplitView columns / hosting views — so this
 // rides AppKit drag-and-drop: the row vends an `NSItemProvider` typed ``HostWindowDragPayload/utType``
@@ -213,21 +219,29 @@ struct HostWindowDragChip: View {
 
 // MARK: - Zone + view-local drop state
 
-/// The action a release at the cursor would commit — the insert-drag mirror of ``PaneDropZone``.
-/// No `.swap` and no `.none`: there is no source pane to exchange, and every point of the canvas is
-/// a valid landing (`.newTab` is the fallback verb, exactly what clicking the row does).
+/// The action a release at the cursor would commit — the rail-drag mirror of ``PaneDropZone``.
+/// No `.swap`: a not-yet-open window has no source pane to exchange, and for an already-streamed one
+/// the move vocabulary (split / dock / new tab) covers every placement. `.newTab` is the fallback verb
+/// (exactly what clicking the row does), so every point of the canvas is a valid landing — except a
+/// MOVE drag hovering the streamed pane's own rect, which resolves `.keep` (release changes nothing).
 enum HostWindowDropZone: Equatable {
     case newTab
-    /// Drop on an `edge` band of `target` → the window opens as a new column/row beside it.
+    /// Drop on an `edge` band of `target` → the window lands as a new column/row beside it.
     case resplit(target: PaneID, edge: PaneDropEdge)
     /// Drop in the container's outer gutter → a full-span column/row on that whole `edge`.
     case dock(edge: PaneDropEdge)
+    /// A MOVE drag over the streamed pane's own rect — the pane is already exactly there, so a release
+    /// commits nothing (the cancel the pane-move drag spells `.none`).
+    case keep
 }
 
-/// View-local drop state (held by `SplitContainer`): the cursor location + the resolved zone.
+/// View-local drop state (held by `SplitContainer`): the cursor location, the resolved zone, and —
+/// for a MOVE drag (the dragged window is already streamed) — its existing pane, so the overlay can
+/// dash-outline the pane being lifted (the pane-move drag's "this one moves" signal).
 struct HostWindowDropDrag: Equatable {
     var location: CGPoint
     var zone: HostWindowDropZone
+    var sourcePane: PaneID?
 }
 
 // MARK: - Drop catcher (AppKit — SwiftUI `.onDrop` never engages for this drag)
@@ -321,6 +335,7 @@ struct HostWindowDropOverlay: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             zonePreview
+            sourceOutline
             chip
                 .position(x: drag.location.x, y: drag.location.y)
         }
@@ -333,6 +348,7 @@ struct HostWindowDropOverlay: View {
         case .newTab: "newtab"
         case let .resplit(target, edge): "resplit-\(target)-\(edge.rawValue)"
         case let .dock(edge): "dock-\(edge.rawValue)"
+        case .keep: "keep"
         }
     }
 
@@ -351,12 +367,35 @@ struct HostWindowDropOverlay: View {
             if let rect = frames[target] { PaneMoveOverlay.slabPreview(in: rect, edge: edge) }
         case let .dock(edge):
             PaneMoveOverlay.railPreview(in: container, edge: edge)
+        case .keep:
+            // Nothing to preview — the pane already sits where the cursor is; the dashed source
+            // outline below plus the muted chip carry the whole message.
+            EmptyView()
+        }
+    }
+
+    /// A MOVE drag dash-outlines the pane being lifted (only when it is in the visible layout —
+    /// a pane moving in from a background tab has no rect here): the pane-move drag's own "this one
+    /// moves, nothing duplicates" signal, reused verbatim so the two drags read as one system.
+    @ViewBuilder
+    private var sourceOutline: some View {
+        if let source = drag.sourcePane, let rect = frames[source] {
+            RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
+                .strokeBorder(
+                    Slate.State.accent.opacity(0.55),
+                    style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]),
+                )
+                .frame(width: rect.width, height: rect.height)
+                .position(x: rect.midX, y: rect.midY)
         }
     }
 
     /// The cursor chip: the window's app icon (the rail row's resolution ladder) + "name — verb".
+    /// `.keep` mutes it (tertiary text, quiet border — the pane-move `.none` treatment): a release
+    /// there is a no-op and the chip must not promise otherwise.
     private var chip: some View {
         let payload = HostWindowDragSession.shared.payload
+        let inert = drag.zone == .keep
         return HStack(spacing: 6) {
             if let bundleID = payload?.bundleID,
                let icon = HostAppIconCache.shared.icon(forBundleID: bundleID)
@@ -369,14 +408,18 @@ struct HostWindowDropOverlay: View {
                 Image(systemSymbol: .macwindow)
                     .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
             }
-            Text(Self.zoneLabel(drag.zone, name: payload?.displayName ?? "window"))
-                .font(.system(size: Slate.Typeface.base, weight: .medium))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: 240)
-                .fixedSize(horizontal: false, vertical: true)
+            Text(Self.zoneLabel(
+                drag.zone,
+                name: payload?.displayName ?? "window",
+                streamed: drag.sourcePane != nil,
+            ))
+            .font(.system(size: Slate.Typeface.base, weight: .medium))
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .frame(maxWidth: 240)
+            .fixedSize(horizontal: false, vertical: true)
         }
-        .foregroundStyle(Slate.Text.primary)
+        .foregroundStyle(inert ? Slate.Text.tertiary : Slate.Text.primary)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(
@@ -384,18 +427,26 @@ struct HostWindowDropOverlay: View {
                 .fill(Slate.Surface.face)
                 .overlay(
                     Capsule(style: .continuous)
-                        .strokeBorder(Slate.State.accent, lineWidth: 1),
+                        .strokeBorder(
+                            inert ? Slate.Text.tertiary.opacity(0.4) : Slate.State.accent,
+                            lineWidth: 1,
+                        ),
                 ),
         )
         .shadow(color: Slate.State.shadow, radius: 8, y: 2)
     }
 
-    /// The chip copy — the verb the release would commit, led by the window's name.
-    static func zoneLabel(_ zone: HostWindowDropZone, name: String) -> String {
+    /// The chip copy — the verb the release would commit, led by the window's name. A `streamed` drag
+    /// MOVES the existing pane, so its verbs say so — the one word that tells a duplicate from a move
+    /// before release.
+    static func zoneLabel(_ zone: HostWindowDropZone, name: String, streamed: Bool = false) -> String {
         switch zone {
-        case .newTab: "\(name) — new tab"
-        case let .resplit(_, edge): "\(name) — split \(edge.rawValue)"
-        case let .dock(edge): "\(name) — dock \(edge.rawValue)"
+        case .newTab: streamed ? "\(name) — move to new tab" : "\(name) — new tab"
+        case let .resplit(_, edge): streamed
+            ? "\(name) — move · split \(edge.rawValue)" : "\(name) — split \(edge.rawValue)"
+        case let .dock(edge): streamed
+            ? "\(name) — move · dock \(edge.rawValue)" : "\(name) — dock \(edge.rawValue)"
+        case .keep: "\(name) — already here"
         }
     }
 }

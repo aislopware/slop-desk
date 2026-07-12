@@ -678,17 +678,10 @@ struct OpenQuicklyView: View {
     }
 
     /// The first pane already streaming `windowID` in the active session (earliest tab wins) — the
-    /// same derivation the rail's streamed marker uses, kept cross-platform here.
+    /// store's ONE derivation (``WorkspaceStore/streamedWindowPane(for:)``), the same rule behind the
+    /// rail's streamed marker and the rail-drag move-vs-mint commit.
     static func streamedPane(for windowID: UInt32, in store: WorkspaceStore) -> PaneID? {
-        guard let session = store.tree.activeSession else { return nil }
-        for tab in session.tabs {
-            for paneID in tab.allPaneIDs() {
-                guard let spec = session.specs[paneID], spec.kind == .remoteGUI,
-                      spec.video?.windowID == windowID else { continue }
-                return paneID
-            }
-        }
-        return nil
+        store.streamedWindowPane(for: windowID)?.paneID
     }
 
     /// The ranked, sectioned result list for the active pill — `.all` merges every non-empty source under its

@@ -58,10 +58,10 @@ final class HostWindowsColumnTests: XCTestCase {
     func testStreamedRefFindsThePaneAndItsTabOrdinal() throws {
         let store = makeStore()
         _ = store.newRemoteWindowTab(windowID: 42, title: "Xcode — slop-desk", appName: "Xcode")
-        let ref = try XCTUnwrap(HostWindowsColumn.streamedRef(for: 42, in: store))
+        let ref = try XCTUnwrap(store.streamedWindowPane(for: 42))
         XCTAssertEqual(ref.tabOrdinal, 2, "the remote tab landed after the seed terminal tab")
-        XCTAssertNil(HostWindowsColumn.streamedRef(for: 43, in: store), "an unstreamed id has no ref")
-        // The Open Quickly twin derivation agrees (one grammar, two surfaces).
+        XCTAssertNil(store.streamedWindowPane(for: 43), "an unstreamed id has no ref")
+        // The Open Quickly twin entry agrees (one grammar, two surfaces).
         XCTAssertEqual(OpenQuicklyView.streamedPane(for: 42, in: store), ref.paneID)
     }
 
@@ -76,7 +76,7 @@ final class HostWindowsColumnTests: XCTestCase {
         let spec = try XCTUnwrap(store.tree.activeSession?.specs[paneID])
         XCTAssertEqual(spec.video?.windowID, 42, "pre-bound like the tab path")
         XCTAssertEqual(
-            HostWindowsColumn.streamedRef(for: 42, in: store)?.paneID, paneID,
+            store.streamedWindowPane(for: 42)?.paneID, paneID,
             "the streamed marker sees a split pane exactly like a tab pane",
         )
     }
@@ -89,8 +89,28 @@ final class HostWindowsColumnTests: XCTestCase {
         let store = makeStore()
         let first = store.newRemoteWindowTab(windowID: 42, title: "t", appName: "Xcode")
         _ = store.newRemoteWindowTab(windowID: 42, title: "t", appName: "Xcode")
-        let ref = try XCTUnwrap(HostWindowsColumn.streamedRef(for: 42, in: store))
+        let ref = try XCTUnwrap(store.streamedWindowPane(for: 42))
         XCTAssertEqual(ref.paneID, first, "the earliest tab keeps the marker")
         XCTAssertEqual(ref.tabOrdinal, 2)
+    }
+
+    // MARK: Reveal — the streamed row's click verb
+
+    func testRevealPaneSwitchesToTheOwningBackgroundTabAndFocuses() throws {
+        // The window pane lives on a background tab (a later tab is active): reveal must switch the
+        // active tab AND focus the pane — the streamed row's single-click contract now that the right
+        // rail is the open window's only tracker.
+        let store = makeStore()
+        let windowPane = store.newRemoteWindowTab(windowID: 42, title: "t", appName: "Xcode")
+        store.newTab(kind: .terminal)
+        XCTAssertNotEqual(store.tree.activeSession?.activeTab?.activePane, windowPane, "precondition: backgrounded")
+
+        store.revealPaneTree(windowPane)
+        XCTAssertEqual(store.tree.activeSession?.activeTab?.activePane, windowPane, "focused")
+        XCTAssertEqual(
+            store.tree.activeSession?.activeTabIndex,
+            try XCTUnwrap(store.tree.activeSession?.tabIndex(containing: windowPane)),
+            "the owning tab became active",
+        )
     }
 }
