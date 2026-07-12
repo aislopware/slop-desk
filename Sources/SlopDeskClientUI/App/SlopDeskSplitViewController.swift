@@ -320,19 +320,35 @@ private final class FlatDividerSplitView: NSSplitView {
         guard arrangedSubviews.count == 3,
               (delegate as? NSSplitViewController)?.splitViewItems.last?.isCollapsed == false
         else { return nil }
-        let x = convert(event.locationInWindow, from: nil).x
-        let gapLeading = arrangedSubviews[1].frame.maxX
-        let gapTrailing = arrangedSubviews[2].frame.minX
-        guard x >= gapLeading - 4, x <= gapTrailing + 4 else { return nil }
+        let point = convert(event.locationInWindow, from: nil)
+        guard dividerEffectiveRect(at: 1).insetBy(dx: -4, dy: 0).contains(point) else { return nil }
         return 1
+    }
+
+    /// Divider `i`'s grab region: the gap between its neighbours, run through the delegate's
+    /// `effectiveRect` refinement when offered (NSSplitViewController trims the titlebar strip off
+    /// the top — a grab there belongs to window dragging, and the hover cursor must agree).
+    private func dividerEffectiveRect(at i: Int) -> NSRect {
+        let gapLeading = arrangedSubviews[i].frame.maxX
+        let gapTrailing = arrangedSubviews[i + 1].frame.minX
+        let drawn = NSRect(
+            x: gapLeading, y: 0, width: gapTrailing - gapLeading, height: bounds.height,
+        )
+        return delegate?.splitView?(self, effectiveRect: drawn, forDrawnRect: drawn, ofDividerAt: i)
+            ?? drawn
     }
 
     private func trackRailDividerDrag(with event: NSEvent, dividerIndex: Int) {
         guard let window else { return }
         let grabX = convert(event.locationInWindow, from: nil).x
         let startPosition = arrangedSubviews[dividerIndex].frame.maxX
-        NSCursor.resizeLeftRight.push()
-        defer { NSCursor.pop() }
+        dividerCursor(at: dividerIndex).push()
+        defer {
+            NSCursor.pop()
+            // Rebuild the hover cursors for the widths the drag settled on (a drag that ends
+            // pinned at a limit must immediately hover as one-directional).
+            window.invalidateCursorRects(for: self)
+        }
         while true {
             guard let next = window.nextEvent(
                 matching: [.leftMouseDragged, .leftMouseUp],
@@ -343,6 +359,8 @@ private final class FlatDividerSplitView: NSSplitView {
             let target = clampRailDividerPosition(startPosition + (x - grabX))
             setPosition(target, ofDividerAt: dividerIndex)
             window.layoutIfNeeded()
+            // Track the limit state live: pinned at min/max shows the one-way arrow mid-drag too.
+            dividerCursor(at: dividerIndex).set()
         }
     }
 
@@ -353,6 +371,57 @@ private final class FlatDividerSplitView: NSSplitView {
             splitWidth: bounds.width,
             dividerThickness: dividerThickness,
         )
+    }
+
+    // MARK: Divider hover cursors (owned — AppKit's lie at the minimum)
+
+    /// Install our OWN divider cursor rects instead of AppKit's. AppKit picks the two-way vs
+    /// one-way resize arrow from its notion of movability, which counts drag-to-collapse as "can
+    /// still move": an item AT its minimum next to a `canCollapse` neighbour keeps the two-way
+    /// arrow even though this app never collapses by shoving a divider (the rail's manual drag
+    /// clamps at min; collapse belongs to the toggles). At the MAXIMUM AppKit already shows the
+    /// one-way arrow, so the two limits read inconsistently. We derive movability purely from the
+    /// items' width ranges (`SlopDeskSplitViewController.dividerMovability`), so both limits wear
+    /// the one-way arrow. The rect mirrors the divider gap widened by the same ±few-pt slop the
+    /// hit-testing claims; a divider beside a collapsed item gets no rect (it is hidden).
+    override func resetCursorRects() {
+        guard let items = (delegate as? NSSplitViewController)?.splitViewItems,
+              items.count == arrangedSubviews.count
+        else {
+            super.resetCursorRects()
+            return
+        }
+        for i in 0..<max(arrangedSubviews.count - 1, 0) {
+            if items[i].isCollapsed || items[i + 1].isCollapsed { continue }
+            addCursorRect(
+                dividerEffectiveRect(at: i).insetBy(dx: -2, dy: 0),
+                cursor: dividerCursor(at: i),
+            )
+        }
+    }
+
+    /// The hover/drag cursor for divider `i`, from pure width-range movability.
+    private func dividerCursor(at i: Int) -> NSCursor {
+        guard let items = (delegate as? NSSplitViewController)?.splitViewItems,
+              items.count == arrangedSubviews.count, i + 1 < items.count
+        else { return .resizeLeftRight }
+        let movability = SlopDeskSplitViewController.dividerMovability(
+            leadingWidth: arrangedSubviews[i].frame.width,
+            leadingMin: items[i].minimumThickness,
+            leadingMax: items[i].maximumThickness,
+            trailingWidth: arrangedSubviews[i + 1].frame.width,
+            trailingMin: items[i + 1].minimumThickness,
+            trailingMax: items[i + 1].maximumThickness,
+        )
+        switch (movability.left, movability.right) {
+        case (true, true): return .resizeLeftRight
+        case (true, false): return .resizeLeft
+        case (false, true): return .resizeRight
+        // Wedged (both neighbours at their floors in an over-tight window): the two-way arrow is
+        // the least-wrong glyph — there is no "no resize" cursor, and a plain arrow over a divider
+        // reads as a dead zone.
+        case (false, false): return .resizeLeftRight
+        }
     }
 }
 
@@ -371,6 +440,24 @@ extension SlopDeskSplitViewController {
         )
         let highest = splitWidth - dividerThickness - Slate.Metric.hostRailMinWidth
         return CGFloat.minimum(CGFloat.maximum(proposed, lowest), highest)
+    }
+
+    /// Whether a divider can move each way, PURELY from its neighbours' width ranges — no
+    /// drag-to-collapse affordance (this app collapses via toggles only, so a divider pinned at a
+    /// limit really is immovable that way and the cursor must say so). Moving LEFT shrinks the
+    /// leading item and grows the trailing one; RIGHT is the mirror. `NSSplitViewItem`'s
+    /// "unspecified" maximum arrives as a negative sentinel — treated as unbounded. Widths compare
+    /// with a half-point tolerance (layout rounds to the pixel grid).
+    static func dividerMovability(
+        leadingWidth: CGFloat, leadingMin: CGFloat, leadingMax: CGFloat,
+        trailingWidth: CGFloat, trailingMin: CGFloat, trailingMax: CGFloat,
+    ) -> (left: Bool, right: Bool) {
+        let slack: CGFloat = 0.5
+        let leadingCeiling = leadingMax < 0 ? CGFloat.infinity : leadingMax
+        let trailingCeiling = trailingMax < 0 ? CGFloat.infinity : trailingMax
+        let left = leadingWidth > leadingMin + slack && trailingWidth < trailingCeiling - slack
+        let right = leadingWidth < leadingCeiling - slack && trailingWidth > trailingMin + slack
+        return (left, right)
     }
 }
 
