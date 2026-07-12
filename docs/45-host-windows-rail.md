@@ -114,6 +114,8 @@ Single-line 32 pt rows only. No subtitles, no per-row close affordance (you can'
 
 **Width:** new token `Slate.Metric.hostRailWidth = 240` (min 220, max 320), added to `SlopDeskClientApp.applyInitialWindowSize` chromeOverhead math.
 
+**Divider drag is MANUAL for the rail seam.** AppKit's constraint-based divider tracking pins the drag at a priority derived from the LEADING item's holding priority, so a trailing item that holds harder than its leading neighbour (rail 260 > content 250 — deliberate, window-resize must feed the content) can never be grown by dragging its divider: the engine opens a hole at the split view's 749-priority trailing glue instead and snaps back on release (the left divider is immune — its growing item is the leading side). `FlatDividerSplitView.mouseDown` therefore runs the standard event-tracking loop itself for the rail divider and places it each step via `setPosition(_:ofDividerAt:)`, clamped by `clampedRailDividerPosition` (content ≥ 420, rail 220…320, no drag-to-collapse — the toggle owns collapse). A collapsed rail bows out of the manual grab entirely. Clamp limits pinned by `RailDividerClampTests`.
+
 **Panel anatomy** (VStack spacing 0 on `Slate.Surface.ground`):
 1. 40 pt strip (`Metric.titlebarHeight`): `PlateIconButton(.sidebarRight)` top-**leading** (pad top 3, leading 8) — mirror of the left toggle; same choreography (hide instantly on collapse, fade back `Slate.Anim.standard.delay(0.25)`).
 2. Header `HOST` — `Typeface.instrument(footnote 11, .semibold)`, tracking 1.2, `Slate.State.header`, padding h16 b6. No hostname, no count.

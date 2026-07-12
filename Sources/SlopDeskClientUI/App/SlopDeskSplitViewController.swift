@@ -41,6 +41,10 @@ final class SlopDeskSplitViewController: NSSplitViewController {
     /// uses the SAME width the split item adopts (no magic-number drift between the layout and the math).
     static let defaultSidebarWidth: CGFloat = 220
 
+    /// The centre column's floor — shared between the split item and the rail divider's manual
+    /// drag clamp (`FlatDividerSplitView.clampRailDividerPosition`) so they can never disagree.
+    static let contentMinWidth: CGFloat = 420
+
     init(
         store: WorkspaceStore,
         connection: AppConnection,
@@ -104,7 +108,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
             rootView: ContentColumn(store: store, connection: connection, chrome: chrome, onConnect: onConnect),
         )
         let contentItem = NSSplitViewItem(viewController: content)
-        contentItem.minimumThickness = 420
+        contentItem.minimumThickness = Self.contentMinWidth
 
         // Each column hosts SwiftUI in its own NSHostingController, which by DEFAULT insets its content below
         // the window's titlebar safe area (the traffic-light strip). With `.hiddenTitleBar` that pushed every
@@ -289,6 +293,84 @@ private final class FlatDividerSplitView: NSSplitView {
     override func drawDivider(in rect: NSRect) {
         flatDividerTone().setFill()
         NSBezierPath(rect: rect).fill()
+    }
+
+    /// The RAIL divider (content | host rail) is dragged by hand, not by AppKit's built-in
+    /// constraint tracking. AppKit's `_doConstraintBasedDragDivider` pins the drag at a priority
+    /// derived from the LEADING item's holding priority, so a trailing item that holds HARDER than
+    /// its leading neighbour (rail 260 > content 250 — deliberate, window-resize must feed the
+    /// content) can never be grown by its divider: the engine grows a hole at the split view's
+    /// 749-priority trailing glue instead and snaps everything back on release. The left divider
+    /// is immune (its growing item is the LEADING side). So for the rail divider we run the
+    /// standard event-tracking loop ourselves and place the divider each step via
+    /// `setPosition(_:ofDividerAt:)`, which AppKit applies at a priority the holds cannot veto.
+    override func mouseDown(with event: NSEvent) {
+        guard let railDivider = railDividerIndex(under: event) else {
+            super.mouseDown(with: event)
+            return
+        }
+        trackRailDividerDrag(with: event, dividerIndex: railDivider)
+    }
+
+    /// The rail divider's index iff `event` grabs it: the LAST divider of a 3-column layout, hit
+    /// within the same ±few-pt slop AppKit's own hit-test claims for a `.thin` divider. A
+    /// COLLAPSED rail bows out (its divider is hidden; a click 4 pt from the window edge is a
+    /// content click, and drag-to-expand would desync the chrome collapse flag).
+    private func railDividerIndex(under event: NSEvent) -> Int? {
+        guard arrangedSubviews.count == 3,
+              (delegate as? NSSplitViewController)?.splitViewItems.last?.isCollapsed == false
+        else { return nil }
+        let x = convert(event.locationInWindow, from: nil).x
+        let gapLeading = arrangedSubviews[1].frame.maxX
+        let gapTrailing = arrangedSubviews[2].frame.minX
+        guard x >= gapLeading - 4, x <= gapTrailing + 4 else { return nil }
+        return 1
+    }
+
+    private func trackRailDividerDrag(with event: NSEvent, dividerIndex: Int) {
+        guard let window else { return }
+        let grabX = convert(event.locationInWindow, from: nil).x
+        let startPosition = arrangedSubviews[dividerIndex].frame.maxX
+        NSCursor.resizeLeftRight.push()
+        defer { NSCursor.pop() }
+        while true {
+            guard let next = window.nextEvent(
+                matching: [.leftMouseDragged, .leftMouseUp],
+                until: .distantFuture, inMode: .eventTracking, dequeue: true,
+            ) else { continue }
+            if next.type == .leftMouseUp { return }
+            let x = convert(next.locationInWindow, from: nil).x
+            let target = clampRailDividerPosition(startPosition + (x - grabX))
+            setPosition(target, ofDividerAt: dividerIndex)
+            window.layoutIfNeeded()
+        }
+    }
+
+    private func clampRailDividerPosition(_ proposed: CGFloat) -> CGFloat {
+        SlopDeskSplitViewController.clampedRailDividerPosition(
+            proposed: proposed,
+            contentMinX: arrangedSubviews[1].frame.minX,
+            splitWidth: bounds.width,
+            dividerThickness: dividerThickness,
+        )
+    }
+}
+
+extension SlopDeskSplitViewController {
+    /// Clamp a proposed rail-divider position to the same limits the split items declare: content
+    /// ≥ its minimum, rail within min…max. Drag-to-collapse is deliberately not offered — the rail
+    /// collapses via its toggle (⌘⇧R / titlebar / palette), never by shoving the divider. In an
+    /// over-constrained window (content floor + rail max cannot both hold) the rail's MINIMUM wins:
+    /// the divider can then only be pushed toward the rail's floor, never below it.
+    static func clampedRailDividerPosition(
+        proposed: CGFloat, contentMinX: CGFloat, splitWidth: CGFloat, dividerThickness: CGFloat,
+    ) -> CGFloat {
+        let lowest = CGFloat.maximum(
+            contentMinX + contentMinWidth,
+            splitWidth - dividerThickness - Slate.Metric.hostRailMaxWidth,
+        )
+        let highest = splitWidth - dividerThickness - Slate.Metric.hostRailMinWidth
+        return CGFloat.minimum(CGFloat.maximum(proposed, lowest), highest)
     }
 }
 
