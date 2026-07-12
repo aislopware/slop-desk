@@ -25,11 +25,13 @@
 > App Store `asverify` window (genuinely AX-listed, never rendered; keyed owner+title so real Finder
 > windows stay). Rows are now DRAG SOURCES: drag one onto the canvas and the pane-move zone language
 > previews the landing — pane edge band → split beside that pane, container gutter → full-span dock,
-> anywhere else → new tab (the click verb). Rides AppKit DnD (`com.slopdesk.host-window` +
-> `HostWindowDragSession` side channel) because rail and canvas are separate hosting views; commits
-> exactly one store op (`newRemoteWindowSplit(beside:)` / `newRemoteWindowAtRootEdge` /
-> `newRemoteWindowTab`). The pane-move grab pill also rose to 7pt from the leaf top (was ~14pt, over
-> the first text row).
+> anywhere else → new tab (the click verb). AppKit DnD END-TO-END (`HostWindowRowDragSource` +
+> `HostWindowDropCatcher` + `HostWindowDragSession` side channel) — SwiftUI's `.onDrag` never lifts
+> off these rows and `.onDrop` never engages for a custom UTType (see DECISIONS); commits exactly
+> one store op (`newRemoteWindowSplit(beside:)` / `newRemoteWindowAtRootEdge` / `newRemoteWindowTab`).
+> Live-verified on mac-studio: edge drop split the hovered pane, centre drop opened a new tab, both
+> streams live. The pane-move grab pill also rose to 7pt from the leaf top (was ~14pt, over the
+> first text row), and the rail list no longer draws the system focus ring on click.
 
 
 The right sidebar that mirrors the host machine's desktop. Synthesized from three designs and nine critiques; every critical/major flaw is resolved inline, every contested call adjudicated.

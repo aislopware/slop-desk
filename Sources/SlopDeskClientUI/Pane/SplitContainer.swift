@@ -73,8 +73,28 @@ struct SplitContainer: View {
                         .id(tab.id) // OUTER key only — inner pane leaves stay keyed by PaneID
                 }
                 #if os(macOS)
-                // Rail-window drop preview — ABOVE every tab layer (purely visual; the receiver on
-                // the compositor below owns the drag lifecycle).
+                // Rail-window drop catcher — an AppKit `NSDraggingDestination` mounted TOPMOST over
+                // the canvas (SwiftUI `.onDrop` never engages for this drag — see
+                // `HostWindowDropCatcher`). Hit-test-transparent unless a rail drag is in flight,
+                // so at rest every click/scroll reaches the panes untouched. Its local space ==
+                // `bounds` == the solver's leaf-rect space.
+                HostWindowDropCatcher(
+                    enabled: !staticMirror,
+                    onUpdate: { location in
+                        windowDrop = HostWindowDropDrag(
+                            location: location,
+                            zone: resolveWindowDropZone(at: location, in: bounds),
+                        )
+                    },
+                    onExit: { windowDrop = nil },
+                    onPerform: { location in
+                        let zone = resolveWindowDropZone(at: location, in: bounds)
+                        windowDrop = nil
+                        return commitWindowDrop(zone)
+                    },
+                )
+                .zIndex(2)
+                // The landing preview — purely visual, above the catcher.
                 if let windowDrop {
                     HostWindowDropOverlay(
                         drag: windowDrop,
@@ -83,38 +103,16 @@ struct SplitContainer: View {
                     )
                     .allowsHitTesting(false)
                     .animation(Slate.Anim.smallFade, value: windowDrop.zone)
-                    .zIndex(1)
+                    .zIndex(3)
                 }
                 #endif
             }
             .frame(width: bounds.width, height: bounds.height, alignment: .topLeading)
-            #if os(macOS)
-                // Rail-window drags land HERE (the pane-level E18 receivers decline this UTType, so the
-                // drop bubbles up to the compositor, whose local space == the solver's leaf-rect space).
-                .onDrop(
-                    of: [HostWindowDragPayload.utType],
-                    delegate: HostWindowDropReceiver(
-                        enabled: !staticMirror,
-                        onUpdate: { location in
-                            windowDrop = HostWindowDropDrag(
-                                location: location,
-                                zone: resolveWindowDropZone(at: location, in: bounds),
-                            )
-                        },
-                        onExit: { windowDrop = nil },
-                        onPerform: { location in
-                            let zone = resolveWindowDropZone(at: location, in: bounds)
-                            windowDrop = nil
-                            return commitWindowDrop(zone)
-                        },
-                    ),
-                )
-            #endif
-                // Report the full container bounds — the geometric ops' fallback before the first solved-layout
-                // report. View-only — never reconciles. Skipped on the static snapshot path. Fires ONCE at the
-                // container level, not per tab.
-                .onAppear { if !staticMirror { store.updateContainerBounds(bounds) } }
-                .onChange(of: bounds) { _, newBounds in if !staticMirror { store.updateContainerBounds(newBounds) } }
+            // Report the full container bounds — the geometric ops' fallback before the first solved-layout
+            // report. View-only — never reconciles. Skipped on the static snapshot path. Fires ONCE at the
+            // container level, not per tab.
+            .onAppear { if !staticMirror { store.updateContainerBounds(bounds) } }
+            .onChange(of: bounds) { _, newBounds in if !staticMirror { store.updateContainerBounds(newBounds) } }
         }
         .background(NativePaneColor.window)
     }

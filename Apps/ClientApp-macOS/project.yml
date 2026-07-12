@@ -57,6 +57,15 @@ targets:
         NSHighResolutionCapable: true
         CFBundleShortVersionString: "0.1.0"
         CFBundleVersion: "1"
+        # The rail-drag pasteboard type (docs/45 round 3): declares `com.slopdesk.host-window`
+        # in the system UTType database. The AppKit source/catcher pair matches raw pasteboard
+        # strings so it works either way — declaring is hygiene, and keeps `UTType(exportedAs:)`
+        # honest about ownership.
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: com.slopdesk.host-window
+            UTTypeDescription: SlopDesk host window reference
+            UTTypeConformsTo:
+              - public.data
     entitlements:
       path: ClientApp-macOS.entitlements
       properties:
