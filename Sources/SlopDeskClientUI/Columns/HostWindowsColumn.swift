@@ -368,14 +368,12 @@ private struct HostWindowLiveRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             },
-            titleTrailing: { hovering in
-                if hovering {
-                    // The verb hint — the click's meaning, legible pre-click (docs/45 §3).
-                    Text(streamed.map { "FOCUS · \($0.tabOrdinal)" } ?? "OPEN")
-                        .font(Slate.Typeface.instrument(Slate.Typeface.small))
-                        .foregroundStyle(Slate.Text.tertiary)
-                } else if let streamed {
-                    // Streamed marker: the pane's tab ordinal in the accent — quiet, positional.
+            titleTrailing: { _ in
+                // Streamed marker: the pane's tab ordinal in the accent — quiet, positional.
+                // (A hover verb hint — "OPEN" / "FOCUS · n" — lived here and was removed on user
+                // ruling 2026-07-12: it said nothing the click doesn't; the tooltip carries the
+                // long-form meaning.)
+                if let streamed {
                     Text("\(streamed.tabOrdinal)")
                         .font(Slate.Typeface.instrument(Slate.Typeface.small))
                         .foregroundStyle(Slate.State.accent)

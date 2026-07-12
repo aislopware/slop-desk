@@ -51,7 +51,7 @@ The right sidebar that mirrors the host machine's desktop. Synthesized from thre
 9. **Frontmost-on-host cue:** kept, as `.medium` title weight only (quietest possible cue, real supervision info); focus-only changes never burst the feed and never reorder.
 10. **Peek trigger:** Space / context menu only at launch; hover-dwell deferred pending hardware evaluation. Peek card mounts via OverlayHostView (in-column placement is physically impossible at 240 pt).
 11. **Blob transport:** ONE shared `blobChunk` reply type + one shared reassembler for icons and previews (two request types, since icon requests must carry the bundleID string).
-12. **Hover trailing slot:** verb hint (`OPEN` / `FOCUS · 3`), not dimensions — dimensions move to tooltip and peek caption (240 pt row can't carry both).
+12. **Hover trailing slot:** the streamed tab ordinal only — the hover verb hint (`OPEN` / `FOCUS · 3`) shipped and was then REMOVED on user ruling (2026-07-12: "không có tác dụng gì lắm"); the tooltip carries the click's meaning. Dimensions stay in tooltip and peek caption (240 pt row can't carry both).
 13. **Hostname header / footer:** cut. Header is `HOST`; the left rail's footer already owns connection truth. No second footer, no counts duplication.
 14. **Minimized rows:** listed (completeness goal #1), dimmed in place — never re-sorted to the bottom, no `MIN` suffix text; tooltip disambiguates minimized / other-Space / hidden-app.
 15. **Raise-on-Host:** cut from scope entirely (type-9 `focusWindow` is session-bound; a new verb + lane plumbing isn't worth it yet).
@@ -121,7 +121,7 @@ Single-line 32 pt rows only. No subtitles, no per-row close affordance (you can'
 4. `ScrollView { LazyVStack(alignment: .leading, spacing: 2) }` padded h8, `.scrollIndicators(.hidden)`.
 5. No footer, no hairline.
 
-**Row shell:** `SlateListRow`, height `heightRow` 32, radius `radiusTab` 7, inner spacing `space2` 8. Idle transparent. Hover → `State.hover` flat plate (`smallFade` 0.12 s), trailing overlay reveals the verb hint (`OPEN` or `FOCUS · 3`, instrument small 10, `Text.tertiary`). Keyboard cursor → hover plate + 1 px `Line.active` hairline ring, visible only while the panel has key focus. No raised card at rest anywhere in this panel. No shadows (MERIDIAN L5).
+**Row shell:** `SlateListRow`, height `heightRow` 32, radius `radiusTab` 7, inner spacing `space2` 8. Idle transparent. Hover → `State.hover` flat plate (`smallFade` 0.12 s); the trailing slot holds the streamed tab ordinal (accent, instrument small 10) hover or not — the hover-revealed verb hint was removed (2026-07-12 user ruling). Keyboard cursor → hover plate + 1 px `Line.active` hairline ring, visible only while the panel has key focus. No raised card at rest anywhere in this panel. No shadows (MERIDIAN L5).
 
 **Motion:** new rows fade in with `Slate.Anim.reveal` 0.15 s (opacity only, no layout animation, no slide); removals and field updates apply instantly. Nothing animates at rest. Cubic-bezier curves only; anything continuous would ride `TimelineView(.animation)` — nothing here does.
 
@@ -135,7 +135,7 @@ Single-line 32 pt rows only. No subtitles, no per-row close affordance (you can'
 
 ## 4. Interactions
 
-- **Single-click / ⏎:** the one verb, state-aware and legible pre-click via the hover verb hint. Available row → `OverlayCoordinator.openRemoteWindow(summary)` → `WorkspaceStore.newRemoteWindowTab` — the sole sanctioned path (endpoint persisted for PANE REBIND, optimistic-open + `revalidateBinding` self-heal, `helloAck(false)` fallback, `liveVideoCap` gating all inherited; the rail never pre-blocks on cap — saturation shows the existing `.gated` placeholder). Streamed row → focus the existing pane (Open Quickly's `.focusPane` act; if streamed twice, the most recently visible pane wins, else tree order).
+- **Single-click / ⏎:** the one verb, state-aware; its long-form meaning lives in the tooltip (the hover verb hint was removed, 2026-07-12). Available row → `OverlayCoordinator.openRemoteWindow(summary)` → `WorkspaceStore.newRemoteWindowTab` — the sole sanctioned path (endpoint persisted for PANE REBIND, optimistic-open + `revalidateBinding` self-heal, `helloAck(false)` fallback, `liveVideoCap` gating all inherited; the rail never pre-blocks on cap — saturation shows the existing `.gated` placeholder). Streamed row → focus the existing pane (Open Quickly's `.focusPane` act; if streamed twice, the most recently visible pane wins, else tree order).
 - **⌘-click / ⌘⏎:** deliberately open another pane of the same window (the sanctioned duplicate path). No double-click semantics.
 - **Context menu** (mirrors the real key semantics): non-streamed → `Open in New Tab ⏎`, `Copy Window Title`; streamed → `Focus Pane ⏎`, `Open Another Pane ⌘⏎`, `Copy Window Title`; Phase 4 adds `Peek ␣`. No Raise-on-Host, no Open-in-Split at launch (deferred; the chooser pane already covers splits).
 - **Keyboard:** panel focusable; ↑/↓ move the cursor across sections; ⏎ acts as click; ⌘⏎ duplicates; Space peeks (Phase 4); Esc dismisses peek → clears search → returns focus to the workspace. Type-to-filter routes into the search plate.
