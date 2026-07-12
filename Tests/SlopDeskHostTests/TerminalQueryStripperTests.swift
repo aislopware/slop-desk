@@ -225,7 +225,7 @@ final class TerminalQueryStripperTests: XCTestCase {
         XCTAssertEqual(TerminalQueryStripper.strip(Data(input.utf8)), Data(expected.utf8))
     }
 
-    /// Env gates: `STRIP_QUERIES=0` disables only the stripper; both off → nil transform.
+    /// Env gates: `STRIP_QUERIES=0` disables only the stripper; ALL THREE off → nil transform.
     func testTransformEnvGates() throws {
         let stripOff = ScrollbackReplayTransform.make(
             environment: ["SLOPDESK_SCROLLBACK_STRIP_QUERIES": "0"],
@@ -238,8 +238,16 @@ final class TerminalQueryStripperTests: XCTestCase {
         XCTAssertNil(ScrollbackReplayTransform.make(environment: [
             "SLOPDESK_SCROLLBACK_STRIP_QUERIES": "0",
             "SLOPDESK_SCROLLBACK_DISTILL": "0",
+            "SLOPDESK_SCROLLBACK_STRIP_EOL_MARKS": "0",
         ]))
-        let bothOn = ScrollbackReplayTransform.make(environment: [:])
-        XCTAssertEqual(bothOn?(Data("a\u{1B}[cb".utf8)), Data("ab".utf8))
+        XCTAssertNotNil(
+            ScrollbackReplayTransform.make(environment: [
+                "SLOPDESK_SCROLLBACK_STRIP_QUERIES": "0",
+                "SLOPDESK_SCROLLBACK_DISTILL": "0",
+            ]),
+            "the PROMPT_SP mark stripper keeps the transform alive on its own",
+        )
+        let allOn = ScrollbackReplayTransform.make(environment: [:])
+        XCTAssertEqual(allOn?(Data("a\u{1B}[cb".utf8)), Data("ab".utf8))
     }
 }

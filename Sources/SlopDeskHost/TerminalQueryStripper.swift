@@ -227,23 +227,30 @@ enum TerminalQueryStripper {
 /// (``MuxChannelSession/makeReplayBuffer()``) and the disk journal's restore
 /// (``ScrollbackJournalStore``) — so both replay paths stay behaviour-identical.
 ///
-/// Composition (both default-ON, the `!= "0"` idiom):
+/// Composition (all default-ON, the `!= "0"` idiom):
 /// 1. `SLOPDESK_SCROLLBACK_DISTILL` — ``ScrollbackDistiller`` collapses B→C line-editor churn.
 /// 2. `SLOPDESK_SCROLLBACK_STRIP_QUERIES` — ``TerminalQueryStripper`` removes terminal queries /
 ///    echoed responses / stale color state (the reattach "garbage input" fix).
+/// 3. `SLOPDESK_SCROLLBACK_STRIP_EOL_MARKS` — ``PromptEOLMarkStripper`` normalizes zsh PROMPT_SP
+///    mark+fill clusters, whose width-dependent overprint trick surfaces stray `%` lines when
+///    history is replayed at a different grid width. Runs LAST: the earlier passes only improve
+///    its cluster→`133;D`/`133;A` adjacency anchor (the distiller flushes clusters buffered in a
+///    B→C span; the query stripper removes interposed query OSCs).
 ///
-/// Returns `nil` when both are disabled (raw replay — the pre-transform behaviour).
+/// Returns `nil` when all are disabled (raw replay — the pre-transform behaviour).
 enum ScrollbackReplayTransform {
     static func make(
         environment env: [String: String] = ProcessInfo.processInfo.environment,
     ) -> (@Sendable (Data) -> Data)? {
         let distill = env["SLOPDESK_SCROLLBACK_DISTILL"] != "0"
         let stripQueries = env["SLOPDESK_SCROLLBACK_STRIP_QUERIES"] != "0"
-        guard distill || stripQueries else { return nil }
+        let stripEOLMarks = env["SLOPDESK_SCROLLBACK_STRIP_EOL_MARKS"] != "0"
+        guard distill || stripQueries || stripEOLMarks else { return nil }
         return { @Sendable data in
             var result = data
             if distill { result = ScrollbackDistiller.distill(result) }
             if stripQueries { result = TerminalQueryStripper.strip(result) }
+            if stripEOLMarks { result = PromptEOLMarkStripper.strip(result) }
             return result
         }
     }

@@ -2016,6 +2016,9 @@ final class MuxChannelSession: @unchecked Sendable {
     ///   ``TerminalQueryStripper`` pass removes terminal queries / echoed responses / stale color
     ///   state from the replayed history, so the client terminal never re-answers a prior life's
     ///   DA/XTVERSION/OSC-color probes into the shell's stdin (the reattach "garbage input" bug).
+    /// - `SLOPDESK_SCROLLBACK_STRIP_EOL_MARKS` — default-ON (`env != "0"`). When ON, a
+    ///   ``PromptEOLMarkStripper`` pass normalizes zsh's width-dependent PROMPT_SP mark+fill
+    ///   clusters so replay at a different grid width doesn't grow stray `%` lines per prompt.
     static func makeReplayBuffer() -> ReplayBuffer {
         let env = ProcessInfo.processInfo.environment
         let persist = env["SLOPDESK_SCROLLBACK_PERSIST"] != "0"
