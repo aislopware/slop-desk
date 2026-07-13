@@ -85,3 +85,52 @@ public enum AttentionJump {
         return firstBlocked ?? firstDone
     }
 }
+
+// MARK: - AttentionWalk (the pure "step the queue, then pop home" decision — ⌘⇧U's walk)
+
+/// The PURE per-press decision for the ⌘⇧U WALK: given the current queue (the caller passes
+/// ``WorkspaceStore/unseenAttentionPanes``'s pane order — rank-then-since, the SAME list the title menu
+/// renders, so this and the menu never disagree about "what's next"), the set of panes this walk has
+/// already visited, and the pane the walk should return to on exhaustion, decide whether to step forward
+/// or pop home.
+///
+/// Deliberately NOT built on ``AttentionJump`` — a visited-set walk needs an exclusion `AttentionJump`'s
+/// `ClaudeStatus`-only signature cannot express, and the queue itself already carries the badge-gated,
+/// since-ordered ranking the walk should honor (the "one shared source" invariant: the menu and the chord
+/// read the identical list, never two orderings kept in sync by hand).
+///
+/// Termination is VISITED-SET exhaustion, not queue emptiness: a still-`.needsPermission` pane re-enters
+/// the caller's queue the instant focus leaves it (only the currently-focused leaf is excluded), so the
+/// walk must remember every pane it has already stepped onto or it would oscillate between the two most
+/// recently departed panes forever.
+public enum AttentionWalk {
+    /// One press's outcome.
+    public enum Step: Equatable {
+        /// Step onto `to` — the caller extends its visited-set with it and focuses it.
+        case advance(to: PaneID)
+        /// The queue's unvisited entries are exhausted (or the walk never started): pop back to `to`, or
+        /// no-op silently when `to` is `nil` (never started, or the recorded origin no longer exists).
+        case popHome(to: PaneID?)
+    }
+
+    /// Decides the outcome of one ⌘⇧U press.
+    ///
+    /// - `queue`: the CURRENT queue order (already rank-then-since sorted by the caller).
+    /// - `visited`: every pane this walk has already stepped onto.
+    /// - `origin`: the pane the walk started from, `nil` before the first step.
+    /// - `isPaneLive`: whether a pane id still exists in the tree (a closed origin pops to `nil`).
+    public static func step(
+        queue: [PaneID],
+        visited: Set<PaneID>,
+        origin: PaneID?,
+        isPaneLive: (PaneID) -> Bool,
+    ) -> Step {
+        if let next = queue.first(where: { !visited.contains($0) }) {
+            return .advance(to: next)
+        }
+        if let origin, isPaneLive(origin) {
+            return .popHome(to: origin)
+        }
+        return .popHome(to: nil)
+    }
+}

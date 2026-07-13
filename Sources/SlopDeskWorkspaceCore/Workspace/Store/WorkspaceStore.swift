@@ -65,6 +65,11 @@ public final class WorkspaceStore {
     /// store (``liveModel`` decides), so the two reconciles can never fight over it.
     private var registry: [PaneID: any PaneSessionHandle] = [:]
 
+    /// ⌘⇧U's walk memory (visited-set / origin / last-walk-focused) — see
+    /// ``jumpToOldestAttentionPane()``. A `let` reference type so the walk's bookkeeping stays out of
+    /// Observation: no view reads it, and a step mutating it must never invalidate view bodies.
+    let attentionWalk = AttentionWalkBox()
+
     /// TRUE while an INTERACTIVE divider drag is in progress (a pane-divider OR the sidebar/inspector
     /// `NSSplitView` divider) — bracketed by ``setTerminalResizeSuspended(_:)``'s begin (`true`) / end
     /// (`false`). The pane resize-scrim reads it so the overlay stays up across a PAUSED drag (mouse held,

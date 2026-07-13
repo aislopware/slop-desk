@@ -11,7 +11,8 @@ import SlopDeskAgentDetect
 /// Three surfaces, all CHEAP + client-side (no host round-trip, no LLM, never on the latency path):
 ///  - the attention-EDGE fire (`fireAgentAttention`, called from `setAgentStatus`'s coalesced edge);
 ///  - the host-label capture + the sidebar activity summary / liveness;
-///  - the ⌘⇧U jump-to-oldest-attention selection (the pure ``AttentionJump`` drives the ordering).
+///  - the ⌘⇧U jump-to-oldest-attention WALK (``AttentionWalk`` drives the per-press step-vs-pop-home
+///    decision over ``unseenAttentionPanes`` — the same queue the title menu renders).
 public extension WorkspaceStore {
     // MARK: Per-pane status / label reads
 
@@ -171,9 +172,11 @@ public extension WorkspaceStore {
     /// `.finished` are BOTH attention-class, so the flash clock cannot change the verdict (no `Date()`
     /// here; the derivation stays deterministic).
     ///
-    /// Order: BLOCKED-FIRST — awaitingInput, then error, then the unread finishes — traversal-stable
-    /// within each class (session → tab → pre-order DFS), the same "answer the blocked agent before
-    /// reading the finished one" philosophy as ``AttentionJump`` / ⌘⇧U.
+    /// Order: BLOCKED-FIRST — awaitingInput, then error, then the unread finishes — and, WITHIN a rank,
+    /// `since`-ASCENDING (the longer-waiting entry is topmost; a `since == nil` manual-override entry
+    /// carries no age evidence, so it sorts after every dated entry of the same rank), traversal-stable as
+    /// the final tie. This is the queue ⌘⇧U's walk steps through (``jumpToOldestAttentionPane()``) — the
+    /// ONE shared source, so the menu's row 1 and the chord's next target are the same pane by construction.
     var unseenAttentionPanes: [UnseenAttentionEntry] {
         var found: [UnseenAttentionEntry] = []
         for session in tree.sessions {
@@ -215,7 +218,12 @@ public extension WorkspaceStore {
                 let lRank = lhs.element.badge.attentionRank
                 let rRank = rhs.element.badge.attentionRank
                 if lRank != rRank { return lRank < rRank }
-                return lhs.offset < rhs.offset
+                switch (lhs.element.since, rhs.element.since) {
+                case let (lSince?, rSince?) where lSince != rSince: return lSince < rSince
+                case (.some, nil): return true // a dated entry always outranks a since-less one at the same rank
+                case (nil, .some): return false
+                default: return lhs.offset < rhs.offset // equal dates, or both nil — traversal order is the tie
+                }
             }
             .map(\.element)
     }
@@ -245,19 +253,44 @@ public extension WorkspaceStore {
         onAgentAttention(id.raw.uuidString, name, status == .needsPermission, agentLabel(for: id))
     }
 
-    // MARK: Jump-to-unread (⌘⇧U)
+    // MARK: Jump-to-unread (⌘⇧U walks the queue)
 
-    /// Jump-to-unread (⌘⇧U): focuses the OLDEST pane currently needing attention across ALL
-    /// sessions/tabs — ``ClaudeStatus/needsPermission`` (blocked) first, then ``ClaudeStatus/done``, each
-    /// in canonical traversal order (`tree.allPaneIDs()` is session → tab → pre-order DFS, so the first is
-    /// the oldest/top-most). Switches session + tab as needed via ``focusPaneTree(_:)``. A no-op when no
-    /// pane needs attention. The selection is the pure ``AttentionJump`` so the ordering is unit-tested
-    /// without the store.
+    /// Jump-to-unread (⌘⇧U): WALKS the NEEDS-ATTENTION queue (``unseenAttentionPanes`` — the ONE shared
+    /// source with the title menu, so row 1 is the target BY CONSTRUCTION) one pane per press, remembering
+    /// every pane it has already stepped onto (``AttentionWalk``) so a re-press advances instead of
+    /// bouncing back to a still-blocked pane the instant focus leaves it. Exhausting the queue (every
+    /// currently-listed pane visited) pops focus back to the pane the walk started from; the press after
+    /// that starts a fresh walk over whatever the queue then holds.
+    ///
+    /// The walk's memory is invisible by design and is discarded the instant ANY focus change happens that
+    /// did NOT come from this method's own ``focusPaneTree(_:)`` call below — a manual tab click, ⌘1-9, a
+    /// session switch, Peek & Reply — detected lazily here (on the NEXT press) by comparing the current
+    /// focus to what the walk itself last set.
+    ///
+    /// Visiting a pane runs ``clearAgentBadge(_:)`` on it UNCONDITIONALLY before advancing — a genuinely
+    /// STRONGER acknowledge than a plain focus change (which only runs the completion-badge clear and never
+    /// settles `.done → .idle`): the chord is an explicit triage action ("I've seen this"), so a `.done`
+    /// visit clears its badge for good. `clearAgentBadge` no-ops on a live `.needsPermission` gate by its
+    /// own contract, so a still-blocked pane re-enters the queue the moment focus leaves it — it left THIS
+    /// walk by visited-set membership only, never by faking the gate closed.
     func jumpToOldestAttentionPane() {
-        guard let target = AttentionJump.oldestPane(
-            in: tree.allPaneIDs(), status: { agentStatus(for: $0) },
-        ) else { return }
-        focusPaneTree(target)
+        let box = attentionWalk
+        let focusedBeforeStep = tree.activeSession?.activeTab?.activePane
+        if box.origin != nil, focusedBeforeStep != box.lastWalkFocused {
+            box.reset() // an external focus change intervened since the last press — abandon the old walk
+        }
+        let queue = unseenAttentionPanes.map(\.pane)
+        switch AttentionWalk.step(queue: queue, visited: box.visited, origin: box.origin, isPaneLive: tree.contains) {
+        case let .advance(target):
+            if box.origin == nil { box.origin = focusedBeforeStep }
+            clearAgentBadge(target)
+            box.visited.insert(target)
+            focusPaneTree(target)
+            box.lastWalkFocused = tree.activeSession?.activeTab?.activePane
+        case let .popHome(origin):
+            if let origin { focusPaneTree(origin) }
+            box.reset()
+        }
     }
 
     // MARK: Peek & Reply (⌘⇧J — answer a blocked agent INLINE)
@@ -360,6 +393,25 @@ public extension WorkspaceStore {
              .idle,
              .working: return nil
         }
+    }
+}
+
+// MARK: - The ⌘⇧U walk's mutable state
+
+/// One walk's mutable memory: which panes it has already visited, the pane focus returns to on
+/// exhaustion, and the pane the walk itself last focused (so the NEXT press can tell a manual focus
+/// change apart from its own step — see ``WorkspaceStore/jumpToOldestAttentionPane()``). A reference
+/// type on purpose: the store holds it as a `let` (``WorkspaceStore/attentionWalk``), keeping the walk's
+/// bookkeeping OUT of Observation — no view reads it, so a step must never invalidate view bodies.
+final class AttentionWalkBox {
+    var visited: Set<PaneID> = []
+    var origin: PaneID?
+    var lastWalkFocused: PaneID?
+
+    func reset() {
+        visited.removeAll()
+        origin = nil
+        lastWalkFocused = nil
     }
 }
 

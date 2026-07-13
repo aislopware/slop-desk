@@ -185,6 +185,44 @@ final class TitlebarAttentionDotTests: XCTestCase {
         XCTAssertNil(entry.since)
     }
 
+    /// Within a rank, entries sort `since`-ASCENDING (the longer-waiting entry is topmost) rather than by
+    /// traversal order — the trailing age column then reads as a monotonically-decreasing gauge.
+    func testUnseenAttentionPanesSortsSinceAscendingWithinRank() throws {
+        let (store, focused, second) = try makeStoreWithBackgroundPane()
+        store.splitActivePane(axis: .horizontal, kind: .terminal)
+        let third = try XCTUnwrap(store.tree.allPaneIDs().first { $0 != focused && $0 != second })
+        store.focusPaneTree(focused)
+
+        // Both land at rank 2 (`.finished`); `third` finishes LATER but must sort AFTER `second` (which
+        // finished earlier) — traversal order alone (third precedes second in the split tree) would give
+        // the opposite order, so this only passes under since-ascending.
+        store.setAgentStatus(.done, for: third, at: Date(timeIntervalSinceReferenceDate: 5000))
+        store.setAgentStatus(.done, for: second, at: Date(timeIntervalSinceReferenceDate: 1000))
+        XCTAssertEqual(
+            store.unseenAttentionPanes.map(\.pane), [second, third],
+            "the longer-waiting (earlier since) finish sorts topmost within its rank",
+        )
+    }
+
+    /// An entry with no `since` (a manual CLI badge override) sorts AFTER every dated entry of the same
+    /// rank, regardless of traversal order — it carries no age evidence, so it must not outrank one that does.
+    func testUnseenAttentionPanesSortsDatedBeforeNilSinceWithinRank() throws {
+        let store = makeStore()
+        let overrideTab = try XCTUnwrap(store.tree.activeSession?.tabs.first?.id)
+        store.newTab(kind: .terminal)
+        let donePane = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
+        store.newTab(kind: .terminal) // a third, active tab — both overrideTab and donePane's tab go background
+
+        // Both land at rank 2 (`.completed` / `.finished`); the override tab comes FIRST in traversal order
+        // (created first) yet carries no `since` — it must sort LAST.
+        store.setTabBadgeOverride(.completed, for: overrideTab)
+        store.setAgentStatus(.done, for: donePane, at: Date(timeIntervalSinceReferenceDate: 4000))
+        XCTAssertEqual(
+            store.unseenAttentionPanes.map(\.badge), [.finished, .completed],
+            "the dated finish sorts BEFORE the since-less manual override at the same rank",
+        )
+    }
+
     /// The list and the dot agree by construction: the focused leaf never appears in the list.
     func testUnseenAttentionPanesExcludesFocusedLeaf() throws {
         let (store, focused, background) = try makeStoreWithBackgroundPane()
