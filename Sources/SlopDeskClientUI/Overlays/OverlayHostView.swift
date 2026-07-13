@@ -82,7 +82,7 @@ struct OverlayHostView: View {
                             .transition(.opacity)
                     }
                     if sidebarCollapsed, let alert = connectionAlert {
-                        ConnectionAlertChip(alert: alert) { store.focusPaneTree(alert.worstPane) }
+                        ConnectionAlertChip(alert: alert) { store.jumpToPaneTree(alert.worstPane) }
                             .transition(.opacity)
                     }
                 }

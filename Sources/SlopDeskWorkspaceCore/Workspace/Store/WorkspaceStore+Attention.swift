@@ -285,10 +285,10 @@ public extension WorkspaceStore {
             if box.origin == nil { box.origin = focusedBeforeStep }
             clearAgentBadge(target)
             box.visited.insert(target)
-            focusPaneTree(target)
+            jumpToPaneTree(target) // every walk step is a teleport — breadcrumb when it crossed a tab
             box.lastWalkFocused = tree.activeSession?.activeTab?.activePane
         case let .popHome(origin):
-            if let origin { focusPaneTree(origin) }
+            if let origin { jumpToPaneTree(origin) } // popping home teleports back too
             box.reset()
         }
     }

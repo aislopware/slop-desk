@@ -47,16 +47,26 @@ struct PeekReplyOverlay: View {
     var body: some View {
         Group {
             if let target = coordinator.peekReplyTarget() {
+                // `.id(target)` gives each queue entry its own view identity, so a reply's advance-to-next
+                // CROSSFADES between the outgoing and incoming cards (mechanical opacity, `smallFade`)
+                // instead of hard-swapping every field in one frame — without the beat, question/recent/
+                // pending-tool all mutate at once and it reads as the SAME pane changing, not the next one
+                // arriving. The remount also re-runs the reply bar's `onAppear` focus grab, so typing keeps
+                // landing across the advance.
                 panel(target: target, content: store.peekContent(for: target))
+                    .id(target)
+                    .transition(.opacity)
             } else {
                 // Robustness only: the open-gate requires a target and the advance closes when none is left,
                 // so this is a near-impossible race (the host cleared the status mid-present). Show an honest
                 // "all caught up" card rather than mutating state during `body`.
                 allCaughtUp
+                    .transition(.opacity)
             }
         }
+        .animation(Slate.Anim.smallFade, value: coordinator.peekReplyTarget())
         #if os(macOS)
-        .frame(width: 460)
+            .frame(width: 460)
         #endif
     }
 

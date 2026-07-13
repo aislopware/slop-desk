@@ -919,7 +919,7 @@ struct OpenQuicklyView: View {
     private func act(_ item: OpenQuicklyItem) {
         switch item.act {
         case let .focusPane(id):
-            store.focusPaneTree(id)
+            store.jumpToPaneTree(id)
         case let .openFolder(path):
             // Folder default action = "change directory here" — verbatim `cd` into the focused pane
             // (parent-if-file handled by the policy, though a frecent entry is always a directory).

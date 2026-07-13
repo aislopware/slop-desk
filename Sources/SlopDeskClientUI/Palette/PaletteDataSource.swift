@@ -430,7 +430,7 @@ public struct TabsPaletteSource: PaletteDataSource {
                 subtitle: entry.subtitle,
                 shortcut: nil,
                 filter: .tabs,
-                action: .store { store in store.focusPaneTree(entry.paneID) },
+                action: .store { store in store.jumpToPaneTree(entry.paneID) },
             )
         }
     }

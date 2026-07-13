@@ -355,6 +355,15 @@ public struct SlopDeskClientApp: App {
         store.onTabCloseRecorded = { [weak overlay] in
             overlay?.noteNotice(label: "TAB CLOSED", detail: "⇧⌘T REOPENS")
         }
+        // A teleport jump (⌘⇧U walk, palette / Open Quickly, a Global Search hit, a notification /
+        // connection-alert click) swaps the whole viewport in one frame. The store fires this ONLY when
+        // the landing crossed a tab/session boundary — the breadcrumb chip says where you are now.
+        // SECURITY: the breadcrumb embeds OSC/PTY-settable titles → mask at the display site.
+        store.onCrossTabJump = { [weak overlay] breadcrumb in
+            overlay?.noteNotice(
+                label: "JUMPED", detail: Toast.redactSecretsIfEnabled(breadcrumb), dwell: .seconds(2.5),
+            )
+        }
         store.onLongCommandNotify = { [weak overlay, weak store] paneIDKey, paneTitle, exitCode, durationMS in
             // The store fires this ONLY for an unfocused, genuinely-long command (its own gate), so a toast
             // here is the background "your build finished" cue. SECURITY: `paneTitle` is the live OSC 0/2 pane

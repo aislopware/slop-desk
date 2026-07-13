@@ -1715,6 +1715,14 @@ public final class WorkspaceStore {
     /// record itself. `nil` in tests / headless ⇒ the cue is dropped. `@ObservationIgnored`: wiring.
     @ObservationIgnored public var onTabCloseRecorded: (() -> Void)?
 
+    /// A TELEPORT focus (``jumpToPaneTree(_:)``) just CROSSED a tab (or session) boundary — the whole
+    /// viewport changed in one frame with no cue of where it landed. Carries the ``JumpBreadcrumb``
+    /// destination line ("session ▸ tab" / "tab"); the app wires it to the overlay coordinator's
+    /// transient `JUMPED · …` notice. A same-tab focus never fires (absent, never wrong). The breadcrumb
+    /// embeds OSC/PTY-settable titles — the app-side wiring masks secrets before display. `nil` in
+    /// tests / headless ⇒ the cue is dropped. `@ObservationIgnored`: wiring, not view state.
+    @ObservationIgnored public var onCrossTabJump: ((_ breadcrumb: String) -> Void)?
+
     /// The configured tmux/zellij PREFIX chord (default ⌃A, CONFIGURABLE off a Ctrl-letter). The app-level
     /// `WorkspaceKeyDispatcher` and the per-surface ``TerminalKeyInterceptor``s
     /// (wired per pane in `wireMaterializedLeaf`) must read the SAME prefix or they disagree on what arms the
@@ -1757,7 +1765,7 @@ public final class WorkspaceStore {
         guard let uuid = UUID(uuidString: idString) else { return }
         let id = PaneID(raw: uuid)
         switch liveModel {
-        case .tree: focusPaneTree(id)
+        case .tree: jumpToPaneTree(id) // a notification click is a teleport — breadcrumb on a crossed tab
         case .canvas: revealPane(id)
         }
     }
@@ -2533,6 +2541,26 @@ public final class WorkspaceStore {
         guard !alreadyActive else { return }
         tree = WorkspaceTreeOps.focusPane(id, in: tree)
         reconcileTree()
+    }
+
+    /// ``focusPaneTree(_:)`` for a TELEPORT — a jump whose destination was not visually pointed at
+    /// (⌘⇧U attention walk, a palette / Open Quickly row, a Global Search hit, a notification /
+    /// connection-alert click). When the landing CROSSED a tab (or session) boundary it fires
+    /// ``onCrossTabJump`` with the ``JumpBreadcrumb`` destination line, so the shell can flash a
+    /// "JUMPED · session ▸ tab" orientation cue. A same-tab focus (or a no-op on a gone pane) stays
+    /// silent — the cue is for the disorienting whole-viewport swap only. Deliberate navigation
+    /// (a labeled rail row / tab click) keeps calling ``focusPaneTree(_:)`` directly: the user chose
+    /// that destination by name, so a chip would be noise.
+    public func jumpToPaneTree(_ id: PaneID) {
+        let beforeTab = tree.activeSession?.activeTab?.id
+        focusPaneTree(id)
+        guard let session = tree.activeSession, let tab = session.activeTab,
+              tab.id != beforeTab, tab.contains(id) else { return }
+        onCrossTabJump?(JumpBreadcrumb.text(
+            sessionName: session.name,
+            tabTitle: JumpBreadcrumb.tabDisplayTitle(tab: tab, specs: session.specs),
+            includeSession: tree.sessions.count > 1,
+        ))
     }
 
     /// Drag-resizes the divider between children `leadingChildIndex` and `leadingChildIndex + 1` of split
@@ -3947,7 +3975,7 @@ public extension WorkspaceStore {
     /// A no-op if the pane is gone.
     func jumpToGlobalSearchResult(_ hit: GlobalSearchHit) {
         guard tree.contains(hit.paneID) else { return }
-        focusPaneTree(hit.paneID) // selects hit.sessionID + hit.tabID + focuses hit.paneID
+        jumpToPaneTree(hit.paneID) // selects hit.sessionID + hit.tabID + focuses hit.paneID (+ breadcrumb)
         guard let model = (registry[hit.paneID] as? TerminalModelProviding)?.terminalModel else { return }
         // Click-to-line: ALWAYS scroll straight to the clicked hit's mirror row so the landing is
         // correct in every mode and independent of the current viewport. The literal `search:` matcher is armed

@@ -322,7 +322,7 @@ struct TitlePaneMenu: View {
     /// runloop tick so dismissing the popover doesn't race the focus reconcile — same idiom as `split`.
     private func jump(to id: PaneID) {
         dismiss()
-        DispatchQueue.main.async { store.focusPaneTree(id) }
+        DispatchQueue.main.async { store.jumpToPaneTree(id) }
     }
 
     private func split(_ axis: SplitAxis) {

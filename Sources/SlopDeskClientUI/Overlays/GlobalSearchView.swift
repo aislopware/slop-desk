@@ -140,6 +140,10 @@ struct GlobalSearchView: View {
                 .foregroundStyle(Slate.Text.secondary)
                 .padding(.horizontal, Slate.Metric.space4)
                 .padding(.vertical, Slate.Metric.space2)
+                // Same numeric roll as the in-pane find counter: live re-runs tick the counts to their new
+                // values rather than teleporting the line (the two search counters must read identically).
+                .contentTransition(.numericText())
+                .animation(Slate.Anim.smallFade, value: results.summary)
         }
     }
 

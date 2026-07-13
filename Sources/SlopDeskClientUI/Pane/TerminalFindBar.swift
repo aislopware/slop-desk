@@ -377,6 +377,12 @@ struct TerminalFindBar: View {
                 .lineLimit(1)
                 .fixedSize()
                 .padding(.horizontal, Slate.Metric.space1)
+                // Each keystroke / ⌘G ROLLS the digits to their new value instead of teleporting the whole
+                // label — the eye tracks WHICH number moved (the position on nav, the total while typing).
+                // Mechanical fade timing (no spring); the transition composes with `monospacedDigit`, so the
+                // bar never jitters horizontally while rolling.
+                .contentTransition(.numericText())
+                .animation(Slate.Anim.smallFade, value: label)
         }
     }
 
