@@ -162,7 +162,7 @@ public final class OverlayCoordinator {
 
     // MARK: Prefix-armed indicator (keyboard improvement)
 
-    /// Whether the tmux-style workspace PREFIX (default ⌃A) is currently ARMED — swallowed, awaiting the
+    /// Whether the tmux-style workspace PREFIX (default ⌃B) is currently ARMED — swallowed, awaiting the
     /// follow-up key. Driven by ``WorkspaceKeyDispatcher`` through ``setPrefixArmed(_:)`` on every armed edge
     /// (arm → true; a resolved/unbound follow-up, double-tap send-prefix, or escape timeout → false), so the
     /// workspace chip (``OverlayHostView``) shows exactly while a follow-up is awaited. Stays `false` on iOS / tests.

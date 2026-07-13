@@ -16,12 +16,12 @@ The keybinding/command-routing stack is **substantially complete** for the core 
 |---|---|---|
 | Binding registry — single source of truth | done | `WorkspaceBindingRegistry.swift:222` — `allBindings` + `selectTabBindings`; used by menu, palette, cheat sheet, dispatcher, tests |
 | Default keymap (full set) | done | 35+ actions (split/close/focus/tab/session/view/blocks) + ⌘1…⌘9 select-tab generated; `WorkspaceBindingRegistry.swift:228–488` |
-| NSEvent prefix monitor (tmux ⌃A-style) | done | `WorkspaceKeyDispatcher.swift:78` — `NSEvent.addLocalMonitorForEvents(matching:.keyDown)`; installed via `.task { keyDispatcher.install() }` at `SlopDeskClientApp.swift:234` |
+| NSEvent prefix monitor (tmux-style, default ⌃B) | done | `WorkspaceKeyDispatcher.swift:78` — `NSEvent.addLocalMonitorForEvents(matching:.keyDown)`; installed via `.task { keyDispatcher.install() }` at `SlopDeskClientApp.swift:234` |
 | Prefix state machine (arm/resolve/timeout/disarm) | done | `PrefixStateMachine` in `CommandInterpreter.swift:369`; 6 states (arm, resolve, passthrough, sendPrefixLiteral, disarmSwallow, expire); pinned by `PrefixStateMachineTests` |
-| Configurable prefix chord | done | Default `KeyChord("a", [.control])` at `WorkspaceStore.swift:1848`; dispatcher adopts `store.workspaceKeyPrefix`; `setPrefix()` for live change |
+| Configurable prefix chord | done | Default ⌃B (`WorkspaceBindingRegistry.defaultPrefixChord`); user override = Settings ▸ Key Bindings ▸ Workspace Prefix (`KeybindingPreferences.prefixKey` → `resolvedPrefixChord`); live re-key via `PreferencesStore.onPrefixKeyApply` → `WorkspaceStore.applyWorkspaceKeyPrefix` + `WorkspaceKeyDispatcher.setPrefix` |
 | Double-tap prefix → send literal | done | `WorkspaceKeyDispatcher.swift:126–134`; `KeyChordNormalizer.literalBytes(for:)` emits the C0 byte to the focused pane |
 | Single-chord dispatch (⌘D/⌘T/…) | done | `WorkspaceKeyDispatcher.swift:113–116`; reads `resolvedChordTable` (override-aware) |
-| Multi-key prefix sequence dispatch (⌃A→D) | done | `WorkspaceKeyDispatcher.swift:65–66`; `resolveSequenceAfterPrefix` over `resolvedSequenceTable`; `WorkspaceBindingOverrides.swift:85–98` |
+| Multi-key prefix sequence dispatch (⌃B→D) | done | `WorkspaceKeyDispatcher.swift:65–66`; `resolveSequenceAfterPrefix` over `resolvedSequenceTable`; `WorkspaceBindingOverrides.swift:85–98` |
 | `route()` action → store op | done | `WorkspaceBindingRouting.routeTree()` at `WorkspaceBindingRouting.swift:47` — every `WorkspaceAction` case → matching `WorkspaceStore` tree op; tested in `TreeCommandRoutingTests` |
 | Binding registry wiring — live call-sites | done | `WorkspaceKeyDispatcher.dispatch()` calls `WorkspaceBindingRegistry.route()`; `TerminalKeyInterceptor` (per-surface fallback) also routes via `route()` at `WorkspaceStore+Keybinding.swift:20`; `ActionsPaletteSource` rows drive store ops directly |
 | Per-surface terminal key interceptor | done | `TerminalKeyInterceptor.swift` — second-line interceptor for libghostty surfaces; wired in `WorkspaceStore.wireKeyInterceptor()` at `WorkspaceStore+Keybinding.swift:16`; reads same `resolvedChordTable` |

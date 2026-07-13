@@ -50,7 +50,7 @@ struct OverlayHostView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .allowsHitTesting(!coordinator.toasts.isEmpty)
             // The "prefix armed" chip — a minimal bottom-LEADING glyph shown only while
-            // the ⌃A prefix machine awaits its follow-up key (`coordinator.prefixArmed`, driven by the app
+            // the workspace prefix machine awaits its follow-up key (`coordinator.prefixArmed`, driven by the app
             // dispatcher's armed edges: arm lights it; fire / unbound / double-tap / timeout clear it). The
             // bottom-TRAILING corner belongs to the toast stack; the chip never takes hits, so the workspace
             // beneath stays interactive.
@@ -256,7 +256,7 @@ struct OverlayHostView: View {
 // MARK: - PrefixArmedChip (the minimal "prefix armed" indicator)
 
 /// The tiny keyboard-centric chip shown while the workspace prefix is ARMED: the configured prefix glyph
-/// (e.g. `⌃A`) + the word "prefix" on the shared floating-card shell. Text-minimal by design (no icon zoo,
+/// (e.g. `⌃B`) + the word "prefix" on the shared floating-card shell. Text-minimal by design (no icon zoo,
 /// no panel) — it only answers "did my prefix land?" while the machine awaits the follow-up key. `Slate.*`
 /// tokens only (the ds-leaks ratchet).
 private struct PrefixArmedChip: View {

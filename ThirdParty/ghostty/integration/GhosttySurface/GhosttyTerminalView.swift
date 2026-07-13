@@ -1229,8 +1229,8 @@ final class GhosttyLayerBackedView: NSView {
         // `TerminalKeyInterceptor` (B2 prefix machine + override-aware single-chord table); here we ONLY map
         // the NSEvent → `KeyChord` and act on the returned disposition.
         //
-        // CRITICAL ORDERING: this MUST precede the Ctrl+<C0> branch — the tmux prefix is ⌃A by default, whose
-        // raw byte (0x01) that branch would otherwise send straight to the PTY, so the prefix would leak
+        // CRITICAL ORDERING: this MUST precede the Ctrl+<C0> branch — the tmux prefix is ⌃B by default, whose
+        // raw byte (0x02) that branch would otherwise send straight to the PTY, so the prefix would leak
         // instead of arming. The interceptor claims the prefix; only a send-prefix DOUBLE-TAP emits the
         // literal byte (via `.sendLiteral`).
         if let interceptor = model?.keyInterceptor,
@@ -2599,7 +2599,7 @@ final class GhosttyLayerBackedView: NSView {
     /// ClientUI and this gated file cannot import it. Keep the two in lock-step: named keys by keyCode FIRST
     /// (parity with the keybindings editor's `baseKey`), else a single printable `charactersIgnoringModifiers`
     /// (⌘/⌥/⌃-independent; ⇧ rides `modifiers`); reject whitespace / control scalars so a bare/Ctrl key still
-    /// reports its printable base (⌃A → "a") and normal typing falls through.
+    /// reports its printable base (⌃B → "b") and normal typing falls through.
     static func workspaceChord(for event: NSEvent) -> KeyChord? {
         var mods: KeyChord.Modifiers = []
         if event.modifierFlags.contains(.shift) { mods.insert(.shift) }

@@ -64,6 +64,32 @@ public extension WorkspaceBindingRegistry {
         return map
     }
 
+    // MARK: - Prefix-key resolution (the tmux-style workspace prefix chord)
+
+    /// The DEFAULT workspace prefix chord — ⌃B. The single source every prefix consumer defaults to
+    /// (`WorkspaceStore.workspaceKeyPrefix`, `TerminalKeyInterceptor`, `PrefixStateMachine`), so the app
+    /// monitor and the per-surface interceptors can never disagree on the out-of-the-box prefix. ⌃B (not
+    /// tmux's ⌃A / screen's ⌃A): ⌃A is readline beginning-of-line — heavily typed at a shell prompt — while
+    /// ⌃B (backward-char) has the arrow keys as its idiomatic spelling, so claiming it costs the PTY least.
+    /// The double-tap send-prefix still delivers the literal 0x02 when it's genuinely wanted.
+    nonisolated static let defaultPrefixChord = KeyChord(character: "b", [.control])
+
+    /// The workspace prefix chord that should arm RIGHT NOW: the user override (Settings ▸ Key Bindings ▸
+    /// Prefix Key) if one is set AND usable, else ``defaultPrefixChord``.
+    static var resolvedPrefixChord: KeyChord {
+        resolvedPrefixChord(overrides: activeOverrides)
+    }
+
+    /// Prefix resolution against an EXPLICIT override set (pure, testable). Validate-then-default: a stored
+    /// chord that can't map to a registry chord, or that carries NO ⌃/⌥/⌘ modifier (a bare or shift-only key
+    /// as prefix would swallow normal typing), is IGNORED → the default stands. Never traps.
+    static func resolvedPrefixChord(overrides: KeybindingPreferences) -> KeyChord {
+        guard let stored = overrides.prefixKey, let mapped = stored.asRegistryChord,
+              !mapped.modifiers.isDisjoint(with: [.control, .option, .command])
+        else { return defaultPrefixChord }
+        return mapped
+    }
+
     // MARK: - Sequence-aware resolution (prefix sequences)
 
     /// The full SEQUENCE that should fire `action` RIGHT NOW: the user override sequence (single-chord OR

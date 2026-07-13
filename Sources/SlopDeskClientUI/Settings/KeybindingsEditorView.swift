@@ -31,6 +31,11 @@ struct KeybindingsEditorView: View {
     /// records at a time so the local key monitor has a single unambiguous target.
     @State private var recordingID: String?
 
+    /// The synthetic recording id of the Prefix Key row. NOT a registry binding id (the prefix is a machine
+    /// key, not an action) — it only routes the shared `KeyCaptureMonitor` to the prefix write path. The
+    /// `workspace.` namespace is unused by `WorkspaceBindingRegistry.allBindings`, so it can never collide.
+    private static let prefixRecordingID = "workspace.prefixKey"
+
     /// The live "Search key bindings" query (filters by action name OR chord). Empty ⇒ show all rows.
     @State private var searchQuery: String = ""
 
@@ -44,6 +49,7 @@ struct KeybindingsEditorView: View {
 
         VStack(alignment: .leading, spacing: Slate.Metric.space3) {
             header
+            prefixKeyRow
             searchField
             if !conflicts.isEmpty {
                 conflictBanner(conflicts)
@@ -111,6 +117,60 @@ struct KeybindingsEditorView: View {
                     .help("Reset every customized shortcut to its default")
             }
         }
+    }
+
+    /// The Workspace Prefix row — the tmux-style two-step arm key (prefix, then a follow-up chord/sequence).
+    /// One dedicated card above the per-action list (it rebinds the MACHINE key, not an action, so it can't
+    /// live among the registry rows): the current effective prefix as a recordable chip, Backspace-to-clear
+    /// restoring the ⌃B default. A captured chord must carry ⌃/⌥/⌘ (`isUsablePrefixKey`) — a bare key would
+    /// swallow normal typing — so an unusable capture keeps recording instead of writing a dead override.
+    private var prefixKeyRow: some View {
+        let isRecording = recordingID == Self.prefixRecordingID
+        return HStack(spacing: Slate.Metric.space2) {
+            Image(systemSymbol: .commandSquare)
+                .font(.system(size: Slate.Metric.iconSize))
+                .foregroundStyle(Slate.Text.icon)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Workspace Prefix")
+                    .font(.system(size: Slate.Typeface.base))
+                    .foregroundStyle(Slate.Text.primary)
+                Text("Arms two-step chords (tmux-style). Double-tap sends the key itself. Needs ⌃, ⌥ or ⌘.")
+                    .font(.system(size: Slate.Typeface.small))
+                    .foregroundStyle(Slate.Text.secondary)
+            }
+            Spacer(minLength: Slate.Metric.space2)
+            Button {
+                toggleRecording(Self.prefixRecordingID)
+            } label: {
+                Text(isRecording ? "Press a key…" : WorkspaceBindingRegistry.glyph(effectivePrefixChord))
+                    .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                    .foregroundStyle(isRecording ? Slate.State.accent : Slate.Text.secondary)
+                    .lineLimit(1)
+                    .padding(.horizontal, Slate.Metric.space2)
+                    .padding(.vertical, 2)
+                    .frame(minWidth: 64)
+                    .background(
+                        isRecording ? Slate.State.accentMuted : Slate.Surface.raised,
+                        in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous),
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall, style: .continuous)
+                            .strokeBorder(isRecording ? Slate.State.accent : Slate.Line.subtle, lineWidth: 1),
+                    )
+            }
+            .buttonStyle(.plain)
+            .help("Click to record a new prefix key; Backspace restores the default (⌃B)")
+        }
+        .padding(Slate.Metric.space2)
+        .slateCard()
+    }
+
+    /// The prefix chord the machine arms on RIGHT NOW — the stored override when usable, else the ⌃B
+    /// default. Resolved from the live editor model (not `activeOverrides`) so the chip updates in the same
+    /// render pass as the write.
+    private var effectivePrefixChord: KeyChord {
+        WorkspaceBindingRegistry.resolvedPrefixChord(overrides: store.keybindings)
     }
 
     /// The full-width rounded "Search key bindings" field (magnifier + clear button) that filters rows by
@@ -291,7 +351,9 @@ struct KeybindingsEditorView: View {
     /// Map a captured `NSEvent` to a ``KeybindingCaptureOutcome`` (pure, headless logic in
     /// `KeybindingCapture`) and apply it to the recording row: Escape cancels (no write), Backspace /
     /// Forward-Delete CLEAR the binding (unbind), a usable chord is recorded, and an unmappable key is
-    /// ignored (stays in recording mode).
+    /// ignored (stays in recording mode). The Prefix Key row shares this monitor (one recording target at a
+    /// time) but writes `prefixKey` instead of an action override — and additionally rejects a chord with no
+    /// ⌃/⌥/⌘ (keeps recording), which is fine as an ACTION override but would make bare typing arm the prefix.
     private func handleCapturedEvent(_ event: NSEvent) {
         guard let id = recordingID else { return }
         let mods = event.modifierFlags
@@ -306,12 +368,24 @@ struct KeybindingsEditorView: View {
         case .cancel:
             recordingID = nil
         case .clear:
-            clearOverride(id)
+            if id == Self.prefixRecordingID {
+                store.keybindings = KeybindingsEditorModel.clearingPrefixKey(in: store.keybindings)
+            } else {
+                clearOverride(id)
+            }
             recordingID = nil
         case .ignore:
             break // no usable chord yet — keep recording
         case let .bind(chord):
-            setOverride(chord, for: id)
+            if id == Self.prefixRecordingID {
+                // Modifier-less chords keep recording (see the row doc) — never store a prefix the resolver
+                // would discard (`isUsablePrefixKey` mirrors its acceptance gate).
+                guard KeybindingsEditorModel.isUsablePrefixKey(chord) else { break }
+                store.keybindings = KeybindingsEditorModel.settingPrefixKey(chord, in: store.keybindings)
+                recordingID = nil
+            } else {
+                setOverride(chord, for: id)
+            }
         }
     }
     #endif

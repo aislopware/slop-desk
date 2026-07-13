@@ -1,5 +1,5 @@
 // PrefixArmedIndicatorTests (keyboard improvement) — the "prefix armed" indicator seam pinned headlessly.
-// When the tmux-style ⌃A prefix arms, the `WorkspaceKeyDispatcher` reports the armed edge through its
+// When the tmux-style ⌃B prefix arms, the `WorkspaceKeyDispatcher` reports the armed edge through its
 // `onPrefixArmedChange` closure (the app wires it to `OverlayCoordinator.setPrefixArmed`, which the workspace
 // chip reads); every disarm path — a resolved follow-up chord, an unbound follow-up, the double-tap
 // send-prefix, and the escape TIMEOUT — must clear it, or the chip lies (shows "armed" while the machine is
@@ -34,8 +34,8 @@ final class PrefixArmedIndicatorTests: XCTestCase {
         WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
     }
 
-    /// The default ⌃A prefix event (keyCode 0 = 'a').
-    private var prefixEvent: NSEvent { keyDown("a", keyCode: 0, control: true) }
+    /// The default ⌃B prefix event (keyCode 11 = 'b').
+    private var prefixEvent: NSEvent { keyDown("b", keyCode: 11, control: true) }
 
     /// Arming the prefix reports `true`; a bound follow-up chord (⌘D → the seeded post-prefix resolve) FIRES
     /// and reports `false` — the chip shows exactly while the machine awaits the follow-up key.

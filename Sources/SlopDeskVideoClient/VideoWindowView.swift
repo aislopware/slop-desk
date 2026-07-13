@@ -1135,7 +1135,7 @@ final class MetalLayerBackedView: NSView {
     // live typing) for future layout-independent input like paste.
     // WORKSPACE PREFIX over the video pane.
     //
-    // The tmux/zellij prefix (⌃A) MUST NOT leak to the remote host when arming a LOCAL workspace command.
+    // The tmux/zellij prefix (⌃B) MUST NOT leak to the remote host when arming a LOCAL workspace command.
     // That interception is UPSTREAM: the app-level `WorkspaceKeyDispatcher` installs ONE
     // `NSEvent.addLocalMonitorForEvents(matching: .keyDown)` at launch, firing BEFORE the first responder —
     // so a prefix arm / resolved chord / send-prefix double-tap is consumed (handler returns `nil`) and

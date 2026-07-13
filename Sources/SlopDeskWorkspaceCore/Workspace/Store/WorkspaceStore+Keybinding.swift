@@ -55,7 +55,7 @@ extension WorkspaceStore {
 
     /// Hand pane `id`'s libghostty surface its PURE ``TerminalKeyInterceptor`` (prefix engine + the
     /// override-aware single-chord table). The surface's `keyDown` consults it BEFORE its own raw-byte
-    /// branches, so (a) a tmux-style prefix sequence (⌃A → D) is claimed before the Ctrl+C0 path leaks the
+    /// branches, so (a) a tmux-style prefix sequence (⌃B → D) is claimed before the Ctrl+C0 path leaks the
     /// literal byte, and (b) the rebindable ⌘D/⌘⇧D split is owned by the shared engine (B5 removed the
     /// hard-coded split branch). A resolved action routes through the SAME `WorkspaceBindingRegistry.route`
     /// the app-level monitor (B3) uses; a new-pane action (split / new-tab / …) mints an in-pane `.chooser`
@@ -70,6 +70,20 @@ extension WorkspaceStore {
                 routeInterceptedKey(action)
             },
         )
+    }
+
+    /// Re-point the workspace prefix on a LIVE settings change (Settings ▸ Key Bindings ▸ Prefix Key —
+    /// the app's `PreferencesStore.onPrefixKeyApply` hook lands here). Writes the shared
+    /// ``workspaceKeyPrefix`` (new panes wire with it) AND re-keys every already-materialized pane's
+    /// ``TerminalKeyInterceptor`` — without the sweep an existing surface would keep arming on the OLD
+    /// prefix while the app monitor armed on the new one (split-brain). The caller re-keys the app-level
+    /// `WorkspaceKeyDispatcher` itself (it lives in the ClientUI layer). Idempotent; no-op when unchanged.
+    public func applyWorkspaceKeyPrefix(_ chord: KeyChord) {
+        guard chord != workspaceKeyPrefix else { return }
+        workspaceKeyPrefix = chord
+        for handle in allSessionHandles {
+            (handle as? TerminalModelProviding)?.terminalModel?.keyInterceptor?.setPrefix(chord)
+        }
     }
 
     /// The terminal surface's right-click "Split Right/Down" landing (factored out of `wireMaterializedLeaf`

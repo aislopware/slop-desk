@@ -2,7 +2,7 @@
 //
 // A "no NSEvent monitor — an off-menu binding is a dead chord" rule (DECISIONS.md, the ⌘⇧I sync-input
 // note) only holds while every chord is a single ⌘/⌥ shortcut a SwiftUI `.commands` menu can express.
-// A tmux/zellij MULTI-KEY prefix (⌃A then D) can't be a `.keyboardShortcut`, and a `.commands` menu can't
+// A tmux/zellij MULTI-KEY prefix (⌃B then D) can't be a `.keyboardShortcut`, and a `.commands` menu can't
 // SWALLOW the follow-up key BEFORE the terminal first responder (libghostty's `GhosttyLayerBackedView`)
 // sees it — so the second key would leak into the PTY. Hence ONE app-level
 // `NSEvent.addLocalMonitorForEvents(matching: .keyDown)` installed at launch. DECISIONS.md records the scope.
@@ -106,7 +106,7 @@ final class WorkspaceKeyDispatcher {
 
     /// - Parameter prefix: the configured prefix chord. Pass `nil` (default) to adopt the store's live
     ///   ``WorkspaceStore/workspaceKeyPrefix`` so the app monitor and the per-surface ``TerminalKeyInterceptor``
-    ///   arm on ONE shared prefix (no split-brain when the prefix moves off ⌃A). An explicit value overrides the
+    ///   arm on ONE shared prefix (no split-brain when the prefix moves off the ⌃B default). An explicit value overrides the
     ///   store (test seam).
     init(
         store: WorkspaceStore,
@@ -139,7 +139,7 @@ final class WorkspaceKeyDispatcher {
         self.onPrefixArmedChange = onPrefixArmedChange
         // Resolve a post-prefix key against the override-aware SEQUENCE table FIRST (so a multi-key sequence
         // whose tail key isn't a standalone binding still fires), falling back to the SINGLE-CHORD table (so the
-        // seeded ⌃A→⌘D keeps working and an override is honoured). Prefix defaults to the store's live
+        // seeded ⌃B→⌘D keeps working and an override is honoured). Prefix defaults to the store's live
         // `workspaceKeyPrefix`.
         machine = PrefixStateMachine(
             prefix: prefix ?? store.workspaceKeyPrefix,
@@ -148,7 +148,7 @@ final class WorkspaceKeyDispatcher {
         )
     }
 
-    /// Re-point the configured prefix (a settings change moved it off ⌃A). Keeps the app monitor and the
+    /// Re-point the configured prefix (a settings change moved it off the default). Keeps the app monitor and the
     /// per-surface interceptors arming on ONE shared prefix.
     func setPrefix(_ chord: KeyChord) { machine.prefix = chord }
 

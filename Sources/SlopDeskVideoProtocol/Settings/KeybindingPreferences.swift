@@ -96,7 +96,7 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
         }
     }
 
-    /// A serialisable multi-key SEQUENCE (tmux/zellij prefix idiom — e.g. `⌃A` then `D`): an ordered,
+    /// A serialisable multi-key SEQUENCE (tmux/zellij prefix idiom — e.g. `⌃B` then `D`): an ordered,
     /// non-empty list of ``KeyChord``s. A single-chord override is the degenerate length-1 sequence; the
     /// registry bridge (`asRegistrySequence`) lifts BOTH into the dispatcher's `KeySequence`. Pure data —
     /// no AppKit. Its CANONICAL form (`"ctrl+a ; d"`) is the conflict-detection key, so a sequence and a
@@ -197,16 +197,25 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
     /// registry action. Empty by default ⇒ no behaviour change.
     public var unbinds: Set<KeyChord>
 
+    /// The user's WORKSPACE PREFIX chord override (the tmux-style two-step arm key), or `nil` to keep the
+    /// registry default (⌃B). Stored here — not as its own UserDefaults key — so the prefix rides the ONE
+    /// keybinding persistence channel (schema gate, Reset-to-Default, `activeOverrides` publish) like every
+    /// other rebind. The registry resolves it via `resolvedPrefixChord` (validate-then-default: an unmappable
+    /// or modifier-less stored chord falls back to the default rather than hijacking bare typing).
+    public var prefixKey: KeyChord?
+
     public init(
         overrides: [String: KeyChord] = [:],
         sequenceOverrides: [String: KeySequence] = [:],
         textBindings: [KeyChord: TextBinding] = [:],
         unbinds: Set<KeyChord> = [],
+        prefixKey: KeyChord? = nil,
     ) {
         self.overrides = overrides
         self.sequenceOverrides = sequenceOverrides
         self.textBindings = textBindings
         self.unbinds = unbinds
+        self.prefixKey = prefixKey
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -215,6 +224,7 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
         case sequenceOverrides
         case textBindings
         case unbinds
+        case prefixKey
     }
 
     /// Decode with a STRICT schema-version gate (no-backcompat): a blob missing the version field (the
@@ -236,6 +246,7 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
         sequenceOverrides = try c.decodeIfPresent([String: KeySequence].self, forKey: .sequenceOverrides) ?? [:]
         textBindings = try c.decodeIfPresent([KeyChord: TextBinding].self, forKey: .textBindings) ?? [:]
         unbinds = try c.decodeIfPresent(Set<KeyChord>.self, forKey: .unbinds) ?? []
+        prefixKey = try c.decodeIfPresent(KeyChord.self, forKey: .prefixKey)
     }
 
     /// Encode WITH the current schema version stamped (so a round-trip / future read passes the gate).
@@ -246,6 +257,7 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
         try c.encode(sequenceOverrides, forKey: .sequenceOverrides)
         try c.encode(textBindings, forKey: .textBindings)
         try c.encode(unbinds, forKey: .unbinds)
+        try c.encodeIfPresent(prefixKey, forKey: .prefixKey)
     }
 
     /// The single-chord override for a binding id, or `nil` (⇒ use the registry default). A MULTI-KEY

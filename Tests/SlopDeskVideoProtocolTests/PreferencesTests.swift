@@ -203,6 +203,20 @@ final class PreferencesTests: XCTestCase {
         XCTAssertNil(prefs.chord(for: "pane.notOverridden"))
     }
 
+    /// The workspace `prefixKey` override rides the same v3 blob: a set prefix round-trips, and a blob
+    /// WITHOUT the field (any pre-prefix v3 write) decodes to `nil` — the resolver then keeps the ⌃B
+    /// default. Additive-within-v3 by design: an existing user's overrides survive the field's arrival.
+    func testPrefixKeyRoundTripsAndAbsentFieldDecodesNil() throws {
+        let prefs = KeybindingPreferences(prefixKey: .init(key: "g", control: true))
+        let decoded = try roundTrip(prefs)
+        XCTAssertEqual(decoded, prefs)
+        XCTAssertEqual(decoded.prefixKey?.canonical, "ctrl+g")
+
+        let prePrefixBlob = Data(#"{"schemaVersion":3,"overrides":{}}"#.utf8)
+        let bare = try JSONDecoder().decode(KeybindingPreferences.self, from: prePrefixBlob)
+        XCTAssertNil(bare.prefixKey, "an absent field decodes nil so the default prefix stands")
+    }
+
     // MARK: Keybindings — text bindings + unbinds (schema v3)
 
     /// The new `textBindings` (chord → literal bytes) and `unbinds` (suppressed-default chords) maps

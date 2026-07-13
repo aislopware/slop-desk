@@ -50,7 +50,7 @@ public enum TerminalKeyDisposition: Equatable, Sendable {
 @MainActor
 public final class TerminalKeyInterceptor {
     /// The pure prefix machine (B2). Its `resolveAfterPrefix` reads the override-aware single-chord table so
-    /// a length-2 sequence (⌃A → ⌘D) honours a rebind; the prefix chord itself is configurable.
+    /// a length-2 sequence (⌃B → ⌘D) honours a rebind; the prefix chord itself is configurable.
     private let machine: PrefixStateMachine
 
     /// Resolve a single (idle) chord to its workspace action, or `nil` to let it fall through. Injected so
@@ -65,7 +65,8 @@ public final class TerminalKeyInterceptor {
     private let now: () -> TimeInterval
 
     /// The configured prefix chord — exposed so a view can show a "prefix armed" affordance and so the
-    /// double-tap's literal byte is derivable. Default ⌃A; CONFIGURABLE off a Ctrl-letter (see B2).
+    /// double-tap's literal byte is derivable. Default ⌃B (the shared
+    /// ``WorkspaceBindingRegistry/defaultPrefixChord``); CONFIGURABLE off a Ctrl-letter (see B2).
     public var prefix: KeyChord { machine.prefix }
 
     /// Whether the prefix is currently armed (read-only mirror; does not expire a stale arm — only `feed`
@@ -73,7 +74,7 @@ public final class TerminalKeyInterceptor {
     public var isArmed: Bool { machine.isArmed }
 
     public init(
-        prefix: KeyChord = KeyChord(character: "a", [.control]),
+        prefix: KeyChord = WorkspaceBindingRegistry.defaultPrefixChord,
         timeout: TimeInterval = 1,
         resolveChord: @escaping (KeyChord) -> WorkspaceAction? = { WorkspaceBindingRegistry.resolvedChordTable[$0] },
         resolveSequence: @escaping (KeySequence)
@@ -96,7 +97,7 @@ public final class TerminalKeyInterceptor {
         self.now = now
     }
 
-    /// Update the configured prefix (e.g. the user moved it off ⌃A in settings). The machine re-keys live.
+    /// Update the configured prefix (e.g. the user moved it off the default in settings). The machine re-keys live.
     public func setPrefix(_ chord: KeyChord) { machine.prefix = chord }
 
     /// Fold ONE keystroke (already normalized to a ``KeyChord`` by the view) into a ``TerminalKeyDisposition``.
@@ -144,7 +145,7 @@ public final class TerminalKeyInterceptor {
     public func disarm() { machine.disarm() }
 
     /// The literal C0 byte(s) a Ctrl-letter prefix would have sent raw (tmux `send-prefix`). For the default
-    /// ⌃A this is `0x01`; for any `Control + <a…z>` it is the standard C0 mapping `letter & 0x1F`. Returns an
+    /// ⌃B this is `0x02`; for any `Control + <a…z>` it is the standard C0 mapping `letter & 0x1F`. Returns an
     /// EMPTY array for a prefix moved off a Ctrl-letter (no single literal byte — the double-tap then no-ops).
     /// Pure + static so the iOS path (B7) and the macOS surfaces (B4/B6) share ONE definition (parity with
     /// `KeyChordNormalizer.literalBytes`, which lives in ClientUI and is unreachable from those surfaces).

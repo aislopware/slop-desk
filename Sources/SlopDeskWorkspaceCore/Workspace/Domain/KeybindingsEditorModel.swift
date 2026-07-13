@@ -122,6 +122,37 @@ public enum KeybindingsEditorModel {
     public static func hasCustomizations(_ prefs: KeybindingPreferences) -> Bool {
         !prefs.overrides.isEmpty || !prefs.sequenceOverrides.isEmpty
             || !prefs.textBindings.isEmpty || !prefs.unbinds.isEmpty
+            || prefs.prefixKey != nil
+    }
+
+    // MARK: Prefix-key capture (the Settings ▸ Key Bindings ▸ Prefix Key row)
+
+    /// Whether a captured chord is USABLE as the workspace prefix: it must map to a registry chord AND carry
+    /// at least one of ⌃/⌥/⌘ — a bare or shift-only key as prefix would arm on (and so swallow) normal
+    /// typing. Mirrors the ``WorkspaceBindingRegistry/resolvedPrefixChord(overrides:)`` acceptance gate, so
+    /// the editor never records a chord the resolver would silently discard (a lying chip).
+    public static func isUsablePrefixKey(_ chord: KeybindingPreferences.KeyChord) -> Bool {
+        guard let mapped = chord.asRegistryChord else { return false }
+        return !mapped.modifiers.isDisjoint(with: [.control, .option, .command])
+    }
+
+    /// Return `prefs` with the workspace prefix override set to `chord`, PRESERVING every other collection
+    /// (the same mutate-a-copy contract as ``settingOverride`` — rebuilding the model would wipe them).
+    public static func settingPrefixKey(
+        _ chord: KeybindingPreferences.KeyChord,
+        in prefs: KeybindingPreferences,
+    ) -> KeybindingPreferences {
+        var next = prefs
+        next.prefixKey = chord
+        return next
+    }
+
+    /// Return `prefs` with the workspace prefix override removed (restoring the ⌃B default), PRESERVING
+    /// every other collection — the Backspace-to-clear path of the Prefix Key row.
+    public static func clearingPrefixKey(in prefs: KeybindingPreferences) -> KeybindingPreferences {
+        var next = prefs
+        next.prefixKey = nil
+        return next
     }
 
     /// Return `prefs` with `id`'s single-chord override set to `chord`, PRESERVING every other collection

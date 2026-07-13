@@ -135,7 +135,7 @@ public struct KeyChord: Hashable, Sendable {
 
 // MARK: - Key sequences (multi-key / prefix bindings)
 
-/// An ordered, non-empty list of ``KeyChord``s — the tmux/zellij prefix idiom (e.g. `⌃A` then `D`).
+/// An ordered, non-empty list of ``KeyChord``s — the tmux/zellij prefix idiom (e.g. `⌃B` then `D`).
 /// A single-chord binding is the degenerate length-1 sequence; the prefix machine walks a sequence
 /// chord-by-chord. Pure / `Hashable` / value-typed so the chord → action mapping is unit-testable
 /// with no view.
@@ -366,13 +366,13 @@ public enum PrefixIntent: Equatable, Sendable {
 ///                                                                       → `.disarmSwallow`
 ///   6. idle + a bare key       → ALWAYS passthrough (never swallow normal typing).   → `.passthrough`
 ///
-/// The prefix is CONFIGURABLE (default `⌃A`, tmux-like) so the user can move it off a Ctrl-letter; resolve
-/// the configured chord from config / `PreferencesStore` and inject it here. The machine NEVER leaks the
-/// prefix to the terminal while armed.
+/// The prefix is CONFIGURABLE (default `⌃B` — ``WorkspaceBindingRegistry/defaultPrefixChord``) so the user
+/// can move it off a Ctrl-letter; resolve the configured chord from config / `PreferencesStore` and inject
+/// it here. The machine NEVER leaks the prefix to the terminal while armed.
 @preconcurrency
 @MainActor
 public final class PrefixStateMachine {
-    /// The configured prefix chord (default `⌃A`). From idle it arms the machine; again while armed it sends
+    /// The configured prefix chord (default `⌃B`). From idle it arms the machine; again while armed it sends
     /// the literal prefix byte (double-tap passthrough). CONFIGURABLE so the user can move it off a Ctrl-letter.
     public var prefix: KeyChord
 
@@ -412,7 +412,7 @@ public final class PrefixStateMachine {
     }
 
     public init(
-        prefix: KeyChord = KeyChord(character: "a", [.control]),
+        prefix: KeyChord = WorkspaceBindingRegistry.defaultPrefixChord,
         timeout: TimeInterval = 1,
         resolveAfterPrefix: @escaping (KeyChord) -> WorkspaceAction? = { _ in nil },
         resolveSequenceAfterPrefix: ((KeySequence) -> WorkspaceAction?)? = nil,

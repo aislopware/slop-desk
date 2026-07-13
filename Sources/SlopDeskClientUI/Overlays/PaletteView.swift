@@ -323,7 +323,7 @@ struct PaletteView: View {
         return cwd
     }
 
-    /// Split a shortcut glyph string ("⇧⌘L", or a space-separated multi-chord sequence "⌃A D") into one chip
+    /// Split a shortcut glyph string ("⇧⌘L", or a space-separated multi-chord sequence "⌃B D") into one chip
     /// per key symbol (the spec renders each key as its own rounded badge). Whitespace separators are dropped.
     private func keycaps(_ shortcut: String) -> [String] {
         shortcut.split(separator: " ").flatMap { chord in chord.map(String.init) }

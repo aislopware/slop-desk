@@ -501,7 +501,8 @@ public struct SlopDeskClientApp: App {
         // Build the live keybinding dispatcher over the single store. A new-pane action (split /
         // new-tab / new-session) mints an in-pane `.chooser` pane via the store's routing, focused,
         // so the user picks Terminal / Remote window INSIDE the new pane; ⌘T stays a direct-terminal escape
-        // hatch (it routes via `.newPane(.terminal)`, never `.newTab`). The default prefix is ⌃A (tmux-like).
+        // hatch (it routes via `.newPane(.terminal)`, never `.newTab`). The prefix is the store's live
+        // `workspaceKeyPrefix` (Settings ▸ Key Bindings ▸ Prefix Key override, else ⌃B).
         //
         // The dispatcher's `textBinding`/`unbind` resolution is LIVE here regardless of the overlay layer —
         // a user `text:`/`csi:`/`esc:` config binding injects via `sendBytes` and an `unbind:` passes through, both
@@ -512,7 +513,7 @@ public struct SlopDeskClientApp: App {
         // opens the Peek & Reply overlay rather than falling back to `jumpToOldestAttentionPane()`.
         // The ⇧⌘F Global Search toggle threads into the SAME NSEvent monitor that owns every chord, so
         // the cross-tab results surface opens from the keyboard (and the View ▸ Global Search… menu item below).
-        _keyDispatcher = State(initialValue: WorkspaceKeyDispatcher(
+        let keyDispatcher = WorkspaceKeyDispatcher(
             store: store,
             togglePalette: { [overlay] in overlay.togglePalette() },
             toggleCheatSheet: { [overlay] in overlay.toggleCheatSheet() },
@@ -551,11 +552,22 @@ public struct SlopDeskClientApp: App {
             isWorkspaceWindowKey: { [windowBox] in
                 Self.workspaceWindowIsKey(captured: windowBox.window, keyWindow: NSApp.keyWindow)
             },
-            // Report every armed edge of the ⌃A prefix machine to
+            // Report every armed edge of the prefix machine to
             // the coordinator so the workspace shows a minimal "prefix" chip while the follow-up key is
             // awaited (arm lights it; fire / unbound / double-tap / timeout clear it).
             onPrefixArmedChange: { [overlay] in overlay.setPrefixArmed($0) },
-        ))
+        )
+        _keyDispatcher = State(initialValue: keyDispatcher)
+        // LIVE prefix re-key: recording a new Prefix Key in Settings (or clearing it back to ⌃B) fires
+        // `applyKeybindings` → this hook, which re-points BOTH cached consumers in one place — the store
+        // (+ its per-pane `TerminalKeyInterceptor` sweep) and this app monitor — so the two layers can
+        // never arm on different prefixes. At LAUNCH the hook is not yet installed when `PreferencesStore`
+        // first applies; that's correct — the store and dispatcher above were just built FROM the resolved
+        // prefix, so there is nothing stale to re-key.
+        PreferencesStore.onPrefixKeyApply = { [store, keyDispatcher] chord in
+            store.applyWorkspaceKeyPrefix(chord)
+            keyDispatcher.setPrefix(chord)
+        }
         // The client control socket server over a ``WorkspaceControlBackend`` adapter on the SAME
         // live stores the GUI uses (the backend holds them WEAKLY — the app retains the originals). Built
         // here so it outlives the scene; BOUND in a launch `.task` (the bind/listen is deferred off init).
@@ -815,7 +827,7 @@ public struct SlopDeskClientApp: App {
             // `keyDispatcher` / `windowBox` / the close gate) is app-wide singleton state, so the stock
             // File ▸ New Window item would mint a SECOND workspace window over the SAME store whose introspect
             // hook then overwrites `windowBox`: chords would intermittently die in the window being typed in and
-            // the ⌃A prefix would leak into remote-GUI panes. `.newItem` carries ONLY the New-Window item for a
+            // the ⌃B prefix would leak into remote-GUI panes. `.newItem` carries ONLY the New-Window item for a
             // plain WindowGroup (no document types are declared), so replacing it with nothing removes the
             // affordance without touching the rest of the File menu.
             CommandGroup(replacing: .newItem) {}

@@ -334,6 +334,11 @@ public final class WorkspaceStore {
     /// The live handle for `id`, or `nil` if no such leaf is materialized.
     public func handle(for id: PaneID) -> (any PaneSessionHandle)? { registry[id] }
 
+    /// Every materialized live handle — the whole-registry sweep ``applyWorkspaceKeyPrefix(_:)`` re-keys
+    /// (unordered; a sweep is per-handle idempotent so order can't matter). Internal so the `registry`
+    /// stays private to this file.
+    var allSessionHandles: [any PaneSessionHandle] { Array(registry.values) }
+
     /// Whether pane `id`'s shell currently reports a running foreground command (the live
     /// ``PaneSessionHandle/isShellBusy`` bit), or `false` for an unmaterialized pane. Exposes the busy
     /// signal to the ClientUI rail (the ``TabBadgeResolver`` "running" input) WITHOUT leaking the
@@ -1723,13 +1728,15 @@ public final class WorkspaceStore {
     /// tests / headless ⇒ the cue is dropped. `@ObservationIgnored`: wiring, not view state.
     @ObservationIgnored public var onCrossTabJump: ((_ breadcrumb: String) -> Void)?
 
-    /// The configured tmux/zellij PREFIX chord (default ⌃A, CONFIGURABLE off a Ctrl-letter). The app-level
-    /// `WorkspaceKeyDispatcher` and the per-surface ``TerminalKeyInterceptor``s
-    /// (wired per pane in `wireMaterializedLeaf`) must read the SAME prefix or they disagree on what arms the
-    /// engine — so it lives here, the one place a settings change re-points it. Already-materialized panes are
-    /// intentionally NOT re-wired here (a process restart re-reads it; changing the prefix mid-session is rare
-    /// and new panes pick it up). `@ObservationIgnored`: wiring, not view state.
-    @ObservationIgnored public var workspaceKeyPrefix: KeyChord = .init(character: "a", [.control])
+    /// The configured tmux/zellij PREFIX chord. The app-level `WorkspaceKeyDispatcher` and the per-surface
+    /// ``TerminalKeyInterceptor``s (wired per pane in `wireMaterializedLeaf`) must read the SAME prefix or
+    /// they disagree on what arms the engine — so it lives here, the one place a settings change re-points
+    /// it (``applyWorkspaceKeyPrefix(_:)``, which also re-keys every already-materialized pane's
+    /// interceptor). Seeded from the override-aware ``WorkspaceBindingRegistry/resolvedPrefixChord`` (the
+    /// Settings ▸ Key Bindings ▸ Prefix Key override, else the ⌃B default): the app builds `PreferencesStore`
+    /// BEFORE this store, so the persisted prefix is live from the first materialized pane.
+    /// `@ObservationIgnored`: wiring, not view state.
+    @ObservationIgnored public var workspaceKeyPrefix: KeyChord = WorkspaceBindingRegistry.resolvedPrefixChord
 
     /// View-injected overlay-toggle closures the per-pane hardware-keyboard ``TerminalKeyInterceptor`` threads
     /// into ``WorkspaceBindingRegistry/route`` (see ``routeInterceptedKey(_:)``). On iOS the per-pane

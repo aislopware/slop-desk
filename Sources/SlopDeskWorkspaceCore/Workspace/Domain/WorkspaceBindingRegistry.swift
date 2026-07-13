@@ -264,7 +264,7 @@ public struct WorkspaceBinding: Sendable, Equatable {
     /// The default chord, or `nil` for a binding surfaced only in the palette / menu (no key equivalent).
     /// For a multi-key binding this is the FIRST chord (the prefix); ``sequence`` carries the full list.
     public let chord: KeyChord?
-    /// The default multi-key SEQUENCE (tmux/zellij prefix idiom — e.g. `⌃A` then `D`), or `nil` for a
+    /// The default multi-key SEQUENCE (tmux/zellij prefix idiom — e.g. `⌃B` then `D`), or `nil` for a
     /// single-chord / palette-only binding. When set, ``chord`` mirrors `sequence.head` so the existing
     /// single-chord glyph / menu-shortcut derivation keeps working off `chord` and the prefix dispatcher
     /// reads the full sequence. The single source of truth for "what fires this" is ``effectiveSequence``.
@@ -915,7 +915,7 @@ public enum WorkspaceBindingRegistry {
         return out
     }
 
-    /// Renders a ``KeySequence`` as space-separated chord glyphs (e.g. `⌃A D` for the prefix-then-key
+    /// Renders a ``KeySequence`` as space-separated chord glyphs (e.g. `⌃B D` for the prefix-then-key
     /// idiom). A length-1 sequence renders exactly like ``glyph(_:)`` of its single chord, so the cheat
     /// sheet / palette show one string for both single and multi-key bindings. `nonisolated` so it composes
     /// from any context.
@@ -924,7 +924,7 @@ public enum WorkspaceBindingRegistry {
     }
 
     /// The display glyph for `action`'s default binding, or `nil` when it has none. Renders the full
-    /// SEQUENCE (so a multi-key prefix binding shows e.g. `⌃A D`), falling back to the single chord for an
+    /// SEQUENCE (so a multi-key prefix binding shows e.g. `⌃B D`), falling back to the single chord for an
     /// ordinary binding. `public` so the rebuilt ClientUI palette derives its row hints from the SAME
     /// registry the keyboard bank registers (no drift).
     public nonisolated static func glyph(for action: WorkspaceAction) -> String? {
