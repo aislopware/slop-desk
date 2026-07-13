@@ -130,6 +130,57 @@ struct CommandBlockTracker {
         return .blockOutput(index: index, output: Data(bytes))
     }
 
+    // MARK: - Agent-control surface (the ctl `last-output` / `run --wait` verbs)
+
+    /// One retained block joined with its last-emitted metadata — the ctl-facing snapshot.
+    struct ControlBlock {
+        var index: UInt32
+        var commandText: String
+        var exitCode: Int32?
+        var durationMS: UInt32?
+        var complete: Bool
+        var output: [UInt8]
+    }
+
+    /// The last `limit` retained blocks (oldest→newest), each joined with its metadata. The ring
+    /// only holds CLOSED blocks (a still-running command is served by ``openBlockForControl()``),
+    /// but a closed block may be `complete == false` — a command interrupted by a fresh prompt
+    /// (Ctrl-C / nested-shell re-prompt) closes without its `D`.
+    func recentBlocksForControl(limit: Int) -> [ControlBlock] {
+        guard limit > 0 else { return [] }
+        return held.suffix(limit).map { h in
+            let meta = lastEmitted[h.index]
+            return ControlBlock(
+                index: h.index,
+                commandText: meta?.commandText ?? "",
+                exitCode: meta?.exitCode,
+                durationMS: meta?.durationMS,
+                complete: meta?.complete ?? true,
+                output: h.output,
+            )
+        }
+    }
+
+    /// Non-destructive snapshot of the still-RUNNING block (saw its `C`, no `D` yet), or `nil`.
+    func openBlockForControl() -> CommandBlockSegmenter.CommandBlock? {
+        segmenter.peekOpenBlock()
+    }
+
+    /// The block index the NEXT shell command will close under — the `run --wait` baseline.
+    /// A currently-EXECUTING block will consume ``CommandBlockSegmenter/nextBlockIndex`` itself
+    /// when it closes, so the caller's command lands one past it; an idle prompt (or a
+    /// `.command`-phase open block, which is discarded without consuming an index) lands exactly
+    /// on `nextBlockIndex`.
+    var expectedNextCommandIndex: UInt32 {
+        let base = segmenter.nextBlockIndex + (segmenter.peekOpenBlock() != nil ? 1 : 0)
+        return UInt32(truncatingIfNeeded: base)
+    }
+
+    /// The retained output bytes for a closed block, or `nil` when evicted / unknown.
+    func outputBytes(index: UInt32) -> [UInt8]? {
+        held.first(where: { $0.index == index })?.output
+    }
+
     // MARK: - Internals
 
     /// Builds the wire metadata for a block and returns a `commandBlock` message ONLY if that

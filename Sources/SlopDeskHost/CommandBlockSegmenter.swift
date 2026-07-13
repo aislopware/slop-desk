@@ -184,6 +184,11 @@ public struct CommandBlockSegmenter {
         )
     }
 
+    /// The index the NEXT closed block will receive (indices are assigned at close, so this is
+    /// also the open block's future index — ``peekOpenBlock`` stamps the same value). The ctl
+    /// `run --wait` verb reads it as the baseline for "the block my command will become".
+    public var nextBlockIndex: Int { nextIndex }
+
     /// Drains + clears the SYNTHETIC OSC-9;4 progress frames queued at the `C` / `D` marks. The owner
     /// (``CommandBlockTracker``) calls this after each ``ingest`` and enqueues the
     /// frames on the CONTROL channel alongside the type-28 block metadata. Returns `[]` when

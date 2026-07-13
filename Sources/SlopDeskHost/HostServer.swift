@@ -1018,22 +1018,43 @@ public final class HostServer: @unchecked Sendable {
         /// vocabulary (`idle`/`working`/`done`/`blocked`). A live pane with no detected
         /// `claude` reports `idle` (see ``AgentControlState``).
         public let state: String
+        /// The detector's human label (the blocking question / last assistant line), `nil` when none.
+        public let stateMessage: String?
+        /// Host-observed cwd truth (OSC-7 sniff / prompt-edge probe), `nil` until observed.
+        public let cwd: String?
+        /// The pane's live foreground-process BASENAME (`zsh`/`claude`/`vim`), "" when unresolvable.
+        public let command: String
+        /// The freshest OSC-133-D exit code, `nil` until a command finished with a reported `$?`.
+        public let lastExitCode: Int32?
+        /// PTY grid size, 0×0 on a closed/unspawned master.
+        public let rows: Int
+        public let cols: Int
     }
 
     /// Returns a snapshot of all live panes (mux + standalone control panes).
-    /// Called from the agent-control `list-panes` verb handler. O(N) over active panes.
+    /// Called from the agent-control `list-panes` verb handler. O(N) over active panes
+    /// (each pane costs one `TIOCGWINSZ` + one `proc_pidinfo` foreground probe — the same
+    /// syscall class the input path already pays per keystroke batch).
     public func listPanesForControl() -> [PaneInfo] {
         lock.lock()
         let mux = Array(muxSessions.values)
         let ctrl = Array(controlSessions.values)
         lock.unlock()
         return (mux + ctrl).map { session in
-            PaneInfo(
+            let agent = session.agentStatusAndMessageForControl
+            let size = session.pty.currentWindowSize()
+            return PaneInfo(
                 paneId: session.sessionID.uuidString,
                 title: session.currentTitle,
                 pid: session.pty.pid,
                 isAlive: !session.isChildExited(),
-                state: AgentControlState.string(from: session.agentStatusForControl),
+                state: AgentControlState.string(from: agent.status),
+                stateMessage: agent.message,
+                cwd: session.cwdForControl,
+                command: PTYForegroundProbe.foregroundName(masterFD: session.pty.masterFD),
+                lastExitCode: session.lastExitCodeForControl,
+                rows: Int(size?.rows ?? 0),
+                cols: Int(size?.cols ?? 0),
             )
         }
     }
@@ -1190,6 +1211,22 @@ public final class HostServer: @unchecked Sendable {
         var environ = HostEnvironment.curated(
             controlSocketPath: agentControlSocketPath.isEmpty ? nil : agentControlSocketPath,
         )
+        // Interactive login-shell spawn (`cmd == nil`) layers the SAME shell-integration shim the
+        // mux path does: the shim's OSC-133 marks are what feed the pane's block segmentation, and
+        // a control pane without them answers `last-output` with nothing and never resolves a
+        // `run --wait`. A `cmd` pane is `$SHELL -c …` (non-interactive, no prompt cycles) — the
+        // shim is prompt machinery, so it is skipped there. Caller `env` still wins (merged after).
+        var shimDir: URL?
+        if cmd == nil || cmd?.isEmpty == true {
+            if let overrides = ShellIntegration.makeEnvironmentOverrides(
+                parent: ProcessInfo.processInfo.environment,
+                shellPath: shellPath,
+                warn: { [weak self] in self?.onLog?($0) },
+            ) {
+                for (k, value) in overrides { environ[k] = value }
+                shimDir = overrides["ZDOTDIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+            }
+        }
         if let extraEnv { for (k, v) in extraEnv { environ[k] = v } }
         // Inject the pane self-id (same contract as a mux-spawned pane).
         environ[HostEnvironment.agentPaneIDEnvKey] = sessionID.uuidString
@@ -1215,15 +1252,22 @@ public final class HostServer: @unchecked Sendable {
         }
 
         // Spawn the child with the requested initial window size.
-        try pty.spawn(
-            executable,
-            arguments: argv,
-            environment: environ,
-            argv0: argv0,
-            cwd: cwd,
-            cols: cols,
-            rows: rows,
-        )
+        do {
+            try pty.spawn(
+                executable,
+                arguments: argv,
+                environment: environ,
+                argv0: argv0,
+                cwd: cwd,
+                cols: cols,
+                rows: rows,
+            )
+        } catch {
+            // The ZDOTDIR shim dir is written BEFORE the spawn (same as the mux path) — a spawn
+            // failure would leak it since no session exists to delete it on exit.
+            if let shimDir { try? FileManager.default.removeItem(at: shimDir) }
+            throw error
+        }
 
         // Build null sub-channels (no real connection).
         let nullData = await MuxSubChannel.makeNull(channel: .data)
@@ -1236,8 +1280,13 @@ public final class HostServer: @unchecked Sendable {
             data: nullData,
             control: nullControl,
             sessionID: sessionID,
+            shimDir: shimDir,
             agentHookListenerActive: { [weak listener = agentHookListener] in listener?.isListening ?? false },
-            blocksEnabled: false, // no client → blocks metadata would be dropped anyway
+            // Blocks tracking follows the server flag even with no GUI client: the ctl socket
+            // itself consumes the segmentation (`last-output` reads the block ring, `run --wait`
+            // resolves on block close) — a control-spawned pane without it answers every
+            // block verb with "SLOPDESK_BLOCKS=0".
+            blocksEnabled: blocksEnabled,
         )
         session.onExit = { [weak self] _ in self?.removeControlSession(sessionID) }
         wireAgentStatusFanOut(session)

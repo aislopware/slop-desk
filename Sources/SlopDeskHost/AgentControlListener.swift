@@ -67,9 +67,9 @@ public struct AgentControlHandler: Sendable {
     // MARK: E14/K13 IPC guards
 
     /// The MUTATING ("send keys" equivalent) verbs — write to a PTY, spawn, kill, or resize a pane.
-    /// Gated behind ``IPCGuards/allowSendKeys``. The READ-ONLY verbs (`list-panes`/`read`/`wait`/
-    /// `report`) are NOT in this set and are always allowed. (`subscribe` is intercepted in the
-    /// acceptor before `dispatch` and only STREAMS output, so it is read-only too.)
+    /// Gated behind ``IPCGuards/allowSendKeys``. The READ-ONLY verbs (`list-panes`/`read`/
+    /// `last-output`/`wait`/`report`) are NOT in this set and are always allowed. (`subscribe` is
+    /// intercepted in the acceptor before `dispatch` and only STREAMS output, so it is read-only too.)
     static let mutatingVerbs: Set<String> = ["write", "run", "spawn", "kill", "resize"]
 
     /// Whether `method` mutates a pane (and so is gated by the send-keys / sensitive-session guards).
@@ -132,6 +132,8 @@ public struct AgentControlHandler: Sendable {
             listPanes(id: id, server: server)
         case "read":
             readPane(id: id, params: params, server: server)
+        case "last-output":
+            lastOutput(id: id, params: params, server: server)
         case "write":
             writePane(id: id, params: params, server: server)
         case "run":
@@ -153,13 +155,89 @@ public struct AgentControlHandler: Sendable {
 
     // MARK: Verb implementations
 
-    /// `list-panes` → `{panes: [{paneId, title, pid, isAlive, state}]}`
+    /// `list-panes` → `{panes: [{paneId, title, pid, isAlive, state, command, rows, cols,
+    /// cwd?, lastExitCode?, stateMessage?}]}`. Optional fields are OMITTED when unknown
+    /// (JSON has no distinct "unset" and an agent should never see a fabricated `""`/`0` truth).
     static func listPanes(id: String, server: HostServer) -> String {
         let panes = server.listPanesForControl()
         let items = panes.map { p -> [String: Any] in
-            ["paneId": p.paneId, "title": p.title, "pid": Int(p.pid), "isAlive": p.isAlive, "state": p.state]
+            var item: [String: Any] = [
+                "paneId": p.paneId,
+                "title": p.title,
+                "pid": Int(p.pid),
+                "isAlive": p.isAlive,
+                "state": p.state,
+                "command": p.command,
+                "rows": p.rows,
+                "cols": p.cols,
+            ]
+            if let cwd = p.cwd { item["cwd"] = cwd }
+            if let exit = p.lastExitCode { item["lastExitCode"] = Int(exit) }
+            if let message = p.stateMessage { item["stateMessage"] = message }
+            return item
         }
         return successResponse(id: id, result: ["panes": items])
+    }
+
+    /// Lossy UTF-8 decode shared by the block-output paths (same idiom as
+    /// ``MuxChannelSession/scrollbackTextForControl(ansiStrip:)``: invalid bytes → `?`).
+    static func decodeLossyUTF8(_ bytes: [UInt8]) -> String {
+        if let utf8 = String(bytes: bytes, encoding: .utf8) { return utf8 }
+        return String(bytes.map { $0 < 0x80 ? $0 : UInt8(0x3F) }.map { Character(UnicodeScalar($0)) })
+    }
+
+    /// Excises zsh's PROMPT_SP end-of-line mark (`%` + width fill) from a block's output tail.
+    ///
+    /// On the live wire the cluster always abuts the closing `133;D` (zsh's preprompt runs right
+    /// before precmd), which is exactly what ``PromptEOLMarkStripper`` anchors on — but the
+    /// segmenter strips the OSC marks out of the captured span, leaving the cluster bare at the
+    /// buffer tail. Re-appending a synthetic `D` anchor restores the adjacency the stripper keys
+    /// on (honest: the real `D` DID follow these bytes), reusing its two-sided-SGR false-positive
+    /// guard instead of duplicating the machine. A command whose real output ends in `%` + spaces
+    /// stays untouched (no SGR wrapping → deliberate miss).
+    static func stripPromptEOLTail(_ bytes: [UInt8]) -> [UInt8] {
+        let anchor: [UInt8] = Array("\u{1B}]133;D\u{07}".utf8)
+        let stripped = [UInt8](PromptEOLMarkStripper.strip(Data(bytes + anchor)))
+        guard stripped.suffix(anchor.count).elementsEqual(anchor) else { return stripped }
+        return Array(stripped.dropLast(anchor.count))
+    }
+
+    /// `last-output` — the OSC-133 block-aware read: the last N CLOSED command blocks
+    /// (command text + output + exit code + duration), newest LAST, plus the still-running
+    /// block's metadata when one is executing.
+    ///
+    /// Response: `{blocks: [{index, command, output, complete, exitCode?, durationMs?}],
+    /// running?: {command, outputLen}}`. Output is ANSI-stripped unless `ansiStrip: false`.
+    /// Errors when blocks tracking is off (`SLOPDESK_BLOCKS=0`) — the caller falls back to `read`.
+    static func lastOutput(id: String, params: [String: Any], server: HostServer) -> String {
+        guard let paneId = params["paneId"] as? String else {
+            return errorResponse(id: id, message: "missing params.paneId")
+        }
+        guard let session = server.lookupPaneForControl(paneId: paneId) else {
+            return errorResponse(id: id, message: "pane not found: \(paneId)")
+        }
+        let n = max(1, (params["n"] as? Int) ?? 1)
+        let ansiStrip = (params["ansiStrip"] as? Bool) ?? true
+        guard let blocks = session.recentBlocksForControl(limit: n) else {
+            return errorResponse(id: id, message: "blocks tracking disabled on host (SLOPDESK_BLOCKS=0)")
+        }
+        let items = blocks.map { b -> [String: Any] in
+            let raw = decodeLossyUTF8(stripPromptEOLTail(b.output))
+            var item: [String: Any] = [
+                "index": Int(b.index),
+                "command": b.commandText,
+                "output": ansiStrip ? ANSIStripper.strip(raw) : raw,
+                "complete": b.complete,
+            ]
+            if let exit = b.exitCode { item["exitCode"] = Int(exit) }
+            if let duration = b.durationMS { item["durationMs"] = Int(duration) }
+            return item
+        }
+        var result: [String: Any] = ["blocks": items]
+        if let open = session.openBlockForControl() {
+            result["running"] = ["command": open.commandText, "outputLen": open.output.count]
+        }
+        return successResponse(id: id, result: result)
     }
 
     /// `read` → `{text: "…"}` — scrollback snapshot for a pane (ANSI stripped by default).
@@ -220,23 +298,48 @@ public struct AgentControlHandler: Sendable {
         return successResponse(id: id, result: ["state": state])
     }
 
-    /// `write` — injects raw text into the PTY (no Enter).
+    /// `write` — injects raw text and/or NAMED KEYS into the PTY (no implicit Enter).
+    ///
+    /// `params.text` (optional) is sent first, then each token in `params.keys` (optional
+    /// `[String]`, tmux `send-keys` vocabulary — `C-c`, `Enter`, `Up`, `M-x`, `F5`, …) resolved
+    /// via ``ControlKeyMap``. At least one of the two must be present; an unknown key token
+    /// rejects the WHOLE request (validate-then-drop — never send a partial key sequence).
     static func writePane(id: String, params: [String: Any], server: HostServer) -> String {
         guard let paneId = params["paneId"] as? String else {
             return errorResponse(id: id, message: "missing params.paneId")
         }
-        guard let text = params["text"] as? String else {
-            return errorResponse(id: id, message: "missing params.text")
+        let text = params["text"] as? String
+        let keyTokens = params["keys"] as? [String]
+        guard text != nil || !(keyTokens ?? []).isEmpty else {
+            return errorResponse(id: id, message: "missing params.text or params.keys")
+        }
+        var bytes = Data()
+        if let text { bytes.append(contentsOf: text.utf8) }
+        if let keyTokens {
+            let resolved = ControlKeyMap.bytes(forTokens: keyTokens)
+            if let unknown = resolved.unknown {
+                return errorResponse(id: id, message: "unknown key: \(unknown)")
+            }
+            bytes.append(contentsOf: resolved.bytes)
         }
         guard let session = server.lookupPaneForControl(paneId: paneId) else {
             return errorResponse(id: id, message: "pane not found: \(paneId)")
         }
-        let bytes = Data(text.utf8)
         session.writeRawForControl(bytes)
         return successResponse(id: id, result: [:])
     }
 
     /// `run` — injects `text + "\r"` atomically (Enter key).
+    ///
+    /// With `params.wait == true`, BLOCKS (connection thread, like `wait`) until the command's
+    /// OSC-133 block CLOSES, then answers `{matched: true, exitCode?, durationMs?, output,
+    /// blockIndex, elapsed}` — the herdr-style "run and give me the result" primitive. The
+    /// command is identified by block INDEX: the segmenter's next-command index is snapshotted
+    /// BEFORE the write, and the first closed block at-or-past it is the answer (an interleaved
+    /// concurrent driver could race a command in between — the answer is then that command's;
+    /// single-driver-per-pane is the supported shape). A closed-but-interrupted block (Ctrl-C,
+    /// re-prompt without `D`) also resolves the wait, with `exitCode` absent. Timeout →
+    /// `{matched: false, elapsed}`. Requires blocks tracking (`SLOPDESK_BLOCKS` on).
     static func runPane(id: String, params: [String: Any], server: HostServer) -> String {
         guard let paneId = params["paneId"] as? String else {
             return errorResponse(id: id, message: "missing params.paneId")
@@ -248,8 +351,64 @@ public struct AgentControlHandler: Sendable {
             return errorResponse(id: id, message: "pane not found: \(paneId)")
         }
         let bytes = Data((text + "\r").utf8)
+        guard (params["wait"] as? Bool) == true else {
+            session.writeRawForControl(bytes)
+            return successResponse(id: id, result: [:])
+        }
+
+        // --wait: baseline the expected block index BEFORE the write so the observer can
+        // discriminate our command's block from an already-running one.
+        guard let baseline = session.expectedNextBlockIndexForControl() else {
+            return errorResponse(id: id, message: "blocks tracking disabled on host (SLOPDESK_BLOCKS=0)")
+        }
+        let timeoutMs = (params["timeoutMs"] as? Double) ?? 30000
+        let ansiStrip = (params["ansiStrip"] as? Bool) ?? true
+
+        final class RunWaitState: @unchecked Sendable {
+            let condition = NSCondition()
+            var closed: MuxChannelSession.CommandBlockUpdate?
+        }
+        let state = RunWaitState()
+        let observerID = UUID()
+        session.registerBlockObserver(id: observerID) { update in
+            // A CLOSED block carries `complete == true` (D-closed) or a non-nil duration
+            // (interrupted close); a RUNNING open-block emission has neither — ignore it.
+            guard update.index >= baseline, update.complete || update.durationMS != nil else { return }
+            state.condition.lock()
+            if state.closed == nil {
+                state.closed = update
+                state.condition.signal()
+            }
+            state.condition.unlock()
+        }
+
         session.writeRawForControl(bytes)
-        return successResponse(id: id, result: [:])
+
+        let startNanos = DispatchTime.now().uptimeNanoseconds
+        state.condition.lock()
+        let deadline = Date(timeIntervalSinceNow: timeoutMs / 1000.0)
+        while state.closed == nil {
+            if !state.condition.wait(until: deadline) { break }
+        }
+        let closed = state.closed
+        state.condition.unlock()
+        session.removeBlockObserver(id: observerID)
+
+        let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds - startNanos) / 1_000_000.0
+        guard let closed else {
+            return successResponse(id: id, result: ["matched": false, "elapsed": elapsedMs])
+        }
+        let outputBytes = session.blockOutputBytesForControl(index: closed.index) ?? []
+        let raw = decodeLossyUTF8(stripPromptEOLTail(outputBytes))
+        var result: [String: Any] = [
+            "matched": true,
+            "elapsed": elapsedMs,
+            "blockIndex": Int(closed.index),
+            "output": ansiStrip ? ANSIStripper.strip(raw) : raw,
+        ]
+        if let exit = closed.exitCode { result["exitCode"] = Int(exit) }
+        if let duration = closed.durationMS { result["durationMs"] = Int(duration) }
+        return successResponse(id: id, result: result)
     }
 
     /// `wait` — blocks until pane output matches `until` regex or `timeoutMs` elapses.
@@ -263,8 +422,13 @@ public struct AgentControlHandler: Sendable {
         guard let paneId = params["paneId"] as? String else {
             return errorResponse(id: id, message: "missing params.paneId")
         }
+        // `state` is the AGENT-STATE wait ("block until the pane is idle/done/blocked") — an
+        // alternative to the output-regex `until`. Exactly one of the two must be present.
+        if let stateSpec = params["state"] as? String {
+            return waitForAgentState(id: id, paneId: paneId, stateSpec: stateSpec, params: params, server: server)
+        }
         guard let untilPattern = params["until"] as? String else {
-            return errorResponse(id: id, message: "missing params.until")
+            return errorResponse(id: id, message: "missing params.until or params.state")
         }
         let timeoutMs = (params["timeoutMs"] as? Double) ?? 30000
         guard let session = server.lookupPaneForControl(paneId: paneId) else {
@@ -330,6 +494,76 @@ public struct AgentControlHandler: Sendable {
 
         let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds - startNanos) / 1_000_000.0
         return successResponse(id: id, result: ["matched": didMatch, "elapsed": elapsedMs])
+    }
+
+    /// The `wait --state` arm: blocks until the pane's supervision state is IN `stateSpec` (one
+    /// state, or a comma-set — `"idle,done"`) or `timeoutMs` elapses.
+    ///
+    /// **Blocking** — connection thread only, like the regex arm. The transition source is the
+    /// server-level `agent_status_changed` fan-out (the same stream `events` serves), plus an
+    /// immediate current-state check BEFORE and AFTER observer registration so a transition in
+    /// the registration gap can never be missed. Response: `{matched, state?, elapsed}`.
+    static func waitForAgentState(
+        id: String,
+        paneId: String,
+        stateSpec: String,
+        params: [String: Any],
+        server: HostServer,
+    ) -> String {
+        let targets = Set(
+            stateSpec.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) },
+        )
+        guard !targets.isEmpty, targets.allSatisfy(AgentControlState.isValid) else {
+            return errorResponse(
+                id: id,
+                message: "invalid state '\(stateSpec)' (want a comma-set of: \(AgentControlState.allStates.joined(separator: ", ")))",
+            )
+        }
+        let timeoutMs = (params["timeoutMs"] as? Double) ?? 30000
+        guard let session = server.lookupPaneForControl(paneId: paneId) else {
+            return errorResponse(id: id, message: "pane not found: \(paneId)")
+        }
+
+        final class StateWait: @unchecked Sendable {
+            let condition = NSCondition()
+            var matched: String?
+        }
+        let state = StateWait()
+        let observerID = UUID()
+        server.registerAgentStatusObserver(id: observerID) { pane, stateStr, _, _ in
+            guard pane == paneId, targets.contains(stateStr) else { return }
+            state.condition.lock()
+            if state.matched == nil {
+                state.matched = stateStr
+                state.condition.signal()
+            }
+            state.condition.unlock()
+        }
+        // Current-state check AFTER registering: a pane already in a target state answers
+        // immediately, and a transition that landed between lookup and registration is caught
+        // here rather than lost (the observer only sees FUTURE transitions).
+        let current = AgentControlState.string(from: session.agentStatusForControl)
+        if targets.contains(current) {
+            state.condition.lock()
+            if state.matched == nil { state.matched = current }
+            state.condition.unlock()
+        }
+
+        let startNanos = DispatchTime.now().uptimeNanoseconds
+        state.condition.lock()
+        let deadline = Date(timeIntervalSinceNow: timeoutMs / 1000.0)
+        while state.matched == nil {
+            if !state.condition.wait(until: deadline) { break }
+        }
+        let matched = state.matched
+        state.condition.unlock()
+        server.removeAgentStatusObserver(id: observerID)
+
+        let elapsedMs = Double(DispatchTime.now().uptimeNanoseconds - startNanos) / 1_000_000.0
+        guard let matched else {
+            return successResponse(id: id, result: ["matched": false, "elapsed": elapsedMs])
+        }
+        return successResponse(id: id, result: ["matched": true, "state": matched, "elapsed": elapsedMs])
     }
 
     /// `spawn` — forks a new standalone pane. Returns `{paneId: "…"}`.

@@ -432,4 +432,52 @@ final class CtlCoreTests: XCTestCase {
         XCTAssertEqual(dp["until"] as? String, "\\$")
         XCTAssertEqual(dp["timeoutMs"] as? Double, 5000)
     }
+
+    // MARK: - Enriched verb builders (last-output / run --wait / write --key / wait --state)
+
+    func testLastOutputParamsDefaults() {
+        let params = lastOutputParams(paneId: "p1")
+        XCTAssertEqual(params["paneId"] as? String, "p1")
+        XCTAssertEqual(params["n"] as? Int, 1)
+        XCTAssertEqual(params["ansiStrip"] as? Bool, true)
+    }
+
+    func testLastOutputParamsExplicit() {
+        let params = lastOutputParams(paneId: "p1", n: 5, ansiStrip: false)
+        XCTAssertEqual(params["n"] as? Int, 5)
+        XCTAssertEqual(params["ansiStrip"] as? Bool, false)
+    }
+
+    func testRunParamsWithoutWaitOmitsWaitFields() {
+        let params = runParams(paneId: "p1", cmd: "ls")
+        XCTAssertEqual(params["text"] as? String, "ls")
+        XCTAssertNil(params["wait"], "plain run must stay byte-identical for older hosts")
+        XCTAssertNil(params["timeoutMs"])
+    }
+
+    func testRunParamsWithWaitCarriesTimeoutAndStrip() {
+        let params = runParams(paneId: "p1", cmd: "make", wait: true, timeoutMs: 90000, ansiStrip: false)
+        XCTAssertEqual(params["wait"] as? Bool, true)
+        XCTAssertEqual(params["timeoutMs"] as? Double, 90000)
+        XCTAssertEqual(params["ansiStrip"] as? Bool, false)
+    }
+
+    func testWriteParamsTextOnlyBackCompatShape() {
+        let params = writeParams(paneId: "p1", text: "hello")
+        XCTAssertEqual(params["text"] as? String, "hello")
+        XCTAssertNil(params["keys"], "no keys -> field omitted")
+    }
+
+    func testWriteParamsKeysOnly() {
+        let params = writeParams(paneId: "p1", keys: ["C-c", "Enter"])
+        XCTAssertNil(params["text"])
+        XCTAssertEqual(params["keys"] as? [String], ["C-c", "Enter"])
+    }
+
+    func testWaitStateParamsShape() {
+        let params = waitStateParams(paneId: "p1", states: "done,blocked", timeoutMs: 2000)
+        XCTAssertEqual(params["state"] as? String, "done,blocked")
+        XCTAssertEqual(params["timeoutMs"] as? Double, 2000)
+        XCTAssertNil(params["until"], "state arm never carries a regex")
+    }
 }

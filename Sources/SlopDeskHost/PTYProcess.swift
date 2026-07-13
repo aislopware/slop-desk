@@ -289,6 +289,18 @@ public final class PTYProcess: @unchecked Sendable {
         _ = ioctl(masterFD, TIOCSWINSZ, &ws)
     }
 
+    /// The PTY's current window size via `TIOCGWINSZ`, or `nil` on a closed/unspawned master.
+    /// Same `exitLock` TOCTOU discipline as ``setWindowSize(cols:rows:pxWidth:pxHeight:)``.
+    /// Surfaced by the agent-control `list-panes` verb (`rows`/`cols`).
+    public func currentWindowSize() -> (rows: UInt16, cols: UInt16)? {
+        exitLock.lock()
+        defer { exitLock.unlock() }
+        guard masterFD >= 0 else { return nil }
+        var ws = winsize()
+        guard ioctl(masterFD, TIOCGWINSZ, &ws) == 0 else { return nil }
+        return (rows: ws.ws_row, cols: ws.ws_col)
+    }
+
     // MARK: Redraw nudge
 
     /// Delivers `SIGWINCH` to the PTY's foreground process group so shells and full-screen

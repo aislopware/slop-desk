@@ -119,19 +119,51 @@ public func readParams(
     return params
 }
 
-/// Builds the params dict for the `write` verb.
-public func writeParams(paneId: String, text: String) -> [String: Any] {
-    ["paneId": paneId, "text": text]
+/// Builds the params dict for the `write` verb. `text` is sent first, then each named-key token
+/// in `keys` (tmux `send-keys` vocabulary — `C-c`, `Enter`, `Up`, … — resolved host-side; an
+/// unknown token errors the whole request). At least one of the two must be non-empty.
+public func writeParams(paneId: String, text: String? = nil, keys: [String] = []) -> [String: Any] {
+    var params: [String: Any] = ["paneId": paneId]
+    if let text { params["text"] = text }
+    if !keys.isEmpty { params["keys"] = keys }
+    return params
 }
 
 /// Builds the params dict for the `run` verb (text + implicit Enter sent as one atomic write).
-public func runParams(paneId: String, cmd: String) -> [String: Any] {
-    ["paneId": paneId, "text": cmd]
+/// With `wait: true` the host blocks until the command's OSC-133 block closes and answers
+/// `{matched, exitCode?, durationMs?, output, blockIndex}` (`timeoutMs` bounds the block-wait;
+/// `ansiStrip: false` keeps escapes in the returned output).
+public func runParams(
+    paneId: String,
+    cmd: String,
+    wait: Bool = false,
+    timeoutMs: Double = 30000,
+    ansiStrip: Bool = true,
+) -> [String: Any] {
+    var params: [String: Any] = ["paneId": paneId, "text": cmd]
+    if wait {
+        params["wait"] = true
+        params["timeoutMs"] = timeoutMs
+        params["ansiStrip"] = ansiStrip
+    }
+    return params
 }
 
-/// Builds the params dict for the `wait` verb.
+/// Builds the params dict for the `wait` verb (output-regex arm).
 public func waitParams(paneId: String, until: String, timeoutMs: Double = 30000) -> [String: Any] {
     ["paneId": paneId, "until": until, "timeoutMs": timeoutMs]
+}
+
+/// Builds the params dict for the `wait` verb's AGENT-STATE arm: block until the pane's
+/// supervision state is in `states` (comma-set of `idle`/`working`/`done`/`blocked`).
+public func waitStateParams(paneId: String, states: String, timeoutMs: Double = 30000) -> [String: Any] {
+    ["paneId": paneId, "state": states, "timeoutMs": timeoutMs]
+}
+
+/// Builds the params dict for the `last-output` verb: the last `n` closed OSC-133 command
+/// blocks (command + output + exit code), newest last.
+public func lastOutputParams(paneId: String, n: Int = 1, ansiStrip: Bool = true) -> [String: Any] {
+    ["paneId": paneId, "n": n, "ansiStrip": ansiStrip]
 }
 
 /// Builds the params dict for the `spawn` verb.

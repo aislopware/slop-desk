@@ -103,6 +103,11 @@ public struct ClaudePaneDetector: Sendable {
     /// The current rolled-up status (diagnostics / the live wiring's per-pane rollup).
     public var status: ClaudeStatus { machine.status }
 
+    /// The machine's short human label (blocking question / last assistant line), `nil` when empty.
+    /// Surfaced by the ctl `list-panes` verb as `stateMessage` so an orchestrator can read WHY a
+    /// pane is blocked without scraping scrollback.
+    public var statusLabel: String? { machine.displayLabel }
+
     // MARK: - Inputs (all fold through the ONE machine)
 
     /// Fold one foreground-process sample at `now`. Emits type-26 on a basename edge (display hint) and

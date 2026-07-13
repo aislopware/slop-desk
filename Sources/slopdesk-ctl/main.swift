@@ -7,9 +7,10 @@ import SlopDeskCtlCore
 // Usage (subcommands map to protocol verbs):
 //   slopdesk-ctl [--socket PATH] list-panes [--json]
 //   slopdesk-ctl [--socket PATH] read <paneId> [--ansi] [--full] [--lines N]
-//   slopdesk-ctl [--socket PATH] write <paneId> --text "..."
-//   slopdesk-ctl [--socket PATH] run <paneId> --cmd "..."
-//   slopdesk-ctl [--socket PATH] wait <paneId> --until "<regex>" [--timeout-ms N]
+//   slopdesk-ctl [--socket PATH] last-output <paneId> [--n N] [--ansi] [--json]
+//   slopdesk-ctl [--socket PATH] write <paneId> [--text "..."] [--key K[,K...]]
+//   slopdesk-ctl [--socket PATH] run <paneId> --cmd "..." [--wait] [--timeout-ms N] [--json]
+//   slopdesk-ctl [--socket PATH] wait <paneId> (--until "<regex>" | --state S) [--timeout-ms N]
 //   slopdesk-ctl [--socket PATH] spawn [--cmd "..."] [--cwd "..."] [--env K=V] [--rows N] [--cols N]
 //   slopdesk-ctl [--socket PATH] kill <paneId>
 //   slopdesk-ctl [--socket PATH] subscribe <paneId> [--ansi]
@@ -54,15 +55,30 @@ func printUsage() {
           split on hard newlines, partial trailing line dropped) so a regex is robust to
           read-chunk boundaries.  Combine with --lines N for the last N logical lines.
 
-      write <paneId> --text "..."
-          Send raw text bytes to the pane's PTY master fd (no Enter appended).
+      last-output <paneId> [--n N] [--ansi] [--json]
+          The last N finished commands as OSC-133 blocks: command line, output, exit code,
+          duration — no prompt scraping.  Default N=1.  A still-running command is noted.
+          --ansi keeps escapes in output.  --json emits the raw NDJSON response.
+          Requires shell integration marks (SLOPDESK_BLOCKS on, default).
 
-      run <paneId> --cmd "..."
+      write <paneId> [--text "..."] [--key K[,K...]]
+          Send raw text bytes and/or named keys to the pane's PTY (no implicit Enter).
+          --key takes tmux send-keys names, comma-separated or repeated:
+            Enter Tab Space Esc Backspace Delete Up Down Left Right Home End
+            PageUp PageDown F1..F12 C-<x> (Ctrl, e.g. C-c) M-<x> (Alt/Meta)
+          Text is sent before keys: --text "ls" --key Enter runs ls.
+
+      run <paneId> --cmd "..." [--wait] [--timeout-ms N] [--ansi] [--json]
           Send text + Enter to the pane (execute a shell command).
+          --wait blocks until the command's OSC-133 block closes, prints its output, and
+          exits with the COMMAND's exit code (timeout → exit 124, "timeout" on stderr).
+          A status line "exit <code> (<duration>ms)" goes to stderr.
 
-      wait <paneId> --until "<regex>" [--timeout-ms N]
-          Block until pane output matches <regex> (ANSI-stripped).
-          Prints "matched (Nms)" and exits 0 on match.
+      wait <paneId> (--until "<regex>" | --state S) [--timeout-ms N]
+          Block until pane output matches <regex> (ANSI-stripped), or — with --state —
+          until the pane's agent state is in S (comma-set of idle|working|done|blocked,
+          e.g. --state done,blocked).
+          Prints "matched (Nms)" (regex) / the matched state and exits 0.
           Prints "timeout after Nms" to stderr and exits 1 on timeout.
           Default timeout: 30000ms.
 
@@ -242,7 +258,10 @@ func cmdListPanes(socketPath: String, rest: [String]) {
     func pad(_ s: String, _ width: Int) -> String {
         s.count >= width ? s : s + String(repeating: " ", count: width - s.count)
     }
-    stdout("\(pad("PANE-ID", 36))  \(pad("PID", 6))  \(pad("STATUS", 6))  \(pad("AGENT", 8))  TITLE\n")
+    stdout(
+        "\(pad("PANE-ID", 36))  \(pad("PID", 6))  \(pad("STATUS", 6))  \(pad("AGENT", 8))  "
+            + "\(pad("EXIT", 4))  \(pad("CMD", 10))  \(pad("CWD", 28))  TITLE\n",
+    )
     for pane in panes {
         let paneId = pane["paneId"] as? String ?? "-"
         let pid = pane["pid"] as? Int ?? -1
@@ -251,7 +270,81 @@ func cmdListPanes(socketPath: String, rest: [String]) {
         let status = isAlive ? "alive" : "dead"
         // P1 supervision state (idle/working/done/blocked). Older hosts omit it → "-".
         let agent = pane["state"] as? String ?? "-"
-        stdout("\(pad(paneId, 36))  \(pad(String(pid), 6))  \(pad(status, 6))  \(pad(agent, 8))  \(title)\n")
+        let exit = (pane["lastExitCode"] as? Int).map(String.init) ?? "-"
+        let command = pane["command"] as? String ?? "-"
+        // Home-shorten the cwd like a prompt does; a pane with no observed cwd shows "-".
+        let cwd: String = {
+            guard let raw = pane["cwd"] as? String else { return "-" }
+            let home = ProcessInfo.processInfo.environment["HOME"] ?? ""
+            if !home.isEmpty, raw.hasPrefix(home) { return "~" + raw.dropFirst(home.count) }
+            return raw
+        }()
+        stdout(
+            "\(pad(paneId, 36))  \(pad(String(pid), 6))  \(pad(status, 6))  \(pad(agent, 8))  "
+                + "\(pad(exit, 4))  \(pad(command.isEmpty ? "-" : command, 10))  \(pad(cwd, 28))  \(title)\n",
+        )
+        // A blocked pane's question rides list-panes directly (no scrollback scrape needed).
+        if let message = pane["stateMessage"] as? String, !message.isEmpty {
+            stdout("\(pad("", 36))  └ \(message)\n")
+        }
+    }
+}
+
+func cmdLastOutput(socketPath: String, rest: [String]) {
+    guard !rest.isEmpty else { die("last-output requires <paneId>") }
+    let paneId = rest[0]
+    var n = 1
+    var keepAnsi = false
+    var jsonMode = false
+    var idx = 1
+    while idx < rest.count {
+        switch rest[idx] {
+        case "--n":
+            guard idx + 1 < rest.count else { die("--n requires a value") }
+            idx += 1
+            guard let value = Int(rest[idx]), value > 0 else { die("--n requires a positive integer") }
+            n = value
+        case "--ansi":
+            keepAnsi = true
+        case "--json":
+            jsonMode = true
+        default:
+            die("unknown flag for last-output: \(rest[idx])")
+        }
+        idx += 1
+    }
+    let obj = callVerb(
+        socketPath: socketPath, method: "last-output",
+        params: lastOutputParams(paneId: paneId, n: n, ansiStrip: !keepAnsi),
+    )
+    requireOK(obj, context: "last-output")
+    if jsonMode {
+        guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]),
+              let line = String(bytes: data, encoding: .utf8)
+        else { die("failed to re-encode JSON response") }
+        stdout(line + "\n")
+        return
+    }
+    let result = obj["result"] as? [String: Any] ?? [:]
+    let blocks = result["blocks"] as? [[String: Any]] ?? []
+    if blocks.isEmpty {
+        stdout("(no finished commands)\n")
+    }
+    for block in blocks {
+        let command = block["command"] as? String ?? ""
+        let exit = (block["exitCode"] as? Int).map { "exit \($0)" } ?? "no exit code"
+        let duration = (block["durationMs"] as? Int).map { ", \($0)ms" } ?? ""
+        let complete = (block["complete"] as? Bool) ?? true
+        let marker = complete ? "" : " [interrupted]"
+        stdout("$ \(command)  (\(exit)\(duration))\(marker)\n")
+        let output = block["output"] as? String ?? ""
+        stdout(output)
+        if !output.hasSuffix("\n") { stdout("\n") }
+    }
+    if let running = result["running"] as? [String: Any] {
+        let command = running["command"] as? String ?? ""
+        let outputLen = running["outputLen"] as? Int ?? 0
+        stdout("… running: $ \(command)  (\(outputLen) output bytes so far)\n")
     }
 }
 
@@ -314,18 +407,29 @@ func cmdWrite(socketPath: String, rest: [String]) {
     guard !rest.isEmpty else { die("write requires <paneId>") }
     let paneId = rest[0]
     var text: String?
+    var keys: [String] = []
     var idx = 1
     while idx < rest.count {
-        if rest[idx] == "--text", idx + 1 < rest.count {
+        switch rest[idx] {
+        case "--text":
+            guard idx + 1 < rest.count else { die("--text requires a value") }
             idx += 1
             text = rest[idx]
-        } else {
+        case "--key":
+            guard idx + 1 < rest.count else { die("--key requires a value") }
+            idx += 1
+            // Comma-separated and/or repeated: --key C-c,Enter == --key C-c --key Enter.
+            keys.append(contentsOf: rest[idx].split(separator: ",").map(String.init))
+        default:
             die("unknown flag for write: \(rest[idx])")
         }
         idx += 1
     }
-    guard let textValue = text else { die("write requires --text \"...\"") }
-    let obj = callVerb(socketPath: socketPath, method: "write", params: writeParams(paneId: paneId, text: textValue))
+    guard text != nil || !keys.isEmpty else { die("write requires --text \"...\" and/or --key K") }
+    let obj = callVerb(
+        socketPath: socketPath, method: "write",
+        params: writeParams(paneId: paneId, text: text, keys: keys),
+    )
     requireOK(obj, context: "write")
 }
 
@@ -333,25 +437,72 @@ func cmdRun(socketPath: String, rest: [String]) {
     guard !rest.isEmpty else { die("run requires <paneId>") }
     let paneId = rest[0]
     var cmd: String?
+    var wait = false
+    var timeoutMs: Double = 30000
+    var keepAnsi = false
+    var jsonMode = false
     var idx = 1
     while idx < rest.count {
-        if rest[idx] == "--cmd", idx + 1 < rest.count {
+        switch rest[idx] {
+        case "--cmd":
+            guard idx + 1 < rest.count else { die("--cmd requires a value") }
             idx += 1
             cmd = rest[idx]
-        } else {
+        case "--wait":
+            wait = true
+        case "--timeout-ms":
+            guard idx + 1 < rest.count else { die("--timeout-ms requires a value") }
+            idx += 1
+            guard let ms = Double(rest[idx]), ms > 0 else { die("--timeout-ms requires a positive number") }
+            timeoutMs = ms
+        case "--ansi":
+            keepAnsi = true
+        case "--json":
+            jsonMode = true
+        default:
             die("unknown flag for run: \(rest[idx])")
         }
         idx += 1
     }
     guard let cmdValue = cmd else { die("run requires --cmd \"...\"") }
-    let obj = callVerb(socketPath: socketPath, method: "run", params: runParams(paneId: paneId, cmd: cmdValue))
+    let obj = callVerb(
+        socketPath: socketPath, method: "run",
+        params: runParams(paneId: paneId, cmd: cmdValue, wait: wait, timeoutMs: timeoutMs, ansiStrip: !keepAnsi),
+    )
     requireOK(obj, context: "run")
+    guard wait else { return }
+
+    if jsonMode {
+        guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]),
+              let line = String(bytes: data, encoding: .utf8)
+        else { die("failed to re-encode JSON response") }
+        stdout(line + "\n")
+        return
+    }
+    let result = obj["result"] as? [String: Any] ?? [:]
+    let matched = (result["matched"] as? Bool) ?? false
+    guard matched else {
+        FileHandle.standardError.write(Data("\(programName): timeout after \(Int(timeoutMs))ms\n".utf8))
+        exit(124) // timeout(1) convention, distinct from a command's own exit 1
+    }
+    let output = result["output"] as? String ?? ""
+    stdout(output)
+    if !output.isEmpty, !output.hasSuffix("\n") { stdout("\n") }
+    let exitCode = result["exitCode"] as? Int
+    let duration = (result["durationMs"] as? Int).map { " (\($0)ms)" } ?? ""
+    FileHandle.standardError.write(
+        Data("\(programName): exit \(exitCode.map(String.init) ?? "?")\(duration)\n".utf8),
+    )
+    // Propagate the COMMAND's exit code (ssh-style) so `slopdesk-ctl run --wait` composes into
+    // scripts. An unknown/interrupted exit maps to 1; codes clamp into the shell's 0–255 range.
+    exit(Int32(min(max(exitCode ?? 1, 0), 255)))
 }
 
 func cmdWait(socketPath: String, rest: [String]) {
     guard !rest.isEmpty else { die("wait requires <paneId>") }
     let paneId = rest[0]
     var until: String?
+    var states: String?
     var timeoutMs: Double = 30000
     var idx = 1
     while idx < rest.count {
@@ -360,6 +511,10 @@ func cmdWait(socketPath: String, rest: [String]) {
             guard idx + 1 < rest.count else { die("--until requires a value") }
             idx += 1
             until = rest[idx]
+        case "--state":
+            guard idx + 1 < rest.count else { die("--state requires a value") }
+            idx += 1
+            states = rest[idx]
         case "--timeout-ms":
             guard idx + 1 < rest.count else { die("--timeout-ms requires a value") }
             idx += 1
@@ -370,20 +525,30 @@ func cmdWait(socketPath: String, rest: [String]) {
         }
         idx += 1
     }
-    guard let pattern = until else { die("wait requires --until \"<regex>\"") }
+    let params: [String: Any]
+    switch (until, states) {
+    case let (pattern?, nil):
+        params = waitParams(paneId: paneId, until: pattern, timeoutMs: timeoutMs)
+    case let (nil, stateSet?):
+        params = waitStateParams(paneId: paneId, states: stateSet, timeoutMs: timeoutMs)
+    case (nil, nil):
+        die("wait requires --until \"<regex>\" or --state S")
+    case (.some, .some):
+        die("wait takes --until OR --state, not both")
+    }
 
-    let obj = callVerb(
-        socketPath: socketPath,
-        method: "wait",
-        params: waitParams(paneId: paneId, until: pattern, timeoutMs: timeoutMs),
-    )
+    let obj = callVerb(socketPath: socketPath, method: "wait", params: params)
     requireOK(obj, context: "wait")
 
     let result = obj["result"] as? [String: Any] ?? [:]
     let matched = (result["matched"] as? Bool) ?? false
     let elapsed = result["elapsed"] as? Double ?? 0
     if matched {
-        stdout(String(format: "matched (%.0fms)\n", elapsed))
+        if let state = result["state"] as? String {
+            stdout(String(format: "\(state) (%.0fms)\n", elapsed))
+        } else {
+            stdout(String(format: "matched (%.0fms)\n", elapsed))
+        }
         exit(0)
     } else {
         FileHandle.standardError.write(Data("\(programName): timeout after \(Int(elapsed))ms\n".utf8))
@@ -663,6 +828,8 @@ case "list-panes":
     cmdListPanes(socketPath: socketPath, rest: global.rest)
 case "read":
     cmdRead(socketPath: socketPath, rest: global.rest)
+case "last-output":
+    cmdLastOutput(socketPath: socketPath, rest: global.rest)
 case "write":
     cmdWrite(socketPath: socketPath, rest: global.rest)
 case "run":

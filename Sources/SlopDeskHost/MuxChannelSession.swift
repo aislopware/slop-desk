@@ -178,6 +178,29 @@ final class MuxChannelSession: @unchecked Sendable {
     /// after the PTY read loop has drained to EOF (so all output observers fire before this),
     /// from the exit task. Guarded by `observersLock`.
     private var closeObservers: [UUID: @Sendable () -> Void] = [:]
+    /// Block-observer closures registered by the agent-control `run --wait` verb. Called from
+    /// ``feedBlocks(_:)`` (the PTY read-loop thread) with each type-28 block-metadata emission,
+    /// AFTER the tracker has retained the block's output (so a completion observer can fetch the
+    /// body immediately). Guarded by `observersLock`.
+    private var blockObservers: [UUID: @Sendable (CommandBlockUpdate) -> Void] = [:]
+
+    /// One type-28 block-metadata emission, decoded for block observers. `complete` is true only
+    /// for a `D`-closed block; a closed-but-interrupted block arrives `complete == false` with a
+    /// non-nil `durationMS`, and a RUNNING open-block update carries `durationMS == nil`.
+    struct CommandBlockUpdate: Sendable {
+        var index: UInt32
+        var commandText: String
+        var exitCode: Int32?
+        var durationMS: UInt32?
+        var complete: Bool
+    }
+
+    /// The freshest OSC-133-D exit code this session has observed (`133;D;<code>` from the
+    /// sniffer's `.commandStatus(.idle(exitCode:))`), latched at the sniff point like
+    /// `lastProgress`. Guarded by `commandExitLock` (written on the read-loop thread; read by
+    /// the ctl `list-panes` handler threads). `nil` until the first code-carrying `D`.
+    private let commandExitLock = NSLock()
+    private var lastExitTruth: Int32?
 
     /// A dedicated serial queue for the host metadata RPC's BLOCKING probe work (git/lsof/proc/
     /// FileManager). Kept OFF the serial control loop so a slow `lsof` / `git` can never stall this
@@ -1353,6 +1376,14 @@ final class MuxChannelSession: @unchecked Sendable {
                 _currentTitle = t
                 titleLock.unlock()
             }
+            // Agent-control: latch the freshest `133;D;<code>` exit so `list-panes` can answer
+            // `lastExitCode` even with blocks tracking off. A code-less `D` keeps the prior latch
+            // (the shim always reports `$?`; a bare `D` carries no new truth to replace it with).
+            if case let .commandStatus(.idle(exitCode, _)) = msg, let exitCode {
+                commandExitLock.lock()
+                lastExitTruth = exitCode
+                commandExitLock.unlock()
+            }
         }
         // Reattach truth: latch the pane's current OSC 9;4 progress at the sniff point (NOT at the
         // control drain — sniffed control rides the out-FIFO and a detached window's messages only
@@ -1597,6 +1628,77 @@ final class MuxChannelSession: @unchecked Sendable {
         return agentDetector.status
     }
 
+    /// The detector's status + human label in ONE lock acquisition (the `list-panes` verb reads
+    /// both; two separate reads could interleave a transition and pair a stale label with a fresh
+    /// state).
+    var agentStatusAndMessageForControl: (status: ClaudeStatus, message: String?) {
+        agentDetectLock.lock()
+        defer { agentDetectLock.unlock() }
+        return (agentDetector.status, agentDetector.statusLabel)
+    }
+
+    /// The freshest host-observed cwd truth (OSC-7 sniff / prompt-edge probe), `nil` until observed.
+    var cwdForControl: String? {
+        projectKeyLock.lock()
+        defer { projectKeyLock.unlock() }
+        return lastCwdTruth
+    }
+
+    /// The freshest OSC-133-D exit code, `nil` until the first code-carrying `D`.
+    var lastExitCodeForControl: Int32? {
+        commandExitLock.lock()
+        defer { commandExitLock.unlock() }
+        return lastExitTruth
+    }
+
+    // MARK: - Agent-control block surface (the `last-output` / `run --wait` verbs)
+
+    /// The last `limit` closed blocks with retained output, or `nil` when blocks tracking is
+    /// disabled (`SLOPDESK_BLOCKS=0`) — the caller distinguishes "no blocks yet" (`[]`) from
+    /// "feature off" (`nil`).
+    func recentBlocksForControl(limit: Int) -> [CommandBlockTracker.ControlBlock]? {
+        blocksLock.lock()
+        defer { blocksLock.unlock() }
+        return blockTracker?.recentBlocksForControl(limit: limit)
+    }
+
+    /// The still-RUNNING block snapshot (saw `C`, no `D`), `nil` when none / blocks disabled.
+    func openBlockForControl() -> CommandBlockSegmenter.CommandBlock? {
+        blocksLock.lock()
+        defer { blocksLock.unlock() }
+        return blockTracker?.openBlockForControl()
+    }
+
+    /// The `run --wait` baseline: the block index the next shell command will close under,
+    /// `nil` when blocks tracking is disabled.
+    func expectedNextBlockIndexForControl() -> UInt32? {
+        blocksLock.lock()
+        defer { blocksLock.unlock() }
+        return blockTracker?.expectedNextCommandIndex
+    }
+
+    /// The retained output bytes for a closed block, `nil` when evicted / unknown / disabled.
+    func blockOutputBytesForControl(index: UInt32) -> [UInt8]? {
+        blocksLock.lock()
+        defer { blocksLock.unlock() }
+        return blockTracker?.outputBytes(index: index)
+    }
+
+    /// Registers a block observer for the `run --wait` verb (see ``CommandBlockUpdate``).
+    /// Replaces any prior observer for the same `id` (idempotent).
+    func registerBlockObserver(id: UUID, _ observer: @escaping @Sendable (CommandBlockUpdate) -> Void) {
+        observersLock.lock()
+        blockObservers[id] = observer
+        observersLock.unlock()
+    }
+
+    /// Removes the block observer registered under `id`. Idempotent.
+    func removeBlockObserver(id: UUID) {
+        observersLock.lock()
+        blockObservers[id] = nil
+        observersLock.unlock()
+    }
+
     /// Registers an output observer for the `wait` verb. The closure is called from the PTY
     /// read-loop thread with each raw output chunk immediately after sniffer processing. The
     /// observer must be non-blocking and short-running (it runs on the read-loop thread).
@@ -1657,6 +1759,30 @@ final class MuxChannelSession: @unchecked Sendable {
         blocksLock.unlock()
         latchProgress(messages) // auto-progress is a second type-32 source — same reattach truth
         if !messages.isEmpty { enqueueControl(messages) }
+        notifyBlockObservers(messages)
+    }
+
+    /// Fans each type-28 block-metadata emission in `messages` to the registered block observers
+    /// (the ctl `run --wait` verb). Called AFTER the tracker ingest, so a completed block's output
+    /// is already retained when its observer fires. Snapshot under `observersLock`, call outside.
+    private func notifyBlockObservers(_ messages: [WireMessage]) {
+        guard !messages.isEmpty else { return }
+        observersLock.lock()
+        let observers = blockObservers
+        observersLock.unlock()
+        guard !observers.isEmpty else { return }
+        for message in messages {
+            guard case let .commandBlock(index, exitCode, durationMS, complete, _, commandText, _) = message
+            else { continue }
+            let update = CommandBlockUpdate(
+                index: index,
+                commandText: commandText,
+                exitCode: exitCode,
+                durationMS: durationMS,
+                complete: complete,
+            )
+            for (_, observer) in observers { observer(update) }
+        }
     }
 
     /// Host-authoritative By-Project key (type 34) — the change-edge derivation, split so the PTY
