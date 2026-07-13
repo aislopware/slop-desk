@@ -109,6 +109,78 @@ final class PeekReplyTests: XCTestCase {
         )
     }
 
+    // MARK: - PeekReplyTarget.queuePosition (pure "N of M" counter)
+
+    /// Two blocked panes, none yet answered: position 1 of 2.
+    func testQueuePositionStartsAtOneOfTotal() {
+        let a = PaneID(), b = PaneID()
+        let status: [PaneID: ClaudeStatus] = [a: .needsPermission, b: .needsPermission]
+        let result = PeekReplyTarget.queuePosition(
+            status: { status[$0] ?? .none }, panes: [a, b], excluding: [],
+        )
+        XCTAssertEqual(result?.position, 1)
+        XCTAssertEqual(result?.total, 2)
+    }
+
+    /// Answering one advances the position but keeps the total fixed (answered + remaining is stable).
+    func testQueuePositionAdvancesWithExcluding() {
+        let a = PaneID(), b = PaneID(), c = PaneID()
+        let status: [PaneID: ClaudeStatus] = [a: .needsPermission, b: .needsPermission, c: .done]
+        let result = PeekReplyTarget.queuePosition(
+            status: { status[$0] ?? .none }, panes: [a, b, c], excluding: [a],
+        )
+        XCTAssertEqual(result?.position, 2, "one answered ⇒ position 2")
+        XCTAssertEqual(result?.total, 3)
+    }
+
+    /// `.done` panes count toward the total exactly like `.needsPermission` — the SAME predicate
+    /// `AttentionJump.oldestPane` orders by, so the counter and the chain can never disagree.
+    func testQueuePositionCountsDonePanesToo() {
+        let a = PaneID(), b = PaneID()
+        let status: [PaneID: ClaudeStatus] = [a: .needsPermission, b: .done]
+        let result = PeekReplyTarget.queuePosition(
+            status: { status[$0] ?? .none }, panes: [a, b], excluding: [],
+        )
+        XCTAssertEqual(result?.total, 2)
+    }
+
+    /// `.idle`/`.working`/`.none` panes never inflate the total — only the attention predicate counts.
+    func testQueuePositionIgnoresNonAttentionStatuses() {
+        let a = PaneID(), b = PaneID(), c = PaneID()
+        let status: [PaneID: ClaudeStatus] = [a: .needsPermission, b: .working, c: .idle]
+        let result = PeekReplyTarget.queuePosition(
+            status: { status[$0] ?? .none }, panes: [a, b, c], excluding: [],
+        )
+        XCTAssertNil(result, "only ONE attention pane ⇒ total 1 ⇒ not a queue")
+    }
+
+    /// A queue of exactly one is `nil` — the calm static caption stays, not "1 of 1".
+    func testQueuePositionNilBelowTwo() {
+        let a = PaneID()
+        let status: [PaneID: ClaudeStatus] = [a: .needsPermission]
+        XCTAssertNil(
+            PeekReplyTarget.queuePosition(status: { status[$0] ?? .none }, panes: [a], excluding: []),
+        )
+        // Zero also nils.
+        XCTAssertNil(
+            PeekReplyTarget.queuePosition(
+                status: { _ in ClaudeStatus.none }, panes: [PaneID](), excluding: [],
+            ),
+        )
+    }
+
+    /// Excluding EVERY attention pane still counts them toward the total (they were answered, not erased)
+    /// — the position lands past the total only when the overlay is about to close (M of M answered).
+    func testQueuePositionAllAnsweredLandsAtTotal() {
+        let a = PaneID(), b = PaneID()
+        let status: [PaneID: ClaudeStatus] = [a: .needsPermission, b: .needsPermission]
+        let result = PeekReplyTarget.queuePosition(
+            status: { status[$0] ?? .none }, panes: [a, b], excluding: [a, b],
+        )
+        XCTAssertEqual(result?.position, 3, "both answered ⇒ position is answered+1, one past the total")
+        XCTAssertEqual(result?.total, 2)
+    }
+
     // MARK: - PeekReplyFormatter (pure formatting)
 
     /// A plain line gets a single trailing newline; whitespace around the whole field is trimmed.

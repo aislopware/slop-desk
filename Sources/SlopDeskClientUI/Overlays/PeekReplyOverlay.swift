@@ -18,6 +18,7 @@
 
 #if canImport(SwiftUI)
 import SlopDeskAgentDetect
+import SlopDeskInspector
 import SlopDeskWorkspaceCore
 import SwiftUI
 
@@ -35,6 +36,11 @@ struct PeekReplyOverlay: View {
     @State private var field = ""
     /// Pre-focuses the reply field on appear so typing (and the empty-field digit shortcut) reaches it.
     @FocusState private var replyFocused: Bool
+
+    /// Whether the pending-tool-call block is showing its full scrollable input instead of the
+    /// collapsed one-liner. Reset to `false` on every advance (``submit(target:)`` / the quick-answer digit
+    /// path) — a fresh target's card starts collapsed, never inheriting the previous pane's disclosure.
+    @State private var pendingToolExpanded = false
 
     private let recentMaxHeight: CGFloat = 132
 
@@ -61,6 +67,7 @@ struct PeekReplyOverlay: View {
             header(target: target, content: content)
             Divider()
             questionBlock(content)
+            pendingToolBlock(target: target)
             if !content.recent.isEmpty { recentBlock(content) }
             Divider()
             replyBar(target: target)
@@ -71,6 +78,13 @@ struct PeekReplyOverlay: View {
 
     private func header(target: PaneID, content: PeekContent) -> some View {
         let status = store.agentStatus(for: target)
+        let label = StatusPresentation.agentLabel(status)
+        // The todo-scent suffix: only while a `.live` inspector reports an `.inProgress`
+        // todo, so an idle / non-Claude / dead-feed pane's caption is byte-identical to today.
+        let scent = liveInspector(for: target).flatMap { vm in
+            vm.feedState == .live ? PendingToolSummary.scent(todos: vm.todos) : nil
+        }
+        let caption = scent.map { "\(label) · \($0)" } ?? label
         return HStack(spacing: 8) {
             if let symbol = StatusPresentation.agentSymbol(status) {
                 Image(systemName: symbol)
@@ -81,17 +95,44 @@ struct PeekReplyOverlay: View {
                     .font(.headline)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(StatusPresentation.agentLabel(status))
+                Text(caption)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    // Truncation order: the suffix puts activeForm LAST, so a tail
+                    // truncation eats the prose first, the "i/n" count second, the status label never.
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
             Spacer(minLength: 8)
-            Text("Peek & Reply")
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
+            // The queue position REPLACES the static caption once a real queue (total >= 2)
+            // exists — a hard cut on the queue edge, never both at once.
+            if let position = queuePosition {
+                Text("\(position.position) of \(position.total)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                    .layoutPriority(1)
+                    .lineLimit(1)
+            } else {
+                Text("Peek & Reply")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
+    }
+
+    /// The "N of M" triage-queue position, or `nil` for a single-target session (a queue of
+    /// one is not a queue — the calm static "Peek & Reply" caption stays). Derives from the SAME
+    /// exclusion set + attention predicate the advance chain itself uses
+    /// (``PeekReplyTarget/queuePosition(status:panes:excluding:)``), so the counter and the chain can
+    /// never disagree.
+    private var queuePosition: (position: Int, total: Int)? {
+        PeekReplyTarget.queuePosition(
+            status: { store.agentStatus(for: $0) },
+            panes: store.tree.allPaneIDs(),
+            excluding: coordinator.peekReplyExcluding,
+        )
     }
 
     // MARK: - Question (the host type-27 blocking prompt, or a generic note)
@@ -104,6 +145,76 @@ struct PeekReplyOverlay: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
+    }
+
+    // MARK: - Pending tool call (the exact call the question above is asking about)
+
+    /// The target pane's live inspector (``LivePaneSession/inspector``), or `nil` for a non-terminal /
+    /// unmaterialized pane — every inspector-fed addition here gates on this.
+    private func liveInspector(for target: PaneID) -> InspectorViewModel? {
+        (store.handle(for: target) as? LivePaneSession)?.inspector
+    }
+
+    /// The single newest `.pending` ``ToolCard`` block, or nothing at all — zero layout residue when
+    /// absent. Gated on ``InspectorViewModel/feedState`` being `.live`: a STALE feed's eternally-pending
+    /// card must not masquerade as the live ask (fully-formed-or-absent, never greyed as "the past").
+    private func pendingToolBlock(target: PaneID) -> some View {
+        Group {
+            if let vm = liveInspector(for: target), vm.feedState == .live,
+               let card = vm.toolCards.last(where: { $0.status == .pending })
+            {
+                pendingToolRow(card)
+            }
+        }
+    }
+
+    /// The collapsed one-line `"<name>: <summary>"` row (via the shared ``PendingToolSummary`` — the
+    /// SAME formatter the header scent + the sidebar tooltip use), rendered as a plain click-to-expand
+    /// button. Expanded swaps it — hard cut, no chevron, no animation — for a scroll capped at
+    /// ``recentMaxHeight`` showing the full input, selectable. No background plate, border, icon, or
+    /// status colour: the header's red triangle already says "blocked".
+    @ViewBuilder
+    private func pendingToolRow(_ card: ToolCard) -> some View {
+        if pendingToolExpanded {
+            ScrollView {
+                Text(card.input.displayString)
+                    .font(.callout.monospaced())
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: recentMaxHeight)
+            .contentShape(Rectangle())
+            .onTapGesture { pendingToolExpanded = false }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 12)
+        } else {
+            let line = PendingToolSummary.line(name: card.name, input: card.input)
+            Button {
+                pendingToolExpanded = true
+            } label: {
+                Text(attributedLine(line))
+                    .font(.callout.monospaced())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .help("Show full input")
+            .padding(.horizontal, 20)
+            .padding(.bottom, 12)
+        }
+    }
+
+    /// Two-tone rendering of a ``PendingToolLine``: the tool name `.secondary` (a label), the summarized
+    /// input `.primary` (the thing to read) — one `AttributedString` rather than `Text`-concatenation
+    /// (deprecated in favour of exactly this on newer SDKs).
+    private func attributedLine(_ line: PendingToolLine) -> AttributedString {
+        var name = AttributedString(line.name + ": ")
+        name.foregroundColor = .secondary
+        var summary = AttributedString(line.summary)
+        summary.foregroundColor = .primary
+        return name + summary
     }
 
     // MARK: - Recent output (the cheap block-mirror tail)
@@ -183,11 +294,12 @@ struct PeekReplyOverlay: View {
 
     /// Submit the typed reply (the `↩` / send-button path): format via the pure ``PeekReplyFormatter`` (a
     /// leading `!` strips to a shell line; empty / whitespace ⇒ nil ⇒ no-op) then deliver + advance. The field
-    /// is cleared for the next pane.
+    /// is cleared, and the pending-tool disclosure collapses, for the next pane.
     private func submit(target: PaneID) {
         guard let text = PeekReplyFormatter.reply(for: field) else { return }
         coordinator.deliverPeekReply(text, to: target)
         field = ""
+        pendingToolExpanded = false
     }
 
     /// Intercept a bare 1–9 quick-answer digit while the field is empty (the "pick option N" shortcut). Any
@@ -202,6 +314,7 @@ struct PeekReplyOverlay: View {
         else { return .ignored }
         coordinator.deliverPeekReply(text, to: target)
         field = ""
+        pendingToolExpanded = false
         return .handled
     }
 }

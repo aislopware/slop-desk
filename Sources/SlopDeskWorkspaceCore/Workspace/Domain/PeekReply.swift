@@ -95,6 +95,33 @@ public enum PeekReplyTarget {
             status: status,
         )
     }
+
+    /// The "N of M" triage-queue position for the header counter: `answered` is how many
+    /// panes the overlay has already advanced past this session (``excluding``'s count); `remaining` is
+    /// how many still-untouched panes carry the SAME attention predicate ``AttentionJump/oldestPane(in:status:)``
+    /// orders by (`.needsPermission` or `.done`) — so the counter and the chain it counts can never
+    /// disagree. `nil` when the total is under 2: a queue of one is not a queue, and the calm static
+    /// "Peek & Reply" caption stays instead.
+    public static func queuePosition(
+        status: (PaneID) -> ClaudeStatus,
+        panes: some Sequence<PaneID>,
+        excluding: Set<PaneID>,
+    ) -> (position: Int, total: Int)? {
+        let answered = excluding.count
+        var remaining = 0
+        for id in panes where !excluding.contains(id) {
+            switch status(id) {
+            case .needsPermission,
+                 .done: remaining += 1
+            case .none,
+                 .idle,
+                 .working: continue
+            }
+        }
+        let total = answered + remaining
+        guard total >= 2 else { return nil }
+        return (position: answered + 1, total: total)
+    }
 }
 
 // MARK: - PeekReplyFormatter (the pure "what bytes does this reply send" formatting)
