@@ -1,13 +1,30 @@
-// ConnectionClusterTests — pins the connection cluster's bitrate formatting (the stream-weight
-// complication), the network-health classifier behind the monogram plate's colour, and the model's
-// kbps dirty-guard semantics (a ZERO is a real idle reading, kept — unlike fps, where zero is
-// spurious and dropped).
+// ConnectionClusterTests — pins the connection cluster's visible-metric contract (the ping ALONE —
+// fps/kbps are tooltip detail, since appending them truncated the hostname at sidebar widths), the
+// bitrate formatting, the network-health classifier behind the metric colour, and the model's kbps
+// dirty-guard semantics (a ZERO is a real idle reading, kept — unlike fps, where zero is spurious
+// and dropped).
 
 import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
 final class ConnectionClusterTests: XCTestCase {
+    func testVisibleMetricIsThePingAlone() {
+        // The row's one metric: rounded ping, nothing appended; nil until the first sample.
+        XCTAssertEqual(ConnectionCluster.pingLabel(11.4), "11 ms")
+        XCTAssertEqual(ConnectionCluster.pingLabel(11.5), "12 ms")
+        XCTAssertNil(ConnectionCluster.pingLabel(nil))
+    }
+
+    func testStreamNumbersLiveInTheTooltipDetail() {
+        XCTAssertEqual(
+            ConnectionCluster.tooltipDetail(fps: 60, kbps: 12400), " · 60 fps · 12.4 Mbps",
+        )
+        XCTAssertEqual(ConnectionCluster.tooltipDetail(fps: nil, kbps: 850), " · 850 kbps")
+        XCTAssertEqual(ConnectionCluster.tooltipDetail(fps: 30, kbps: nil), " · 30 fps")
+        XCTAssertEqual(ConnectionCluster.tooltipDetail(fps: nil, kbps: nil), "", "no detail, no separator")
+    }
+
     func testBitrateLabelMegabitsWithOneDecimal() {
         XCTAssertEqual(ConnectionCluster.bitrateLabel(kbps: 12400), "12.4 Mbps")
         XCTAssertEqual(ConnectionCluster.bitrateLabel(kbps: 1000), "1.0 Mbps")

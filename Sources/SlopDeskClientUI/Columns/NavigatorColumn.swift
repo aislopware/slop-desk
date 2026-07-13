@@ -238,8 +238,9 @@ struct NavigatorColumn: View {
                     .fill(Slate.Line.subtle)
                     .frame(maxWidth: .infinity)
                     .frame(height: Slate.Metric.hairline)
-                // The telemetry (ping / fps / kbps, ~1 Hz) is read inside `SidebarConnectionFooter` so
-                // its per-second ticks re-render that leaf, never this sidebar body.
+                // The telemetry (~1 Hz; ping visible, fps/kbps tooltip-only) is read inside
+                // `SidebarConnectionFooter` so its per-second ticks re-render that leaf, never this
+                // sidebar body.
                 SidebarConnectionFooter(store: store, connection: connection, onConnect: onConnect)
                     .padding(.horizontal, Slate.Metric.space2)
                     .padding(.vertical, Slate.Metric.space2)
@@ -548,8 +549,9 @@ private struct IOSSidebarLiveRow: View {
 }
 
 /// The sidebar's connection footer, split into its own leaf: the ``ConnectionTelemetry``
-/// reads (ping / fps / kbps) tick at ~1 Hz off the live session models — read HERE so each tick re-renders
-/// this footer only, never the sidebar body (which would re-derive the whole rail every second).
+/// reads tick at ~1 Hz off the live session models — read HERE so each tick re-renders this footer
+/// only, never the sidebar body (which would re-derive the whole rail every second). Only the ping
+/// renders in the row; fps/kbps ride the tooltip (`ConnectionCluster` header note).
 private struct SidebarConnectionFooter: View {
     let store: WorkspaceStore
     let connection: AppConnection

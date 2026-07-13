@@ -7,12 +7,16 @@
 //   full short hostname                 instrument tertiary
 //   (secondary; err when offline)       (warn/err when slow/bad)
 //
+// The VISIBLE metric is the ping ALONE. Appending fps/kbps ("11 ms · 60 fps · 12.4 Mbps") made the
+// trailing text long enough to truncate the hostname out of its own row at sidebar widths — the
+// identity lost to telemetry. Ping is the one number that reads as connection HEALTH; the stream
+// numbers are on-demand detail and live in the TOOLTIP with the raw target.
+//
 // No monogram plate — the hostname already *is* the host, so a plate would be redundant. No health
 // LED either — the attention dot owns the "dot" language elsewhere in the chrome, and a second
 // always-on dot here would be noise. State lives in the TEXT instead: the metric digits carry the
 // health colour (warn/err when degrading), the trailing status word covers offline, and the hostname
-// itself dims to tertiary when not connected. Full target (raw IP etc.) still in the tooltip.
-// Tap → Connect editor; give-up → Retry.
+// itself dims to tertiary when not connected. Tap → Connect editor; give-up → Retry.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -22,6 +26,7 @@ import SwiftUI
 struct ConnectionCluster: View {
     let connection: AppConnection
     var pingMS: Double?
+    /// Stream cadence/bitrate of the active video pane — TOOLTIP-ONLY detail (see the header note).
     var fps: Int?
     var kbps: Int?
     var onConnect: () -> Void = {}
@@ -36,16 +41,22 @@ struct ConnectionCluster: View {
     private var displayHost: String { connection.hostDisplayName ?? host }
     private var isConnected: Bool { if case .connected = status { true } else { false } }
 
-    private var metrics: [String] {
-        var out: [String] = []
-        if let pingMS { out.append("\(Int(pingMS.rounded())) ms") }
-        if let fps { out.append("\(fps) fps") }
-        if let kbps { out.append(Self.bitrateLabel(kbps: kbps)) }
-        return out
+    /// The one visible metric: the ping. `nil` until the first sample.
+    static func pingLabel(_ pingMS: Double?) -> String? {
+        pingMS.map { "\(Int($0.rounded())) ms" }
     }
 
     static func bitrateLabel(kbps: Int) -> String {
         kbps >= 1000 ? String(format: "%.1f Mbps", Double(kbps) / 1000) : "\(kbps) kbps"
+    }
+
+    /// The stream numbers as tooltip detail (" · 60 fps · 12.4 Mbps"), or empty when neither exists.
+    /// Pure + static so the "fps/kbps never render in the row" contract is pinned headlessly.
+    static func tooltipDetail(fps: Int?, kbps: Int?) -> String {
+        var extras: [String] = []
+        if let fps { extras.append("\(fps) fps") }
+        if let kbps { extras.append(bitrateLabel(kbps: kbps)) }
+        return extras.map { " · \($0)" }.joined()
     }
 
     enum NetworkHealth: Equatable {
@@ -73,13 +84,19 @@ struct ConnectionCluster: View {
         }
     }
 
-    /// Connected: live metrics (or nil if no sample yet). Else short status word.
+    /// Connected: the ping alone (or nil before the first sample). Else short status word.
     private var trailing: (text: String, isMetric: Bool)? {
         if isConnected {
-            let m = metrics
-            return m.isEmpty ? nil : (m.joined(separator: " · "), true)
+            return Self.pingLabel(pingMS).map { ($0, true) }
         }
         return (StatusPresentation.connectionLabel(status), false)
+    }
+
+    /// Hover/accessibility text: host + headline, plus the stream numbers while connected — the
+    /// on-demand home of the detail the visible row deliberately drops.
+    private var helpText: String {
+        StatusPresentation.connectionHelp(host: host, status: status)
+            + (isConnected ? Self.tooltipDetail(fps: fps, kbps: kbps) : "")
     }
 
     var body: some View {
@@ -125,9 +142,9 @@ struct ConnectionCluster: View {
             .buttonStyle(.plain)
             .onHover { hover = $0 }
             .animation(Slate.Anim.smallFade, value: hover)
-            .help(StatusPresentation.connectionHelp(host: host, status: status))
+            .help(helpText)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(StatusPresentation.connectionHelp(host: host, status: status))
+            .accessibilityLabel(helpText)
 
             if StatusPresentation.showsRetry(status) {
                 Button { Task { await connection.retry() } } label: {
