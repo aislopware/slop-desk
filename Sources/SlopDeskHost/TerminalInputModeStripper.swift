@@ -26,11 +26,12 @@ import Foundation
 ///
 /// ## Scope
 /// Stripped (the set that changes what the CLIENT SENDS): DECCKM `?1`, mouse `?9/1000/1001/1002/
-/// 1003/1005/1006/1015/1016`, focus `?1004`, bracketed paste `?2004`, in-band resize `?2048`, and
-/// the kitty keyboard ops `CSI > flags u` (push) / `CSI < n u` (pop) / `CSI = flags ; mode u`
-/// (set). Display state (alt-screen `?1049`, cursor `?25`, autowrap `?7`, sync `?2026`…) passes
-/// through untouched — the replay needs it to render. A DECSET with MIXED params (`?1049;2004h`)
-/// is rewritten to keep the non-stripped params.
+/// 1003/1005/1006/1015/1016`, focus `?1004`, bracketed paste `?2004`, color-scheme notifications
+/// `?2031` (report-on-enable, like 2048), in-band resize `?2048`, and the kitty keyboard ops
+/// `CSI > flags u` (push) / `CSI < n u` (pop) / `CSI = flags ; mode u` (set). Display state
+/// (alt-screen `?1049`, cursor `?25`, autowrap `?7`, sync `?2026`…) passes through untouched —
+/// the replay needs it to render. A DECSET with MIXED params (`?1049;2004h`) is rewritten to
+/// keep the non-stripped params.
 ///
 /// ## Where it runs
 /// ONLY on the replay-side transform (``ScrollbackReplayTransform``), FIRST — on the raw stream,
@@ -51,7 +52,11 @@ enum TerminalInputModeStripper {
     private static let bel: UInt8 = 0x07
 
     /// DEC private modes whose set/reset is stripped from replay and tracked for re-assert.
-    static let trackedModes: Set<Int> = [1, 9, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1015, 1016, 2004, 2048]
+    /// 2031 (color-scheme notifications) is in the set for the same reason as 2048: the terminal
+    /// emits a report (`CSI ? 997 ; 1|2 n`) the instant the mode is set.
+    static let trackedModes: Set<Int> = [
+        1, 9, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1015, 1016, 2004, 2031, 2048,
+    ]
 
     /// Returns `data` with the tracked sequences removed, plus the net final state a terminal
     /// replaying `data` would end at. A truncated trailing sequence passes through unchanged

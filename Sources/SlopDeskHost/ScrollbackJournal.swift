@@ -58,7 +58,7 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
     /// kitty-keyboard pop-all + flags reset.
     static let sanitizeSuffix = Data(
         ("\u{1B}[?1049l\u{1B}[?9l\u{1B}[?1000l\u{1B}[?1001l\u{1B}[?1002l\u{1B}[?1003l\u{1B}[?1004l"
-            + "\u{1B}[?1005l\u{1B}[?1006l\u{1B}[?1015l\u{1B}[?1016l\u{1B}[?2004l\u{1B}[?2048l"
+            + "\u{1B}[?1005l\u{1B}[?1006l\u{1B}[?1015l\u{1B}[?1016l\u{1B}[?2004l\u{1B}[?2031l\u{1B}[?2048l"
             + "\u{1B}[<32u\u{1B}[=0;1u\u{1B}[?1l\u{1B}[0m\u{1B}[?25h\r\n")
             .utf8,
     )

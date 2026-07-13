@@ -238,10 +238,14 @@ enum TerminalQueryStripper {
 ///    Runs FIRST, on the RAW stream: the net state must be computed in true chronological order,
 ///    and the distiller reorders it — an open B→C span's bytes (where zsh toggles `?2004`
 ///    per prompt) are flushed out of sequence or replaced by the committed command line.
-/// 2. `SLOPDESK_SCROLLBACK_DISTILL` — ``ScrollbackDistiller`` collapses B→C line-editor churn.
-/// 3. `SLOPDESK_SCROLLBACK_STRIP_QUERIES` — ``TerminalQueryStripper`` removes terminal queries /
+/// 2. `SLOPDESK_SCROLLBACK_STRIP_ALT_SCREEN` — ``AltScreenSegmentStripper`` drops CLOSED
+///    alt-screen segments (`?1049h…?1049l`): a TUI's drawing contributes nothing to the final
+///    display but costs tens of MiB of replay that renders as the pane "stuck inside vim". A
+///    segment still open at end-of-stream (live TUI) is kept verbatim — that IS the repaint.
+/// 3. `SLOPDESK_SCROLLBACK_DISTILL` — ``ScrollbackDistiller`` collapses B→C line-editor churn.
+/// 4. `SLOPDESK_SCROLLBACK_STRIP_QUERIES` — ``TerminalQueryStripper`` removes terminal queries /
 ///    echoed responses / stale color state (the reattach "garbage input" fix).
-/// 4. `SLOPDESK_SCROLLBACK_STRIP_EOL_MARKS` — ``PromptEOLMarkStripper`` normalizes zsh PROMPT_SP
+/// 5. `SLOPDESK_SCROLLBACK_STRIP_EOL_MARKS` — ``PromptEOLMarkStripper`` normalizes zsh PROMPT_SP
 ///    mark+fill clusters, whose width-dependent overprint trick surfaces stray `%` lines when
 ///    history is replayed at a different grid width. Runs LAST: the earlier passes only improve
 ///    its cluster→`133;D`/`133;A` adjacency anchor (the distiller flushes clusters buffered in a
@@ -256,8 +260,11 @@ enum ScrollbackReplayTransform {
         let distill = env["SLOPDESK_SCROLLBACK_DISTILL"] != "0"
         let stripQueries = env["SLOPDESK_SCROLLBACK_STRIP_QUERIES"] != "0"
         let stripInputModes = env["SLOPDESK_SCROLLBACK_STRIP_INPUT_MODES"] != "0"
+        let stripAltScreen = env["SLOPDESK_SCROLLBACK_STRIP_ALT_SCREEN"] != "0"
         let stripEOLMarks = env["SLOPDESK_SCROLLBACK_STRIP_EOL_MARKS"] != "0"
-        guard distill || stripQueries || stripInputModes || stripEOLMarks else { return nil }
+        guard distill || stripQueries || stripInputModes || stripAltScreen || stripEOLMarks else {
+            return nil
+        }
         return { @Sendable data in
             var result = data
             var reassert = Data()
@@ -266,6 +273,7 @@ enum ScrollbackReplayTransform {
                 result = stripped.data
                 if reassertInputModes { reassert = stripped.state.reassertSequence }
             }
+            if stripAltScreen { result = AltScreenSegmentStripper.strip(result) }
             if distill { result = ScrollbackDistiller.distill(result) }
             if stripQueries { result = TerminalQueryStripper.strip(result) }
             if stripEOLMarks { result = PromptEOLMarkStripper.strip(result) }
