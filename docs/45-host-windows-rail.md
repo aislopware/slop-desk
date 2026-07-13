@@ -70,7 +70,7 @@ The right sidebar that mirrors the host machine's desktop. Synthesized from thre
 11. **Blob transport:** ONE shared `blobChunk` reply type + one shared reassembler for icons and previews (two request types, since icon requests must carry the bundleID string).
 12. **Hover trailing slot:** the streamed tab ordinal only — the hover verb hint (`OPEN` / `FOCUS · 3`) shipped and was then REMOVED on the user's 2026-07-12 ruling that it added nothing useful; the tooltip carries the click's meaning. Dimensions stay in tooltip and peek caption (240 pt row can't carry both).
 13. **Hostname header / footer:** cut. Header is `HOST`; the left rail's footer already owns connection truth. No second footer, no counts duplication.
-14. **Minimized rows:** listed (completeness goal #1), dimmed in place — never re-sorted to the bottom, no `MIN` suffix text; tooltip disambiguates minimized / other-Space / hidden-app.
+14. **Minimized rows:** listed (completeness goal #1), dimmed in place — never re-sorted to the bottom, no `MIN` suffix text; tooltip disambiguates minimized / other-Space / hidden-app. **Opening one streams it:** the mint path's on-screen `SCShareableContent` enumeration can't resolve a minimized / other-Space window, so the hello handler falls back to `OffScreenWindowMintRescue` — full enumeration → AX un-minimize when minimized (the WindowServer never paints a minimized window) → brief wait for the on-screen landing → mint; only a truly-gone or still-hidden window keeps the terminal `muxNoWindow` refusal.
 15. **Raise-on-Host:** cut from scope entirely (type-9 `focusWindow` is session-bound; a new verb + lane plumbing isn't worth it yet).
 
 ---

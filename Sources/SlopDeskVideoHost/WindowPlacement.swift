@@ -184,6 +184,40 @@ public enum WindowPlacement {
         return true
     }
 
+    /// Un-minimize the window `windowID` (owned by `pid`) so the WindowServer paints it again — a
+    /// minimized window is never rendered, so SCK capture of one streams nothing (the mint-time
+    /// rescue, ``OffScreenWindowMintRescue``, calls this before resolving the window for capture).
+    /// Read-then-write: a window that is not minimized is left untouched (`.notMinimized`).
+    /// Best-effort + crash-free; main-actor (AX is main-thread), bounded by the per-message timeout.
+    @preconcurrency
+    @MainActor
+    public static func deminiaturizeWindow(windowID: CGWindowID, pid: pid_t) -> DeminiaturizeOutcome {
+        guard pid > 0 else { return .failed }
+        let appEl = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appEl, axMessagingTimeout)
+        var windowsRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &windowsRef) == .success,
+              let axWindows = windowsRef as? [AXUIElement],
+              let axWindow = axWindows.first(where: { axWindowID(of: $0) == windowID })
+        else {
+            log.error("deminiaturize window \(windowID): AX window not found (pid \(pid))")
+            return .failed
+        }
+        var minimizedRef: CFTypeRef?
+        let isMinimized = AXUIElementCopyAttributeValue(
+            axWindow, kAXMinimizedAttribute as CFString, &minimizedRef,
+        ) == .success ? ((minimizedRef as? Bool) ?? false) : false
+        guard isMinimized else { return .notMinimized }
+        guard AXUIElementSetAttributeValue(
+            axWindow, kAXMinimizedAttribute as CFString, kCFBooleanFalse,
+        ) == .success else {
+            log.error("deminiaturize window \(windowID): AX un-minimize write failed (pid \(pid))")
+            return .failed
+        }
+        log.notice("deminiaturized window \(windowID) (pid \(pid)) for capture")
+        return .restoring
+    }
+
     /// ORIGIN-then-SIZE restore of an already-resolved AX window to `frame` (best-effort, no return —
     /// rollback/restore is opportunistic).
     @MainActor

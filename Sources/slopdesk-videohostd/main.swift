@@ -358,6 +358,34 @@ func shareableWindows() async throws -> [SCWindow] {
     }
 }
 
+/// Resolve a hello's requestedWindowID that `shareableWindows()` (ON-SCREEN only) missed: the
+/// host-windows rail (docs/45) offers MINIMIZED windows and windows on another Space, which that
+/// enumeration can never contain. Finds the target in the FULL enumeration, un-minimizes it via AX
+/// when that is what hides it (a minimized window is never painted → capturing it streams nothing),
+/// and waits briefly for it to land on-screen. `nil` = truly gone or stays hidden — the caller's
+/// terminal `muxNoWindow` refusal stands. Decision tree = ``OffScreenWindowMintRescue`` (unit-pinned).
+@Sendable
+func rescueOffScreenWindow(_ windowID: CGWindowID) async -> SCWindow? {
+    await OffScreenWindowMintRescue.run(
+        windowID: windowID,
+        fullList: {
+            let content = try? await SCShareableContent.excludingDesktopWindows(
+                false, onScreenWindowsOnly: false,
+            )
+            return content?.windows
+        },
+        onScreenList: { try? await shareableWindows() },
+        windowIDOf: \.windowID,
+        deminiaturize: { target in
+            guard let pid = target.owningApplication?.processID else { return .failed }
+            return await MainActor.run {
+                WindowPlacement.deminiaturizeWindow(windowID: windowID, pid: pid)
+            }
+        },
+        sleep: { try? await Task.sleep(nanoseconds: 125_000_000) },
+    )
+}
+
 func describe(_ w: SCWindow) -> String {
     let app = w.owningApplication?.applicationName ?? "?"
     let title = w.title.flatMap { $0.isEmpty ? nil : $0 } ?? "(untitled)"
@@ -821,7 +849,17 @@ Task {
             }
             // Re-enumerate live windows for THIS hello (a pane may open long after launch).
             let live = try await shareableWindows()
-            guard let w = live.first(where: { $0.windowID == requestedWindowID }) else {
+            let w: SCWindow
+            if let onScreen = live.first(where: { $0.windowID == requestedWindowID }) {
+                w = onScreen
+            } else if let rescued = await rescueOffScreenWindow(requestedWindowID) {
+                // The rail offers minimized / other-Space windows the on-screen enumeration above
+                // can never resolve — the rescue un-minimized it (when needed) and it is capturable.
+                w = rescued
+                log(
+                    "mux: window-id=\(requestedWindowID) was off-screen (minimized / other Space) — rescued for capture",
+                )
+            } else {
                 throw VideoHostdError.muxNoWindow(requestedWindowID: requestedWindowID)
             }
             // ⚠️ Documented, un-coded limitation — needs two panes naming the SAME windowID:
