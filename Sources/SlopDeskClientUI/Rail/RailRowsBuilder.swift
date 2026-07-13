@@ -167,6 +167,13 @@ enum RailRowsBuilder {
         let subtitle: String?
         let readOnly: Bool
         let isEditing: Bool
+        /// The host's blocking prompt (``WorkspaceStore/agentLabel(for:)``), non-nil ONLY while `status ==
+        /// .needsPermission` AND the store has a non-empty label for this pane — kept OUT of ``subtitle``
+        /// (and therefore out of the memoized, structural ``RailRow``) so a blocked row's search corpus never
+        /// bakes in a stale question and a mid-block structural rebuild can never freeze one in. The row VIEW
+        /// swaps its line-2 text to this over `subtitle` while non-nil; `subtitle`/`gitSummary` keep resolving
+        /// as if the row were never blocked.
+        let question: String?
     }
 
     /// Resolve one pane's volatile chrome — the SINGLE resolution rule behind both ``rows(for:)`` (the full
@@ -211,6 +218,11 @@ enum RailRowsBuilder {
             agentGates: store.agentBadgeGates(for: paneID),
             commandGates: store.commandBadgeGates,
         )
+        // The blocked-row question: the host's blocking prompt, gated on the SAME predicate the
+        // row view uses to pick its `.tail` truncation — status == .needsPermission AND a non-empty label —
+        // so a block whose label hasn't landed yet (the race window) keeps the plain git/cwd subtitle instead
+        // of a blank/absent line.
+        let question = status == .needsPermission ? store.agentLabel(for: paneID) : nil
         return RailRowChrome(
             status: status,
             badge: (paneID == representativePane ? manualBadge : nil) ?? gatedBadge,
@@ -219,6 +231,7 @@ enum RailRowsBuilder {
             subtitle: subtitle,
             readOnly: store.isReadOnly(for: paneID),
             isEditing: store.pendingTabRename == tabID && paneID == representativePane,
+            question: question,
         )
     }
 

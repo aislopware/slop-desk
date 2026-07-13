@@ -311,6 +311,109 @@ final class RailRowBuilderTests: XCTestCase {
         )
     }
 
+    // MARK: - Blocked rows show the question, kept OUT of `subtitle`
+
+    /// While a pane is blocked (`.needsPermission`) AND the store carries a host label for it, `chrome.question`
+    /// resolves to that label — but `chrome.subtitle` (the plain git/cwd line) is UNTOUCHED, proving the
+    /// question travels as a separate field rather than overwriting the memoized search corpus. Fails on a
+    /// builder that has no `question` field or that folds the label into `subtitle`.
+    func testChromeQuestionResolvesWhileBlockedWithoutTouchingSubtitle() {
+        let store = makeStore()
+        let pane = paneID(store, row: 0)
+        store.setLastKnownCwd("/Users/me/project-alpha", for: pane)
+        store.setAgentStatus(.needsPermission, for: pane)
+        store.setAgentLabel("Allow Bash(npm install)?", for: pane)
+
+        let row = RailRowsBuilder.rows(for: store)[0]
+        let chrome = RailRowsBuilder.liveChrome(for: row, store: store)
+        XCTAssertEqual(chrome.question, "Allow Bash(npm install)?", "the blocking prompt surfaces as the question")
+        XCTAssertEqual(
+            chrome.subtitle, "/Users/me/project-alpha",
+            "subtitle keeps resolving the plain cwd line — the question never overwrites it",
+        )
+        XCTAssertEqual(
+            row.subtitle, "/Users/me/project-alpha",
+            "the memoized structural RailRow.subtitle never carries the question either",
+        )
+    }
+
+    /// Not blocked (idle/none/working/done) never surfaces a question even with a stale label on record.
+    func testChromeQuestionNilWhenNotBlocked() {
+        let store = makeStore()
+        let pane = paneID(store, row: 0)
+        store.setAgentLabel("Allow Bash(npm install)?", for: pane)
+        // No `.needsPermission` was ever set — status stays `.none`.
+        let row = RailRowsBuilder.rows(for: store)[0]
+        XCTAssertNil(RailRowsBuilder.liveChrome(for: row, store: store).question)
+
+        store.setAgentStatus(.working, for: pane)
+        XCTAssertNil(RailRowsBuilder.liveChrome(for: row, store: store).question, "working is not blocked")
+
+        store.setAgentStatus(.done, for: pane)
+        XCTAssertNil(RailRowsBuilder.liveChrome(for: row, store: store).question, "done is not blocked")
+    }
+
+    /// The label-race window: status flips to `.needsPermission` before the host label lands. `question` stays
+    /// `nil` (the row keeps its plain subtitle) until the label actually arrives, then resolves — the swap
+    /// predicate for the caller's truncation mode must key on THIS, not on `status == .needsPermission` alone.
+    func testChromeQuestionNilDuringLabelRaceThenResolvesOnArrival() {
+        let store = makeStore()
+        let pane = paneID(store, row: 0)
+        store.setLastKnownCwd("/srv/app", for: pane)
+        store.setAgentStatus(.needsPermission, for: pane)
+        let row = RailRowsBuilder.rows(for: store)[0]
+        XCTAssertNil(
+            RailRowsBuilder.liveChrome(for: row, store: store).question,
+            "blocked with no label yet — the race window keeps the row on its plain subtitle",
+        )
+
+        store.setAgentLabel("Allow Write(/srv/app/config.yml)?", for: pane)
+        XCTAssertEqual(
+            RailRowsBuilder.liveChrome(for: row, store: store).question, "Allow Write(/srv/app/config.yml)?",
+            "the label landing resolves the question",
+        )
+    }
+
+    /// Unblocking reverts `question` to `nil` on the very next chrome read — hard cut, same slot — while
+    /// `subtitle` is unaffected across the whole cycle.
+    func testChromeQuestionRevertsOnUnblock() {
+        let store = makeStore()
+        let pane = paneID(store, row: 0)
+        store.setLastKnownCwd("/srv/app", for: pane)
+        store.setAgentStatus(.needsPermission, for: pane)
+        store.setAgentLabel("Allow Bash(rm -rf build)?", for: pane)
+        let row = RailRowsBuilder.rows(for: store)[0]
+        XCTAssertNotNil(RailRowsBuilder.liveChrome(for: row, store: store).question, "blocked with a label")
+
+        store.setAgentStatus(.idle, for: pane)
+        let chrome = RailRowsBuilder.liveChrome(for: row, store: store)
+        XCTAssertNil(chrome.question, "unblocking reverts the question")
+        XCTAssertEqual(chrome.subtitle, "/srv/app", "subtitle was never touched by the block/unblock cycle")
+    }
+
+    /// The question is kept OUT of the memoized, structural ``RailRow`` entirely (it lives only on the
+    /// volatile ``RailRowsBuilder/RailRowChrome``), so ``RailRowsBuilder/filtered(_:query:)`` — which narrows
+    /// over the structural rows — can never match a blocked row by its question text, only by its ordinary
+    /// title/subtitle/cwd/processLabel. Widening the search key would require putting agent status/label into
+    /// the memo's structural fingerprint, reintroducing the O(panes) rebuild-per-status-tick the memo exists
+    /// to prevent — deliberately not done.
+    func testBlockedRowNotSearchableByQuestionText() {
+        let store = makeStore()
+        let pane = paneID(store, row: 0)
+        store.setLastKnownCwd("/srv/app", for: pane)
+        store.setAgentStatus(.needsPermission, for: pane)
+        store.setAgentLabel("Allow Bash(npm install)?", for: pane)
+        let rows = RailRowsBuilder.rows(for: store)
+        XCTAssertTrue(
+            RailRowsBuilder.filtered(rows, query: "npm install").isEmpty,
+            "the question text is not part of the structural row's search key",
+        )
+        XCTAssertEqual(
+            RailRowsBuilder.filtered(rows, query: "app").map(\.id), [pane],
+            "the ordinary cwd/title search key still matches",
+        )
+    }
+
     /// The title precedence for a terminal row: an EXPLICIT rename beats the folder name, the folder
     /// name beats the shell-title chain, and a cwd-less pane keeps the old fallback ("Terminal").
     func testRowTitlePrecedence() {

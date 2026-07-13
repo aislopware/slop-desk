@@ -35,6 +35,10 @@ struct SlateListRow<
     /// the SAME instrument font + secondary default, so a caller can only supply per-run COLOUR, never restyle
     /// the voice. Its plain text MUST equal ``subtitle`` (the height/search/truncation still key on that).
     var subtitleColored: AttributedString?
+    /// Line-2 truncation. `.middle` (default) suits the path-shaped subtitles (cwd / git line — head and
+    /// tail both carry meaning); a caller whose line 2 is PROSE (the blocked row's question) passes
+    /// `.tail` so the sentence keeps its head.
+    var subtitleTruncation: Text.TruncationMode = .middle
     /// Tap action for the whole row. `nil` ⇒ no-op (a presentation-only row).
     var onTap: (() -> Void)?
     @ViewBuilder let leading: () -> Leading
@@ -78,7 +82,7 @@ struct SlateListRow<
                             .font(Slate.Typeface.instrument(Slate.Typeface.small))
                             .foregroundStyle(Slate.Text.secondary)
                             .lineLimit(1)
-                            .truncationMode(.middle)
+                            .truncationMode(subtitleTruncation)
                         Spacer(minLength: Slate.Metric.space2)
                         subtitleTrailing(isHovering)
                     }
@@ -121,6 +125,7 @@ extension SlateListRow where Leading == EmptyView {
         active: Bool = false,
         subtitle: String? = nil,
         subtitleColored: AttributedString? = nil,
+        subtitleTruncation: Text.TruncationMode = .middle,
         onTap: (() -> Void)? = nil,
         @ViewBuilder title: @escaping () -> Title,
         @ViewBuilder titleTrailing: @escaping (_ hovering: Bool) -> TitleTrailing,
@@ -128,7 +133,8 @@ extension SlateListRow where Leading == EmptyView {
         @ViewBuilder trailingOverlay: @escaping (_ hovering: Bool) -> TrailingOverlay,
     ) {
         self.init(
-            active: active, subtitle: subtitle, subtitleColored: subtitleColored, onTap: onTap,
+            active: active, subtitle: subtitle, subtitleColored: subtitleColored,
+            subtitleTruncation: subtitleTruncation, onTap: onTap,
             leading: { EmptyView() }, title: title, titleTrailing: titleTrailing,
             subtitleTrailing: subtitleTrailing, trailingOverlay: trailingOverlay,
         )

@@ -18,6 +18,7 @@
 #if canImport(SwiftUI)
 import Defaults
 import SFSafeSymbols
+import SlopDeskInspector // PendingToolSummary — the working-row tooltip's todo-scent line
 import SlopDeskVideoProtocol // AgentPreferences — the `preventSleep` flag the tab context menu toggles
 import SlopDeskWorkspaceCore
 import SwiftUI
@@ -484,16 +485,30 @@ private struct SidebarLiveRow: View {
         // exactly the row leaves, never the sidebar body.
         let active = row.id == store.tree.activeSession?.activeTab?.activePane
         let chrome = RailRowsBuilder.liveChrome(for: row, store: store)
+        // Blocked rows show the question: while `chrome.question` is non-nil the line-2 slot
+        // swaps to it wholesale — the coloured git line is suppressed too, so line 2 never shows the plain
+        // question text next to a coloured git token. `chrome.subtitle`/`gitSummary` themselves are
+        // untouched (never overwritten), so the moment the block clears the row falls straight back to its
+        // normal git/cwd line. Truncation follows the content: the question is PROSE (`.tail` keeps the
+        // sentence's head), the normal path subtitle stays `.middle`.
+        // The tooltip gains the todo-scent line only while the agent is WORKING with a live inspector feed
+        // reporting an in-flight todo — every other row keeps today's cwd-only tooltip.
+        let scent: String? = chrome.badge == .running
+            ? (store.handle(for: row.id) as? LivePaneSession)?.inspector.flatMap { vm in
+                vm.feedState == .live ? PendingToolSummary.scent(todos: vm.todos) : nil
+            }
+            : nil
         SlateTabRow(
             title: row.title.isEmpty ? fallbackTitle : row.title,
             active: active,
-            subtitle: chrome.subtitle,
-            gitSummary: chrome.gitSummary,
+            subtitle: chrome.question ?? chrome.subtitle,
+            gitSummary: chrome.question != nil ? nil : chrome.gitSummary,
+            subtitleTruncation: chrome.question != nil ? .tail : .middle,
             processLabel: chrome.processLabel,
             badge: chrome.badge,
             readOnly: chrome.readOnly,
             isEditing: chrome.isEditing,
-            helpText: row.cwd,
+            helpText: scent.map { "\(row.cwd)\n\($0)" } ?? row.cwd,
             onSelect: onSelect,
             onClose: onClose,
             onRename: onRename,

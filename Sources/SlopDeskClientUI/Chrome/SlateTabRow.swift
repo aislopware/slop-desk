@@ -26,6 +26,10 @@ struct SlateTabRow: View {
     /// per-token STATUS colour (branch muted, `↑ahead` green, `↓behind` blue, `· N changed` amber) instead of
     /// the flat ``subtitle``. `nil` ⇒ no repo (or a non-terminal row) → the plain ``subtitle`` renders.
     var gitSummary: PaneGitSummary?
+    /// Line-2 truncation, forwarded to the ``SlateListRow`` shell. `.middle` (default) suits the
+    /// path-shaped subtitle; the blocked row passes `.tail` while its line 2 IS the question — prose
+    /// keeps its head, and the normal cwd/git path keeps `.middle` untouched.
+    var subtitleTruncation: Text.TruncationMode = .middle
     /// The host's coarse foreground-process label ("zsh"), shown trailing on the ACTIVE row only.
     var processLabel: String?
     /// The single fused status badge (spinner / check / dot / error / hand / coffee / shield). `nil` ⇒ none.
@@ -69,6 +73,7 @@ struct SlateTabRow: View {
             active: active,
             subtitle: subtitle,
             subtitleColored: gitSummary.flatMap(Self.gitLine),
+            subtitleTruncation: subtitleTruncation,
             // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the field.
             onTap: { if !isEditing { onSelect() } },
             title: {
