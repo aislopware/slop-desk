@@ -409,6 +409,7 @@ public final class TerminalViewModel {
     /// `jump_to_prompt:` binding action ran. Idempotent per jump (a re-arm just refreshes the window).
     public func notePromptJumpIssued() {
         promptJumpArmedAt = ContinuousClock().now
+        Self.flashDebugLog("armed")
     }
 
     /// One viewport-scroll report from the renderer (the surface's scrollbar hook). Settles a pending
@@ -416,10 +417,26 @@ public final class TerminalViewModel {
     /// `atBottom` (viewport == active area) means libghostty could not pin the prompt to the top, so
     /// the row is unknown ⇒ no flash. Always disarms — one jump, at most one flash.
     public func noteViewportScroll(atBottom: Bool) {
-        guard let armedAt = promptJumpArmedAt else { return }
+        guard let armedAt = promptJumpArmedAt else {
+            Self.flashDebugLog("echo atBottom=\(atBottom) — unarmed, ignored")
+            return
+        }
         promptJumpArmedAt = nil
-        guard ContinuousClock().now - armedAt < promptJumpSettleWindow, !atBottom else { return }
+        let elapsed = ContinuousClock().now - armedAt
+        guard elapsed < promptJumpSettleWindow, !atBottom else {
+            Self.flashDebugLog("echo consumed arm — elapsed=\(elapsed) atBottom=\(atBottom): SUPPRESSED")
+            return
+        }
         promptJumpFlashEpoch += 1
+        Self.flashDebugLog("SETTLED — epoch \(promptJumpFlashEpoch)")
+    }
+
+    /// stderr diagnostics for the landed-flash arm/settle chain, gated by `SLOPDESK_BLOCKS_DEBUG == "1"`
+    /// (default-OFF) — the same launch-from-terminal debugging flag the `BlockJump` choreography uses,
+    /// so one env var traces a jump end-to-end (issue → arm → scrollbar echo → settle/suppress).
+    private static func flashDebugLog(_ message: String) {
+        guard ProcessInfo.processInfo.environment["SLOPDESK_BLOCKS_DEBUG"] == "1" else { return }
+        FileHandle.standardError.write(Data("[flash] \(message)\n".utf8))
     }
 
     /// The AppKit pasteboard write, injected so ``handleCopyModeKey`` stays PURE of AppKit (unit-testable

@@ -406,6 +406,13 @@ final class GhosttyApp {
                 let surface = Unmanaged<GhosttySurface>.fromOpaque(ud).takeUnretainedValue()
                 let bar = action.action.scrollbar
                 let (offset, length, total) = (bar.offset, bar.len, bar.total)
+                if ProcessInfo.processInfo.environment["SLOPDESK_BLOCKS_DEBUG"] == "1" {
+                    // The SLOPDESK_BLOCKS_DEBUG jump trace's raw-signal end: proves the renderer's
+                    // scrollbar action reaches the embedder at all (vs the settle chain dropping it).
+                    FileHandle.standardError.write(
+                        Data("[flash] scrollbar action offset=\(offset) len=\(length) total=\(total)\n".utf8),
+                    )
+                }
                 ghosttyOnMainActor { surface.onScrollbarChange?(offset, length, total) }
                 return true
             }

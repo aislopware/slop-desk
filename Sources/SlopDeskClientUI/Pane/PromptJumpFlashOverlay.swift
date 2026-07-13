@@ -50,7 +50,15 @@ struct PromptJumpFlashOverlay: View {
         // A cancelled sleep (pane torn down / rapid re-jump retargeting the task) just stops — the
         // successor task repaints from scratch, so no cleanup is owed here.
         .task(id: model.promptJumpFlashEpoch) {
-            guard model.promptJumpFlashEpoch > 0, let rect = landedPromptRect() else { return }
+            guard model.promptJumpFlashEpoch > 0 else { return }
+            guard let rect = landedPromptRect() else {
+                Self
+                    .debugLog(
+                        "epoch \(model.promptJumpFlashEpoch) settled but NO RECT (alt-screen / no seam / empty row)",
+                    )
+                return
+            }
+            Self.debugLog("painting epoch \(model.promptJumpFlashEpoch) rect=\(rect)")
             var snap = Transaction()
             snap.disablesAnimations = true
             withTransaction(snap) {
@@ -64,22 +72,45 @@ struct PromptJumpFlashOverlay: View {
         }
     }
 
-    /// The landed prompt row's rect: viewport row 0 (where the jump pinned the prompt), spanning the
-    /// row's TEXT extent (a full-grid-width bar reads as a selection band; the prompt's own width reads
-    /// as "this line"). `nil` — no flash — for an alt-screen TUI, a placeholder surface (no viewport
-    /// seam), or an empty row 0 (nothing to anchor to).
+    /// The landed prompt row's rect: the pinned prompt block's first TEXT row (see ``anchorRow(in:)``
+    /// — row 0 is often an OSC-133 spacer blank), spanning the row's text extent (a full-grid-width
+    /// bar reads as a selection band; the prompt's own width reads as "this line"). `nil` — no flash —
+    /// for an alt-screen TUI, a placeholder surface (no viewport seam), or a blank landing (nothing to
+    /// anchor to).
     private func landedPromptRect() -> CGRect? {
         guard !model.isAlternateScreen,
               let snapshot = model.surface as? TerminalViewportSnapshotting,
               let metrics = snapshot.cellMetrics(),
-              metrics.cellWidth > 0, metrics.cellHeight > 0
+              metrics.cellWidth > 0, metrics.cellHeight > 0,
+              let anchor = Self.anchorRow(in: snapshot.viewportTextRows())
         else { return nil }
-        // Grapheme count under-measures a wide (2-cell) glyph's span — acceptable: the flash still
-        // covers the row's text from column 0, just stopping a few cells early on CJK-heavy prompts.
-        let rowText = snapshot.viewportTextRows().first ?? ""
-        let cellCount = rowText.count
-        guard cellCount > 0 else { return nil }
-        return metrics.clampedRect(row: 0, colStart: 0, colEnd: cellCount)
+        return metrics.clampedRect(row: anchor.row, colStart: 0, colEnd: anchor.cellCount)
+    }
+
+    /// The viewport row the flash anchors to: the first row with visible TEXT within the top
+    /// `searchDepth` rows. libghostty pins the jumped-to prompt at row 0, but the OSC-133 `A` mark is
+    /// emitted at the pre-prompt cursor position — with a spacer-printing prompt (starship's default
+    /// `add_newline` blank line) the PINNED row is that BLANK spacer and the visible prompt text sits
+    /// on row 1/2. Flashing the block's first text row anchors the eye identically; a whitespace-only
+    /// row never anchors (a space-flash reads as a rendering artifact). All blank ⇒ `nil`.
+    ///
+    /// `cellCount` is the row's grapheme count — under-measures a wide (2-cell) glyph's span,
+    /// acceptable: the flash covers the text from column 0, just stopping a few cells early on
+    /// CJK-heavy prompts. Static + pure so `PromptJumpFlashAnchorTests` pins the spacer-row rule.
+    static func anchorRow(in rows: [String], searchDepth: Int = 3) -> (row: Int, cellCount: Int)? {
+        for (index, text) in rows.prefix(searchDepth).enumerated()
+            where !text.trimmingCharacters(in: .whitespaces).isEmpty
+        {
+            return (index, text.count)
+        }
+        return nil
+    }
+
+    /// stderr diagnostics gated by `SLOPDESK_BLOCKS_DEBUG == "1"` — the paint end of the one-flag
+    /// jump trace (issue → arm → scrollbar echo → settle → THIS paint / no-rect drop).
+    private static func debugLog(_ message: String) {
+        guard ProcessInfo.processInfo.environment["SLOPDESK_BLOCKS_DEBUG"] == "1" else { return }
+        FileHandle.standardError.write(Data("[flash] \(message)\n".utf8))
     }
 }
 #endif
