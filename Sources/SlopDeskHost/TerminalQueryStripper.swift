@@ -228,29 +228,48 @@ enum TerminalQueryStripper {
 /// (``ScrollbackJournalStore``) — so both replay paths stay behaviour-identical.
 ///
 /// Composition (all default-ON, the `!= "0"` idiom):
-/// 1. `SLOPDESK_SCROLLBACK_DISTILL` — ``ScrollbackDistiller`` collapses B→C line-editor churn.
-/// 2. `SLOPDESK_SCROLLBACK_STRIP_QUERIES` — ``TerminalQueryStripper`` removes terminal queries /
+/// 1. `SLOPDESK_SCROLLBACK_STRIP_INPUT_MODES` — ``TerminalInputModeStripper`` removes mouse /
+///    kitty-keyboard / in-band-resize mode changes so replayed history can never transiently arm
+///    the client's input reporting (the reattach `zsh: command not found: 18M65…` garbage fix).
+///    With `reassertInputModes` the NET final state is re-appended after the whole pipeline, so a
+///    session still inside a TUI keeps that TUI's modes across a cold reattach. The ring path
+///    (live session) re-asserts; the journal path (fresh shell after a daemon restart) must NOT —
+///    there is no TUI to serve, and ``ScrollbackJournalStore/sanitizeSuffix`` wants all-off.
+///    Runs FIRST, on the RAW stream: the net state must be computed in true chronological order,
+///    and the distiller reorders it — an open B→C span's bytes (where zsh toggles `?2004`
+///    per prompt) are flushed out of sequence or replaced by the committed command line.
+/// 2. `SLOPDESK_SCROLLBACK_DISTILL` — ``ScrollbackDistiller`` collapses B→C line-editor churn.
+/// 3. `SLOPDESK_SCROLLBACK_STRIP_QUERIES` — ``TerminalQueryStripper`` removes terminal queries /
 ///    echoed responses / stale color state (the reattach "garbage input" fix).
-/// 3. `SLOPDESK_SCROLLBACK_STRIP_EOL_MARKS` — ``PromptEOLMarkStripper`` normalizes zsh PROMPT_SP
+/// 4. `SLOPDESK_SCROLLBACK_STRIP_EOL_MARKS` — ``PromptEOLMarkStripper`` normalizes zsh PROMPT_SP
 ///    mark+fill clusters, whose width-dependent overprint trick surfaces stray `%` lines when
 ///    history is replayed at a different grid width. Runs LAST: the earlier passes only improve
 ///    its cluster→`133;D`/`133;A` adjacency anchor (the distiller flushes clusters buffered in a
-///    B→C span; the query stripper removes interposed query OSCs).
+///    B→C span; the query/mode strippers remove interposed sequences).
 ///
 /// Returns `nil` when all are disabled (raw replay — the pre-transform behaviour).
 enum ScrollbackReplayTransform {
     static func make(
         environment env: [String: String] = ProcessInfo.processInfo.environment,
+        reassertInputModes: Bool = false,
     ) -> (@Sendable (Data) -> Data)? {
         let distill = env["SLOPDESK_SCROLLBACK_DISTILL"] != "0"
         let stripQueries = env["SLOPDESK_SCROLLBACK_STRIP_QUERIES"] != "0"
+        let stripInputModes = env["SLOPDESK_SCROLLBACK_STRIP_INPUT_MODES"] != "0"
         let stripEOLMarks = env["SLOPDESK_SCROLLBACK_STRIP_EOL_MARKS"] != "0"
-        guard distill || stripQueries || stripEOLMarks else { return nil }
+        guard distill || stripQueries || stripInputModes || stripEOLMarks else { return nil }
         return { @Sendable data in
             var result = data
+            var reassert = Data()
+            if stripInputModes {
+                let stripped = TerminalInputModeStripper.strip(result)
+                result = stripped.data
+                if reassertInputModes { reassert = stripped.state.reassertSequence }
+            }
             if distill { result = ScrollbackDistiller.distill(result) }
             if stripQueries { result = TerminalQueryStripper.strip(result) }
             if stripEOLMarks { result = PromptEOLMarkStripper.strip(result) }
+            result.append(reassert)
             return result
         }
     }

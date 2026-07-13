@@ -52,8 +52,14 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
     /// modes on and the cursor hidden. Replaying those bytes verbatim into a FRESH terminal would
     /// leave the pane wedged in that state before the new shell's first prompt. Order matters:
     /// leave alt screen FIRST (so the resets land on the main screen), then reset modes/SGR.
+    /// ``TerminalInputModeStripper`` already keeps the restored bytes mode-free on the default
+    /// path; this suffix stays the backstop for env-disabled raw replay and covers the full
+    /// input-affecting set — every mouse encoding, focus (1004), in-band resize (2048), and a
+    /// kitty-keyboard pop-all + flags reset.
     static let sanitizeSuffix = Data(
-        "\u{1B}[?1049l\u{1B}[?1000l\u{1B}[?1002l\u{1B}[?1003l\u{1B}[?1006l\u{1B}[?2004l\u{1B}[?1l\u{1B}[0m\u{1B}[?25h\r\n"
+        ("\u{1B}[?1049l\u{1B}[?9l\u{1B}[?1000l\u{1B}[?1001l\u{1B}[?1002l\u{1B}[?1003l\u{1B}[?1004l"
+            + "\u{1B}[?1005l\u{1B}[?1006l\u{1B}[?1015l\u{1B}[?1016l\u{1B}[?2004l\u{1B}[?2048l"
+            + "\u{1B}[<32u\u{1B}[=0;1u\u{1B}[?1l\u{1B}[0m\u{1B}[?25h\r\n")
             .utf8,
     )
 
@@ -108,7 +114,9 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
                 ReplayBuffer.defaultScrollbackBytes
             }
         guard cap > 0 else { return nil }
-        // Same distill + query-strip pipeline as the in-memory ring's cold replay.
+        // Same distill + strip pipeline as the in-memory ring's cold replay — but NO input-mode
+        // re-assert: a journal restore fronts a FRESH shell, so the prior life's TUI modes must
+        // stay off (the sanitize suffix enforces the same for env-disabled raw replay).
         return ScrollbackJournalStore(
             directory: dir, byteCap: cap,
             distiller: ScrollbackReplayTransform.make(environment: env),

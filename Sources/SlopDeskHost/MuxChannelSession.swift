@@ -2007,6 +2007,11 @@ final class MuxChannelSession: @unchecked Sendable {
     ///   ``TerminalQueryStripper`` pass removes terminal queries / echoed responses / stale color
     ///   state from the replayed history, so the client terminal never re-answers a prior life's
     ///   DA/XTVERSION/OSC-color probes into the shell's stdin (the reattach "garbage input" bug).
+    /// - `SLOPDESK_SCROLLBACK_STRIP_INPUT_MODES` — default-ON (`env != "0"`). When ON, a
+    ///   ``TerminalInputModeStripper`` pass removes mouse / kitty-keyboard / in-band-resize mode
+    ///   changes from the replayed history (they'd transiently arm the client's input reporting
+    ///   mid-replay) and re-asserts only the NET final state after the replay — a live TUI keeps
+    ///   its modes, an exited one leaves nothing armed.
     /// - `SLOPDESK_SCROLLBACK_STRIP_EOL_MARKS` — default-ON (`env != "0"`). When ON, a
     ///   ``PromptEOLMarkStripper`` pass normalizes zsh's width-dependent PROMPT_SP mark+fill
     ///   clusters so replay at a different grid width doesn't grow stray `%` lines per prompt.
@@ -2025,7 +2030,9 @@ final class MuxChannelSession: @unchecked Sendable {
         // replay paths stay behaviour-identical (see ``ScrollbackReplayTransform``).
         return ReplayBuffer(
             scrollbackBytes: scrollbackCap,
-            scrollbackDistiller: ScrollbackReplayTransform.make(environment: env),
+            // reassert: the ring replays into a cold client of a LIVE session — a TUI that is
+            // still running needs its input modes re-established after the (stripped) replay.
+            scrollbackDistiller: ScrollbackReplayTransform.make(environment: env, reassertInputModes: true),
         )
     }
 
