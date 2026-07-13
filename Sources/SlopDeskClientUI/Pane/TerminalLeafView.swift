@@ -143,6 +143,12 @@ struct TerminalLeafView: View {
                 if !staticMirror {
                     LinkHighlightOverlay(model: model, cwd: cwd)
                 }
+                // The prompt-jump landed flash — one ~240ms accent fade over the row libghostty pinned
+                // the jumped-to prompt at, anchoring the eye after the viewport hard-cuts. Also a
+                // DECORATION overlay coincident with the surface; inert until a jump settles.
+                if !staticMirror {
+                    PromptJumpFlashOverlay(model: model)
+                }
                 // The Vimium Hint Mode overlay — dims the surface + draws yellow 2-letter
                 // labels when armed (⌘⇧J open / ⌘⇧Y copy / reveal). Also a DECORATION overlay coincident with the
                 // surface (origin 0,0). Inert unless the renderer armed `hintMode` (or an iOS tap-on-label); a

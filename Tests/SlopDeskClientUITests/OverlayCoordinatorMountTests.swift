@@ -669,6 +669,57 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertFalse(overlay.peekReplyVisible, "answering the last blocked pane closes the card")
     }
 
+    /// A delivered reply publishes the window-level "REPLY SENT · <pane title>" notice — the delivery
+    /// cue that makes a submit distinguishable from a skip once the card advances/closes. The detail
+    /// names WHICH pane got the reply (the one doubt the advance leaves).
+    func testDeliverPeekReplyPublishesReplySentNotice() throws {
+        let (overlay, store) = makeCoordinator()
+        let pane = try XCTUnwrap(store.tree.allPaneIDs().first)
+        store.setAgentStatus(.needsPermission, for: pane)
+        store.renamePane(pane, to: "build-agent")
+        overlay.openPeekReply()
+
+        overlay.deliverPeekReply("approve\n", to: pane)
+        let notice = try XCTUnwrap(overlay.notice, "the delivery publishes a notice")
+        XCTAssertEqual(notice.label, "REPLY SENT")
+        XCTAssertEqual(notice.detail, "build-agent", "the detail names the answered pane")
+    }
+
+    // MARK: - The window-level notice chip (`noteNotice` — tab-close undo cue et al.)
+
+    /// `noteNotice` publishes with a FRESH epoch each time (a successor retargets the mounted chip's
+    /// dwell task instead of expiring on the old timer), and `clearNotice` dismisses idempotently —
+    /// the exact contract the copy receipt pinned, kept in lockstep for the generic twin.
+    func testNoteNoticePublishesFreshEpochsAndClearIsIdempotent() throws {
+        let overlay = OverlayCoordinator()
+        overlay.noteNotice(label: "TAB CLOSED", detail: "⇧⌘T REOPENS")
+        let first = try XCTUnwrap(overlay.notice)
+        XCTAssertEqual(first.accessibilityText, "TAB CLOSED · ⇧⌘T REOPENS")
+
+        overlay.noteNotice(label: "TAB CLOSED", detail: "⇧⌘T REOPENS")
+        let second = try XCTUnwrap(overlay.notice)
+        XCTAssertNotEqual(first.epoch, second.epoch, "a successor notice gets a fresh dwell identity")
+
+        overlay.clearNotice()
+        XCTAssertNil(overlay.notice)
+        overlay.clearNotice() // idempotent
+        XCTAssertNil(overlay.notice)
+    }
+
+    /// The store's tab-close hook is what the app wires to `noteNotice` — pin the wiring shape the app
+    /// uses (a recorded reopenable close ⇒ exactly one notice, speaking the ⇧⌘T affordance).
+    func testTabCloseRecordedWiringPublishesTheUndoCue() throws {
+        let (overlay, store) = makeCoordinator()
+        store.onTabCloseRecorded = { [weak overlay] in
+            overlay?.noteNotice(label: "TAB CLOSED", detail: "⇧⌘T REOPENS")
+        }
+        store.newTab(kind: .terminal) // a second tab so the close leaves the workspace alive
+        let closing = try XCTUnwrap(store.tree.activeSession?.activeTab?.id)
+
+        store.closeTab(closing)
+        XCTAssertEqual(overlay.notice?.accessibilityText, "TAB CLOSED · ⇧⌘T REOPENS")
+    }
+
     /// Closing resets the advance-exclusion so a REOPEN re-targets a still-blocked pane (rather than carrying
     /// a stale exclusion that would make the reopened card target nothing). FAILS if `closePeekReply` leaves
     /// `peekReplyExcluding` populated.

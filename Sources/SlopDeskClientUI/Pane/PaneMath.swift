@@ -18,6 +18,19 @@ enum PaneMath {
         return Double(pixelIncrement) / Double(axisSpan) * Double(flexSum)
     }
 
+    /// The live drag's ratio readout: the divider's pair weights as integer percentages summing to
+    /// exactly 100 (`62 · 38`) — the trailing side is the complement of the ROUNDED leading side, so the
+    /// pair can never read `62 · 39`. `nil` for a degenerate pair (a `.fixed` side reports weight 0, or
+    /// non-finite residue) — the cue is then absent, never wrong. Weight ratio equals on-screen extent
+    /// ratio (both sides share the same `span/flexSum` factor), so this is the honest pixel truth.
+    static func splitPercents(leading: Double, trailing: Double) -> (leading: Int, trailing: Int)? {
+        guard leading.isFinite, trailing.isFinite, leading > 0, trailing > 0 else { return nil }
+        let sum = leading + trailing
+        guard sum > 0 else { return nil }
+        let lead = Int((leading / sum * 100).rounded())
+        return (lead, 100 - lead)
+    }
+
     /// Truncate a cwd path from the BEGINNING (keep the trailing leaf dirs visible), max `maxChars`
     /// glyphs incl. the leading ellipsis (spec §5.1 `truncate_from_beginning`, max 40).
     static func truncatedCwd(_ cwd: String, maxChars: Int = 40) -> String {

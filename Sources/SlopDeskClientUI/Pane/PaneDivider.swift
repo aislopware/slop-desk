@@ -86,6 +86,30 @@ struct PaneDivider: View {
                 }
             }
             .animation(Slate.Anim.dividerHover, value: gestureActive)
+            // The live ratio readout (`62 · 38`) — MERIDIAN L3 status: present ONLY while the drag is
+            // working, hard-cut on release (mounted AFTER the `.animation` above so it never fades).
+            // Each frame's re-solve rebuilds `handle` with fresh pair weights, so the numbers track the
+            // seam live; a degenerate pair (a `.fixed` side) yields nil ⇒ absent, never wrong.
+            .overlay { if gestureActive { ratioReadout } }
+    }
+
+    /// The instrument-voice split percentages, centered on the seam: the answer to "am I at the ratio I
+    /// was aiming for?" while the eye is already on the divider (feedback at the trigger — never a HUD
+    /// elsewhere). `EmptyView` for a degenerate pair. Hit-transparent so the drag beneath is untouched.
+    @ViewBuilder
+    private var ratioReadout: some View {
+        if let pct = PaneMath.splitPercents(leading: handle.leadingWeight, trailing: handle.trailingWeight) {
+            HStack(spacing: Slate.Metric.space1) {
+                Text("\(pct.leading)")
+                    .foregroundStyle(Slate.Text.primary)
+                Text("·")
+                    .foregroundStyle(Slate.Text.tertiary)
+                Text("\(pct.trailing)")
+                    .foregroundStyle(Slate.Text.primary)
+            }
+            .modifier(InstrumentChipShell(accessibility: "\(pct.leading) to \(pct.trailing) percent split"))
+            .allowsHitTesting(false)
+        }
     }
 
     #if os(macOS)

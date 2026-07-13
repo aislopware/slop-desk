@@ -37,21 +37,9 @@ struct CopyReceiptChip: View {
             Text(receipt.detail)
                 .foregroundStyle(Slate.Text.primary)
         }
-        .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .medium))
-        .tracking(Slate.Typeface.instrumentTracking)
-        .lineLimit(1)
-        .fixedSize()
-        .padding(.horizontal, Slate.Metric.space2)
-        .padding(.vertical, Slate.Metric.space1)
-        // The pane-pill shell: raised surface + hairline, with the small lift shadow that keeps a chip
-        // legible over busy terminal output (the ReadOnlyPill treatment).
-        .background(Slate.Surface.raised, in: .rect(cornerRadius: Slate.Metric.radiusControl))
-        .overlay(
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
-        )
-        .shadow(color: Slate.State.shadow, radius: 4, x: 0, y: 1)
-        .accessibilityLabel(receipt.label)
+        // The shared instrument-chip treatment (`InstrumentChipShell`) — one shell for this chip and
+        // every `NoticeChip`, so the two can never drift apart visually.
+        .modifier(InstrumentChipShell(accessibility: receipt.label))
         // Dwell timer, keyed on the receipt's epoch: a re-copy while mounted restarts it (the retarget).
         // A CANCELLED sleep must NOT expire — cancellation means either a newer receipt owns the chip
         // or the chip unmounted; calling `onExpire` then would kill the successor's dwell.

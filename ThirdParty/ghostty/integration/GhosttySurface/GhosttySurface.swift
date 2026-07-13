@@ -334,6 +334,14 @@ public final class GhosttySurface: @MainActor TerminalSurface, FeedBackpressurin
     /// as a plain `Bool` so this ABI binding stays AppKit-free. iOS leaves it unset (no pointer → no-op).
     public var onMouseVisibility: ((Bool) -> Void)?
 
+    /// Viewport-scroll observer: libghostty's renderer emits a `GHOSTTY_ACTION_SCROLLBAR` action
+    /// whenever the viewport/scrollback geometry changes (`terminal.Scrollbar`: `total` screen rows,
+    /// viewport `offset` row, viewport `length` rows). The app-level `action_cb` recovers THIS surface
+    /// from the action target and forwards the three raw values here; the view wires it to
+    /// `TerminalViewModel.noteViewportScroll(atBottom:)` (the prompt-jump landed-flash settle signal).
+    /// Kept plain `UInt64`s so this ABI binding stays free of any workspace-core dependency.
+    public var onScrollbarChange: ((_ offset: UInt64, _ length: UInt64, _ total: UInt64) -> Void)?
+
     /// Reports whether the host terminal is on the ALTERNATE screen (a full-screen TUI owns the viewport).
     /// The view wires this to `TerminalViewModel.isAlternateScreen` (the real DECSET 1049/47/1047 parse from
     /// the client `TerminalModeTracker`) so the libghostty-initiated paste BACKSTOP (`write`/middle-click,

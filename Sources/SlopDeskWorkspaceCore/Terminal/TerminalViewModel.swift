@@ -385,6 +385,43 @@ public final class TerminalViewModel {
         copyReceipt = nil
     }
 
+    // MARK: Prompt-jump landed flash (the ⌘PageUp/⌘PageDown orientation cue)
+
+    /// Bumped once per CONFIRMED prompt-jump landing — OBSERVABLE: the pane's flash overlay
+    /// (`PromptJumpFlashOverlay`) paints a one-shot ~240ms accent fade over viewport row 0 (where
+    /// libghostty PINS the jumped-to prompt) on each bump. The two-step arm/settle below keeps it
+    /// honest: it fires only when a jump actually MOVED the viewport to a pinned prompt, never when
+    /// the jump was a no-op or landed in the ACTIVE area (bottom clamp — the prompt is then NOT at
+    /// row 0, so the flash is suppressed: absent, never wrong).
+    public private(set) var promptJumpFlashEpoch = 0
+
+    /// The arm instant of an issued-but-unsettled prompt jump. libghostty reports the resulting
+    /// viewport move asynchronously (the renderer's scrollbar action on the next frame), so the jump
+    /// call arms this and the FIRST scrollbar change inside ``promptJumpSettleWindow`` settles it.
+    @ObservationIgnored private var promptJumpArmedAt: ContinuousClock.Instant?
+
+    /// How long an armed jump waits for its scrollbar echo before it lapses. Generous versus a frame
+    /// (~16ms) yet far below human re-action time, so an unrelated LATER scroll can never claim a
+    /// stale arm. Internal + settable so tests can force the lapse deterministically.
+    @ObservationIgnored var promptJumpSettleWindow: Duration = .milliseconds(400)
+
+    /// Arms the landed flash — called by the store's `jumpToBlockInActivePane` right after the
+    /// `jump_to_prompt:` binding action ran. Idempotent per jump (a re-arm just refreshes the window).
+    public func notePromptJumpIssued() {
+        promptJumpArmedAt = ContinuousClock().now
+    }
+
+    /// One viewport-scroll report from the renderer (the surface's scrollbar hook). Settles a pending
+    /// jump: inside the window and NOT bottom-clamped ⇒ the prompt is pinned at viewport row 0 ⇒ flash.
+    /// `atBottom` (viewport == active area) means libghostty could not pin the prompt to the top, so
+    /// the row is unknown ⇒ no flash. Always disarms — one jump, at most one flash.
+    public func noteViewportScroll(atBottom: Bool) {
+        guard let armedAt = promptJumpArmedAt else { return }
+        promptJumpArmedAt = nil
+        guard ContinuousClock().now - armedAt < promptJumpSettleWindow, !atBottom else { return }
+        promptJumpFlashEpoch += 1
+    }
+
     /// The AppKit pasteboard write, injected so ``handleCopyModeKey`` stays PURE of AppKit (unit-testable
     /// without a pasteboard). Default writes to the general `NSPasteboard` on macOS (no-op elsewhere); tests
     /// override with a capturing closure. `@ObservationIgnored`: wiring, not view state.

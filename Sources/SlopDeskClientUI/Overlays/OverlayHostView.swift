@@ -76,6 +76,11 @@ struct OverlayHostView: View {
                             .allowsHitTesting(false)
                             .transition(.opacity)
                     }
+                    if let notice = coordinator.notice {
+                        NoticeChip(notice: notice, onExpire: { coordinator.clearNotice() })
+                            .allowsHitTesting(false)
+                            .transition(.opacity)
+                    }
                     if sidebarCollapsed, let alert = connectionAlert {
                         ConnectionAlertChip(alert: alert) { store.focusPaneTree(alert.worstPane) }
                             .transition(.opacity)
@@ -85,6 +90,7 @@ struct OverlayHostView: View {
             }
             .animation(Slate.Anim.smallFade, value: connectionAlert)
             .animation(Slate.Anim.smallFade, value: coordinator.copyReceipt)
+            .animation(Slate.Anim.smallFade, value: coordinator.notice)
             .sheet(item: activeSheetBinding) { sheet in
                 // System accent inside the sheet too (a sheet roots a fresh environment, so reset the tint on the
                 // presented content directly — not only on the presenter below — to be order-independent).

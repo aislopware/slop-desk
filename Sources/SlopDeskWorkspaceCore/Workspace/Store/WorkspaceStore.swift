@@ -1708,6 +1708,13 @@ public final class WorkspaceStore {
         onLocalCopy?(text)
     }
 
+    /// A REOPENABLE tab was just recorded onto the ⇧⌘T LIFO (``recordClosedTab(_:)`` — a close that
+    /// removed a tab holding ≥1 real pane). The app wires this to the overlay coordinator's transient
+    /// "TAB CLOSED · ⇧⌘T REOPENS" notice — the undo affordance for the workspace's most destructive
+    /// routine action. Never fires for an all-ephemeral (system-dialog) tab, which is skipped by the
+    /// record itself. `nil` in tests / headless ⇒ the cue is dropped. `@ObservationIgnored`: wiring.
+    @ObservationIgnored public var onTabCloseRecorded: (() -> Void)?
+
     /// The configured tmux/zellij PREFIX chord (default ⌃A, CONFIGURABLE off a Ctrl-letter). The app-level
     /// `WorkspaceKeyDispatcher` and the per-surface ``TerminalKeyInterceptor``s
     /// (wired per pane in `wireMaterializedLeaf`) must read the SAME prefix or they disagree on what arms the
@@ -2348,6 +2355,9 @@ public final class WorkspaceStore {
             if recentlyClosedTabs.count > Self.recentlyClosedTabsCap {
                 recentlyClosedTabs.removeFirst(recentlyClosedTabs.count - Self.recentlyClosedTabsCap)
             }
+            // The record IS the undo affordance — surface it (the app wires this to the transient
+            // "TAB CLOSED · ⇧⌘T REOPENS" chip). After the append so a hook observer sees the LIFO state.
+            onTabCloseRecorded?()
             return
         }
     }

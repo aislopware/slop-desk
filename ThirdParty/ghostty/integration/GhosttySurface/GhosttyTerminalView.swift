@@ -395,6 +395,19 @@ final class GhosttyApp {
                 let visible = MouseVisibilityMapping.isVisible(forRawValue: rawVisibility)
                 ghosttyOnMainActor { surface.onMouseVisibility?(visible) }
                 return true
+            } else if action.tag == GHOSTTY_ACTION_SCROLLBAR {
+                // Viewport-scroll report (`terminal.Scrollbar`: total/offset/len screen rows), emitted by
+                // libghostty's renderer whenever the viewport or scrollback geometry changes. Mirror the
+                // MOUSE_SHAPE branch: recover the target surface, copy the three values (plain integers),
+                // and forward on the main actor. The prompt-jump landed flash settles on this signal.
+                guard target.tag == GHOSTTY_TARGET_SURFACE,
+                      let cSurface = target.target.surface,
+                      let ud = ghostty_surface_userdata(cSurface) else { return false }
+                let surface = Unmanaged<GhosttySurface>.fromOpaque(ud).takeUnretainedValue()
+                let bar = action.action.scrollbar
+                let (offset, length, total) = (bar.offset, bar.len, bar.total)
+                ghosttyOnMainActor { surface.onScrollbarChange?(offset, length, total) }
+                return true
             }
             return false
         }
@@ -927,6 +940,14 @@ final class GhosttyLayerBackedView: NSView {
             // A landed ⌘C / OSC-52 STANDARD-clipboard write → the pane's transient `COPIED · N` receipt
             // chip (libghostty owns the write; this is the only observation point that sees the text).
             s.onClipboardWrite = { [weak model] text in model?.noteClipboardCopy(text) }
+            // Viewport-scroll echo → the prompt-jump landed-flash settle signal. `atBottom` = the
+            // viewport is the ACTIVE area (offset+len reaches total — overflow-checked because the
+            // values cross a C ABI), where a forward jump could NOT pin the prompt at row 0.
+            s.onScrollbarChange = { [weak model] offset, length, total in
+                let end = offset.addingReportingOverflow(length)
+                let atBottom = end.overflow || end.partialValue >= total
+                model?.noteViewportScroll(atBottom: atBottom)
+            }
             self.surface = s
             // A BRAND-NEW surface must get its first real layout (setPixelSize) — drop the
             // same-size guard's cache so the next layout() pass applies unconditionally.

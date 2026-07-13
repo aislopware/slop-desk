@@ -201,6 +201,30 @@ public final class OverlayCoordinator {
         copyReceipt = nil
     }
 
+    // MARK: Notice chip (the window-level transient `LABEL · DETAIL` cue)
+
+    /// The window-level transient notice — the copy receipt's generic twin for non-copy cues (a sole-leaf
+    /// tab close → the ⇧⌘T undo affordance; a Peek & Reply delivery → which pane got the reply). One slot:
+    /// a successor RETARGETS the mounted chip (text hard-cuts, dwell restarts) rather than stacking.
+    /// ``OverlayHostView`` mounts the shared `NoticeChip` bottom-center while non-nil.
+    public private(set) var notice: ChipNotice?
+
+    /// Per-notice monotonic counter — fresh identity so a rapid successor restarts the chip's dwell
+    /// (`.task(id: epoch)`) instead of expiring on the old timer.
+    @ObservationIgnored private var noticeEpoch = 0
+
+    /// Publish a transient notice. `label` speaks the secondary caps register ("TAB CLOSED"), `detail`
+    /// the primary data register ("⇧⌘T REOPENS"; may be empty — the chip then shows the label alone).
+    public func noteNotice(label: String, detail: String, dwell: Duration = .seconds(4)) {
+        noticeEpoch += 1
+        notice = ChipNotice(label: label, detail: detail, epoch: noticeEpoch, dwell: dwell)
+    }
+
+    /// Dismisses the notice chip (its dwell elapsed). Idempotent.
+    public func clearNotice() {
+        notice = nil
+    }
+
     // MARK: Modal gate
 
     /// Whether ANY focus-stealing modal overlay is presented — the `OverlayHostView` hit-testing gate.
@@ -603,6 +627,13 @@ public final class OverlayCoordinator {
     /// attention. Observe + reply, **never a gate** — the agent was never blocked waiting on us.
     public func deliverPeekReply(_ text: String, to pane: PaneID) {
         store?.sendPeekReply(text, to: pane)
+        // The delivery cue: the card advances (or closes) the instant the reply lands, so without a cue
+        // a submit is indistinguishable from a skip/cancel. The notice names WHICH pane got the reply —
+        // the one doubt the advance leaves. The title is untrusted OSC-settable text ⇒ masked at this
+        // construction site (idempotent, same rule as the toast surfaces).
+        if let title = store?.peekContent(for: pane).title {
+            noteNotice(label: "REPLY SENT", detail: Toast.redactSecretsIfEnabled(title), dwell: .seconds(2.5))
+        }
         advancePeekReply(answered: pane)
     }
 

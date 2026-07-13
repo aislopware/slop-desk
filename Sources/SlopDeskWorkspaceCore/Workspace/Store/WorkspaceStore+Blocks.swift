@@ -111,10 +111,13 @@ enum BlockJump {
     /// `ordinal`. `0` (unknown — a mid-stream join stamped no ordinal) is a graceful no-op: better no
     /// jump than a mis-landing. The `ordinal − 1` downward delta is emitted as one or more in-range hops
     /// (see ``maxStep``) so an ordinal beyond ghostty's i16 range still lands exactly instead of no-opping.
-    nonisolated static func toPromptOrdinal(_ ordinal: UInt32, using actions: TerminalSurfaceActions) {
+    /// Returns whether the whole choreography ran (every binding action accepted) — the callers arm the
+    /// landed flash only then, so a skipped/rejected jump never leaves a pending flash arm.
+    @discardableResult
+    nonisolated static func toPromptOrdinal(_ ordinal: UInt32, using actions: TerminalSurfaceActions) -> Bool {
         guard ordinal >= 1 else {
             debugLog("jump SKIPPED: ordinal 0 (mid-stream join — host stamped no prompt ordinal)")
-            return
+            return false
         }
         let anchor1 = actions.performBindingAction("scroll_to_bottom")
         let anchor2 = actions.performBindingAction("jump_to_prompt:-\(reAnchorDelta)")
@@ -138,6 +141,7 @@ enum BlockJump {
             "jump ordinal=\(ordinal): scroll_to_bottom=\(anchor1) "
                 + "anchor(-\(reAnchorDelta))=\(anchor2) steps=\(hops)=\(stepsOK)",
         )
+        return anchor1 && anchor2 && stepsOK
     }
 
     /// Default-level diagnostics for a jump that failed to move the viewport (see ``toPromptOrdinal``).
@@ -218,7 +222,10 @@ public extension WorkspaceStore {
     func jumpToBlockInActivePane(delta: Int) {
         guard let model = activeTerminalModel,
               let actions = model.surface as? TerminalSurfaceActions else { return }
-        actions.performBindingAction("jump_to_prompt:\(delta)")
+        guard actions.performBindingAction("jump_to_prompt:\(delta)") else { return }
+        // Arm the landed flash: the renderer's scrollbar echo settles it (flash at the pinned prompt
+        // row) or it lapses (no-op jump / bottom clamp) — see `TerminalViewModel.noteViewportScroll`.
+        model.notePromptJumpIssued()
     }
 
     /// BOOKMARKS: seeds a freshly-materialized pane's ``TerminalBlockModel`` from persistence (keyed by
@@ -292,7 +299,9 @@ public extension WorkspaceStore {
             in: blocks, fromIndex: blockBookmarks.jumpCursor[paneID], forward: forward,
         ) else { return }
         blockBookmarks.jumpCursor[paneID] = target.index
-        BlockJump.toPromptOrdinal(target.promptOrdinal, using: actions)
+        if BlockJump.toPromptOrdinal(target.promptOrdinal, using: actions) {
+            model.notePromptJumpIssued() // landed flash — same settle contract as the delta jump
+        }
     }
 
     // MARK: - Jump to a specific Outline block
@@ -309,6 +318,8 @@ public extension WorkspaceStore {
         guard let model = activeTerminalModel,
               let actions = model.surface as? TerminalSurfaceActions,
               let block = model.blocks.block(at: index) else { return }
-        BlockJump.toPromptOrdinal(block.promptOrdinal, using: actions)
+        if BlockJump.toPromptOrdinal(block.promptOrdinal, using: actions) {
+            model.notePromptJumpIssued() // landed flash — same settle contract as the delta jump
+        }
     }
 }

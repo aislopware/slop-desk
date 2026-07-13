@@ -349,6 +349,12 @@ public struct SlopDeskClientApp: App {
         store.onLocalCopy = { [weak overlay] text in
             overlay?.noteCopy(text)
         }
+        // Closing a tab is the workspace's most destructive ROUTINE action, and the ⇧⌘T reopen has no
+        // visible affordance at the moment it matters. The store fires this only when a REOPENABLE tab
+        // just landed on the LIFO, so the chip never promises an undo it can't deliver.
+        store.onTabCloseRecorded = { [weak overlay] in
+            overlay?.noteNotice(label: "TAB CLOSED", detail: "⇧⌘T REOPENS")
+        }
         store.onLongCommandNotify = { [weak overlay, weak store] paneIDKey, paneTitle, exitCode, durationMS in
             // The store fires this ONLY for an unfocused, genuinely-long command (its own gate), so a toast
             // here is the background "your build finished" cue. SECURITY: `paneTitle` is the live OSC 0/2 pane

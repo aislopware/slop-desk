@@ -237,6 +237,43 @@ final class ReopenClosedTabTreeTests: XCTestCase {
         XCTAssertTrue(store.recentlyClosedTabs.isEmpty, "an ephemeral system-dialog tab is never recorded for reopen")
     }
 
+    // MARK: - The tab-close-recorded hook (the "TAB CLOSED · ⇧⌘T REOPENS" cue's source)
+
+    /// ``WorkspaceStore/onTabCloseRecorded`` fires exactly when a REOPENABLE tab lands on the LIFO —
+    /// the app wires it to the transient undo-affordance chip, so the hook must track the record
+    /// one-to-one: fire for a real close (the chip's promise is honest — ⇧⌘T will work), stay silent
+    /// for an all-ephemeral dialog tab (never promise an undo the LIFO can't deliver) and for a
+    /// pane close that leaves its tab alive (nothing was lost).
+    func testTabCloseRecordedHookTracksTheRecordExactly() {
+        let (ws, tabIDs, paneIDs) = tabbedWorkspace(["A", "B"])
+        let store = makeTreeStore(restoringTree: ws)
+        var fired = 0
+        store.onTabCloseRecorded = { fired += 1 }
+
+        store.closeTab(tabIDs[0])
+        XCTAssertEqual(fired, 1, "an explicit tab close records ⇒ the hook fires")
+
+        store.closePaneTree(paneIDs[1]) // sole leaf ⇒ the cascade removes the tab ⇒ records
+        XCTAssertEqual(fired, 2, "a sole-leaf pane close cascades the tab away ⇒ the hook fires")
+
+        let dialogID = store.addSystemDialogPane(windowID: 7, owner: "SecurityAgent", title: "sudo", isSecure: true)
+        store.closeSystemDialogPane(dialogID)
+        XCTAssertEqual(fired, 2, "an ephemeral dialog tab never records ⇒ no cue (no false undo promise)")
+    }
+
+    /// A pane close that leaves its tab alive records nothing ⇒ the hook stays silent (the tab — and
+    /// the ⇧⌘T affordance — did not change).
+    func testPaneCloseThatKeepsTabAliveDoesNotFireTheHook() {
+        let (ws, _, paneIDs) = tabbedWorkspace(["A"])
+        let store = makeTreeStore(restoringTree: ws)
+        store.splitPaneTree(paneIDs[0], axis: .horizontal, kind: .terminal) // two leaves — tab survives one close
+        var fired = 0
+        store.onTabCloseRecorded = { fired += 1 }
+
+        store.closePaneTree(paneIDs[0])
+        XCTAssertEqual(fired, 0, "closing one of several leaves keeps the tab ⇒ no record, no cue")
+    }
+
     // MARK: - Bounded LIFO (cap)
 
     /// The LIFO is bounded at ``WorkspaceStore/recentlyClosedTabsCap`` — closing more than the cap drops
