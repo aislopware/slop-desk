@@ -344,11 +344,14 @@ func runParkedWindowLaunchHygiene(at url: URL?) {
 // starts. (`dispatchMain()` stays the run loop; frame delivery is on SCStream's own dispatch queue.)
 NSApplication.shared.setActivationPolicy(.accessory)
 
-/// Fetches the shareable, on-screen windows (excluding desktop chrome).
+/// Fetches the shareable windows (excluding desktop chrome). `onScreenOnly: true` (the default) is
+/// the WindowServer's "paintable right now" set; pass `false` to also get minimized / other-Space
+/// windows — the mint path can rescue those (``OffScreenWindowMintRescue``), so the `windowList`
+/// reply enumerates them too.
 @Sendable
-func shareableWindows() async throws -> [SCWindow] {
+func shareableWindows(onScreenOnly: Bool = true) async throws -> [SCWindow] {
     let content = try await SCShareableContent.excludingDesktopWindows(
-        false, onScreenWindowsOnly: true,
+        false, onScreenWindowsOnly: onScreenOnly,
     )
     // Stable, readable order: by owning app then window id.
     return content.windows.sorted {
@@ -368,12 +371,7 @@ func shareableWindows() async throws -> [SCWindow] {
 func rescueOffScreenWindow(_ windowID: CGWindowID) async -> SCWindow? {
     await OffScreenWindowMintRescue.run(
         windowID: windowID,
-        fullList: {
-            let content = try? await SCShareableContent.excludingDesktopWindows(
-                false, onScreenWindowsOnly: false,
-            )
-            return content?.windows
-        },
+        fullList: { try? await shareableWindows(onScreenOnly: false) },
         onScreenList: { try? await shareableWindows() },
         windowIDOf: \.windowID,
         deminiaturize: { target in
@@ -445,7 +443,13 @@ func answerWindowList(
     answerGuard: ListAnswerGuard,
 ) async {
     defer { answerGuard.end(channelID) }
-    let summaries = await ((try? shareableWindows()) ?? []).compactMap(pickerSummary).prefix(64)
+    // FULL enumeration: the reply is the client's authority for the picker AND for WindowRebind's
+    // open-time/reconnect revalidation — minimized / other-Space windows are streamable (the mint
+    // path rescues them), so omitting them here made the client's revalidation close a pane whose
+    // hello this daemon was about to accept. On-screen first so the cap evicts the off-screen tail.
+    let all = await ((try? shareableWindows(onScreenOnly: false)) ?? [])
+    let ordered = StreamableWindowListOrder.arrange(all, isOnScreen: \.isOnScreen) { $0.title ?? "" }
+    let summaries = ordered.compactMap(pickerSummary).prefix(64)
     let reply = VideoControlMessage.windowList(Array(summaries)).encode()
     mux.send(reply, on: .control, channelID: channelID)
     mux.retire(channelID)

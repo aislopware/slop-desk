@@ -17,6 +17,11 @@
 ///    is the overwhelmingly common case).
 ///  - unresolved: the app has no windows on the host (quit) — the caller falls back to the picker.
 ///
+/// The list this consults (the host's `windowList` reply) enumerates ALL streamable windows —
+/// including MINIMIZED and other-Space ones, which the host's mint path rescues via AX — so
+/// absence here really does mean gone. An on-screen-only list would resolve a freshly picked
+/// minimized window to `.unresolved` and tear down the very hello the host was about to accept.
+///
 /// Pure + headlessly testable (no discovery, no UI).
 public enum WindowRebind {
     public enum Resolution: Equatable, Sendable {

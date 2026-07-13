@@ -560,7 +560,10 @@ media flows. `[UInt8 type][body]`, big-endian:
   "Resize…" popover can cap its width/height fields at a size the remote can actually adopt.
 - **Session-LESS discovery (no capture mint; the request bootstraps its reply flow at the mux, is
   never answered with an unbound-lane `bye`, and its lane is retired after the reply):**
-  `listWindows` (7, zero body) → `windowList` (8) powers the remote-window picker;
+  `listWindows` (7, zero body) → `windowList` (8) powers the remote-window picker AND the client's
+  `WindowRebind` open-time/reconnect revalidation. The reply enumerates ALL streamable windows —
+  on-screen first, then titled minimized / other-Space ones (the mint path rescues those via AX
+  un-minimize), so absence in the reply really does mean "gone from the host";
   `listSystemDialogs` (11, zero body) → `systemDialogList` (12) powers the system-popup panes. Exact
   record layouts live in the `VideoControlCodec.swift` header table (golden-pinned).
 - **Host-window FEED (docs/45 rail, 2026-07-11):** `windowFeedSubscribe` (16, client → host,
