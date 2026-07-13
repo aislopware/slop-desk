@@ -59,6 +59,7 @@ enum LinkActionActuator {
                 },
                 RowAction(title: "Copy", symbol: "doc.on.doc") {
                     copyToPasteboard(item.title)
+                    model?.noteClipboardCopy(item.title)
                 },
             ]
         }
@@ -75,6 +76,7 @@ enum LinkActionActuator {
             return
         case let .copyPathClient(text):
             copyToPasteboard(text)
+            model?.noteClipboardCopy(text)
         case let .changeDirectoryPTY(path):
             model?.sendInput(Data(LinkActionPolicy.changeDirectoryCommandLine(path).utf8))
         case let .openURLClient(urlString):

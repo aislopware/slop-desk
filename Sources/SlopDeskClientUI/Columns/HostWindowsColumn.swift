@@ -464,8 +464,12 @@ private struct HostWindowLiveRow: View {
         }
         Button("Copy Window Title") {
             let title = feed.titles[identity.windowID] ?? ""
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(title.isEmpty ? identity.appName : title, forType: .string)
+            let text = title.isEmpty ? identity.appName : title
+            // The shared copy funnel (test-isolated pasteboard under XCTest), then the pane-less
+            // confirmation: the context menu is gone as the write lands, so the window-level
+            // `COPIED · N` chip (store hook → overlay coordinator) is the receipt.
+            ClientPasteboard.write(text)
+            store.noteLocalCopy(text)
         }
     }
 }

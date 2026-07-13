@@ -301,6 +301,14 @@ public final class GhosttySurface: @MainActor TerminalSurface, FeedBackpressurin
     /// coordinator sets this to emit a `resize` WireMessage.
     public var onResize: ((UInt16, UInt16) -> Void)?
 
+    /// Fired after a STANDARD-clipboard write libghostty requested for THIS surface actually landed on
+    /// the pasteboard (⌘C `copy_to_clipboard`, or an allowed OSC-52 write) — carrying the copied text.
+    /// The view wires this to `TerminalViewModel.noteClipboardCopy` so the pane's transient `COPIED · N`
+    /// chip lights. SELECTION-clipboard writes (the copy-on-select drag, routed to the private selection
+    /// pasteboard) never fire it — a chip per drag tick would be spam. Kept a plain `(String) -> Void`
+    /// so this ABI binding stays free of any workspace-core dependency.
+    public var onClipboardWrite: ((String) -> Void)?
+
     /// Fired after each ``feed(_:)``. The embedding view sets this to request a present from its
     /// GATED display-link (`draw_now`). This dirty signal is what lets the renderer present new
     /// content WITHOUT a free-running per-frame `draw_now` — which kept libghostty's renderer libxev

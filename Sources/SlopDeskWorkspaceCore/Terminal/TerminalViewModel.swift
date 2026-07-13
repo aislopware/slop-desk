@@ -353,10 +353,37 @@ public final class TerminalViewModel {
     /// `@ObservationIgnored`: wiring, not view state. Nil for headless/preview callers (never invoked).
     @ObservationIgnored public var onRequestCopyMode: (() -> Void)?
 
-    /// A brief "copied" confirmation flash hook the ``CopyModeOverlay`` wires to a transient `@State`
-    /// toast (<=0.22s). Fired by ``handleCopyModeKey`` after a successful `y`/Enter copy.
-    /// `@ObservationIgnored`: wiring, not view state. Nil for headless/preview callers.
+    /// A brief "copied" confirmation flash hook. Fired by ``noteClipboardCopy(_:)`` alongside every
+    /// receipt (copy-mode yank, ⌘C selection, navigator/hint copies). `@ObservationIgnored`: wiring,
+    /// not view state. Nil for headless/preview callers.
     @ObservationIgnored public var onCopyConfirmation: (() -> Void)?
+
+    /// The most recent clipboard-copy receipt — OBSERVABLE: the pane's transient `COPIED · N` chip
+    /// (``TerminalLeafView``) mounts while this is non-nil and clears it after its dwell. Every
+    /// pane-scoped copy path lands here via ``noteClipboardCopy(_:)``: the copy-mode `y`/Enter yank,
+    /// the renderer's ⌘C / OSC-52 standard-clipboard write (via the surface's clipboard-write hook),
+    /// and the navigator / hint-mode / Jump-To copy actions.
+    public private(set) var copyReceipt: CopyReceipt?
+
+    /// Per-copy monotonic counter — gives each receipt a fresh identity so a rapid re-copy restarts
+    /// the chip's dwell timer (`.task(id: epoch)`) instead of expiring on the old timer.
+    @ObservationIgnored private var copyReceiptEpoch = 0
+
+    /// Records that `text` just landed on the clipboard: publishes a fresh ``CopyReceipt`` (the chip's
+    /// content) and fires the legacy ``onCopyConfirmation`` hook. RECORD-only — the pasteboard write
+    /// itself stays at the call site (libghostty writes internally; view helpers write per-platform).
+    /// Empty text is a no-op (nothing was copied ⇒ nothing to confirm).
+    public func noteClipboardCopy(_ text: String) {
+        guard !text.isEmpty else { return }
+        copyReceiptEpoch += 1
+        copyReceipt = CopyReceipt(text: text, epoch: copyReceiptEpoch)
+        onCopyConfirmation?()
+    }
+
+    /// Dismisses the copy receipt — called by the chip when its dwell elapses. Idempotent.
+    public func clearCopyReceipt() {
+        copyReceipt = nil
+    }
 
     /// The AppKit pasteboard write, injected so ``handleCopyModeKey`` stays PURE of AppKit (unit-testable
     /// without a pasteboard). Default writes to the general `NSPasteboard` on macOS (no-op elsewhere); tests
@@ -691,7 +718,7 @@ public final class TerminalViewModel {
         }
         guard let payload = text, !payload.isEmpty else { return }
         copyToPasteboard(payload)
-        onCopyConfirmation?()
+        noteClipboardCopy(payload)
     }
 
     /// Arms copy-mode and fires ``onRequestCopyMode`` so the overlay shows (⌘⇧C / menu / store entry). A fresh

@@ -175,6 +175,32 @@ public final class OverlayCoordinator {
         prefixArmed = armed
     }
 
+    // MARK: Copy receipt (the window-level `COPIED · N` chip)
+
+    /// The window-level copy receipt — published for NON-pane-scoped copies (palette "Copy Path",
+    /// host-window rail "Copy Window Title"), whose trigger sheet / menu is already gone by the time the
+    /// write lands, so no pane can host the confirmation. ``OverlayHostView`` mounts the shared
+    /// `CopyReceiptChip` bottom-center while non-nil; pane-scoped copies publish
+    /// ``TerminalViewModel/copyReceipt`` on their own pane instead and never route here.
+    public private(set) var copyReceipt: CopyReceipt?
+
+    /// Per-copy monotonic counter — fresh identity per receipt so a rapid re-copy restarts the chip's
+    /// dwell (`.task(id: epoch)`) instead of expiring on the old timer.
+    @ObservationIgnored private var copyReceiptEpoch = 0
+
+    /// Publish a fresh receipt for a completed pane-less clipboard write (the target the app wires
+    /// ``WorkspaceStore/onLocalCopy`` to). Empty text is a no-op.
+    public func noteCopy(_ text: String) {
+        guard !text.isEmpty else { return }
+        copyReceiptEpoch += 1
+        copyReceipt = CopyReceipt(text: text, epoch: copyReceiptEpoch)
+    }
+
+    /// Dismisses the window-level chip (its dwell elapsed). Idempotent.
+    public func clearCopyReceipt() {
+        copyReceipt = nil
+    }
+
     // MARK: Modal gate
 
     /// Whether ANY focus-stealing modal overlay is presented — the `OverlayHostView` hit-testing gate.

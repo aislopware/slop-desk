@@ -509,7 +509,7 @@ final class GhosttyApp {
         // `ghostty_clipboard_content_s` { mime, data }. Write the text/plain entry to
         // NSPasteboard.general (upstream writeClipboard, App.swift:371-405). We model the STANDARD
         // clipboard only (the selection clipboard is virtual on macOS); ignore non-text mimes.
-        runtime.write_clipboard_cb = { (_ /*userdata*/, location, content, len, confirm) in
+        runtime.write_clipboard_cb = { (userdata, location, content, len, confirm) in
             guard let content, len > 0 else { return }
             // Find the text/plain entry (mime == "text/plain"); fall back to the first entry's data.
             // Both pointers are NUL-terminated UTF-8 owned by libghostty — copied via String(cString:)
@@ -532,11 +532,19 @@ final class GhosttyApp {
             // makes the decision; `confirm` already imports as a Swift `Bool` from C `bool` (no {0,1} byte to
             // re-read). Pasteboard is main-thread-only; this path is main (copy_to_clipboard / main feed).
             MainActor.assumeIsolated {
+                // Recover the owning surface (same userdata contract as `confirm_read_clipboard_cb`) so a
+                // landed STANDARD write can light the pane's `COPIED · N` chip via `onClipboardWrite`. The
+                // SELECTION clipboard (copy-on-select drag → private pasteboard) stays chip-silent.
+                let surface = userdata.map { Unmanaged<GhosttySurface>.fromOpaque($0).takeUnretainedValue() }
+                let noteWrite = {
+                    if location == GHOSTTY_CLIPBOARD_STANDARD { surface?.onClipboardWrite?(text) }
+                }
                 switch ClipboardWritePolicy.decide(confirmRequested: confirm, text: text) {
                 case .drop:
                     return
                 case .write:
                     slopdeskWriteClipboard(text, location: location)
+                    noteWrite()
                 case .confirm:
                     #if os(macOS)
                     // `clipboard-write = ask`: present the "a program wants to set your clipboard" sheet;
@@ -547,7 +555,10 @@ final class GhosttyApp {
                         dangers: [],
                         in: NSApp.keyWindow,
                     ) { allow in
-                        if allow { slopdeskWriteClipboard(text, location: location) }
+                        if allow {
+                            slopdeskWriteClipboard(text, location: location)
+                            noteWrite()
+                        }
                     }
                     #else
                     // iOS has no confirmation sheet. An "Ask" we cannot present must NOT silently allow —
@@ -913,6 +924,9 @@ final class GhosttyLayerBackedView: NSView {
             // middle-click) reads the REAL alt-screen flag through this hook so it suppresses inside a true
             // full-screen TUI — matching the ⌘V `requestPaste` path (no more hardcoded `false`).
             s.isAlternateScreen = { [weak model] in model?.isAlternateScreen ?? false }
+            // A landed ⌘C / OSC-52 STANDARD-clipboard write → the pane's transient `COPIED · N` receipt
+            // chip (libghostty owns the write; this is the only observation point that sees the text).
+            s.onClipboardWrite = { [weak model] text in model?.noteClipboardCopy(text) }
             self.surface = s
             // A BRAND-NEW surface must get its first real layout (setPixelSize) — drop the
             // same-size guard's cache so the next layout() pass applies unconditionally.

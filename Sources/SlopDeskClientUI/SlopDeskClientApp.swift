@@ -344,6 +344,11 @@ public struct SlopDeskClientApp: App {
             guard let toast = Toast.sessionResume(paneIDKey: paneID.raw.uuidString, outcome: outcome) else { return }
             overlay?.pushToast(toast)
         }
+        // A NON-pane-scoped copy (palette "Copy Path", rail "Copy Window Title") lights the coordinator's
+        // window-level `COPIED · N` chip — the pane-less twin of `TerminalViewModel.copyReceipt`.
+        store.onLocalCopy = { [weak overlay] text in
+            overlay?.noteCopy(text)
+        }
         store.onLongCommandNotify = { [weak overlay, weak store] paneIDKey, paneTitle, exitCode, durationMS in
             // The store fires this ONLY for an unfocused, genuinely-long command (its own gate), so a toast
             // here is the background "your build finished" cue. SECURITY: `paneTitle` is the live OSC 0/2 pane

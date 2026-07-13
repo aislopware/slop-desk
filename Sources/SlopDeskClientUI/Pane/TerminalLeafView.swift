@@ -206,6 +206,20 @@ struct TerminalLeafView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        // The transient `COPIED · N` receipt chip — bottom-TRAILING, its own overlay slot so appearing
+        // never reflows the top-trailing pill stack (no layout shift for a frequent action). Fade-only
+        // (no travel), hit-transparent, self-expiring: the chip's dwell task calls `clearCopyReceipt()`
+        // and the `smallFade` below fades it out. Reading `copyReceipt` here registers observation, so
+        // every pane-scoped copy path (⌘C, yank, navigator, hints) lights it reactively.
+        .overlay(alignment: .bottomTrailing) {
+            if !staticMirror, let model = live?.terminalModel, let receipt = model.copyReceipt {
+                CopyReceiptChip(receipt: receipt, onExpire: { model.clearCopyReceipt() })
+                    .padding(Slate.Metric.space2)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+        }
+        .animation(Slate.Anim.smallFade, value: live?.terminalModel?.copyReceipt)
         .animation(Slate.Anim.reveal, value: findBar.visible)
         .animation(Slate.Anim.reveal, value: showReadOnlyPill)
         .animation(Slate.Anim.reveal, value: showSecureInputPill)
@@ -461,15 +475,15 @@ struct TerminalLeafView: View {
             switch intent {
             case .open: openURLString("http://" + target.raw)
             case .copy,
-                 .reveal: copyToPasteboard(target.raw)
+                 .reveal: copyToPasteboard(target.raw, model: model)
             }
         case .gitHash:
             // A bare commit hash has NO open target (no repo URL to resolve it against), so every intent copies
             // the text — a deliberate gap in docs/DECISIONS.md rather than faking an open.
-            copyToPasteboard(target.raw)
+            copyToPasteboard(target.raw, model: model)
         case let .custom(actionTemplate):
             switch intent {
-            case .copy: copyToPasteboard(target.raw)
+            case .copy: copyToPasteboard(target.raw, model: model)
             case .open,
                  .reveal: runCustomHintAction(template: actionTemplate, raw: target.raw, model: model)
             }
@@ -498,7 +512,7 @@ struct TerminalLeafView: View {
         case .nothing:
             return
         case let .copyPathClient(text):
-            copyToPasteboard(text)
+            copyToPasteboard(text, model: model)
         case let .changeDirectoryPTY(path):
             model.sendInput(Data(LinkActionPolicy.changeDirectoryCommandLine(path).utf8))
         case let .openURLClient(urlString):
@@ -515,7 +529,7 @@ struct TerminalLeafView: View {
     /// context per the hint-mode mapping note) by injecting it verbatim down the PTY. No template ⇒ copy the text.
     private static func runCustomHintAction(template: String?, raw: String, model: TerminalViewModel) {
         guard let template, !template.isEmpty else {
-            copyToPasteboard(raw)
+            copyToPasteboard(raw, model: model)
             return
         }
         let resolved = template.replacingOccurrences(of: "{0}", with: raw)
@@ -539,14 +553,16 @@ struct TerminalLeafView: View {
         #endif
     }
 
-    /// Copy text to the platform pasteboard (the Jump-To / context-menu idiom). A no-op for empty text.
-    private static func copyToPasteboard(_ text: String) {
+    /// Copy text to the platform pasteboard (the Jump-To / context-menu idiom) and publish the pane's
+    /// `COPIED · N` receipt. A no-op for empty text.
+    private static func copyToPasteboard(_ text: String, model: TerminalViewModel) {
         guard !text.isEmpty else { return }
         #if canImport(AppKit)
         ClientPasteboard.write(text)
         #elseif canImport(UIKit)
         UIPasteboard.general.string = text
         #endif
+        model.noteClipboardCopy(text)
     }
 }
 #endif

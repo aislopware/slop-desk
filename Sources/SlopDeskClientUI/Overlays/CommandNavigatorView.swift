@@ -478,6 +478,9 @@ struct CommandNavigatorView: View {
             #elseif canImport(UIKit)
             UIPasteboard.general.string = text
             #endif
+            // The navigator stays OPEN on copy, so the pane's `COPIED · N` chip underneath is the
+            // confirmation that the (possibly huge, VT-stripped) block output actually landed.
+            model.noteClipboardCopy(text)
         }
     }
 

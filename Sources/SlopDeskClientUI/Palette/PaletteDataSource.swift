@@ -68,6 +68,9 @@ public struct ActionsPaletteSource: PaletteDataSource {
                       let paneID = session.activeTab?.activePane,
                       let cwd = session.specs[paneID]?.lastKnownCwd, !cwd.isEmpty else { return }
                 copyToPasteboard(cwd)
+                // Pane-less confirmation: the palette sheet is closing as the write lands, so the
+                // window-level `COPIED · N` chip (store hook → overlay coordinator) is the receipt.
+                store.noteLocalCopy(cwd)
             },
         ),
         item(

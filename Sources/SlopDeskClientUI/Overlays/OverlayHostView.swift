@@ -63,18 +63,28 @@ struct OverlayHostView: View {
                 }
             }
             .animation(Slate.Anim.smallFade, value: coordinator.prefixArmed)
-            // The durable connection indicator — a compact amber/red chip shown at the
-            // bottom ONLY while the tabs panel is collapsed AND some pane is unhealthy. With the sidebar hidden
-            // a dropped/reconnecting pane otherwise has no per-pane surface; clicking the chip focuses the worst
-            // affected pane. Hidden entirely when all panes are healthy (`connectionAlert()` returns nil).
+            // The bottom-center transient chips, stacked so they can't overlap: the window-level
+            // `COPIED · N` receipt (pane-less copies — palette "Copy Path", rail "Copy Window Title";
+            // self-expiring via the chip's dwell task) above the durable connection indicator — a compact
+            // amber/red chip shown ONLY while the tabs panel is collapsed AND some pane is unhealthy. With
+            // the sidebar hidden a dropped/reconnecting pane otherwise has no per-pane surface; clicking
+            // the chip focuses the worst affected pane. Hidden when all panes are healthy (`nil` alert).
             .overlay(alignment: .bottom) {
-                if sidebarCollapsed, let alert = connectionAlert {
-                    ConnectionAlertChip(alert: alert) { store.focusPaneTree(alert.worstPane) }
-                        .padding(Slate.Metric.space4)
-                        .transition(.opacity)
+                VStack(spacing: Slate.Metric.space2) {
+                    if let receipt = coordinator.copyReceipt {
+                        CopyReceiptChip(receipt: receipt, onExpire: { coordinator.clearCopyReceipt() })
+                            .allowsHitTesting(false)
+                            .transition(.opacity)
+                    }
+                    if sidebarCollapsed, let alert = connectionAlert {
+                        ConnectionAlertChip(alert: alert) { store.focusPaneTree(alert.worstPane) }
+                            .transition(.opacity)
+                    }
                 }
+                .padding(Slate.Metric.space4)
             }
             .animation(Slate.Anim.smallFade, value: connectionAlert)
+            .animation(Slate.Anim.smallFade, value: coordinator.copyReceipt)
             .sheet(item: activeSheetBinding) { sheet in
                 // System accent inside the sheet too (a sheet roots a fresh environment, so reset the tint on the
                 // presented content directly — not only on the presenter below — to be order-independent).

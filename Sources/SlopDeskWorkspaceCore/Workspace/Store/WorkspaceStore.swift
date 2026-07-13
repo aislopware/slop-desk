@@ -1694,6 +1694,20 @@ public final class WorkspaceStore {
     @ObservationIgnored
     public var onSessionResumeOutcome: ((_ paneID: PaneID, _ outcome: SlopDeskClient.SessionResumeOutcome) -> Void)?
 
+    /// A NON-pane-scoped client copy just landed on the clipboard (palette "Copy Path", host-window rail
+    /// "Copy Window Title" — actions whose trigger surface has no pane to host the transient `COPIED · N`
+    /// chip). The app wires this to the overlay coordinator's window-level chip. Pane-scoped copies never
+    /// route here — they publish ``TerminalViewModel/copyReceipt`` on their own pane instead. `nil` in
+    /// tests / headless ⇒ the confirmation is dropped. `@ObservationIgnored`: wiring, not view state.
+    @ObservationIgnored public var onLocalCopy: ((_ text: String) -> Void)?
+
+    /// Fires ``onLocalCopy`` for a completed non-pane-scoped clipboard write. Empty text is a no-op
+    /// (nothing was copied ⇒ nothing to confirm).
+    public func noteLocalCopy(_ text: String) {
+        guard !text.isEmpty else { return }
+        onLocalCopy?(text)
+    }
+
     /// The configured tmux/zellij PREFIX chord (default ⌃A, CONFIGURABLE off a Ctrl-letter). The app-level
     /// `WorkspaceKeyDispatcher` and the per-surface ``TerminalKeyInterceptor``s
     /// (wired per pane in `wireMaterializedLeaf`) must read the SAME prefix or they disagree on what arms the
