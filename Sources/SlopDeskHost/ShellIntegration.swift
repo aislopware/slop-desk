@@ -183,11 +183,17 @@ public enum ShellIntegration {
     }
 
     /// Runs `<shellPath> --norcs --interactive -c 'echo -n $ZDOTDIR'` (kitty's exact probe) and
-    /// returns its stdout, or `nil` on spawn failure / non-zero exit / a 2s timeout (the caller
+    /// returns its stdout, or `nil` on spawn failure / non-zero exit / timeout (the caller
     /// fails OPEN). `--norcs` suppresses every startup file EXCEPT `/etc/zshenv` — the one under
     /// test; `--interactive` makes `[[ -o interactive ]]`-guarded code in it behave as in a real
     /// session. stderr/stdin are nulled (an interactive `-c` zsh may grumble about job control).
-    static func probeZDotDir(shellPath: String, environment: [String: String]) -> String? {
+    /// `timeout` defaults to 2s — tight enough that a hostile/hung `/etc/zshenv` cannot wedge pane
+    /// spawn; tests pass a generous value so a loaded machine doesn't fail the assertion.
+    static func probeZDotDir(
+        shellPath: String,
+        environment: [String: String],
+        timeout: TimeInterval = 2,
+    ) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shellPath)
         process.arguments = ["--norcs", "--interactive", "-c", "echo -n $ZDOTDIR"]
@@ -203,7 +209,7 @@ public enum ShellIntegration {
         }
         // Bounded wait: a hostile/hung /etc/zshenv must not wedge pane spawn. Polling is fine on
         // this rare path (the probe only runs when /etc/zshenv exists).
-        let deadline = Date().addingTimeInterval(2)
+        let deadline = Date().addingTimeInterval(timeout)
         while process.isRunning, Date() < deadline {
             usleep(10000)
         }

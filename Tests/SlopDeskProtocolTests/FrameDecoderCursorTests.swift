@@ -63,21 +63,28 @@ final class FrameDecoderCursorTests: XCTestCase {
         )
     }
 
+    /// Warm-up ×2, then MIN of 3 measured runs: min is the standard noise-resistant estimator —
+    /// a single measured run can be descheduled under `swift test --parallel` worker contention,
+    /// inflating the scaling ratio past its threshold (a load flake, not a regression).
     private func drainTime(_ make: () -> Data) throws -> Double {
         let bytes = make()
-        // One warmup to stabilize allocator/caches, then the measured run.
         for _ in 0..<2 {
             let d = FrameDecoder()
             d.append(bytes)
             while try d.nextMessage() != nil {}
         }
         let clock = ContinuousClock()
-        let start = clock.now
-        let d = FrameDecoder()
-        d.append(bytes)
-        while try d.nextMessage() != nil {}
-        let elapsed = start.duration(to: clock.now)
-        return Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+        var best = Double.infinity
+        for _ in 0..<3 {
+            let start = clock.now
+            let d = FrameDecoder()
+            d.append(bytes)
+            while try d.nextMessage() != nil {}
+            let elapsed = start.duration(to: clock.now)
+            let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+            best = Double.minimum(best, seconds)
+        }
+        return best
     }
 
     // MARK: Back-patched length prefix (rank 11 encode optimization)
