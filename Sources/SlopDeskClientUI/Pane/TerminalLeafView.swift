@@ -199,6 +199,18 @@ struct TerminalLeafView: View {
                     TerminalFindBar(model: findBar)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
+                // The workspace-prefix ARMED pill (⌃B awaiting its follow-up key) — a keyboard MODE, so it
+                // joins this mode-pill slot on the FOCUSED pane. LAST in the stack (appearing displaces no
+                // persistent pill above) and FADE-ONLY (sub-second state — a move transition reads as
+                // flicker), hit-transparent (nothing to click; the arm resolves by keyboard alone).
+                if PrefixArmedPill.shows(
+                    staticMirror: staticMirror, isFocused: isFocused,
+                    armed: overlayCoordinator?.prefixArmed == true,
+                ) {
+                    PrefixArmedPill(glyph: WorkspaceBindingRegistry.glyph(store.workspaceKeyPrefix))
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
             }
             .padding(Slate.Metric.space2)
         }
@@ -226,6 +238,7 @@ struct TerminalLeafView: View {
             }
         }
         .animation(Slate.Anim.smallFade, value: live?.terminalModel?.copyReceipt)
+        .animation(Slate.Anim.smallFade, value: overlayCoordinator?.prefixArmed)
         .animation(Slate.Anim.reveal, value: findBar.visible)
         .animation(Slate.Anim.reveal, value: showReadOnlyPill)
         .animation(Slate.Anim.reveal, value: showSecureInputPill)

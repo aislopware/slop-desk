@@ -49,20 +49,10 @@ struct OverlayHostView: View {
         ToastStackView(coordinator: coordinator)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .allowsHitTesting(!coordinator.toasts.isEmpty)
-            // The "prefix armed" chip — a minimal bottom-LEADING glyph shown only while
-            // the workspace prefix machine awaits its follow-up key (`coordinator.prefixArmed`, driven by the app
-            // dispatcher's armed edges: arm lights it; fire / unbound / double-tap / timeout clear it). The
-            // bottom-TRAILING corner belongs to the toast stack; the chip never takes hits, so the workspace
-            // beneath stays interactive.
-            .overlay(alignment: .bottomLeading) {
-                if coordinator.prefixArmed {
-                    PrefixArmedChip(glyph: WorkspaceBindingRegistry.glyph(store.workspaceKeyPrefix))
-                        .padding(Slate.Metric.space4)
-                        .allowsHitTesting(false)
-                        .transition(.opacity)
-                }
-            }
-            .animation(Slate.Anim.smallFade, value: coordinator.prefixArmed)
+            // The "prefix armed" indicator is NOT a window-corner chip: it is a keyboard MODE, so it
+            // renders as a ``PrefixArmedPill`` in the FOCUSED pane's top-trailing mode-pill stack
+            // (`TerminalLeafView` / `GuiLeafView`), beside VI / READ ONLY / SECURE INPUT — the leaves read
+            // the same `coordinator.prefixArmed` flag the dispatcher drives.
             // The bottom-center transient chips, stacked so they can't overlap: the window-level
             // `COPIED · N` receipt (pane-less copies — palette "Copy Path", rail "Copy Window Title";
             // self-expiring via the chip's dwell task) above the durable connection indicator — a compact
@@ -253,35 +243,11 @@ struct OverlayHostView: View {
     }
 }
 
-// MARK: - PrefixArmedChip (the minimal "prefix armed" indicator)
-
-/// The tiny keyboard-centric chip shown while the workspace prefix is ARMED — `PREFIX · ⌃B` in the
-/// instrument caps register on the SHARED ``InstrumentChipShell`` (the COPIED·N / TAB CLOSED / REPLY SENT
-/// family), so the one live-mode chip reads as the same instrument as the transient receipts instead of a
-/// one-off treatment. Label secondary · glyph primary (the NoticeChip register); state-driven (visible
-/// exactly while armed), so no dwell task — the armed edge unmounts it. `Slate.*` tokens only (the
-/// ds-leaks ratchet).
-private struct PrefixArmedChip: View {
-    let glyph: String
-
-    var body: some View {
-        HStack(spacing: Slate.Metric.space1) {
-            Text("PREFIX")
-                .foregroundStyle(Slate.Text.secondary)
-            Text("·")
-                .foregroundStyle(Slate.Text.tertiary)
-            Text(glyph)
-                .foregroundStyle(Slate.Text.primary)
-        }
-        .modifier(InstrumentChipShell(accessibility: "Prefix armed — " + glyph))
-    }
-}
-
 // MARK: - ConnectionAlertChip (the durable collapsed-sidebar connection indicator)
 
 /// The compact connection-health chip: an amber/red status dot + a count label
 /// ("1 reconnecting" / "2 disconnected") shown at the bottom while the tabs panel is collapsed and some pane
-/// is unhealthy. A `Button` (unlike the non-interactive prefix chip) so a click focuses the worst-affected
+/// is unhealthy. A `Button` (unlike the non-interactive receipt chips) so a click focuses the worst-affected
 /// pane. `Slate.*` tokens only (the ds-leaks ratchet); the dot colour reuses the shared status roles.
 private struct ConnectionAlertChip: View {
     let alert: WorkspaceConnectionAlert
