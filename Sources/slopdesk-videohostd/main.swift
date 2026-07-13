@@ -374,6 +374,7 @@ func rescueOffScreenWindow(_ windowID: CGWindowID) async -> SCWindow? {
         fullList: { try? await shareableWindows(onScreenOnly: false) },
         onScreenList: { try? await shareableWindows() },
         windowIDOf: \.windowID,
+        frameOf: \.frame,
         deminiaturize: { target in
             guard let pid = target.owningApplication?.processID else { return .failed }
             return await MainActor.run {
