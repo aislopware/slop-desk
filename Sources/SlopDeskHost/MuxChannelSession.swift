@@ -1570,6 +1570,27 @@ final class MuxChannelSession: @unchecked Sendable {
         return ansiStrip ? ANSIStripper.strip(text) : text
     }
 
+    /// Returns the RAW scrollback bytes (all acked + live tail, seq order) for the `screen`
+    /// verb's on-demand grid reconstruction. When the ring holds more than `capBytes`, only the
+    /// NEWEST whole messages that fit are returned (a full-screen app repaints, so a truncated
+    /// prefix converges after one redraw cycle — same property the ring's own truncation relies
+    /// on). Snapshot under `replayLock`, same discipline as ``scrollbackTextForControl(ansiStrip:)``.
+    func scrollbackRawForControl(capBytes: Int = 8 * 1024 * 1024) -> Data {
+        replayLock.lock()
+        let messages = replay.messages(after: 0)
+        replayLock.unlock()
+        var included: [Data] = []
+        var total = 0
+        for m in messages.reversed() {
+            if total + m.bytes.count > capBytes, !included.isEmpty { break }
+            included.append(m.bytes)
+            total += m.bytes.count
+        }
+        var data = Data(capacity: total)
+        for bytes in included.reversed() { data.append(bytes) }
+        return data
+    }
+
     /// Returns the pane's scrollback as an array of LOGICAL lines (the `read --unwrapped` verb).
     ///
     /// The host keeps NO screen buffer and the scrollback ring stores RAW PTY read-chunk byte

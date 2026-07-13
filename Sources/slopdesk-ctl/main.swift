@@ -7,6 +7,7 @@ import SlopDeskCtlCore
 // Usage (subcommands map to protocol verbs):
 //   slopdesk-ctl [--socket PATH] list-panes [--json]
 //   slopdesk-ctl [--socket PATH] read <paneId> [--ansi] [--full] [--lines N]
+//   slopdesk-ctl [--socket PATH] screen <paneId> [--rows N] [--cols N] [--json]
 //   slopdesk-ctl [--socket PATH] last-output <paneId> [--n N] [--ansi] [--json]
 //   slopdesk-ctl [--socket PATH] write <paneId> [--text "..."] [--key K[,K...]]
 //   slopdesk-ctl [--socket PATH] run <paneId> --cmd "..." [--wait] [--timeout-ms N] [--json]
@@ -54,6 +55,13 @@ func printUsage() {
           --unwrapped (alias --recent) returns logical lines (joined chunks, ANSI-stripped,
           split on hard newlines, partial trailing line dropped) so a regex is robust to
           read-chunk boundaries.  Combine with --lines N for the last N logical lines.
+
+      screen <paneId> [--rows N] [--cols N] [--json]
+          Dump the RENDERED screen: the host replays the pane's scrollback through its VT
+          screen model at the live PTY size and returns the visible grid — a TUI pane
+          (vim, htop, claude) reads as what a human sees, not raw escape-code soup.
+          --rows/--cols override the grid size.  --json adds cursor position, altScreen
+          flag, and the untrimmed per-row lines array.
 
       last-output <paneId> [--n N] [--ansi] [--json]
           The last N finished commands as OSC-133 blocks: command line, output, exit code,
@@ -399,6 +407,50 @@ func cmdRead(socketPath: String, rest: [String]) {
         text = lines.suffix(limit).joined(separator: "\n")
     }
 
+    stdout(text)
+    if !text.hasSuffix("\n") { stdout("\n") }
+}
+
+func cmdScreen(socketPath: String, rest: [String]) {
+    guard !rest.isEmpty else { die("screen requires <paneId>") }
+    let paneId = rest[0]
+    var rows: Int?
+    var cols: Int?
+    var jsonMode = false
+    var idx = 1
+    while idx < rest.count {
+        switch rest[idx] {
+        case "--rows":
+            guard idx + 1 < rest.count else { die("--rows requires a value") }
+            idx += 1
+            guard let n = Int(rest[idx]), n >= 1, n <= 512 else { die("--rows must be 1..512") }
+            rows = n
+        case "--cols":
+            guard idx + 1 < rest.count else { die("--cols requires a value") }
+            idx += 1
+            guard let n = Int(rest[idx]), n >= 1, n <= 1024 else { die("--cols must be 1..1024") }
+            cols = n
+        case "--json":
+            jsonMode = true
+        default:
+            die("unknown flag for screen: \(rest[idx])")
+        }
+        idx += 1
+    }
+    let obj = callVerb(
+        socketPath: socketPath, method: "screen",
+        params: screenParams(paneId: paneId, rows: rows, cols: cols),
+    )
+    requireOK(obj, context: "screen")
+    if jsonMode {
+        guard let data = try? JSONSerialization.data(withJSONObject: obj, options: [.sortedKeys]),
+              let line = String(bytes: data, encoding: .utf8)
+        else { die("failed to re-encode JSON response") }
+        stdout(line + "\n")
+        return
+    }
+    let result = obj["result"] as? [String: Any] ?? [:]
+    let text = result["text"] as? String ?? ""
     stdout(text)
     if !text.hasSuffix("\n") { stdout("\n") }
 }
@@ -828,6 +880,8 @@ case "list-panes":
     cmdListPanes(socketPath: socketPath, rest: global.rest)
 case "read":
     cmdRead(socketPath: socketPath, rest: global.rest)
+case "screen":
+    cmdScreen(socketPath: socketPath, rest: global.rest)
 case "last-output":
     cmdLastOutput(socketPath: socketPath, rest: global.rest)
 case "write":

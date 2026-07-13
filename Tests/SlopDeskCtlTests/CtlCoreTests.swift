@@ -480,4 +480,17 @@ final class CtlCoreTests: XCTestCase {
         XCTAssertEqual(params["timeoutMs"] as? Double, 2000)
         XCTAssertNil(params["until"], "state arm never carries a regex")
     }
+
+    func testScreenParamsDefaultsToLiveSize() {
+        let params = screenParams(paneId: "p1")
+        XCTAssertEqual(params["paneId"] as? String, "p1")
+        XCTAssertNil(params["rows"], "absent size fields = host uses the live PTY winsize")
+        XCTAssertNil(params["cols"])
+    }
+
+    func testScreenParamsExplicitSize() {
+        let params = screenParams(paneId: "p1", rows: 50, cols: 132)
+        XCTAssertEqual(params["rows"] as? Int, 50)
+        XCTAssertEqual(params["cols"] as? Int, 132)
+    }
 }

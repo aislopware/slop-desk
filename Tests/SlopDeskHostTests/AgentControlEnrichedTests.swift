@@ -440,6 +440,75 @@ final class AgentControlEnrichedTests: XCTestCase {
         XCTAssertEqual(AgentControlHandler.stripPromptEOLTail(plain), plain)
     }
 
+    // MARK: screen (rendered-grid dump)
+
+    func testScreenRendersScrollbackAsGrid() {
+        let session = makeSession()
+        let server = makeServer(with: session)
+        // Ring bytes via the REAL replay append path; the unspawned PTY has no winsize → the
+        // verb falls back to 24×80.
+        session.appendForTesting(Data("hello\r\nworld\(ESC)[1;1HX".utf8))
+        let resp = AgentControlHandler.dispatch(
+            id: "s1", method: "screen",
+            params: ["paneId": session.sessionID.uuidString],
+            server: server, guards: IPCGuards(allowSendKeys: false, allowSensitiveSessions: false),
+        )
+        let res = result(resp)
+        XCTAssertEqual(res?["rows"] as? Int, 24)
+        XCTAssertEqual(res?["cols"] as? Int, 80)
+        let lines = res?["lines"] as? [String]
+        XCTAssertEqual(lines?.count, 24, "lines is the full grid")
+        XCTAssertEqual(lines?[0], "Xello")
+        XCTAssertEqual(lines?[1], "world")
+        XCTAssertEqual(res?["text"] as? String, "Xello\nworld", "text drops trailing blank rows")
+        XCTAssertEqual(res?["cursorRow"] as? Int, 0)
+        XCTAssertEqual(res?["cursorCol"] as? Int, 1)
+        XCTAssertEqual(res?["altScreen"] as? Bool, false)
+    }
+
+    func testScreenIsReadOnlyVerbUnderClosedGuards() {
+        // Dispatched above with both guards OFF and it succeeded — pin the classification too.
+        XCTAssertFalse(AgentControlHandler.isMutatingVerb("screen"))
+    }
+
+    func testScreenShowsOpenAltScreenTUI() {
+        let session = makeSession()
+        let server = makeServer(with: session)
+        session.appendForTesting(
+            Data("shell history\(ESC)[?1049h\(ESC)[2J\(ESC)[2;2H-- INSERT --".utf8),
+        )
+        let res = result(AgentControlHandler.dispatch(
+            id: "s2", method: "screen",
+            params: ["paneId": session.sessionID.uuidString, "rows": 5, "cols": 20],
+            server: server, guards: allowAll,
+        ))
+        XCTAssertEqual(res?["altScreen"] as? Bool, true)
+        XCTAssertEqual(res?["rows"] as? Int, 5, "explicit rows/cols override the fallback size")
+        XCTAssertEqual(res?["text"] as? String, "\n -- INSERT --")
+    }
+
+    func testScreenRejectsOutOfRangeSize() {
+        let session = makeSession()
+        let server = makeServer(with: session)
+        let resp = AgentControlHandler.dispatch(
+            id: "s3", method: "screen",
+            params: ["paneId": session.sessionID.uuidString, "rows": 0],
+            server: server, guards: allowAll,
+        )
+        XCTAssertEqual(parseResponse(resp)?["ok"] as? Bool, false)
+    }
+
+    func testScreenUnknownPaneIsError() {
+        let session = makeSession()
+        let server = makeServer(with: session)
+        let resp = AgentControlHandler.dispatch(
+            id: "s4", method: "screen",
+            params: ["paneId": UUID().uuidString],
+            server: server, guards: allowAll,
+        )
+        XCTAssertEqual(parseResponse(resp)?["ok"] as? Bool, false)
+    }
+
     // MARK: CommandBlockTracker control surface
 
     func testTrackerExpectedNextCommandIndexAdvances() {

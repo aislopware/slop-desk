@@ -68,7 +68,7 @@ public struct AgentControlHandler: Sendable {
 
     /// The MUTATING ("send keys" equivalent) verbs — write to a PTY, spawn, kill, or resize a pane.
     /// Gated behind ``IPCGuards/allowSendKeys``. The READ-ONLY verbs (`list-panes`/`read`/
-    /// `last-output`/`wait`/`report`) are NOT in this set and are always allowed. (`subscribe` is
+    /// `screen`/`last-output`/`wait`/`report`) are NOT in this set and are always allowed. (`subscribe` is
     /// intercepted in the acceptor before `dispatch` and only STREAMS output, so it is read-only too.)
     static let mutatingVerbs: Set<String> = ["write", "run", "spawn", "kill", "resize"]
 
@@ -132,6 +132,8 @@ public struct AgentControlHandler: Sendable {
             listPanes(id: id, server: server)
         case "read":
             readPane(id: id, params: params, server: server)
+        case "screen":
+            screenPane(id: id, params: params, server: server)
         case "last-output":
             lastOutput(id: id, params: params, server: server)
         case "write":
@@ -268,6 +270,50 @@ public struct AgentControlHandler: Sendable {
         let ansiStrip = (params["ansiStrip"] as? Bool) ?? true
         let text = session.scrollbackTextForControl(ansiStrip: ansiStrip)
         return successResponse(id: id, result: ["text": text])
+    }
+
+    /// `screen` — the RENDERED-screen dump: replays the scrollback ring's raw bytes through
+    /// ``TerminalScreenModel`` at the pane's live PTY size and returns the resulting grid, so a
+    /// TUI pane (vim, htop, claude) reads as what a human sees instead of raw byte soup.
+    ///
+    /// Response: `{rows, cols, cursorRow, cursorCol, cursorVisible, altScreen, lines: [String],
+    /// text}` — `lines` has exactly `rows` entries (trailing whitespace trimmed), `text` is the
+    /// join with trailing blank lines dropped; cursor coordinates are 0-based. Optional
+    /// `rows`/`cols` params (1…512 / 1…1024, the model's clamp) override the grid size — the
+    /// default is the live `TIOCGWINSZ` size, falling back to 24×80 when the PTY is gone.
+    static func screenPane(id: String, params: [String: Any], server: HostServer) -> String {
+        guard let paneId = params["paneId"] as? String else {
+            return errorResponse(id: id, message: "missing params.paneId")
+        }
+        guard let session = server.lookupPaneForControl(paneId: paneId) else {
+            return errorResponse(id: id, message: "pane not found: \(paneId)")
+        }
+        let live = session.pty.currentWindowSize()
+        var rows = Int(live?.rows ?? 24)
+        var cols = Int(live?.cols ?? 80)
+        if let r = params["rows"] as? Int {
+            guard r >= 1, r <= 512 else { return errorResponse(id: id, message: "rows must be 1..512") }
+            rows = r
+        }
+        if let c = params["cols"] as? Int {
+            guard c >= 1, c <= 1024 else { return errorResponse(id: id, message: "cols must be 1..1024") }
+            cols = c
+        }
+        var model = TerminalScreenModel(rows: rows, cols: cols)
+        model.feed(session.scrollbackRawForControl())
+        let snap = model.snapshot()
+        var trimmed = snap.lines
+        while let last = trimmed.last, last.isEmpty { trimmed.removeLast() }
+        return successResponse(id: id, result: [
+            "rows": snap.rows,
+            "cols": snap.cols,
+            "cursorRow": snap.cursorRow,
+            "cursorCol": snap.cursorCol,
+            "cursorVisible": snap.cursorVisible,
+            "altScreen": snap.altScreen,
+            "lines": snap.lines,
+            "text": trimmed.joined(separator: "\n"),
+        ])
     }
 
     /// `report` — an agent self-declares its state `{state, message?}` (P1 supervision API).

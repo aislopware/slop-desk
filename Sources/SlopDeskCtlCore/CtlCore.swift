@@ -119,6 +119,17 @@ public func readParams(
     return params
 }
 
+/// Builds the params dict for the `screen` verb — the RENDERED-screen dump (the host replays
+/// the scrollback ring through its VT screen model at the pane's live size and returns the
+/// visible grid, so TUI panes read as what a human sees). `rows`/`cols` override the grid size;
+/// `nil` (default) uses the live PTY winsize.
+public func screenParams(paneId: String, rows: Int? = nil, cols: Int? = nil) -> [String: Any] {
+    var params: [String: Any] = ["paneId": paneId]
+    if let rows { params["rows"] = rows }
+    if let cols { params["cols"] = cols }
+    return params
+}
+
 /// Builds the params dict for the `write` verb. `text` is sent first, then each named-key token
 /// in `keys` (tmux `send-keys` vocabulary — `C-c`, `Enter`, `Up`, … — resolved host-side; an
 /// unknown token errors the whole request). At least one of the two must be non-empty.
