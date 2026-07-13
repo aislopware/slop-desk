@@ -255,30 +255,25 @@ struct OverlayHostView: View {
 
 // MARK: - PrefixArmedChip (the minimal "prefix armed" indicator)
 
-/// The tiny keyboard-centric chip shown while the workspace prefix is ARMED: the configured prefix glyph
-/// (e.g. `⌃B`) + the word "prefix" on the shared floating-card shell. Text-minimal by design (no icon zoo,
-/// no panel) — it only answers "did my prefix land?" while the machine awaits the follow-up key. `Slate.*`
-/// tokens only (the ds-leaks ratchet).
+/// The tiny keyboard-centric chip shown while the workspace prefix is ARMED — `PREFIX · ⌃B` in the
+/// instrument caps register on the SHARED ``InstrumentChipShell`` (the COPIED·N / TAB CLOSED / REPLY SENT
+/// family), so the one live-mode chip reads as the same instrument as the transient receipts instead of a
+/// one-off treatment. Label secondary · glyph primary (the NoticeChip register); state-driven (visible
+/// exactly while armed), so no dwell task — the armed edge unmounts it. `Slate.*` tokens only (the
+/// ds-leaks ratchet).
 private struct PrefixArmedChip: View {
     let glyph: String
 
     var body: some View {
         HStack(spacing: Slate.Metric.space1) {
-            Text(glyph)
-                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                .foregroundStyle(Slate.State.accent)
-            Text("prefix")
-                .font(.system(size: Slate.Typeface.footnote))
+            Text("PREFIX")
                 .foregroundStyle(Slate.Text.secondary)
+            Text("·")
+                .foregroundStyle(Slate.Text.tertiary)
+            Text(glyph)
+                .foregroundStyle(Slate.Text.primary)
         }
-        .padding(.horizontal, Slate.Metric.space2)
-        .padding(.vertical, Slate.Metric.space1)
-        .background(Slate.Surface.face, in: .rect(cornerRadius: Slate.Metric.radiusControl))
-        .overlay(
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                .strokeBorder(Slate.Line.subtle, lineWidth: 1),
-        )
-        .accessibilityLabel("Prefix armed")
+        .modifier(InstrumentChipShell(accessibility: "Prefix armed — " + glyph))
     }
 }
 

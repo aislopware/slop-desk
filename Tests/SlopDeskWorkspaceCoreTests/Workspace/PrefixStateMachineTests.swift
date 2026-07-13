@@ -135,6 +135,45 @@ final class PrefixStateMachineTests: XCTestCase {
         XCTAssertFalse(m.isArmed)
     }
 
+    /// The tmux-faithful BARE follow-up (implied-⌘ fold): with a resolver that binds ONLY ⌘-chords (the
+    /// real registry shape — every workspace chord is ⌘/⌥-prefixed), `prefix, d` resolves the ⌘D action
+    /// and `prefix, ⇧d` resolves ⌘⇧D (⇧ carries through the fold). An IDLE bare `d` stays passthrough (the
+    /// load-bearing typing guard — the fold exists only in the armed branch). FAILS on the un-folded
+    /// machine: armed bare `d` was `.disarmSwallow`, which is exactly the "⌃B D doesn't split" bug.
+    func testArmedBareKeyResolvesViaImpliedCommandFold() {
+        let prefix = KeyChord(character: "b", [.control])
+        let m = PrefixStateMachine(prefix: prefix, timeout: 1) { chord in
+            if chord == KeyChord(character: "d", [.command]) { return .splitRight }
+            if chord == KeyChord(character: "d", [.command, .shift]) { return .splitDown }
+            return nil
+        }
+        _ = m.feed(prefix, at: 0)
+        XCTAssertEqual(m.feed(KeyChord(character: "d"), at: 0.1), .resolved(.splitRight))
+        XCTAssertFalse(m.isArmed)
+        _ = m.feed(prefix, at: 0.2)
+        XCTAssertEqual(
+            m.feed(KeyChord(character: "d", [.shift]), at: 0.3), .resolved(.splitDown),
+            "shift rides through the fold: prefix, ⇧d → the ⌘⇧D binding",
+        )
+        XCTAssertEqual(
+            m.feed(KeyChord(character: "d"), at: 0.4), .passthrough(KeyChord(character: "d")),
+            "idle bare d is normal typing — the fold never runs outside the armed branch",
+        )
+    }
+
+    /// A follow-up that ALREADY carries ⌘ never double-folds: armed + ⌘D hits the table directly, and an
+    /// armed ⌘-chord the table misses disarm-swallows (no second lookup with ⌘⌘).
+    func testArmedCommandChordNeverDoubleFolds() {
+        let prefix = KeyChord(character: "b", [.control])
+        let m = PrefixStateMachine(prefix: prefix, timeout: 1) { chord in
+            chord == KeyChord(character: "d", [.command]) ? .splitRight : nil
+        }
+        _ = m.feed(prefix, at: 0)
+        XCTAssertEqual(m.feed(KeyChord(character: "d", [.command]), at: 0.1), .resolved(.splitRight))
+        _ = m.feed(prefix, at: 0.2)
+        XCTAssertEqual(m.feed(KeyChord(character: "y", [.command]), at: 0.3), .disarmSwallow)
+    }
+
     /// FINDING-2: the sequence resolver takes PRECEDENCE over the single-chord fallback when BOTH could match
     /// the tail key, but a tail key the sequence table does NOT cover still falls back to the single-chord
     /// resolver — so the seeded ⌃A→⌘D (⌘D also a standalone chord) keeps working.

@@ -67,7 +67,34 @@ final class TerminalKeyInterceptorTests: XCTestCase {
         XCTAssertTrue(i.isArmed)
     }
 
-    /// armed + a bound follow-up chord (⌘D) → dispatch `.splitRight` and swallow (the ⌃A→⌘D tmux sequence).
+    /// armed + a BARE follow-up key → the implied-⌘ fold resolves it against the same table (`prefix, d` →
+    /// the ⌘D binding) — the tmux prefix-converts-the-next-key idiom. FAILS on the un-folded machine
+    /// (armed bare `d` disarm-swallowed: the "⌃B D doesn't split" bug).
+    func testArmedBareFollowUpResolvesViaImpliedCommandFold() {
+        var routed: [WorkspaceAction] = []
+        let i = make(onAction: { routed.append($0) })
+        XCTAssertEqual(i.intercept(prefix), .swallow)
+        XCTAssertEqual(i.intercept(KeyChord(character: "d")), .swallow)
+        XCTAssertEqual(routed, [.splitRight], "prefix then bare d fires the ⌘D-bound action")
+    }
+
+    /// END-TO-END with the REAL registry defaults (no injected table): a default-built interceptor arms on
+    /// ⌃B (``WorkspaceBindingRegistry/defaultPrefixChord``) and `⌃B, d` routes the registry's ⌘D
+    /// split-right. Pins the shipped out-of-the-box behaviour, not just the injected-resolver contract.
+    func testDefaultInterceptorArmsOnCtrlBAndBareDSplitsRight() {
+        // The default resolvers read the PROCESS-GLOBAL `activeOverrides` — pin it empty for this test
+        // (and restore) so an earlier suite's leftover rebind can't hide the registry's ⌘D.
+        let saved = WorkspaceBindingRegistry.activeOverrides
+        WorkspaceBindingRegistry.activeOverrides = KeybindingPreferences()
+        defer { WorkspaceBindingRegistry.activeOverrides = saved }
+        var routed: [WorkspaceAction] = []
+        let i = TerminalKeyInterceptor(onAction: { routed.append($0) })
+        XCTAssertEqual(i.intercept(KeyChord(character: "b", [.control])), .swallow, "⌃B is the default prefix")
+        XCTAssertEqual(i.intercept(KeyChord(character: "d")), .swallow)
+        XCTAssertEqual(routed, [.splitRight], "⌃B then D = split right against the live registry table")
+    }
+
+    /// armed + a bound follow-up chord (⌘D) → dispatch `.splitRight` and swallow (the ⌃B→⌘D tmux sequence).
     func testArmedBoundFollowupDispatchesAndSwallows() {
         var routed: [WorkspaceAction] = []
         let i = make(onAction: { routed.append($0) })

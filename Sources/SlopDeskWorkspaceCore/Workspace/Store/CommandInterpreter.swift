@@ -357,7 +357,9 @@ public enum PrefixIntent: Equatable, Sendable {
 ///
 /// PREFIX POLICY (decided):
 ///   1. idle + the prefix       → ARM (swallow, never leak the prefix). → `.consumedArm`
-///   2. armed + a bound key/seq → resolve the action (swallow).         → `.resolved(action)`
+///   2. armed + a bound key/seq → resolve the action (swallow); a BARE key also resolves via its
+///      implied-⌘ chord (`prefix, d` → the ⌘D binding — tmux's prefix-converts-the-next-key idiom).
+///                                                                       → `.resolved(action)`
 ///   3. armed + the prefix AGAIN → emit the literal prefix byte (send-prefix passthrough), disarm.
 ///                                                                       → `.sendPrefixLiteral`
 ///   4. armed + escape-timeout  → the arm has expired; an arriving key is treated as idle (passthrough /
@@ -461,6 +463,16 @@ public final class PrefixStateMachine {
             if let action = resolveAfterPrefix(chord) {
                 // Step 2: a bound single chord resolves its action (swallowed).
                 return .resolved(action)
+            }
+            // Step 2b: the tmux-faithful BARE follow-up — `prefix, d` fires the ⌘D binding. Every workspace
+            // chord is ⌘/⌥-prefixed (the §5 conflict rule), so a bare armed key can never hit the table
+            // directly; folding ⌘ in resolves it as its command chord (⇧/⌥ carry through: `prefix, ⇧d` →
+            // ⌘⇧D). ONLY while armed — an idle bare key is normal typing and never reaches this branch.
+            if !chord.modifiers.contains(.command) {
+                let folded = KeyChord(chord.key, chord.modifiers.union(.command))
+                if let action = resolveAfterPrefix(folded) {
+                    return .resolved(action)
+                }
             }
             // Step 5: an unbound key disarms + is SWALLOWED (tmux-faithful; the prefix is NOT replayed).
             return .disarmSwallow
