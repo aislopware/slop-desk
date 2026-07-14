@@ -106,19 +106,9 @@ final class PrefixArmedIndicatorTests: XCTestCase {
         XCTAssertFalse(armed, "an abandoned arm must clear the indicator on timeout")
     }
 
-    /// The pill's pure mount gate: FOCUSED pane + armed + live render path ONLY. An unfocused pane showing
-    /// "armed" would lie about where the follow-up key lands; the static-mirror snapshot path never shows
-    /// transient keyboard state.
-    func testPrefixArmedPillShowsOnFocusedLivePaneOnly() {
-        XCTAssertTrue(PrefixArmedPill.shows(staticMirror: false, isFocused: true, armed: true))
-        XCTAssertFalse(PrefixArmedPill.shows(staticMirror: false, isFocused: false, armed: true))
-        XCTAssertFalse(PrefixArmedPill.shows(staticMirror: false, isFocused: true, armed: false))
-        XCTAssertFalse(PrefixArmedPill.shows(staticMirror: true, isFocused: true, armed: true))
-    }
-
     /// The app wiring target: `OverlayCoordinator.setPrefixArmed` publishes the `@Observable` flag the
-    /// FOCUSED pane's ``PrefixArmedPill`` reads — the closure-driven edges land on the coordinator unchanged
-    /// (and redundant sets are idempotent).
+    /// titlebar's centre-chip armed readout reads — the closure-driven edges land on the coordinator
+    /// unchanged (and redundant sets are idempotent).
     func testCoordinatorPublishesArmedFlag() {
         let store = makeStore()
         let overlay = OverlayCoordinator(store: store)

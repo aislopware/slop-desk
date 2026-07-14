@@ -88,55 +88,6 @@ struct ReadOnlyPill: View {
     }
 }
 
-/// The workspace-prefix ARMED pill — shown in the FOCUSED pane's top-trailing overlay for the sub-second
-/// window while the tmux-style prefix (⌃B) awaits its follow-up key. The prefix is a keyboard MODE, so it
-/// lives with the mode-pill family (`VI` / `READ ONLY` / `SECURE INPUT`) rather than floating in a window
-/// corner: the eye is at the focused pane, and the top-trailing slot is where this app says "your keyboard
-/// is in a mode right now". Family grammar with the ARMED treatment borrowed from ``ViModePill``'s visual
-/// selection: primary keyboard glyph + the prefix chord in the accent tone, accent hairline ring.
-///
-/// FADE-ONLY at the mount sites (never `.move`): the state lives well under a second, and a travel
-/// transition at that cadence reads as flicker (the ``CopyReceiptChip`` rationale). Appended LAST in the
-/// pill stack so appearing never displaces a persistent pill above it. Hit-transparent — there is nothing
-/// to click; the arm resolves by keyboard alone.
-struct PrefixArmedPill: View {
-    /// The configured prefix chord's display glyph (`⌃B` — `WorkspaceBindingRegistry.glyph`).
-    let glyph: String
-
-    /// The pure mount gate the leaves share (and the test pins): FOCUSED pane only (the follow-up key acts
-    /// on the workspace AT the focused pane — an unfocused pane showing "armed" would lie about where the
-    /// next key lands), live render path only.
-    static func shows(staticMirror: Bool, isFocused: Bool, armed: Bool) -> Bool {
-        !staticMirror && isFocused && armed
-    }
-
-    var body: some View {
-        HStack(spacing: Slate.Metric.space1) {
-            Image(systemSymbol: .keyboard)
-                .font(.system(size: Slate.Typeface.small, weight: .semibold))
-                .foregroundStyle(Slate.Text.primary)
-            Text(glyph)
-                .font(.system(size: Slate.Typeface.footnote, weight: .semibold, design: .monospaced))
-                .tracking(0.5)
-                .foregroundStyle(Slate.State.accent)
-                .lineLimit(1)
-                .fixedSize()
-        }
-        .padding(.horizontal, Slate.Metric.space2)
-        .padding(.vertical, Slate.Metric.space1)
-        .background(Slate.Surface.raised, in: .rect(cornerRadius: Slate.Metric.radiusControl))
-        .overlay(
-            // The ARMED ring — the same accent treatment ``ViModePill`` wears in a visual selection: this
-            // pill exists only in the awaiting-a-key state, so it always carries the state ring.
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
-                .strokeBorder(Slate.State.accent.opacity(0.5), lineWidth: Slate.Metric.hairline),
-        )
-        .shadow(color: Slate.State.shadow, radius: 4, x: 0, y: 1)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Prefix armed — \(glyph)")
-    }
-}
-
 /// The `🛡 SECURE INPUT` pill — shown in the pane's top-trailing overlay while macOS
 /// Secure Keyboard Entry is active for the pane (the host is at a no-echo password prompt and Auto Secure
 /// Input is on, OR the manual toggle is on) AND the secure-input INDICATOR setting is on. Faithful to

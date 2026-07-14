@@ -48,11 +48,6 @@ struct GuiLeafView: View {
     /// edge-pan freeze lives in the video view (via ``RemoteWindowModel/sendViewport(_:)``); this tracks it 1:1.
     @State private var panLocked = false
 
-    /// The scene-root overlay coordinator — read for the workspace-prefix ARMED flag
-    /// (``OverlayCoordinator/prefixArmed``) so the focused video pane shows the ``PrefixArmedPill`` in the
-    /// same top-trailing mode slot a terminal leaf uses. `nil` (tests / previews) ⇒ never shown.
-    @Environment(\.overlayCoordinator) private var overlayCoordinator
-
     /// The pane's remote-window model (picker/open/close/keyInjector). `nil` for a non-video handle.
     private var model: RemoteWindowModel? { live?.remoteWindow }
 
@@ -108,27 +103,13 @@ struct GuiLeafView: View {
         // gate, View-menu item, and sidebar lock read. Gated by the pure
         // ``showReadOnlyPill(staticMirror:isReadOnly:)`` (never on the static-mirror path).
         .overlay(alignment: .topTrailing) {
-            VStack(alignment: .trailing, spacing: Slate.Metric.space2) {
-                if Self.showReadOnlyPill(staticMirror: staticMirror, isReadOnly: store.isReadOnly(for: paneID)) {
-                    ReadOnlyPill(onDeactivate: { store.setPaneReadOnly(paneID, false) })
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
-                // The workspace-prefix ARMED pill on the FOCUSED video pane — the dispatcher swallows the
-                // prefix before the video pipeline ever sees it, so the mode cue belongs here exactly as on
-                // a terminal leaf (same slot, fade-only, hit-transparent; see `TerminalLeafView`).
-                if PrefixArmedPill.shows(
-                    staticMirror: staticMirror, isFocused: isFocused,
-                    armed: overlayCoordinator?.prefixArmed == true,
-                ) {
-                    PrefixArmedPill(glyph: WorkspaceBindingRegistry.glyph(store.workspaceKeyPrefix))
-                        .allowsHitTesting(false)
-                        .transition(.opacity)
-                }
+            if Self.showReadOnlyPill(staticMirror: staticMirror, isReadOnly: store.isReadOnly(for: paneID)) {
+                ReadOnlyPill(onDeactivate: { store.setPaneReadOnly(paneID, false) })
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .padding(Slate.Metric.space2)
             }
-            .padding(Slate.Metric.space2)
         }
         .animation(Slate.Anim.reveal, value: store.isReadOnly(for: paneID))
-        .animation(Slate.Anim.smallFade, value: overlayCoordinator?.prefixArmed)
         // CAP ADMISSION: request a slot when ON-SCREEN, on appear AND whenever a sibling
         // frees one (`videoPromotionGeneration` bumps); `.task(id:)` cancels+restarts on either. Gated on
         // `isVisible` so a background-tab / zoom-hidden pane does NOT claim a `liveVideoCap` slot (else the
