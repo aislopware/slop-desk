@@ -206,6 +206,52 @@ final class SlateSnapshotRender: XCTestCase {
         )
     }
 
+    /// Renders the LIVE ``SlateTitlebar`` with the workspace-prefix ARMED readout showing (the centre
+    /// chip's whole-label state swap while ⌃B awaits its follow-up key) — the visual lock for the armed
+    /// cue. The armed flag rides the scene ``OverlayCoordinator`` through the `\.overlayCoordinator`
+    /// environment, so the render injects a coordinator with `setPrefixArmed(true)` — exactly the app's
+    /// wiring, no view-internal test seam. Writes `titlebar-armed.png` into
+    /// `SLOPDESK_TITLEBAR_SNAPSHOT_DIR` (same opt-in as the dot render). Headless — no socket / video / Metal.
+    @MainActor
+    func testRenderTitlebarPrefixArmed() throws {
+        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TITLEBAR_SNAPSHOT_DIR"] else {
+            throw XCTSkip("set SLOPDESK_TITLEBAR_SNAPSHOT_DIR=<dir> to render the armed titlebar")
+        }
+        let (store, focused) = makeAttentionStore()
+        let idle = OverlayCoordinator(store: store)
+        let armed = OverlayCoordinator(store: store)
+        armed.setPrefixArmed(true)
+
+        // Both states stacked (resting above, armed below) so the swap's two faces compare in one image.
+        // The centre chip is rendered directly — the full `SlateTitlebar` cannot rasterise (HoverSensor).
+        let strip = VStack(spacing: 0) {
+            titlebarStrip(store: store, activePane: focused, overlay: idle)
+            titlebarStrip(store: store, activePane: focused, overlay: armed)
+        }
+        try render(strip, size: CGSize(width: 920, height: 192), to: dir, named: "titlebar-armed.png")
+    }
+
+    /// One mock titlebar strip around the REAL ``TitleMenuButton`` — traffic lights at the true lead, the
+    /// centre chip on the traffic-light row, a hairline, and a slice of the paper content region.
+    @MainActor
+    private func titlebarStrip(
+        store: WorkspaceStore, activePane: PaneID?, overlay: OverlayCoordinator,
+    ) -> some View {
+        VStack(spacing: 0) {
+            ZStack(alignment: .topLeading) {
+                TitleMenuButton(title: "slopdesk", store: store, activePane: activePane)
+                    .padding(.top, 3)
+                    .frame(maxWidth: .infinity)
+                trafficLights.padding(.leading, 20).padding(.top, 9)
+            }
+            .frame(height: Slate.Metric.titlebarHeight, alignment: .top)
+            Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
+            Slate.Surface.face
+        }
+        .background(Slate.Surface.ground)
+        .overlayCoordinator(overlay)
+    }
+
     /// The three macOS traffic lights, mocked for the strip render (the real ones are window chrome and
     /// never render under `ImageRenderer`).
     private var trafficLights: some View {
