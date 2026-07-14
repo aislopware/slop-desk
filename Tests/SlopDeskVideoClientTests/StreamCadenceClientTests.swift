@@ -67,8 +67,8 @@ final class StreamCadenceClientTests: XCTestCase {
     /// Deadline-mode rhythm rebases to the governed interval: after `setContentFps(30)` the second
     /// frame's deadline sits one 33.3 ms CONTENT interval past the first present's deadline — a
     /// tick at the old 16.7 ms spacing must NOT present it yet. (Extends FramePacerDeadlineTests
-    /// to the live instance: submit reads the real clock, so assertions bracket it with
-    /// before/after timestamps — the bracket is sub-ms in-process.)
+    /// to the live instance, driven entirely on the virtual clock via `submitForTest(_:now:)` —
+    /// no wall-clock reads, so deadlines are exact and the test is load-immune.)
     func testSetContentFpsRebasesDeadlineRhythm() {
         let presents = PresentCounter()
         let pacer = FramePacer(
@@ -82,18 +82,16 @@ final class StreamCadenceClientTests: XCTestCase {
         )
         pacer.setContentFps(30)
         let halfTick = 0.5 / 60.0
+        let t0 = 1000.0 // virtual clock origin
 
-        let t0 = FramePacer.currentHostTimeSeconds()
-        pacer.submit(makePixelBuffer()) // d1 ∈ [t0, t1] + 0.020
-        let t1 = FramePacer.currentHostTimeSeconds()
-        XCTAssertLessThan(t1 - t0, 0.01, "submit bracket must be tight for the deadline bounds below")
-        pacer.tick(hostTimeSeconds: t1 + 0.020 + halfTick) // d1 is due → presents, anchors the rhythm at d1
+        pacer.submitForTest(makePixelBuffer(), now: t0) // d1 = t0 + 0.020 (first frame: arrival + playout)
+        pacer.tick(hostTimeSeconds: t0 + 0.020 + halfTick) // d1 is due → presents, anchors the rhythm at d1
         XCTAssertEqual(presents.count, 1)
 
-        pacer.submit(makePixelBuffer()) // d2 = d1 + 1/30 (the REBASED interval)
-        pacer.tick(hostTimeSeconds: t0 + 0.020 + 1.0 / 60.0) // old 60 fps spacing: d2 ≥ d1 + 1/30 > this + halfTick
+        pacer.submitForTest(makePixelBuffer(), now: t0 + 0.020 + halfTick) // d2 = d1 + 1/30 (the REBASED interval)
+        pacer.tick(hostTimeSeconds: t0 + 0.020 + 1.0 / 60.0) // old 60 fps spacing: d2 = d1 + 1/30 > this + halfTick
         XCTAssertEqual(presents.count, 1, "a 16.7 ms tick must NOT present — the rhythm is 33.3 ms now")
-        pacer.tick(hostTimeSeconds: t1 + 0.020 + 1.0 / 30.0 + halfTick) // ≥ d2 → due
+        pacer.tick(hostTimeSeconds: t0 + 0.020 + 1.0 / 30.0 + halfTick) // ≥ d2 → due
         XCTAssertEqual(presents.count, 2, "presented exactly one content interval (1/30) after the first")
     }
 
