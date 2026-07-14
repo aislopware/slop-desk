@@ -93,6 +93,10 @@ final class RecordingSelectionSurface: TerminalSurface, TerminalSurfaceActions, 
     /// Per-SCREEN-row text `readScreenRow(_:)` serves (index = screen row; missing = `nil`).
     var screenRows: [String] = []
 
+    /// Rows that soft-WRAP into the next row (`lineRange(_:)` walks these like the fork walks the
+    /// grid's `wrap` flags — row N in this set means N and N+1 belong to the same logical line).
+    var wrappedRows: Set<Int> = []
+
     /// Mouse-selection stand-ins for the yank fallback (mirrors ``RecordingSurfaceActions``).
     var selectionText: String?
     var scrollbackLines: [String] = []
@@ -155,6 +159,15 @@ final class RecordingSelectionSurface: TerminalSurface, TerminalSurfaceActions, 
     func readScreenRow(_ row: Int) -> String? {
         guard screenRows.indices.contains(row) else { return nil }
         return screenRows[row]
+    }
+
+    func lineRange(_ screenRow: Int) -> ClosedRange<Int>? {
+        guard screenRow >= 0 else { return nil }
+        var start = screenRow
+        while start > 0, wrappedRows.contains(start - 1) { start -= 1 }
+        var end = screenRow
+        while wrappedRows.contains(end) { end += 1 }
+        return start...end
     }
 }
 

@@ -556,5 +556,6 @@ private final class ViSnapshotSurface: TerminalSurface, TerminalViewportSnapshot
     func setSelection(anchor _: TerminalScreenPoint, head _: TerminalScreenPoint, rectangle _: Bool) -> Bool { true }
     func clearSelection() {}
     func readScreenRow(_ row: Int) -> String? { rows.indices.contains(row) ? rows[row] : nil }
+    func lineRange(_ screenRow: Int) -> ClosedRange<Int>? { screenRow...screenRow } // no wrap staged
 }
 #endif

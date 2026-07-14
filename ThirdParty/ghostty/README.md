@@ -72,7 +72,13 @@ parser rewrite in `dcs.zig`/`parse_table.zig` and a per-keystroke mutex round-tr
   2026-07-14). Includes the `Point.pin` exact-coord fix: the upstream helper clamped
   every `y` to `pages.rows - 1` (the GRID height), so a `.screen`/`.history` exact point
   below one grid-height of scrollback resolved to the wrong row — the clamp now honors
-  the tag's own bottom-right extent.
+  the tag's own bottom-right extent. Extended same-day with `ghostty_surface_padding`
+  (+ `ghostty_padding_s` — the grid's pixel inset inside the surface view, so
+  embedder-drawn cell overlays anchor at the grid's REAL origin instead of assuming
+  `(0,0)` and drifting by the window padding) and `ghostty_surface_line_range` (the
+  LOGICAL soft-wrap-joined line containing a screen row — the `wrap`/`wrap_continuation`
+  walk `Screen.selectLine` does, minus its whitespace/semantic trimming — so copy-mode's
+  line-oriented ops treat a wrapped long line as ONE line).
 
 **What was dropped** (present in the pre-2026-07-11 fat delta; recoverable from git
 history of this file + the old patch): the tmux control-mode viewer

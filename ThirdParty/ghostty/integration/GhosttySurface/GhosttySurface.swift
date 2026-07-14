@@ -845,10 +845,12 @@ public final class GhosttySurface: @MainActor TerminalSurface, FeedBackpressurin
     /// laid out; this is a READ-only probe (unlike ``setSize(cols:rows:)`` it does NOT write back to the
     /// `cellWidthPx`/`cellHeightPx` seeds), falling back to those seeds + the mirrored `cols`/`rows`
     /// before the first render. libghostty measures cells in PIXELS, so we divide by the backing scale
-    /// to hand the overlay POINTS (its coordinate space). The surface fills its hosting view, so the
-    /// viewport origin is the view's top-left `(0, 0)` — the overlay is layered directly over the
-    /// surface view in `TerminalLeafView` (WI-5). Plain `/` (no `addingProduct`/`fma` — CLAUDE.md §2
-    /// habit, kept even though this is view geometry).
+    /// to hand the overlay POINTS (its coordinate space). The overlay is layered directly over the
+    /// surface view in `TerminalLeafView` (WI-5), but the GRID is inset inside the surface by
+    /// libghostty's window padding (`window-padding-*` + any balanced remainder — 2pt/side by default),
+    /// so the viewport origin is the fork's `ghostty_surface_padding` readback, NOT `(0, 0)` — a `(0,0)`
+    /// origin drew every cell overlay (block cursor, hint labels, underline) one padding off the glyph.
+    /// Plain `/` (no `addingProduct`/`fma` — CLAUDE.md §2 habit, kept even though this is view geometry).
     public func cellMetrics() -> TerminalCellMetrics? {
         guard let s = surface else { return nil }
         let sz = ghostty_surface_size(s)   // header 1177 → ghostty_surface_size_s
@@ -858,13 +860,15 @@ public final class GhosttySurface: @MainActor TerminalSurface, FeedBackpressurin
         let scale = contentScale > 0 ? CGFloat(contentScale) : 1
         let gridCols = sz.columns > 0 ? Int(sz.columns) : Int(cols)
         let gridRows = sz.rows > 0 ? Int(sz.rows) : Int(rows)
+        var padding = ghostty_padding_s()  // zero-initialized — the pre-first-layout fallback
+        ghostty_surface_padding(s, &padding)
         return TerminalCellMetrics(
             cellWidth: CGFloat(cellWPx) / scale,
             cellHeight: CGFloat(cellHPx) / scale,
             cols: gridCols,
             rows: gridRows,
-            originX: 0,
-            originY: 0,
+            originX: CGFloat(padding.left_px) / scale,
+            originY: CGFloat(padding.top_px) / scale,
         )
     }
 
@@ -942,6 +946,19 @@ public final class GhosttySurface: @MainActor TerminalSurface, FeedBackpressurin
         var line = String(cString: ptr)
         if line.hasSuffix("\n") { line.removeLast() }
         return line
+    }
+
+    /// The LOGICAL line containing `screenRow` — the fork's `ghostty_surface_line_range` walks the
+    /// soft-wrap chain (`wrap`/`wrap_continuation`, the same walk `Screen.selectLine` does) and
+    /// returns its inclusive screen-row extent. `nil` when the surface is gone / the row cannot be
+    /// resolved (validate-then-drop → the caller degrades to display-row semantics).
+    public func lineRange(_ screenRow: Int) -> ClosedRange<Int>? {
+        guard let s = surface, screenRow >= 0 else { return nil }
+        var startY: UInt32 = 0
+        var endY: UInt32 = 0
+        guard ghostty_surface_line_range(s, UInt32(screenRow), &startY, &endY),
+              startY <= endY else { return nil }
+        return Int(startY)...Int(endY)
     }
 
     /// Performs a named libghostty keybinding action (e.g. `copy_to_clipboard`,

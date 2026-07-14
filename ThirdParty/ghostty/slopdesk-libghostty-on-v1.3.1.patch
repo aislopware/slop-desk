@@ -1,8 +1,8 @@
 diff --git a/include/ghostty.h b/include/ghostty.h
-index 40ff55c..f108a8a 100644
+index 40ff55c..6c16e28 100644
 --- a/include/ghostty.h
 +++ b/include/ghostty.h
-@@ -413,11 +413,36 @@ typedef struct {
+@@ -413,11 +413,47 @@ typedef struct {
    bool rectangle;
  } ghostty_selection_s;
  
@@ -17,6 +17,17 @@ index 40ff55c..f108a8a 100644
 +  uint32_t cursor_x;
 +  uint32_t cursor_y;
 +} ghostty_viewport_info_s;
++
++// slopdesk: the rendered grid's inset inside the surface view, in PIXELS —
++// the grid's top-left cell starts at (left_px, top_px), NOT (0, 0)
++// (window-padding-* plus any balanced remainder). Embedder-drawn cell
++// overlays must offset by this.
++typedef struct {
++  uint32_t left_px;
++  uint32_t top_px;
++  uint32_t right_px;
++  uint32_t bottom_px;
++} ghostty_padding_s;
 +
  typedef struct {
    const char* key;
@@ -39,7 +50,7 @@ index 40ff55c..f108a8a 100644
  typedef struct {
    void* nsview;
  } ghostty_platform_macos_s;
-@@ -450,6 +475,9 @@ typedef struct {
+@@ -450,6 +486,9 @@ typedef struct {
    const char* initial_input;
    bool wait_after_command;
    ghostty_surface_context_e context;
@@ -49,7 +60,7 @@ index 40ff55c..f108a8a 100644
  } ghostty_surface_config_s;
  
  typedef struct {
-@@ -1045,6 +1073,8 @@ void ghostty_config_load_cli_args(ghostty_config_t);
+@@ -1045,6 +1084,8 @@ void ghostty_config_load_cli_args(ghostty_config_t);
  void ghostty_config_load_file(ghostty_config_t, const char*);
  void ghostty_config_load_default_files(ghostty_config_t);
  void ghostty_config_load_recursive_files(ghostty_config_t);
@@ -58,7 +69,7 @@ index 40ff55c..f108a8a 100644
  void ghostty_config_finalize(ghostty_config_t);
  bool ghostty_config_get(ghostty_config_t, void*, const char*, uintptr_t);
  ghostty_input_trigger_s ghostty_config_trigger(ghostty_config_t,
-@@ -1082,6 +1112,7 @@ bool ghostty_surface_needs_confirm_quit(ghostty_surface_t);
+@@ -1082,6 +1123,7 @@ bool ghostty_surface_needs_confirm_quit(ghostty_surface_t);
  bool ghostty_surface_process_exited(ghostty_surface_t);
  void ghostty_surface_refresh(ghostty_surface_t);
  void ghostty_surface_draw(ghostty_surface_t);
@@ -66,7 +77,7 @@ index 40ff55c..f108a8a 100644
  void ghostty_surface_set_content_scale(ghostty_surface_t, double, double);
  void ghostty_surface_set_focus(ghostty_surface_t, bool);
  void ghostty_surface_set_occlusion(ghostty_surface_t, bool);
-@@ -1096,6 +1127,7 @@ bool ghostty_surface_key_is_binding(ghostty_surface_t,
+@@ -1096,6 +1138,7 @@ bool ghostty_surface_key_is_binding(ghostty_surface_t,
                                      ghostty_input_key_s,
                                      ghostty_binding_flags_e*);
  void ghostty_surface_text(ghostty_surface_t, const char*, uintptr_t);
@@ -74,7 +85,7 @@ index 40ff55c..f108a8a 100644
  void ghostty_surface_preedit(ghostty_surface_t, const char*, uintptr_t);
  bool ghostty_surface_mouse_captured(ghostty_surface_t);
  bool ghostty_surface_mouse_button(ghostty_surface_t,
-@@ -1131,6 +1163,10 @@ bool ghostty_surface_read_text(ghostty_surface_t,
+@@ -1131,6 +1174,15 @@ bool ghostty_surface_read_text(ghostty_surface_t,
                                 ghostty_selection_s,
                                 ghostty_text_s*);
  void ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*);
@@ -82,6 +93,11 @@ index 40ff55c..f108a8a 100644
 +bool ghostty_surface_set_selection(ghostty_surface_t, ghostty_selection_s);
 +void ghostty_surface_clear_selection(ghostty_surface_t);
 +bool ghostty_surface_viewport_info(ghostty_surface_t, ghostty_viewport_info_s*);
++void ghostty_surface_padding(ghostty_surface_t, ghostty_padding_s*);
++bool ghostty_surface_line_range(ghostty_surface_t,
++                                uint32_t,
++                                uint32_t*,
++                                uint32_t*);
  
  #ifdef __APPLE__
  void ghostty_surface_set_display_id(ghostty_surface_t, uint32_t);
@@ -206,7 +222,7 @@ index 4d66622..cde7798 100644
      const runtime_str = try std.fmt.allocPrint(alloc, "{d} ms", .{info.runtime_ms});
  
 diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
-index 0d5a4f8..bf4e610 100644
+index 0d5a4f8..0efa68a 100644
 --- a/src/apprt/embedded.zig
 +++ b/src/apprt/embedded.zig
 @@ -15,6 +15,7 @@ const input = @import("../input.zig");
@@ -378,7 +394,7 @@ index 0d5a4f8..bf4e610 100644
  
              return switch (self.coord_tag) {
                  // Exact coordinates require a specific pin.
-@@ -1385,6 +1503,19 @@ pub const CAPI = struct {
+@@ -1385,6 +1503,30 @@ pub const CAPI = struct {
          }
      };
  
@@ -395,10 +411,21 @@ index 0d5a4f8..bf4e610 100644
 +        cursor_y: u32,
 +    };
 +
++    // ghostty_padding_s (slopdesk: the rendered grid's inset inside the
++    // surface view, in PIXELS — the grid's top-left cell starts at
++    // (left_px, top_px), NOT (0, 0); window-padding-* plus any balanced
++    // remainder). Embedder-drawn cell overlays must offset by this.
++    const SurfacePadding = extern struct {
++        left_px: u32,
++        top_px: u32,
++        right_px: u32,
++        bottom_px: u32,
++    };
++
      // Reference the conditional exports based on target platform
      // so they're included in the C API.
      comptime {
-@@ -1679,6 +1810,85 @@ pub const CAPI = struct {
+@@ -1679,6 +1821,160 @@ pub const CAPI = struct {
          ptr.deinit();
      }
  
@@ -481,10 +508,85 @@ index 0d5a4f8..bf4e610 100644
 +        return true;
 +    }
 +
++    /// slopdesk: Read the grid's padding (its pixel inset inside the
++    /// surface view) so embedder-drawn cell overlays can anchor at the
++    /// grid's REAL origin. Reads the same resize-thread-owned `size` the
++    /// existing ghostty_surface_size export reads, so no lock (matching
++    /// that precedent).
++    export fn ghostty_surface_padding(
++        surface: *Surface,
++        result: *SurfacePadding,
++    ) void {
++        const padding = surface.core_surface.size.padding;
++        result.* = .{
++            .left_px = padding.left,
++            .top_px = padding.top,
++            .right_px = padding.right,
++            .bottom_px = padding.bottom,
++        };
++    }
++
++    /// slopdesk: Resolve the LOGICAL (soft-wrap joined) line containing the
++    /// given SCREEN row: walks `wrap`/`wrap_continuation` like
++    /// Screen.selectLine (without its whitespace/semantic-prompt trimming)
++    /// and returns the chain's first and last SCREEN rows inclusive. A
++    /// non-wrapped row returns itself for both. Lets keyboard copy-mode
++    /// treat a soft-wrapped long line as ONE line ($ / 0 / ^ / V / Y).
++    export fn ghostty_surface_line_range(
++        surface: *Surface,
++        screen_y: u32,
++        out_start_y: *u32,
++        out_end_y: *u32,
++    ) bool {
++        const core_surface = &surface.core_surface;
++        core_surface.renderer_state.mutex.lock();
++        defer core_surface.renderer_state.mutex.unlock();
++
++        const screen = core_surface.renderer_state.terminal.screens.active;
++        const pt: Point = .{
++            .tag = .screen,
++            .coord_tag = .exact,
++            .x = 0,
++            .y = screen_y,
++        };
++        const pin = pt.pin(screen) orelse return false;
++
++        // Walk UP: while the row ABOVE soft-wraps into the current one,
++        // the logical line starts (at least) there.
++        const start_pin: terminal.Pin = start: {
++            var it = pin.rowIterator(.left_up, null);
++            var prev: terminal.Pin = it.next() orelse return false; // self
++            while (it.next()) |p| {
++                if (!p.rowAndCell().row.wrap) break :start prev;
++                prev = p;
++            }
++            break :start prev; // top of the retained scrollback
++        };
++
++        // Walk DOWN: the logical line ends on the first row that does NOT
++        // wrap into the next (the bottom screen row never wraps, so the
++        // fallback is only reachable on a torn iterator — degrade to self).
++        const end_pin: terminal.Pin = end: {
++            var it = pin.rowIterator(.right_down, null);
++            var last: terminal.Pin = pin;
++            while (it.next()) |p| {
++                last = p;
++                if (!p.rowAndCell().row.wrap) break;
++            }
++            break :end last;
++        };
++
++        const start_pt = screen.pages.pointFromPin(.screen, start_pin) orelse return false;
++        const end_pt = screen.pages.pointFromPin(.screen, end_pin) orelse return false;
++        out_start_y.* = start_pt.screen.y;
++        out_end_y.* = end_pt.screen.y;
++        return true;
++    }
++
      /// Tell the surface that it needs to schedule a render
      export fn ghostty_surface_refresh(surface: *Surface) void {
          surface.refresh();
-@@ -1690,6 +1900,12 @@ pub const CAPI = struct {
+@@ -1690,6 +1986,12 @@ pub const CAPI = struct {
          surface.draw();
      }
  
@@ -497,7 +599,7 @@ index 0d5a4f8..bf4e610 100644
      /// Update the size of a surface. This will trigger resize notifications
      /// to the pty and the renderer.
      export fn ghostty_surface_set_size(surface: *Surface, w: u32, h: u32) void {
-@@ -1804,6 +2020,32 @@ pub const CAPI = struct {
+@@ -1804,6 +2106,32 @@ pub const CAPI = struct {
          surface.textCallback(ptr[0..len]);
      }
  

@@ -54,10 +54,13 @@ final class FrameDecoderCursorTests: XCTestCase {
     func testFrameDecoderScalesLinearlyNotQuadratically() throws {
         let small = try drainTime { smallWireFrames(8000).bytes }
         let large = try drainTime { smallWireFrames(32000).bytes } // 4× the frames
-        // Linear ≈ 4×; the old O(n²) front-removal ≈ 16×. Assert well below the quadratic regime.
+        // Linear ≈ 4×; the old O(n²) front-removal ≈ 16×. 12 (not a tight 8) because under the full
+        // suite's `--parallel` worker contention the LONGER run absorbs more descheduling, inflating
+        // an honestly-linear ratio past 8 (observed 8.16 under `make check` while standalone runs sit
+        // near 4) — a quadratic regression still lands at ≥16 and stays caught.
         XCTAssertLessThan(
             large / max(small, 1e-9),
-            8.0,
+            12.0,
             "decode time must scale ~linearly in frame count (got \(large / small)× for 4× frames) — "
                 + "a ratio near 16 means the O(n²) front-removal regressed",
         )
@@ -188,9 +191,10 @@ final class FrameDecoderCursorTests: XCTestCase {
     func testMuxFrameDecoderScalesLinearlyNotQuadratically() throws {
         let small = try muxDrainTime { smallMuxFrames(8000).bytes }
         let large = try muxDrainTime { smallMuxFrames(32000).bytes }
+        // 12: the same contention-aware bound (and rationale) as the WireMessage tripwire above.
         XCTAssertLessThan(
             large / max(small, 1e-9),
-            8.0,
+            12.0,
             "mux decode time must scale ~linearly (got \(large / small)× for 4× frames)",
         )
     }

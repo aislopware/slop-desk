@@ -698,16 +698,15 @@ public final class TerminalViewModel {
         case .char("l", control: false, _),
              .right:
             applyColumnMotion(sign: 1)
+        // Line-edge motions follow the LOGICAL line (the soft-wrap chain): a long line the grid
+        // wrapped over several display rows is ONE line, so `0`/`^` land on the chain's FIRST row
+        // and `$` on the chain's LAST row's line end — never a wrap point.
         case .char("0", control: false, _):
-            _ = copyModeState.consumeCount()
-            moveCursorToColumn { _ in ViLineMotion.lineStart }
+            applyLineEdgeMotion(.start, actions: actions)
         case .char("^", control: false, _):
-            _ = copyModeState.consumeCount()
-            moveCursorToColumn { ViLineMotion.firstNonBlank($0) }
+            applyLineEdgeMotion(.firstGlyph, actions: actions)
         case .char("$", control: false, _):
-            _ = copyModeState.consumeCount()
-            // stickyEnd: after `$`, vertical motions keep hugging each row's line end (vim curswant).
-            moveCursorToColumn(stickyEnd: true) { ViLineMotion.lastNonBlank($0) ?? ViLineMotion.lineStart }
+            applyLineEdgeMotion(.end, actions: actions)
         // Word motions (cursor path only): the count REPEATS the single step, which wraps across rows.
         case .char("w", control: false, _):
             applyWordMotion(.nextStart, actions: actions)
@@ -921,11 +920,15 @@ public final class TerminalViewModel {
         case .char:
             ctl.setSelection(anchor: anchor, head: cursor, rectangle: false)
         case .line:
+            // Line-visual spans LOGICAL lines: the ends widen to their soft-wrap chains, so `V` on
+            // any display row of a wrapped long line selects the WHOLE line (vim/tmux semantics).
             let top = min(anchor.row, cursor.row)
             let bottom = max(anchor.row, cursor.row)
+            let start = ctl.lineRange(top)?.lowerBound ?? top
+            let end = ctl.lineRange(bottom)?.upperBound ?? bottom
             ctl.setSelection(
-                anchor: TerminalScreenPoint(col: 0, row: top),
-                head: TerminalScreenPoint(col: info.cols - 1, row: bottom),
+                anchor: TerminalScreenPoint(col: 0, row: start),
+                head: TerminalScreenPoint(col: info.cols - 1, row: end),
                 rectangle: false,
             )
         case .block:
@@ -972,16 +975,43 @@ public final class TerminalViewModel {
         refreshVisualSelection(ctl, info: info)
     }
 
-    /// `0`/`^`/`$` — the cursor jumps to a column computed from its ROW'S TEXT (read fresh through
-    /// the seam) and re-seeds curswant there (`stickyEnd` seeds `Int.max`, vim's `$`-then-`j`
-    /// hug-the-line-ends behavior). Cursor path only.
-    private func moveCursorToColumn(stickyEnd: Bool = false, _ column: (String) -> Int) {
+    /// The three line-edge landings ``applyLineEdgeMotion(_:actions:)`` resolves over the logical line.
+    private enum LineEdge {
+        case start
+        case firstGlyph
+        case end
+    }
+
+    /// `0`/`^`/`$` — line-EDGE motions over the LOGICAL line (the seam's soft-wrap chain, vim/tmux
+    /// semantics): `0`/`^` land on the chain's FIRST row (column 0 / first non-blank glyph), `$` on
+    /// the chain's LAST row's last text cell — so on a soft-wrapped long line the cursor moves ROWS
+    /// to the line's real edges, never a wrap point. `$` re-seeds sticky curswant (`Int.max`, vim's
+    /// `$`-then-`j` hug-the-line-ends behavior); the viewport follows the landed row (a chain edge
+    /// can sit off-screen). A seam without `lineRange` truth degrades to the display row (the
+    /// honest single-row chain). Cursor path only.
+    private func applyLineEdgeMotion(_ edge: LineEdge, actions: TerminalSurfaceActions?) {
+        _ = copyModeState.consumeCount()
         guard let (ctl, info) = cursorContext() else { return }
         var cursor = seededCursor(info)
-        let line = ctl.readScreenRow(cursor.row) ?? ""
-        cursor.col = min(max(column(line), 0), info.cols - 1)
+        let chain = ctl.lineRange(cursor.row) ?? cursor.row...cursor.row
+        switch edge {
+        case .start:
+            cursor.row = chain.lowerBound
+            cursor.col = ViLineMotion.lineStart
+            copyModeState.wantColumn = cursor.col
+        case .firstGlyph:
+            cursor.row = chain.lowerBound
+            cursor.col = ViLineMotion.firstNonBlank(ctl.readScreenRow(cursor.row) ?? "")
+            copyModeState.wantColumn = cursor.col
+        case .end:
+            cursor.row = chain.upperBound
+            let line = ctl.readScreenRow(cursor.row) ?? ""
+            cursor.col = ViLineMotion.lastNonBlank(line) ?? ViLineMotion.lineStart
+            copyModeState.wantColumn = Int.max
+        }
+        cursor.col = min(max(cursor.col, 0), info.cols - 1)
         copyModeState.cursor = cursor
-        copyModeState.wantColumn = stickyEnd ? Int.max : cursor.col
+        followViewport(cursor, info: info, actions: actions)
         refreshVisualSelection(ctl, info: info)
     }
 
@@ -1118,12 +1148,16 @@ public final class TerminalViewModel {
         refreshVisualSelection(ctl, info: info)
     }
 
-    /// vim `Y` — copies the cursor row's text (+ receipt). Returns whether anything was copied
-    /// (blank row / no cursor path ⇒ `false`, and the mode stays put — nothing was yanked).
+    /// vim `Y` — copies the cursor's LOGICAL line (+ receipt): the soft-wrap chain's rows joined
+    /// WITHOUT newlines (the wrap is a display artifact, not content — an interior chain row spans
+    /// the full grid width, so plain concatenation reconstructs the real line). Returns whether
+    /// anything was copied (blank row / no cursor path ⇒ `false`, and the mode stays put).
     private func yankCursorLine() -> Bool {
         guard let (ctl, info) = cursorContext() else { return false }
         let cursor = seededCursor(info)
-        guard let line = ctl.readScreenRow(cursor.row), !line.isEmpty else { return false }
+        let chain = ctl.lineRange(cursor.row) ?? cursor.row...cursor.row
+        let line = chain.compactMap { ctl.readScreenRow($0) }.joined()
+        guard !line.isEmpty else { return false }
         copyToPasteboard(line)
         noteClipboardCopy(line)
         return true

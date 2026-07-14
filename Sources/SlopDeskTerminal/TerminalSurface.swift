@@ -267,6 +267,12 @@ public protocol TerminalSelectionControl: AnyObject {
     /// One SCREEN-coordinate row's text (for word/column motions), or `nil` off-range. The row is
     /// read fresh from libghostty — never a cached mirror.
     func readScreenRow(_ row: Int) -> String?
+
+    /// The LOGICAL line containing `screenRow` — the inclusive screen-row range of its soft-wrap
+    /// chain (a long line the grid wrapped over several display rows is ONE line; a plain row
+    /// returns `row...row`). `nil` off-range / no live surface. Backs the line-oriented copy-mode
+    /// ops (`$`/`0`/`^`/`V`/`Y`), which follow the REAL line, not the display row.
+    func lineRange(_ screenRow: Int) -> ClosedRange<Int>?
 }
 
 /// Backpressure seam for renderers whose ``TerminalSurface/feed(_:)`` is an

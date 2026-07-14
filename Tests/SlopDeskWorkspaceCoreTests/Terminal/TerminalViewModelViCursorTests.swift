@@ -155,6 +155,27 @@ final class TerminalViewModelViCursorTests: XCTestCase {
         XCTAssertTrue(rec.actions.isEmpty)
     }
 
+    /// The line-edge motions follow the LOGICAL line (the soft-wrap chain): on a wrapped long line,
+    /// `$` moves to the chain's LAST row's last glyph and `0`/`^` to the chain's FIRST row — the
+    /// line's REAL edges, never the current display row's wrap points.
+    func testLineEdgeMotionsFollowTheLogicalLine() {
+        let (model, rec) = makeModel()
+        rec.wrappedRows = [89, 90] // rows 89→90→91 are ONE soft-wrapped logical line
+        rec.screenRows[89] = "  " + String(repeating: "a", count: 78)
+        rec.screenRows[90] = String(repeating: "b", count: 80)
+        rec.screenRows[91] = "  tail of the long line"
+        model.handleCopyModeKey(key("$"))
+        XCTAssertEqual(model.viCursorCell?.row, 91 - 76, "$ moves DOWN to the chain's last row")
+        XCTAssertEqual(model.viCursorCell?.col, 22, "…landing on the real line end")
+        model.handleCopyModeKey(key("0"))
+        XCTAssertEqual(model.viCursorCell?.row, 89 - 76, "0 moves UP to the chain's first row")
+        XCTAssertEqual(model.viCursorCell?.col, 0)
+        model.handleCopyModeKey(key("j")) // onto a continuation row…
+        model.handleCopyModeKey(key("^"))
+        XCTAssertEqual(model.viCursorCell?.row, 89 - 76, "^ also lands on the chain's first row")
+        XCTAssertEqual(model.viCursorCell?.col, 2, "…on ITS first non-blank glyph")
+    }
+
     /// `w` steps by vim small-words over the seam's row text and wraps to the next row's first run.
     func testWordMotionStepsAndWrapsRows() {
         let (model, rec) = makeModel(cursorCol: 0)
@@ -280,6 +301,31 @@ final class TerminalViewModelViCursorTests: XCTestCase {
         model.handleCopyModeKey(key("Y", shift: true))
         XCTAssertEqual(copied, ["git push"], "Y yanks the cursor row's text")
         XCTAssertFalse(model.isCopyMode)
+    }
+
+    /// On a soft-wrap chain, `V` selects the WHOLE logical line from any of its display rows, and
+    /// `Y` yanks the chain's rows joined WITHOUT newlines (the wrap is display, not content).
+    func testLineVisualAndYankCoverTheWrapChain() {
+        let (model, rec) = makeModel()
+        rec.wrappedRows = [89, 90] // rows 89→90→91 are ONE soft-wrapped logical line
+        rec.screenRows[89] = String(repeating: "a", count: 80)
+        rec.screenRows[90] = String(repeating: "b", count: 80)
+        rec.screenRows[91] = "tail"
+        model.handleCopyModeKey(key("V", shift: true))
+        XCTAssertEqual(rec.selections.last, RecordingSelectionSurface.SelectionCall(
+            anchor: TerminalScreenPoint(col: 0, row: 89),
+            head: TerminalScreenPoint(col: 79, row: 91),
+            rectangle: false,
+        ), "line-visual widens both ends to their soft-wrap chains")
+        model.handleCopyModeKey(.escape) // collapse the visual before Y (yank-line, not selection)
+        var copied: [String] = []
+        model.copyToPasteboard = { copied.append($0) }
+        model.handleCopyModeKey(key("Y", shift: true))
+        XCTAssertEqual(
+            copied,
+            [String(repeating: "a", count: 80) + String(repeating: "b", count: 80) + "tail"],
+            "Y reconstructs the unwrapped logical line",
+        )
     }
 
     // MARK: Absolute + page jumps keep cursor and viewport together

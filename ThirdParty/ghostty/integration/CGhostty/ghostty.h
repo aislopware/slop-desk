@@ -425,6 +425,17 @@ typedef struct {
   uint32_t cursor_y;
 } ghostty_viewport_info_s;
 
+// slopdesk: the rendered grid's inset inside the surface view, in PIXELS —
+// the grid's top-left cell starts at (left_px, top_px), NOT (0, 0)
+// (window-padding-* plus any balanced remainder). Embedder-drawn cell
+// overlays must offset by this.
+typedef struct {
+  uint32_t left_px;
+  uint32_t top_px;
+  uint32_t right_px;
+  uint32_t bottom_px;
+} ghostty_padding_s;
+
 typedef struct {
   const char* key;
   const char* value;
@@ -1167,6 +1178,11 @@ void ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*);
 bool ghostty_surface_set_selection(ghostty_surface_t, ghostty_selection_s);
 void ghostty_surface_clear_selection(ghostty_surface_t);
 bool ghostty_surface_viewport_info(ghostty_surface_t, ghostty_viewport_info_s*);
+void ghostty_surface_padding(ghostty_surface_t, ghostty_padding_s*);
+bool ghostty_surface_line_range(ghostty_surface_t,
+                                uint32_t,
+                                uint32_t*,
+                                uint32_t*);
 
 #ifdef __APPLE__
 void ghostty_surface_set_display_id(ghostty_surface_t, uint32_t);
