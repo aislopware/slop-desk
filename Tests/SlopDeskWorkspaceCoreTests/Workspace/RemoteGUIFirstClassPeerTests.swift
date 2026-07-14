@@ -5,32 +5,14 @@ import XCTest
 
 // MARK: - RemoteGUIFirstClassPeerTests (the audit-as-tests peer-enumeration suite)
 
-/// **Every kind-generic surface treats `.remoteGUI` as a first-class peer of a terminal pane.**
+/// **Every kind-generic surface treats `.remoteGUI` as a first-class peer — as a STAGE tab.**
 ///
-/// `.remoteGUI` (a real host window streamed over the PATH-2 UDP video path) must be a first-class peer in
-/// every surface across the app. There is no reference screenshot to compare against — the standard is the
-/// existing slopdesk surfaces. This suite is the developer-facing peer-enumeration pin: it asserts the model
-/// entry points (`newRemoteWindowTab`, `OpenQuicklyModel.openedItems`,
-/// `WorkspaceTreeOps.splitPane`, `WorkspaceStore.isReadOnly`) all ADMIT /
-/// HANDLE `.remoteGUI` with no kind-dropping `switch`/guard.
-///
-/// ### Most cases pass immediately (confirming reuse); one drives a fix.
-/// The machinery is overwhelmingly kind-generic, so most assertions are GREEN on un-fixed code — they pin the
-/// reuse so a later refactor that silently drops `.remoteGUI` from an enumeration is caught. The exception is
-/// ``testOpenedItemsDifferentiatesTheRemoteWindowRow``: the Open-Quickly row for a video pane is currently
-/// undifferentiated (badge "Pane" / the split glyph / no subtitle). That assertion is RED until the fix threads a
-/// `paneKind:` through `paneItem`/`openedItems` and maps `.remoteGUI` → a window glyph (`display`) + badge
-/// "Window" + a host/window subtitle. It is written FIRST here (revert-to-confirm-fail) so that fix has a failing
-/// test to turn green.
-///
-/// ### Out of scope here (own file — would not compile against un-fixed code)
-/// - The read-only INPUT gate on the video seam (`RemotePaneContext.inputEnabled`) lands its own
-///   `ReadOnlyStoreTests`/`PaletteReadOnlyTests` cases once the additive field exists (referencing it now
-///   would be a compile error, not a runtime failure). This suite pins only the kind-generic
-///   `isReadOnly`/`setPaneReadOnly` flip on a `.remoteGUI` pane (already convergent).
-/// - The status-bar STRIP mount is app-target view code (`GuiLeafView`),
-///   compiled + code-reviewed, never unit-instantiated (hang-safety).
-///   This suite covers only the pure models behind it.
+/// Under the Stage re-scope the split tree is TERMINAL-ONLY: a `.remoteGUI` pane (a real host window
+/// streamed over the PATH-2 UDP video path) lives in its session's STAGE. First-class-ness now means
+/// the kind-generic enumeration/policy surfaces still ADMIT the staged pane with no kind-dropping
+/// switch/guard: the stage ingress mints a reachable pane, Open Quickly's Opened list includes and
+/// DIFFERENTIATES it, read-only records it, the rail-subtitle policy labels it, and a LEGACY persisted
+/// file that still carries a video leaf in its tree migrates it into the stage instead of dropping it.
 ///
 /// Hang-safety: NO `SCStream`/`VTCompression`/`VTDecompression`/Metal/`NSWindow` is instantiated — the store
 /// uses the spec-only ``FakePaneSession`` seam, and the tree ops are pure value transforms.
@@ -38,16 +20,15 @@ import XCTest
 final class RemoteGUIFirstClassPeerTests: XCTestCase {
     // MARK: - Fixtures
 
-    /// A spec-only `.tree`-live store (no terminal model / renderer / socket) — the same seam
-    /// ``RemoteWindowTabLandingTests`` uses to drive `newRemoteWindowTab`.
+    /// A spec-only `.tree`-live store (no terminal model / renderer / socket).
     private func makeFakeStore() -> WorkspaceStore {
         WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0) }, liveVideoCap: 2)
     }
 
-    /// A pure two-tab tree carrying a `.terminal` pane and a `.remoteGUI` (video) pane in one session, so the
-    /// kind-generic enumeration surfaces (Open-Quickly) can be asserted to include BOTH. The video pane mirrors
-    /// what ``WorkspaceStore/newRemoteWindowTab(windowID:title:appName:)`` mints: a `.remoteGUI` spec carrying a
-    /// pre-bound ``VideoEndpoint`` and no shell cwd.
+    /// A pure tree carrying a `.terminal` tree pane and a `.remoteGUI` STAGE pane in one session, so
+    /// the kind-generic enumeration surfaces (Open-Quickly) can be asserted to include BOTH zones. The
+    /// stage pane mirrors what ``WorkspaceStore/openWindowInStage(windowID:title:appName:)`` mints: a
+    /// `.remoteGUI` spec carrying a pre-bound ``VideoEndpoint`` and no shell cwd.
     private func makeMixedTree() -> (tree: TreeWorkspace, terminal: PaneID, video: PaneID) {
         let termID = PaneID()
         let videoID = PaneID()
@@ -59,94 +40,75 @@ final class RemoteGUIFirstClassPeerTests: XCTestCase {
             video: VideoEndpoint(windowID: 5, title: "Safari — GitHub", appName: "Safari"),
         )
         let termTab = Tab(title: "T", root: .leaf(termID), activePane: termID)
-        let videoTab = Tab(title: "V", root: .leaf(videoID), activePane: videoID)
-        let session = Session(name: "s", tabs: [termTab, videoTab], specs: [termID: termSpec, videoID: videoSpec])
+        let session = Session(
+            name: "s", tabs: [termTab],
+            specs: [termID: termSpec, videoID: videoSpec],
+            stagePanes: [videoID], activeStagePane: videoID,
+        )
         let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)
         return (tree, termID, videoID)
     }
 
-    /// A pure single-tab tree with a `.terminal` leaf split alongside a `.remoteGUI` SIBLING (two tiled leaves
-    /// in one tab) — the fixture for the kind-generic split peer assertions.
-    private func makeSplitWithVideoSibling() -> (tree: TreeWorkspace, terminal: PaneID, video: PaneID) {
-        let ws0 = TreeWorkspace.singlePane(spec: PaneSpec(kind: .terminal, title: "term"))
-        let term = ws0.allPaneIDs()[0]
-        let videoSpec = PaneSpec(
-            kind: .remoteGUI,
-            title: "Safari",
-            video: VideoEndpoint(windowID: 9, title: "Safari", appName: "Safari"),
-        )
-        let (ws, video) = WorkspaceTreeOps.splitPane(term, axis: .horizontal, newSpec: videoSpec, in: ws0)
-        return (ws, term, video)
-    }
+    // MARK: - the picker → stage path lands a reachable first-class peer
 
-    // MARK: - the picker → `.remoteGUI` pane path lands a reachable first-class peer
-
-    /// `newRemoteWindowTab` mints a `.remoteGUI` leaf bound to the picked host window, reachable BOTH in the
-    /// live tree AND as a first-class Open-Quickly "Opened" row (the picker → pane → switcher round trip). The
-    /// picker/connect overlay already mounts and mints the spec; this guards the end-to-end reachability
-    /// against a regression. Passes on un-fixed code (the path is kind-generic).
-    func testNewRemoteWindowTabMintsReachableRemoteGUIPeer() throws {
+    /// `openWindowInStage` mints a `.remoteGUI` stage tab bound to the picked host window, reachable BOTH
+    /// in the live stage AND as a first-class Open-Quickly "Opened" row (the picker → stage → switcher
+    /// round trip).
+    func testOpenWindowInStageMintsReachableRemoteGUIPeer() throws {
         let store = makeFakeStore()
 
-        let id = store.newRemoteWindowTab(windowID: 42, title: "Apple", appName: "Safari")
+        let id = try XCTUnwrap(store.openWindowInStage(windowID: 42, title: "Apple", appName: "Safari"))
 
         // 1) the minted spec is a `.remoteGUI` pre-bound to the picked window
         let spec = try XCTUnwrap(store.tree.activeSession?.specs[id])
         XCTAssertEqual(spec.kind, .remoteGUI, "the picked window mints a remote-GUI video pane")
         XCTAssertEqual(spec.video?.windowID, 42, "the spec is pre-bound to the chosen host window")
 
-        // 2) it is a live leaf of the tree …
-        XCTAssertTrue(store.tree.allPaneIDs().contains(id), "the picked window lands as a live pane")
+        // 2) it is a live STAGE pane (never a tree leaf — the tree is terminal-only) …
+        XCTAssertTrue(store.stagePaneIDs.contains(id), "the picked window lands as a stage tab")
+        XCTAssertFalse(store.tree.allPaneIDs().contains(id), "and never as a split-tree leaf")
 
         // 3) … and a first-class peer in the kind-generic Open-Quickly "Opened" enumeration
         let opened = OpenQuicklyModel.openedItems(from: store.tree)
         XCTAssertTrue(
             opened.contains { $0.act == .focusPane(id) },
-            "the remote-window pane is a first-class peer in Open-Quickly's Opened list",
+            "the staged window is a first-class peer in Open-Quickly's Opened list",
         )
     }
 
-    // MARK: - Open-Quickly admits the video pane (inclusion vs differentiation)
+    // MARK: - Open-Quickly admits the staged pane (inclusion vs differentiation)
 
-    /// `openedItems` is kind-AGNOSTIC: it already emits one row per live pane, INCLUDING the `.remoteGUI` pane.
-    /// Passes on un-fixed code — pins the inclusion so a refactor can't silently drop the video pane from the
-    /// switcher.
-    func testOpenedItemsIncludesTheRemoteWindowPane() {
+    /// `openedItems` enumerates BOTH zones: one row per tree pane AND per stage tab.
+    func testOpenedItemsIncludesTheStagedWindowPane() {
         let (tree, terminal, video) = makeMixedTree()
 
         let items = OpenQuicklyModel.openedItems(from: tree)
 
-        XCTAssertEqual(items.count, 2, "one Opened row per live pane — the terminal AND the remote window")
+        XCTAssertEqual(items.count, 2, "one Opened row per live pane — the terminal AND the staged window")
         XCTAssertTrue(
             items.contains { $0.act == .focusPane(terminal) },
             "the terminal pane is enumerated",
         )
         XCTAssertTrue(
             items.contains { $0.act == .focusPane(video) },
-            "the `.remoteGUI` pane is enumerated as a first-class Opened row",
+            "the staged `.remoteGUI` pane is enumerated as a first-class Opened row",
         )
     }
 
-    /// **RED until the Open-Quickly differentiation lands.** The video pane's row must read as a
-    /// WINDOW, not an undifferentiated pane: a window glyph (`display`), a "Window" badge, and a non-nil
-    /// host/window subtitle (a video pane has no cwd). On un-fixed code the row is built with `kind == .pane`
-    /// (badge "Pane", the split glyph, nil subtitle) so every assertion below fails — exactly the
-    /// revert-to-confirm-fail signal the fix turns green by threading `paneKind:` through `paneItem`/`openedItems`.
-    func testOpenedItemsDifferentiatesTheRemoteWindowRow() throws {
+    /// The staged window's row reads as a WINDOW, not an undifferentiated pane: a window glyph
+    /// (`display`), a "Window" badge, and the host-app subtitle (a video pane has no cwd).
+    func testOpenedItemsDifferentiatesTheStagedWindowRow() throws {
         let (tree, _, video) = makeMixedTree()
 
         let items = OpenQuicklyModel.openedItems(from: tree)
         let videoRow = try XCTUnwrap(
             items.first { $0.act == .focusPane(video) },
-            "the video pane must be enumerated before it can be differentiated",
+            "the staged pane must be enumerated before it can be differentiated",
         )
 
         XCTAssertEqual(videoRow.badge, "Window", "WI-2: a remote window is badged 'Window', not 'Pane'")
         XCTAssertEqual(videoRow.symbol, "display", "WI-2: a remote window uses the window glyph, not the split glyph")
         XCTAssertNotNil(videoRow.subtitle, "WI-2: a video row carries a host/window subtitle (it has no cwd)")
-        // The subtitle is the host-side APP name (line 2), NOT an echo of the window title (line 1). On
-        // un-fixed code `paneRowSubtitle` returned `nonEmpty(title)` — the SAME string as the row title — so the
-        // row printed identical text on both lines. Pin the expected app name and that it differs from the title.
         XCTAssertEqual(
             videoRow.subtitle, "Safari",
             "F2: a remote-window subtitle is the host app name (the rail's `railSubtitle` source), not the title",
@@ -157,20 +119,18 @@ final class RemoteGUIFirstClassPeerTests: XCTestCase {
         )
     }
 
-    // MARK: - read-only is kind-generic on the video pane
+    // MARK: - read-only is kind-generic on the staged pane
 
-    /// `setPaneReadOnly`/`isReadOnly(for:)` are kind-generic — they record a `.remoteGUI` pane in the
-    /// convergent `paneReadOnly` set even though it has no live terminal model (the set-only path). Passes on
-    /// un-fixed code; pins the policy the pill `🔒 READ ONLY ×` + the sidebar lock read. The downstream video-
-    /// input GATE (`RemotePaneContext.inputEnabled`) is an additive seam, tested where that field lands.
-    func testReadOnlyFlipsOnARemoteWindowPane() {
+    /// `setPaneReadOnly`/`isReadOnly(for:)` are kind-generic — they record a staged `.remoteGUI` pane in
+    /// the convergent `paneReadOnly` set even though it has no live terminal model (the set-only path).
+    func testReadOnlyFlipsOnAStagedWindowPane() throws {
         let store = makeFakeStore()
-        let video = store.newRemoteWindowTab(windowID: 21, title: "Xcode", appName: "Xcode")
+        let video = try XCTUnwrap(store.openWindowInStage(windowID: 21, title: "Xcode", appName: "Xcode"))
 
         XCTAssertFalse(store.isReadOnly(for: video), "a fresh remote window is writable")
 
         store.setPaneReadOnly(video, true)
-        XCTAssertTrue(store.isReadOnly(for: video), "read-only records a `.remoteGUI` pane (kind-generic)")
+        XCTAssertTrue(store.isReadOnly(for: video), "read-only records a staged `.remoteGUI` pane (kind-generic)")
         XCTAssertTrue(store.paneReadOnly.contains(video), "and lands in the convergent source of truth")
 
         store.setPaneReadOnly(video, false)
@@ -179,13 +139,9 @@ final class RemoteGUIFirstClassPeerTests: XCTestCase {
 
     // MARK: - the sidebar rail reads a `.remoteGUI` pane as a labelled window
 
-    /// **The sidebar-row SUBTITLE policy** (the kind-generic ``PaneSpec/railSubtitle`` the native
-    /// rail ``RailRowsBuilder`` binds its second line to). A `.remoteGUI` pane has no shell cwd, so a bare
-    /// `spec?.lastKnownCwd` subtitle would always be `nil` (a bare single-line window row). Instead the
-    /// host-side window's owning APP name stands in its place, so a remote window reads as a *labelled window* (its
-    /// window title on line 1, the host app on line 2) — a first-class peer of a terminal's cwd row. A terminal
-    /// keeps its cwd. Pins specific expected strings (not the output's own derivation), so a regression to a
-    /// nil video subtitle is visible.
+    /// **The sidebar-row SUBTITLE policy** (the kind-generic ``PaneSpec/railSubtitle``). A `.remoteGUI`
+    /// pane has no shell cwd, so the host-side window's owning APP name stands in — a remote window reads
+    /// as a *labelled window* (its window title on line 1, the host app on line 2). A terminal keeps its cwd.
     func testRailSubtitlePrefersHostAppForARemoteWindowPane() throws {
         let (tree, terminal, video) = makeMixedTree()
         let termSpec = try XCTUnwrap(tree.spec(for: terminal))
@@ -229,13 +185,12 @@ final class RemoteGUIFirstClassPeerTests: XCTestCase {
     }
 
     /// **EMPTY HOST-TITLE PARITY (both the rail + the Open-Quickly lines).** A remote window
-    /// whose streamed window has NO title has its label collapsed to the app name by `newRemoteWindowTab`, so
+    /// whose streamed window has NO title has its label collapsed to the app name by the ingress spec, so
     /// line 1 (`lastKnownTitle ?? title`) AND the streamed window title are both just the app name. The host
-    /// app must then show on ONE line only — not the app name on both. Revert-to-confirm-fail: on the un-fixed
-    /// `railSubtitle`/`paneRowSubtitle` the app name returns on BOTH lines (line 1 == subtitle == "Safari").
+    /// app must then show on ONE line only — not the app name on both.
     func testEmptyHostTitleShowsTheAppNameOnOneLineOnly() throws {
         let store = makeFakeStore()
-        let id = store.newRemoteWindowTab(windowID: 88, title: "", appName: "Safari")
+        let id = try XCTUnwrap(store.openWindowInStage(windowID: 88, title: "", appName: "Safari"))
         let spec = try XCTUnwrap(store.tree.activeSession?.specs[id])
 
         // Line 1 fell back to the app name (the window had no title).
@@ -253,7 +208,7 @@ final class RemoteGUIFirstClassPeerTests: XCTestCase {
     /// app on line 2 (a labelled window — window title on line 1, host app on line 2), on BOTH surfaces.
     func testPresentHostTitleKeepsTheHostAppSubtitle() throws {
         let store = makeFakeStore()
-        let id = store.newRemoteWindowTab(windowID: 89, title: "GitHub", appName: "Safari")
+        let id = try XCTUnwrap(store.openWindowInStage(windowID: 89, title: "GitHub", appName: "Safari"))
         let spec = try XCTUnwrap(store.tree.activeSession?.specs[id])
 
         XCTAssertEqual(spec.title, "GitHub", "a present window title is line 1")
@@ -263,32 +218,48 @@ final class RemoteGUIFirstClassPeerTests: XCTestCase {
         XCTAssertEqual(row.subtitle, "Safari", "the Open-Quickly row keeps the host app on line 2 too")
     }
 
-    // MARK: - split admits a video sibling + no drop-to-create a remote window
+    // MARK: - a LEGACY tree carrying video leaves migrates them into the stage
 
-    /// `WorkspaceTreeOps.splitPane` is kind-generic on `PaneID`/rects — splitting a terminal with a `.remoteGUI`
-    /// sibling yields a tab with BOTH leaves tiled and the invariant intact. Passes on un-fixed code; pins the
-    /// drag-drop/split exclusion (a remote window comes from the picker, never a file/URL
-    /// drop, but it splits and tiles as a first-class peer once minted).
-    func testSplitAdmitsARemoteWindowSibling() {
-        let (ws, terminal, video) = makeSplitWithVideoSibling()
+    /// A pre-Stage persisted file can still hold `.remoteGUI` leaves in its split tree. `normalized()`
+    /// (the load path) must MOVE them to the stage — never drop a bound window across the update — and
+    /// leave the tree terminal-only with the invariant intact. A tab the move empties is dropped.
+    func testNormalizedMigratesLegacyVideoLeavesIntoTheStage() throws {
+        let termID = PaneID()
+        let videoID = PaneID()
+        let videoSpec = PaneSpec(
+            kind: .remoteGUI, title: "Safari",
+            video: VideoEndpoint(windowID: 5, title: "Safari", appName: "Safari"),
+        )
+        let session = Session(
+            name: "s",
+            tabs: [
+                Tab(title: "T", root: .leaf(termID), activePane: termID),
+                Tab(title: "V", root: .leaf(videoID), activePane: videoID), // the legacy whole-tab window
+            ],
+            specs: [termID: PaneSpec(kind: .terminal, title: "zsh"), videoID: videoSpec],
+        )
+        let legacy = TreeWorkspace(sessions: [session], activeSessionID: session.id)
 
-        let ids = ws.allPaneIDs()
-        XCTAssertTrue(ids.contains(terminal), "the terminal leaf survives the split")
-        XCTAssertTrue(ids.contains(video), "the `.remoteGUI` sibling is a tiled first-class leaf")
-        XCTAssertEqual(ws.spec(for: video)?.kind, .remoteGUI, "the split sibling keeps its video kind")
-        XCTAssertTrue(ws.isInvariantHeld(), "specs==leafIDs invariant holds across a mixed-kind split")
+        let migrated = legacy.normalized()
+
+        let s = try XCTUnwrap(migrated.sessions.first)
+        XCTAssertEqual(s.stagePanes, [videoID], "the legacy video leaf moved to the stage")
+        XCTAssertEqual(s.activeStagePane, videoID, "the first mover becomes the stage selection")
+        XCTAssertEqual(s.tabs.count, 1, "the emptied window tab is dropped")
+        XCTAssertFalse(migrated.allPaneIDs().contains(videoID), "the tree is terminal-only after the repair")
+        XCTAssertEqual(s.specs[videoID]?.video?.windowID, 5, "the binding survives the move (rebind identity)")
+        XCTAssertTrue(migrated.isInvariantHeld())
     }
 
+    // MARK: - no drop-to-create a remote window
+
     /// **The drag-drop exclusion pin — "no drop-to-create a remote window".** A
-    /// `.remoteGUI` pane (a host window streamed over the PATH-2 video path) is minted ONLY by the picker
-    /// (`newRemoteWindowTab`); there is intentionally NO drop-to-create arm. ``DropAction`` — the pure output of
-    /// ``DropActionResolver`` — carries terminal cases only, so NO `(zone × content)` cell in the whole
-    /// policy table can spawn a video pane. This walks the FULL table (every ``DropZone`` × each
-    /// ``DroppedContent`` variant) and asserts every resolved action targets a terminal, never a
-    /// remote window. The ``createsRemoteWindow(_:)`` classifier is an EXHAUSTIVE switch, so a future refactor
-    /// that adds a remote-window `DropAction` case is forced to classify it HERE (compile-time) and any resolver
-    /// arm returning it trips the assertion — the exclusion can't erode silently. This is a documentation-only
-    /// change, so this is a regression pin (no behavioral change to revert), not a revert-to-confirm-fail driver.
+    /// `.remoteGUI` pane is minted ONLY by the stage ingress (`openWindowInStage`); there is intentionally
+    /// NO drop-to-create arm. ``DropAction`` — the pure output of ``DropActionResolver`` — carries terminal
+    /// cases only, so NO `(zone × content)` cell in the whole policy table can spawn a video pane. The
+    /// ``createsRemoteWindow(_:)`` classifier is an EXHAUSTIVE switch, so a future refactor that adds a
+    /// remote-window `DropAction` case is forced to classify it HERE (compile-time) and any resolver
+    /// arm returning it trips the assertion — the exclusion can't erode silently.
     func testDropPolicyNeverCreatesARemoteWindow() {
         let contents: [DroppedContent] = [
             .folder("/work/proj"),
@@ -304,7 +275,7 @@ final class RemoteGUIFirstClassPeerTests: XCTestCase {
                 resolvedAny = true
                 XCTAssertFalse(
                     Self.createsRemoteWindow(action),
-                    "no drop cell may spawn a `.remoteGUI` pane — remote windows come from the picker (\(zone), \(content))",
+                    "no drop cell may spawn a `.remoteGUI` pane — remote windows come from the stage ingress (\(zone), \(content))",
                 )
             }
         }

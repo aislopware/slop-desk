@@ -674,10 +674,11 @@ public final class OverlayCoordinator {
         remotePickerModel = nil
     }
 
-    /// A window was chosen in the picker → open a NEW `.remoteGUI` tab pre-bound to it (logic-api §4),
-    /// then close the picker. The materialized pane's own ``RemoteWindowModel`` drives the live stream.
+    /// A window was chosen in the picker → open it in the STAGE (pre-bound endpoint; idempotent by
+    /// windowID), then close the picker. The materialized pane's own ``RemoteWindowModel`` drives the
+    /// live stream.
     public func openRemoteWindow(_ summary: RemoteWindowSummary) {
-        store?.newRemoteWindowTab(
+        store?.openWindowInStage(
             windowID: summary.windowID, title: summary.title, appName: summary.appName,
         )
         store?.recordRecentCommand(.newPane(.remoteGUI))

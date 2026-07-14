@@ -32,7 +32,8 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
     }
 
     private func dialogLeaves(_ store: WorkspaceStore) -> [PaneID] {
-        store.tree.allPaneIDs().filter { store.tree.spec(for: $0)?.kind == .systemDialog }
+        // The Stage re-scope: a system dialog is a STAGE pane (the tree is terminal-only).
+        store.tree.allStagePaneIDs().filter { store.tree.spec(for: $0)?.kind == .systemDialog }
     }
 
     // MARK: - Busy-pane close + confirm closes the TREE leaf (was a no-op on .tree)
@@ -127,41 +128,43 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
         XCTAssertFalse(store.tree.contains(leaf), "the idle leaf closed immediately")
     }
 
-    // MARK: - System-dialog auto-pane materializes IN THE TREE
+    // MARK: - System-dialog auto-pane materializes IN THE STAGE (the Stage re-scope)
 
-    /// `addSystemDialogPane(...)` on a `.tree` store inserts an ephemeral `.systemDialog` leaf into the
-    /// TREE (a new tab of the active session) + the registry. A regression here mutates `workspace.canvas`
-    /// and ends in the guarded-no-op canvas `reconcile()`, so no leaf ever appears on the tree shell.
-    func testSystemDialogPaneMaterializesInTree() {
+    /// `addSystemDialogPane(...)` on a `.tree` store inserts an ephemeral `.systemDialog` pane into the
+    /// active session's STAGE (selected — a surfacing SecurityAgent prompt demands attention) + the
+    /// registry. The split tree stays terminal-only.
+    func testSystemDialogPaneMaterializesInStage() {
         let store = makeTreeStore()
         let tabsBefore = store.tree.activeSession?.tabs.count ?? 0
-        XCTAssertTrue(dialogLeaves(store).isEmpty, "no dialog leaf initially")
+        XCTAssertTrue(dialogLeaves(store).isEmpty, "no dialog pane initially")
 
         let id = store.addSystemDialogPane(windowID: 1966, owner: "SecurityAgent", title: "sudo", isSecure: true)
 
-        XCTAssertTrue(store.tree.contains(id), "the dialog leaf is in the TREE")
-        XCTAssertEqual(store.tree.spec(for: id)?.kind, .systemDialog, "it is an ephemeral system-dialog leaf")
+        XCTAssertTrue(store.stagePaneIDs.contains(id), "the dialog pane is in the STAGE")
+        XCTAssertFalse(store.tree.contains(id), "never a split-tree leaf — the tree is terminal-only")
+        XCTAssertEqual(store.tree.spec(for: id)?.kind, .systemDialog, "it is an ephemeral system-dialog pane")
         XCTAssertEqual(store.tree.spec(for: id)?.video?.windowID, 1966, "it streams the dialog's host windowID")
-        XCTAssertEqual(store.tree.activeSession?.tabs.count, tabsBefore + 1, "materialized as a transient new tab")
+        XCTAssertEqual(store.activeStagePaneID, id, "the surfacing prompt's tab is selected")
+        XCTAssertEqual(store.tree.activeSession?.tabs.count, tabsBefore, "the tree's tab strip is untouched")
         XCTAssertNotNil(store.handle(for: id) as? FakePaneSession, "and is materialized in the registry")
     }
 
-    /// `closeSystemDialogPane(_:)` removes a tree dialog leaf (the dialog-gone path), and the liveness
-    /// probe `isSystemDialogPaneLive(_:)` reflects the tree.
-    func testSystemDialogPaneRemovedFromTree() {
+    /// `closeSystemDialogPane(_:)` removes a stage dialog pane (the dialog-gone path), and the liveness
+    /// probe `isSystemDialogPaneLive(_:)` reflects the stage.
+    func testSystemDialogPaneRemovedFromStage() {
         let store = makeTreeStore()
         let id = store.addSystemDialogPane(windowID: 7, owner: "SecurityAgent", title: "", isSecure: false)
         XCTAssertTrue(store.isSystemDialogPaneLive(id), "live after spawn")
 
         store.closeSystemDialogPane(id)
 
-        XCTAssertFalse(store.tree.contains(id), "the dialog leaf is gone from the tree")
+        XCTAssertFalse(store.stagePaneIDs.contains(id), "the dialog pane is gone from the stage")
         XCTAssertFalse(store.isSystemDialogPaneLive(id), "and the liveness probe reflects it")
-        XCTAssertTrue(dialogLeaves(store).isEmpty, "no system-dialog leaves remain")
+        XCTAssertTrue(dialogLeaves(store).isEmpty, "no system-dialog panes remain")
     }
 
     /// END-TO-END via the actual `SystemDialogMonitor` diff (the production caller): a dialog appearing →
-    /// a tree leaf materialized; the dialog leaving → it is removed. A regression here makes both canvas no-ops.
+    /// a stage pane materialized; the dialog leaving → it is removed.
     func testSystemDialogMonitorDrivesTheTreeShell() {
         let store = makeTreeStore()
         let monitor = SystemDialogMonitor(store: store, isConnected: { true }, target: { .default })
@@ -176,10 +179,10 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
                 isSecure: true,
             ),
         ])
-        XCTAssertEqual(dialogLeaves(store).count, 1, "a present dialog materialized a tree leaf")
+        XCTAssertEqual(dialogLeaves(store).count, 1, "a present dialog materialized a stage pane")
 
         monitor.reconcileForTesting([]) // dialog gone host-side
-        XCTAssertEqual(dialogLeaves(store).count, 0, "the tree leaf was removed when the dialog left")
+        XCTAssertEqual(dialogLeaves(store).count, 0, "the stage pane was removed when the dialog left")
     }
 
     /// AppLaunchMonitor side: `liveLayoutPresets` resolves from the TREE under `.tree`, and

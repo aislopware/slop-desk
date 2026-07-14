@@ -834,18 +834,19 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         overlay.closePalette()
     }
 
-    // MARK: - A picked window opens a `.remoteGUI` tab + closes the picker
+    // MARK: - A picked window opens a STAGE tab + closes the picker
 
     /// `RemoteWindowPickerModal` routes a pick through `coordinator.openRemoteWindow(_:)` (NOT the in-pane
-    /// `pick()→open()`). Pin that it opens a NEW `.remoteGUI` tab pre-bound to the picked window AND closes the
-    /// modal — the app-global path the modal depends on.
-    func testOpenRemoteWindowOpensRemoteGuiTabAndCloses() throws {
+    /// `pick()→open()`). Pin that it opens a `.remoteGUI` STAGE tab pre-bound to the picked window AND
+    /// closes the modal — the app-global path the modal depends on (the Stage re-scope: the split tree is
+    /// terminal-only, so the pick never touches the tab strip).
+    func testOpenRemoteWindowOpensStageTabAndCloses() throws {
         let (overlay, store) = makeCoordinator()
         overlay.openRemotePicker()
         XCTAssertTrue(overlay.remotePickerVisible, "openRemotePicker presents the modal")
         XCTAssertNotNil(overlay.remotePickerModel, "a fresh discovery model is built per open")
 
-        let before = store.tree.activeSession?.tabs.count ?? 0
+        let tabsBefore = store.tree.activeSession?.tabs.count ?? 0
         let summary = RemoteWindowSummary(
             windowID: 4242, appName: "Safari", title: "Docs", width: 1200, height: 800,
         )
@@ -855,8 +856,9 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertNil(overlay.remotePickerModel, "the per-open model is released on close")
 
         let session = try XCTUnwrap(store.tree.activeSession)
-        XCTAssertEqual(session.tabs.count, before + 1, "a new tab was opened for the picked window")
-        let newPane = try XCTUnwrap(session.activeTab?.activePane)
+        XCTAssertEqual(session.tabs.count, tabsBefore, "the tree's tab strip is untouched")
+        let newPane = try XCTUnwrap(session.activeStagePane, "the picked window's stage tab is selected")
+        XCTAssertEqual(session.stagePanes, [newPane], "a stage tab was opened for the picked window")
         XCTAssertEqual(session.specs[newPane]?.kind, .remoteGUI, "the new pane is a remote-GUI pane")
         XCTAssertEqual(
             session.specs[newPane]?.video?.windowID, 4242,

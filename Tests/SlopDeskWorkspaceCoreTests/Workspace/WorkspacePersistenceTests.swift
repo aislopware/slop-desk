@@ -546,11 +546,19 @@ final class WorkspacePersistenceTests: XCTestCase {
     func testLoadTreeRoundTripsCurrentVersionFileWithoutMigration() throws {
         let url = try tempURL()
         let persistence = WorkspacePersistence(fileURL: url)
-        let session = Session.singlePane(name: "Local", spec: PaneSpec(kind: .terminal, title: "build"))
-        // Add a second tab so the round-trip exercises more than a singleton.
+        var session = Session.singlePane(name: "Local", spec: PaneSpec(kind: .terminal, title: "build"))
+        // Add a second TERMINAL tab + a STAGE window pane so the round-trip exercises both zones
+        // (the current shape: the split tree is terminal-only, windows live in the stage).
+        let stagePane = PaneID()
+        session.stagePanes = [stagePane]
+        session.activeStagePane = stagePane
+        session.specs[stagePane] = PaneSpec(
+            kind: .remoteGUI, title: "agent",
+            video: VideoEndpoint(windowID: 3, title: "agent", appName: "Xcode"),
+        )
         let (grown, _) = WorkspaceTreeOps.newTab(
             in: TreeWorkspace(sessions: [session], activeSessionID: session.id),
-            spec: PaneSpec(kind: .remoteGUI, title: "agent"),
+            spec: PaneSpec(kind: .terminal, title: "logs"),
         )
         try persistence.save(grown)
 
@@ -561,7 +569,11 @@ final class WorkspacePersistenceTests: XCTestCase {
             "a current-version file loads at the current schema version, no migration",
         )
         XCTAssertEqual(Set(loaded.allPaneIDs()), Set(grown.allPaneIDs()), "every leaf survived the round-trip")
-        XCTAssertTrue(loaded.isInvariantHeld(), "the loaded tree holds specs == leafIDs")
+        XCTAssertEqual(
+            loaded.allStagePaneIDs(), [stagePane],
+            "the stage pane survived the round-trip in its zone (no migration touched it)",
+        )
+        XCTAssertTrue(loaded.isInvariantHeld(), "the loaded tree holds specs == paneIDs")
         let backup = url.appendingPathExtension("corrupt")
         XCTAssertFalse(
             FileManager.default.fileExists(atPath: backup.path),

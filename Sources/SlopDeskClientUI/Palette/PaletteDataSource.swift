@@ -393,6 +393,9 @@ public struct TabsPaletteSource: PaletteDataSource {
         public let title: String
         public let subtitle: String?
         public let isAgent: Bool
+        /// A STAGE window tab (the Stage re-scope): rendered with the window glyph; its jump routes
+        /// through the same `jumpToPaneTree` funnel, whose stage branch activates the tab.
+        public var isWindow: Bool = false
     }
 
     private let entries: [Entry]
@@ -418,6 +421,18 @@ public struct TabsPaletteSource: PaletteDataSource {
                 ))
             }
         }
+        // STAGE tabs join the jump list (the Stage re-scope): a streamed window is no longer a tree
+        // leaf, but it must stay keyboard-reachable — the jump routes through `jumpToPaneTree`, whose
+        // stage branch selects the tab (and auto-reveals the zone).
+        for paneID in session.stagePanes {
+            let spec = session.specs[paneID]
+            let title = spec?.lastKnownTitle ?? spec?.title ?? "Remote window"
+            out.append(Entry(
+                paneID: paneID, tabIndex: session.tabs.count,
+                title: title.isEmpty ? "Remote window" : title,
+                subtitle: spec?.video?.appName, isAgent: false, isWindow: true,
+            ))
+        }
         return Self(entries: out)
     }
 
@@ -425,7 +440,7 @@ public struct TabsPaletteSource: PaletteDataSource {
         entries.map { entry in
             PaletteItem(
                 id: "tab.\(entry.paneID.raw.uuidString)",
-                icon: entry.isAgent ? "asterisk" : "terminal",
+                icon: entry.isWindow ? "macwindow" : (entry.isAgent ? "asterisk" : "terminal"),
                 title: entry.title,
                 subtitle: entry.subtitle,
                 shortcut: nil,

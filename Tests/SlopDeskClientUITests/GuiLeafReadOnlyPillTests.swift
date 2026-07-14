@@ -36,9 +36,12 @@ final class GuiLeafReadOnlyPillTests: XCTestCase {
     /// End-to-end through the store: a `.remoteGUI` pane that is locked feeds a TRUE gate, and the pill's `×`
     /// release path (``WorkspaceStore/setPaneReadOnly(_:_:)`` with `false`) clears the convergent set so the
     /// gate falls back to false — proving the in-pane exit affordance the body wires actually unlocks the pane.
-    func testReadOnlyPillReleasesTheRemoteWindowLock() {
+    func testReadOnlyPillReleasesTheRemoteWindowLock() throws {
         let store = WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
-        let video = store.newRemoteWindowTab(windowID: 7, title: "Safari", appName: "Safari")
+        let video = try XCTUnwrap(
+            store.openWindowInStage(windowID: 7, title: "Safari", appName: "Safari"),
+            "the remote window opens as a stage tab (the Stage re-scope)",
+        )
 
         XCTAssertFalse(
             GuiLeafView.showReadOnlyPill(staticMirror: false, isReadOnly: store.isReadOnly(for: video)),

@@ -280,25 +280,22 @@ struct HostWindowsColumn: View {
 
     // MARK: - Acting (the ONE verb, state-aware — docs/45 §4)
 
-    /// Single-click / ⏎: REVEAL the streaming pane when the window is already in the workspace —
-    /// tab switch, focus, and the switched-to tab's badge auto-clear, exactly what a left-rail row
-    /// click does — else open a new pane. `duplicate` (⌘-click / ⌘⏎) deliberately opens ANOTHER pane
-    /// of the same window.
-    private func act(on identity: HostWindowIdentity, duplicate: Bool) {
+    /// Single-click / ⏎: open the window in the STAGE — `openWindowInStage` is idempotent by
+    /// windowID (an already-staged window ACTIVATES its tab; the zone auto-reveals), so the one verb
+    /// covers both states. The `duplicate` flag (⌘-click) is accepted-and-ignored: the stage is the
+    /// window's ONE home, so a deliberate second pane of the same window no longer exists.
+    private func act(on identity: HostWindowIdentity, duplicate _: Bool) {
         cursor = identity
-        if !duplicate, let ref = store.streamedWindowPane(for: identity.windowID) {
-            store.revealPaneTree(ref.paneID)
-            return
-        }
         openPane(for: identity)
     }
 
     private func openPane(for identity: HostWindowIdentity) {
         let title = feed.titles[identity.windowID] ?? ""
-        store.newRemoteWindowTab(
+        let alreadyStaged = store.stagedWindowPane(for: identity.windowID) != nil
+        store.openWindowInStage(
             windowID: identity.windowID, title: title, appName: identity.appName,
         )
-        store.recordRecentCommand(.newPane(.remoteGUI))
+        if !alreadyStaged { store.recordRecentCommand(.newPane(.remoteGUI)) }
     }
 
     private func moveCursor(
@@ -338,13 +335,13 @@ private struct HostWindowLiveRow: View {
         let state = feed.states[identity.windowID]
         let dimmed = state?.isDimmed ?? false
         let isFrontmost = feed.frontmostWindowID == identity.windowID
-        let streamed = store.streamedWindowPane(for: identity.windowID)
-        // This rail is the open window's ONE tracker (the left rail is terminal-only), so a streamed
-        // row whose pane is the workspace's FOCUSED pane wears the raised card — the same selection
-        // truth the left rail paints for the focused terminal. Live-read here (never an init param) so
-        // a focus flip repaints exactly the two affected leaves; restyle-in-place, the row never moves.
+        let streamed = store.stagedWindowPane(for: identity.windowID)
+        // This rail is the open window's ONE tracker (the left rail is terminal-only), so the row
+        // whose window is the SELECTED stage tab wears the raised card — the same selection truth the
+        // left rail paints for the focused terminal. Live-read here (never an init param) so a
+        // selection flip repaints exactly the two affected leaves; restyle-in-place, the row never moves.
         let isFocusedPane = streamed != nil
-            && streamed?.paneID == store.tree.activeSession?.activeTab?.activePane
+            && streamed?.paneID == store.activeStagePaneID
         SlateListRow(
             active: isCursor || isFocusedPane,
             onTap: { onAct(NSEvent.modifierFlags.contains(.command)) },
@@ -416,16 +413,6 @@ private struct HostWindowLiveRow: View {
         .animation(Slate.Anim.smallFade, value: hovered)
     }
 
-    /// Open-in-Split (docs/45 Phase 5): the split-with-spec op beside the active pane — same
-    /// endpoint persistence + cap gating as the tab path.
-    private func openSplit(_ axis: SplitAxis) {
-        let title = feed.titles[identity.windowID] ?? ""
-        store.newRemoteWindowSplit(
-            windowID: identity.windowID, title: title, appName: identity.appName, axis: axis,
-        )
-        store.recordRecentCommand(.newPane(.remoteGUI))
-    }
-
     /// Dimensions / display / visibility live in the tooltip ONLY — never row filler (docs/45 §2).
     private func tooltip(title: String, state: HostWindowState?) -> String {
         var parts = [title.isEmpty ? identity.appName : "\(identity.appName) — \(title)"]
@@ -441,25 +428,17 @@ private struct HostWindowLiveRow: View {
 
     @ViewBuilder
     private func contextMenu(streamed: StreamedWindowRef?) -> some View {
-        if streamed != nil {
-            Button("Focus Pane") { onAct(false) }
-            Button("Open Another Pane") { onAct(true) }
-        } else {
-            Button("Open in New Tab") { onAct(false) }
-        }
-        // Open in Split (docs/45 Phase 5): pull the window in BESIDE the active pane — the
-        // split-with-spec op; works for streamed windows too (a deliberate second pane).
-        Button("Open in Split Right") { openSplit(.horizontal) }
-        Button("Open in Split Down") { openSplit(.vertical) }
+        // The one open verb (the Stage re-scope): a window's ONE home is its stage tab, so both
+        // states route through the idempotent stage open (fresh = new selected tab; staged = activate).
+        Button(streamed != nil ? "Show in Stage" : "Open in Stage") { onAct(false) }
         if let onPeek {
             Button("Peek") { onPeek() }
         }
         Divider()
         // The tracker's close verb: with the left rail terminal-only this row is the ONE place an
-        // open window pane is listed, so it must also be closable here (the request flow — not a hard
-        // close — so the pane's own confirm/teardown rules apply).
+        // open window's tab is listed, so it must also be closable here.
         if let streamed {
-            Button("Close Pane") { store.requestClosePaneTree(streamed.paneID) }
+            Button("Close Window Tab") { store.closeStagePane(streamed.paneID) }
             Divider()
         }
         Button("Copy Window Title") {

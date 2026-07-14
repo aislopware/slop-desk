@@ -81,19 +81,15 @@ struct SplitContainer: View {
                 HostWindowDropCatcher(
                     enabled: !staticMirror,
                     onUpdate: { location in
-                        let source = windowDragSourcePane()
                         windowDrop = HostWindowDropDrag(
                             location: location,
-                            zone: resolveWindowDropZone(at: location, in: bounds, source: source),
-                            sourcePane: source,
+                            alreadyStaged: draggedWindowIsStaged(),
                         )
                     },
                     onExit: { windowDrop = nil },
-                    onPerform: { location in
-                        let source = windowDragSourcePane()
-                        let zone = resolveWindowDropZone(at: location, in: bounds, source: source)
+                    onPerform: { _ in
                         windowDrop = nil
-                        return commitWindowDrop(zone)
+                        return commitWindowDrop()
                     },
                 )
                 .zIndex(2)
@@ -101,11 +97,9 @@ struct SplitContainer: View {
                 if let windowDrop {
                     HostWindowDropOverlay(
                         drag: windowDrop,
-                        frames: activeLeafFrames(in: bounds),
                         container: bounds,
                     )
                     .allowsHitTesting(false)
-                    .animation(Slate.Anim.smallFade, value: windowDrop.zone)
                     .zIndex(3)
                 }
                 #endif
@@ -426,124 +420,26 @@ struct SplitContainer: View {
 
     // MARK: - Rail-window drop (drag a HOST WINDOW row onto the canvas — docs/45-host-windows-rail.md)
 
-    /// The ACTIVE tab's solved leaf rects (the overlay + the zone resolver read the SAME geometry the
-    /// user sees). Recomputed per call — the solver is pure rect math over ≤ a handful of leaves.
-    private func activeLeafFrames(in bounds: CGRect) -> [PaneID: CGRect] {
-        guard let tab = store.tree.activeSession?.activeTab else { return [:] }
-        let layout = SplitTreeRenderModel.layout(for: tab, in: bounds)
-        return Dictionary(layout.leaves.map { ($0.id, $0.rect) }, uniquingKeysWith: { a, _ in a })
-    }
-
-    /// The in-flight rail drag's EXISTING pane, when the dragged window is already streaming — the
-    /// switch between MOVE (relocate that pane) and MINT (open a new one). Resolved from the live
-    /// store per event, not latched at drag-begin: the pane can close mid-drag, and a stale id must
-    /// not move a stranger.
-    private func windowDragSourcePane() -> PaneID? {
-        guard let payload = HostWindowDragSession.shared.payload else { return nil }
-        return store.streamedWindowPane(for: payload.windowID)?.paneID
-    }
-
-    private func resolveWindowDropZone(
-        at location: CGPoint, in bounds: CGRect, source: PaneID?,
-    ) -> HostWindowDropZone {
-        guard let tab = store.tree.activeSession?.activeTab else { return .newTab }
-        let layout = SplitTreeRenderModel.layout(for: tab, in: bounds)
-        return Self.resolveWindowDropZone(
-            at: location, leaves: layout.leaves, container: bounds, source: source,
-        )
-    }
-
-    /// Resolves the cursor `location` of a rail-window drag to the ``HostWindowDropZone`` a release
-    /// would commit — the rail-drag mirror of `resolveZone`: same gutter/edge-band geometry, and the
-    /// CENTRE box / any gap falls back to `.newTab` (the rail click's verb) instead of swap/cancel —
-    /// every point of the canvas is a valid landing. A MOVE drag (`source` = the dragged window's
-    /// existing pane) borrows the pane-move source rules: a dock onto an edge the source already fully
-    /// spans is suppressed (visual no-op), and the source's own rect resolves `.keep` — without it the
-    /// `.newTab` fallback would EJECT the pane to a new tab when the user just put it back down.
-    /// `static` + pure so `HostWindowDropZoneTests` pins the mapping headlessly.
-    static func resolveWindowDropZone(
-        at location: CGPoint,
-        leaves: [SplitTreeRenderModel.PlacedLeaf],
-        container: CGRect,
-        source: PaneID? = nil,
-    ) -> HostWindowDropZone {
-        // A background-tab source has no rect in THIS layout — the drag then behaves like an insert
-        // (every zone valid), while the commit still moves the existing pane.
-        let sourceRect = source.flatMap { id in leaves.first(where: { $0.id == id })?.rect }
-        if let edge = containerEdge(at: location, container: container, sourceRect: sourceRect) {
-            return .dock(edge: edge)
-        }
-        if let sourceRect, sourceRect.contains(location) {
-            return .keep
-        }
-        guard let (target, rect) = leaf(at: location, in: leaves, excluding: source),
-              rect.width > 0, rect.height > 0
-        else {
-            return .newTab
-        }
-        let u = (location.x - rect.minX) / rect.width
-        let v = (location.y - rect.minY) / rect.height
-        let band = PaneDropMetrics.edgeBandFraction
-        let inCentreX = u >= band && u <= 1 - band
-        let inCentreY = v >= band && v <= 1 - band
-        if inCentreX, inCentreY {
-            return .newTab
-        }
-        return .resplit(target: target, edge: dominantEdge(u: u, v: v, band: band))
+    /// Whether the in-flight rail drag's window is ALREADY staged — the one bit the hover chip's copy
+    /// needs ("open" vs "show"). Resolved from the live store per event, not latched at drag-begin.
+    private func draggedWindowIsStaged() -> Bool {
+        guard let payload = HostWindowDragSession.shared.payload else { return false }
+        return store.stagedWindowPane(for: payload.windowID) != nil
     }
 
     /// Commits a rail-window drop: reads the in-flight payload off the ``HostWindowDragSession`` side
-    /// channel (NSItemProvider data is drop-time-async, and only rail rows vend this UTType). An
-    /// already-streamed window MOVES its existing pane to the zone; anything else MINTS a new pane
-    /// there — exactly ONE store op either way, matching the pane-move rule.
-    private func commitWindowDrop(_ zone: HostWindowDropZone) -> Bool {
+    /// channel (NSItemProvider data is drop-time-async, and only rail rows vend this UTType) and opens
+    /// the window in the STAGE — the rail click's one verb (idempotent by windowID: an already-staged
+    /// window activates its tab). Exactly ONE store op, matching the pane-move rule.
+    private func commitWindowDrop() -> Bool {
         guard let payload = HostWindowDragSession.shared.payload else { return false }
         HostWindowDragSession.shared.payload = nil
-        if let ref = store.streamedWindowPane(for: payload.windowID) {
-            commitStreamedWindowMove(zone, source: ref.paneID)
-            return true
-        }
-        switch zone {
-        case .newTab:
-            store.newRemoteWindowTab(
-                windowID: payload.windowID, title: payload.title, appName: payload.appName,
-            )
-        case let .resplit(target, edge):
-            store.newRemoteWindowSplit(
-                windowID: payload.windowID, title: payload.title, appName: payload.appName,
-                beside: target, axis: edge.axis, before: edge.insertsBefore,
-            )
-        case let .dock(edge):
-            store.newRemoteWindowAtRootEdge(
-                windowID: payload.windowID, title: payload.title, appName: payload.appName, edge: edge,
-            )
-        case .keep:
-            // `.keep` only resolves for a streamed drag, which the branch above consumed.
-            break
-        }
-        store.recordRecentCommand(.newPane(.remoteGUI))
+        let alreadyStaged = store.stagedWindowPane(for: payload.windowID) != nil
+        store.openWindowInStage(
+            windowID: payload.windowID, title: payload.title, appName: payload.appName,
+        )
+        if !alreadyStaged { store.recordRecentCommand(.newPane(.remoteGUI)) }
         return true
-    }
-
-    /// The MOVE commit for a streamed window's rail drag: relocate `source` (cross-tab included —
-    /// the pane keeps its `PaneID`, so the live stream survives), then reveal it. Not recorded as a
-    /// recent command — nothing new was opened. The relocation ops no-op when nothing would change
-    /// (`.keep`, re-docking an edge it spans, "new tab" when it already has its own) — the reveal
-    /// still runs, so an inert release degrades to "take me to it".
-    private func commitStreamedWindowMove(_ zone: HostWindowDropZone, source: PaneID) {
-        switch zone {
-        case .keep:
-            break
-        case .newTab:
-            store.breakPaneToTab(source)
-        case let .resplit(target, edge):
-            store.moveLeafAcrossTabsTree(
-                source, beside: target, axis: edge.axis, before: edge.insertsBefore,
-            )
-        case let .dock(edge):
-            store.moveLeafToActiveTabRootEdgeTree(source, edge: edge)
-        }
-        store.revealPaneTree(source)
     }
     #endif
 }

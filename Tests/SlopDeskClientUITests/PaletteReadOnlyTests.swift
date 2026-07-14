@@ -56,9 +56,11 @@ final class PaletteReadOnlyTests: XCTestCase {
     /// any build that gated the read-only verb to a terminal pane (it would no-op here and the lock never set).
     func testReadOnlyPaletteVerbReachesARemoteGUIActivePane() throws {
         let store = WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
-        let video = store.newRemoteWindowTab(windowID: 11, title: "Safari", appName: "Safari")
+        let video = try XCTUnwrap(store.openWindowInStage(windowID: 11, title: "Safari", appName: "Safari"))
+        // Click-into-the-stream: input ownership moves to the stage, so the verb targets the stage tab
+        // (a streamed window can never be the tree's focused pane under the hard split).
         store.focusPaneTree(video)
-        XCTAssertEqual(store.activePaneID, video, "the remote window is the active pane")
+        XCTAssertTrue(store.stageFocused, "the remote window holds input ownership")
         XCTAssertFalse(store.isReadOnly(for: video), "a fresh remote window is writable")
 
         let row = try XCTUnwrap(ActionsPaletteSource.catalog.first { $0.id == "action.toggleReadOnly" })

@@ -427,56 +427,6 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(idBefore, idAfter, "a structural no-op must not rebuild the split (no reconcile churn)")
     }
 
-    // MARK: - Rail-drag inserts (docs/45 — drop a HOST WINDOW from the rail onto the canvas)
-
-    /// `store.newRemoteWindowSplit(windowID:title:appName:beside:axis:before:)` is the rail-drag
-    /// edge-band drop commit: a NEW `.remoteGUI` leaf PRE-BOUND to the host window lands on the named
-    /// side of the TARGET pane (the one under the cursor — NOT the active pane, which the context-verb
-    /// overload uses), carrying the endpoint, focused. Proven to fail before the overload existed.
-    func testNewRemoteWindowSplitBesideTargetInsertsOnTheNamedSide() throws {
-        let store = makeTreeStore()
-        route(.splitRight, store) // [a | b]; b is now ACTIVE
-        let a = leaves(store)[0]
-        XCTAssertNotEqual(activePane(store), a, "precondition: the drop target is NOT the active pane")
-
-        let id = store.newRemoteWindowSplit(
-            windowID: 77, title: "ChatGPT", appName: "Google Chrome",
-            beside: a, axis: .vertical, before: true,
-        )
-
-        XCTAssertEqual(leaves(store).first, id, "the window lands ABOVE the target (before: true), not beside b")
-        let spec = try XCTUnwrap(store.tree.activeSession?.specs[id])
-        XCTAssertEqual(spec.kind, .remoteGUI)
-        XCTAssertEqual(spec.video?.windowID, 77, "the endpoint is persisted for rebind")
-        XCTAssertEqual(activePane(store), id, "the dropped window's pane lands focused")
-    }
-
-    /// `store.newRemoteWindowAtRootEdge(windowID:title:appName:edge:)` is the rail-drag container-gutter
-    /// drop: the window opens as a FULL-SPAN row on that whole edge — and unlike the pane-move dock
-    /// (`moveLeafToRootEdge`, which needs ≥2 leaves) it works on a LONE-LEAF tab, because it MINTS a pane
-    /// instead of relocating one. Proven to fail before `insertPaneAtRootEdge` existed.
-    func testNewRemoteWindowAtRootEdgeDocksFullSpanEvenOnALoneLeafTab() throws {
-        let store = makeTreeStore() // ONE terminal pane
-        let original = leaves(store)[0]
-
-        let id = store.newRemoteWindowAtRootEdge(
-            windowID: 88, title: "Preview", appName: "Preview", edge: .bottom,
-        )
-
-        XCTAssertEqual(leaves(store), [original, id], "docked AFTER the whole root (bottom edge)")
-        guard case let .split(_, .vertical, children)? = store.tree.activeSession?.activeTab?.root,
-              children.count == 2
-        else {
-            XCTFail("the root wrapped into a vertical 2-child split [original / new]")
-            return
-        }
-        XCTAssertEqual(children[1].node, .leaf(id), "the window spans the whole bottom edge (full-width row)")
-        let spec = try XCTUnwrap(store.tree.activeSession?.specs[id])
-        XCTAssertEqual(spec.kind, .remoteGUI)
-        XCTAssertEqual(spec.video?.windowID, 88, "the endpoint is persisted for rebind")
-        XCTAssertEqual(activePane(store), id, "the dropped window's pane lands focused")
-    }
-
     // MARK: - Layouts (select-layout parity): routing + chord pin
 
     /// `.applyLayout(.evenHorizontal)` re-tiles the active tab into a single horizontal split while keeping

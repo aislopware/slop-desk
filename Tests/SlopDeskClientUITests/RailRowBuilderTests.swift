@@ -497,33 +497,24 @@ final class RailRowBuilderTests: XCTestCase {
     /// `.remoteGUI` panes entirely — a whole-tab window AND one split beside a terminal sibling. The
     /// terminal rows around it are untouched. Fails on the old builder, which listed the same pane in
     /// two sidebars.
-    func testRemoteWindowPanesAreNotRailRows() {
+    func testRemoteWindowPanesAreNotRailRows() throws {
         let store = makeStore()
-        let remote = store.newRemoteWindowTab(windowID: 4242, title: "Docs", appName: "Safari")
+        let remote = try XCTUnwrap(store.openWindowInStage(windowID: 4242, title: "Docs", appName: "Safari"))
 
-        XCTAssertNil(
-            RailRowsBuilder.rows(for: store).first { $0.id == remote },
-            "a whole-tab remote window has no left-rail row",
-        )
-
-        // Split a terminal beside it: the terminal sibling IS a row, the window pane still is not.
-        store.splitActivePane(axis: .horizontal, kind: .terminal, leading: false, launchGrace: .zero)
         let rows = RailRowsBuilder.rows(for: store)
-        XCTAssertNil(rows.first { $0.id == remote }, "a split remote window has no left-rail row either")
-        XCTAssertTrue(rows.allSatisfy { $0.kind != .remoteGUI }, "no `.remoteGUI` row survives the builder")
-        XCTAssertNotNil(
-            rows.first { $0.tabNumber == 2 },
-            "the window tab's TERMINAL sibling still gets its row",
+        XCTAssertNil(
+            rows.first { $0.id == remote },
+            "a staged remote window has no left-rail row (its one home is the right rail / Stage strip)",
         )
+        XCTAssertTrue(rows.allSatisfy { $0.kind != .remoteGUI }, "no `.remoteGUI` row survives the builder")
     }
 
     /// Skipping window panes in the RAIL must not touch the ⌘K jump-to-pane palette, which enumerates
     /// panes itself — a remote window stays jumpable even though it is no longer listed on the left.
-    func testRemoteWindowPanesStayInTheJumpPalette() {
+    func testRemoteWindowPanesStayInTheJumpPalette() throws {
         let store = makeStore()
-        let remote = store.newRemoteWindowTab(windowID: 7777, title: "Docs", appName: "Safari")
+        let remote = try XCTUnwrap(store.openWindowInStage(windowID: 7777, title: "Docs", appName: "Safari"))
         store.splitActivePane(axis: .horizontal, kind: .terminal, leading: false, launchGrace: .zero)
-        store.focusPaneTree(remote)
 
         let paletteIDs = TabsPaletteSource.snapshot(store)
             .candidates(query: "")

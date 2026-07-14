@@ -295,11 +295,44 @@ public extension TreeWorkspace {
         return copy
     }
 
-    /// Both repairs in the order `load()` applies them (specs first so the active-pane repair sees a
+    /// Repairs a LEGACY (pre-Stage) persisted layout: a VIDEO-kind leaf (`.remoteGUI`/`.systemDialog`)
+    /// still sitting in the split tree moves to its session's STAGE — the tree is terminal-only under
+    /// the Stage re-scope, and dropping the pane instead would silently lose a bound window across the
+    /// update. Stage order = DFS encounter order; the selection lands on the first mover when none is
+    /// set. A tab emptied by the move is dropped (``normalizingActive()`` re-seeds a session left with
+    /// zero tabs, and clamps the tab index). Pure; a no-op on a post-Stage file.
+    func migratingVideoLeavesToStage() -> TreeWorkspace {
+        var copy = self
+        copy.sessions = sessions.map { session in
+            var s = session
+            let movers = s.allPaneIDs().filter { s.specs[$0]?.kind.isVideo == true }
+            guard !movers.isEmpty else { return s }
+            for id in movers {
+                guard let tIdx = s.tabs.firstIndex(where: { $0.contains(id) }) else { continue }
+                var tab = s.tabs[tIdx]
+                if let pruned = tab.root.removing(id) {
+                    if tab.zoomedPane == id { tab.zoomedPane = nil }
+                    if tab.activePane == id { tab.activePane = pruned.firstLeafID }
+                    tab.root = pruned
+                    s.tabs[tIdx] = tab
+                } else {
+                    s.tabs.remove(at: tIdx)
+                }
+            }
+            s.stagePanes.append(contentsOf: movers.filter { !s.stagePanes.contains($0) })
+            if s.activeStagePane == nil { s.activeStagePane = s.stagePanes.first }
+            return s
+        }
+        return copy
+    }
+
+    /// The repairs in the order `load()` applies them: the legacy video-leaf migration FIRST (so the
+    /// membership/spec repairs see the final zones), then specs (so the active-pane repair sees a
     /// consistent leaf set), plus the built-in launch-preset + session-template seeds for a fresh /
     /// pre-feature file. Pure.
     func normalized() -> TreeWorkspace {
-        normalizingSpecs().normalizingActive()
+        migratingVideoLeavesToStage()
+            .normalizingSpecs().normalizingActive()
             .seedingBuiltInLaunchPresetsIfEmpty()
             .seedingBuiltInSessionTemplatesIfEmpty()
     }

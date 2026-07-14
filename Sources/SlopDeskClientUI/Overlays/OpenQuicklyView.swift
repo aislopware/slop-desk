@@ -599,8 +599,8 @@ struct OpenQuicklyView: View {
         case let .openHostWindow(windowID, title, appName):
             // A Host row (docs/45): the default ↩ opens; ⌘K mirrors the rail's context menu.
             return [
-                RowAction(title: "Open in New Tab", symbol: "macwindow") {
-                    store.newRemoteWindowTab(windowID: windowID, title: title, appName: appName)
+                RowAction(title: "Open in Stage", symbol: "macwindow") {
+                    store.openWindowInStage(windowID: windowID, title: title, appName: appName)
                     store.recordRecentCommand(.newPane(.remoteGUI))
                 },
                 RowAction(title: "Copy Window Title", symbol: "doc.on.doc") {
@@ -690,11 +690,11 @@ struct OpenQuicklyView: View {
         )
     }
 
-    /// The first pane already streaming `windowID` in the active session (earliest tab wins) — the
-    /// store's ONE derivation (``WorkspaceStore/streamedWindowPane(for:)``), the same rule behind the
-    /// rail's streamed marker and the rail-drag move-vs-mint commit.
+    /// The pane already streaming `windowID` in the active session's STAGE — the store's ONE
+    /// derivation (``WorkspaceStore/stagedWindowPane(for:)``), the same rule behind the rail's
+    /// streamed marker.
     static func streamedPane(for windowID: UInt32, in store: WorkspaceStore) -> PaneID? {
-        store.streamedWindowPane(for: windowID)?.paneID
+        store.stagedWindowPane(for: windowID)?.paneID
     }
 
     /// The ranked, sectioned result list for the active pill — `.all` merges every non-empty source under its
@@ -951,9 +951,9 @@ struct OpenQuicklyView: View {
                 LinkActionActuator.actuate(LinkActionPolicy.explicitOpenAction(link: link), model: activeModel)
             }
         case let .openHostWindow(windowID, title, appName):
-            // Host row (docs/45): pull the host window into a new `.remoteGUI` pane — the SAME
-            // sanctioned path the rail + picker use (endpoint persisted, optimistic-open self-heal).
-            store.newRemoteWindowTab(windowID: windowID, title: title, appName: appName)
+            // Host row (docs/45): open the host window in the STAGE — the SAME sanctioned path the
+            // rail + picker use (endpoint persisted, idempotent by windowID).
+            store.openWindowInStage(windowID: windowID, title: title, appName: appName)
             store.recordRecentCommand(.newPane(.remoteGUI))
         }
         close()

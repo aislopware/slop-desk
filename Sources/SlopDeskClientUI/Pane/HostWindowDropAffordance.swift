@@ -1,15 +1,8 @@
-// HostWindowDropAffordance — drag a HOST WINDOW ROW off the right rail and drop it INTO the split
-// canvas. While the drag hovers the workspace, the SAME zone language as the pane-move affordance
-// previews where the window will land:
-//   • an EDGE band of a pane        → SPLIT: the window opens as a new column/row beside that pane;
-//   • the container's outer gutter  → DOCK: a full-span column/row on that whole edge;
-//   • anywhere else (a pane's centre, a divider gap) → NEW TAB (the rail click's verb).
-//
-// A window that is ALREADY streaming resolves the same zones but the release MOVES its existing pane
-// there (cross-tab included) — never a duplicate: the right rail is the open window's tracker, so
-// dragging its row is picking the pane up. Its own rect resolves `.keep` (release changes nothing);
-// the canvas dash-outlines the pane being lifted and the chip verbs read "move …". A deliberate
-// second pane of the same window stays available via ⌘-click / the row's context menu.
+// HostWindowDropAffordance — drag a HOST WINDOW ROW off the right rail and drop it onto the
+// workspace. The Stage re-scope collapsed the old zone grammar (split / dock / new-tab): the split
+// tree is terminal-only now, so a release ANYWHERE over the canvas commits the rail click's one verb —
+// open the window in the STAGE (idempotent by windowID; an already-staged window just activates its
+// tab). The hover preview is a whole-canvas wash + a cursor chip naming the window and the verb.
 //
 // Unlike the pane-move drag (a SwiftUI `DragGesture` confined to one hosting view's coordinate
 // space), the rail and the canvas live in DIFFERENT NSSplitView columns / hosting views — so this
@@ -29,7 +22,7 @@ import UniformTypeIdentifiers
 
 // MARK: - Payload + in-process side channel
 
-/// What a rail-row drag carries — exactly ``WorkspaceStore/newRemoteWindowTab(windowID:title:appName:)``'s
+/// What a rail-row drag carries — exactly ``WorkspaceStore/openWindowInStage(windowID:title:appName:)``'s
 /// inputs plus the `bundleID` for the chip icon. In-app DnD only (never the wire — Codable is fine here).
 struct HostWindowDragPayload: Codable, Equatable {
     let windowID: UInt32
@@ -219,29 +212,11 @@ struct HostWindowDragChip: View {
 
 // MARK: - Zone + view-local drop state
 
-/// The action a release at the cursor would commit — the rail-drag mirror of ``PaneDropZone``.
-/// No `.swap`: a not-yet-open window has no source pane to exchange, and for an already-streamed one
-/// the move vocabulary (split / dock / new tab) covers every placement. `.newTab` is the fallback verb
-/// (exactly what clicking the row does), so every point of the canvas is a valid landing — except a
-/// MOVE drag hovering the streamed pane's own rect, which resolves `.keep` (release changes nothing).
-enum HostWindowDropZone: Equatable {
-    case newTab
-    /// Drop on an `edge` band of `target` → the window lands as a new column/row beside it.
-    case resplit(target: PaneID, edge: PaneDropEdge)
-    /// Drop in the container's outer gutter → a full-span column/row on that whole `edge`.
-    case dock(edge: PaneDropEdge)
-    /// A MOVE drag over the streamed pane's own rect — the pane is already exactly there, so a release
-    /// commits nothing (the cancel the pane-move drag spells `.none`).
-    case keep
-}
-
-/// View-local drop state (held by `SplitContainer`): the cursor location, the resolved zone, and —
-/// for a MOVE drag (the dragged window is already streamed) — its existing pane, so the overlay can
-/// dash-outline the pane being lifted (the pane-move drag's "this one moves" signal).
+/// View-local drop state (held by `SplitContainer`): the cursor location plus whether the dragged
+/// window is ALREADY staged — the one bit the chip copy needs ("open" vs "show").
 struct HostWindowDropDrag: Equatable {
     var location: CGPoint
-    var zone: HostWindowDropZone
-    var sourcePane: PaneID?
+    var alreadyStaged: Bool
 }
 
 // MARK: - Drop catcher (AppKit — SwiftUI `.onDrop` never engages for this drag)
@@ -321,81 +296,26 @@ struct HostWindowDropCatcher: NSViewRepresentable {
 
 // MARK: - Overlay
 
-/// The drag overlay drawn ABOVE every pane while a rail drag hovers the canvas: the zone-specific
-/// landing preview (the pane-move visual language — slab+seam / dock rail / whole-canvas wash for
-/// NEW TAB) plus a ghost chip pinned to the cursor naming the window + the verb. Purely visual
-/// (`allowsHitTesting(false)` at the call site).
+/// The drag overlay drawn ABOVE every pane while a rail drag hovers the canvas: the whole-canvas
+/// wash (every point is the same landing — the Stage) plus a ghost chip pinned to the cursor naming
+/// the window + the verb. Purely visual (`allowsHitTesting(false)` at the call site).
 struct HostWindowDropOverlay: View {
     let drag: HostWindowDropDrag
-    /// The ACTIVE tab's leaf rects (solver space), keyed by pane.
-    let frames: [PaneID: CGRect]
-    /// The whole compositor bound — the DOCK rail + NEW-TAB wash span it.
+    /// The whole compositor bound — the wash spans it.
     let container: CGRect
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            zonePreview
-            sourceOutline
+            PaneMoveOverlay.washPreview(container)
             chip
                 .position(x: drag.location.x, y: drag.location.y)
         }
     }
 
-    /// Distinct identity per zone so a zone change CROSS-FADES (the ``PaneMoveOverlay`` treatment)
-    /// rather than morphing a slab's frame across the canvas.
-    private var zoneKey: String {
-        switch drag.zone {
-        case .newTab: "newtab"
-        case let .resplit(target, edge): "resplit-\(target)-\(edge.rawValue)"
-        case let .dock(edge): "dock-\(edge.rawValue)"
-        case .keep: "keep"
-        }
-    }
-
-    private var zonePreview: some View {
-        zoneShape
-            .id(zoneKey)
-            .transition(.opacity)
-    }
-
-    @ViewBuilder
-    private var zoneShape: some View {
-        switch drag.zone {
-        case .newTab:
-            PaneMoveOverlay.washPreview(container)
-        case let .resplit(target, edge):
-            if let rect = frames[target] { PaneMoveOverlay.slabPreview(in: rect, edge: edge) }
-        case let .dock(edge):
-            PaneMoveOverlay.railPreview(in: container, edge: edge)
-        case .keep:
-            // Nothing to preview — the pane already sits where the cursor is; the dashed source
-            // outline below plus the muted chip carry the whole message.
-            EmptyView()
-        }
-    }
-
-    /// A MOVE drag dash-outlines the pane being lifted (only when it is in the visible layout —
-    /// a pane moving in from a background tab has no rect here): the pane-move drag's own "this one
-    /// moves, nothing duplicates" signal, reused verbatim so the two drags read as one system.
-    @ViewBuilder
-    private var sourceOutline: some View {
-        if let source = drag.sourcePane, let rect = frames[source] {
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusCard)
-                .strokeBorder(
-                    Slate.State.accent.opacity(0.55),
-                    style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]),
-                )
-                .frame(width: rect.width, height: rect.height)
-                .position(x: rect.midX, y: rect.midY)
-        }
-    }
-
     /// The cursor chip: the window's app icon (the rail row's resolution ladder) + "name — verb".
-    /// `.keep` mutes it (tertiary text, quiet border — the pane-move `.none` treatment): a release
-    /// there is a no-op and the chip must not promise otherwise.
     private var chip: some View {
         let payload = HostWindowDragSession.shared.payload
-        let inert = drag.zone == .keep
+        let inert = false
         return HStack(spacing: 6) {
             if let bundleID = payload?.bundleID,
                let icon = HostAppIconCache.shared.icon(forBundleID: bundleID)
@@ -408,10 +328,9 @@ struct HostWindowDropOverlay: View {
                 Image(systemSymbol: .macwindow)
                     .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
             }
-            Text(Self.zoneLabel(
-                drag.zone,
+            Text(Self.stageLabel(
                 name: payload?.displayName ?? "window",
-                streamed: drag.sourcePane != nil,
+                alreadyStaged: drag.alreadyStaged,
             ))
             .font(.system(size: Slate.Typeface.base, weight: .medium))
             .lineLimit(1)
@@ -436,18 +355,10 @@ struct HostWindowDropOverlay: View {
         .shadow(color: Slate.State.shadow, radius: 8, y: 2)
     }
 
-    /// The chip copy — the verb the release would commit, led by the window's name. A `streamed` drag
-    /// MOVES the existing pane, so its verbs say so — the one word that tells a duplicate from a move
-    /// before release.
-    static func zoneLabel(_ zone: HostWindowDropZone, name: String, streamed: Bool = false) -> String {
-        switch zone {
-        case .newTab: streamed ? "\(name) — move to new tab" : "\(name) — new tab"
-        case let .resplit(_, edge): streamed
-            ? "\(name) — move · split \(edge.rawValue)" : "\(name) — split \(edge.rawValue)"
-        case let .dock(edge): streamed
-            ? "\(name) — move · dock \(edge.rawValue)" : "\(name) — dock \(edge.rawValue)"
-        case .keep: "\(name) — already here"
-        }
+    /// The chip copy — the ONE verb a release commits, led by the window's name: "open in Stage"
+    /// for a fresh window, "show in Stage" for one already staged (the release activates its tab).
+    static func stageLabel(name: String, alreadyStaged: Bool) -> String {
+        alreadyStaged ? "\(name) — show in Stage" : "\(name) — open in Stage"
     }
 }
 #endif

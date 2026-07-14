@@ -795,16 +795,14 @@ public final class WorkspaceStore {
             title: label,
             video: VideoEndpoint(windowID: windowID, title: label, appName: owner),
         )
-        // On the LIVE tree shell the canvas is dead, so an ephemeral dialog pane inserts into the TREE — a
-        // NEW TAB of the active session (least-disruptive transient shape: the monitor closes it again when
-        // the dialog leaves, without resplitting the layout). `.canvas` inserts onto the canvas.
+        // On the LIVE tree shell a system dialog is VIDEO content, so it lands as an AUTO STAGE TAB
+        // (selected — a surfacing SecurityAgent prompt demands attention; the Stage re-scope keeps the
+        // split tree terminal-only). The monitor closes the tab again when the dialog leaves.
+        // `.canvas` inserts onto the canvas.
         let id: PaneID
         switch liveModel {
         case .tree:
-            let (next, newID) = WorkspaceTreeOps.newTab(in: tree, spec: spec)
-            tree = next
-            id = newID
-            reconcileTree()
+            id = mintStagePane(spec: spec)
         case .canvas:
             let viewport = lastViewport
             let (canvas, newID) = workspace.canvas.adding(spec, near: workspace.focusedPane, viewport: viewport)
@@ -828,17 +826,24 @@ public final class WorkspaceStore {
     /// the busy-shell guard — a dialog leaving host-side must always dismiss its pane).
     public func closeSystemDialogPane(_ id: PaneID) {
         switch liveModel {
-        case .tree: closePaneTree(id)
+        // The Stage re-scope: a tree-shell dialog pane is a stage tab; `closeStagePane` no-ops when
+        // `id` is not staged, so fall through to the tree close for a pane that somehow landed there.
+        case .tree:
+            if tree.sessions.contains(where: { $0.stageContains(id) }) {
+                closeStagePane(id)
+            } else {
+                closePaneTree(id)
+            }
         case .canvas: closePane(id)
         }
     }
 
-    /// Whether `id` is a LIVE leaf in whichever model is current — the tree under ``LiveModel/tree``, else
-    /// the canvas. The auto-managed monitor uses this to detect a manual close (a spawned pane absent from
-    /// the model) on EITHER shell.
+    /// Whether `id` is a LIVE pane in whichever model is current — the tree ∪ stage under
+    /// ``LiveModel/tree`` (a system dialog is a stage tab there), else the canvas. The auto-managed
+    /// monitor uses this to detect a manual close (a spawned pane absent from the model) on EITHER shell.
     public func isSystemDialogPaneLive(_ id: PaneID) -> Bool {
         switch liveModel {
-        case .tree: tree.contains(id)
+        case .tree: tree.contains(id) || tree.sessions.contains { $0.stageContains(id) }
         case .canvas: workspace.canvas.contains(id)
         }
     }

@@ -34,13 +34,22 @@ public extension WorkspaceStore {
             activateStagePane(existing)
             return existing
         }
+        return mintStagePane(spec: Self.remoteWindowSpec(windowID: windowID, title: title, appName: appName))
+    }
+
+    /// Mints a NEW stage tab carrying `spec` in the ACTIVE session, SELECTED — the shared shape behind
+    /// ``openWindowInStage(windowID:title:appName:)`` and the system-dialog monitor's auto tab. Frees
+    /// the outgoing tab's decode slot in the same op (single-active-decode) so admission never waits
+    /// for the background view's disappear tick. Internal: callers own dedupe (a window already staged
+    /// must ACTIVATE, not re-mint).
+    @discardableResult
+    internal func mintStagePane(spec: PaneSpec) -> PaneID {
         let id = PaneID()
+        guard let sIdx = tree.activeSessionIndex else { return id }
         var session = tree.sessions[sIdx]
-        // Single-active-decode: the incoming tab takes the decode slot; free the outgoing one NOW so
-        // admission does not wait for the background view's disappear tick.
         if let previous = session.activeStagePane { deactivateVideo(previous) }
         session.stagePanes.append(id)
-        session.specs[id] = Self.remoteWindowSpec(windowID: windowID, title: title, appName: appName)
+        session.specs[id] = spec
         session.activeStagePane = id
         tree.sessions[sIdx] = session
         reconcileTree()
