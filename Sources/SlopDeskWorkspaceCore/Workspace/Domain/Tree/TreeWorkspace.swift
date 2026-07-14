@@ -108,11 +108,17 @@ public extension TreeWorkspace {
 // MARK: - Facade the store consumes (docs/42 §"Facade the store consumes")
 
 public extension TreeWorkspace {
-    /// Every ``PaneID`` across every session → tab → split tree, in deterministic DFS order (session
-    /// order, then tab order, then pre-order tree). Drives the store's reconcile diff (`reconcile()`
-    /// compares it as a `Set`; the order matters for cycling + the carousel).
+    /// Every TREE ``PaneID`` across every session → tab → split tree, in deterministic DFS order (session
+    /// order, then tab order, then pre-order tree). Drives focus cycling + the carousel; the store's
+    /// reconcile diff unions this with ``allStagePaneIDs()`` (stage panes materialize too, but never join
+    /// the tree-focused cycling).
     func allPaneIDs() -> [PaneID] {
         sessions.flatMap { $0.allPaneIDs() }
+    }
+
+    /// Every STAGE ``PaneID`` across every session, in session order then stage tab-strip order.
+    func allStagePaneIDs() -> [PaneID] {
+        sessions.flatMap(\.stagePanes)
     }
 
     /// The active session's leaf ids — drives active-tab focus/visibility (reconcile keeps the full set).
@@ -165,12 +171,15 @@ public extension TreeWorkspace {
 // MARK: - Invariant check (specs == leafIDs)
 
 public extension TreeWorkspace {
-    /// The load-bearing invariant: for every session, the spec side table's keys equal the set of leaf
-    /// ids across all that session's tabs (`Set(specs.keys) == Set(leafIDs)`). A checkable property the
-    /// ops preserve and the tests assert after every op. Pure.
+    /// The load-bearing invariant: for every session, the spec side table's keys equal the set of pane
+    /// ids the session owns — tree leaves across all tabs ∪ stage panes
+    /// (`Set(specs.keys) == leafIDSet() ∪ stagePanes`), and the stage is DISJOINT from the tree (a pane
+    /// lives in exactly one zone). A checkable property the ops preserve and the tests assert after
+    /// every op. Pure.
     func isInvariantHeld() -> Bool {
-        for session in sessions where Set(session.specs.keys) != session.leafIDSet() {
-            return false
+        for session in sessions {
+            if Set(session.specs.keys) != session.paneIDSet() { return false }
+            if !session.leafIDSet().isDisjoint(with: session.stagePanes) { return false }
         }
         return true
     }
@@ -179,18 +188,29 @@ public extension TreeWorkspace {
 // MARK: - Normalizing repairs (applied on load — never crash on a hand-edited file)
 
 public extension TreeWorkspace {
-    /// Repairs the **specs == leafIDs invariant** against a corrupt / hand-edited file: drops orphan spec
-    /// entries (a spec for a pane no longer in any tab) and re-seeds a default ``PaneSpec`` for a leaf
-    /// whose spec went missing (so the store can always materialize it). Pure. (Validate-then-repair, the
-    /// CLAUDE.md contract for untrusted persisted data — mirrors ``Workspace/normalizingGroups()``.)
+    /// Repairs the **specs == paneIDs invariant** against a corrupt / hand-edited file: normalizes the
+    /// stage list (dedupe; a pane cannot be BOTH a tree leaf and a stage pane — the tree wins; a stage
+    /// pane with no spec is dropped, since re-seeding a default TERMINAL spec would put a shell in the
+    /// non-terminal zone), drops orphan spec entries (a spec for a pane in neither zone) and re-seeds a
+    /// default ``PaneSpec`` for a TREE leaf whose spec went missing (so the store can always materialize
+    /// it). Pure. (Validate-then-repair, the CLAUDE.md contract for untrusted persisted data — mirrors
+    /// ``Workspace/normalizingGroups()``.)
     func normalizingSpecs() -> TreeWorkspace {
         var copy = self
         copy.sessions = sessions.map { session in
             var s = session
             let leafIDs = s.leafIDSet()
-            // Drop orphan specs (no matching leaf).
-            s.specs = s.specs.filter { leafIDs.contains($0.key) }
-            // Re-seed a default spec for any leaf that lost its spec.
+            // Stage repair FIRST so the orphan-spec filter below sees the final membership: dedupe
+            // (keep first occurrence), drop tree-duplicated ids (the tree wins), drop spec-less ids.
+            var seen = Set<PaneID>()
+            s.stagePanes = s.stagePanes.filter { id in
+                guard !leafIDs.contains(id), s.specs[id] != nil, seen.insert(id).inserted else { return false }
+                return true
+            }
+            let paneIDs = leafIDs.union(s.stagePanes)
+            // Drop orphan specs (no matching tree leaf or stage pane).
+            s.specs = s.specs.filter { paneIDs.contains($0.key) }
+            // Re-seed a default spec for any TREE leaf that lost its spec.
             for id in leafIDs where s.specs[id] == nil {
                 s.specs[id] = PaneSpec(kind: .terminal, title: "Terminal")
             }
@@ -234,6 +254,13 @@ public extension TreeWorkspace {
                     t.zoomedPane = nil
                 }
                 return t
+            }
+            // Clamp the active stage tab to stage membership: a vanished pane falls back to the first
+            // stage tab; an empty stage clears the selection (the zone collapses).
+            if let active = s.activeStagePane, !s.stagePanes.contains(active) {
+                s.activeStagePane = s.stagePanes.first
+            } else if s.activeStagePane == nil {
+                s.activeStagePane = s.stagePanes.first
             }
             return s
         }

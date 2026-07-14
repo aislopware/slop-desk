@@ -3033,7 +3033,9 @@ public final class WorkspaceStore {
     /// `persistence`), so the tree-reconcile suite still pins the bare diff. Idempotent.
     public func reconcileTree() {
         reconcileRegistry(
-            desiredLeafIDs: tree.allPaneIDs(),
+            // Tree leaves ∪ stage panes: the stage's video panes materialize through the SAME diff
+            // (teardown / cap-accounting / rebind wiring), they just never join the tree-focused set.
+            desiredLeafIDs: tree.allPaneIDs() + tree.allStagePaneIDs(),
             spec: { tree.spec(for: $0) },
             onMaterialize: { [weak self] id, handle in
                 self?.wireMaterializedLeaf(id: id, handle: handle)

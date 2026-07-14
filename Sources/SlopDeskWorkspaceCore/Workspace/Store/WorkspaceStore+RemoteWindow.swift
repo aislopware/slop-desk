@@ -109,7 +109,8 @@ public extension WorkspaceStore {
 
     /// The ONE `.remoteGUI` spec shape every remote-window ingress mints: label falls back
     /// title → appName → "Remote window"; the ``VideoEndpoint`` carries the rebind identity.
-    private static func remoteWindowSpec(windowID: UInt32, title: String, appName: String) -> PaneSpec {
+    /// Internal (not private): the Stage ingress (`WorkspaceStore+Stage`) mints the same shape.
+    static func remoteWindowSpec(windowID: UInt32, title: String, appName: String) -> PaneSpec {
         let label = title.isEmpty ? (appName.isEmpty ? "Remote window" : appName) : title
         return PaneSpec(
             kind: .remoteGUI,
