@@ -80,11 +80,6 @@ public enum WorkspaceAction: Hashable, Sendable {
     // terminal (own paste pipeline) / empty / read-only pane.
     case pasteAsKeystrokes
     case toggleSidebar // ⌘⇧L — show/hide the sessions sidebar
-    // Host Windows rail (docs/45): ⌘⇧R shows/hides the RIGHT sidebar listing the host machine's
-    // windows (mirror-twin of the left rail; ⌘⇧R is free since the Details panel was removed).
-    // Window-scope → needs no active pane; routed through a view closure onto
-    // `WorkspaceChromeState.hostRailCollapsed` like `.toggleSidebar`.
-    case toggleHostWindows // ⌘⇧R — show/hide the host-windows rail
     // View → Pin Window: keep the window floating above ALL other apps' windows. CHORD-LESS;
     // the live macOS app flips `WorkspaceChromeState.pinned` → `NSWindow.level = .floating` via the route
     // closure. Window-scope → needs no active pane; iOS has no window level (documented no-op).
@@ -129,6 +124,7 @@ public enum WorkspaceAction: Hashable, Sendable {
 
     // Tabs
     case newTab // ⌘T
+    case newDesktopTab // ⌥⌘N — a `.desktop` pane streaming the host's whole main display
     case nextTab // ⌘⇧]
     case prevTab // ⌘⇧[
     case selectTab(Int) // ⌘1…⌘9 (1-based)
@@ -233,6 +229,7 @@ public extension WorkspaceAction {
              .cheatSheet,
              .globalSearch, // a cross-tab results surface — acts globally, needs no active pane (like the palette)
              .newTab,
+             .newDesktopTab, // mints a fresh tab — acts on the session, needs no active pane (like .newTab)
              .nextTab,
              .prevTab,
              .selectTab,
@@ -240,7 +237,6 @@ public extension WorkspaceAction {
              .closeWindow, // closes the whole window (→ Session) — a window-scope action, needs no active pane
              .reopenClosed, // restores a closed pane into the active tab — acts on history, not a live pane
              .toggleSidebar,
-             .toggleHostWindows, // window-scope chrome toggle — needs no active pane (like the sidebar toggle)
              .pinWindow, // a window-scope NSWindow.level toggle — needs no active pane (like the sidebar toggle)
              .openQuickly, // a global fuzzy switcher — needs no active pane
              .toggleSyncInput, // the tab must exist, but the palette can still show it (mirrors .newTab)
@@ -441,6 +437,16 @@ public enum WorkspaceBindingRegistry {
             id: "tab.new", action: .newTab, title: "New Tab",
             category: .tabs, chord: KeyChord(character: "t", [.command]),
             symbol: "plus.rectangle.on.rectangle", keywords: "add open create tab",
+        ),
+        // New DESKTOP tab (the full-desktop pivot): a `.desktop` pane streaming the host's whole
+        // main display. ⌥⌘N is FREE (`n` appears in no other live chord) and echoes the dead canvas
+        // table's "⌥⌘N = new remote pane" precedent. Terminal keeps the hot chords (⌘T/⌘D — the
+        // chooser stays retired); every non-terminal kind gets its own explicit shortcut like this one.
+        WorkspaceBinding(
+            id: "tab.newDesktop", action: .newDesktopTab, title: "New Desktop Tab",
+            category: .tabs, chord: KeyChord(character: "n", [.command, .option]),
+            symbol: "display",
+            keywords: "desktop display screen full remote stream monitor new tab",
         ),
         // Tab cycling lives on ⌘⇧]/⌘⇧[ (see DECISIONS), NOT plain ⌘]/⌘[ — those drive sequential
         // PANE cycling instead (`focus.cycleNext`/`focus.cyclePrev`), per the reference table; the Muxy tab
@@ -670,16 +676,6 @@ public enum WorkspaceBindingRegistry {
             id: "view.toggleSidebar", action: .toggleSidebar, title: "Toggle Tabs Panel",
             category: .view, chord: KeyChord(character: "l", [.command, .shift]),
             symbol: "sidebar.left", keywords: "sidebar sessions tabs panel rail hide show collapse",
-        ),
-        // Host Windows rail ⌘⇧R (docs/45): the RIGHT sidebar listing the host machine's windows —
-        // the mirror twin of ⌘⇧L. ⌘⇧R is FREE since the Details panel was removed (`r` is otherwise
-        // only ⌃⌘R re-run); routes through a `toggleHostWindows` view-closure onto the live
-        // `WorkspaceChromeState.hostRailCollapsed`, exactly the `view.toggleSidebar` shape.
-        WorkspaceBinding(
-            id: "view.hostWindows", action: .toggleHostWindows, title: "Toggle Host Windows",
-            category: .view, chord: KeyChord(character: "r", [.command, .shift]),
-            symbol: "sidebar.right",
-            keywords: "host windows rail right sidebar panel remote list apps stream hide show collapse",
         ),
         // Pin Window ("View ▸ Pin Window" — `spec/user-interface__window-tab-split.md:14`
         // "keeps the window floating above all other apps' windows"). No default chord — `chord: nil`

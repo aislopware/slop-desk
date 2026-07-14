@@ -1,10 +1,8 @@
 // SlopDeskSplitViewController — the macOS shell. An `NSSplitViewController` with
-// three `NSSplitViewItem`s (sidebar | content | host-windows rail), each an `NSHostingController` over a
+// two `NSSplitViewItem`s (sidebar | content), each an `NSHostingController` over a
 // SwiftUI column. Modelled on CodeEdit's `CodeEditSplitViewController`: an AppKit split shell with SwiftUI
 // INSIDE each column. Keeping the split in AppKit (not a SwiftUI `HSplitView` that rebuilds subtrees) is the
 // load-bearing no-teardown choice for L2's libghostty panes — a torn-down NSView kills the surface.
-// The LEFT sidebar tracks terminal panes; the RIGHT rail (docs/45) is the host-window list AND the open
-// remote windows' tracker — a plain item, never `.inspector` (that unmounts content and kills live video).
 // There is no Details column — the app is keyboard-centric; the Git details window opens from the
 // palette / View menu instead.
 
@@ -36,21 +34,13 @@ final class SlopDeskSplitViewController: NSSplitViewController {
 
     /// Retained so the titlebar toggle can animate its collapse (set in `viewDidLoad`).
     private var sidebarItem: NSSplitViewItem?
-    /// The RIGHT Host Windows rail (docs/45) — retained like `sidebarItem` so `applyCollapse` can
-    /// animate it. A third PLAIN split item (never `.inspector` — that unmounts content and kills
-    /// live video panes; a plain sibling item never remounts the centre column).
-    private var hostRailItem: NSSplitViewItem?
-    /// The host-windows feed store (app-owned) the rail column renders. `nil` (tests/previews)
-    /// skips mounting the rail entirely.
-    private let hostWindowFeed: HostWindowFeed?
 
     /// The sidebar (TABS panel) default thickness, shared with
     /// the window-size glue (`SlopDeskClientApp.applyInitialWindowSize`) so the `grid` mode's `chromeOverhead`
     /// uses the SAME width the split item adopts (no magic-number drift between the layout and the math).
     static let defaultSidebarWidth: CGFloat = 220
 
-    /// The centre column's floor — shared between the split item and the rail divider's manual
-    /// drag clamp (`FlatDividerSplitView.clampRailDividerPosition`) so they can never disagree.
+    /// The centre column's floor.
     static let contentMinWidth: CGFloat = 420
 
     init(
@@ -58,7 +48,6 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         connection: AppConnection,
         chrome: WorkspaceChromeState,
         preferences: PreferencesStore? = nil,
-        hostWindowFeed: HostWindowFeed? = nil,
         onConnect: @escaping () -> Void = {},
         overlay: OverlayCoordinator? = nil,
     ) {
@@ -66,7 +55,6 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         self.connection = connection
         self.chrome = chrome
         self.preferences = preferences
-        self.hostWindowFeed = hostWindowFeed
         self.onConnect = onConnect
         self.overlay = overlay
         super.init(nibName: nil, bundle: nil)
@@ -111,9 +99,9 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         sidebarItem.canCollapse = true
         sidebarItem.holdingPriority = NSLayoutConstraint.Priority(260)
 
-        // 2) Content — the pane grid (terminal / claude / remote) + the hover-reveal titlebar overlay.
-        //    The non-collapsible centre. `chrome` drives the titlebar's sidebar toggle; `onConnect` wires
-        //    the titlebar's connection-status cluster to the Connect-to-Host editor.
+        // 2) Content — the pane grid (terminal / desktop / remote window) + the hover-reveal titlebar
+        //    overlay. The non-collapsible centre. `chrome` drives the titlebar's sidebar toggle; `onConnect`
+        //    wires the titlebar's connection-status cluster to the Connect-to-Host editor.
         let content = NSHostingController(
             rootView: ContentColumn(store: store, connection: connection, chrome: chrome, onConnect: onConnect)
                 .overlayCoordinator(overlay),
@@ -133,31 +121,9 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         addSplitViewItem(sidebarItem)
         addSplitViewItem(contentItem)
 
-        // 3) Host Windows rail (docs/45) — the RIGHT column listing the host machine's windows. A
-        //    PLAIN item like the sidebar (never `NSSplitViewItem(inspectorWithViewController:)` /
-        //    SwiftUI `.inspector`: both unmount the centre on toggle, which kills live video panes).
-        //    Same holding priority as the sidebar so window-resize grows the content, not the rail.
-        //    Starts collapsed per the persisted chrome flag (`updateNSViewController` applies it
-        //    every update; setting it before the first layout avoids a flash-of-rail at launch).
-        if let hostWindowFeed {
-            let hostRail = NSHostingController(rootView: HostWindowsColumn(
-                store: store, feed: hostWindowFeed, chrome: chrome,
-            ))
-            let hostRailItem = NSSplitViewItem(viewController: hostRail)
-            let railRange = Self.railThicknessRange(compact: chrome.hostRailCompact)
-            hostRailItem.minimumThickness = railRange.min
-            hostRailItem.maximumThickness = railRange.max
-            hostRailItem.canCollapse = true
-            hostRailItem.holdingPriority = NSLayoutConstraint.Priority(260)
-            hostRailItem.isCollapsed = chrome.hostRailCollapsed
-            hostRail.safeAreaRegions = []
-            addSplitViewItem(hostRailItem)
-            self.hostRailItem = hostRailItem
-        }
-
         self.sidebarItem = sidebarItem
 
-        // Defer remote terminal grid-resize forwarding while a sidebar/inspector divider (or the window edge)
+        // Defer remote terminal grid-resize forwarding while a sidebar divider (or the window edge)
         // is being dragged: NSSplitView re-lays its subviews every step and posts this notification, so each
         // step would otherwise be a host PTY reflow + a re-streamed redraw. We pause forwarding on the first
         // step and flush the FINAL grid once the drag settles (see `splitViewSubviewsDidResize`). We OBSERVE
@@ -170,7 +136,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
             object: splitView,
         )
 
-        // D3: SwiftUI `@Environment`/`.preferredColorScheme` does NOT cross into the three
+        // D3: SwiftUI `@Environment`/`.preferredColorScheme` does NOT cross into the
         // `NSHostingController` columns, so a runtime theme change can't be observed inside them. Observe
         // the appearance-changed notification (posted by the `AppearanceApplier` hook after it repoints
         // `ThemeStore.shared`) and re-pin the WINDOW appearance + nudge each column to re-read the tokens —
@@ -217,7 +183,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         DispatchQueue.main.asyncAfter(deadline: .now() + resizeSettleDelay, execute: work)
     }
 
-    /// Pin the WINDOW's appearance to the active theme. The three columns are hosted in
+    /// Pin the WINDOW's appearance to the active theme. The columns are hosted in
     /// `NSHostingController`s inside this AppKit split controller, so they do NOT inherit the SwiftUI
     /// `.preferredColorScheme` set on `WorkspaceRootView` — any system-dynamic colour / material in a column
     /// would otherwise resolve to the OS appearance and clash with the pinned theme palette (e.g. white text
@@ -269,79 +235,20 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         }
     }
 
-    /// Apply the toolbar collapse flags to the sidebar + host-rail items (idempotent — only animates
+    /// Apply the toolbar collapse flag to the sidebar item (idempotent — only animates
     /// a real change so a steady-state update doesn't re-trigger the animation).
-    func applyCollapse(sidebarCollapsed: Bool, hostRailCollapsed: Bool = true) {
-        let sidebarChanging = sidebarItem.map { $0.isCollapsed != sidebarCollapsed } ?? false
-        let railChanging = hostRailItem.map { $0.isCollapsed != hostRailCollapsed } ?? false
+    func applyCollapse(sidebarCollapsed: Bool) {
+        guard let sidebarItem, sidebarItem.isCollapsed != sidebarCollapsed else { return }
         // LOST-PROMPT FIX: `animator().isCollapsed = …` applies the FIRST collapse-animation layout frame
         // SYNCHRONOUSLY, which fires `GhosttyLayerBackedView.layout()` and forwards an INTERMEDIATE grid
         // size to the host BEFORE `splitViewSubviewsDidResize` (the notification) suspends forwarding. That
         // premature SIGWINCH makes zsh run `zle reset-prompt` at the wrong width, double-firing against the
         // final-width reset and erasing the prompt line. Suspend FIRST so the intermediate frames are held;
         // the settle timer in `splitViewSubviewsDidResize` resumes + flushes the FINAL grid (the
-        // idempotency guard in `setResizeSuspended` prevents a double-flush). The host rail's collapse
-        // resizes the SAME centre column, so it takes the identical suspend-first treatment.
-        if sidebarChanging || railChanging {
-            resizeForwardingSuspended = true
-            store.setTerminalResizeSuspended(true)
-        }
-        if sidebarChanging, let sidebarItem {
-            sidebarItem.animator().isCollapsed = sidebarCollapsed
-        }
-        if railChanging, let hostRailItem {
-            hostRailItem.animator().isCollapsed = hostRailCollapsed
-        }
-    }
-
-    /// Apply the rail's STICKY compact/wide flavour to the split item's thickness range (compact
-    /// pins min = max = ``Slate/Metric/hostRailCompactWidth``; wide restores min…max). Idempotent —
-    /// the representable calls this every update. The width change relayouts the centre column, so
-    /// a VISIBLE rail takes the same suspend-first treatment as `applyCollapse` (a COLLAPSED rail's
-    /// range change moves no layout — suspending there would leave forwarding stuck with no resize
-    /// notification to settle it).
-    func applyRailCompact(_ compact: Bool) {
-        guard let hostRailItem else { return }
-        let range = Self.railThicknessRange(compact: compact)
-        guard hostRailItem.minimumThickness != range.min
-            || hostRailItem.maximumThickness != range.max
-        else { return }
-        if !hostRailItem.isCollapsed {
-            resizeForwardingSuspended = true
-            store.setTerminalResizeSuspended(true)
-        }
-        hostRailItem.minimumThickness = range.min
-        hostRailItem.maximumThickness = range.max
-    }
-
-    /// Divider double-click: flip compact ⇄ wide (the sticky-state toggle the drag-snap also
-    /// lands on). Persists via the chrome state; the thickness change applies immediately.
-    func toggleRailCompact() {
-        chrome.setHostRailCompact(!chrome.hostRailCompact)
-        applyRailCompact(chrome.hostRailCompact)
-    }
-
-    /// A manual rail-divider drag spans BOTH flavours (compact 56 ↔ wide 220…320, snapping over
-    /// the dead zone between), so the tracked drag temporarily relaxes the item's pinned range —
-    /// no width change happens here (the current width sits inside the relaxed span), so no
-    /// relayout fires.
-    func beginRailDividerDrag() {
-        guard let hostRailItem else { return }
-        hostRailItem.minimumThickness = Slate.Metric.hostRailCompactWidth
-        hostRailItem.maximumThickness = Slate.Metric.hostRailMaxWidth
-    }
-
-    /// Drag released: the clamp's snap guarantees the settled width is either the compact width or
-    /// inside the wide band — read it, make that flavour the sticky mode, and re-tighten the range
-    /// around it (no width change ⇒ no relayout; the persisted flag is what survives relaunch).
-    func endRailDividerDrag() {
-        guard let hostRailItem else { return }
-        let width = hostRailItem.viewController.view.frame.width
-        let compact = width < Slate.Metric.hostRailMinWidth - 0.5
-        chrome.setHostRailCompact(compact)
-        let range = Self.railThicknessRange(compact: compact)
-        hostRailItem.minimumThickness = range.min
-        hostRailItem.maximumThickness = range.max
+        // idempotency guard in `setResizeSuspended` prevents a double-flush).
+        resizeForwardingSuspended = true
+        store.setTerminalResizeSuspended(true)
+        sidebarItem.animator().isCollapsed = sidebarCollapsed
     }
 }
 
@@ -349,54 +256,12 @@ final class SlopDeskSplitViewController: NSSplitViewController {
 /// `object_setClass` onto the controller's already-built split view (so it never goes through the
 /// `NSSplitViewController` construction path that traps `_setupSplitView` when a custom split view is
 /// supplied up front). `drawDivider(in:)` fills the 1px `.thin` divider rect with the active theme backdrop,
-/// so the sidebar/content/inspector seam blends into the flat chrome instead of AppKit's default pure-black
+/// so the sidebar/content seam blends into the flat chrome instead of AppKit's default pure-black
 /// hairline. Adds NO stored properties — the isa-swizzle keeps the original instance's ivar layout intact.
 private final class FlatDividerSplitView: NSSplitView {
     override func drawDivider(in rect: NSRect) {
         flatDividerTone().setFill()
         NSBezierPath(rect: rect).fill()
-    }
-
-    /// The RAIL divider (content | host rail) is dragged by hand, not by AppKit's built-in
-    /// constraint tracking. AppKit's `_doConstraintBasedDragDivider` pins the drag at a priority
-    /// derived from the LEADING item's holding priority, so a trailing item that holds HARDER than
-    /// its leading neighbour (rail 260 > content 250 — deliberate, window-resize must feed the
-    /// content) can never be grown by its divider: the engine grows a hole at the split view's
-    /// 749-priority trailing glue instead and snaps everything back on release. The left divider
-    /// is immune (its growing item is the LEADING side). So for the rail divider we run the
-    /// standard event-tracking loop ourselves and place the divider each step via
-    /// `setPosition(_:ofDividerAt:)`, which AppKit applies at a priority the holds cannot veto.
-    override func mouseDown(with event: NSEvent) {
-        guard let railDivider = railDividerIndex(under: event) else {
-            super.mouseDown(with: event)
-            return
-        }
-        let controller = delegate as? SlopDeskSplitViewController
-        // Double-click = flip compact ⇄ wide (the sticky flavour toggle the drag-snap also lands
-        // on) — the standard macOS divider double-click affordance, repurposed since this app
-        // never drag- or click-collapses.
-        if event.clickCount == 2 {
-            controller?.toggleRailCompact()
-            return
-        }
-        // A drag spans both flavours: relax the item's pinned range for the tracked loop, then let
-        // the release make whichever side the snap settled on the sticky mode.
-        controller?.beginRailDividerDrag()
-        trackRailDividerDrag(with: event, dividerIndex: railDivider)
-        controller?.endRailDividerDrag()
-    }
-
-    /// The rail divider's index iff `event` grabs it: the LAST divider of a 3-column layout, hit
-    /// within the same ±few-pt slop AppKit's own hit-test claims for a `.thin` divider. A
-    /// COLLAPSED rail bows out (its divider is hidden; a click 4 pt from the window edge is a
-    /// content click, and drag-to-expand would desync the chrome collapse flag).
-    private func railDividerIndex(under event: NSEvent) -> Int? {
-        guard arrangedSubviews.count == 3,
-              (delegate as? NSSplitViewController)?.splitViewItems.last?.isCollapsed == false
-        else { return nil }
-        let point = convert(event.locationInWindow, from: nil)
-        guard dividerEffectiveRect(at: 1).insetBy(dx: -4, dy: 0).contains(point) else { return nil }
-        return 1
     }
 
     /// Divider `i`'s grab region: the gap between its neighbours, run through the delegate's
@@ -412,52 +277,17 @@ private final class FlatDividerSplitView: NSSplitView {
             ?? drawn
     }
 
-    private func trackRailDividerDrag(with event: NSEvent, dividerIndex: Int) {
-        guard let window else { return }
-        let grabX = convert(event.locationInWindow, from: nil).x
-        let startPosition = arrangedSubviews[dividerIndex].frame.maxX
-        dividerCursor(at: dividerIndex).push()
-        defer {
-            NSCursor.pop()
-            // Rebuild the hover cursors for the widths the drag settled on (a drag that ends
-            // pinned at a limit must immediately hover as one-directional).
-            window.invalidateCursorRects(for: self)
-        }
-        while true {
-            guard let next = window.nextEvent(
-                matching: [.leftMouseDragged, .leftMouseUp],
-                until: .distantFuture, inMode: .eventTracking, dequeue: true,
-            ) else { continue }
-            if next.type == .leftMouseUp { return }
-            let x = convert(next.locationInWindow, from: nil).x
-            let target = clampRailDividerPosition(startPosition + (x - grabX))
-            setPosition(target, ofDividerAt: dividerIndex)
-            window.layoutIfNeeded()
-            // Track the limit state live: pinned at min/max shows the one-way arrow mid-drag too.
-            dividerCursor(at: dividerIndex).set()
-        }
-    }
-
-    private func clampRailDividerPosition(_ proposed: CGFloat) -> CGFloat {
-        SlopDeskSplitViewController.clampedRailDividerPosition(
-            proposed: proposed,
-            contentMinX: arrangedSubviews[1].frame.minX,
-            splitWidth: bounds.width,
-            dividerThickness: dividerThickness,
-        )
-    }
-
     // MARK: Divider hover cursors (owned — AppKit's lie at the minimum)
 
     /// Install our OWN divider cursor rects instead of AppKit's. AppKit picks the two-way vs
     /// one-way resize arrow from its notion of movability, which counts drag-to-collapse as "can
     /// still move": an item AT its minimum next to a `canCollapse` neighbour keeps the two-way
-    /// arrow even though this app never collapses by shoving a divider (the rail's manual drag
-    /// clamps at min; collapse belongs to the toggles). At the MAXIMUM AppKit already shows the
-    /// one-way arrow, so the two limits read inconsistently. We derive movability purely from the
-    /// items' width ranges (`SlopDeskSplitViewController.dividerMovability`), so both limits wear
-    /// the one-way arrow. The rect mirrors the divider gap widened by the same ±few-pt slop the
-    /// hit-testing claims; a divider beside a collapsed item gets no rect (it is hidden).
+    /// arrow even though this app never collapses by shoving a divider (collapse belongs to the
+    /// toggles). At the MAXIMUM AppKit already shows the one-way arrow, so the two limits read
+    /// inconsistently. We derive movability purely from the items' width ranges
+    /// (`SlopDeskSplitViewController.dividerMovability`), so both limits wear the one-way arrow.
+    /// The rect mirrors the divider gap widened by the same ±few-pt slop the hit-testing claims; a
+    /// divider beside a collapsed item gets no rect (it is hidden).
     override func resetCursorRects() {
         guard let items = (delegate as? NSSplitViewController)?.splitViewItems,
               items.count == arrangedSubviews.count
@@ -474,25 +304,18 @@ private final class FlatDividerSplitView: NSSplitView {
         }
     }
 
-    /// The hover/drag cursor for divider `i`, from pure width-range movability. The RAIL divider's
-    /// range is the DRAG span (compact 56 … wide max), not the item's mode-pinned min/max — a
-    /// compact rail at its pinned 56 = 56 would otherwise read "wedged" though a leftward drag
-    /// (expand to wide) is live, and a wide rail at 220 can still shrink (snap to compact).
+    /// The hover/drag cursor for divider `i`, from pure width-range movability.
     private func dividerCursor(at i: Int) -> NSCursor {
         guard let items = (delegate as? NSSplitViewController)?.splitViewItems,
               items.count == arrangedSubviews.count, i + 1 < items.count
         else { return .resizeLeftRight }
-        let isRailDivider = arrangedSubviews.count == 3 && i == 1
-            && delegate is SlopDeskSplitViewController
         let movability = SlopDeskSplitViewController.dividerMovability(
             leadingWidth: arrangedSubviews[i].frame.width,
             leadingMin: items[i].minimumThickness,
             leadingMax: items[i].maximumThickness,
             trailingWidth: arrangedSubviews[i + 1].frame.width,
-            trailingMin: isRailDivider
-                ? Slate.Metric.hostRailCompactWidth : items[i + 1].minimumThickness,
-            trailingMax: isRailDivider
-                ? Slate.Metric.hostRailMaxWidth : items[i + 1].maximumThickness,
+            trailingMin: items[i + 1].minimumThickness,
+            trailingMax: items[i + 1].maximumThickness,
         )
         switch (movability.left, movability.right) {
         case (true, true): return .resizeLeftRight
@@ -507,45 +330,6 @@ private final class FlatDividerSplitView: NSSplitView {
 }
 
 extension SlopDeskSplitViewController {
-    /// The rail item's pinned thickness range per sticky flavour: compact pins the icon-strip
-    /// width rigid (window-resize can never squish or stretch it); wide keeps the min…max band.
-    static func railThicknessRange(compact: Bool) -> (min: CGFloat, max: CGFloat) {
-        compact
-            ? (Slate.Metric.hostRailCompactWidth, Slate.Metric.hostRailCompactWidth)
-            : (Slate.Metric.hostRailMinWidth, Slate.Metric.hostRailMaxWidth)
-    }
-
-    /// The drag-snap watershed between the rail's two flavours: a proposed rail width below the
-    /// compact/wide midpoint POPS to the compact width; at or above it, the wide band's clamp
-    /// takes over. The dead zone between compact and wide-min is never a width, even mid-drag.
-    static let railSnapMidpoint: CGFloat =
-        (Slate.Metric.hostRailCompactWidth + Slate.Metric.hostRailMinWidth) / 2
-
-    /// Clamp a proposed rail-divider position: proposals below the snap midpoint resolve to the
-    /// COMPACT width (the Finder-sidebar drag-collapse pop — live, not on release); wide-band
-    /// proposals honour the same limits the split items declare (content ≥ its minimum, rail
-    /// within min…max). Drag-to-collapse is deliberately not offered — the rail HIDES via its
-    /// toggle (⌘⇧R / titlebar / palette), never by shoving the divider. In an over-constrained
-    /// window (content floor + rail max cannot both hold) the rail's MINIMUM wins: the divider
-    /// can then only be pushed toward the rail's floor, never below it.
-    static func clampedRailDividerPosition(
-        proposed: CGFloat, contentMinX: CGFloat, splitWidth: CGFloat, dividerThickness: CGFloat,
-    ) -> CGFloat {
-        let proposedRailWidth = splitWidth - dividerThickness - proposed
-        if proposedRailWidth < railSnapMidpoint {
-            // Compact pop. The content floor cannot bind here — the compact position gives the
-            // content MORE room than any wide-band position; in a window too narrow for even
-            // that, the rail's floor wins (the same over-constrained rule as the wide band).
-            return splitWidth - dividerThickness - Slate.Metric.hostRailCompactWidth
-        }
-        let lowest = CGFloat.maximum(
-            contentMinX + contentMinWidth,
-            splitWidth - dividerThickness - Slate.Metric.hostRailMaxWidth,
-        )
-        let highest = splitWidth - dividerThickness - Slate.Metric.hostRailMinWidth
-        return CGFloat.minimum(CGFloat.maximum(proposed, lowest), highest)
-    }
-
     /// Whether a divider can move each way, PURELY from its neighbours' width ranges — no
     /// drag-to-collapse affordance (this app collapses via toggles only, so a divider pinned at a
     /// limit really is immovable that way and the cursor must say so). Moving LEFT shrinks the

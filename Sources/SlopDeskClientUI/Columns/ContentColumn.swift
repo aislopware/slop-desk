@@ -5,7 +5,6 @@
 // for a clean resting silhouette. The shared `WorkspaceChromeState` drives the sidebar/Details toggles.
 
 #if canImport(SwiftUI)
-import Defaults
 import SlopDeskWorkspaceCore
 import SwiftUI
 
@@ -16,18 +15,6 @@ struct ContentColumn: View {
     /// Opens the Connect-to-Host editor — wired into the titlebar's connection-status cluster. The no-op
     /// default keeps the column standalone-mountable in previews.
     var onConnect: () -> Void = {}
-
-    /// The STAGE zone's width — seeded from the persisted default, live during the divider drag,
-    /// persisted on release (`StageDivider`). Owned here (not on the zone) so it survives the zone's
-    /// collapse-to-zero unmount when the stage empties.
-    @State private var stageWidth: CGFloat = .init(Defaults[.stageWidth])
-
-    /// The Stage zone's width floor — below this a streamed window stops being legible.
-    private static let stageMinWidth: CGFloat = 280
-    /// The terminal canvas's floor beside the stage — mirrors the macOS shell's centre-column minimum
-    /// (`SlopDeskSplitViewController.contentMinWidth`) without referencing the macOS-only type, so the
-    /// clamp compiles on iOS too.
-    private static let canvasMinWidth: CGFloat = 420
 
     private var hasActiveTab: Bool { store.tree.activeSession?.activeTab != nil }
 
@@ -42,7 +29,8 @@ struct ContentColumn: View {
             .background(Slate.Surface.face)
         #if os(macOS)
             // The hover-reveal titlebar floats as a TOP overlay. New-pane gestures (`+` / title-menu split)
-            // mint a terminal pane directly (the Stage re-scope retired the kind chooser).
+            // mint a terminal pane directly (the kind chooser is retired — non-terminal kinds have their
+            // own explicit shortcuts).
             .overlay(alignment: .top) {
                 SlateTitlebar(store: store, chrome: chrome, connection: connection, onConnect: onConnect)
             }
@@ -55,41 +43,11 @@ struct ContentColumn: View {
         #if os(macOS)
         VStack(spacing: 0) {
             Color.clear.frame(height: Slate.Metric.titlebarHeight)
-            paneAndStage
+            paneArea
         }
         #else
-        paneAndStage
+        paneArea
         #endif
-    }
-
-    /// The terminal canvas + the STAGE zone (the Stage re-scope): the split tree is terminal-only, the
-    /// staged windows dock on the trailing edge behind a hand-draggable seam. An EMPTY stage mounts
-    /// nothing (collapse-to-zero — opening a window auto-reveals the zone); the appear/disappear is a
-    /// HARD CUT (never animate leaf frames). Width is clamped live against the column geometry so the
-    /// canvas always keeps a usable floor.
-    private var paneAndStage: some View {
-        GeometryReader { geo in
-            HStack(spacing: 0) {
-                paneArea
-                if !store.stagePaneIDs.isEmpty {
-                    StageDivider(
-                        width: $stageWidth,
-                        range: Self.stageWidthRange(columnWidth: geo.size.width),
-                        store: store,
-                    )
-                    StageZone(store: store)
-                        .frame(width: stageWidth.clamped(to: Self.stageWidthRange(columnWidth: geo.size.width)))
-                }
-            }
-        }
-    }
-
-    /// The stage width clamp for a column `columnWidth` points wide: at least ``stageMinWidth``, and
-    /// never so wide the terminal canvas drops below the shell's content floor. In an over-tight column
-    /// the FLOOR wins (a degenerate range collapses to the floor) — same rule as the rail divider.
-    static func stageWidthRange(columnWidth: CGFloat) -> ClosedRange<CGFloat> {
-        let ceiling = CGFloat.maximum(stageMinWidth, columnWidth - canvasMinWidth)
-        return stageMinWidth...ceiling
     }
 
     private var paneArea: some View {

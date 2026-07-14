@@ -49,6 +49,11 @@ public enum PaneKind: String, Codable, Sendable, Equatable {
     case terminal
     /// A remote-GUI video window (PATH 2 UDP media + cursor side-channel).
     case remoteGUI
+    /// A FULL-DESKTOP video pane (the full-desktop pivot, docs/DECISIONS.md 2026-07-14): streams a
+    /// whole host display (`VideoEndpoint.displayID`, `0` = main) over the SAME video stack as
+    /// ``remoteGUI`` — only the hello (`helloDisplay`) and the input-mapping origin differ. No
+    /// picker, no rebind (a display target never goes stale the way CGWindowIDs do).
+    case desktop
     /// An EPHEMERAL pane auto-spawned by the client's system-dialog monitor to stream a host SYSTEM
     /// prompt (e.g. a SecurityAgent login/password dialog) in its own pane. Same video stack as
     /// ``remoteGUI``, but auto-managed (spawn/close follow the host poll), NOT persisted, and it skips
@@ -97,8 +102,9 @@ public enum PaneKind: String, Codable, Sendable, Equatable {
 
 public extension PaneKind {
     /// A video (PATH 2) pane — rides the shared UDP flow, counts against the live-video cap, renders the
-    /// remote-GUI view. Both the user-picked ``remoteGUI`` and the auto ``systemDialog`` are video kinds.
-    var isVideo: Bool { self == .remoteGUI || self == .systemDialog }
+    /// remote-GUI view. The user-picked ``remoteGUI``, the full-desktop ``desktop``, and the auto
+    /// ``systemDialog`` are all video kinds.
+    var isVideo: Bool { self == .remoteGUI || self == .systemDialog || self == .desktop }
     /// An auto-managed, never-persisted overlay pane (the system-dialog surface).
     var isEphemeral: Bool { self == .systemDialog }
     /// Whether this pane has a shell input funnel that text can be typed into — the recipient set for
@@ -113,7 +119,7 @@ public extension PaneKind {
 /// Persisted with the tree so a restored video pane remembers its window + title; the actual UDP is
 /// opened against the app target.
 public struct VideoEndpoint: Codable, Sendable, Equatable {
-    /// The host-side window being mirrored (ScreenCaptureKit window id).
+    /// The host-side window being mirrored (ScreenCaptureKit window id). `0` for a display target.
     public var windowID: UInt32
     /// Human-readable window title (shown in pane chrome before the stream is live).
     public var title: String
@@ -123,10 +129,15 @@ public struct VideoEndpoint: Codable, Sendable, Equatable {
     /// binding to the same app's window instead of streaming a dead/recycled id. Empty for
     /// legacy/manual-entry bindings (presence-of-id is then the only validity signal).
     public var appName: String
-    public init(windowID: UInt32, title: String, appName: String = "") {
+    /// FULL-DESKTOP TARGET (a ``PaneKind/desktop`` pane): non-nil ⇒ stream this whole host display
+    /// (`0` = the main display) instead of a window. Additive (synthesized Codable decodes a
+    /// missing key to `nil` — an older file's window endpoints are unaffected).
+    public var displayID: UInt32?
+    public init(windowID: UInt32, title: String, appName: String = "", displayID: UInt32? = nil) {
         self.windowID = windowID
         self.title = title
         self.appName = appName
+        self.displayID = displayID
     }
 }
 

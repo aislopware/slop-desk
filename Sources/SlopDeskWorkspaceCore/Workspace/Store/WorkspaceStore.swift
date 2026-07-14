@@ -78,13 +78,6 @@ public final class WorkspaceStore {
     /// pause). ``PaneContainer`` gates it on THIS pane actually changing size, so only resized panes scrim.
     public private(set) var isInteractiveResizeActive = false
 
-    /// TRUE while input ownership sits in the STAGE zone (the Stage re-scope): the active stage tab's
-    /// streamed window consumes pointer/keyboard (its surface is the first responder), the canvas
-    /// terminal does not. Set by clicking into the stream (``focusPaneTree(_:)``'s stage branch);
-    /// cleared by any canvas focus (clicking a terminal is the release affordance). The Stage zone
-    /// reads it to drive the active tab's `RemotePaneContext.isActive` + the accent focus ring.
-    public internal(set) var stageFocused = false
-
     /// The injection seam (docs/22 §0). Spec-only — the store re-points the built handle at the leaf
     /// id via `adopt(id:)` (see ``PaneSessionIDAdopting``).
     private let makeSession: @MainActor (PaneSpec) -> any PaneSessionHandle
@@ -795,14 +788,16 @@ public final class WorkspaceStore {
             title: label,
             video: VideoEndpoint(windowID: windowID, title: label, appName: owner),
         )
-        // On the LIVE tree shell a system dialog is VIDEO content, so it lands as an AUTO STAGE TAB
-        // (selected — a surfacing SecurityAgent prompt demands attention; the Stage re-scope keeps the
-        // split tree terminal-only). The monitor closes the tab again when the dialog leaves.
-        // `.canvas` inserts onto the canvas.
+        // On the LIVE tree shell the canvas is dead, so an ephemeral dialog pane inserts into the TREE — a
+        // NEW TAB of the active session (least-disruptive transient shape: the monitor closes it again when
+        // the dialog leaves, without resplitting the layout). `.canvas` inserts onto the canvas.
         let id: PaneID
         switch liveModel {
         case .tree:
-            id = mintStagePane(spec: spec)
+            let (next, newID) = WorkspaceTreeOps.newTab(in: tree, spec: spec)
+            tree = next
+            id = newID
+            reconcileTree()
         case .canvas:
             let viewport = lastViewport
             let (canvas, newID) = workspace.canvas.adding(spec, near: workspace.focusedPane, viewport: viewport)
@@ -826,24 +821,17 @@ public final class WorkspaceStore {
     /// the busy-shell guard — a dialog leaving host-side must always dismiss its pane).
     public func closeSystemDialogPane(_ id: PaneID) {
         switch liveModel {
-        // The Stage re-scope: a tree-shell dialog pane is a stage tab; `closeStagePane` no-ops when
-        // `id` is not staged, so fall through to the tree close for a pane that somehow landed there.
-        case .tree:
-            if tree.sessions.contains(where: { $0.stageContains(id) }) {
-                closeStagePane(id)
-            } else {
-                closePaneTree(id)
-            }
+        case .tree: closePaneTree(id)
         case .canvas: closePane(id)
         }
     }
 
-    /// Whether `id` is a LIVE pane in whichever model is current — the tree ∪ stage under
-    /// ``LiveModel/tree`` (a system dialog is a stage tab there), else the canvas. The auto-managed
-    /// monitor uses this to detect a manual close (a spawned pane absent from the model) on EITHER shell.
+    /// Whether `id` is a LIVE pane in whichever model is current — the tree under ``LiveModel/tree``,
+    /// else the canvas. The auto-managed monitor uses this to detect a manual close (a spawned pane
+    /// absent from the model) on EITHER shell.
     public func isSystemDialogPaneLive(_ id: PaneID) -> Bool {
         switch liveModel {
-        case .tree: tree.contains(id) || tree.sessions.contains { $0.stageContains(id) }
+        case .tree: tree.contains(id)
         case .canvas: workspace.canvas.contains(id)
         }
     }
@@ -2555,17 +2543,7 @@ public final class WorkspaceStore {
     /// Focuses leaf `id` in the tree (sets its tab's `activePane` + selects that session/tab). The full
     /// leaf set stays registered — a pure active-state change. The IDE shell calls this on a leaf tap.
     public func focusPaneTree(_ id: PaneID) {
-        // A STAGE pane routes to the stage: select its tab and move input ownership into the zone
-        // (the click-into-the-stream affordance — `GuiLeafView.onActivate` funnels here for both zones).
-        if !tree.contains(id), tree.sessions.contains(where: { $0.stageContains(id) }) {
-            stageFocused = true
-            activateStagePane(id)
-            return
-        }
         guard tree.contains(id) else { return }
-        // A canvas focus RECLAIMS input ownership from the stage (clicking a terminal is the release
-        // affordance), even when the pane was already active.
-        stageFocused = false
         let alreadyActive = tree.activeSession?.activeTab?.activePane == id
         guard !alreadyActive else { return }
         tree = WorkspaceTreeOps.focusPane(id, in: tree)
@@ -3055,9 +3033,7 @@ public final class WorkspaceStore {
     /// `persistence`), so the tree-reconcile suite still pins the bare diff. Idempotent.
     public func reconcileTree() {
         reconcileRegistry(
-            // Tree leaves ∪ stage panes: the stage's video panes materialize through the SAME diff
-            // (teardown / cap-accounting / rebind wiring), they just never join the tree-focused set.
-            desiredLeafIDs: tree.allPaneIDs() + tree.allStagePaneIDs(),
+            desiredLeafIDs: tree.allPaneIDs(),
             spec: { tree.spec(for: $0) },
             onMaterialize: { [weak self] id, handle in
                 self?.wireMaterializedLeaf(id: id, handle: handle)
@@ -4265,10 +4241,11 @@ public func apply(_ command: WorkspaceCommand, to store: WorkspaceStore) {
 /// OUT of the `WorkspaceStore` primary body's `type_body_length` budget.
 public extension WorkspaceStore {
     /// Create a new TERMINAL pane placed by `context` and FOCUSED. Every new-pane gesture (⌘T / ⌘D /
-    /// the `+` button / the context-menu splits) mints a terminal DIRECTLY — the in-pane kind chooser is
-    /// retired (the Stage re-scope): remote windows open in the Stage from the host-windows rail / the
-    /// palette, so a kind question on the hot path has no second answer left. cwd inheritance is the
-    /// `newTab` / `splitActivePane` placement + inherit path, unchanged.
+    /// the `+` button / the context-menu splits) mints a terminal DIRECTLY — the in-pane kind chooser
+    /// is retired: the default kind gets the hot path, and every non-terminal kind has its own
+    /// explicit shortcut (⌥⌘N desktop; Open Quickly / the picker for windows), so a kind question on
+    /// the hot path has no second answer left. cwd inheritance is the `newTab` / `splitActivePane`
+    /// placement + inherit path, unchanged.
     func newTerminalPane(_ context: NewPanePlacement) {
         switch context {
         case let .split(axis, leading): splitActivePane(axis: axis, kind: .terminal, leading: leading)

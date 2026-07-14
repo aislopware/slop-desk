@@ -532,20 +532,6 @@ public enum OpenQuicklyModel {
                     ))
                 }
             }
-            // STAGE tabs join the Opened list (the Stage re-scope): a streamed window is no longer a
-            // tree leaf but stays a first-class switcher row — same window glyph/badge/subtitle
-            // derivation; its `focusPane` act routes through the shared funnel, whose stage branch
-            // selects the tab (and auto-reveals the zone).
-            for paneID in session.stagePanes {
-                let spec = session.specs[paneID]
-                out.append(paneItem(
-                    paneID: paneID,
-                    title: paneDisplayTitle(spec),
-                    cwd: nonEmpty(spec?.lastKnownCwd),
-                    paneKind: spec?.kind ?? .remoteGUI,
-                    appName: spec?.video?.appName,
-                ))
-            }
         }
         return out
     }

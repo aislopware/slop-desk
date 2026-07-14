@@ -127,38 +127,6 @@ final class HostWindowFeedTests: XCTestCase {
         XCTAssertTrue(g.isLive)
     }
 
-    // MARK: Sectioning + filter (pure)
-
-    func testSectionsAlphabeticalCaseInsensitiveRowsFirstSeen() {
-        let f = feed()
-        f.apply([
-            window(id: 1, app: "zed", bundle: "dev.zed"),
-            window(id: 2, app: "Ghostty"),
-            window(id: 3, app: "zed", bundle: "dev.zed"),
-        ], generation: 1)
-        let sections = HostWindowFeed.sectioned(f.structure)
-        XCTAssertEqual(sections.map(\.appName), ["Ghostty", "zed"], "alphabetical, case-insensitive")
-        XCTAssertEqual(sections[1].rows.map(\.windowID), [1, 3], "rows keep first-seen order")
-    }
-
-    func testFilterIsTokenANDOverTitleAndAppName() {
-        let structure = [
-            HostWindowIdentity(windowID: 1, bundleID: "b", appName: "Ghostty"),
-            HostWindowIdentity(windowID: 2, bundleID: "b", appName: "Safari"),
-        ]
-        let titles: [UInt32: String] = [1: "make test — slop-desk", 2: "slop-desk PR"]
-        XCTAssertEqual(
-            HostWindowFeed.filtered(structure, titles: titles, query: "slop ghost").map(\.windowID),
-            [1],
-            "every token must match in title OR app name",
-        )
-        XCTAssertEqual(
-            HostWindowFeed.filtered(structure, titles: titles, query: " ").map(\.windowID),
-            [1, 2],
-            "a blank query matches everything",
-        )
-    }
-
     // MARK: run() — lifecycle gating over the persistent link
 
     func testLoopOpensNoLinkWhileInactive() async {

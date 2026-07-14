@@ -174,8 +174,8 @@ struct PaneMoveOverlay: View {
         }
     }
 
-    // The three zone previews are `static` so the rail-drag overlay (``HostWindowDropOverlay``)
-    // draws the SAME visual language — one drop vocabulary across both drag systems.
+    // The three zone previews are `static` — kept callable from outside the drag gesture so any
+    // future drop overlay draws the SAME visual language (one drop vocabulary).
 
     /// SWAP / whole-area wash: a wash + border over the WHOLE rect — "this entire area".
     static func washPreview(_ rect: CGRect) -> some View {

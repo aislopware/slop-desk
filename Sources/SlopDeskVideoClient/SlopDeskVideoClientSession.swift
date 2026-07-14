@@ -540,10 +540,27 @@ public actor SlopDeskVideoClientSession {
         fec: FECScheme? = AdaptiveFECPolicy.makeFECScheme(),
         recoveryPolicy: RecoveryPolicy = RecoveryPolicy(),
     ) {
+        self.init(
+            target: .window(requestedWindowID), viewport: viewport, transport: transport,
+            gui: gui, fec: fec, recoveryPolicy: recoveryPolicy,
+        )
+    }
+
+    /// Target-general init: a `.window` target sends the classic `hello`; a `.display` target (the
+    /// full-desktop pane) sends `helloDisplay` and never issues in-session resize requests (the
+    /// display's size is fixed — the client letterboxes).
+    public init(
+        target: VideoStreamTarget,
+        viewport: VideoSize,
+        transport: any VideoClientTransport,
+        gui: GUIHooks,
+        fec: FECScheme? = AdaptiveFECPolicy.makeFECScheme(),
+        recoveryPolicy: RecoveryPolicy = RecoveryPolicy(),
+    ) {
         self.transport = transport
         self.gui = gui
         self.recoveryPolicy = recoveryPolicy
-        stateMachine = VideoClientStateMachine(requestedWindowID: requestedWindowID, viewport: viewport)
+        stateMachine = VideoClientStateMachine(target: target, viewport: viewport)
         reassembler = FrameReassembler(fec: fec)
         // NACK / selective ARQ: hold a FEC-unrecoverable frame for the retransmit grace so a host
         // re-send can fill it (instead of dropping straight to an LTR refresh). Off by default.
@@ -830,6 +847,8 @@ public actor SlopDeskVideoClientSession {
     /// session is not streaming.
     public func userResizeTo(width: Double, height: Double) {
         guard stateMachine.mediaFlowing else { return }
+        // A DISPLAY target never resizes the host (the display's size is fixed; the client letterboxes).
+        guard case .window = stateMachine.target else { return }
         let target = VideoSize(
             width: Double.maximum(Self.minResizePoints, width),
             height: Double.maximum(Self.minResizePoints, height),
@@ -848,6 +867,8 @@ public actor SlopDeskVideoClientSession {
     /// is not streaming.
     private func maybeRequestResize(for size: VideoSize) {
         guard stateMachine.mediaFlowing else { return }
+        // A DISPLAY target never follows the pane size (fixed display; the client aspect-fits).
+        guard case .window = stateMachine.target else { return }
         // PANE-FOLLOWS-STREAM (1:1 snap): until the first snap rebases the debounce
         // (`noteLayerSizeAdopted`), suppress emission entirely. A layout pass racing the first
         // decoded frame must not echo the pane's STALE size to the host — that would AX-resize

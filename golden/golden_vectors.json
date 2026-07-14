@@ -4013,6 +4013,36 @@
       "maxWidthPx": 640,
       "variant": "windowPreviewRequest",
       "windowID": 42
+    },
+    {
+      "hex": "16",
+      "variant": "listDisplays"
+    },
+    {
+      "displays": [
+        {
+          "displayID": 1,
+          "height": 1440,
+          "isMain": true,
+          "width": 2560
+        },
+        {
+          "displayID": 83689474,
+          "height": 1080,
+          "isMain": false,
+          "width": 1920
+        }
+      ],
+      "hex": "170002000000010a0005a00104fd00020780043800",
+      "variant": "displayList"
+    },
+    {
+      "displayID": 1,
+      "hex": "1800070000000140940000000000004089000000000000",
+      "variant": "helloDisplay",
+      "version": 7,
+      "vh": 800,
+      "vw": 1280
     }
   ],
   "virtualDisplayGeometry": [

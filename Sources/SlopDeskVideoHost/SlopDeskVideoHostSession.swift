@@ -458,7 +458,13 @@ public actor SlopDeskVideoHostSession {
     }
 
     private let transport: any VideoDatagramTransport
-    private let window: SCWindow
+    /// The window target (the classic per-window session). Exactly one of `window`/`display` is set.
+    private let window: SCWindow?
+    /// The DISPLAY target (the full-desktop pane): capture the whole display, no parking, no
+    /// geometry watcher, no AX raise. Exactly one of `window`/`display` is set.
+    private let display: SCDisplay?
+    /// The target's id for logging (windowID or displayID).
+    private var targetID: UInt32 { window.map { UInt32($0.windowID) } ?? display?.displayID ?? 0 }
     /// Capture/encode at `window points × captureScale` PIXELS — 2 (Retina) gives sharp text;
     /// the helloAck/cursor mapping stays in POINTS so coordinates are unaffected.
     private let captureScale: Double
@@ -625,6 +631,7 @@ public actor SlopDeskVideoHostSession {
         fps: Int = 30,
     ) {
         self.window = window
+        display = nil
         self.transport = transport
         self.captureScale = max(1.0, captureScale)
         self.captureSizeOverride = captureSizeOverride
@@ -638,6 +645,35 @@ public actor SlopDeskVideoHostSession {
         // frame (+1 pacing chunk ≈ +1.5ms lane serialization, sent AFTER the data) on EVERY frame
         // to save the occasional loss-recovery round-trip. The client reads the FEC tier per
         // fragment, so a parity-less stream is wire-compatible with an unchanged client.
+        let fecDisabled = ProcessInfo.processInfo.environment["SLOPDESK_FEC"] == "0"
+        packetizeLane = PacketizeLane(fec: fecDisabled ? nil : fec)
+    }
+
+    /// FULL-DESKTOP session (the desktop pane, docs/DECISIONS.md 2026-07-14): streams a whole
+    /// display. Same wire/encode/input machinery as the window session minus the window-only
+    /// pieces — no VD parking / size override (the display IS the size), no geometry watcher (a
+    /// display never moves), no AX raise (whole-desktop input goes to whatever is frontmost).
+    /// `captureScale` should be the DISPLAY's backing scale (pixels ÷ points) so a Retina display
+    /// captures at native resolution.
+    public init(
+        display: SCDisplay,
+        transport: any VideoDatagramTransport,
+        fec: FECScheme? = AdaptiveFECPolicy.makeFECScheme(),
+        captureScale: Double = 1.0,
+        bitrate: Int = VideoEncoder.bitrateBitsPerSecond,
+        fps: Int = 30,
+    ) {
+        window = nil
+        self.display = display
+        self.transport = transport
+        self.captureScale = max(1.0, captureScale)
+        captureSizeOverride = nil
+        resizePointLimit = nil
+        self.bitrate = bitrate
+        self.fps = max(1, fps)
+        governedFps = max(1, fps)
+        stateMachine = VideoSessionStateMachine(fullRange: Self.fullRange)
+        // Same SLOPDESK_FEC=0 A/B gate as the window init (see the comment there).
         let fecDisabled = ProcessInfo.processInfo.environment["SLOPDESK_FEC"] == "0"
         packetizeLane = PacketizeLane(fec: fecDisabled ? nil : fec)
     }
@@ -765,7 +801,7 @@ public actor SlopDeskVideoHostSession {
                     // observable or the remote window looks like it isn't receiving input, with no lead.
                     if Self.inputTrace {
                         FileHandle.standardError.write(Data(
-                            "slopdesk-videohostd[inject]: input DROPPED (state=\(stateMachine.state), window=\(window.windowID))\n"
+                            "slopdesk-videohostd[inject]: input DROPPED (state=\(stateMachine.state), target=\(targetID))\n"
                                 .utf8,
                         ))
                     }
@@ -868,7 +904,7 @@ public actor SlopDeskVideoHostSession {
             dbg("control datagram malformed (\(data.count)B) — dropped")
             return
         }
-        dbg("control received: \(String(describing: message)) (window=\(window.windowID))")
+        dbg("control received: \(String(describing: message)) (target=\(targetID))")
         // Proactive raise on client pane focus (the "raise the focused pane's window" model): bring the
         // captured window frontmost ONCE now, so the user's FIRST click lands instantly instead of
         // paying the per-interaction activate-then-control raise stall. Idempotent —
@@ -883,7 +919,7 @@ public actor SlopDeskVideoHostSession {
                 FileHandle.standardError
                     .write(
                         Data(
-                            "slopdesk-videohostd[inject]: focusWindow → proactive raise (async, window=\(window.windowID))\n"
+                            "slopdesk-videohostd[inject]: focusWindow → proactive raise (async, target=\(targetID))\n"
                                 .utf8,
                         ),
                     )
@@ -904,7 +940,7 @@ public actor SlopDeskVideoHostSession {
             resolveCaptureSize: { [window, captureSizeOverride] requestedWindowID, viewport in
                 // Accept only the window this session was created for; size the capture to
                 // the real window backing store (clamp the requested viewport to it).
-                guard requestedWindowID == UInt32(window.windowID) else { return nil }
+                guard let window, requestedWindowID == UInt32(window.windowID) else { return nil }
                 // Prefer the daemon's achieved post-move size (feature #1 VD): a window resized DOWN to
                 // fit the VD must be captured + acked at its NEW point size, not the stale `SCWindow.frame`
                 // enumeration snapshot — else the SCStream over-crops and the client's input-mapping
@@ -924,14 +960,26 @@ public actor SlopDeskVideoHostSession {
                 // `apply(.resizeCapture)` is the AUTHORITATIVE achieved size (the window may further
                 // clamp to its own min/max). Min 1×1; max is the VD point bounds when the window is
                 // parked on the VD (so a resize can't push the crop past the framebuffer), else the
-                // UInt16 wire limit.
-                guard requestedWindowID == UInt32(window.windowID) else { return nil }
+                // UInt16 wire limit. A DISPLAY session never resizes (window == nil ⇒ nil).
+                guard let window, requestedWindowID == UInt32(window.windowID) else { return nil }
                 let maxSize = resizePointLimit ?? VideoSize(width: Double(UInt16.max), height: Double(UInt16.max))
                 return SizeNegotiation.clamp(
                     desired: desired,
                     min: VideoSize(width: 1, height: 1),
                     max: maxSize,
                 )
+            },
+            resolveDisplayCaptureSize: { [display] requestedDisplayID, viewport in
+                // Accept only the display this session was created for (`0` = "the main display" —
+                // the daemon already resolved the concrete target at mint, so any id that got this
+                // session minted matches). Capture at the display's full point size; the client
+                // aspect-fits (viewport informs nothing here, same as the window path).
+                guard let display,
+                      requestedDisplayID == display.displayID || requestedDisplayID == 0 else { return nil }
+                let w = UInt16(max(1, min(Double(UInt16.max), display.frame.width.rounded())))
+                let h = UInt16(max(1, min(Double(UInt16.max), display.frame.height.rounded())))
+                _ = viewport
+                return (w, h)
             },
         )
         for effect in effects { await apply(effect) }
@@ -1416,7 +1464,11 @@ public actor SlopDeskVideoHostSession {
     /// ``WindowDisplayResolver``; only the live display enumeration is impure.
     private func resolveDisplayMaxPoints() -> VideoSize {
         if let limit = resizePointLimit { return limit }
-        let frame = window.frame
+        // A full-desktop session's "max" is simply the display's own point size (it never resizes).
+        if let display {
+            return VideoSize(width: display.frame.width, height: display.frame.height)
+        }
+        guard let frame = window?.frame else { return VideoSize(width: 0, height: 0) }
         if let display = WindowDisplayResolver.display(
             forWindowFrame: frame, displays: WindowDisplayResolver.activeDisplayBounds(),
         ) {
@@ -1764,7 +1816,8 @@ public actor SlopDeskVideoHostSession {
             newCapturer.setGovernedFPS(governedFps)
             newEncoder.setExpectedFrameRate(governedFps)
         }
-        let captureWindow = window
+        // Resize is a WINDOW-session path (the SM rejects a display resize) — defensive unwrap.
+        guard let captureWindow = window else { return }
         do {
             nonisolated(unsafe) let w = captureWindow
             try await newCapturer.start(window: w, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
@@ -1931,7 +1984,8 @@ public actor SlopDeskVideoHostSession {
             rebuiltCapturer.setGovernedFPS(governedFps)
             rebuiltEncoder.setExpectedFrameRate(governedFps)
         }
-        let captureWindow = window
+        // Resize recovery is a WINDOW-session path (the SM rejects a display resize) — defensive unwrap.
+        guard let captureWindow = window else { return }
         do {
             nonisolated(unsafe) let w = captureWindow
             try await rebuiltCapturer.start(window: w, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
@@ -2055,23 +2109,29 @@ public actor SlopDeskVideoHostSession {
         }
         self.capturer = capturer
 
-        // Geometry watcher → geometry datagrams + keep input/cursor bounds in sync.
-        let geometryWatcher = WindowGeometryWatcher(
-            windowID: window.windowID,
-            pid: window.owningApplication?.processID ?? 0,
-        ) { [weak self] message in
-            guard let self else { return }
-            Task { await self.onGeometry(message) }
+        // Geometry watcher → geometry datagrams + keep input/cursor bounds in sync. WINDOW
+        // sessions only: a display's bounds never change, so a full-desktop session has no watcher
+        // (and no geometry datagrams — the client's mapping origin stays the helloAck bounds).
+        var geometryWatcher: WindowGeometryWatcher?
+        if let window {
+            geometryWatcher = WindowGeometryWatcher(
+                windowID: window.windowID,
+                pid: window.owningApplication?.processID ?? 0,
+            ) { [weak self] message in
+                guard let self else { return }
+                Task { await self.onGeometry(message) }
+            }
         }
         self.geometryWatcher = geometryWatcher
         // DIALOG-EXPAND: arm the union poll only when the window is VD-parked (display-anchored
         // capture — the feature relies on includeChildWindows compositing the dialog) and the
         // feature env is on. The handler hops onto the actor; ``onAssociatedUnion`` decides whether
-        // the union differs from the live region enough to rebuild.
+        // the union differs from the live region enough to rebuild. (A display session has neither
+        // a size override nor a watcher, so this stays off there.)
         dialogExpandArmed = (captureSizeOverride != nil) && Self.dialogExpandEnabled
         captureRegionGlobal = nil // a fresh/reused session starts captured at the plain window frame
         if dialogExpandArmed {
-            geometryWatcher.setAssociatedUnionHandler { [weak self] unionGlobal, contentRectsGlobal in
+            geometryWatcher?.setAssociatedUnionHandler { [weak self] unionGlobal, contentRectsGlobal in
                 guard let self else { return }
                 Task { await self.onAssociatedUnion(unionGlobal, contentRectsGlobal: contentRectsGlobal) }
             }
@@ -2095,20 +2155,25 @@ public actor SlopDeskVideoHostSession {
         // (see `carriedInputBalance`). If a live injector is being REPLACED without an
         // intervening teardown, its balance is the freshest truth — snapshot it first.
         if let injector { carriedInputBalance = injector.balanceSnapshot }
-        injector = InputInjector(
-            pid: window.owningApplication?.processID ?? 0,
-            windowID: window.windowID,
-            windowBoundsCG: bounds,
-            balance: carriedInputBalance,
-        )
+        if let window {
+            injector = InputInjector(
+                pid: window.owningApplication?.processID ?? 0,
+                windowID: window.windowID,
+                windowBoundsCG: bounds,
+                balance: carriedInputBalance,
+            )
+        } else {
+            // Full-desktop: display-scoped injector — same affine mapping over the display's CG
+            // bounds, NO AX raise (there is no one target window; posted CGEvents already land
+            // wherever a local user's would).
+            injector = InputInjector(displayBoundsCG: bounds, balance: carriedInputBalance)
+        }
         inputNeedsRaise = true
 
-        // Bring the live sources up. `window` is an AppKit/SCK type (not Sendable);
-        // it is owned only by this actor and handed to the capturer here. The capture
+        // Bring the live sources up. `window`/`display` are AppKit/SCK types (not Sendable);
+        // they are owned only by this actor and handed to the capturer here. The capture
         // path is GUI-only and single-owner, so this hand-off is safe.
-        let captureWindow = window
         do {
-            nonisolated(unsafe) let w = captureWindow
             // ⚠️ Suspension point (symmetric to `teardownLiveComponents`). `capturer.start`
             // brings up the SCStream (`stream.startCapture()` + `addStreamOutput`/`delegate:self`),
             // and the SCStream framework then RETAINS `capturer` for as long as the stream runs.
@@ -2120,7 +2185,13 @@ public actor SlopDeskVideoHostSession {
             // gate, but the SCStream + VTCompressionSession + drag/cursor timers leak until process
             // exit). So guard the post-await start on identity: only proceed if `self.capturer` is
             // still the instance THIS invocation installed.
-            try await capturer.start(window: w, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
+            if let window {
+                nonisolated(unsafe) let w = window
+                try await capturer.start(window: w, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
+            } else if let display {
+                nonisolated(unsafe) let d = display
+                try await capturer.start(display: d, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
+            }
             dbg(
                 "SCStream capture started (\(pixelWidth)x\(pixelHeight) px @\(captureScale)×, \(width)x\(height) pt) — awaiting frames",
             )
@@ -2140,14 +2211,14 @@ public actor SlopDeskVideoHostSession {
             dbg("startLiveComponents superseded during capturer.start — tearing down orphaned instances")
             await capturer.stop() // async: stops the SCStream we just brought up (stream = nil)
             cursorSampler.stop()
-            geometryWatcher.stop()
+            geometryWatcher?.stop()
             // `encoder`/`injector` are inert until the (now-skipped) capture/input path drives
             // them; releasing the locals lets them deinit (VideoEncoder.deinit invalidates its
             // VTCompressionSessions). Do not clear actor refs — a superseding start owns them.
             return
         }
 
-        geometryWatcher.startDragPolling()
+        geometryWatcher?.startDragPolling()
         cursorSampler.start()
         log.info("live capture/encode/geometry/cursor running")
     }
@@ -2688,7 +2759,8 @@ public actor SlopDeskVideoHostSession {
         injector?.updateWindowBounds(mapRect)
         cursorSampler?.updateWindowBounds(mapRect)
         captureRegionGlobal = regionGlobal
-        let captureWindow = window
+        // Dialog-expand is a WINDOW-session path (armed only when VD-parked) — defensive unwrap.
+        guard let captureWindow = window else { return }
         do {
             nonisolated(unsafe) let w = captureWindow
             try await newCapturer.start(window: w, pixelWidth: pixelWidth, pixelHeight: pixelHeight, region: override)
@@ -2835,7 +2907,8 @@ public actor SlopDeskVideoHostSession {
         injector?.updateWindowBounds(mapRect)
         cursorSampler?.updateWindowBounds(mapRect)
         captureRegionGlobal = nil
-        let captureWindow = window
+        // Dialog-expand recovery is a WINDOW-session path (armed only when VD-parked) — defensive unwrap.
+        guard let captureWindow = window else { return }
         do {
             nonisolated(unsafe) let w = captureWindow
             try await fallbackCapturer.start(window: w, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
@@ -2987,8 +3060,12 @@ public actor SlopDeskVideoHostSession {
     // MARK: Helpers
 
     private func currentWindowBoundsCG() -> VideoRect {
-        // Live bounds via the watcher if present, else the window's creation frame.
-        geometryWatcher?.currentBoundsCG() ?? VideoRect(window.frame)
+        // Live bounds via the watcher if present, else the target's creation frame (a display's
+        // CG bounds are fixed — no watcher exists for a full-desktop session).
+        if let live = geometryWatcher?.currentBoundsCG() { return live }
+        if let window { return VideoRect(window.frame) }
+        if let display { return VideoRect(CGDisplayBounds(display.displayID)) }
+        return VideoRect(x: 0, y: 0, width: 0, height: 0)
     }
 
     private func boundsFromGeometry(_ message: WindowGeometryMessage) -> VideoRect? {

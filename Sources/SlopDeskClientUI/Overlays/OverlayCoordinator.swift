@@ -134,9 +134,6 @@ public final class OverlayCoordinator {
     /// button + the palette ✓ read — never the legacy `store.sidebarCollapsed` the native shell ignores. No-op
     /// by default (iOS / tests / previews), so the row is never a trap.
     @ObservationIgnored public var toggleSidebar: @MainActor () -> Void = {}
-    /// Toggles the RIGHT Host Windows rail (docs/45, ⌘⇧R) — bound by the root view to the live
-    /// `chrome.toggleHostWindows()` so the palette row, the chord, and the rail button flip ONE flag.
-    @ObservationIgnored public var toggleHostWindows: @MainActor () -> Void = {}
     /// Toggles the window-pin flag (View ▸ Pin Window). Bound by ``WorkspaceRootView`` to
     /// `chrome.togglePin()` so any surface routed here flips the SAME live `WorkspaceChromeState.pinned` the
     /// menu Button + the macOS `NSWindow.level` glue read. No-op by default (iOS / tests / previews).
@@ -455,9 +452,6 @@ public final class OverlayCoordinator {
         case .toggleSidebar:
             toggleSidebar()
             if !keepOpen { closePalette() }
-        case .toggleHostWindows:
-            toggleHostWindows()
-            if !keepOpen { closePalette() }
         case .togglePinWindow:
             togglePinWindow()
             if !keepOpen { closePalette() }
@@ -674,11 +668,11 @@ public final class OverlayCoordinator {
         remotePickerModel = nil
     }
 
-    /// A window was chosen in the picker → open it in the STAGE (pre-bound endpoint; idempotent by
-    /// windowID), then close the picker. The materialized pane's own ``RemoteWindowModel`` drives the
-    /// live stream.
+    /// A window was chosen in the picker → open it as a `.remoteGUI` tab (pre-bound endpoint;
+    /// idempotent by windowID — an already-streaming window is revealed), then close the picker. The
+    /// materialized pane's own ``RemoteWindowModel`` drives the live stream.
     public func openRemoteWindow(_ summary: RemoteWindowSummary) {
-        store?.openWindowInStage(
+        store?.openRemoteWindow(
             windowID: summary.windowID, title: summary.title, appName: summary.appName,
         )
         store?.recordRecentCommand(.newPane(.remoteGUI))

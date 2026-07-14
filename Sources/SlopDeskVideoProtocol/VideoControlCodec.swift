@@ -55,6 +55,10 @@ import Foundation
 /// type 20 blobChunk:       UInt8 blobKind | UInt64 blobID | UInt16 metaA | UInt16 metaB
 ///                            | UInt8 chunkIndex | UInt8 chunkCount | UInt16 byteCount | bytes
 /// type 21 windowPreviewRequest: UInt32 windowID | UInt16 maxWidthPx
+/// type 22 listDisplays:  (no body)
+/// type 23 displayList:   UInt16 count | per record: UInt32 displayID | UInt16 w | UInt16 h | UInt8 isMain
+/// type 24 helloDisplay:  UInt16 protocolVersion | UInt32 requestedDisplayID
+///                            | Float64 viewportW | Float64 viewportH
 /// ```
 ///
 /// Liveness keepalive: guards against a client that crashes without sending `bye` — a zero-body
@@ -146,6 +150,28 @@ public struct HostWindowRecord: Equatable, Sendable {
         self.bundleID = bundleID
         self.appName = appName
         self.title = title
+    }
+}
+
+/// One host-side display in a ``VideoControlMessage/displayList(_:)`` response — the data behind the
+/// full-desktop pane's display targeting (the full-desktop pivot, docs/DECISIONS.md 2026-07-14).
+/// Mirrors ``WindowSummary`` for whole displays: the client streams one by sending a
+/// ``VideoControlMessage/helloDisplay(protocolVersion:requestedDisplayID:viewport:)`` with its id.
+public struct DisplaySummary: Equatable, Sendable {
+    /// The host `CGDirectDisplayID` to put in a `helloDisplay`'s `requestedDisplayID`.
+    public var displayID: UInt32
+    /// Display size in points (clamped to UInt16 on the wire, same as ``WindowSummary``).
+    public var width: UInt16
+    public var height: UInt16
+    /// Whether this is the host's MAIN display (`CGMainDisplayID`) — the default target
+    /// (`requestedDisplayID == 0` also resolves to it).
+    public var isMain: Bool
+
+    public init(displayID: UInt32, width: UInt16, height: UInt16, isMain: Bool) {
+        self.displayID = displayID
+        self.width = width
+        self.height = height
+        self.isMain = isMain
     }
 }
 
@@ -317,6 +343,21 @@ public enum VideoControlMessage: Equatable, Sendable {
     /// ≤1 s-old captures reused, ≤2 captures/s globally — SCScreenshotManager shares WindowServer
     /// with the live encoders, so previews are throttled, never eager).
     case windowPreviewRequest(windowID: UInt32, maxWidthPx: UInt16)
+    /// Client → host: "what displays can I stream?" — a session-LESS discovery request mirroring
+    /// ``listWindows`` (the host answers ``displayList(_:)`` WITHOUT minting a session). Zero body.
+    /// Powers the full-desktop pane's multi-display rows; an old host drops it (unknown type) → the
+    /// client falls back to the main display (`requestedDisplayID == 0`).
+    case listDisplays
+    /// Host → client: the online displays, in response to ``listDisplays``. The client streams one by
+    /// sending a ``helloDisplay(protocolVersion:requestedDisplayID:viewport:)`` with its id.
+    case displayList([DisplaySummary])
+    /// Client → host: open a FULL-DESKTOP session streaming display `requestedDisplayID`
+    /// (`0` = the host's main display), sized to `viewport`. The display sibling of ``hello`` — the
+    /// host answers with the SAME ``helloAck`` shape, where `windowBoundsCG` carries the DISPLAY's
+    /// CG bounds and `captureWidth/Height` its point size (the client decode/aspect-fit/input math
+    /// is target-agnostic). A desktop session never resizes the host display: `resizeRequest` acks
+    /// at the fixed display size and the client letterboxes.
+    case helloDisplay(protocolVersion: UInt16, requestedDisplayID: UInt32, viewport: VideoSize)
 
     public var messageType: UInt8 {
         switch self {
@@ -341,6 +382,9 @@ public enum VideoControlMessage: Equatable, Sendable {
         case .appIconRequest: 19
         case .blobChunk: 20
         case .windowPreviewRequest: 21
+        case .listDisplays: 22
+        case .displayList: 23
+        case .helloDisplay: 24
         }
     }
 
@@ -485,6 +529,22 @@ public enum VideoControlMessage: Equatable, Sendable {
         case let .windowPreviewRequest(windowID, maxWidthPx):
             out.appendBE(windowID)
             out.appendBE(maxWidthPx)
+        case .listDisplays:
+            break
+        case let .displayList(displays):
+            // Mirrors windowList; CALLER caps the list to fit one UDP datagram (control is not packetized).
+            out.appendBE(UInt16(truncatingIfNeeded: displays.count))
+            for d in displays {
+                out.appendBE(d.displayID)
+                out.appendBE(d.width)
+                out.appendBE(d.height)
+                out.append(d.isMain ? 1 : 0)
+            }
+        case let .helloDisplay(version, displayID, viewport):
+            out.appendBE(version)
+            out.appendBE(displayID)
+            out.appendBE(viewport.width)
+            out.appendBE(viewport.height)
         }
         return out
     }
@@ -681,6 +741,31 @@ public enum VideoControlMessage: Equatable, Sendable {
             let windowID = try reader.readUInt32()
             let maxWidthPx = try reader.readUInt16()
             return .windowPreviewRequest(windowID: windowID, maxWidthPx: maxWidthPx)
+        case 22:
+            return .listDisplays
+        case 23:
+            let count = try Int(reader.readUInt16())
+            var displays: [DisplaySummary] = []
+            // Same untrusted-count discipline as windowList: no reserveCapacity; each record read
+            // throws `.truncated` the instant the datagram runs short.
+            for _ in 0..<count {
+                let id = try reader.readUInt32()
+                let w = try reader.readUInt16()
+                let h = try reader.readUInt16()
+                let isMain = try reader.readUInt8() != 0
+                displays.append(DisplaySummary(displayID: id, width: w, height: h, isMain: isMain))
+            }
+            return .displayList(displays)
+        case 24:
+            let version = try reader.readUInt16()
+            let displayID = try reader.readUInt32()
+            let w = try reader.readFiniteFloat64("helloDisplay.viewport.w")
+            let h = try reader.readFiniteFloat64("helloDisplay.viewport.h")
+            return .helloDisplay(
+                protocolVersion: version,
+                requestedDisplayID: displayID,
+                viewport: VideoSize(width: w, height: h),
+            )
         default:
             throw VideoProtocolError.malformed("unknown video control message type \(type)")
         }

@@ -239,14 +239,18 @@ final class E1KeymapParityTests: XCTestCase {
         )
     }
 
-    /// ⌘⇧R belongs to the Host Windows rail (docs/45 — the DELIBERATE re-take of the chord the removed
-    /// Details panel freed), and Rename — which once squatted on ⌘⇧R — stays chord-less. FAILS if the
-    /// chord moves again without a deliberate decision.
-    func testCmdShiftRTogglesHostWindowsAndRenameIsChordLess() {
-        XCTAssertEqual(
+    /// ⌘⇧R was freed by the Host Windows rail's retirement (the full-desktop pivot) and deliberately
+    /// left UNBOUND; Rename — which once squatted on ⌘⇧R — stays chord-less. ⌥⌘N is the desktop
+    /// pane's chord. FAILS if either moves again without a deliberate decision.
+    func testCmdShiftRIsFreeAndNewDesktopTabIsOptCmdN() {
+        XCTAssertNil(
             WorkspaceBindingRegistry.chordTable[KeyChord(character: "r", [.command, .shift])],
-            .toggleHostWindows,
-            "⌘⇧R toggles the Host Windows rail (docs/45) — the deliberate successor to the removed Details panel",
+            "⌘⇧R returned to the free pool with the rail's retirement",
+        )
+        XCTAssertEqual(
+            WorkspaceBindingRegistry.chordTable[KeyChord(character: "n", [.command, .option])],
+            .newDesktopTab,
+            "⌥⌘N opens a full-desktop tab (the full-desktop pivot's dedicated non-terminal chord)",
         )
         // Rename is still a REGISTERED, routable action (title menu / context menu / palette), but chord-LESS.
         let rename = WorkspaceBindingRegistry.binding(for: .renamePane)

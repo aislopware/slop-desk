@@ -39,8 +39,8 @@ final class GuiLeafReadOnlyPillTests: XCTestCase {
     func testReadOnlyPillReleasesTheRemoteWindowLock() throws {
         let store = WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
         let video = try XCTUnwrap(
-            store.openWindowInStage(windowID: 7, title: "Safari", appName: "Safari"),
-            "the remote window opens as a stage tab (the Stage re-scope)",
+            store.openRemoteWindow(windowID: 7, title: "Safari", appName: "Safari"),
+            "the remote window opens as a `.remoteGUI` tab",
         )
 
         XCTAssertFalse(

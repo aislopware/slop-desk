@@ -226,9 +226,6 @@ struct OverlayHostView: View {
         { item in
             switch item.id {
             case "action.toggleSidebar": !chrome.sidebarCollapsed
-            // The Host Windows rail (docs/45): ✓ while the rail is REVEALED — same live-chrome read
-            // as the Tabs panel, so the palette, the ⌘⇧R chord, and the rail button stay in lockstep.
-            case "action.toggleHostWindows": !chrome.hostRailCollapsed
             // Pin Window is a CHECKABLE toggle — light the ✓ gutter while the window is pinned, so the
             // palette (and the View menu) tell the user the current pinned state. Mirrors the sidebar
             // treatment, reading the SAME live `chrome.pinned` the menu Button + the `NSWindow.level` glue flip.

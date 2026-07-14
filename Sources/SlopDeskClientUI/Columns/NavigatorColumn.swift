@@ -158,8 +158,6 @@ struct NavigatorColumn: View {
     /// sections. Paints its own warm background (the host `NSSplitViewItem` is a plain item, so there is no
     /// native vibrancy/rounding).
     private var macSidebar: some View {
-        // TERMINAL panes only — an open remote window is tracked by the RIGHT rail
-        // (`HostWindowsColumn`), never listed here too (`RailRowsBuilder.rows` excludes `.remoteGUI`).
         let allRows = renderedRows
         let sections = buildSections(allRows, query: query)
         return VStack(alignment: .leading, spacing: 0) {

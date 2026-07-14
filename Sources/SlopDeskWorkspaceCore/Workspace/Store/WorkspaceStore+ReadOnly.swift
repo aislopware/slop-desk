@@ -72,9 +72,7 @@ public extension WorkspaceStore {
     /// shell (no active pane). The current state is read from the convergent ``paneReadOnly`` set so the
     /// toggle is correct even when no live model has echoed a value yet.
     func toggleReadOnlyInActivePane() {
-        // Stage-aware: while input ownership sits in the Stage the verb locks the active stage tab
-        // (a streamed window can never be the tree's focused pane under the hard split).
-        guard let id = inputTargetPaneID else { return }
+        guard let id = activePaneID else { return }
         setPaneReadOnly(id, !paneReadOnly.contains(id))
     }
 

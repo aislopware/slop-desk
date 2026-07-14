@@ -490,30 +490,33 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertNil(RailRowsBuilder.cwdFolderName(nil))
     }
 
-    // MARK: - `.remoteGUI` panes are the RIGHT rail's rows, never the left rail's
+    // MARK: - Video panes are rail rows again (the full-desktop pivot: the navigator is the ONE sidebar)
 
-    /// The left rail tracks TERMINAL panes only: an open remote window's one home is the right rail
-    /// (`HostWindowsColumn` — streamed marker / focus state / drag-to-move), so the builder must skip
-    /// `.remoteGUI` panes entirely — a whole-tab window AND one split beside a terminal sibling. The
-    /// terminal rows around it are untouched. Fails on the old builder, which listed the same pane in
-    /// two sidebars.
-    func testRemoteWindowPanesAreNotRailRows() throws {
+    /// A `.remoteGUI` pane lists like any pane — the right rail that used to carry it is retired, so
+    /// the navigator must not skip video kinds anymore (a skipped pane would be untracked everywhere
+    /// but the tab strip). Fails on the Stage-era builder, which excluded `.remoteGUI`.
+    func testRemoteWindowPanesAreRailRows() throws {
         let store = makeStore()
-        let remote = try XCTUnwrap(store.openWindowInStage(windowID: 4242, title: "Docs", appName: "Safari"))
+        let remote = try XCTUnwrap(store.openRemoteWindow(windowID: 4242, title: "Docs", appName: "Safari"))
 
         let rows = RailRowsBuilder.rows(for: store)
-        XCTAssertNil(
-            rows.first { $0.id == remote },
-            "a staged remote window has no left-rail row (its one home is the right rail / Stage strip)",
-        )
-        XCTAssertTrue(rows.allSatisfy { $0.kind != .remoteGUI }, "no `.remoteGUI` row survives the builder")
+        let row = try XCTUnwrap(rows.first { $0.id == remote }, "a window pane has a navigator row")
+        XCTAssertEqual(row.kind, .remoteGUI)
     }
 
-    /// Skipping window panes in the RAIL must not touch the ⌘K jump-to-pane palette, which enumerates
-    /// panes itself — a remote window stays jumpable even though it is no longer listed on the left.
+    /// A `.desktop` pane (the full-desktop stream) lists too, under its own kind.
+    func testDesktopPanesAreRailRows() {
+        let store = makeStore()
+        let desktop = store.newDesktopTab()
+
+        let rows = RailRowsBuilder.rows(for: store)
+        XCTAssertEqual(rows.first { $0.id == desktop }?.kind, .desktop)
+    }
+
+    /// The ⌘K jump-to-pane palette enumerates panes itself — a remote window is jumpable there too.
     func testRemoteWindowPanesStayInTheJumpPalette() throws {
         let store = makeStore()
-        let remote = try XCTUnwrap(store.openWindowInStage(windowID: 7777, title: "Docs", appName: "Safari"))
+        let remote = try XCTUnwrap(store.openRemoteWindow(windowID: 7777, title: "Docs", appName: "Safari"))
         store.splitActivePane(axis: .horizontal, kind: .terminal, leading: false, launchGrace: .zero)
 
         let paletteIDs = TabsPaletteSource.snapshot(store)

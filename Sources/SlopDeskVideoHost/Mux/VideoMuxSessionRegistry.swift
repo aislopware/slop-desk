@@ -125,12 +125,17 @@ public actor VideoMuxSessionRegistry {
 
     /// The PURE dispatch decision for one demultiplexed datagram (no GUI, no socket). A live lane
     /// (sink already present) delivers; a never-seen channelID mints iff its first datagram is a
-    /// `hello`; otherwise drop. `decide` is the headless-testable core of `dispatch`.
+    /// `hello` (window session) or a `helloDisplay` (full-desktop session); otherwise drop. `decide`
+    /// is the headless-testable core of `dispatch`.
     public func decide(channelID: UInt32, channel: VideoChannel, data: Data) -> DispatchDecision {
         if sinkTable.contains(channelID) { return .deliver(channelID: channelID) }
         if minting.contains(channelID) { return .deliver(channelID: channelID) } // mint already in flight
-        if channel == .control, let msg = try? VideoControlMessage.decode(data), case .hello = msg {
-            return .mint(channelID: channelID)
+        if channel == .control, let msg = try? VideoControlMessage.decode(data) {
+            switch msg {
+            case .hello,
+                 .helloDisplay: return .mint(channelID: channelID)
+            default: break
+            }
         }
         return .dropUnbound(channelID: channelID)
     }

@@ -109,7 +109,7 @@ struct PaneContainer: View {
 
     /// Whether this is a video (PATH 2) pane. `PaneKind.isVideo` is internal to WorkspaceCore, so the
     /// equivalent check is inlined here (the case set matches `PaneKind.isVideo`).
-    private var isVideo: Bool { kind == .remoteGUI || kind == .systemDialog }
+    private var isVideo: Bool { kind == .remoteGUI || kind == .systemDialog || kind == .desktop }
 
     /// The leaf content, routed by pane kind. A terminal pane renders the `TerminalLeafView` over the
     /// terminal-renderer seam; a video pane renders the `GuiLeafView` over the `VideoWindowFactory` seam

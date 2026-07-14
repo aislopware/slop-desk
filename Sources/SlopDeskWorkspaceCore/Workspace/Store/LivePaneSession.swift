@@ -264,10 +264,12 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         case .terminal:
             makeTerminal(spec, makeClient: makeClient, makeInspector: makeInspector, target: target)
         case .remoteGUI,
+             .desktop,
              .systemDialog:
             // A system-dialog pane uses the SAME video stack as a remote-GUI pane (streams one host
             // window by id); the differences — auto-management, no picker, skip revalidation, not
             // persisted — live in the store/monitor and `setVideoActive`, not the session shape.
+            // A DESKTOP pane rides the same stack too — its model carries the display target.
             makeRemoteGUI(spec, target: target)
         }
     }
@@ -355,7 +357,15 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         target: @escaping @MainActor () -> ConnectionTarget,
     ) -> LivePaneSession {
         let model =
-            if let v = spec.video {
+            if spec.kind == .desktop {
+                // FULL-DESKTOP pane: the model carries the display target (0 = main) — no picker,
+                // no window id, no rebind. `setVideoActive` opens it like any configured video pane.
+                RemoteWindowModel(
+                    target: target,
+                    title: spec.video?.title ?? spec.title,
+                    desktopDisplayID: spec.video?.displayID ?? 0,
+                )
+            } else if let v = spec.video {
                 RemoteWindowModel(
                     target: target,
                     windowID: String(v.windowID),

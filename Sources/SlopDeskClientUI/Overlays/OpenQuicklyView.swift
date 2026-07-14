@@ -597,10 +597,10 @@ struct OpenQuicklyView: View {
             }
             return actions
         case let .openHostWindow(windowID, title, appName):
-            // A Host row (docs/45): the default ↩ opens; ⌘K mirrors the rail's context menu.
+            // A Host row: the default ↩ opens (an already-streaming window is revealed, not duplicated).
             return [
-                RowAction(title: "Open in Stage", symbol: "macwindow") {
-                    store.openWindowInStage(windowID: windowID, title: title, appName: appName)
+                RowAction(title: "Open Window", symbol: "macwindow") {
+                    store.openRemoteWindow(windowID: windowID, title: title, appName: appName)
                     store.recordRecentCommand(.newPane(.remoteGUI))
                 },
                 RowAction(title: "Copy Window Title", symbol: "doc.on.doc") {
@@ -690,11 +690,10 @@ struct OpenQuicklyView: View {
         )
     }
 
-    /// The pane already streaming `windowID` in the active session's STAGE — the store's ONE
-    /// derivation (``WorkspaceStore/stagedWindowPane(for:)``), the same rule behind the rail's
-    /// streamed marker.
+    /// The pane already streaming `windowID` in the active session — the store's ONE derivation
+    /// (``WorkspaceStore/streamedWindowPane(for:)``), shared with every other ingress.
     static func streamedPane(for windowID: UInt32, in store: WorkspaceStore) -> PaneID? {
-        store.stagedWindowPane(for: windowID)?.paneID
+        store.streamedWindowPane(for: windowID)?.paneID
     }
 
     /// The ranked, sectioned result list for the active pill — `.all` merges every non-empty source under its
@@ -951,9 +950,9 @@ struct OpenQuicklyView: View {
                 LinkActionActuator.actuate(LinkActionPolicy.explicitOpenAction(link: link), model: activeModel)
             }
         case let .openHostWindow(windowID, title, appName):
-            // Host row (docs/45): open the host window in the STAGE — the SAME sanctioned path the
-            // rail + picker use (endpoint persisted, idempotent by windowID).
-            store.openWindowInStage(windowID: windowID, title: title, appName: appName)
+            // Host row: the ONE sanctioned per-window ingress (endpoint persisted, idempotent by
+            // windowID — an already-streaming window is revealed).
+            store.openRemoteWindow(windowID: windowID, title: title, appName: appName)
             store.recordRecentCommand(.newPane(.remoteGUI))
         }
         close()

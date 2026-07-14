@@ -170,7 +170,9 @@ struct GuiLeafView: View {
                 // CONTROL bar (`GuiPaneControlBar`), not an in-content corner grip.
                 liveSurface
             case .entryForm:
-                if let model {
+                // A DESKTOP pane has no picker (its display target is fixed at mint) — the transient
+                // pre-admission beat shows the calm placeholder, never the window-entry form.
+                if let model, live?.kind != .desktop {
                     RemoteWindowPickerView(model: model, onActivate: { store.focusPaneTree(paneID) })
                 } else {
                     placeholder(.entryForm)
@@ -261,7 +263,11 @@ struct GuiLeafView: View {
 
     private func placeholderLabel(_ state: RemoteGUIDisplay) -> String {
         if state == .gated { return "Video paused — too many live streams" }
-        return live?.kind == .systemDialog ? "system dialog" : "remote window"
+        return switch live?.kind {
+        case .systemDialog: "system dialog"
+        case .desktop: "desktop"
+        default: "remote window"
+        }
     }
 }
 

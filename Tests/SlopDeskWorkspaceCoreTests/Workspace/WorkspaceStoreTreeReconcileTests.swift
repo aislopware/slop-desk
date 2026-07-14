@@ -55,12 +55,11 @@ extension WorkspaceStoreReconcileTests {
         file: StaticString = #filePath,
         line: UInt = #line,
     ) {
-        // Tree leaves ∪ stage panes — the reconcile diff's full desired set (the Stage re-scope).
-        let leaves = Set(store.tree.allPaneIDs() + store.tree.allStagePaneIDs())
+        let leaves = Set(store.tree.allPaneIDs())
         XCTAssertEqual(
             treeRegistryIDs(store),
             leaves,
-            "registry.keys != tree ∪ stage pane ids \(message)",
+            "registry.keys != tree.allPaneIDs() \(message)",
             file: file,
             line: line,
         )
@@ -326,60 +325,60 @@ extension WorkspaceStoreReconcileTests {
     ///  (b) `videoPromotionGeneration` advanced (the close-time slot-freeing nudge);
     ///  (c) with a NON-ZERO `videoTeardownSettle` the slot stays HELD past `teardown()`'s return until
     ///      `quiesce()` drains the settle — only then does the gated reopen admit.
-    func testCloseStageVideoPaneHonorsCapTeardownAccounting() async throws {
-        // Two staged windows under cap=2 + a non-zero settle, so a same-tick reopen has nowhere to go
-        // until the closing pane's stack actually releases. (The Stage re-scope: video panes live in the
-        // stage; the cap/teardown accounting is the SAME shared reconcile core the tree leaves use.)
+    func testCloseTreeVideoPaneHonorsCapTeardownAccounting() async throws {
+        // A two-`.remoteGUI`-leaf tree (split the seed) under cap=2 + a non-zero settle, so a same-tick
+        // reopen has nowhere to go until the closing pane's stack actually releases.
+        let videoSpec = PaneSpec(kind: .remoteGUI, title: "Remote window")
         let store = makeTreeStore(
-            restoringTree: .defaultWorkspace(),
+            restoringTree: .singlePane(spec: videoSpec),
             liveVideoCap: 2,
             videoTeardownSettle: .milliseconds(80),
         )
         store.reconcileTree()
-        let a = try XCTUnwrap(store.openWindowInStage(windowID: 1, title: "A", appName: "A"))
-        let b = try XCTUnwrap(store.openWindowInStage(windowID: 2, title: "B", appName: "B"))
+        let a = store.tree.allPaneIDs()[0]
+        store.splitActivePane(axis: .horizontal, kind: .remoteGUI)
+        let b = try XCTUnwrap(store.tree.allPaneIDs().first { $0 != a })
+        XCTAssertEqual(store.allSessions.count, 2, "two remoteGUI leaves materialized")
 
-        // Mark BOTH stage panes video-active through the store's cap-checked admission (cap=2 — the cap
-        // is registry-level; the stage's single-active-decode is a VIEW policy above it).
+        // Mark BOTH leaves' handles video-active through the store's cap-checked admission (cap=2).
         XCTAssertTrue(store.activateVideo(a))
         XCTAssertTrue(store.activateVideo(b), "cap=2 saturated by two live video panes")
         let bFake = try XCTUnwrap(treeFake(store, b))
 
         let genBefore = store.videoPromotionGeneration
 
-        // Close b through the STAGE path. Its teardown returns immediately (no gate) but the settle holds
+        // Close b through the TREE path. Its teardown returns immediately (no gate) but the settle holds
         // its slot; b is gone from the registry synchronously.
-        store.closeStagePane(b)
-        XCTAssertNil(store.handle(for: b), "closed stage pane removed from the registry synchronously")
-        assertTreeInvariant(store, "after closeStagePane(b) of a live video pane")
+        store.closePaneTree(b)
+        XCTAssertNil(store.handle(for: b), "closed leaf removed from the registry synchronously")
+        assertTreeInvariant(store, "after closePaneTree(b) of a live video leaf")
 
         // (b) The close was a slot-freeing event for a LIVE video pane ⇒ exactly one close-time nudge.
         XCTAssertEqual(
             store.videoPromotionGeneration,
             genBefore + 1,
-            "closing a live staged video pane is a slot-freeing event ⇒ one close-time promotion nudge",
+            "closing a live video tree leaf is a slot-freeing event ⇒ one close-time promotion nudge",
         )
 
-        // (a) + (c) Same tick, open a third window. The mint's single-active handoff freed a's slot, so
-        // re-admit a — then while b's slot is still held by the settle (a live (1) + b settling (1) =
-        // cap of 2 occupied), the newcomer is GATED.
-        let c = try XCTUnwrap(store.openWindowInStage(windowID: 3, title: "C", appName: "C"))
-        XCTAssertTrue(store.activateVideo(a), "a re-admits (its slot was freed by the single-active handoff)")
+        // (a) + (c) Same tick, split a third `.remoteGUI` leaf in. While the closing pane's slot is still
+        // held by the settle (a live (1) + b settling (1) = cap of 2 occupied), the reopen is GATED.
+        store.splitActivePane(axis: .horizontal, kind: .remoteGUI)
+        let reopened = try XCTUnwrap(store.tree.allPaneIDs().first { $0 != a })
         await Task.yield() // let teardown() return but leave the settle sleep in flight
         XCTAssertFalse(
-            store.activateVideo(c),
+            store.activateVideo(reopened),
             "same-tick reopen GATED — b is recorded in tearingDownVideo and its slot is still settling",
         )
 
         // After quiesce() drains the teardown task INCLUDING its settle sleep, the slot frees.
         await store.quiesce()
-        XCTAssertEqual(bFake.teardownCount, 1, "the closed video pane was torn down exactly once")
+        XCTAssertEqual(bFake.teardownCount, 1, "the closed video leaf was torn down exactly once")
         XCTAssertTrue(
-            store.activateVideo(c),
-            "once the settle elapsed and the stack released, the new stage tab admits",
+            store.activateVideo(reopened),
+            "once the settle elapsed and the stack released, the reopened tree leaf admits",
         )
         let activeIDs = Set(store.allSessions.filter(\.isVideoActive).map(\.id))
-        XCTAssertEqual(activeIDs, Set([a, c]), "exactly cap=2 live; the ceiling was never exceeded")
+        XCTAssertEqual(activeIDs, Set([a, reopened]), "exactly cap=2 live; the ceiling was never exceeded")
     }
 
     // MARK: - Finding 3: closeTab orphaning >1 leaf in a single reconcileTree pass

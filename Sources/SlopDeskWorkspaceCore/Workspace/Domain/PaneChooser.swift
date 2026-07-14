@@ -13,8 +13,8 @@ import Foundation
 /// `"apple.terminal"`) so this file stays import-free; the ClientUI layer wraps it in a type-safe
 /// `SFSymbol` at the use site.
 ///
-/// The in-pane kind CHOOSER itself is retired (the Stage re-scope: every new-pane gesture mints a
-/// terminal directly, remote windows open in the Stage), but this metadata registry remains the one
+/// The in-pane kind CHOOSER itself is retired (every new-pane gesture mints a terminal directly;
+/// non-terminal kinds have their own explicit shortcuts), but this metadata registry remains the one
 /// kind → title/symbol source of truth.
 public struct PaneChooserOption: Sendable, Equatable {
     /// The pane kind this option mints.
@@ -70,10 +70,19 @@ public enum PaneChooserRegistry {
             PaneChooserOption(
                 kind: .remoteGUI,
                 title: "Remote window",
-                symbol: "display",
+                symbol: "macwindow",
                 mnemonic: "r",
                 isVideo: true,
                 requiresWindowPick: true,
+            )
+        case .desktop:
+            PaneChooserOption(
+                kind: .desktop,
+                title: "Desktop",
+                symbol: "display",
+                mnemonic: "d",
+                isVideo: true,
+                requiresWindowPick: false, // the display target is fixed at mint (0 = main display)
             )
         case .systemDialog:
             PaneChooserOption(

@@ -81,6 +81,16 @@ public struct ActionsPaletteSource: PaletteDataSource {
                 store.recordRecentCommand(.newPane(.terminal))
             },
         ),
+        // "New Desktop Tab" (⌥⌘N): a `.desktop` pane streaming the host's whole main display — the
+        // full-desktop pivot's primary viewing verb.
+        item(
+            id: "action.newDesktopTab", icon: "display", title: "New Desktop Tab",
+            shortcut: glyph(.newDesktopTab), category: .tab,
+            run: { store in
+                store.newDesktopTab()
+                store.recordRecentCommand(.newPane(.remoteGUI))
+            },
+        ),
         // "New Remote Window Tab" opens the Remote-Window picker (the host window list) rather
         // than minting an UNBOUND `.remoteGUI` pane — the pick then opens a pre-bound streaming pane. The
         // overlay coordinator handles `.openRemotePicker` (it records the recent command on open). No
@@ -148,16 +158,6 @@ public struct ActionsPaletteSource: PaletteDataSource {
             id: "action.toggleSidebar", icon: "sidebar.left", title: "Toggle Tabs Panel",
             subtitle: nil, shortcut: glyph(.toggleSidebar), filter: .actions, category: .view,
             action: .toggleSidebar,
-        ),
-        // "Toggle Host Windows" (docs/45): the RIGHT rail listing the host machine's windows. Same
-        // live-chrome routing as Toggle Tabs Panel — the ⌘⇧R chord, this row, and the rail's own
-        // button all flip `WorkspaceChromeState.hostRailCollapsed`, and the ✓ reads it.
-        PaletteItem(
-            id: "action.toggleHostWindows", icon: "sidebar.right", title: "Toggle Host Windows",
-            subtitle: nil,
-            keywords: "host windows rail right sidebar panel remote list apps stream",
-            shortcut: glyph(.toggleHostWindows), filter: .actions, category: .view,
-            action: .toggleHostWindows,
         ),
         // Read Only: toggle the active pane's input gate. Under the SHELL section as the
         // first shell verb in the catalog. The spec accepts
@@ -393,8 +393,8 @@ public struct TabsPaletteSource: PaletteDataSource {
         public let title: String
         public let subtitle: String?
         public let isAgent: Bool
-        /// A STAGE window tab (the Stage re-scope): rendered with the window glyph; its jump routes
-        /// through the same `jumpToPaneTree` funnel, whose stage branch activates the tab.
+        /// A VIDEO pane (window / desktop stream): rendered with the window glyph; its jump routes
+        /// through the same `jumpToPaneTree` funnel as any pane.
         public var isWindow: Bool = false
     }
 
@@ -412,26 +412,17 @@ public struct TabsPaletteSource: PaletteDataSource {
             // Enumerate the tab's full pane set (`tab.allPaneIDs()`, pre-order DFS) — matching OpenQuickly.
             for paneID in tab.allPaneIDs() {
                 let spec = session.specs[paneID]
-                let title = spec?.lastKnownTitle ?? spec?.title ?? "Terminal"
-                let subtitle = spec?.lastKnownCwd
+                let isVideo = spec?.kind.isVideo == true
+                let fallback = isVideo ? "Remote window" : "Terminal"
+                let title = spec?.lastKnownTitle ?? spec?.title ?? fallback
+                let subtitle = isVideo ? spec?.video?.appName : spec?.lastKnownCwd
                 let isAgent = (store.paneAgentStatus[paneID] ?? .none) != .none
                 out.append(Entry(
                     paneID: paneID, tabIndex: tabIndex,
-                    title: title.isEmpty ? "Terminal" : title, subtitle: subtitle, isAgent: isAgent,
+                    title: title.isEmpty ? fallback : title, subtitle: subtitle, isAgent: isAgent,
+                    isWindow: isVideo,
                 ))
             }
-        }
-        // STAGE tabs join the jump list (the Stage re-scope): a streamed window is no longer a tree
-        // leaf, but it must stay keyboard-reachable — the jump routes through `jumpToPaneTree`, whose
-        // stage branch selects the tab (and auto-reveals the zone).
-        for paneID in session.stagePanes {
-            let spec = session.specs[paneID]
-            let title = spec?.lastKnownTitle ?? spec?.title ?? "Remote window"
-            out.append(Entry(
-                paneID: paneID, tabIndex: session.tabs.count,
-                title: title.isEmpty ? "Remote window" : title,
-                subtitle: spec?.video?.appName, isAgent: false, isWindow: true,
-            ))
         }
         return Self(entries: out)
     }

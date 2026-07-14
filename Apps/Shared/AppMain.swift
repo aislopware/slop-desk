@@ -76,6 +76,7 @@ struct ClientAppMain {
                     mediaPort: descriptor.mediaPort,
                     cursorPort: descriptor.cursorPort,
                     windowID: descriptor.windowID,
+                    displayID: descriptor.displayID, // full-desktop pane → wire helloDisplay
                 )
                 return AnyView(VideoWindowView(
                     title: descriptor.title, connection: connection,
@@ -158,28 +159,6 @@ struct ClientAppMain {
                         }))
                     }
                 }
-            }
-        }
-
-        // App-icon fetch seam (docs/45 Phase 3): one-shot kind-0 blob fetch for HOST-only apps the
-        // client's Launch Services can't resolve. Magic-validated PNG bytes or nil.
-        MainActor.assumeIsolated {
-            HostAppIconQuery.shared = { host, mediaPort, cursorPort, bundleID, sizePx in
-                await AppIconFetch.fetch(
-                    host: host, mediaPort: mediaPort, cursorPort: cursorPort,
-                    bundleID: bundleID, sizePx: sizePx,
-                )
-            }
-        }
-
-        // Window-preview PEEK seam (docs/45 Phase 4): one-shot kind-1 JPEG fetch for the rail's
-        // Space/context-menu peek. Magic-validated bytes + pixel dims, or nil (fully-formed-only).
-        MainActor.assumeIsolated {
-            HostWindowPreviewQuery.shared = { host, mediaPort, cursorPort, windowID, maxWidthPx in
-                await WindowPreviewFetch.fetch(
-                    host: host, mediaPort: mediaPort, cursorPort: cursorPort,
-                    windowID: windowID, maxWidthPx: maxWidthPx,
-                )
             }
         }
 

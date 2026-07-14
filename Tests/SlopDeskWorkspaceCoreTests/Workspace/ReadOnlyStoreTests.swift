@@ -153,9 +153,9 @@ final class ReadOnlyStoreTests: XCTestCase {
     /// window forwards NEITHER pointer/scroll NOR keycodes (wire-compatible silence). Fails on un-fixed code:
     /// `RemotePaneContext.inputEnabled` / `.videoLeaf` did not exist, so a "read-only" remote window still
     /// accepted input.
-    func testReadOnlyDerivesTheVideoInputGate() throws {
+    func testReadOnlyDerivesTheVideoInputGate() {
         let store = makeFakeStore()
-        let video = try XCTUnwrap(store.openWindowInStage(windowID: 7, title: "Safari", appName: "Safari"))
+        let video = store.newRemoteWindowTab(windowID: 7, title: "Safari", appName: "Safari")
 
         // WRITABLE: the seam derivation enables input forwarding.
         let writable = RemotePaneContext.videoLeaf(

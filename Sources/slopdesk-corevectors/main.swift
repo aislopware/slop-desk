@@ -403,6 +403,19 @@ root["videoControl"] = [
         .windowPreviewRequest(windowID: 42, maxWidthPx: 640),
         ["windowID": 42, "maxWidthPx": 640],
     ),
+    vc("listDisplays", .listDisplays, [:]),
+    vc("displayList", .displayList([
+        DisplaySummary(displayID: 1, width: 2560, height: 1440, isMain: true),
+        DisplaySummary(displayID: 0x04FD_0002, width: 1920, height: 1080, isMain: false),
+    ]), ["displays": [
+        ["displayID": 1, "width": 2560, "height": 1440, "isMain": true],
+        ["displayID": 0x04FD_0002, "width": 1920, "height": 1080, "isMain": false],
+    ]]),
+    vc(
+        "helloDisplay",
+        .helloDisplay(protocolVersion: 7, requestedDisplayID: 1, viewport: VideoSize(width: 1280.0, height: 800.0)),
+        ["version": 7, "displayID": 1, "vw": 1280.0, "vh": 800.0],
+    ),
 ]
 
 // MARK: RecoveryMessage

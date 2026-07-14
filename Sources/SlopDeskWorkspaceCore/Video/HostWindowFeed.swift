@@ -90,35 +90,7 @@ public final class HostWindowFeedQuery {
     ) -> (any HostWindowFeedLink)?)?
 }
 
-/// The **app-icon fetch seam** (docs/45 Phase 3): the GUI app injects the one-shot icon fetch
-/// (implemented in `SlopDeskVideoClient.AppIconFetch`), so the rail's icon cache can pull HOST-only
-/// app icons over the wire WITHOUT importing the gated video module. Returns magic-validated PNG
-/// bytes, or `nil` (timeout / no icon — the caller's negative cache stops re-asking). `nil` seam ⇒
-/// local-resolve only.
-@preconcurrency
-@MainActor
-public final class HostAppIconQuery {
-    /// App-registered fetch (set once at launch). Args: host, mediaPort, cursorPort, bundleID, sizePx.
-    public static var shared: (@MainActor (
-        _ host: String, _ mediaPort: UInt16, _ cursorPort: UInt16, _ bundleID: String, _ sizePx: UInt16,
-    ) async -> Data?)?
-}
-
-/// The **window-preview PEEK seam** (docs/45 Phase 4): the GUI app injects the one-shot preview
-/// fetch (implemented in `SlopDeskVideoClient.WindowPreviewFetch`). Returns magic-validated JPEG
-/// bytes + pixel dimensions, or `nil` (timeout / host throttle) — the peek simply never appears
-/// (fully-formed-only). `nil` seam ⇒ the Peek verb is hidden.
-@preconcurrency
-@MainActor
-public final class HostWindowPreviewQuery {
-    /// App-registered fetch (set once at launch). Args: host, mediaPort, cursorPort, windowID,
-    /// maxWidthPx. Returns (jpeg, pxWidth, pxHeight).
-    public static var shared: (@MainActor (
-        _ host: String, _ mediaPort: UInt16, _ cursorPort: UInt16, _ windowID: UInt32, _ maxWidthPx: UInt16,
-    ) async -> (jpeg: Data, pxWidth: Int, pxHeight: Int)?)?
-}
-
-/// A window's structural identity in the rail: the row's `leafIdentity` key (`windowID|bundleID`)
+/// A window's structural identity: the `leafIdentity` key (`windowID|bundleID`)
 /// plus the section key (`appName` — fixed for a window's lifetime, so structural by nature).
 public struct HostWindowIdentity: Equatable, Hashable, Sendable, Identifiable {
     public var windowID: UInt32
@@ -337,40 +309,5 @@ public final class HostWindowFeed {
 
         if !hasEverLoaded { hasEverLoaded = true }
         if !isLive { isLive = true }
-    }
-
-    // MARK: Pure sectioning (the rail's information architecture, docs/45 §2)
-
-    /// Groups identities into the rail's sections: one per app, ordered ALPHABETICALLY by appName
-    /// (case-insensitive, deterministic across sessions); rows within a section keep their
-    /// first-seen order. Pure + static so ordering stability is unit-pinned.
-    public static func sectioned(_ structure: [HostWindowIdentity]) -> [(appName: String, rows: [HostWindowIdentity])] {
-        var byApp: [String: [HostWindowIdentity]] = [:]
-        var displayName: [String: String] = [:]
-        for identity in structure {
-            let key = identity.appName.lowercased()
-            byApp[key, default: []].append(identity)
-            if displayName[key] == nil { displayName[key] = identity.appName }
-        }
-        return byApp.keys.sorted().map { key in
-            (appName: displayName[key] ?? key, rows: byApp[key] ?? [])
-        }
-    }
-
-    /// The window list narrowed by the search plate — the picker's token-AND policy over
-    /// appName + title (reuses `RemoteWindowModel.filtered`'s semantics on the feed's shape).
-    /// Runs over SNAPSHOT COPIES of the volatile dicts (the memo passes them in), never live
-    /// Observation reads — typing plus title ticks must not re-run the panel body (docs/45 §4).
-    public static func filtered(
-        _ structure: [HostWindowIdentity],
-        titles: [UInt32: String],
-        query: String,
-    ) -> [HostWindowIdentity] {
-        let tokens = query.lowercased().split(separator: " ").map(String.init)
-        guard !tokens.isEmpty else { return structure }
-        return structure.filter { identity in
-            let haystack = "\(titles[identity.windowID]?.lowercased() ?? "") \(identity.appName.lowercased())"
-            return tokens.allSatisfy { haystack.contains($0) }
-        }
     }
 }

@@ -884,11 +884,7 @@ public enum WorkspaceTreeOps {
         in ws: TreeWorkspace,
         _ transform: (inout PaneSpec) -> Void,
     ) -> TreeWorkspace {
-        // A tree leaf resolves via `locate`; a STAGE pane is not in any tab, so fall back to the session
-        // whose stage owns it (the endpoint-committed rebind persistence must reach stage specs too).
-        let sessionIndex = locate(target, in: ws)?.0
-            ?? ws.sessions.firstIndex { $0.stageContains(target) }
-        guard let sIdx = sessionIndex, var spec = ws.sessions[sIdx].specs[target] else { return ws }
+        guard let sIdx = locate(target, in: ws)?.0, var spec = ws.sessions[sIdx].specs[target] else { return ws }
         transform(&spec)
         var copy = ws
         copy.sessions[sIdx].specs[target] = spec

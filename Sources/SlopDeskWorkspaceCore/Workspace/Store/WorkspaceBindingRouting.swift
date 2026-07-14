@@ -21,10 +21,6 @@ struct RouteToggles {
     var find: (() -> Void)?
     var peekReply: (() -> Void)?
     var sidebar: (() -> Void)?
-    /// Toggles the Host Windows rail (docs/45, ⌘⇧R). A chrome-flag concern like `sidebar` (the live
-    /// app flips `WorkspaceChromeState.hostRailCollapsed`); `nil` (headless / test / iOS default) is
-    /// a graceful no-op, never a dead chord.
-    var hostWindows: (() -> Void)?
     var globalSearch: (() -> Void)?
     /// Toggles the Jump-To affordance (⌘J). A VIEW overlay (like `globalSearch`), passed in as a
     /// closure; `nil` (headless / test default) is a graceful no-op, never a dead chord. Jump-To
@@ -65,7 +61,6 @@ public extension WorkspaceBindingRegistry {
         toggleFind: (() -> Void)? = nil,
         togglePeekReply: (() -> Void)? = nil,
         toggleSidebar: (() -> Void)? = nil,
-        toggleHostWindows: (() -> Void)? = nil,
         toggleGlobalSearch: (() -> Void)? = nil,
         toggleJumpTo: (() -> Void)? = nil,
         openQuickly: (() -> Void)? = nil,
@@ -75,7 +70,7 @@ public extension WorkspaceBindingRegistry {
         let toggles = RouteToggles(
             palette: togglePalette, cheatSheet: toggleCheatSheet, find: toggleFind,
             peekReply: togglePeekReply,
-            sidebar: toggleSidebar, hostWindows: toggleHostWindows,
+            sidebar: toggleSidebar,
             globalSearch: toggleGlobalSearch, jumpTo: toggleJumpTo,
             openQuickly: openQuickly, pinWindow: togglePinWindow,
             closeWindow: closeWindow,
@@ -95,8 +90,8 @@ public extension WorkspaceBindingRegistry {
     ) {
         switch action {
         // Panes
-        // A split MINTS a new pane — a TERMINAL, directly and focused (the Stage re-scope retired the
-        // in-pane kind chooser; remote windows open in the Stage from the rail / palette).
+        // A split MINTS a new pane — a TERMINAL, directly and focused (the in-pane kind chooser is
+        // retired; the non-terminal kinds have their own explicit entries — ⌥⌘N / the picker).
         case .splitRight:
             store.newTerminalPane(.split(axis: .horizontal))
         case .splitDown:
@@ -206,10 +201,6 @@ public extension WorkspaceBindingRegistry {
         // store-flag reader still toggles).
         case .toggleSidebar:
             if let s = toggles.sidebar { s() } else { store.toggleSidebarCollapsed() }
-        // Toggle Host Windows (⌘⇧R, docs/45): the RIGHT rail collapse is VIEW @State
-        // (`WorkspaceChromeState.hostRailCollapsed`, read by the native split controller) — a passed-in
-        // closure like `.toggleSidebar`; `nil` (headless / test / iOS default) is a graceful no-op.
-        case .toggleHostWindows: toggles.hostWindows?()
         // Pin Window: float the window above all other apps. A macOS NSWindow.level
         // concern (VIEW @State `WorkspaceChromeState.pinned`), passed in as a closure like `.toggleSidebar`;
         // `nil` (headless / test / iOS default) is a graceful no-op, never a dead chord.
@@ -244,11 +235,13 @@ public extension WorkspaceBindingRegistry {
         // graceful no-op, never a dead chord.
         case .openQuickly: toggles.openQuickly?()
         // Tabs
-        // `.newTab` is the generic new-pane entry (the `+` button / a future generic chord): creates a
-        // focused in-pane `.chooser` pane (Terminal / Remote window). ⌘T stays a direct-terminal escape hatch
-        // via `.newPane(.terminal)` on the canvas command path — it never opens the chooser.
+        // `.newTab` (⌘T / the `+` button) mints a TERMINAL directly — the default kind gets the hot
+        // path (the chooser is retired); non-terminal kinds have their own explicit actions below.
         case .newTab:
             store.newTerminalPane(.newTab)
+        // `.newDesktopTab` (⌥⌘N): a `.desktop` pane streaming the host's whole main display.
+        case .newDesktopTab:
+            store.newDesktopTab()
         case .nextTab: store.cycleTab(by: 1)
         case .prevTab: store.cycleTab(by: -1)
         case let .selectTab(n): store.selectTabNumber(n)
@@ -296,6 +289,8 @@ public extension WorkspaceBindingRegistry {
              .splitUp,
              .newTab:
             apply(.newPaneDefault, to: store)
+        // Canvas analogue of the desktop tab: a `.remoteGUI` pane is the nearest canvas kind.
+        case .newDesktopTab: apply(.newPane(.remoteGUI), to: store)
         case .closePane: apply(.closePane, to: store)
         // Reopen the last closed pane: the canvas has its own retained single-slot reopen (distinct from the
         // tree shell's LIFO stack) — route to it so the canvas path still responds.
@@ -379,8 +374,6 @@ public extension WorkspaceBindingRegistry {
         // Sidebar is the tree-shell chrome; the canvas path still toggles it via the closure (the live macOS
         // app wires `chrome.toggleSidebar`). `nil` (the canvas test default) is a graceful no-op.
         case .toggleSidebar: toggles.sidebar?()
-        // The Host Windows rail is tree-shell chrome too; the canvas path forwards the closure the same way.
-        case .toggleHostWindows: toggles.hostWindows?()
         // Pin Window is a window-level concern (the live macOS app flips `WorkspaceChromeState.pinned`); the
         // canvas path forwards it via the closure too — a graceful no-op when none is supplied, never a dead chord.
         case .pinWindow: toggles.pinWindow?()

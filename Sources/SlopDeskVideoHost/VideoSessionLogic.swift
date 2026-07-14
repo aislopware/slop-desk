@@ -27,8 +27,13 @@ public struct VideoSessionStateMachine: Sendable {
     /// Negotiated capture dimensions, set once the hello is accepted.
     public private(set) var captureWidth: UInt16 = 0
     public private(set) var captureHeight: UInt16 = 0
-    /// The window the accepted session is remoting.
+    /// The window (or, for a full-desktop session, the display) the accepted session is remoting.
     public private(set) var windowID: UInt32 = 0
+    /// Whether the accepted session targets a whole DISPLAY (`helloDisplay`) rather than a window.
+    /// Duplicate-hello re-acks match on (id, kind) so a window hello can never re-ack a display
+    /// session; an in-session `resizeRequest` is rejected for a display target (the display never
+    /// resizes — the client letterboxes).
+    public private(set) var isDisplayTarget = false
 
     /// The monotonically increasing stream id handed to the client on accept (lets a
     /// reconnecting client distinguish a fresh session).
@@ -93,71 +98,23 @@ public struct VideoSessionStateMachine: Sendable {
         windowBoundsCG: VideoRect,
         resolveCaptureSize: (_ requestedWindowID: UInt32, _ viewport: VideoSize) -> (UInt16, UInt16)?,
         resolveResizeSize: (_ windowID: UInt32, _ desired: VideoSize) -> (UInt16, UInt16)? = { _, _ in nil },
+        resolveDisplayCaptureSize: (_ requestedDisplayID: UInt32, _ viewport: VideoSize) -> (UInt16, UInt16)? =
+            { _, _ in nil },
     ) -> [Effect] {
         switch message {
         case let .hello(version, requestedWindowID, viewport):
-            // Strict version check — no fallback (doc 20 §4 discipline).
-            guard version == SlopDeskVideoProtocol.version else {
-                return [.sendControl(.helloAck(
-                    accepted: false,
-                    streamID: 0,
-                    captureWidth: 0,
-                    captureHeight: 0,
-                    windowBoundsCG: windowBoundsCG,
-                    fullRange: false,
-                ))]
-            }
-            // Only accept a hello while listening; ignore a duplicate once streaming
-            // (idempotent — the client may retransmit the unreliable hello).
-            guard state == .listening else {
-                if state == .streaming, requestedWindowID == windowID {
-                    // Re-ack an in-flight duplicate so a lost ack is recovered, but do
-                    // NOT restart capture.
-                    return [.sendControl(.helloAck(
-                        accepted: true,
-                        streamID: lastStreamID,
-                        captureWidth: captureWidth,
-                        captureHeight: captureHeight,
-                        windowBoundsCG: windowBoundsCG,
-                        fullRange: fullRange,
-                    ))]
-                }
-                return []
-            }
-            guard let (w, h) = resolveCaptureSize(requestedWindowID, viewport) else {
-                return [.sendControl(.helloAck(
-                    accepted: false,
-                    streamID: 0,
-                    captureWidth: 0,
-                    captureHeight: 0,
-                    windowBoundsCG: windowBoundsCG,
-                    fullRange: false,
-                ))]
-            }
-            let streamID = nextStreamID
-            nextStreamID &+= 1
-            lastStreamID = streamID
-            captureWidth = w
-            captureHeight = h
-            windowID = requestedWindowID
-            // Reset the resize epoch for the FRESH session. A reconnecting client mints
-            // epochs from 1 again (its `ResizeDebounce` is per-connection); a stale
-            // `lastResizeEpoch` from the PRIOR session (e.g. 7) would make every new epoch
-            // look stale (≤ 7) and drop its first resizes. Re-arm to 0 so the new session's
-            // first request (epoch ≥ 1) wins.
-            lastResizeEpoch = 0
-            state = .streaming
-            return [
-                .sendControl(.helloAck(
-                    accepted: true,
-                    streamID: streamID,
-                    captureWidth: w,
-                    captureHeight: h,
-                    windowBoundsCG: windowBoundsCG,
-                    fullRange: fullRange,
-                )),
-                .startCapture(windowID: requestedWindowID, width: w, height: h),
-            ]
+            return acceptHello(
+                version: version, targetID: requestedWindowID, displayTarget: false,
+                viewport: viewport, windowBoundsCG: windowBoundsCG, resolve: resolveCaptureSize,
+            )
+        case let .helloDisplay(version, requestedDisplayID, viewport):
+            // The full-desktop sibling of `.hello`: same version check / duplicate re-ack / accept
+            // shape, resolved through the DISPLAY closure (nil-by-default — a window session never
+            // accepts a display hello).
+            return acceptHello(
+                version: version, targetID: requestedDisplayID, displayTarget: true,
+                viewport: viewport, windowBoundsCG: windowBoundsCG, resolve: resolveDisplayCaptureSize,
+            )
         case .bye:
             // A client bye re-arms the session so a fresh hello can reconnect WITHOUT a daemon
             // restart: return to .listening and stop capture only if it was streaming. The next
@@ -172,8 +129,9 @@ public struct VideoSessionStateMachine: Sendable {
             // In-session resize: accept ONLY while streaming (listening/stopped has no live
             // capture to re-size). A stale/dup epoch (≤ last applied) is dropped so a UDP
             // reorder/retransmit can't shrink-then-grow out of order; a burst coalesces to
-            // the highest-epoch (settled) request.
-            guard state == .streaming else { return [] }
+            // the highest-epoch (settled) request. A DISPLAY target never resizes (the client
+            // letterboxes; its state machine doesn't send these — this is the defensive half).
+            guard state == .streaming, !isDisplayTarget else { return [] }
             guard !SizeNegotiation.isStaleEpoch(epoch, lastApplied: lastResizeEpoch) else { return [] }
             // The closure clamps `desired` against the LIVE window (min/max) for the
             // session's `windowID`; `nil` ⇒ wrong/gone window or out-of-policy → reject
@@ -209,7 +167,9 @@ public struct VideoSessionStateMachine: Sendable {
              .windowFeedCurrent,
              .appIconRequest,
              .blobChunk,
-             .windowPreviewRequest:
+             .windowPreviewRequest,
+             .listDisplays,
+             .displayList:
             // Window-list, system-dialog-list, window-feed AND icon discovery are answered at the
             // DAEMON level (session-less, no capture mint) and never reach a session's state machine.
             // `windowList`/`systemDialogList`/`scrollOffset`/`contentMask`/`displayMax`/
@@ -217,6 +177,80 @@ public struct VideoSessionStateMachine: Sendable {
             // at the host. No-op.
             return []
         }
+    }
+
+    /// The shared hello-accept path for BOTH target kinds (`.hello` = window, `.helloDisplay` =
+    /// display): strict version check, duplicate re-ack while streaming (matched on id AND kind),
+    /// resolve-or-reject, then accept with a fresh streamID + a `.startCapture` effect (the actor
+    /// knows its own target — the effect's id is informational).
+    private mutating func acceptHello(
+        version: UInt16,
+        targetID: UInt32,
+        displayTarget: Bool,
+        viewport: VideoSize,
+        windowBoundsCG: VideoRect,
+        resolve: (_ targetID: UInt32, _ viewport: VideoSize) -> (UInt16, UInt16)?,
+    ) -> [Effect] {
+        // Strict version check — no fallback (doc 20 §4 discipline).
+        guard version == SlopDeskVideoProtocol.version else {
+            return [rejectAck(windowBoundsCG: windowBoundsCG)]
+        }
+        // Only accept a hello while listening; ignore a duplicate once streaming
+        // (idempotent — the client may retransmit the unreliable hello).
+        guard state == .listening else {
+            if state == .streaming, targetID == windowID, displayTarget == isDisplayTarget {
+                // Re-ack an in-flight duplicate so a lost ack is recovered, but do
+                // NOT restart capture.
+                return [.sendControl(.helloAck(
+                    accepted: true,
+                    streamID: lastStreamID,
+                    captureWidth: captureWidth,
+                    captureHeight: captureHeight,
+                    windowBoundsCG: windowBoundsCG,
+                    fullRange: fullRange,
+                ))]
+            }
+            return []
+        }
+        guard let (w, h) = resolve(targetID, viewport) else {
+            return [rejectAck(windowBoundsCG: windowBoundsCG)]
+        }
+        let streamID = nextStreamID
+        nextStreamID &+= 1
+        lastStreamID = streamID
+        captureWidth = w
+        captureHeight = h
+        windowID = targetID
+        isDisplayTarget = displayTarget
+        // Reset the resize epoch for the FRESH session. A reconnecting client mints
+        // epochs from 1 again (its `ResizeDebounce` is per-connection); a stale
+        // `lastResizeEpoch` from the PRIOR session (e.g. 7) would make every new epoch
+        // look stale (≤ 7) and drop its first resizes. Re-arm to 0 so the new session's
+        // first request (epoch ≥ 1) wins.
+        lastResizeEpoch = 0
+        state = .streaming
+        return [
+            .sendControl(.helloAck(
+                accepted: true,
+                streamID: streamID,
+                captureWidth: w,
+                captureHeight: h,
+                windowBoundsCG: windowBoundsCG,
+                fullRange: fullRange,
+            )),
+            .startCapture(windowID: targetID, width: w, height: h),
+        ]
+    }
+
+    private func rejectAck(windowBoundsCG: VideoRect) -> Effect {
+        .sendControl(.helloAck(
+            accepted: false,
+            streamID: 0,
+            captureWidth: 0,
+            captureHeight: 0,
+            windowBoundsCG: windowBoundsCG,
+            fullRange: false,
+        ))
     }
 
     /// `stop()` was called locally.

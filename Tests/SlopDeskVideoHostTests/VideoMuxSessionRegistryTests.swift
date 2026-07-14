@@ -35,6 +35,18 @@ final class VideoMuxSessionRegistryTests: XCTestCase {
         XCTAssertEqual(decision, .mint(channelID: 5))
     }
 
+    func testFirstHelloDisplayForNewChannelDecidesMint() async {
+        // The full-desktop pane's `helloDisplay` bootstraps a mint exactly like a window `hello`.
+        let registry = makeRegistry()
+        let helloDisplay = VideoControlMessage.helloDisplay(
+            protocolVersion: SlopDeskVideoProtocol.version,
+            requestedDisplayID: 0,
+            viewport: VideoSize(width: 100, height: 100),
+        ).encode()
+        let decision = await registry.decide(channelID: 6, channel: .control, data: helloDisplay)
+        XCTAssertEqual(decision, .mint(channelID: 6))
+    }
+
     func testNonHelloForUnknownChannelDecidesDrop() async {
         // A video/input/recovery datagram for a never-seen lane cannot be bound to a session — drop
         // (benign, never fatal, never disturbs siblings).

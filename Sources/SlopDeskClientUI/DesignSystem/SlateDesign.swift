@@ -431,16 +431,6 @@ enum Slate {
         /// terminal starts BELOW the titlebar (the resting silhouette), not under the centred title.
         static let titlebarHeight: CGFloat = heightStrip
         static let sidebarWidth: CGFloat = 220
-        /// The Host Windows rail (docs/45) — the RIGHT sidebar's default / min / max thickness
-        /// (a touch wider than the left rail: app icon + title + streamed ordinal per row).
-        static let hostRailWidth: CGFloat = 240
-        static let hostRailMinWidth: CGFloat = 220
-        static let hostRailMaxWidth: CGFloat = 320
-        /// The rail's COMPACT (icon-only) thickness — the empirically-settled icon-strip band
-        /// (VS Code activity bar 48, Discord 72, Arc compact 60): a 20pt app icon + the streamed
-        /// ordinal badge per row, titles moving to the hover card. Below ~48 the icons stop being
-        /// glanceable; 56 leaves the 32pt row a comfortable plate.
-        static let hostRailCompactWidth: CGFloat = 56
         /// The Settings window's left navigator column (a two-column Settings layout — wider than the
         /// workspace sidebar so the icon+label section rows + the search pill sit comfortably).
         static let settingsSidebarWidth: CGFloat = 260

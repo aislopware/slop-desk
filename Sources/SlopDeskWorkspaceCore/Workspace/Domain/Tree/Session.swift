@@ -6,11 +6,12 @@ import Foundation
 /// replaces the retired infinite canvas (docs/42 §Decisions.1). A pure
 /// `Identifiable`/`Codable`/`Equatable`/`Sendable` value with **no SwiftUI / transport import**.
 ///
-/// A `Session` owns its tabs (``tabs``, ≥ 1 for a live session), the STAGE (``stagePanes`` — the
-/// dedicated zone for non-terminal content), and the per-session ``specs`` side table (the **specs ==
-/// paneIDs invariant**: `Set(specs.keys) == Set(leafIDs across every tab) ∪ Set(stagePanes)`). It also
-/// models a per-session host (``connection``): the schema is multi-host capable now even though the MVP
-/// shares the one app-global `AppConnection` (docs/42 Decisions.9 — model now, no later migration).
+/// A `Session` owns its tabs (``tabs``, ≥ 1 for a live session) and the per-session ``specs`` side
+/// table (the **specs == leafIDs invariant**: `Set(specs.keys) == Set(leafIDs across every tab)`).
+/// The tree is MIXED-KIND: a leaf's `PaneSpec.kind` decides its content (terminal / desktop / remote
+/// window) — the full-desktop pivot, docs/DECISIONS.md 2026-07-14. It also models a per-session host
+/// (``connection``): the schema is multi-host capable now even though the MVP shares the one
+/// app-global `AppConnection` (docs/42 Decisions.9 — model now, no later migration).
 public struct Session: Identifiable, Sendable, Equatable {
     public let id: SessionID
     public var name: String
@@ -18,22 +19,12 @@ public struct Session: Identifiable, Sendable, Equatable {
     public var tabs: [Tab]
     /// The selected tab. Clamped to `tabs.indices` by ``normalizingActive()`` / the ops.
     public var activeTabIndex: Int
-    /// Side table mapping each pane ``PaneID`` (tree leaf OR stage pane) to its ``PaneSpec`` (so a
-    /// rename never churns a tree diff). Invariant: `Set(specs.keys) == Set(leafIDs) ∪ Set(stagePanes)`.
+    /// Side table mapping each tree leaf ``PaneID`` to its ``PaneSpec`` (so a rename never churns a
+    /// tree diff). Invariant: `Set(specs.keys) == Set(leafIDs)`.
     public var specs: [PaneID: PaneSpec]
     /// Per-session host association. MVP shares the one app-global connection (all sessions `nil` ⇒ the
     /// app target); modeled now so multi-host needs no later migration (docs/42 Decisions.9).
     public var connection: ConnectionTarget?
-    /// The STAGE — the dedicated tabbed zone for NON-TERMINAL content (streamed remote windows now;
-    /// webview/editor later — the Stage re-scope, docs/DECISIONS.md 2026-07-14). Ordered tab-strip order,
-    /// DISJOINT from the split tree's leaf set (the tree is terminal-only). Stage panes keep `PaneID` +
-    /// `PaneSpec` identity in ``specs`` so the live-session registry, persistence, and rebind machinery
-    /// treat them exactly like tree leaves.
-    public var stagePanes: [PaneID]
-    /// The SELECTED stage tab — the only one whose video stream decodes (single-active-decode; the
-    /// background tabs freeze). `nil` ⇔ the stage is empty. Clamped to ``stagePanes`` membership by
-    /// ``TreeWorkspace/normalizingActive()`` / the stage ops.
-    public var activeStagePane: PaneID?
 
     public init(
         id: SessionID = SessionID(),
@@ -42,8 +33,6 @@ public struct Session: Identifiable, Sendable, Equatable {
         activeTabIndex: Int = 0,
         specs: [PaneID: PaneSpec],
         connection: ConnectionTarget? = nil,
-        stagePanes: [PaneID] = [],
-        activeStagePane: PaneID? = nil,
     ) {
         self.id = id
         self.name = name
@@ -51,8 +40,6 @@ public struct Session: Identifiable, Sendable, Equatable {
         self.activeTabIndex = activeTabIndex
         self.specs = specs
         self.connection = connection
-        self.stagePanes = stagePanes
-        self.activeStagePane = activeStagePane
     }
 }
 
@@ -73,8 +60,6 @@ extension Session: Codable {
         case activeTabIndex
         case specs
         case connection
-        case stagePanes
-        case activeStagePane
     }
 
     private struct SpecEntry: Codable {
@@ -93,9 +78,9 @@ extension Session: Codable {
         for entry in entries { map[entry.pane] = entry.spec }
         specs = map
         connection = try container.decodeIfPresent(ConnectionTarget.self, forKey: .connection)
-        // Additive (the Stage re-scope): a file written before the stage decodes to an empty stage.
-        stagePanes = try container.decodeIfPresent([PaneID].self, forKey: .stagePanes) ?? []
-        activeStagePane = try container.decodeIfPresent(PaneID.self, forKey: .activeStagePane)
+        // A file written during the short-lived Stage era may carry `stagePanes`/`activeStagePane`
+        // keys — ignored here; the orphaned specs are pruned by `normalizingSpecs()` (streamed-window
+        // stage tabs were ephemeral viewing surfaces, so dropping them loses no terminal state).
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -110,10 +95,6 @@ extension Session: Codable {
             .sorted { $0.pane.raw.uuidString < $1.pane.raw.uuidString }
         try container.encode(entries, forKey: .specs)
         try container.encodeIfPresent(connection, forKey: .connection)
-        // Additive-minimal: a stage-less session's JSON is byte-identical to the pre-stage shape.
-        // `stagePanes` is an ordered array, so the emitted order is already deterministic.
-        if !stagePanes.isEmpty { try container.encode(stagePanes, forKey: .stagePanes) }
-        try container.encodeIfPresent(activeStagePane, forKey: .activeStagePane)
     }
 }
 
@@ -138,33 +119,20 @@ public extension Session {
         tabs.flatMap { $0.allPaneIDs() }
     }
 
-    /// The set of TREE leaf ids (across every tab) — the stage is not included; see ``paneIDSet()``.
+    /// The set of leaf ids across every tab.
     func leafIDSet() -> Set<PaneID> {
         Set(allPaneIDs())
     }
 
-    /// EVERY pane id this session owns — tree leaves ∪ stage panes. The spec side table must equal
-    /// this set (the widened specs invariant).
-    func paneIDSet() -> Set<PaneID> {
-        leafIDSet().union(stagePanes)
-    }
-
-    /// The ``PaneSpec`` for pane `id` in this session (a tree leaf OR a stage pane), or `nil` if this
-    /// session does not own it.
+    /// The ``PaneSpec`` for tree leaf `id` in this session, or `nil` if this session does not own it.
     func spec(for id: PaneID) -> PaneSpec? {
-        guard contains(id) || stageContains(id) else { return nil }
+        guard contains(id) else { return nil }
         return specs[id]
     }
 
-    /// Whether `id` is a TREE leaf anywhere in this session (the stage is separate — see
-    /// ``stageContains(_:)``; the tree-focused ops and focus cycling must never see a stage pane).
+    /// Whether `id` is a leaf anywhere in this session.
     func contains(_ id: PaneID) -> Bool {
         tabs.contains { $0.contains(id) }
-    }
-
-    /// Whether `id` is a STAGE pane of this session.
-    func stageContains(_ id: PaneID) -> Bool {
-        stagePanes.contains(id)
     }
 
     /// The currently selected tab (clamped). `nil` only for a structurally empty session (never live).

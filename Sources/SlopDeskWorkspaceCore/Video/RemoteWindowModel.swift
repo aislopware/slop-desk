@@ -32,6 +32,12 @@ public final class RemoteWindowModel {
     /// rides the one shared UDP flow at the app host (docs/31).
     private let target: @MainActor () -> ConnectionTarget
 
+    /// FULL-DESKTOP TARGET (a `.desktop` pane): non-nil ⇒ this model streams a whole host display
+    /// (`0` = the main display) instead of a window. ``open()`` then builds a display descriptor
+    /// directly — no picker, no window id, and ``revalidateBinding()`` is a `.skipped` no-op (a
+    /// display target never goes stale the way CGWindowIDs do).
+    public let desktopDisplayID: UInt32?
+
     /// The opened window's descriptor (carries the full endpoint). `nil` ⇒ the form is shown;
     /// non-nil ⇒ the live ``VideoWindowFactory`` view is shown.
     public private(set) var active: RemoteWindowDescriptor?
@@ -258,6 +264,7 @@ public final class RemoteWindowModel {
         windowID: String = "",
         title: String = "Remote window",
         appName: String = "",
+        desktopDisplayID: UInt32? = nil,
         pasteInterval: Duration = .milliseconds(6),
         pasteFeedbackDuration: Duration = .seconds(5),
     ) {
@@ -265,6 +272,7 @@ public final class RemoteWindowModel {
         self.windowID = windowID
         self.title = title
         self.appName = appName
+        self.desktopDisplayID = desktopDisplayID
         self.pasteInterval = pasteInterval
         self.pasteFeedbackDuration = pasteFeedbackDuration
     }
@@ -340,15 +348,28 @@ public final class RemoteWindowModel {
 
     var parsedWindowID: UInt32? { UInt32(windowID.trimmingCharacters(in: .whitespaces)) }
 
-    /// Whether a valid window id is entered. Host + UDP ports come from the app target (always valid),
-    /// so a window id is all that is needed to open.
-    public var canOpen: Bool { parsedWindowID != nil }
+    /// Whether the model can open. A DESKTOP target always can (the display id is fixed at init);
+    /// a window target needs a valid entered window id (host + UDP ports come from the app target).
+    public var canOpen: Bool { desktopDisplayID != nil || parsedWindowID != nil }
 
-    /// Builds the descriptor from the app target (host + UDP ports) + the entered window id and marks it
-    /// active (the panel then brings up the live ``VideoWindowView``). No-op if the window id is invalid.
+    /// Builds the descriptor from the app target (host + UDP ports) + the target (the fixed display
+    /// for a desktop pane, else the entered window id) and marks it active (the panel then brings up
+    /// the live ``VideoWindowView``). No-op if a window target's id is invalid.
     public func open() {
-        guard let wid = parsedWindowID else { return }
         let t = target()
+        if let did = desktopDisplayID {
+            active = RemoteWindowDescriptor(
+                title: title,
+                windowID: 0,
+                displayID: did,
+                host: t.host,
+                mediaPort: t.mediaPort,
+                cursorPort: t.cursorPort,
+            )
+            onEndpointCommitted?(VideoEndpoint(windowID: 0, title: title, displayID: did))
+            return
+        }
+        guard let wid = parsedWindowID else { return }
         active = RemoteWindowDescriptor(
             title: title.isEmpty ? "window \(wid)" : title,
             windowID: wid,
@@ -404,6 +425,8 @@ public final class RemoteWindowModel {
     /// AFTER the optimistic `open()` (a stale binding re-binds within the discovery round-trip instead of
     /// sitting on a silent black pane). Best-effort: an unreachable host / missing seam changes nothing.
     public func revalidateBinding() async -> RebindOutcome {
+        // A DESKTOP target has no window binding to go stale — nothing to revalidate.
+        guard desktopDisplayID == nil else { return .skipped }
         guard let query = RemoteWindowDiscovery.shared, let wid = parsedWindowID else { return .skipped }
         let t = target()
         // STALE-VERDICT GUARD: snapshot liveness BEFORE suspending. The spawn sites cancel

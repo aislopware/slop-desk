@@ -15,14 +15,23 @@ public struct VideoWindowConnection: Sendable, Equatable {
     public var mediaPort: UInt16
     /// The host dedicated cursor UDP port.
     public var cursorPort: UInt16
-    /// The host CGWindowID to remote.
+    /// The host CGWindowID to remote (`0` for a display target).
     public var windowID: UInt32
+    /// FULL-DESKTOP TARGET: non-nil ⇒ stream a whole host display (`0` = the main display) via
+    /// the wire `helloDisplay` instead of a window `hello`. `nil` ⇒ window.
+    public var displayID: UInt32?
 
-    public init(host: String, mediaPort: UInt16, cursorPort: UInt16, windowID: UInt32) {
+    public init(host: String, mediaPort: UInt16, cursorPort: UInt16, windowID: UInt32, displayID: UInt32? = nil) {
         self.host = host
         self.mediaPort = mediaPort
         self.cursorPort = cursorPort
         self.windowID = windowID
+        self.displayID = displayID
+    }
+
+    /// The stream target this connection names (display wins when set).
+    public var streamTarget: VideoStreamTarget {
+        displayID.map { .display($0) } ?? .window(windowID)
     }
 }
 

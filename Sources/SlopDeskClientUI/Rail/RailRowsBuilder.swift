@@ -85,11 +85,9 @@ enum RailRowsBuilder {
     /// in tab order then pre-order pane order. `selected` = the tab is active AND the pane is that tab's
     /// active pane. Agent status comes from the store's per-pane mirror (`.none` ⇒ plain terminal).
     ///
-    /// `.remoteGUI` panes are NOT rows: the left rail tracks the TERMINAL workspace only — an open
-    /// remote window's home is the RIGHT rail (``HostWindowsColumn``), where its host-window row carries
-    /// the streamed marker/focus state and clicking/dragging it acts on the existing pane. Listing it
-    /// here too made the same pane answer to two sidebars. (The ⌘K jump palette enumerates panes
-    /// itself, so window panes stay jumpable.)
+    /// EVERY kind is a row again (the full-desktop pivot): the retired right rail was the video
+    /// panes' tracker; with it gone the navigator is the one sidebar, so desktop/window panes list
+    /// here like any pane (their `chrome` resolution stays kind-aware — no git/process line).
     @MainActor
     static func rows(for store: WorkspaceStore) -> [RailRow] {
         guard let session = store.tree.activeSession else { return [] }
@@ -112,8 +110,6 @@ enum RailRowsBuilder {
             for paneID in tab.allPaneIDs() {
                 let spec = session.specs[paneID]
                 let kind = spec?.kind ?? .terminal
-                // Remote windows are the right rail's rows — see the builder doc above.
-                if kind == .remoteGUI { continue }
                 // The row's VOLATILE chrome (status / badge / git line / process / lock / rename mode) —
                 // resolved by the SAME `chrome(...)` the live row views read directly. The sidebar body
                 // memoizes these rows and each row VIEW re-reads its own chrome fresh, so the resolution

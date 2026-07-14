@@ -457,6 +457,33 @@ func answerWindowList(
     log("answered listWindows on chan=\(channelID): \(summaries.count) windows (\(reply.count) bytes)")
 }
 
+/// Answers a client `listDisplays` discovery request (the full-desktop pane): enumerate the online
+/// displays, reply with a `displayList` on the request's channelID, then RETIRE the lane (mirrors
+/// `answerWindowList` — session-less, never mints). The virtual display (if up) is listed too — it
+/// is streamable like any display; the client defaults to the MAIN display (`requestedDisplayID 0`).
+@Sendable
+func answerDisplayList(
+    channelID: UInt32,
+    mux: NWVideoMuxDatagramTransport,
+    answerGuard: ListAnswerGuard,
+) async {
+    defer { answerGuard.end(channelID) }
+    let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+    let mainID = CGMainDisplayID()
+    let displays = (content?.displays ?? []).prefix(16).map { d in
+        DisplaySummary(
+            displayID: d.displayID,
+            width: UInt16(clamping: Int(d.frame.width.rounded())),
+            height: UInt16(clamping: Int(d.frame.height.rounded())),
+            isMain: d.displayID == mainID,
+        )
+    }
+    let reply = VideoControlMessage.displayList(Array(displays)).encode()
+    mux.send(reply, on: .control, channelID: channelID)
+    mux.retire(channelID)
+    log("answered listDisplays on chan=\(channelID): \(displays.count) displays (\(reply.count) bytes)")
+}
+
 /// Enumerate the on-screen windows and classify the open SYSTEM dialogs (SecurityAgent login/password
 /// prompts etc.) via the pure ``SystemDialogDetector``, capped to a control-datagram-safe count.
 @Sendable
@@ -759,6 +786,61 @@ func bringUpVirtualDisplay(
     return (parkingManager, VDRecreateContext(geometry: geo, fps: args.fps))
 }
 
+/// FULL-DESKTOP mint (wire `helloDisplay`, the desktop pane): capture a whole display — no window
+/// resolve, no VD parking (the real display IS the target), captureScale from the display's own
+/// backing ratio so a Retina display captures at native resolution. Top-level (not nested in the
+/// bring-up Task) so the registry's mint closure stays the window path.
+@Sendable
+func mintDisplaySession(
+    channelID: UInt32,
+    requestedDisplayID: UInt32,
+    mux: NWVideoMuxDatagramTransport,
+    sinkTable: VideoMuxSinkTable,
+    retireBox: MuxRetireBox,
+    bitrate: Int,
+    fps: Int,
+) async throws -> SlopDeskVideoHostSession {
+    guard !shutdownGate.isClosed else {
+        throw VideoHostdError.muxNoWindow(requestedWindowID: requestedDisplayID)
+    }
+    let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+    let mainID = CGMainDisplayID()
+    guard let display = content.displays.first(where: {
+        $0.displayID == requestedDisplayID || (requestedDisplayID == 0 && $0.displayID == mainID)
+    }) ?? (requestedDisplayID == 0 ? content.displays.first : nil) else {
+        throw VideoHostdError.muxNoWindow(requestedWindowID: requestedDisplayID)
+    }
+    let lane = VideoMuxChannelTransport(
+        channelID: channelID,
+        shared: mux,
+        sinkTable: sinkTable,
+        onRetire: { id in retireBox.retire(id) },
+    )
+    // Backing ratio (pixels ÷ points) of THIS display — 2.0 on Retina, 1.0 otherwise.
+    let displayID = display.displayID
+    let db = CGDisplayBounds(displayID)
+    let scale = db.width > 0 ? Double(CGDisplayPixelsWide(displayID)) / Double(db.width) : 1.0
+    // SCDisplay is an SCK type (not Sendable); owned by the session actor from here on —
+    // the same single-owner hand-off the window path uses for its SCWindow.
+    nonisolated(unsafe) let d = display
+    let session = SlopDeskVideoHostSession(
+        display: d,
+        transport: lane,
+        captureScale: scale,
+        bitrate: bitrate,
+        fps: fps,
+    )
+    try await session.start()
+    if shutdownGate.isClosed {
+        await session.stop()
+        throw VideoHostdError.muxNoWindow(requestedWindowID: requestedDisplayID)
+    }
+    log(
+        "mux: minted FULL-DESKTOP session chan=\(channelID) display-id=\(displayID) scale=\(scale)",
+    )
+    return session
+}
+
 Task {
     do {
         let windows = try await shareableWindows()
@@ -834,6 +916,7 @@ Task {
         // the moment a lane is minted. The lane's retire hook is bound after the registry exists.
         let sinkTable = VideoMuxSinkTable()
         let retireBox = MuxRetireBox()
+
         // The session registry mints a session per new channel's hello. The lane transport
         // (`VideoMuxChannelTransport`) wires the session's sink into the shared sink table.
         let registry = VideoMuxSessionRegistry(sinkTable: sinkTable, forgetLane: { id in
@@ -843,6 +926,13 @@ Task {
             // bootstrap hello stamped — the registry sends this BEFORE forgetLane retires that stamp.
             mux.send(data, on: .control, channelID: id)
         }) { channelID, hello in
+            if case let .helloDisplay(_, requestedDisplayID, _) = hello {
+                return try await mintDisplaySession(
+                    channelID: channelID, requestedDisplayID: requestedDisplayID,
+                    mux: mux, sinkTable: sinkTable, retireBox: retireBox,
+                    bitrate: bitrate, fps: args.fps,
+                )
+            }
             guard case let .hello(_, requestedWindowID, _) = hello else {
                 throw VideoHostdError.muxNoWindow(requestedWindowID: 0)
             }

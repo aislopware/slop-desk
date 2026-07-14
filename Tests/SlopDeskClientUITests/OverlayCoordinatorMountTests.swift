@@ -834,13 +834,13 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         overlay.closePalette()
     }
 
-    // MARK: - A picked window opens a STAGE tab + closes the picker
+    // MARK: - A picked window opens a `.remoteGUI` TAB + closes the picker
 
     /// `RemoteWindowPickerModal` routes a pick through `coordinator.openRemoteWindow(_:)` (NOT the in-pane
-    /// `pick()→open()`). Pin that it opens a `.remoteGUI` STAGE tab pre-bound to the picked window AND
-    /// closes the modal — the app-global path the modal depends on (the Stage re-scope: the split tree is
-    /// terminal-only, so the pick never touches the tab strip).
-    func testOpenRemoteWindowOpensStageTabAndCloses() throws {
+    /// `pick()→open()`). Pin that it opens a `.remoteGUI` TAB pre-bound to the picked window AND
+    /// closes the modal — the app-global path the modal depends on (the full-desktop pivot: the Stage is
+    /// retired, so the pick lands on the tree like any pane).
+    func testOpenRemoteWindowOpensWindowTabAndCloses() throws {
         let (overlay, store) = makeCoordinator()
         overlay.openRemotePicker()
         XCTAssertTrue(overlay.remotePickerVisible, "openRemotePicker presents the modal")
@@ -856,9 +856,8 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertNil(overlay.remotePickerModel, "the per-open model is released on close")
 
         let session = try XCTUnwrap(store.tree.activeSession)
-        XCTAssertEqual(session.tabs.count, tabsBefore, "the tree's tab strip is untouched")
-        let newPane = try XCTUnwrap(session.activeStagePane, "the picked window's stage tab is selected")
-        XCTAssertEqual(session.stagePanes, [newPane], "a stage tab was opened for the picked window")
+        XCTAssertEqual(session.tabs.count, tabsBefore + 1, "the pick opened a new tab")
+        let newPane = try XCTUnwrap(session.activeTab?.activePane, "the picked window's tab is selected")
         XCTAssertEqual(session.specs[newPane]?.kind, .remoteGUI, "the new pane is a remote-GUI pane")
         XCTAssertEqual(
             session.specs[newPane]?.video?.windowID, 4242,

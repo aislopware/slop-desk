@@ -29,12 +29,6 @@ struct SplitContainer: View {
     /// terminal-grid / remote-window redraw fires once on commit, not per drag frame.
     @State private var move: PaneMoveDrag?
 
-    #if os(macOS)
-    /// Live rail-window drop (a HOST WINDOW row dragged off the right rail — see docs/45-host-windows-rail.md).
-    /// View-local like `move`: the store is untouched until `performDrop` commits exactly ONE op.
-    @State private var windowDrop: HostWindowDropDrag?
-    #endif
-
     /// EVERY tab of every RETAINED session (the active session + the LRU-retained previous ones — see
     /// ``WorkspaceStore/retainedSessionIDs``), in session-then-tab-bar order. We render ALL of them (see
     /// `body`), revealing only the active session's active tab, so NEITHER a tab switch NOR an A→B→A session
@@ -72,37 +66,6 @@ struct SplitContainer: View {
                         .accessibilityHidden(!isActive)
                         .id(tab.id) // OUTER key only — inner pane leaves stay keyed by PaneID
                 }
-                #if os(macOS)
-                // Rail-window drop catcher — an AppKit `NSDraggingDestination` mounted TOPMOST over
-                // the canvas (SwiftUI `.onDrop` never engages for this drag — see
-                // `HostWindowDropCatcher`). Hit-test-transparent unless a rail drag is in flight,
-                // so at rest every click/scroll reaches the panes untouched. Its local space ==
-                // `bounds` == the solver's leaf-rect space.
-                HostWindowDropCatcher(
-                    enabled: !staticMirror,
-                    onUpdate: { location in
-                        windowDrop = HostWindowDropDrag(
-                            location: location,
-                            alreadyStaged: draggedWindowIsStaged(),
-                        )
-                    },
-                    onExit: { windowDrop = nil },
-                    onPerform: { _ in
-                        windowDrop = nil
-                        return commitWindowDrop()
-                    },
-                )
-                .zIndex(2)
-                // The landing preview — purely visual, above the catcher.
-                if let windowDrop {
-                    HostWindowDropOverlay(
-                        drag: windowDrop,
-                        container: bounds,
-                    )
-                    .allowsHitTesting(false)
-                    .zIndex(3)
-                }
-                #endif
             }
             .frame(width: bounds.width, height: bounds.height, alignment: .topLeading)
             // Report the full container bounds — the geometric ops' fallback before the first solved-layout
@@ -415,32 +378,5 @@ struct SplitContainer: View {
         for entry in penetrations.dropFirst() where entry.pen > best.pen { best = entry }
         return best.edge
     }
-
-    #if os(macOS)
-
-    // MARK: - Rail-window drop (drag a HOST WINDOW row onto the canvas — docs/45-host-windows-rail.md)
-
-    /// Whether the in-flight rail drag's window is ALREADY staged — the one bit the hover chip's copy
-    /// needs ("open" vs "show"). Resolved from the live store per event, not latched at drag-begin.
-    private func draggedWindowIsStaged() -> Bool {
-        guard let payload = HostWindowDragSession.shared.payload else { return false }
-        return store.stagedWindowPane(for: payload.windowID) != nil
-    }
-
-    /// Commits a rail-window drop: reads the in-flight payload off the ``HostWindowDragSession`` side
-    /// channel (NSItemProvider data is drop-time-async, and only rail rows vend this UTType) and opens
-    /// the window in the STAGE — the rail click's one verb (idempotent by windowID: an already-staged
-    /// window activates its tab). Exactly ONE store op, matching the pane-move rule.
-    private func commitWindowDrop() -> Bool {
-        guard let payload = HostWindowDragSession.shared.payload else { return false }
-        HostWindowDragSession.shared.payload = nil
-        let alreadyStaged = store.stagedWindowPane(for: payload.windowID) != nil
-        store.openWindowInStage(
-            windowID: payload.windowID, title: payload.title, appName: payload.appName,
-        )
-        if !alreadyStaged { store.recordRecentCommand(.newPane(.remoteGUI)) }
-        return true
-    }
-    #endif
 }
 #endif

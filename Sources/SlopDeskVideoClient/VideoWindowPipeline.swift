@@ -518,7 +518,7 @@ final class VideoWindowPipeline {
         )
 
         let session = SlopDeskVideoClientSession(
-            requestedWindowID: connection.windowID,
+            target: connection.streamTarget,
             viewport: viewport,
             transport: transport,
             gui: gui,

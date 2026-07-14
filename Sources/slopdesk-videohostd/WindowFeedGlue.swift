@@ -257,6 +257,11 @@ func makeSessionlessDispatcher(
             if listAnswerGuard.begin(channelID) {
                 Task { await answerSystemDialogList(channelID: channelID, mux: mux, answerGuard: listAnswerGuard) }
             }
+        case .listDisplays:
+            // Full-desktop discovery: the online displays (mirrors listWindows — session-less).
+            if listAnswerGuard.begin(channelID) {
+                Task { await answerDisplayList(channelID: channelID, mux: mux, answerGuard: listAnswerGuard) }
+            }
         case let .windowFeedSubscribe(knownGeneration):
             // Feed renewal (docs/45): answered from the shared 1 s-TTL cache AND registered as a
             // push subscriber (TTL 6 s — Phase 2).

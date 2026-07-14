@@ -26,8 +26,11 @@ import SwiftUI
 public struct RemoteWindowDescriptor: Sendable, Equatable {
     /// The remote window's last-known title (from the geometry channel).
     public var title: String
-    /// A stable identifier for the remote window (host CGWindowID).
+    /// A stable identifier for the remote window (host CGWindowID). `0` for a display target.
     public var windowID: UInt32
+    /// FULL-DESKTOP TARGET: non-nil ⇒ stream a whole host display (`0` = the main display)
+    /// instead of a window — the desktop pane (docs/DECISIONS.md 2026-07-14). `nil` ⇒ window.
+    public var displayID: UInt32?
     /// The host's NetBird-routable address (or hostname). Empty ⇒ no live endpoint
     /// (the factory then builds the chrome-only / placeholder view).
     public var host: String
@@ -39,12 +42,14 @@ public struct RemoteWindowDescriptor: Sendable, Equatable {
     public init(
         title: String,
         windowID: UInt32,
+        displayID: UInt32? = nil,
         host: String = "",
         mediaPort: UInt16 = 0,
         cursorPort: UInt16 = 0,
     ) {
         self.title = title
         self.windowID = windowID
+        self.displayID = displayID
         self.host = host
         self.mediaPort = mediaPort
         self.cursorPort = cursorPort

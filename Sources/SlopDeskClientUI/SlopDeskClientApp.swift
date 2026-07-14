@@ -463,26 +463,21 @@ public struct SlopDeskClientApp: App {
         let chromeState = WorkspaceChromeState()
         _chrome = State(initialValue: chromeState)
         #if os(macOS)
-        // Host-windows FEED (docs/45): the ONE app-owned store the RIGHT rail + Open Quickly render.
-        // Its renewal loop (a scene `.task` below) gates on the LIVE chrome flag + OQ visibility +
-        // connection — a collapsed rail with no OQ costs the host exactly 0 Hz. Strong captures of the
-        // app-lifetime chrome/overlay locals; the connection is weak like `overlay.connectionTarget`.
+        // Host-windows FEED: the ONE app-owned store Open Quickly's Host rows render (the dedicated
+        // rail is retired — full-desktop pivot). Its renewal loop (a scene `.task` below) gates on OQ
+        // visibility + connection — no OQ up costs the host exactly 0 Hz. Strong capture of the
+        // app-lifetime overlay local; the connection is weak like `overlay.connectionTarget`.
         let feed = HostWindowFeed(
-            isActive: { !chromeState.hostRailCollapsed || overlay.openQuicklyVisible },
+            isActive: { overlay.openQuicklyVisible },
             isConnected: { [weak appConnection] in appConnection?.status == .connected },
             target: { [weak appConnection] in appConnection?.target ?? .default },
         )
         _hostWindowFeed = State(initialValue: feed)
-        // Open Quickly's Host rows read the SAME live feed the rail renders (weak — @State owns it).
+        // Open Quickly's Host rows read the live feed (weak — @State owns it).
         overlay.hostWindowFeed = feed
         // While the feed is live its snapshot answers the app-launch monitor's
-        // poll for free (one poller replaces two); collapsed-rail falls back to the wire query.
+        // poll for free (one poller replaces two); a dormant feed falls back to the wire query.
         launchMonitor.hostWindowFeed = feed
-        // The rail's icon cache may wire-fetch HOST-only app icons — but only while
-        // connected (a nil target skips the round instead of wasting a 3 s timeout).
-        HostAppIconCache.shared.remoteTarget = { [weak appConnection] in
-            appConnection?.status == .connected ? appConnection?.target : nil
-        }
         // QUIT-DRAIN: hand the termination delegate the single live store (weak — the App's `@State`
         // owns it) so `applicationShouldTerminate` can drain the in-flight pane teardowns via
         // `quiesce()` before the process dies. Set here, before any window exists, so the seam is live
@@ -592,14 +587,11 @@ public struct SlopDeskClientApp: App {
             connection: connection,
             overlay: overlayCoordinator,
             chrome: chrome,
-            hostWindowFeed: hostWindowFeed,
             installSidebarToggle: { [keyDispatcher] toggle in keyDispatcher.setToggleSidebar(toggle) },
             // Hand the dispatcher the (chord-less by default) Pin Window toggle, so a user-bound
             // chord for `.pinWindow` flips the SAME `chrome.pinned` the menu Button + the `NSWindow.level` glue
             // read, through the one NSEvent monitor that owns every chord.
             installPinToggle: { [keyDispatcher] toggle in keyDispatcher.setTogglePinWindow(toggle) },
-            // Host Windows rail (docs/45): ⌘⇧R routes through the same one NSEvent monitor.
-            installHostRailToggle: { [keyDispatcher] toggle in keyDispatcher.setToggleHostWindows(toggle) },
         )
         // Bind the coordinator's `openSettingsAction` to the SwiftUI `openSettings`
         // environment action so the palette "Open Settings" row + the agent footer hook open the stock
@@ -1022,14 +1014,10 @@ public struct SlopDeskClientApp: App {
             width: window.frame.size.width - window.contentLayoutRect.size.width,
             height: window.frame.size.height - window.contentLayoutRect.size.height,
         )
-        // In-window non-terminal overhead for `grid` mode: the revealed sidebar + host-rail widths
+        // In-window non-terminal overhead for `grid` mode: the revealed sidebar width
         // (the titlebar is an overlay → no vertical cost; vertical-tabs-only → no horizontal tab bar).
         let overheadWidth =
-            (chrome.sidebarCollapsed ? 0 : SlopDeskSplitViewController.defaultSidebarWidth)
-                + (chrome.hostRailCollapsed
-                    ? 0
-                    : chrome.hostRailCompact
-                    ? Slate.Metric.hostRailCompactWidth : Slate.Metric.hostRailWidth)
+            chrome.sidebarCollapsed ? 0 : SlopDeskSplitViewController.defaultSidebarWidth
         let chromeOverhead = CGSize(width: overheadWidth, height: 0)
         guard let size = WindowSizeMath.resolvedContentSize(
             mode: mode,

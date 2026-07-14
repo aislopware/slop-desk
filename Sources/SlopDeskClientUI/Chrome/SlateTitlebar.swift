@@ -57,7 +57,6 @@ struct SlateTitlebar: View {
     }
 
     private var sidebarVisible: Bool { !chrome.sidebarCollapsed }
-    private var hostRailVisible: Bool { !chrome.hostRailCollapsed }
 
     /// Pointer-in-top-strip — the reveal gate for both reopen buttons (`HoverSensor` below).
     @State private var topHover = false
@@ -91,11 +90,8 @@ struct SlateTitlebar: View {
             TitleMenuButton(title: activeTitle, store: store, activePane: activePane)
                 .padding(.top, rowTop)
 
-            // Right: the Host Windows rail REOPEN (only while the rail is collapsed — the expanded
-            // toggle lives inside the rail's strip, exactly the left sidebar's split of duties), with
-            // the connection cluster beside it (collapsed-LEFT-sidebar fallback only; footer is the
-            // resting home). The reopen slot is ALWAYS reserved (hidden ⇒ transparent, not absent) so
-            // the cluster never shifts when the rail toggles — the zero-shift rule.
+            // Right: the connection cluster (collapsed-LEFT-sidebar fallback only; the sidebar footer
+            // is its resting home).
             HStack(spacing: Slate.Metric.space2) {
                 if let connection, !sidebarVisible {
                     ConnectionCluster(
@@ -106,17 +102,6 @@ struct SlateTitlebar: View {
                         onConnect: onConnect,
                     )
                 }
-                // The WINDOW glyph, not `sidebar.right` — this toggle opens the host-WINDOWS rail and
-                // must read differently from the left sidebar's. Same
-                // hover + settle choreography as the left reopen button.
-                PlateIconButton(symbol: .macwindowOnRectangle) { chrome.toggleHostWindows() }
-                    .opacity(!hostRailVisible && topHover ? 1 : 0)
-                    .allowsHitTesting(!hostRailVisible && topHover)
-                    .animation(
-                        hostRailVisible ? nil : Slate.Anim.standard.delay(0.15),
-                        value: hostRailVisible,
-                    )
-                    .animation(Slate.Anim.smallFade, value: topHover)
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.trailing, Slate.Metric.space3)

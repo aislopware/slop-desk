@@ -1059,16 +1059,43 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         try await stream.startCapture()
         self.stream = stream
         log.info("WindowCapturer started for window \(window.windowID)")
+        startIDRTimer()
+    }
 
-        // VIDEO-HOST-1: a heartbeat timer on `frameQueue` so every tick is serialized against
-        // the SCStream callback — no lock needed for `cachedPixelBuffer` / the decider. On a
-        // static window (only `.idle` frames) this is the ONLY path that can produce an IDR for
-        // a joining / loss-recovering client.
-        //
-        // The poll is DECOUPLED from the heartbeat: with a multi-second heartbeat the timer must still
-        // poll the recovery latch + service a truly-idle window promptly. The decider only EMITS when
-        // due, so sub-cadence ticks are cheap no-ops. At an 80ms tick the crisp re-anchor lands
-        // ≈ quietWindow + tick (~0.38s) after motion stops. SLOPDESK_IDR_TICK_MS.
+    /// Starts capturing a WHOLE display (the full-desktop pane) at an explicit PIXEL size
+    /// (`pixelWidth`×`pixelHeight` — the display's point size × `captureScale`). The filter is
+    /// `SCContentFilter(display:excludingWindows: [])` — everything on the display, dock and
+    /// desktop included — and the `makeConfiguration` sourceRect pin `(0, 0, w/scale, h/scale)`
+    /// IS the full display here, so no crop/anchor state is needed (a display never moves; the
+    /// window path's re-anchor machinery stays inert). ⚠️ Same TCC/window-server requirements
+    /// as ``start(window:pixelWidth:pixelHeight:region:)`` — NEVER call from a test.
+    public func start(display: SCDisplay, pixelWidth: Int, pixelHeight: Int) async throws {
+        let config = Self.makeConfiguration(
+            width: pixelWidth,
+            height: pixelHeight,
+            fps: fps,
+            captureScale: captureScale,
+            fullRange: fullRange,
+        )
+        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let stream = SCStream(filter: filter, configuration: config, delegate: self)
+        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: frameQueue)
+        try await stream.startCapture()
+        self.stream = stream
+        log.info("WindowCapturer started for display \(display.displayID)")
+        startIDRTimer()
+    }
+
+    /// VIDEO-HOST-1: a heartbeat timer on `frameQueue` so every tick is serialized against
+    /// the SCStream callback — no lock needed for `cachedPixelBuffer` / the decider. On a
+    /// static window (only `.idle` frames) this is the ONLY path that can produce an IDR for
+    /// a joining / loss-recovering client.
+    ///
+    /// The poll is DECOUPLED from the heartbeat: with a multi-second heartbeat the timer must still
+    /// poll the recovery latch + service a truly-idle window promptly. The decider only EMITS when
+    /// due, so sub-cadence ticks are cheap no-ops. At an 80ms tick the crisp re-anchor lands
+    /// ≈ quietWindow + tick (~0.38s) after motion stops. SLOPDESK_IDR_TICK_MS.
+    private func startIDRTimer() {
         let tick = Self.resolveIDRPollTick(envValue: ProcessInfo.processInfo.environment["SLOPDESK_IDR_TICK_MS"])
         let leewayMs = max(8, Int((tick * 1000.0) / 4.0))
         let timer = DispatchSource.makeTimerSource(queue: frameQueue)

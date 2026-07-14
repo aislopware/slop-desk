@@ -22,27 +22,66 @@ public enum VideoClientState: Equatable, Sendable {
     case stopped
 }
 
-/// The pure state machine driving a client video session: emits the `hello`,
-/// consumes the host's `helloAck`, and gates whether received media is processed.
-/// No live component — the actor advances it and acts on the returned ``Effect``s.
+/// What a client video session asks the host to stream: one WINDOW (the classic per-window
+/// session, wire `hello`) or a whole DISPLAY (the full-desktop pane, wire `helloDisplay` —
+/// `0` = the host's main display). Everything downstream of the hello (ack, decode, input
+/// mapping) is target-agnostic.
+public enum VideoStreamTarget: Equatable, Sendable {
+    case window(UInt32)
+    case display(UInt32)
+}
+
+/// The pure state machine driving a client video session: emits the `hello` (or the display
+/// sibling `helloDisplay`), consumes the host's `helloAck`, and gates whether received media is
+/// processed. No live component — the actor advances it and acts on the returned ``Effect``s.
 public struct VideoClientStateMachine: Sendable {
     public private(set) var state: VideoClientState = .idle
 
-    /// The window this client asked the host to remote.
-    public let requestedWindowID: UInt32
+    /// What this client asked the host to stream (window or whole display).
+    public let target: VideoStreamTarget
+    /// The window this client asked the host to remote (`0` for a display target — kept for the
+    /// window-specific call sites; prefer ``target``).
+    public var requestedWindowID: UInt32 {
+        if case let .window(id) = target { return id }
+        return 0
+    }
+
     /// The client viewport size sent in the hello (host sizes capture against it).
     public let viewport: VideoSize
 
     /// Negotiated values, populated on an accepted `helloAck`.
     public private(set) var streamID: UInt32 = 0
     public private(set) var captureSize: VideoSize = .init(width: 0, height: 0)
-    /// The window's CG-top-left bounds reported in the ack (the initial geometry,
-    /// updated thereafter by the geometry channel).
+    /// The TARGET's CG-top-left bounds reported in the ack (the initial geometry — a window's
+    /// frame, updated thereafter by the geometry channel; a display's fixed CG bounds).
     public private(set) var windowBoundsCG: VideoRect = .init(x: 0, y: 0, width: 0, height: 0)
 
     public init(requestedWindowID: UInt32, viewport: VideoSize) {
-        self.requestedWindowID = requestedWindowID
+        self.init(target: .window(requestedWindowID), viewport: viewport)
+    }
+
+    public init(target: VideoStreamTarget, viewport: VideoSize) {
+        self.target = target
         self.viewport = viewport
+    }
+
+    /// The wire hello for this session's target — `hello` for a window, `helloDisplay` for a
+    /// display. One derivation shared by ``start()`` and ``resendHello()``.
+    private var helloMessage: VideoControlMessage {
+        switch target {
+        case let .window(id):
+            .hello(
+                protocolVersion: SlopDeskVideoProtocol.version,
+                requestedWindowID: id,
+                viewport: viewport,
+            )
+        case let .display(id):
+            .helloDisplay(
+                protocolVersion: SlopDeskVideoProtocol.version,
+                requestedDisplayID: id,
+                viewport: viewport,
+            )
+        }
     }
 
     /// Side effects the actor performs after a transition.
@@ -101,11 +140,7 @@ public struct VideoClientStateMachine: Sendable {
     public mutating func start() -> [Effect] {
         guard state == .idle else { return [] }
         state = .connecting
-        return [.sendControl(.hello(
-            protocolVersion: SlopDeskVideoProtocol.version,
-            requestedWindowID: requestedWindowID,
-            viewport: viewport,
-        ))]
+        return [.sendControl(helloMessage)]
     }
 
     /// A control datagram arrived from the host. The client acts only on `helloAck`
@@ -173,6 +208,7 @@ public struct VideoClientStateMachine: Sendable {
             guard state == .streaming, w >= 1, h >= 1 else { return [] }
             return [.applyDisplayMax(VideoSize(width: Double(w), height: Double(h)))]
         case .hello,
+             .helloDisplay,
              .resizeRequest,
              .keepalive,
              .listWindows,
@@ -180,6 +216,8 @@ public struct VideoClientStateMachine: Sendable {
              .focusWindow,
              .listSystemDialogs,
              .systemDialogList,
+             .listDisplays,
+             .displayList,
              .windowFeedSubscribe,
              .windowFeedSnapshot,
              .windowFeedCurrent,
@@ -204,11 +242,7 @@ public struct VideoClientStateMachine: Sendable {
     /// (a duplicate hello re-acks without restarting capture).
     public mutating func resendHello() -> [Effect] {
         guard state == .connecting else { return [] }
-        return [.sendControl(.hello(
-            protocolVersion: SlopDeskVideoProtocol.version,
-            requestedWindowID: requestedWindowID,
-            viewport: viewport,
-        ))]
+        return [.sendControl(helloMessage)]
     }
 
     /// `stop()` was called locally: tell the host (best-effort `bye`) and tear down.

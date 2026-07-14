@@ -68,12 +68,6 @@ public struct WorkspaceRootView: View {
     /// `store.sidebarCollapsed` (which nothing reads on macOS). `nil` (default / iOS / tests) is a no-op. A
     /// plain closure keeps `WorkspaceKeyDispatcher` internal (no public-API widening).
     private let installSidebarToggle: ((@escaping () -> Void) -> Void)?
-    /// Installs the Host Windows rail toggle (⌘⇧R, docs/45) on the app-level keybinding dispatcher —
-    /// the same late-wiring as `installSidebarToggle`. `nil` (default / iOS / tests) is a no-op.
-    private let installHostRailToggle: ((@escaping () -> Void) -> Void)?
-    /// The app-owned host-windows feed (docs/45) — threaded into the macOS split so the RIGHT rail
-    /// can render it. `nil` (iOS / previews / tests) skips the rail.
-    private let hostWindowFeed: HostWindowFeed?
     /// Installs the "Pin Window" toggle on the app-level keybinding dispatcher (same late-wiring as
     /// `installSidebarToggle`): hands it `chrome.togglePin` so a user-bound chord for the chord-less
     /// `.pinWindow` action routes through the SAME NSEvent monitor. `nil` (default / iOS / tests) is a no-op —
@@ -87,19 +81,15 @@ public struct WorkspaceRootView: View {
         connection: AppConnection,
         overlay: OverlayCoordinator,
         chrome: WorkspaceChromeState,
-        hostWindowFeed: HostWindowFeed? = nil,
         installSidebarToggle: ((@escaping () -> Void) -> Void)? = nil,
         installPinToggle: ((@escaping () -> Void) -> Void)? = nil,
-        installHostRailToggle: ((@escaping () -> Void) -> Void)? = nil,
     ) {
         self.store = store
         self.connection = connection
         self.overlay = overlay
         self.chrome = chrome
-        self.hostWindowFeed = hostWindowFeed
         self.installSidebarToggle = installSidebarToggle
         self.installPinToggle = installPinToggle
-        self.installHostRailToggle = installHostRailToggle
     }
 
     /// The active tab's active pane's live session, if materialized — the source of the active pane's ping
@@ -124,7 +114,7 @@ public struct WorkspaceRootView: View {
         // (`SlateTitlebar`, inside `ContentColumn`) IS the chrome.
         WorkspaceSplitRepresentable(
             store: store, connection: connection, chrome: chrome, overlay: overlay,
-            preferences: preferencesStore, hostWindowFeed: hostWindowFeed,
+            preferences: preferencesStore,
         )
         .ignoresSafeArea()
         // The floating-overlay layer (palette / cheat sheet / connect / remote-window picker / toasts)
@@ -221,10 +211,6 @@ public struct WorkspaceRootView: View {
         // "Toggle Tabs Panel" flips the flag the split + the ✓ read (not the dead `store.sidebarCollapsed`).
         // Bound here because `chrome` predates the app-built overlay.
         overlay.toggleSidebar = { [chrome] in chrome.toggleSidebar() }
-        // Host Windows rail (docs/45): the ⌘⇧R chord + the palette row flip the SAME live
-        // `chrome.hostRailCollapsed` the split item + the rail's own button read.
-        installHostRailToggle? { [chrome] in chrome.toggleHostWindows() }
-        overlay.toggleHostWindows = { [chrome] in chrome.toggleHostWindows() }
         // Pin Window: route the palette / any command surface AND a user-bound chord (chord-less by default)
         // to the SAME live `chrome.pinned` the menu Button + the macOS `NSWindow.level` glue read.
         overlay.togglePinWindow = { [chrome] in chrome.togglePin() }
@@ -395,7 +381,7 @@ public struct WorkspaceRootView: View {
                 .help("Command Palette")
         }
         ToolbarItem(placement: .primaryAction) {
-            // The `+` mints a focused terminal pane directly (the Stage re-scope retired the chooser).
+            // The `+` mints a focused terminal pane directly (the kind chooser is retired).
             Button { store.newTerminalPane(.newTab) } label: { Image(systemSymbol: .plus) }
                 .help("New Tab")
         }
@@ -434,26 +420,18 @@ struct WorkspaceSplitRepresentable: NSViewControllerRepresentable {
     /// The NSHostingController columns do not inherit the WindowGroup environment, hence the explicit thread.
     /// `nil` (no scene injection / a preview) hides the row.
     let preferences: PreferencesStore?
-    /// The app-owned host-windows feed (docs/45) the RIGHT rail renders. `nil` (previews/tests)
-    /// skips the third split item.
-    var hostWindowFeed: HostWindowFeed?
 
     func makeNSViewController(context _: Context) -> SlopDeskSplitViewController {
         SlopDeskSplitViewController(
             store: store, connection: connection, chrome: chrome, preferences: preferences,
-            hostWindowFeed: hostWindowFeed,
             onConnect: { [overlay] in overlay.openConnect() },
             overlay: overlay,
         )
     }
 
     func updateNSViewController(_ controller: SlopDeskSplitViewController, context _: Context) {
-        // Reading the @Observable flags here ties this update to their changes; apply to the items.
-        controller.applyCollapse(
-            sidebarCollapsed: chrome.sidebarCollapsed,
-            hostRailCollapsed: chrome.hostRailCollapsed,
-        )
-        controller.applyRailCompact(chrome.hostRailCompact)
+        // Reading the @Observable flag here ties this update to its changes; apply to the item.
+        controller.applyCollapse(sidebarCollapsed: chrome.sidebarCollapsed)
     }
 }
 #endif

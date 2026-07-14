@@ -4,12 +4,12 @@ import XCTest
 
 // MARK: - RemoteWindowTabLandingTests (WS-A store landing)
 
-/// Pins the store landing for the GUI/video pane: ``WorkspaceStore/openWindowInStage(windowID:title:appName:)``
-/// (the STAGE ingress — the picker / rail / palette entry, WorkspaceStore+Stage.swift) mints a
-/// `.remoteGUI` STAGE tab pre-bound to a host window, preserves the registry-key invariant, and — through
+/// Pins the store landing for the WS-A GUI/video pane: ``WorkspaceStore/newRemoteWindowTab(windowID:title:appName:)``
+/// (the tree-path "New Remote Window Tab" / picker-resolve entry, WorkspaceStore+RemoteWindow.swift) mints a
+/// `.remoteGUI` leaf pre-bound to a host window, preserves the registry-key invariant, and — through
 /// `wireMaterializedLeaf` — wires the materialized ``RemoteWindowModel``'s `onEndpointCommitted` so an
 /// `open()` persists the live binding back into the pane's `spec.video` (PANE REBIND: a relaunch re-streams
-/// instead of re-showing the picker; `updatingSpec` reaches STAGE specs too).
+/// instead of re-showing the picker).
 ///
 /// Shape assertions use the spec-only ``FakePaneSession`` seam; the `onEndpointCommitted` persistence test
 /// uses a real ``LivePaneSession`` (via ``WorkspaceStore/liveMakeSession`` with a throwing
@@ -19,33 +19,33 @@ import XCTest
 final class RemoteWindowTabLandingTests: XCTestCase {
     // MARK: - kind + invariant
 
-    /// `openWindowInStage` mints a `.remoteGUI` STAGE tab, selects it, and leaves the registry-key
-    /// invariant intact (`Set(registry ids) == Set(tree ∪ stage pane ids)`).
-    func testOpenWindowInStageMintsRemoteGUIStageTab() throws {
+    /// `newRemoteWindowTab` mints a `.remoteGUI` leaf, selects+focuses it, and leaves the registry-key
+    /// invariant intact (`Set(registry ids) == Set(pane ids)`).
+    func testNewRemoteWindowTabMintsRemoteGUILeaf() throws {
         let store = WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0) }, liveVideoCap: 2)
 
-        let id = try XCTUnwrap(store.openWindowInStage(windowID: 42, title: "Apple", appName: "Safari"))
+        let id = store.newRemoteWindowTab(windowID: 42, title: "Apple", appName: "Safari")
 
         let handle = try XCTUnwrap(store.handle(for: id))
         XCTAssertEqual(handle.kind, .remoteGUI, "the new tab is a remote-GUI video pane")
         XCTAssertTrue(handle.kind.isVideo)
-        XCTAssertEqual(store.activeStagePaneID, id, "the fresh stage tab is selected")
+        XCTAssertEqual(store.tree.activeSession?.activeTab?.activePane, id, "selected + focused like newTab(kind:)")
 
-        // Registry-key invariant: one handle per pane, keyed by pane id (tree leaves ∪ stage panes).
+        // Registry-key invariant: one handle per pane, keyed by pane id.
         XCTAssertEqual(
             Set(store.allSessions.map(\.id)),
-            Set(store.tree.allPaneIDs() + store.tree.allStagePaneIDs()),
-            "registry keys == tree ∪ stage pane ids after openWindowInStage",
+            Set(store.tree.allPaneIDs()),
+            "registry keys == pane ids after newRemoteWindowTab",
         )
-        XCTAssertTrue(store.tree.isInvariantHeld(), "tree specs==paneIDs invariant holds")
+        XCTAssertTrue(store.tree.isInvariantHeld(), "tree specs==leafIDs invariant holds")
     }
 
     /// The leaf's spec carries the pre-bound ``VideoEndpoint`` (so the materialized model opens
     /// immediately) and the label folds title→appName→"Remote window".
-    func testOpenWindowInStagePreBindsTheVideoEndpoint() throws {
+    func testNewRemoteWindowTabPreBindsTheVideoEndpoint() throws {
         let store = WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0) }, liveVideoCap: 2)
 
-        let id = try XCTUnwrap(store.openWindowInStage(windowID: 7, title: "", appName: "Finder"))
+        let id = store.newRemoteWindowTab(windowID: 7, title: "", appName: "Finder")
         let spec = try XCTUnwrap(store.tree.activeSession?.specs[id])
         XCTAssertEqual(spec.kind, .remoteGUI)
         XCTAssertEqual(spec.title, "Finder", "empty title folds to the app name")
@@ -68,8 +68,8 @@ final class RemoteWindowTabLandingTests: XCTestCase {
             liveVideoCap: 2,
         )
 
-        // Land a remote-GUI STAGE tab pre-bound to window 42, then materialize its live session.
-        let id = try XCTUnwrap(store.openWindowInStage(windowID: 42, title: "Apple", appName: "Safari"))
+        // Land a remote-GUI tab pre-bound to window 42, then materialize its live session.
+        let id = store.newRemoteWindowTab(windowID: 42, title: "Apple", appName: "Safari")
         let live = try XCTUnwrap(store.handle(for: id) as? LivePaneSession)
         let model = try XCTUnwrap(live.remoteWindow, "a remoteGUI session always has a RemoteWindowModel")
         XCTAssertNotNil(model.onEndpointCommitted, "wireMaterializedLeaf wired the persistence callback")

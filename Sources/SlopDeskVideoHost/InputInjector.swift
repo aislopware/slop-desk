@@ -131,6 +131,17 @@ public final class InputInjector: @unchecked Sendable {
     ///   ``balanceSnapshot`` so a button/modifier the user held ACROSS the reconnect still matches
     ///   its eventual up (an empty balance would classify that up as an orphan → suppress → the
     ///   terminating CGEvent is never posted → host OS stuck in drag/modifier state).
+    /// DISPLAY-SCOPED injector (the full-desktop pane): coordinates map against the display's CG
+    /// bounds and there is NO target window/app — the AX raise chain is skipped entirely
+    /// (`CGEvent.post(.cghidEventTap)` already delivers to whatever is frontmost / under the
+    /// cursor, which for whole-desktop remoting is exactly right).
+    public convenience init(
+        displayBoundsCG: VideoRect,
+        balance: InputButtonBalance = InputButtonBalance(),
+    ) {
+        self.init(pid: 0, windowID: 0, windowBoundsCG: displayBoundsCG, balance: balance)
+    }
+
     public init(
         pid: pid_t,
         windowID: CGWindowID,
@@ -194,6 +205,9 @@ public final class InputInjector: @unchecked Sendable {
     /// The actual raise, CONFINED to ``raiseQueue`` (off the main actor). Serial + throttled so the
     /// several raise requests one click fires coalesce.
     private func performRaise() {
+        // A display-scoped injector (full-desktop pane, pid 0) has no target window/app to raise —
+        // whole-desktop input goes to whatever is frontmost, exactly like a local user.
+        guard pid > 0 else { return }
         // Skip the whole chain when the target app is ALREADY frontmost and we have raised at least
         // once. Errs toward raising (``InputInjectorRaisePolicy``): a backgrounded window, a different
         // frontmost app, or an unreadable frontmost still runs the full raise.

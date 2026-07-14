@@ -283,18 +283,6 @@ public enum SettingsKey {
     /// ``SidebarAutoHidePolicy/desiredCollapsed(mode:tabCount:)`` and the view-side glue drives
     /// ``WorkspaceChromeState/sidebarCollapsed`` from it. `Key` suffix frees the bare ``autoHideTabsPanel`` name.
     public static let autoHideTabsPanelKey = "shell.autoHideTabsPanel" // AutoHideTabsPanelMode.rawValue
-    /// Whether the Host Windows rail (docs/45, the RIGHT sidebar) is collapsed. Default FALSE —
-    /// at its compact (icon-only) width the rail earns its pixels as the always-on window tracker;
-    /// ⌘⇧R / palette / titlebar hide it, and the choice persists.
-    public static let hostWindowsRailCollapsedKey = "shell.hostWindowsRailCollapsed"
-    /// Whether the Host Windows rail renders COMPACT (icon-only, ``hostRailCompactWidth``) vs WIDE
-    /// (icon + title rows). A sticky user choice (divider drag-snap / divider double-click), never a
-    /// hover-transient — width states are intentional (the VS Code / Material rail convention).
-    public static let hostWindowsRailCompactKey = "shell.hostWindowsRailCompact"
-    /// The STAGE zone's width in points (the Stage re-scope — the tabbed non-terminal zone beside the
-    /// canvas). Written on divider-drag release; the zone itself shows/hides by stage EMPTINESS, so
-    /// only the width persists.
-    public static let stageWidthKey = "shell.stageWidth"
 
     /// The working-directory policy for a NEW WINDOW (`working-directory`), default `home` — a fresh
     /// window opens at the shell's login cwd. Stored as the ``WorkingDirectoryPolicy/rawConfig`` string
@@ -886,23 +874,6 @@ public extension Defaults.Keys {
         slopDesk: SettingsKey.autoHideTabsPanelKey,
         default: .default,
     )
-    // Host Windows rail (docs/45): visible by default now that the default flavour is the compact
-    // icon strip (56pt earns its pixels as the window tracker); the ⌘⇧R / palette / titlebar toggle
-    // persists the user's choice across launches.
-    static let hostWindowsRailCollapsed = Key<Bool>(
-        slopDesk: SettingsKey.hostWindowsRailCollapsedKey,
-        default: false,
-    )
-    // Compact (icon-only) vs wide rail — sticky, flipped by the rail divider's drag-snap /
-    // double-click. Compact is the default: identity = icon + streamed ordinal; titles live on the
-    // hover card, and the wide rows are one divider drag away.
-    static let hostWindowsRailCompact = Key<Bool>(
-        slopDesk: SettingsKey.hostWindowsRailCompactKey,
-        default: true,
-    )
-    // The Stage zone's width (pt). Default 480 — wide enough for a legible streamed window beside a
-    // working terminal column; the divider drag clamps + persists the user's choice.
-    static let stageWidth = Key<Double>(slopDesk: SettingsKey.stageWidthKey, default: 480)
     // Working-directory policies stored as the `WorkingDirectoryPolicy.rawConfig` String (config value).
     // New window defaults to `home` (login cwd); new tab / split default to `inherit` (active pane's cwd).
     static let workingDirectoryNewWindow = Key<String>(

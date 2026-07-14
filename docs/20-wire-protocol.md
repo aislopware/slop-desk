@@ -519,9 +519,19 @@ media flows. `[UInt8 type][body]`, big-endian:
 | `1` | `hello`    | client → host | `UInt16 protocolVersion` + `UInt32 requestedWindowID` + `Float64 viewportW` + `Float64 viewportH` |
 | `2` | `helloAck` | host → client | `UInt8 accepted(0/1)` + `UInt32 streamID` + `UInt16 captureWidth` + `UInt16 captureHeight` + `Float64 boundsX` + `boundsY` + `boundsW` + `boundsH` |
 | `3` | `bye`      | either | *(empty)* |
+| `24` | `helloDisplay` | client → host | `UInt16 protocolVersion` + `UInt32 requestedDisplayID` + `Float64 viewportW` + `Float64 viewportH` |
 
 - `hello` announces the client, the host `CGWindowID` it wants to remote, and the client viewport
   size so the host can size capture/encode to the client surface.
+- **`helloDisplay` (24, the full-desktop pane — 2026-07-14 pivot)** is the display sibling of
+  `hello`: it names a host `CGDirectDisplayID` (`0` = the main display) instead of a window, and the
+  host answers with the SAME `helloAck` shape — `bounds*` carry the DISPLAY's CG bounds and
+  `captureWidth/Height` its point size, so everything downstream (decode, aspect-fit, the
+  normalized input mapping) is target-agnostic. A display session never resizes the host
+  (`resizeRequest` is rejected; the client letterboxes), gets no geometry datagrams (the bounds are
+  fixed), and injects input with NO AX raise (whole-desktop input lands wherever a local user's
+  would). An old host drops the unknown type → the client's hello retry gives up like any downed
+  host.
 - `helloAck` confirms (or rejects via `accepted = 0`) and reports the **host-decided** capture
   dimensions plus the window's current **CG top-left bounds** — the client's input-mapping origin
   until the geometry channel updates it. ("Negotiated" elsewhere in the code/comments means this
@@ -564,11 +574,17 @@ media flows. `[UInt8 type][body]`, big-endian:
   `WindowRebind` open-time/reconnect revalidation. The reply enumerates ALL streamable windows —
   on-screen first, then titled minimized / other-Space ones (the mint path rescues those via AX
   un-minimize), so absence in the reply really does mean "gone from the host";
-  `listSystemDialogs` (11, zero body) → `systemDialogList` (12) powers the system-popup panes. Exact
-  record layouts live in the `VideoControlCodec.swift` header table (golden-pinned).
-- **Host-window FEED (docs/45 rail, 2026-07-11):** `windowFeedSubscribe` (16, client → host,
-  `UInt32 knownGeneration`, 0 = have nothing) is the ONE feed message — sent every ~2 s while the
-  host-windows rail / Open Quickly is visible it is simultaneously the poll, the (Phase-2)
+  `listSystemDialogs` (11, zero body) → `systemDialogList` (12) powers the system-popup panes;
+  `listDisplays` (22, zero body) → `displayList` (23, `UInt16 count` + per record `UInt32
+  displayID` + `UInt16 wPt` + `UInt16 hPt` + `UInt8 isMain`) enumerates the online displays for the
+  full-desktop pane (the client defaults to the main display via `requestedDisplayID 0`, so this
+  pair is informational/multi-display only). Exact record layouts live in the
+  `VideoControlCodec.swift` header table (golden-pinned).
+- **Host-window FEED (2026-07-11; the dedicated rail UI was retired by the 2026-07-14 full-desktop
+  pivot — the feed remains LOAD-BEARING for Open Quickly's Host rows + the app-launch layout
+  auto-switch):** `windowFeedSubscribe` (16, client → host,
+  `UInt32 knownGeneration`, 0 = have nothing) is the ONE feed message — sent every ~2 s while
+  Open Quickly is visible it is simultaneously the poll, the (Phase-2)
   subscription renewal, and the loss-healing resync anchor. The host answers with either
   **`windowFeedCurrent` (18, `UInt32 generation`)** — "you're current", so a quiet desktop costs
   5 bytes each way per renewal — or a **`windowFeedSnapshot` (17)** chunk sequence: `UInt32
@@ -581,7 +597,8 @@ media flows. `[UInt8 type][body]`, big-endian:
   ~25 ms apart (the `bye`/`streamCadence` loss pattern). The client assembles per generation (all
   chunks must agree on `chunkCount`), applies the latest fully-assembled generation, and heals any
   loss at the next renewal. All three are inert to an old peer (unknown type → dropped).
-- **App icons + blobs (docs/45 Phase 3):** `appIconRequest` (19, client → host, `UInt16 sizePx` +
+- **App icons + blobs (client-dormant since the rail's retirement — the wire stays pinned):**
+  `appIconRequest` (19, client → host, `UInt16 sizePx` +
   lp `bundleID`) is session-LESS like the feed subscribe (bootstraps, bye-exempt, lane retired per
   answer). The host answers with **`blobChunk` (20)** — the ONE shared binary-blob reply: `UInt8
   blobKind` + `UInt64 blobID` + `UInt16 metaA` + `UInt16 metaB` + `UInt8 chunkIndex` + `UInt8
@@ -592,7 +609,7 @@ media flows. `[UInt8 type][body]`, big-endian:
   accumulation, and validates image magic before any cache sees bytes; a request retransmit
   re-sends every chunk from the host's LRU'd encoded cache (whole-blob re-request — no per-chunk
   NACK machinery). Both inert to an old peer.
-- **Window-preview PEEK (docs/45 Phase 4):** `windowPreviewRequest` (21, client → host, `UInt32
+- **Window-preview PEEK (client-dormant since the rail's retirement):** `windowPreviewRequest` (21, client → host, `UInt32
   windowID` + `UInt16 maxWidthPx`) — session-LESS like `appIconRequest`. Answered with `blobChunk`
   kind 1 (JPEG). The host hard-throttles (single-flight per window, captures reused ≤ 1 s, ≤ 2
   fresh captures/s globally, chunks paced ~1 datagram/ms) because `SCScreenshotManager` shares
