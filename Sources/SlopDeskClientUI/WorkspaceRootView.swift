@@ -453,6 +453,7 @@ struct WorkspaceSplitRepresentable: NSViewControllerRepresentable {
             sidebarCollapsed: chrome.sidebarCollapsed,
             hostRailCollapsed: chrome.hostRailCollapsed,
         )
+        controller.applyRailCompact(chrome.hostRailCompact)
     }
 }
 #endif

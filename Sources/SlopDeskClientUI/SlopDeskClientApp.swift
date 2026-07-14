@@ -1026,7 +1026,10 @@ public struct SlopDeskClientApp: App {
         // (the titlebar is an overlay → no vertical cost; vertical-tabs-only → no horizontal tab bar).
         let overheadWidth =
             (chrome.sidebarCollapsed ? 0 : SlopDeskSplitViewController.defaultSidebarWidth)
-                + (chrome.hostRailCollapsed ? 0 : Slate.Metric.hostRailWidth)
+                + (chrome.hostRailCollapsed
+                    ? 0
+                    : chrome.hostRailCompact
+                    ? Slate.Metric.hostRailCompactWidth : Slate.Metric.hostRailWidth)
         let chromeOverhead = CGSize(width: overheadWidth, height: 0)
         guard let size = WindowSizeMath.resolvedContentSize(
             mode: mode,

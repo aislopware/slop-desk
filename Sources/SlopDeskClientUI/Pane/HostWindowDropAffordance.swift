@@ -69,12 +69,17 @@ struct HostWindowRowDragSource: NSViewRepresentable {
     /// Hover in/out — the overlay swallows the events SwiftUI `.onHover` rides, so it senses hover
     /// itself (tracking areas ignore hitTest) and the row styles off this instead.
     let onHover: (Bool) -> Void
+    /// COMPACT-rail identity card (``HostWindowHoverCardPresenter``): non-nil arms the hover dwell,
+    /// with this view as the card's anchor (the overlay IS the row's frame). The wide rail passes
+    /// `nil` — its rows carry the title inline and keep the system `.help` tooltip instead.
+    var hoverCardModel: (@MainActor () -> HostWindowHoverCardModel)?
 
     func makeNSView(context _: Context) -> DragView {
         let view = DragView()
         view.payload = payload
         view.onAct = onAct
         view.onHover = onHover
+        view.hoverCardModel = hoverCardModel
         return view
     }
 
@@ -82,12 +87,14 @@ struct HostWindowRowDragSource: NSViewRepresentable {
         view.payload = payload
         view.onAct = onAct
         view.onHover = onHover
+        view.hoverCardModel = hoverCardModel
     }
 
     final class DragView: NSView, NSDraggingSource {
         var payload: HostWindowDragPayload?
         var onAct: ((_ duplicate: Bool) -> Void)?
         var onHover: ((Bool) -> Void)?
+        var hoverCardModel: (@MainActor () -> HostWindowHoverCardModel)?
 
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
@@ -100,11 +107,29 @@ struct HostWindowRowDragSource: NSViewRepresentable {
             ))
         }
 
-        override func mouseEntered(with _: NSEvent) { onHover?(true) }
-        override func mouseExited(with _: NSEvent) { onHover?(false) }
+        override func mouseEntered(with _: NSEvent) {
+            onHover?(true)
+            if let hoverCardModel {
+                HostWindowHoverCardPresenter.shared.schedule(anchor: self, model: hoverCardModel)
+            }
+        }
+
+        override func mouseExited(with _: NSEvent) {
+            onHover?(false)
+            HostWindowHoverCardPresenter.shared.dismiss(anchor: self)
+        }
+
+        /// A row torn down mid-hover (scroll recycle / feed removal / window close) never fires
+        /// `mouseExited` — drop its pending/visible card on the way out.
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            super.viewWillMove(toWindow: newWindow)
+            if newWindow == nil { HostWindowHoverCardPresenter.shared.dismiss(anchor: self) }
+        }
 
         override func mouseDown(with event: NSEvent) {
             guard let window else { return }
+            // The click IS the answer the card was previewing — clear it (and its dwell) now.
+            HostWindowHoverCardPresenter.shared.dismiss(anchor: self)
             let start = event.locationInWindow
             // Standard AppKit click-vs-drag disambiguation loop (the divider idiom): consume
             // drag/up events until the 4pt threshold or release.

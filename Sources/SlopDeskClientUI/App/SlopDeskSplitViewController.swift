@@ -144,8 +144,9 @@ final class SlopDeskSplitViewController: NSSplitViewController {
                 store: store, feed: hostWindowFeed, chrome: chrome,
             ))
             let hostRailItem = NSSplitViewItem(viewController: hostRail)
-            hostRailItem.minimumThickness = Slate.Metric.hostRailMinWidth
-            hostRailItem.maximumThickness = Slate.Metric.hostRailMaxWidth
+            let railRange = Self.railThicknessRange(compact: chrome.hostRailCompact)
+            hostRailItem.minimumThickness = railRange.min
+            hostRailItem.maximumThickness = railRange.max
             hostRailItem.canCollapse = true
             hostRailItem.holdingPriority = NSLayoutConstraint.Priority(260)
             hostRailItem.isCollapsed = chrome.hostRailCollapsed
@@ -292,6 +293,56 @@ final class SlopDeskSplitViewController: NSSplitViewController {
             hostRailItem.animator().isCollapsed = hostRailCollapsed
         }
     }
+
+    /// Apply the rail's STICKY compact/wide flavour to the split item's thickness range (compact
+    /// pins min = max = ``Slate/Metric/hostRailCompactWidth``; wide restores min…max). Idempotent —
+    /// the representable calls this every update. The width change relayouts the centre column, so
+    /// a VISIBLE rail takes the same suspend-first treatment as `applyCollapse` (a COLLAPSED rail's
+    /// range change moves no layout — suspending there would leave forwarding stuck with no resize
+    /// notification to settle it).
+    func applyRailCompact(_ compact: Bool) {
+        guard let hostRailItem else { return }
+        let range = Self.railThicknessRange(compact: compact)
+        guard hostRailItem.minimumThickness != range.min
+            || hostRailItem.maximumThickness != range.max
+        else { return }
+        if !hostRailItem.isCollapsed {
+            resizeForwardingSuspended = true
+            store.setTerminalResizeSuspended(true)
+        }
+        hostRailItem.minimumThickness = range.min
+        hostRailItem.maximumThickness = range.max
+    }
+
+    /// Divider double-click: flip compact ⇄ wide (the sticky-state toggle the drag-snap also
+    /// lands on). Persists via the chrome state; the thickness change applies immediately.
+    func toggleRailCompact() {
+        chrome.setHostRailCompact(!chrome.hostRailCompact)
+        applyRailCompact(chrome.hostRailCompact)
+    }
+
+    /// A manual rail-divider drag spans BOTH flavours (compact 56 ↔ wide 220…320, snapping over
+    /// the dead zone between), so the tracked drag temporarily relaxes the item's pinned range —
+    /// no width change happens here (the current width sits inside the relaxed span), so no
+    /// relayout fires.
+    func beginRailDividerDrag() {
+        guard let hostRailItem else { return }
+        hostRailItem.minimumThickness = Slate.Metric.hostRailCompactWidth
+        hostRailItem.maximumThickness = Slate.Metric.hostRailMaxWidth
+    }
+
+    /// Drag released: the clamp's snap guarantees the settled width is either the compact width or
+    /// inside the wide band — read it, make that flavour the sticky mode, and re-tighten the range
+    /// around it (no width change ⇒ no relayout; the persisted flag is what survives relaunch).
+    func endRailDividerDrag() {
+        guard let hostRailItem else { return }
+        let width = hostRailItem.viewController.view.frame.width
+        let compact = width < Slate.Metric.hostRailMinWidth - 0.5
+        chrome.setHostRailCompact(compact)
+        let range = Self.railThicknessRange(compact: compact)
+        hostRailItem.minimumThickness = range.min
+        hostRailItem.maximumThickness = range.max
+    }
 }
 
 /// A drop-in `NSSplitView` whose ONLY change is a flat, theme-coloured divider — installed via
@@ -320,7 +371,19 @@ private final class FlatDividerSplitView: NSSplitView {
             super.mouseDown(with: event)
             return
         }
+        let controller = delegate as? SlopDeskSplitViewController
+        // Double-click = flip compact ⇄ wide (the sticky flavour toggle the drag-snap also lands
+        // on) — the standard macOS divider double-click affordance, repurposed since this app
+        // never drag- or click-collapses.
+        if event.clickCount == 2 {
+            controller?.toggleRailCompact()
+            return
+        }
+        // A drag spans both flavours: relax the item's pinned range for the tracked loop, then let
+        // the release make whichever side the snap settled on the sticky mode.
+        controller?.beginRailDividerDrag()
         trackRailDividerDrag(with: event, dividerIndex: railDivider)
+        controller?.endRailDividerDrag()
     }
 
     /// The rail divider's index iff `event` grabs it: the LAST divider of a 3-column layout, hit
@@ -411,18 +474,25 @@ private final class FlatDividerSplitView: NSSplitView {
         }
     }
 
-    /// The hover/drag cursor for divider `i`, from pure width-range movability.
+    /// The hover/drag cursor for divider `i`, from pure width-range movability. The RAIL divider's
+    /// range is the DRAG span (compact 56 … wide max), not the item's mode-pinned min/max — a
+    /// compact rail at its pinned 56 = 56 would otherwise read "wedged" though a leftward drag
+    /// (expand to wide) is live, and a wide rail at 220 can still shrink (snap to compact).
     private func dividerCursor(at i: Int) -> NSCursor {
         guard let items = (delegate as? NSSplitViewController)?.splitViewItems,
               items.count == arrangedSubviews.count, i + 1 < items.count
         else { return .resizeLeftRight }
+        let isRailDivider = arrangedSubviews.count == 3 && i == 1
+            && delegate is SlopDeskSplitViewController
         let movability = SlopDeskSplitViewController.dividerMovability(
             leadingWidth: arrangedSubviews[i].frame.width,
             leadingMin: items[i].minimumThickness,
             leadingMax: items[i].maximumThickness,
             trailingWidth: arrangedSubviews[i + 1].frame.width,
-            trailingMin: items[i + 1].minimumThickness,
-            trailingMax: items[i + 1].maximumThickness,
+            trailingMin: isRailDivider
+                ? Slate.Metric.hostRailCompactWidth : items[i + 1].minimumThickness,
+            trailingMax: isRailDivider
+                ? Slate.Metric.hostRailMaxWidth : items[i + 1].maximumThickness,
         )
         switch (movability.left, movability.right) {
         case (true, true): return .resizeLeftRight
@@ -437,14 +507,37 @@ private final class FlatDividerSplitView: NSSplitView {
 }
 
 extension SlopDeskSplitViewController {
-    /// Clamp a proposed rail-divider position to the same limits the split items declare: content
-    /// ≥ its minimum, rail within min…max. Drag-to-collapse is deliberately not offered — the rail
-    /// collapses via its toggle (⌘⇧R / titlebar / palette), never by shoving the divider. In an
-    /// over-constrained window (content floor + rail max cannot both hold) the rail's MINIMUM wins:
-    /// the divider can then only be pushed toward the rail's floor, never below it.
+    /// The rail item's pinned thickness range per sticky flavour: compact pins the icon-strip
+    /// width rigid (window-resize can never squish or stretch it); wide keeps the min…max band.
+    static func railThicknessRange(compact: Bool) -> (min: CGFloat, max: CGFloat) {
+        compact
+            ? (Slate.Metric.hostRailCompactWidth, Slate.Metric.hostRailCompactWidth)
+            : (Slate.Metric.hostRailMinWidth, Slate.Metric.hostRailMaxWidth)
+    }
+
+    /// The drag-snap watershed between the rail's two flavours: a proposed rail width below the
+    /// compact/wide midpoint POPS to the compact width; at or above it, the wide band's clamp
+    /// takes over. The dead zone between compact and wide-min is never a width, even mid-drag.
+    static let railSnapMidpoint: CGFloat =
+        (Slate.Metric.hostRailCompactWidth + Slate.Metric.hostRailMinWidth) / 2
+
+    /// Clamp a proposed rail-divider position: proposals below the snap midpoint resolve to the
+    /// COMPACT width (the Finder-sidebar drag-collapse pop — live, not on release); wide-band
+    /// proposals honour the same limits the split items declare (content ≥ its minimum, rail
+    /// within min…max). Drag-to-collapse is deliberately not offered — the rail HIDES via its
+    /// toggle (⌘⇧R / titlebar / palette), never by shoving the divider. In an over-constrained
+    /// window (content floor + rail max cannot both hold) the rail's MINIMUM wins: the divider
+    /// can then only be pushed toward the rail's floor, never below it.
     static func clampedRailDividerPosition(
         proposed: CGFloat, contentMinX: CGFloat, splitWidth: CGFloat, dividerThickness: CGFloat,
     ) -> CGFloat {
+        let proposedRailWidth = splitWidth - dividerThickness - proposed
+        if proposedRailWidth < railSnapMidpoint {
+            // Compact pop. The content floor cannot bind here — the compact position gives the
+            // content MORE room than any wide-band position; in a window too narrow for even
+            // that, the rail's floor wins (the same over-constrained rule as the wide band).
+            return splitWidth - dividerThickness - Slate.Metric.hostRailCompactWidth
+        }
         let lowest = CGFloat.maximum(
             contentMinX + contentMinWidth,
             splitWidth - dividerThickness - Slate.Metric.hostRailMaxWidth,

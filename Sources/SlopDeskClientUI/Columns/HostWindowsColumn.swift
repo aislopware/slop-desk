@@ -3,6 +3,12 @@
 // rows at radius 7. A supervision instrument, not a picker: every row is one click from becoming a
 // pane, and every already-streamed window points back at its pane (trailing accent tab ordinal).
 //
+// TWO STICKY WIDTHS (the icon-strip convention — VS Code activity bar / Discord rail): COMPACT
+// (56pt, the default — icon-only plates, ordinal stamped on the corner, titles on the hover card,
+// no header/search) and WIDE (220–320pt, the full anatomy above). The divider drag live-snaps
+// between them and double-click flips them; rendering keys off the MEASURED width so mid-drag
+// frames are honest. Never hover-expanded — width is a choice, not a transient.
+//
 // This rail is ALSO the workspace's window TRACKER: the left rail lists terminal panes only
 // (`RailRowsBuilder.rows` excludes `.remoteGUI`), so an open remote window's ONE home is its host
 // row here — streamed = accent ordinal, focused = the raised card, click = reveal the pane (tab
@@ -55,6 +61,18 @@ struct HostWindowsColumn: View {
     }
 
     var body: some View {
+        // COMPACT (icon strip) vs WIDE (icon + title rows) is decided by the MEASURED width, not
+        // the sticky chrome flag: the divider drag live-snaps the column between the two widths,
+        // and rendering off geometry keeps every mid-drag frame honest (the flag only pins the
+        // split item's thickness range between drags).
+        GeometryReader { geo in
+            column(compact: geo.size.width < Slate.Metric.hostRailMinWidth - 0.5)
+        }
+        .background(Slate.theme.ground)
+    }
+
+    @ViewBuilder
+    private func column(compact: Bool) -> some View {
         // Filter reads `feed.titles` ONLY while a query is active (registering the body's dependency
         // on titles is the price of live-filtering; at rest an empty query keeps the body
         // structural-only, so title ticks re-render just the ≤64 leaves).
@@ -63,16 +81,22 @@ struct HostWindowsColumn: View {
             titles: query.isEmpty ? [:] : feed.titles,
             query: query,
         )
-        return VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             strip
-            header
-            searchField
-                .padding(.horizontal, 8)
-                .padding(.bottom, 6)
-            list(sections)
+            if !compact {
+                header
+                searchField
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 6)
+            }
+            list(sections, compact: compact)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Slate.theme.ground)
+        // COMPACT has no search plate — drop a lingering filter so the icon list is never silently
+        // narrowed by an invisible query (⌘K / Open Quickly carry search at this width).
+        .onChange(of: compact) { _, isCompact in
+            if isCompact { query = "" }
+        }
     }
 
     // MARK: - Chrome (strip + header + search — the left rail's anatomy, mirrored)
@@ -148,26 +172,40 @@ struct HostWindowsColumn: View {
     // MARK: - List
 
     @ViewBuilder
-    private func list(_ sections: [(appName: String, rows: [HostWindowIdentity])]) -> some View {
+    private func list(
+        _ sections: [(appName: String, rows: [HostWindowIdentity])], compact: Bool,
+    ) -> some View {
         if HostWindowFeedQuery.openLink == nil {
-            emptyLabel("Window discovery unavailable")
+            emptyLabel("Window discovery unavailable", compact: compact)
         } else if !feed.hasEverLoaded {
             // Never loaded: connected ⇒ the first snapshot is in flight (rows appear fully formed —
             // no spinner, no skeleton); disconnected ⇒ say what unlocks the rail.
-            emptyLabel(feed.isLive ? " " : "Connect to a host to see its windows")
+            emptyLabel(feed.isLive ? " " : "Connect to a host to see its windows", compact: compact)
         } else if sections.isEmpty {
-            emptyLabel(query.isEmpty
-                ? "No windows on the host"
-                : windowFilterEmptyMessage())
+            emptyLabel(
+                query.isEmpty
+                    ? "No windows on the host"
+                    : windowFilterEmptyMessage(),
+                compact: compact,
+            )
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
-                    ForEach(sections, id: \.appName) { section in
-                        SlateSectionHeader(section.appName.uppercased()) {
-                            if section.rows.count > 1 {
-                                Text("\(section.rows.count)")
-                                    .font(Slate.Typeface.instrument(Slate.Typeface.small))
-                                    .foregroundStyle(Slate.Text.tertiary)
+                    ForEach(Array(sections.enumerated()), id: \.element.appName) { index, section in
+                        if compact {
+                            // Zone structure survives compaction as pure SPACING (the Arc compact
+                            // rule): same-app icons already read as a group; a caps header has no
+                            // room at the icon-strip width.
+                            if index > 0 {
+                                Color.clear.frame(height: Slate.Metric.space2)
+                            }
+                        } else {
+                            SlateSectionHeader(section.appName.uppercased()) {
+                                if section.rows.count > 1 {
+                                    Text("\(section.rows.count)")
+                                        .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                                        .foregroundStyle(Slate.Text.tertiary)
+                                }
                             }
                         }
                         ForEach(section.rows) { identity in
@@ -175,6 +213,7 @@ struct HostWindowsColumn: View {
                                 identity: identity,
                                 feed: feed,
                                 store: store,
+                                compact: compact,
                                 isCursor: cursor == identity && listFocused,
                                 onAct: { duplicate in act(on: identity, duplicate: duplicate) },
                                 onPeek: HostWindowPreviewQuery.shared == nil
@@ -264,13 +303,29 @@ struct HostWindowsColumn: View {
     }
 
     /// The rail's quiet empty label — the left rail's `emptyLabel` register (no icon, no card).
-    private func emptyLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: Slate.Typeface.base))
-            .foregroundStyle(Slate.Text.tertiary)
-            .padding(.horizontal, 16)
-            .padding(.top, 8)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    /// COMPACT has no room for a sentence: a dimmed glyph carries the state and the sentence rides
+    /// its tooltip (the blank in-flight state renders nothing at all).
+    @ViewBuilder
+    private func emptyLabel(_ text: String, compact: Bool) -> some View {
+        if compact {
+            if text.trimmingCharacters(in: .whitespaces).isEmpty {
+                Color.clear
+            } else {
+                Image(systemSymbol: .macwindow)
+                    .font(.system(size: Slate.Typeface.body))
+                    .foregroundStyle(Slate.Text.tertiary)
+                    .help(text)
+                    .padding(.top, 8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            }
+        } else {
+            Text(text)
+                .font(.system(size: Slate.Typeface.base))
+                .foregroundStyle(Slate.Text.tertiary)
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
     }
 
     /// The filter-miss message — names the filter AND the fix (the picker's pinned copy shape).
@@ -319,6 +374,9 @@ private struct HostWindowLiveRow: View {
     let identity: HostWindowIdentity
     let feed: HostWindowFeed
     let store: WorkspaceStore
+    /// COMPACT (icon-only plate, hover card carries the words) vs WIDE (icon + title row, system
+    /// tooltip). Width-derived by the column — see `HostWindowsColumn.body`.
+    let compact: Bool
     let isCursor: Bool
     /// Fires the row's verb; `duplicate` = ⌘-click (open another pane of an already-streamed window).
     let onAct: (_ duplicate: Bool) -> Void
@@ -342,40 +400,56 @@ private struct HostWindowLiveRow: View {
         // selection flip repaints exactly the two affected leaves; restyle-in-place, the row never moves.
         let isFocusedPane = streamed != nil
             && streamed?.paneID == store.activeStagePaneID
-        SlateListRow(
-            active: isCursor || isFocusedPane,
-            onTap: { onAct(NSEvent.modifierFlags.contains(.command)) },
-            leading: { icon(dimmed: dimmed) },
-            title: {
-                // A DIMMED row (minimized / other Space / hidden app) wakes up under the pointer —
-                // the hover preview of what opening it restores. Colour-only, restyle-in-place.
-                Text(title.isEmpty ? identity.appName : title)
-                    .font(.system(size: Slate.Typeface.body, weight: isFrontmost ? .medium : .regular))
-                    .foregroundStyle(dimmed && !hovered ? Slate.Text.secondary : Slate.Text.primary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            },
-            titleTrailing: { _ in
-                // Streamed marker: the pane's tab ordinal in the accent — quiet, positional. No
-                // hover verb hint ("OPEN" / "FOCUS · n") — it would say nothing the click doesn't;
-                // the tooltip already carries the long-form meaning.
-                if let streamed {
-                    Text("\(streamed.tabOrdinal)")
-                        .font(Slate.Typeface.instrument(Slate.Typeface.small))
-                        .foregroundStyle(Slate.State.accent)
-                }
-            },
-            subtitleTrailing: { _ in },
-            trailingOverlay: { _ in },
-            hoverOverride: hovered,
-        )
-        .help(tooltip(title: title, state: state))
+        Group {
+            if compact {
+                compactPlate(dimmed: dimmed, active: isCursor || isFocusedPane, streamed: streamed)
+            } else {
+                SlateListRow(
+                    active: isCursor || isFocusedPane,
+                    onTap: { onAct(NSEvent.modifierFlags.contains(.command)) },
+                    leading: { icon(dimmed: dimmed) },
+                    title: {
+                        // A DIMMED row (minimized / other Space / hidden app) wakes up under the
+                        // pointer — the hover preview of what opening it restores. Colour-only,
+                        // restyle-in-place.
+                        Text(title.isEmpty ? identity.appName : title)
+                            .font(.system(
+                                size: Slate.Typeface.body,
+                                weight: isFrontmost ? .medium : .regular,
+                            ))
+                            .foregroundStyle(
+                                dimmed && !hovered ? Slate.Text.secondary : Slate.Text.primary,
+                            )
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    },
+                    titleTrailing: { _ in
+                        // Streamed marker: the pane's tab ordinal in the accent — quiet,
+                        // positional. No hover verb hint ("OPEN" / "FOCUS · n") — it would say
+                        // nothing the click doesn't; the tooltip already carries the long-form
+                        // meaning.
+                        if let streamed {
+                            Text("\(streamed.tabOrdinal)")
+                                .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                                .foregroundStyle(Slate.State.accent)
+                        }
+                    },
+                    subtitleTrailing: { _ in },
+                    trailingOverlay: { _ in },
+                    hoverOverride: hovered,
+                )
+                // The system tooltip is the WIDE row's long-form layer; compact swaps it for the
+                // styled hover card (both would double up).
+                .help(tooltip(title: title, state: state))
+            }
+        }
         .contextMenu { contextMenu(streamed: streamed) }
         // DRAG SOURCE (docs/45): drag the row onto the canvas to place the window — the
         // canvas previews split/dock/new-tab zones (`HostWindowDropAffordance`). An AppKit overlay,
         // NOT `.onDrag` (the row's tap gesture eats the mouse-down — see `HostWindowRowDragSource`);
         // it also owns the row's left-click (`onAct`, not `SlateListRow.onTap`) AND its hover
-        // (`hovered`, not `.onHover` — the overlay swallows those events too).
+        // (`hovered`, not `.onHover` — the overlay swallows those events too). In compact it also
+        // anchors the hover card (dwell scheduled off its tracking area, the card resolved live).
         .overlay {
             HostWindowRowDragSource(
                 payload: HostWindowDragPayload(
@@ -386,26 +460,99 @@ private struct HostWindowLiveRow: View {
                 ),
                 onAct: onAct,
                 onHover: { hovered = $0 },
+                hoverCardModel: compact ? { hoverCardModel() } : nil,
             )
         }
     }
 
-    /// The 16pt app icon — resolved LOCALLY by bundleID (the client is a Mac too; most apps match).
+    /// The COMPACT row: a 32pt plate the app icon alone identifies (position + icon, the
+    /// icon-strip vocabulary); the streamed tab ordinal is STAMPED on the plate's corner (the
+    /// Stage Manager icon-over-content move) instead of holding a trailing column. Selection and
+    /// hover speak the exact same raised-card / flat-wash vocabulary as the wide row.
+    private func compactPlate(
+        dimmed: Bool, active: Bool, streamed: StreamedWindowRef?,
+    ) -> some View {
+        ZStack {
+            icon(dimmed: dimmed, side: 20, fallbackGlyphSize: Slate.Typeface.body)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: Slate.Metric.heightRow)
+        .overlay(alignment: .bottomTrailing) {
+            if let streamed {
+                Text("\(streamed.tabOrdinal)")
+                    .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
+                    .foregroundStyle(Slate.State.accent)
+                    .padding(.horizontal, 3)
+                    // A ground wash under the digit so it stays legible over any icon corner.
+                    .background(Slate.theme.ground, in: Capsule())
+                    .padding(.bottom, 2)
+                    .padding(.trailing, 6)
+            }
+        }
+        .background(
+            compactBackground(active: active),
+            in: .rect(cornerRadius: Slate.Metric.radiusTab),
+        )
+        .overlay {
+            if active {
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusTab)
+                    .strokeBorder(Slate.Line.card, lineWidth: Slate.Metric.cardBorderWidth)
+            }
+        }
+        .contentShape(.rect)
+        .animation(Slate.Anim.smallFade, value: hovered)
+        .animation(Slate.Anim.smallFade, value: active)
+    }
+
+    private func compactBackground(active: Bool) -> Color {
+        if active { Slate.Surface.raised }
+        else if hovered { Slate.State.hover }
+        else { .clear }
+    }
+
+    /// The compact plate's hover card content — the wide row's tooltip truths plus the staged tab,
+    /// live-read at dwell-fire.
+    private func hoverCardModel() -> HostWindowHoverCardModel {
+        let state = feed.states[identity.windowID]
+        var detail: [String] = []
+        if let m = feed.metrics[identity.windowID] {
+            detail.append("\(m.widthPt) × \(m.heightPt)")
+            if m.displayIndex > 0 { detail.append("DISPLAY \(m.displayIndex + 1)") }
+        }
+        if let state, !state.isOnScreen {
+            detail.append(
+                state.isAppHidden ? "APP HIDDEN" : state.isMinimized ? "MINIMIZED" : "OTHER SPACE",
+            )
+        }
+        return HostWindowHoverCardModel(
+            appName: identity.appName,
+            title: feed.titles[identity.windowID] ?? "",
+            detail: detail.joined(separator: " · "),
+            streamedOrdinal: store.stagedWindowPane(for: identity.windowID)
+                .map { "\($0.tabOrdinal)" },
+        )
+    }
+
+    /// The app icon — resolved LOCALLY by bundleID (the client is a Mac too; most apps match).
     /// Unresolved ⇒ the static `macwindow` glyph — no monogram, no loading animation (docs/45 §2).
     /// On hover the icon perks up: a small scale bump (the pane-move pill's treatment) + a dimmed
-    /// row's icon returns to full strength — colour/scale only, the frame never moves.
-    private func icon(dimmed: Bool) -> some View {
+    /// row's icon returns to full strength — colour/scale only, the frame never moves. 16pt in the
+    /// wide row's leading slot; 20pt standing alone on the compact plate.
+    private func icon(
+        dimmed: Bool, side: CGFloat = 16,
+        fallbackGlyphSize: CGFloat = Slate.Typeface.iconSizeFallback,
+    ) -> some View {
         Group {
             if let icon = HostAppIconCache.shared.icon(forBundleID: identity.bundleID) {
                 Image(nsImage: icon)
                     .resizable()
                     .interpolation(.high)
-                    .frame(width: 16, height: 16)
+                    .frame(width: side, height: side)
             } else {
                 Image(systemSymbol: .macwindow)
-                    .font(.system(size: Slate.Typeface.iconSizeFallback))
+                    .font(.system(size: fallbackGlyphSize))
                     .foregroundStyle(Slate.Text.icon)
-                    .frame(width: 16, height: 16)
+                    .frame(width: side, height: side)
             }
         }
         .opacity(dimmed && !hovered ? 0.5 : 1)

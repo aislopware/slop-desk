@@ -18,10 +18,16 @@ final class WorkspaceChromeState {
     /// Whether the left navigator (sidebar) split item is collapsed.
     var sidebarCollapsed = false
     /// Whether the RIGHT Host Windows rail (docs/45) split item is collapsed. Seeded from the
-    /// persisted default (collapsed on first launch — the rail earns its pixels); every toggle
-    /// writes the choice back so it survives relaunch. Unlike the left sidebar there is no
+    /// persisted default (visible on first launch — the compact strip earns its pixels); every
+    /// toggle writes the choice back so it survives relaunch. Unlike the left sidebar there is no
     /// auto-hide policy — the ONE owner of this flag is the user's toggle.
     var hostRailCollapsed = Defaults[.hostWindowsRailCollapsed]
+    /// Whether the rail renders COMPACT (56pt icon strip) vs WIDE (icon + title rows) — a STICKY
+    /// width state (the VS Code / Material rail convention: width is an intentional choice, never a
+    /// hover transient). Flipped by the rail divider's drag-snap or double-click
+    /// (`SlopDeskSplitViewController.endRailDividerDrag` / `toggleRailCompact`); persisted like the
+    /// collapse flag. Orthogonal to `hostRailCollapsed` — hiding remembers the flavour it reopens to.
+    var hostRailCompact = Defaults[.hostWindowsRailCompact]
     /// Whether the window is PINNED (View ▸ Pin Window — keep-on-top). Lives with the other
     /// chrome flags so reading it in the SwiftUI scene body re-invalidates the introspect-bearing scene; the
     /// macOS `NSWindow` glue maps it to `NSWindow.level` (`.floating` ⇄ `.normal`). Pure view
@@ -63,6 +69,14 @@ final class WorkspaceChromeState {
     func toggleHostWindows() {
         hostRailCollapsed.toggle()
         Defaults[.hostWindowsRailCollapsed] = hostRailCollapsed
+    }
+
+    /// Set the rail's compact/wide flavour (divider drag-snap release + divider double-click) and
+    /// persist it. Idempotent — a no-change call writes nothing and re-triggers nothing.
+    func setHostRailCompact(_ compact: Bool) {
+        guard hostRailCompact != compact else { return }
+        hostRailCompact = compact
+        Defaults[.hostWindowsRailCompact] = compact
     }
 }
 #endif

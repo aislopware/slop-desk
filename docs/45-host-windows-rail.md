@@ -49,6 +49,25 @@
 > duplicate paths. (3) The streamed derivation is the store's one rule
 > (`WorkspaceStore.streamedWindowPane(for:)`) shared by rows, click, Open Quickly, and the
 > move-vs-mint drop commit.
+>
+> **Round 5 (2026-07-14): COMPACT flavour — the rail becomes an icon strip by default.** With the
+> Stage now also occupying the right side, the 220–320pt rail over-claimed the canvas. Research
+> round (Stage Manager / VS Code activity bar / Discord rail / Arc compact / hover-card
+> conventions) converged on the fixed-narrow-rail + hover-card pattern: no mainstream app
+> hover-expands a rail; width is a STICKY user state. So the rail now has two flavours —
+> **compact 56pt** (default: 20pt icon-only plates, streamed tab ordinal stamped on the plate
+> corner Stage-Manager-style, section headers become spacing, no HOST header/search — ⌘K and Open
+> Quickly carry search) and **wide 220–320pt** (the full anatomy above, unchanged). Identity words
+> move to a styled hover card (`HostWindowHoverCardPresenter`) on a NON-ACTIVATING child-window
+> panel — never an NSPopover, which can steal key status from the terminal — with a 0.45s dwell /
+> instant hide; the card carries app · title · dimensions · staged tab (the wide tooltip's truths).
+> Flavour flips by divider DRAG-SNAP (live pop at the compact/wide midpoint, the Finder-sidebar
+> feel; `clampedRailDividerPosition` owns the snap) or divider DOUBLE-CLICK; persisted as
+> `shell.hostWindowsRailCompact`, orthogonal to the ⌘⇧R collapse (which now defaults to VISIBLE —
+> at 56pt the tracker earns its pixels). Rendering keys off MEASURED width (mid-drag frames stay
+> honest); keyboard ↑/↓/⏎/Space, context menu, drag-to-Stage, and Peek are identical in both
+> flavours. Rows never show inline text below wide — per the icon-legibility floor evidence
+> (VS Code's 48px; sub-40px experiments drew "too small" backlash).
 
 
 The right sidebar that mirrors the host machine's desktop. Synthesized from three designs and nine critiques; every critical/major flaw is resolved inline, every contested call adjudicated.
