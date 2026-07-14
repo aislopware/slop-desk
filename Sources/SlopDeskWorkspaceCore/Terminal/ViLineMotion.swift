@@ -142,6 +142,51 @@ enum ViLineMotion {
         return cells[runEndIndex(cells, at: i)].col
     }
 
+    /// The row's cursor-ADDRESSABLE cells: the display cells trimmed of TRAILING whitespace. A
+    /// terminal row right-pads to the grid width, so trailing blanks are padding, never text — the
+    /// vi cursor lives on these cells only (vim/tmux: the cursor follows the line, not the grid).
+    static func addressableCells(_ line: String) -> [CellChar] {
+        var cells = cells(line)
+        while let last = cells.last, charClass(last.char) == .whitespace {
+            cells.removeLast()
+        }
+        return cells
+    }
+
+    /// `h`/`l` — the landing column `delta` GLYPHS away over the addressable cells (a wide glyph is
+    /// ONE step), clamped at the row's first/last text cell (vim: `h`/`l` never leave the row). A
+    /// cursor sitting in the trailing padding steps back INTO the text; a blank row pins column 0.
+    static func columnStep(_ line: String, from col: Int, by delta: Int) -> Int {
+        let cells = addressableCells(line)
+        guard !cells.isEmpty else { return 0 }
+        var index = 0
+        for (i, cell) in cells.enumerated() where cell.col <= col {
+            index = i
+        }
+        let landed = min(max(index + delta, 0), cells.count - 1)
+        return cells[landed].col
+    }
+
+    /// The column of the addressable cell CONTAINING `col` — the wide-glyph/padding snap a vertical
+    /// motion applies after the curswant clamp (a cursor never sits mid-glyph or in the trailing
+    /// padding). Past-extent snaps to the last text cell; a blank row to column 0.
+    static func snapToCell(_ line: String, col: Int) -> Int {
+        var found = 0
+        for cell in addressableCells(line) where cell.col <= col {
+            found = cell.col
+        }
+        return found
+    }
+
+    /// The display width of the glyph AT `col` (blank / out-of-range cells read as 1) — the block
+    /// cursor's drawn width, so a wide glyph wears a full-width block instead of half a cell.
+    static func cellWidth(_ line: String, at col: Int) -> Int {
+        for cell in cells(line) where cell.col == col {
+            return max(1, TerminalLinkDetector.displayCellWidth(of: cell.char))
+        }
+        return 1
+    }
+
     /// The last run on a row for a backward (`b`) wrap-landing: the start of the row's final
     /// word/punct run, or `nil` on a blank row.
     static func lastWordStart(_ line: String) -> Int? {

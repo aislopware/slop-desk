@@ -69,7 +69,10 @@ parser rewrite in `dcs.zig`/`parse_table.zig` and a per-keystroke mutex round-tr
   `Screen.select` under `renderer_state.mutex`, bypasses copy-on-select (yank copies
   explicitly), wakes the renderer like `select_all`'s `queueRender`. Lets the client's
   keyboard copy-mode START a char/line/block selection from a vi cursor (DECISIONS.md
-  2026-07-14).
+  2026-07-14). Includes the `Point.pin` exact-coord fix: the upstream helper clamped
+  every `y` to `pages.rows - 1` (the GRID height), so a `.screen`/`.history` exact point
+  below one grid-height of scrollback resolved to the wrong row — the clamp now honors
+  the tag's own bottom-right extent.
 
 **What was dropped** (present in the pre-2026-07-11 fat delta; recoverable from git
 history of this file + the old patch): the tmux control-mode viewer

@@ -491,6 +491,11 @@ public final class TerminalViewModel {
         /// The visual-selection ANCHOR (set where the cursor stood when `v`/`V`/`⌃v` entered a
         /// visual mode). `nil` outside a cursor-driven visual selection.
         var anchor: TerminalScreenPoint?
+        /// vim's curswant — the DESIRED column a vertical motion tries to land on, remembered from
+        /// the last horizontal motion (`Int.max` = a sticky `$`, so `j` keeps hugging line ends).
+        /// `nil` until the first motion establishes one; every vertical landing clamps it to the
+        /// landed row's TEXT extent so the cursor follows the text, never the bare grid.
+        var wantColumn: Int?
 
         /// Hard ceiling on an accumulated count so a key-repeat / paste flood can't overflow `Int` or ask for
         /// an absurd scroll. 9999 is far past any real scrollback motion; the digit append clamps to it.
@@ -531,10 +536,14 @@ public final class TerminalViewModel {
     public struct ViCursorCell: Equatable, Sendable {
         public let col: Int
         public let row: Int
+        /// The drawn block's width in CELLS — 2 on a wide (CJK/fullwidth) glyph so the block wears
+        /// the whole character, 1 otherwise.
+        public let width: Int
 
-        public init(col: Int, row: Int) {
+        public init(col: Int, row: Int, width: Int = 1) {
             self.col = col
             self.row = row
+            self.width = width
         }
     }
 
@@ -697,7 +706,8 @@ public final class TerminalViewModel {
             moveCursorToColumn { ViLineMotion.firstNonBlank($0) }
         case .char("$", control: false, _):
             _ = copyModeState.consumeCount()
-            moveCursorToColumn { ViLineMotion.lastNonBlank($0) ?? ViLineMotion.lineStart }
+            // stickyEnd: after `$`, vertical motions keep hugging each row's line end (vim curswant).
+            moveCursorToColumn(stickyEnd: true) { ViLineMotion.lastNonBlank($0) ?? ViLineMotion.lineStart }
         // Word motions (cursor path only): the count REPEATS the single step, which wraps across rows.
         case .char("w", control: false, _):
             applyWordMotion(.nextStart, actions: actions)
@@ -845,6 +855,37 @@ public final class TerminalViewModel {
         )
     }
 
+    /// Lands a VERTICAL motion on its row's TEXT (vim's curswant rule): the cursor tries the
+    /// remembered desired column (`Int.max` = a sticky `$`), clamped to the landed row's last text
+    /// cell and snapped to a glyph start — so `j`/`k` follow the text's shape instead of floating
+    /// through the grid's trailing padding, and a wide glyph is never straddled. A vertical motion
+    /// with no remembered column adopts the current one first (vim seeds curswant lazily).
+    private func settledOnRowText(
+        _ cursor: TerminalScreenPoint,
+        ctl: TerminalSelectionControl,
+        info: TerminalViewportInfo,
+    ) -> TerminalScreenPoint {
+        var cursor = cursor
+        if copyModeState.wantColumn == nil { copyModeState.wantColumn = cursor.col }
+        let want = copyModeState.wantColumn ?? cursor.col
+        let line = ctl.readScreenRow(cursor.row) ?? ""
+        let extent = min(ViLineMotion.lastNonBlank(line) ?? 0, info.cols - 1)
+        cursor.col = ViLineMotion.snapToCell(line, col: min(max(want, 0), extent))
+        return cursor
+    }
+
+    /// The last SCREEN row that carries text — `G`'s landing. The active grid's unwritten/cleared
+    /// tail rows are padding, not content (vim's `G` lands on the last LINE); the scan is bounded
+    /// to one grid height because every history row above the active area was once written.
+    private func lastTextRow(_ ctl: TerminalSelectionControl, info: TerminalViewportInfo) -> Int {
+        var row = info.totalRows - 1
+        let floor = max(0, info.totalRows - info.viewportRows)
+        while row > floor, (ctl.readScreenRow(row) ?? "").isEmpty {
+            row -= 1
+        }
+        return row
+    }
+
     /// Scrolls just enough to bring the cursor into the viewport (`scroll_page_lines:±delta`) — the
     /// vi "viewport follows the cursor" rule. `info` is the PRE-motion readback; the overlay resync
     /// afterwards reads fresh truth.
@@ -902,6 +943,7 @@ public final class TerminalViewModel {
         if let (ctl, info) = cursorContext() {
             var cursor = seededCursor(info)
             cursor.row = min(max(cursor.row + sign * count, 0), info.totalRows - 1)
+            cursor = settledOnRowText(cursor, ctl: ctl, info: info)
             copyModeState.cursor = cursor
             followViewport(cursor, info: info, actions: actions)
             refreshVisualSelection(ctl, info: info)
@@ -915,25 +957,31 @@ public final class TerminalViewModel {
         }
     }
 
-    /// `h`/`l`/←/→ — the cursor moves `±count` columns within its row (vim: no line wrap). Cursor
-    /// path only; without a cursor there is no column to move, so the key is swallowed.
+    /// `h`/`l`/←/→ — the cursor moves `±count` GLYPHS within its row's TEXT (a wide glyph is one
+    /// step; the motion clamps at the line's first/last text cell — vim: `h`/`l` never leave the
+    /// row, and never wander the trailing padding). Cursor path only; without a cursor there is no
+    /// column to move, so the key is swallowed.
     private func applyColumnMotion(sign: Int) {
         let count = copyModeState.consumeCount()
         guard let (ctl, info) = cursorContext() else { return }
         var cursor = seededCursor(info)
-        cursor.col = min(max(cursor.col + sign * count, 0), info.cols - 1)
+        let line = ctl.readScreenRow(cursor.row) ?? ""
+        cursor.col = min(max(ViLineMotion.columnStep(line, from: cursor.col, by: sign * count), 0), info.cols - 1)
         copyModeState.cursor = cursor
+        copyModeState.wantColumn = cursor.col
         refreshVisualSelection(ctl, info: info)
     }
 
     /// `0`/`^`/`$` — the cursor jumps to a column computed from its ROW'S TEXT (read fresh through
-    /// the seam). Cursor path only.
-    private func moveCursorToColumn(_ column: (String) -> Int) {
+    /// the seam) and re-seeds curswant there (`stickyEnd` seeds `Int.max`, vim's `$`-then-`j`
+    /// hug-the-line-ends behavior). Cursor path only.
+    private func moveCursorToColumn(stickyEnd: Bool = false, _ column: (String) -> Int) {
         guard let (ctl, info) = cursorContext() else { return }
         var cursor = seededCursor(info)
         let line = ctl.readScreenRow(cursor.row) ?? ""
         cursor.col = min(max(column(line), 0), info.cols - 1)
         copyModeState.cursor = cursor
+        copyModeState.wantColumn = stickyEnd ? Int.max : cursor.col
         refreshVisualSelection(ctl, info: info)
     }
 
@@ -954,6 +1002,7 @@ public final class TerminalViewModel {
             cursor = stepWord(motion, from: cursor, ctl: ctl, info: info)
         }
         copyModeState.cursor = cursor
+        copyModeState.wantColumn = cursor.col // a word motion re-seeds curswant (vim)
         followViewport(cursor, info: info, actions: actions)
         refreshVisualSelection(ctl, info: info)
     }
@@ -1011,6 +1060,7 @@ public final class TerminalViewModel {
             actions?.performBindingAction("scroll_page_lines:\(delta)")
             var cursor = seededCursor(info)
             cursor.row = min(max(cursor.row + delta, 0), info.totalRows - 1)
+            cursor = settledOnRowText(cursor, ctl: ctl, info: info)
             copyModeState.cursor = cursor
             // Post-scroll truth: the residual follow only fires at the screen edges (where the
             // viewport clamped but the cursor kept moving, or vice versa).
@@ -1024,28 +1074,33 @@ public final class TerminalViewModel {
     }
 
     /// `g`/`G` — absolute top/bottom: the viewport jumps via the native action; on the cursor path
-    /// the cursor lands on the first/last screen row.
+    /// the cursor lands on the first / LAST TEXT row's first non-blank glyph (vim's `gg`/`G` — the
+    /// active grid's blank tail rows are padding, never a landing).
     private func applyAbsoluteJump(_ actions: TerminalSurfaceActions?, toTop: Bool) {
         _ = copyModeState.consumeCount()
         actions?.performBindingAction(toTop ? "scroll_to_top" : "scroll_to_bottom")
         guard let (ctl, info) = cursorContext() else { return }
         var cursor = seededCursor(info)
-        cursor.row = toTop ? 0 : info.totalRows - 1
+        cursor.row = toTop ? 0 : lastTextRow(ctl, info: info)
+        cursor.col = ViLineMotion.firstNonBlank(ctl.readScreenRow(cursor.row) ?? "")
         copyModeState.cursor = cursor
+        copyModeState.wantColumn = cursor.col
         refreshVisualSelection(ctl, info: info)
     }
 
     /// `[`/`]` — the prompt jump keeps the native `jump_to_prompt:±count`; on the cursor path the
     /// cursor then re-anchors to the LANDED viewport top (the row libghostty pinned the prompt to —
-    /// the binding action mutates core synchronously, so the post-jump readback is already fresh).
+    /// the binding action mutates core synchronously, so the post-jump readback is already fresh),
+    /// landing on the prompt row's first glyph (vim's line-jump column rule).
     private func applyPromptJump(_ actions: TerminalSurfaceActions?, sign: Int) {
         let count = copyModeState.consumeCount()
         actions?.performBindingAction("jump_to_prompt:\(sign * count)")
         guard let (ctl, info) = cursorContext() else { return }
         var cursor = seededCursor(info)
         cursor.row = info.viewportTopRow
-        cursor.col = ViLineMotion.lineStart
+        cursor.col = ViLineMotion.firstNonBlank(ctl.readScreenRow(cursor.row) ?? "")
         copyModeState.cursor = cursor
+        copyModeState.wantColumn = cursor.col
         refreshVisualSelection(ctl, info: info)
     }
 
@@ -1058,6 +1113,7 @@ public final class TerminalViewModel {
               let cursor = copyModeState.cursor else { return }
         copyModeState.anchor = cursor
         copyModeState.cursor = anchor
+        copyModeState.wantColumn = anchor.col // the swapped-to end re-seeds curswant (vim)
         followViewport(anchor, info: info, actions: actions)
         refreshVisualSelection(ctl, info: info)
     }
@@ -1077,10 +1133,12 @@ public final class TerminalViewModel {
     /// VIEWPORT-relative, `nil` off-viewport — from a FRESH readback. Written only on a real change.
     private func syncCursorOverlay() {
         var cell: ViCursorCell?
-        if isCopyMode, let cursor = copyModeState.cursor, let (_, info) = cursorContext() {
+        if isCopyMode, let cursor = copyModeState.cursor, let (ctl, info) = cursorContext() {
             let viewportRow = cursor.row - info.viewportTopRow
             if viewportRow >= 0, viewportRow < info.viewportRows, cursor.col >= 0, cursor.col < info.cols {
-                cell = ViCursorCell(col: cursor.col, row: viewportRow)
+                // The block's width follows the glyph under it (a wide CJK/fullwidth char = 2 cells).
+                let width = ViLineMotion.cellWidth(ctl.readScreenRow(cursor.row) ?? "", at: cursor.col)
+                cell = ViCursorCell(col: cursor.col, row: viewportRow, width: min(width, info.cols - cursor.col))
             }
         }
         if viCursorCell != cell { viCursorCell = cell }

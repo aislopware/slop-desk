@@ -206,7 +206,7 @@ index 4d66622..cde7798 100644
      const runtime_str = try std.fmt.allocPrint(alloc, "{d} ms", .{info.runtime_ms});
  
 diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
-index 0d5a4f8..5d526eb 100644
+index 0d5a4f8..bf4e610 100644
 --- a/src/apprt/embedded.zig
 +++ b/src/apprt/embedded.zig
 @@ -15,6 +15,7 @@ const input = @import("../input.zig");
@@ -348,7 +348,37 @@ index 0d5a4f8..5d526eb 100644
      pub fn updateContentScale(self: *Surface, x: f64, y: f64) void {
          // We are an embedded API so the caller can send us all sorts of
          // garbage. We want to make sure that the float values are valid
-@@ -1385,6 +1485,19 @@ pub const CAPI = struct {
+@@ -1335,9 +1435,27 @@ pub const CAPI = struct {
+                 ),
+             };
+ 
+-            // Clamp our point to the screen bounds.
++            // Clamp our point to the bounds of the tag's coordinate space.
++            // slopdesk: a .screen/.history y spans the RETAINED SCROLLBACK
++            // (u32 rows), not the grid — clamping it to `pages.rows` (the
++            // grid height) silently resolved any exact point below the
++            // first grid-height of scrollback to the wrong row (keyboard
++            // copy-mode row reads / selections landed on the wrong line on
++            // any real scrollback). Clamp against the tag's own
++            // bottom-right extent instead.
++            const grid_max_y: u32 = @intCast(screen.pages.rows -| 1);
++            const max_y: u32 = switch (tag) {
++                .active, .viewport => grid_max_y,
++                .screen, .history => max_y: {
++                    const br_pin = screen.pages.getBottomRight(tag) orelse
++                        break :max_y grid_max_y;
++                    const br_pt = screen.pages.pointFromPin(tag, br_pin) orelse
++                        break :max_y grid_max_y;
++                    break :max_y br_pt.coord().y;
++                },
++            };
+             const clamped_x = @min(self.x, screen.pages.cols -| 1);
+-            const clamped_y = @min(self.y, screen.pages.rows -| 1);
++            const clamped_y = @min(self.y, max_y);
+ 
+             return switch (self.coord_tag) {
+                 // Exact coordinates require a specific pin.
+@@ -1385,6 +1503,19 @@ pub const CAPI = struct {
          }
      };
  
@@ -368,7 +398,7 @@ index 0d5a4f8..5d526eb 100644
      // Reference the conditional exports based on target platform
      // so they're included in the C API.
      comptime {
-@@ -1679,6 +1792,85 @@ pub const CAPI = struct {
+@@ -1679,6 +1810,85 @@ pub const CAPI = struct {
          ptr.deinit();
      }
  
@@ -454,7 +484,7 @@ index 0d5a4f8..5d526eb 100644
      /// Tell the surface that it needs to schedule a render
      export fn ghostty_surface_refresh(surface: *Surface) void {
          surface.refresh();
-@@ -1690,6 +1882,12 @@ pub const CAPI = struct {
+@@ -1690,6 +1900,12 @@ pub const CAPI = struct {
          surface.draw();
      }
  
@@ -467,7 +497,7 @@ index 0d5a4f8..5d526eb 100644
      /// Update the size of a surface. This will trigger resize notifications
      /// to the pty and the renderer.
      export fn ghostty_surface_set_size(surface: *Surface, w: u32, h: u32) void {
-@@ -1804,6 +2002,32 @@ pub const CAPI = struct {
+@@ -1804,6 +2020,32 @@ pub const CAPI = struct {
          surface.textCallback(ptr[0..len]);
      }
  

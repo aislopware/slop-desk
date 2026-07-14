@@ -8,6 +8,7 @@
 #if canImport(SwiftUI) && canImport(AppKit)
 import AppKit
 import SFSafeSymbols
+import SlopDeskTerminal
 import SlopDeskTransport
 import SwiftUI
 import XCTest
@@ -305,6 +306,89 @@ final class SlateSnapshotRender: XCTestCase {
         return (store, panes[0])
     }
 
+    // MARK: - Opt-in render of the vi copy-mode surfaces (block cursor + responsive hint bar)
+
+    /// Renders the REAL ``ViCursorOverlay`` over a hand-built cell-exact terminal mock (every glyph
+    /// framed in its own cell box, so glyph↔block alignment is true by construction) — the visual
+    /// lock for the copy-mode block cursor (sharp, glyph-width, translucent) on an ASCII glyph AND
+    /// on a wide CJK glyph (2-cell block) — plus the ``ViKeyHintBar`` at three pane widths to
+    /// eyeball the `ViewThatFits` reflow (3-col → 2-col → 1-col). SAME opt-in idiom as the other
+    /// renders; writes `vi-cursor.png` + `vi-hint-bar.png` into `SLOPDESK_VIMODE_SNAPSHOT_DIR`.
+    /// Headless: a stub surface (no socket / video / Metal — the hang-safety rule).
+    @MainActor
+    func testRenderViCopyModeSurfaces() throws {
+        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_VIMODE_SNAPSHOT_DIR"] else {
+            throw XCTSkip("set SLOPDESK_VIMODE_SNAPSHOT_DIR=<dir> to render the vi copy-mode surfaces")
+        }
+        let rows = [
+            "❯ rg --files Sources | head",
+            "Sources/SlopDeskTerminal/TerminalSurface.swift",
+            "Sources/SlopDeskWorkspaceCore/Terminal/ViLineMotion.swift",
+            "xin chào 世界 — wide glyphs",
+            "❯ make check",
+        ]
+        // The model's `surface` is WEAK — the stubs must outlive the render, so they are owned here.
+        let ascii = ViSnapshotSurface(rows: rows, cursor: TerminalScreenPoint(col: 8, row: 2))
+        let wide = ViSnapshotSurface(rows: rows, cursor: TerminalScreenPoint(col: 9, row: 3))
+        let panels = VStack(alignment: .leading, spacing: 12) {
+            cursorPanel(surface: ascii, rows: rows)
+            cursorPanel(surface: wide, rows: rows)
+        }
+        .padding(12)
+        .background(Slate.Surface.ground)
+        try withExtendedLifetime((ascii, wide)) {
+            try render(panels, size: CGSize(width: 560, height: 260), to: dir, named: "vi-cursor.png")
+        }
+
+        let bars = VStack(alignment: .leading, spacing: 16) {
+            ViKeyHintBar().frame(width: 760, alignment: .leading)
+            ViKeyHintBar().frame(width: 470, alignment: .leading)
+            ViKeyHintBar().frame(width: 300, alignment: .leading)
+        }
+        .padding(16)
+        .background(Slate.Surface.ground)
+        try render(bars, size: CGSize(width: 800, height: 980), to: dir, named: "vi-hint-bar.png")
+    }
+
+    /// One terminal-mock panel with the live cursor overlay: a ``TerminalViewModel`` over the stub
+    /// surface enters copy-mode (seeding the vi cursor at the staged terminal cursor) and the real
+    /// ``ViCursorOverlay`` draws over the cell grid.
+    @MainActor
+    private func cursorPanel(surface: ViSnapshotSurface, rows: [String]) -> some View {
+        let model = TerminalViewModel(surface: surface)
+        model.enterCopyMode()
+        return ZStack(alignment: .topLeading) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, line in
+                    self.fakeTerminalRow(line)
+                }
+            }
+            ViCursorOverlay(model: model)
+        }
+        .padding(8)
+        .background(Slate.Surface.face)
+    }
+
+    /// One cell-exact mock terminal row: each glyph in its own fixed cell box (wide glyphs 2 cells),
+    /// matching ``ViSnapshotSurface``'s staged metrics so the block cursor can be judged for
+    /// alignment honestly.
+    @MainActor
+    private func fakeTerminalRow(_ line: String) -> some View {
+        HStack(spacing: 0) {
+            ForEach(Array(line.enumerated()), id: \.offset) { _, ch in
+                Text(String(ch))
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(Slate.Text.primary)
+                    .frame(
+                        width: 8 * CGFloat(max(1, TerminalLinkDetector.displayCellWidth(of: ch))),
+                        height: 17,
+                    )
+            }
+            Spacer(minLength: 0)
+        }
+        .frame(height: 17)
+    }
+
     /// Center an overlay panel on the dimmed scrim + window background, the way `OverlayHostView` composes it.
     @MainActor
     private func scrimmed(_ panel: some View) -> some View {
@@ -429,5 +513,48 @@ private struct SlateShowcase: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(Slate.Metric.space3)
     }
+}
+
+/// The vi-cursor render's stub surface: stages a viewport whose extent equals the mock rows and a
+/// terminal cursor for copy-mode to seed at. Selection calls are accepted and dropped (the render
+/// judges the CURSOR; the selection band is libghostty's to paint in the real app).
+private final class ViSnapshotSurface: TerminalSurface, TerminalViewportSnapshotting, TerminalSelectionControl,
+    @unchecked Sendable
+{
+    private let rows: [String]
+    private let cursor: TerminalScreenPoint
+
+    init(rows: [String], cursor: TerminalScreenPoint) {
+        self.rows = rows
+        self.cursor = cursor
+    }
+
+    // TerminalSurface (inert)
+    func feed(_: Data) {}
+    func setSize(cols _: UInt16, rows _: UInt16) {}
+    func handleInput(_: Data) {}
+    var onWrite: ((Data) -> Void)?
+
+    // TerminalViewportSnapshotting — the staged cell geometry `fakeTerminalRow` mirrors (8×17pt).
+    func viewportTextRows() -> [String] { rows }
+    func cellMetrics() -> TerminalCellMetrics? {
+        TerminalCellMetrics(cellWidth: 8, cellHeight: 17, cols: 64, rows: rows.count)
+    }
+
+    // TerminalSelectionControl — one static readback; the render is a single frame.
+    func viewportInfo() -> TerminalViewportInfo? {
+        TerminalViewportInfo(
+            viewportTopRow: 0,
+            viewportRows: rows.count,
+            cols: 64,
+            totalRows: rows.count,
+            cursor: cursor,
+        )
+    }
+
+    @discardableResult
+    func setSelection(anchor _: TerminalScreenPoint, head _: TerminalScreenPoint, rectangle _: Bool) -> Bool { true }
+    func clearSelection() {}
+    func readScreenRow(_ row: Int) -> String? { rows.indices.contains(row) ? rows[row] : nil }
 }
 #endif

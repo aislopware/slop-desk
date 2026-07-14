@@ -192,10 +192,29 @@ struct ViKeyHintBar: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: Slate.Metric.space4) {
-            column("MOTION", Self.motion)
-            column("SELECT", Self.selection)
-            column("SEARCH", Self.search)
+        // RESPONSIVE: the reference card re-flows to the pane's width instead of clipping — three
+        // columns side-by-side when they fit, else MOTION beside a stacked SELECT+SEARCH, else one
+        // tall column (a narrow split pane still gets the whole card). `ViewThatFits` proposes the
+        // pane width; the `fixedSize()` rows keep each layout's intrinsic width honest so the first
+        // layout that truly fits wins.
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: Slate.Metric.space4) {
+                column("MOTION", Self.motion)
+                column("SELECT", Self.selection)
+                column("SEARCH", Self.search)
+            }
+            HStack(alignment: .top, spacing: Slate.Metric.space4) {
+                column("MOTION", Self.motion)
+                VStack(alignment: .leading, spacing: Slate.Metric.space3) {
+                    column("SELECT", Self.selection)
+                    column("SEARCH", Self.search)
+                }
+            }
+            VStack(alignment: .leading, spacing: Slate.Metric.space3) {
+                column("MOTION", Self.motion)
+                column("SELECT", Self.selection)
+                column("SEARCH", Self.search)
+            }
         }
         .padding(.horizontal, Slate.Metric.space3)
         .padding(.vertical, Slate.Metric.space2)

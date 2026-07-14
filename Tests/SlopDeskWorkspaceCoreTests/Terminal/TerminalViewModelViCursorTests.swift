@@ -53,16 +53,30 @@ final class TerminalViewModelViCursorTests: XCTestCase {
 
     // MARK: Column + line motions
 
-    /// `l`/`h` move the cursor column (no scroll action — the cursor is client state) and the
-    /// repeat-count scales the step.
+    /// `l`/`h` move the cursor column over the row's TEXT (no scroll action — the cursor is client
+    /// state) and the repeat-count scales the step.
     func testColumnMotionsMoveCursorWithoutScrolling() {
         let (model, rec) = makeModel()
+        rec.screenRows[90] = "swift build --verbose"
         model.handleCopyModeKey(key("3"))
         model.handleCopyModeKey(key("l"))
         XCTAssertEqual(model.viCursorCell?.col, 7, "3l steps three columns right")
         model.handleCopyModeKey(key("h"))
         XCTAssertEqual(model.viCursorCell?.col, 6)
         XCTAssertTrue(rec.actions.isEmpty, "column motions never scroll")
+    }
+
+    /// `h`/`l` clamp at the row's TEXT extent (vim: the cursor never wanders the grid's trailing
+    /// padding) and a blank row pins the cursor to column 0.
+    func testColumnMotionsClampToRowText() {
+        let (model, rec) = makeModel()
+        rec.screenRows[90] = "swift"
+        model.handleCopyModeKey(key("9"))
+        model.handleCopyModeKey(key("l"))
+        XCTAssertEqual(model.viCursorCell?.col, 4, "l clamps on the last glyph, not the grid edge")
+        rec.screenRows[90] = ""
+        model.handleCopyModeKey(key("l"))
+        XCTAssertEqual(model.viCursorCell?.col, 0, "a blank row pins column 0")
     }
 
     /// `j`/`k` move the cursor ROW; inside the viewport no scroll is issued (the pre-lift behavior
@@ -72,6 +86,49 @@ final class TerminalViewModelViCursorTests: XCTestCase {
         model.handleCopyModeKey(key("j"))
         XCTAssertEqual(model.viCursorCell?.row, 90 - 76 + 1, "j moves the cursor row down")
         XCTAssertTrue(rec.actions.isEmpty, "no scroll while the cursor stays visible")
+    }
+
+    /// vim's curswant: a vertical motion clamps to each row's TEXT extent but REMEMBERS the desired
+    /// column, so passing through a short line and back restores the original column.
+    func testVerticalMotionClampsToRowTextAndRestoresWantColumn() {
+        let (model, rec) = makeModel(cursorCol: 10)
+        rec.screenRows[90] = "swift build --verbose"
+        rec.screenRows[91] = "ok"
+        rec.screenRows[92] = "make check golden"
+        model.handleCopyModeKey(key("j"))
+        XCTAssertEqual(model.viCursorCell?.col, 1, "the short row clamps the cursor to its last glyph")
+        model.handleCopyModeKey(key("j"))
+        XCTAssertEqual(model.viCursorCell?.col, 10, "the longer row restores the remembered column")
+        model.handleCopyModeKey(key("k"))
+        XCTAssertEqual(model.viCursorCell?.col, 1, "…and the clamp re-applies on the way back")
+    }
+
+    /// `$` seeds a STICKY end-of-line curswant: subsequent `j` keeps hugging each row's line end.
+    func testDollarStickyEndHugsLineEnds() {
+        let (model, rec) = makeModel()
+        rec.screenRows[90] = "swift build --verbose"
+        rec.screenRows[91] = "ok"
+        rec.screenRows[92] = "make check golden"
+        model.handleCopyModeKey(key("$"))
+        XCTAssertEqual(model.viCursorCell?.col, 20)
+        model.handleCopyModeKey(key("j"))
+        XCTAssertEqual(model.viCursorCell?.col, 1, "after $ the cursor rides the next row's end")
+        model.handleCopyModeKey(key("j"))
+        XCTAssertEqual(model.viCursorCell?.col, 16, "…and the end of every row after that")
+    }
+
+    /// A wide (CJK) glyph is ONE `h`/`l` step, is never straddled, and the drawn block wears its
+    /// full 2-cell width.
+    func testWideGlyphStepsWholeGlyphsAndWidensTheBlock() {
+        // "chào 世界": c0 h1 à2 o3 ␠4 世5–6 界7–8.
+        let (model, rec) = makeModel(cursorCol: 5)
+        rec.screenRows[90] = "chào 世界"
+        model.handleCopyModeKey(key("l"))
+        XCTAssertEqual(model.viCursorCell?.col, 7, "l steps one GLYPH (2 cells)")
+        XCTAssertEqual(model.viCursorCell?.width, 2, "the block covers the whole wide glyph")
+        model.handleCopyModeKey(key("h"))
+        XCTAssertEqual(model.viCursorCell?.col, 5)
+        XCTAssertEqual(model.viCursorCell?.width, 2)
     }
 
     /// A line motion past the viewport edge scrolls JUST the overflow (`scroll_page_lines:<delta>`)
@@ -116,6 +173,7 @@ final class TerminalViewModelViCursorTests: XCTestCase {
     /// renders a keyboard-STARTED char selection (the lifted ceiling).
     func testCharVisualStartsSelectionFromCursor() {
         let (model, rec) = makeModel()
+        rec.screenRows[90] = "swift build"
         model.handleCopyModeKey(key("v"))
         model.handleCopyModeKey(key("l"))
         model.handleCopyModeKey(key("l"))
@@ -142,6 +200,8 @@ final class TerminalViewModelViCursorTests: XCTestCase {
     /// `⌃v` sets the rectangle flag (block selection).
     func testBlockVisualSetsRectangle() {
         let (model, rec) = makeModel()
+        rec.screenRows[90] = "swift build"
+        rec.screenRows[91] = "swift test"
         model.handleCopyModeKey(key("v", control: true))
         model.handleCopyModeKey(key("l"))
         model.handleCopyModeKey(key("j"))
@@ -156,6 +216,7 @@ final class TerminalViewModelViCursorTests: XCTestCase {
     /// the pre-lift `o` was a documented no-op).
     func testAnchorSwapMovesCursorToOtherEnd() {
         let (model, rec) = makeModel()
+        rec.screenRows[90] = "swift build"
         model.handleCopyModeKey(key("v"))
         model.handleCopyModeKey(key("l"))
         model.handleCopyModeKey(key("o"))
@@ -223,15 +284,30 @@ final class TerminalViewModelViCursorTests: XCTestCase {
 
     // MARK: Absolute + page jumps keep cursor and viewport together
 
-    /// `g`/`G` land the cursor on the first/last screen row alongside the native scroll action.
+    /// `g`/`G` land the cursor on the first / last TEXT row (the active grid's blank tail rows are
+    /// padding, never a landing — vim's `G`) alongside the native scroll action, on the row's first
+    /// non-blank glyph.
     func testAbsoluteJumpsMoveCursor() {
         let (model, rec) = makeModel()
+        rec.screenRows[97] = "  ❯ make check"
         model.handleCopyModeKey(key("g"))
         XCTAssertEqual(rec.actions, ["scroll_to_top"])
         XCTAssertNil(model.viCursorCell, "row 0 is off the (staged) viewport — the overlay hides, never lies")
         model.handleCopyModeKey(key("G", shift: true))
         XCTAssertEqual(rec.actions, ["scroll_to_top", "scroll_to_bottom"])
-        XCTAssertEqual(model.viCursorCell?.row, 99 - 76, "G lands on the last screen row")
+        XCTAssertEqual(model.viCursorCell?.row, 97 - 76, "G lands on the LAST TEXT row, skipping blank tail rows")
+        XCTAssertEqual(model.viCursorCell?.col, 2, "…on its first non-blank glyph")
+    }
+
+    /// `[` re-anchors the cursor to the landed prompt row's first glyph (the viewport top after the
+    /// native `jump_to_prompt:` pinned the prompt there).
+    func testPromptJumpLandsOnPromptRowFirstGlyph() {
+        let (model, rec) = makeModel()
+        rec.screenRows[76] = "  ❯ swift test"
+        model.handleCopyModeKey(key("["))
+        XCTAssertEqual(rec.actions, ["jump_to_prompt:-1"])
+        XCTAssertEqual(model.viCursorCell?.row, 0, "the cursor re-anchors to the landed viewport top")
+        XCTAssertEqual(model.viCursorCell?.col, 2, "…on the prompt row's first non-blank glyph")
     }
 
     /// `⌃d` scrolls a half page in LINES (cursor + viewport move together on the cursor path).

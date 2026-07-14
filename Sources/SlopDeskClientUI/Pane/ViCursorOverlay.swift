@@ -32,17 +32,15 @@ struct ViCursorOverlay: View {
            let snapshot = model.surface as? TerminalViewportSnapshotting,
            let metrics = snapshot.cellMetrics(),
            metrics.cellWidth > 0, metrics.cellHeight > 0,
-           let rect = metrics.clampedRect(row: cell.row, colStart: cell.col, colEnd: cell.col + 1)
+           let rect = metrics.clampedRect(row: cell.row, colStart: cell.col, colEnd: cell.col + cell.width)
         {
             ZStack(alignment: .topLeading) {
-                // A light accent wash + a solid accent outline: visible over any cell content (including
-                // libghostty's native selection band) without occluding the glyph underneath.
-                RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                    .fill(Slate.State.accent.opacity(0.22))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                            .strokeBorder(Slate.State.accent, lineWidth: Slate.Metric.hairline),
-                    )
+                // A terminal-authentic BLOCK cursor: one sharp-cornered accent block, exactly the
+                // glyph's cell footprint (`cell.width` = 2 on a wide glyph), translucent enough that
+                // the character underneath stays legible — no rounding, no outline, no glow (the
+                // Meridian at-rest zero-ornament law; a cursor is an instrument, not a button).
+                Rectangle()
+                    .fill(Slate.State.accent.opacity(0.45))
                     .frame(width: rect.width, height: rect.height)
                     .offset(x: rect.minX, y: rect.minY)
             }

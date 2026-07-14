@@ -76,4 +76,33 @@ final class ViLineMotionTests: XCTestCase {
         XCTAssertEqual(ViLineMotion.lastNonBlank(line), 6)
         XCTAssertEqual(ViLineMotion.prevWordStart(line, from: 5), 0, "b from `ab` lands on the CJK run's start")
     }
+
+    // MARK: Column step / snap / width (the text-semantic h-l engine + block width)
+
+    func testColumnStepWalksGlyphsAndClampsToText() {
+        let line = "ab 日本  " // a(0) b(1) ␠(2) 日(3-4) 本(5-6), trailing padding
+        XCTAssertEqual(ViLineMotion.columnStep(line, from: 0, by: 1), 1)
+        XCTAssertEqual(ViLineMotion.columnStep(line, from: 1, by: 2), 3, "a step crosses the space onto the wide glyph")
+        XCTAssertEqual(ViLineMotion.columnStep(line, from: 3, by: 1), 5, "a wide glyph is ONE step (2 cells)")
+        XCTAssertEqual(
+            ViLineMotion.columnStep(line, from: 5, by: 3), 5,
+            "l clamps at the last TEXT cell, not the padding",
+        )
+        XCTAssertEqual(ViLineMotion.columnStep(line, from: 0, by: -1), 0, "h clamps at the row start")
+        XCTAssertEqual(ViLineMotion.columnStep("", from: 7, by: 1), 0, "a blank row pins column 0")
+    }
+
+    func testSnapToCellNeverStraddlesGlyphsOrPadding() {
+        let line = "ab 日本  "
+        XCTAssertEqual(ViLineMotion.snapToCell(line, col: 4), 3, "mid-wide-glyph snaps to the glyph's start")
+        XCTAssertEqual(ViLineMotion.snapToCell(line, col: 20), 5, "past the text extent snaps to the last text cell")
+        XCTAssertEqual(ViLineMotion.snapToCell("", col: 9), 0)
+    }
+
+    func testCellWidthReadsGlyphWidth() {
+        let line = "a日"
+        XCTAssertEqual(ViLineMotion.cellWidth(line, at: 0), 1)
+        XCTAssertEqual(ViLineMotion.cellWidth(line, at: 1), 2, "the block cursor wears the wide glyph's 2 cells")
+        XCTAssertEqual(ViLineMotion.cellWidth(line, at: 40), 1, "out-of-range reads as a plain cell")
+    }
 }
