@@ -78,6 +78,13 @@ public final class WorkspaceStore {
     /// pause). ``PaneContainer`` gates it on THIS pane actually changing size, so only resized panes scrim.
     public private(set) var isInteractiveResizeActive = false
 
+    /// TRUE while input ownership sits in the STAGE zone (the Stage re-scope): the active stage tab's
+    /// streamed window consumes pointer/keyboard (its surface is the first responder), the canvas
+    /// terminal does not. Set by clicking into the stream (``focusPaneTree(_:)``'s stage branch);
+    /// cleared by any canvas focus (clicking a terminal is the release affordance). The Stage zone
+    /// reads it to drive the active tab's `RemotePaneContext.isActive` + the accent focus ring.
+    public internal(set) var stageFocused = false
+
     /// The injection seam (docs/22 §0). Spec-only — the store re-points the built handle at the leaf
     /// id via `adopt(id:)` (see ``PaneSessionIDAdopting``).
     private let makeSession: @MainActor (PaneSpec) -> any PaneSessionHandle
@@ -2300,7 +2307,7 @@ public final class WorkspaceStore {
         let inheritedCwd = SettingsKey.workingDirectoryNewSplit.resolve(activePaneCwd: activeCwd)
         var spec = PaneSpec(kind: kind, title: defaultTitle(for: kind))
         spec.lastKnownCwd = inheritedCwd
-        // `splitPane` already makes the new leaf the active pane, so an in-pane `.chooser` split lands focused.
+        // `splitPane` already makes the new leaf the active pane, so the split lands focused.
         let (next, _) = WorkspaceTreeOps.splitPane(active, axis: axis, newSpec: spec, before: leading, in: tree)
         tree = next
         reconcileTree()
@@ -2405,8 +2412,8 @@ public final class WorkspaceStore {
 
     /// Adds a new tab (single leaf of `kind`) to the active session and selects it; materializes its leaf.
     /// The tab lands at the configured ``SettingsKey/newTabPosition`` (the `new-tab-position` setting): `.auto`/
-    /// `.end` append, `.afterCurrent` inserts after the active tab. The ⌘T-via-chooser path
-    /// (``openChooserPane(_:)`` `.newTab`) funnels through here, so it inherits the same placement.
+    /// `.end` append, `.afterCurrent` inserts after the active tab. The ⌘T gesture
+    /// (``newTerminalPane(_:)`` `.newTab`) funnels through here, so it inherits the same placement.
     public func newTab(kind: PaneKind) {
         newTab(kind: kind, launchGrace: .milliseconds(1400))
     }
@@ -2543,7 +2550,17 @@ public final class WorkspaceStore {
     /// Focuses leaf `id` in the tree (sets its tab's `activePane` + selects that session/tab). The full
     /// leaf set stays registered — a pure active-state change. The IDE shell calls this on a leaf tap.
     public func focusPaneTree(_ id: PaneID) {
+        // A STAGE pane routes to the stage: select its tab and move input ownership into the zone
+        // (the click-into-the-stream affordance — `GuiLeafView.onActivate` funnels here for both zones).
+        if !tree.contains(id), tree.sessions.contains(where: { $0.stageContains(id) }) {
+            stageFocused = true
+            activateStagePane(id)
+            return
+        }
         guard tree.contains(id) else { return }
+        // A canvas focus RECLAIMS input ownership from the stage (clicking a terminal is the release
+        // affordance), even when the pane was already active.
+        stageFocused = false
         let alreadyActive = tree.activeSession?.activeTab?.activePane == id
         guard !alreadyActive else { return }
         tree = WorkspaceTreeOps.focusPane(id, in: tree)

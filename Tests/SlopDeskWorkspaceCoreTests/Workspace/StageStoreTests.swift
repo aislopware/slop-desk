@@ -185,6 +185,41 @@ final class StageStoreTests: XCTestCase {
         XCTAssertTrue(repaired.isInvariantHeld())
     }
 
+    // MARK: - Focus routing: click-into-the-stream vs click-a-terminal
+
+    func testFocusPaneTreeRoutesStagePaneToStageFocus() throws {
+        let store = makeTreeStore()
+        let terminal = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
+        let a = try XCTUnwrap(store.openWindowInStage(windowID: 1, title: "A", appName: "A"))
+        let b = try XCTUnwrap(store.openWindowInStage(windowID: 2, title: "B", appName: "B"))
+        XCTAssertFalse(store.stageFocused, "opening a window does not steal keyboard ownership")
+
+        // Clicking into a background stage tab's stream: ownership moves to the stage AND that tab selects.
+        store.focusPaneTree(a)
+        XCTAssertTrue(store.stageFocused, "click-into-the-stream captures input ownership")
+        XCTAssertEqual(store.activeStagePaneID, a, "focusing a background stage tab also selects it")
+        XCTAssertEqual(
+            store.tree.activeSession?.activeTab?.activePane, terminal,
+            "the canvas focus is untouched — the zones keep separate focus",
+        )
+
+        // Clicking a terminal releases ownership back to the canvas — even the already-active one.
+        store.focusPaneTree(terminal)
+        XCTAssertFalse(store.stageFocused, "a canvas click is the release affordance")
+        _ = b
+    }
+
+    func testClosingLastStagePaneReleasesStageFocus() throws {
+        let store = makeTreeStore()
+        let a = try XCTUnwrap(store.openWindowInStage(windowID: 1, title: "A", appName: "A"))
+        store.focusPaneTree(a)
+        XCTAssertTrue(store.stageFocused)
+
+        store.closeStagePane(a)
+
+        XCTAssertFalse(store.stageFocused, "an emptied stage cannot hold input ownership")
+    }
+
     // MARK: - Session teardown covers the stage
 
     func testClosingSessionTearsDownItsStagePanes() throws {

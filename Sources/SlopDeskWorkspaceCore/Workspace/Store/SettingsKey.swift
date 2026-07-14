@@ -286,6 +286,10 @@ public enum SettingsKey {
     /// Whether the Host Windows rail (docs/45, the RIGHT sidebar) is collapsed. Default TRUE — the
     /// rail must earn its pixels; ⌘⇧R / palette / titlebar reveal it, and the choice persists.
     public static let hostWindowsRailCollapsedKey = "shell.hostWindowsRailCollapsed"
+    /// The STAGE zone's width in points (the Stage re-scope — the tabbed non-terminal zone beside the
+    /// canvas). Written on divider-drag release; the zone itself shows/hides by stage EMPTINESS, so
+    /// only the width persists.
+    public static let stageWidthKey = "shell.stageWidth"
 
     /// The working-directory policy for a NEW WINDOW (`working-directory`), default `home` — a fresh
     /// window opens at the shell's login cwd. Stored as the ``WorkingDirectoryPolicy/rawConfig`` string
@@ -883,6 +887,9 @@ public extension Defaults.Keys {
         slopDesk: SettingsKey.hostWindowsRailCollapsedKey,
         default: true,
     )
+    // The Stage zone's width (pt). Default 480 — wide enough for a legible streamed window beside a
+    // working terminal column; the divider drag clamps + persists the user's choice.
+    static let stageWidth = Key<Double>(slopDesk: SettingsKey.stageWidthKey, default: 480)
     // Working-directory policies stored as the `WorkingDirectoryPolicy.rawConfig` String (config value).
     // New window defaults to `home` (login cwd); new tab / split default to `inherit` (active pane's cwd).
     static let workingDirectoryNewWindow = Key<String>(

@@ -58,8 +58,8 @@ extension WorkspaceStore {
     /// branches, so (a) a tmux-style prefix sequence (⌃B → D) is claimed before the Ctrl+C0 path leaks the
     /// literal byte, and (b) the rebindable ⌘D/⌘⇧D split is owned by the shared engine (B5 removed the
     /// hard-coded split branch). A resolved action routes through the SAME `WorkspaceBindingRegistry.route`
-    /// the app-level monitor (B3) uses; a new-pane action (split / new-tab / …) mints an in-pane `.chooser`
-    /// pane directly via the store (no modal). A `nil` `terminal` (headless / non-terminal handle) is a no-op.
+    /// the app-level monitor (B3) uses; a new-pane action (split / new-tab / …) mints a terminal
+    /// pane directly via the store. A `nil` `terminal` (headless / non-terminal handle) is a no-op.
     func wireKeyInterceptor(terminal: TerminalViewModel?) {
         terminal?.keyInterceptor = TerminalKeyInterceptor(
             prefix: workspaceKeyPrefix,
@@ -88,8 +88,8 @@ extension WorkspaceStore {
 
     /// The terminal surface's right-click "Split Right/Down" landing (factored out of `wireMaterializedLeaf`
     /// to keep the `WorkspaceStore` body under the lint ceiling). A split MINTS a pane, so — like the `+` /
-    /// ⌘D / title-menu split — it creates an in-pane CHOOSER pane (Terminal / Remote window) and focuses it.
-    /// Focuses `paneID` first so the chooser's active-pane split targets the surface the user acted on.
+    /// ⌘D / title-menu split — it mints a focused terminal pane.
+    /// Focuses `paneID` first so the active-pane split targets the surface the user acted on.
     /// `horizontal == true` → side-by-side.
     func splitFromContextMenu(paneID: PaneID, horizontal: Bool) {
         let axis: SplitAxis = horizontal ? .horizontal : .vertical

@@ -95,15 +95,14 @@ public extension WorkspaceBindingRegistry {
     ) {
         switch action {
         // Panes
-        // A split MINTS a new pane → an in-pane CHOOSER pane (Terminal / Remote window), focused: the user
-        // picks the kind INSIDE the pane (no modal). `openChooserPane(.split(axis:))` splits the active pane
-        // into a `.chooser` leaf; `choosePaneKind` later flips it to the real kind in place.
+        // A split MINTS a new pane — a TERMINAL, directly and focused (the Stage re-scope retired the
+        // in-pane kind chooser; remote windows open in the Stage from the rail / palette).
         case .splitRight:
             store.newTerminalPane(.split(axis: .horizontal))
         case .splitDown:
             store.newTerminalPane(.split(axis: .vertical))
-        // Split-left / split-up: same chooser-split as right/down, but `leading: true` inserts
-        // the new `.chooser` leaf on the LEADING side of the active pane (left of a horizontal split / above a
+        // Split-left / split-up: same terminal split as right/down, but `leading: true` inserts
+        // the new leaf on the LEADING side of the active pane (left of a horizontal split / above a
         // vertical one). The new pane is focused, same as right/down.
         case .splitLeft:
             store.newTerminalPane(.split(axis: .horizontal, leading: true))

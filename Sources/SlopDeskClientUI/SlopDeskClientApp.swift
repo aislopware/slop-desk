@@ -499,7 +499,7 @@ public struct SlopDeskClientApp: App {
         store.clipboardTextProvider = { ClientPasteboard.pasteboard.string(forType: .string) }
         _dockProgress = State(initialValue: dockProgress)
         // Build the live keybinding dispatcher over the single store. A new-pane action (split /
-        // new-tab / new-session) mints an in-pane `.chooser` pane via the store's routing, focused,
+        // new-tab / new-session) mints a terminal pane directly via the store's routing, focused,
         // so the user picks Terminal / Remote window INSIDE the new pane; ⌘T stays a direct-terminal escape
         // hatch (it routes via `.newPane(.terminal)`, never `.newTab`). The prefix is the store's live
         // `workspaceKeyPrefix` (Settings ▸ Key Bindings ▸ Prefix Key override, else ⌃B).

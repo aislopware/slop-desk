@@ -315,7 +315,7 @@ struct NavigatorColumn: View {
         .searchable(text: $query, prompt: "Search tabs")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button { store.openChooserPane(.newTab) } label: { Image(systemSymbol: .plus) }
+                Button { store.newTerminalPane(.newTab) } label: { Image(systemSymbol: .plus) }
             }
         }
     }

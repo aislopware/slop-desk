@@ -395,8 +395,7 @@ public struct WorkspaceRootView: View {
                 .help("Command Palette")
         }
         ToolbarItem(placement: .primaryAction) {
-            // The `+` opens a focused `.chooser` pane (in-pane chooser UX, same as macOS's titlebar),
-            // rendering `InPaneChooserView` for the Terminal/Remote pick.
+            // The `+` mints a focused terminal pane directly (the Stage re-scope retired the chooser).
             Button { store.newTerminalPane(.newTab) } label: { Image(systemSymbol: .plus) }
                 .help("New Tab")
         }

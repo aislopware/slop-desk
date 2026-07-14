@@ -78,6 +78,8 @@ public extension WorkspaceStore {
                 : session.stagePanes.last
         }
         tree.sessions[sIdx] = session
+        // An emptied stage collapses — input ownership falls back to the canvas (nothing left to hold it).
+        if session.stagePanes.isEmpty { stageFocused = false }
         reconcileTree()
     }
 
