@@ -33,6 +33,15 @@ struct ConnectionCluster: View {
     /// Sidebar footer: stretch the hit/hover plate full width. Titlebar mount hugs content.
     var fillWidth = false
 
+    /// The scene overlay coordinator — read for the workspace-prefix ARMED flag. While the prefix (⌃B)
+    /// awaits its follow-up key the WHOLE cluster crossfades to the prefix pill (`⌃B …` in a capsule) and
+    /// back on resolve — a state swap of THIS always-mounted instrument (the same swap grammar as the
+    /// receipts), never an added ornament. The cluster is the cue's home because it is the chrome's one
+    /// running instrument readout: "the workspace is holding your key" is connection-adjacent state, and
+    /// the slot exists in BOTH sidebar states (footer while open, titlebar trailing while collapsed).
+    /// `nil` (tests / previews / no scene injection) ⇒ the pill never shows.
+    @Environment(\.overlayCoordinator) private var overlayCoordinator
+
     @State private var hover = false
 
     private var status: ConnectionStatus { connection.status }
@@ -100,6 +109,23 @@ struct ConnectionCluster: View {
     }
 
     var body: some View {
+        let armed = overlayCoordinator?.prefixArmed == true
+        // The armed swap is a ZStack crossfade IN PLACE: the box keeps the cluster's width (the pill is
+        // narrower), so neither the footer row nor the titlebar's trailing edge ever shifts — zero-shift.
+        return ZStack(alignment: fillWidth ? .leading : .center) {
+            cluster
+                .opacity(armed ? 0 : 1)
+                .allowsHitTesting(!armed)
+                .accessibilityHidden(armed)
+            PrefixArmedPill()
+                .opacity(armed ? 1 : 0)
+                .allowsHitTesting(false)
+                .accessibilityHidden(!armed)
+        }
+        .animation(Slate.Anim.smallFade, value: armed)
+    }
+
+    private var cluster: some View {
         HStack(spacing: Slate.Metric.space1) {
             Button(action: onConnect) {
                 HStack(alignment: .center, spacing: Slate.Metric.space2) {
@@ -159,6 +185,33 @@ struct ConnectionCluster: View {
                 .accessibilityLabel("Retry connecting to \(host)")
             }
         }
+    }
+}
+
+/// The workspace-prefix ARMED pill — what the connection cluster crossfades to while the prefix (⌃B)
+/// awaits its follow-up key: the chord glyph + the vi-hint-bar's bare `…` "more keys" token, in a
+/// CAPSULE on the raised plate. The chord reads the LIVE registry resolution
+/// (``WorkspaceBindingRegistry/resolvedPrefixChord`` — the same source the dispatcher re-keys from), so a
+/// Settings rebind shows the new chord with no threading. System face (never monospaced — SF Mono draws
+/// the modifier glyphs as cramped fallbacks), primary tone, no icon, no accent: an instrument readout in
+/// the cluster's own quiet register, not an alarm.
+struct PrefixArmedPill: View {
+    var body: some View {
+        HStack(spacing: Slate.Metric.space1) {
+            Text(WorkspaceBindingRegistry.glyph(WorkspaceBindingRegistry.resolvedPrefixChord))
+                .font(.system(size: Slate.Typeface.small, weight: .medium))
+                .foregroundStyle(Slate.Text.primary)
+                .lineLimit(1)
+                .fixedSize()
+            Text("…")
+                .font(.system(size: Slate.Typeface.small, weight: .medium))
+                .foregroundStyle(Slate.Text.tertiary)
+        }
+        .padding(.horizontal, Slate.Metric.space2)
+        .padding(.vertical, Slate.Metric.space1)
+        .background(Slate.Surface.raised, in: .capsule)
+        .overlay(Capsule().strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline))
+        .accessibilityLabel("Prefix key armed, awaiting the next key")
     }
 }
 #endif

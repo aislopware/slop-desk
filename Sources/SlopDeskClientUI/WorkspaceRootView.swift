@@ -444,6 +444,7 @@ struct WorkspaceSplitRepresentable: NSViewControllerRepresentable {
             store: store, connection: connection, chrome: chrome, preferences: preferences,
             hostWindowFeed: hostWindowFeed,
             onConnect: { [overlay] in overlay.openConnect() },
+            overlay: overlay,
         )
     }
 

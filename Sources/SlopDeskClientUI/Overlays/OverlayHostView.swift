@@ -50,9 +50,10 @@ struct OverlayHostView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .allowsHitTesting(!coordinator.toasts.isEmpty)
             // The "prefix armed" indicator is NOT a window-corner chip: while the prefix awaits its
-            // follow-up key the TITLEBAR CENTRE chip crossfades to the armed readout (`SlateTitlebar`'s
-            // `TitleMenuButton`, reading the same `coordinator.prefixArmed` flag the dispatcher drives) —
-            // a state swap of existing chrome, visible for every pane kind, never a floating island.
+            // follow-up key the CONNECTION CLUSTER (sidebar footer / titlebar trailing) crossfades to the
+            // `⌃B …` pill (`ConnectionCluster` → `PrefixArmedPill`, reading the same
+            // `coordinator.prefixArmed` flag the dispatcher drives) — a state swap of existing chrome,
+            // visible for every pane kind, never a floating island.
             // The bottom-center transient chips, stacked so they can't overlap: the window-level
             // `COPIED · N` receipt (pane-less copies — palette "Copy Path", rail "Copy Window Title";
             // self-expiring via the chip's dwell task) above the durable connection indicator — a compact

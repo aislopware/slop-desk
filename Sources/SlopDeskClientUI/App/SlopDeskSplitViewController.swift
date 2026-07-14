@@ -27,6 +27,12 @@ final class SlopDeskSplitViewController: NSSplitViewController {
     /// binds this to `overlay.openConnect()`; the no-op default keeps the controller buildable without
     /// an overlay.
     private let onConnect: () -> Void
+    /// The scene ``OverlayCoordinator`` — re-injected into BOTH hosted columns' environments
+    /// (`\.overlayCoordinator`): like `preferences`, the columns' separate `NSHostingController`s do not
+    /// inherit the WindowGroup environment, and the connection cluster (sidebar footer + titlebar
+    /// trailing) reads the coordinator's prefix-ARMED flag for its pill swap. `nil` (previews/tests)
+    /// simply never shows the armed pill.
+    private let overlay: OverlayCoordinator?
 
     /// Retained so the titlebar toggle can animate its collapse (set in `viewDidLoad`).
     private var sidebarItem: NSSplitViewItem?
@@ -54,6 +60,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         preferences: PreferencesStore? = nil,
         hostWindowFeed: HostWindowFeed? = nil,
         onConnect: @escaping () -> Void = {},
+        overlay: OverlayCoordinator? = nil,
     ) {
         self.store = store
         self.connection = connection
@@ -61,6 +68,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         self.preferences = preferences
         self.hostWindowFeed = hostWindowFeed
         self.onConnect = onConnect
+        self.overlay = overlay
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -96,7 +104,7 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         let navigator = NSHostingController(rootView: NavigatorColumn(
             store: store, preferences: preferences, chrome: chrome,
             connection: connection, onConnect: onConnect,
-        ))
+        ).overlayCoordinator(overlay))
         let sidebarItem = NSSplitViewItem(viewController: navigator)
         sidebarItem.minimumThickness = Self.defaultSidebarWidth
         sidebarItem.maximumThickness = 360
@@ -107,7 +115,8 @@ final class SlopDeskSplitViewController: NSSplitViewController {
         //    The non-collapsible centre. `chrome` drives the titlebar's sidebar toggle; `onConnect` wires
         //    the titlebar's connection-status cluster to the Connect-to-Host editor.
         let content = NSHostingController(
-            rootView: ContentColumn(store: store, connection: connection, chrome: chrome, onConnect: onConnect),
+            rootView: ContentColumn(store: store, connection: connection, chrome: chrome, onConnect: onConnect)
+                .overlayCoordinator(overlay),
         )
         let contentItem = NSSplitViewItem(viewController: content)
         contentItem.minimumThickness = Self.contentMinWidth

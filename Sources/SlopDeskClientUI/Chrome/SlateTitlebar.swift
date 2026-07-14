@@ -161,24 +161,10 @@ struct SlateTitlebar: View {
 /// everything is seen (MERIDIAN zero-ornament at rest). Superscript-pip and leading-bullet variants are
 /// avoided: a badge riding TEXT reads as dirt — badges belong on icons or in the
 /// row's trailing slot.
-///
-/// Internal (not private) so the L10 snapshot harness (`SlateSnapshotRender`) can render the REAL centre
-/// chip headlessly — the whole `SlateTitlebar` cannot rasterise (its `HoverSensor` platform view draws as
-/// `ImageRenderer`'s unsupported-view placeholder over the strip). Same seam as ``TitlePaneMenu``.
-struct TitleMenuButton: View {
+private struct TitleMenuButton: View {
     let title: String
     let store: WorkspaceStore
     let activePane: PaneID?
-
-    /// The scene-root overlay coordinator — read for the workspace-prefix ARMED flag. While the prefix
-    /// (⌃B) awaits its follow-up key the WHOLE centre label crossfades to the armed readout (the `[⌃B] …`
-    /// keycap chip) and back on resolve — a state SWAP of an existing chrome element, never an added
-    /// ornament (two prior floating-chip placements read as islands; the titlebar centre is the one always-
-    /// mounted, pane-kind-independent slot, so a chooser/video/terminal pane all show the same cue). The
-    /// two layers share one ZStack so the swap is a cross-fade in place — the chip never travels, and its
-    /// width is the max of the two labels (the title is almost always the wider). `nil` (tests / previews)
-    /// ⇒ the readout never shows.
-    @Environment(\.overlayCoordinator) private var overlayCoordinator
 
     @State private var hover = false
     @State private var show = false
@@ -187,53 +173,22 @@ struct TitleMenuButton: View {
         let waiting = store.unseenAttentionPanes
         let showDot = !waiting.isEmpty
         let dotTint = Self.tint(for: waiting.first?.badge)
-        let armed = overlayCoordinator?.prefixArmed == true
         return Button { show.toggle() } label: {
-            ZStack {
-                HStack(spacing: 5) {
-                    Text(title)
-                        .font(.system(size: Slate.Typeface.body, weight: .medium))
-                        .foregroundStyle(hover || show ? Slate.Text.primary : Slate.Text.secondary)
-                        .lineLimit(1)
-                    // The ONE trailing complication slot (always reserved): the attention dot at rest, the
-                    // `⋯` menu hint on hover/press. A ZStack so the swap is a cross-fade in place.
-                    ZStack {
-                        Image(systemSymbol: .ellipsis)
-                            .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                            .foregroundStyle(Slate.Text.icon)
-                            .opacity(hover || show ? 1 : 0)
-                        SlateStatusDot(color: dotTint, size: 7)
-                            .opacity(showDot && !hover && !show ? 1 : 0)
-                    }
+            HStack(spacing: 5) {
+                Text(title)
+                    .font(.system(size: Slate.Typeface.body, weight: .medium))
+                    .foregroundStyle(hover || show ? Slate.Text.primary : Slate.Text.secondary)
+                    .lineLimit(1)
+                // The ONE trailing complication slot (always reserved): the attention dot at rest, the
+                // `⋯` menu hint on hover/press. A ZStack so the swap is a cross-fade in place.
+                ZStack {
+                    Image(systemSymbol: .ellipsis)
+                        .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+                        .foregroundStyle(Slate.Text.icon)
+                        .opacity(hover || show ? 1 : 0)
+                    SlateStatusDot(color: dotTint, size: 7)
+                        .opacity(showDot && !hover && !show ? 1 : 0)
                 }
-                .opacity(armed ? 0 : 1)
-                // The prefix-ARMED readout — the centre chip's whole-label state swap while the follow-up
-                // key is awaited. It speaks the app's KEYCAP grammar (the palette / vi-hint-bar /
-                // cheat-sheet chip, verbatim register) + the vi bar's bare `…` "more keys" token: `[⌃B] …`
-                // reads "this key is held open, awaiting the next". No icon, no accent — an earlier take
-                // (keyboard SF-symbol + accent monospaced chord) shouted over the quiet chrome and drew the
-                // ⌃ as a cheap caret; the keycap plate is already the product's picture of "a key".
-                HStack(spacing: Slate.Metric.space1) {
-                    // The PALETTE's keycap face (system, not mono) — SF Mono draws the modifier glyphs
-                    // (⌃⌥⇧⌘) as cramped fallbacks; the system face carries them at menu-bar quality.
-                    Text(WorkspaceBindingRegistry.glyph(store.workspaceKeyPrefix))
-                        .font(.system(size: Slate.Typeface.small, weight: .medium))
-                        .foregroundStyle(Slate.Text.primary)
-                        .lineLimit(1)
-                        .fixedSize()
-                        .frame(minWidth: 18, minHeight: 18)
-                        .padding(.horizontal, Slate.Metric.space1)
-                        .background(Slate.Surface.raised, in: .rect(cornerRadius: Slate.Metric.radiusSmall))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                                .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
-                        )
-                    Text("…")
-                        .font(.system(size: Slate.Typeface.small, weight: .medium))
-                        .foregroundStyle(Slate.Text.tertiary)
-                }
-                .opacity(armed ? 1 : 0)
-                .accessibilityHidden(!armed)
             }
             .padding(.horizontal, Slate.Metric.space2)
             .frame(height: Slate.Metric.heightControl)
@@ -244,7 +199,6 @@ struct TitleMenuButton: View {
         .onHover { hover = $0 }
         .animation(Slate.Anim.smallFade, value: hover)
         .animation(Slate.Anim.smallFade, value: showDot)
-        .animation(Slate.Anim.smallFade, value: armed)
         .popover(isPresented: $show, arrowEdge: .bottom) {
             TitlePaneMenu(store: store, activePane: activePane, dismiss: { show = false })
         }

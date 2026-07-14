@@ -165,7 +165,8 @@ public final class OverlayCoordinator {
     /// Whether the tmux-style workspace PREFIX (default ⌃B) is currently ARMED — swallowed, awaiting the
     /// follow-up key. Driven by ``WorkspaceKeyDispatcher`` through ``setPrefixArmed(_:)`` on every armed edge
     /// (arm → true; a resolved/unbound follow-up, double-tap send-prefix, or escape timeout → false), so the
-    /// workspace chip (``OverlayHostView``) shows exactly while a follow-up is awaited. Stays `false` on iOS / tests.
+    /// connection cluster's armed-pill swap (`ConnectionCluster` → `PrefixArmedPill`) shows exactly while a
+    /// follow-up is awaited. Stays `false` on iOS / tests.
     public private(set) var prefixArmed = false
 
     /// Publish one armed edge (the dispatcher's `onPrefixArmedChange` target). Idempotent — a redundant edge

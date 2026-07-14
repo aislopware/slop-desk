@@ -8,6 +8,7 @@
 #if canImport(SwiftUI) && canImport(AppKit)
 import AppKit
 import SFSafeSymbols
+import SlopDeskTransport
 import SwiftUI
 import XCTest
 @testable import SlopDeskClientUI
@@ -206,50 +207,51 @@ final class SlateSnapshotRender: XCTestCase {
         )
     }
 
-    /// Renders the LIVE ``SlateTitlebar`` with the workspace-prefix ARMED readout showing (the centre
-    /// chip's whole-label state swap while ⌃B awaits its follow-up key) — the visual lock for the armed
-    /// cue. The armed flag rides the scene ``OverlayCoordinator`` through the `\.overlayCoordinator`
-    /// environment, so the render injects a coordinator with `setPrefixArmed(true)` — exactly the app's
-    /// wiring, no view-internal test seam. Writes `titlebar-armed.png` into
-    /// `SLOPDESK_TITLEBAR_SNAPSHOT_DIR` (same opt-in as the dot render). Headless — no socket / video / Metal.
+    /// Renders the LIVE ``ConnectionCluster`` in its workspace-prefix ARMED swap (the cluster crossfades
+    /// to the `⌃B …` capsule pill while the prefix awaits its follow-up key) beside the resting cluster —
+    /// the visual lock for the armed cue, in BOTH mounts (sidebar-footer `fillWidth` row + the titlebar's
+    /// hugging trailing mount). The armed flag rides the scene ``OverlayCoordinator`` through the
+    /// `\.overlayCoordinator` environment — exactly the app's wiring, no view-internal test seam. Writes
+    /// `cluster-armed.png` into `SLOPDESK_TITLEBAR_SNAPSHOT_DIR` (same opt-in as the dot render).
+    /// Headless — the connection is a throwing-registry double, no socket / video / Metal.
     @MainActor
-    func testRenderTitlebarPrefixArmed() throws {
+    func testRenderClusterPrefixArmed() throws {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TITLEBAR_SNAPSHOT_DIR"] else {
-            throw XCTSkip("set SLOPDESK_TITLEBAR_SNAPSHOT_DIR=<dir> to render the armed titlebar")
+            throw XCTSkip("set SLOPDESK_TITLEBAR_SNAPSHOT_DIR=<dir> to render the armed cluster")
         }
-        let (store, focused) = makeAttentionStore()
+        let (store, _) = makeAttentionStore()
+        let connection = try AppConnection(
+            registry: ConnectionRegistry { _, _ in throw CocoaError(.fileNoSuchFile) },
+            defaults: XCTUnwrap(UserDefaults(suiteName: "render.cluster.scratch")),
+        )
         let idle = OverlayCoordinator(store: store)
         let armed = OverlayCoordinator(store: store)
         armed.setPrefixArmed(true)
 
-        // Both states stacked (resting above, armed below) so the swap's two faces compare in one image.
-        // The centre chip is rendered directly — the full `SlateTitlebar` cannot rasterise (HoverSensor).
-        let strip = VStack(spacing: 0) {
-            titlebarStrip(store: store, activePane: focused, overlay: idle)
-            titlebarStrip(store: store, activePane: focused, overlay: armed)
+        // Footer mount (fillWidth, sidebar width) + titlebar mount (hugging), resting beside armed.
+        func footerPanel(_ overlay: OverlayCoordinator) -> some View {
+            ConnectionCluster(connection: connection, pingMS: 11, fillWidth: true)
+                .padding(Slate.Metric.space2)
+                .frame(width: 240)
+                .background(Slate.Surface.ground)
+                .overlayCoordinator(overlay)
         }
-        try render(strip, size: CGSize(width: 920, height: 192), to: dir, named: "titlebar-armed.png")
-    }
-
-    /// One mock titlebar strip around the REAL ``TitleMenuButton`` — traffic lights at the true lead, the
-    /// centre chip on the traffic-light row, a hairline, and a slice of the paper content region.
-    @MainActor
-    private func titlebarStrip(
-        store: WorkspaceStore, activePane: PaneID?, overlay: OverlayCoordinator,
-    ) -> some View {
-        VStack(spacing: 0) {
-            ZStack(alignment: .topLeading) {
-                TitleMenuButton(title: "slopdesk", store: store, activePane: activePane)
-                    .padding(.top, 3)
-                    .frame(maxWidth: .infinity)
-                trafficLights.padding(.leading, 20).padding(.top, 9)
+        func titlebarPanel(_ overlay: OverlayCoordinator) -> some View {
+            ConnectionCluster(connection: connection, pingMS: 11)
+                .padding(Slate.Metric.space2)
+                .frame(width: 240, alignment: .trailing)
+                .background(Slate.Surface.ground)
+                .overlayCoordinator(overlay)
+        }
+        let panel = VStack(spacing: 1) {
+            HStack(spacing: 1) { footerPanel(idle)
+                footerPanel(armed)
             }
-            .frame(height: Slate.Metric.titlebarHeight, alignment: .top)
-            Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
-            Slate.Surface.face
+            HStack(spacing: 1) { titlebarPanel(idle)
+                titlebarPanel(armed)
+            }
         }
-        .background(Slate.Surface.ground)
-        .overlayCoordinator(overlay)
+        try render(panel, size: CGSize(width: 482, height: 90), to: dir, named: "cluster-armed.png")
     }
 
     /// The three macOS traffic lights, mocked for the strip render (the real ones are window chrome and

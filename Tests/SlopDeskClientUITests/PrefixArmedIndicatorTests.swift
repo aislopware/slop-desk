@@ -107,7 +107,7 @@ final class PrefixArmedIndicatorTests: XCTestCase {
     }
 
     /// The app wiring target: `OverlayCoordinator.setPrefixArmed` publishes the `@Observable` flag the
-    /// titlebar's centre-chip armed readout reads — the closure-driven edges land on the coordinator
+    /// connection cluster's armed-pill swap reads — the closure-driven edges land on the coordinator
     /// unchanged (and redundant sets are idempotent).
     func testCoordinatorPublishesArmedFlag() {
         let store = makeStore()
