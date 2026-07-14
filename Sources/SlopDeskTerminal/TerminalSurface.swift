@@ -193,6 +193,82 @@ public protocol TerminalViewportSnapshotting: AnyObject {
     func cellMetrics() -> TerminalCellMetrics?
 }
 
+// MARK: - TerminalSelectionControl (the keyboard copy-mode capability seam)
+
+/// A cell position in SCREEN coordinates — `row` 0 is the OLDEST retained scrollback row, the same
+/// space a `GHOSTTY_POINT_SCREEN` exact point addresses. The copy-mode cursor/anchor live in this
+/// space so they stay put while the viewport scrolls under them.
+public struct TerminalScreenPoint: Sendable, Equatable {
+    /// Grid column (0-based).
+    public var col: Int
+    /// Absolute screen row (0 = oldest retained scrollback row).
+    public var row: Int
+
+    public init(col: Int, row: Int) {
+        self.col = col
+        self.row = row
+    }
+}
+
+/// One readback of the live surface's viewport/extent/cursor in SCREEN coordinates — the truth the
+/// keyboard copy-mode re-reads EVERY keystroke so a client-held cursor can never drift from what
+/// libghostty actually shows (the anti-jitter rule: never claim a position libghostty can contradict).
+public struct TerminalViewportInfo: Sendable, Equatable {
+    /// The viewport's top row in screen coordinates.
+    public var viewportTopRow: Int
+    /// Visible viewport rows.
+    public var viewportRows: Int
+    /// Grid columns.
+    public var cols: Int
+    /// Total screen rows (retained scrollback + active screen).
+    public var totalRows: Int
+    /// The TERMINAL cursor (where the shell is typing), in screen coordinates — the copy-mode
+    /// entry position (tmux parity: copy-mode starts at the prompt cursor, not the viewport corner).
+    public var cursor: TerminalScreenPoint
+
+    public init(
+        viewportTopRow: Int,
+        viewportRows: Int,
+        cols: Int,
+        totalRows: Int,
+        cursor: TerminalScreenPoint,
+    ) {
+        self.viewportTopRow = viewportTopRow
+        self.viewportRows = viewportRows
+        self.cols = cols
+        self.totalRows = totalRows
+        self.cursor = cursor
+    }
+}
+
+/// The OPTIONAL capability seam (mirrors ``TerminalSurfaceActions``) that lets the keyboard
+/// copy-mode START and steer a selection programmatically — the E17 char-range ceiling lift
+/// (DECISIONS.md 2026-07-14). Backed by the fork's `ghostty_surface_set_selection` /
+/// `ghostty_surface_clear_selection` / `ghostty_surface_viewport_info` C APIs; the selection
+/// itself is RENDERED natively by libghostty (never a client-drawn rectangle). Headless
+/// conformers do not conform; the GUI probes with `as? TerminalSelectionControl` and copy-mode
+/// degrades to the pre-lift behavior (scroll-only navigation, mouse-anchored yank). Not
+/// exercised by a test (hang-safety rule); the pure cursor/motion state it feeds is
+/// unit-tested against a recording mock.
+public protocol TerminalSelectionControl: AnyObject {
+    /// The live viewport/extent/cursor readback, or `nil` when there is no live surface — in which
+    /// case copy-mode runs without a cursor (the honest ceiling, like an absent overlay).
+    func viewportInfo() -> TerminalViewportInfo?
+
+    /// Sets the selection from `anchor` to `head` (both inclusive, SCREEN coordinates, either
+    /// order — libghostty orders internally). `rectangle` selects a block (`⌃V`). Returns whether
+    /// libghostty accepted the range.
+    @discardableResult
+    func setSelection(anchor: TerminalScreenPoint, head: TerminalScreenPoint, rectangle: Bool) -> Bool
+
+    /// Clears any selection (leaving visual mode). Safe when nothing is selected.
+    func clearSelection()
+
+    /// One SCREEN-coordinate row's text (for word/column motions), or `nil` off-range. The row is
+    /// read fresh from libghostty — never a cached mirror.
+    func readScreenRow(_ row: Int) -> String?
+}
+
 /// Backpressure seam for renderers whose ``TerminalSurface/feed(_:)`` is an
 /// ASYNCHRONOUS enqueue (GhosttySurface's per-surface serial feed queue, docs/31 #5).
 ///

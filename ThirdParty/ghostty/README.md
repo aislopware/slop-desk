@@ -62,6 +62,14 @@ parser rewrite in `dcs.zig`/`parse_table.zig` and a per-keystroke mutex round-tr
 - **Unicode 17 width tables** (`src/simd/codepoint_width.*`) and two defensive
   `unreachable`→graceful-return fixes in `src/terminal/search/` (upstream's own search
   engine; ReleaseFast `unreachable` is UB).
+- **Programmatic selection + viewport readback (2026-07-14, the copy-mode ceiling lift)**:
+  `ghostty_surface_set_selection` / `ghostty_surface_clear_selection` /
+  `ghostty_surface_viewport_info` (+ `ghostty_viewport_info_s`) in `embedded.zig` +
+  `include/ghostty.h`. Resolves the same tagged points as `read_text`, drives
+  `Screen.select` under `renderer_state.mutex`, bypasses copy-on-select (yank copies
+  explicitly), wakes the renderer like `select_all`'s `queueRender`. Lets the client's
+  keyboard copy-mode START a char/line/block selection from a vi cursor (DECISIONS.md
+  2026-07-14).
 
 **What was dropped** (present in the pre-2026-07-11 fat delta; recoverable from git
 history of this file + the old patch): the tmux control-mode viewer

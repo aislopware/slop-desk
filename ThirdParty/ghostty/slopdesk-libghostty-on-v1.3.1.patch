@@ -1,8 +1,25 @@
 diff --git a/include/ghostty.h b/include/ghostty.h
-index 40ff55c..973bde8 100644
+index 40ff55c..f108a8a 100644
 --- a/include/ghostty.h
 +++ b/include/ghostty.h
-@@ -418,6 +418,19 @@ typedef struct {
+@@ -413,11 +413,36 @@ typedef struct {
+   bool rectangle;
+ } ghostty_selection_s;
+ 
++// slopdesk: keyboard copy-mode readback. All row values are SCREEN
++// coordinates (0 = oldest retained scrollback row), the same space a
++// GHOSTTY_POINT_SCREEN exact point addresses.
++typedef struct {
++  uint32_t viewport_top_y;
++  uint32_t viewport_rows;
++  uint32_t cols;
++  uint32_t total_rows;
++  uint32_t cursor_x;
++  uint32_t cursor_y;
++} ghostty_viewport_info_s;
++
+ typedef struct {
+   const char* key;
    const char* value;
  } ghostty_env_var_s;
  
@@ -22,7 +39,7 @@ index 40ff55c..973bde8 100644
  typedef struct {
    void* nsview;
  } ghostty_platform_macos_s;
-@@ -450,6 +463,9 @@ typedef struct {
+@@ -450,6 +475,9 @@ typedef struct {
    const char* initial_input;
    bool wait_after_command;
    ghostty_surface_context_e context;
@@ -32,7 +49,7 @@ index 40ff55c..973bde8 100644
  } ghostty_surface_config_s;
  
  typedef struct {
-@@ -1045,6 +1061,8 @@ void ghostty_config_load_cli_args(ghostty_config_t);
+@@ -1045,6 +1073,8 @@ void ghostty_config_load_cli_args(ghostty_config_t);
  void ghostty_config_load_file(ghostty_config_t, const char*);
  void ghostty_config_load_default_files(ghostty_config_t);
  void ghostty_config_load_recursive_files(ghostty_config_t);
@@ -41,7 +58,7 @@ index 40ff55c..973bde8 100644
  void ghostty_config_finalize(ghostty_config_t);
  bool ghostty_config_get(ghostty_config_t, void*, const char*, uintptr_t);
  ghostty_input_trigger_s ghostty_config_trigger(ghostty_config_t,
-@@ -1082,6 +1100,7 @@ bool ghostty_surface_needs_confirm_quit(ghostty_surface_t);
+@@ -1082,6 +1112,7 @@ bool ghostty_surface_needs_confirm_quit(ghostty_surface_t);
  bool ghostty_surface_process_exited(ghostty_surface_t);
  void ghostty_surface_refresh(ghostty_surface_t);
  void ghostty_surface_draw(ghostty_surface_t);
@@ -49,7 +66,7 @@ index 40ff55c..973bde8 100644
  void ghostty_surface_set_content_scale(ghostty_surface_t, double, double);
  void ghostty_surface_set_focus(ghostty_surface_t, bool);
  void ghostty_surface_set_occlusion(ghostty_surface_t, bool);
-@@ -1096,6 +1115,7 @@ bool ghostty_surface_key_is_binding(ghostty_surface_t,
+@@ -1096,6 +1127,7 @@ bool ghostty_surface_key_is_binding(ghostty_surface_t,
                                      ghostty_input_key_s,
                                      ghostty_binding_flags_e*);
  void ghostty_surface_text(ghostty_surface_t, const char*, uintptr_t);
@@ -57,6 +74,17 @@ index 40ff55c..973bde8 100644
  void ghostty_surface_preedit(ghostty_surface_t, const char*, uintptr_t);
  bool ghostty_surface_mouse_captured(ghostty_surface_t);
  bool ghostty_surface_mouse_button(ghostty_surface_t,
+@@ -1131,6 +1163,10 @@ bool ghostty_surface_read_text(ghostty_surface_t,
+                                ghostty_selection_s,
+                                ghostty_text_s*);
+ void ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*);
++// slopdesk: programmatic selection + viewport readback (keyboard copy-mode).
++bool ghostty_surface_set_selection(ghostty_surface_t, ghostty_selection_s);
++void ghostty_surface_clear_selection(ghostty_surface_t);
++bool ghostty_surface_viewport_info(ghostty_surface_t, ghostty_viewport_info_s*);
+ 
+ #ifdef __APPLE__
+ void ghostty_surface_set_display_id(ghostty_surface_t, uint32_t);
 diff --git a/src/Surface.zig b/src/Surface.zig
 index 4d66622..cde7798 100644
 --- a/src/Surface.zig
@@ -178,7 +206,7 @@ index 4d66622..cde7798 100644
      const runtime_str = try std.fmt.allocPrint(alloc, "{d} ms", .{info.runtime_ms});
  
 diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
-index 0d5a4f8..27479b6 100644
+index 0d5a4f8..5d526eb 100644
 --- a/src/apprt/embedded.zig
 +++ b/src/apprt/embedded.zig
 @@ -15,6 +15,7 @@ const input = @import("../input.zig");
@@ -320,7 +348,113 @@ index 0d5a4f8..27479b6 100644
      pub fn updateContentScale(self: *Surface, x: f64, y: f64) void {
          // We are an embedded API so the caller can send us all sorts of
          // garbage. We want to make sure that the float values are valid
-@@ -1690,6 +1790,12 @@ pub const CAPI = struct {
+@@ -1385,6 +1485,19 @@ pub const CAPI = struct {
+         }
+     };
+ 
++    // ghostty_viewport_info_s (slopdesk: keyboard copy-mode readback).
++    // All row values are SCREEN coordinates (0 = oldest retained
++    // scrollback row), the same space a GHOSTTY_POINT_SCREEN exact
++    // point addresses.
++    const ViewportInfo = extern struct {
++        viewport_top_y: u32,
++        viewport_rows: u32,
++        cols: u32,
++        total_rows: u32,
++        cursor_x: u32,
++        cursor_y: u32,
++    };
++
+     // Reference the conditional exports based on target platform
+     // so they're included in the C API.
+     comptime {
+@@ -1679,6 +1792,85 @@ pub const CAPI = struct {
+         ptr.deinit();
+     }
+ 
++    /// slopdesk: Set the selection to an arbitrary tagged-point range
++    /// (keyboard copy-mode). Points resolve exactly like
++    /// ghostty_surface_read_text; `rectangle` selects a block. This
++    /// deliberately bypasses copy-on-select — an incremental keyboard
++    /// selection must not write the clipboard on every cursor move; the
++    /// copy happens explicitly on yank via ghostty_surface_read_selection.
++    /// Returns false if a point cannot be resolved.
++    export fn ghostty_surface_set_selection(
++        surface: *Surface,
++        sel: Selection,
++    ) bool {
++        const core_surface = &surface.core_surface;
++        core_surface.renderer_state.mutex.lock();
++        defer core_surface.renderer_state.mutex.unlock();
++
++        const screen = core_surface.renderer_state.terminal.screens.active;
++        const core_sel = sel.core(screen) orelse return false;
++        screen.select(core_sel) catch |err| {
++            log.warn("error setting selection err={}", .{err});
++            return false;
++        };
++
++        // Wake the renderer so the selection paints now (the same wakeup
++        // Surface.queueRender issues after select_all).
++        core_surface.renderer_thread.wakeup.notify() catch {};
++        return true;
++    }
++
++    /// slopdesk: Clear any selection (keyboard copy-mode leaving visual
++    /// mode). Safe to call with no selection.
++    export fn ghostty_surface_clear_selection(surface: *Surface) void {
++        const core_surface = &surface.core_surface;
++        core_surface.renderer_state.mutex.lock();
++        defer core_surface.renderer_state.mutex.unlock();
++
++        const screen = core_surface.renderer_state.terminal.screens.active;
++        screen.select(null) catch |err| {
++            log.warn("error clearing selection err={}", .{err});
++            return;
++        };
++        core_surface.renderer_thread.wakeup.notify() catch {};
++    }
++
++    /// slopdesk: Read the viewport position, screen extent, and terminal
++    /// cursor position in SCREEN coordinates — the readback that lets an
++    /// embedder-held copy-mode cursor stay honest against libghostty truth.
++    export fn ghostty_surface_viewport_info(
++        surface: *Surface,
++        result: *ViewportInfo,
++    ) bool {
++        const core_surface = &surface.core_surface;
++        core_surface.renderer_state.mutex.lock();
++        defer core_surface.renderer_state.mutex.unlock();
++
++        const screen = core_surface.renderer_state.terminal.screens.active;
++        const pages = &screen.pages;
++
++        const vp_pt = pages.pointFromPin(
++            .screen,
++            pages.getTopLeft(.viewport),
++        ) orelse return false;
++        const br_pin = pages.getBottomRight(.screen) orelse return false;
++        const br_pt = pages.pointFromPin(.screen, br_pin) orelse return false;
++        const cur_pt = pages.pointFromPin(
++            .screen,
++            screen.cursor.page_pin.*,
++        ) orelse return false;
++
++        result.* = .{
++            .viewport_top_y = vp_pt.screen.y,
++            .viewport_rows = @intCast(pages.rows),
++            .cols = @intCast(pages.cols),
++            .total_rows = br_pt.screen.y + 1,
++            .cursor_x = @intCast(cur_pt.screen.x),
++            .cursor_y = cur_pt.screen.y,
++        };
++        return true;
++    }
++
+     /// Tell the surface that it needs to schedule a render
+     export fn ghostty_surface_refresh(surface: *Surface) void {
+         surface.refresh();
+@@ -1690,6 +1882,12 @@ pub const CAPI = struct {
          surface.draw();
      }
  
@@ -333,7 +467,7 @@ index 0d5a4f8..27479b6 100644
      /// Update the size of a surface. This will trigger resize notifications
      /// to the pty and the renderer.
      export fn ghostty_surface_set_size(surface: *Surface, w: u32, h: u32) void {
-@@ -1804,6 +1910,32 @@ pub const CAPI = struct {
+@@ -1804,6 +2002,32 @@ pub const CAPI = struct {
          surface.textCallback(ptr[0..len]);
      }
  

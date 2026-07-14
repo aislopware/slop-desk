@@ -9,19 +9,10 @@ import XCTest
 
 @MainActor
 final class ViKeyHintBarTests: XCTestCase {
-    /// The bar must NOT list `o` ("Swap ends"): the pinned libghostty fork exposes no swap-ends / set-selection
-    /// action, so `handleCopyModeKey`'s `o` case is a documented NO-OP (see DECISIONS.md). Advertising it would
-    /// claim a dead key — the exact dishonesty the bar avoids for the other unwired motions (h/l/w/b/e/…).
-    /// Revert-to-confirm-fail: the pre-fix `selection` column carried `Hint(keys: ["o"], label: "Swap ends")`,
-    /// so this assertion fails on it.
-    func testHintBarDoesNotAdvertiseTheDeadSwapEndsKey() {
-        XCTAssertFalse(
-            ViKeyHintBar.advertisedKeys.contains("o"),
-            "the hint bar must not advertise the dead `o` (swap ends) key — it is a documented no-op",
-        )
-        // None of the other deliberately-unwired vi motions are advertised either (the documented omissions).
-        // `f` is NOT in this list — it is wired (Hint Mode, via `beginHint`) and IS advertised (see the wired test).
-        for dead in ["h", "l", "w", "b", "e", "0", "$", "^", "H", "M", "L"] {
+    /// The deliberately-unwired screen-relative jumps (`H`/`M`/`L`) stay unadvertised — the one honesty
+    /// omission left after the E17 ceiling lift wired the cursor motions (DECISIONS.md 2026-07-14).
+    func testHintBarDoesNotAdvertiseUnwiredKeys() {
+        for dead in ["H", "M", "L"] {
             XCTAssertFalse(
                 ViKeyHintBar.advertisedKeys.contains(dead),
                 "the hint bar must not advertise the unwired motion `\(dead)`",
@@ -29,15 +20,16 @@ final class ViKeyHintBarTests: XCTestCase {
         }
     }
 
-    /// Positive control (guards against the test passing by listing nothing): the keys copy-mode DOES wire — the
-    /// scroll/visual motions, yank, and BOTH search directions `/` and `?` — are present. `?` in particular pins
-    /// that the bar reflects the wired backward-find, not just a forward `/`.
+    /// Positive control (guards against the test passing by listing nothing): the wired keys are present —
+    /// including the CURSOR motions + `o` (swap ends) + `Y` (yank line) that joined with the ceiling lift.
+    /// `?` pins the wired backward-find; `f` pins the Hint Mode entry (its own `beginHint` seam).
     func testHintBarAdvertisesTheWiredKeys() {
         let keys = Set(ViKeyHintBar.advertisedKeys)
-        // `f` (Enter Hint Mode) is included: it is wired via `beginHint(.open)` (the hint overlay, not the blocked
-        // cursor-move action), so the bar honestly advertises it. Revert-to-confirm-fail: drop the `f` entry from
-        // `ViKeyHintBar.selection` and this fails.
-        for wired in ["j", "k", "g", "G", "v", "V", "y", "/", "?", "n", "N", "f"] {
+        let wiredKeys = [
+            "h", "j", "k", "l", "w", "b", "e", "0", "^", "$", "o", "Y",
+            "g", "G", "v", "V", "y", "/", "?", "n", "N", "f",
+        ]
+        for wired in wiredKeys {
             XCTAssertTrue(keys.contains(wired), "the hint bar advertises the wired key `\(wired)`")
         }
     }

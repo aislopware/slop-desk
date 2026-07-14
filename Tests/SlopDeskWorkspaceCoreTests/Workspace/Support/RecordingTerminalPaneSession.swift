@@ -73,6 +73,91 @@ final class RecordingSurfaceActions: TerminalSurface, TerminalSurfaceActions, @u
     }
 }
 
+// MARK: - RecordingSelectionSurface (RecordingSurfaceActions + the TerminalSelectionControl seam)
+
+/// A ``RecordingSurfaceActions``-shaped double that ALSO conforms to ``TerminalSelectionControl`` —
+/// the assertion surface for the copy-mode CURSOR path (the E17 ceiling lift): tests stage a
+/// ``TerminalViewportInfo`` + per-screen-row text, then read back every `setSelection` /
+/// `clearSelection` the engine issued. A separate class (not a flag on the base recorder) so the
+/// LEGACY tests keep exercising the seam-absent fallback simply by using the base class.
+final class RecordingSelectionSurface: TerminalSurface, TerminalSurfaceActions, TerminalSelectionControl,
+    @unchecked Sendable
+{
+    private let lock = NSLock()
+    private var recorded: [String] = []
+    var onWrite: ((Data) -> Void)?
+
+    /// The staged viewport truth `viewportInfo()` returns (`nil` = the readback fails → legacy path).
+    var info: TerminalViewportInfo?
+
+    /// Per-SCREEN-row text `readScreenRow(_:)` serves (index = screen row; missing = `nil`).
+    var screenRows: [String] = []
+
+    /// Mouse-selection stand-ins for the yank fallback (mirrors ``RecordingSurfaceActions``).
+    var selectionText: String?
+    var scrollbackLines: [String] = []
+
+    /// One recorded `setSelection` call.
+    struct SelectionCall: Equatable {
+        var anchor: TerminalScreenPoint
+        var head: TerminalScreenPoint
+        var rectangle: Bool
+    }
+
+    /// Every `setSelection` in call order — the native-selection assertion surface.
+    private(set) var selections: [SelectionCall] = []
+    /// How many times `clearSelection` ran (leave-visual + exit hygiene).
+    private(set) var clearSelectionCount = 0
+
+    var actions: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recorded
+    }
+
+    func resetActions() {
+        lock.lock()
+        defer { lock.unlock() }
+        recorded.removeAll()
+    }
+
+    // TerminalSurface (inert).
+    func feed(_: Data) {}
+    func setSize(cols _: UInt16, rows _: UInt16) {}
+    func handleInput(_: Data) {}
+
+    // TerminalSurfaceActions.
+    func hasSelection() -> Bool { selectionText != nil }
+    func readSelection() -> String? { selectionText }
+    @discardableResult
+    func performBindingAction(_ action: String) -> Bool {
+        lock.lock()
+        recorded.append(action)
+        lock.unlock()
+        return true
+    }
+
+    func scrollbackTextLines() -> [String] { scrollbackLines }
+
+    // TerminalSelectionControl.
+    func viewportInfo() -> TerminalViewportInfo? { info }
+
+    @discardableResult
+    func setSelection(anchor: TerminalScreenPoint, head: TerminalScreenPoint, rectangle: Bool) -> Bool {
+        selections.append(SelectionCall(anchor: anchor, head: head, rectangle: rectangle))
+        return true
+    }
+
+    func clearSelection() {
+        clearSelectionCount += 1
+    }
+
+    func readScreenRow(_ row: Int) -> String? {
+        guard screenRows.indices.contains(row) else { return nil }
+        return screenRows[row]
+    }
+}
+
 // MARK: - RecordingTerminalPaneSession (a LivePaneSession-shaped recording double)
 
 /// A ``PaneSessionHandle`` test double that — unlike ``FakePaneSession`` — carries a REAL

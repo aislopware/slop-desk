@@ -116,13 +116,19 @@ public extension WorkspaceBindingRegistry {
         resolvedSequenceTable(overrides: activeOverrides)
     }
 
-    /// The override-aware sequence table against an explicit override set (pure, testable).
+    /// The override-aware sequence table against an explicit override set (pure, testable). The
+    /// ``aliasSequences(prefix:)`` (e.g. `prefix, [` → Vi Mode) fold in over the RESOLVED prefix, so a
+    /// Settings prefix rebind carries them without any stored override.
     static func resolvedSequenceTable(overrides: KeybindingPreferences) -> [KeySequence: WorkspaceAction] {
         var map: [KeySequence: WorkspaceAction] = [:]
         for binding in allBindings {
             if let seq = resolvedSequence(for: binding.action, overrides: overrides) {
                 map[seq] = binding.action
             }
+        }
+        let prefix = resolvedPrefixChord(overrides: overrides)
+        for (seq, action) in aliasSequences(prefix: prefix) where map[seq] == nil {
+            map[seq] = action
         }
         return map
     }

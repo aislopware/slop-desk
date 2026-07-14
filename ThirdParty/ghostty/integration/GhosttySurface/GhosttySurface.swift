@@ -135,7 +135,7 @@ func ghosttyOnMainActor(_ body: @escaping @MainActor () -> Void) {
 /// enqueues onto the per-surface serial ``feedGate`` queue (docs/31 follow-up #5 — see
 /// the header THREADING CONTRACT).
 @MainActor
-public final class GhosttySurface: @MainActor TerminalSurface, FeedBackpressuring, @MainActor TerminalSurfaceActions, @MainActor TerminalViewportSnapshotting {
+public final class GhosttySurface: @MainActor TerminalSurface, FeedBackpressuring, @MainActor TerminalSurfaceActions, @MainActor TerminalViewportSnapshotting, @MainActor TerminalSelectionControl {
 
     // MARK: Stored state
 
@@ -866,6 +866,82 @@ public final class GhosttySurface: @MainActor TerminalSurface, FeedBackpressurin
             originX: 0,
             originY: 0,
         )
+    }
+
+    // MARK: TerminalSelectionControl (the E17 ceiling lift — keyboard copy-mode seam)
+    //
+    // Backed by the fork's slopdesk C APIs (ghostty_surface_set_selection / clear_selection /
+    // viewport_info — see ThirdParty/ghostty/README.md "the SLIM delta"). Compiled + code-reviewed
+    // only (hang-safety rule); the pure cursor/motion state these feed is unit-tested against a
+    // recording mock in the core package.
+
+    /// The live viewport/extent/cursor readback in SCREEN coordinates, or `nil` when the surface is
+    /// gone / the readback fails (validate-then-drop → copy-mode runs cursor-less, the honest ceiling).
+    public func viewportInfo() -> TerminalViewportInfo? {
+        guard let s = surface else { return nil }
+        var info = ghostty_viewport_info_s()
+        guard ghostty_surface_viewport_info(s, &info) else { return nil }
+        return TerminalViewportInfo(
+            viewportTopRow: Int(info.viewport_top_y),
+            viewportRows: Int(info.viewport_rows),
+            cols: Int(info.cols),
+            totalRows: Int(info.total_rows),
+            cursor: TerminalScreenPoint(col: Int(info.cursor_x), row: Int(info.cursor_y)),
+        )
+    }
+
+    /// Sets the selection anchor→head (inclusive, SCREEN coordinates, either order — libghostty
+    /// orders internally; `rectangle` = block select). libghostty clamps out-of-range points to the
+    /// screen bounds and paints the selection natively (never a client-drawn rectangle). Negative
+    /// coordinates are clamped to 0 here (the C ABI is unsigned).
+    @discardableResult
+    public func setSelection(anchor: TerminalScreenPoint, head: TerminalScreenPoint, rectangle: Bool) -> Bool {
+        guard let s = surface else { return false }
+        var sel = ghostty_selection_s()
+        sel.top_left.tag = GHOSTTY_POINT_SCREEN
+        sel.top_left.coord = GHOSTTY_POINT_COORD_EXACT
+        sel.top_left.x = UInt32(max(0, anchor.col))
+        sel.top_left.y = UInt32(max(0, anchor.row))
+        sel.bottom_right.tag = GHOSTTY_POINT_SCREEN
+        sel.bottom_right.coord = GHOSTTY_POINT_COORD_EXACT
+        sel.bottom_right.x = UInt32(max(0, head.col))
+        sel.bottom_right.y = UInt32(max(0, head.row))
+        sel.rectangle = rectangle
+        return ghostty_surface_set_selection(s, sel)
+    }
+
+    /// Clears any selection (leaving visual mode). Safe when nothing is selected.
+    public func clearSelection() {
+        guard let s = surface else { return }
+        ghostty_surface_clear_selection(s)
+    }
+
+    /// One SCREEN-coordinate row's text for the copy-mode word/column motions — the same
+    /// single-row EXACT-point read as ``readViewportRow(_:row:cols:)`` but in SCREEN space, so the
+    /// cursor row can be read even while the viewport scrolls. `nil` when the surface is gone or
+    /// the read fails; `""` is a legitimately empty row.
+    public func readScreenRow(_ row: Int) -> String? {
+        guard let s = surface, row >= 0 else { return nil }
+        let sz = ghostty_surface_size(s)   // header → ghostty_surface_size_s
+        let gridCols = sz.columns > 0 ? Int(sz.columns) : Int(cols)
+        guard gridCols > 0 else { return nil }
+        var sel = ghostty_selection_s()
+        sel.top_left.tag = GHOSTTY_POINT_SCREEN
+        sel.top_left.coord = GHOSTTY_POINT_COORD_EXACT
+        sel.top_left.x = 0
+        sel.top_left.y = UInt32(row)
+        sel.bottom_right.tag = GHOSTTY_POINT_SCREEN
+        sel.bottom_right.coord = GHOSTTY_POINT_COORD_EXACT
+        sel.bottom_right.x = UInt32(gridCols - 1)
+        sel.bottom_right.y = UInt32(row)
+        sel.rectangle = false
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_text(s, sel, &text) else { return nil }
+        defer { ghostty_surface_free_text(s, &text) }                       // libghostty owns the buffer
+        guard let ptr = text.text else { return nil }
+        var line = String(cString: ptr)
+        if line.hasSuffix("\n") { line.removeLast() }
+        return line
     }
 
     /// Performs a named libghostty keybinding action (e.g. `copy_to_clipboard`,

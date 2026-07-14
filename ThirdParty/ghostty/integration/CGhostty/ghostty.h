@@ -413,6 +413,18 @@ typedef struct {
   bool rectangle;
 } ghostty_selection_s;
 
+// slopdesk: keyboard copy-mode readback. All row values are SCREEN
+// coordinates (0 = oldest retained scrollback row), the same space a
+// GHOSTTY_POINT_SCREEN exact point addresses.
+typedef struct {
+  uint32_t viewport_top_y;
+  uint32_t viewport_rows;
+  uint32_t cols;
+  uint32_t total_rows;
+  uint32_t cursor_x;
+  uint32_t cursor_y;
+} ghostty_viewport_info_s;
+
 typedef struct {
   const char* key;
   const char* value;
@@ -1151,6 +1163,10 @@ bool ghostty_surface_read_text(ghostty_surface_t,
                                ghostty_selection_s,
                                ghostty_text_s*);
 void ghostty_surface_free_text(ghostty_surface_t, ghostty_text_s*);
+// slopdesk: programmatic selection + viewport readback (keyboard copy-mode).
+bool ghostty_surface_set_selection(ghostty_surface_t, ghostty_selection_s);
+void ghostty_surface_clear_selection(ghostty_surface_t);
+bool ghostty_surface_viewport_info(ghostty_surface_t, ghostty_viewport_info_s*);
 
 #ifdef __APPLE__
 void ghostty_surface_set_display_id(ghostty_surface_t, uint32_t);

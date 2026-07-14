@@ -417,6 +417,9 @@ public final class TerminalViewModel {
     /// `atBottom` (viewport == active area) means libghostty could not pin the prompt to the top, so
     /// the row is unknown ⇒ no flash. Always disarms — one jump, at most one flash.
     public func noteViewportScroll(atBottom: Bool) {
+        // A viewport move (wheel scroll, host output) shifts where the copy-mode cursor sits on
+        // screen — re-derive the overlay cell from fresh truth (hides it when scrolled away).
+        syncCursorOverlay()
         guard let armedAt = promptJumpArmedAt else {
             Self.flashDebugLog("echo atBottom=\(atBottom) — unarmed, ignored")
             return
@@ -480,6 +483,14 @@ public final class TerminalViewModel {
         var pendingCount: Int?
         /// The active visual-selection mode (or `.none` for plain navigation).
         var visualMode: VisualMode = .none
+        /// The vi CURSOR in SCREEN coordinates (the E17 ceiling lift) — `nil` until the surface's
+        /// ``TerminalSelectionControl`` seam yields a viewport readback (headless / legacy surfaces
+        /// stay cursor-less and keep the scroll-only behavior). Re-clamped against fresh
+        /// `viewportInfo()` on every motion, never trusted across keystrokes.
+        var cursor: TerminalScreenPoint?
+        /// The visual-selection ANCHOR (set where the cursor stood when `v`/`V`/`⌃v` entered a
+        /// visual mode). `nil` outside a cursor-driven visual selection.
+        var anchor: TerminalScreenPoint?
 
         /// Hard ceiling on an accumulated count so a key-repeat / paste flood can't overflow `Int` or ask for
         /// an absurd scroll. 9999 is far past any real scrollback motion; the digit append clamps to it.
@@ -510,6 +521,25 @@ public final class TerminalViewModel {
     /// OBSERVABLE mirror of the active visual mode for the vi-mode pill label (`VISUAL` / `VISUAL LINE` /
     /// `VISUAL BLOCK`). `.none` outside a visual selection. Kept in lock-step by ``syncViObservables()``.
     public private(set) var viVisualMode: VisualMode = .none
+
+    /// The copy-mode cursor cell in VIEWPORT coordinates (row 0 = top visible row) for the
+    /// block-cursor overlay, or `nil` when there is no cursor / it is scrolled off-viewport (the
+    /// overlay then draws nothing — absent, never wrong). Recomputed from a FRESH
+    /// ``TerminalSelectionControl/viewportInfo()`` readback after every copy-mode key AND on each
+    /// renderer scroll echo (``noteViewportScroll(atBottom:)``), so a wheel scroll during copy-mode
+    /// moves/hides the drawn cursor in lock-step with libghostty truth.
+    public struct ViCursorCell: Equatable, Sendable {
+        public let col: Int
+        public let row: Int
+
+        public init(col: Int, row: Int) {
+            self.col = col
+            self.row = row
+        }
+    }
+
+    /// OBSERVABLE cursor-overlay cell (see ``ViCursorCell``). Kept current by ``syncCursorOverlay()``.
+    public private(set) var viCursorCell: ViCursorCell?
 
     /// Vi-mode key-hint bar visibility (the `⌘/` reference card). Observable so the GUI
     /// hint bar shows/hides; toggled per copy-mode session via ``toggleViKeyHints()`` and reset on enter/exit
@@ -559,6 +589,8 @@ public final class TerminalViewModel {
         case char(Character, control: Bool, shift: Bool)
         case up
         case down
+        case left
+        case right
         case escape
         case enter
     }
@@ -572,13 +604,16 @@ public final class TerminalViewModel {
     public static func makeCopyModeKey(event: NSEvent) -> CopyModeKey {
         let control = event.modifierFlags.contains(.control)
         let shift = event.modifierFlags.contains(.shift)
-        // Special keys by key code (53 = Escape, 36 = Return, 76 = keypad Enter, 126 = ↑, 125 = ↓).
+        // Special keys by key code (53 = Escape, 36 = Return, 76 = keypad Enter, 126 = ↑, 125 = ↓,
+        // 123 = ←, 124 = →).
         switch event.keyCode {
         case 53: return .escape
         case 36,
              76: return .enter
         case 126: return .up
         case 125: return .down
+        case 123: return .left
+        case 124: return .right
         default: break
         }
         // `charactersIgnoringModifiers` keeps the layout base (and Shift, so `G` vs `g` is distinguished),
@@ -601,17 +636,20 @@ public final class TerminalViewModel {
     /// magnitude). An absolute jump (`g`/`G`), a half-page (`⌃d`/`⌃u`), and a full-page (`⌃f`/`⌃b`) just
     /// consume/clear the count.
     ///
-    /// VISUAL MODES: `v`/`V`/`⌃v` set ``VisualMode`` `.char`/`.line`/`.block` (pill `VISUAL`/`VISUAL LINE`/
-    /// `VISUAL BLOCK`); in a visual mode the line motions drive `adjust_selection:<dir>` to EXTEND an anchored
-    /// (mouse-made) selection. `o` (anchor-swap) is a documented no-op — see the ABI ceiling below.
+    /// CURSOR ENGINE (the E17 ceiling LIFT, DECISIONS.md 2026-07-14): when the surface conforms to
+    /// ``TerminalSelectionControl`` (the fork's set-selection/viewport-info ABI), copy-mode holds a REAL vi
+    /// cursor in SCREEN coordinates — `h/l/←/→` column motions, `0/^/$` line columns, `w/b/e` word motions
+    /// (``ViLineMotion`` over the seam's row text), `j/k/↑/↓` cursor rows with viewport-follow scrolling, and
+    /// the page/absolute jumps move cursor AND viewport. `v`/`V`/`⌃v` anchor AT the cursor and drive
+    /// `setSelection` so libghostty renders the selection natively; `o` swaps anchor↔cursor; `y`/Enter yanks
+    /// the real range; `Y` yanks the cursor row. Every motion re-reads `viewportInfo()` FIRST (the anti-jitter
+    /// rule: the cursor is client state, but every claim about where it sits derives from same-keystroke
+    /// libghostty truth, re-clamped — never a cached offset).
     ///
-    /// DOCUMENTED ABI CEILING: the pinned libghostty fork exposes NO programmatic cursor-move / set-selection
-    /// action, so a vi cursor cannot START a char-range selection from nothing and there is NO rendered vi
-    /// visual-char-select. The pill shows TRUE mode state; selection-extend (`adjust_selection`) and yank work
-    /// only against an anchored mouse-made selection. `y`/Enter copies the MOUSE-made libghostty selection
-    /// (``TerminalSurfaceActions/readSelection``) when one exists, else the visible scrollback text — never a
-    /// client-guessed character range (the anti-jitter rule: never claim a position libghostty can
-    /// contradict) — then EXITS vi mode (spec). See DECISIONS.md for the precise ceiling.
+    /// LEGACY FALLBACK (seam absent — headless conformers, placeholder surfaces): the pre-lift behavior is
+    /// kept verbatim — line motions scroll (`scroll_page_lines:±count`), visual modes EXTEND a mouse-anchored
+    /// selection via `adjust_selection:<dir>`, the column/word motions are swallowed, and `y` copies the
+    /// mouse-made selection / visible scrollback.
     ///
     /// Scroll-sign convention (Binding.zig): NEGATIVE = UP toward older scrollback, so `j`/↓ = `+1` (down),
     /// `k`/↑ = `-1` (up). `jump_to_prompt`/scroll actions are re-resolved every call (the seam reads live
@@ -619,59 +657,82 @@ public final class TerminalViewModel {
     public func handleCopyModeKey(_ key: CopyModeKey) {
         let actions = surface as? TerminalSurfaceActions
         // Every path re-syncs the pill mirrors after mutating the pure ``copyModeState`` (digit append /
-        // motion-consume / visual-mode flip), so the live repeat-count + mode label stay current.
-        defer { syncViObservables() }
+        // motion-consume / visual-mode flip) AND the cursor-overlay cell (fresh viewport readback), so the
+        // live repeat-count + mode label + drawn cursor stay current.
+        defer {
+            syncViObservables()
+            syncCursorOverlay()
+        }
         // Plain (non-Control) nav/copy/exit keys match `control: false` so a Ctrl-<key> chord is a clean
         // no-op (swallowed via `default`) rather than silently aliasing onto a nav action — e.g. Ctrl-J must
         // not scroll, Ctrl-N must not navigate_search. Ctrl-D / Ctrl-U / Ctrl-V deliberately require
         // `control: true`.
         switch key {
         // Repeat-count digits (pure, client-side accumulation; shown live in the pill). `0` only EXTENDS an
-        // existing count (10, 20…); a bare `0` is the line-start motion (a documented column-motion ceiling,
-        // see DECISIONS.md) → it falls to `default` and is swallowed.
+        // existing count (10, 20…); a bare `0` is the line-start column motion below.
         case .char("0", control: false, _) where copyModeState.pendingCount != nil:
             copyModeState.appendDigit(0)
         case let .char(ch, control: false, _) where ch >= "1" && ch <= "9":
             copyModeState.appendDigit(ch.wholeNumberValue ?? 0)
-        // Vertical line motions: the count SCALES the scroll (`scroll_page_lines:±count`), or in a visual mode
-        // EXTENDS the selection (`adjust_selection:<dir>` ×count) — see ``applyLineMotion(_:sign:)``.
+        // Vertical line motions: cursor rows with viewport-follow (cursor path), else the count SCALES the
+        // scroll / EXTENDS a mouse-anchored selection (legacy) — see ``applyLineMotion(_:sign:)``.
         case .char("j", control: false, _),
              .down:
             applyLineMotion(actions, sign: 1)
         case .char("k", control: false, _),
              .up:
             applyLineMotion(actions, sign: -1)
-        // Half-page: a single half-page step; the count is consumed/cleared, not scaled.
+        // Column motions (cursor path only — without a cursor there is no column to move).
+        case .char("h", control: false, _),
+             .left:
+            applyColumnMotion(sign: -1)
+        case .char("l", control: false, _),
+             .right:
+            applyColumnMotion(sign: 1)
+        case .char("0", control: false, _):
+            _ = copyModeState.consumeCount()
+            moveCursorToColumn { _ in ViLineMotion.lineStart }
+        case .char("^", control: false, _):
+            _ = copyModeState.consumeCount()
+            moveCursorToColumn { ViLineMotion.firstNonBlank($0) }
+        case .char("$", control: false, _):
+            _ = copyModeState.consumeCount()
+            moveCursorToColumn { ViLineMotion.lastNonBlank($0) ?? ViLineMotion.lineStart }
+        // Word motions (cursor path only): the count REPEATS the single step, which wraps across rows.
+        case .char("w", control: false, _):
+            applyWordMotion(.nextStart, actions: actions)
+        case .char("b", control: false, _):
+            applyWordMotion(.prevStart, actions: actions)
+        case .char("e", control: false, _):
+            applyWordMotion(.end, actions: actions)
+        // Half-page: one half-viewport step (cursor + viewport on the cursor path); the count is
+        // consumed/cleared, not scaled.
         case .char("d", control: true, _):
-            _ = copyModeState.consumeCount()
-            actions?.performBindingAction("scroll_page_fractional:0.5")
+            applyPageMotion(actions, sign: 1, fraction: 0.5)
         case .char("u", control: true, _):
-            _ = copyModeState.consumeCount()
-            actions?.performBindingAction("scroll_page_fractional:-0.5")
+            applyPageMotion(actions, sign: -1, fraction: 0.5)
         // Full-page (vim ⌃f forward / ⌃b backward): a single viewport-page step; the count is consumed/cleared,
         // not scaled (parity with the half-page keys). `0.9` (one page minus a sliver of overlap context) is
         // the SAME "≈ a page" magnitude the PageDown/PageUp scroll hooks use (WorkspaceStore+FontScroll).
         // Sign convention (Binding.zig): positive = DOWN toward newer (⌃f), negative = UP toward older (⌃b).
         case .char("f", control: true, _):
-            _ = copyModeState.consumeCount()
-            actions?.performBindingAction("scroll_page_fractional:0.9")
+            applyPageMotion(actions, sign: 1, fraction: 0.9)
         case .char("b", control: true, _):
-            _ = copyModeState.consumeCount()
-            actions?.performBindingAction("scroll_page_fractional:-0.9")
+            applyPageMotion(actions, sign: -1, fraction: 0.9)
         // Absolute top/bottom: a count is meaningless on an absolute jump → consumed/cleared.
         case .char("g", control: false, shift: false):
-            _ = copyModeState.consumeCount()
-            actions?.performBindingAction("scroll_to_top")
+            applyAbsoluteJump(actions, toTop: true)
         case .char("g", control: false, shift: true),
              .char("G", control: false, _):
-            _ = copyModeState.consumeCount()
-            actions?.performBindingAction("scroll_to_bottom")
-        // Prompt jump: the count SCALES the magnitude (`3]` → jump_to_prompt:3).
+            applyAbsoluteJump(actions, toTop: false)
+        // Prompt jump: the count SCALES the magnitude (`3]` → jump_to_prompt:3); on the cursor path the
+        // cursor re-anchors to the landed viewport top (the prompt row libghostty pinned).
         case .char("[", control: false, _):
-            actions?.performBindingAction("jump_to_prompt:\(-copyModeState.consumeCount())")
+            applyPromptJump(actions, sign: -1)
         case .char("]", control: false, _):
-            actions?.performBindingAction("jump_to_prompt:\(copyModeState.consumeCount())")
-        // Visual modes (v / V / ⌃v): set/toggle the mode; subsequent motions EXTEND the selection.
+            applyPromptJump(actions, sign: 1)
+        // Visual modes (v / V / ⌃v): anchor at the cursor and drive the native selection (cursor path), or
+        // set/toggle the mode so motions EXTEND a mouse-anchored selection (legacy).
         case .char("v", control: false, shift: false):
             setVisualMode(.char)
         case .char("v", control: false, shift: true),
@@ -680,16 +741,16 @@ public final class TerminalViewModel {
         case .char("v", control: true, _):
             setVisualMode(.block)
         case .char("o", control: false, _):
-            // Anchor-swap: the pinned libghostty fork exposes no "swap selection ends" action, so this is a
-            // documented no-op (the char-range ceiling, see DECISIONS.md) — never a faked cursor move. The
-            // pending count is dropped (a count on a non-motion is meaningless).
+            // Anchor-swap (vim `o`): swap anchor↔cursor so the free end changes (a real motion since the
+            // ceiling lift; still a no-op without a cursor-driven visual selection). The pending count is
+            // dropped (a count on a non-motion is meaningless).
             copyModeState.pendingCount = nil
-        // Hint Mode (vi-mode spec §Action list: `f` enters Hint Mode for keyboard-driven link clicking). UNLIKE
-        // the cursor / set-selection motions, Hint Mode is NOT blocked by the libghostty char-range ceiling — it
-        // is a separate visible-viewport label overlay, driven by the same ``beginHint(_:)`` seam the
-        // ⌘⇧J chord uses. A count on a non-motion is meaningless, so it is dropped first; `beginHint(.open)` is
-        // itself a clean no-op when there is no live surface / no hintable target (so `f` never enters an empty
-        // mode). The renderer routes subsequent keys to ``handleHintKey(_:)`` while `hintMode` is armed.
+            swapVisualEnds(actions)
+        // Hint Mode (vi-mode spec §Action list: `f` enters Hint Mode for keyboard-driven link clicking) — a
+        // separate visible-viewport label overlay, driven by the same ``beginHint(_:)`` seam the ⌘⇧J chord
+        // uses. A count on a non-motion is meaningless, so it is dropped first; `beginHint(.open)` is itself a
+        // clean no-op when there is no live surface / no hintable target (so `f` never enters an empty mode).
+        // The renderer routes subsequent keys to ``handleHintKey(_:)`` while `hintMode` is armed.
         case .char("f", control: false, _):
             copyModeState.pendingCount = nil
             beginHint(.open)
@@ -707,15 +768,30 @@ public final class TerminalViewModel {
              .char("N", control: false, _):
             let count = copyModeState.consumeCount()
             for _ in 0..<count { stepFindInSearchDirection(actions, reverse: true) }
-        // Yank: copies the mouse-made selection / visible scrollback, then EXITS vi mode (spec).
-        case .char("y", control: false, _),
+        // Yank: copies the live selection (a cursor-driven visual range IS the live libghostty selection) /
+        // the mouse-made selection / visible scrollback, then EXITS vi mode (spec).
+        case .char("y", control: false, shift: false),
              .enter:
             _ = copyModeState.consumeCount()
             copyCurrentSelectionOrScrollback(actions)
             exitCopyMode()
-        case .char("q", control: false, _),
-             .escape:
+        // Yank-line (vim `Y`): copies the cursor row's text (cursor path only), then exits.
+        case .char("y", control: false, shift: true),
+             .char("Y", control: false, _):
+            _ = copyModeState.consumeCount()
+            if yankCursorLine() {
+                exitCopyMode()
+            }
+        case .char("q", control: false, _):
             exitCopyMode() // resets all vi state (count/visual/hints) via ``resetViState()``
+        case .escape:
+            // vim parity: Esc first collapses an active visual selection back to plain navigation
+            // (clearing the native selection), and only then exits the mode.
+            if copyModeState.visualMode != .none {
+                setVisualMode(copyModeState.visualMode) // toggling the ACTIVE mode = off
+            } else {
+                exitCopyMode()
+            }
         default:
             break // swallow every other key (consumed while in mode — nothing reaches the shell)
         }
@@ -737,12 +813,100 @@ public final class TerminalViewModel {
         }
     }
 
-    /// Applies a vertical line motion under the current repeat-count. In a VISUAL mode it EXTENDS the selection
-    /// — `adjust_selection:<dir>` repeated `count` times (the directional libghostty action takes no magnitude).
-    /// In plain navigation it SCALES the scroll — one `scroll_page_lines:±count` (the parameter IS the line
-    /// count). `sign` is +1 for down (`j`/↓), -1 for up (`k`/↑).
+    // MARK: vi cursor engine (the E17 ceiling lift — cursor path over ``TerminalSelectionControl``)
+
+    /// The selection-control seam, when the live surface offers it (`nil` = headless / legacy → the
+    /// pre-lift scroll-only behavior).
+    private var selectionControl: TerminalSelectionControl? { surface as? TerminalSelectionControl }
+
+    /// Fresh libghostty truth for one cursor-path step, or `nil` → legacy. Re-read EVERY key (the
+    /// anti-jitter rule) and sanity-gated so a degenerate readback can never divide/clamp into nonsense.
+    private func cursorContext() -> (ctl: TerminalSelectionControl, info: TerminalViewportInfo)? {
+        guard let ctl = selectionControl, let info = ctl.viewportInfo(),
+              info.viewportRows > 0, info.cols > 0, info.totalRows > 0 else { return nil }
+        return (ctl, info)
+    }
+
+    /// The current vi cursor re-clamped against `info`, seeding it on first use: entry lands on the
+    /// TERMINAL cursor (tmux parity), pulled into the visible viewport if the user had scrolled away.
+    private func seededCursor(_ info: TerminalViewportInfo) -> TerminalScreenPoint {
+        if let cursor = copyModeState.cursor { return clamped(cursor, info) }
+        var cursor = clamped(info.cursor, info)
+        let top = info.viewportTopRow
+        let bottom = top + info.viewportRows - 1
+        cursor.row = min(max(cursor.row, top), bottom)
+        return cursor
+    }
+
+    private func clamped(_ point: TerminalScreenPoint, _ info: TerminalViewportInfo) -> TerminalScreenPoint {
+        TerminalScreenPoint(
+            col: min(max(point.col, 0), info.cols - 1),
+            row: min(max(point.row, 0), info.totalRows - 1),
+        )
+    }
+
+    /// Scrolls just enough to bring the cursor into the viewport (`scroll_page_lines:±delta`) — the
+    /// vi "viewport follows the cursor" rule. `info` is the PRE-motion readback; the overlay resync
+    /// afterwards reads fresh truth.
+    private func followViewport(
+        _ cursor: TerminalScreenPoint,
+        info: TerminalViewportInfo,
+        actions: TerminalSurfaceActions?,
+    ) {
+        let top = info.viewportTopRow
+        let bottom = top + info.viewportRows - 1
+        let delta: Int =
+            if cursor.row < top {
+                cursor.row - top
+            } else if cursor.row > bottom {
+                cursor.row - bottom
+            } else {
+                0
+            }
+        guard delta != 0 else { return }
+        actions?.performBindingAction("scroll_page_lines:\(delta)")
+    }
+
+    /// Re-issues the native selection for the active cursor-driven visual mode after any cursor move
+    /// (anchor→cursor; `.line` spans full rows; `.block` sets the rectangle flag). libghostty renders
+    /// it — never a client-drawn selection.
+    private func refreshVisualSelection(_ ctl: TerminalSelectionControl, info: TerminalViewportInfo) {
+        guard copyModeState.visualMode != .none,
+              let anchor = copyModeState.anchor,
+              let cursor = copyModeState.cursor else { return }
+        switch copyModeState.visualMode {
+        case .none:
+            return
+        case .char:
+            ctl.setSelection(anchor: anchor, head: cursor, rectangle: false)
+        case .line:
+            let top = min(anchor.row, cursor.row)
+            let bottom = max(anchor.row, cursor.row)
+            ctl.setSelection(
+                anchor: TerminalScreenPoint(col: 0, row: top),
+                head: TerminalScreenPoint(col: info.cols - 1, row: bottom),
+                rectangle: false,
+            )
+        case .block:
+            ctl.setSelection(anchor: anchor, head: cursor, rectangle: true)
+        }
+    }
+
+    /// Applies a vertical line motion under the current repeat-count. CURSOR path: the cursor moves
+    /// `±count` rows (clamped to the screen), the viewport follows, and an active visual selection
+    /// re-issues. LEGACY: in a VISUAL mode it EXTENDS the mouse-anchored selection
+    /// (`adjust_selection:<dir>` ×count — the directional action takes no magnitude), else it SCALES
+    /// the scroll (one `scroll_page_lines:±count`). `sign` is +1 for down (`j`/↓), -1 for up (`k`/↑).
     private func applyLineMotion(_ actions: TerminalSurfaceActions?, sign: Int) {
         let count = copyModeState.consumeCount()
+        if let (ctl, info) = cursorContext() {
+            var cursor = seededCursor(info)
+            cursor.row = min(max(cursor.row + sign * count, 0), info.totalRows - 1)
+            copyModeState.cursor = cursor
+            followViewport(cursor, info: info, actions: actions)
+            refreshVisualSelection(ctl, info: info)
+            return
+        }
         if copyModeState.visualMode != .none {
             let direction = sign > 0 ? "down" : "up"
             for _ in 0..<count { actions?.performBindingAction("adjust_selection:\(direction)") }
@@ -751,12 +915,199 @@ public final class TerminalViewModel {
         }
     }
 
+    /// `h`/`l`/←/→ — the cursor moves `±count` columns within its row (vim: no line wrap). Cursor
+    /// path only; without a cursor there is no column to move, so the key is swallowed.
+    private func applyColumnMotion(sign: Int) {
+        let count = copyModeState.consumeCount()
+        guard let (ctl, info) = cursorContext() else { return }
+        var cursor = seededCursor(info)
+        cursor.col = min(max(cursor.col + sign * count, 0), info.cols - 1)
+        copyModeState.cursor = cursor
+        refreshVisualSelection(ctl, info: info)
+    }
+
+    /// `0`/`^`/`$` — the cursor jumps to a column computed from its ROW'S TEXT (read fresh through
+    /// the seam). Cursor path only.
+    private func moveCursorToColumn(_ column: (String) -> Int) {
+        guard let (ctl, info) = cursorContext() else { return }
+        var cursor = seededCursor(info)
+        let line = ctl.readScreenRow(cursor.row) ?? ""
+        cursor.col = min(max(column(line), 0), info.cols - 1)
+        copyModeState.cursor = cursor
+        refreshVisualSelection(ctl, info: info)
+    }
+
+    /// The three vi word motions ``applyWordMotion(_:actions:)`` steps.
+    private enum WordMotion {
+        case nextStart
+        case prevStart
+        case end
+    }
+
+    /// `w`/`b`/`e` — repeats the single word step `count` times (each step may wrap to the adjacent
+    /// row), then the viewport follows the landed cursor. Cursor path only.
+    private func applyWordMotion(_ motion: WordMotion, actions: TerminalSurfaceActions?) {
+        let count = copyModeState.consumeCount()
+        guard let (ctl, info) = cursorContext() else { return }
+        var cursor = seededCursor(info)
+        for _ in 0..<count {
+            cursor = stepWord(motion, from: cursor, ctl: ctl, info: info)
+        }
+        copyModeState.cursor = cursor
+        followViewport(cursor, info: info, actions: actions)
+        refreshVisualSelection(ctl, info: info)
+    }
+
+    /// One vim word step over the seam's row text (``ViLineMotion``), wrapping to the adjacent row
+    /// when the motion runs off the current one (a blank row is a landing, like vim's empty line).
+    private func stepWord(
+        _ motion: WordMotion,
+        from cursor: TerminalScreenPoint,
+        ctl: TerminalSelectionControl,
+        info: TerminalViewportInfo,
+    ) -> TerminalScreenPoint {
+        var cursor = cursor
+        let line = ctl.readScreenRow(cursor.row) ?? ""
+        switch motion {
+        case .nextStart:
+            if let col = ViLineMotion.nextWordStart(line, from: cursor.col) {
+                cursor.col = col
+            } else if cursor.row + 1 < info.totalRows {
+                cursor.row += 1
+                cursor.col = ViLineMotion.firstNonBlank(ctl.readScreenRow(cursor.row) ?? "")
+            }
+        case .prevStart:
+            if let col = ViLineMotion.prevWordStart(line, from: cursor.col) {
+                cursor.col = col
+            } else if cursor.row > 0 {
+                cursor.row -= 1
+                cursor.col = ViLineMotion.lastWordStart(ctl.readScreenRow(cursor.row) ?? "") ?? ViLineMotion.lineStart
+            }
+        case .end:
+            if let col = ViLineMotion.wordEnd(line, from: cursor.col) {
+                cursor.col = col
+            } else if cursor.row + 1 < info.totalRows {
+                cursor.row += 1
+                let next = ctl.readScreenRow(cursor.row) ?? ""
+                cursor.col = ViLineMotion.wordEnd(next, from: 0)
+                    ?? ViLineMotion.lastNonBlank(next)
+                    ?? ViLineMotion.lineStart
+            }
+        }
+        cursor.col = min(max(cursor.col, 0), info.cols - 1)
+        return cursor
+    }
+
+    /// `⌃d`/`⌃u` (fraction 0.5) and `⌃f`/`⌃b` (0.9 — the "≈ a page" magnitude the PageUp/PageDown
+    /// hooks use). CURSOR path: viewport AND cursor move together by the same line delta (vim
+    /// semantics), clamped, with fresh post-scroll truth for the selection/overlay. LEGACY: the
+    /// original `scroll_page_fractional:±f`. The count is consumed/cleared, not scaled.
+    private func applyPageMotion(_ actions: TerminalSurfaceActions?, sign: Int, fraction: Double) {
+        _ = copyModeState.consumeCount()
+        if let (ctl, info) = cursorContext() {
+            let lines = Double(info.viewportRows) * fraction
+            let magnitude = max(1, Int(lines.rounded(.down)))
+            let delta = sign * magnitude
+            actions?.performBindingAction("scroll_page_lines:\(delta)")
+            var cursor = seededCursor(info)
+            cursor.row = min(max(cursor.row + delta, 0), info.totalRows - 1)
+            copyModeState.cursor = cursor
+            // Post-scroll truth: the residual follow only fires at the screen edges (where the
+            // viewport clamped but the cursor kept moving, or vice versa).
+            if let fresh = ctl.viewportInfo(), fresh.viewportRows > 0 {
+                followViewport(cursor, info: fresh, actions: actions)
+                refreshVisualSelection(ctl, info: fresh)
+            }
+            return
+        }
+        actions?.performBindingAction("scroll_page_fractional:\(sign > 0 ? fraction : -fraction)")
+    }
+
+    /// `g`/`G` — absolute top/bottom: the viewport jumps via the native action; on the cursor path
+    /// the cursor lands on the first/last screen row.
+    private func applyAbsoluteJump(_ actions: TerminalSurfaceActions?, toTop: Bool) {
+        _ = copyModeState.consumeCount()
+        actions?.performBindingAction(toTop ? "scroll_to_top" : "scroll_to_bottom")
+        guard let (ctl, info) = cursorContext() else { return }
+        var cursor = seededCursor(info)
+        cursor.row = toTop ? 0 : info.totalRows - 1
+        copyModeState.cursor = cursor
+        refreshVisualSelection(ctl, info: info)
+    }
+
+    /// `[`/`]` — the prompt jump keeps the native `jump_to_prompt:±count`; on the cursor path the
+    /// cursor then re-anchors to the LANDED viewport top (the row libghostty pinned the prompt to —
+    /// the binding action mutates core synchronously, so the post-jump readback is already fresh).
+    private func applyPromptJump(_ actions: TerminalSurfaceActions?, sign: Int) {
+        let count = copyModeState.consumeCount()
+        actions?.performBindingAction("jump_to_prompt:\(sign * count)")
+        guard let (ctl, info) = cursorContext() else { return }
+        var cursor = seededCursor(info)
+        cursor.row = info.viewportTopRow
+        cursor.col = ViLineMotion.lineStart
+        copyModeState.cursor = cursor
+        refreshVisualSelection(ctl, info: info)
+    }
+
+    /// vim `o` — swaps anchor↔cursor so subsequent motions grow the OTHER end of the selection; the
+    /// viewport follows the (former) anchor. A no-op outside a cursor-driven visual selection.
+    private func swapVisualEnds(_ actions: TerminalSurfaceActions?) {
+        guard let (ctl, info) = cursorContext(),
+              copyModeState.visualMode != .none,
+              let anchor = copyModeState.anchor,
+              let cursor = copyModeState.cursor else { return }
+        copyModeState.anchor = cursor
+        copyModeState.cursor = anchor
+        followViewport(anchor, info: info, actions: actions)
+        refreshVisualSelection(ctl, info: info)
+    }
+
+    /// vim `Y` — copies the cursor row's text (+ receipt). Returns whether anything was copied
+    /// (blank row / no cursor path ⇒ `false`, and the mode stays put — nothing was yanked).
+    private func yankCursorLine() -> Bool {
+        guard let (ctl, info) = cursorContext() else { return false }
+        let cursor = seededCursor(info)
+        guard let line = ctl.readScreenRow(cursor.row), !line.isEmpty else { return false }
+        copyToPasteboard(line)
+        noteClipboardCopy(line)
+        return true
+    }
+
+    /// Mirrors ``copyModeState``'s cursor into the observable ``viCursorCell`` overlay cell —
+    /// VIEWPORT-relative, `nil` off-viewport — from a FRESH readback. Written only on a real change.
+    private func syncCursorOverlay() {
+        var cell: ViCursorCell?
+        if isCopyMode, let cursor = copyModeState.cursor, let (_, info) = cursorContext() {
+            let viewportRow = cursor.row - info.viewportTopRow
+            if viewportRow >= 0, viewportRow < info.viewportRows, cursor.col >= 0, cursor.col < info.cols {
+                cell = ViCursorCell(col: cursor.col, row: viewportRow)
+            }
+        }
+        if viCursorCell != cell { viCursorCell = cell }
+    }
+
     /// Sets (or toggles OFF) a visual-selection mode. Pressing the SAME mode key again returns to plain
     /// navigation (`.none`); a different mode key SWITCHES (vim parity: `V` from char-visual → line-visual).
-    /// Entering/switching a visual mode drops any pending repeat-count.
+    /// Entering/switching a visual mode drops any pending repeat-count. CURSOR path: entering anchors AT
+    /// the cursor and issues the native selection; leaving clears both; switching re-issues under the new
+    /// mode. LEGACY: the mode flag alone (motions then drive `adjust_selection`).
     private func setVisualMode(_ mode: VisualMode) {
         copyModeState.pendingCount = nil
-        copyModeState.visualMode = (copyModeState.visualMode == mode) ? .none : mode
+        let previous = copyModeState.visualMode
+        let next: VisualMode = (previous == mode) ? .none : mode
+        copyModeState.visualMode = next
+        guard let (ctl, info) = cursorContext() else { return }
+        if next == .none {
+            copyModeState.anchor = nil
+            ctl.clearSelection()
+            return
+        }
+        let cursor = seededCursor(info)
+        copyModeState.cursor = cursor
+        if previous == .none || copyModeState.anchor == nil {
+            copyModeState.anchor = cursor
+        }
+        refreshVisualSelection(ctl, info: info)
     }
 
     /// Copies the libghostty selection if one exists, else the visible scrollback text — then flashes the
@@ -781,6 +1132,12 @@ public final class TerminalViewModel {
         guard !isCopyMode else { return }
         resetViState()
         isCopyMode = true
+        // Seed the vi cursor at the terminal cursor (tmux parity) when the selection seam is live;
+        // headless/legacy surfaces stay cursor-less (scroll-only navigation).
+        if let (_, info) = cursorContext() {
+            copyModeState.cursor = seededCursor(info)
+        }
+        syncCursorOverlay()
         onRequestCopyMode?()
     }
 
@@ -793,8 +1150,13 @@ public final class TerminalViewModel {
             onRequestCopyMode?()
             return
         }
+        // Clear OUR cursor-driven selection (never a mouse-made one — those have no anchor here).
+        if copyModeState.anchor != nil {
+            selectionControl?.clearSelection()
+        }
         isCopyMode = false
         resetViState()
+        syncCursorOverlay()
         onRequestCopyMode?()
     }
 

@@ -15,15 +15,14 @@
 // Metal / VideoToolbox is touched (CLAUDE.md rule #6): plain SwiftUI chips driven by the pane model's
 // observables.
 //
-// HONESTY (the "nothing is a dead key" rule + the documented libghostty ceiling): the ``ViKeyHintBar`` lists
-// ONLY the keys ``TerminalViewModel/handleCopyModeKey(_:)`` actually wires in slopdesk's copy-mode — a faithful
-// SUBSET of full vi. Column / word / screen motions (`h`/`l`, `w`/`b`/`e`, `0`/`$`/`^`, `H`/`M`/`L`) AND the
-// visual anchor-swap (`o`) are NOT wired — the pinned fork exposes no programmatic cursor-move / set-selection /
-// swap-ends action (Binding.zig has `adjust_selection` + `select_all` but no swap-ends; see DECISIONS.md,
-// which pins `o` as a documented NO-OP) — so they are deliberately omitted rather than advertised as dead keys.
-// Hint Mode (`f`), by contrast, IS wired and IS listed: it does NOT depend on that cursor-move ceiling — it is a
-// separate visible-viewport label overlay armed via ``TerminalViewModel/beginHint(_:)``, the same seam the
-// ⌘⇧J chord uses — so `f` is an honest entry, not a faked motion.
+// HONESTY (the "nothing is a dead key" rule): the ``ViKeyHintBar`` lists ONLY the keys
+// ``TerminalViewModel/handleCopyModeKey(_:)`` actually wires in slopdesk's copy-mode — a faithful subset of
+// full vi. Since the E17 ceiling LIFT (DECISIONS.md 2026-07-14: the fork gained a set-selection /
+// viewport-info ABI) that subset includes the CURSOR motions — `h`/`l`, `w`/`b`/`e`, `0`/`^`/`$` — plus the
+// visual anchor-swap `o` and the `Y` line-yank, all of which were previously omitted as unwired. Still
+// deliberately absent: `H`/`M`/`L` (screen-relative jumps, not wired). Hint Mode (`f`) is a separate
+// visible-viewport label overlay armed via ``TerminalViewModel/beginHint(_:)``, the same seam the ⌘⇧J
+// chord uses.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -155,7 +154,9 @@ struct ViKeyHintBar: View {
     }
 
     private static let motion: [Hint] = [
-        Hint(keys: ["j", "k"], label: "Scroll line"),
+        Hint(keys: ["h", "j", "k", "l"], label: "Move cursor"),
+        Hint(keys: ["w", "b", "e"], label: "Word motions"),
+        Hint(keys: ["0", "^", "$"], label: "Line start / end"),
         Hint(keys: ["⌃d", "⌃u"], label: "Half page"),
         Hint(keys: ["⌃f", "⌃b"], label: "Full page"),
         Hint(keys: ["g", "G"], label: "Top / bottom"),
@@ -163,16 +164,15 @@ struct ViKeyHintBar: View {
         Hint(keys: ["1", "…", "9"], label: "Repeat count"),
     ]
 
-    // `o` (swap selection ends) is DELIBERATELY ABSENT: it is a documented NO-OP (the pinned libghostty fork
-    // exposes no swap-ends / set-selection action — see the file header and DECISIONS.md), so listing it would
-    // advertise a dead key, exactly the omission this bar makes for the other unwired vi motions (h/l/w/b/e/…).
-    // `f` (Enter Hint Mode) IS listed — unlike the cursor motions it is wired (it rides the Hint Mode
-    // overlay via `beginHint`, NOT the blocked cursor-move action), so advertising it is honest, not a dead key.
+    // Every row here is WIRED (the honesty rule): the cursor motions + `o` + `Y` joined the bar with the
+    // E17 ceiling lift (see the file header); `f` rides the Hint Mode overlay via `beginHint`, its own seam.
     private static let selection: [Hint] = [
         Hint(keys: ["v"], label: "Visual"),
         Hint(keys: ["V"], label: "Visual line"),
         Hint(keys: ["⌃v"], label: "Visual block"),
+        Hint(keys: ["o"], label: "Swap ends"),
         Hint(keys: ["y", "↩"], label: "Yank + exit"),
+        Hint(keys: ["Y"], label: "Yank line"),
         Hint(keys: ["f"], label: "Hint links"),
     ]
 

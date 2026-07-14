@@ -108,4 +108,35 @@ final class KeySequenceRegistryTests: XCTestCase {
             KeySequence([KeyChord(character: "a", [.control]), KeyChord(.leftArrow)]),
         )
     }
+
+    /// The `prefix, [` sequence ALIAS (tmux's copy-mode entry) resolves to `.toggleCopyMode` — as a
+    /// SEQUENCE, because the armed implied-⌘ fold would otherwise resolve a bare `[` as ⌘[ =
+    /// `cyclePanePrev`. The `view.copyMode` display chord (⌘⇧C) is untouched (alias = no display row).
+    func testPrefixBracketAliasEntersCopyMode() throws {
+        let table = WorkspaceBindingRegistry.resolvedSequenceTable(overrides: KeybindingPreferences())
+        let seq = try XCTUnwrap(KeySequence([
+            WorkspaceBindingRegistry.defaultPrefixChord, KeyChord(character: "[", []),
+        ]))
+        XCTAssertEqual(table[seq], .toggleCopyMode, "⌃B [ enters Vi Mode via the sequence table")
+        XCTAssertEqual(
+            WorkspaceBindingRegistry.binding(for: .toggleCopyMode)?.chord,
+            KeyChord(character: "c", [.command, .shift]),
+            "the alias adds no display row — ⌘⇧C stays the canonical chord",
+        )
+    }
+
+    /// A Settings prefix REBIND carries the `[` alias with it: the alias keys off the RESOLVED prefix,
+    /// not a hardcoded ⌃B (which must then be absent — no stale entry on the old prefix).
+    func testPrefixBracketAliasFollowsPrefixRebind() throws {
+        let prefs = KeybindingPreferences(prefixKey: .init(key: "g", control: true))
+        let table = WorkspaceBindingRegistry.resolvedSequenceTable(overrides: prefs)
+        let rebound = try XCTUnwrap(KeySequence([
+            KeyChord(character: "g", [.control]), KeyChord(character: "[", []),
+        ]))
+        XCTAssertEqual(table[rebound], .toggleCopyMode, "the alias follows the rebound prefix")
+        let stale = try XCTUnwrap(KeySequence([
+            WorkspaceBindingRegistry.defaultPrefixChord, KeyChord(character: "[", []),
+        ]))
+        XCTAssertNil(table[stale], "no stale alias remains on the default prefix after a rebind")
+    }
 }

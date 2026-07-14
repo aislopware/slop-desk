@@ -889,13 +889,33 @@ public enum WorkspaceBindingRegistry {
         return map
     }
 
+    /// SEQUENCE aliases — extra multi-key sequences that fire an existing action without a display row
+    /// (``aliasChords``, one level up). Built from the LIVE prefix chord so a Settings rebind of the
+    /// workspace prefix carries the alias with it: `prefix, [` enters Vi Mode (tmux's `⌃B [` copy-mode
+    /// entry). This MUST be a sequence (not an armed bare key): the armed implied-⌘ fold would resolve a
+    /// bare `[` as ⌘[ = `cyclePanePrev`, and the sequence table is consulted BEFORE the fold
+    /// (``PrefixStateMachine/feed(_:at:)`` step 2a).
+    public static func aliasSequences(prefix: KeyChord) -> [KeySequence: WorkspaceAction] {
+        var map: [KeySequence: WorkspaceAction] = [:]
+        if let sequence = KeySequence([prefix, KeyChord(character: "[", [])]) {
+            map[sequence] = .toggleCopyMode
+        }
+        return map
+    }
+
     /// The full key SEQUENCE → action lookup table (single AND multi-key). The prefix state machine reads
     /// this to resolve a completed sequence; a single-chord binding appears as its length-1 sequence so one
-    /// table serves both. Built from ``allBindings`` (the same source as everything else).
+    /// table serves both. Built from ``allBindings`` (the same source as everything else) plus
+    /// ``aliasSequences(prefix:)`` over the DEFAULT prefix (the override-aware sibling
+    /// ``resolvedSequenceTable`` folds them over the resolved prefix instead).
     public static var sequenceTable: [KeySequence: WorkspaceAction] {
         var map: [KeySequence: WorkspaceAction] = [:]
         for binding in allBindings {
             if let seq = binding.effectiveSequence { map[seq] = binding.action }
+        }
+        // Aliases never overwrite a real binding (the aliasChords rule).
+        for (seq, action) in aliasSequences(prefix: defaultPrefixChord) where map[seq] == nil {
+            map[seq] = action
         }
         return map
     }

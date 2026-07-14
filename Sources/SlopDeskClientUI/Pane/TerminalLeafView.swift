@@ -149,6 +149,13 @@ struct TerminalLeafView: View {
                 if !staticMirror {
                     PromptJumpFlashOverlay(model: model)
                 }
+                // The copy-mode block cursor — one accent-outlined cell at the vi cursor (the
+                // selection itself renders natively via the fork's set_selection ABI). Also a DECORATION
+                // overlay coincident with the surface; inert outside copy-mode / when the cursor is
+                // scrolled off-viewport / over a placeholder surface.
+                if !staticMirror {
+                    ViCursorOverlay(model: model)
+                }
                 // The Vimium Hint Mode overlay — dims the surface + draws yellow 2-letter
                 // labels when armed (⌘⇧J open / ⌘⇧Y copy / reveal). Also a DECORATION overlay coincident with the
                 // surface (origin 0,0). Inert unless the renderer armed `hintMode` (or an iOS tap-on-label); a
