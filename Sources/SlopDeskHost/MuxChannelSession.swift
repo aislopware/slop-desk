@@ -232,7 +232,10 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Disk scrollback journal for this session (nil = disk persistence off). Fed ONLY by
     /// ``ingestPTYChunk(_:)`` — genuine PTY output — so a restored preamble (which enters via the
     /// out-FIFO) is never re-journaled and transcripts don't double across daemon restarts.
-    private let scrollbackJournal: ScrollbackJournal?
+    /// Internal (not private): `HostServer`'s end-of-life paths pass THIS instance to the
+    /// store's identity-guarded `release(sessionID:instance:)`/`delete(sessionID:instance:)`,
+    /// so a stale teardown of a same-UUID ghost can never close the live successor's writer.
+    let scrollbackJournal: ScrollbackJournal?
 
     /// The prior life's distilled transcript (fresh-spawn restore, `HostServer.spawnFreshShell`).
     /// Enqueued as the FIRST output frame(s) by ``startRelay()`` — before the read loop starts —
@@ -245,6 +248,9 @@ final class MuxChannelSession: @unchecked Sendable {
     private let taskLock = NSLock()
     private var replay: ReplayBuffer
     private let replayLock = NSLock()
+    /// Serializes ``updateReplayBackpressure()``'s [recompute → gate apply] pair across the
+    /// independent caller tasks (output drain / ack path / detach) — see that method's docs.
+    private let backpressureApplyLock = NSLock()
     private var inputTask: Task<Void, Never>?
     private var controlTask: Task<Void, Never>?
     private var exitTask: Task<Void, Never>?
@@ -596,7 +602,7 @@ final class MuxChannelSession: @unchecked Sendable {
                 }
             } catch { /* channel gone — the daemon keeps the shell alive (keep-alive) */ }
             // The DATA channel ended (clean close or drop): the client is no longer reachable on this
-            // channel, so engage the ReplayBuffer's 4 MiB offline gate for the window before teardown.
+            // channel, so engage the ReplayBuffer's 64 MiB offline gate for the window before teardown.
             // Harmless if the session is already being shut down (gate-pause is idempotent).
             self?.setClientOnline(false)
         }
@@ -818,7 +824,7 @@ final class MuxChannelSession: @unchecked Sendable {
     ///
     /// **The read loop is NOT stopped.** `PTYReadLoop.stop()` sets a PERMANENT `stopped`
     /// flag (irreversible) and would prevent rebinding. Instead, `setClientOnline(false)`
-    /// engages the ReplayBuffer's 4 MiB offline gate which causes `PausableQueueGate` to
+    /// engages the ReplayBuffer's 64 MiB offline gate which causes `PausableQueueGate` to
     /// pause the read loop via its replay-pause source. The shell stays alive; the loop
     /// parks on the `NSCondition` gate consuming zero syscalls.
     ///
@@ -2045,42 +2051,54 @@ final class MuxChannelSession: @unchecked Sendable {
     private func nextSeq(for bytes: Data) -> Int64 {
         replayLock.lock()
         let seq = replay.append(bytes: bytes)
-        let shouldPause = replay.shouldPauseDrain
         replayLock.unlock()
-        // Appending may push retained bytes over the 64 MiB cap (or the 4 MiB offline gate); feed
+        // Appending may push retained bytes over the 256 MiB cap (or the 64 MiB offline gate); feed
         // that into the read-loop pause so the kernel PTY buffer backpressures the shell instead of
         // the host buffering the un-acked stream unboundedly. OR-composed with the bounded-queue
         // source inside the gate (resume only when both clear). The lock is released BEFORE touching
         // the gate to keep the lock order replayLock→gate.
-        updateReplayBackpressure(shouldPause)
+        updateReplayBackpressure()
         return seq
     }
 
     private func acknowledge(upTo seq: Int64) {
         replayLock.lock()
         replay.ack(upTo: seq)
-        let shouldPause = replay.shouldPauseDrain
         replayLock.unlock()
         // An ack releases retained entries → retained bytes drop → the replay-pause may clear, resuming
         // the read loop (if the bounded queue is also below bound). This is the drain side of the cap.
-        updateReplayBackpressure(shouldPause)
+        updateReplayBackpressure()
     }
 
-    /// Marks the client online/offline for the offline (4 MiB) gate, then recomputes backpressure. A
+    /// Marks the client online/offline for the offline (64 MiB) gate, then recomputes backpressure. A
     /// channel-gone usually tears the whole session down moments later, but wiring this keeps the
     /// offline gate honest for the brief window and for when per-channel resume lands.
     private func setClientOnline(_ online: Bool) {
         replayLock.lock()
         replay.isClientOnline = online
-        let shouldPause = replay.shouldPauseDrain
         replayLock.unlock()
-        updateReplayBackpressure(shouldPause)
+        updateReplayBackpressure()
     }
 
-    /// Forwards the ReplayBuffer's drain signal to the output gate's replay-pause source. `nil` gate
-    /// (flow control off / before `startRelay`) is a no-op.
-    private func updateReplayBackpressure(_ shouldPause: Bool) {
+    /// Recomputes the ReplayBuffer's drain signal and forwards it to the output gate's
+    /// replay-pause source. `nil` gate (flow control off / before `startRelay`) is a no-op.
+    ///
+    /// RECOMPUTE-AT-APPLY under `backpressureApplyLock` — never carry a value computed inside a
+    /// caller's earlier `replayLock` section across to the gate. The output drain (`nextSeq`),
+    /// the ack path (`acknowledge`), and detach/rebind (`setClientOnline`) run on independent
+    /// tasks; a caller preempted between its compute and its apply would land a STALE value on
+    /// the gate after a fresher one (a reattach-backlog drain racing the tail acks can wedge
+    /// the read loop paused with nothing left to ack — no future event would recompute).
+    /// Serializing the [read fresh truth → apply] pair means the last apply always reflects a
+    /// state at least as fresh as the last mutation. Lock order: applyLock → replayLock and
+    /// applyLock → gate; nothing takes either in the reverse direction.
+    private func updateReplayBackpressure() {
+        backpressureApplyLock.lock()
+        replayLock.lock()
+        let shouldPause = replay.shouldPauseDrain
+        replayLock.unlock()
         outputGate?.setReplayPause(shouldPause)
+        backpressureApplyLock.unlock()
     }
 
     // MARK: - Exit ordering: EOF latch
@@ -2144,7 +2162,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// - `SLOPDESK_SCROLLBACK_PERSIST` — default-ON (`env != "0"`). When `"0"`, the scrollback
     ///   ring is disabled (cap = 0), disabling cold-reattach scrollback replay.
     /// - `SLOPDESK_SCROLLBACK_BYTES` — integer byte cap for the ring. Defaults to
-    ///   `ReplayBuffer.defaultScrollbackBytes` (4 MiB). Ignored when scrollback persist is off.
+    ///   `ReplayBuffer.defaultScrollbackBytes` (64 MiB). Ignored when scrollback persist is off.
     /// - `SLOPDESK_SCROLLBACK_DISTILL` — default-ON (`env != "0"`). When ON, a ``ScrollbackDistiller``
     ///   is injected so a COLD-reattach scrollback replay collapses the transient B→C line-editor churn
     ///   (tab-completion menus, autosuggestions, per-keystroke redraws) to the committed OSC-133 command

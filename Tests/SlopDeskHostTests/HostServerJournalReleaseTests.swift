@@ -34,13 +34,17 @@ final class HostServerJournalReleaseTests: XCTestCase {
         ScrollbackJournalStore(directory: tempDir, byteCap: byteCap)
     }
 
-    private func makeSession(sessionID: UUID = UUID()) -> MuxChannelSession {
+    /// Mirrors production wiring: `spawnFreshShell` hands the session its `claimJournal(for:)`
+    /// writer, and the release paths are IDENTITY-GUARDED against that instance — a session
+    /// constructed without its journal would (correctly) never release the store's writer.
+    private func makeSession(sessionID: UUID = UUID(), journals: ScrollbackJournalStore? = nil) -> MuxChannelSession {
         MuxChannelSession(
             channelID: 1,
             pty: PTYProcess(), // unspawned — no reaper thread, no masterFD (hang-safety)
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
             sessionID: sessionID,
+            scrollbackJournal: journals?.journal(for: sessionID),
         )
     }
 
@@ -83,7 +87,7 @@ final class HostServerJournalReleaseTests: XCTestCase {
         store.journal(for: id).append(transcript)
         store.journal(for: id).synchronize()
 
-        let session = makeSession(sessionID: id)
+        let session = makeSession(sessionID: id, journals: store)
         server.detachMuxSessionForTesting(key: MuxSessionKey(connectionID: UUID(), channelID: 1), session: session)
         session.onExit?(0) // the shell exits while parked → the wired onDetachedExit fires
 
@@ -108,7 +112,7 @@ final class HostServerJournalReleaseTests: XCTestCase {
         store.journal(for: id).append(transcript)
         store.journal(for: id).synchronize()
 
-        let session = makeSession(sessionID: id)
+        let session = makeSession(sessionID: id, journals: store)
         server.detachMuxSessionForTesting(key: MuxSessionKey(connectionID: UUID(), channelID: 1), session: session)
         // Drive the REAL eviction path directly (the TTL task's only body) — no timer wait.
         server.detachedStoreForTesting?.evict(id)
@@ -135,8 +139,8 @@ final class HostServerJournalReleaseTests: XCTestCase {
         store.journal(for: victimID).synchronize()
         _ = store.journal(for: survivorID) // survivor's live writer
 
-        let victim = makeSession(sessionID: victimID)
-        let survivor = makeSession(sessionID: survivorID)
+        let victim = makeSession(sessionID: victimID, journals: store)
+        let survivor = makeSession(sessionID: survivorID, journals: store)
         server.detachMuxSessionForTesting(key: MuxSessionKey(connectionID: UUID(), channelID: 1), session: victim)
         // Parking the second session overflows the cap=1 store → the oldest (victim) is evicted.
         server.detachMuxSessionForTesting(key: MuxSessionKey(connectionID: UUID(), channelID: 1), session: survivor)
@@ -154,6 +158,47 @@ final class HostServerJournalReleaseTests: XCTestCase {
         XCTAssertEqual(
             try? Data(contentsOf: journalFileURL(for: victimID)), victimBytes,
             "the victim's FILE must survive (a returning client can still cold-restore)",
+        )
+    }
+
+    // MARK: - (1b) a STALE detached-exit (teardown already taken over) stands down
+
+    /// The reattach-after-parked-death race: the reconnect's `claim()` reaps the dead child
+    /// (taking over its teardown) and the same-UUID fresh spawn rotates the journal writer —
+    /// then the ghost's exit task fires its `onDetachedExit` closure LATE. The stale closure
+    /// must stand down (`remove` returns false): before the guard it released the SHARED
+    /// journal instance, silently killing the successor's journaling for the pane's lifetime.
+    func testStaleDetachedExitAfterClaimReapStandsDown() {
+        let store = makeStore()
+        let server = makeServer(journals: store)
+        let id = UUID()
+        let ghost = makeSession(sessionID: id, journals: store)
+        server.detachMuxSessionForTesting(key: MuxSessionKey(connectionID: UUID(), channelID: 1), session: ghost)
+        ghost.pty.completeExitForTesting(code: 0) // dies while parked
+
+        // Reconnect: the claim reaps the dead child — the CALLER now owns the teardown.
+        guard case .reapedDeadChild = server.detachedStoreForTesting?.claim(id) else {
+            XCTFail("claim of a parked dead child must report .reapedDeadChild")
+            return
+        }
+        // The same-UUID fresh spawn takes journal ownership (what `spawnFreshShell` does).
+        let successor = store.claimJournal(for: id)
+        successor.append(Data("successor output\n".utf8))
+
+        // The ghost's stale detached-exit closure fires late…
+        ghost.onExit?(0)
+
+        // …and the successor's journaling must be unharmed.
+        XCTAssertTrue(
+            store.hasLiveWriterForTesting(id),
+            "a stale detached-exit must not release the successor's writer",
+        )
+        successor.append(Data("more\n".utf8))
+        successor.synchronize()
+        XCTAssertEqual(
+            try? Data(contentsOf: journalFileURL(for: id)),
+            Data("successor output\nmore\n".utf8),
+            "the successor keeps journaling after the ghost's late teardown",
         )
     }
 

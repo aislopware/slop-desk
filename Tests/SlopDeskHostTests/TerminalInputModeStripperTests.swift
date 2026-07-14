@@ -138,6 +138,69 @@ final class TerminalInputModeStripperTests: XCTestCase {
         )
     }
 
+    // MARK: - XTSAVE / XTRESTORE (`CSI ? Pm s|r` — the save/restore door into tracked modes)
+
+    /// A raw `?1000s … ?1000r` pair replayed verbatim re-arms mouse reporting on the client
+    /// (restore brings the saved ON back) — the exact garbage-input class the h/l stripping
+    /// exists to prevent, just via the save/restore door. Both are stripped AND simulated, so
+    /// the net state lands where a real terminal executing the raw stream would have.
+    func testXTSaveRestoreDoorIsStrippedAndTracked() {
+        let (out, state) = strip("\u{1B}[?1000h\u{1B}[?1000s\u{1B}[?1000l\u{1B}[?1000rTUI")
+        XCTAssertEqual(out, "TUI", "save/restore must be stripped like set/reset")
+        XCTAssertEqual(state.modes[1000], true, "restore re-applies the value saved while ON")
+        XCTAssertEqual(state.reassertSequence, Data("\u{1B}[?1000h".utf8))
+    }
+
+    /// XTRESTORE with no prior save restores the initial (fresh-terminal) value — off.
+    func testXTRestoreWithoutSaveNetsOff() {
+        let (out, state) = strip("\u{1B}[?1000h\u{1B}[?1000rX")
+        XCTAssertEqual(out, "X")
+        XCTAssertTrue(state.isNeutral, "restore-without-save yields the initial value (off)")
+    }
+
+    /// Mixed tracked/untracked params rewrite (mirror of the h/l discipline), and the NON-`?`
+    /// finals stay untouched: bare `r` is DECSTBM (scroll region), bare `s` is SCOSC/DECSLRM —
+    /// display state the replay needs.
+    func testMixedParamSaveRewrittenAndDECSTBMKept() {
+        let (out, state) = strip("\u{1B}[?1049;1000sX\u{1B}[2;24rY\u{1B}[sZ")
+        XCTAssertEqual(out, "\u{1B}[?1049sX\u{1B}[2;24rY\u{1B}[sZ")
+        XCTAssertTrue(state.isNeutral)
+    }
+
+    // MARK: - Trailing split-escape hold-back (the ring/tail boundary)
+
+    /// PTY chunking can split ONE escape sequence across the scrollback-ring / un-acked-tail
+    /// boundary. The reassert must land BEFORE the dangling half, never between it and the raw
+    /// tail's continuation bytes — interposing there aborts the split sequence and prints the
+    /// tail's continuation as literal text.
+    func testReassertLandsBeforeTrailingSplitEscape() throws {
+        let transform = try XCTUnwrap(
+            ScrollbackReplayTransform.make(environment: [:], reassertInputModes: true),
+        )
+        let out = transform(Data("\u{1B}[?1002hvim\u{1B}[?2004".utf8))
+        XCTAssertEqual(
+            out, Data("vim\u{1B}[?1002h\u{1B}[?2004".utf8),
+            "reassert BEFORE the dangling half-CSI — the live tail completes it adjacently",
+        )
+    }
+
+    /// The splitter itself: complete endings split nothing; a lone ESC / mid-CSI / unterminated
+    /// OSC tail is held back.
+    func testSplitTrailingIncompleteEscape() {
+        func dangling(_ s: String) -> Data {
+            ScrollbackReplayTransform.splitTrailingIncompleteEscape(Data(s.utf8)).dangling
+        }
+        XCTAssertEqual(dangling("plain"), Data())
+        XCTAssertEqual(dangling("a\u{1B}[0m"), Data())
+        XCTAssertEqual(dangling("a\u{1B}"), Data("\u{1B}".utf8))
+        XCTAssertEqual(dangling("a\u{1B}[?200"), Data("\u{1B}[?200".utf8))
+        XCTAssertEqual(
+            dangling("a\u{1B}]0;title"), Data("\u{1B}]0;title".utf8),
+            "an unterminated OSC opener is held back whole",
+        )
+        XCTAssertEqual(dangling("a\u{1B}]0;t\u{07}b"), Data(), "a BEL-terminated OSC ends clean")
+    }
+
     /// Env gate: `STRIP_INPUT_MODES=0` restores the pre-fix passthrough (the enables survive) —
     /// the regression this type exists to prevent.
     func testEnvGateOffLeavesModesArmed() throws {

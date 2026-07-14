@@ -162,6 +162,30 @@ enum TerminalInputModeStripper {
             if !touched { return nil }
             if kept.isEmpty { return Data() }
             return Data("\u{1B}[?\(kept.joined(separator: ";"))\(isSet ? "h" : "l")".utf8)
+        case UInt8(ascii: "s"),
+             UInt8(ascii: "r"):
+            // XTSAVE / XTRESTORE (`CSI ? Pm s|r`) — a save/restore DOOR into the tracked modes
+            // that bypasses h/l: replaying a raw `?1000s … ?1000r` pair can re-arm mouse
+            // reporting mid-replay (the exact garbage-input class this type exists to strip),
+            // and an untracked restore desyncs the net-state simulation. Same strip/rewrite
+            // discipline as h/l. A NON-`?` final here is DECSTBM (`r`) / SCOSC-DECSLRM (`s`) —
+            // display state, kept verbatim via the guard.
+            guard seq.params.first == UInt8(ascii: "?") else { return nil }
+            let isSave = seq.final == UInt8(ascii: "s")
+            var kept: [Substring] = []
+            var touched = false
+            // swiftlint:disable:next optional_data_string_conversion
+            for field in String(decoding: seq.params.dropFirst(), as: UTF8.self).split(separator: ";") {
+                if let mode = Int(field), trackedModes.contains(mode) {
+                    if isSave { state.save(mode: mode) } else { state.restore(mode: mode) }
+                    touched = true
+                } else {
+                    kept.append(field)
+                }
+            }
+            if !touched { return nil }
+            if kept.isEmpty { return Data() }
+            return Data("\u{1B}[?\(kept.joined(separator: ";"))\(isSave ? "s" : "r")".utf8)
         case UInt8(ascii: "u"):
             switch seq.params.first {
             case UInt8(ascii: ">"): // kitty push
@@ -228,6 +252,19 @@ struct InputModeFinalState: Equatable {
 
     mutating func apply(mode: Int, enabled: Bool) {
         modes[mode] = enabled
+    }
+
+    /// XTSAVE/XTRESTORE slots for the tracked modes (`CSI ? Pm s` / `CSI ? Pm r`). A restore
+    /// with no prior save yields the fresh-terminal default (off) — xterm's initial-value
+    /// semantics.
+    private(set) var savedModes: [Int: Bool] = [:]
+
+    mutating func save(mode: Int) {
+        savedModes[mode] = modes[mode] ?? false
+    }
+
+    mutating func restore(mode: Int) {
+        modes[mode] = savedModes[mode] ?? false
     }
 
     /// Simulation cap on the kitty stack depth (kitty itself caps the stack; entries pushed

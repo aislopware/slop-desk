@@ -122,7 +122,17 @@ public final class HostServer: @unchecked Sendable {
     /// are removed on every end of life: deliberate close (``removeMuxSession``), detached exit,
     /// TTL/overflow eviction (``DetachedSessionStore/onEvicted``), and the failed-rebind
     /// dead-child reap.
-    private var hookPaneIDsBySession: [UUID: String] = [:]
+    private var hookPaneIDsBySession: [UUID: HookSinkRegistration] = [:]
+
+    /// One session's hook-sink routing entry. `owner` (the registering session's object
+    /// identity) makes teardown IDENTITY-GUARDED: a stale end-of-life for a same-UUID ghost —
+    /// the detach-window race can mint a fresh session under a sessionID whose predecessor is
+    /// still winding down — must never remove the entry the live successor just registered
+    /// (the successor's agent-status hook POSTs would silently stop routing forever).
+    private struct HookSinkRegistration {
+        let paneID: String
+        let owner: ObjectIdentifier
+    }
 
     /// Cache of the resolved effective TERM keyed by `requested|explicitOverride`, guarded by `lock`.
     /// The host's terminfo state doesn't change during a session, so the (possibly `infocmp`-spawning)
@@ -280,9 +290,13 @@ public final class HostServer: @unchecked Sendable {
         // FILE survives as the restore source) and drop its hook-sink key here, or both leak
         // once per eviction for the daemon's lifetime. Fired outside the store lock; neither
         // eviction path runs under `HostServer.lock` (see `DetachedSessionStore.onEvicted`).
-        detachedStore?.onEvicted = { [weak self] sessionID in
-            self?.scrollbackJournals?.release(sessionID: sessionID)
-            self?.unregisterHookSink(sessionID: sessionID)
+        detachedStore?.onEvicted = { [weak self] session in
+            // Identity-guarded: `instance`/`owner` matching means evicting a same-UUID ghost
+            // can never close the journal writer / hook-sink key a live successor session owns.
+            self?.scrollbackJournals?.release(
+                sessionID: session.sessionID, instance: session.scrollbackJournal,
+            )
+            self?.unregisterHookSink(session: session)
         }
     }
 
@@ -486,8 +500,8 @@ public final class HostServer: @unchecked Sendable {
             // journal writer (file kept — a reconnect may still cold-restore) + hook-sink key.
             fanAgentTeardown(session)
             session.shutdownDetached()
-            scrollbackJournals?.release(sessionID: session.sessionID)
-            unregisterHookSink(sessionID: session.sessionID)
+            scrollbackJournals?.release(sessionID: session.sessionID, instance: session.scrollbackJournal)
+            unregisterHookSink(session: session)
             return
         }
         // Re-park. Idempotent end-to-end even if `handleLinkDown` lands between the snapshot
@@ -596,11 +610,33 @@ public final class HostServer: @unchecked Sendable {
         // critical section makes the sessionID immediately visible as "attached" to every later
         // channelOpen — closing the two-concurrent-reattach and reattach-vs-TTL races.
         var claimed: MuxChannelSession?
+        // A dead child reaped BY the claim (PATH C): the claim took over the entry, so the
+        // reaped session's own detached-exit closure stands down (`remove` returns false) —
+        // the per-id teardown it would have done is finished below, outside the lock.
+        var reapedDeadChild: MuxChannelSession?
         if !isStopping, !alreadyLive, !attachedElsewhere, hasRealSessionID, let store = detachedStore {
-            claimed = store.claim(open.sessionID)
-            if let claimed { muxSessions[key] = claimed }
+            switch store.claim(open.sessionID) {
+            case let .claimed(session):
+                claimed = session
+                muxSessions[key] = session
+            case let .reapedDeadChild(session):
+                reapedDeadChild = session
+            case .notFound:
+                break
+            }
         }
         lock.unlock()
+
+        if let reapedDeadChild {
+            // Prevent-sleep strict balance: the dead session may still carry a `.working`
+            // status nobody will ever clear (its stale exit closure is gated off) — fan the
+            // final `.none` here. Drop its hook-sink key BEFORE the fresh spawn below
+            // re-registers the same sessionID (identity-guarded, so ordering is belt+braces).
+            // The journal writer is deliberately NOT released: the same-UUID fresh spawn
+            // rotates it via `claimJournal`, keeping the transcript file continuous.
+            fanAgentTeardown(reapedDeadChild)
+            unregisterHookSink(session: reapedDeadChild)
+        }
 
         if isStopping {
             // Shutting down — refuse the channel so we never fork a PTY that would outlive the daemon
@@ -708,6 +744,13 @@ public final class HostServer: @unchecked Sendable {
         // the zero sentinel (a raw/old client) can never be re-presented, so journaling it would
         // only produce an orphan file.
         let hasResumableID = open.sessionID != WireMessage.newSessionID
+        // `claimJournal` FIRST (exclusive fresh-spawn ownership): it registers the live writer —
+        // exempting the file from a concurrently-running `sweep()` — and ROTATES OUT a ghost
+        // instance a same-UUID predecessor may still hold (the detach-window race / claim-reaped
+        // dead child), flushing its tail so the restore below reads the complete transcript.
+        // Sharing the ghost's instance instead would interleave two writers into one file and
+        // let the ghost's late teardown close the live session's journaling forever.
+        let journal = hasResumableID ? scrollbackJournals?.claimJournal(for: open.sessionID) : nil
         // Restore gate: a fresh spawn for a RETURNING id whose client is COLD (`lastReceivedSeq
         // == 0` — a brand-new terminal surface). A WARM client (non-zero seq: transport dropped
         // but the app kept running) still holds its rendered grid; replaying the transcript there
@@ -715,7 +758,6 @@ public final class HostServer: @unchecked Sendable {
         let restoredScrollback: Data? = (hasResumableID && open.lastReceivedSeq == 0)
             ? scrollbackJournals?.restoredScrollback(for: open.sessionID)
             : nil
-        let journal = hasResumableID ? scrollbackJournals?.journal(for: open.sessionID) : nil
 
         let pty = PTYProcess()
         // The per-session ZDOTDIR shim dir (if the zsh shim is installed) — captured so the session can
@@ -764,6 +806,9 @@ public final class HostServer: @unchecked Sendable {
             // this path to delete it later. Clean it up here so the "no leaked shim dir per pane"
             // guarantee holds on the failure path too.
             if let shimDir { try? FileManager.default.removeItem(at: shimDir) }
+            // Release the just-claimed journal writer (fd + map entry; file kept) — no session
+            // was created to own it, and a dangling live writer is also sweep-exempt forever.
+            if let journal { scrollbackJournals?.release(sessionID: open.sessionID, instance: journal) }
             // Refuse the channel so the client's router marks it dead and never routes data to it.
             Task { await connection.sendOpenAck(open.channelID, accepted: false) }
             return
@@ -796,6 +841,9 @@ public final class HostServer: @unchecked Sendable {
             // running from `pty.spawn`, so `shutdown()` reaps it cleanly) and refuse the channel.
             lock.unlock()
             session.shutdown()
+            // The stopping path never reaches an end-of-life that would release the claimed
+            // writer — drop it here (file kept; the restart's restore reads it).
+            if let journal { scrollbackJournals?.release(sessionID: open.sessionID, instance: journal) }
             Task { await connection.sendOpenAck(open.channelID, accepted: false) }
             return
         }
@@ -822,7 +870,8 @@ public final class HostServer: @unchecked Sendable {
         guard let agentHookListener else { return }
         let paneID = Self.paneID(connectionID: connectionID, channelID: channelID)
         lock.lock()
-        hookPaneIDsBySession[session.sessionID] = paneID
+        hookPaneIDsBySession[session.sessionID] =
+            HookSinkRegistration(paneID: paneID, owner: ObjectIdentifier(session))
         lock.unlock()
         agentHookListener.register(paneID: paneID) { [weak session] bytes in
             session?.ingestAgentHookRecord(bytes)
@@ -837,10 +886,16 @@ public final class HostServer: @unchecked Sendable {
     private func refreshHookSinkOnReattach(session: MuxChannelSession) {
         guard let agentHookListener else { return }
         lock.lock()
-        let paneID = hookPaneIDsBySession[session.sessionID]
+        // A reattach continues the SAME session object, so ownership transfers with it —
+        // re-point the entry's owner (the registration is keyed by the immutable env-baked
+        // paneID either way; only the teardown identity-guard reads `owner`).
+        let registration = hookPaneIDsBySession[session.sessionID].map {
+            HookSinkRegistration(paneID: $0.paneID, owner: ObjectIdentifier(session))
+        }
+        if let registration { hookPaneIDsBySession[session.sessionID] = registration }
         lock.unlock()
-        guard let paneID else { return } // hooks were off at spawn — nothing routes to this pane
-        agentHookListener.register(paneID: paneID) { [weak session] bytes in
+        guard let registration else { return } // hooks were off at spawn — nothing routes to this pane
+        agentHookListener.register(paneID: registration.paneID) { [weak session] bytes in
             session?.ingestAgentHookRecord(bytes)
         }
     }
@@ -850,11 +905,17 @@ public final class HostServer: @unchecked Sendable {
     /// eviction (via ``DetachedSessionStore/onEvicted``), and the failed-rebind dead-child reap
     /// — but NEVER on a mere detach: hook records must keep folding into the detector while the
     /// session is parked, or a detached window's status goes stale. Idempotent.
-    private func unregisterHookSink(sessionID: UUID) {
+    /// IDENTITY-GUARDED: removes the entry only while it is still OWNED by `session` — a stale
+    /// teardown for a same-UUID ghost stands down instead of dropping the key its live
+    /// successor re-registered (see ``HookSinkRegistration``).
+    private func unregisterHookSink(session: MuxChannelSession) {
         lock.lock()
-        let paneID = hookPaneIDsBySession.removeValue(forKey: sessionID)
+        let sessionID = session.sessionID
+        let registration = hookPaneIDsBySession[sessionID]
+        let owned = registration?.owner == ObjectIdentifier(session)
+        if owned { hookPaneIDsBySession.removeValue(forKey: sessionID) }
         lock.unlock()
-        if let paneID { agentHookListener?.unregister(paneID: paneID) }
+        if owned, let registration { agentHookListener?.unregister(paneID: registration.paneID) }
     }
 
     /// Resolves the effective `TERM` for a new PTY against the host's terminfo database, logging
@@ -946,7 +1007,19 @@ public final class HostServer: @unchecked Sendable {
         session.detach { [weak self, weak store, weak session] id in
             // Shell exited while in the store — remove the entry (TTL cancelled) and
             // close the master fd. The shell is already dead, so no kill needed.
-            store?.remove(id)
+            //
+            // OWNERSHIP GATE: proceed only when THIS call removed the entry. `false` means
+            // `claim()`/`evict()`/`drainAll()` already took it and owns the teardown — this
+            // closure is then a STALE straggler (the exit task can fire seconds late, e.g. a
+            // claim-reaped dead child unblocking `awaitExitSentOrTimeout`), and running the
+            // per-id teardown anyway would release the journal writer + hook-sink key a
+            // same-UUID successor session is already using. The fd close below stays (it acts
+            // on THIS session object only, idempotent).
+            let owned = store?.remove(id) ?? false
+            guard owned else {
+                session?.shutdownDetached()
+                return
+            }
             // Prevent-sleep strict balance: a parked shell that exits mid-turn never
             // delivered a non-working transition — fan a final `.none` so a `.working` observer clears it.
             if let session { self?.fanAgentTeardown(session) }
@@ -956,8 +1029,10 @@ public final class HostServer: @unchecked Sendable {
             // journal — flush + close the fd, drop the map entry, KEEP the file (the restore
             // source for a returning cold client) — and drop the hook-sink key. Without these,
             // every parked death leaked one fd + one sink for the daemon's lifetime.
-            self?.scrollbackJournals?.release(sessionID: id)
-            self?.unregisterHookSink(sessionID: id)
+            if let session {
+                self?.scrollbackJournals?.release(sessionID: id, instance: session.scrollbackJournal)
+                self?.unregisterHookSink(session: session)
+            }
             self?.onLog?("detached session \(id): shell exited while parked")
         }
         // SYNCHRONOUS insert: a fire-and-forget `Task { await store.insert }` could lose to a fast
@@ -981,12 +1056,12 @@ public final class HostServer: @unchecked Sendable {
         // guard keeps a child-exit RACING `stop()` from wiping a journal the restart is
         // supposed to restore.
         if let session, !isStopping {
-            scrollbackJournals?.delete(sessionID: session.sessionID)
+            scrollbackJournals?.delete(sessionID: session.sessionID, instance: session.scrollbackJournal)
         }
         // Drop this pane's hook sink so a late hook POST for a closed pane is dropped.
         // Keyed by the session's ORIGINAL pane id (not this close's composite key — after a
         // reattach cycle they differ, and unregistering the current key leaked the original).
-        if let session { unregisterHookSink(sessionID: session.sessionID) }
+        if let session { unregisterHookSink(session: session) }
         // Only re-count when a session was actually removed (the path is idempotent with the
         // peer-close / child-exit race, so a second remove of the same key is a no-op and must
         // not re-emit an unchanged count).
@@ -1183,7 +1258,7 @@ public final class HostServer: @unchecked Sendable {
     /// The pane's output goes into its `ReplayBuffer` (read via the `read` verb) and fires
     /// output observers (used by the `wait` verb). The `data`/`control` sub-channels are null
     /// stubs (infinite window, no-op sends, immediately-finished inbound) so the relay's receive
-    /// loops exit at once and `setClientOnline(false)` engages the 4 MiB offline gate — PTY
+    /// loops exit at once and `setClientOnline(false)` engages the 64 MiB offline gate — PTY
     /// output flows into the replay ring rather than trying to send on a non-existent connection.
     ///
     /// - Parameters:

@@ -57,8 +57,10 @@ final class DetachedSessionStore: @unchecked Sendable {
     ///   sessionID, so releasing would tear down the live entry's resources;
     /// - ``remove(_:)`` / ``drainAll()`` — the caller owns those paths (detached exit wires its
     ///   own cleanup; drain is daemon stop).
-    /// Set once by `HostServer.init` before any session can flow.
-    var onEvicted: (@Sendable (UUID) -> Void)?
+    /// Set once by `HostServer.init` before any session can flow. Receives the evicted SESSION
+    /// (not just its id) so the handler can tear down instance-owned resources (the journal
+    /// writer) without guessing whether a same-UUID successor took the id over.
+    var onEvicted: (@Sendable (MuxChannelSession) -> Void)?
 
     init(maxSessions: Int? = nil) {
         self.maxSessions = maxSessions
@@ -127,7 +129,7 @@ final class DetachedSessionStore: @unchecked Sendable {
         if let overflowVictim {
             overflowVictim.ttlTask?.cancel()
             overflowVictim.session.shutdownDetached()
-            onEvicted?(overflowVictim.session.sessionID)
+            onEvicted?(overflowVictim.session)
         }
     }
 
@@ -148,20 +150,37 @@ final class DetachedSessionStore: @unchecked Sendable {
     /// `removeMuxSession` → `shutdown` when `onExit` fires, but if the client reconnects
     /// first we want it to get a fresh shell, not hang on a dead one). Its fd cleanup uses
     /// `shutdownDetached()` (the child exited naturally — nothing to kill).
-    func claim(_ sessionID: UUID) -> MuxChannelSession? {
+    ///
+    /// The dead-child reap is REPORTED (`.reapedDeadChild`), not folded into "not found": the
+    /// caller took over this entry's teardown (the session's own `onDetachedExit` closure sees
+    /// ``remove(_:)`` return `false` and stands down), so the caller must finish what that
+    /// closure would have done — fan the final agent-status `.none` (prevent-sleep strict
+    /// balance) and drop the hook-sink key — before spawning the same-UUID fresh shell.
+    enum ClaimOutcome {
+        case notFound
+        case claimed(MuxChannelSession)
+        case reapedDeadChild(MuxChannelSession)
+
+        /// The live claimed session, `nil` for the other outcomes (test convenience).
+        var claimedSession: MuxChannelSession? {
+            if case let .claimed(session) = self { session } else { nil }
+        }
+    }
+
+    func claim(_ sessionID: UUID) -> ClaimOutcome {
         lock.lock()
         guard let entry = store.removeValue(forKey: sessionID) else {
             lock.unlock()
-            return nil
+            return .notFound
         }
         entry.ttlTask?.cancel()
         lock.unlock()
 
         if entry.session.isChildExited() {
             entry.session.shutdownDetached()
-            return nil
+            return .reapedDeadChild(entry.session)
         }
-        return entry.session
+        return .claimed(entry.session)
     }
 
     // MARK: Contains
@@ -181,11 +200,19 @@ final class DetachedSessionStore: @unchecked Sendable {
     /// Removes the entry WITHOUT killing the shell. Called when the shell exits naturally
     /// (its `onExit` callback fires) while the session is detached — the PTY is already dead,
     /// so there's nothing to kill; we just drop the store entry (TTL task cancelled).
-    func remove(_ sessionID: UUID) {
+    ///
+    /// Returns whether THIS call removed the entry — i.e. whether the caller WON the teardown.
+    /// `false` means `claim()`/`evict()`/`drainAll()` already took the entry and owns the
+    /// per-id resource teardown; a stale detached-exit closure firing afterwards must then
+    /// stand down, or it releases the journal writer + hook sink a same-UUID SUCCESSOR session
+    /// is already using (silently killing the live pane's journaling + agent-status routing).
+    @discardableResult
+    func remove(_ sessionID: UUID) -> Bool {
         lock.lock()
         let entry = store.removeValue(forKey: sessionID)
         lock.unlock()
         entry?.ttlTask?.cancel()
+        return entry != nil
     }
 
     // MARK: Evict (TTL / overflow)
@@ -200,7 +227,7 @@ final class DetachedSessionStore: @unchecked Sendable {
         guard let entry else { return }
         entry.ttlTask?.cancel()
         entry.session.shutdownDetached()
-        onEvicted?(sessionID)
+        onEvicted?(entry.session)
     }
 
     // MARK: drainAll

@@ -136,6 +136,26 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
         return journal
     }
 
+    /// Vends the writer for a FRESH SPAWN (`HostServer.spawnFreshShell`) — takes exclusive
+    /// ownership of the sessionID's journal. On the correct lifecycle every end of life
+    /// releases/deletes the writer, so a cache HIT here means another session object (a ghost
+    /// of the same UUID: a parked duplicate from the detach-window race, or a dead child
+    /// reaped by `claim`) still holds the instance. Sharing it would interleave two writers
+    /// into one file — and worse, the ghost's eventual teardown would `closeKeepingFile()` the
+    /// shared instance, silently killing the LIVE session's journaling forever (`append` is a
+    /// no-op once `closed`). Instead ROTATE: flush+close the ghost's instance (its later
+    /// appends drop — the attached session is the one that must win) and vend a fresh writer
+    /// that appends to the same file, keeping the transcript continuous. The close runs under
+    /// `lock` so no concurrent `journal(for:)`/`delete` can interleave with the swap.
+    func claimJournal(for sessionID: UUID) -> ScrollbackJournal {
+        lock.lock()
+        defer { lock.unlock() }
+        if let ghost = journals[sessionID] { ghost.closeKeepingFile() }
+        let journal = ScrollbackJournal(fileURL: fileURL(for: sessionID), byteCap: byteCap)
+        journals[sessionID] = journal
+        return journal
+    }
+
     /// Loads the persisted transcript for a returning session: raw bytes → distill → sanitize
     /// suffix. `nil` when no journal exists or it is empty (nothing to restore).
     func restoredScrollback(for sessionID: UUID) -> Data? {
@@ -160,18 +180,42 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
     /// and, because ``sweep()`` exempts ids live in the map, would leave the file permanently
     /// unsweepable too. A later ``journal(for:)`` for the same id transparently vends a fresh
     /// writer whose `openIfNeeded` seeks to end (append semantics preserved across the release).
-    func release(sessionID: UUID) {
+    /// - Parameter instance: the writer the CALLER owns (its session's construction-time
+    ///   journal). The map entry is dropped only when it still IS that instance — a stale
+    ///   teardown (a ghost session of the same UUID racing its live successor) must not evict
+    ///   the successor's writer. `nil` (the caller lost its session reference, so ownership
+    ///   cannot be proven) leaves the map alone: a possible bounded fd hold beats closing a
+    ///   writer that may belong to the live successor.
+    func release(sessionID: UUID, instance: ScrollbackJournal?) {
+        guard let instance else { return }
         lock.lock()
-        let writer = journals.removeValue(forKey: sessionID)
+        if journals[sessionID] === instance {
+            journals.removeValue(forKey: sessionID)
+        }
+        // Close under `lock` (bounded: one queue.sync flush+close; the journal queue never
+        // takes this lock) so a concurrent `journal(for:)`/`claimJournal` cannot observe the
+        // half-released state. A stale owner's instance was already rotated out + closed —
+        // this close is an idempotent no-op for it, and it never touches the successor's writer.
+        instance.closeKeepingFile()
         lock.unlock()
-        writer?.closeKeepingFile()
     }
 
     /// Removes the journal (deliberate end-of-pane only — see the type docs for the policy).
-    func delete(sessionID: UUID) {
+    ///
+    /// The close + unlink run UNDER `lock`: unlinking outside it raced a same-UUID re-present
+    /// (`spawnFreshShell` → `claimJournal` creating + opening the file anew), and the late
+    /// unlink would then tear the NEW session's file out from under its open fd — every byte
+    /// it writes from then on lands in an unreachable inode. Same `instance` guard as
+    /// ``release(sessionID:instance:)``: a stale owner must not delete the successor's file.
+    func delete(sessionID: UUID, instance: ScrollbackJournal?) {
         lock.lock()
+        defer { lock.unlock() }
+        guard instance == nil || journals[sessionID] === instance || journals[sessionID] == nil else {
+            // A successor already owns this sessionID's journal — the caller's instance was
+            // rotated out (already closed). Nothing to delete.
+            return
+        }
         let writer = journals.removeValue(forKey: sessionID)
-        lock.unlock()
         writer?.closeAndDelete()
         // No writer in THIS process (e.g. a pane closed right after a daemon restart): remove
         // the file directly.
@@ -179,6 +223,9 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
             try? FileManager.default.removeItem(at: fileURL(for: sessionID))
         }
     }
+
+    /// Unguarded convenience (tests + callers with no session reference).
+    func delete(sessionID: UUID) { delete(sessionID: sessionID, instance: nil) }
 
     // MARK: Sweep (orphan bound)
 
@@ -292,6 +339,12 @@ final class ScrollbackJournal: @unchecked Sendable {
     /// again (release — the store has already dropped this instance, so a fresh writer owns
     /// the file from here).
     private var closed = false
+    /// Retry floor after a FAILED compaction (the `.atomic` rewrite transiently needs ~cap of
+    /// free space that incremental appends don't): without it, every append past `byteCap * 2`
+    /// re-reads the whole over-cap file and re-attempts the rewrite — an O(file) tax per PTY
+    /// chunk for as long as the disk pressure lasts. One failure defers the next attempt until
+    /// the file has grown another `byteCap`.
+    private var compactRetryFloor = 0
 
     init(fileURL: URL, byteCap: Int) {
         self.fileURL = fileURL
@@ -307,7 +360,7 @@ final class ScrollbackJournal: @unchecked Sendable {
         queue.async { [self] in
             guard !closed else { return }
             pending.append(bytes)
-            if size + pending.count > byteCap * 2 {
+            if size + pending.count > max(byteCap * 2, compactRetryFloor) {
                 // Cap accounting counts buffered bytes, not just the on-disk `size`.
                 compact()
             } else if pending.count >= Self.flushThresholdBytes {
@@ -432,9 +485,13 @@ final class ScrollbackJournal: @unchecked Sendable {
         do {
             try tail.write(to: fileURL, options: .atomic)
             size = tail.count
+            compactRetryFloor = 0
         } catch {
-            // Compaction failure keeps the (over-cap) file; the next append reopens + retries.
+            // Compaction failure keeps the (over-cap) file; the next append reopens. Defer the
+            // next compaction attempt (retry floor) so persistent disk pressure doesn't turn
+            // every append into a full-file read + failed rewrite.
             size = current.count
+            compactRetryFloor = current.count + byteCap
         }
     }
 }

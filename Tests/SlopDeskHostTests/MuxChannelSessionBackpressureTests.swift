@@ -67,6 +67,39 @@ final class MuxChannelSessionBackpressureTests: XCTestCase {
         XCTAssertFalse(rec.isPaused, "back online under the cap → resume")
     }
 
+    /// Concurrent producers (output drain appending) and consumers (ack path) hammer the
+    /// recompute→apply glue; after everything is acked the gate must read the FRESH truth
+    /// (unpaused). Regression net for the stale-apply hazard: a caller that computed its
+    /// pause value under `replayLock`, was preempted, and applied it AFTER a fresher apply
+    /// could wedge the read loop paused with nothing left to ack — recompute-at-apply under
+    /// `backpressureApplyLock` makes the last apply always reflect the latest state.
+    func testConcurrentAppendAckConvergesToFinalTruth() async {
+        let rec = PauseRec()
+        let session = makeSession(replay: ReplayBuffer(maxBackupBytes: 100, offlineGateBytes: 40))
+        session.installGateForTesting(PausableQueueGate(capacity: 1_000_000) { rec.apply($0) })
+
+        let lastSeq = await withTaskGroup(of: Int64.self) { group in
+            group.addTask {
+                var last: Int64 = 0
+                for _ in 0..<400 { last = session.appendForTesting(Data(count: 120)) }
+                return last
+            }
+            group.addTask {
+                for _ in 0..<400 { session.ackForTesting(upTo: .max) } // clamped to highestSeq
+                return 0
+            }
+            var last: Int64 = 0
+            for await v in group { last = max(last, v) }
+            return last
+        }
+        session.ackForTesting(upTo: lastSeq) // final truth: the whole backlog is released
+        XCTAssertFalse(
+            rec.isPaused,
+            "with everything acked, the gate must settle UNPAUSED — a stale pause here wedges "
+                + "the read loop with no future event to recompute",
+        )
+    }
+
     // MARK: - Exit-ordering EOF latch
 
     /// Once EOF is signalled (read loop drained the master), the exit gate returns IMMEDIATELY — so

@@ -168,7 +168,7 @@ final class ReattachOrphanRecoveryTests: XCTestCase {
         // it under the new key — exactly the state performReattach starts its replayTail in.
         let conn2 = UUID()
         let key2 = MuxSessionKey(connectionID: conn2, channelID: 1)
-        let claimed = store.claim(id)
+        let claimed = store.claim(id).claimedSession
         XCTAssertIdentical(claimed, session, "the reconnect's claim must win the parked session")
         server.registerMuxSessionForTesting(session, key: key2)
 
@@ -204,7 +204,7 @@ final class ReattachOrphanRecoveryTests: XCTestCase {
 
         // Flap-3 reconnect: the session reattaches for real.
         let key3 = MuxSessionKey(connectionID: UUID(), channelID: 1)
-        let claimedAgain = store.claim(id)
+        let claimedAgain = store.claim(id).claimedSession
         XCTAssertIdentical(claimedAgain, session, "the next reconnect must be able to claim the session")
         server.registerMuxSessionForTesting(session, key: key3)
         let liveData = MuxSubChannel(channelID: 1, channel: .data) { _, _ in }
@@ -231,7 +231,7 @@ final class ReattachOrphanRecoveryTests: XCTestCase {
         let key1 = MuxSessionKey(connectionID: UUID(), channelID: 1)
         server.detachMuxSessionForTesting(key: key1, session: session)
         let key2 = MuxSessionKey(connectionID: UUID(), channelID: 1)
-        let claimed = store.claim(id)
+        let claimed = store.claim(id).claimedSession
         XCTAssertIdentical(claimed, session)
         server.registerMuxSessionForTesting(session, key: key2)
         XCTAssertFalse(store.storedIDsForTesting.contains(id), "claimed: the store entry is gone")
@@ -250,7 +250,7 @@ final class ReattachOrphanRecoveryTests: XCTestCase {
         XCTAssertTrue(session.isDetached)
 
         // Claimable again, and the next rebind works.
-        let claimedAgain = store.claim(id)
+        let claimedAgain = store.claim(id).claimedSession
         XCTAssertIdentical(claimedAgain, session)
         let liveData = MuxSubChannel(channelID: 1, channel: .data) { _, _ in }
         let liveControl = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
@@ -328,7 +328,7 @@ final class ReattachOrphanRecoveryTests: XCTestCase {
         let key1 = MuxSessionKey(connectionID: UUID(), channelID: 1)
         server.detachMuxSessionForTesting(key: key1, session: session)
         let key2 = MuxSessionKey(connectionID: UUID(), channelID: 1)
-        XCTAssertIdentical(store.claim(id), session)
+        XCTAssertIdentical(store.claim(id).claimedSession, session)
         server.registerMuxSessionForTesting(session, key: key2)
 
         // The child dies while the reattach is replaying, then the link dies too.
@@ -369,7 +369,7 @@ final class ReattachOrphanRecoveryTests: XCTestCase {
         let key1 = MuxSessionKey(connectionID: UUID(), channelID: 1)
         server.detachMuxSessionForTesting(key: key1, session: session)
         let key2 = MuxSessionKey(connectionID: UUID(), channelID: 1)
-        XCTAssertIdentical(store.claim(id), session)
+        XCTAssertIdentical(store.claim(id).claimedSession, session)
         server.registerMuxSessionForTesting(session, key: key2)
 
         let dead = await makeFinishedChannels()

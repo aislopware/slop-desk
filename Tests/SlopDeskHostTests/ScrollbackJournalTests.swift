@@ -377,7 +377,7 @@ final class ScrollbackJournalTests: XCTestCase {
         let tail = Data("buffered-tail\n".utf8) // far below the 32 KiB threshold — buffered
         store.journal(for: sessionID).append(tail)
 
-        store.release(sessionID: sessionID)
+        store.release(sessionID: sessionID, instance: store.journal(for: sessionID))
         XCTAssertFalse(
             store.hasLiveWriterForTesting(sessionID),
             "release must drop the map entry (the fd-leak half of the defect)",
@@ -398,7 +398,7 @@ final class ScrollbackJournalTests: XCTestCase {
         let kept = Data("kept\n".utf8)
         let journal = store.journal(for: sessionID)
         journal.append(kept)
-        store.release(sessionID: sessionID)
+        store.release(sessionID: sessionID, instance: store.journal(for: sessionID))
 
         journal.append(Data("late-straggler\n".utf8))
         journal.synchronize() // would flush the straggler if the instance were still open
@@ -416,7 +416,7 @@ final class ScrollbackJournalTests: XCTestCase {
         let store = makeStore()
         store.journal(for: sessionID).append(Data("x".utf8))
         store.journal(for: sessionID).synchronize()
-        store.release(sessionID: sessionID)
+        store.release(sessionID: sessionID, instance: store.journal(for: sessionID))
 
         let url = tempDir.appendingPathComponent("\(sessionID.uuidString).scrollback")
         try FileManager.default.setAttributes(
@@ -437,7 +437,7 @@ final class ScrollbackJournalTests: XCTestCase {
         let old = Data("old\n".utf8)
         let new = Data("new\n".utf8)
         store.journal(for: sessionID).append(old)
-        store.release(sessionID: sessionID)
+        store.release(sessionID: sessionID, instance: store.journal(for: sessionID))
 
         store.journal(for: sessionID).append(new) // transparently reopened
         XCTAssertEqual(
@@ -453,12 +453,77 @@ final class ScrollbackJournalTests: XCTestCase {
         let sessionID = UUID()
         let store = makeStore()
         store.journal(for: sessionID).append(Data("x".utf8))
-        store.release(sessionID: sessionID)
+        store.release(sessionID: sessionID, instance: store.journal(for: sessionID))
 
         store.delete(sessionID: sessionID)
         let url = tempDir.appendingPathComponent("\(sessionID.uuidString).scrollback")
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
         XCTAssertNil(store.restoredScrollback(for: sessionID))
+    }
+
+    // MARK: - Fresh-spawn ownership (claimJournal rotation + identity-guarded lifecycle)
+
+    /// `claimJournal(for:)` takes exclusive ownership for a fresh spawn: a ghost instance a
+    /// same-UUID predecessor still holds is rotated OUT (flushed + closed — its later appends
+    /// drop instead of interleaving), and the fresh writer appends to the SAME file so the
+    /// transcript stays continuous.
+    func testClaimJournalRotatesGhostWriterKeepingTranscriptContinuous() {
+        let sessionID = UUID()
+        let store = makeStore()
+        let ghost = store.journal(for: sessionID)
+        ghost.append(Data("old-life\n".utf8))
+
+        let fresh = store.claimJournal(for: sessionID)
+        XCTAssertNotIdentical(ghost, fresh, "a cache hit means a ghost owner — never share the instance")
+
+        ghost.append(Data("GHOST-INTERLEAVE".utf8)) // closed by the rotation → dropped
+        fresh.append(Data("new-life\n".utf8))
+        fresh.synchronize()
+        XCTAssertEqual(
+            store.restoredScrollback(for: sessionID),
+            Data("old-life\nnew-life\n".utf8) + ScrollbackJournalStore.sanitizeSuffix,
+            "the ghost's flushed tail + the successor's output, in order — no interleave, no loss",
+        )
+    }
+
+    /// A STALE release (the ghost's late teardown, after a successor claimed the id) must not
+    /// close the successor's writer — the exact silent-journaling-death the identity guard fixes.
+    func testStaleReleaseCannotCloseSuccessorWriter() {
+        let sessionID = UUID()
+        let store = makeStore()
+        let ghost = store.journal(for: sessionID)
+        let fresh = store.claimJournal(for: sessionID)
+
+        store.release(sessionID: sessionID, instance: ghost) // stale owner stands down
+        XCTAssertTrue(
+            store.hasLiveWriterForTesting(sessionID),
+            "the successor's map entry must survive a stale release",
+        )
+        fresh.append(Data("still journaling\n".utf8))
+        fresh.synchronize()
+        XCTAssertEqual(
+            try? Data(contentsOf: tempDir.appendingPathComponent("\(sessionID.uuidString).scrollback")),
+            Data("still journaling\n".utf8),
+            "the successor must keep journaling after the ghost's stale release",
+        )
+    }
+
+    /// A STALE delete must not unlink the successor's file (nor drop its writer).
+    func testStaleDeleteCannotRemoveSuccessorFile() {
+        let sessionID = UUID()
+        let store = makeStore()
+        let ghost = store.journal(for: sessionID)
+        let fresh = store.claimJournal(for: sessionID)
+        fresh.append(Data("live\n".utf8))
+        fresh.synchronize()
+
+        store.delete(sessionID: sessionID, instance: ghost) // stale owner stands down
+        let url = tempDir.appendingPathComponent("\(sessionID.uuidString).scrollback")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertTrue(store.hasLiveWriterForTesting(sessionID))
+
+        store.delete(sessionID: sessionID, instance: fresh) // the real owner still deletes
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
     }
 
     // MARK: - Environment gates

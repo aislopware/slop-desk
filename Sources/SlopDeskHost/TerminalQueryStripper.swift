@@ -266,7 +266,16 @@ enum ScrollbackReplayTransform {
             return nil
         }
         return { @Sendable data in
-            var result = data
+            // Hold back a trailing INCOMPLETE escape sequence and re-attach it LAST. PTY reads
+            // chunk at arbitrary offsets, so the scrollback-ring / un-acked-tail boundary (the
+            // exact edge this transform runs up to on a cold reattach) can split one escape
+            // sequence in half — the raw live tail then begins with the continuation bytes.
+            // Anything appended in between (the input-mode reassert below) would land MID-
+            // sequence: the terminal aborts the split sequence (losing its toggle) and prints
+            // the tail's continuation as literal text. Keeping [dangling][tail] adjacent and
+            // placing the reassert BEFORE them preserves both.
+            let split = splitTrailingIncompleteEscape(data)
+            var result = split.head
             var reassert = Data()
             if stripInputModes {
                 let stripped = TerminalInputModeStripper.strip(result)
@@ -278,7 +287,72 @@ enum ScrollbackReplayTransform {
             if stripQueries { result = TerminalQueryStripper.strip(result) }
             if stripEOLMarks { result = PromptEOLMarkStripper.strip(result) }
             result.append(reassert)
+            result.append(split.dangling)
             return result
         }
+    }
+
+    /// Backward-scan bound for the trailing-escape check: real dangling artifacts are short
+    /// (a mid-CSI chunk cut); an unterminated string sequence whose opener sits further back
+    /// than this is left alone (today's passthrough behaviour).
+    static let trailingEscapeScanBytes = 4096
+
+    /// Splits `data` into (head, dangling) where `dangling` is a trailing escape sequence the
+    /// buffer ends MID-WAY through (no final byte / no string terminator), or empty when the
+    /// buffer ends clean. Ambiguity errs toward "no dangling".
+    static func splitTrailingIncompleteEscape(_ data: Data) -> (head: Data, dangling: Data) {
+        let bytes = [UInt8](data)
+        let n = bytes.count
+        let esc: UInt8 = 0x1B
+        let bel: UInt8 = 0x07
+        guard n > 0 else { return (data, Data()) }
+        // Find the LAST ESC within the bounded window.
+        var e = n - 1
+        let floor = max(0, n - trailingEscapeScanBytes)
+        while e >= floor, bytes[e] != esc {
+            e -= 1
+        }
+        guard e >= floor else { return (data, Data()) } // no ESC in window — ends clean
+        let incomplete: Bool
+        if e == n - 1 {
+            incomplete = true // lone trailing ESC
+        } else {
+            switch bytes[e + 1] {
+            case UInt8(ascii: "["): // CSI: params → intermediates → final (0x40–0x7E)
+                var j = e + 2
+                while j < n, (0x30...0x3F).contains(bytes[j]) { j += 1 }
+                while j < n, (0x20...0x2F).contains(bytes[j]) { j += 1 }
+                incomplete = !(j < n && (0x40...0x7E).contains(bytes[j]))
+            case UInt8(ascii: "]"): // OSC: BEL or ST terminates
+                var j = e + 2
+                var terminated = false
+                while j < n {
+                    if bytes[j] == bel { terminated = true
+                        break
+                    }
+                    // The last ESC is the opener, so no ST's ESC can follow within the buffer —
+                    // reaching here means the body runs to the end unterminated.
+                    j += 1
+                }
+                incomplete = !terminated
+            case UInt8(ascii: "P"),
+                 UInt8(ascii: "X"),
+                 UInt8(ascii: "^"),
+                 UInt8(ascii: "_"):
+                // DCS/SOS/PM/APC: only ST terminates, and its ESC would be a LATER ESC — the
+                // opener being the last ESC means the buffer ends inside the body.
+                incomplete = true
+            case 0x20...0x2F: // ESC + intermediate(s) + final (charset designators &c.)
+                var j = e + 1
+                while j < n, (0x20...0x2F).contains(bytes[j]) { j += 1 }
+                incomplete = j >= n // intermediates run to the end — final byte missing
+            default:
+                incomplete = false // two-byte ESC pair — complete
+            }
+        }
+        guard incomplete else { return (data, Data()) }
+        // Fresh Data (not a slice) — slice-backed Data keeps the parent's indices, a classic
+        // index trap for downstream byte-wise passes.
+        return (Data(bytes[..<e]), Data(bytes[e...]))
     }
 }

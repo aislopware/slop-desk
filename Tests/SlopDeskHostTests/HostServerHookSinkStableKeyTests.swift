@@ -59,7 +59,7 @@ final class HostServerHookSinkStableKeyTests: XCTestCase {
     ) -> MuxSessionKey {
         server.detachMuxSessionForTesting(key: oldKey, session: session)
         let newKey = MuxSessionKey(connectionID: UUID(), channelID: 1)
-        XCTAssertIdentical(server.detachedStoreForTesting?.claim(session.sessionID), session)
+        XCTAssertIdentical(server.detachedStoreForTesting?.claim(session.sessionID).claimedSession, session)
         server.registerMuxSessionForTesting(session, key: newKey)
         server.reattachHookSinkForTesting(
             session: session, connectionID: newKey.connectionID, channelID: newKey.channelID,

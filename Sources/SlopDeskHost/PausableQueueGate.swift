@@ -26,7 +26,7 @@ import SlopDeskProtocol
 final class PausableQueueGate: @unchecked Sendable {
     private let lock = NSLock()
     private var policy: BoundedQueuePolicy
-    /// Second, INDEPENDENT pause source: the per-channel ``ReplayBuffer``'s 64 MiB cap / 4 MiB offline
+    /// Second, INDEPENDENT pause source: the per-channel ``ReplayBuffer``'s 256 MiB cap / 64 MiB offline
     /// gate (deep-hunt R5 rank 2). The bounded queue (``policy``) bounds enqueued-not-yet-SENT bytes;
     /// the replay buffer bounds SENT-but-not-yet-ACKED retained bytes — a wire-consuming-but-not-acking
     /// client grows the latter unbounded while the former stays empty. The read loop must PAUSE if

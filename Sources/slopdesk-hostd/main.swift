@@ -252,23 +252,38 @@ final class ShutdownLatch: @unchecked Sendable {
 
 let shutdownLatch = ShutdownLatch()
 
-// Install a SIGINT handler that stops the server and exits. Use a DispatchSource so
-// the default SIGINT disposition does not kill us mid-shutdown.
-signal(SIGINT, SIG_IGN)
-let sigintSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-sigintSource.setEventHandler {
-    guard shutdownLatch.tryFire() else { return } // ignore repeated Ctrl-C during the async drain
-    log("SIGINT — shutting down")
-    Task {
-        agentHookListener?.stop()
-        agentControlListener?.stop()
-        inspectorServer?.stop()
-        await server.stop()
-        exit(0)
+// Install SIGINT/SIGTERM handlers that stop the server and exit. Use DispatchSources so
+// the default dispositions do not kill us mid-shutdown. SIGTERM matters as much as Ctrl-C:
+// it is what `kill <pid>`, launchd stop, and system shutdown/restart deliver — without the
+// handler those paths killed hostd instantly, skipping the orderly drain (child reap, replay
+// flush, `bye`) that SIGINT gets. Both route through the ONE-SHOT latch, so a SIGTERM racing
+// a Ctrl-C can never start two teardowns (two concurrent libc `exit()`s are UB).
+@MainActor
+func makeShutdownSignalSource(_ sig: Int32, name: String) -> DispatchSourceSignal {
+    signal(sig, SIG_IGN)
+    let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+    // The source is bound to the main queue, so the handler runs on the main actor's
+    // executor — `assumeIsolated` makes that visible to the compiler (the top-level
+    // daemon globals it touches are main-actor state).
+    source.setEventHandler {
+        MainActor.assumeIsolated {
+            guard shutdownLatch.tryFire() else { return } // ignore repeated signals during the async drain
+            log("\(name) — shutting down")
+            Task {
+                agentHookListener?.stop()
+                agentControlListener?.stop()
+                inspectorServer?.stop()
+                await server.stop()
+                exit(0)
+            }
+        }
     }
+    source.resume()
+    return source
 }
 
-sigintSource.resume()
+let sigintSource = makeShutdownSignalSource(SIGINT, name: "SIGINT")
+let sigtermSource = makeShutdownSignalSource(SIGTERM, name: "SIGTERM")
 
 Task {
     do {

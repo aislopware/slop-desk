@@ -34,16 +34,16 @@ final class DetachedSessionStoreTests: XCTestCase {
         let id = UUID()
         let session = makeStubSession(sessionID: id)
         store.insert(session, key: MuxSessionKey(connectionID: UUID(), channelID: 1), ttl: .seconds(60))
-        let found = store.claim(id)
+        let found = store.claim(id).claimedSession
         XCTAssertNotNil(found, "claim must return a freshly-inserted session")
         XCTAssertIdentical(found, session)
         XCTAssertEqual(store.countForTesting, 0, "claim must REMOVE the entry (exclusive hand-off)")
-        XCTAssertNil(store.claim(id), "a second claim for the same id must get nil, never an alias")
+        XCTAssertNil(store.claim(id).claimedSession, "a second claim for the same id must get nil, never an alias")
     }
 
     func testClaimUnknownIDReturnsNil() {
         let store = DetachedSessionStore()
-        let result = store.claim(UUID())
+        let result = store.claim(UUID()).claimedSession
         XCTAssertNil(result, "unknown sessionID must return nil")
     }
 
@@ -58,7 +58,7 @@ final class DetachedSessionStoreTests: XCTestCase {
 
         let winners = await withTaskGroup(of: Int.self) { group in
             for _ in 0..<8 {
-                group.addTask { store.claim(id) != nil ? 1 : 0 }
+                group.addTask { store.claim(id).claimedSession != nil ? 1 : 0 }
             }
             var total = 0
             for await w in group { total += w }
@@ -79,7 +79,7 @@ final class DetachedSessionStoreTests: XCTestCase {
         let session = makeStubSession(sessionID: id)
         store.insert(session, key: MuxSessionKey(connectionID: UUID(), channelID: 1), ttl: nil)
         try await Task.sleep(for: .milliseconds(150))
-        let found = store.claim(id)
+        let found = store.claim(id).claimedSession
         XCTAssertNotNil(found, "a nil-TTL detached session must never be timer-evicted")
     }
 
@@ -160,7 +160,7 @@ final class DetachedSessionStoreTests: XCTestCase {
         let id = UUID()
         let session = makeStubSession(sessionID: id)
         store.insert(session, key: MuxSessionKey(connectionID: UUID(), channelID: 1), ttl: .milliseconds(10))
-        let claimed = store.claim(id)
+        let claimed = store.claim(id).claimedSession
         XCTAssertNotNil(claimed, "claim must win against a not-yet-fired TTL")
         // Same session detaches again later — re-inserted with NO ttl.
         store.insert(session, key: MuxSessionKey(connectionID: UUID(), channelID: 2), ttl: nil)
@@ -213,7 +213,7 @@ final class DetachedSessionStoreTests: XCTestCase {
             "the original never-evict entry must be kept — a duplicate insert must not arm a "
                 + "second TTL (nor leak the first) that kills the parked session",
         )
-        XCTAssertIdentical(store.claim(id), session)
+        XCTAssertIdentical(store.claim(id).claimedSession, session)
     }
 
     /// Defensive: a DIFFERENT session under the same id (should be unreachable — the
@@ -232,7 +232,7 @@ final class DetachedSessionStoreTests: XCTestCase {
             store.storedIDsForTesting.contains(id),
             "the displaced entry's armed TTL must be cancelled — it must not evict the new entry",
         )
-        XCTAssertIdentical(store.claim(id), new, "newest session wins the id")
+        XCTAssertIdentical(store.claim(id).claimedSession, new, "newest session wins the id")
     }
 
     /// `contains` — the failed-rebind recovery's "already re-parked?" probe.
@@ -242,7 +242,7 @@ final class DetachedSessionStoreTests: XCTestCase {
         XCTAssertFalse(store.contains(id))
         store.insert(makeStubSession(sessionID: id), key: MuxSessionKey(connectionID: UUID(), channelID: 1), ttl: nil)
         XCTAssertTrue(store.contains(id))
-        _ = store.claim(id)
+        _ = store.claim(id).claimedSession
         XCTAssertFalse(store.contains(id), "a claimed session is no longer in the store")
     }
 
@@ -254,8 +254,47 @@ final class DetachedSessionStoreTests: XCTestCase {
         let session = makeStubSession(sessionID: id)
         store.insert(session, key: MuxSessionKey(connectionID: UUID(), channelID: 1), ttl: .seconds(60))
         store.remove(id)
-        XCTAssertNil(store.claim(id), "remove must clear the entry")
+        XCTAssertNil(store.claim(id).claimedSession, "remove must clear the entry")
         XCTAssertEqual(store.countForTesting, 0)
+    }
+
+    /// `remove` reports whether THIS call won the teardown — `false` means claim/evict/drain
+    /// already own it, and a stale detached-exit closure must stand down (or it tears down the
+    /// journal writer + hook sink a same-UUID successor is using).
+    func testRemoveReportsWhetherThisCallWonTheTeardown() {
+        let store = DetachedSessionStore()
+        let id = UUID()
+        store.insert(makeStubSession(sessionID: id), key: MuxSessionKey(connectionID: UUID(), channelID: 1), ttl: nil)
+        XCTAssertTrue(store.remove(id), "first remove wins the entry")
+        XCTAssertFalse(store.remove(id), "a second remove must report the loss, never a win")
+
+        let claimedID = UUID()
+        store.insert(
+            makeStubSession(sessionID: claimedID),
+            key: MuxSessionKey(connectionID: UUID(), channelID: 1), ttl: nil,
+        )
+        _ = store.claim(claimedID)
+        XCTAssertFalse(store.remove(claimedID), "claim took the entry — the late remove lost")
+    }
+
+    /// A parked DEAD child is reaped BY the claim and reported distinctly (`.reapedDeadChild`),
+    /// so the caller knows it took over the teardown (vs `.notFound` where nothing existed).
+    func testClaimReportsReapedDeadChildDistinctFromNotFound() {
+        let store = DetachedSessionStore()
+        let id = UUID()
+        let session = makeStubSession(sessionID: id)
+        session.pty.completeExitForTesting(code: 0)
+        store.insert(session, key: MuxSessionKey(connectionID: UUID(), channelID: 1), ttl: nil)
+
+        guard case let .reapedDeadChild(reaped) = store.claim(id) else {
+            XCTFail("claiming a parked dead child must report .reapedDeadChild")
+            return
+        }
+        XCTAssertIdentical(reaped, session)
+        guard case .notFound = store.claim(id) else {
+            XCTFail("the entry is gone — a second claim must report .notFound")
+            return
+        }
     }
 
     func testRemoveUnknownIDIsNoOp() {
@@ -293,7 +332,7 @@ final class DetachedSessionStoreTests: XCTestCase {
         // Unspawned PTY → isChildExited() == false → claim should return the session.
         XCTAssertFalse(session.isChildExited(), "unspawned PTY must not appear exited")
         store.insert(session, key: MuxSessionKey(connectionID: UUID(), channelID: 1), ttl: .seconds(60))
-        let found = store.claim(id)
+        let found = store.claim(id).claimedSession
         XCTAssertNotNil(found, "session with live child must be returned by claim")
     }
 }
@@ -368,7 +407,7 @@ final class RoutingDecisionTests: XCTestCase {
     /// Zero UUID → fresh shell (PATH B: no prior session to claim).
     func testZeroUUIDRoutesToNewShell() {
         let store = DetachedSessionStore()
-        let result = store.claim(UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)))
+        let result = store.claim(UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))).claimedSession
         XCTAssertNil(result, "zero UUID must not match any detached session → new shell")
     }
 
@@ -379,7 +418,7 @@ final class RoutingDecisionTests: XCTestCase {
         let session = makeStubSession(sessionID: id)
         XCTAssertFalse(session.isChildExited())
         store.insert(session, key: MuxSessionKey(connectionID: UUID(), channelID: 1), ttl: .seconds(60))
-        let found = store.claim(id)
+        let found = store.claim(id).claimedSession
         XCTAssertNotNil(found, "known UUID with live child → reattach (PATH A)")
         XCTAssertIdentical(found, session)
     }
@@ -387,7 +426,7 @@ final class RoutingDecisionTests: XCTestCase {
     /// Unknown UUID → new shell (PATH B/C: never inserted).
     func testUnknownUUIDRoutesToNewShell() {
         let store = DetachedSessionStore()
-        let found = store.claim(UUID())
+        let found = store.claim(UUID()).claimedSession
         XCTAssertNil(found, "unknown UUID must not match → new shell")
     }
 
