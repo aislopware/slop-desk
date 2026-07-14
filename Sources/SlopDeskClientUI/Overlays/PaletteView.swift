@@ -35,6 +35,10 @@ struct PaletteView: View {
     /// Pre-focuses the search field on appear so typing reaches it immediately (spec: pre-focused on open).
     @FocusState private var searchFocused: Bool
 
+    /// Hover→selection arbiter (see ``HoverSelectionGate``): hover-driven selection must not auto-scroll,
+    /// and a list scrolling under a PARKED pointer must not steal the selection. One per presentation.
+    @State private var hoverGate = HoverSelectionGate()
+
     // The fixed panel width (spec: a centered floating panel, ~720pt) + the results viewport cap (~7 rows).
     private let panelWidth: CGFloat = 720
     private let resultsMaxHeight: CGFloat = 336
@@ -115,6 +119,9 @@ struct PaletteView: View {
             }
             .frame(maxHeight: resultsMaxHeight)
             .onChange(of: coordinator.paletteSelection) { _, _ in
+                // Keyboard nav / query-reset only — a HOVER-driven change must not scroll, or the list
+                // "follows the mouse" (hover selects → scrollTo slides a new row under the pointer → …).
+                guard hoverGate.shouldAutoScrollOnSelectionChange() else { return }
                 guard let id = selectedRowID else { return }
                 withAnimation(Slate.Anim.smallFade) { proxy.scrollTo(id, anchor: .center) }
             }
@@ -231,9 +238,14 @@ struct PaletteView: View {
         )
         .padding(.horizontal, Slate.Metric.space2)
         .contentShape(Rectangle())
-        // Hover moves the keyboard selection onto this row (spec: hover/tap → run).
-        .onHover { hovering in
-            if hovering { coordinator.paletteSelection = selectableIndex }
+        // Hover moves the keyboard selection onto this row (spec: hover/tap → run) — but only on genuine
+        // pointer MOVEMENT (`.global`-space location changed): a keyboard scrollTo sliding this row under a
+        // parked pointer re-fires hover too, and admitting that would yank the selection back to the mouse.
+        .onContinuousHover(coordinateSpace: .global) { phase in
+            guard case let .active(location) = phase, hoverGate.admitHover(at: location) else { return }
+            guard coordinator.paletteSelection != selectableIndex else { return }
+            hoverGate.noteHoverDrivenSelection()
+            coordinator.paletteSelection = selectableIndex
         }
         .onTapGesture { coordinator.run(item) }
         .id(item.id)

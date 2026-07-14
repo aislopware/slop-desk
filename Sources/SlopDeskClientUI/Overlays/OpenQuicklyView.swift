@@ -40,6 +40,9 @@ struct OpenQuicklyView: View {
     @State private var query = ""
     /// The keyboard-selected row index into ``selectableRows``.
     @State private var selection = 0
+    /// Hover→selection arbiter (see ``HoverSelectionGate``): hover-driven selection must not auto-scroll,
+    /// and a list scrolling under a PARKED pointer must not steal the selection. One per presentation.
+    @State private var hoverGate = HoverSelectionGate()
     /// Whether the ⌘K Actions popover is shown for the selected row.
     @State private var actionsVisible = false
     /// The ⌘K Actions popover's fuzzy filter query (the action set is itself searchable).
@@ -204,6 +207,9 @@ struct OpenQuicklyView: View {
             }
             .frame(maxHeight: resultsMaxHeight)
             .onChange(of: selection) { _, _ in
+                // Keyboard nav / query-reset only — a HOVER-driven change must not scroll, or the list
+                // "follows the mouse" (hover selects → scrollTo slides a new row under the pointer → …).
+                guard hoverGate.shouldAutoScrollOnSelectionChange() else { return }
                 guard let id = selectedRowID else { return }
                 withAnimation(Slate.Anim.smallFade) { proxy.scrollTo(id, anchor: .center) }
             }
@@ -295,7 +301,14 @@ struct OpenQuicklyView: View {
         )
         .padding(.horizontal, Slate.Metric.space2)
         .contentShape(Rectangle())
-        .onHover { hovering in if hovering { selection = selectableIndex } }
+        // Hover-select on genuine pointer MOVEMENT only — a keyboard scrollTo sliding this row under a
+        // parked pointer re-fires hover too, and admitting that would yank the selection back to the mouse.
+        .onContinuousHover(coordinateSpace: .global) { phase in
+            guard case let .active(location) = phase, hoverGate.admitHover(at: location) else { return }
+            guard selection != selectableIndex else { return }
+            hoverGate.noteHoverDrivenSelection()
+            selection = selectableIndex
+        }
         .onTapGesture { act(item) }
         .id(item.id)
         // The Actions popover anchors on the SELECTED row (⌘K), reusing the per-kind action table.

@@ -60,6 +60,9 @@ struct CommandNavigatorView: View {
     @State private var filter: BlockNavigatorFilter = .all
     /// The keyboard-selected row index into ``visibleBlocks``.
     @State private var selection = 0
+    /// Hover→selection arbiter (see ``HoverSelectionGate``): hover-driven selection must not auto-scroll,
+    /// and a list scrolling under a PARKED pointer must not steal the selection. One per presentation.
+    @State private var hoverGate = HoverSelectionGate()
     /// Pre-focuses the search field on appear so typing reaches it immediately (the Jump-To / palette idiom).
     @FocusState private var searchFocused: Bool
 
@@ -222,6 +225,9 @@ struct CommandNavigatorView: View {
             }
             .frame(maxHeight: resultsMaxHeight)
             .onChange(of: selection) { _, _ in
+                // Keyboard nav / query-reset only — a HOVER-driven change must not scroll, or the list
+                // "follows the mouse" (hover selects → scrollTo slides a new row under the pointer → …).
+                guard hoverGate.shouldAutoScrollOnSelectionChange() else { return }
                 let rows = visibleBlocks
                 guard selection >= 0, selection < rows.count else { return }
                 withAnimation(Slate.Anim.smallFade) { proxy.scrollTo(rows[selection].id, anchor: .center) }
@@ -286,7 +292,14 @@ struct CommandNavigatorView: View {
         )
         .padding(.horizontal, Slate.Metric.space2)
         .contentShape(Rectangle())
-        .onHover { hovering in if hovering { selection = index } }
+        // Hover-select on genuine pointer MOVEMENT only — a keyboard scrollTo sliding this row under a
+        // parked pointer re-fires hover too, and admitting that would yank the selection back to the mouse.
+        .onContinuousHover(coordinateSpace: .global) { phase in
+            guard case let .active(location) = phase, hoverGate.admitHover(at: location) else { return }
+            guard selection != index else { return }
+            hoverGate.noteHoverDrivenSelection()
+            selection = index
+        }
         .onTapGesture { act(block) }
         .id(block.id)
     }
