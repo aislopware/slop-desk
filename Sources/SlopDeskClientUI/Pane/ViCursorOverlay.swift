@@ -37,12 +37,12 @@ struct ViCursorOverlay: View {
             ZStack(alignment: .topLeading) {
                 // A terminal-authentic BLOCK cursor: one sharp-cornered accent block, exactly the
                 // glyph's cell footprint (`cell.width` = 2 on a wide glyph). A real terminal block
-                // inverts the glyph; an overlay can't, so the split is: a translucent wash (the glyph
-                // underneath stays legible) + a FULL-strength 1pt edge (the crisp silhouette the eye
-                // finds across a busy buffer — the wash alone sank into bright cells). Sharp corners,
+                // inverts the glyph; an overlay can't, so the roles split: the FULL-strength edge is
+                // the visibility (the crisp silhouette the eye finds across a busy buffer) and the
+                // interior wash stays LIGHT so the glyph underneath reads clearly. Sharp corners,
                 // no glow (the Meridian at-rest zero-ornament law).
                 Rectangle()
-                    .fill(Slate.State.accent.opacity(0.55))
+                    .fill(Slate.State.accent.opacity(0.3))
                     .overlay(Rectangle().strokeBorder(Slate.State.accent, lineWidth: 1.5))
                     .frame(width: rect.width, height: rect.height)
                     .offset(x: rect.minX, y: rect.minY)
