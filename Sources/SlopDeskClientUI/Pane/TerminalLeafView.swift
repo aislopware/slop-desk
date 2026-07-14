@@ -267,8 +267,12 @@ struct TerminalLeafView: View {
     /// Whether the vi-mode pill is shown. Reads the OBSERVABLE
     /// ``TerminalViewModel/copyModeBadgeActive`` mirror (NOT the `@ObservationIgnored` `isCopyMode` the keyDown
     /// path reads) so the pill lights / clears reactively. `false` for a non-terminal / not-yet-live pane.
+    /// Steps aside while HINT MODE is armed on top (`f` / ⌘⇧J / ⌘⇧Y during vi): the `HINTS` badge owns the
+    /// same top-trailing corner (it lives in ``HintModeOverlay``, outside this pill stack), so without the
+    /// gate the two overlapped — one corner, one mode chip; the vi pill returns the instant hints cancel.
     private var showViModePill: Bool {
-        live?.terminalModel?.copyModeBadgeActive == true
+        guard let model = live?.terminalModel else { return false }
+        return model.copyModeBadgeActive && model.hintMode == nil
     }
 
     /// Whether the vi key-hint bar is shown: in vi mode AND the per-session `⌘/` toggle is

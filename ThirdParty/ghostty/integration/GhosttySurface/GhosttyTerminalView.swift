@@ -1195,6 +1195,23 @@ final class GhosttyLayerBackedView: NSView {
     override var acceptsFirstResponder: Bool { true }
 
     override func keyDown(with event: NSEvent) {
+        // E10 WI-9 HINT MODE: while a hint intent is armed (⌘⇧J open / ⌘⇧Y copy / reveal / copy-mode `f`),
+        // every key drives label resolution (first letter dims, second confirms + runs the action; Esc
+        // cancels; Backspace undoes) instead of the shell. Map the NSEvent → the abstract `HintKey` (the ONLY
+        // NSEvent-aware point) and hand the PURE intent to the model; consume unconditionally so nothing leaks
+        // to libghostty / the PTY. This branch MUST precede the copy-mode branch: hint mode can be armed ON TOP
+        // of copy-mode (`f`, or a ⌘⇧J/⌘⇧Y chord while vi is up), and it is the topmost modal layer — checked
+        // first, its label letters resolve and its Esc peels ONLY the hint layer (back to copy-mode); checked
+        // second, copy-mode swallowed every label key and Esc tore down the WRONG (bottom) layer first. The
+        // RELEASE-swallow stamp mirrors copy-mode's, so a kitty `report_events` TUI never sees an orphan CSI-u
+        // release for a key the surface never sent a press for (the confirming second key exits hint mode
+        // SYNCHRONOUSLY here, so its keyUp's `hintMode != nil` guard is already false).
+        if model?.hintMode != nil {
+            hintConsumedReleaseKeyCode = UInt16(event.keyCode)
+            model?.handleHintKey(TerminalViewModel.makeHintKey(event: event))
+            return
+        }
+
         // P5b COPY-MODE: when this pane is armed, its keys drive scrollback navigation / search / copy /
         // exit instead of the shell. Map the NSEvent → the abstract key HERE (the only NSEvent-aware point)
         // and hand the PURE intent to the view model; consume unconditionally so nothing leaks to libghostty
@@ -1205,19 +1222,6 @@ final class GhosttyLayerBackedView: NSView {
             // would already be false and fall through to an orphan CSI-u release under a report_events TUI).
             copyModeConsumedReleaseKeyCode = UInt16(event.keyCode)
             model?.handleCopyModeKey(TerminalViewModel.makeCopyModeKey(event: event))
-            return
-        }
-
-        // E10 WI-9 HINT MODE: while a hint intent is armed (⌘⇧J open / ⌘⇧Y copy / reveal), every key drives
-        // label resolution (first letter dims, second confirms + runs the action; Esc cancels; Backspace
-        // undoes) instead of the shell. Map the NSEvent → the abstract `HintKey` (the ONLY NSEvent-aware point)
-        // and hand the PURE intent to the model; consume unconditionally so nothing leaks to libghostty / the
-        // PTY. Mirrors the copy-mode branch above, incl. stamping the RELEASE-swallow so a kitty `report_events`
-        // TUI never sees an orphan CSI-u release for a key the surface never sent a press for (the confirming
-        // second key exits hint mode SYNCHRONOUSLY here, so its keyUp's `hintMode != nil` guard is already false).
-        if model?.hintMode != nil {
-            hintConsumedReleaseKeyCode = UInt16(event.keyCode)
-            model?.handleHintKey(TerminalViewModel.makeHintKey(event: event))
             return
         }
 
@@ -1509,7 +1513,8 @@ final class GhosttyLayerBackedView: NSView {
         }
 
         // E10 WI-9 HINT MODE symmetry: keyDown CONSUMES every key while a hint intent is armed (routing it to
-        // `handleHintKey`), so libghostty never saw the PRESS — suppress the RELEASE too. Mirror the keyDown
+        // `handleHintKey` — checked BEFORE copy-mode there; either armed-guard returning here keeps the same
+        // suppression), so libghostty never saw the PRESS — suppress the RELEASE too. Mirror the keyDown
         // guard, plus the ONE exit key whose press hint mode consumed but whose mode flag is now already cleared
         // (the confirming second key / Esc exited synchronously in keyDown). Swallow it once.
         if model?.hintMode != nil { return }
