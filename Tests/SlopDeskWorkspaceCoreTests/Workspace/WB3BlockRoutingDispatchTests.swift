@@ -243,7 +243,7 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
         store.blockBookmarks.save = { key, indices in saved[key] = indices }
 
         // Split to materialize a NEW leaf → wireMaterializedLeaf → seedBlockBookmarks runs for it.
-        store.splitActivePane(axis: .horizontal, kind: .terminal) // real terminal (route() now mints a chooser)
+        store.splitActivePane(axis: .horizontal, kind: .terminal) // direct terminal split
         let session = try activeSession(store)
         let model = try XCTUnwrap(session.terminalModel)
 
@@ -262,7 +262,7 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
         store.blockBookmarks.load = { _ in [3, 9] }
         store.blockBookmarks.save = { _, _ in saveCount += 1 }
 
-        store.splitActivePane(axis: .horizontal, kind: .terminal) // real terminal (route() now mints a chooser)
+        store.splitActivePane(axis: .horizontal, kind: .terminal) // direct terminal split
         let session = try activeSession(store)
         let model = try XCTUnwrap(session.terminalModel)
 
@@ -277,7 +277,7 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
     func testEachSessionHasADistinctBookmarkScopeKey() throws {
         let store = makeStore()
         let first = try activeSession(store)
-        store.splitActivePane(axis: .horizontal, kind: .terminal) // real terminal (route() now mints a chooser)
+        store.splitActivePane(axis: .horizontal, kind: .terminal) // direct terminal split
         let second = try activeSession(store)
         XCTAssertNotEqual(first.id, second.id, "two distinct panes")
         XCTAssertNotEqual(

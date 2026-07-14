@@ -36,7 +36,7 @@ final class SyncInputTests: XCTestCase {
     }
 
     /// Routes `action` through the production registry — EXCEPT the new-pane verbs, which the production
-    /// `route(...)` now lands as an in-pane `.chooser` pane (pinned by `PaneChooserRoutingTests`). Sync-input
+    /// `route(...)` lands as a terminal directly (pinned by `NewTerminalPaneTests`). Sync-input
     /// only fans to TEXT panes, so translate those verbs to a direct terminal creation for setup.
     private func route(_ action: WorkspaceAction, _ store: WorkspaceStore) {
         switch action {

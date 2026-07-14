@@ -94,6 +94,6 @@ extension WorkspaceStore {
     func splitFromContextMenu(paneID: PaneID, horizontal: Bool) {
         let axis: SplitAxis = horizontal ? .horizontal : .vertical
         focusPaneTree(paneID)
-        openChooserPane(.split(axis: axis))
+        newTerminalPane(.split(axis: axis))
     }
 }

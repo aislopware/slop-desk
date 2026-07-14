@@ -329,7 +329,7 @@ struct TitlePaneMenu: View {
         dismiss()
         // A split MINTS a pane → create an in-pane CHOOSER pane (Terminal / Remote window), focused. Defer one
         // runloop tick so dismissing THIS menu's popover doesn't race the split's reconcile + focus.
-        DispatchQueue.main.async { store.openChooserPane(.split(axis: axis)) }
+        DispatchQueue.main.async { store.newTerminalPane(.split(axis: axis)) }
     }
 
     private func move(_ direction: FocusDirection) {

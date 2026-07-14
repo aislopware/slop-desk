@@ -40,8 +40,8 @@ final class PeekReplyTests: XCTestCase {
     }
 
     private func route(_ action: WorkspaceAction, _ store: WorkspaceStore) {
-        // The production `route(...)` now mints an in-pane `.chooser` pane for the new-pane verbs (pinned by
-        // `PaneChooserRoutingTests`); this suite needs REAL panes, so translate those verbs to a direct
+        // The production `route(...)` mints a terminal directly for the new-pane verbs (pinned by
+        // `NewTerminalPaneTests`); this suite needs kind-controlled panes, so translate those verbs to a direct
         // terminal creation. Every OTHER action routes unchanged.
         switch action {
         case .splitRight: store.splitActivePane(axis: .horizontal, kind: .terminal)

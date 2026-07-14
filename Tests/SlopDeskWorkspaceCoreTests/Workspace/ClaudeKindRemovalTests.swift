@@ -61,6 +61,20 @@ final class ClaudeKindRemovalTests: XCTestCase {
         XCTAssertNil(PaneKind(rawValue: "web"), "the synthesized rawValue init does not know web")
     }
 
+    // MARK: - 2c. Legacy `"chooser"` raw value decodes to `.terminal` (the retired in-pane kind chooser)
+
+    /// The removed `PaneKind.chooser` (the transient in-pane kind picker — retired by the Stage re-scope:
+    /// every new-pane gesture mints a terminal directly) rides the SAME decode bridge as `"web"` /
+    /// `"claudeCode"`: a persisted `.chooser` was always mid-gesture ephemera, and folding it to
+    /// `.terminal` is exactly what picking the default kind would have done. Revert-to-confirm-fail:
+    /// without the bridge in `PaneKind.init(from:)` the decode throws and this test fails.
+    func testLegacyChooserRawValueDecodesToTerminal() throws {
+        let json = Data(#"{ "kind": "chooser", "title": "New Pane" }"#.utf8)
+        let spec = try JSONDecoder().decode(PaneSpec.self, from: json)
+        XCTAssertEqual(spec.kind, .terminal, "a legacy chooser spec decodes to a plain terminal (no trap)")
+        XCTAssertNil(PaneKind(rawValue: "chooser"), "the synthesized rawValue init does not know chooser")
+    }
+
     // MARK: - 3. Legacy claude pane handling
 
     // L0 / D2: testMigrationRewritesLegacyClaudeCodePaneToTerminal was DELETED — it exercised the deleted

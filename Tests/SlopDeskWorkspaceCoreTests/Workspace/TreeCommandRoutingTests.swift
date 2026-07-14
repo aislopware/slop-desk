@@ -41,8 +41,8 @@ final class TreeCommandRoutingTests: XCTestCase {
 
     /// Routes `action` through the single-source-of-truth registry (the production seam).
     private func route(_ action: WorkspaceAction, _ store: WorkspaceStore) {
-        // The production `route(...)` now mints an in-pane `.chooser` pane for the new-pane verbs (that
-        // behaviour is pinned by `PaneChooserRoutingTests`); this suite drives the tree ops over REAL panes,
+        // The production `route(...)` mints a terminal directly for the new-pane verbs (that
+        // behaviour is pinned by `NewTerminalPaneTests`); this suite drives the tree ops over kind-controlled panes,
         // so translate those verbs to a direct terminal creation. Every OTHER action routes unchanged.
         switch action {
         case .splitRight: store.splitActivePane(axis: .horizontal, kind: .terminal)

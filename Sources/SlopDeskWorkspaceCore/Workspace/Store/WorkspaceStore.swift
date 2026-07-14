@@ -3431,10 +3431,6 @@ public final class WorkspaceStore {
         //    let the caller wire it (the canvas path's pane-rebind / OSC-9 closures).
         for id in desiredLeafIDs where registry[id] == nil {
             guard let spec = spec(id) else { continue }
-            // A `.chooser` pane is a pure IN-PANE kind picker — it has NO live session until the user picks a
-            // real kind (`choosePaneKind` flips the spec and this loop then materializes it). Skip it so
-            // `handle(for:)` stays nil and the leaf view renders directly from the spec kind.
-            if spec.kind == .chooser { continue }
             let handle = makeSession(spec)
             (handle as? PaneSessionIDAdopting)?.adopt(id: id)
             registry[id] = handle
@@ -4239,52 +4235,21 @@ public func apply(_ command: WorkspaceCommand, to store: WorkspaceStore) {
     }
 }
 
-// MARK: - In-pane pane-type chooser (content-as-chooser, no modal)
+// MARK: - New-pane gesture (direct terminal mint)
 
-/// Factored into a same-file extension (like `splitFromContextMenu`) so the new-pane chooser entry points
-/// stay OUT of the `WorkspaceStore` primary body's `type_body_length` budget. `choosePaneKind` must live in
-/// THIS file (it calls the file-private `updateSpecLive` / `defaultTitle`).
+/// Factored into a same-file extension (like `splitFromContextMenu`) so the new-pane entry point stays
+/// OUT of the `WorkspaceStore` primary body's `type_body_length` budget.
 public extension WorkspaceStore {
-    /// Create a new pane whose CONTENT is the pane-type chooser (Terminal / Remote window), placed by
-    /// `context` and FOCUSED — the user picks the kind INSIDE the pane, no modal popup. The pane carries the
-    /// `.chooser` kind, which materializes NO session until ``choosePaneKind(_:kind:)`` flips it to a real one.
-    func openChooserPane(_ context: PaneChooserContext) {
+    /// Create a new TERMINAL pane placed by `context` and FOCUSED. Every new-pane gesture (⌘T / ⌘D /
+    /// the `+` button / the context-menu splits) mints a terminal DIRECTLY — the in-pane kind chooser is
+    /// retired (the Stage re-scope): remote windows open in the Stage from the host-windows rail / the
+    /// palette, so a kind question on the hot path has no second answer left. cwd inheritance is the
+    /// `newTab` / `splitActivePane` placement + inherit path, unchanged.
+    func newTerminalPane(_ context: NewPanePlacement) {
         switch context {
-        case let .split(axis, leading): splitActivePane(axis: axis, kind: .chooser, leading: leading)
-        case .newTab: newTab(kind: .chooser)
+        case let .split(axis, leading): splitActivePane(axis: axis, kind: .terminal, leading: leading)
+        case .newTab: newTab(kind: .terminal)
         }
-    }
-
-    /// Resolve a `.chooser` pane to the real `kind` the user picked from its in-pane rows: flip the spec kind
-    /// + retitle IN PLACE (same `PaneID`), then reconcile so the now-real leaf materializes its session
-    /// (terminal channel / remote-GUI video). Keeps focus on the pane. No-op if `paneID` is not a chooser.
-    func choosePaneKind(_ paneID: PaneID, kind: PaneKind) {
-        choosePaneKind(paneID, kind: kind, launchGrace: .milliseconds(1400))
-    }
-
-    /// The `launchGrace`-parameterized core of ``choosePaneKind(_:kind:)``. Kept for tests and call-site
-    /// parity with the direct-terminal `newTab` / `splitActivePane` paths.
-    ///
-    /// cwd-inheritance on the PRIMARY ⌘T / ⌘D flow: those chords route through the chooser
-    /// (`openChooserPane(.newTab)` → `newTab(kind: .chooser)`, etc.). The chooser carries the resolved cwd
-    /// on its spec's `lastKnownCwd`; when the user picks Terminal, reconcile materializes the terminal
-    /// session and that cwd is sent in `channelOpen` so the host spawns the PTY there directly.
-    func choosePaneKind(_ paneID: PaneID, kind: PaneKind, launchGrace _: Duration) {
-        guard tree.spec(for: paneID)?.kind == .chooser else { return }
-        let title = defaultTitle(for: kind)
-        updateSpecLive(paneID) { spec in
-            spec.kind = kind
-            spec.title = title
-            // A chooser INHERITS the focused terminal's cwd so a Terminal pick spawns its PTY there. A
-            // NON-terminal pick (remote window / system dialog) has NO shell — that inherited cwd would then
-            // linger on a video pane and mislabel it: `railSubtitle` shows the cwd instead of the host app,
-            // the raw cwd rides as a hidden search key, and `paneProjectKey` files the pane under that
-            // project's By-Project section instead of "Other". The value is non-plugin so it even survives a
-            // persistence round-trip. Clear it on a non-terminal resolve so a video pane carries no phantom
-            // working directory.
-            if kind != .terminal { spec.lastKnownCwd = nil }
-        }
-        focusPaneTree(paneID)
     }
 
     /// Model-agnostic read of pane `id`'s persisted ``PaneSpec/lastKnownCwd`` (from the tree or canvas

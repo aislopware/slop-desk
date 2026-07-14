@@ -60,7 +60,7 @@ struct ContentColumn: View {
                 SlateEmptyState(cause: cause) {
                     switch cause {
                     case .neverConnected: onConnect()
-                    case .noTabs: store.openChooserPane(.newTab)
+                    case .noTabs: store.newTerminalPane(.newTab)
                     case .linkDown: break // redials itself; no user action offered
                     }
                 }

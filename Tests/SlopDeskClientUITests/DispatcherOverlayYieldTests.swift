@@ -39,7 +39,7 @@ final class DispatcherOverlayYieldTests: XCTestCase {
     /// destructive close observable as a leaf-count drop.
     private func makeTwoLeafStore() -> WorkspaceStore {
         let store = WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
-        WorkspaceBindingRegistry.route(.splitRight, to: store) // mints a focused `.chooser` sibling leaf
+        WorkspaceBindingRegistry.route(.splitRight, to: store) // mints a focused terminal sibling leaf
         XCTAssertEqual(store.tree.allPaneIDs().count, 2, "precondition: the split gave the tab two leaves")
         return store
     }

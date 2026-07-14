@@ -13,10 +13,9 @@ import Foundation
 /// `"apple.terminal"`) so this file stays import-free; the ClientUI layer wraps it in a type-safe
 /// `SFSymbol` at the use site.
 ///
-/// This file is also the long-term home for the pane-type chooser model (WS-C): `PaneChooserOption`
-/// extends cleanly into the chooser rows (it already carries `mnemonic` + `requiresWindowPick`), and
-/// `PaneChooserRegistry` will grow `options` + `option(forKey:)` there. For NOW only the metadata
-/// registry — `option(for:)` — is in scope.
+/// The in-pane kind CHOOSER itself is retired (the Stage re-scope: every new-pane gesture mints a
+/// terminal directly, remote windows open in the Stage), but this metadata registry remains the one
+/// kind → title/symbol source of truth.
 public struct PaneChooserOption: Sendable, Equatable {
     /// The pane kind this option mints.
     public let kind: PaneKind
@@ -85,50 +84,20 @@ public enum PaneChooserRegistry {
                 isVideo: true,
                 requiresWindowPick: false,
             )
-        case .chooser:
-            PaneChooserOption(
-                kind: .chooser,
-                title: "New Pane",
-                symbol: "square.split.2x2",
-                mnemonic: "c",
-                isVideo: false,
-                requiresWindowPick: false,
-            )
         }
-    }
-
-    // MARK: - Chooser options (WS-C — the user-pickable pane kinds)
-
-    /// The ordered list of pane kinds the new-pane/new-tab chooser offers. NOT every ``PaneKind`` — only
-    /// the ones a user can deliberately *create* from the chooser. ``PaneKind/systemDialog`` is
-    /// **excluded**: it is an ephemeral kind the host auto-spawns for a `SecurityAgent` password prompt
-    /// (``PaneKind/isEphemeral``), never minted by the user, so it carries no chooser row even though it
-    /// still has presentation metadata via ``option(for:)``.
-    ///
-    /// Display order = the order rows render in the popover; the mnemonic keys are **unique** across this
-    /// list (the chooser's resolve-by-key depends on it; pinned by a test invariant).
-    public static let options: [PaneChooserOption] = [
-        option(for: .terminal),
-        option(for: .remoteGUI),
-    ]
-
-    /// The chooser option whose mnemonic equals `key` (lower-cased), or `nil` if no row matches. The
-    /// single-key resolve path the ``PaneChooserModel`` feeds keystrokes into.
-    public static func option(forKey key: Character) -> PaneChooserOption? {
-        let lowered = Character(key.lowercased())
-        return options.first { $0.mnemonic == lowered }
     }
 }
 
-// MARK: - Pane-type chooser (WS-C — the transient new-pane/new-tab kind picker)
+// MARK: - New-pane placement (the placement intent of a new-pane gesture)
 
-/// WHERE a new-pane gesture was triggered from — carried to ``WorkspaceStore/openChooserPane(_:)`` so it
-/// places the new `.chooser` pane (`.newTab → newTab`, `.split → split the active pane`, etc.). Pure value;
-/// the pane itself renders the kind picker (no modal), so this only records placement intent.
-public enum PaneChooserContext: Sendable, Equatable {
+/// WHERE a new-pane gesture was triggered from — carried to ``WorkspaceStore/newTerminalPane(_:)`` so it
+/// places the new `.terminal` pane (`.newTab → newTab`, `.split → split the active pane`). Pure value.
+/// (Formerly `PaneChooserContext`; the in-pane kind chooser is retired — the gesture mints a terminal
+/// directly — but the placement intent it carried is unchanged.)
+public enum NewPanePlacement: Sendable, Equatable {
     /// New tab in the active session (the `+` button / ⌘T-equivalent generic action).
     case newTab
-    /// Split the active pane along `axis`. `leading == true` inserts the new `.chooser` leaf on the
+    /// Split the active pane along `axis`. `leading == true` inserts the new leaf on the
     /// LEADING side of the active pane (left of a `.horizontal` split / above a `.vertical` split) rather
     /// than the natural trailing side — the split-left (⌘⌥D) / split-up (⌘⌥⇧D) chords feed `leading:
     /// true`, every other split (the ⌘D right / ⌘⇧D down) keeps the default trailing insert. Defaulted so

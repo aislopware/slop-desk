@@ -52,7 +52,7 @@ final class E1KeymapParityTests: XCTestCase {
         let added = try XCTUnwrap(after.first { $0 != original })
         XCTAssertEqual(after.first, added, "the new leaf is inserted on the LEADING side (DFS-first)")
         XCTAssertEqual(activePane(store), added, "the new (leading) leaf is focused")
-        XCTAssertEqual(store.tree.spec(for: added)?.kind, .chooser, "the new leaf is an in-pane chooser pane")
+        XCTAssertEqual(store.tree.spec(for: added)?.kind, .terminal, "the new leaf is a terminal (direct mint)")
     }
 
     /// `.splitUp` does the same on the vertical axis: a leading (top, DFS-first) leaf, focused, in a stacked

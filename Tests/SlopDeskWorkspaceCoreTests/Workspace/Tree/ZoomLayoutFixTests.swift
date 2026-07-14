@@ -11,7 +11,7 @@ import XCTest
 ///    dropped the siblings from the layout entirely → their libghostty surfaces / video streams were torn
 ///    down and un-zoom repainted them from the lossy replay ring.
 /// 2. **Split/focus ops while zoomed exit zoom first** (the documented applyLayout/cycleLayout rule) —
-///    otherwise ⌘D while zoomed created an invisible focused pane and the next ⇧⌘↩ zoomed the chooser.
+///    otherwise ⌘D while zoomed created an invisible focused pane and the next ⇧⌘↩ zoomed the new pane.
 ///
 /// Headless: pure render-model geometry + pure tree ops.
 final class ZoomLayoutFixTests: XCTestCase {

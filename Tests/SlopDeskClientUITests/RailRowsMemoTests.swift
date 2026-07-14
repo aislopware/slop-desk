@@ -45,23 +45,19 @@ final class RailRowsMemoTests: XCTestCase {
 
     /// ⌘T chooser → pick Terminal — the rail row must retitle
     /// from "New Pane" to the cwd folder name on the very next memo read.
-    func testChooserResolveRebuildsMemoRowTitle() throws {
+    func testNewPaneMintRebuildsMemoRowTitle() throws {
         let store = makeStore()
         let source = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
         store.setLastKnownCwd("/Users/me/projects/slop-desk/Sources/CSlopDeskSIMD", for: source)
         let memo = RailRowsMemo()
         _ = memo.rows(for: store)
 
-        store.openChooserPane(.newTab)
-        let chooser = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
-        let rowsBefore = memo.rows(for: store)
-        XCTAssertEqual(rowsBefore.first { $0.id == chooser }?.title, "New Pane")
-
-        store.choosePaneKind(chooser, kind: .terminal)
+        store.newTerminalPane(.newTab)
+        let added = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
         let rowsAfter = memo.rows(for: store)
         XCTAssertEqual(
-            rowsAfter.first { $0.id == chooser }?.title, "Sources/CSlopDeskSIMD",
-            "the resolved pane retitles by folder name (parent-qualified against the source pane collision)",
+            rowsAfter.first { $0.id == added }?.title, "Sources/CSlopDeskSIMD",
+            "the new terminal inherits the cwd and titles by folder name (parent-qualified against the source pane collision)",
         )
     }
 

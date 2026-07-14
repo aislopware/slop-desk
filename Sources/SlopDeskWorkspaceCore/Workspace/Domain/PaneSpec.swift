@@ -54,12 +54,6 @@ public enum PaneKind: String, Codable, Sendable, Equatable {
     /// ``remoteGUI``, but auto-managed (spawn/close follow the host poll), NOT persisted, and it skips
     /// the picker + stale-binding revalidation (its windowID is always fresh from the live poll).
     case systemDialog
-    /// A TRANSIENT, just-created pane whose CONTENT is the pane-type CHOOSER (Terminal / Remote window).
-    /// `WorkspaceBindingRegistry.route` mints this immediately on a split / new-tab / new-session
-    /// gesture and FOCUSES it, so the user picks the kind INSIDE the pane (no modal popup). It materializes
-    /// NO live session (the reconcile skips it); ``WorkspaceStore/choosePaneKind(_:kind:)`` flips it to a real
-    /// kind, at which point reconcile materializes the terminal / remote-GUI session IN PLACE (same `PaneID`).
-    case chooser
 
     /// The retired-but-tolerated legacy raw value of the removed "Claude Code" pane kind. A
     /// `.claudeCode` pane is just a `.terminal`; an OLD persisted file may still carry this
@@ -72,14 +66,23 @@ public enum PaneKind: String, Codable, Sendable, Equatable {
     /// as ``legacyClaudeCodeRawValue``) so a stale workspace never traps.
     static let legacyWebRawValue = "web"
 
+    /// The retired-but-tolerated legacy raw value of the removed in-pane kind CHOOSER (the Stage
+    /// re-scope made every new-pane gesture mint a terminal directly, so the transient chooser kind is
+    /// gone). A persisted `.chooser` was always mid-gesture ephemera; folding it to `.terminal` is
+    /// exactly what picking the default would have done.
+    static let legacyChooserRawValue = "chooser"
+
     /// **Forward/back-tolerant decode (validate-then-repair, CLAUDE.md untrusted-persisted-data
-    /// contract).** A persisted `"claudeCode"` raw value (the removed kind) or `"web"` raw value (the
-    /// removed local web pane) maps to `.terminal` so an old workspace file never traps now the cases are
-    /// gone. Any OTHER unknown raw value still throws (it is genuine corruption the loader's reset path
-    /// handles), preserving the strict behaviour for everything except the intentionally-retired values.
+    /// contract).** A persisted `"claudeCode"` raw value (the removed kind), `"web"` raw value (the
+    /// removed local web pane), or `"chooser"` raw value (the removed in-pane kind chooser) maps to
+    /// `.terminal` so an old workspace file never traps now the cases are gone. Any OTHER unknown raw
+    /// value still throws (it is genuine corruption the loader's reset path handles), preserving the
+    /// strict behaviour for everything except the intentionally-retired values.
     public init(from decoder: any Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)
-        if raw == Self.legacyClaudeCodeRawValue || raw == Self.legacyWebRawValue {
+        if raw == Self.legacyClaudeCodeRawValue || raw == Self.legacyWebRawValue
+            || raw == Self.legacyChooserRawValue
+        {
             self = .terminal
             return
         }

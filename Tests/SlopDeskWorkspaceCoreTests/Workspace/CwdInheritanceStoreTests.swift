@@ -320,131 +320,66 @@ final class CwdInheritanceStoreTests: XCTestCase {
         XCTAssertEqual(newFake?.sentBytes ?? [], [], "no inherit source → no `cd`")
     }
 
-    // MARK: - The PRIMARY ⌘T / ⌘D chooser flow preserves cwd without a startup `cd`
+    // MARK: - The PRIMARY ⌘T / ⌘D gestures mint a terminal DIRECTLY, preserving cwd without a `cd`
 
-    // The dominant new-tab / split gestures route through a `.chooser` pane (`openChooserPane`), NOT a direct
-    // `.terminal` `newTab` / `splitActivePane`. The cwd hint must stay on the chooser spec so that when the
-    // user picks Terminal (`choosePaneKind`), the host can spawn the terminal in that cwd directly.
+    // The dominant new-tab / split gestures mint a `.terminal` pane immediately (`newTerminalPane` — the
+    // Stage re-scope retired the in-pane chooser hop). The cwd hint must land on the new spec so the host
+    // spawns the PTY there directly; nothing is ever typed into the shell.
 
-    func testChooserNewTabThenPickTerminalSendsNoStartupCd() async throws {
+    func testNewTerminalPaneNewTabInheritsCwdAndSendsNothing() async throws {
         SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
         let before = allPaneIDs(store)
 
-        // ⌘T routes through the chooser (the generic new-tab action), not `newTab(kind: .terminal)`.
-        store.openChooserPane(.newTab)
-        let chooser = try XCTUnwrap(allPaneIDs(store).subtracting(before).first, "the chooser path mints a new pane")
-        XCTAssertEqual(store.tree.spec(for: chooser)?.kind, .chooser, "⌘T opens a chooser pane")
-        // While it is still a chooser there is no PTY — nothing is sent.
-        await settleDeferredSends()
-        XCTAssertEqual((store.handle(for: chooser) as? FakePaneSession)?.sentBytes ?? [], [])
-
-        // Picking Terminal flips the chooser → terminal; cwd is already on the spec and must not be typed.
-        store.choosePaneKind(chooser, kind: .terminal, launchGrace: .zero)
-        let newFake = store.handle(for: chooser) as? FakePaneSession
+        // ⌘T is the generic new-pane action — it mints a focused terminal directly.
+        store.newTerminalPane(.newTab)
+        let newPane = try XCTUnwrap(allPaneIDs(store).subtracting(before).first, "⌘T mints a new pane")
+        XCTAssertEqual(store.tree.spec(for: newPane)?.kind, .terminal, "⌘T mints a terminal directly")
+        XCTAssertEqual(
+            store.tree.spec(for: newPane)?.lastKnownCwd, "/Users/me/project",
+            "the new terminal inherits the active pane's cwd (the host-side spawn hint)",
+        )
+        let newFake = store.handle(for: newPane) as? FakePaneSession
         await settleDeferredSends()
         XCTAssertEqual(
             newFake?.sentBytes ?? [], [],
-            "the chooser-resolved terminal uses host-side spawn cwd, not a visible `cd`",
+            "the terminal uses host-side spawn cwd, not a visible `cd`",
         )
         // The original pane is untouched.
         XCTAssertEqual((store.handle(for: pane) as? FakePaneSession)?.sentBytes ?? [], [])
     }
 
-    func testChooserSplitThenPickTerminalSendsNoStartupCd() async throws {
+    func testNewTerminalPaneSplitInheritsCwdAndSendsNothing() async throws {
         SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewSplitKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/srv/app"))
         let before = allPaneIDs(store)
 
-        store.openChooserPane(.split(axis: .horizontal))
-        let chooser = try XCTUnwrap(allPaneIDs(store).subtracting(before).first, "a chooser split mints a new pane")
-
-        store.choosePaneKind(chooser, kind: .terminal, launchGrace: .zero)
-        let newFake = store.handle(for: chooser) as? FakePaneSession
+        store.newTerminalPane(.split(axis: .horizontal))
+        let newPane = try XCTUnwrap(allPaneIDs(store).subtracting(before).first, "a split mints a new pane")
+        XCTAssertEqual(store.tree.spec(for: newPane)?.kind, .terminal, "⌘D mints a terminal directly")
+        XCTAssertEqual(store.tree.spec(for: newPane)?.lastKnownCwd, "/srv/app")
+        let newFake = store.handle(for: newPane) as? FakePaneSession
         await settleDeferredSends()
         XCTAssertEqual(
             newFake?.sentBytes ?? [], [],
-            "the chooser-resolved split terminal inherits cwd through channelOpen, not shell input",
+            "the split terminal inherits cwd through channelOpen, not shell input",
         )
     }
 
-    func testChooserHomePolicyThenPickTerminalSendsNoCd() async throws {
+    func testNewTerminalPaneHomePolicyStampsNilCwdAndSendsNothing() async throws {
         SettingsKey.store.set("home", forKey: SettingsKey.workingDirectoryNewTabKey)
         let pane = PaneID()
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
         let before = allPaneIDs(store)
 
-        store.openChooserPane(.newTab)
-        let chooser = try XCTUnwrap(allPaneIDs(store).subtracting(before).first)
-        XCTAssertNil(store.tree.spec(for: chooser)?.lastKnownCwd, "home stamps nil on the chooser spec")
-
-        store.choosePaneKind(chooser, kind: .terminal, launchGrace: .zero)
-        let newFake = store.handle(for: chooser) as? FakePaneSession
+        store.newTerminalPane(.newTab)
+        let newPane = try XCTUnwrap(allPaneIDs(store).subtracting(before).first)
+        XCTAssertNil(store.tree.spec(for: newPane)?.lastKnownCwd, "home stamps nil on the new spec")
+        let newFake = store.handle(for: newPane) as? FakePaneSession
         await settleDeferredSends()
-        XCTAssertEqual(newFake?.sentBytes ?? [], [], "home resolves nil → no `cd` even via the chooser flow")
-    }
-
-    func testChooserPickRemoteGuiSendsNoCd() async throws {
-        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
-        let pane = PaneID()
-        let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
-        let before = allPaneIDs(store)
-
-        store.openChooserPane(.newTab)
-        let chooser = try XCTUnwrap(allPaneIDs(store).subtracting(before).first)
-
-        // Resolving the chooser to a NON-terminal kind must never send a `cd` (a video pane has no shell).
-        store.choosePaneKind(chooser, kind: .remoteGUI, launchGrace: .zero)
-        let newFake = store.handle(for: chooser) as? FakePaneSession
-        await settleDeferredSends()
-        XCTAssertEqual(newFake?.sentBytes ?? [], [], "a remote-GUI pane takes no `cd`")
-    }
-
-    // MARK: - A non-terminal chooser resolve CLEARS the inherited cwd (video pane carries no working dir)
-
-    /// A chooser inherits the focused terminal's cwd (for a Terminal pick's spawn dir). Resolving it to a
-    /// VIDEO kind (remote window) instead must CLEAR that cwd — a video pane has no shell, so a lingering cwd
-    /// would mislabel its rail subtitle (a directory instead of the host app), ride as a hidden search key,
-    /// and file the whole tab under that project under By-Project grouping. FAILS on the pre-fix
-    /// `choosePaneKind` (it flipped only kind + title, leaving the inherited cwd on the video spec — a
-    /// non-plugin value that even survives a relaunch).
-    func testChooserResolvedToRemoteGuiClearsInheritedCwd() throws {
-        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
-        let pane = PaneID()
-        let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
-        let before = allPaneIDs(store)
-
-        store.openChooserPane(.newTab)
-        let chooser = try XCTUnwrap(allPaneIDs(store).subtracting(before).first)
-        XCTAssertEqual(
-            store.tree.spec(for: chooser)?.lastKnownCwd, "/Users/me/project",
-            "the chooser inherits the active pane's cwd (would be the Terminal spawn dir)",
-        )
-
-        store.choosePaneKind(chooser, kind: .remoteGUI, launchGrace: .zero)
-        XCTAssertEqual(store.tree.spec(for: chooser)?.kind, .remoteGUI, "the chooser resolved to a video pane")
-        XCTAssertNil(
-            store.tree.spec(for: chooser)?.lastKnownCwd,
-            "a non-terminal resolve clears the inherited cwd → no stale subtitle/search/By-Project bucket",
-        )
-    }
-
-    /// The clear is NON-terminal-only: a Terminal pick KEEPS the inherited cwd (it is the PTY spawn dir).
-    func testChooserResolvedToTerminalKeepsInheritedCwd() throws {
-        SettingsKey.store.set("inherit", forKey: SettingsKey.workingDirectoryNewTabKey)
-        let pane = PaneID()
-        let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
-        let before = allPaneIDs(store)
-
-        store.openChooserPane(.newTab)
-        let chooser = try XCTUnwrap(allPaneIDs(store).subtracting(before).first)
-        store.choosePaneKind(chooser, kind: .terminal, launchGrace: .zero)
-        XCTAssertEqual(
-            store.tree.spec(for: chooser)?.lastKnownCwd, "/Users/me/project",
-            "a Terminal pick keeps the inherited cwd (the host spawns the PTY there)",
-        )
+        XCTAssertEqual(newFake?.sentBytes ?? [], [], "home resolves nil → no `cd`")
     }
 
     // MARK: - New session ("New Window") working-directory policy

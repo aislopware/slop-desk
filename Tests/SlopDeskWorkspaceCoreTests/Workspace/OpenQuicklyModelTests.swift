@@ -638,21 +638,6 @@ final class OpenQuicklyModelTests: XCTestCase {
         XCTAssertEqual(row.subtitle, "/tmp/x", "a present cwd takes precedence over the window-title fallback")
     }
 
-    /// Only the VIDEO kinds are windows — a non-video, non-terminal pane (`.chooser`) keeps the generic
-    /// pane glyph/badge and, with no cwd, carries NO subtitle (no window-title fallback). Pins that the
-    /// differentiation is keyed on ``PaneKind/isVideo``, not "anything that is not a terminal".
-    func testPaneItemNonVideoKindsKeepGenericPaneChrome() {
-        let chooser = OpenQuicklyModel.paneItem(
-            paneID: PaneID(raw: UUID()),
-            title: "Choose…",
-            cwd: nil,
-            paneKind: .chooser,
-        )
-        XCTAssertEqual(chooser.badge, "Pane", "a chooser pane is not a window")
-        XCTAssertEqual(chooser.symbol, "rectangle.split.2x1", "a chooser pane keeps the generic pane glyph")
-        XCTAssertNil(chooser.subtitle, "a non-video pane with no cwd carries no subtitle (no window-title fallback)")
-    }
-
     /// `openedItems` threads `spec.kind` so a mixed tree yields a differentiated row per pane: the terminal row
     /// keeps its generic chrome + cwd; the `.remoteGUI` row reads as a window (glyph + "Window" badge + a
     /// host/window subtitle). End-to-end pin of the `paneKind` thread. Revert-to-confirm-fail: dropping the

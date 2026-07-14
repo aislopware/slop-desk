@@ -115,12 +115,7 @@ struct PaneContainer: View {
     /// terminal-renderer seam; a video pane renders the `GuiLeafView` over the `VideoWindowFactory` seam
     /// (live surface / in-pane picker / cap-gated placeholder, with the cap-enforced activation lifecycle).
     @ViewBuilder private var paneContent: some View {
-        if kind == .chooser {
-            // A just-created, unconfigured pane: its CONTENT is the pane-type chooser (Terminal / Remote
-            // window). Picking flips the spec kind in place (`choosePaneKind`) and reconcile materializes the
-            // real session here on the SAME PaneID — no modal, no new leaf.
-            InPaneChooserView(store: store, paneID: paneID)
-        } else if isVideo {
+        if isVideo {
             GuiLeafView(
                 live: live,
                 isFocused: isFocused,

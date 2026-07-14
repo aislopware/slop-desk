@@ -99,16 +99,16 @@ public extension WorkspaceBindingRegistry {
         // picks the kind INSIDE the pane (no modal). `openChooserPane(.split(axis:))` splits the active pane
         // into a `.chooser` leaf; `choosePaneKind` later flips it to the real kind in place.
         case .splitRight:
-            store.openChooserPane(.split(axis: .horizontal))
+            store.newTerminalPane(.split(axis: .horizontal))
         case .splitDown:
-            store.openChooserPane(.split(axis: .vertical))
+            store.newTerminalPane(.split(axis: .vertical))
         // Split-left / split-up: same chooser-split as right/down, but `leading: true` inserts
         // the new `.chooser` leaf on the LEADING side of the active pane (left of a horizontal split / above a
         // vertical one). The new pane is focused, same as right/down.
         case .splitLeft:
-            store.openChooserPane(.split(axis: .horizontal, leading: true))
+            store.newTerminalPane(.split(axis: .horizontal, leading: true))
         case .splitUp:
-            store.openChooserPane(.split(axis: .vertical, leading: true))
+            store.newTerminalPane(.split(axis: .vertical, leading: true))
         case .closePane: store.requestCloseActivePaneTree()
         case .renamePane: store.requestRenameActivePane()
         case .breakPaneToTab: store.breakActivePaneToTab()
@@ -249,7 +249,7 @@ public extension WorkspaceBindingRegistry {
         // focused in-pane `.chooser` pane (Terminal / Remote window). ⌘T stays a direct-terminal escape hatch
         // via `.newPane(.terminal)` on the canvas command path — it never opens the chooser.
         case .newTab:
-            store.openChooserPane(.newTab)
+            store.newTerminalPane(.newTab)
         case .nextTab: store.cycleTab(by: 1)
         case .prevTab: store.cycleTab(by: -1)
         case let .selectTab(n): store.selectTabNumber(n)
