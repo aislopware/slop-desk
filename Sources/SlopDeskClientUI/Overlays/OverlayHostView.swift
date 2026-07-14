@@ -50,8 +50,8 @@ struct OverlayHostView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .allowsHitTesting(!coordinator.toasts.isEmpty)
             // The "prefix armed" indicator is NOT a window-corner chip: while the prefix awaits its
-            // follow-up key the CONNECTION CLUSTER (sidebar footer / titlebar trailing) crossfades to the
-            // `⌃B …` pill (`ConnectionCluster` → `PrefixArmedPill`, reading the same
+            // follow-up key the CONNECTION CLUSTER's trailing metric (sidebar footer / titlebar trailing)
+            // crossfades to the `⌃B` capsule (`ConnectionCluster` → `PrefixArmedPill`, reading the same
             // `coordinator.prefixArmed` flag the dispatcher drives) — a state swap of existing chrome,
             // visible for every pane kind, never a floating island.
             // The bottom-center transient chips, stacked so they can't overlap: the window-level

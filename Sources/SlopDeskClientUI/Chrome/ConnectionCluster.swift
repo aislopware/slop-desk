@@ -34,12 +34,12 @@ struct ConnectionCluster: View {
     var fillWidth = false
 
     /// The scene overlay coordinator — read for the workspace-prefix ARMED flag. While the prefix (⌃B)
-    /// awaits its follow-up key the WHOLE cluster crossfades to the prefix pill (`⌃B …` in a capsule) and
-    /// back on resolve — a state swap of THIS always-mounted instrument (the same swap grammar as the
-    /// receipts), never an added ornament. The cluster is the cue's home because it is the chrome's one
-    /// running instrument readout: "the workspace is holding your key" is connection-adjacent state, and
-    /// the slot exists in BOTH sidebar states (footer while open, titlebar trailing while collapsed).
-    /// `nil` (tests / previews / no scene injection) ⇒ the pill never shows.
+    /// awaits its follow-up key the cluster's TRAILING metric (the ping) crossfades to the prefix pill
+    /// (the `⌃B` capsule) and back on resolve — a state swap of the metric slot ONLY: the hostname stays
+    /// put (the identity never blinks; per user direction the cue lives in the right corner where the
+    /// ping sits). The cluster is the cue's home because it is the chrome's one running instrument
+    /// readout, and the slot exists in BOTH sidebar states (footer while open, titlebar trailing while
+    /// collapsed). `nil` (tests / previews / no scene injection) ⇒ the pill never shows.
     @Environment(\.overlayCoordinator) private var overlayCoordinator
 
     @State private var hover = false
@@ -109,23 +109,6 @@ struct ConnectionCluster: View {
     }
 
     var body: some View {
-        let armed = overlayCoordinator?.prefixArmed == true
-        // The armed swap is a ZStack crossfade IN PLACE: the box keeps the cluster's width (the pill is
-        // narrower), so neither the footer row nor the titlebar's trailing edge ever shifts — zero-shift.
-        return ZStack(alignment: fillWidth ? .leading : .center) {
-            cluster
-                .opacity(armed ? 0 : 1)
-                .allowsHitTesting(!armed)
-                .accessibilityHidden(armed)
-            PrefixArmedPill()
-                .opacity(armed ? 1 : 0)
-                .allowsHitTesting(false)
-                .accessibilityHidden(!armed)
-        }
-        .animation(Slate.Anim.smallFade, value: armed)
-    }
-
-    private var cluster: some View {
         HStack(spacing: Slate.Metric.space1) {
             Button(action: onConnect) {
                 HStack(alignment: .center, spacing: Slate.Metric.space2) {
@@ -141,19 +124,7 @@ struct ConnectionCluster: View {
 
                     if fillWidth { Spacer(minLength: Slate.Metric.space1) }
 
-                    if let trailing {
-                        Text(trailing.text)
-                            .font(
-                                trailing.isMetric
-                                    ? Slate.Typeface.instrument(Slate.Typeface.small)
-                                    : .system(size: Slate.Typeface.small),
-                            )
-                            .foregroundStyle(trailing.isMetric ? metricColor : Slate.Text.tertiary)
-                            .lineLimit(1)
-                            .layoutPriority(0)
-                            .frame(maxHeight: .infinity, alignment: .center)
-                            .transition(.opacity.animation(isConnected ? Slate.Anim.needle.delay(0.08) : nil))
-                    }
+                    trailingSlot
                 }
                 .padding(.horizontal, Slate.Metric.space2)
                 .frame(height: Slate.Metric.heightControl, alignment: .center)
@@ -173,45 +144,78 @@ struct ConnectionCluster: View {
             .accessibilityLabel(helpText)
 
             if StatusPresentation.showsRetry(status) {
-                Button { Task { await connection.retry() } } label: {
-                    Image(systemSymbol: .arrowClockwise)
-                        .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-                        .foregroundStyle(Slate.Text.secondary)
-                        .frame(width: Slate.Metric.plate, height: Slate.Metric.plate)
-                        .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .help("Retry connecting to \(host)")
-                .accessibilityLabel("Retry connecting to \(host)")
+                retryButton
             }
         }
     }
+
+    /// The row's trailing METRIC slot — the ping (or the short status word) at rest; while the workspace
+    /// prefix is ARMED it crossfades to the ``PrefixArmedPill`` in place (trailing-anchored ZStack, so the
+    /// right corner never shifts) and back on resolve. The hostname to its left never blinks.
+    @ViewBuilder private var trailingSlot: some View {
+        let armed = overlayCoordinator?.prefixArmed == true
+        if armed || trailing != nil {
+            ZStack(alignment: .trailing) {
+                if let trailing {
+                    Text(trailing.text)
+                        .font(
+                            trailing.isMetric
+                                ? Slate.Typeface.instrument(Slate.Typeface.small)
+                                : .system(size: Slate.Typeface.small),
+                        )
+                        .foregroundStyle(trailing.isMetric ? metricColor : Slate.Text.tertiary)
+                        .lineLimit(1)
+                        .transition(.opacity.animation(isConnected ? Slate.Anim.needle.delay(0.08) : nil))
+                        .opacity(armed ? 0 : 1)
+                        .accessibilityHidden(armed)
+                }
+                PrefixArmedPill()
+                    .opacity(armed ? 1 : 0)
+                    .accessibilityHidden(!armed)
+            }
+            // Ideal width always (the metric is a short readout — squeezing it into `…` would defeat
+            // the instrument; the HOSTNAME is the row's designated truncator, `layoutPriority` above).
+            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(0)
+            .frame(maxHeight: .infinity, alignment: .center)
+            .animation(Slate.Anim.smallFade, value: armed)
+        }
+    }
+
+    private var retryButton: some View {
+        Button { Task { await connection.retry() } } label: {
+            Image(systemSymbol: .arrowClockwise)
+                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+                .foregroundStyle(Slate.Text.secondary)
+                .frame(width: Slate.Metric.plate, height: Slate.Metric.plate)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .help("Retry connecting to \(host)")
+        .accessibilityLabel("Retry connecting to \(host)")
+    }
 }
 
-/// The workspace-prefix ARMED pill — what the connection cluster crossfades to while the prefix (⌃B)
-/// awaits its follow-up key: the chord glyph + the vi-hint-bar's bare `…` "more keys" token, in a
-/// CAPSULE on the raised plate. The chord reads the LIVE registry resolution
+/// The workspace-prefix ARMED pill — what the cluster's trailing metric crossfades to while the prefix
+/// (⌃B) awaits its follow-up key: the bare chord glyph in a CAPSULE on the raised plate, nothing else (an
+/// earlier `…` "awaiting" suffix read as dirt next to the chord — the pill's presence already says
+/// "listening"). The chord reads the LIVE registry resolution
 /// (``WorkspaceBindingRegistry/resolvedPrefixChord`` — the same source the dispatcher re-keys from), so a
 /// Settings rebind shows the new chord with no threading. System face (never monospaced — SF Mono draws
 /// the modifier glyphs as cramped fallbacks), primary tone, no icon, no accent: an instrument readout in
 /// the cluster's own quiet register, not an alarm.
 struct PrefixArmedPill: View {
     var body: some View {
-        HStack(spacing: Slate.Metric.space1) {
-            Text(WorkspaceBindingRegistry.glyph(WorkspaceBindingRegistry.resolvedPrefixChord))
-                .font(.system(size: Slate.Typeface.small, weight: .medium))
-                .foregroundStyle(Slate.Text.primary)
-                .lineLimit(1)
-                .fixedSize()
-            Text("…")
-                .font(.system(size: Slate.Typeface.small, weight: .medium))
-                .foregroundStyle(Slate.Text.tertiary)
-        }
-        .padding(.horizontal, Slate.Metric.space2)
-        .padding(.vertical, Slate.Metric.space1)
-        .background(Slate.Surface.raised, in: .capsule)
-        .overlay(Capsule().strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline))
-        .accessibilityLabel("Prefix key armed, awaiting the next key")
+        Text(WorkspaceBindingRegistry.glyph(WorkspaceBindingRegistry.resolvedPrefixChord))
+            .font(.system(size: Slate.Typeface.small, weight: .medium))
+            .foregroundStyle(Slate.Text.primary)
+            .lineLimit(1)
+            .fixedSize()
+            .padding(.horizontal, Slate.Metric.space2)
+            .padding(.vertical, Slate.Metric.space1)
+            .background(Slate.Surface.raised, in: .capsule)
+            .overlay(Capsule().strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline))
+            .accessibilityLabel("Prefix key armed, awaiting the next key")
     }
 }
 #endif
