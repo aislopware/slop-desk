@@ -366,6 +366,12 @@ let package = Package(
         // GUI client. Diagnostic-only (overnight capture-cadence root-cause work). GUI+TCC at runtime.
         .executableTarget(name: "slopdesk-fake-client", dependencies: ["SlopDeskVideoProtocol"]),
 
+        // VD-120Hz DE-RISK probe: creates a headless CGVirtualDisplay advertising a >60Hz mode and
+        // reports the refresh rate WindowServer actually grants — the make-or-break for the
+        // "beat-free 60fps via a 120Hz virtual-display capture source" plan (a 60Hz panel can never
+        // oversample; a 120Hz VD source can). Diagnostic-only; GUI+WindowServer-attached at runtime.
+        .executableTarget(name: "slopdesk-vd-probe", dependencies: ["SlopDeskVideoHost"]),
+
         // Micro-benchmark for the Swift-level hot paths (frame hash, GF region multiply, RS FEC).
         .executableTarget(name: "slopdesk-bench", dependencies: ["SlopDeskVideoProtocol"]),
 
