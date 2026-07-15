@@ -2012,7 +2012,7 @@ private struct VideoHostSettingsView: View {
 
             slateFormSection("Video · Pacer (host)") {
                 Picker("Mode", selection: pacerBinding) {
-                    Text("Default (on arrival)").tag(VideoPreferences.Pacer?.none)
+                    Text("Default (deadline)").tag(VideoPreferences.Pacer?.none)
                     Text("Deadline").tag(Optional(VideoPreferences.Pacer.deadline))
                     Text("On arrival").tag(Optional(VideoPreferences.Pacer.arrival))
                 }

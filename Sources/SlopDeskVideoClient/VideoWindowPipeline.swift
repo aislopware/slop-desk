@@ -293,18 +293,25 @@ final class VideoWindowPipeline {
             displayMaxHz: displayMaxHz,
             floor: maxFrameRate,
         )
-        // DEADLINE PACER (default OFF). The deadline pacer schedules presentation on the CONTENT rhythm
-        // with a small playout delay — research-validated (WebRTC VCMTiming / Moonlight) against
-        // jitter-induced "bunched frame" stutter, and HW-validated over NetBird (present-gaps 0.37%→0%,
-        // max hold 258→91ms). BUT it adds a standing playout buffer to the keypress→echo loop, and this
-        // is a CODING tool: input latency outranks motion smoothness, and transient scroll blur is
-        // acceptable (the static screen re-sharpens fast — see StaticIDRDecider). So the default is
-        // present-on-arrival (deadlineMode=false) — a decoded frame shows on the next display tick, no
-        // playout hold. `SLOPDESK_PACER=deadline` selects the smoothness-tuned deadline pacer for a
-        // jittery-WAN A/B (`SLOPDESK_PLAYOUT_MS` then tunes its buffer).
+        // DEADLINE PACER (default ON for this remote-GUI video path). Presentation is scheduled on the
+        // CONTENT rhythm (`lastDeadline + interval`) with a small playout delay, so arrival jitter — which
+        // on THIS transport runs higher than Parsec's (RS FEC / LTR recovery can delay a repaired frame,
+        // where Parsec's FEC-less transport just drops it) — does not pass straight into inter-present
+        // spacing (the "bunched frame" 8/8/17/8ms judder that reads as "less smooth than Parsec"). The
+        // scheme is research-validated (WebRTC VCMTiming / Moonlight) and HW-validated over NetBird
+        // (present-gaps 0.37%→0%, max hold 258→91ms).
+        // Why default HERE without a latency regression: this pipeline serves ONLY the remote-GUI /
+        // window / full-desktop video streams — the terminal renders through libghostty and never touches
+        // this pacer — and the host cursor is drawn on the LOCAL pointer from a SEPARATE socket, so the
+        // playout buffer never delays interactive pointer feel. Motion smoothness is the priority for the
+        // desktop stream. ADAPTIVE PLAYOUT floats the buffer down to ~4ms on a clean link (negligible
+        // standing latency there) and inflates it only on a jittery link. `SLOPDESK_PACER=arrival` (GUI
+        // Video → "On arrival") is the escape hatch to the zero-playout present-on-arrival model
+        // (Parsec's queued_frames=0 shape — lowest latency, wins only when the link is already clean).
         // PACER / PLAYOUT_MS resolve through `EnvConfig` (ProcessInfo env → settings overlay) so a GUI
         // setting can drive them; an EMPTY overlay is byte-identical to a bare `env[...]` read.
-        let deadlineMode = EnvConfig.string("SLOPDESK_PACER").map { $0.lowercased() == "deadline" } ?? false
+        let deadlineMode = EnvConfig.string("SLOPDESK_PACER")
+            .map { !["arrival", "off", "0"].contains($0.lowercased()) } ?? true
         // ADAPTIVE PLAYOUT (default ON): the playout buffer auto-tunes to the live network jitter
         // (clamp(k·jitter + base, [floor, ceil])) — a clean LAN floats down to ~floor (low latency), a
         // jittery WAN inflates for smoothness. A fixed value is wrong across links. HW-validated over
