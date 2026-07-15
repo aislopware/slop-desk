@@ -181,15 +181,24 @@ final class VirtualDisplayGeometryTests: XCTestCase {
 
     // MARK: vdRefreshRates
 
-    // At 60fps: just the 60/30 baseline (descending, deduped).
+    // A VD used as the capture SOURCE for an N-fps encode must refresh at 2×N (capped 120) so
+    // SCStream can oversample 2:1 and kill the fps-on-refresh beat. At 60fps the VD therefore needs a
+    // 120Hz mode; at 30fps the 2× is 60 (already in the baseline). Baseline 60/30 always present.
     func testRefreshRatesDefault() {
-        XCTAssertEqual(VirtualDisplayPlanner.refreshRates(fps: 60), [60, 30])
+        XCTAssertEqual(VirtualDisplayPlanner.refreshRates(fps: 60), [120, 60, 30])
         XCTAssertEqual(VirtualDisplayPlanner.refreshRates(fps: 30), [60, 30])
     }
 
-    // Above 60fps: add the fps mode so a VD-parked window can be composited that fast.
+    // The 60fps desktop encode MUST get a 120Hz VD mode — this is the beat-kill enabler (a VD stuck
+    // at 60 captures 1:1 with the encode and beats, exactly like the physical 60Hz panel it replaces).
+    func testRefreshRatesOversampleAt60() {
+        XCTAssertTrue(VirtualDisplayPlanner.refreshRates(fps: 60).contains(120))
+    }
+
+    // Above 60fps: include BOTH the fps mode (a VD-parked window composited that fast) AND the 2×
+    // oversample mode capped at 120 (so an encoder above 60 still oversamples up to the 120 ceiling).
     func testRefreshRatesHighFPS() {
-        XCTAssertEqual(VirtualDisplayPlanner.refreshRates(fps: 90), [90, 60, 30])
+        XCTAssertEqual(VirtualDisplayPlanner.refreshRates(fps: 90), [120, 90, 60, 30])
         XCTAssertEqual(VirtualDisplayPlanner.refreshRates(fps: 120), [120, 60, 30])
     }
 }

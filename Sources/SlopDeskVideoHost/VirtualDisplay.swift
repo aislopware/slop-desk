@@ -381,15 +381,30 @@ public enum VirtualDisplayPlanner {
         return 7680
     }
 
-    /// The refresh-rate modes to advertise for a VD driven at `fps`. WindowServer composites a
-    /// VD-parked window at most at the VD's refresh, so a window at `--fps 90` needs a ≥90 Hz mode or
-    /// capture is silently capped at 60. Always include 60 + 30 (the safe baseline) and `fps` when it
-    /// exceeds 60; deduped + descending. Pure + unit-tested.
+    /// The 120 Hz ceiling for advertised VD modes — the highest refresh WindowServer was empirically
+    /// confirmed to both GRANT and genuinely CLOCK for a headless VD (slopdesk-vd-probe Q1/Q2). We do
+    /// not advertise above it because an unclocked/ungranted mode would be a silent no-op.
+    public static let maxAdvertisedHz = 120
+
+    /// The refresh-rate modes to advertise for a VD used as the capture SOURCE for an `fps`-fps encode.
+    ///
+    /// Two requirements, unioned:
+    /// 1. **2:1 oversample (beat-kill).** WindowServer commits a VD-parked surface at the VD's refresh,
+    ///    and a capture 1:1 with the encode fps beats (the 60fps-on-60Hz double-slot). Advertising a
+    ///    mode at `2×fps` (capped at ``maxAdvertisedHz``) lets SCStream capture 2 commits per encoded
+    ///    frame — no beat. This is why a 60fps desktop encode needs a **120 Hz** VD mode, not 60.
+    /// 2. **≥fps for a fast window.** WindowServer composites a VD-parked window at most at the VD's
+    ///    refresh, so a `--fps 90` window still needs a ≥90 Hz mode of its own.
+    ///
+    /// Always include the 60 + 30 baseline. Deduped + descending. Pure + unit-tested.
     public static func refreshRates(fps: Int) -> [Double] {
-        // STRICT `fps > 60` (boundary 60 NOT appended), then dedup via `Set` + sort DESCENDING. The
-        // construction never duplicates, so `Set` is a no-op de-dup, but it mirrors the core. Matches.
+        let f = max(1, fps)
         var rates = [60.0, 30.0]
-        if fps > 60 { rates.append(Double(fps)) }
+        // 2× oversample mode (capped) — the beat-kill enabler; for fps ≤ 30 the 2× is ≤ 60 (baseline).
+        let oversample = min(maxAdvertisedHz, f * 2)
+        if oversample > 60 { rates.append(Double(oversample)) }
+        // The window's own rate when it exceeds 60 (a >60fps parked window needs a matching mode).
+        if f > 60 { rates.append(Double(f)) }
         return Array(Set(rates)).sorted(by: >)
     }
 }
