@@ -90,6 +90,19 @@ public final class InputInjector: @unchecked Sendable {
     /// post tap + cursor move differ.
     private static let injectToPid = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_INJECT_TO_PID"] != nil
     private static let inputTrace = ProcessInfo.processInfo.environment["SLOPDESK_INPUT_TRACE"] != nil
+    /// PARSEC-STYLE POINTER MOTION (`SLOPDESK_TABLET_MOUSE`, default ON; `=0` restores the warp path).
+    /// A remote pointer stream is ~99% hover moves (≈150:1 vs buttons); the warp path injects each behind
+    /// THREE synchronous WindowServer IPCs (`CGWarpMouseCursorPosition` +
+    /// `CGAssociateMouseAndMouseCursorPosition` + `CGEvent.post`), which under a hover flood saturates
+    /// WindowServer and stalls SCStream capture — the desktop hitches exactly while the pointer moves
+    /// (measured 61ms capture-gap). Parsec instead posts ONE event: a tablet-subtype
+    /// (`kCGEventMouseSubtypeTabletPoint`) `.mouseMoved` carrying absolute `kCGTabletEventPointX/Y`, no
+    /// warp/associate (disasm parsecd-150-104a @0x148a50). VERIFIED end-to-end on macOS 26 (the event alone
+    /// positions the host cursor at exact coords — no warp needed; still tagged via ``stampAndPost`` so the
+    /// `CursorSampler` self-inject filter keeps working). Applies to HOVER moves ONLY — DRAGS keep the warp
+    /// path so selection engines are byte-unchanged. Escape hatch `=0` for any app that special-cases the
+    /// tablet subtype (games/canvas mouse-look — niche on a remote coding desktop).
+    private static let tabletMouse = ProcessInfo.processInfo.environment["SLOPDESK_TABLET_MOUSE"] != "0"
     /// Scroll gain multiplier (`SLOPDESK_SCROLL_GAIN`, default 1.0 = byte-identical pass-through).
     /// The client forwards macOS's already-accelerated trackpad deltas 1:1 and the coalescer never
     /// merges/drops a scroll, so distance parity with a local gesture holds at 1.0; this knob is only
@@ -344,6 +357,26 @@ public final class InputInjector: @unchecked Sendable {
 
     private func postMouseMove(normalized: VideoPoint, tag: UInt32) {
         let pt = target(normalized)
+        // PARSEC PATH (`tabletMouse`, real-injection only — the loopback `injectToPid` seam keeps the
+        // warp path below): ONE absolute tablet-point `.mouseMoved`, no warp/associate → 1 WindowServer
+        // IPC not 3, so a hover flood no longer stalls SCStream capture. The event's `mouseCursorPosition`
+        // positions the host cursor (verified macOS 26); the tablet subtype + absolute point fields give
+        // delta-reading apps an absolute position. Stateless like the warp path (pure hover; drags go
+        // through ``postMouseDrag``).
+        if Self.tabletMouse, !Self.injectToPid {
+            if let event = CGEvent(
+                mouseEventSource: eventSource,
+                mouseType: .mouseMoved,
+                mouseCursorPosition: pt,
+                mouseButton: .left,
+            ) {
+                event.setIntegerValueField(.mouseEventSubtype, value: 1) // kCGEventMouseSubtypeTabletPoint
+                event.setIntegerValueField(.tabletEventPointX, value: Int64(pt.x.rounded()))
+                event.setIntegerValueField(.tabletEventPointY, value: Int64(pt.y.rounded()))
+                stampAndPost(event, tag: tag)
+            }
+            return
+        }
         // Absolute HOVER move: warp the cursor, then post `.mouseMoved` so apps reading deltas see
         // it (doc 05 §1). A button-held drag is NEVER inferred here — the client sends an explicit
         // `.mouseDrag` (see ``postMouseDrag``), so a move is always a pure hover. Inferring "button
