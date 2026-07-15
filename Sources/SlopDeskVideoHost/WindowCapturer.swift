@@ -308,6 +308,42 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         return 3
     }()
 
+    /// FRESHEST-WINS backlog (default OFF; `SLOPDESK_ENCODE_FRESHEST=1`). When the decoupled encode
+    /// backlog is full, evict the OLDEST still-pending delta and encode the NEWEST instead of
+    /// dropping the incoming one — so a fat scroll frame never strands fresher content and the client
+    /// always gets the latest pixels (RE of Parsec: SCStream `setQueueDepth:4` + one-encode-per-frame
+    /// = "capture is never blocked on encode", it keeps the newest). Freshness is a coding tool's
+    /// north star. Requires the decoupled encode queue. Unset ⇒ the historical drop-newest path runs
+    /// byte-identical. A/B lever for the one ragged-cadence source the audit confirmed in code
+    /// (``handOffToEncoder`` backlog drop) — HW-verify with client-side framewatch before defaulting.
+    static let freshestWins =
+        encodeOffQueueEnabled && ProcessInfo.processInfo.environment["SLOPDESK_ENCODE_FRESHEST"] == "1"
+
+    /// PURE decision for the decoupled encode backlog when a captured frame arrives (unit-tested).
+    /// `pendingForced` = the forced-flag of each frame already queued (oldest first); `incomingForced`
+    /// = whether the arriving frame is a forced keyframe/crisp/compact/LTR (recovery/sharpness anchor,
+    /// never dropped). Default (`freshest == false`) = ``dropIncoming`` when full = the historical
+    /// drop-newest policy. `freshest == true` = FRESHEST-WINS = ``evictOldestUnforced`` so the newest
+    /// delta is admitted and the stalest pending one is coalesced out. A forced incoming, or a backlog
+    /// that is somehow ALL forced, always ``enqueue``s (never drop a recovery anchor nor the fresh delta).
+    enum BacklogDecision: Equatable {
+        case enqueue // append the incoming frame + schedule a drain
+        case dropIncoming // backlog full, drop the incoming (newest) delta — historical default
+        case evictOldestUnforced(Int) // freshest-wins: remove pending[idx], append incoming, no new drain
+    }
+
+    static func backlogDecision(
+        pendingForced: [Bool],
+        incomingForced: Bool,
+        max: Int,
+        freshest: Bool,
+    ) -> BacklogDecision {
+        if incomingForced || pendingForced.count < max { return .enqueue }
+        guard freshest else { return .dropIncoming }
+        if let idx = pendingForced.firstIndex(where: { !$0 }) { return .evictOldestUnforced(idx) }
+        return .enqueue // backlog is all forced frames — keep the fresh delta rather than drop it
+    }
+
     /// SELF-HEAL cadence (Parsec-style ack-anchored healing — HW-validated in
     /// `slopdesk-loopback-validate --ack-ref` arms L/M/N/O): every `selfHealEvery`-th LIVE delta is
     /// encoded as a `ForceLTRRefresh` P-frame, which VideoToolbox anchors to the newest LTR the
@@ -357,6 +393,26 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     private var encodePending = 0
     private var encodeBacklogDropped = 0
 
+    /// A frame copied for the serial encode queue. Used ONLY on the ``Self/freshestWins`` path, where
+    /// the backlog is an explicit deque (so the OLDEST pending delta can be evicted) instead of the
+    /// default fire-and-forget `encodeQueue.async` + integer counter. Guarded by `encodePendingLock`.
+    private struct PendingEncode {
+        let buffer: SendableBuffer
+        let pts: CMTime
+        let forceKeyframe: Bool
+        let crisp: Bool
+        let compact: Bool
+        let ltrRefresh: Bool
+        let perFrameMaxQP: Int?
+        let pacerAnchor: Bool
+        var forced: Bool { forceKeyframe || crisp || compact || ltrRefresh }
+    }
+
+    /// Freshest-wins backlog (oldest first). Invariant: the count of scheduled `drainOnePending`
+    /// blocks in flight == `pendingEncodes.count`, so an evict-without-schedule is still consumed by
+    /// an already-scheduled drain. Guarded by `encodePendingLock`; drained on the serial `encodeQueue`.
+    private var pendingEncodes: [PendingEncode] = []
+
     /// ENCODE-LOAD PACER (``EncodeLoadPacer``, gated on ``encodePacerEnabled``). Mutated ONLY on the
     /// serial `encodeQueue` (single-threaded — no lock on the struct itself); its selected fps is
     /// PUBLISHED to `encodePacedFPS` under `pacerLock` so the frameQueue's `currentGovernedFPS()` can
@@ -385,6 +441,24 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             return
         }
         let forced = forceKeyframe || crisp || compact || ltrRefresh
+        if Self.freshestWins {
+            // Copy OUTSIDE the backlog lock (heavy memcpy); the copy is a fresh single-owner buffer.
+            guard let copy = Self.copyPixelBuffer(buffer) else { return }
+            enqueueFreshest(
+                PendingEncode(
+                    buffer: SendableBuffer(value: copy),
+                    pts: pts,
+                    forceKeyframe: forceKeyframe,
+                    crisp: crisp,
+                    compact: compact,
+                    ltrRefresh: ltrRefresh,
+                    perFrameMaxQP: perFrameMaxQP,
+                    pacerAnchor: forceKeyframe || crisp,
+                ),
+                encodeQueue: encodeQueue,
+            )
+            return
+        }
         encodePendingLock.lock()
         if !forced, encodePending >= Self.maxEncodePending {
             encodePendingLock.unlock()
@@ -450,6 +524,77 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             encodePendingLock.lock()
             encodePending -= 1
             encodePendingLock.unlock()
+        }
+    }
+
+    /// FRESHEST-WINS encode hand-off (``Self/freshestWins``): keep an explicit backlog deque so the
+    /// OLDEST pending delta can be coalesced out when the encoder over-runs — the client always gets
+    /// the newest pixels (Parsec keeps the newest via its depth-4 capture ring), never a ragged
+    /// drop-newest gap. Forced frames are never evicted and may overflow the cap (recovery/sharpness
+    /// anchors). The caller has already copied the buffer (outside any lock).
+    private func enqueueFreshest(_ entry: PendingEncode, encodeQueue: DispatchQueue) {
+        var schedule = false
+        var evicted = false
+        encodePendingLock.lock()
+        switch Self.backlogDecision(
+            pendingForced: pendingEncodes.map(\.forced),
+            incomingForced: entry.forced,
+            max: Self.maxEncodePending,
+            freshest: true,
+        ) {
+        case .enqueue:
+            pendingEncodes.append(entry)
+            schedule = true
+        case let .evictOldestUnforced(idx):
+            // Coalesce out the stalest pending delta, admit the newest — DO NOT schedule a new drain:
+            // an already-scheduled block consumes the newest (blocks-in-flight == count invariant).
+            pendingEncodes.remove(at: idx)
+            pendingEncodes.append(entry)
+            encodeBacklogDropped += 1
+            evicted = true
+        case .dropIncoming:
+            // Unreachable with freshest == true (kept for switch exhaustiveness); honor the counter.
+            encodeBacklogDropped += 1
+        }
+        encodePendingLock.unlock()
+        if Self.dbgGapEnabled, evicted, encodeBacklogDropped.isMultiple(of: 15) {
+            FileHandle.standardError
+                .write(Data("slopdesk-videohostd[coalesce]: freshest-wins evict #\(encodeBacklogDropped)\n".utf8))
+        }
+        if schedule { encodeQueue.async { [weak self] in self?.drainOnePending() } }
+    }
+
+    /// Encode exactly one frame from the freshest-wins deque (oldest first), on the serial
+    /// `encodeQueue`. Mirrors the default async block's measure/pacer bookkeeping (``EncodeLoadPacer``
+    /// stays confined to this queue). A defensive empty-deque guard makes a spurious drain a no-op.
+    private func drainOnePending() {
+        encodePendingLock.lock()
+        guard !pendingEncodes.isEmpty else {
+            encodePendingLock.unlock()
+            return
+        }
+        let e = pendingEncodes.removeFirst()
+        encodePendingLock.unlock()
+
+        let measure = Self.encodePacerEnabled || Self.dbgGapEnabled
+        let encStart = measure ? Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) : 0
+        frameHandler(e.buffer.value, e.pts, e.forceKeyframe, e.crisp, e.compact, e.ltrRefresh, e.perFrameMaxQP)
+        guard measure else { return }
+        let ms = (Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) - encStart) / 1_000_000.0
+        if Self.encodePacerEnabled {
+            let paced = encodeLoadPacer.note(encodeMs: ms, isAnchor: e.pacerAnchor)
+            pacerLock.lock()
+            encodePacedFPS = paced
+            pacerLock.unlock()
+            if Self.dbgGapEnabled, paced != lastLoggedPacedFPS {
+                let msg = "slopdesk-videohostd[pace]: \(Int(ms))ms ⇒ fps \(lastLoggedPacedFPS)→\(paced)\n"
+                FileHandle.standardError.write(Data(msg.utf8))
+                lastLoggedPacedFPS = paced
+            }
+        }
+        if Self.dbgGapEnabled, ms > 16.7 {
+            FileHandle.standardError
+                .write(Data("slopdesk-videohostd[enc]: encode \(Int(ms))ms\(e.pacerAnchor ? " ANCHOR" : "")\n".utf8))
         }
     }
 
