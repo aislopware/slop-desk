@@ -30,17 +30,87 @@ import SlopDeskVideoHost
 var fps = 120
 var holdSeconds: UInt64 = 2
 var measureSeconds = 3.0
+var makeMain = false
 var it = Array(CommandLine.arguments.dropFirst()).makeIterator()
 while let a = it.next() {
     switch a {
     case "--fps": fps = it.next().flatMap { Int($0) } ?? fps
     case "--hold-seconds": holdSeconds = it.next().flatMap { UInt64($0) } ?? holdSeconds
     case "--measure-seconds": measureSeconds = it.next().flatMap(Double.init) ?? measureSeconds
+    case "--make-main": makeMain = true
     default: break
     }
 }
 
 func eprint(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
+
+/// The online displays as `(id, global-bounds)`, main-first for readability.
+func snapshotArrangement() -> [(id: CGDirectDisplayID, bounds: CGRect)] {
+    var n: UInt32 = 0
+    guard CGGetOnlineDisplayList(0, nil, &n) == .success, n > 0 else { return [] }
+    var ids = [CGDirectDisplayID](repeating: 0, count: Int(n))
+    guard CGGetOnlineDisplayList(n, &ids, &n) == .success else { return [] }
+    return ids.prefix(Int(n)).map { (id: $0, bounds: CGDisplayBounds($0)) }
+}
+
+func describeArrangement(_ a: [(id: CGDirectDisplayID, bounds: CGRect)]) -> String {
+    a.map { "id=\($0.id)@(\(Int($0.bounds.minX)),\(Int($0.bounds.minY)))" }.joined(separator: " ")
+}
+
+/// Q3 (the make-or-break for build (b)): can a HEADLESS VD be PROMOTED to the main display, so the
+/// existing `mintDisplaySession` — which captures `CGMainDisplayID()` — captures the VD's 120Hz surface
+/// with NO other code change? Pins the VD at the global origin (0,0) and every physical display to its
+/// right, `.forSession` (the scope that relocates the global menubar/desktop, not just this process's
+/// coordinate view). Reads back `CGMainDisplayID()`, holds, then RESTORES the original arrangement so
+/// the host is never left reconfigured. `.forSession` (not `.permanently`) also self-reverts at logout,
+/// a second safety net.
+func probeMakeMain(vdID: CGDirectDisplayID, vdWidthPx: Int) {
+    let before = snapshotArrangement()
+    let beforeMain = CGMainDisplayID()
+    eprint("make-main: BEFORE main=\(beforeMain) [\(describeArrangement(before))]")
+
+    func reconfigure(_ place: (CGDisplayConfigRef) -> Void) -> CGError {
+        var cfg: CGDisplayConfigRef?
+        let begin = CGBeginDisplayConfiguration(&cfg)
+        guard begin == .success, let cfg else { return begin }
+        place(cfg)
+        return CGCompleteDisplayConfiguration(cfg, .forSession)
+    }
+
+    // 1) VD → (0,0); every physical display stacked to the right of the VD.
+    let apply = reconfigure { cfg in
+        CGConfigureDisplayOrigin(cfg, vdID, 0, 0)
+        var x = Int32(vdWidthPx)
+        for d in before where d.id != vdID {
+            CGConfigureDisplayOrigin(cfg, d.id, x, 0)
+            x += Int32(d.bounds.width.rounded())
+        }
+    }
+    let afterMain = CGMainDisplayID()
+    let after = snapshotArrangement()
+    eprint("make-main: APPLY forSession=\(apply.rawValue) → main=\(afterMain) [\(describeArrangement(after))]")
+    if afterMain == vdID {
+        eprint("make-main: ✅ Q3 PASS — VD is now CGMainDisplayID; mintDisplaySession would capture it unchanged")
+    } else {
+        eprint("make-main: ❌ Q3 — VD did NOT become main (main=\(afterMain)); a different promotion path is needed")
+    }
+    Thread.sleep(forTimeInterval: 1.5)
+
+    // 2) RESTORE every display to its captured origin — never leave the host reconfigured.
+    let restore = reconfigure { cfg in
+        for d in before { CGConfigureDisplayOrigin(
+            cfg,
+            d.id,
+            Int32(d.bounds.minX.rounded()),
+            Int32(d.bounds.minY.rounded()),
+        ) }
+    }
+    let restoredMain = CGMainDisplayID()
+    eprint("make-main: RESTORE forSession=\(restore.rawValue) → main=\(restoredMain) (was \(beforeMain))")
+    if restoredMain != beforeMain {
+        eprint("make-main: ⚠️ main did not return to \(beforeMain) — logout/reboot reverts .forSession as a fallback")
+    }
+}
 
 /// Thread-safe tick counter — the CVDisplayLink handler runs on its own real-time thread, so the
 /// main-thread reader needs a lock to see a coherent count.
@@ -131,6 +201,8 @@ func run() async -> Int32 {
     }
     // Q2 — the make-or-break: does WindowServer actually clock this VD at 120Hz?
     if measureSeconds > 0 { measureCompositorClock(displayID: id, seconds: measureSeconds) }
+    // Q3 — can the VD be promoted to main so the desktop mint captures it unchanged? (auto-reverts)
+    if makeMain { probeMakeMain(vdID: id, vdWidthPx: 1920) }
     try? await Task.sleep(nanoseconds: holdSeconds * 1_000_000_000)
     vd.destroy()
     eprint("vd-probe: VD destroyed — done")
