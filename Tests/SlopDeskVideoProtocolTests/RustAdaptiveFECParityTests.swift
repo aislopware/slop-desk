@@ -75,7 +75,10 @@ final class RustAdaptiveFECParityTests: XCTestCase {
         _ allowOff: Bool,
         _ unrec: Bool,
     ) -> NativeState {
-        let sticky = unrec ? (2 * 24) : max(0, s.sticky - 1)
+        // Re-arm to the SAME window the Swift uses on unrecovered loss (`stickyRelaxWindowReports`,
+        // = 2 × relaxDwellReports). This oracle tests LOGIC parity given the constants;
+        // `testConstantsUnchanged` pins the constant VALUES, so referencing it here is not circular.
+        let sticky = unrec ? AdaptiveFECPolicy.stickyRelaxWindowReports : max(0, s.sticky - 1)
         let effective = sticky > 0 ? 2 * dwell : dwell
         let current = nativeLevel(forTier: s.tier)
         let target = max(nativeTargetLevel(loss, current), nativeRelaxFloor(allowOff))
@@ -178,7 +181,9 @@ final class RustAdaptiveFECParityTests: XCTestCase {
 
     func testConstantsUnchanged() {
         XCTAssertEqual(AdaptiveFECPolicy.defaultTier, 0)
-        XCTAssertEqual(AdaptiveFECPolicy.relaxDwellReports, 24)
-        XCTAssertEqual(AdaptiveFECPolicy.stickyRelaxWindowReports, 48)
+        // 240 = ~12s of relax dwell at the 50ms NetworkStats cadence (was 24, a 1.2s cadence-coupling
+        // bug — see AdaptiveFECPolicy.relaxDwellReports). stickyRelaxWindowReports stays 2×.
+        XCTAssertEqual(AdaptiveFECPolicy.relaxDwellReports, 240)
+        XCTAssertEqual(AdaptiveFECPolicy.stickyRelaxWindowReports, 480)
     }
 }

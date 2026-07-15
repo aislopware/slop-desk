@@ -289,11 +289,16 @@ public enum AdaptiveFECPolicy {
     /// BURSTS seconds apart, and the loss EWMA decays below the relax thresholds between bursts, so
     /// relax walks back to OFF in ~1s and EVERY burst then lands on an unprotected stream (measured:
     /// 224 tier changes in one session, cycling OFF→g10→g5→g10→OFF every ~8s, 118 unrecovered frames
-    /// ≈ 1%, almost all in OFF windows). Requiring ~12s of consecutively clean reports (24 at the
-    /// ~2/s netstats cadence) keeps g10 armed BETWEEN bursts while a genuinely clean path (home WiFi)
-    /// still relaxes to OFF — just ~12s per step slower, a one-time cost against a standing 10-20%
-    /// overhead saving.
-    public static let relaxDwellReports = 24
+    /// ≈ 1%, almost all in OFF windows). Requiring ~12s of consecutively clean reports keeps g10 armed
+    /// BETWEEN bursts while a genuinely clean path (home WiFi) still relaxes to OFF — just ~12s per step
+    /// slower, a one-time cost against a standing 10-20% overhead saving.
+    ///
+    /// ⚠️ CADENCE-COUPLED: the host steps this once per client NetworkStats report, and that timer fires
+    /// every 50 ms (`SlopDeskVideoClientSession` networkStatsTask, ~20/s) — NOT the ~2/s an earlier
+    /// version assumed. So ~12s = 240 reports, not 24. (The original 24 gave a 1.2s dwell — 10× too fast,
+    /// defeating the anti-flap entirely; every ~8s burst still relaxed to OFF between bursts.) If that
+    /// 50 ms cadence ever changes, re-derive this: `relaxDwellReports ≈ 12s / reportInterval`.
+    public static let relaxDwellReports = 240
 
     /// STICKY RELAX: a report carrying UNRECOVERED frame loss proves the CURRENT redundancy was
     /// insufficient — relaxing soon after is exactly the measured blip-per-2.6s failure mode (see

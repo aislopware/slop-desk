@@ -183,6 +183,18 @@ final class AdaptiveFECPolicyTests: XCTestCase {
         XCTAssertEqual(s.tier, 0, "next lossy report escalates g10 → g5")
     }
 
+    /// CADENCE-COUPLING GUARD. The host steps the tier once per client NetworkStats report, which
+    /// fires every 50 ms (`SlopDeskVideoClientSession` networkStatsTask). The documented 4G anti-flap
+    /// needs ~12s of clean reports before a relax step — so the dwell MUST be ~240 reports at that
+    /// cadence, not the ~24 an earlier "~2/s" assumption implied (24 = a 1.2s dwell that let every
+    /// burst relax to OFF between bursts — the exact failure the dwell exists to prevent). Regresses
+    /// the moment someone resets it to a 2/s-era value.
+    func testRelaxDwellIsTwelveSecondsAtTheFiftyMsNetstatsCadence() {
+        let netstatsIntervalSeconds = 0.050 // SlopDeskVideoClientSession networkStatsTask sleep
+        let dwellSeconds = Double(AdaptiveFECPolicy.relaxDwellReports) * netstatsIntervalSeconds
+        XCTAssertEqual(dwellSeconds, 12.0, accuracy: 1.0, "relax dwell must be ~12s at the 50ms report cadence")
+    }
+
     /// Relaxation fires only after `dwell` CONSECUTIVE relax-demanding reports.
     func testDwellRelaxRequiresConsecutiveCleanReports() {
         var s = AdaptiveFECPolicy.TierState(tier: 0) // g5
