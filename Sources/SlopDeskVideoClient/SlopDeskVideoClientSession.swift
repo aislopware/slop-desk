@@ -705,7 +705,18 @@ public actor SlopDeskVideoClientSession {
         // the periodic fire (the FSM is untouched; the tick resumes the instant the path returns).
         guard stateMachine.mediaFlowing, transport.sendPathViable else { return }
         transport.send(VideoControlMessage.keepalive.encode(), on: .control)
+        // Cursor-flow re-prime piggyback: the MEDIA flow re-stamps itself on every routed inbound
+        // datagram, but the cursor socket has no ongoing client→host traffic — after a NAT rebind
+        // (wifi flap) the host keeps sending cursor updates to the DEAD old mapping forever while
+        // video and input recover, freezing the pointer shape on the default arrow. One extra
+        // 5-byte datagram per keepalive tick keeps the host's cursor reply flow current (the host
+        // stamp is an unconditional overwrite, so a duplicate prime is a no-op).
+        transport.send(Self.cursorFlowPrime, on: .cursor)
     }
+
+    /// The cursor side-channel prime payload — content is irrelevant to the host (it stamps the
+    /// reply flow off the channelID framing alone); one stable byte keeps it identifiable in traces.
+    private static let cursorFlowPrime = Data([0x00])
 
     // MARK: Stall-scrim liveness snapshot
 
@@ -1703,6 +1714,12 @@ public actor SlopDeskVideoClientSession {
         switch effect {
         case let .sendControl(message):
             transport.send(message.encode(), on: .control)
+        case .primeCursorFlow:
+            // Cursor side-channel (re-)prime: a 1-byte datagram on the CURSOR socket (the transport
+            // frames it with this lane's channelID) so the host (re-)stamps the lane's cursor reply
+            // flow. Rides with every hello — the only self-heal the cursor channel has (no other
+            // client→host traffic exists on that socket; see the Effect's doc).
+            transport.send(Self.cursorFlowPrime, on: .cursor)
         case let .startDecodePipeline(captureSize, _, fullRange):
             startDecodePipeline(captureSize: captureSize, fullRange: fullRange)
         case .stopDecodePipeline:

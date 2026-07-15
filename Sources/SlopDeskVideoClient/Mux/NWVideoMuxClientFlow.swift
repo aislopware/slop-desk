@@ -172,9 +172,25 @@ public final class NWVideoMuxClientFlow: @unchecked Sendable {
     }
 
     public func send(_ datagram: Data, on channel: VideoChannel, channelID: UInt32) {
-        // The client sends on the media socket only (control + input). A stray cursor send is
-        // dropped defensively.
-        guard Self.mediaSocket(for: channel) else { return }
+        // A `.cursor` send is the lane's flow (re-)prime: it rides the CURSOR socket with the
+        // channelID-only framing (`[u32 chan][payload]`, no tag — the wire shape `registerLane`'s
+        // one-shot prime uses), so the host (re-)stamps this lane's cursor reply flow. The session
+        // re-primes with every hello and each keepalive tick because the cursor socket carries no
+        // other client→host traffic — a host restart / NAT rebind would otherwise kill cursor
+        // updates for the lane's whole life while video+input self-heal.
+        guard Self.mediaSocket(for: channel) else {
+            lock.lock()
+            let cursor = cursorConn
+            lock.unlock()
+            let framed = VideoMuxHeaderCodec.encode(channelID: channelID, payload: datagram)
+            cursor?.send(content: framed, completion: .contentProcessed { [weak self] error in
+                if let error {
+                    self?.log
+                        .error("mux cursor prime send failed chan=\(channelID): \(String(describing: error))")
+                }
+            })
+            return
+        }
         lock.lock()
         let conn = mediaConn
         lock.unlock()

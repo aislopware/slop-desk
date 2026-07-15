@@ -12,7 +12,7 @@ final class DisplayClientStateMachineTests: XCTestCase {
             target: .display(0), viewport: VideoSize(width: 1280, height: 800),
         )
         let effects = sm.start()
-        XCTAssertEqual(effects, [.sendControl(.helloDisplay(
+        XCTAssertEqual(effects, [.primeCursorFlow, .sendControl(.helloDisplay(
             protocolVersion: SlopDeskVideoProtocol.version,
             requestedDisplayID: 0,
             viewport: VideoSize(width: 1280, height: 800),
@@ -27,7 +27,10 @@ final class DisplayClientStateMachineTests: XCTestCase {
         )
         _ = sm.start()
         let retry = sm.resendHello()
-        XCTAssertEqual(retry, [.sendControl(.helloDisplay(
+        // The re-prime matters MOST here: the desktop pane that sat `.connecting` across a host
+        // daemon restart reconnects via this retry — without the prime its cursor channel is dead
+        // (shape stuck on the default arrow) even though video and input recover.
+        XCTAssertEqual(retry, [.primeCursorFlow, .sendControl(.helloDisplay(
             protocolVersion: SlopDeskVideoProtocol.version,
             requestedDisplayID: 7,
             viewport: VideoSize(width: 640, height: 480),
@@ -42,7 +45,7 @@ final class DisplayClientStateMachineTests: XCTestCase {
         )
         XCTAssertEqual(sm.target, .window(42))
         let effects = sm.start()
-        XCTAssertEqual(effects, [.sendControl(.hello(
+        XCTAssertEqual(effects, [.primeCursorFlow, .sendControl(.hello(
             protocolVersion: SlopDeskVideoProtocol.version,
             requestedWindowID: 42,
             viewport: VideoSize(width: 100, height: 100),

@@ -703,6 +703,16 @@ A single cursor PNG fits comfortably in one 1200-byte datagram, so the shape cha
 fragmentation. The client caches each shape by `shapeID` and composites it at
 `position * videoScale − hotspot`, where `videoScale = layerSize.width / decodedSize.width`.
 
+**Client → host prime (mux only).** On the shared-flow mux the cursor socket is host→client except
+for the lane's flow **prime**: a channelID-framed datagram (`[UInt32 BE channelID][payload…]`, no
+channel tag; payload content is ignored — the reference client sends one `0x00` byte) whose only
+purpose is teaching the host which remote flow carries this lane's cursor replies. Because no other
+client→host traffic exists on the socket, a lost stamp never self-heals the way the media flow does
+(re-stamped by every routed inbound datagram) — so the client sends the prime at lane registration,
+**with every `hello`/`helloDisplay` (including retries)**, and **piggybacked on each `keepalive`
+tick**: a host daemon restart or NAT rebind then restores cursor delivery within one keepalive
+interval instead of freezing the pointer shape for the lane's lifetime.
+
 ## 9.7 Input events — `InputEvent` (input channel, client → host)
 
 Client→host input (doc 17 §3.9 / doc 05). Pointer positions are in **normalised window space (0..1)**

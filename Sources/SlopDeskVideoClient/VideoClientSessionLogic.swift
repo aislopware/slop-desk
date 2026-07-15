@@ -88,6 +88,14 @@ public struct VideoClientStateMachine: Sendable {
     public enum Effect: Equatable, Sendable {
         /// Send this control message to the host (on the control channel).
         case sendControl(VideoControlMessage)
+        /// (Re-)send the cursor side-channel prime so the host (re-)learns this lane's cursor
+        /// reply flow. The cursor socket is host→client only after the prime — there is NO ongoing
+        /// client→host traffic on it — so unlike the media flow (re-stamped by every routed inbound
+        /// datagram) a lost stamp NEVER self-heals: a host daemon restart between the one-shot lane
+        /// prime and the (re)hello leaves video+input working while every cursor update is silently
+        /// dropped (the pointer shape freezes on the default arrow). Emitting the prime with EVERY
+        /// hello closes that hole.
+        case primeCursorFlow
         /// Session up at the negotiated capture size: bring up decoder / pacer / renderer
         /// (the actor's GUI-only step). `fullRange` is the stream's negotiated
         /// luma range off the `helloAck`; the actor sets the decoder's output pixel-format
@@ -136,11 +144,11 @@ public struct VideoClientStateMachine: Sendable {
         case sessionRejectedByHost
     }
 
-    /// `start()` was called: send the hello, move to `.connecting`.
+    /// `start()` was called: prime the cursor flow + send the hello, move to `.connecting`.
     public mutating func start() -> [Effect] {
         guard state == .idle else { return [] }
         state = .connecting
-        return [.sendControl(helloMessage)]
+        return [.primeCursorFlow, .sendControl(helloMessage)]
     }
 
     /// A control datagram arrived from the host. The client acts only on `helloAck`
@@ -242,7 +250,11 @@ public struct VideoClientStateMachine: Sendable {
     /// (a duplicate hello re-acks without restarting capture).
     public mutating func resendHello() -> [Effect] {
         guard state == .connecting else { return [] }
-        return [.sendControl(helloMessage)]
+        // The prime rides every retry, not just the first hello: a session that sat `.connecting`
+        // across a host daemon restart reconnects THROUGH this path on the restarted daemon, which
+        // never saw the lane's original one-shot prime — without a re-prime its cursor channel
+        // stays dead (pointer shape frozen on the default arrow) while video and input recover.
+        return [.primeCursorFlow, .sendControl(helloMessage)]
     }
 
     /// `stop()` was called locally: tell the host (best-effort `bye`) and tear down.

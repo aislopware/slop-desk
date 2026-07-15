@@ -9,12 +9,16 @@ final class VideoClientStateMachineTests: XCTestCase {
         VideoClientStateMachine(requestedWindowID: 42, viewport: VideoSize(width: 1280, height: 800))
     }
 
-    func testStartSendsHelloAndMovesToConnecting() {
+    func testStartSendsCursorPrimeThenHelloAndMovesToConnecting() {
         var sm = makeSM()
         let effects = sm.start()
         XCTAssertEqual(sm.state, .connecting)
-        XCTAssertEqual(effects.count, 1)
-        guard case let .sendControl(.hello(version, windowID, viewport)) = effects.first else {
+        XCTAssertEqual(effects.count, 2)
+        XCTAssertEqual(
+            effects.first, .primeCursorFlow,
+            "every hello rides with a cursor-flow prime (the cursor socket has no other client→host traffic)",
+        )
+        guard case let .sendControl(.hello(version, windowID, viewport)) = effects.last else {
             XCTFail("expected a hello effect, got \(effects)")
             return
         }
@@ -167,12 +171,18 @@ final class VideoClientStateMachineTests: XCTestCase {
 
     // MARK: Hello retry (reconnect-wedge fix)
 
-    func testResendHelloWhileConnectingReEmitsTheSameHello() {
+    func testResendHelloWhileConnectingReEmitsThePrimeAndTheSameHello() {
+        // THE STUCK-DEFAULT-CURSOR REGRESSION: a host daemon restart mid-`.connecting` loses the
+        // lane's one-shot cursor prime; the retried hello re-mints the session on the fresh daemon,
+        // but without a re-prime the host never learns the cursor reply flow — video and input work
+        // while every cursor update is silently dropped (`send` has no flow → drop, no log), so the
+        // pointer shape stays the default arrow for the pane's whole life. The retry MUST re-prime.
         var sm = makeSM()
         _ = sm.start()
         let effects = sm.resendHello()
-        XCTAssertEqual(effects.count, 1)
-        guard case let .sendControl(.hello(version, windowID, viewport)) = effects.first else {
+        XCTAssertEqual(effects.count, 2)
+        XCTAssertEqual(effects.first, .primeCursorFlow, "a retried hello re-primes the cursor flow")
+        guard case let .sendControl(.hello(version, windowID, viewport)) = effects.last else {
             XCTFail("expected a re-emitted hello, got \(effects)")
             return
         }
