@@ -266,17 +266,21 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         return 5
     }()
 
-    /// ENCODE DECOUPLING (default OFF, A/B via `SLOPDESK_ENCODE_OFFQUEUE=1`). The VT encode runs
-    /// SYNCHRONOUSLY in the SCStream sample handler, so during heavy scroll a per-frame encode that
-    /// spikes past the ~16ms budget makes the handler fall progressively behind → SCStream holds
-    /// surfaces → the measured 150–230ms capture gaps (the frame-smoothness judder). When ON, the
-    /// handler instead COPIES the frame (~1ms) and hands the encode to a dedicated serial queue, then
-    /// returns immediately → SCStream delivers at a steady 60Hz; encode runs in parallel, in PTS order.
-    /// A bounded pending count drops ordinary deltas (never forced/recovery frames) if the encoder
-    /// can't keep up — congestion-dropping at the encoder, not stalling capture (the P-chain stays
-    /// intact, so no client decode break). `SLOPDESK_ENCODE_QUEUE_MAX` overrides the bound (clamp 1…12).
+    /// ENCODE DECOUPLING (DEFAULT ON; `SLOPDESK_ENCODE_OFFQUEUE=0` reverts to inline encode). The VT
+    /// encode otherwise runs SYNCHRONOUSLY in the SCStream sample handler, so during heavy scroll a
+    /// per-frame encode that spikes past the ~16ms budget makes the handler fall progressively behind →
+    /// SCStream holds surfaces → capture gaps (the frame-smoothness judder). When ON, the handler
+    /// instead COPIES the frame (~1ms) and hands the encode to a dedicated serial queue, then returns
+    /// immediately → SCStream delivers at a steady 60Hz; encode runs in parallel, in PTS order. A
+    /// bounded pending count drops ordinary deltas (never forced/recovery frames) if the encoder can't
+    /// keep up — congestion-dropping at the encoder, not stalling capture (the P-chain stays intact, so
+    /// no client decode break). This is Parsec's discipline: capture is never blocked on encode. Default
+    /// ON is HW-validated on the 1080p60 desktop stream — the encode-overrun capture-gap band (60–100ms)
+    /// dropped ~44% (113→64 events/scroll) and the client held a steadier ~60fps present cadence
+    /// (pacer-hold windows n≈111–121 vs a ragged 46–108 inline). `SLOPDESK_ENCODE_QUEUE_MAX` overrides
+    /// the pending bound (clamp 1…12).
     static let encodeOffQueueEnabled =
-        ProcessInfo.processInfo.environment["SLOPDESK_ENCODE_OFFQUEUE"] == "1"
+        ProcessInfo.processInfo.environment["SLOPDESK_ENCODE_OFFQUEUE"] != "0"
     /// DIAGNOSTIC: force a compact recovery IDR every Nth live frame, so the loss-driven recovery-IDR
     /// storm reproduces deterministically on localhost (no real loss needed).
     /// `SLOPDESK_FORCE_COMPACT_EVERY=N`; 0/unset = off.
@@ -1922,6 +1926,13 @@ extension WindowCapturer {
 
     func drainFrameQueueForTesting() {
         frameQueue.sync {}
+    }
+
+    /// Barrier on the decoupled encode queue (``encodeOffQueueEnabled``, now default-ON): the tick
+    /// hands the frame to the encoder ASYNCHRONOUSLY, so a test asserting the emit must wait for the
+    /// serial queue to drain first. No-op when encode runs inline (queue nil).
+    func drainEncodeQueueForTesting() {
+        encodeQueue?.sync {}
     }
 }
 #endif

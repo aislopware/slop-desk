@@ -59,6 +59,7 @@ final class CaptureFailureTeardownTests: XCTestCase {
         let capturer = makeCapturer(frames: frames)
         try capturer.seedCachedPixelBufferForTesting(makePixelBuffer())
         capturer.runIDRTimerTickForTesting()
+        capturer.drainEncodeQueueForTesting() // emit is async through the decoupled encode queue (default-ON)
         XCTAssertEqual(frames.value, 1, "seeded static-IDR tick must hand the cached frame to the encoder")
     }
 
@@ -70,6 +71,7 @@ final class CaptureFailureTeardownTests: XCTestCase {
         let capturer = makeCapturer(frames: frames)
         try capturer.seedCachedPixelBufferForTesting(makePixelBuffer())
         capturer.runIDRTimerTickForTesting()
+        capturer.drainEncodeQueueForTesting() // emit is async through the decoupled encode queue (default-ON)
         XCTAssertEqual(frames.value, 1)
 
         capturer.handleCaptureFailure()
@@ -77,6 +79,7 @@ final class CaptureFailureTeardownTests: XCTestCase {
 
         capturer.requestKeyframe() // a frozen client's recovery request must NOT resurrect the stale frame
         capturer.runIDRTimerTickForTesting()
+        capturer.drainEncodeQueueForTesting() // drain so a would-be async emit can't hide behind the sync check
         XCTAssertEqual(
             frames.value, 1,
             "post-failure tick must be a no-op — the stale cached frame may never be re-encoded",
@@ -124,6 +127,7 @@ final class CaptureFailureTeardownTests: XCTestCase {
 
         capturer.requestKeyframe()
         capturer.runIDRTimerTickForTesting()
+        capturer.drainEncodeQueueForTesting() // a real emit would be async — drain so ==0 can't pass vacuously
         XCTAssertEqual(frames.value, 0, "no synthetic frame may be emitted after failure + stop")
     }
 
@@ -144,6 +148,7 @@ final class CaptureFailureTeardownTests: XCTestCase {
         XCTAssertEqual(callbacks.value, 0, "a failure trailing a deliberate stop() must not fire the callback")
         capturer.requestKeyframe()
         capturer.runIDRTimerTickForTesting()
+        capturer.drainEncodeQueueForTesting() // a real emit would be async — drain so ==0 can't pass vacuously
         XCTAssertEqual(frames.value, 0, "stop() must have cleared the cache — no synthetic frame")
     }
 
