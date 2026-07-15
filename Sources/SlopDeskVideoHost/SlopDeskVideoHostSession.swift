@@ -483,8 +483,12 @@ public actor SlopDeskVideoHostSession {
     /// Live-encoder target bitrate (bits/sec). Higher = crisper text (HEVC softens glyph edges
     /// at low bitrate); raise it over LAN/NetBird where bandwidth is ample.
     private let bitrate: Int
-    /// Capture + encoder frame-rate cap (fps). Default 60 for Parsec-class scroll/motion smoothness
-    /// (30 was visibly steppier); threaded into every `WindowCapturer`/`VideoEncoder` this session builds.
+    /// Capture + encoder frame-rate cap (fps), set by the CALLER per pane kind — threaded into every
+    /// `WindowCapturer`/`VideoEncoder` this session builds. Window/terminal (coding) panes run the
+    /// `--fps` default (30, latency-first + WAN-frugal); the FULL-DESKTOP pane runs `resolveDisplayFps`
+    /// (60 default) for Parsec-class scroll/motion smoothness (30 was visibly steppier on a whole
+    /// desktop). `LiveBitratePolicy` provisions the bitrate ceiling from area × THIS fps, so 60 also
+    /// lifts the ceiling ~2× — the two together are the felt smoothness delta vs Parsec.
     private let fps: Int
     private let scheduler = VideoSendScheduler()
     private let recoveryRouter = RecoveryDatagramRouter()
@@ -2476,7 +2480,16 @@ public actor SlopDeskVideoHostSession {
             }
             // Keyframe DUPLICATE-SEND, lane edition: the second copy is just another in-order job
             // with a leading time-separation gap. Throttle state stays actor-owned.
-            if Self.kfDup, keyframe {
+            // LOSS-GATED like `smallDup`: the dup guards a keyframe lost inside the recovery-IDR
+            // cooldown, which only matters when the link is actually dropping packets. At the CLEAN
+            // FEC tier (loss ≈ 0 — the LAN/mesh case) the second copy is pure re-send Parsec never
+            // pays (it dups nothing, ever), and it occupies the ordered lane delaying the next delta.
+            // So dup iff loss is present; keep dupping unconditionally when adaptive-m is OFF (no tier
+            // signal to trust). The moment loss appears the tier leaves `parityTierClean` and the dup
+            // re-engages, so recovery keyframes — which happen DURING loss — stay protected.
+            if Self.kfDup, keyframe,
+               !Self.adaptiveMEnabled || fecTierState.tier != AdaptiveFECPolicy.parityTierClean
+            {
                 let now = ProcessInfo.processInfo.systemUptime
                 if now - lastKeyframeDupTime >= Self.kfDupMinInterval {
                     lastKeyframeDupTime = now
@@ -2512,7 +2525,11 @@ public actor SlopDeskVideoHostSession {
         // frameID/fragIndex (overwrite-by-identical-bytes; a copy after completion is .stale) → decoded
         // exactly once. NOT a reorder → no white-screen risk. Keyframes ONLY; throttled to ≤1 per
         // kfDupMinInterval so a storm isn't byte-amplified (`SLOPDESK_KF_DUP=0` disables).
-        if Self.kfDup, keyframe, stateMachine.mediaFlowing {
+        // LOSS-GATED (mirror of the lane-path gate above): dup only when loss is present; at the clean
+        // FEC tier the double-send is pure overhead Parsec never pays. Unconditional when adaptive-m is OFF.
+        if Self.kfDup, keyframe, stateMachine.mediaFlowing,
+           !Self.adaptiveMEnabled || fecTierState.tier != AdaptiveFECPolicy.parityTierClean
+        {
             let now = ProcessInfo.processInfo.systemUptime
             if now - lastKeyframeDupTime >= Self.kfDupMinInterval {
                 lastKeyframeDupTime = now

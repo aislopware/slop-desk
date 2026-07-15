@@ -272,6 +272,23 @@ func resolveCaptureScaleOverride(vdScale: Double) -> Double {
     return min(vdScale, v)
 }
 
+/// Frame-rate for FULL-DESKTOP (`.desktop`) sessions. The `--fps` default (30) is tuned for the
+/// coding-WINDOW pane — latency-first + WAN-frugal, the `fps-cap-not-game-stream` directive, which
+/// predates the full-desktop pivot and scopes to coding windows. A whole-desktop stream is the
+/// regime the user benchmarks against Parsec, which runs 44–60fps content-adaptive; 30fps reads as
+/// visibly steppier on full-screen scroll/drag/video. Default 60 (matches a 60Hz host and Parsec's
+/// observed cap; the M1 Max encodes 1080p in ~9ms so 60fps clears the 16.7ms budget with margin,
+/// and `LiveBitratePolicy` auto-provisions ~2× the bitrate ceiling at the higher rate). An explicit
+/// higher `--fps` still wins (a user asking for 120 on a ProMotion host gets it); `SLOPDESK_DISPLAY_FPS`
+/// overrides outright (clamped 15…120), e.g. `=30` to opt a bandwidth-constrained desktop back down.
+@Sendable
+func resolveDisplayFps(windowFps: Int) -> Int {
+    if let s = EnvConfig.string("SLOPDESK_DISPLAY_FPS"), let v = Int(s) {
+        return min(120, max(15, v))
+    }
+    return max(windowFps, 60)
+}
+
 // MARK: - Next-launch parked-window hygiene
 
 /// The global bounds of every online display — the ``StrandedWindowRestorePolicy`` input. Empty on
@@ -836,7 +853,7 @@ func mintDisplaySession(
         throw VideoHostdError.muxNoWindow(requestedWindowID: requestedDisplayID)
     }
     log(
-        "mux: minted FULL-DESKTOP session chan=\(channelID) display-id=\(displayID) scale=\(scale)",
+        "mux: minted FULL-DESKTOP session chan=\(channelID) display-id=\(displayID) scale=\(scale) fps=\(fps)",
     )
     return session
 }
@@ -930,7 +947,7 @@ Task {
                 return try await mintDisplaySession(
                     channelID: channelID, requestedDisplayID: requestedDisplayID,
                     mux: mux, sinkTable: sinkTable, retireBox: retireBox,
-                    bitrate: bitrate, fps: args.fps,
+                    bitrate: bitrate, fps: resolveDisplayFps(windowFps: args.fps),
                 )
             }
             guard case let .hello(_, requestedWindowID, _) = hello else {
