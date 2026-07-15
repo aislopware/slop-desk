@@ -203,6 +203,14 @@ public struct LiveCongestionController: Sendable, Equatable {
     public static let kneeTTLTicks: Int = envInt("SLOPDESK_ABR_KNEE_TTL", 1200, min: 1, max: 1_000_000)
     /// Floor as a fraction of the ceiling (also clamped to ``LiveBitratePolicy/minimumBitrate``). `SLOPDESK_ABR_MINFRAC`.
     public static let minFrac: Double = envDouble("SLOPDESK_ABR_MINFRAC", 0.25, min: 0.01, max: 1.0)
+    /// Open-loop START fraction of `ceiling` for ``current`` (`SLOPDESK_ABR_SEED_FRAC`, DEFAULT 1.0 =
+    /// start AT the ceiling — today's behaviour, byte-identical). `< 1` seeds BELOW the ceiling so the
+    /// first heavy burst can't self-induce bufferbloat before the loop's first report/streak reacts
+    /// (Parsec slow-starts ~2.6 Mbps and its window — not its target — bounds in-flight). The cost is a
+    /// brief additive-increase ramp (softer image) at connect/resize, so keep 1.0 on a clean fast link
+    /// where the resolution-derived ceiling is already link-plausible; lower it for a lossy/bufferbloaty
+    /// WAN. Clamped `[minFrac, 1]`.
+    public static let seedFraction: Double = envDouble("SLOPDESK_ABR_SEED_FRAC", 1.0, min: minFrac, max: 1.0)
     /// Actuation churn gate (fraction of ceiling): the host skips a re-actuation smaller than this. `SLOPDESK_ABR_MATERIAL`.
     public static let materialFraction: Double = envDouble("SLOPDESK_ABR_MATERIAL", 0.05, min: 0.0, max: 1.0)
     /// Actuation churn gate (absolute bps floor): the host skips a re-actuation smaller than this. `SLOPDESK_ABR_MATERIAL_FLOOR`.
@@ -276,20 +284,29 @@ public struct LiveCongestionController: Sendable, Equatable {
     /// Primary initialiser. `floor` is clamped to `[minimumBitrate, ceiling]` so the controller can
     /// never drive the rate to 0 nor below a usable minimum. `current` starts AT `ceiling`.
     /// `gradientCutEnabled` defaults to the env gate — production passes nothing.
-    public init(ceiling: Int, floor: Int, gradientCutEnabled: Bool = Self.gradientCutEnabledDefault) {
+    public init(
+        ceiling: Int,
+        floor: Int,
+        seedFraction: Double = 1.0,
+        gradientCutEnabled: Bool = Self.gradientCutEnabledDefault,
+    ) {
         let c = max(1, ceiling)
         self.ceiling = c
         self.floor = max(LiveBitratePolicy.minimumBitrate, min(floor, c))
-        current = c
+        // Seed `current` at `ceiling × seedFraction` (default 1.0 ⇒ AT ceiling, unchanged), never below
+        // the floor. Additive-increase then probes back up toward the ceiling on clean ticks.
+        let frac = min(1.0, max(0.0, seedFraction))
+        current = max(self.floor, Int((Double(c) * frac).rounded()))
         self.gradientCutEnabled = gradientCutEnabled
     }
 
     /// Convenience: derive the floor from `ceiling × minFrac` (the production wiring), keeping the
-    /// floor-derivation policy in one place.
+    /// floor-derivation policy in one place. Seeds `current` from the ``seedFraction`` env.
     public init(ceiling: Int, gradientCutEnabled: Bool = Self.gradientCutEnabledDefault) {
         self.init(
             ceiling: ceiling,
             floor: Int(Double(max(1, ceiling)) * Self.minFrac),
+            seedFraction: Self.seedFraction,
             gradientCutEnabled: gradientCutEnabled,
         )
     }

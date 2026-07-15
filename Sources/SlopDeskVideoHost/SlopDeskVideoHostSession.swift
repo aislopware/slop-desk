@@ -237,6 +237,19 @@ public actor SlopDeskVideoHostSession {
     private static let kfDup = ProcessInfo.processInfo.environment["SLOPDESK_KF_DUP"] != "0"
     /// Throttle so a recovery-IDR burst is not byte-amplified: duplicate at most one keyframe per interval.
     private static let kfDupMinInterval: TimeInterval = 0.25
+    /// kfDup engages only when the loss EWMA (`networkEstimate.lossRate`) is at/above this. On a clean
+    /// link (LAN/mesh, loss ≈ 0) the keyframe double-send is pure overhead Parsec never pays (it dups
+    /// nothing, ever); it re-arms the instant real loss appears — and recovery keyframes happen DURING
+    /// loss, so they stay protected. 0.5% mirrors the adaptive-FEC ladder's lowest escalation boundary.
+    /// A UNIVERSAL signal: works whether the adaptive-FEC/-m gates are on or off (the adaptive-m tier is
+    /// default-OFF, so a tier-only gate would leave the default config always-dupping). `SLOPDESK_KF_DUP_LOSS`.
+    private static let kfDupLossThreshold: Double = {
+        if let s = ProcessInfo.processInfo.environment["SLOPDESK_KF_DUP_LOSS"], let v = Double(s), v >= 0 {
+            return v
+        }
+        return 0.005
+    }()
+
     /// SMALL-FRAME DUPLICATE-SEND. DEFAULT OFF (`SLOPDESK_SMALL_DUP=1`).
     ///
     /// A CHANGED small DELTA frame (a keystroke / caret — typically 1 fragment) can be wiped WHOLE
@@ -2480,16 +2493,13 @@ public actor SlopDeskVideoHostSession {
             }
             // Keyframe DUPLICATE-SEND, lane edition: the second copy is just another in-order job
             // with a leading time-separation gap. Throttle state stays actor-owned.
-            // LOSS-GATED like `smallDup`: the dup guards a keyframe lost inside the recovery-IDR
-            // cooldown, which only matters when the link is actually dropping packets. At the CLEAN
-            // FEC tier (loss ≈ 0 — the LAN/mesh case) the second copy is pure re-send Parsec never
-            // pays (it dups nothing, ever), and it occupies the ordered lane delaying the next delta.
-            // So dup iff loss is present; keep dupping unconditionally when adaptive-m is OFF (no tier
-            // signal to trust). The moment loss appears the tier leaves `parityTierClean` and the dup
-            // re-engages, so recovery keyframes — which happen DURING loss — stay protected.
-            if Self.kfDup, keyframe,
-               !Self.adaptiveMEnabled || fecTierState.tier != AdaptiveFECPolicy.parityTierClean
-            {
+            // LOSS-GATED on the loss EWMA (see `kfDupLossThreshold`): the dup guards a keyframe lost
+            // inside the recovery-IDR cooldown, which only matters when the link is actually dropping
+            // packets. On a clean link (loss ≈ 0 — the LAN/mesh case) the second copy is pure re-send
+            // Parsec never pays, and it occupies the ordered lane delaying the next delta. So dup iff
+            // loss is present; it re-engages the instant loss appears, so recovery keyframes — which
+            // happen DURING loss — stay protected.
+            if Self.kfDup, keyframe, networkEstimate.lossRate >= Self.kfDupLossThreshold {
                 let now = ProcessInfo.processInfo.systemUptime
                 if now - lastKeyframeDupTime >= Self.kfDupMinInterval {
                     lastKeyframeDupTime = now
@@ -2525,10 +2535,10 @@ public actor SlopDeskVideoHostSession {
         // frameID/fragIndex (overwrite-by-identical-bytes; a copy after completion is .stale) → decoded
         // exactly once. NOT a reorder → no white-screen risk. Keyframes ONLY; throttled to ≤1 per
         // kfDupMinInterval so a storm isn't byte-amplified (`SLOPDESK_KF_DUP=0` disables).
-        // LOSS-GATED (mirror of the lane-path gate above): dup only when loss is present; at the clean
-        // FEC tier the double-send is pure overhead Parsec never pays. Unconditional when adaptive-m is OFF.
+        // LOSS-GATED on the loss EWMA (mirror of the lane-path gate above): dup only when loss is
+        // present; on a clean link the double-send is pure overhead Parsec never pays.
         if Self.kfDup, keyframe, stateMachine.mediaFlowing,
-           !Self.adaptiveMEnabled || fecTierState.tier != AdaptiveFECPolicy.parityTierClean
+           networkEstimate.lossRate >= Self.kfDupLossThreshold
         {
             let now = ProcessInfo.processInfo.systemUptime
             if now - lastKeyframeDupTime >= Self.kfDupMinInterval {
