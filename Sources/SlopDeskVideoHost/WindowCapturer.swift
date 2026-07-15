@@ -682,6 +682,12 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// feedback flows at all — the gate NEVER suppresses healing (fail-safe: heal when loss is unmeasured).
     /// Only consulted when ``selfHealLossGate`` is on.
     private var selfHealLossRate = Double.infinity
+    /// CLIENT-SILENCE PAUSE (``setClientSilencePaused(_:)``): when the client's feedback has gone
+    /// silent past ``SlopDeskVideoHostSession/clientSilencePauseSeconds`` the session sets this true so
+    /// ordinary frames are SKIPPED (no encode, no send) — the host stops blasting to a peer that is not
+    /// listening. Under `keyframeLock` (set on the 1 s heartbeat / cleared on the next inbound, read
+    /// once per frame — same discipline as the self-heal state). Default false ⇒ never pauses.
+    private var clientSilencePaused = false
     /// FPS-GOVERNOR: the governed encode fps the session actor latches via ``setGovernedFPS(_:)``.
     /// Equals `fps` (ungoverned, gate inert) until the governor steps. Under `keyframeLock` (set rarely
     /// off-queue, read once per frame — the `setSelfHealEligible` discipline). SCStream delivery stays at
@@ -784,6 +790,24 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         keyframeLock.lock()
         pendingForcedKeyframe = true
         keyframeLock.unlock()
+    }
+
+    /// Sets the CLIENT-SILENCE pause state (``clientSilencePaused``). Thread-safe; the session calls
+    /// this from its 1 s heartbeat (true after the silence threshold) and from the inbound path (false
+    /// on the next client datagram — instant resume). frameQueue reads it via ``isClientSilencePaused()``
+    /// once per frame.
+    public func setClientSilencePaused(_ paused: Bool) {
+        keyframeLock.lock()
+        clientSilencePaused = paused
+        keyframeLock.unlock()
+    }
+
+    /// PEEK the CLIENT-SILENCE pause flag (frameQueue read, `keyframeLock`-guarded). See
+    /// ``setClientSilencePaused(_:)``.
+    private func isClientSilencePaused() -> Bool {
+        keyframeLock.lock()
+        defer { keyframeLock.unlock() }
+        return clientSilencePaused
     }
 
     /// Requests a cheap LTR refresh on the next captured frame (host `.refreshLTR` recovery
@@ -1791,6 +1815,19 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         //    only ever fires when its armed frame is still the NEWEST content.
         pendingGatedFlush?.cancel()
         pendingGatedFlush = nil
+        // CLIENT-SILENCE PAUSE: the client's feedback has gone silent past the threshold (walk-away /
+        // dead uplink), so skip encode+send for this ordinary frame — the host must not blast ~ABR to a
+        // peer that is not listening. Skipped like the static-suppress / cadence gates: the cache /
+        // decider / PTS above were updated (a crisp refresh on resume has the latest content) but
+        // `encodeBelowGate` is NOT called, so the encoder reference chain does NOT advance — when the
+        // client returns the next delta decodes against its last-received frame with NO keyframe. A
+        // pending forced-keyframe / LTR-refresh latch is EXEMPT (honored for a clean resume), and the
+        // pending-flush was just cancelled above so nothing encodes during the pause. Only ever true
+        // after the stream is established (`hasEmittedFirstFrame`) and the feature is enabled
+        // (`SLOPDESK_VIDEO_PAUSE_SILENT_SEC`); the session clears it on the next inbound datagram.
+        if isClientSilencePaused(), hasEmittedFirstFrame, !peekPendingRecoveryLatches() {
+            return
+        }
         let governed = currentGovernedFPS()
         if governed < fps {
             let mustEncode = !hasEmittedFirstFrame || peekPendingRecoveryLatches()

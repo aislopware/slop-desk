@@ -447,6 +447,18 @@ public actor SlopDeskVideoHostSession {
     /// (zero cross-machine skew). A reconnect that re-creates the actor resets the anchor; a stale
     /// stamp echoed from a prior session is rejected by `NetworkEstimate.computeRTTMillis` (elaps<0 / >60s).
     private let sessionStartUptime = ProcessInfo.processInfo.systemUptime
+    /// Monotonic time (systemUptime) of the most recent inbound client datagram of ANY kind — the
+    /// CLIENT-SILENCE video-pause signal (see ``clientSilencePauseSeconds``). Seeded to session start
+    /// (and re-seeded on each `startCapture`) so a fresh/reconnected stream is never instantly
+    /// "silent". Actor-isolated (stamped in ``receiveBatch``, read on the 1 s heartbeat).
+    private var lastClientInboundUptime = ProcessInfo.processInfo.systemUptime
+    /// Sticky-true once the client has sent feedback (a `networkStats` report) — proves a modern
+    /// feedback-speaking client, so the pause (like the idle-reaper's never-reap-without-keepalive
+    /// rule) never fires on a legacy client that never reports. Reset per `startCapture`.
+    private var sawClientFeedback = false
+    /// The client-silence pause state currently pushed to the capturer — so the 1 s heartbeat only
+    /// re-pushes on a TRANSITION, not every tick.
+    private var videoPausedForSilence = false
     /// Host-side network estimate folded from the client's periodic NetworkStats reports. A pure value
     /// type — no reference capture, so no retain-cycle risk.
     private var networkEstimate = NetworkEstimate()
@@ -859,6 +871,16 @@ public actor SlopDeskVideoHostSession {
     private var lastInputRxMs: UInt32 = 0
 
     private func receiveBatch(_ batch: [(VideoChannel, Data)]) async {
+        // CLIENT-SILENCE PAUSE liveness: any inbound client datagram refreshes the silence stamp and,
+        // if video was paused for silence, RESUMES it instantly (before decode — even an undecodable
+        // datagram proves the peer is back). When the feature is off `videoPausedForSilence` is never
+        // set, so this is a lone dead-store assignment (no capturer call, no observable effect).
+        lastClientInboundUptime = ProcessInfo.processInfo.systemUptime
+        if videoPausedForSilence {
+            videoPausedForSilence = false
+            capturer?.setClientSilencePaused(false)
+            dbg("client-silence: video RESUMED (inbound datagram)")
+        }
         var inputRun: [InputEvent] = []
         var sawKeyOrButtonDown = false
         for (channel, data) in batch {
@@ -1204,6 +1226,7 @@ public actor SlopDeskVideoHostSession {
             dbg("recovery requestCursorShape \(shapeID) — re-shipping cursor shape")
             cursorSampler?.reshipShape(shapeID)
         case let .networkStats(report):
+            sawClientFeedback = true // proven modern feedback client ⇒ eligible for the silence pause
             // Network-feedback telemetry: fold a clock-skew-free estimate (host-clock RTT + loss +
             // jitter trend) — the ABR / FEC / fps controllers below all tick off it.
             // `SLOPDESK_NETSTATS=0` ⇒ the client reports latestHostSendTs=0 ⇒ computeRTTMillis returns
@@ -1500,6 +1523,52 @@ public actor SlopDeskVideoHostSession {
     private func sendHeartbeatIfStreaming() {
         guard stateMachine.mediaFlowing else { return }
         transport.send(scheduler.scheduleControl(.keepalive).bytes, on: .control)
+        updateClientSilencePause()
+    }
+
+    /// CLIENT-SILENCE video-pause threshold (seconds). When the client's feedback (netstats /
+    /// keepalive / input) has been silent this long, the host PAUSES video encode+send — it must not
+    /// keep blasting ~ABR to a peer that is not listening (lid-closed / walk-away / dead uplink). This
+    /// is DISTINCT from the 30 s idle-reaper (``KeepaliveTiming/idleTimeout``), which TEARS DOWN the
+    /// session: the pause keeps the session `.streaming`, advances NO encoder reference, and resumes
+    /// instantly on the next inbound — so detach-tolerance is unchanged and the reaper still reclaims a
+    /// truly-gone client. `SLOPDESK_VIDEO_PAUSE_SILENT_SEC`; unset/≤0 ⇒ 0 ⇒ **DISABLED** (byte-
+    /// identical — the capturer is never told to pause). When set it is clamped to
+    /// `[keepaliveInterval, idleTimeout)` = [5, 30): shorter than one keepalive interval would trip on
+    /// a normal keepalive-only gap; ≥ the reaper is pointless (it already tore the session down).
+    static let clientSilencePauseSeconds: Double = {
+        guard let s = ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_PAUSE_SILENT_SEC"],
+              let v = Double(s), v > 0 else { return 0 } // unset/≤0 ⇒ OFF
+        return min(KeepaliveTiming.idleTimeout - 0.001, max(KeepaliveTiming.keepaliveInterval, v))
+    }()
+
+    /// PURE: whether video should PAUSE for client silence. Disabled (`thresholdSeconds <= 0`) or an
+    /// unproven client (never sent feedback) ⇒ never pause — mirrors the idle-reaper's
+    /// never-reap-without-keepalive safety. Otherwise pause once the last inbound is `thresholdSeconds`
+    /// old. Monotonic-clock `now`/`lastInbound`.
+    static func shouldPauseForClientSilence(
+        now: Double, lastInbound: Double, sawFeedback: Bool, thresholdSeconds: Double,
+    ) -> Bool {
+        guard thresholdSeconds > 0, sawFeedback else { return false }
+        return now - lastInbound >= thresholdSeconds
+    }
+
+    /// 1 s-heartbeat client-silence check: if the client has been silent past
+    /// ``clientSilencePauseSeconds``, tell the capturer to pause video encode+send (logged on the
+    /// transition). Resume is handled instantly in ``receiveBatch`` on the next inbound; this only
+    /// ARMS the pause. No-op unless the feature is enabled (threshold 0 ⇒ `shouldPause` always false ⇒
+    /// `videoPausedForSilence` never leaves `false`). Actor-isolated.
+    private func updateClientSilencePause() {
+        let now = ProcessInfo.processInfo.systemUptime
+        let shouldPause = Self.shouldPauseForClientSilence(
+            now: now, lastInbound: lastClientInboundUptime, sawFeedback: sawClientFeedback,
+            thresholdSeconds: Self.clientSilencePauseSeconds,
+        )
+        guard shouldPause != videoPausedForSilence else { return }
+        videoPausedForSilence = shouldPause
+        capturer?.setClientSilencePaused(shouldPause)
+        let silentFor = String(format: "%.1f", now - lastClientInboundUptime)
+        dbg("client-silence: video \(shouldPause ? "PAUSED" : "RESUMED") (silent \(silentFor)s)")
     }
 
     /// Sends the `streamCadence(fps:)` control message, duplicated once ~25 ms later with a
@@ -1607,6 +1676,12 @@ public actor SlopDeskVideoHostSession {
             // HOST-WINDOW RESIZE: announce the window's display max so the client's resize popover caps
             // its fields. Additive (old clients drop the unknown type); sent once per capture bring-up.
             sendDisplayMax()
+            // CLIENT-SILENCE PAUSE: re-seed the silence state for this stream so a reused/reconnected
+            // session never inherits a stale "silent" stamp (which would wrongly pause the fresh
+            // capturer before its first inbound). The new capturer starts un-paused by construction.
+            lastClientInboundUptime = ProcessInfo.processInfo.systemUptime
+            sawClientFeedback = false
+            videoPausedForSilence = false
             // STALL-SCRIM HEARTBEAT: start the 1 s host→client liveness keepalive for this stream.
             startHeartbeat()
         case .stopCapture:
