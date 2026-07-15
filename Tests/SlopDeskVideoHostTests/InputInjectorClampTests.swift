@@ -48,5 +48,20 @@ final class InputInjectorClampTests: XCTestCase {
         XCTAssertEqual(InputInjector.scaledScrollDelta(.nan, gain: 2), 0)
         XCTAssertEqual(InputInjector.scaledScrollDelta(.infinity, gain: 0.1), Int32.max)
     }
+
+    /// The `SLOPDESK_TABLET_MOUSE` hover path sets `kCGTabletEventPointX/Y` from the injected point via
+    /// `Int64(clampToInt32(pt))`. Without the clamp a bare `Int64(pt.x.rounded())` TRAPS on a finite-but-
+    /// huge coordinate (a normalized 1e18 × window ≈ 1e21 > Int64.max), crashing the host on an untrusted
+    /// datagram — the regression this pins. The tablet-point conversion must saturate, never trap.
+    func testTabletPointCoordNeverTraps() {
+        // The exact crash-trigger magnitude class from the review (pt ≈ 1e21) saturates to Int32.max
+        // when widened to the Int64 field — no trap.
+        XCTAssertEqual(Int64(InputInjector.clampToInt32(1e21)), Int64(Int32.max))
+        XCTAssertEqual(Int64(InputInjector.clampToInt32(-1e21)), Int64(Int32.min))
+        XCTAssertEqual(Int64(InputInjector.clampToInt32(.infinity)), Int64(Int32.max))
+        XCTAssertEqual(Int64(InputInjector.clampToInt32(.nan)), 0)
+        // A real in-display coordinate passes through unclamped.
+        XCTAssertEqual(Int64(InputInjector.clampToInt32(1287.6)), 1288)
+    }
 }
 #endif

@@ -371,8 +371,13 @@ public final class InputInjector: @unchecked Sendable {
                 mouseButton: .left,
             ) {
                 event.setIntegerValueField(.mouseEventSubtype, value: 1) // kCGEventMouseSubtypeTabletPoint
-                event.setIntegerValueField(.tabletEventPointX, value: Int64(pt.x.rounded()))
-                event.setIntegerValueField(.tabletEventPointY, value: Int64(pt.y.rounded()))
+                // Reuse the never-traps Int32 backstop: a malicious/corrupt mouseMove can carry a finite
+                // huge coordinate (`readFiniteFloat64` rejects only NaN/Inf, and windowPoint doesn't
+                // clamp), so `pt` can reach ~1e21 — a bare `Int64(_:)` would TRAP and crash the host on an
+                // untrusted datagram. Int32 range (±2.1e9) dwarfs any real display; the CGEvent's
+                // `mouseCursorPosition` does the actual positioning.
+                event.setIntegerValueField(.tabletEventPointX, value: Int64(Self.clampToInt32(pt.x)))
+                event.setIntegerValueField(.tabletEventPointY, value: Int64(Self.clampToInt32(pt.y)))
                 stampAndPost(event, tag: tag)
             }
             return

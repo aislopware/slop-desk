@@ -250,6 +250,25 @@ public actor SlopDeskVideoHostSession {
         return 0.005
     }()
 
+    /// How long ``gateRecoveryIDR`` keeps kfDup armed after a recovery-keyframe request (fast-attack
+    /// window, uptime seconds). Comfortably covers the recovery IDR's next-capture encode + paced send
+    /// even while `lossRate` is still ~0; re-armed on each request through a sustained burst.
+    private static let kfDupFastAttackWindow: TimeInterval = 0.5
+
+    /// PURE kfDup decision (unit-tested): duplicate a keyframe iff loss is present (the smoothed EWMA is
+    /// at/above threshold — steady loss) OR the fast-attack window is still open (a recovery IDR was just
+    /// requested — closes the EWMA's leading-edge lag so the FIRST re-anchor IDR of a burst is protected
+    /// even before the burst's `unrecovered` count folds into `lossRate`). On a clean link neither holds,
+    /// so the heartbeat crisp IDR is NOT dupped — the bandwidth win Parsec has.
+    static func shouldDupKeyframe(
+        lossRate: Double,
+        nowUptime: TimeInterval,
+        fastAttackUntil: TimeInterval,
+        threshold: Double,
+    ) -> Bool {
+        lossRate >= threshold || nowUptime < fastAttackUntil
+    }
+
     /// SMALL-FRAME DUPLICATE-SEND. DEFAULT OFF (`SLOPDESK_SMALL_DUP=1`).
     ///
     /// A CHANGED small DELTA frame (a keystroke / caret — typically 1 fragment) can be wiped WHOLE
@@ -387,6 +406,13 @@ public actor SlopDeskVideoHostSession {
     private var encodedFrameCount = 0
     /// Uptime seconds of the last keyframe whose datagrams were duplicate-sent (the kfDup throttle).
     private var lastKeyframeDupTime: TimeInterval = 0
+    /// kfDup FAST-ATTACK deadline (uptime seconds; 0 = disarmed). The loss-EWMA gate lags — it only moves
+    /// when a 50ms NetworkStats report folds, so at a clean→burst edge the client's recovery-IDR request
+    /// can reach the send path BEFORE the burst's `unrecovered` count is folded, leaving that first
+    /// re-anchor IDR un-dupped (the load-bearing case kfDup exists for). ``gateRecoveryIDR`` arms this the
+    /// instant a recovery keyframe is requested — independent of report timing — so the recovery IDR is
+    /// dupped even while `lossRate` is still ~0. Mirrors the FEC ladder's raw-`unrecovered` fast-attack.
+    private var kfDupFastAttackUntil: TimeInterval = 0
     /// Monotonic anchor for the per-fragment `hostSendTsMillis` stamp + the RTT fold (the network-
     /// feedback channel). Captured at init BEFORE any frame, so every stamp and `hostRelativeMillis()`
     /// share ONE epoch — RTT is `(hostNow − stamp) − clientHold`, all in this single clock domain
@@ -1356,6 +1382,7 @@ public actor SlopDeskVideoHostSession {
             return
         }
         guard Self.recoveryIDRV2 else {
+            armKfDupFastAttack()
             capturer.requestKeyframe()
             return
         }
@@ -1365,10 +1392,19 @@ public actor SlopDeskVideoHostSession {
             smoothedRTTSeconds: networkEstimate.smoothedRTTMillis / 1000.0,
         )
         if case .grant = verdict {
+            armKfDupFastAttack()
             capturer.requestKeyframe()
         } else {
             dbg("recovery IDR \(verdict) (lastDecoded=\(lastDecoded.map(String.init) ?? "none"))")
         }
+    }
+
+    /// Arm the kfDup fast-attack window (see ``kfDupFastAttackUntil``) — called wherever a RECOVERY
+    /// keyframe is actually requested, so the resulting re-anchor IDR is dupped regardless of when the
+    /// loss EWMA folds. On a clean link no recovery is requested, so this never arms and the heartbeat
+    /// crisp IDR stays un-dupped (the bandwidth win).
+    private func armKfDupFastAttack() {
+        kfDupFastAttackUntil = ProcessInfo.processInfo.systemUptime + Self.kfDupFastAttackWindow
     }
 
     /// (Re)seed the congestion controller to a freshly-built encoder's resolution-aware ceiling
@@ -2499,7 +2535,12 @@ public actor SlopDeskVideoHostSession {
             // Parsec never pays, and it occupies the ordered lane delaying the next delta. So dup iff
             // loss is present; it re-engages the instant loss appears, so recovery keyframes — which
             // happen DURING loss — stay protected.
-            if Self.kfDup, keyframe, networkEstimate.lossRate >= Self.kfDupLossThreshold {
+            if Self.kfDup, keyframe, Self.shouldDupKeyframe(
+                lossRate: networkEstimate.lossRate,
+                nowUptime: ProcessInfo.processInfo.systemUptime,
+                fastAttackUntil: kfDupFastAttackUntil,
+                threshold: Self.kfDupLossThreshold,
+            ) {
                 let now = ProcessInfo.processInfo.systemUptime
                 if now - lastKeyframeDupTime >= Self.kfDupMinInterval {
                     lastKeyframeDupTime = now
@@ -2537,9 +2578,12 @@ public actor SlopDeskVideoHostSession {
         // kfDupMinInterval so a storm isn't byte-amplified (`SLOPDESK_KF_DUP=0` disables).
         // LOSS-GATED on the loss EWMA (mirror of the lane-path gate above): dup only when loss is
         // present; on a clean link the double-send is pure overhead Parsec never pays.
-        if Self.kfDup, keyframe, stateMachine.mediaFlowing,
-           networkEstimate.lossRate >= Self.kfDupLossThreshold
-        {
+        if Self.kfDup, keyframe, stateMachine.mediaFlowing, Self.shouldDupKeyframe(
+            lossRate: networkEstimate.lossRate,
+            nowUptime: ProcessInfo.processInfo.systemUptime,
+            fastAttackUntil: kfDupFastAttackUntil,
+            threshold: Self.kfDupLossThreshold,
+        ) {
             let now = ProcessInfo.processInfo.systemUptime
             if now - lastKeyframeDupTime >= Self.kfDupMinInterval {
                 lastKeyframeDupTime = now
