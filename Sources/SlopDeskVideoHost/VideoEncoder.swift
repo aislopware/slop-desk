@@ -57,6 +57,29 @@ public final class VideoEncoder: @unchecked Sendable {
     /// `SLOPDESK_SPEED_OVER_QUALITY=1` restores the speed-first hint for A/B or hardware where
     /// quality-first misses the 16.7 ms budget.
     static let speedOverQuality = ProcessInfo.processInfo.environment["SLOPDESK_SPEED_OVER_QUALITY"] == "1"
+    /// Parsec-parity MINIMUM PIPELINE LATENCY (`kVTCompressionPropertyKey_MaxFrameDelayCount`).
+    /// Cloned 1:1 from the parsecd RE: the session-setup fn PROBES 0,1,2,3,4,5,6 and pins the SMALLEST
+    /// value the encoder accepts (first `noErr` wins) — the minimum number of frames it may hold in
+    /// flight. VT's own default is `kVTUnlimitedFrameDelayCount` (-1), so an unset key lets the HW
+    /// encoder buffer frames for rate-control lookahead, adding glass-to-glass latency SlopDesk never
+    /// paid intentionally. Default = the probe `[0,1,2,3,4,5,6]`; `SLOPDESK_MAX_FRAME_DELAY=off` (or
+    /// `-1`) restores the legacy unset key; a numeric `0…6` pins one value for A/B.
+    static let maxFrameDelayCandidates: [Int] =
+        frameDelayCandidates(ProcessInfo.processInfo.environment["SLOPDESK_MAX_FRAME_DELAY"])
+
+    /// PURE: resolve the ``maxFrameDelayCandidates`` probe sequence from the env string. `nil` ⇒
+    /// `[0,1,2,3,4,5,6]` (the Parsec probe, smallest-latency FIRST). `"off"`/`"-1"` ⇒ `[]` (leave the
+    /// key unset — the legacy behaviour). A parseable `0…6` ⇒ `[that]` (pin). Anything else ⇒ the probe
+    /// (safe default). Ascending order is load-bearing: the wiring keeps the FIRST accepted value, so
+    /// the sequence must start at the smallest delay to minimise pipeline latency.
+    static func frameDelayCandidates(_ raw: String?) -> [Int] {
+        guard let raw else { return [0, 1, 2, 3, 4, 5, 6] }
+        let lower = raw.lowercased()
+        if lower == "off" || lower == "-1" { return [] }
+        if let v = Int(raw), v >= 0, v <= 6 { return [v] }
+        return [0, 1, 2, 3, 4, 5, 6]
+    }
+
     /// (doc 26 §A) worst-case quantizer CEILING for the live session. HEVC QP range 1 (lossless)
     /// … 51 (coarsest). VT RAISES QP up to this ceiling to keep a frame under the hard `DataRateLimits`
     /// cap, and DROPS the frame if it still can't fit — so this is the dial between "coarsen" and
@@ -538,6 +561,24 @@ public final class VideoEncoder: @unchecked Sendable {
             kVTCompressionPropertyKey_AllowFrameReordering,
             kCFBooleanFalse,
         ) // no B-frames — latency-critical
+        // Parsec-parity MINIMUM PIPELINE LATENCY: probe MaxFrameDelayCount 0→6 and pin the SMALLEST
+        // the encoder accepts (see ``maxFrameDelayCandidates``). VT's default (unlimited) lets the HW
+        // encoder hold frames for RC lookahead. A rejected candidate is EXPECTED (some encoders floor
+        // at 1-2), so this probes with a raw VTSessionSetProperty rather than `set` (which logs an
+        // error per rejection); if none is accepted (or the probe is disabled) the key stays unset ==
+        // legacy. Best-effort — never latency-critical (a failed pin degrades to VT's own default).
+        // `first(where:)` attempts the set for each candidate (the predicate's side effect) and stops
+        // at the first that returns noErr — the smallest accepted delay is the one left applied.
+        let pinnedFrameDelay = Self.maxFrameDelayCandidates.first { delay in
+            VTSessionSetProperty(
+                session,
+                key: kVTCompressionPropertyKey_MaxFrameDelayCount,
+                value: delay as CFNumber,
+            ) == noErr
+        }
+        if let pinnedFrameDelay {
+            log.notice("MaxFrameDelayCount pinned \(pinnedFrameDelay) (Parsec-parity min pipeline latency)")
+        }
         // Explicitly opt OUT of the power-efficiency hint: left unset, the HW encoder may apply
         // an efficiency clock policy that adds encode latency. We always trade watts for ms here.
         // Best-effort: tolerated as -12900 on encoders without the key.

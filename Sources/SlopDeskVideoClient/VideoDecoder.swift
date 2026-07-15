@@ -81,6 +81,33 @@ public final class VideoDecoder: @unchecked Sendable {
     /// (and thus the shader coefficients the renderer pairs with it) differs.
     public var outputFullRange = false
 
+    /// Parsec-parity PRESENT-ON-DECODE (`SLOPDESK_DISPLAY_IMMEDIATE`, default ON; `=0` restores the
+    /// unset path). Cloned 1:1 from the parsecd RE (its decode fn stamps
+    /// `kCMSampleAttachmentKey_DisplayImmediately=true` on every sample buffer before
+    /// `VTDecompressionSessionDecodeFrame`): the decoder emits the frame the INSTANT it decodes rather
+    /// than holding it in the DPB for reorder. Our encoder already sets `AllowFrameReordering=false`
+    /// so the SPS should declare no reorder, but this is the belt-and-suspenders guarantee Parsec
+    /// ships — a decoder that still advertised reorder capacity would hold the frame under our
+    /// synchronous `flags:[]` decode (a silent no-pixels drop). Output pixels are byte-identical; only
+    /// the emission timing (no DPB hold) changes.
+    static let displayImmediate = EnvConfig.boolDefaultOn("SLOPDESK_DISPLAY_IMMEDIATE")
+
+    /// Stamps `kCMSampleAttachmentKey_DisplayImmediately=true` on `sampleBuffer`'s first per-sample
+    /// attachment dictionary (creating the attachments array if absent). No-op when the buffer has no
+    /// sample slot. Extracted so the attachment round-trip is unit-testable against a headless
+    /// CoreMedia sample buffer — no `VTDecompressionSession` (hang-safe).
+    static func stampDisplayImmediately(_ sampleBuffer: CMSampleBuffer) {
+        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(
+            sampleBuffer, createIfNecessary: true,
+        ), CFArrayGetCount(attachments) > 0 else { return }
+        let dict = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
+        CFDictionarySetValue(
+            dict,
+            Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
+            Unmanaged.passUnretained(kCFBooleanTrue).toOpaque(),
+        )
+    }
+
     public init(decodedFrameHandler: @escaping DecodedFrameHandler) {
         self.decodedFrameHandler = decodedFrameHandler
     }
@@ -289,6 +316,9 @@ public final class VideoDecoder: @unchecked Sendable {
             sampleBufferOut: &sampleBuffer,
         )
         guard status == noErr, let sampleBuffer else { throw VideoDecoderError.sampleBufferFailed(status) }
+        // Parsec-parity: emit the frame the instant it decodes (no DPB reorder hold). See
+        // ``displayImmediate``. Default-ON; the OFF path leaves the buffer's attachments untouched.
+        if Self.displayImmediate { Self.stampDisplayImmediately(sampleBuffer) }
         return sampleBuffer
     }
 }
