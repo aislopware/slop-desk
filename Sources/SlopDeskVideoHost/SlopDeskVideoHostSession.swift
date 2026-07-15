@@ -119,6 +119,24 @@ public actor SlopDeskVideoHostSession {
         return 12_000_000
     }()
 
+    /// DELTA send-pace FLOOR. DEFAULT **OFF** (unset/≤0 ⇒ 0 ⇒ `max(ABR, 0) == ABR`, delta send timing
+    /// byte- AND cadence-identical to the pre-floor path). A non-keyframe delta paces at the RAW live ABR;
+    /// a scroll-onset delta landing on a stale-low static-window ABR (~4–8Mbps on the 1× 1080p dongle)
+    /// then serializes over ~30–46ms of pure send-span, and the depth-1 present-on-arrival client converts
+    /// that span 1:1 into present-cadence JITTER the loss-0 link never demanded (Parsec blasts the same
+    /// delta at link rate ≈ 2ms — it paces at a connection-AIMD window, not at the encoder's low
+    /// steady-state bitrate). When set (clamp 1–100 Mbps, mirroring ``kfPaceFloorBps``), a low-ABR delta
+    /// drains at ≥ floor·k instead: a 12Mbps floor ⇒ 30Mbps instantaneous (gap 7.68→2.56ms @4Mbps ABR),
+    /// 5× below the ~146Mbps un-paced blast that caused the documented Wi-Fi 2–13% burst loss — so this
+    /// FLOORS the pace rate, never UN-paces, and reintroduces no ABR sawtooth. Inert whenever ABR ≥ floor
+    /// (an active scene already paces fast). The keyframe floor is the existence proof a smaller delta floor
+    /// is safe on this exact path. `SLOPDESK_DELTA_PACE_FLOOR_BPS`.
+    private static let deltaPaceFloorBps: Int = {
+        guard let s = ProcessInfo.processInfo.environment["SLOPDESK_DELTA_PACE_FLOOR_BPS"],
+              let v = Int(s), v > 0 else { return 0 } // unset/≤0 ⇒ OFF: max(ABR, 0) == ABR ⇒ byte-identical
+        return min(100_000_000, max(1_000_000, v))
+    }()
+
     /// CONGESTION BACKPRESSURE. The paced ``VideoSendLane`` is an unbounded FIFO: under a sustained
     /// scroll burst the encoder outruns the drain, the queue grows without bound, and latency bloats to
     /// seconds (HW-measured RTT 1475ms / client hold 2547ms on a 10ms link — a slowness no env tuning can
@@ -222,6 +240,16 @@ public actor SlopDeskVideoHostSession {
         let gap = chunkBits / effectiveBps * 1_000_000_000.0
         guard gap.isFinite, gap >= 0 else { return ceilNanos }
         return max(floorNanos, min(UInt64(min(gap, Double(ceilNanos))), ceilNanos))
+    }
+
+    /// PURE (unit-tested): the pace-TARGET bitrate for a frame — the rate ``adaptivePaceGapNanos`` drains a
+    /// chunk at. Keyframes floor at `kfFloorBps` (IDR delivery time IS recovery time); deltas floor at
+    /// `deltaFloorBps`, which is 0 by default so `max(abr, 0) == abr` ⇒ delta pace timing is byte-identical
+    /// to the pre-floor path. A non-zero delta floor lifts a stale-low scroll-onset delta off the raw ABR so
+    /// it drains at ≥ floor·k rather than a 4Mbps crawl — flooring the pace RATE, never un-pacing (see
+    /// ``deltaPaceFloorBps``). Inert whenever `abr >= deltaFloorBps` (an active scene).
+    static func paceTargetBps(keyframe: Bool, abr: Int, kfFloorBps: Int, deltaFloorBps: Int) -> Int {
+        keyframe ? max(abr, kfFloorBps) : max(abr, deltaFloorBps)
     }
 
     /// KEYFRAME DUPLICATE-SEND. Forward redundancy by REPETITION: re-send a keyframe's datagrams a second
@@ -2494,8 +2522,13 @@ public actor SlopDeskVideoHostSession {
         // stutter). Wire order is preserved (one lane consumer).
         if let sendLane {
             // Keyframes pace at ≥ kfPaceFloorBps — IDR delivery time IS recovery time, and the measured
-            // path carries 30Mbps at the same weather-loss as 5Mbps (rate-independent).
-            let paceTargetBps = keyframe ? max(lastActuatedBitrate, Self.kfPaceFloorBps) : lastActuatedBitrate
+            // path carries 30Mbps at the same weather-loss as 5Mbps (rate-independent). Deltas floor at
+            // deltaPaceFloorBps (0 = off ⇒ raw ABR, byte-identical) — lifts a stale-low scroll-onset delta
+            // off a 4Mbps crawl so its send-span (⇒ depth-1 present jitter) shrinks, without un-pacing.
+            let paceTargetBps = Self.paceTargetBps(
+                keyframe: keyframe, abr: lastActuatedBitrate,
+                kfFloorBps: Self.kfPaceFloorBps, deltaFloorBps: Self.deltaPaceFloorBps,
+            )
             let gapNanos: UInt64 = !Self.paceSend ? 0 : (Self.pacingAdaptive
                 ? Self.adaptivePaceGapNanos(
                     targetBps: paceTargetBps,
@@ -2611,7 +2644,10 @@ public actor SlopDeskVideoHostSession {
             // burst. Computed once per frame from the current ABR target.
             let gapNanos: UInt64 = Self.pacingAdaptive
                 ? Self.adaptivePaceGapNanos(
-                    targetBps: lastActuatedBitrate,
+                    // SLOPDESK_SEND_LANE=0 parity: floor the delta pace target the same as the lane path
+                    // (0 = off ⇒ raw ABR, byte-identical). This path is not keyframe-aware, so the floor
+                    // lifts both — strictly ≥ the raw-ABR gap, never slower.
+                    targetBps: max(lastActuatedBitrate, Self.deltaPaceFloorBps),
                     fallbackBps: Self.pacingFallbackBps,
                     chunkFragments: Self.paceChunkFragments,
                     datagramSize: VideoPacketizer.maxDatagramSize,
