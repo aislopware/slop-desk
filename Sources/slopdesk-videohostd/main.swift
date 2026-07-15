@@ -32,6 +32,7 @@ import SlopDeskVideoProtocol
 struct VideoHostdArguments {
     var list = false
     var listDialogs = false
+    var vdSckProbe = false
     var windowID: UInt32?
     var windowTitle: String?
     var mediaPort: UInt16 = 9000
@@ -85,6 +86,7 @@ struct VideoHostdArguments {
             switch argv[i] {
             case "--list": a.list = true
             case "--list-dialogs": a.listDialogs = true
+            case "--vd-sck-probe": a.vdSckProbe = true
             case "--window-id":
                 guard let v = next(), let n = UInt32(v) else { return nil }
                 a.windowID = n
@@ -858,6 +860,44 @@ func mintDisplaySession(
     return session
 }
 
+/// DIAGNOSTIC: prove the LAST build-(b) unknown — does ScreenCaptureKit (out-of-process, system
+/// display view) ENUMERATE a virtual display, and can it be matched to `CGMainDisplayID()`? The
+/// desktop mint (``mintDisplaySession``) captures `content.displays.first { $0.displayID == mainID }`,
+/// so the VD-only path only works if SCK lists the VD. Creates an EXTRA VD (no promote, no
+/// dongle-disable → a live session is untouched), lists every SCK display + marks the VD and the main,
+/// then destroys it. Run: `slopdesk-videohostd --vd-sck-probe` (needs the daemon's Screen-Recording TCC).
+@MainActor
+func runVDSCKProbe() async {
+    let vd = VirtualDisplay()
+    let geo = VirtualDisplayGeometry(pointWidth: 1920, pointHeight: 1080, scale: 1)
+    guard let vdID = await vd.create(geo, name: "SlopDesk SCK Probe", fps: 60) else {
+        log("vd-sck-probe: FAIL — VD create returned nil (no WindowServer / OS refused)")
+        return
+    }
+    log("vd-sck-probe: VD online id=\(vdID); enumerating SCShareableContent.displays…")
+    // Small settle so WindowServer has surfaced the new display to SCK's out-of-process view.
+    try? await Task.sleep(nanoseconds: 400_000_000)
+    let mainID = CGMainDisplayID()
+    if let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) {
+        log("vd-sck-probe: SCK sees \(content.displays.count) display(s), CGMainDisplayID=\(mainID):")
+        var vdSeen = false
+        for d in content.displays {
+            let tags = [d.displayID == vdID ? "◀ THE VD" : nil, d.displayID == mainID ? "◀ main" : nil]
+                .compactMap(\.self).joined(separator: " ")
+            if d.displayID == vdID { vdSeen = true }
+            log("  displayID=\(d.displayID) frame=\(Int(d.frame.width))x\(Int(d.frame.height)) \(tags)")
+        }
+        if vdSeen {
+            log("vd-sck-probe: ✅ SCK ENUMERATES the VD — mintDisplaySession can capture it once it is main")
+        } else {
+            log("vd-sck-probe: ❌ SCK did NOT list the VD — the desktop mint cannot target it; needs another path")
+        }
+    } else {
+        log("vd-sck-probe: SCShareableContent failed (Screen-Recording TCC missing?)")
+    }
+    vd.destroy()
+}
+
 Task {
     do {
         let windows = try await shareableWindows()
@@ -888,6 +928,11 @@ Task {
                     )
                 }
             }
+            exit(0)
+        }
+
+        if args.vdSckProbe {
+            await runVDSCKProbe()
             exit(0)
         }
 
