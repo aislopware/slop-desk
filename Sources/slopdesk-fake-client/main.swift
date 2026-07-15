@@ -84,9 +84,23 @@ let hello = VideoControlMessage.hello(
 let helloDatagram = Data([0, 0, 0, 0]) + hello.encode()
 eprint("fake-client → \(host):\(port) hello(window=\(windowID), \(Int(vw))x\(Int(vh))), \(seconds)s")
 
-// Drain incoming so the socket buffer never fills.
-let drain = Thread { var buf = [UInt8](repeating: 0, count: 65536)
-    while true { _ = recv(fd, &buf, buf.count, 0) }
+// Drain incoming so the socket buffer never fills. Count datagrams + bytes so a run can tell
+// "mint succeeded, frames flowing" apart from "mint failed / capture idle" (diagnostic).
+final class RxCount: @unchecked Sendable {
+    var pkts = 0
+    var bytes = 0
+}
+
+let rx = RxCount()
+let drain = Thread {
+    var buf = [UInt8](repeating: 0, count: 65536)
+    while true {
+        let n = recv(fd, &buf, buf.count, 0)
+        if n > 0 {
+            rx.pkts += 1
+            rx.bytes += n
+        }
+    }
 }
 
 drain.start()
@@ -125,7 +139,7 @@ while Date() < deadline {
 }
 
 sflag.run = false
-eprint("fake-client done")
+eprint("fake-client done — rx \(rx.pkts) datagrams, \(rx.bytes) bytes (0 ⇒ mint failed / no frames)")
 exit(0)
 #else
 fatalError("slopdesk-fake-client is macOS-only")

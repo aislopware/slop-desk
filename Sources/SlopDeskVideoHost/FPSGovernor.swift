@@ -271,3 +271,108 @@ public enum SelfHealCadence {
         return max(2, Int(scaled))
     }
 }
+
+/// PURE self-tuning ENCODER-LOAD pacer — the COMPUTE-axis twin of ``FPSGovernor`` (which is the
+/// LINK-axis).
+///
+/// WHY a second controller: ``FPSGovernor`` only steps fps down on NETWORK congestion (`overBudget
+/// AND congested`). On a clean, fast link — the exact case the user benchmarks against Parsec — the
+/// bottleneck is not the link but the HW ENCODER: a fat scroll delta whose `VTCompressionSessionEncodeFrame`
+/// over-runs the base-fps inter-arrival budget (16.7 ms at 60 fps) backs up the decoupled encode
+/// queue, and ``WindowCapturer``'s capture hand-off then drops deltas RAGGEDLY (whenever the backlog
+/// is momentarily full). Ragged drops are an irregular 16.7/33/50 ms present cadence — a primary
+/// scroll-stutter source (the 100–140 ms client present hitch), even though the average encode is
+/// well under budget. The governor never sees this (the link is clean) so nothing regularises it.
+///
+/// This pacer measures encode WALL-TIME and, when the encoder cannot sustain the current rung's
+/// budget, steps the effective fps DOWN one clean divisor so the SAME schedule-anchored
+/// ``EncodeCadenceGate`` does a metronome-regular decimation (30 fps clean) instead of the ragged
+/// backlog drop — Parsec's discipline, keyed on the COMPUTE budget rather than the link budget. It
+/// steps back UP when even the (larger) current-rung frames fit the next-higher rung's tighter
+/// budget — the governor's projection-conservatism, mirrored for encode time. INERT (returns
+/// baseFps) until it has sustained evidence of over-run, so a stream the encoder keeps up with is
+/// never touched. Composed at the hand-off via `min(governedFps, pacedFps)`, so the two axes never
+/// fight.
+///
+/// PURE + DETERMINISTIC: "time" is the count of encoded frames folded (`ticks`); no wall-clock, no
+/// I/O. Value-type ⇒ auto `Equatable`/`Sendable`.
+public struct EncodeLoadPacer: Sendable, Equatable {
+    /// EWMA weight for the encode-ms fold (~4-frame memory — encode spikes are bursty).
+    public static let alpha = 0.25
+    /// Step DOWN a rung when the encode-ms EWMA reaches this fraction of the CURRENT rung's budget
+    /// (`1000/currentFps` ms). < 1 so the backlog is caught building, not only once it saturates.
+    public static let downFraction = 0.85
+    /// Step UP a rung when the encode-ms EWMA (measured at the current, coarser rung ⇒ LARGER frames)
+    /// still fits this fraction of the NEXT-higher rung's budget. Since the higher rung's frames are
+    /// SMALLER (less motion each), fitting the bigger frames under its budget is a conservative,
+    /// biased-safe projection (mirrors ``FPSGovernor``'s step-up fit).
+    public static let upFraction = 0.90
+    /// Consecutive over-budget encoded frames before a step-down (~50 ms at 60 fps) — fast, so a
+    /// scroll burst is caught within a few frames.
+    public static let downTicks = 3
+    /// Consecutive headroom frames before a step-up — slow (a step is a visible cadence change);
+    /// ~1.5 s at 30 fps.
+    public static let upTicks = 45
+    /// Frames to fold before ANY action (cold-start guard).
+    public static let warmupTicks = 8
+
+    public let baseFps: Int
+    /// Clean-divisor rungs (reuses ``FPSGovernor/ladder(baseFps:)`` so the two controllers share the
+    /// exact same metronome-regular divisor set).
+    public let ladder: [Int]
+    public private(set) var currentFps: Int
+    public private(set) var encodeMsEWMA: Double = 0
+    public private(set) var ticks = 0
+    public private(set) var overRun = 0
+    public private(set) var cleanRun = 0
+
+    public init(baseFps: Int) {
+        let base = max(1, baseFps)
+        self.baseFps = base
+        ladder = FPSGovernor.ladder(baseFps: base)
+        currentFps = ladder[0]
+    }
+
+    /// The per-frame wall-clock budget (ms) at a given fps.
+    static func budgetMs(_ fps: Int) -> Double { 1000.0 / Double(max(1, fps)) }
+
+    /// Fold one encoded frame's measured wall-time (ms) and return the (possibly unchanged) paced
+    /// fps. ANCHOR frames (keyframe/crisp) are episodic 5–10× encode-time outliers — excluded, like
+    /// the governor excludes them from its bytes EWMA — so a recovery IDR never fakes a step-down.
+    @discardableResult
+    public mutating func note(encodeMs: Double, isAnchor: Bool) -> Int {
+        if isAnchor || encodeMs < 0 { return currentFps }
+        ticks += 1
+        if encodeMsEWMA == 0 {
+            encodeMsEWMA = encodeMs // first sample seeds exactly
+        } else {
+            // keep mul+add separate — FMA breaks bit-exact parity
+            encodeMsEWMA = encodeMsEWMA * (1.0 - Self.alpha) + encodeMs * Self.alpha
+        }
+        if ticks < Self.warmupTicks { return currentFps }
+
+        if encodeMsEWMA > Self.budgetMs(currentFps) * Self.downFraction {
+            cleanRun = 0
+            overRun += 1
+            if overRun >= Self.downTicks, let next = ladder.first(where: { $0 < currentFps }) {
+                currentFps = next // ONE rung down
+                overRun = 0
+            }
+        } else {
+            overRun = 0
+            // Step up only with sustained headroom for the tighter higher-rung budget.
+            if currentFps < baseFps, let up = ladder.reversed().first(where: { $0 > currentFps }),
+               encodeMsEWMA < Self.budgetMs(up) * Self.upFraction
+            {
+                cleanRun += 1
+                if cleanRun >= Self.upTicks {
+                    currentFps = up
+                    cleanRun = 0
+                }
+            } else {
+                cleanRun = 0
+            }
+        }
+        return currentFps
+    }
+}

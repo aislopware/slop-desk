@@ -281,6 +281,14 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// the pending bound (clamp 1…12).
     static let encodeOffQueueEnabled =
         ProcessInfo.processInfo.environment["SLOPDESK_ENCODE_OFFQUEUE"] != "0"
+    /// ENCODE-LOAD PACER (DEFAULT ON; `SLOPDESK_ENCODE_PACER=0` reverts to the ragged backlog drop).
+    /// Requires the decoupled encode queue (it paces THAT queue's over-run). Measures encode
+    /// wall-time and, when the HW encoder cannot sustain the base-fps budget on a CLEAN link (where
+    /// the network ``FPSGovernor`` never engages), steps the effective fps down a clean divisor so the
+    /// ``EncodeCadenceGate`` decimates metronome-regularly instead of dropping deltas raggedly — the
+    /// compute-axis twin of the governor. See ``EncodeLoadPacer``.
+    static let encodePacerEnabled =
+        encodeOffQueueEnabled && ProcessInfo.processInfo.environment["SLOPDESK_ENCODE_PACER"] != "0"
     /// DIAGNOSTIC: force a compact recovery IDR every Nth live frame, so the loss-driven recovery-IDR
     /// storm reproduces deterministically on localhost (no real loss needed).
     /// `SLOPDESK_FORCE_COMPACT_EVERY=N`; 0/unset = off.
@@ -349,6 +357,16 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     private var encodePending = 0
     private var encodeBacklogDropped = 0
 
+    /// ENCODE-LOAD PACER (``EncodeLoadPacer``, gated on ``encodePacerEnabled``). Mutated ONLY on the
+    /// serial `encodeQueue` (single-threaded — no lock on the struct itself); its selected fps is
+    /// PUBLISHED to `encodePacedFPS` under `pacerLock` so the frameQueue's `currentGovernedFPS()` can
+    /// read it without touching the struct. `encodePacedFPS` starts at the base fps (inert).
+    private var encodeLoadPacer: EncodeLoadPacer
+    private let pacerLock = NSLock()
+    private var encodePacedFPS: Int
+    /// Last paced fps we logged a transition for (frameQueue/encodeQueue diagnostic dedup).
+    private var lastLoggedPacedFPS: Int
+
     /// Hand a frame to the encoder — inline on the capture queue, or, when `encodeOffQueueEnabled`,
     /// COPIED and dispatched to the serial `encodeQueue` so capture delivery is never blocked by encode time.
     /// Ordinary deltas are DROPPED when the encode backlog is full (`maxEncodePending`); a forced
@@ -375,6 +393,14 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
                 let dropped = encodeBacklogDropped
                 log.notice("encode-offqueue: \(dropped) deltas dropped (encoder backlog full)")
             }
+            // SLOPDESK_VIDEO_DEBUG: a saturated backlog means encode over-ran the 60fps inter-arrival
+            // (16.7ms) and this delta is being dropped — the RAGGED-cadence source of the client's
+            // 100–140ms present hitches. Throttled so a heavy-scroll burst is visible without flooding.
+            if Self.dbgGapEnabled, encodeBacklogDropped.isMultiple(of: 15) {
+                FileHandle.standardError
+                    .write(Data("slopdesk-videohostd[drop]: backlog-full delta drop #\(encodeBacklogDropped)\n"
+                            .utf8))
+            }
             return // encoder can't keep up — drop this delta (P-chain intact), never stall capture
         }
         encodePending += 1
@@ -388,9 +414,39 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         let handler = frameHandler
         // The copy is a fresh single-owner buffer; moving it to the serial encode queue is safe.
         let boxed = SendableBuffer(value: copy)
+        // Big episodic IDRs (keyframe / crisp) are 5–10× encode-time outliers — excluded from the
+        // pacer's load EWMA (as the governor excludes them from its bytes EWMA); compact + LTR
+        // refreshes are near steady-state and ARE folded.
+        let pacerAnchor = forceKeyframe || crisp
+        let measure = Self.encodePacerEnabled || Self.dbgGapEnabled
         encodeQueue.async { [weak self] in
+            // Measure the encode+packetize+send wall-time. Past the 60fps budget (16.7ms) it fills
+            // the backlog and forces the ragged [drop] above — the pacer folds it to step the rate
+            // down cleanly instead. [enc] + [drop] localize a hitch to encoder over-run under DEBUG.
+            let encStart = measure ? Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) : 0
             handler(boxed.value, pts, forceKeyframe, crisp, compact, ltrRefresh, perFrameMaxQP)
             guard let self else { return }
+            if measure {
+                let ms = (Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) - encStart) / 1_000_000.0
+                // ENCODE-LOAD PACER: the struct is confined to THIS serial queue; only its output fps
+                // crosses to the frameQueue (published under `pacerLock`).
+                if Self.encodePacerEnabled {
+                    let paced = encodeLoadPacer.note(encodeMs: ms, isAnchor: pacerAnchor)
+                    pacerLock.lock()
+                    encodePacedFPS = paced
+                    pacerLock.unlock()
+                    if Self.dbgGapEnabled, paced != lastLoggedPacedFPS {
+                        let msg = "slopdesk-videohostd[pace]: \(Int(ms))ms ⇒ fps \(lastLoggedPacedFPS)→\(paced)\n"
+                        FileHandle.standardError.write(Data(msg.utf8))
+                        lastLoggedPacedFPS = paced
+                    }
+                }
+                if Self.dbgGapEnabled, ms > 16.7 {
+                    FileHandle.standardError
+                        .write(Data("slopdesk-videohostd[enc]: encode \(Int(ms))ms\(pacerAnchor ? " ANCHOR" : "")\n"
+                                .utf8))
+                }
+            }
             encodePendingLock.lock()
             encodePending -= 1
             encodePendingLock.unlock()
@@ -581,8 +637,16 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
 
     private func currentGovernedFPS() -> Int {
         keyframeLock.lock()
-        defer { keyframeLock.unlock() }
-        return governedFPS
+        let governed = governedFPS
+        keyframeLock.unlock()
+        guard Self.encodePacerEnabled else { return governed }
+        // The two axes compose: the effective rate is the MORE restrictive of the network governor
+        // and the encode-load pacer, so a clean-link encoder over-run and a congested-link byte
+        // over-run each cap the rate without fighting. Sequential locks (never nested).
+        pacerLock.lock()
+        let paced = encodePacedFPS
+        pacerLock.unlock()
+        return min(governed, paced)
     }
 
     /// FPS-GOVERNOR: PEEK (without clearing) whether a recovery latch is pending — the cadence
@@ -749,6 +813,9 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             fps: max(1, fps),
         )
         governedFPS = max(1, fps)
+        encodeLoadPacer = EncodeLoadPacer(baseFps: max(1, fps))
+        encodePacedFPS = max(1, fps)
+        lastLoggedPacedFPS = max(1, fps)
         self.captureScale = max(1.0, captureScale)
         self.fullRange = fullRange
         self.frameHandler = frameHandler
