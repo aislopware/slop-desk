@@ -40,13 +40,17 @@ final class VideoMuxReadmitRoutingTests: XCTestCase {
                 deliver = true
             case .rejectUnadmitted,
                  .dropRetired:
-                // The one-shot hello peek mirrors the private `payloadIsHello` helper.
-                let isHello: Bool = {
-                    guard decodedChannel == .control, let msg = try? VideoControlMessage.decode(p),
-                          case .hello = msg else { return false }
-                    return true
-                }()
-                switch VideoMuxRouter.bootstrapAction(for: decision, channel: decodedChannel, payloadIsHello: isHello) {
+                // The REAL peeks — never a hand-mirrored copy. A mirrored `case .hello` copy here is
+                // exactly how the gate silently dropped `helloDisplay`: the mirror passed while the
+                // live predicate rejected. These calls keep the harness pinned to the shipped logic.
+                let isHello = NWVideoMuxDatagramTransport.payloadIsHello(channel: decodedChannel, payload: p)
+                let isList = NWVideoMuxDatagramTransport.payloadIsListRequest(channel: decodedChannel, payload: p)
+                switch VideoMuxRouter.bootstrapAction(
+                    for: decision,
+                    channel: decodedChannel,
+                    payloadIsHello: isHello,
+                    payloadIsListRequest: isList,
+                ) {
                 case .bootstrapDeliver:
                     channelMediaConn[decodedID] = conn
                     deliver = true
@@ -127,6 +131,67 @@ final class VideoMuxReadmitRoutingTests: XCTestCase {
         XCTAssertTrue(h.feed(channelID: 50, channel: .control, payload: helloPayload(), on: conn))
         XCTAssertTrue(h.channelMediaConn[50] === conn)
         XCTAssertEqual(h.deliveredIDs, [50])
+    }
+
+    private func helloDisplayPayload() -> Data {
+        VideoControlMessage.helloDisplay(
+            protocolVersion: SlopDeskVideoProtocol.version,
+            requestedDisplayID: 0,
+            viewport: VideoSize(width: 100, height: 100),
+        ).encode()
+    }
+
+    /// THE FULL-DESKTOP REGRESSION: the desktop pane's very first `helloDisplay` arrives on a
+    /// never-seen lane, so it MUST bootstrap exactly like the window `hello` — deliver for mint +
+    /// remember the reply flow. Pre-fix the hello-peek matched only `.hello`, so the datagram was
+    /// dropped SILENTLY (helloDisplay is deliberately bye-exempt) and a desktop pane never streamed.
+    func testFirstHelloDisplayOnNeverSeenLaneBootstraps() {
+        let h = Harness()
+        let conn = FakeConn()
+        XCTAssertTrue(
+            h.feed(channelID: 70, channel: .control, payload: helloDisplayPayload(), on: conn),
+            "a first helloDisplay bootstraps the lane for the registry mint",
+        )
+        XCTAssertTrue(h.channelMediaConn[70] === conn, "the helloAck reply flow is remembered")
+        XCTAssertEqual(h.deliveredIDs, [70])
+    }
+
+    /// Cross-process channelID reuse holds for the display hello too: a retired lane re-admits on a
+    /// fresh `helloDisplay` (a restarted client's desktop pane must reconnect, same as a window pane).
+    func testRetiredLaneReadmitsOnHelloDisplay() {
+        let h = Harness()
+        let conn1 = FakeConn(), conn2 = FakeConn()
+        XCTAssertTrue(h.feed(channelID: 4, channel: .control, payload: helloDisplayPayload(), on: conn1))
+        h.router.admit(4)
+        h.router.retire(4)
+        XCTAssertTrue(
+            h.feed(channelID: 4, channel: .control, payload: helloDisplayPayload(), on: conn2),
+            "a retired lane re-admits on a fresh helloDisplay",
+        )
+        XCTAssertTrue(h.channelMediaConn[4] === conn2, "the re-admit remembers the NEW reply flow")
+    }
+
+    /// `listDisplays` is a session-LESS discovery request (the desktop pane's display list) — it must
+    /// bootstrap its reply flow WITHOUT minting, exactly like `listWindows`. Pre-fix it was missing
+    /// from the list-request peek, so the daemon never answered it.
+    func testListDisplaysBootstrapsAsSessionlessRequest() {
+        let h = Harness()
+        let conn = FakeConn()
+        XCTAssertTrue(
+            h.feed(channelID: 80, channel: .control, payload: VideoControlMessage.listDisplays.encode(), on: conn),
+            "listDisplays bootstraps so the daemon can answer it",
+        )
+        XCTAssertTrue(h.channelMediaConn[80] === conn, "the displayList reply flow is remembered")
+    }
+
+    /// The host→client `displayList` is NOT a bootstrap type — a stray one on an unknown lane drops
+    /// without a stamp (the leak guard's no-leak property extends to the new display trio).
+    func testStrayDisplayListNeverStampsFlow() {
+        let h = Harness()
+        let conn = FakeConn()
+        let stray = VideoControlMessage.displayList([]).encode()
+        XCTAssertFalse(h.feed(channelID: 81, channel: .control, payload: stray, on: conn))
+        XCTAssertNil(h.channelMediaConn[81], "a stray displayList leaves no flow entry")
     }
 
     func testEmptyControlPayloadIsBoundsSafeAndDrops() {

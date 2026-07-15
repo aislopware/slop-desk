@@ -423,30 +423,39 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
         })
     }
 
-    /// One-shot peek: does a control-channel payload decode as a `hello`? Only the control channel is
-    /// ever a hello, so non-control payloads short-circuit without a decode. Shared by the retired
-    /// re-admit rule and the stray-control leak guard so the decode happens at most once per datagram.
-    private static func payloadIsHello(channel: VideoChannel, payload: Data) -> Bool {
-        guard channel == .control,
-              let msg = try? VideoControlMessage.decode(payload),
-              case .hello = msg else { return false }
-        return true
+    /// One-shot peek: does a control-channel payload decode as a session-MINTING hello — the window
+    /// `hello` OR the full-desktop `helloDisplay`? Both bootstrap an unadmitted lane the same way (the
+    /// registry mints on either). Only the control channel is ever a hello, so non-control payloads
+    /// short-circuit without a decode. Shared by the retired re-admit rule and the stray-control leak
+    /// guard so the decode happens at most once per datagram. Internal (not private) so the routing
+    /// tests exercise THIS predicate — a hand-mirrored copy is exactly how `helloDisplay` got dropped.
+    static func payloadIsHello(channel: VideoChannel, payload: Data) -> Bool {
+        guard channel == .control, let msg = try? VideoControlMessage.decode(payload) else { return false }
+        switch msg {
+        case .hello,
+             .helloDisplay: return true
+        default: return false
+        }
     }
 
     /// One-shot peek: does a control-channel payload decode as a session-LESS discovery request —
-    /// `listWindows` (docs/31 picker), `listSystemDialogs` (the system-popup-pane feature), or
-    /// `windowFeedSubscribe` (the host-windows rail feed, docs/45)? Like the hello peek, only the
-    /// control channel can carry these. Lets such a request bootstrap its reply flow so the daemon can
-    /// answer it without minting a capture session. EVERY new client→host session-less type MUST be
-    /// added here AND stay bye-exempt in ``UnboundLaneByeDecider`` — a missed site = silent bye-storms.
-    private static func payloadIsListRequest(channel: VideoChannel, payload: Data) -> Bool {
+    /// `listWindows` (docs/31 picker), `listSystemDialogs` (the system-popup-pane feature),
+    /// `windowFeedSubscribe` (the window feed behind Open Quickly), or `listDisplays` (the
+    /// full-desktop pane's display discovery)? Like the hello peek, only the control channel can carry
+    /// these. Lets such a request bootstrap its reply flow so the daemon can answer it without minting
+    /// a capture session. EVERY new client→host session-less type MUST be added here AND stay
+    /// bye-exempt in ``UnboundLaneByeDecider`` — a missed site = a SILENT drop (no log, no bye, the
+    /// client just never hears back). Internal (not private) so the routing tests exercise THIS
+    /// predicate.
+    static func payloadIsListRequest(channel: VideoChannel, payload: Data) -> Bool {
         guard channel == .control, let msg = try? VideoControlMessage.decode(payload) else { return false }
         switch msg {
         case .listWindows,
              .listSystemDialogs,
              .windowFeedSubscribe,
              .appIconRequest,
-             .windowPreviewRequest: return true
+             .windowPreviewRequest,
+             .listDisplays: return true
         default: return false
         }
     }
