@@ -372,6 +372,40 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         return 30
     }()
 
+    /// CLEAN-LINK SELF-HEAL LOSS-GATE. DEFAULT **OFF** (`SLOPDESK_SELF_HEAL_LOSS_GATE=1` enables). When
+    /// on, the every-Kth self-heal ``VideoEncoder/encodeLiveLTRRefresh(pixelBuffer:presentationTime:)`` is
+    /// SUPPRESSED while the folded loss EWMA is below ``selfHealLossGateThreshold`` — on a loss-0 link the
+    /// periodic ~1.49× refresh is a present-doublet (~1–2×/s during sustained motion) that Parsec has no
+    /// analog for, and self-heal there protects against a loss that isn't happening. It re-arms the instant
+    /// loss appears: the frame counter keeps climbing while suppressed (the heal is skipped, not reset), so
+    /// the FIRST frame that sees loss ≥ threshold heals immediately. OFF ⇒ the gate branch is never
+    /// consulted ⇒ byte-identical (always heal at K, exactly as today). Mirrors the shipped kfDup
+    /// clean-link loss-gate — the same universal loss-EWMA signal, gating the other
+    /// periodic-overhead-on-a-clean-link mechanism.
+    static let selfHealLossGate = ProcessInfo.processInfo.environment["SLOPDESK_SELF_HEAL_LOSS_GATE"] == "1"
+    /// The loss EWMA at/above which self-heal stays armed under ``selfHealLossGate`` — 0.5%, mirroring the
+    /// session's `kfDupLossThreshold` (the adaptive-FEC ladder's lowest escalation boundary).
+    static let selfHealLossGateThreshold = 0.005
+
+    /// PURE (unit-tested): should this live delta become a self-heal LTR refresh? Base cadence: the counter
+    /// has reached K, healing is enabled (`healEvery > 0`), and client acks are flowing (`eligible`). The
+    /// clean-link loss-gate (`lossGated`, default OFF) additionally SUPPRESSES the heal while `lossRate <
+    /// threshold`; with the gate off the loss terms are ignored ⇒ the decision is exactly the pre-gate one.
+    /// The caller keeps advancing the counter while suppressed, so re-arming on the first lossy frame is
+    /// immediate (this returns true the moment `lossRate >= threshold` with the counter already past K).
+    static func shouldSelfHeal(
+        framesSinceAnchor: Int,
+        healEvery: Int,
+        eligible: Bool,
+        lossGated: Bool,
+        lossRate: Double,
+        threshold: Double,
+    ) -> Bool {
+        guard healEvery > 0, framesSinceAnchor >= healEvery, eligible else { return false }
+        if lossGated, lossRate < threshold { return false } // clean link — skip the refresh doublet
+        return true
+    }
+
     private let log = Logger(subsystem: "slopdesk.video.host", category: "WindowCapturer")
     private let frameQueue = DispatchQueue(label: "slopdesk.video.capture", qos: .userInteractive)
     private var stream: SCStream?
@@ -642,6 +676,12 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// acked LTRs; a cadence refresh would then be VT's IDR fallback every K frames). Under
     /// `keyframeLock` (set rarely off-queue, read once per frame — same discipline as the latches).
     private var selfHealEligible = false
+    /// SELF-HEAL loss-gate snapshot — the session actor pushes the freshly-folded loss EWMA here on every
+    /// netstats report (``setSelfHealLossRate(_:)``, ~20/s). Under `keyframeLock` (read once per frame —
+    /// the `selfHealEligible` discipline). Defaults HIGH (∞) so that before any report — or when no client
+    /// feedback flows at all — the gate NEVER suppresses healing (fail-safe: heal when loss is unmeasured).
+    /// Only consulted when ``selfHealLossGate`` is on.
+    private var selfHealLossRate = Double.infinity
     /// FPS-GOVERNOR: the governed encode fps the session actor latches via ``setGovernedFPS(_:)``.
     /// Equals `fps` (ungoverned, gate inert) until the governor steps. Under `keyframeLock` (set rarely
     /// off-queue, read once per frame — the `setSelfHealEligible` discipline). SCStream delivery stays at
@@ -768,6 +808,22 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         keyframeLock.lock()
         defer { keyframeLock.unlock() }
         return selfHealEligible
+    }
+
+    /// SELF-HEAL loss-gate feed. The session actor pushes the freshly-folded loss EWMA every netstats
+    /// report (~20/s) so the clean-link gate (``selfHealLossGate``) can suppress the periodic refresh
+    /// doublet while the link is loss-free and re-arm it the instant loss appears. Thread-safe. Behaviorally
+    /// inert unless ``selfHealLossGate`` is on (the per-frame read is skipped otherwise).
+    public func setSelfHealLossRate(_ lossRate: Double) {
+        keyframeLock.lock()
+        selfHealLossRate = lossRate
+        keyframeLock.unlock()
+    }
+
+    private func currentSelfHealLossRate() -> Double {
+        keyframeLock.lock()
+        defer { keyframeLock.unlock() }
+        return selfHealLossRate
     }
 
     /// FPS-GOVERNOR: latch the governed encode fps (clamped to `[1, fps]` — the governor never
@@ -1818,9 +1874,19 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             baseFps: fps,
             governedFps: governed,
         )
+        // CLEAN-LINK LOSS-GATE (default OFF ⇒ byte-identical): with the gate on, the every-Kth refresh is
+        // suppressed while the pushed loss EWMA is below threshold — the counter keeps climbing (heal
+        // skipped, not reset) so the first lossy frame re-arms healing immediately (see `selfHealLossGate`).
         if healEvery > 0, !forceKeyframe, !ltrRefresh {
             framesSinceAnchor += 1
-            if framesSinceAnchor >= healEvery, selfHealIsEligible() {
+            if Self.shouldSelfHeal(
+                framesSinceAnchor: framesSinceAnchor,
+                healEvery: healEvery,
+                eligible: selfHealIsEligible(),
+                lossGated: Self.selfHealLossGate,
+                lossRate: currentSelfHealLossRate(),
+                threshold: Self.selfHealLossGateThreshold,
+            ) {
                 ltrRefresh = true
             }
         }

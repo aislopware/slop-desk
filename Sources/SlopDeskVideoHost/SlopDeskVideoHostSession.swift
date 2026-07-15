@@ -1221,6 +1221,13 @@ public actor SlopDeskVideoHostSession {
                 owdTrendState: report.owdTrendStateRaw,
                 owdTrendModifiedMilli: report.owdTrendModifiedMilliSigned,
             )
+            // SELF-HEAL clean-link loss-gate: push the freshly-folded loss EWMA to the capturer so its
+            // gate (SLOPDESK_SELF_HEAL_LOSS_GATE) can suppress the periodic refresh doublet on a loss-free
+            // link and re-arm it the instant loss appears. Gated on the flag ⇒ zero work when off; the
+            // snapshot is at most one report (~50ms) stale, well inside the K-frame heal cadence.
+            if WindowCapturer.selfHealLossGate {
+                capturer?.setSelfHealLossRate(networkEstimate.lossRate)
+            }
             // ADAPTIVE FEC: pick the per-frame group-size tier from the freshly-folded loss EWMA.
             // Hysteretic + one-step-clamped (anti-flap) inside the pure policy. Updated ONLY here, inside
             // a real report → it can't move before there is loss data (inert when no reports arrive).
