@@ -147,13 +147,13 @@ public final class FramePacer: @unchecked Sendable {
     // CRITICAL: the anchor advances by the SCHEDULED deadline, never the actual present time,
     // so a late tick cannot accumulate schedule drift. Latest-frame-wins on the single pending
     // slot (a post-stall bunch shows the newest frame, not a fast-forward replay).
-    // DEFAULT for the remote-GUI video path (`VideoWindowPipeline` resolves `deadlineMode` ON unless
-    // `SLOPDESK_PACER=arrival`). Anchoring presentation to the content rhythm absorbs this transport's
-    // FEC/recovery arrival jitter into a small adaptive playout buffer instead of letting it bunch the
-    // present cadence — HW-validated over NetBird (present-gaps 0.37%→0%, max hold 258ms→91ms). The
-    // escape hatch `SLOPDESK_PACER=arrival` restores present-on-arrival (Parsec's queued_frames=0
-    // zero-playout shape — lowest latency, wins only on an already-clean link). `SLOPDESK_PLAYOUT_MS`
-    // pins a fixed buffer (else adaptive; 10ms cold-start seed).
+    // OPT-IN (`SLOPDESK_PACER=deadline`) for the remote-GUI video path; the DEFAULT is present-on-arrival
+    // (Parsec's queued_frames=0 zero-playout shape — lowest latency, the right trade for an interactive
+    // desktop). Anchoring presentation to the content rhythm absorbs this transport's FEC/recovery arrival
+    // jitter into a small adaptive playout buffer instead of letting it bunch the present cadence —
+    // HW-validated over NetBird (present-gaps 0.37%→0%, max hold 258ms→91ms) — but it costs standing
+    // latency, so it wins only on a genuinely JITTERY WAN link. `SLOPDESK_PLAYOUT_MS` pins a fixed buffer
+    // (else adaptive; 10ms cold-start seed).
     private let deadlineMode: Bool
     /// The content-rhythm interval (deadline mode). MUTABLE: a host `streamCadence` message
     /// rebases it via ``setContentFps(_:)``. Read and written only under ``lock``.

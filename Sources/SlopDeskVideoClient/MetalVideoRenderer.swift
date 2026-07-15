@@ -136,13 +136,18 @@ public final class MetalVideoRenderer {
         metalLayer.pixelFormat = .bgra8Unorm
         metalLayer.framebufferOnly = true
         metalLayer.maximumDrawableCount = 2 // ~1 vsync latency (doc 04)
-        // env SLOPDESK_NO_VSYNC=1: present the drawable as soon as the GPU finishes instead of holding
-        // for the next refresh — shaves the 0-16.7ms (avg ~8) composite-alignment wait at the cost of
-        // possible mid-scan tearing. Default ON-vsync; opt-in.
+        // PARSEC-PARITY: present the drawable as soon as the GPU finishes instead of holding for the
+        // compositor's next refresh — Parsec's DisplayImmediately model (its vsync toggle is OFF by
+        // default). This shaves the 0-8.3ms (avg ~4 at 120Hz) composite-alignment wait off EVERY frame,
+        // the single largest client-present latency stage after the pacer. Cost is possible mid-scan
+        // tearing during fast motion — the trade Parsec makes for latency on an interactive desktop. The
+        // FramePacer still bounds render cadence to the content rate, so vsync-off adds no extra content
+        // presents (no runaway). `SLOPDESK_VSYNC=1` restores the vsync-locked present (tear-free, +1
+        // refresh latency) for a tearing-sensitive panel or an A/B.
         // macOS-only: `displaySyncEnabled` does not exist on iOS — must stay `#if os(macOS)`-gated or
         // the iOS app build breaks.
         #if os(macOS)
-        if ProcessInfo.processInfo.environment["SLOPDESK_NO_VSYNC"] == "1" {
+        if ProcessInfo.processInfo.environment["SLOPDESK_VSYNC"] != "1" {
             metalLayer.displaySyncEnabled = false
         }
         #endif

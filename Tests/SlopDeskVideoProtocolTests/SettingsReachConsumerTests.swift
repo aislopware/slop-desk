@@ -74,18 +74,19 @@ final class SettingsReachConsumerTests: XCTestCase {
     // MARK: SLOPDESK_PACER — VideoWindowPipeline deadlineMode
 
     /// The client pacer selector mirrors `VideoWindowPipeline`:
-    /// `EnvConfig.string("SLOPDESK_PACER").map { !["arrival","off","0"].contains($0.lowercased()) } ?? true`
-    /// (default deadline for the remote-GUI path; `arrival`/`off`/`0` force present-on-arrival). Overlay reaches it.
+    /// `EnvConfig.string("SLOPDESK_PACER").map { $0.lowercased() == "deadline" } ?? false`
+    /// (default present-on-arrival — Parsec's zero-playout model; only `deadline` opts into the playout
+    /// buffer for a jittery WAN link). Overlay reaches it.
     func testOverlayReachesPacer() throws {
         try skipIfRealEnv("SLOPDESK_PACER")
         func resolveDeadlineMode() -> Bool {
-            EnvConfig.string("SLOPDESK_PACER").map { !["arrival", "off", "0"].contains($0.lowercased()) } ?? true
+            EnvConfig.string("SLOPDESK_PACER").map { $0.lowercased() == "deadline" } ?? false
         }
-        XCTAssertTrue(resolveDeadlineMode(), "empty overlay ⇒ deadline pacer (default)")
+        XCTAssertFalse(resolveDeadlineMode(), "empty overlay ⇒ present-on-arrival (Parsec-model default)")
+        EnvConfig.overlay["SLOPDESK_PACER"] = "deadline"
+        XCTAssertTrue(resolveDeadlineMode(), "overlay SLOPDESK_PACER=deadline ⇒ deadline pacer (opt-in)")
         EnvConfig.overlay["SLOPDESK_PACER"] = "arrival"
         XCTAssertFalse(resolveDeadlineMode(), "overlay SLOPDESK_PACER=arrival ⇒ present-on-arrival")
-        EnvConfig.overlay["SLOPDESK_PACER"] = "deadline"
-        XCTAssertTrue(resolveDeadlineMode(), "overlay SLOPDESK_PACER=deadline ⇒ deadline pacer")
     }
 
     // MARK: SLOPDESK_PLAYOUT_MS — VideoWindowPipeline fixedPlayoutOverride / playoutMs

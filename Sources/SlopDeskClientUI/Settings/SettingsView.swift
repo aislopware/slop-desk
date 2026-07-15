@@ -2010,9 +2010,9 @@ private struct VideoHostSettingsView: View {
                 timingFooter(.reconnect)
             }
 
-            slateFormSection("Video · Pacer (host)") {
+            slateFormSection("Video · Pacer (client present)") {
                 Picker("Mode", selection: pacerBinding) {
-                    Text("Default (deadline)").tag(VideoPreferences.Pacer?.none)
+                    Text("Default (on arrival)").tag(VideoPreferences.Pacer?.none)
                     Text("Deadline").tag(Optional(VideoPreferences.Pacer.deadline))
                     Text("On arrival").tag(Optional(VideoPreferences.Pacer.arrival))
                 }
