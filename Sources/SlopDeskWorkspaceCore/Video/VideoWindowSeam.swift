@@ -128,6 +128,27 @@ public struct RemotePaneContext {
     /// (kilobits/sec, ~1 Hz) — the titlebar cluster's stream-weight complication. Informational view→model
     /// push (never reaches the host), so NOT read-only-gated. `nil` ⇒ none.
     public var onStreamBitrateChanged: ((_ kbps: Int) -> Void)?
+    /// NETWORK-STATS MIRROR: the live video view PUSHES the ~2 Hz client-local telemetry aggregate —
+    /// received frames/sec, FEC recoveries/sec, unrecovered losses/sec, latest host-stamp hold (ms),
+    /// pacer depth. Primitives only (this seam is headless). Informational view→model push (never
+    /// reaches the host), so NOT read-only-gated. `nil` ⇒ none.
+    public var onNetworkStats: ((
+        _ fps: Double, _ fecPerSec: Double, _ unrecoveredPerSec: Double, _ holdMs: Int, _ pacerDepth: Int,
+    ) -> Void)?
+    /// STREAM SETTINGS (fps cap / bitrate ceiling): the live video view publishes a settings-drive closure
+    /// here once its session exists (`nil` on teardown), so the pane can request a live encode fps cap /
+    /// bitrate ceiling (`(fpsCap, bitrateCeilingBps)`, 0 = auto — host clamps on apply). Changes HOST
+    /// encode behaviour, so — like ``onResizeInjectorReady`` — WITHHELD (bound `nil`) while read-only.
+    /// `nil` (standalone default) ⇒ no canvas.
+    public var onStreamSettingsInjectorReady: ((((_ fpsCap: Int, _ bitrateCeilingBps: Int) -> Void)?) -> Void)?
+    /// SYSTEM-KEY INJECTOR (immersive-capture plumbing): the live video view publishes a programmatic
+    /// key-event closure here (`nil` on teardown) driving the SAME wire path the pane's local
+    /// keyDown/keyUp uses. `(keyCode, modifierFlags [raw platform flags], isDown)`. SENDS host input, so —
+    /// like ``onKeyInjectorReady`` — WITHHELD (bound `nil`) while read-only. `nil` (standalone default) ⇒
+    /// no canvas.
+    public var onSystemKeyInjectorReady: ((((
+        _ keyCode: UInt16, _ modifierFlags: UInt64, _ isDown: Bool,
+    ) -> Void)?) -> Void)?
     /// STALL SCRIM: the live video view PUSHES the stream's stall state when it FLIPS — `true` ⇒
     /// host silent past the stall threshold (pane overlays "Reconnecting…"), `false` ⇒ traffic resumed.
     /// Informational view→model push (never reaches the host), so NOT read-only-gated. `nil` ⇒ none.
@@ -153,6 +174,13 @@ public struct RemotePaneContext {
         onWindowGeometryChanged: ((_ curW: Double, _ curH: Double, _ maxW: Double, _ maxH: Double) -> Void)? = nil,
         onStreamCadenceChanged: ((_ fps: Int) -> Void)? = nil,
         onStreamBitrateChanged: ((_ kbps: Int) -> Void)? = nil,
+        onNetworkStats: ((
+            _ fps: Double, _ fecPerSec: Double, _ unrecoveredPerSec: Double, _ holdMs: Int, _ pacerDepth: Int,
+        ) -> Void)? = nil,
+        onStreamSettingsInjectorReady: ((((_ fpsCap: Int, _ bitrateCeilingBps: Int) -> Void)?) -> Void)? = nil,
+        onSystemKeyInjectorReady: ((((
+            _ keyCode: UInt16, _ modifierFlags: UInt64, _ isDown: Bool,
+        ) -> Void)?) -> Void)? = nil,
         onStreamStallChanged: ((_ stalled: Bool) -> Void)? = nil,
         onSessionRejected: (() -> Void)? = nil,
     ) {
@@ -168,6 +196,9 @@ public struct RemotePaneContext {
         self.onWindowGeometryChanged = onWindowGeometryChanged
         self.onStreamCadenceChanged = onStreamCadenceChanged
         self.onStreamBitrateChanged = onStreamBitrateChanged
+        self.onNetworkStats = onNetworkStats
+        self.onStreamSettingsInjectorReady = onStreamSettingsInjectorReady
+        self.onSystemKeyInjectorReady = onSystemKeyInjectorReady
         self.onStreamStallChanged = onStreamStallChanged
         self.onSessionRejected = onSessionRejected
     }
@@ -195,11 +226,18 @@ public struct RemotePaneContext {
         bindResizeInjector: @escaping (((_ width: Double, _ height: Double) -> Void)?) -> Void = { _ in },
         bindViewportInjector: @escaping (((_ command: UInt8) -> Void)?) -> Void = { _ in },
         bindInputRelease: @escaping ((() -> Void)?) -> Void = { _ in },
+        bindStreamSettingsInjector: @escaping (((_ fpsCap: Int, _ bitrateCeilingBps: Int) -> Void)?)
+            -> Void = { _ in },
+        bindSystemKeyInjector: @escaping (((_ keyCode: UInt16, _ modifierFlags: UInt64, _ isDown: Bool) -> Void)?)
+            -> Void = { _ in },
         onWindowGeometry: @escaping (_ curW: Double, _ curH: Double, _ maxW: Double, _ maxH: Double)
             -> Void = { _, _, _, _ in
             },
         onStreamCadence: @escaping (_ fps: Int) -> Void = { _ in },
         onStreamBitrate: @escaping (_ kbps: Int) -> Void = { _ in },
+        onNetworkStats: @escaping (
+            _ fps: Double, _ fecPerSec: Double, _ unrecoveredPerSec: Double, _ holdMs: Int, _ pacerDepth: Int,
+        ) -> Void = { _, _, _, _, _ in },
         onStreamStall: @escaping (_ stalled: Bool) -> Void = { _ in },
         onSessionRejected: @escaping () -> Void = {},
     ) -> Self {
@@ -227,6 +265,15 @@ public struct RemotePaneContext {
             // so they stay live regardless of read-only — the titlebar telemetry tracks the stream either way.
             onStreamCadenceChanged: onStreamCadence,
             onStreamBitrateChanged: onStreamBitrate,
+            // NETWORK-STATS MIRROR: informational (never reaches the host) — stays live regardless of
+            // read-only, so a locked pane's stats surface still tracks the stream.
+            onNetworkStats: onNetworkStats,
+            // STREAM SETTINGS: changes HOST encode behaviour (fps cap / bitrate ceiling) — a read-only
+            // pane must not drive it. Withhold the sink (bind nil), exactly like the resize sink.
+            onStreamSettingsInjectorReady: { sink in bindStreamSettingsInjector(readOnly ? nil : sink) },
+            // SYSTEM-KEY INJECTOR: sends host KEY input — a read-only pane must not inject. Withhold
+            // the sink (bind nil), exactly like the paste-keystrokes sink.
+            onSystemKeyInjectorReady: { sink in bindSystemKeyInjector(readOnly ? nil : sink) },
             // STALL SCRIM: informational (never reaches the host) — stays live regardless of read-only, so
             // a locked pane still shows "Reconnecting…" when its host goes dark.
             onStreamStallChanged: onStreamStall,
@@ -302,6 +349,45 @@ public final class RemoteWindowDiscovery {
     /// App-registered window-list query (set once at launch). `nil` → the picker uses manual entry.
     public static var shared: (@MainActor (_ host: String, _ mediaPort: UInt16, _ cursorPort: UInt16) async
         -> [RemoteWindowSummary])?
+}
+
+/// One host-side DISPLAY the desktop pane's display-switcher lists. The cross-platform mirror of the
+/// video protocol's `DisplaySummary` (kept here so `SlopDeskClientUI` needn't depend on
+/// `SlopDeskVideoProtocol`). `Identifiable` (by `displayID`) for direct `ForEach` rendering.
+public struct RemoteDisplaySummary: Sendable, Equatable, Identifiable {
+    public var displayID: UInt32
+    /// Point size (the host's `CGDisplayBounds` size).
+    public var width: UInt16
+    public var height: UInt16
+    public var isMain: Bool
+    public var id: UInt32 { displayID }
+
+    public init(displayID: UInt32, width: UInt16, height: UInt16, isMain: Bool) {
+        self.displayID = displayID
+        self.width = width
+        self.height = height
+        self.isMain = isMain
+    }
+
+    /// One switcher row: "Main Display (2560×1440)" / "Display 2 (1920×1080)". The ordinal is the
+    /// caller's index+1 (display IDs are opaque u32s — meaningless to show).
+    public func displayLabel(ordinal: Int) -> String {
+        let name = isMain ? "Main Display" : "Display \(ordinal)"
+        return "\(name) (\(width)×\(height))"
+    }
+}
+
+/// The display-list **discovery seam** (the desktop pane's display switcher): the GUI app injects a
+/// closure querying the host's online displays (implemented in
+/// `SlopDeskVideoClient.VideoWindowDiscovery.discoverDisplays` — the session-less `listDisplays` ↔
+/// `displayList` pair), mirroring ``RemoteWindowDiscovery`` exactly. `nil` → no discovery → the
+/// switcher shows only the current display.
+@preconcurrency
+@MainActor
+public final class RemoteDisplayDiscovery {
+    /// App-registered display-list query (set once at launch). `nil` → the switcher is inert.
+    public static var shared: (@MainActor (_ host: String, _ mediaPort: UInt16, _ cursorPort: UInt16) async
+        -> [RemoteDisplaySummary])?
 }
 
 /// One host-side SYSTEM dialog/prompt the client's monitor surfaces in its own pane (the user's case: a

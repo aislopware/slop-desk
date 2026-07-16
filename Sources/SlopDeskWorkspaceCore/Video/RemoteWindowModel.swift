@@ -36,7 +36,9 @@ public final class RemoteWindowModel {
     /// (`0` = the main display) instead of a window. ``open()`` then builds a display descriptor
     /// directly — no picker, no window id, and ``revalidateBinding()`` is a `.skipped` no-op (a
     /// display target never goes stale the way CGWindowIDs do).
-    public let desktopDisplayID: UInt32?
+    /// Mutable only via ``switchDisplay(to:)`` (the desktop pane's display switcher) — every other
+    /// consumer treats it as the fixed mint-time target.
+    public private(set) var desktopDisplayID: UInt32?
 
     /// The opened window's descriptor (carries the full endpoint). `nil` ⇒ the form is shown;
     /// non-nil ⇒ the live ``VideoWindowFactory`` view is shown.
@@ -104,6 +106,57 @@ public final class RemoteWindowModel {
         guard kbps >= 0, streamKbps != kbps else { return }
         streamKbps = kbps
     }
+
+    /// LIVE NETWORK STATS (client-local mirror, ~2 Hz): received frames/sec, FEC recoveries/sec,
+    /// unrecovered losses/sec, the latest host-stamp hold (ms), and the pacer's live depth —
+    /// pushed by ``VideoWindowView`` from the session's aggregated telemetry windows. `nil` until
+    /// the first push lands. Like ``streamKbps``, ZEROS are real readings (an idle stream receives
+    /// nothing), so they are kept.
+    public private(set) var statsFps: Double?
+    public private(set) var statsFecPerSec: Double?
+    public private(set) var statsUnrecoveredPerSec: Double?
+    public private(set) var statsHoldMs: Int?
+    public private(set) var statsPacerDepth: Int?
+
+    /// Records one ~2 Hz network-stats reading. A negative value on any axis is nonsense (rates and
+    /// gauges are non-negative by construction) — the whole reading is dropped rather than mixing a
+    /// good axis with garbage. Each observable is only written on a real change.
+    public func noteNetworkStats(
+        fps: Double, fecPerSec: Double, unrecoveredPerSec: Double, holdMs: Int, pacerDepth: Int,
+    ) {
+        guard fps >= 0, fecPerSec >= 0, unrecoveredPerSec >= 0, holdMs >= 0, pacerDepth >= 0 else { return }
+        if statsFps != fps { statsFps = fps }
+        if statsFecPerSec != fecPerSec { statsFecPerSec = fecPerSec }
+        if statsUnrecoveredPerSec != unrecoveredPerSec { statsUnrecoveredPerSec = unrecoveredPerSec }
+        if statsHoldMs != holdMs { statsHoldMs = holdMs }
+        if statsPacerDepth != pacerDepth { statsPacerDepth = pacerDepth }
+    }
+
+    /// STREAM SETTINGS (fps cap / bitrate ceiling): the live ``VideoWindowView`` publishes this once its
+    /// session exists (cleared `nil` on teardown; WITHHELD by the seam while read-only — it changes HOST
+    /// encode behaviour, like ``resizeInjector``). `(fpsCap, bitrateCeilingBps)`, `0` = auto; the host
+    /// clamps on apply and the session re-sends the request after every re-hello.
+    public var streamSettingsInjector: ((_ fpsCap: Int, _ bitrateCeilingBps: Int) -> Void)?
+
+    /// Whether the stream-settings controls should be live: streaming AND a settings sink is wired
+    /// (withheld while read-only).
+    public var canAdjustStreamSettings: Bool { active != nil && streamSettingsInjector != nil }
+
+    /// Request a live fps cap / bitrate ceiling (`0` = auto) through the published sink (no-op when
+    /// none is wired — not streaming or read-only).
+    public func applyStreamSettings(fpsCap: Int, bitrateCeilingBps: Int) {
+        streamSettingsInjector?(fpsCap, bitrateCeilingBps)
+    }
+
+    /// SYSTEM-KEY INJECTOR (immersive-capture plumbing): programmatic key events driven through the
+    /// SAME wire path the pane's local keyDown/keyUp uses. `(keyCode, modifierFlags [raw platform
+    /// flags], isDown)`. Published by ``VideoWindowView`` once its session exists (cleared `nil` on
+    /// teardown; WITHHELD by the seam while read-only — it sends host input, like ``keyInjector``).
+    public var systemKeyInjector: ((_ keyCode: UInt16, _ modifierFlags: UInt64, _ isDown: Bool) -> Void)?
+
+    /// Whether programmatic system-key injection is possible right now: streaming AND a live sink is
+    /// wired (withheld while read-only).
+    public var canInjectSystemKeys: Bool { active != nil && systemKeyInjector != nil }
 
     /// STALL SCRIM: whether the stream is STALLED — the host went
     /// silent (no frame AND no 1 s host heartbeat) past the stall threshold, so the pane overlays a
@@ -532,5 +585,44 @@ public final class RemoteWindowModel {
         revalidationTask?.cancel()
         endAwaitingReflow() // a closed window will not re-capture — never leave the scrim hung
         isStreamStalled = false // a closed pane shows the picker, not a stale "Reconnecting…" scrim
+        // Drop every published sink HERE — the model's own lifecycle, not the view's dismantle. The old
+        // view's `deactivate()` deliberately publishes NOTHING (see `VideoWindowView.deactivate`): during a
+        // pane detach/reattach the SAME model is re-bound by a view in ANOTHER hosting root, and SwiftUI may
+        // dismantle the old view AFTER the new one published fresh sinks — an unconditional nil-publish
+        // there would silently kill the new surface's input. close() always precedes the re-open in store
+        // order, so clearing here is race-free.
+        keyInjector = nil
+        resizeInjector = nil
+        viewportInjector = nil
+        inputReleaseInjector = nil
+        streamSettingsInjector = nil
+        systemKeyInjector = nil
+    }
+
+    // MARK: Display switcher (desktop pane)
+
+    /// The host's online displays, fetched by ``refreshDisplays()`` — the desktop pane's
+    /// display-switcher menu. Empty until fetched / when discovery is unavailable.
+    public private(set) var availableDisplays: [RemoteDisplaySummary] = []
+
+    /// Queries the host's display list via the ``RemoteDisplayDiscovery`` seam (session-less, same
+    /// transient-lane discipline as the window picker). Best-effort: no seam / timeout leaves the
+    /// previous list standing. A no-op for a window-target pane (no display to switch).
+    public func refreshDisplays() async {
+        guard desktopDisplayID != nil, let query = RemoteDisplayDiscovery.shared else { return }
+        let t = target()
+        let displays = await query(t.host, t.mediaPort, t.cursorPort)
+        guard !displays.isEmpty else { return }
+        availableDisplays = displays
+    }
+
+    /// Re-targets a DESKTOP pane at another host display: tears the current session down and re-hellos
+    /// at `displayID` (`open()` re-commits the endpoint, so the new target persists to the pane spec).
+    /// No-op for a window-target pane or when already streaming that display.
+    public func switchDisplay(to displayID: UInt32) {
+        guard desktopDisplayID != nil, desktopDisplayID != displayID else { return }
+        close()
+        desktopDisplayID = displayID
+        open()
     }
 }

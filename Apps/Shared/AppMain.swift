@@ -92,6 +92,13 @@ struct ClientAppMain {
                     onWindowGeometryReady: paneContext.onWindowGeometryChanged,
                     onStreamCadenceReady: paneContext.onStreamCadenceChanged,
                     onStreamBitrateReady: paneContext.onStreamBitrateChanged,
+                    // NETWORK-STATS MIRROR + LIVE STREAM SETTINGS + SYSTEM-KEY INJECTOR: the pane's
+                    // stats overlay / tune popover / immersive-capture forward path. Defaults are nil,
+                    // so forgetting these threads compiles headlessly but leaves the real app's
+                    // controls dead — they must ride the factory like every other seam callback.
+                    onNetworkStatsReady: paneContext.onNetworkStats,
+                    onStreamSettingsInjectorReady: paneContext.onStreamSettingsInjectorReady,
+                    onSystemKeyInjectorReady: paneContext.onSystemKeyInjectorReady,
                     onStreamStallChanged: paneContext.onStreamStallChanged,
                     // TERMINAL REJECTION: host refused the session — the seam routes it to
                     // `RemoteWindowModel.noteSessionRejected()` (picker + error, no rebuild loop).
@@ -121,6 +128,25 @@ struct ClientAppMain {
                         title: $0.title,
                         width: $0.width,
                         height: $0.height,
+                    )
+                }
+            }
+        }
+
+        // Display-list discovery seam (the desktop pane's display switcher): same shape as the
+        // window-picker seam above — the `listDisplays` ↔ `displayList` session-less pair, mapped to
+        // the UI's `RemoteDisplaySummary`. `nil` (no video module) ⇒ the switcher is inert.
+        MainActor.assumeIsolated {
+            RemoteDisplayDiscovery.shared = { host, mediaPort, cursorPort in
+                let displays = await VideoWindowDiscovery.discoverDisplays(
+                    host: host, mediaPort: mediaPort, cursorPort: cursorPort,
+                )
+                return displays.map {
+                    RemoteDisplaySummary(
+                        displayID: $0.displayID,
+                        width: $0.width,
+                        height: $0.height,
+                        isMain: $0.isMain,
                     )
                 }
             }

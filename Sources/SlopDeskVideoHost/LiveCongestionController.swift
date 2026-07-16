@@ -237,6 +237,10 @@ public struct LiveCongestionController: Sendable, Equatable {
     /// The lowest the controller may drive the live rate. Always ≥ ``LiveBitratePolicy/minimumBitrate``
     /// (≥ 1 Mbps) ⇒ NEVER 0, and ≤ `ceiling`.
     public let floor: Int
+    /// USER BITRATE CEILING (wire `streamSettings`): an optional client-requested ceiling layered
+    /// UNDER the policy ceiling. `nil` = none (auto — the pure policy ceiling rules, byte-identical
+    /// to the pre-override control law). Set/cleared at runtime via ``setUserCeilingBps(_:)``.
+    public private(set) var userCeilingBps: Int?
     /// Whether the delay-gradient early-cut path is armed (see ``gradientCutEnabledDefault``).
     /// INSTANCE-level (injected at construction, env default in production) so the loopback harness
     /// and tests can A/B both arms in one process without env games.
@@ -309,6 +313,27 @@ public struct LiveCongestionController: Sendable, Equatable {
             seedFraction: Self.seedFraction,
             gradientCutEnabled: gradientCutEnabled,
         )
+    }
+
+    // MARK: User ceiling override (wire streamSettings)
+
+    /// The ceiling every climb is clamped to: the policy ceiling bounded by the user override,
+    /// itself floored at `floor` so a pathological low override can never starve the encoder below
+    /// the usable minimum (the `[floor, ceiling]` invariant survives). With no override this is
+    /// exactly `ceiling` — the control law is untouched. Integer math, no float discipline needed.
+    public var effectiveCeiling: Int {
+        guard let user = userCeilingBps, user > 0 else { return ceiling }
+        return Swift.min(ceiling, Swift.max(floor, user))
+    }
+
+    /// Sets (or with `nil`/≤0 clears) the user bitrate ceiling. A `current` above the new effective
+    /// ceiling CLAMPS DOWN IMMEDIATELY — the override must bite on the very next actuation, not
+    /// after an AIMD episode — and every later additive climb is capped at ``effectiveCeiling``
+    /// (see `decideInner`). Clearing restores the pure policy ceiling; the reclaimed headroom is
+    /// climbed back through the ordinary additive probe, never jumped.
+    public mutating func setUserCeilingBps(_ userBps: Int?) {
+        userCeilingBps = (userBps ?? 0) > 0 ? userBps : nil
+        current = Swift.min(current, effectiveCeiling)
     }
 
     // MARK: Control law
@@ -538,7 +563,9 @@ public struct LiveCongestionController: Sendable, Equatable {
                 let step = cautious
                     ? Swift.max(increaseStep() / Self.kneeCautionDivisor, 1)
                     : increaseStep()
-                current = Swift.min(ceiling, current + step)
+                // Climb cap: the USER-effective ceiling (== `ceiling` with no override, so the
+                // no-override law stays byte-identical to the Rust mirror).
+                current = Swift.min(effectiveCeiling, current + step)
                 return Decision(target: current, reason: cautious ? .knee : .probe)
             }
             if let decayed = appLimitedDecay(offeredBps) {

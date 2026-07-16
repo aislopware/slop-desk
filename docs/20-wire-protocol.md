@@ -568,6 +568,17 @@ media flows. `[UInt8 type][body]`, big-endian:
   POINT size the captured window can reach (the bounds of its display, or the parked VD). The host
   sends it once at capture start, paired with its resize-to-display-origin step, so the client's
   "Resize…" popover can cap its width/height fields at a size the remote can actually adopt.
+- **Live stream settings (25, client → host, 2026-07-16):** `streamSettings` = `UInt8 fpsCap` +
+  `UInt32 bitrateCeilingBps` — the user's per-session encode fps CAP and bitrate CEILING. `0` on
+  either axis means AUTO (clear that override); non-zero values are clamped on the HOST at apply
+  time (fps 5…120, bitrate 500 kbps…200 Mbps — the decoder rejects only a malformed length). A
+  later message REPLACES the earlier one wholesale. The fps cap composes with the FPS governor
+  (`min(governed, cap)`) and actuates the governed-fps path (capture cadence gate + VT
+  `ExpectedFrameRate` + a `streamCadence` announce so the client pacer rebases); the bitrate
+  ceiling layers UNDER the resolution-derived policy ceiling in the ABR controller (the current
+  target clamps down immediately; climbs never exceed it). Per-session HOST state: it dies with a
+  session re-mint, so the client re-sends its last-requested values after every accepted
+  (re-)hello. Inert to an old host (unknown type → dropped).
 - **Session-LESS discovery (no capture mint; the request bootstraps its reply flow at the mux, is
   never answered with an unbound-lane `bye`, and its lane is retired after the reply):**
   `listWindows` (7, zero body) → `windowList` (8) powers the remote-window picker AND the client's
@@ -744,9 +755,12 @@ big-endian:
 
 | Type | Name | Body |
 |------|------|------|
-| `1` | `ack`               | `UInt32 streamSeq` (highest contiguous datagram seq durably received — bounds the host's LTR-pin window) |
-| `2` | `requestLTRRefresh` | `UInt32 fromFrameID` + `UInt32 toFrameID` (the lost frame range) |
-| `3` | `requestIDR`        | *(empty)* |
+| `1` | `ack`               | `UInt32 streamSeq` (highest contiguous datagram seq durably received — bounds the host's LTR-pin window; DOUBLES as the LTR/keyframe ack, carrying the decoded frame's `frameID` in that arm) |
+| `2` | `requestLTRRefresh` | `UInt32 fromFrameID` + `UInt32 toFrameID` (the lost frame range) + `UInt32 lastDecodedFrameID` (`0xFFFFFFFF` = nothing decoded yet) |
+| `3` | `requestIDR`        | `UInt32 lastDecodedFrameID` (`0xFFFFFFFF` = nothing decoded yet — keys the host's delivery-keyed recovery-IDR cooldown) |
+| `4` | `requestCursorShape` | `UInt16 shapeID` — re-request a cursor SHAPE bitmap the client is missing (its one-shot shipment was lost / over-MTU); the host re-emits it on the cursor socket, the cache re-insert is idempotent |
+| `5` | `networkStats`      | 11 × `UInt32`: `framesReceived` + `fecRecovered` + `unrecovered` + `latestHostSendTs` + `clientHoldMs` + `owdJitterMicros` + `owdTrendMilli` + `owdTrendFlags` + `pacerLateFrames` + `pacerPresentGaps` + `pacerDepth` — the periodic (~50 ms) client→host telemetry window; every field is RELATIVE (windowed counters / host-stamp echo / client-local deltas), so the host derives RTT in its OWN clock, clock-skew-free |
+| `6` | `requestFragments`  | `UInt32 frameID` + `UInt16 count` + count × `UInt16 fragIndex` — NACK / selective ARQ (`SLOPDESK_NACK=1`, capped at 64 indices): the host re-sends exactly those data fragments from its send-history ring; a ring miss is a benign no-op (the Dropped→LTR-refresh fallback still fires) |
 
 Recovery **prefers an LTR refresh** (`requestLTRRefresh`): the client names the lost frame range; the
 host invalidates the referenced long-term-reference frame and encodes the next frame against an older

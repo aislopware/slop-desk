@@ -7,6 +7,38 @@ import OSLog
 import QuartzCore
 import SlopDeskVideoProtocol
 
+/// A ~2 Hz CLIENT-LOCAL aggregate of the ~50 ms network-telemetry windows — the pane's live
+/// stats mirror. The 50 ms wire report to the host is untouched; this is a second, slower
+/// consumer of the same counters (rates over the aggregated window) plus the latest host-stamp
+/// hold and the pacer's live depth. Primitives only, so the seam can forward it headlessly.
+public struct ClientNetworkStatsSnapshot: Sendable, Equatable {
+    /// Complete frames received per second over the aggregation window.
+    public let framesPerSecond: Double
+    /// Frames completed via FEC recovery per second.
+    public let fecRecoveredPerSecond: Double
+    /// Frames declared unrecoverably lost per second.
+    public let unrecoveredPerSecond: Double
+    /// The latest `clientHoldMs` (ms since the newest observed host send stamp — the same
+    /// client-local delta the wire report carries; 0 when telemetry is off / nothing observed).
+    public let holdMillis: Int
+    /// The pacer's live presentation depth (0 = no pacer attached).
+    public let pacerDepth: Int
+
+    public init(
+        framesPerSecond: Double,
+        fecRecoveredPerSecond: Double,
+        unrecoveredPerSecond: Double,
+        holdMillis: Int,
+        pacerDepth: Int,
+    ) {
+        self.framesPerSecond = framesPerSecond
+        self.fecRecoveredPerSecond = fecRecoveredPerSecond
+        self.unrecoveredPerSecond = unrecoveredPerSecond
+        self.holdMillis = holdMillis
+        self.pacerDepth = pacerDepth
+    }
+}
+
 /// The client-side session orchestrator for the GUI video path (PATH 2) — the exact mirror of
 /// `SlopDeskVideoHost.SlopDeskVideoHostSession`.
 ///
@@ -116,6 +148,15 @@ public actor SlopDeskVideoClientSession {
         /// (kilobits/sec), reported ~1 Hz from the reassembled-frame byte window. Payload-level (the
         /// decoder's diet — FEC parity/headers/dups excluded). `nil` ⇒ no view wants it.
         public var applyStreamBitrate: (@Sendable (Int) -> Void)?
+        /// NETWORK-STATS MIRROR (~2 Hz): a client-local aggregate of the ~50 ms telemetry windows
+        /// (``ClientNetworkStatsSnapshot``) for the pane's stats surface. A LOCAL GUI reading like
+        /// ``applyStreamBitrate`` — never a wire report; the 50 ms host report cadence is
+        /// untouched. `nil` ⇒ no view wants it.
+        public var applyNetworkStats: (@Sendable (ClientNetworkStatsSnapshot) -> Void)?
+        /// NON-DRAINING pacer-depth read for the stats mirror (`FramePacer.currentDepth`). The
+        /// wire report's ``readPacerTelemetry`` DRAINS its counters exactly once per report, so
+        /// the mirror must not share it — it reads this gauge instead. `nil` ⇒ no pacer (depth 0).
+        public var readPacerDepth: (@Sendable () -> Int)?
         /// Adaptive pacer depth: SYNCHRONOUS, lock-guarded drain of the pipeline-owned FramePacer's
         /// presentation-health counters (`FramePacer.drainTelemetry`). Safe to call from the session
         /// actor with NO main hop — the pacer is `@unchecked Sendable` behind its own NSLock.
@@ -175,6 +216,8 @@ public actor SlopDeskVideoClientSession {
             notifyStreamNativePoints: (@Sendable (VideoSize) -> Void)? = nil,
             applyStreamCadence: (@Sendable (Int) -> Void)? = nil,
             applyStreamBitrate: (@Sendable (Int) -> Void)? = nil,
+            applyNetworkStats: (@Sendable (ClientNetworkStatsSnapshot) -> Void)? = nil,
+            readPacerDepth: (@Sendable () -> Int)? = nil,
             readPacerTelemetry: (@Sendable () -> PacerTelemetrySnapshot)? = nil,
             noteNetworkLate: (@Sendable () -> Void)? = nil,
             notePlayoutJitter: (@Sendable (Double) -> Void)? = nil,
@@ -192,6 +235,8 @@ public actor SlopDeskVideoClientSession {
             self.notifyStreamNativePoints = notifyStreamNativePoints
             self.applyStreamCadence = applyStreamCadence
             self.applyStreamBitrate = applyStreamBitrate
+            self.applyNetworkStats = applyNetworkStats
+            self.readPacerDepth = readPacerDepth
             self.readPacerTelemetry = readPacerTelemetry
             self.noteNetworkLate = noteNetworkLate
             self.notePlayoutJitter = notePlayoutJitter
@@ -516,6 +561,21 @@ public actor SlopDeskVideoClientSession {
     /// NetworkStats wire window): reassembled-frame payload bytes + the window's start timestamp.
     private var bitrateWindowBytes: UInt64 = 0
     private var bitrateWindowStartS: Double = 0
+    /// NETWORK-STATS MIRROR window (the ~2 Hz `gui.applyNetworkStats` push): SEPARATE counters
+    /// from the win* trio (the wire report resets those every ~50 ms, and it only runs when
+    /// telemetry is on — the mirror must aggregate across those windows regardless). Incremented
+    /// at the same three sites; reset by ``flushNetworkStatsMirrorIfDue()``.
+    private var mirrorFrames: UInt32 = 0
+    private var mirrorFecRecovered: UInt32 = 0
+    private var mirrorUnrecovered: UInt32 = 0
+    private var mirrorWindowStartS: Double = 0
+    /// Minimum mirror-window span (seconds) — the ~2 Hz push cadence.
+    private static let statsMirrorInterval: Double = 0.5
+    /// USER STREAM SETTINGS: the last-requested fps cap / bitrate ceiling (`0` = auto), re-sent
+    /// automatically after every accepted (re-)hello — the settings are per-session HOST state
+    /// and die with a session re-mint, so the handshake must re-establish them. `nil` ⇒ never
+    /// requested (nothing rides the handshake).
+    private var lastStreamSettings: (fpsCap: Int, bitrateCeilingBps: Int)?
     /// The self-owned ~50 ms NetworkStats timer (mirrors ``keepaliveTask``'s safe weak pattern).
     /// Cancelled in ``stop()``.
     private var networkStatsTask: Task<Void, Never>?
@@ -752,6 +812,7 @@ public actor SlopDeskVideoClientSession {
                 guard let self else { return }
                 await sendNetworkStatsIfStreaming()
                 await flushStreamBitrateIfDue()
+                await flushNetworkStatsMirrorIfDue()
             }
         }
     }
@@ -822,6 +883,48 @@ public actor SlopDeskVideoClientSession {
         bitrateWindowBytes = 0
         bitrateWindowStartS = now
         apply(kbps)
+    }
+
+    /// NETWORK-STATS MIRROR: flushes the ~0.5 s aggregate of the telemetry counters into
+    /// `gui.applyNetworkStats` as per-second rates. Rides the 50 ms stats timer but — like the
+    /// bitrate complication — is NOT gated on the telemetry flag (a local GUI reading, never a
+    /// wire report; the 50 ms wire cadence is untouched). While media is not flowing the window
+    /// re-arms silently (no 0-spam into a torn-down view); a flowing-but-idle window reports real
+    /// zeros (idle-skip means nothing arrives). Monotonic clock throughout (the local idiom).
+    private func flushNetworkStatsMirrorIfDue() {
+        guard let apply = gui.applyNetworkStats else { return }
+        let now = FramePacer.currentHostTimeSeconds()
+        guard stateMachine.mediaFlowing else {
+            mirrorFrames = 0
+            mirrorFecRecovered = 0
+            mirrorUnrecovered = 0
+            mirrorWindowStartS = now
+            return
+        }
+        if mirrorWindowStartS == 0 {
+            mirrorWindowStartS = now
+            return
+        }
+        let elapsed = now - mirrorWindowStartS
+        guard elapsed >= Self.statsMirrorInterval else { return }
+        // The latest clientHoldMs — the same clamped client-local delta the wire report carries
+        // (0 = telemetry off / no host stamp observed yet).
+        let holdMs: Int = latestHostSendTs == 0 ? 0 : Int(min(
+            Double(UInt32.max),
+            max(0, (now - latestHostSendTsObservedAt) * 1000),
+        ))
+        let snapshot = ClientNetworkStatsSnapshot(
+            framesPerSecond: Double(mirrorFrames) / elapsed,
+            fecRecoveredPerSecond: Double(mirrorFecRecovered) / elapsed,
+            unrecoveredPerSecond: Double(mirrorUnrecovered) / elapsed,
+            holdMillis: holdMs,
+            pacerDepth: gui.readPacerDepth?() ?? 0,
+        )
+        mirrorFrames = 0
+        mirrorFecRecovered = 0
+        mirrorUnrecovered = 0
+        mirrorWindowStartS = now
+        apply(snapshot)
     }
 
     // MARK: Layout (called by the host view each layout pass)
@@ -1072,9 +1175,11 @@ public actor SlopDeskVideoClientSession {
                 "frame reassembled #\(frame.frameID) (kf=\(frame.keyframe) ltr=\(frame.isLTR) fec=\(frame.recoveredViaFEC)) → decoding",
             )
             winFramesReceived &+= 1
+            mirrorFrames &+= 1
             bitrateWindowBytes &+= UInt64(frame.avcc.count)
             if frame.recoveredViaFEC {
                 winFecRecovered &+= 1
+                mirrorFecRecovered &+= 1
                 // An FEC recovery is the EARLY-WARNING loss event — bursts produce several of these
                 // before the first unrecoverable frame, so the burst's first frozen episode already
                 // runs the halved escalation clock.
@@ -1131,6 +1236,7 @@ public actor SlopDeskVideoClientSession {
         dbg("frame #\(lost) declared LOST (unrecoverable)")
         // Network-feedback telemetry: count an unrecoverable loss (the loss-rate numerator).
         winUnrecovered &+= 1
+        mirrorUnrecovered &+= 1
         // Feed the loss-observing window (gates the halved escalation clock).
         lossWindow.noteEvent(now: FramePacer.currentHostTimeSeconds())
         // SELF-HEAL: record the loss boundary so a SUCCESSFULLY-decoded frame newer than every loss
@@ -1650,6 +1756,30 @@ public actor SlopDeskVideoClientSession {
         sendInput(inputEncoder.text(string))
     }
 
+    /// USER STREAM SETTINGS (wire type 25): request a live encode fps CAP and/or bitrate CEILING
+    /// for this session — `0` on either axis means auto (clear that override). The values are
+    /// stored and RE-SENT automatically after every accepted (re-)hello (per-session HOST state —
+    /// it dies with a session re-mint); the HOST clamps on apply (fps 5…120, bitrate
+    /// 500 kbps…200 Mbps). A later call replaces the earlier request wholesale.
+    public func updateStreamSettings(fpsCap: Int, bitrateCeilingBps: Int) {
+        lastStreamSettings = (fpsCap: max(0, fpsCap), bitrateCeilingBps: max(0, bitrateCeilingBps))
+        sendStreamSettingsIfStreaming()
+    }
+
+    /// Sends the stored settings iff a session streams (the host SM ignores a pre-stream message,
+    /// and the handshake completion re-sends — see ``updateStreamSettings(fpsCap:bitrateCeilingBps:)``).
+    private func sendStreamSettingsIfStreaming() {
+        guard let settings = lastStreamSettings, stateMachine.mediaFlowing else { return }
+        dbg("→ streamSettings fpsCap=\(settings.fpsCap) ceiling=\(settings.bitrateCeilingBps)bps")
+        transport.send(
+            VideoControlMessage.streamSettings(
+                fpsCap: UInt8(clamping: settings.fpsCap),
+                bitrateCeilingBps: UInt32(clamping: settings.bitrateCeilingBps),
+            ).encode(),
+            on: .control,
+        )
+    }
+
     /// Tells the host to RAISE the captured window to frontmost because this pane was focused on the
     /// client (hover / first-responder). Sent fire-and-forget on the `.control` channel WHILE streaming.
     /// Proactive + idempotent: the host raises once (short-circuiting if already frontmost), so the
@@ -1842,6 +1972,10 @@ public actor SlopDeskVideoClientSession {
         // semantics); the gate arming is idempotent with the reactive path below.
         decodeGate.noteAwaitingKeyframe()
         requestIDR()
+        // USER STREAM SETTINGS are per-session HOST state — a (re-)accepted hello landed on a
+        // freshly-minted session that knows nothing of the user's cap/ceiling, so re-establish
+        // the last request now (no-op when none was ever made).
+        sendStreamSettingsIfStreaming()
         reapplyCursor()
         log
             .info(

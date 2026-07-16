@@ -38,7 +38,10 @@ public enum UnboundLaneByeDecider {
             switch message {
             case .keepalive,
                  .resizeRequest,
-                 .focusWindow:
+                 .focusWindow,
+                 .streamSettings:
+                // `streamSettings` is in-session-only like the trio above (the client only sends
+                // it while it believes a session streams) — a live-session belief worth correcting.
                 return true
             case .hello,
                  .helloAck,

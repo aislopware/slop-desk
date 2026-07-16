@@ -59,6 +59,7 @@ import Foundation
 /// type 23 displayList:   UInt16 count | per record: UInt32 displayID | UInt16 w | UInt16 h | UInt8 isMain
 /// type 24 helloDisplay:  UInt16 protocolVersion | UInt32 requestedDisplayID
 ///                            | Float64 viewportW | Float64 viewportH
+/// type 25 streamSettings: UInt8 fpsCap | UInt32 bitrateCeilingBps
 /// ```
 ///
 /// Liveness keepalive: guards against a client that crashes without sending `bye` — a zero-body
@@ -358,6 +359,14 @@ public enum VideoControlMessage: Equatable, Sendable {
     /// is target-agnostic). A desktop session never resizes the host display: `resizeRequest` acks
     /// at the fixed display size and the client letterboxes.
     case helloDisplay(protocolVersion: UInt16, requestedDisplayID: UInt32, viewport: VideoSize)
+    /// Client → host: LIVE per-session stream controls — a user-requested encode fps CAP and bitrate
+    /// CEILING. `fpsCap == 0` / `bitrateCeilingBps == 0` mean AUTO (clear that override); non-zero
+    /// values are clamped on the HOST at apply time (fps 5…120, bitrate 500 kbps…200 Mbps —
+    /// validate-then-drop stays at the length level, out-of-range semantics clamp rather than drop).
+    /// A later message REPLACES the earlier one wholesale. Per-session HOST state: it dies with a
+    /// session re-mint, so the client re-sends its last-requested values after every accepted
+    /// (re-)hello. Inert to an old host (unknown type → dropped).
+    case streamSettings(fpsCap: UInt8, bitrateCeilingBps: UInt32)
 
     public var messageType: UInt8 {
         switch self {
@@ -385,6 +394,7 @@ public enum VideoControlMessage: Equatable, Sendable {
         case .listDisplays: 22
         case .displayList: 23
         case .helloDisplay: 24
+        case .streamSettings: 25
         }
     }
 
@@ -545,6 +555,9 @@ public enum VideoControlMessage: Equatable, Sendable {
             out.appendBE(displayID)
             out.appendBE(viewport.width)
             out.appendBE(viewport.height)
+        case let .streamSettings(fpsCap, bitrateCeilingBps):
+            out.append(fpsCap)
+            out.appendBE(bitrateCeilingBps)
         }
         return out
     }
@@ -766,6 +779,12 @@ public enum VideoControlMessage: Equatable, Sendable {
                 requestedDisplayID: displayID,
                 viewport: VideoSize(width: w, height: h),
             )
+        case 25:
+            // Length is the only decode-time validation (a short body throws `.truncated`);
+            // out-of-range VALUES clamp on the host at apply time, per the case doc.
+            let fpsCap = try reader.readUInt8()
+            let ceiling = try reader.readUInt32()
+            return .streamSettings(fpsCap: fpsCap, bitrateCeilingBps: ceiling)
         default:
             throw VideoProtocolError.malformed("unknown video control message type \(type)")
         }

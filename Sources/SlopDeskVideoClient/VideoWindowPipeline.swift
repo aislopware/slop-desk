@@ -148,6 +148,16 @@ final class VideoWindowPipeline {
     /// Display-only (never reaches the host).
     var onStreamBitrateChanged: ((Int) -> Void)?
 
+    /// NETWORK-STATS MIRROR: fired on the @MainActor ~2 Hz with the session's client-local
+    /// telemetry aggregate (received-fps / FEC / unrecovered rates + hold + pacer depth) for the
+    /// pane's stats surface. Set by the view in `activate`. Display-only (never reaches the host).
+    var onNetworkStatsChanged: ((ClientNetworkStatsSnapshot) -> Void)?
+
+    /// USER STREAM SETTINGS: the last requested fps cap / bitrate ceiling (`0` = auto), preserved
+    /// ACROSS a host-ended rebuild — the rebuild constructs a fresh session whose per-session host
+    /// state starts clean, so `activate` re-seeds it from here. `nil` ⇒ never requested.
+    private var lastStreamSettings: (fpsCap: Int, bitrateCeilingBps: Int)?
+
     #if os(macOS)
     /// The LOCAL `NSCursor` mirroring the host's CURRENT cursor SHAPE (Parsec model: the OS draws it at
     /// the instant local mouse position, so the pointer never lags by an RTT). `nil` until the shape
@@ -467,6 +477,17 @@ final class VideoWindowPipeline {
                 // (the titlebar cluster). Hop to main (the model is @MainActor); no-op when unbound.
                 Task { @MainActor in self?.onStreamBitrateChanged?(kbps) }
             },
+            applyNetworkStats: { [weak self] snapshot in
+                // NETWORK-STATS MIRROR: surface the ~2 Hz client-local aggregate to the view→model
+                // chain. Hop to main (the model is @MainActor); no-op when unbound.
+                Task { @MainActor in self?.onNetworkStatsChanged?(snapshot) }
+            },
+            readPacerDepth: {
+                // Non-draining depth gauge for the stats mirror — the wire report's drainTelemetry
+                // stays the SOLE drainer of the presentation-health counters. Strong `pacer`
+                // capture matches submitDecodedFrame (session→hooks→pacer is acyclic).
+                pacer.currentDepth
+            },
             readPacerTelemetry: {
                 // Synchronous lock-guarded drain (no main hop — the pacer carries its own NSLock).
                 // Strong `pacer` capture matches `submitDecodedFrame` above: session→hooks→pacer is
@@ -534,6 +555,15 @@ final class VideoWindowPipeline {
         Task { try? await session.start() }
         let initialSize = layerSize
         Task { await session.setLayerSize(initialSize) }
+        // USER STREAM SETTINGS survive a pipeline rebuild: seed the fresh session with the last
+        // request — it stores the values and (re-)sends them once the new handshake completes.
+        if let settings = lastStreamSettings {
+            Task {
+                await session.updateStreamSettings(
+                    fpsCap: settings.fpsCap, bitrateCeilingBps: settings.bitrateCeilingBps,
+                )
+            }
+        }
 
         // Bring up the single ordered outbound-input consumer before any input can be enqueued.
         startOutboundConsumer()
@@ -696,6 +726,15 @@ final class VideoWindowPipeline {
     func userResizeTo(width: Double, height: Double) {
         guard let session else { return }
         Task { await session.userResizeTo(width: width, height: height) }
+    }
+
+    /// USER STREAM SETTINGS: forward a live fps-cap / bitrate-ceiling request (`0` = auto) to the
+    /// session (which stores it and re-sends after every re-hello) and remember it here so a
+    /// host-ended rebuild's fresh session inherits it (see `activate`).
+    func updateStreamSettings(fpsCap: Int, bitrateCeilingBps: Int) {
+        lastStreamSettings = (fpsCap: fpsCap, bitrateCeilingBps: bitrateCeilingBps)
+        guard let session else { return }
+        Task { await session.updateStreamSettings(fpsCap: fpsCap, bitrateCeilingBps: bitrateCeilingBps) }
     }
 
     /// VNC-style zoom/pan, forwarded to the renderer (applied as a UV crop next vsync)

@@ -4043,6 +4043,12 @@
       "version": 7,
       "vh": 800,
       "vw": 1280
+    },
+    {
+      "bitrateCeilingBps": 8000000,
+      "fpsCap": 24,
+      "hex": "1918007a1200",
+      "variant": "streamSettings"
     }
   ],
   "virtualDisplayGeometry": [

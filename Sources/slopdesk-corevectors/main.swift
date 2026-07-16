@@ -416,6 +416,11 @@ root["videoControl"] = [
         .helloDisplay(protocolVersion: 7, requestedDisplayID: 1, viewport: VideoSize(width: 1280.0, height: 800.0)),
         ["version": 7, "displayID": 1, "vw": 1280.0, "vh": 800.0],
     ),
+    vc(
+        "streamSettings",
+        .streamSettings(fpsCap: 24, bitrateCeilingBps: 8_000_000),
+        ["fpsCap": 24, "bitrateCeilingBps": 8_000_000],
+    ),
 ]
 
 // MARK: RecoveryMessage

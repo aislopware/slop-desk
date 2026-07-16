@@ -47,6 +47,22 @@ struct GuiLeafView: View {
     /// "LOCK POSITION" button state — mirrored locally so the footer lock icon reflects on/off. The actual
     /// edge-pan freeze lives in the video view (via ``RemoteWindowModel/sendViewport(_:)``); this tracks it 1:1.
     @State private var panLocked = false
+    /// Whether the in-pane STATS readout is showing (footer toggle). Per-pane view state — resets on
+    /// remount, like the client-side zoom.
+    @State private var showStats = false
+    /// The pane's LIVE stream-settings selection (0 = auto) — mirrors what was last requested through
+    /// ``RemoteWindowModel/applyStreamSettings(fpsCap:bitrateCeilingBps:)``. View state by design: a
+    /// remount mints a NEW client session whose host state also resets to auto, so the two stay in step.
+    @State private var fpsCapSelection = 0
+    @State private var bitrateCapMbpsSelection = 0
+    #if os(macOS)
+    /// IMMERSIVE capture (system keys → host): the CGEventTap owner, engaged only while the toggle is on
+    /// AND this pane can inject (live + not read-only). One controller per pane view.
+    @State private var systemKeyCapture = SystemKeyCaptureController()
+    /// Mirrors ``systemKeyCapture``'s engaged state for the footer toggle tint (the controller
+    /// self-disengages on app-resign / the ⌃⌥⌘E escape chord — `onDisengage` keeps this in step).
+    @State private var immersiveOn = false
+    #endif
 
     /// The pane's remote-window model (picker/open/close/keyInjector). `nil` for a non-video handle.
     private var model: RemoteWindowModel? { live?.remoteWindow }
@@ -76,7 +92,14 @@ struct GuiLeafView: View {
             // status strip. Host + connection state live ONCE in the sidebar header, not duplicated here.
             // Only while live.
             if showControlBar {
-                GuiPaneControlBar(model: model, store: store, paneID: paneID, panLocked: $panLocked)
+                GuiPaneControlBar(
+                    model: model, store: store, paneID: paneID, panLocked: $panLocked,
+                    showStats: $showStats,
+                    fpsCapSelection: $fpsCapSelection,
+                    bitrateCapMbpsSelection: $bitrateCapMbpsSelection,
+                    immersiveOn: immersiveActive,
+                    onToggleImmersive: { toggleImmersive() },
+                )
             }
         }
         .background(NativePaneColor.terminalBackground)
@@ -110,6 +133,17 @@ struct GuiLeafView: View {
             }
         }
         .animation(Slate.Anim.reveal, value: store.isReadOnly(for: paneID))
+        // STATS READOUT (footer toggle): the client-local telemetry chip — instrument voice, top-leading
+        // (top-trailing belongs to the read-only pill), hit-testing off so it never eats pane input.
+        .overlay(alignment: .topLeading) {
+            if showStats, !staticMirror, let model, model.active != nil {
+                GuiStatsReadout(model: model)
+                    .allowsHitTesting(false)
+                    .padding(Slate.Metric.space2)
+                    .transition(.opacity)
+            }
+        }
+        .animation(Slate.Anim.reveal, value: showStats)
         // CAP ADMISSION: request a slot when ON-SCREEN, on appear AND whenever a sibling
         // frees one (`videoPromotionGeneration` bumps); `.task(id:)` cancels+restarts on either. Gated on
         // `isVisible` so a background-tab / zoom-hidden pane does NOT claim a `liveVideoCap` slot (else the
@@ -130,8 +164,55 @@ struct GuiLeafView: View {
         // Belt-and-braces: a genuine unmount (pane close before reconcile teardown) also frees the slot.
         .onDisappear {
             guard !staticMirror else { return }
+            #if os(macOS)
+            systemKeyCapture.disengage() // an unmounted pane must never keep swallowing the keyboard
+            #endif
             store.deactivateVideo(paneID)
         }
+        #if os(macOS)
+        // IMMERSIVE SAFETY: capture follows pane focus + injectability. Losing workspace focus (or the
+        // satellite window's key state, which drives `isFocused` there) releases the keyboard; a read-only
+        // flip withholds the sink → `canInjectSystemKeys` flips false → release too. The controller's own
+        // app-resign observer + the ⌃⌥⌘E escape chord cover the rest; `onDisengage` keeps the toggle honest.
+        .onChange(of: isFocused) { _, focused in
+            if !focused { systemKeyCapture.disengage() }
+        }
+        .onChange(of: model?.canInjectSystemKeys ?? false) { _, can in
+            if !can { systemKeyCapture.disengage() }
+        }
+        #endif
+    }
+
+    /// Whether immersive capture is live (macOS; constant `false` elsewhere — no CGEventTap).
+    private var immersiveActive: Bool {
+        #if os(macOS)
+        immersiveOn
+        #else
+        false
+        #endif
+    }
+
+    /// Flips immersive system-key capture for this pane. Engaging requires a live, writable pane
+    /// (`canInjectSystemKeys`) and Accessibility trust — an untrusted first attempt surfaces the system
+    /// prompt instead (the user flips the toggle again once granted). The forward closure re-reads the
+    /// LIVE sink per event (mirrors `pasteAsKeystrokes`), so a read-only flip mid-capture stops
+    /// forwarding instantly even before the auto-disengage lands.
+    private func toggleImmersive() {
+        #if os(macOS)
+        if systemKeyCapture.isEngaged {
+            systemKeyCapture.disengage() // onDisengage clears the mirror
+            return
+        }
+        guard model?.canInjectSystemKeys == true else { return }
+        guard SystemKeyCaptureController.isTrusted else {
+            SystemKeyCaptureController.promptForTrust()
+            return
+        }
+        systemKeyCapture.onDisengage = { immersiveOn = false }
+        immersiveOn = systemKeyCapture.engage(forward: { [weak model] keyCode, flags, isDown in
+            model?.systemKeyInjector?(keyCode, flags, isDown)
+        })
+        #endif
     }
 
     /// The `.task` identity: re-run admission when THIS session changes (mount), a sibling frees a slot, OR
@@ -210,6 +291,12 @@ struct GuiLeafView: View {
                     // RELEASE STUCK INPUT: the palette's escape hatch — host input, so the seam binds
                     // nil while read-only (exactly like the key sink).
                     bindInputRelease: { [weak model] sink in model?.inputReleaseInjector = sink },
+                    // LIVE STREAM SETTINGS (fps cap / bitrate ceiling): host encode behaviour — the
+                    // seam binds nil while read-only (exactly like the resize sink).
+                    bindStreamSettingsInjector: { [weak model] sink in model?.streamSettingsInjector = sink },
+                    // SYSTEM-KEY INJECTOR (immersive capture): host key input — the seam binds nil
+                    // while read-only (exactly like the paste-keystrokes sink).
+                    bindSystemKeyInjector: { [weak model] sink in model?.systemKeyInjector = sink },
                     // HOST-WINDOW RESIZE: the live view pushes the window's current + max point sizes so the
                     // "Resize…" popover pre-fills + caps its fields (informational; not read-only-gated).
                     onWindowGeometry: { [weak model] cw, ch, mw, mh in
@@ -220,6 +307,14 @@ struct GuiLeafView: View {
                     // (informational; not read-only-gated).
                     onStreamCadence: { [weak model] fps in model?.noteStreamFps(fps) },
                     onStreamBitrate: { [weak model] kbps in model?.noteStreamKbps(kbps) },
+                    // NETWORK-STATS MIRROR (~2 Hz): feeds the toggleable in-pane stats readout
+                    // (informational; not read-only-gated).
+                    onNetworkStats: { [weak model] fps, fec, unrecovered, holdMs, depth in
+                        model?.noteNetworkStats(
+                            fps: fps, fecPerSec: fec, unrecoveredPerSec: unrecovered,
+                            holdMs: holdMs, pacerDepth: depth,
+                        )
+                    },
                     // STALL SCRIM: the live view pushes the stream's stall flips (host silent ↔ traffic
                     // resumed) so the overlay below shows/clears "Reconnecting…" (informational).
                     onStreamStall: { [weak model] stalled in model?.noteStreamStalled(stalled) },
@@ -321,9 +416,19 @@ private struct GuiPaneControlBar: View {
     /// Mirrors the pane's "lock position" state so the lock icon reflects on/off (the freeze itself lives in
     /// the video view; this toggles 1:1 with the `.toggleLock` command).
     @Binding var panLocked: Bool
+    /// The in-pane stats readout toggle (the chip renders in ``GuiLeafView``'s overlay).
+    @Binding var showStats: Bool
+    /// The live stream-settings selection (0 = auto), owned by the leaf so it outlives the popover.
+    @Binding var fpsCapSelection: Int
+    @Binding var bitrateCapMbpsSelection: Int
+    /// Immersive system-key capture state + toggle (constant `false`/no-op off macOS).
+    let immersiveOn: Bool
+    let onToggleImmersive: () -> Void
 
     /// Whether the numeric "Resize…" size popover is open.
     @State private var showResizePopover = false
+    /// Whether the stream-quality (fps cap / bitrate ceiling) popover is open.
+    @State private var showTunePopover = false
 
     /// Whether this pane currently lives in a satellite window (drives detach ⇄ reattach flip).
     private var isDetached: Bool { store.tree.isDetached(paneID) }
@@ -357,6 +462,49 @@ private struct GuiPaneControlBar: View {
             }
             #endif
             Spacer(minLength: Slate.Metric.space2)
+            // STATS: toggle the client-local telemetry readout — informational, so it stays live even on
+            // a read-only pane.
+            if model != nil {
+                SlatePlateButton(
+                    symbol: .chartBarXaxis,
+                    help: showStats ? "Hide stream stats" : "Show stream stats",
+                    tint: showStats ? Slate.State.accent : Slate.Text.icon,
+                ) { showStats.toggle() }
+            }
+            // STREAM QUALITY (fps cap / bitrate ceiling): live host-encode overrides. Gated on the
+            // settings sink (withheld while read-only), like Resize.
+            if let model, model.canAdjustStreamSettings {
+                SlatePlateButton(
+                    symbol: .speedometer,
+                    help: "Stream quality — fps cap / bitrate ceiling…",
+                    tint: (fpsCapSelection != 0 || bitrateCapMbpsSelection != 0)
+                        ? Slate.State.accent : Slate.Text.icon,
+                ) { showTunePopover = true }
+                    .popover(isPresented: $showTunePopover, arrowEdge: .bottom) {
+                        GuiStreamTunePopover(
+                            model: model,
+                            fpsCap: $fpsCapSelection,
+                            bitrateCapMbps: $bitrateCapMbpsSelection,
+                        )
+                    }
+            }
+            // DISPLAY SWITCHER (desktop panes): re-target the stream at another host display.
+            if let model, model.desktopDisplayID != nil {
+                GuiDisplaySwitcherMenu(model: model)
+            }
+            // IMMERSIVE (system keys → host): macOS CGEventTap capture; the engaged state also shows
+            // while the sink is withheld so the user can always turn it OFF.
+            #if os(macOS)
+            if let model, model.canInjectSystemKeys || immersiveOn {
+                SlatePlateButton(
+                    symbol: .keyboardFill,
+                    help: immersiveOn
+                        ? "Immersive on — system keys (⌘Tab, ⌘Space…) go to the host · ⌃⌥⌘E exits"
+                        : "Immersive — send system keys (⌘Tab, ⌘Space…) to the host",
+                    tint: immersiveOn ? Slate.State.accent : Slate.Text.icon,
+                ) { onToggleImmersive() }
+            }
+            #endif
             if let model, model.canControlViewport {
                 SlatePlateButton(symbol: .minusMagnifyingglass, help: "Zoom out") { model.sendViewport(.zoomOut) }
                 SlatePlateButton(symbol: .arrowCounterclockwise, help: "Actual size (reset zoom + position)") {
@@ -380,6 +528,150 @@ private struct GuiPaneControlBar: View {
         .overlay(alignment: .top) {
             Rectangle().fill(Slate.Line.divider).frame(height: Slate.Metric.hairline)
         }
+    }
+}
+
+/// The in-pane STATS readout (footer toggle): the client-local telemetry the session already computes —
+/// host cadence + measured payload bitrate, received fps + pacer depth, FEC recoveries + unrecovered
+/// losses per second, and the latest host-stamp hold. Instrument voice on a small dark chip (mirrors
+/// ``StreamStallCaption``'s material), hit-testing off. Rows render "—" until their first reading lands.
+private struct GuiStatsReadout: View {
+    let model: RemoteWindowModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+            row("\(model.streamFps.map(String.init) ?? "—") FPS · \(mbpsLabel) MBPS")
+            row("RX \(model.statsFps.map { String(format: "%.0f", $0) } ?? "—") FPS · DEPTH "
+                + "\(model.statsPacerDepth.map(String.init) ?? "—")")
+            row("FEC \(perSecLabel(model.statsFecPerSec)) · LOST \(perSecLabel(model.statsUnrecoveredPerSec))")
+            row("HOLD \(model.statsHoldMs.map(String.init) ?? "—") MS")
+        }
+        .padding(.horizontal, Slate.Metric.space2)
+        .padding(.vertical, Slate.Metric.space1)
+        .background(
+            Slate.Surface.ground.opacity(0.88),
+            in: .rect(cornerRadius: Slate.Metric.radiusSmall),
+        )
+    }
+
+    private var mbpsLabel: String {
+        guard let kbps = model.streamKbps else { return "—" }
+        return String(format: "%.1f", Double(kbps) / 1000.0)
+    }
+
+    private func perSecLabel(_ value: Double?) -> String {
+        guard let value else { return "—/S" }
+        return String(format: "%.1f/S", value)
+    }
+
+    private func row(_ text: String) -> some View {
+        Text(text)
+            .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .medium))
+            .tracking(Slate.Typeface.instrumentTracking)
+            .foregroundStyle(Slate.Text.primary)
+    }
+}
+
+/// The stream-quality popover: a LIVE fps cap + bitrate ceiling for this session (0 = auto — the host's
+/// governor/ABR run unclamped). Applies on every change (no Apply button — the override is cheap and
+/// reversible); the host clamps on apply and the client session re-sends after any re-hello. Selections
+/// reset to Auto with the session (a remount mints a new session whose host state is auto too).
+private struct GuiStreamTunePopover: View {
+    let model: RemoteWindowModel
+    @Binding var fpsCap: Int
+    @Binding var bitrateCapMbps: Int
+
+    private static let fpsChoices = [0, 15, 30, 60]
+    private static let mbpsChoices = [0, 5, 10, 20, 50]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Slate.Metric.space3) {
+            Text("Stream quality")
+                .font(.system(size: Slate.Typeface.body, weight: .semibold))
+                .foregroundStyle(Slate.Text.primary)
+            VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+                Text("FPS cap")
+                    .font(.system(size: Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.secondary)
+                Picker("FPS cap", selection: $fpsCap) {
+                    ForEach(Self.fpsChoices, id: \.self) { fps in
+                        Text(fps == 0 ? "Auto" : "\(fps)").tag(fps)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+            VStack(alignment: .leading, spacing: Slate.Metric.space1) {
+                Text("Bitrate ceiling")
+                    .font(.system(size: Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.secondary)
+                Picker("Bitrate ceiling", selection: $bitrateCapMbps) {
+                    ForEach(Self.mbpsChoices, id: \.self) { mbps in
+                        Text(mbps == 0 ? "Auto" : "\(mbps) Mb").tag(mbps)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+            Text("Applies live. Auto restores the adaptive governor/ABR.")
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.secondary)
+        }
+        .padding(Slate.Metric.space4)
+        .frame(width: 300)
+        .onChange(of: fpsCap) { apply() }
+        .onChange(of: bitrateCapMbps) { apply() }
+    }
+
+    private func apply() {
+        model.applyStreamSettings(fpsCap: fpsCap, bitrateCeilingBps: bitrateCapMbps * 1_000_000)
+    }
+}
+
+/// The desktop pane's DISPLAY SWITCHER: a footer menu of the host's online displays (fetched through the
+/// session-less `listDisplays` discovery on mount) — picking one re-hellos the SAME pane at that display.
+/// The current display is check-marked; a refresh row covers hot-plugged monitors.
+private struct GuiDisplaySwitcherMenu: View {
+    let model: RemoteWindowModel
+    @State private var hovering = false
+
+    var body: some View {
+        Menu {
+            if model.availableDisplays.isEmpty {
+                Button("No display list from host") {}.disabled(true)
+            } else {
+                ForEach(Array(model.availableDisplays.enumerated()), id: \.element.id) { index, display in
+                    Button {
+                        model.switchDisplay(to: display.displayID)
+                    } label: {
+                        if display.displayID == model.desktopDisplayID {
+                            Label(display.displayLabel(ordinal: index + 1), systemSymbol: .checkmark)
+                        } else {
+                            Text(display.displayLabel(ordinal: index + 1))
+                        }
+                    }
+                }
+            }
+            Divider()
+            Button("Refresh Displays") {
+                Task { await model.refreshDisplays() }
+            }
+        } label: {
+            Image(systemSymbol: .display)
+                .font(.system(size: Slate.Metric.iconSize, weight: .medium))
+                .foregroundStyle(Slate.Text.icon)
+                .frame(width: Slate.Metric.plate, height: Slate.Metric.plate)
+                .background(
+                    hovering ? Slate.State.hover : .clear,
+                    in: .rect(cornerRadius: Slate.Metric.radiusControl),
+                )
+                .contentShape(.rect)
+        }
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { hovering = $0 }
+        .task { await model.refreshDisplays() }
+        .slateHelp("Switch host display")
     }
 }
 

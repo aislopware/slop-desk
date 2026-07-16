@@ -64,6 +64,11 @@ public struct VideoSessionStateMachine: Sendable {
         /// with `resizeAck`. Does NOT mint a new streamID — same session, only the
         /// capture geometry changes.
         case resizeCapture(width: UInt16, height: UInt16, epoch: UInt32)
+        /// Apply the client's LIVE stream-settings overrides (wire `streamSettings`) to the running
+        /// session: an encode fps CAP and a bitrate CEILING, `0` = auto (clear that override). The
+        /// values ride RAW — the actor clamps on apply (``UserStreamSettingsPolicy``) and actuates
+        /// through the same paths a governed fps step / ABR tick takes.
+        case applyStreamSettings(fpsCap: UInt8, bitrateCeilingBps: UInt32)
     }
 
     /// The highest resize epoch already APPLIED for the current streaming session, so a
@@ -143,6 +148,13 @@ public struct VideoSessionStateMachine: Sendable {
             // Same session (same streamID, same window) — only the capture geometry
             // changes. The actor performs the live resize and sends the resizeAck.
             return [.resizeCapture(width: w, height: h, epoch: epoch)]
+        case let .streamSettings(fpsCap, bitrateCeilingBps):
+            // Live stream controls apply only to a STREAMING session (there is no capture/encoder
+            // to actuate otherwise, and the client re-sends after every accepted hello, so a
+            // pre-stream message is never load-bearing). Values ride raw — the ACTOR clamps on
+            // apply (fps 5…120, bitrate 500 kbps…200 Mbps; 0 = restore auto).
+            guard state == .streaming else { return [] }
+            return [.applyStreamSettings(fpsCap: fpsCap, bitrateCeilingBps: bitrateCeilingBps)]
         case .helloAck,
              .resizeAck,
              .streamCadence:
@@ -307,6 +319,42 @@ public enum SizeNegotiation {
     /// session (any `epoch >= 1` against `lastApplied == 0`) is therefore NOT stale.
     public static func isStaleEpoch(_ epoch: UInt32, lastApplied: UInt32) -> Bool {
         epoch <= lastApplied
+    }
+}
+
+/// Pure clamp + composition policy for the client's `streamSettings` overrides (wire type 25) —
+/// the host-side half of the validate-then-drop contract: the DECODER rejects only malformed
+/// length, and the semantics clamp HERE at apply time. Kept beside ``SizeNegotiation`` so the
+/// clamps and the fps composition are unit-testable without a capturer/encoder.
+public enum UserStreamSettingsPolicy {
+    /// The host accepts a user fps cap only inside this band: below 5 the stream is a slideshow
+    /// (and a hostile 1 fps request would starve recovery); above 120 exceeds every panel the
+    /// client drives.
+    public static let fpsCapRange = 5...120
+    /// The host accepts a user bitrate ceiling only inside this band: below 500 kbps the encoder
+    /// starves even at QP ceiling; 200 Mbps is past any realistic LAN provision.
+    public static let bitrateCeilingRange = 500_000...200_000_000
+
+    /// Maps the wire fps-cap byte to the applied override: `0` ⇒ `nil` (auto), else clamped into
+    /// ``fpsCapRange``.
+    public static func fpsCap(fromWire raw: UInt8) -> Int? {
+        guard raw != 0 else { return nil }
+        return Swift.min(fpsCapRange.upperBound, Swift.max(fpsCapRange.lowerBound, Int(raw)))
+    }
+
+    /// Maps the wire bitrate-ceiling field to the applied override: `0` ⇒ `nil` (auto), else
+    /// clamped into ``bitrateCeilingRange``.
+    public static func bitrateCeiling(fromWire raw: UInt32) -> Int? {
+        guard raw != 0 else { return nil }
+        return Swift.min(bitrateCeilingRange.upperBound, Swift.max(bitrateCeilingRange.lowerBound, Int(raw)))
+    }
+
+    /// The encode cadence actually in force: the governor's output (or the base fps when the
+    /// governor is off) clamped by the user cap. `nil` cap ⇒ exactly `governed`, so with no
+    /// override every actuation is byte-identical to today's.
+    public static func effectiveFps(governed: Int, userCap: Int?) -> Int {
+        guard let userCap else { return governed }
+        return Swift.min(governed, userCap)
     }
 }
 

@@ -683,6 +683,22 @@ public actor SlopDeskVideoHostSession {
     /// The fps the governor currently has actuated (== `fps` until a step). Drives the capturer
     /// gate latch + encoder hint re-application at resize and the streamCadence dup-send.
     private var governedFps: Int
+    /// USER STREAM SETTINGS (wire `streamSettings`, clamped by ``UserStreamSettingsPolicy``):
+    /// the client's live fps cap and bitrate ceiling for THIS session. `nil` = auto. Reset at
+    /// every `.startCapture` — the settings die with a session re-mint; the client re-sends its
+    /// last-requested values after the fresh helloAck.
+    private var userFPSCap: Int?
+    private var userBitrateCeilingBps: Int?
+    /// The resolution-aware policy ceiling of the CURRENT encoder build (re-stamped by
+    /// ``seedCongestionController(ceiling:)``). The ABR-off actuation baseline for the user
+    /// bitrate ceiling — with ABR on, the controller's own `effectiveCeiling` rules instead.
+    private var policyCeilingBps = 0
+
+    /// The encode cadence actually in force: the governor's output clamped by the user fps cap
+    /// (`min`); with no cap this is exactly `governedFps`, so every pre-override path is untouched.
+    private var effectiveStreamFps: Int {
+        UserStreamSettingsPolicy.effectiveFps(governed: governedFps, userCap: userFPSCap)
+    }
 
     /// HOST→CLIENT HEARTBEAT (stall-scrim liveness): a 1 s
     /// (``KeepaliveTiming/hostHeartbeatInterval``) actor-owned Task sending a zero-body `keepalive` on
@@ -1300,8 +1316,10 @@ public actor SlopDeskVideoHostSession {
                 // IDLE-RAMP GUARD: pass the recent offered throughput so the controller suppresses the
                 // additive probe while application-limited (idle/static) — no phantom headroom for a
                 // later burst to overshoot. `nil` until the first delta frame (no gate).
+                // `effectiveStreamFps` (== governedFps with no user cap) — the utilization signal
+                // must reflect the cadence frames actually encode at.
                 let offeredBps = offeredBytesPerFrameEWMA > 0
-                    ? offeredBytesPerFrameEWMA * 8.0 * Double(governedFps)
+                    ? offeredBytesPerFrameEWMA * 8.0 * Double(effectiveStreamFps)
                     : nil
                 let decision = ctrl.decide(networkEstimate, offeredBps: offeredBps)
                 let target = decision.target
@@ -1354,14 +1372,19 @@ public actor SlopDeskVideoHostSession {
             // (the two controllers agree on "congested") + ABR-below-ceiling as a debounced proxy.
             // nil when `SLOPDESK_FPS_GOVERNOR` is off ⇒ skipped entirely.
             if var gov = fpsGovernor {
+                // `effectiveCeiling` (not the raw policy ceiling): the below-ceiling proxy means
+                // "the ABR cut below what it is ALLOWED to run at". With a user bitrate ceiling the
+                // rate legitimately saturates AT that override — comparing against the policy
+                // ceiling would read a clean link as permanently congested and walk fps down.
                 let congested = FPSGovernor.congestionEvidence(
                     lastLossSample: networkEstimate.lastLossSample,
                     smoothedRTTMillis: networkEstimate.smoothedRTTMillis,
                     minRTTMillis: networkEstimate.minRTTMillis,
-                    abrCurrent: congestionController?.current, abrCeiling: congestionController?.ceiling,
+                    abrCurrent: congestionController?.current,
+                    abrCeiling: congestionController?.effectiveCeiling,
                 )
                 let newFps = gov.onTick(targetBps: lastActuatedBitrate, congested: congested)
-                let offeredBps = Int(gov.bytesPerFrameEWMA * 8 * Double(governedFps))
+                let offeredBps = Int(gov.bytesPerFrameEWMA * 8 * Double(effectiveStreamFps))
                 fpsGovernor = gov
                 if newFps != governedFps {
                     let old = governedFps
@@ -1476,21 +1499,79 @@ public actor SlopDeskVideoHostSession {
         // fallback — even when ABR is off. Otherwise `SLOPDESK_PACE=1` with `SLOPDESK_ABR=0` serializes
         // heavy frames at 4× the gap.
         lastActuatedBitrate = ceiling
+        policyCeilingBps = ceiling // the ABR-off baseline the user bitrate ceiling clamps against
         // OWN RATE-CONTROL: when const-QP mode is on, seed the link-AIMD at the env QP. It rides the ABR
         // tick (uses the ABR's congestion verdict), so it needs the ABR controller below.
         if let seed = VideoEncoder.constQP { qpController = QPController(seedQ: seed) }
-        guard Self.abrEnabled else { return }
-        congestionController = LiveCongestionController(ceiling: ceiling)
+        if Self.abrEnabled {
+            var controller = LiveCongestionController(ceiling: ceiling)
+            // USER BITRATE CEILING survives an encoder rebuild (a mid-session resize must not silently
+            // discard the client's request): re-layer the live override under the fresh policy ceiling.
+            controller.setUserCeilingBps(userBitrateCeilingBps)
+            congestionController = controller
+        }
+        // USER BITRATE CEILING re-actuation: a rebuilt encoder starts at the policy ceiling, and the
+        // client only re-sends its settings after a re-hello — never on a resize — so a live override
+        // must re-clamp the fresh encoder NOW. No-op with no override (effective == ceiling ==
+        // lastActuatedBitrate); const-QP keeps AverageBitRate pinned (the QP-AIMD owns the rate).
+        let effective = congestionController?.current
+            ?? Swift.min(ceiling, userBitrateCeilingBps ?? ceiling)
+        if effective != lastActuatedBitrate {
+            lastActuatedBitrate = effective
+            if qpController == nil { encoder?.setLiveBitrate(effective) }
+        }
     }
 
     /// FPS GOVERNOR actuation: (1) latch the governed fps onto the capturer's cadence gate
     /// (thread-safe), (2) hint the live encoder's `ExpectedFrameRate` (best-effort
     /// VTSessionSetProperty — the gate enforces cadence regardless), (3) tell the client via
     /// `streamCadence` (dup-sent ×2 for loss tolerance — the exact `onCursorShape` pattern).
+    /// The USER FPS CAP composes here (`min`) so a governed step can never actuate above the
+    /// client's cap; with no cap the actuated value is exactly the governor's. SCStream slot
+    /// config is never touched (slots stay at 2× base — the slot-beat trap).
     private func actuateGovernedFps(_ newFps: Int) {
-        capturer?.setGovernedFPS(newFps)
-        encoder?.setExpectedFrameRate(newFps)
-        sendStreamCadence(UInt16(clamping: newFps))
+        let fps = UserStreamSettingsPolicy.effectiveFps(governed: newFps, userCap: userFPSCap)
+        capturer?.setGovernedFPS(fps)
+        encoder?.setExpectedFrameRate(fps)
+        sendStreamCadence(UInt16(clamping: fps))
+    }
+
+    /// USER STREAM SETTINGS (the `.applyStreamSettings` effect): clamp the wire values
+    /// host-side (``UserStreamSettingsPolicy``; `0` = restore auto) and actuate both axes. A
+    /// second message REPLACES the first wholesale — both overrides are re-assigned every time.
+    private func applyUserStreamSettings(fpsCap: UInt8, bitrateCeilingBps: UInt32) {
+        // FPS CAP: actuate through the SAME path a governed step takes (capture cadence gate +
+        // VT ExpectedFrameRate hint + streamCadence announce, so the client FramePacer learns the
+        // new cadence). The governor's own output keeps evolving underneath; the cap only clamps
+        // actuation, so clearing it restores the governed/base cadence on the spot.
+        userFPSCap = UserStreamSettingsPolicy.fpsCap(fromWire: fpsCap)
+        actuateGovernedFps(governedFps)
+
+        // BITRATE CEILING: layer the override under the policy ceiling. With ABR on the
+        // controller clamps its current target down immediately and never climbs past the
+        // effective ceiling; with ABR off the live rate is pinned at the policy ceiling, so the
+        // override (or its clearing) actuates the encoder directly.
+        userBitrateCeilingBps = UserStreamSettingsPolicy.bitrateCeiling(fromWire: bitrateCeilingBps)
+        let target: Int
+        if var ctrl = congestionController {
+            ctrl.setUserCeilingBps(userBitrateCeilingBps)
+            target = ctrl.current
+            congestionController = ctrl
+        } else {
+            guard policyCeilingBps > 0 else { return } // no encoder seeded yet — nothing to actuate
+            target = Swift.min(policyCeilingBps, userBitrateCeilingBps ?? policyCeilingBps)
+        }
+        // A user-driven ceiling change actuates immediately (no material-change gate — it is a
+        // rare explicit request, not a 50 ms tick), except under const-QP where the QP-AIMD owns
+        // the rate (same carve-out as the ABR actuation site).
+        if target != lastActuatedBitrate {
+            lastActuatedBitrate = target
+            if qpController == nil { encoder?.setLiveBitrate(target) }
+        }
+        dbg(
+            "streamSettings: fpsCap=\(userFPSCap.map(String.init) ?? "auto") → fps \(effectiveStreamFps), "
+                + "ceiling=\(userBitrateCeilingBps.map(String.init) ?? "auto") → target \(target)bps",
+        )
     }
 
     // MARK: Host→client heartbeat (stall-scrim liveness)
@@ -1668,6 +1749,10 @@ public actor SlopDeskVideoHostSession {
             transport.send(scheduler.scheduleControl(message).bytes, on: .control)
         case let .startCapture(_, width, height):
             dbg("effect startCapture \(width)x\(height) — bringing up live capture/encode")
+            // USER STREAM SETTINGS die with the session re-mint: a fresh hello starts clean and
+            // the client re-sends its last-requested values after the ack.
+            userFPSCap = nil
+            userBitrateCeilingBps = nil
             await startLiveComponents(width: Int(width), height: Int(height))
             // FPS GOVERNOR: announce the session's content cadence up front (+dup) so the
             // streamCadence message is the single cadence truth even before any governed step.
@@ -1690,6 +1775,8 @@ public actor SlopDeskVideoHostSession {
             await teardownLiveComponents()
         case let .resizeCapture(width, height, epoch):
             await applyResize(width: width, height: height, epoch: epoch)
+        case let .applyStreamSettings(fpsCap, bitrateCeilingBps):
+            applyUserStreamSettings(fpsCap: fpsCap, bitrateCeilingBps: bitrateCeilingBps)
         }
     }
 
@@ -1901,7 +1988,9 @@ public actor SlopDeskVideoHostSession {
                 seedCongestionController(ceiling: ceiling) // re-anchor controller to new ceiling
                 resetLTRForNewEncoder() // new VT session holds no acked LTRs
                 oldEncoder.completeFrames() // drain the old encoder AFTER the swap (no frames route to it now)
-                if Self.fpsGovernorEnabled, governedFps != fps { newEncoder.setExpectedFrameRate(governedFps) }
+                // Re-apply the live EFFECTIVE cadence (governed + user cap) to the swapped encoder;
+                // the capturer (and its latch) is unchanged on this in-place path.
+                if effectiveStreamFps != fps { newEncoder.setExpectedFrameRate(effectiveStreamFps) }
                 dbg(
                     "resize(in-place) epoch=\(epoch) — updateConfiguration to \(pixelWidth)x\(pixelHeight) px, NO restart",
                 )
@@ -1973,11 +2062,11 @@ public actor SlopDeskVideoHostSession {
         capturer = newCapturer
         encoderBox = newBox // the new capturer's hot-path hand-off
         // FPS GOVERNOR: a fresh capturer/encoder start at the base fps — re-apply the live
-        // governed state (governor state itself persists across resize: path knowledge). No
-        // client message — the cadence is unchanged.
-        if Self.fpsGovernorEnabled, governedFps != fps {
-            newCapturer.setGovernedFPS(governedFps)
-            newEncoder.setExpectedFrameRate(governedFps)
+        // governed state clamped by the user fps cap (both persist across resize: path/user
+        // knowledge). No client message — the cadence is unchanged.
+        if effectiveStreamFps != fps {
+            newCapturer.setGovernedFPS(effectiveStreamFps)
+            newEncoder.setExpectedFrameRate(effectiveStreamFps)
         }
         // Resize is a WINDOW-session path (the SM rejects a display resize) — defensive unwrap.
         guard let captureWindow = window else { return }
@@ -2142,10 +2231,10 @@ public actor SlopDeskVideoHostSession {
         seedCongestionController(ceiling: ceiling) // re-anchor the controller to the rebuilt (old-size) ceiling
         resetLTRForNewEncoder() // the rebuilt VT session holds no acked LTRs — invalidate the acked-set
         capturer = rebuiltCapturer
-        // FPS GOVERNOR: re-apply the live governed state to the rebuilt components (see applyResize).
-        if Self.fpsGovernorEnabled, governedFps != fps {
-            rebuiltCapturer.setGovernedFPS(governedFps)
-            rebuiltEncoder.setExpectedFrameRate(governedFps)
+        // FPS GOVERNOR + USER FPS CAP: re-apply the live effective cadence (see applyResize).
+        if effectiveStreamFps != fps {
+            rebuiltCapturer.setGovernedFPS(effectiveStreamFps)
+            rebuiltEncoder.setExpectedFrameRate(effectiveStreamFps)
         }
         // Resize recovery is a WINDOW-session path (the SM rejects a display resize) — defensive unwrap.
         guard let captureWindow = window else { return }
@@ -2936,9 +3025,9 @@ public actor SlopDeskVideoHostSession {
         seedCongestionController(ceiling: ceiling)
         resetLTRForNewEncoder()
         capturer = newCapturer
-        if Self.fpsGovernorEnabled, governedFps != fps {
-            newCapturer.setGovernedFPS(governedFps)
-            newEncoder.setExpectedFrameRate(governedFps)
+        if effectiveStreamFps != fps {
+            newCapturer.setGovernedFPS(effectiveStreamFps)
+            newEncoder.setExpectedFrameRate(effectiveStreamFps)
         }
         // Re-origin the input + cursor mapping to the captured region so a click in the dialog area
         // (which may sit left/above the window) maps to the correct GLOBAL point. Contracting back
@@ -3081,9 +3170,9 @@ public actor SlopDeskVideoHostSession {
         seedCongestionController(ceiling: ceiling)
         resetLTRForNewEncoder()
         capturer = fallbackCapturer
-        if Self.fpsGovernorEnabled, governedFps != fps {
-            fallbackCapturer.setGovernedFPS(governedFps)
-            fallbackEncoder.setExpectedFrameRate(governedFps)
+        if effectiveStreamFps != fps {
+            fallbackCapturer.setGovernedFPS(effectiveStreamFps)
+            fallbackEncoder.setExpectedFrameRate(effectiveStreamFps)
         }
         // Back to the WINDOW-origin input/cursor mapping (the union region — and its off-window
         // origin — is gone with the failed capturer).

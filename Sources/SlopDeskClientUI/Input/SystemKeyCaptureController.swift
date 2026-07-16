@@ -52,6 +52,11 @@ public final class SystemKeyCaptureController {
     /// Whether the tap is currently live. Read-only mirror for the caller's UI (the immersive badge).
     public private(set) var isEngaged = false
 
+    /// Fired at the START of every ``disengage()`` — the auto-disengage paths (app-resign / window-resign /
+    /// the ⌃⌥⌘E escape chord) tear the tap down without the caller's involvement, so a UI toggle mirroring
+    /// ``isEngaged`` needs this to stay truthful. Set it before ``engage(forward:keyWindow:)``.
+    public var onDisengage: (() -> Void)?
+
     // The CF handles are `nonisolated(unsafe)` so the nonisolated `deinit` can invalidate them (they are only
     // ever written on the main actor; CF invalidation is thread-safe). A leaked ENABLED tap would keep
     // swallowing the session's keys with no owner left to disengage it — deinit teardown is non-negotiable.
@@ -138,6 +143,7 @@ public final class SystemKeyCaptureController {
     public func disengage() {
         guard isEngaged else { return }
         isEngaged = false
+        onDisengage?()
         if let forward {
             // Sorted for a deterministic release order (a Set iterates arbitrarily).
             for keyCode in forwardedDownKeyCodes.sorted() { forward(keyCode, 0, false) }

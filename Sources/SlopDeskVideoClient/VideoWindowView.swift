@@ -122,6 +122,24 @@ public struct VideoWindowView: View {
     /// CONNECTION STATS: the live view pushes the client-measured video PAYLOAD bitrate (kilobits/sec,
     /// ~1 Hz) here — the titlebar cluster's stream-weight complication. `nil` ⇒ no canvas wired it.
     let onStreamBitrateReady: ((_ kbps: Int) -> Void)?
+    /// NETWORK-STATS MIRROR: the live view pushes the ~2 Hz client-local telemetry aggregate here —
+    /// received frames/sec, FEC recoveries/sec, unrecovered losses/sec, latest hold (ms), pacer
+    /// depth — for the pane's stats surface. Primitives only (the seam is headless). `nil` ⇒ none.
+    let onNetworkStatsReady: ((
+        _ fps: Double, _ fecPerSec: Double, _ unrecoveredPerSec: Double, _ holdMs: Int, _ pacerDepth: Int,
+    ) -> Void)?
+    /// STREAM SETTINGS (fps cap / bitrate ceiling): the live view publishes a settings-drive closure
+    /// here once its session exists (and `nil` on teardown), so the pane can request a live encode
+    /// fps cap / bitrate ceiling (`0` = auto). Host-affecting — the seam withholds it while
+    /// read-only, like the resize sink. `nil` ⇒ no canvas.
+    let onStreamSettingsInjectorReady: ((((_ fpsCap: Int, _ bitrateCeilingBps: Int) -> Void)?) -> Void)?
+    /// SYSTEM-KEY INJECTOR (immersive capture plumbing): the live view publishes a programmatic
+    /// key-event closure here (and `nil` on teardown) driving the SAME wire path the Metal view's
+    /// local keyDown/keyUp uses. `(keyCode, modifierFlags [raw NSEvent flags], isDown)`.
+    /// Host input — the seam withholds it while read-only, like the paste-keystrokes sink. `nil` ⇒ none.
+    let onSystemKeyInjectorReady: ((((
+        _ keyCode: UInt16, _ modifierFlags: UInt64, _ isDown: Bool,
+    ) -> Void)?) -> Void)?
     /// STALL SCRIM: the live view pushes the stream's stall state here when it FLIPS — `true` ⇒ the host
     /// went silent past the stall threshold (show the pane's "Reconnecting…" scrim), `false` ⇒ traffic
     /// resumed (clear it). Sticky through the self-heal rebuild. `nil` ⇒ no canvas wired it.
@@ -150,6 +168,9 @@ public struct VideoWindowView: View {
         onWindowGeometryReady = nil
         onStreamCadenceReady = nil
         onStreamBitrateReady = nil
+        onNetworkStatsReady = nil
+        onStreamSettingsInjectorReady = nil
+        onSystemKeyInjectorReady = nil
         onStreamStallChanged = nil
         onSessionRejected = nil
     }
@@ -172,6 +193,13 @@ public struct VideoWindowView: View {
         onWindowGeometryReady: ((_ curW: Double, _ curH: Double, _ maxW: Double, _ maxH: Double) -> Void)? = nil,
         onStreamCadenceReady: ((_ fps: Int) -> Void)? = nil,
         onStreamBitrateReady: ((_ kbps: Int) -> Void)? = nil,
+        onNetworkStatsReady: ((
+            _ fps: Double, _ fecPerSec: Double, _ unrecoveredPerSec: Double, _ holdMs: Int, _ pacerDepth: Int,
+        ) -> Void)? = nil,
+        onStreamSettingsInjectorReady: ((((_ fpsCap: Int, _ bitrateCeilingBps: Int) -> Void)?) -> Void)? = nil,
+        onSystemKeyInjectorReady: ((((
+            _ keyCode: UInt16, _ modifierFlags: UInt64, _ isDown: Bool,
+        ) -> Void)?) -> Void)? = nil,
         onStreamStallChanged: ((_ stalled: Bool) -> Void)? = nil,
         onSessionRejected: (() -> Void)? = nil,
     ) {
@@ -189,6 +217,9 @@ public struct VideoWindowView: View {
         self.onWindowGeometryReady = onWindowGeometryReady
         self.onStreamCadenceReady = onStreamCadenceReady
         self.onStreamBitrateReady = onStreamBitrateReady
+        self.onNetworkStatsReady = onNetworkStatsReady
+        self.onStreamSettingsInjectorReady = onStreamSettingsInjectorReady
+        self.onSystemKeyInjectorReady = onSystemKeyInjectorReady
         self.onStreamStallChanged = onStreamStallChanged
         self.onSessionRejected = onSessionRejected
     }
@@ -215,6 +246,9 @@ public struct VideoWindowView: View {
             onWindowGeometryReady: onWindowGeometryReady,
             onStreamCadenceReady: onStreamCadenceReady,
             onStreamBitrateReady: onStreamBitrateReady,
+            onNetworkStatsReady: onNetworkStatsReady,
+            onStreamSettingsInjectorReady: onStreamSettingsInjectorReady,
+            onSystemKeyInjectorReady: onSystemKeyInjectorReady,
             onStreamStallChanged: onStreamStallChanged,
             onSessionRejected: onSessionRejected,
         )
@@ -250,6 +284,9 @@ struct MetalVideoLayerView: NSViewRepresentable {
     var onWindowGeometryReady: ((Double, Double, Double, Double) -> Void)?
     var onStreamCadenceReady: ((Int) -> Void)?
     var onStreamBitrateReady: ((Int) -> Void)?
+    var onNetworkStatsReady: ((Double, Double, Double, Int, Int) -> Void)?
+    var onStreamSettingsInjectorReady: ((((Int, Int) -> Void)?) -> Void)?
+    var onSystemKeyInjectorReady: ((((UInt16, UInt64, Bool) -> Void)?) -> Void)?
     var onStreamStallChanged: ((Bool) -> Void)?
     var onSessionRejected: (() -> Void)?
 
@@ -267,6 +304,8 @@ struct MetalVideoLayerView: NSViewRepresentable {
         // CONNECTION STATS: before activate so the first host cadence announcement reaches the model's FPS row.
         view.onStreamCadenceReady = onStreamCadenceReady
         view.onStreamBitrateReady = onStreamBitrateReady
+        // NETWORK-STATS MIRROR: before activate so the first ~2 Hz aggregate reaches the model.
+        view.onNetworkStatsReady = onNetworkStatsReady
         // STALL SCRIM: before activate so a stall detected on the very first monitor tick reaches the model.
         view.onStreamStallReady = onStreamStallChanged
         // TERMINAL REFUSAL: before activate so a helloAck(accepted:false) landing immediately reaches the model.
@@ -289,6 +328,15 @@ struct MetalVideoLayerView: NSViewRepresentable {
         // read-only, like the key sink). Cleared on `deactivate`.
         view.onInputReleaseReady = onInputReleaseReady
         view.publishInputReleaseInjector()
+        // STREAM SETTINGS: publish the fps-cap / bitrate-ceiling drive (the session's streaming guard
+        // makes a pre-stream request safe — it is stored and sent at handshake). Host-affecting, so the
+        // seam binds nil while read-only, like the resize sink. Cleared on `deactivate`.
+        view.onStreamSettingsInjectorReady = onStreamSettingsInjectorReady
+        view.publishStreamSettingsInjector()
+        // SYSTEM-KEY INJECTOR: publish the programmatic key drive (same wire path as local keyDown/keyUp;
+        // `pipeline.key` no-ops until the session is up). Host input — seam binds nil while read-only.
+        view.onSystemKeyInjectorReady = onSystemKeyInjectorReady
+        view.publishSystemKeyInjector()
         // BUG-2 probe: a recreate (makeNSView) on focus change — vs an in-place updateNSView — would reset
         // isActive to its `true` default mid-stream; logging it distinguishes "stale Bool" from "recreate".
         videoViewDbg("makeNSView (CREATED) isActive=\(isActive)")
@@ -315,6 +363,8 @@ struct MetalVideoLayerView: NSViewRepresentable {
         // CONNECTION STATS: keep the cadence + bitrate pushes current (model persists per pane).
         nsView.onStreamCadenceReady = onStreamCadenceReady
         nsView.onStreamBitrateReady = onStreamBitrateReady
+        // NETWORK-STATS MIRROR: keep the ~2 Hz aggregate push current (model persists per pane).
+        nsView.onNetworkStatsReady = onNetworkStatsReady
         // STALL SCRIM: keep the stall push current (model persists per pane).
         nsView.onStreamStallReady = onStreamStallChanged
         // TERMINAL REFUSAL: keep the rejection push current (model persists per pane).
@@ -331,6 +381,12 @@ struct MetalVideoLayerView: NSViewRepresentable {
             // nil-binding so a locked pane withdraws the escape hatch and an unlock restores it.
             nsView.onInputReleaseReady = onInputReleaseReady
             nsView.publishInputReleaseInjector()
+            // STREAM SETTINGS + SYSTEM KEYS: read-only-gated like the resize/key sinks — a flip
+            // re-evaluates the seam's nil-binding (lock withholds, unlock restores).
+            nsView.onStreamSettingsInjectorReady = onStreamSettingsInjectorReady
+            nsView.publishStreamSettingsInjector()
+            nsView.onSystemKeyInjectorReady = onSystemKeyInjectorReady
+            nsView.publishSystemKeyInjector()
         }
     }
 
@@ -436,6 +492,18 @@ final class MetalLayerBackedView: NSView {
     /// client-measured video PAYLOAD bitrate (kilobits/sec) for the titlebar's stream-weight complication.
     /// Set by the representable.
     var onStreamBitrateReady: ((Int) -> Void)?
+    /// NETWORK-STATS MIRROR: the canvas publishes a stats SINK through this — the view pushes the ~2 Hz
+    /// client-local aggregate `(fps, fecPerSec, unrecoveredPerSec, holdMs, pacerDepth)` for the pane's
+    /// stats surface. Set by the representable.
+    var onNetworkStatsReady: ((Double, Double, Double, Int, Int) -> Void)?
+    /// STREAM SETTINGS: the canvas publishes a settings-drive sink through this (and `nil` on teardown;
+    /// the seam binds nil while read-only — host-affecting, like the resize sink). `(fpsCap,
+    /// bitrateCeilingBps)`, 0 = auto. Set by the representable.
+    var onStreamSettingsInjectorReady: ((((Int, Int) -> Void)?) -> Void)?
+    /// SYSTEM-KEY INJECTOR: the canvas publishes a programmatic key sink through this (and `nil` on
+    /// teardown; the seam binds nil while read-only — host input, like the paste-keystrokes sink).
+    /// `(keyCode, modifierFlags [raw NSEvent flags], isDown)`. Set by the representable.
+    var onSystemKeyInjectorReady: ((((UInt16, UInt64, Bool) -> Void)?) -> Void)?
     /// STALL SCRIM: the canvas publishes a stall SINK through this — the view pushes the pipeline's stall
     /// flips (`true` ⇒ host silent past threshold, show "Reconnecting…"; `false` ⇒ traffic resumed) so the
     /// pane can overlay/clear its scrim. Set by the representable.
@@ -468,6 +536,27 @@ final class MetalLayerBackedView: NSView {
     func publishResizeInjector() {
         onResizeInjectorReady? { [weak self] width, height in
             self?.pipeline.userResizeTo(width: width, height: height)
+        }
+    }
+
+    /// Hands the canvas a stream-settings drive routed to THIS view's pipeline (fps cap / bitrate
+    /// ceiling, 0 = auto; the session stores + re-sends after every re-hello). `self` weak so a
+    /// torn-down view requests nothing. Idempotent — safe to call on every render.
+    func publishStreamSettingsInjector() {
+        onStreamSettingsInjectorReady? { [weak self] fpsCap, bitrateCeilingBps in
+            self?.pipeline.updateStreamSettings(fpsCap: fpsCap, bitrateCeilingBps: bitrateCeilingBps)
+        }
+    }
+
+    /// Hands the canvas a programmatic key drive routed through the SAME `pipeline.key` path the
+    /// local `keyDown`/`keyUp` overrides use, so an injected key is indistinguishable on the wire
+    /// from a typed one. The raw flags are the caller's `NSEvent.ModifierFlags.rawValue` (UInt64 at
+    /// the headless seam); the mapping to ``InputModifiers`` is the keyboard path's own
+    /// ``modifiers(_:)``. `self` weak so a torn-down view injects nothing. Idempotent.
+    func publishSystemKeyInjector() {
+        onSystemKeyInjectorReady? { [weak self] keyCode, rawModifierFlags, isDown in
+            let flags = NSEvent.ModifierFlags(rawValue: UInt(truncatingIfNeeded: rawModifierFlags))
+            self?.pipeline.key(keyCode: keyCode, down: isDown, modifiers: Self.modifiers(flags))
         }
     }
 
@@ -656,6 +745,17 @@ final class MetalLayerBackedView: NSView {
         // CONNECTION STATS: forward the host-announced stream cadence to the model's FPS row (no-op if unbound).
         pipeline.onStreamCadenceChanged = { [weak self] fps in self?.onStreamCadenceReady?(fps) }
         pipeline.onStreamBitrateChanged = { [weak self] kbps in self?.onStreamBitrateReady?(kbps) }
+        // NETWORK-STATS MIRROR: flatten the snapshot to primitives at the seam (the model side is
+        // headless — it never imports this module's types). No-op if unbound.
+        pipeline.onNetworkStatsChanged = { [weak self] snapshot in
+            self?.onNetworkStatsReady?(
+                snapshot.framesPerSecond,
+                snapshot.fecRecoveredPerSecond,
+                snapshot.unrecoveredPerSecond,
+                snapshot.holdMillis,
+                snapshot.pacerDepth,
+            )
+        }
         // STALL: drain THIS surface to grayscale (MERIDIAN L1 — the material says "stale", see
         // `applyStallDrain`) and forward the flip to the pane model (→ the corner age caption; no-op if
         // unbound). The closure reads the live `onStreamStallReady`, so updateNSView refreshing the seam
@@ -689,10 +789,11 @@ final class MetalLayerBackedView: NSView {
     func deactivate() {
         if pointerInside { NSCursor.arrow.set() } // restore the arrow before the pipeline tears down
         pointerInside = false
-        onKeyInjectorReady?(nil) // PASTE AS KEYSTROKES: drop the stale sink before teardown
-        onResizeInjectorReady?(nil) // RESIZE GRIP: drop the stale sink before teardown
-        onViewportInjectorReady?(nil) // VIEWPORT CONTROLS: drop the stale zoom/lock sink before teardown
-        onInputReleaseReady?(nil) // RELEASE STUCK INPUT (C5): drop the stale escape-hatch sink before teardown
+        // Deliberately NO nil-publish of the injector sinks here: `RemoteWindowModel.close()` clears its
+        // own sinks (model lifecycle, always BEFORE a re-open in store order). During a pane
+        // detach/reattach the SAME model is re-bound by a replacement view in ANOTHER hosting root, and
+        // SwiftUI may dismantle THIS view AFTER that view already published fresh sinks — an
+        // unconditional nil-publish here would silently kill the new surface's input.
         pipeline.deactivate()
     }
 
@@ -1342,9 +1443,14 @@ struct MetalVideoLayerView: UIViewRepresentable {
     var onInputReleaseReady: (((() -> Void)?) -> Void)?
     var onWindowGeometryReady: ((Double, Double, Double, Double) -> Void)?
     // Signature parity with the macOS representable. The iOS Connection section is not wired yet, so the
-    // host-cadence + bitrate pushes are accepted + ignored here.
+    // host-cadence + bitrate + stats pushes are accepted + ignored here.
     var onStreamCadenceReady: ((Int) -> Void)?
     var onStreamBitrateReady: ((Int) -> Void)?
+    var onNetworkStatsReady: ((Double, Double, Double, Int, Int) -> Void)?
+    // Signature parity with the macOS representable. iOS has no stream-settings UI nor a
+    // programmatic key drive (it forwards no host key input) — accepted + ignored here.
+    var onStreamSettingsInjectorReady: ((((Int, Int) -> Void)?) -> Void)?
+    var onSystemKeyInjectorReady: ((((UInt16, UInt64, Bool) -> Void)?) -> Void)?
     // Signature parity with the macOS representable. The iOS pane has no scrim overlay wired yet, so the
     // stall push is accepted + ignored here.
     var onStreamStallChanged: ((Bool) -> Void)?
