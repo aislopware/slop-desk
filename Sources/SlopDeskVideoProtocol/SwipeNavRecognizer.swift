@@ -82,7 +82,10 @@ public struct SwipeNavRecognizer: Sendable {
     /// then forgives drift; a whole-gesture 4× requirement re-taxes every later wobble — a
     /// field 856 ms Σ=(355,−155) deliberate swipe (2.3× dominance, 4.4× fire travel) rejected
     /// under it while native would honour it. Travel buys the tolerance: at 2× the shorter
-    /// gestures still reject, so a modest diagonal nudge can't ride the relaxation.
+    /// gestures still reject, so a modest diagonal nudge can't ride the relaxation. This
+    /// ratio deliberately does NOT scale with `fireTravel` — the knob scales the whole travel
+    /// family (at the clamp floor of 20 the relaxed line sits at 60 pt), which is exactly the
+    /// hair-trigger an operator setting 20 asked for.
     public static let slowRelaxedDominance: Double = 2
     /// Began→ended duration (seconds) separating the FLICK tier from the SLOW tier. Also gates
     /// ARMING — a long gesture's momentum tail must never navigate (slow fires at lift only).
@@ -411,10 +414,13 @@ public struct SwipeNavRecognizer: Sendable {
         guard Self.slowCommitmentFires(
             sumX: sumX, sumY: sumY, slowFireTravel: slowFireTravel, slowRelaxedTravel: slowRelaxedTravel,
         ) else {
-            // Keep the two reject reasons distinguishable in field traces: name the axis that
-            // failed under the tier's PRIMARY (full-dominance) rule.
+            // Name the NEAREST miss so a field trace steers the right knob: a candidate whose
+            // dominance band was acceptable (full 4×, or relaxed 2× in the middle band) failed
+            // on TRAVEL — labelling that band "dominance" would send tuning the wrong way.
             if abs(sumX) >= Self.slowDominance * abs(sumY) {
                 emitTrace("lift \(stats) → reject slow travel (<\(Int(slowFireTravel)))")
+            } else if abs(sumX) >= Self.slowRelaxedDominance * abs(sumY) {
+                emitTrace("lift \(stats) → reject slow travel (<\(Int(slowRelaxedTravel)) relaxed)")
             } else {
                 emitTrace("lift \(stats) → reject slow dominance")
             }

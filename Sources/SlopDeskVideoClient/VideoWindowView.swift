@@ -1402,6 +1402,14 @@ final class MetalLayerBackedView: NSView {
         let previous = peelStatus
         peelStatus = status
         if !status.eligible { abandonSwipePeel() }
+        if previous?.eligible != true, status.eligible {
+            // Warm the snapshot context on the eligibility RISING edge — a quiet moment. A
+            // cold CIContext defers its Metal device + kernel-pipeline setup to the first
+            // render, which would otherwise land synchronously on the main thread INSIDE the
+            // first commit choreography (the exact beat the snapshot exists to keep smooth).
+            let warm = CIImage(color: .black).cropped(to: CGRect(x: 0, y: 0, width: 1, height: 1))
+            _ = Self.peelSnapshotContext.createCGImage(warm, from: warm.extent)
+        }
         if previous?.fireTravel != status.fireTravel || previous?.slowTier != status.slowTier {
             peelPlanner = SwipePeelPlanner(
                 fireTravel: Double(status.fireTravel), slowSwipe: status.slowTier,
