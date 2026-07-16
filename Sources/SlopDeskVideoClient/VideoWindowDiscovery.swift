@@ -62,6 +62,50 @@ public enum VideoWindowDiscovery {
         return result ?? []
     }
 
+    /// Discovers the host's online DISPLAYS (the desktop pane's display-switcher menu): the
+    /// ``VideoControlMessage/listDisplays`` ↔ ``VideoControlMessage/displayList`` pair, same
+    /// transient-lane request / retry / timeout discipline as ``discoverWindows(host:mediaPort:cursorPort:retryInterval:timeout:)``
+    /// (session-less — the host never mints a capture session for it). Returns `[]` on timeout / no
+    /// registry / an old host (the menu then shows only the current display).
+    public static func discoverDisplays(
+        host: String,
+        mediaPort: UInt16,
+        cursorPort: UInt16,
+        retryInterval: Duration = .milliseconds(500),
+        timeout: Duration = .seconds(3),
+    ) async -> [DisplaySummary] {
+        guard let registry = VideoWindowPipeline.sharedRegistry else { return [] }
+        let acq = registry.acquire(host: host, mediaPort: mediaPort, cursorPort: cursorPort)
+        defer { registry.release(host: host, mediaPort: mediaPort, cursorPort: cursorPort, channelID: acq.channelID) }
+
+        let box = ReplyBox<DisplaySummary>()
+        acq.flow.registerLane(
+            channelID: acq.channelID,
+            onMedia: { channel, payload in
+                guard channel == .control,
+                      let msg = try? VideoControlMessage.decode(payload),
+                      case let .displayList(displays) = msg else { return }
+                box.deliver(displays)
+            },
+            onCursor: { _ in },
+        )
+
+        let request = VideoControlMessage.listDisplays.encode()
+        let flow = acq.flow
+        let channelID = acq.channelID
+        let sender = Task { @MainActor in
+            let deadline = ContinuousClock.now.advanced(by: timeout)
+            while ContinuousClock.now < deadline, !box.hasReply, !Task.isCancelled {
+                flow.send(request, on: .control, channelID: channelID)
+                try? await Task.sleep(for: retryInterval)
+            }
+            box.finish()
+        }
+        let result = await box.firstReply()
+        sender.cancel()
+        return result ?? []
+    }
+
     /// Polls the host for the open SYSTEM dialogs (the "show system popups in their own pane" feature).
     /// Same transient-lane request / retry / timeout discipline as ``discoverWindows`` but for the
     /// ``VideoControlMessage/listSystemDialogs`` ↔ ``VideoControlMessage/systemDialogList`` pair. The
