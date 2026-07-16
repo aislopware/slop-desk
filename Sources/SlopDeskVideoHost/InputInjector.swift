@@ -58,7 +58,7 @@ public final class InputInjector: @unchecked Sendable {
     /// Swipe-back flick recogniser fed from ``inject(_:)``'s scroll arm. Injection is serial per
     /// session, so the lock is the same harmless insurance ``balance`` carries.
     private let swipeNavLock = NSLock()
-    private var swipeNav = SwipeNavRecognizer()
+    private var swipeNav = SwipeNavRecognizer(fireTravel: swipeNavTravel, trace: swipeNavTrace)
 
     /// Serial background queue for the window-raise AX chain: ~6–10 SYNCHRONOUS cross-process AX
     /// IPC calls (each capped at the 0.08s messaging timeout) + an O(app-windows) match loop —
@@ -137,6 +137,21 @@ public final class InputInjector: @unchecked Sendable {
     private static let swipeNavEnabled = EnvConfig.boolDefaultOn("SLOPDESK_SWIPE_NAV")
     /// Extra bundle ids for the swipe-nav allowlist (`SLOPDESK_SWIPE_NAV_APPS`, comma-separated).
     private static let swipeNavExtraApps = SwipeNavPolicy.extraApps(from: EnvConfig.string("SLOPDESK_SWIPE_NAV_APPS"))
+    /// Lift-fire travel threshold in points (`SLOPDESK_SWIPE_NAV_TRAVEL`, default 80) — scales the
+    /// recogniser's whole threshold family (arm = 0.3×, momentum confirm = 1.5×). Clamped so a
+    /// typo can't make every scroll navigate (too low) or dead the feature silently (too high).
+    private static let swipeNavTravel: Double = {
+        guard let s = EnvConfig.string("SLOPDESK_SWIPE_NAV_TRAVEL"), let v = Double(s), v.isFinite,
+              v >= 20, v <= 500 else { return 80 }
+        return v
+    }()
+
+    /// Per-GESTURE swipe-nav decision trace (`SLOPDESK_SWIPE_NAV_TRACE`; also on under the full
+    /// `SLOPDESK_INPUT_TRACE`). ≤2 stderr lines per gesture — cheap enough to leave on a daily
+    /// driver, and the only way to see the real flick's travel/duration/dominance numbers when a
+    /// swipe "didn't count" on hardware.
+    private static let swipeNavTrace = ProcessInfo.processInfo
+        .environment["SLOPDESK_SWIPE_NAV_TRACE"] != nil || inputTrace
 
     /// SCROLL RESAMPLE output rate (`SLOPDESK_SCROLL_RESAMPLE_HZ`, default **0 = OFF**). HW-measured:
     /// Chromium/Electron renders INJECTED smooth-scroll at a rate that climbs with the
@@ -642,8 +657,8 @@ public final class InputInjector: @unchecked Sendable {
         continuous: Bool,
     ) {
         guard Self.swipeNavEnabled else { return }
-        let fired = swipeNavLock.withLock {
-            swipeNav.ingest(
+        let (fired, traceLine) = swipeNavLock.withLock { () -> (SwipeNavRecognizer.Direction?, String?) in
+            let f = swipeNav.ingest(
                 dx: dx,
                 dy: dy,
                 scrollPhase: scrollPhase,
@@ -651,6 +666,13 @@ public final class InputInjector: @unchecked Sendable {
                 continuous: continuous,
                 now: ProcessInfo.processInfo.systemUptime,
             )
+            return (f, swipeNav.takeTraceLine())
+        }
+        if let traceLine {
+            // Tagged with the session's capture target so two concurrent injectors (two panes)
+            // stay attributable in the shared stderr log.
+            FileHandle.standardError
+                .write(Data("slopdesk-videohostd[inject]: swipe-nav(pid \(pid) win \(windowID)) \(traceLine)\n".utf8))
         }
         guard let fired else { return }
         if Self.scrollResampleHz > 0 {

@@ -99,6 +99,32 @@ final class ScrollCoalescePlannerTests: XCTestCase {
         XCTAssertEqual(out, [changed(dx: 3, dy: 9, tag: 9)], "deltas sum; newest tag/template wins")
     }
 
+    /// A momentum-continue coast delta (`momentumPhase == continue(2)` — the other coalescable phase).
+    private func momentum(dx: Double, dy: Double, tag: UInt32 = 7) -> InputEvent {
+        .scroll(dx: dx, dy: dy, normalized: n, scrollPhase: 0, momentumPhase: 2, continuous: true, tag: tag)
+    }
+
+    /// DUAL-LOSS phase purity: the gesture's `ended` AND `momentum begin` datagrams are BOTH lost,
+    /// so a held on-glass `changed` residual meets the first surviving momentum-continue with no
+    /// boundary in between. They must NOT merge — the summed emit carries one phase pair, so the
+    /// residual's on-glass travel would be silently re-tagged as momentum (and the recogniser's
+    /// on-glass sums undercounted). The domain switch flushes like a boundary instead.
+    func testPhaseDomainSwitchFlushesResidualInsteadOfMerging() {
+        var planner = plannerHoldingResidual(start: 100.0) // holds changed(dx:1, dy:4)
+        let out = planner.plan(run: [momentum(dx: 8, dy: 0)], now: 100.0 + 0.008)
+        XCTAssertEqual(
+            out,
+            [changed(dx: 1, dy: 4)],
+            "the changed-phase residual flushes at the domain switch; the momentum delta accumulates fresh",
+        )
+        XCTAssertTrue(planner.hasPendingScroll, "the momentum delta is now the held residual")
+        XCTAssertEqual(
+            planner.plan(run: [], now: 100.0 + 2 * interval),
+            [momentum(dx: 8, dy: 0)],
+            "…and it emits under its OWN phase pair, never the residual's",
+        )
+    }
+
     /// `coalesceScroll == false` (the A/B legacy path) never accumulates: scrolls pass through
     /// verbatim and an empty run emits nothing (byte-identical pre-coalesce behaviour).
     func testCoalesceOffPassesScrollsThroughAndHoldsNothing() {

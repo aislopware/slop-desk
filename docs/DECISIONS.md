@@ -878,6 +878,21 @@
   default-ON. Decision-at-gesture-END is the safety property: a browser arbitrates scroll-vs-navigate
   per page (it knows the page is pinned); a remote host can't, so the flick SHAPE gates instead —
   slow horizontal content pans (spreadsheets, wide code) never qualify.
+- ✅ **v2 (same day, HW feedback "even a hard swipe doesn't register"): momentum-CONFIRMED lift +
+  UDP loss tolerance.** The v1 on-glass-only gate rejected exactly the most emphatic swipes: the
+  harder the flick, the SHORTER the fingers stay on glass — most displacement arrives in the
+  momentum tail v1 ignored, and a long deliberate swipe blew the 400 ms budget instead. v2 keeps
+  the lift decision (thresholds retuned: ≤ 450 ms, ≥ 80 pt fires outright) and adds a second path:
+  a dominant quick lift ≥ 24 pt ARMS a 250 ms coast window; momentum deltas confirm at ≥ 120 pt
+  combined. Momentum still only ever CONFIRMS what the on-glass segment armed — a rejected pan's
+  tail navigates nothing. Loss tolerance: a lost `began` is synthesised from the first continuous
+  `changed`, a lost `ended` from the first momentum event (v1 silently dropped the whole gesture —
+  the input channel is send-once UDP). Reorder/dup hardenings: a 250 ms post-fire REFRACTORY
+  (a reordered on-glass straggler after the fired `ended` must not re-fire off the gesture's own
+  momentum tail = back two pages), and synthesised candidates never ARM (a straggler from a
+  REJECTED pan + the pan's momentum tail must not navigate). `SLOPDESK_SWIPE_NAV_TRAVEL` scales
+  the threshold family; `SLOPDESK_SWIPE_NAV_TRACE` (≤ 2 stderr lines/gesture) exists so the NEXT
+  "didn't register" report comes with the real travel/duration/dominance numbers.
 - ✅ **Pinch → CLIENT-side ⌘= / ⌘− ladder; smart zoom → ⌘0** (`PinchZoomKeyPlanner`, 0.2
   magnification/step, ≤ 3 steps/event; `SLOPDESK_PINCH_KEYS` default-ON). Rides the existing key
   path — NO wire change anywhere in this round.

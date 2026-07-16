@@ -702,6 +702,17 @@ public struct ScrollCoalescePlanner: Sendable {
                case let .scroll(dx, dy, norm, scrollPhase, momentumPhase, continuous, tag) = event,
                Self.isCoalescableScrollPhase(scrollPhase: scrollPhase, momentumPhase: momentumPhase)
             {
+                // PHASE-DOMAIN boundary: an on-glass changed(2) residual must never merge with a
+                // momentum continue(2) delta — the summed emit carries ONE phase pair, so the
+                // older domain's marker would be silently rewritten (on-glass travel replayed as
+                // momentum). Unreachable in a complete gesture (ended/momentum-begin boundaries
+                // flush between the domains); it exists for the DUAL-LOSS case where both those
+                // datagrams drop on the fire-and-forget input channel. Flush like any boundary.
+                if case let .scroll(_, _, _, heldPhase, heldMomentum, _, _) = accumTemplate,
+                   heldPhase != scrollPhase || heldMomentum != momentumPhase
+                {
+                    appendPendingFlush(&out)
+                }
                 accumDx += dx
                 accumDy += dy
                 accumTemplate = .scroll(
