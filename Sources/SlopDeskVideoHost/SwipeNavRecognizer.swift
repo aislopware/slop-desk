@@ -11,7 +11,7 @@ import Foundation
 /// watches the stream it is already injecting and fires the universal keyboard equivalent
 /// instead. See docs/05-input-window-control.md §"Trackpad gestures".
 ///
-/// TWO decision points, matching how a real flick distributes its energy:
+/// THREE decision points, matching how real page-swipes distribute their energy:
 ///
 ///  1. **Lift** (the `ended` marker): a decisive flick that spent enough travel on-glass fires
 ///     immediately. The completed-gesture shape gates out content pans — a navigation flick is
@@ -25,6 +25,14 @@ import Foundation
 ///     Momentum can only ever CONFIRM a candidate the on-glass segment armed — a pan whose lift
 ///     was rejected (too long, not dominant) contributes nothing, so momentum tails of ordinary
 ///     pans still can't navigate.
+///  3. **Slow deliberate swipe**: natively a page-swipe works at ANY speed — the peel tracks the
+///     fingers and commits at release — so a long duration alone must not disqualify. Past
+///     `flickMaxDuration` the lift decision demands COMMITMENT instead of speed: double the
+///     travel (`slowFireTravel`) and harder dominance (`slowDominance`). Page state (is the
+///     content at its horizontal edge? can it scroll at all?) is what native browsers arbitrate
+///     with, and it is invisible remotely — commitment is the only proxy left. There is no
+///     upper duration bound: natively you may drag, hold, and release whenever. Slow gestures
+///     never ARM — momentum confirmation is a flick mechanism (a slow lift has no tail).
 ///
 /// LOSS TOLERANCE (the input channel is fire-and-forget UDP; scroll datagrams are sent once):
 /// a lost `began` is synthesised from the first continuous `changed`; a lost `ended` is
@@ -54,13 +62,21 @@ public struct SwipeNavRecognizer: Sendable {
     public let armTravel: Double
     /// Combined on-glass + momentum |Σdx| that fires an armed candidate.
     public let confirmTravel: Double
+    /// |Σdx| that fires a SLOW deliberate swipe (past `flickMaxDuration`) at lift. Double the
+    /// flick threshold: with no duration cap, travel commitment is what separates a deliberate
+    /// navigation drag from a modest horizontal content nudge.
+    public let slowFireTravel: Double
     /// Horizontal dominance: |Σdx| must be ≥ this multiple of |Σdy|. Cuts diagonal pans.
     /// Re-checked at momentum confirmation over the combined sums, so a coast that curves
     /// vertical dies too.
     public static let dominance: Double = 3
-    /// Maximum began→ended duration (seconds). Content pans run longer; flicks don't. Also
-    /// gates ARMING — a long pan's momentum tail must never navigate.
-    public static let maxDuration: TimeInterval = 0.45
+    /// Dominance for the slow tier. Stricter than the flick's: over a long gesture the hand has
+    /// time to wander, and a 2-D content exploration (maps, canvas) wanders — a deliberate slow
+    /// nav swipe is a clean line (field traces run 16×+).
+    public static let slowDominance: Double = 4
+    /// Began→ended duration (seconds) separating the FLICK tier from the SLOW tier. Also gates
+    /// ARMING — a long gesture's momentum tail must never navigate (slow fires at lift only).
+    public static let flickMaxDuration: TimeInterval = 0.45
     /// How long after lift momentum may still confirm. Momentum begins within a frame of the
     /// lift; this only needs to absorb wire jitter plus a few coalesced momentum emits.
     public static let momentumWindow: TimeInterval = 0.25
@@ -72,6 +88,10 @@ public struct SwipeNavRecognizer: Sendable {
     /// eaten (a rapid re-flick's later `changed` events still synthesise past the window).
     public static let refractory: TimeInterval = 0.25
 
+    /// Slow-tier kill switch (`SLOPDESK_SWIPE_NAV_SLOW=0`): with it off, past-`flickMaxDuration`
+    /// lifts reject on duration exactly like v2 — the escape hatch if slow-fires ever collide
+    /// with a horizontal-scrolling workload (sheets/maps in a browser).
+    private let slowSwipe: Bool
     private let trace: Bool
     private var traceLine: String?
 
@@ -92,11 +112,14 @@ public struct SwipeNavRecognizer: Sendable {
     private var lastMomentum: (dx: Double, dy: Double, phase: UInt8)?
 
     /// `fireTravel` scales the whole threshold family: arming at 0.3× (below that is jitter),
-    /// momentum confirmation at 1.5× (an armed candidate must show real combined travel).
-    public init(fireTravel: Double = 80, trace: Bool = false) {
+    /// momentum confirmation at 1.5× (an armed candidate must show real combined travel), and
+    /// the slow tier at 2× (past the duration boundary only commitment discriminates).
+    public init(fireTravel: Double = 80, slowSwipe: Bool = true, trace: Bool = false) {
         self.fireTravel = fireTravel
         armTravel = fireTravel * 0.3
         confirmTravel = fireTravel * 1.5
+        slowFireTravel = fireTravel * 2
+        self.slowSwipe = slowSwipe
         self.trace = trace
     }
 
@@ -223,16 +246,15 @@ public struct SwipeNavRecognizer: Sendable {
         return nil
     }
 
-    /// The lift decision: fire outright, arm momentum confirmation, or reject. Duration and
-    /// dominance gate BOTH outcomes — an armed candidate is always a plausible flick already.
+    /// The lift decision: fire outright (flick or slow tier), arm momentum confirmation, or
+    /// reject. Duration picks the tier; dominance gates every outcome — an armed candidate is
+    /// always a plausible flick already.
     private mutating func liftDecision(now: TimeInterval) -> Direction? {
         tracking = false
         let duration = now - startedAt
         let stats = "dur=\(Int(duration * 1000))ms Σ=(\(Int(sumX)),\(Int(sumY)))"
-        guard duration <= Self.maxDuration else {
-            emitTrace("lift \(stats) → reject duration")
-            reset()
-            return nil
+        guard duration <= Self.flickMaxDuration else {
+            return slowLiftDecision(now: now, stats: stats)
         }
         guard abs(sumX) >= Self.dominance * abs(sumY) else {
             emitTrace("lift \(stats) → reject dominance")
@@ -260,6 +282,31 @@ public struct SwipeNavRecognizer: Sendable {
         emitTrace("lift \(stats) → reject travel (<\(Int(armTravel)))")
         reset()
         return nil
+    }
+
+    /// The slow tier (see decision point 3 in the type doc): a lift past `flickMaxDuration`
+    /// fires on commitment — double travel, harder dominance, no upper duration bound — or
+    /// rejects outright. It never ARMS: momentum confirmation exists for flicks whose energy
+    /// went into the tail; a slow lift has none, and letting a long gesture coast would hand
+    /// content-pan tails a path to navigate again.
+    private mutating func slowLiftDecision(now: TimeInterval, stats: String) -> Direction? {
+        defer { reset() }
+        guard slowSwipe else {
+            emitTrace("lift \(stats) → reject duration (slow tier off)")
+            return nil
+        }
+        guard abs(sumX) >= Self.slowDominance * abs(sumY) else {
+            emitTrace("lift \(stats) → reject slow dominance")
+            return nil
+        }
+        guard abs(sumX) >= slowFireTravel else {
+            emitTrace("lift \(stats) → reject slow travel (<\(Int(slowFireTravel)))")
+            return nil
+        }
+        let fired: Direction = sumX > 0 ? .back : .forward
+        emitTrace("lift \(stats) → FIRE \(fired) (slow)")
+        firedAt = now
+        return fired
     }
 
     private mutating func reset() {

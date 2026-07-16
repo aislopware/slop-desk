@@ -58,7 +58,9 @@ public final class InputInjector: @unchecked Sendable {
     /// Swipe-back flick recogniser fed from ``inject(_:)``'s scroll arm. Injection is serial per
     /// session, so the lock is the same harmless insurance ``balance`` carries.
     private let swipeNavLock = NSLock()
-    private var swipeNav = SwipeNavRecognizer(fireTravel: swipeNavTravel, trace: swipeNavTrace)
+    private var swipeNav = SwipeNavRecognizer(
+        fireTravel: swipeNavTravel, slowSwipe: swipeNavSlow, trace: swipeNavTrace,
+    )
 
     /// Serial background queue for the window-raise AX chain: ~6–10 SYNCHRONOUS cross-process AX
     /// IPC calls (each capped at the 0.08s messaging timeout) + an O(app-windows) match loop —
@@ -145,6 +147,11 @@ public final class InputInjector: @unchecked Sendable {
               v >= 20, v <= 500 else { return 80 }
         return v
     }()
+
+    /// Slow-tier acceptance (`SLOPDESK_SWIPE_NAV_SLOW`, default ON; `=0` off): a deliberate slow
+    /// swipe fires like native. Turn off to restore the v2 flick-only duration gate if slow
+    /// fires ever collide with a horizontal-scrolling browser workload (sheets/maps).
+    private static let swipeNavSlow = EnvConfig.boolDefaultOn("SLOPDESK_SWIPE_NAV_SLOW")
 
     /// Per-GESTURE swipe-nav decision trace (`SLOPDESK_SWIPE_NAV_TRACE`; also on under the full
     /// `SLOPDESK_INPUT_TRACE`). ≤2 stderr lines per gesture — cheap enough to leave on a daily

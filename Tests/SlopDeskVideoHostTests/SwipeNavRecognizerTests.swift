@@ -1,12 +1,13 @@
 import XCTest
 @testable import SlopDeskVideoHost
 
-/// Pins the swipe-back flick recogniser: WHAT fires (decisively horizontal completed gestures —
-/// at lift when the on-glass travel suffices, or via momentum confirmation for the sharp flicks
-/// that spend most of their displacement AFTER the fingers leave the glass), what must NEVER
-/// fire (vertical/diagonal pans, slow drags, momentum of a rejected pan, wheel notches,
-/// cancelled gestures), the UDP loss tolerance (lost `began`/`ended` datagrams), and the
-/// ⌘[ / ⌘] app allowlist policy.
+/// Pins the swipe-back recogniser: WHAT fires (decisively horizontal completed gestures — at
+/// lift when the on-glass travel suffices, via momentum confirmation for the sharp flicks that
+/// spend most of their displacement AFTER the fingers leave the glass, or via the SLOW tier for
+/// deliberate any-speed swipes with doubled commitment), what must NEVER fire (vertical/diagonal
+/// pans, modest slow nudges, momentum of a rejected pan, wheel notches, cancelled gestures),
+/// the UDP loss tolerance (lost `began`/`ended` datagrams), and the ⌘[ / ⌘] app allowlist
+/// policy.
 final class SwipeNavRecognizerTests: XCTestCase {
     /// Drives a whole gesture through the recogniser: began at `t0`, `changed` deltas 8 ms apart,
     /// ended at `endedAt` (default = right after the last changed). Returns the ended verdict.
@@ -60,10 +61,14 @@ final class SwipeNavRecognizerTests: XCTestCase {
         XCTAssertNil(run(deltas: Array(repeating: (dx: 30.0, dy: 12.5), count: 8)))
     }
 
-    func testSlowHorizontalDragNeverFires() {
-        // Plenty of travel, decisively horizontal — but 0.6 s from began to ended is a content
-        // pan (spreadsheet / wide code), not a navigation flick.
-        XCTAssertNil(run(deltas: Array(repeating: (dx: 30.0, dy: 0.0), count: 8), t0: 100, endedAt: 100.6))
+    func testSlowModestDragNeverFiresNorArms() {
+        // Σdx = 122 clears the FLICK travel (80) but not the slow tier's doubled 160 — past the
+        // flick duration a modest horizontal drag is a content nudge, not a navigation.
+        var rec = SwipeNavRecognizer()
+        XCTAssertNil(run(deltas: Array(repeating: (dx: 15.0, dy: 0.0), count: 8), t0: 100, endedAt: 100.6, rec: &rec))
+        // …and the rejected slow lift never ARMS: its momentum tail must not confirm either.
+        XCTAssertNil(rec.ingest(dx: 300, dy: 0, scrollPhase: 0, momentumPhase: 1, continuous: true, now: 100.61))
+        XCTAssertNil(rec.ingest(dx: 300, dy: 0, scrollPhase: 0, momentumPhase: 2, continuous: true, now: 100.62))
     }
 
     func testTinyTravelNeverFiresOrArms() {
@@ -206,6 +211,79 @@ final class SwipeNavRecognizerTests: XCTestCase {
         )
     }
 
+    // MARK: Slow tier — deliberate any-speed swipes
+
+    func testSlowDeliberateSwipeFires() {
+        // The field-trace shape v2 wrongly rejected: dur≈600 ms, Σ=(242,-16) — decisively
+        // horizontal with real commitment. Native navigates this at any speed (the peel tracks
+        // the fingers); the slow tier accepts it on doubled travel + 4× dominance.
+        XCTAssertEqual(
+            run(deltas: Array(repeating: (dx: 30.0, dy: -2.0), count: 8), t0: 100, endedAt: 100.6),
+            .back,
+        )
+        XCTAssertEqual(
+            run(deltas: Array(repeating: (dx: -30.0, dy: 2.0), count: 8), t0: 100, endedAt: 100.6),
+            .forward,
+        )
+    }
+
+    func testSlowArcFailsTheHarderDominance() {
+        // Σ=(202,60): 3.4× passes the flick's 3× but NOT the slow tier's 4× — over a long
+        // gesture the hand has time to wander, and a wandering 2-D content pan must not
+        // navigate even with big horizontal travel.
+        XCTAssertNil(run(deltas: Array(repeating: (dx: 25.0, dy: 7.5), count: 8), t0: 100, endedAt: 100.6))
+    }
+
+    func testSlowBoundaryTravelAndDominanceFire() {
+        // Σdx = 2 (began) + 158 = 160 exactly = slowFireTravel; Σdy = 40 → dominance exactly
+        // 4×. `>=` on both, matching the flick tier's boundary semantics.
+        XCTAssertEqual(run(deltas: [(dx: 158.0, dy: 40.0)], t0: 100, endedAt: 100.6), .back)
+    }
+
+    func testDragHoldReleaseFiresLikeNative() {
+        // Natively you may drag the page across, HOLD, and release whenever — the commit
+        // happens at lift. The slow tier therefore has NO upper duration bound.
+        XCTAssertEqual(
+            run(deltas: Array(repeating: (dx: 40.0, dy: 1.0), count: 8), t0: 100, endedAt: 105.0),
+            .back,
+        )
+    }
+
+    func testSlowSwipeLostEndedFiresOnMomentumBegin() {
+        // A slow qualifying swipe whose `ended` datagram was lost: the momentum-begin lift
+        // synthesis must route into the slow tier too, not just the flick path.
+        var rec = SwipeNavRecognizer()
+        XCTAssertNil(rec.ingest(dx: 2, dy: 0, scrollPhase: 1, momentumPhase: 0, continuous: true, now: 100))
+        for i in 0..<8 {
+            XCTAssertNil(rec.ingest(
+                dx: 30, dy: 1, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.07 + Double(i) * 0.07,
+            ))
+        }
+        XCTAssertEqual(
+            rec.ingest(dx: 10, dy: 0, scrollPhase: 0, momentumPhase: 1, continuous: true, now: 100.63),
+            .back,
+        )
+    }
+
+    func testSlowTierDisabledRestoresDurationReject() {
+        // `SLOPDESK_SWIPE_NAV_SLOW=0` — the v2 escape hatch: past the flick duration every
+        // lift rejects, however committed (for horizontal-scrolling browser workloads).
+        var rec = SwipeNavRecognizer(slowSwipe: false)
+        XCTAssertNil(run(deltas: Array(repeating: (dx: 40.0, dy: 0.0), count: 8), t0: 100, endedAt: 100.6, rec: &rec))
+    }
+
+    func testSlowFireTravelScalesWithTheKnob() {
+        // fireTravel 160 → slow tier 320: Σ=242 (fires at the default) is short here…
+        var rec = SwipeNavRecognizer(fireTravel: 160)
+        XCTAssertNil(run(deltas: Array(repeating: (dx: 30.0, dy: 0.0), count: 8), t0: 100, endedAt: 100.6, rec: &rec))
+        // …and Σ=402 clears it.
+        var rec2 = SwipeNavRecognizer(fireTravel: 160)
+        XCTAssertEqual(
+            run(deltas: Array(repeating: (dx: 50.0, dy: 0.0), count: 8), t0: 200, endedAt: 200.6, rec: &rec2),
+            .back,
+        )
+    }
+
     // MARK: UDP loss tolerance
 
     func testLostEndedStillFiresOnMomentum() {
@@ -289,9 +367,9 @@ final class SwipeNavRecognizerTests: XCTestCase {
 
     func testSynthesisedCandidateNeverArmsMomentumConfirmation() {
         var rec = SwipeNavRecognizer()
-        // A long horizontal content pan is REJECTED at lift (duration)…
+        // A long modest content pan is REJECTED at lift (slow tier: Σ=102 < 160)…
         XCTAssertNil(rec.ingest(dx: 2, dy: 0, scrollPhase: 1, momentumPhase: 0, continuous: true, now: 100))
-        XCTAssertNil(rec.ingest(dx: 300, dy: 5, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.3))
+        XCTAssertNil(rec.ingest(dx: 100, dy: 5, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.3))
         XCTAssertNil(rec.ingest(dx: 0, dy: 0, scrollPhase: 4, momentumPhase: 0, continuous: true, now: 100.6))
         // …but one straggler `changed` (reordered past the ended, no fire ⇒ no refractory) forms
         // a SYNTHESISED candidate just as the pan's big momentum tail lands. Arming here would
@@ -355,13 +433,14 @@ final class SwipeNavRecognizerTests: XCTestCase {
         // A reordered momentum-CONTINUE from the previous gesture's tail lands inside a live
         // long pan. Running the lift decision there would reset the candidate and re-synthesise
         // the pan's remainder into a flick-shaped segment that FIRES (review-reproduced on a
-        // 700 ms pan). The stray must leave the candidate intact — the pan then rejects on
-        // duration at its real ended, exactly as without the stray.
+        // 700 ms pan). The stray must leave the candidate intact — the WHOLE pan (Σ=(250,70),
+        // 3.6× < the slow tier's 4×) then rejects at its real ended, exactly as without the
+        // stray; only the chopped tail segment (Σ=(85,2), 150 ms) would qualify.
         var rec = SwipeNavRecognizer()
         XCTAssertNil(rec.ingest(dx: 5, dy: 0, scrollPhase: 1, momentumPhase: 0, continuous: true, now: 100))
         for i in 0..<4 {
             XCTAssertNil(rec.ingest(
-                dx: 40, dy: 1, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.1 + Double(i) * 0.1,
+                dx: 40, dy: 17, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.1 + Double(i) * 0.1,
             ))
         }
         XCTAssertNil(rec.ingest(dx: 3, dy: 0, scrollPhase: 0, momentumPhase: 2, continuous: true, now: 100.5))

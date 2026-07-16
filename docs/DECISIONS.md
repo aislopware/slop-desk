@@ -893,6 +893,21 @@
   REJECTED pan + the pan's momentum tail must not navigate). `SLOPDESK_SWIPE_NAV_TRAVEL` scales
   the threshold family; `SLOPDESK_SWIPE_NAV_TRACE` (≤ 2 stderr lines/gesture) exists so the NEXT
   "didn't register" report comes with the real travel/duration/dominance numbers.
+- ✅ **v3 (same day, HW feedback "can't swipe slowly like native"): SLOW tier — commitment replaces
+  speed past the flick boundary.** The trace receipts showed exactly what v2 rejected: 681 pt and
+  246 pt swipes at 16× dominance, refused for taking ~500 ms. Natively a page-swipe works at ANY
+  speed — the peel tracks the fingers and commits at release — so an absolute duration gate is the
+  wrong model. Past 450 ms the lift now fires on COMMITMENT instead: ≥ 2× travel (160 pt default,
+  scales with `SLOPDESK_SWIPE_NAV_TRAVEL`) and ≥ 4× dominance (harder than the flick's 3× — a long
+  gesture gives the hand time to wander; field traces of deliberate slow swipes run 16×+), with NO
+  upper duration bound (natively you may drag, hold, and release whenever). Slow lifts never ARM —
+  momentum confirmation stays a flick mechanism, so long content-pan tails still can't navigate.
+  The accepted trade-off: a decisively-horizontal ≥ 160 pt content pan inside an allowlisted
+  browser (wide sheets/maps) now navigates — remote recognition cannot see the page's scroll
+  state, commitment is the only proxy, and the daily workload is docs/code where pages don't
+  scroll horizontally. `SLOPDESK_SWIPE_NAV_SLOW=0` is the escape hatch (restores the v2 gate).
+  What CANNOT be reproduced remotely: the gradual peel-while-dragging visual — translation fires
+  a discrete ⌘[ / ⌘] at lift; only the trigger acceptance is native-like, never the feedback.
 - ✅ **Pinch → CLIENT-side ⌘= / ⌘− ladder; smart zoom → ⌘0** (`PinchZoomKeyPlanner`, 0.2
   magnification/step, ≤ 3 steps/event; `SLOPDESK_PINCH_KEYS` default-ON). Rides the existing key
   path — NO wire change anywhere in this round.
