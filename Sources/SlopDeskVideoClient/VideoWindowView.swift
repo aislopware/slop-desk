@@ -730,9 +730,12 @@ final class MetalLayerBackedView: NSView {
 
     // ── SWIPE-PEEL feedback (doc 05 §8): a local mirror of the HOST's swipe-nav recogniser gives
     //    the one piece of native swipe-back a key translation can't — the page reacting WHILE the
-    //    fingers are on the glass. Nudges `videoLayer.transform` (a channel `layoutVideoLayer`'s
-    //    frame writes never touch) + publishes the chip through `controls`. The host stays the
-    //    sole authority on firing ⌘[/⌘].
+    //    fingers are on the glass. The page FOLLOWS the fingers ~1:1 (`videoLayer.transform`, a
+    //    channel `layoutVideoLayer`'s frame writes never touch) over a flat underlay, the chip
+    //    publishes through `controls`, and a fired gesture plays the commit choreography: the
+    //    outgoing page freezes into a snapshot and slides off while the post-navigation page
+    //    streams in underneath — masking the inject→capture→stream round trip the way Safari's
+    //    snapshot swap masks its own load. The host stays the sole authority on firing ⌘[/⌘].
     private var peelPlanner = SwipePeelPlanner()
     /// The host's swipe-nav operating point (cursor-socket type=3 push). `nil` until the first
     /// push — an old host never shows the overlay, so the affordance can't lie.
@@ -741,6 +744,21 @@ final class MetalLayerBackedView: NSView {
     private var peelChipCommitted = false
     /// Delayed clear of the confirm-pulse chip after a fire.
     private var peelConfirmClear: Task<Void, Never>?
+    /// The flat backdrop revealed behind the page while it follows the fingers (below
+    /// `videoLayer` in the clipping host layer; the chip floats over it as the affordance —
+    /// MERIDIAN flat, no ornament). Built lazily on first show, hidden when the peel concludes.
+    private var peelUnderlay: CALayer?
+    /// A thin gradient hugging the sliding page's edge inside the revealed gap — the page
+    /// "casts" onto the underlay, reading as depth without any blur/material over metal.
+    private var peelUnderlayShade: CAGradientLayer?
+    /// The commit choreography's frozen outgoing page (a plain layer over `videoLayer`).
+    private var peelSnapshotLayer: CALayer?
+    /// The hold-then-slide driver for ``peelSnapshotLayer``.
+    private var peelSnapshotSlide: Task<Void, Never>?
+    /// One-shot NV12→RGB conversion context for the commit snapshot (class-level: CIContext
+    /// construction is expensive; first touched on the first commit, GUI-only — this class
+    /// never runs headless, per the no-Metal-in-unit-tests law).
+    private static let peelSnapshotContext = CIContext()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -858,7 +876,12 @@ final class MetalLayerBackedView: NSView {
     func deactivate() {
         if pointerInside { NSCursor.arrow.set() } // restore the arrow before the pipeline tears down
         pointerInside = false
-        abandonSwipePeel() // never strand a mid-gesture nudge/chip across a teardown
+        abandonSwipePeel() // never strand a mid-gesture peel/chip across a teardown
+        clearPeelSnapshot() // nor a mid-flight commit choreography
+        // Forget the host's eligibility across a teardown: a remounted surface must stay dark
+        // until the NEXT status push (≤2 s heartbeat) instead of trusting a stale operating
+        // point from a possibly-restarted host (audit: stale-eligible window).
+        peelStatus = nil
         // Deliberately NO nil-publish of the injector sinks here: `RemoteWindowModel.close()` clears its
         // own sinks (model lifecycle, always BEFORE a re-open in store order). During a pane
         // detach/reattach the SAME model is re-bound by a replacement view in ANOTHER hosting root, and
@@ -1394,6 +1417,15 @@ final class MetalLayerBackedView: NSView {
         ))
     }
 
+    /// The page-follow translation for a raw gesture travel: ~1:1 under the fingers with a
+    /// soft tanh knee into a cap at just under half the pane (`d(offset)/d(travel) ≈ 1` at the
+    /// origin because the scale equals the cap) — the page never slides past the point where
+    /// the reveal would read as a detached card.
+    private func peelOffset(forTravel travelX: Double) -> CGFloat {
+        let cap = Double.maximum(Double.minimum(Double(bounds.width) * 0.45, 560), 120)
+        return CGFloat(cap * tanh(travelX / cap))
+    }
+
     private func applySwipePeel(_ verdict: SwipePeelPlanner.Verdict) {
         switch verdict {
         case .idle:
@@ -1401,12 +1433,18 @@ final class MetalLayerBackedView: NSView {
         case let .show(overlay):
             peelConfirmClear?.cancel()
             peelConfirmClear = nil
-            // Track the finger 1:1 — instant transform write, the same no-implicit-animation
+            // A new gesture over a still-running commit choreography adopts the page where it
+            // is: drop the old snapshot instantly (the live layer beneath is already home).
+            clearPeelSnapshot()
+            let offset = peelOffset(forTravel: overlay.travelX)
+            // Track the finger — instant transform write, the same no-implicit-animation
             // convention as every other geometry mutation in this file. `.transform` is a pure
-            // compositor channel `layoutVideoLayer`'s frame writes never touch.
+            // compositor channel `layoutVideoLayer`'s frame writes never touch. The underlay
+            // updates in the SAME transaction so page and backdrop can never tear.
             CATransaction.begin()
             CATransaction.setDisableActions(true)
-            videoLayer.transform = CATransform3DMakeTranslation(overlay.offset, 0, 0)
+            videoLayer.transform = CATransform3DMakeTranslation(offset, 0, 0)
+            updatePeelUnderlay(offset: offset)
             CATransaction.commit()
             if overlay.chip.committed, !peelChipCommitted {
                 // The moment native communicates by page position: "release now navigates".
@@ -1415,16 +1453,16 @@ final class MetalLayerBackedView: NSView {
             peelChipCommitted = overlay.chip.committed
             if controls?.swipePeel != overlay.chip { controls?.swipePeel = overlay.chip }
         case let .commit(direction):
-            easeSwipePeelHome()
+            beginPeelCommitChoreography(direction)
             peelChipCommitted = false
             controls?.swipePeel = SwipePeelChipState(
                 direction: direction, progress: 1, committed: true, confirming: true,
             )
             peelConfirmClear?.cancel()
             peelConfirmClear = Task { [weak self] in
-                // Let the confirm pulse read before the chip leaves; the host's ⌘[/⌘] lands and
-                // the new page streams in underneath during this beat.
-                try? await Task.sleep(nanoseconds: 260_000_000)
+                // The chip's confirm pulse spans the snapshot hold + slide (the host's ⌘[/⌘]
+                // lands and the new page streams in underneath during this beat).
+                try? await Task.sleep(nanoseconds: 520_000_000)
                 guard !Task.isCancelled else { return }
                 self?.controls?.swipePeel = nil
             }
@@ -1435,15 +1473,142 @@ final class MetalLayerBackedView: NSView {
         }
     }
 
-    /// The one deliberately ANIMATED layer write in this file: the lift ease-home. A
-    /// transform-only compositor animation (never touches the drawable pool), non-spring per
-    /// the design system — the reveal curve over 180 ms. A new gesture's instant `.show` write
-    /// (disabled actions) snaps over it, so finger-tracking always wins.
+    // MARK: Swipe-peel underlay + commit choreography
+
+    /// Shows/positions the flat backdrop + edge shade for the current page offset; `0` hides.
+    /// Caller wraps this in its disabled-actions transaction (tears otherwise).
+    private func updatePeelUnderlay(offset: CGFloat) {
+        guard offset != 0 else {
+            peelUnderlay?.isHidden = true
+            return
+        }
+        let underlay = ensurePeelUnderlay()
+        underlay.isHidden = false
+        underlay.frame = bounds
+        guard let shade = peelUnderlayShade else { return }
+        // The shade hugs the page's moving edge INSIDE the revealed gap: for a back-swipe the
+        // gap is on the left and the page edge sits at x = offset (dark side rightmost); a
+        // forward-swipe mirrors on the right edge.
+        let shadeWidth: CGFloat = 18
+        if offset > 0 {
+            shade.frame = CGRect(x: offset - shadeWidth, y: 0, width: shadeWidth, height: bounds.height)
+            shade.startPoint = CGPoint(x: 0, y: 0.5)
+            shade.endPoint = CGPoint(x: 1, y: 0.5)
+        } else {
+            shade.frame = CGRect(x: bounds.width + offset, y: 0, width: shadeWidth, height: bounds.height)
+            shade.startPoint = CGPoint(x: 1, y: 0.5)
+            shade.endPoint = CGPoint(x: 0, y: 0.5)
+        }
+        // Read as the page casting onto the backdrop: strongest at the page edge, gone by ~18pt.
+        shade.opacity = Float(Double.minimum(abs(Double(offset)) / 80, 1))
+    }
+
+    private func ensurePeelUnderlay() -> CALayer {
+        if let peelUnderlay { return peelUnderlay }
+        let underlay = CALayer()
+        // MERIDIAN flat: a near-black matte, no ornament — the chip floating above the gap is
+        // the affordance. Never a material/blur (repo law: nothing refractive over/under the
+        // metal layer's compositing path).
+        underlay.backgroundColor = CGColor(gray: 0.07, alpha: 1)
+        let shade = CAGradientLayer()
+        shade.colors = [CGColor(gray: 0, alpha: 0), CGColor(gray: 0, alpha: 0.34)]
+        underlay.addSublayer(shade)
+        layer?.insertSublayer(underlay, below: videoLayer)
+        peelUnderlay = underlay
+        peelUnderlayShade = shade
+        return underlay
+    }
+
+    /// The fired-gesture choreography: freeze the outgoing page into a plain snapshot layer at
+    /// its current offset, return the live layer home INSTANTLY underneath (same pixels — an
+    /// invisible seam), hold one beat for the post-navigation page to stream in, then slide the
+    /// snapshot off in the swipe direction revealing the live layer. Masks the ~150–400 ms
+    /// inject→browser-paint→capture→stream latency exactly the way Safari's own snapshot swap
+    /// masks its load. No frame on glass yet (fresh session) ⇒ fall back to the plain ease-home.
+    private func beginPeelCommitChoreography(_ direction: SwipeNavRecognizer.Direction) {
+        clearPeelSnapshot()
+        guard let cgImage = makePeelSnapshotImage() else {
+            easeSwipePeelHome()
+            return
+        }
+        let snapshot = CALayer()
+        snapshot.contents = cgImage
+        snapshot.contentsGravity = .resize
+        snapshot.frame = videoLayer.frame
+        snapshot.transform = videoLayer.presentation()?.transform ?? videoLayer.transform
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer?.addSublayer(snapshot)
+        videoLayer.transform = CATransform3DIdentity
+        peelUnderlay?.isHidden = true
+        CATransaction.commit()
+        peelSnapshotLayer = snapshot
+        peelSnapshotSlide = Task { [weak self] in
+            // One beat for ⌘[/⌘] to land remotely and the new page's frames to arrive — the
+            // common case reveals the REAL destination page mid-slide; a slow navigation
+            // degrades to revealing the old page again (yesterday's teleport, now with motion).
+            try? await Task.sleep(nanoseconds: 280_000_000)
+            guard !Task.isCancelled else { return }
+            self?.slidePeelSnapshotOff(direction)
+        }
+    }
+
+    private func slidePeelSnapshotOff(_ direction: SwipeNavRecognizer.Direction) {
+        guard let snapshot = peelSnapshotLayer else { return }
+        let dx = direction == .back ? bounds.width + 40 : -(bounds.width + 40)
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.22)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(controlPoints: 0, 0, 0.58, 1))
+        CATransaction.setCompletionBlock { [weak self] in
+            // Only the still-current snapshot tears down here — a new gesture may have swapped
+            // in a fresh one while this slide ran.
+            if self?.peelSnapshotLayer === snapshot { self?.peelSnapshotLayer = nil }
+            snapshot.removeFromSuperlayer()
+        }
+        snapshot.transform = CATransform3DMakeTranslation(dx, 0, 0)
+        snapshot.opacity = 0.92
+        CATransaction.commit()
+    }
+
+    /// Drops any commit-choreography snapshot instantly (new gesture / teardown).
+    private func clearPeelSnapshot() {
+        peelSnapshotSlide?.cancel()
+        peelSnapshotSlide = nil
+        guard let snapshot = peelSnapshotLayer else { return }
+        peelSnapshotLayer = nil
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        snapshot.removeFromSuperlayer()
+        CATransaction.commit()
+    }
+
+    /// The outgoing page, frozen: the frame on glass converted NV12→RGB once. ~10 ms for a
+    /// desktop-sized frame — once per FIRED navigation, at gesture end, never on the 120 Hz
+    /// tracking path.
+    private func makePeelSnapshotImage() -> CGImage? {
+        guard let buffer = pipeline.lastRenderedImageBuffer() else { return nil }
+        let image = CIImage(cvImageBuffer: buffer)
+        return Self.peelSnapshotContext.createCGImage(image, from: image.extent)
+    }
+
+    /// The retract ease-home: a transform-only compositor animation (never touches the
+    /// drawable pool), non-spring per the design system — the reveal curve over 180 ms. The
+    /// edge shade fades in the same transaction (its frame is pinned to the last offset, so it
+    /// would otherwise dangle in the shrinking gap), and the underlay hides on completion. A
+    /// new gesture's instant `.show` write (disabled actions) snaps over all of it, so
+    /// finger-tracking always wins.
     private func easeSwipePeelHome() {
         CATransaction.begin()
         CATransaction.setAnimationDuration(0.18)
         CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(controlPoints: 0, 0, 0.58, 1))
+        CATransaction.setCompletionBlock { [weak self] in
+            // Hidden only if no new gesture re-showed it mid-ease (its instant write already
+            // un-hid + repositioned everything).
+            guard let self, videoLayer.transform.m41 == 0 else { return }
+            peelUnderlay?.isHidden = true
+        }
         videoLayer.transform = CATransform3DIdentity
+        peelUnderlayShade?.opacity = 0
         CATransaction.commit()
     }
 

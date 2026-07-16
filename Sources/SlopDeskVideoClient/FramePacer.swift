@@ -494,6 +494,15 @@ public final class FramePacer: @unchecked Sendable {
         needsRedisplay = true
     }
 
+    /// The frame currently ON GLASS, for a ONE-SHOT visual snapshot (the swipe-peel commit
+    /// choreography freezes the outgoing page while the post-navigation page streams in
+    /// underneath). ⚠️ Main-confined (same as the render path that writes it — the render dedup
+    /// reference IS the presented frame, unlike the lock-guarded pick-ahead `lastShownFrame`).
+    /// The returned buffer is safe to retain — the pacer only swaps references, never mutates.
+    public func lastRenderedImageBuffer() -> CVImageBuffer? {
+        lastRenderedFrame ?? lock.withLock { lastShownFrame }
+    }
+
     /// FPS GOVERNOR: rebase the content-cadence assumptions on a host fps change (the
     /// `streamCadence` control message). Lock-guarded; callable off-main. Default arrival-mode
     /// pacing is fps-agnostic (present-on-arrival), so this rebases only (a) the deadline-mode

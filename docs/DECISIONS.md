@@ -937,6 +937,47 @@
   the same render/input coupling the zoom/pan inverse preserves; and a mid-gesture direction
   reversal concludes the old chip before re-showing (same-identity SwiftUI content would have
   animated the alignment flip as a full-pane slide).
+- ✅ **v4.1 (2026-07-17, HW feedback "still not native" AGAIN, post-v4): the chip never showed —
+  the daemon's `NSWorkspace.frontmostApplication` is a first-access-frozen snapshot.** A runtime
+  probe (new diagnostic `slopdesk-swipestatus-probe`: mints a real display session against the
+  RUNNING daemon, primes the cursor flow, reports arriving type-3 datagrams) proved the push path
+  alive but `eligible=false` on every beat — with Chrome demonstrably frontmost. In a run-loop-less
+  daemon NSWorkspace's snapshot freezes at its first access (any thread; a side-by-side experiment
+  showed `CGWindowListCopyWindowInfo` tracking live app flips while NSWorkspace never moved), so
+  the kicker was pushing the launch-time Terminal forever, and the injector's identical read was
+  correct only by first-access luck (frozen wrong ⇒ ⌘[ misfiring as OUTDENT into a later-focused
+  editor). Fix: `HostFrontmostApp` — a fresh-per-call WindowServer query (first layer-0,
+  visible-alpha window's owner, front-to-back; pure scan unit-pinned) used by ALL THREE frontmost
+  reads (status kicker, fire-path allowlist, raise skip-check), NSWorkspace demoted to fallback.
+  Kicker gained a change-only `SLOPDESK_SWIPE_NAV_TRACE` line — the path had zero observability,
+  which is how the freeze shipped invisibly. Standing rule: NEVER read NSWorkspace state in the
+  daemons; static audit REFUTED this exact suspect because both paths shared one API — only the
+  runtime probe exposed the freshness split, so freshness bugs get probes, not audits. (The
+  `didActivateApplication` observer also never fires under `dispatchMain()` — eligibility flips
+  ride the 2 s heartbeat alone, an accepted ≤ 2 s arming latency.)
+- ✅ **v5 (2026-07-17, immediately after v4.1): native-SCALE peel — the page follows the fingers,
+  and the commit choreography masks the navigation round trip.** v4's deliberately-timid 32 pt
+  nudge could never read as native next to Safari's full-page drag. The peel now slides the video
+  layer ~1:1 under the fingers with a soft `tanh` knee into a 45 %-of-pane cap (initial slope 1 —
+  finger-locked; the cap keeps the reveal from reading as a detached card) over a flat near-black
+  underlay + an 18 pt edge shade (MERIDIAN flat, the chip stays the affordance; never a
+  material/blur near the metal layer). The planner now hands the view RAW travel — the mapping is
+  geometry-dependent and belongs where the bounds live. On fire, the outgoing page FREEZES: one
+  NV12→RGB conversion of the frame on glass (pacer's `lastRenderedImageBuffer`, once per fired
+  navigation, never on the 120 Hz path) becomes a plain snapshot layer at the current offset, the
+  live layer returns home invisibly beneath it (same pixels), a ~280 ms hold lets ⌘[ land and the
+  destination page stream in, then the snapshot slides off in the swipe direction — Safari's own
+  snapshot-swap trick; a slow navigation degrades to revealing the old page (v4's teleport, now
+  with motion), and no-frame-yet degrades to the plain ease-home. The double-motion objection that
+  justified the nudge is accepted as a trade: pages that also scroll horizontally see the local
+  slide on top of their own pan, in exchange for native feel everywhere else — same class of
+  trade-off as the v3 slow tier, same escape hatch. **Slow tier dominance is now GRADUATED**
+  (`slowCommitmentFires`, shared verbatim by lift + live mirror): ≥ 4× at 2× travel as before, OR
+  ≥ 2× once travel is overwhelming (≥ 3× fire = 240 pt) — the field 856 ms Σ=(355,−155) deliberate
+  swipe (2.3×, rejected by the whole-gesture 4×) now fires, because native decides the axis at
+  onset and forgives later wobble. Widened trade accepted: a ≥ 240 pt strongly-horizontal (≥ 2×)
+  slow drag in an allowlisted app navigates; sub-240 pt wobbly drags and sub-2× diagonal
+  explorations still reject (pinned both sides).
 - ✅ **Pinch → CLIENT-side ⌘= / ⌘− ladder; smart zoom → ⌘0** (`PinchZoomKeyPlanner`, 0.2
   magnification/step, ≤ 3 steps/event; `SLOPDESK_PINCH_KEYS` default-ON). Rides the existing key
   path — NO wire change anywhere in this round.

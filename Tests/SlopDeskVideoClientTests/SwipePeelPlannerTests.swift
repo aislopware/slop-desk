@@ -66,26 +66,26 @@ final class SwipePeelPlannerTests: XCTestCase {
     func testDominantDragShowsGrowsAndFlipsCommitted() {
         var planner = SwipePeelPlanner()
         XCTAssertEqual(began(&planner), .idle)
-        // Σx = 42 → shown, uncommitted, offset positive (back = fingers right).
+        // Σx = 42 → shown, uncommitted; the overlay carries the RAW travel (the view owns the
+        // geometry-dependent page-follow mapping).
         guard case let .show(early) = changed(&planner, dx: 40, dy: 1, now: 100.02) else {
             XCTFail("expected .show once past the arm line")
             return
         }
         XCTAssertEqual(early.chip.direction, .back)
         XCTAssertFalse(early.chip.committed)
-        XCTAssertGreaterThan(early.offset, 0)
-        XCTAssertLessThanOrEqual(abs(early.offset), SwipePeelPlanner.maxShift)
-        // Σx = 102 ≥ fireTravel 80 → committed, fill capped at 1.
+        XCTAssertEqual(early.travelX, 42)
+        // Σx = 102 ≥ fireTravel 80 → committed, fill capped at 1, travel passed through raw.
         guard case let .show(late) = changed(&planner, dx: 60, dy: 1, now: 100.05) else {
             XCTFail("expected .show past fireTravel")
             return
         }
         XCTAssertTrue(late.chip.committed)
         XCTAssertEqual(late.chip.progress, 1)
-        XCTAssertGreaterThan(late.offset, early.offset)
+        XCTAssertEqual(late.travelX, 102)
     }
 
-    func testLeftwardDragMirrorsDirectionAndOffsetSign() {
+    func testLeftwardDragMirrorsDirectionAndTravelSign() {
         var planner = SwipePeelPlanner()
         _ = began(&planner, dx: -2)
         guard case let .show(overlay) = changed(&planner, dx: -60, dy: -1, now: 100.02) else {
@@ -93,7 +93,7 @@ final class SwipePeelPlannerTests: XCTestCase {
             return
         }
         XCTAssertEqual(overlay.chip.direction, .forward)
-        XCTAssertLessThan(overlay.offset, 0)
+        XCTAssertEqual(overlay.travelX, -62)
     }
 
     func testChipProgressIsQuantized() {

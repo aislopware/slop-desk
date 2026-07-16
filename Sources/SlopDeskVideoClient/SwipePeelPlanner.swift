@@ -26,9 +26,10 @@ public struct SwipePeelChipState: Equatable, Sendable {
 /// Client-side mirror of the HOST's swipe-nav recogniser, run purely for FEEDBACK — the piece
 /// of native swipe-back that key translation can never give: the page reacting WHILE the
 /// fingers are still on the glass. The host remains the sole authority on actually firing
-/// ⌘[/⌘]; this planner drives a local nudge of the video layer plus a progress chip, from the
-/// SAME event stream the view forwards (pre-coalescing — coalescing sums same-phase deltas and
-/// keeps the boundary markers, so both recognisers reach the same sums and the same verdicts).
+/// ⌘[/⌘]; this planner drives the view's page-follow translation plus a progress chip, from
+/// the SAME event stream the view forwards (pre-coalescing — coalescing sums same-phase deltas
+/// and keeps the boundary markers, so both recognisers reach the same sums and the same
+/// verdicts).
 ///
 /// The mirror's thresholds come from the host's ``SwipeNavStatusMessage`` push, so a host-side
 /// `SLOPDESK_SWIPE_NAV_TRAVEL`/`_SLOW` retune never desynchronises the feedback; the view only
@@ -39,9 +40,10 @@ public struct SwipePeelChipState: Equatable, Sendable {
 public struct SwipePeelPlanner: Sendable {
     /// The full overlay state for one live candidate.
     public struct Overlay: Equatable, Sendable {
-        /// Signed points to translate the video layer by (rubber-banded, capped at
-        /// ``SwipePeelPlanner/maxShift``).
-        public var offset: Double
+        /// The candidate's RAW signed horizontal travel (points). The VIEW maps this to the
+        /// page-follow translation — the mapping needs the pane's live geometry (the soft cap
+        /// is a fraction of pane width), which this pure planner deliberately never sees.
+        public var travelX: Double
         /// The chip to publish.
         public var chip: SwipePeelChipState
     }
@@ -59,19 +61,11 @@ public struct SwipePeelPlanner: Sendable {
         case retract
     }
 
-    /// Content-shift cap (points). Deliberately a NUDGE, not a native full-page slide: the
-    /// remote app ALSO receives the forwarded scroll and may genuinely scroll horizontally
-    /// (sheets/maps) — a large local slide on top of real remote motion would double-move.
-    /// The nudge + chip communicate "this gesture is arming navigation" without fighting
-    /// whatever the remote content does.
-    public static let maxShift: Double = 32
     /// Chip-fill quantum: progress is rounded to this so the @Published chip state changes at
     /// most ~32 times per fill, not once per 120 Hz event.
     public static let progressQuantum: Double = 1.0 / 32.0
 
     private var recognizer: SwipeNavRecognizer
-    /// The travel scale the rubber-band uses (2× fire = the slow tier's full commitment).
-    private let shiftScale: Double
     /// Overlay appearance threshold — the recogniser's own arm line (0.3× fire): below it the
     /// horizontal component is jitter, and a slightly-diagonal ordinary scroll must not flash
     /// the chip for its first few points of incidental Σx.
@@ -91,7 +85,6 @@ public struct SwipePeelPlanner: Sendable {
 
     public init(fireTravel: Double = 80, slowSwipe: Bool = true) {
         recognizer = SwipeNavRecognizer(fireTravel: fireTravel, slowSwipe: slowSwipe)
-        shiftScale = fireTravel * 2
         showTravel = fireTravel * 0.3
     }
 
@@ -134,7 +127,7 @@ public struct SwipePeelPlanner: Sendable {
         shownDirection = live.direction
         let quantized = (progress / Self.progressQuantum).rounded(.down) * Self.progressQuantum
         return .show(Overlay(
-            offset: Self.maxShift * tanh(live.travelX / shiftScale),
+            travelX: live.travelX,
             chip: SwipePeelChipState(
                 direction: live.direction,
                 progress: Double.minimum(Double.maximum(quantized, Self.progressQuantum), 1),
