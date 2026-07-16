@@ -76,7 +76,7 @@ struct GuiLeafView: View {
             // status strip. Host + connection state live ONCE in the sidebar header, not duplicated here.
             // Only while live.
             if showControlBar {
-                GuiPaneControlBar(model: model, store: store, panLocked: $panLocked)
+                GuiPaneControlBar(model: model, store: store, paneID: paneID, panLocked: $panLocked)
             }
         }
         .background(NativePaneColor.terminalBackground)
@@ -313,14 +313,20 @@ private struct StreamStallCaption: View {
 /// sink (``RemoteWindowModel/canControlViewport``, live even while read-only — pure client ops).
 private struct GuiPaneControlBar: View {
     let model: RemoteWindowModel?
-    /// The store — supplies the LOCAL clipboard (current + the recent-clips ring) for the paste menu.
+    /// The store — supplies the LOCAL clipboard (current + the recent-clips ring) for the paste menu,
+    /// and the detach/reattach ops.
     let store: WorkspaceStore
+    /// This pane's id — the detach/reattach target.
+    let paneID: PaneID
     /// Mirrors the pane's "lock position" state so the lock icon reflects on/off (the freeze itself lives in
     /// the video view; this toggles 1:1 with the `.toggleLock` command).
     @Binding var panLocked: Bool
 
     /// Whether the numeric "Resize…" size popover is open.
     @State private var showResizePopover = false
+
+    /// Whether this pane currently lives in a satellite window (drives detach ⇄ reattach flip).
+    private var isDetached: Bool { store.tree.isDetached(paneID) }
 
     var body: some View {
         HStack(spacing: Slate.Metric.space1) {
@@ -339,6 +345,17 @@ private struct GuiPaneControlBar: View {
                     RemoteWindowSizePopover(model: model, isPresented: $showResizePopover)
                 }
             }
+            // DETACH ⇄ REATTACH: pop this pane out into its own OS window (the live stream survives —
+            // only the view remounts), or fold a satellite back into its tab. Mirrors ⌥⌘P / the menu.
+            // macOS-only: iOS has no satellite NSWindow — a detached pane there would vanish into nowhere.
+            #if os(macOS)
+            SlatePlateButton(
+                symbol: isDetached ? .macwindowAndPointerArrow : .macwindowOnRectangle,
+                help: isDetached ? "Reattach as a pane" : "Detach into its own window (⌥⌘P)",
+            ) {
+                if isDetached { store.reattachPane(paneID) } else { store.detachPaneToWindow(paneID) }
+            }
+            #endif
             Spacer(minLength: Slate.Metric.space2)
             if let model, model.canControlViewport {
                 SlatePlateButton(symbol: .minusMagnifyingglass, help: "Zoom out") { model.sendViewport(.zoomOut) }

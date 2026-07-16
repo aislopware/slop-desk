@@ -107,8 +107,13 @@ public extension WorkspaceBindingRegistry {
         case .renamePane: store.requestRenameActivePane()
         case .breakPaneToTab: store.breakActivePaneToTab()
         // Detach / reattach (own-window satellites): NON-destructive by design — never routed through
-        // the close-confirmation surface (detach isn't a close; the session survives).
-        case .detachPane: store.detachActivePane()
+        // the close-confirmation surface (detach isn't a close; the session survives). macOS-only
+        // actuation: iOS has no satellite NSWindow, so detaching there would strand the pane out of
+        // every tab with nothing rendering it (documented no-op, like `.pinWindow`).
+        case .detachPane:
+            #if os(macOS)
+            store.detachActivePane()
+            #endif
         case .reattachAllPanes: store.reattachAllPanes()
         // Move pane (swap with the geometric neighbour, against the reported layout)
         case .movePaneLeft: store.swapActivePaneInDirection(.left)
