@@ -959,9 +959,14 @@
   and the commit choreography masks the navigation round trip.** v4's deliberately-timid 32 pt
   nudge could never read as native next to Safari's full-page drag. The peel now slides the video
   layer ~1:1 under the fingers with a soft `tanh` knee into a 45 %-of-pane cap (initial slope 1 —
-  finger-locked; the cap keeps the reveal from reading as a detached card) over a flat near-black
-  underlay + an 18 pt edge shade (MERIDIAN flat, the chip stays the affordance; never a
-  material/blur near the metal layer). The planner now hands the view RAW travel — the mapping is
+  finger-locked; the cap keeps the reveal from reading as a detached card) behind a flat
+  near-black CURTAIN + an 18 pt edge shade covering exactly the pane-edge gap rect. The curtain
+  sits ABOVE the metal layer, not beneath: the video layer is an OVERSIZED pan-offset sublayer,
+  so translating it exposes ADJACENT PAGE CONTENT — a below-layer backdrop stays covered and the
+  peel would read as a content pan (caught pre-review from `layoutVideoLayer`'s
+  `origin.x = -panOffset.x`). Pane-coordinate rect, blind to the pan origin; an opaque flat
+  CALayer sibling is the allowed shape (the law bans NSView subviews and materials/blur —
+  MERIDIAN flat, the chip stays the affordance). The planner now hands the view RAW travel — the mapping is
   geometry-dependent and belongs where the bounds live. On fire, the outgoing page FREEZES: one
   NV12→RGB conversion of the frame on glass (pacer's `lastRenderedImageBuffer`, once per fired
   navigation, never on the 120 Hz path) becomes a plain snapshot layer at the current offset, the

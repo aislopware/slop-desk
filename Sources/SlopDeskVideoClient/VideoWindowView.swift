@@ -744,12 +744,18 @@ final class MetalLayerBackedView: NSView {
     private var peelChipCommitted = false
     /// Delayed clear of the confirm-pulse chip after a fire.
     private var peelConfirmClear: Task<Void, Never>?
-    /// The flat backdrop revealed behind the page while it follows the fingers (below
-    /// `videoLayer` in the clipping host layer; the chip floats over it as the affordance —
-    /// MERIDIAN flat, no ornament). Built lazily on first show, hidden when the peel concludes.
+    /// The flat backdrop "revealed" while the page follows the fingers — implemented as an
+    /// opaque CURTAIN layer ABOVE `videoLayer` covering exactly the pane-edge gap rect, NOT an
+    /// underlay beneath it: the video layer is an OVERSIZED sublayer whose origin carries the
+    /// pan offset (`layoutVideoLayer`), so translating it exposes ADJACENT PAGE CONTENT, not
+    /// whatever sits behind — a below-layer backdrop would stay covered and the peel would
+    /// read as a content pan. The curtain's rect lives in PANE coordinates (width == |offset|),
+    /// independent of the video layer's origin. A plain flat layer over the metal layer is
+    /// fine (the law bans NSView subviews and materials/blur, not opaque CALayer siblings);
+    /// the chip floats over it as the affordance — MERIDIAN flat, no ornament.
     private var peelUnderlay: CALayer?
-    /// A thin gradient hugging the sliding page's edge inside the revealed gap — the page
-    /// "casts" onto the underlay, reading as depth without any blur/material over metal.
+    /// A thin gradient hugging the sliding page's edge at the curtain's inner border — the
+    /// page "casts" onto the backdrop, reading as depth without any blur/material over metal.
     private var peelUnderlayShade: CAGradientLayer?
     /// The commit choreography's frozen outgoing page (a plain layer over `videoLayer`).
     private var peelSnapshotLayer: CALayer?
@@ -1475,27 +1481,32 @@ final class MetalLayerBackedView: NSView {
 
     // MARK: Swipe-peel underlay + commit choreography
 
-    /// Shows/positions the flat backdrop + edge shade for the current page offset; `0` hides.
-    /// Caller wraps this in its disabled-actions transaction (tears otherwise).
+    /// Shows/positions the curtain + edge shade for the current page offset; `0` hides.
+    /// Caller wraps this in its disabled-actions transaction (tears otherwise). All rects are
+    /// PANE coordinates — deliberately blind to `videoLayer.frame.origin` (the pan offset).
     private func updatePeelUnderlay(offset: CGFloat) {
         guard offset != 0 else {
             peelUnderlay?.isHidden = true
             return
         }
-        let underlay = ensurePeelUnderlay()
-        underlay.isHidden = false
-        underlay.frame = bounds
+        let curtain = ensurePeelUnderlay()
+        curtain.isHidden = false
+        curtain.opacity = 1
+        // The gap rect: for a back-swipe the page moves right, so the curtain covers
+        // [0, offset) at the leading edge; a forward-swipe mirrors at the trailing edge.
+        curtain.frame = offset > 0
+            ? CGRect(x: 0, y: 0, width: offset, height: bounds.height)
+            : CGRect(x: bounds.width + offset, y: 0, width: -offset, height: bounds.height)
         guard let shade = peelUnderlayShade else { return }
-        // The shade hugs the page's moving edge INSIDE the revealed gap: for a back-swipe the
-        // gap is on the left and the page edge sits at x = offset (dark side rightmost); a
-        // forward-swipe mirrors on the right edge.
+        // The shade hugs the page's moving edge — the curtain's INNER border (curtain-local
+        // coordinates; the curtain clips it while shrinking home).
         let shadeWidth: CGFloat = 18
         if offset > 0 {
-            shade.frame = CGRect(x: offset - shadeWidth, y: 0, width: shadeWidth, height: bounds.height)
+            shade.frame = CGRect(x: curtain.bounds.width - shadeWidth, y: 0, width: shadeWidth, height: bounds.height)
             shade.startPoint = CGPoint(x: 0, y: 0.5)
             shade.endPoint = CGPoint(x: 1, y: 0.5)
         } else {
-            shade.frame = CGRect(x: bounds.width + offset, y: 0, width: shadeWidth, height: bounds.height)
+            shade.frame = CGRect(x: 0, y: 0, width: shadeWidth, height: bounds.height)
             shade.startPoint = CGPoint(x: 1, y: 0.5)
             shade.endPoint = CGPoint(x: 0, y: 0.5)
         }
@@ -1505,18 +1516,19 @@ final class MetalLayerBackedView: NSView {
 
     private func ensurePeelUnderlay() -> CALayer {
         if let peelUnderlay { return peelUnderlay }
-        let underlay = CALayer()
+        let curtain = CALayer()
         // MERIDIAN flat: a near-black matte, no ornament — the chip floating above the gap is
-        // the affordance. Never a material/blur (repo law: nothing refractive over/under the
-        // metal layer's compositing path).
-        underlay.backgroundColor = CGColor(gray: 0.07, alpha: 1)
+        // the affordance. Never a material/blur (repo law: nothing refractive over the metal
+        // layer's compositing path — an opaque flat sibling is the allowed shape).
+        curtain.backgroundColor = CGColor(gray: 0.07, alpha: 1)
+        curtain.masksToBounds = true // clips the shade while the curtain shrinks home
         let shade = CAGradientLayer()
         shade.colors = [CGColor(gray: 0, alpha: 0), CGColor(gray: 0, alpha: 0.34)]
-        underlay.addSublayer(shade)
-        layer?.insertSublayer(underlay, below: videoLayer)
-        peelUnderlay = underlay
+        curtain.addSublayer(shade)
+        layer?.insertSublayer(curtain, above: videoLayer)
+        peelUnderlay = curtain
         peelUnderlayShade = shade
-        return underlay
+        return curtain
     }
 
     /// The fired-gesture choreography: freeze the outgoing page into a plain snapshot layer at
@@ -1593,10 +1605,9 @@ final class MetalLayerBackedView: NSView {
 
     /// The retract ease-home: a transform-only compositor animation (never touches the
     /// drawable pool), non-spring per the design system — the reveal curve over 180 ms. The
-    /// edge shade fades in the same transaction (its frame is pinned to the last offset, so it
-    /// would otherwise dangle in the shrinking gap), and the underlay hides on completion. A
-    /// new gesture's instant `.show` write (disabled actions) snaps over all of it, so
-    /// finger-tracking always wins.
+    /// curtain shrinks home in the SAME transaction (frame animation tracking the page edge;
+    /// its mask clips the fading shade), and hides on completion. A new gesture's instant
+    /// `.show` write (disabled actions) snaps over all of it, so finger-tracking always wins.
     private func easeSwipePeelHome() {
         CATransaction.begin()
         CATransaction.setAnimationDuration(0.18)
@@ -1608,6 +1619,14 @@ final class MetalLayerBackedView: NSView {
             peelUnderlay?.isHidden = true
         }
         videoLayer.transform = CATransform3DIdentity
+        if let curtain = peelUnderlay, !curtain.isHidden {
+            // Zero-width at the edge the gap closes toward (leading gap keeps x = 0; trailing
+            // gap's x rides to the pane edge).
+            let closesLeading = curtain.frame.minX == 0
+            curtain.frame = CGRect(
+                x: closesLeading ? 0 : bounds.width, y: 0, width: 0, height: bounds.height,
+            )
+        }
         peelUnderlayShade?.opacity = 0
         CATransaction.commit()
     }
