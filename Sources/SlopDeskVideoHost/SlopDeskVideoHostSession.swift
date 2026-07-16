@@ -1,4 +1,5 @@
 #if os(macOS)
+import AppKit
 import CoreMedia
 import Foundation
 import OSLog
@@ -3318,6 +3319,26 @@ public actor SlopDeskVideoHostSession {
     /// with video motion (the lossiest moment), so cheap time-separated repetition (≤ ~1.2 KB, a few
     /// dozen per session) closes that window; the client's shape registration is idempotent per
     /// shapeID, so the duplicate is harmless.
+    /// Daemon push (`SwipeNavStatusKicker`): ships the current swipe-nav status over the cursor
+    /// socket so the client's peel-feedback mirror knows whether a swipe would translate and
+    /// which thresholds the host operates on (doc 05 §8). A WINDOW session's eligibility is its
+    /// own target app — whole-session static, the translated key lands there regardless of the
+    /// desktop's frontmost; a DISPLAY session follows the frontmost app, exactly mirroring
+    /// ``InputInjector``'s fire-time check. Fire-and-forget: the kicker re-pushes on every
+    /// frontmost activation plus a ~2 s heartbeat, so a lost datagram self-heals.
+    public func pushSwipeNavStatus(frontmostBundleID: String?) {
+        guard stateMachine.mediaFlowing else { return }
+        let bundleID: String? =
+            if let pid = window?.owningApplication?.processID, pid > 0 {
+                // Thread-safe AppKit read, same as InputInjector's off-main usage.
+                NSRunningApplication(processIdentifier: pid_t(pid))?.bundleIdentifier
+            } else {
+                frontmostBundleID
+            }
+        let status = SwipeNavHostConfig.status(bundleID: bundleID)
+        transport.send(scheduler.scheduleCursor(.swipeNavStatus(status)).bytes, on: .cursor)
+    }
+
     private func onCursorShape(_ shape: CursorShapeMessage) {
         guard stateMachine.mediaFlowing else { return }
         let bytes = scheduler.scheduleCursor(.shape(shape)).bytes

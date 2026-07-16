@@ -207,6 +207,12 @@ public actor SlopDeskVideoClientSession {
         /// rebuild + re-hello (that re-sends the same doomed request forever) — it tears down and
         /// surfaces the failure to the pane (picker/error). `nil` ⇒ no owner (standalone/preview).
         public var notifySessionRejected: (@Sendable () -> Void)?
+        /// SWIPE-NAV STATUS (cursor socket type=3, ~2 Hz + on frontmost change): whether the host's
+        /// ⌘[/⌘] swipe translation would currently accept a gesture, plus its recogniser knobs —
+        /// the macOS view gates + configures its peel-feedback mirror from this (doc 05 §8). The
+        /// client stays NOT-eligible until the first push arrives (old host ⇒ no overlay, never a
+        /// lying affordance). `nil` ⇒ no view wants it (iOS / standalone).
+        public var applySwipeNavStatus: (@Sendable (SwipeNavStatusMessage) -> Void)?
         @preconcurrency
         public init(
             submitDecodedFrame: @escaping @Sendable (CVImageBuffer) -> Void,
@@ -227,6 +233,7 @@ public actor SlopDeskVideoClientSession {
             notifyDisplayMax: (@Sendable (VideoSize) -> Void)? = nil,
             notifySessionEnded: (@Sendable () -> Void)? = nil,
             notifySessionRejected: (@Sendable () -> Void)? = nil,
+            applySwipeNavStatus: (@Sendable (SwipeNavStatusMessage) -> Void)? = nil,
         ) {
             self.submitDecodedFrame = submitDecodedFrame
             self.applyCursor = applyCursor
@@ -246,6 +253,7 @@ public actor SlopDeskVideoClientSession {
             self.notifyDisplayMax = notifyDisplayMax
             self.notifySessionEnded = notifySessionEnded
             self.notifySessionRejected = notifySessionRejected
+            self.applySwipeNavStatus = applySwipeNavStatus
         }
     }
 
@@ -1554,6 +1562,8 @@ public actor SlopDeskVideoClientSession {
             applyCursor(update)
         case let .shape(shape):
             registerCursorShape(shape)
+        case let .swipeNavStatus(status):
+            gui.applySwipeNavStatus?(status)
         }
     }
 

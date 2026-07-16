@@ -153,6 +153,12 @@ final class VideoWindowPipeline {
     /// pane's stats surface. Set by the view in `activate`. Display-only (never reaches the host).
     var onNetworkStatsChanged: ((ClientNetworkStatsSnapshot) -> Void)?
 
+    /// SWIPE-NAV STATUS: fired on the @MainActor (~2 Hz heartbeat + on host frontmost-app change)
+    /// with the host's swipe-translation eligibility + recogniser knobs. The macOS backing view
+    /// gates and configures its peel-feedback mirror from it (doc 05 §8). Set by the view in
+    /// `activate`. Display-only (never reaches the host).
+    var onSwipeNavStatusChanged: ((SwipeNavStatusMessage) -> Void)?
+
     /// USER STREAM SETTINGS: the last requested fps cap / bitrate ceiling (`0` = auto), preserved
     /// ACROSS a host-ended rebuild — the rebuild constructs a fresh session whose per-session host
     /// state starts clean, so `activate` re-seeds it from here. `nil` ⇒ never requested.
@@ -539,6 +545,12 @@ final class VideoWindowPipeline {
                 // would re-hello the same doomed request forever (the mint-failure retry wedge,
                 // one layer up). The view surfaces it to the pane (picker/error state).
                 Task { @MainActor in self?.handleHostRejectedSession() }
+            },
+            applySwipeNavStatus: { [weak self] status in
+                // SWIPE-NAV STATUS: surface the host's eligibility + recogniser knobs to the
+                // view's peel-feedback mirror. Hop to main (the view is @MainActor); no-op when
+                // unbound (iOS / standalone).
+                Task { @MainActor in self?.onSwipeNavStatusChanged?(status) }
             },
         )
 

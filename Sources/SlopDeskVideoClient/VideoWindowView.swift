@@ -45,6 +45,11 @@ public struct VideoWindowConnection: Sendable, Equatable {
 public final class VideoPaneControls: ObservableObject {
     @Published public var mode: VideoContentMode = .fit
     @Published public var zoomed: Bool = false
+    /// SWIPE-PEEL chip (doc 05 §8): the live swipe-nav feedback state the SwiftUI overlay
+    /// renders (`nil` = hidden). Published by the macOS backing view's ``SwipePeelPlanner``
+    /// mirror, already quantized so the 120 Hz gesture stream re-renders the chip at most a
+    /// few dozen times per gesture. Never set on iOS (no trackpad scroll phases).
+    @Published public var swipePeel: SwipePeelChipState?
     var onToggleFill: () -> Void = {}
     var onResetZoom: () -> Void = {}
     public init() {}
@@ -253,7 +258,54 @@ public struct VideoWindowView: View {
             onSessionRejected: onSessionRejected,
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // SWIPE-PEEL feedback chip (doc 05 §8): a SwiftUI overlay, NEVER an NSView subview of
+        // the Metal view (the rule at `VideoPaneControls` — subviews perturbed its geometry and
+        // swallowed gesture mouseUps). Flat fills only — no material/blur over the CAMetalLayer.
+        // The edge alignment lives INSIDE the conditional content so the removal transition keeps
+        // the chip on ITS edge — an outer `alignment:` recomputed from nil would yank a fading
+        // forward-chip across to the leading edge.
+        .overlay {
+            if let peel = controls.swipePeel {
+                SwipePeelChipView(state: peel)
+                    .padding(.horizontal, 14)
+                    .frame(
+                        maxWidth: .infinity, maxHeight: .infinity,
+                        alignment: peel.direction == .forward ? .trailing : .leading,
+                    )
+                    .transition(.opacity)
+            }
+        }
+        .animation(.timingCurve(0, 0, 0.58, 1, duration: 0.15), value: controls.swipePeel)
         .accessibilityLabel(Text("Remote GUI window: \(title)"))
+    }
+}
+
+/// The swipe-peel progress chip: a chevron in a flat circle whose ring fills toward the commit
+/// threshold and turns solid the instant a release would navigate — the affordance native swipe
+/// communicates by peeling the page. White-on-any-video (the Chromium overscroll idiom users
+/// already know), flat fills only (no material — never glass over the `CAMetalLayer`).
+struct SwipePeelChipView: View {
+    let state: SwipePeelChipState
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color.white.opacity(state.committed ? 0.95 : 0.82))
+            Circle()
+                .stroke(Color.black.opacity(0.12), lineWidth: 1)
+            Circle()
+                .trim(from: 0, to: state.progress)
+                .stroke(Color.black.opacity(0.75), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .opacity(state.committed ? 0 : 1) // the solid state replaces the progress ring
+            Image(systemName: state.direction == .back ? "chevron.left" : "chevron.right")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Color.black.opacity(state.committed ? 0.9 : 0.45))
+        }
+        .frame(width: 36, height: 36)
+        .scaleEffect(state.confirming ? 1.12 : (state.committed ? 1.06 : 1.0))
+        .shadow(color: Color.black.opacity(0.25), radius: 4, y: 1)
+        .opacity(state.confirming ? 0 : 1) // confirm pulse: scale up while fading out
     }
 }
 
@@ -676,6 +728,20 @@ final class MetalLayerBackedView: NSView {
     /// Full-penetration pan speed (WINDOW POINTS per second) at the pane border.
     private static let edgePanPointsPerSec: Double = 1600
 
+    // ── SWIPE-PEEL feedback (doc 05 §8): a local mirror of the HOST's swipe-nav recogniser gives
+    //    the one piece of native swipe-back a key translation can't — the page reacting WHILE the
+    //    fingers are on the glass. Nudges `videoLayer.transform` (a channel `layoutVideoLayer`'s
+    //    frame writes never touch) + publishes the chip through `controls`. The host stays the
+    //    sole authority on firing ⌘[/⌘].
+    private var peelPlanner = SwipePeelPlanner()
+    /// The host's swipe-nav operating point (cursor-socket type=3 push). `nil` until the first
+    /// push — an old host never shows the overlay, so the affordance can't lie.
+    private var peelStatus: SwipeNavStatusMessage?
+    /// Rising-edge tracker for the commit haptic (tap once when "release now navigates" starts).
+    private var peelChipCommitted = false
+    /// Delayed clear of the confirm-pulse chip after a fire.
+    private var peelConfirmClear: Task<Void, Never>?
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         // The video layer is an oversized SUBLAYER (sized to the whole remote window) of a CLIPPING backing
@@ -742,6 +808,9 @@ final class MetalLayerBackedView: NSView {
             displayMaxPoints = points
             publishWindowGeometry()
         }
+        // SWIPE-PEEL: adopt the host's swipe-nav operating point (eligibility + recogniser knobs)
+        // so the feedback mirror always predicts what the host will actually do.
+        pipeline.onSwipeNavStatusChanged = { [weak self] status in self?.adoptSwipeNavStatus(status) }
         // CONNECTION STATS: forward the host-announced stream cadence to the model's FPS row (no-op if unbound).
         pipeline.onStreamCadenceChanged = { [weak self] fps in self?.onStreamCadenceReady?(fps) }
         pipeline.onStreamBitrateChanged = { [weak self] kbps in self?.onStreamBitrateReady?(kbps) }
@@ -789,6 +858,7 @@ final class MetalLayerBackedView: NSView {
     func deactivate() {
         if pointerInside { NSCursor.arrow.set() } // restore the arrow before the pipeline tears down
         pointerInside = false
+        abandonSwipePeel() // never strand a mid-gesture nudge/chip across a teardown
         // Deliberately NO nil-publish of the injector sinks here: `RemoteWindowModel.close()` clears its
         // own sinks (model lifecycle, always BEFORE a re-open in store order). During a pane
         // detach/reattach the SAME model is re-bound by a replacement view in ANOTHER hosting root, and
@@ -1145,7 +1215,13 @@ final class MetalLayerBackedView: NSView {
         // Convert to this view's coordinates, then flip Y so origin is TOP-left (the
         // orientation the host window space + InputEventEncoder normalisation expect).
         let p = convert(event.locationInWindow, from: nil)
-        return VideoPoint(x: Double(p.x), y: Double(bounds.height - p.y))
+        // SWIPE-PEEL COMPENSATION: while the peel nudge translates `videoLayer`, the content the
+        // user SEES at view-x sits at content-x − shift — the same render/input coupling the
+        // zoom/pan inverse preserves (a click must land on the pixel under the pointer). Read the
+        // PRESENTATION value so the 180 ms ease-home beat compensates with the live decayed
+        // offset (the model is already identity there); zero whenever no peel is in flight.
+        let peelShift = videoLayer.presentation()?.transform.m41 ?? videoLayer.transform.m41
+        return VideoPoint(x: Double(p.x - peelShift), y: Double(bounds.height - p.y))
     }
 
     private func mods(_ event: NSEvent) -> InputModifiers { Self.modifiers(event.modifierFlags) }
@@ -1272,8 +1348,12 @@ final class MetalLayerBackedView: NSView {
                 momentumPhase: Self.cgMomentumPhaseCode(event.momentumPhase),
                 continuous: event.hasPreciseScrollingDeltas,
             )
+            feedSwipePeel(event)
             return
         }
+        // A scroll that no longer reaches the remote (focus flip / ⌥ pan / read-only) abandons
+        // any mid-gesture peel — the host recogniser stops seeing this gesture too.
+        abandonSwipePeel()
         let dx: CGFloat, dy: CGFloat
         if event.hasPreciseScrollingDeltas { dx = event.scrollingDeltaX
             dy = event.scrollingDeltaY
@@ -1282,6 +1362,95 @@ final class MetalLayerBackedView: NSView {
         }
         videoViewDbg("scroll → canvas pan d=(\(Int(-dx)),\(Int(-dy))) isActive=\(isActive)")
         onCanvasScroll(CGSize(width: -dx, height: -dy))
+    }
+
+    // MARK: Swipe-peel feedback (doc 05 §8)
+
+    /// Adopts the host's swipe-nav status push. Eligibility flipping OFF mid-gesture retracts
+    /// immediately (the host would ignore the fire); a knob change rebuilds the (idle) mirror so
+    /// a host-side `SLOPDESK_SWIPE_NAV_TRAVEL`/`_SLOW` retune never desynchronises the feedback.
+    private func adoptSwipeNavStatus(_ status: SwipeNavStatusMessage) {
+        let previous = peelStatus
+        peelStatus = status
+        if !status.eligible { abandonSwipePeel() }
+        if previous?.fireTravel != status.fireTravel || previous?.slowTier != status.slowTier {
+            peelPlanner = SwipePeelPlanner(
+                fireTravel: Double(status.fireTravel), slowSwipe: status.slowTier,
+            )
+        }
+    }
+
+    /// Mirrors one forwarded scroll event into the peel planner and applies its verdict. Gated
+    /// on the host saying the target app is eligible AT ALL — no push yet (old host) ⇒ nothing.
+    private func feedSwipePeel(_ event: NSEvent) {
+        guard peelStatus?.eligible == true else { return }
+        applySwipePeel(peelPlanner.ingest(
+            dx: Double(event.scrollingDeltaX),
+            dy: Double(event.scrollingDeltaY),
+            scrollPhase: Self.cgScrollPhaseCode(event.phase),
+            momentumPhase: Self.cgMomentumPhaseCode(event.momentumPhase),
+            continuous: event.hasPreciseScrollingDeltas,
+            now: event.timestamp,
+        ))
+    }
+
+    private func applySwipePeel(_ verdict: SwipePeelPlanner.Verdict) {
+        switch verdict {
+        case .idle:
+            return
+        case let .show(overlay):
+            peelConfirmClear?.cancel()
+            peelConfirmClear = nil
+            // Track the finger 1:1 — instant transform write, the same no-implicit-animation
+            // convention as every other geometry mutation in this file. `.transform` is a pure
+            // compositor channel `layoutVideoLayer`'s frame writes never touch.
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            videoLayer.transform = CATransform3DMakeTranslation(overlay.offset, 0, 0)
+            CATransaction.commit()
+            if overlay.chip.committed, !peelChipCommitted {
+                // The moment native communicates by page position: "release now navigates".
+                NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            }
+            peelChipCommitted = overlay.chip.committed
+            if controls?.swipePeel != overlay.chip { controls?.swipePeel = overlay.chip }
+        case let .commit(direction):
+            easeSwipePeelHome()
+            peelChipCommitted = false
+            controls?.swipePeel = SwipePeelChipState(
+                direction: direction, progress: 1, committed: true, confirming: true,
+            )
+            peelConfirmClear?.cancel()
+            peelConfirmClear = Task { [weak self] in
+                // Let the confirm pulse read before the chip leaves; the host's ⌘[/⌘] lands and
+                // the new page streams in underneath during this beat.
+                try? await Task.sleep(nanoseconds: 260_000_000)
+                guard !Task.isCancelled else { return }
+                self?.controls?.swipePeel = nil
+            }
+        case .retract:
+            easeSwipePeelHome()
+            peelChipCommitted = false
+            controls?.swipePeel = nil
+        }
+    }
+
+    /// The one deliberately ANIMATED layer write in this file: the lift ease-home. A
+    /// transform-only compositor animation (never touches the drawable pool), non-spring per
+    /// the design system — the reveal curve over 180 ms. A new gesture's instant `.show` write
+    /// (disabled actions) snaps over it, so finger-tracking always wins.
+    private func easeSwipePeelHome() {
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.18)
+        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(controlPoints: 0, 0, 0.58, 1))
+        videoLayer.transform = CATransform3DIdentity
+        CATransaction.commit()
+    }
+
+    /// Abandons any in-flight peel (scroll rerouted, eligibility off, teardown): the planner
+    /// resets and, if something was showing, everything eases home.
+    private func abandonSwipePeel() {
+        applySwipePeel(peelPlanner.cancel())
     }
 
     // ALL keys (printable + special) go through the layout-level keycode `.key` path so the HOST's

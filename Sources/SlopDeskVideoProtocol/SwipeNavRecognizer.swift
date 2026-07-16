@@ -195,6 +195,73 @@ public struct SwipeNavRecognizer: Sendable {
         return traceLine
     }
 
+    /// A live, read-only view of the in-flight candidate for CLIENT-side gesture feedback
+    /// (the peel overlay): how far along the current tier's commitment the gesture is, and
+    /// whether a lift right now would fire. `nil` when no candidate is live (idle,
+    /// refractory, zero horizontal travel, or just decided).
+    ///
+    /// The client runs its own recognizer over the SAME event stream it forwards — raw,
+    /// pre-coalescing, but coalescing SUMS same-phase deltas and preserves the boundary
+    /// markers, so the two instances reach the same sums and the same verdicts. Feedback
+    /// driven from here therefore predicts what the host will do, without a round trip.
+    public struct LiveCandidate: Equatable, Sendable {
+        /// The direction a fire would take (sign of the horizontal travel so far).
+        public var direction: Direction
+        /// Signed horizontal travel so far (points; includes momentum while coasting).
+        public var travelX: Double
+        /// 0…1 toward the live tier's fire threshold (flick `fireTravel`, slow
+        /// `slowFireTravel`, coast `confirmTravel`). 0 while the tier's dominance fails —
+        /// feedback must never promise a fire the lift decision would reject.
+        public var progress: Double
+        /// Whether a lift at `now` would fire. Always `false` while coasting: the fingers
+        /// are already up, and momentum confirmation is the only decision left.
+        public var wouldFireAtLift: Bool
+        /// The candidate is armed and coasting — awaiting momentum confirmation.
+        public var coasting: Bool
+    }
+
+    /// See ``LiveCandidate``. Tier selection mirrors ``liftDecision`` exactly: duration
+    /// picks flick vs slow, the slow tier vanishes (progress 0) with `slowSwipe` off, and
+    /// each tier applies its own dominance before reporting any progress.
+    public func liveCandidate(now: TimeInterval) -> LiveCandidate? {
+        if tracking {
+            guard sumX != 0 else { return nil }
+            let direction: Direction = sumX > 0 ? .back : .forward
+            let duration = now - startedAt
+            let flickTier = duration <= Self.flickMaxDuration
+            if !flickTier, !slowSwipe {
+                // Past the flick window with the slow tier off: the lift can only reject
+                // on duration, so the feedback retracts (progress 0) instead of promising.
+                return LiveCandidate(
+                    direction: direction, travelX: sumX, progress: 0,
+                    wouldFireAtLift: false, coasting: false,
+                )
+            }
+            let dominance = flickTier ? Self.dominance : Self.slowDominance
+            let threshold = flickTier ? fireTravel : slowFireTravel
+            let dominanceOK = abs(sumX) >= dominance * abs(sumY)
+            return LiveCandidate(
+                direction: direction,
+                travelX: sumX,
+                progress: dominanceOK ? Double.minimum(abs(sumX) / threshold, 1) : 0,
+                wouldFireAtLift: dominanceOK && abs(sumX) >= threshold,
+                coasting: false,
+            )
+        }
+        if coasting {
+            guard now <= coastDeadline, sumX != 0 else { return nil }
+            let dominanceOK = abs(sumX) >= Self.dominance * abs(sumY)
+            return LiveCandidate(
+                direction: sumX > 0 ? .back : .forward,
+                travelX: sumX,
+                progress: dominanceOK ? Double.minimum(abs(sumX) / confirmTravel, 1) : 0,
+                wouldFireAtLift: false,
+                coasting: true,
+            )
+        }
+        return nil
+    }
+
     /// A momentum event: synthesise the lift if `ended` was lost, then let the coast window
     /// accumulate confirmation evidence for an armed candidate.
     private mutating func ingestMomentum(
@@ -359,6 +426,15 @@ public enum SwipeNavPolicy {
     public static func extraApps(from raw: String?) -> Set<String> {
         guard let raw else { return [] }
         return Set(raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
+    }
+
+    /// The `SLOPDESK_SWIPE_NAV_TRAVEL` knob with its safety clamp — a typo must not make every
+    /// scroll navigate (too low) or dead the feature silently (too high). ONE parse shared by
+    /// the injector's recogniser and the ``SwipeNavStatusMessage`` push, so the client's
+    /// feedback mirror always sees the value the host actually operates on.
+    public static func fireTravel(fromEnv raw: String?) -> Double {
+        guard let raw, let v = Double(raw), v.isFinite, v >= 20, v <= 500 else { return 80 }
+        return v
     }
 
     public static func isNavigable(bundleID: String?, extraApps: Set<String> = []) -> Bool {

@@ -221,6 +221,13 @@ public actor VideoMuxSessionRegistry {
         for session in live { await session.stop() }
     }
 
+    /// Fans an async closure over every live session — the daemon-level push path (e.g. the
+    /// swipe-nav status kicker, which ships one global frontmost-app truth to all lanes).
+    @preconcurrency
+    public func forEachSession(_ body: @Sendable (SlopDeskVideoHostSession) async -> Void) async {
+        for session in sessions.values { await body(session) }
+    }
+
     /// The number of live lanes (for a test / lsof-style assertion).
     public var liveChannelCount: Int { sinkTable.count }
 

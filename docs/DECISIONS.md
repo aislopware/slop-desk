@@ -908,6 +908,35 @@
   scroll horizontally. `SLOPDESK_SWIPE_NAV_SLOW=0` is the escape hatch (restores the v2 gate).
   What CANNOT be reproduced remotely: the gradual peel-while-dragging visual — translation fires
   a discrete ⌘[ / ⌘] at lift; only the trigger acceptance is native-like, never the feedback.
+- ✅ **v4 (2026-07-17, HW feedback "still not native" WITH every post-v3 gesture firing 8/8 in the
+  trace): CLIENT-side swipe-peel feedback — the v3 "cannot be reproduced" claim was true only
+  host-side.** With acceptance solved, the remaining gap was the dead glass: native shows the page
+  reacting from the first millimetre and commits with an animation; ours showed nothing, then the
+  page teleported one beat after lift. The HOST can never animate a ⌘[ — but the CLIENT owns both
+  the real trackpad events and the video layer. So the client now mirrors the exact same
+  `SwipeNavRecognizer` (moved to `SlopDeskVideoProtocol`; new `liveCandidate` read-only view) over
+  the stream it forwards, and `SwipePeelPlanner` maps it to feedback: a rubber-banded ≤ 32 pt
+  video-layer nudge (`tanh`, a NUDGE by design — the remote may genuinely scroll horizontally, a
+  full slide would double-move), a chevron chip whose ring fills toward the live tier's threshold,
+  a solid flip + ONE trackpad haptic at "release now navigates", a confirm pulse + 180 ms ease-home
+  on fire (the real page streams in underneath the beat), an ease-home on any reject/reroute.
+  Feedback must never lie: it shows only from the arm line (≥ 24 pt decisively horizontal), and it
+  is gated by a NEW host push — `SwipeNavStatusMessage`, cursor-socket type 3 (golden
+  `swipeNavStatus`; `SwipeNavStatusKicker` fans out on frontmost activation + 2 s heartbeat,
+  window sessions resolve their own target app) — carrying eligibility AND the host's
+  travel/slow knobs so the mirror always predicts the host's actual verdict (`SwipeNavHostConfig`
+  is the single env parse). No push (old host) ⇒ no overlay. The nudge is the one animated
+  `videoLayer.transform` write in the client (a channel `layoutVideoLayer` never touches);
+  the chip is a SwiftUI overlay via `VideoPaneControls` (never an NSView subview over Metal, flat
+  fills only — no material over the `CAMetalLayer`), non-spring reveal curve per the design
+  system. Pinned by `SwipePeelPlannerTests` + `liveCandidate` pins in `SwipeNavRecognizerTests`.
+  Three review-confirmed hardenings landed with it: the daemon kicker is retained by the
+  transport's `onReceive` closure (the `do` scope exits right after the non-blocking listener
+  start — a scope-local would deallocate in seconds and silently kill the push); `viewPoint`
+  subtracts the live peel shift (presentation value, so the ease-home beat compensates too) —
+  the same render/input coupling the zoom/pan inverse preserves; and a mid-gesture direction
+  reversal concludes the old chip before re-showing (same-identity SwiftUI content would have
+  animated the alignment flip as a full-pane slide).
 - ✅ **Pinch → CLIENT-side ⌘= / ⌘− ladder; smart zoom → ⌘0** (`PinchZoomKeyPlanner`, 0.2
   magnification/step, ≤ 3 steps/event; `SLOPDESK_PINCH_KEYS` default-ON). Rides the existing key
   path — NO wire change anywhere in this round.

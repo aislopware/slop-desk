@@ -714,6 +714,21 @@ A single cursor PNG fits comfortably in one 1200-byte datagram, so the shape cha
 fragmentation. The client caches each shape by `shapeID` and composites it at
 `position * videoScale − hotspot`, where `videoScale = layerSize.width / decodedSize.width`.
 
+**`SwipeNavStatusMessage` (type `3`) — rare status push, fixed 5 bytes:**
+
+```
+off 0: UInt8   type (=3)
+off 1: UInt8   eligible   (0/1) — a qualifying swipe would be translated to ⌘[/⌘] right now
+off 2: UInt8   slowTier   (0/1) — the host's SLOPDESK_SWIPE_NAV_SLOW operating point
+off 3: UInt16  fireTravel — points, the host's clamped SLOPDESK_SWIPE_NAV_TRAVEL
+```
+
+Sent by the host on every frontmost-app **activation** plus a ~2 s heartbeat (`SwipeNavStatusKicker`
+fan-out; a window session resolves eligibility against its own target app instead of the frontmost).
+The client's swipe-peel feedback mirror (doc 05 §8) is gated + threshold-tuned by the latest push;
+until one arrives it stays NOT eligible, so an older host simply never shows the overlay. Pure
+fire-and-forget — a lost datagram self-heals on the next beat. Golden vector: `swipeNavStatus`.
+
 **Client → host prime (mux only).** On the shared-flow mux the cursor socket is host→client except
 for the lane's flow **prime**: a channelID-framed datagram (`[UInt32 BE channelID][payload…]`, no
 channel tag; payload content is ignored — the reference client sends one `0x00` byte) whose only

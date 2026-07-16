@@ -91,19 +91,23 @@ public struct CursorShapeMessage: Equatable, Sendable {
     }
 }
 
-/// Either message that can arrive on the cursor side-channel UDP socket: the hot
-/// position update or the rare shape bitmap. Both share the channel but are told
-/// apart by their leading type byte (``CursorUpdate/messageType`` == 1,
-/// ``CursorShapeMessage/messageType`` == 2). The client peeks the first byte to
-/// route a received cursor datagram.
+/// Any message that can arrive on the cursor side-channel UDP socket: the hot
+/// position update, the rare shape bitmap, or the rare swipe-nav status push. All
+/// share the channel but are told apart by their leading type byte
+/// (``CursorUpdate/messageType`` == 1, ``CursorShapeMessage/messageType`` == 2,
+/// ``SwipeNavStatusMessage/messageType`` == 3). The client peeks the first byte to
+/// route a received cursor datagram; an unknown type is a malformed drop, so an
+/// older client simply ignores newer message kinds.
 public enum CursorChannelMessage: Equatable, Sendable {
     case update(CursorUpdate)
     case shape(CursorShapeMessage)
+    case swipeNavStatus(SwipeNavStatusMessage)
 
     public func encode() -> Data {
         switch self {
         case let .update(u): u.encode()
         case let .shape(s): s.encode()
+        case let .swipeNavStatus(s): s.encode()
         }
     }
 
@@ -113,6 +117,7 @@ public enum CursorChannelMessage: Equatable, Sendable {
         switch first {
         case CursorUpdate.messageType: return try .update(CursorUpdate.decode(data))
         case CursorShapeMessage.messageType: return try .shape(CursorShapeMessage.decode(data))
+        case SwipeNavStatusMessage.messageType: return try .swipeNavStatus(SwipeNavStatusMessage.decode(data))
         default: throw VideoProtocolError.malformed("unknown cursor channel type \(first)")
         }
     }

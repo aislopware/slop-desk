@@ -1083,7 +1083,15 @@ Task {
         // `makeSessionlessDispatcher` (WindowFeedGlue.swift), which owns the services + the
         // per-channel retransmit-coalescing guard + the NSWorkspace kick observer.
         let dispatchSessionless = makeSessionlessDispatcher(mux: mux)
+        // Swipe-nav eligibility push (doc 05 §8): frontmost-activation + 2 s heartbeat fan-out to
+        // every lane's cursor socket. RETAINED by the onReceive closure below, which the transport
+        // keeps for the daemon's lifetime (the WindowFeedKicker idiom) — this `do` scope itself
+        // ends right after `mux.start` returns (the listeners are non-blocking; the daemon parks
+        // at the OUTER run loop), so a scope-local would be deallocated within seconds and the
+        // NSWorkspace observer + heartbeat would silently die with it.
+        let swipeNavKicker = SwipeNavStatusKicker(registry: registry)
         try await mux.start { channelID, channel, data in
+            _ = swipeNavKicker
             // ORDERING: an ADMITTED lane's sink appends to its session's serial inbound queue
             // SYNCHRONOUSLY, in arrival order, on the transport's serial receive queue — so a mouseUp
             // can never overtake its preceding mouseDown/mouseDrag (InputButtonBalance + down/up pairing

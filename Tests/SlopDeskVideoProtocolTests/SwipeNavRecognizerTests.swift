@@ -1,5 +1,5 @@
 import XCTest
-@testable import SlopDeskVideoHost
+@testable import SlopDeskVideoProtocol
 
 /// Pins the swipe-back recogniser: WHAT fires (decisively horizontal completed gestures — at
 /// lift when the on-glass travel suffices, via momentum confirmation for the sharp flicks that
@@ -493,5 +493,100 @@ final class SwipeNavRecognizerTests: XCTestCase {
         XCTAssertTrue(SwipeNavPolicy.isNavigable(bundleID: "com.example.One", extraApps: extras))
         XCTAssertFalse(SwipeNavPolicy.isNavigable(bundleID: "com.example.Three", extraApps: extras))
         XCTAssertEqual(SwipeNavPolicy.extraApps(from: nil), [])
+    }
+
+    // MARK: Live candidate (client peel feedback)
+
+    func testLiveCandidateIsNilWhenIdle() {
+        let rec = SwipeNavRecognizer()
+        XCTAssertNil(rec.liveCandidate(now: 100))
+    }
+
+    func testLiveCandidateTracksFlickProgressAndCommitFlip() {
+        var rec = SwipeNavRecognizer()
+        XCTAssertNil(rec.ingest(dx: 2, dy: 0, scrollPhase: 1, momentumPhase: 0, continuous: true, now: 100))
+        XCTAssertNil(rec.ingest(dx: 38, dy: 1, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.05))
+        // Σx = 40 of fireTravel 80 → half way, not yet committed.
+        var live = rec.liveCandidate(now: 100.05)
+        XCTAssertEqual(live?.direction, .back)
+        XCTAssertEqual(live?.progress, 0.5)
+        XCTAssertEqual(live?.wouldFireAtLift, false)
+        XCTAssertEqual(live?.coasting, false)
+        // Σx = 100 ≥ 80 → committed; progress caps at 1.
+        XCTAssertNil(rec.ingest(dx: 60, dy: 1, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.1))
+        live = rec.liveCandidate(now: 100.1)
+        XCTAssertEqual(live?.progress, 1)
+        XCTAssertEqual(live?.wouldFireAtLift, true)
+    }
+
+    func testLiveCandidateReportsZeroProgressWithoutDominance() {
+        var rec = SwipeNavRecognizer()
+        XCTAssertNil(rec.ingest(dx: 2, dy: 0, scrollPhase: 1, momentumPhase: 0, continuous: true, now: 100))
+        // Σ = (102, 50) → dominance 2.04× < 3× — feedback must not promise a fire.
+        XCTAssertNil(rec.ingest(dx: 100, dy: 50, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.05))
+        let live = rec.liveCandidate(now: 100.05)
+        XCTAssertEqual(live?.progress, 0)
+        XCTAssertEqual(live?.wouldFireAtLift, false)
+    }
+
+    func testLiveCandidateSwitchesToSlowTierPastFlickWindow() {
+        var rec = SwipeNavRecognizer()
+        XCTAssertNil(rec.ingest(dx: 2, dy: 0, scrollPhase: 1, momentumPhase: 0, continuous: true, now: 100))
+        XCTAssertNil(rec.ingest(dx: 118, dy: 1, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.2))
+        // Inside the flick window Σx = 120 ≥ 80 → committed…
+        XCTAssertEqual(rec.liveCandidate(now: 100.2)?.wouldFireAtLift, true)
+        // …but the SAME sums past 0.45 s re-gate on the slow tier: 120 < 160 → 0.75, uncommitted.
+        let slow = rec.liveCandidate(now: 100.6)
+        XCTAssertEqual(slow?.progress, 0.75)
+        XCTAssertEqual(slow?.wouldFireAtLift, false)
+        // More travel across the slow threshold commits again.
+        XCTAssertNil(rec.ingest(dx: 44, dy: 1, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.7))
+        XCTAssertEqual(rec.liveCandidate(now: 100.7)?.wouldFireAtLift, true)
+    }
+
+    func testLiveCandidateSlowTierAppliesHarderDominance() {
+        var rec = SwipeNavRecognizer()
+        XCTAssertNil(rec.ingest(dx: 2, dy: 0, scrollPhase: 1, momentumPhase: 0, continuous: true, now: 100))
+        // Σ = (202, 60) → 3.4×: clears the flick's 3× inside the window…
+        XCTAssertNil(rec.ingest(dx: 200, dy: 60, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.2))
+        XCTAssertEqual(rec.liveCandidate(now: 100.2)?.wouldFireAtLift, true)
+        // …but fails the slow tier's 4× past the window → feedback retracts to 0.
+        XCTAssertEqual(rec.liveCandidate(now: 100.6)?.progress, 0)
+    }
+
+    func testLiveCandidateRetractsWhenSlowTierDisabled() {
+        var rec = SwipeNavRecognizer(slowSwipe: false)
+        XCTAssertNil(rec.ingest(dx: 2, dy: 0, scrollPhase: 1, momentumPhase: 0, continuous: true, now: 100))
+        XCTAssertNil(rec.ingest(dx: 198, dy: 1, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.2))
+        XCTAssertEqual(rec.liveCandidate(now: 100.2)?.wouldFireAtLift, true)
+        // Past the flick window with no slow tier a lift can only reject on duration.
+        let live = rec.liveCandidate(now: 100.6)
+        XCTAssertEqual(live?.progress, 0)
+        XCTAssertEqual(live?.wouldFireAtLift, false)
+    }
+
+    func testLiveCandidateCoastsTowardConfirmThenExpires() {
+        var rec = SwipeNavRecognizer()
+        // Σx = 60: arms at lift (≥24, <80) — the live view flips to coasting.
+        XCTAssertNil(run(deltas: [(dx: 58.0, dy: 1.0)], rec: &rec))
+        var live = rec.liveCandidate(now: 100.05)
+        XCTAssertEqual(live?.coasting, true)
+        XCTAssertEqual(live?.wouldFireAtLift, false)
+        XCTAssertEqual(live?.progress, 0.5) // 60 of confirmTravel 120
+        // Momentum accumulates toward confirmation and progress follows.
+        XCTAssertNil(rec.ingest(dx: 30, dy: 0, scrollPhase: 0, momentumPhase: 1, continuous: true, now: 100.06))
+        live = rec.liveCandidate(now: 100.06)
+        XCTAssertEqual(live?.progress, 0.75) // 90 of 120
+        // Past the coast deadline the live view vanishes (the arm is stale).
+        XCTAssertNil(rec.liveCandidate(now: 100.5))
+    }
+
+    func testLiveCandidateIsNilAfterFireAndDuringRefractoryBegan() {
+        var rec = SwipeNavRecognizer()
+        XCTAssertEqual(run(deltas: Array(repeating: (dx: 30.0, dy: 1.0), count: 8), rec: &rec), .back)
+        XCTAssertNil(rec.liveCandidate(now: 100.08)) // decided → reset
+        // A began inside the 250 ms refractory window is suppressed — no live candidate either.
+        XCTAssertNil(rec.ingest(dx: 30, dy: 0, scrollPhase: 1, momentumPhase: 0, continuous: true, now: 100.2))
+        XCTAssertNil(rec.liveCandidate(now: 100.2))
     }
 }

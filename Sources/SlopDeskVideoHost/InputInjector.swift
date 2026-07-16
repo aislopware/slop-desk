@@ -136,22 +136,18 @@ public final class InputInjector: @unchecked Sendable {
     /// the stream it posts (``SwipeNavRecognizer``) and, when a completed flick qualifies AND the
     /// receiving app is one where ⌘[ / ⌘] means history (``SwipeNavPolicy``), posts that key
     /// equivalent. Scroll posting itself is untouched — the page still rubber-bands natively.
-    private static let swipeNavEnabled = EnvConfig.boolDefaultOn("SLOPDESK_SWIPE_NAV")
+    private static let swipeNavEnabled = SwipeNavHostConfig.enabled
     /// Extra bundle ids for the swipe-nav allowlist (`SLOPDESK_SWIPE_NAV_APPS`, comma-separated).
-    private static let swipeNavExtraApps = SwipeNavPolicy.extraApps(from: EnvConfig.string("SLOPDESK_SWIPE_NAV_APPS"))
+    private static let swipeNavExtraApps = SwipeNavHostConfig.extraApps
     /// Lift-fire travel threshold in points (`SLOPDESK_SWIPE_NAV_TRAVEL`, default 80) — scales the
-    /// recogniser's whole threshold family (arm = 0.3×, momentum confirm = 1.5×). Clamped so a
-    /// typo can't make every scroll navigate (too low) or dead the feature silently (too high).
-    private static let swipeNavTravel: Double = {
-        guard let s = EnvConfig.string("SLOPDESK_SWIPE_NAV_TRAVEL"), let v = Double(s), v.isFinite,
-              v >= 20, v <= 500 else { return 80 }
-        return v
-    }()
+    /// recogniser's whole threshold family (arm = 0.3×, momentum confirm = 1.5×). Parse + clamp
+    /// live in ``SwipeNavHostConfig`` so the client-feedback status push mirrors this exactly.
+    private static let swipeNavTravel = SwipeNavHostConfig.fireTravel
 
     /// Slow-tier acceptance (`SLOPDESK_SWIPE_NAV_SLOW`, default ON; `=0` off): a deliberate slow
     /// swipe fires like native. Turn off to restore the v2 flick-only duration gate if slow
     /// fires ever collide with a horizontal-scrolling browser workload (sheets/maps).
-    private static let swipeNavSlow = EnvConfig.boolDefaultOn("SLOPDESK_SWIPE_NAV_SLOW")
+    private static let swipeNavSlow = SwipeNavHostConfig.slowTier
 
     /// Per-GESTURE swipe-nav decision trace (`SLOPDESK_SWIPE_NAV_TRACE`; also on under the full
     /// `SLOPDESK_INPUT_TRACE`). ≤2 stderr lines per gesture — cheap enough to leave on a daily

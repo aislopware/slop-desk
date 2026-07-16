@@ -2721,6 +2721,20 @@
       "quietWindowBits": 4607182418800017408
     }
   ],
+  "swipeNavStatus": [
+    {
+      "eligible": true,
+      "fireTravel": 80,
+      "hex": "0301010050",
+      "slowTier": true
+    },
+    {
+      "eligible": false,
+      "fireTravel": 500,
+      "hex": "03000001f4",
+      "slowTier": false
+    }
+  ],
   "systemDialogClassify": [
     {
       "dialog": {

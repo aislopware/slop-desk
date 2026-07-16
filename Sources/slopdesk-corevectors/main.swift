@@ -166,6 +166,16 @@ root["cursorShape"] = [
     cursorShapeRecord(shapeID: 1, w: 16.0, h: 16.0, hx: 0.0, hy: 0.0, bitmap: []),
 ]
 
+func swipeNavStatusRecord(eligible: Bool, slowTier: Bool, fireTravel: UInt16) -> [String: Any] {
+    let s = SwipeNavStatusMessage(eligible: eligible, slowTier: slowTier, fireTravel: fireTravel)
+    return ["eligible": eligible, "slowTier": slowTier, "fireTravel": fireTravel, "hex": hex(s.encode())]
+}
+
+root["swipeNavStatus"] = [
+    swipeNavStatusRecord(eligible: true, slowTier: true, fireTravel: 80),
+    swipeNavStatusRecord(eligible: false, slowTier: false, fireTravel: 500),
+]
+
 // MARK: WindowGeometryMessage
 
 func wg(_ name: String, _ msg: WindowGeometryMessage, _ extra: [String: Any]) -> [String: Any] {

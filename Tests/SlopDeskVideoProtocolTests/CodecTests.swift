@@ -71,6 +71,32 @@ final class CodecTests: XCTestCase {
         ))
     }
 
+    func testSwipeNavStatusRoundTrip() throws {
+        let cases = [
+            SwipeNavStatusMessage(eligible: true, slowTier: true, fireTravel: 80),
+            SwipeNavStatusMessage(eligible: false, slowTier: false, fireTravel: 500),
+            SwipeNavStatusMessage(eligible: true, slowTier: false, fireTravel: 20),
+        ]
+        for status in cases {
+            XCTAssertEqual(try SwipeNavStatusMessage.decode(status.encode()), status)
+            XCTAssertEqual(status.encode().count, SwipeNavStatusMessage.encodedSize)
+        }
+    }
+
+    func testSwipeNavStatusRejectsWrongTypeAndTruncation() {
+        XCTAssertThrowsError(try SwipeNavStatusMessage.decode(Data([99, 1, 1, 0, 80])))
+        XCTAssertThrowsError(try SwipeNavStatusMessage.decode(Data([3, 1, 1]))) // short datagram
+        XCTAssertThrowsError(try SwipeNavStatusMessage.decode(Data()))
+    }
+
+    func testCursorChannelRoutesSwipeNavStatusByLeadingByte() throws {
+        let status = SwipeNavStatusMessage(eligible: true, slowTier: true, fireTravel: 120)
+        let routed = try CursorChannelMessage.decode(CursorChannelMessage.swipeNavStatus(status).encode())
+        XCTAssertEqual(routed, .swipeNavStatus(status))
+        // An UNKNOWN leading byte stays a malformed drop — an older client ignores newer kinds.
+        XCTAssertThrowsError(try CursorChannelMessage.decode(Data([9, 0, 0, 0, 0])))
+    }
+
     // MARK: Window geometry
 
     func testWindowGeometryRoundTrip() throws {
