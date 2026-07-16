@@ -167,6 +167,12 @@ struct GuiLeafView: View {
             #if os(macOS)
             systemKeyCapture.disengage() // an unmounted pane must never keep swallowing the keyboard
             #endif
+            // RELOCATION GUARD (detach/reattach): this leaf unmounts while the pane is STILL desired —
+            // in the tree (just reattached) or detached (just popped out) — and ANOTHER hosting root is
+            // mounting the same PaneID. Deactivating here would close the model mid-handoff and race the
+            // replacement view's fresh session/sinks. Only a pane gone from BOTH (a genuine close) frees
+            // the slot; tab-hide never unmounts (keep-all-mounted), so the `isVisible` path is untouched.
+            guard !store.tree.contains(paneID), !store.tree.isDetached(paneID) else { return }
             store.deactivateVideo(paneID)
         }
         #if os(macOS)
@@ -209,9 +215,16 @@ struct GuiLeafView: View {
             return
         }
         systemKeyCapture.onDisengage = { immersiveOn = false }
-        immersiveOn = systemKeyCapture.engage(forward: { [weak model] keyCode, flags, isDown in
-            model?.systemKeyInjector?(keyCode, flags, isDown)
-        })
+        // The toggle click happened in this pane's window, so it IS the key window right now — arm the
+        // controller's window-resign auto-disengage on it. Without this, another window of the SAME app
+        // going key (Settings, a second satellite) keeps the app active and the pane focused, so neither
+        // the app-resign observer nor the focus onChange would release the swallowed keyboard.
+        immersiveOn = systemKeyCapture.engage(
+            forward: { [weak model] keyCode, flags, isDown in
+                model?.systemKeyInjector?(keyCode, flags, isDown)
+            },
+            keyWindow: NSApp.keyWindow,
+        )
         #endif
     }
 

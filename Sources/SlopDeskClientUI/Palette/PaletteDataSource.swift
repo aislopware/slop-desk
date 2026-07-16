@@ -145,7 +145,15 @@ public struct ActionsPaletteSource: PaletteDataSource {
             id: "action.detachPane", icon: "macwindow.on.rectangle", title: "Detach Pane into Window",
             keywords: "detach pop out float window satellite separate monitor",
             shortcut: glyph(.detachPane), category: .pane,
-            run: { store in store.detachActivePane() },
+            run: { store in
+                // Same macOS-only gate as the routing arm + the control-bar button: iOS has no
+                // satellite NSWindow — an ungated palette run would strand the pane out of every tab.
+                #if os(macOS)
+                store.detachActivePane()
+                #else
+                _ = store
+                #endif
+            },
         ),
         item(
             id: "action.reattachAllPanes", icon: "macwindow.and.cursorarrow", title: "Reattach All Panes",

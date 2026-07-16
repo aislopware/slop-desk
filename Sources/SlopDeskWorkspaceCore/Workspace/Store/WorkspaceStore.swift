@@ -372,7 +372,11 @@ public final class WorkspaceStore {
     /// SwiftUI body registers observation on each ``ConnectionViewModel/status``, so the chip re-renders as
     /// panes drop / recover — the same observation seam ``PanePresentation/connectionStatus(_:)`` relies on.
     public func connectionAlert() -> WorkspaceConnectionAlert? {
-        let entries: [(pane: PaneID, status: ConnectionStatus?)] = tree.allPaneIDs().map { id in
+        // Union in the DETACHED (satellite) panes — they left the tree but their handles are live
+        // (reconcile's widened desired set), and a satellite's dropped connection must still trip the
+        // sidebar alarm. Appended after the tree so the tiled DFS tie-break order is unchanged.
+        let ids = tree.allPaneIDs() + tree.detachedPaneIDs()
+        let entries: [(pane: PaneID, status: ConnectionStatus?)] = ids.map { id in
             (pane: id, status: (registry[id] as? LivePaneSession)?.connection?.status)
         }
         return WorkspaceConnectionAlert.resolve(from: entries)
