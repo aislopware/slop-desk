@@ -65,12 +65,12 @@ struct GuiLeafView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // EDGE-TO-EDGE: no inner padding — every point of a video pane is remote pixels (a gutter
+            // here is pure wasted stream area, unlike a terminal where the inset is a reading margin).
+            // The Metal-hosting view is sized to the FULL leaf rect, so its pointer→host coordinate
+            // mapping (relative to view bounds) stays consistent.
             content
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // Inner padding so the remote surface isn't flush against pane edges / the split divider. The
-                // Metal-hosting view is sized to this PADDED frame, so its pointer→host coordinate mapping
-                // (relative to view bounds) stays consistent.
-                .padding(Slate.Metric.space2)
             // WINDOW-PANE CONTROL BAR: window CONTROLS, kept out of the pane CONTENT and in the
             // footer — resize, lock-position (freeze edge-hover auto-pan), zoom in / out / reset — NOT a
             // status strip. Host + connection state live ONCE in the sidebar header, not duplicated here.
@@ -163,7 +163,7 @@ struct GuiLeafView: View {
         } else {
             switch display {
             case .live:
-                // The live surface fills its (padded) leaf rect: the Metal-hosting view is sized to that rect,
+                // The live surface fills the leaf rect edge-to-edge: the Metal-hosting view is sized to that rect,
                 // so its tracking area + pointer→host coordinate mapping (relative to view bounds) stays correct.
                 // The stream `.fit`-letterboxes inside; the remote window keeps its own size (no host-follow
                 // resize — see `SlopDeskVideoClientSession.windowFollowsPane`). Resize lives in the bottom
