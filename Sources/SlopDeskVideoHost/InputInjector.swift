@@ -55,6 +55,11 @@ public final class InputInjector: @unchecked Sendable {
     /// (so the self-inject filter still recognises them). Confined to `scrollQueue`.
     private var lastScrollTag: UInt32 = 0
 
+    /// Swipe-back flick recogniser fed from ``inject(_:)``'s scroll arm. Injection is serial per
+    /// session, so the lock is the same harmless insurance ``balance`` carries.
+    private let swipeNavLock = NSLock()
+    private var swipeNav = SwipeNavRecognizer()
+
     /// Serial background queue for the window-raise AX chain: ~6–10 SYNCHRONOUS cross-process AX
     /// IPC calls (each capped at the 0.08s messaging timeout) + an O(app-windows) match loop —
     /// MEASURED 1–7s against a BACKGROUNDED target (the captured app is never frontmost while the
@@ -121,6 +126,17 @@ public final class InputInjector: @unchecked Sendable {
         let v = ProcessInfo.processInfo.environment["SLOPDESK_SCROLL_PHASE"]
         return !(v == "0" || v?.lowercased() == "false")
     }()
+
+    /// SWIPE-BACK TRANSLATION (`SLOPDESK_SWIPE_NAV`, default ON; `=0` off). A forwarded phased
+    /// scroll can NEVER trigger the browser's own two-finger history swipe — Chromium demands real
+    /// `NSTouch` data or `trackSwipeEventWithOptions:` (both reject CGEvent-posted scrolls) and
+    /// Safari behaves identically (probe-verified, six field variants). So the injector watches
+    /// the stream it posts (``SwipeNavRecognizer``) and, when a completed flick qualifies AND the
+    /// receiving app is one where ⌘[ / ⌘] means history (``SwipeNavPolicy``), posts that key
+    /// equivalent. Scroll posting itself is untouched — the page still rubber-bands natively.
+    private static let swipeNavEnabled = EnvConfig.boolDefaultOn("SLOPDESK_SWIPE_NAV")
+    /// Extra bundle ids for the swipe-nav allowlist (`SLOPDESK_SWIPE_NAV_APPS`, comma-separated).
+    private static let swipeNavExtraApps = SwipeNavPolicy.extraApps(from: EnvConfig.string("SLOPDESK_SWIPE_NAV_APPS"))
 
     /// SCROLL RESAMPLE output rate (`SLOPDESK_SCROLL_RESAMPLE_HZ`, default **0 = OFF**). HW-measured:
     /// Chromium/Electron renders INJECTED smooth-scroll at a rate that climbs with the
@@ -333,6 +349,13 @@ public final class InputInjector: @unchecked Sendable {
                 momentumPhase: momentumPhase,
                 continuous: continuous,
                 tag: tag,
+            )
+            translateSwipeNavIfNeeded(
+                dx: dx,
+                dy: dy,
+                scrollPhase: scrollPhase,
+                momentumPhase: momentumPhase,
+                continuous: continuous,
             )
         case let .key(keyCode, down, mods, tag):
             postKey(keyCode: keyCode, down: down, modifiers: mods, tag: tag)
@@ -593,6 +616,99 @@ public final class InputInjector: @unchecked Sendable {
     /// saturating branches).
     static func scaledScrollDelta(_ value: Double, gain: Double) -> Int32 {
         clampToInt32(value * gain)
+    }
+
+    // MARK: Swipe-back translation (see `swipeNavEnabled`)
+
+    /// ANSI key POSITIONS (layout-independent virtual keycodes, HIToolbox `kVK_ANSI_*`): the same
+    /// values the client sends for real keystrokes, interpreted by the host layout like any other
+    /// forwarded key.
+    private static let keyLeftBracket: UInt16 = 0x21 // kVK_ANSI_LeftBracket → ⌘[ = history back
+    private static let keyRightBracket: UInt16 = 0x1E // kVK_ANSI_RightBracket → ⌘] = forward
+    private static let keyCommand: UInt16 = 0x37 // kVK_Command — the chord bracket (see below)
+    private static let keyRightCommand: UInt16 = 0x36 // kVK_RightCommand — same latch, right side
+
+    /// Feeds the recogniser and, on a qualifying completed flick, posts ⌘[ / ⌘] to the app the
+    /// scroll is landing in. On the default direct-post path the chord runs strictly AFTER the
+    /// gesture's `ended` scroll was posted; in resample mode (`SLOPDESK_SCROLL_RESAMPLE_HZ` > 0)
+    /// the flushed residual + `ended` marker post asynchronously on `scrollQueue`, so the fire is
+    /// hopped onto that same serial queue — FIFO then guarantees the navigation key still lands
+    /// after the gesture's own scroll stream (and never between a residual's ⌘-latched window).
+    private func translateSwipeNavIfNeeded(
+        dx: Double,
+        dy: Double,
+        scrollPhase: UInt8,
+        momentumPhase: UInt8,
+        continuous: Bool,
+    ) {
+        guard Self.swipeNavEnabled else { return }
+        let fired = swipeNavLock.withLock {
+            swipeNav.ingest(
+                dx: dx,
+                dy: dy,
+                scrollPhase: scrollPhase,
+                momentumPhase: momentumPhase,
+                continuous: continuous,
+                now: ProcessInfo.processInfo.systemUptime,
+            )
+        }
+        guard let fired else { return }
+        if Self.scrollResampleHz > 0 {
+            scrollQueue.async { [weak self] in self?.fireSwipeNav(fired) }
+        } else {
+            fireSwipeNav(fired)
+        }
+    }
+
+    /// The allowlist check + chord post for one recognised flick (see
+    /// ``translateSwipeNavIfNeeded`` for when this runs directly vs on `scrollQueue`). AppKit
+    /// reads here (`NSRunningApplication`/`NSWorkspace`) are the same thread-safe calls
+    /// ``performRaise`` makes off-main.
+    private func fireSwipeNav(_ fired: SwipeNavRecognizer.Direction) {
+        // Only drive apps where ⌘[ / ⌘] is history navigation — in an editor it EDITS TEXT
+        // (outdent/indent), so an unknown app gets nothing beyond the scroll it already received.
+        guard SwipeNavPolicy.isNavigable(bundleID: swipeNavTargetBundleID(), extraApps: Self.swipeNavExtraApps)
+        else {
+            if Self.inputTrace {
+                FileHandle.standardError
+                    .write(Data("slopdesk-videohostd[inject]: swipe-nav flick ignored (app not navigable)\n".utf8))
+            }
+            return
+        }
+        if Self.inputTrace {
+            FileHandle.standardError
+                .write(Data("slopdesk-videohostd[inject]: swipe-nav → \(fired == .back ? "⌘[ back" : "⌘] forward")\n"
+                        .utf8))
+        }
+        let keyCode = fired == .back ? Self.keyLeftBracket : Self.keyRightBracket
+        // BRACKETED chord, never a bare flagged pair: a synthetic key posted with `maskCommand` on
+        // both edges LATCHES ⌘ onto the shared `.hidSystemState` source (probe-verified: every
+        // later flag-less synthetic event — scrolls included — then inherits ⌘, turning ordinary
+        // scrolling into browser zoom). Posting the real ⌘ key down/up around the letter, with the
+        // release carrying EMPTY flags, is exactly the shape a forwarded client chord has
+        // (`flagsChanged` sends the modifier edges) and leaves the source state clean.
+        //
+        // EXCEPT when the user PHYSICALLY holds ⌘ (the balance saw the real modifier down and no
+        // release yet): the latch is already real, and a synthetic ⌘-up would be consumed by the
+        // balance as the one legitimate release — the user's actual release later dedupes away,
+        // stranding the host un-⌘'d mid-hold. Ride the real modifier instead: letter pair only.
+        let commandHeld = balanceLock.withLock {
+            balance.heldModifierKeys.contains(Self.keyCommand)
+                || balance.heldModifierKeys.contains(Self.keyRightCommand)
+        }
+        if !commandHeld { postKey(keyCode: Self.keyCommand, down: true, modifiers: .command, tag: 0) }
+        postKey(keyCode: keyCode, down: true, modifiers: .command, tag: 0)
+        postKey(keyCode: keyCode, down: false, modifiers: .command, tag: 0)
+        if !commandHeld { postKey(keyCode: Self.keyCommand, down: false, modifiers: [], tag: 0) }
+    }
+
+    /// The app the translated key would land in: the tracked window's app for a WINDOW-scoped
+    /// session, the frontmost app for a DISPLAY-scoped one (pid 0 — whole-desktop input goes to
+    /// whatever is frontmost, exactly like the scroll it follows). Thread-safe AppKit reads only
+    /// (`NSRunningApplication` / `NSWorkspace`), same as ``performRaise``'s off-main usage.
+    private func swipeNavTargetBundleID() -> String? {
+        if pid > 0 { return NSRunningApplication(processIdentifier: pid)?.bundleIdentifier }
+        return NSWorkspace.shared.frontmostApplication?.bundleIdentifier
     }
 
     private func postKey(keyCode: UInt16, down: Bool, modifiers: InputModifiers, tag _: UInt32) {

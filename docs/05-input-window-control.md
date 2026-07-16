@@ -138,3 +138,36 @@ AXUIElementSetAttributeValue(fieldEl, kAXFocusedAttribute as CFString, kCFBoolea
 - [ ] Try `AXPress` on a standard button → compare reliability against synthesized clicks.
 
 → If these pass → the model is viable. If activation fails often → consider fallbacks (see [08-risks](08-risks-open-questions.md)).
+
+---
+
+## 8. Trackpad gestures — audit & forwarding contract (2026-07-16)
+
+Ground truth, probe-verified on macOS 26 (`scratchpad` probes; six CGEvent field variants — phases,
+`ScrollCount`, `mayBegin`, momentum tail, `BeginGesture`/`EndGesture` brackets — against Safari + Chrome
+with real link-click history): **a synthetic phased scroll can NEVER trigger the browser's own
+two-finger history swipe.** Chromium's `HistorySwiper` needs real `NSTouch` data (trackpad path) or
+routes into `trackSwipeEventWithOptions:` (Magic-Mouse path) — both reject CGEvent-posted scrolls;
+Safari behaves identically. Likewise there is **no public constructor for gesture events** (`magnify` /
+`rotate` / `smartMagnify` / `swipe` / `quickLook` / `pressure`) — only scroll wheels and mouse/key
+events can be synthesised; the private byte-blob route (Hammerspoon's TouchEvents) is broken in
+Chromium apps and macOS-version-fragile. So everything beyond plain scroll is either **translated to
+key equivalents** or **deliberately dropped**:
+
+| Gesture (2-finger unless noted) | Reaches the client view as | Disposition |
+|---|---|---|
+| Scroll (any direction, incl. momentum) | `scrollWheel` + phases | **Forwarded 1:1** (wire `.scroll`, phases replayed on host — native rubber-band/inertia) |
+| Swipe between pages (horizontal flick) | same scroll stream | **Translated on HOST**: `SwipeNavRecognizer` on the injected stream → ⌘[ / ⌘] when the receiving app is in `SwipeNavPolicy` (browsers + Finder). `SLOPDESK_SWIPE_NAV` default-ON; `SLOPDESK_SWIPE_NAV_APPS` extends. Fires only on a COMPLETED flick: ≤ 400 ms, ≥ 120 pt, ≥ 3× horizontal dominance — slow/diagonal content pans keep scrolling only. |
+| Pinch zoom | `magnify(with:)` | **Translated on CLIENT**: `PinchZoomKeyPlanner` → ⌘= / ⌘− steps (0.2 magnification per step, ≤ 3 steps/event). `SLOPDESK_PINCH_KEYS` default-ON. |
+| Smart zoom (double-tap) | `smartMagnify(with:)` | **Translated on CLIENT**: ⌘0 (actual size) — pairs with the pinch ladder. Same flag. |
+| Tap-to-click / 2-finger tap (secondary) | plain mouse events | Already forwarded (indistinguishable from clicks) |
+| 3-finger drag (accessibility) | plain down/drag/up | Already forwarded |
+| Rotate | `rotate(with:)` | **Dropped** — no universal key equivalent; niche on a coding desktop |
+| Force click / Quick Look / pressure | `pressureChange`/`quickLook` | **Dropped** — pressure can't be faithfully synthesised; host Quick Look = press Space yourself |
+| Mission Control / App Exposé / Spaces / Launchpad / Show Desktop / Notification Centre (3-4 finger, edge) | **never reaches any app** — consumed by the client's own WindowServer/Dock | Not capturable at app level, IMPOSSIBLE to forward as gestures. Host-side equivalents already work as keystrokes (⌃↑ / ⌃↓ / ⌃←→ / F11) — reachable via immersive mode's system-key capture |
+
+Traps that produced false probe negatives (keep for the next RE round): a stray same-app window
+(here: a Safari "Open" dialog) can sit exactly over the probe point — verify the top window at the
+target coordinate, not just the app; and posting a ⌘-flagged key through the shared
+`.hidSystemState` source LATCHES ⌘ onto every later synthetic event (the known `postText` trap) —
+probes must set `flags = []` explicitly on every event. Both shipped translations therefore emit BRACKETED chords — real ⌘ key down, letter pair flagged, ⌘ release with empty flags — the same byte-shape a forwarded client chord has.

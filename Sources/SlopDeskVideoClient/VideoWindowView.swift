@@ -981,10 +981,62 @@ final class MetalLayerBackedView: NSView {
 
     // MARK: Local navigation (pan) — responder methods, never gesture recognizers
 
-    /// Trackpad pinch is unused in the ACTUAL-SIZE viewport (the window already shows at its native size;
-    /// the pane is a fixed viewport you pan, not a zoom surface). Left as a no-op so a stray pinch can't
-    /// perturb geometry. (Edge-hover does the navigation.)
-    override func magnify(with _: NSEvent) {}
+    // MARK: Pinch / smart-zoom → key translation (`SLOPDESK_PINCH_KEYS`, default ON; `=0` off)
+
+    /// No public API can synthesise a real `magnify` gesture on the host, so the pinch is
+    /// translated into the near-universal zoom key equivalents and rides the existing key path
+    /// (no wire change; accumulation lives in the pure ``PinchZoomKeyPlanner``). The pane itself
+    /// never zooms from a pinch — it is a fixed ACTUAL-SIZE viewport (footer zoom + edge-pan own
+    /// local navigation), so the gesture's only meaning here is REMOTE zoom.
+    private static let pinchKeysEnabled = EnvConfig.boolDefaultOn("SLOPDESK_PINCH_KEYS")
+    /// ANSI key POSITIONS (HIToolbox `kVK_ANSI_*`), interpreted by the host layout like any
+    /// forwarded keystroke.
+    private static let keyEqual: UInt16 = 0x18 // kVK_ANSI_Equal → ⌘= zoom in
+    private static let keyMinus: UInt16 = 0x1B // kVK_ANSI_Minus → ⌘− zoom out
+    private static let keyZero: UInt16 = 0x1D // kVK_ANSI_0 → ⌘0 actual size
+    private static let keyCommandModifier: UInt16 = 0x37 // kVK_Command — the chord bracket
+    private static let keyRightCommandModifier: UInt16 = 0x36 // kVK_RightCommand — same latch
+    private var pinchPlanner = PinchZoomKeyPlanner()
+
+    /// Two-finger pinch → ⌘= / ⌘− steps on the HOST. Same routing rule as `scrollWheel`: only the
+    /// ACTIVE, writable pane forwards; an unfocused or read-only pane swallows the pinch (it must
+    /// not perturb local geometry either — the historical no-op behaviour).
+    override func magnify(with event: NSEvent) {
+        guard isActive, inputEnabled, Self.pinchKeysEnabled else { return }
+        if event.phase.contains(.began) { pinchPlanner.begin() }
+        let steps = pinchPlanner.ingest(magnification: Double(event.magnification))
+        guard steps != 0 else { return }
+        for _ in 0..<abs(steps) {
+            sendHostChord(keyCode: steps > 0 ? Self.keyEqual : Self.keyMinus)
+        }
+    }
+
+    /// Two-finger double-tap (smart zoom) → ⌘0 (actual size / reset zoom) on the HOST — the
+    /// natural pairing with the pinch's ⌘= / ⌘− ladder.
+    override func smartMagnify(with _: NSEvent) {
+        guard isActive, inputEnabled, Self.pinchKeysEnabled else { return }
+        sendHostChord(keyCode: Self.keyZero)
+    }
+
+    /// Emits one synthetic ⌘-chord as a BRACKETED sequence — real ⌘ key down, the letter pair
+    /// flagged, the ⌘ release with EMPTY flags — never a bare flagged pair: the host posts
+    /// forwarded keys onto the shared `.hidSystemState` source, where a flagged pair with no
+    /// modifier release LATCHES ⌘ onto every later flag-less synthetic event (scrolls → browser
+    /// zoom; probe-verified). Byte-shaped like a real user chord (`flagsChanged` forwards the
+    /// modifier edges exactly this way).
+    ///
+    /// EXCEPT while the user PHYSICALLY holds ⌘ (either side — `modifierLatch` tracks the real
+    /// edges): the host already has the real latch, and a synthetic ⌘-up would be consumed by the
+    /// host's balance as the one legitimate release — the user's actual release later dedupes
+    /// away, stranding the host un-⌘'d mid-hold. Ride the real modifier: letter pair only.
+    private func sendHostChord(keyCode: UInt16) {
+        let commandHeld = modifierLatch.isDown(Self.keyCommandModifier)
+            || modifierLatch.isDown(Self.keyRightCommandModifier)
+        if !commandHeld { pipeline.key(keyCode: Self.keyCommandModifier, down: true, modifiers: .command) }
+        pipeline.key(keyCode: keyCode, down: true, modifiers: .command)
+        pipeline.key(keyCode: keyCode, down: false, modifiers: .command)
+        if !commandHeld { pipeline.key(keyCode: Self.keyCommandModifier, down: false, modifiers: []) }
+    }
 
     /// 1× reset → restore actual-size zoom AND re-anchor the viewport to the window's TOP-LEFT.
     private func applyResetZoom() {

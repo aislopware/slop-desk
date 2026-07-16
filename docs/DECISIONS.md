@@ -859,3 +859,31 @@
 - ✅ **Close = REATTACH, never destroy:** the satellite's `windowShouldClose` folds the pane back and vetoes; the coordinator's diff performs the one real window teardown. Menu Close Window targets the KEY window (a key satellite closes itself, not the hidden main window). Detach NEVER routes the close-confirmation surface (non-destructive).
 - ✅ **Persistence v1: satellites do NOT restore as windows across relaunch** — the launch restore re-docks every persisted detached pane into its tab (`redockingDetachedPanes()`, launch-ONLY: it must never run op-internally or it would undo a live detach). A quit/crash while detached loses nothing.
 - ✅ **Chords/menu/palette:** `.detachPane` ⌥⌘P ("pop out"), `.reattachAllPanes` chord-less; registry-driven menu rows + palette verbs; iOS routing is a no-op (no NSWindow).
+
+## Trackpad gestures: swipe-back / pinch / smart-zoom are KEY TRANSLATIONS, not gesture synthesis (2026-07-16)
+
+> User-directed ("two-finger swipe-back doesn't work in the browser; audit every common macOS
+> gesture"). Root cause is architectural, probe-verified on the host (six CGEvent field variants,
+> real link-click history): browsers refuse synthetic swipe input — Chromium's `HistorySwiper`
+> requires real `NSTouch` data or `trackSwipeEventWithOptions:` (both reject CGEvent-posted
+> scrolls), Safari behaves identically — and gesture events (`magnify`/`rotate`/`smartMagnify`)
+> have NO public constructor at all. Full audit table: doc 05 §8.
+
+- ✅ **Swipe back/forward → HOST-side translation.** `SwipeNavRecognizer` (pure, pinned) watches the
+  scroll stream `InputInjector` already posts; a COMPLETED flick (≤ 400 ms began→ended, ≥ 120 pt,
+  ≥ 3× horizontal dominance, momentum never participates) fires ⌘[ / ⌘] — but ONLY into apps where
+  that chord means history (`SwipeNavPolicy` allowlist: browsers + Finder; `SLOPDESK_SWIPE_NAV_APPS`
+  extends). In an editor ⌘[ is outdent — an allowlist miss means "scroll only", never a text edit.
+  Scroll forwarding itself is untouched (the page still rubber-bands natively). `SLOPDESK_SWIPE_NAV`
+  default-ON. Decision-at-gesture-END is the safety property: a browser arbitrates scroll-vs-navigate
+  per page (it knows the page is pinned); a remote host can't, so the flick SHAPE gates instead —
+  slow horizontal content pans (spreadsheets, wide code) never qualify.
+- ✅ **Pinch → CLIENT-side ⌘= / ⌘− ladder; smart zoom → ⌘0** (`PinchZoomKeyPlanner`, 0.2
+  magnification/step, ≤ 3 steps/event; `SLOPDESK_PINCH_KEYS` default-ON). Rides the existing key
+  path — NO wire change anywhere in this round.
+- ❌ **REJECTED: private gesture-event synthesis** (Hammerspoon/Calf-Trail `TouchEvents` byte-blob on
+  type-29 events) — works in Safari/Preview but confirmed broken in Chromium apps, macOS-fragile,
+  and against the native-first discipline. ❌ **Rotate, force-click/pressure, Quick Look**: dropped
+  (no universal equivalent / not faithfully synthesisable). ❌ **3/4-finger system gestures**: the
+  client's own WindowServer consumes them before any app sees an event — host equivalents stay
+  reachable as keystrokes (⌃↑/⌃↓/⌃←→) via immersive capture.
