@@ -366,6 +366,13 @@ let package = Package(
         // GUI client. Diagnostic-only (overnight capture-cadence root-cause work). GUI+TCC at runtime.
         .executableTarget(name: "slopdesk-fake-client", dependencies: ["SlopDeskVideoProtocol"]),
 
+        // SwipeNavStatus push probe: a headless client that mints a real display session against a
+        // RUNNING videohostd, primes the cursor socket, and reports whether type-3 SwipeNavStatus
+        // datagrams (the swipe-peel eligibility push) actually arrive — the runtime proof the
+        // kicker→registry→scheduler→cursor-flow chain is alive, which has no host-side logging.
+        // Diagnostic-only, sibling of slopdesk-fake-client. `swift run slopdesk-swipestatus-probe`.
+        .executableTarget(name: "slopdesk-swipestatus-probe", dependencies: ["SlopDeskVideoProtocol"]),
+
         // VD-120Hz DE-RISK probe: creates a headless CGVirtualDisplay advertising a >60Hz mode and
         // reports the refresh rate WindowServer actually grants — the make-or-break for the
         // "beat-free 60fps via a 120Hz virtual-display capture source" plan (a 60Hz panel can never

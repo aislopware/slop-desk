@@ -16,6 +16,19 @@ final class SwipeNavStatusKicker {
     private let registry: VideoMuxSessionRegistry
     private var heartbeat: Task<Void, Never>?
 
+    /// Change-only push trace (`SLOPDESK_SWIPE_NAV_TRACE`, the per-gesture trace's flag): one
+    /// line per frontmost-app transition, not per 2 s beat. This push path is otherwise
+    /// UNOBSERVABLE — the eligible=false freeze shipped silently because nothing logged what
+    /// the heartbeat was actually saying.
+    private nonisolated static let trace = ProcessInfo.processInfo
+        .environment["SLOPDESK_SWIPE_NAV_TRACE"] != nil
+    private final class LastPushed: @unchecked Sendable {
+        let lock = NSLock()
+        var key: String?
+    }
+
+    private let lastPushed = LastPushed()
+
     init(registry: VideoMuxSessionRegistry) {
         self.registry = registry
         NSWorkspace.shared.notificationCenter.addObserver(
@@ -36,10 +49,27 @@ final class SwipeNavStatusKicker {
     private func noteActivation(_: Notification) { push() }
 
     private func push() {
-        // Thread-safe AppKit read on main; the fan-out hops through the registry actor and
-        // each session actor — a 5-byte datagram per lane, nothing on any hot path.
-        let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        Task { [registry] in
+        // The frontmost read is ``HostFrontmostApp`` (a fresh WindowServer query), NEVER
+        // `NSWorkspace`: the daemon's NSWorkspace snapshot freezes at first access (on and off
+        // the main thread — probe-verified with Chrome frontmost while every heartbeat kept
+        // pushing the launch-time Terminal → eligible=false forever, chip never lit). Detached
+        // so the CGWindowList IPC never blocks the main actor; the fan-out then hops through
+        // the registry actor and each session actor — a 5-byte datagram per lane, nothing on a
+        // hot path.
+        Task.detached(priority: .utility) { [registry, lastPushed] in
+            let bundleID = HostFrontmostApp.bundleID()
+            if Self.trace {
+                let key = "\(bundleID ?? "nil") eligible=\(SwipeNavHostConfig.eligible(bundleID: bundleID))"
+                let changed = lastPushed.lock.withLock {
+                    let changed = lastPushed.key != key
+                    lastPushed.key = key
+                    return changed
+                }
+                if changed {
+                    FileHandle.standardError
+                        .write(Data("slopdesk-videohostd: swipe-nav status push → \(key)\n".utf8))
+                }
+            }
             await registry.forEachSession { await $0.pushSwipeNavStatus(frontmostBundleID: bundleID) }
         }
     }

@@ -257,8 +257,10 @@ public final class InputInjector: @unchecked Sendable {
         guard pid > 0 else { return }
         // Skip the whole chain when the target app is ALREADY frontmost and we have raised at least
         // once. Errs toward raising (``InputInjectorRaisePolicy``): a backgrounded window, a different
-        // frontmost app, or an unreadable frontmost still runs the full raise.
-        let frontmostPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        // frontmost app, or an unreadable frontmost still runs the full raise. The read is the
+        // WindowServer query (``HostFrontmostApp``) — the daemon's NSWorkspace snapshot freezes at
+        // first access, which here could wrongly SKIP the raise forever once the frozen pid matched.
+        let frontmostPID = HostFrontmostApp.frontmostPID()
         let willRaise = InputInjectorRaisePolicy.shouldRaise(
             frontmostPID: frontmostPID,
             targetPID: pid,
@@ -729,11 +731,14 @@ public final class InputInjector: @unchecked Sendable {
 
     /// The app the translated key would land in: the tracked window's app for a WINDOW-scoped
     /// session, the frontmost app for a DISPLAY-scoped one (pid 0 — whole-desktop input goes to
-    /// whatever is frontmost, exactly like the scroll it follows). Thread-safe AppKit reads only
-    /// (`NSRunningApplication` / `NSWorkspace`), same as ``performRaise``'s off-main usage.
+    /// whatever is frontmost, exactly like the scroll it follows). The frontmost read is the
+    /// WindowServer query (``HostFrontmostApp``), NOT `NSWorkspace`: the daemon's NSWorkspace
+    /// snapshot freezes at first access, which here means firing ⌘[ into whatever app happened
+    /// to be frontmost the first time this process looked — an OUTDENT in an editor the user
+    /// switched to later.
     private func swipeNavTargetBundleID() -> String? {
         if pid > 0 { return NSRunningApplication(processIdentifier: pid)?.bundleIdentifier }
-        return NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        return HostFrontmostApp.bundleID()
     }
 
     private func postKey(keyCode: UInt16, down: Bool, modifiers: InputModifiers, tag _: UInt32) {
