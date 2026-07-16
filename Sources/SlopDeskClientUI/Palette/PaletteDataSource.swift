@@ -139,6 +139,20 @@ public struct ActionsPaletteSource: PaletteDataSource {
             shortcut: glyph(.renamePane), category: .pane,
             run: { store in store.requestRenameActivePane() },
         ),
+        // Detach / reattach (own-window satellites). Non-destructive: the pane's session survives the
+        // move; closing the satellite window reattaches it.
+        item(
+            id: "action.detachPane", icon: "macwindow.on.rectangle", title: "Detach Pane into Window",
+            keywords: "detach pop out float window satellite separate monitor",
+            shortcut: glyph(.detachPane), category: .pane,
+            run: { store in store.detachActivePane() },
+        ),
+        item(
+            id: "action.reattachAllPanes", icon: "macwindow.and.cursorarrow", title: "Reattach All Panes",
+            keywords: "reattach dock fold return window satellite",
+            shortcut: glyph(.reattachAllPanes), category: .pane,
+            run: { store in store.reattachAllPanes() },
+        ),
         // No registry chord exists for reconnect (the keyboard bank never registers one) ⇒ no hint chip.
         item(
             id: "action.reconnect", icon: "arrow.clockwise", title: "Reconnect Pane",

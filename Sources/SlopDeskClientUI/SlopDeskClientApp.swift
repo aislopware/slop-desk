@@ -91,6 +91,10 @@ public struct SlopDeskClientApp: App {
     /// forbidden `NSApplication.windows` scan (and without depending on the introspect closure re-firing on a
     /// pure flag change). A plain holder, not `@Observable` — mutating its `window` must not re-render.
     @State private var windowBox: WeakWindowBox
+    /// The detach-pane satellite windows (one plain-AppKit `NSWindowController` per
+    /// ``WorkspaceStore/detachedPanes`` entry) — pure AppKit, never a second `WindowGroup`, so the
+    /// single-workspace-window machinery (`windowBox` / chord dispatcher / close gate) is untouched.
+    @State private var satelliteWindows = SatelliteWindowsCoordinator()
     #endif
     @Environment(\.scenePhase) private var scenePhase
     @State private var lifecycleTask: Task<Void, Never>?
@@ -791,6 +795,17 @@ public struct SlopDeskClientApp: App {
                 .task {
                     store.isAppActive = NSApplication.shared.isActive
                 }
+                // SATELLITE WINDOWS (Detach Pane into Window): diff one plain-AppKit window per
+                // detached pane. Driven HERE off the `@Observable` detached list — the store stays
+                // headless; only this app layer touches NSWindow. The launch restore re-docks satellites
+                // (v1: they don't persist as windows), so the initial sync is normally a no-op — kept for
+                // the automation/replay paths that could restore a mid-detach state.
+                .onChange(of: store.detachedPanes) { _, panes in
+                    satelliteWindows.sync(panes, store: store, decorate: decorateSatelliteRoot)
+                }
+                .task {
+                    satelliteWindows.sync(store.detachedPanes, store: store, decorate: decorateSatelliteRoot)
+                }
             #endif
         }
         #if os(macOS)
@@ -844,12 +859,20 @@ public struct SlopDeskClientApp: App {
                 // Feed the live pinned state so the View ▸ Pin Window row renders its ✓ (a checkable
                 // toggle). Reading `chrome.pinned` here re-evaluates `.commands` when the pin flips.
                 pinWindowOn: chrome.pinned,
-                // The Window ▸ Close Window menu row ACTUATES a real close —
-                // `performClose(nil)` on THIS scene's captured `NSWindow` fires the native `windowShouldClose`
-                // → the existing `WindowCloseConfirmationDelegate` gate (preserving the close-confirmation
-                // policy), rather than routing to `store.requestCloseWindow()`, which only parks a flag
-                // nothing observes and would leave the menu item unable to close the window.
-                closeWindow: { [windowBox] in windowBox.window?.performClose(nil) },
+                // The Window ▸ Close Window menu row ACTUATES a real close on the window the user is
+                // LOOKING AT: a key SATELLITE closes itself (its delegate reattaches the pane — never the
+                // hidden main window, which would be the surprise target of the once-captured `windowBox`);
+                // otherwise `performClose(nil)` on the captured workspace `NSWindow` fires the native
+                // `windowShouldClose` → the existing `WindowCloseConfirmationDelegate` gate (preserving the
+                // close-confirmation policy), rather than routing to `store.requestCloseWindow()`, which
+                // only parks a flag nothing observes and would leave the menu item unable to close.
+                closeWindow: { [windowBox] in
+                    if let satellite = NSApp.keyWindow as? SatellitePaneWindow {
+                        satellite.performClose(nil)
+                    } else {
+                        windowBox.window?.performClose(nil)
+                    }
+                },
             )
         }
         #endif
@@ -912,6 +935,21 @@ public struct SlopDeskClientApp: App {
     }
 
     #if os(macOS)
+    /// Wraps a satellite window's SwiftUI root with the scene-level environment. An `NSHostingView`
+    /// root inherits NOTHING from the main scene (the known hosting-root env trap), so the theme
+    /// tint/scheme + the injected stores must be re-applied here or the satellite renders unthemed and
+    /// its deep views resolve nil coordinators.
+    private func decorateSatelliteRoot(_ root: AnyView) -> AnyView {
+        AnyView(
+            root
+                .preferencesStore(preferences)
+                .agentHooksController(agentHooks)
+                .overlayCoordinator(overlayCoordinator)
+                .tint(Slate.State.accent)
+                .preferredColorScheme(Slate.colorScheme),
+        )
+    }
+
     /// The keybinding dispatcher's key-window gate, as a PURE identity predicate so it is unit-pinnable
     /// without an `NSWindow` (`AnyObject` — tests inject plain fakes): the workspace owns the keyboard ONLY
     /// when the window captured by the `.introspect(.window)` hook IS the application's current key window.
@@ -920,8 +958,10 @@ public struct SlopDeskClientApp: App {
     /// capture to "workspace is key", letting a stale box swallow chords while the Settings window (or any
     /// other window) is frontmost. Identity against `NSApp.keyWindow` also stays truthful if the box ever
     /// held a non-workspace window: that window being key is exactly the state where yielding is wrong only
-    /// for the REAL workspace window, which the single-window model (File ▸ New Window removed) guarantees is
-    /// the only window the introspect hook can capture.
+    /// for the REAL workspace window — and only the ONE workspace window can land in the box: File ▸ New
+    /// Window is removed, and the detach-pane satellites (``SatellitePaneWindow``) are plain-AppKit windows
+    /// that never mount the `.introspect` hook. A key SATELLITE therefore correctly yields the chord
+    /// keyboard (workspace chords act on the main window; satellites take plain first-responder input).
     static func workspaceWindowIsKey(captured: AnyObject?, keyWindow: AnyObject?) -> Bool {
         guard let captured else { return false }
         return captured === keyWindow

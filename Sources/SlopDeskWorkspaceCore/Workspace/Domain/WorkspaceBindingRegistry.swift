@@ -20,6 +20,9 @@ public enum WorkspaceAction: Hashable, Sendable {
     case renamePane // no default chord — renames the active TAB on the tree shell (inline tab-strip
     // field), or the active pane on the retained-but-dead canvas path. Title menu / context menu / palette only.
     case breakPaneToTab // ⌃⌘T — eject the active pane into a new tab
+    case detachPane // ⌥⌘P — pop the active pane out into its OWN macOS window (session survives; the
+    // satellite window's close reattaches it). macOS only — a no-op routing on iOS (no NSWindow).
+    case reattachAllPanes // chord-less — fold every detached (own-window) pane back into its tab
 
     // Move pane (Zellij "move pane" — swap with the geometric neighbour)
     case movePaneLeft // ⌥⌘⇧←
@@ -164,6 +167,7 @@ public extension WorkspaceAction {
              .closePane,
              .renamePane,
              .breakPaneToTab,
+             .detachPane, // pops the ACTIVE pane out — needs one
              .movePaneLeft,
              .movePaneRight,
              .movePaneUp,
@@ -241,7 +245,8 @@ public extension WorkspaceAction {
              .openQuickly, // a global fuzzy switcher — needs no active pane
              .toggleSyncInput, // the tab must exist, but the palette can still show it (mirrors .newTab)
              .jumpToAttention, // acts globally across all tabs/sessions — needs no active pane
-             .peekAndReply: // acts globally (targets the oldest attention pane) — needs no active pane
+             .peekAndReply, // acts globally (targets the oldest attention pane) — needs no active pane
+             .reattachAllPanes: // acts on the detached set — needs no active pane
             false
         }
     }
@@ -363,6 +368,21 @@ public enum WorkspaceBindingRegistry {
             id: "pane.breakToTab", action: .breakPaneToTab, title: "Break Pane to Tab",
             category: .panes, chord: KeyChord(character: "t", [.control, .command]),
             symbol: "rectangle.portrait.and.arrow.right", keywords: "eject move detach pop out promote",
+        ),
+        // Detach to an OWN OS window (satellite): ⌥⌘P ("Pop out") — `p` is in no other ⌘ chord
+        // (⌘⇧P is the palette; modifiers differ), pinned unique by the chord-uniqueness guard. The
+        // session/PTY/stream survives; closing the satellite window reattaches.
+        WorkspaceBinding(
+            id: "pane.detach", action: .detachPane, title: "Detach Pane into Window",
+            category: .panes, chord: KeyChord(character: "p", [.option, .command]),
+            symbol: "macwindow.on.rectangle", keywords: "detach pop out float window satellite separate monitor",
+        ),
+        // Reattach all satellites — chord-less (menu / palette; each satellite's close button reattaches
+        // just itself).
+        WorkspaceBinding(
+            id: "pane.reattachAll", action: .reattachAllPanes, title: "Reattach All Panes",
+            category: .panes, chord: nil,
+            symbol: "macwindow.and.cursorarrow", keywords: "reattach dock fold return window satellite",
         ),
         // Move pane (Zellij "move pane" — swap with the geometric neighbour). ⌥⌘⇧+arrows: the ⌥ modifier
         // (vs ⌃) keeps them distinct from focus (⌃⌘arrows) and the ⌃⌘⇧arrow divider chords below, so a

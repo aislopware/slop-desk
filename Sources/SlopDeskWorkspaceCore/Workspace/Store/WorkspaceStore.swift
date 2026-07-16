@@ -313,7 +313,10 @@ public final class WorkspaceStore {
     ) {
         self.liveModel = liveModel
         workspace = restoring ?? .defaultWorkspace()
-        tree = (restoringTree ?? .defaultWorkspace()).normalized()
+        // Launch-only: fold persisted detached panes back into tabs (satellite windows do not restore
+        // across relaunch — v1; a quit/crash while detached loses nothing). NEVER inside `normalized()`,
+        // which runs op-internally and would undo a live detach.
+        tree = (restoringTree ?? .defaultWorkspace()).normalized().redockingDetachedPanes()
         self.makeSession = makeSession
         self.liveVideoCap = liveVideoCap
         self.persistence = persistence
@@ -2321,6 +2324,14 @@ public final class WorkspaceStore {
         // Clear a matching parked busy-close so confirming/closing the same leaf twice cannot strand a
         // phantom confirmation dialog (mirrors the canvas `closePane(_:)` `pendingClose` clear).
         if pendingClose == target { pendingClose = nil }
+        // A DETACHED pane is not in any tab tree — `closePane` would silently no-op and leave a zombie
+        // handle streaming into a dead satellite window (the PTY-exit close path routes here too). Its
+        // dedicated op drops the detached entry + spec so reconcile tears the handle down.
+        if tree.isDetached(target) {
+            tree = WorkspaceTreeOps.closeDetachedPane(target, in: tree)
+            reconcileTree()
+            return
+        }
         // When `target` is its tab's SOLE tiled leaf, closing it cascades the whole TAB away — capture the
         // tab for ⇧⌘T reopen BEFORE the op mutates the tree (the cascade can also drop the session, so the
         // pre-mutation snapshot is the only source). A pane that is one of several leaves leaves its tab
@@ -2328,6 +2339,47 @@ public final class WorkspaceStore {
         if let removedTab = tabRemovedByClosing(target) { recordClosedTab(removedTab) }
         tree = WorkspaceTreeOps.closePane(target, in: tree)
         reconcileTree()
+    }
+
+    // MARK: - Detach a pane to its own window (satellite) / reattach
+
+    /// Every detached (own-window) pane in session order then detach order — the satellite-window
+    /// coordinator diffs its NSWindows against this. `@Observable` via ``tree``.
+    public var detachedPanes: [DetachedPane] {
+        tree.sessions.flatMap(\.detached)
+    }
+
+    /// Detaches pane `target` into its own OS window: the leaf leaves the split tree but its spec + live
+    /// registry handle survive (reconcile unions detached ids into the desired set), so the PTY / video
+    /// session keeps running and only the VIEW remounts in the satellite window the app-layer coordinator
+    /// opens for it. No-op if `target` is not a tree leaf (already detached / absent).
+    public func detachPaneToWindow(_ target: PaneID) {
+        guard tree.contains(target) else { return }
+        tree = WorkspaceTreeOps.detachPane(target, in: tree)
+        reconcileTree()
+    }
+
+    /// Reattaches detached pane `target` back into a tab (origin tab when alive, else the session's
+    /// active tab; fresh-tab fallback) and reveals it. The satellite-window coordinator closes the
+    /// window when the pane leaves ``detachedPanes``. No-op if `target` is not detached.
+    public func reattachPane(_ target: PaneID) {
+        guard tree.isDetached(target) else { return }
+        tree = WorkspaceTreeOps.reattachPane(target, in: tree)
+        reconcileTree()
+    }
+
+    /// Reattaches every detached pane (the "Reattach All Panes" menu/palette action).
+    public func reattachAllPanes() {
+        for entry in detachedPanes {
+            tree = WorkspaceTreeOps.reattachPane(entry.pane, in: tree)
+        }
+        reconcileTree()
+    }
+
+    /// Detaches the active tab's active pane (the chord / menu routing target). No-op without one.
+    public func detachActivePane() {
+        guard let active = tree.activeSession?.activeTab?.activePane else { return }
+        detachPaneToWindow(active)
     }
 
     /// The ``TabID`` that closing leaf `target` would REMOVE — i.e. `target` is the only leaf in its tab,
@@ -3033,7 +3085,9 @@ public final class WorkspaceStore {
     /// `persistence`), so the tree-reconcile suite still pins the bare diff. Idempotent.
     public func reconcileTree() {
         reconcileRegistry(
-            desiredLeafIDs: tree.allPaneIDs(),
+            // Detached panes (own-window satellites) are OUT of the tree but stay DESIRED — their live
+            // handles (PTY stream / video session) must survive the detach; only the view remounts.
+            desiredLeafIDs: tree.allPaneIDs() + tree.detachedPaneIDs(),
             spec: { tree.spec(for: $0) },
             onMaterialize: { [weak self] id, handle in
                 self?.wireMaterializedLeaf(id: id, handle: handle)

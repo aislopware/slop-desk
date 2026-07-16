@@ -110,8 +110,21 @@ public extension TreeWorkspace {
 public extension TreeWorkspace {
     /// Every ``PaneID`` across every session → tab → split tree, in deterministic DFS order (session
     /// order, then tab order, then pre-order tree). Drives focus cycling + the store's reconcile diff.
+    /// Deliberately EXCLUDES detached panes — tree membership drives focus/zoom/tab semantics; the
+    /// store's reconcile unions in ``detachedPaneIDs()`` separately so detached handles stay live.
     func allPaneIDs() -> [PaneID] {
         sessions.flatMap { $0.allPaneIDs() }
+    }
+
+    /// Every pane detached into its own window, across every session in session order then detach order.
+    /// The store's reconcile unions this with ``allPaneIDs()`` as the desired registry set.
+    func detachedPaneIDs() -> [PaneID] {
+        sessions.flatMap { $0.detached.map(\.pane) }
+    }
+
+    /// Whether `id` is detached into its own window in any session.
+    func isDetached(_ id: PaneID) -> Bool {
+        sessions.contains { $0.isDetached(id) }
     }
 
     /// The active session's leaf ids — drives active-tab focus/visibility (reconcile keeps the full set).
@@ -165,10 +178,13 @@ public extension TreeWorkspace {
 
 public extension TreeWorkspace {
     /// The load-bearing invariant: for every session, the spec side table's keys equal the set of leaf
-    /// ids across all of that session's tabs (`Set(specs.keys) == leafIDSet()`). A checkable property
-    /// the ops preserve and the tests assert after every op. Pure.
+    /// ids across all of that session's tabs UNION its detached panes
+    /// (`Set(specs.keys) == leafIDSet() ∪ detachedIDSet()`). A checkable property the ops preserve and
+    /// the tests assert after every op. Pure.
     func isInvariantHeld() -> Bool {
-        for session in sessions where Set(session.specs.keys) != session.leafIDSet() {
+        for session in sessions
+            where Set(session.specs.keys) != session.leafIDSet().union(session.detachedIDSet())
+        {
             return false
         }
         return true
@@ -188,8 +204,19 @@ public extension TreeWorkspace {
         copy.sessions = sessions.map { session in
             var s = session
             let leafIDs = s.leafIDSet()
-            // Drop orphan specs (no matching leaf).
-            s.specs = s.specs.filter { leafIDs.contains($0.key) }
+            // Repair the detached list FIRST so the spec filter below sees a consistent membership:
+            // an entry shadowed by a tree leaf is dropped (tree membership wins — a pane cannot be both
+            // tiled and detached), as is a duplicate id or an entry with no spec to materialize from
+            // (a spec-less detached record is unrecoverable garbage, unlike a tree leaf whose STRUCTURE
+            // demands a re-seeded default).
+            var seenDetached = Set<PaneID>()
+            s.detached = s.detached.filter { entry in
+                guard !leafIDs.contains(entry.pane), s.specs[entry.pane] != nil else { return false }
+                return seenDetached.insert(entry.pane).inserted
+            }
+            let keepIDs = leafIDs.union(s.detachedIDSet())
+            // Drop orphan specs (no matching leaf or detached pane).
+            s.specs = s.specs.filter { keepIDs.contains($0.key) }
             // Re-seed a default spec for any leaf that lost its spec.
             for id in leafIDs where s.specs[id] == nil {
                 s.specs[id] = PaneSpec(kind: .terminal, title: "Terminal")
@@ -270,10 +297,40 @@ public extension TreeWorkspace {
 
     /// The repairs in the order `load()` applies them: specs first (so the active-pane repair sees a
     /// consistent leaf set), plus the built-in launch-preset + session-template seeds for a fresh /
-    /// pre-feature file. Pure.
+    /// pre-feature file. Pure. Deliberately does NOT re-dock detached panes — `normalized()` runs after
+    /// every close/cascade op, so folding ``redockingDetachedPanes()`` in here would instantly undo any
+    /// detach. Re-dock is a LAUNCH-ONLY step (the store's restore path).
     func normalized() -> TreeWorkspace {
         normalizingSpecs().normalizingActive()
             .seedingBuiltInLaunchPresetsIfEmpty()
             .seedingBuiltInSessionTemplatesIfEmpty()
+    }
+
+    /// Re-docks every detached pane back into a tab — the LAUNCH-ONLY restore policy (v1): satellite
+    /// windows do not restore across relaunch, but a quit/crash while detached must lose nothing, so the
+    /// persisted detached panes fold back into their sessions (origin tab when alive, else a fresh tab —
+    /// ``WorkspaceTreeOps/reattachPane(_:in:)``). The persisted SELECTION is preserved (each reattach
+    /// focuses its pane; a launch restore must not let the last-detached pane steal the saved focus).
+    /// Applied by the store AFTER `normalized()` and ONLY at restore time — never op-internally (see
+    /// ``normalized()``).
+    func redockingDetachedPanes() -> TreeWorkspace {
+        guard sessions.contains(where: { !$0.detached.isEmpty }) else { return self }
+        var copy = self
+        // Snapshot the persisted selection; reattach mutates it per pane.
+        let savedActiveSession = copy.activeSessionID
+        let savedTabIndices = copy.sessions.map { ($0.id, $0.activeTabIndex) }
+        for id in copy.detachedPaneIDs() {
+            copy = WorkspaceTreeOps.reattachPane(id, in: copy)
+        }
+        // Restore the saved selection (appended tabs never shift existing indices).
+        copy.activeSessionID = savedActiveSession
+        for (sessionID, tabIndex) in savedTabIndices {
+            if let sIdx = copy.sessions.firstIndex(where: { $0.id == sessionID }),
+               copy.sessions[sIdx].tabs.indices.contains(tabIndex)
+            {
+                copy.sessions[sIdx].activeTabIndex = tabIndex
+            }
+        }
+        return copy.normalizingActive()
     }
 }

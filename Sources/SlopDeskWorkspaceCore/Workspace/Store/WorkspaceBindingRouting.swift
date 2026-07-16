@@ -106,6 +106,10 @@ public extension WorkspaceBindingRegistry {
         case .closePane: store.requestCloseActivePaneTree()
         case .renamePane: store.requestRenameActivePane()
         case .breakPaneToTab: store.breakActivePaneToTab()
+        // Detach / reattach (own-window satellites): NON-destructive by design — never routed through
+        // the close-confirmation surface (detach isn't a close; the session survives).
+        case .detachPane: store.detachActivePane()
+        case .reattachAllPanes: store.reattachAllPanes()
         // Move pane (swap with the geometric neighbour, against the reported layout)
         case .movePaneLeft: store.swapActivePaneInDirection(.left)
         case .movePaneRight: store.swapActivePaneInDirection(.right)
@@ -296,7 +300,10 @@ public extension WorkspaceBindingRegistry {
         // tree shell's LIFO stack) — route to it so the canvas path still responds.
         case .reopenClosed: apply(.reopenClosedPane, to: store)
         case .renamePane: apply(.renamePane, to: store)
-        case .breakPaneToTab: break // no canvas analogue
+        case .breakPaneToTab,
+             .detachPane, // detach/reattach are tree-shell features — no canvas analogue
+             .reattachAllPanes:
+            break
         // Tree-only pane management (move / resize / balance) — the flat canvas has no split tree to act on.
         case .movePaneLeft,
              .movePaneRight,

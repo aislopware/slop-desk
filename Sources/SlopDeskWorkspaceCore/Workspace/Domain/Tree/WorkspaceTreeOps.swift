@@ -89,6 +89,12 @@ public enum WorkspaceTreeOps {
     ) -> TreeWorkspace {
         var copy = ws
         if copy.sessions[sessionIndex].tabs.isEmpty {
+            // A session that still OWNS detached (own-window) panes SURVIVES its last tab closing — the
+            // user closed a TAB, not the satellites; dropping the session here would orphan their specs
+            // and reconcile would tear the live satellite streams down mid-use. `normalizingActive()`
+            // (the callers' `.normalized()`) re-seeds a default tab so the session stays renderable.
+            // An EXPLICIT `closeSession` still drops everything, satellites included — intended there.
+            if !copy.sessions[sessionIndex].detached.isEmpty { return copy }
             // Session emptied → drop it.
             let removedID = copy.sessions[sessionIndex].id
             copy.sessions.remove(at: sessionIndex)
@@ -877,17 +883,104 @@ public enum WorkspaceTreeOps {
 
     // MARK: Spec mutation (side table, not the tree)
 
-    /// Mutates the ``PaneSpec`` of leaf `target` in place via `transform` (a rename / title / video edit)
-    /// — the SPLIT TREE is never touched, so a rename can't churn a tree diff. No-op if absent.
+    /// Mutates the ``PaneSpec`` of pane `target` in place via `transform` (a rename / title / video edit)
+    /// — the SPLIT TREE is never touched, so a rename can't churn a tree diff. Works for a tree leaf OR a
+    /// detached pane (both live in the session side table — a detached pane's cwd/title/video-binding
+    /// edges must keep persisting while it streams in its satellite window). No-op if absent.
     public static func updatingSpec(
         _ target: PaneID,
         in ws: TreeWorkspace,
         _ transform: (inout PaneSpec) -> Void,
     ) -> TreeWorkspace {
-        guard let sIdx = locate(target, in: ws)?.0, var spec = ws.sessions[sIdx].specs[target] else { return ws }
+        let owner = locate(target, in: ws)?.0 ?? ws.sessions.firstIndex { $0.isDetached(target) }
+        guard let sIdx = owner, var spec = ws.sessions[sIdx].specs[target] else { return ws }
         transform(&spec)
         var copy = ws
         copy.sessions[sIdx].specs[target] = spec
+        return copy
+    }
+
+    // MARK: Detach a pane to its own window / reattach
+
+    /// Detaches pane `target` from its tab into the session's ``Session/detached`` list — the pane
+    /// leaves the split TREE but keeps its spec (and therefore its live registry handle: the store's
+    /// reconcile unions detached ids into the desired set, so the PTY / video session survives; only the
+    /// view remounts in the satellite window). The source tab shrinks exactly like a close (collapse +
+    /// rebalance + refocus); a tab it was the sole leaf of is removed. Unlike ``closePane(_:in:)``'s
+    /// cascade the SESSION always survives — it owns the detached pane's spec, so removing it would tear
+    /// the live pane down; a session whose last tree pane detached gets a fresh default tab from the
+    /// `normalizingActive()` repair (the main window never renders an empty session). Records the origin
+    /// ``TabID`` as the preferred reattach destination. No-op if `target` is absent or already detached.
+    /// Preserves the (detach-widened) **specs invariant**.
+    public static func detachPane(_ target: PaneID, in ws: TreeWorkspace) -> TreeWorkspace {
+        guard let (sIdx, tIdx) = locate(target, in: ws) else { return ws }
+        var copy = ws
+        var session = copy.sessions[sIdx]
+        let originTab = session.tabs[tIdx].id
+        pruneLeafFromTab(target, at: tIdx, in: &session) // spec deliberately kept — the pane lives on
+        session.detached.append(DetachedPane(pane: target, originTab: originTab))
+        // A removed tab shifts indices — clamp the selection (normalizingActive also seeds a fresh tab
+        // when the LAST tree pane detached, keeping the session renderable).
+        session.activeTabIndex = Int(Double.minimum(
+            Double(session.activeTabIndex),
+            Double.maximum(Double(session.tabs.count - 1), 0),
+        ))
+        copy.sessions[sIdx] = session
+        return copy.normalized()
+    }
+
+    /// Reattaches detached pane `target` back into a tab: its origin tab when still alive, else the
+    /// owning session's active tab — docked at the trailing ROOT edge (full-span column, the
+    /// ``moveLeafToRootEdge(_:edge:in:)`` insert shape), KEEPING its `PaneID` so reconcile is a registry
+    /// no-op (the live session survives, only the view remounts back in the main window). A root insert
+    /// that would breach ``SplitNode/maxDepth`` — or a session left with no tabs mid-repair — falls back
+    /// to a fresh tab holding the pane as its lone leaf. The destination is revealed: session selected,
+    /// tab selected, pane focused, zoom exited. No-op if `target` is not detached anywhere. Preserves the
+    /// **specs invariant** (the spec never left the side table).
+    public static func reattachPane(_ target: PaneID, in ws: TreeWorkspace) -> TreeWorkspace {
+        guard let sIdx = ws.sessions.firstIndex(where: { $0.isDetached(target) }) else { return ws }
+        var copy = ws
+        var session = copy.sessions[sIdx]
+        let originTab = session.detached.first { $0.pane == target }?.originTab
+        session.detached.removeAll { $0.pane == target }
+
+        // Destination: origin tab when alive, else the session's active tab (clamped).
+        let destIdx = originTab.flatMap { origin in session.tabs.firstIndex { $0.id == origin } }
+            ?? Int(Double.minimum(
+                Double(session.activeTabIndex),
+                Double.maximum(Double(session.tabs.count - 1), 0),
+            ))
+        if session.tabs.indices.contains(destIdx) {
+            var tab = session.tabs[destIdx]
+            let grown = tab.root.insertingAtRoot(target, axis: .horizontal, before: false)
+            if grown.depth <= SplitNode.maxDepth {
+                tab.root = grown
+                tab.activePane = target
+                tab.zoomedPane = nil
+                session.tabs[destIdx] = tab
+                session.activeTabIndex = destIdx
+                copy.sessions[sIdx] = session
+                copy.activeSessionID = session.id
+                return copy
+            }
+        }
+        // Fallback: a fresh tab holding the pane (depth breach / no destination tab).
+        session.tabs.append(Tab(root: .leaf(target), activePane: target))
+        session.activeTabIndex = session.tabs.count - 1
+        copy.sessions[sIdx] = session
+        copy.activeSessionID = session.id
+        return copy
+    }
+
+    /// Closes DETACHED pane `target` for real: removes its ``Session/detached`` entry AND its spec, so
+    /// the store's reconcile tears the live handle down. The close counterpart ``closePane(_:in:)`` only
+    /// walks the tree — the store routes a close of a detached id here (PTY exit inside a satellite
+    /// window, an explicit close). No-op if `target` is not detached anywhere.
+    public static func closeDetachedPane(_ target: PaneID, in ws: TreeWorkspace) -> TreeWorkspace {
+        guard let sIdx = ws.sessions.firstIndex(where: { $0.isDetached(target) }) else { return ws }
+        var copy = ws
+        copy.sessions[sIdx].detached.removeAll { $0.pane == target }
+        copy.sessions[sIdx].specs.removeValue(forKey: target)
         return copy
     }
 

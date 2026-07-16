@@ -517,9 +517,12 @@ final class OverlayCoordinatorMountTests: XCTestCase {
                 // Release Stuck Input is chord-less (the remote-GUI escape hatch —
                 // palette/menu-only; pinned by `TreeCommandRoutingTests`).
                 "view.releaseStuckInput",
+                // Reattach All Panes is chord-less (each satellite's close button reattaches
+                // itself; the bulk fold is a menu/palette verb).
+                "pane.reattachAll",
             ],
             "the no-chip rows: collapsed select-tab representative + chord-less Rename/Close Tab "
-                + "+ the three E17 view toggles + E10 Hint to Reveal + E19 Pin Window",
+                + "+ the three E17 view toggles + E10 Hint to Reveal + E19 Pin Window + Reattach All",
         )
 
         // Every chord-bearing row resolves a non-empty glyph (the chips) — no drift between display + chord.

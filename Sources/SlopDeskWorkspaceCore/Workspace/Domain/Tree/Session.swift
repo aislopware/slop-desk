@@ -1,5 +1,27 @@
 import Foundation
 
+// MARK: - DetachedPane (a pane living in its own OS window, outside every tab tree)
+
+/// A pane the user detached into its OWN macOS window: it has left every tab's split tree but stays a
+/// first-class member of its ``Session`` — its ``PaneSpec`` remains in the session's side table and the
+/// store's reconcile keeps its live handle registered, so the PTY / video session survives the move (only
+/// the VIEW remounts in the satellite window). Distinct from the retired in-app floating-card feature
+/// (docs/DECISIONS.md 2026-07-03): this is OS-window detach, not an overlay layer.
+public struct DetachedPane: Codable, Sendable, Equatable, Identifiable {
+    /// The detached pane — also the spec/registry key.
+    public let pane: PaneID
+    /// The tab the pane detached FROM — the preferred reattach destination. `nil` / a since-closed tab
+    /// falls back to the session's active tab.
+    public var originTab: TabID?
+
+    public var id: PaneID { pane }
+
+    public init(pane: PaneID, originTab: TabID? = nil) {
+        self.pane = pane
+        self.originTab = originTab
+    }
+}
+
 // MARK: - Session (the top of the tiled hierarchy)
 
 /// A named, host-scoped group of ``Tab``s — the top of the new `Session → Tab → Pane` hierarchy that
@@ -19,12 +41,17 @@ public struct Session: Identifiable, Sendable, Equatable {
     public var tabs: [Tab]
     /// The selected tab. Clamped to `tabs.indices` by ``normalizingActive()`` / the ops.
     public var activeTabIndex: Int
-    /// Side table mapping each tree leaf ``PaneID`` to its ``PaneSpec`` (so a rename never churns a
-    /// tree diff). Invariant: `Set(specs.keys) == Set(leafIDs)`.
+    /// Side table mapping each pane ``PaneID`` (tree leaf OR detached) to its ``PaneSpec`` (so a rename
+    /// never churns a tree diff). Invariant: `Set(specs.keys) == leafIDSet() ∪ detachedIDSet()`.
     public var specs: [PaneID: PaneSpec]
     /// Per-session host association. MVP shares the one app-global connection (all sessions `nil` ⇒ the
     /// app target); modeled now so multi-host needs no later migration (docs/42 Decisions.9).
     public var connection: ConnectionTarget?
+    /// Panes detached into their own OS windows, in detach order. Each keeps its spec in ``specs`` and
+    /// its live registry handle (the store's reconcile counts detached panes as desired), so detach ↔
+    /// reattach never tears a session down. Additive v11 field — absent in older files (`decodeIfPresent`),
+    /// encoded only when non-empty so a detach-free workspace file stays byte-identical.
+    public var detached: [DetachedPane]
 
     public init(
         id: SessionID = SessionID(),
@@ -33,6 +60,7 @@ public struct Session: Identifiable, Sendable, Equatable {
         activeTabIndex: Int = 0,
         specs: [PaneID: PaneSpec],
         connection: ConnectionTarget? = nil,
+        detached: [DetachedPane] = [],
     ) {
         self.id = id
         self.name = name
@@ -40,6 +68,7 @@ public struct Session: Identifiable, Sendable, Equatable {
         self.activeTabIndex = activeTabIndex
         self.specs = specs
         self.connection = connection
+        self.detached = detached
     }
 }
 
@@ -60,6 +89,7 @@ extension Session: Codable {
         case activeTabIndex
         case specs
         case connection
+        case detached
     }
 
     private struct SpecEntry: Codable {
@@ -78,6 +108,7 @@ extension Session: Codable {
         for entry in entries { map[entry.pane] = entry.spec }
         specs = map
         connection = try container.decodeIfPresent(ConnectionTarget.self, forKey: .connection)
+        detached = try container.decodeIfPresent([DetachedPane].self, forKey: .detached) ?? []
         // A file written during the short-lived Stage era may carry `stagePanes`/`activeStagePane`
         // keys — ignored here; the orphaned specs are pruned by `normalizingSpecs()` (streamed-window
         // stage tabs were ephemeral viewing surfaces, so dropping them loses no terminal state).
@@ -95,6 +126,10 @@ extension Session: Codable {
             .sorted { $0.pane.raw.uuidString < $1.pane.raw.uuidString }
         try container.encode(entries, forKey: .specs)
         try container.encodeIfPresent(connection, forKey: .connection)
+        // Only when non-empty — a detach-free session's persisted bytes stay identical to pre-feature files.
+        if !detached.isEmpty {
+            try container.encode(detached, forKey: .detached)
+        }
     }
 }
 
@@ -124,9 +159,20 @@ public extension Session {
         Set(allPaneIDs())
     }
 
-    /// The ``PaneSpec`` for tree leaf `id` in this session, or `nil` if this session does not own it.
+    /// The set of pane ids detached into their own windows (see ``detached``).
+    func detachedIDSet() -> Set<PaneID> {
+        Set(detached.map(\.pane))
+    }
+
+    /// Whether `id` is detached into its own window in this session.
+    func isDetached(_ id: PaneID) -> Bool {
+        detached.contains { $0.pane == id }
+    }
+
+    /// The ``PaneSpec`` for pane `id` in this session — a tree leaf OR a detached pane (both are
+    /// first-class members of the session's side table), or `nil` if this session does not own it.
     func spec(for id: PaneID) -> PaneSpec? {
-        guard contains(id) else { return nil }
+        guard contains(id) || isDetached(id) else { return nil }
         return specs[id]
     }
 
