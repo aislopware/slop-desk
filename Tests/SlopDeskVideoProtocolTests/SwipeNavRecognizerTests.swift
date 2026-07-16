@@ -228,10 +228,33 @@ final class SwipeNavRecognizerTests: XCTestCase {
     }
 
     func testSlowArcFailsTheHarderDominance() {
-        // Σ=(202,60): 3.4× passes the flick's 3× but NOT the slow tier's 4× — over a long
-        // gesture the hand has time to wander, and a wandering 2-D content pan must not
-        // navigate even with big horizontal travel.
+        // Σ=(202,60): 3.4× passes the flick's 3× but NOT the slow tier's 4×, and 202 is short
+        // of the 240 relaxed-dominance line — over a long gesture the hand has time to wander,
+        // and a wandering 2-D content pan must not navigate on moderate horizontal travel.
         XCTAssertNil(run(deltas: Array(repeating: (dx: 25.0, dy: 7.5), count: 8), t0: 100, endedAt: 100.6))
+    }
+
+    func testFieldWobblySlowSwipeFiresOnGraduatedDominance() {
+        // The field shape the whole-gesture 4× rejected: dur≈860 ms, Σ=(354,−156) — a
+        // deliberate slow back-swipe whose late vertical wobble drops dominance to 2.3×.
+        // Native decides the axis at onset and forgives the wobble; past the 3×-fire travel
+        // line the graduated rule does too.
+        XCTAssertEqual(
+            run(deltas: Array(repeating: (dx: 44.0, dy: -19.5), count: 8), t0: 100, endedAt: 100.86),
+            .back,
+        )
+    }
+
+    func testGraduatedRelaxationStillNeedsTripleTravel() {
+        // Σ=(220,−100): 2.2× dominance fails the full rule, and 220 < 240 keeps the relaxed
+        // rule out of reach — a modest wobbly drag must not ride the relaxation.
+        XCTAssertNil(run(deltas: Array(repeating: (dx: 27.25, dy: -12.5), count: 8), t0: 100, endedAt: 100.6))
+    }
+
+    func testGraduatedRelaxationStillNeedsDoubleDominance() {
+        // Σ=(300,−160): huge travel but 1.9× dominance — a diagonal 2-D exploration, not a
+        // nav swipe. Below 2× nothing fires regardless of commitment.
+        XCTAssertNil(run(deltas: Array(repeating: (dx: 37.25, dy: -20.0), count: 8), t0: 100, endedAt: 100.6))
     }
 
     func testSlowBoundaryTravelAndDominanceFire() {
@@ -433,19 +456,20 @@ final class SwipeNavRecognizerTests: XCTestCase {
         // A reordered momentum-CONTINUE from the previous gesture's tail lands inside a live
         // long pan. Running the lift decision there would reset the candidate and re-synthesise
         // the pan's remainder into a flick-shaped segment that FIRES (review-reproduced on a
-        // 700 ms pan). The stray must leave the candidate intact — the WHOLE pan (Σ=(250,70),
-        // 3.6× < the slow tier's 4×) then rejects at its real ended, exactly as without the
-        // stray; only the chopped tail segment (Σ=(85,2), 150 ms) would qualify.
+        // 700 ms pan). The stray must leave the candidate intact — the WHOLE pan (Σ=(245,146),
+        // 1.7× — a genuine 2-D exploration, below even the relaxed 2×) then rejects at its
+        // real ended, exactly as without the stray; only the chopped tail segment (Σ=(80,6),
+        // 150 ms, 13×) would qualify as a flick.
         var rec = SwipeNavRecognizer()
         XCTAssertNil(rec.ingest(dx: 5, dy: 0, scrollPhase: 1, momentumPhase: 0, continuous: true, now: 100))
         for i in 0..<4 {
             XCTAssertNil(rec.ingest(
-                dx: 40, dy: 17, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.1 + Double(i) * 0.1,
+                dx: 40, dy: 35, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.1 + Double(i) * 0.1,
             ))
         }
         XCTAssertNil(rec.ingest(dx: 3, dy: 0, scrollPhase: 0, momentumPhase: 2, continuous: true, now: 100.5))
-        XCTAssertNil(rec.ingest(dx: 40, dy: 1, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.55))
-        XCTAssertNil(rec.ingest(dx: 40, dy: 1, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.65))
+        XCTAssertNil(rec.ingest(dx: 40, dy: 3, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.55))
+        XCTAssertNil(rec.ingest(dx: 40, dy: 3, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.65))
         XCTAssertNil(rec.ingest(dx: 5, dy: 0, scrollPhase: 4, momentumPhase: 0, continuous: true, now: 100.7))
     }
 
@@ -544,14 +568,38 @@ final class SwipeNavRecognizerTests: XCTestCase {
         XCTAssertEqual(rec.liveCandidate(now: 100.7)?.wouldFireAtLift, true)
     }
 
-    func testLiveCandidateSlowTierAppliesHarderDominance() {
+    func testLiveCandidateSlowTierGraduatedDominanceMirror() {
         var rec = SwipeNavRecognizer()
         XCTAssertNil(rec.ingest(dx: 2, dy: 0, scrollPhase: 1, momentumPhase: 0, continuous: true, now: 100))
         // Σ = (202, 60) → 3.4×: clears the flick's 3× inside the window…
         XCTAssertNil(rec.ingest(dx: 200, dy: 60, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.2))
         XCTAssertEqual(rec.liveCandidate(now: 100.2)?.wouldFireAtLift, true)
-        // …but fails the slow tier's 4× past the window → feedback retracts to 0.
-        XCTAssertEqual(rec.liveCandidate(now: 100.6)?.progress, 0)
+        // …and past the window sits BETWEEN the slow dominances (2×…4×): the fill re-bases on
+        // the farther relaxed line (240) it must actually reach — honest, not a retract.
+        let slow = rec.liveCandidate(now: 100.6)
+        XCTAssertEqual(slow?.progress, 202.0 / 240.0)
+        XCTAssertEqual(slow?.wouldFireAtLift, false)
+        // More travel flips FULL dominance back on (Σ=(242,60) → 4.03×) → primary rule commits.
+        XCTAssertNil(rec.ingest(dx: 40, dy: 0, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.7))
+        XCTAssertEqual(rec.liveCandidate(now: 100.7)?.wouldFireAtLift, true)
+    }
+
+    func testLiveCandidateSlowTierRelaxedCommitAndSubTwoDominanceZero() {
+        // A wobbly-but-committed candidate (Σ=(245,−110) → 2.2×, ≥240) commits via the
+        // relaxed rule — exactly what the lift would fire…
+        var rec = SwipeNavRecognizer()
+        XCTAssertNil(rec.ingest(dx: 2, dy: 0, scrollPhase: 1, momentumPhase: 0, continuous: true, now: 100))
+        XCTAssertNil(rec.ingest(dx: 243, dy: -110, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.6))
+        let relaxed = rec.liveCandidate(now: 100.6)
+        XCTAssertEqual(relaxed?.progress, 1)
+        XCTAssertEqual(relaxed?.wouldFireAtLift, true)
+        // …while below 2× the feedback stays dark however big the travel (Σ=(300,−160) → 1.9×).
+        var diagonal = SwipeNavRecognizer()
+        XCTAssertNil(diagonal.ingest(dx: 2, dy: 0, scrollPhase: 1, momentumPhase: 0, continuous: true, now: 100))
+        XCTAssertNil(diagonal.ingest(dx: 298, dy: -160, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.6))
+        let dark = diagonal.liveCandidate(now: 100.6)
+        XCTAssertEqual(dark?.progress, 0)
+        XCTAssertEqual(dark?.wouldFireAtLift, false)
     }
 
     func testLiveCandidateRetractsWhenSlowTierDisabled() {
