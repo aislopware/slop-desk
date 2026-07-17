@@ -2372,6 +2372,38 @@ public final class WorkspaceStore {
         reconcileTree()
     }
 
+    /// Reattaches detached pane `target` BESIDE leaf `anchor` — the drag-to-merge commit: the satellite
+    /// window's grab strip dropped on an edge band of a tree pane (a sidebar-row drop uses the row's pane
+    /// as the anchor). KEEPS `PaneID`, so reconcile is a registry no-op (the live session survives; only
+    /// the view remounts in the main window). ONE reconcile, fired from the gesture's `.onEnded`. No-op if
+    /// `target` is not detached, `anchor` is absent / in another session, or the insert would breach the
+    /// depth ceiling.
+    public func reattachPaneTree(_ target: PaneID, beside anchor: PaneID, axis: SplitAxis, before: Bool) {
+        let next = WorkspaceTreeOps.reattachPane(target, beside: anchor, axis: axis, before: before, in: tree)
+        guard next != tree else { return }
+        tree = next
+        reconcileTree()
+    }
+
+    /// Reattaches detached pane `target` at the ACTIVE tab's outermost `edge` — the drag-to-merge gutter
+    /// drop on the main canvas. KEEPS `PaneID` (no surface teardown); ONE reconcile on release. No-op if
+    /// `target` is not detached / its session is not active / the dock would breach the depth ceiling.
+    public func reattachPaneToActiveTabRootEdgeTree(_ target: PaneID, edge: PaneDropEdge) {
+        let next = WorkspaceTreeOps.reattachPane(target, toActiveTabRootEdge: edge, in: tree)
+        guard next != tree else { return }
+        tree = next
+        reconcileTree()
+    }
+
+    /// Reattaches detached pane `target` into a FRESH tab (the drag-to-merge "New Tab" drop). KEEPS
+    /// `PaneID` (no surface teardown); ONE reconcile on release. No-op if `target` is not detached.
+    public func reattachPaneToNewTabTree(_ target: PaneID) {
+        let next = WorkspaceTreeOps.reattachPaneToNewTab(target, in: tree)
+        guard next != tree else { return }
+        tree = next
+        reconcileTree()
+    }
+
     /// Reattaches every detached pane (the "Reattach All Panes" menu/palette action).
     public func reattachAllPanes() {
         for entry in detachedPanes {

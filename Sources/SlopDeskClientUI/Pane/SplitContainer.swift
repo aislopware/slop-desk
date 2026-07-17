@@ -24,6 +24,10 @@ struct SplitContainer: View {
     let store: WorkspaceStore
     /// EAGER/STATIC render path for headless ImageRenderer snapshots.
     var staticMirror: Bool = false
+    /// The cross-container drag rendezvous — lets the in-canvas grab handle resolve SIDEBAR / tear-off
+    /// destinations once the cursor leaves this hosting view, and lets a satellite-origin drag preview
+    /// its canvas landing here. `nil` (previews / iOS / static path) keeps the drag canvas-only.
+    var paneDrag: PaneDragCoordinator?
 
     /// Live pane-move drag (grab-handle). View-local: the store is untouched until release, so the
     /// terminal-grid / remote-window redraw fires once on commit, not per drag frame.
@@ -71,10 +75,31 @@ struct SplitContainer: View {
             // Report the full container bounds — the geometric ops' fallback before the first solved-layout
             // report. View-only — never reconciles. Skipped on the static snapshot path. Fires ONCE at the
             // container level, not per tab.
-            .onAppear { if !staticMirror { store.updateContainerBounds(bounds) } }
-            .onChange(of: bounds) { _, newBounds in if !staticMirror { store.updateContainerBounds(newBounds) } }
+            .onAppear { if !staticMirror { reportContainerBounds(bounds) } }
+            .onChange(of: bounds) { _, newBounds in if !staticMirror { reportContainerBounds(newBounds) } }
         }
         .background(NativePaneColor.window)
+        #if os(macOS)
+            // Register this canvas's SCREEN rect (and, through it, the main window frame — the tear-off
+            // boundary) with the drag coordinator, so sidebar/satellite drags can hit-test it.
+            .background(canvasFrameReader)
+        #endif
+    }
+
+    #if os(macOS)
+    @ViewBuilder
+    private var canvasFrameReader: some View {
+        if let paneDrag, !staticMirror {
+            DropTargetFrameReader(key: .canvas, coordinator: paneDrag)
+        }
+    }
+    #endif
+
+    /// Push the container bounds to the store (the geometric ops' fallback) AND the drag coordinator
+    /// (the canvas-local space a satellite-origin drag resolves its insert zones in).
+    private func reportContainerBounds(_ bounds: CGRect) {
+        store.updateContainerBounds(bounds)
+        paneDrag?.canvasBounds = bounds
     }
 
     /// One tab's pane tree, placed absolutely in a ZStack. Rendered for EVERY tab; the caller hides +
@@ -127,6 +152,12 @@ struct SplitContainer: View {
                 // Grab-handles + the live drag overlay (extracted to keep this ZStack type-checkable).
                 moveLayer(leaves: layout.leaves, frames: frames, container: bounds)
                     .zIndex(Self.moveZ)
+                // The landing preview for a drag that STARTED elsewhere (a satellite window's grab
+                // strip) — same zone visuals, driven by the coordinator's published destination.
+                if let paneDrag, !staticMirror {
+                    ExternalDropZonePreview(coordinator: paneDrag, frames: frames, container: bounds)
+                        .zIndex(Self.moveZ)
+                }
             }
         }
         .frame(width: bounds.width, height: bounds.height, alignment: .topLeading)
@@ -141,10 +172,13 @@ struct SplitContainer: View {
     }
 
     /// Forwards the active tab's solved frames to `store.updateSolvedLayout` (a hidden tab / the static
-    /// snapshot path never reports — the store must only ever hold the geometry the user actually sees).
+    /// snapshot path never reports — the store must only ever hold the geometry the user actually sees)
+    /// and mirrors them to the drag coordinator so a satellite-origin drag resolves its canvas insert
+    /// zones against the same live geometry.
     private func reportSolvedLayout(_ frames: [PaneID: CGRect], isActive: Bool) {
         guard isActive, !staticMirror, !frames.isEmpty else { return }
         store.updateSolvedLayout(SolvedLayout(frames: frames))
+        paneDrag?.canvasFrames = frames
     }
 
     /// The z-index band the compositor ZStack stacks by: panes at the base (0), then the divider layer,
@@ -192,15 +226,17 @@ struct SplitContainer: View {
         .position(x: handle.rect.midX, y: handle.rect.midY)
     }
 
-    /// The pane move affordance: a top grab handle per leaf (≥2 leaves only) plus the live drag overlay.
-    /// Skipped entirely on the static snapshot path.
+    /// The pane move affordance: a top grab handle per leaf plus the live drag overlay. With a drag
+    /// coordinator wired even a SOLE leaf gets its handle — a lone pane has no in-tab target, but it can
+    /// still leave: onto a sidebar row, the New-Tab slot, or out of the window entirely. Skipped
+    /// entirely on the static snapshot path.
     @ViewBuilder
     private func moveLayer(
         leaves: [SplitTreeRenderModel.PlacedLeaf],
         frames: [PaneID: CGRect],
         container: CGRect,
     ) -> some View {
-        if !staticMirror, leaves.count > 1 {
+        if !staticMirror, leaves.count > 1 || paneDrag != nil {
             ForEach(leaves, id: \.id) { leaf in
                 moveHandle(for: leaf, leaves: leaves, container: container)
             }
@@ -228,20 +264,22 @@ struct SplitContainer: View {
             leafSize: leaf.rect.size,
             isDragging: move?.source == leaf.id,
             onChanged: { loc in
-                move = PaneMoveDrag(
-                    source: leaf.id,
-                    location: loc,
-                    zone: resolveZone(
-                        at: loc, leaves: leaves, container: container, source: leaf.id, sourceRect: leaf.rect,
-                    ),
-                )
-            },
-            onEnded: { loc in
-                let zone = resolveZone(
+                let dest = dragDestination(
                     at: loc, leaves: leaves, container: container, source: leaf.id, sourceRect: leaf.rect,
                 )
-                commit(zone, source: leaf.id)
+                // The local overlay draws only the CANVAS zones; an external destination reads `.none`
+                // here (its cursor chip is clipped at the hosting-view edge anyway — the coordinator's
+                // floating panel + the sidebar highlights are the affordance out there).
+                move = PaneMoveDrag(source: leaf.id, location: loc, zone: Self.canvasZone(of: dest))
+                publishTreeDrag(dest, source: leaf.id, local: loc)
+            },
+            onEnded: { loc in
+                let dest = dragDestination(
+                    at: loc, leaves: leaves, container: container, source: leaf.id, sourceRect: leaf.rect,
+                )
+                commitDestination(dest, source: leaf.id, local: loc)
                 move = nil
+                paneDrag?.end()
             },
             onTap: { store.focusPaneTree(leaf.id) },
         )
@@ -267,6 +305,74 @@ struct SplitContainer: View {
         }
     }
 
+    /// The FULL destination for a tree drag at canvas-local `loc`: inside the canvas the live in-tab
+    /// resolution applies unchanged; outside it, the coordinator's registered targets (sidebar rows,
+    /// the New-Tab slot, the tear-off boundary) take over. Without a coordinator (previews / iOS) the
+    /// gesture stays canvas-only, exactly the old behaviour.
+    private func dragDestination(
+        at loc: CGPoint,
+        leaves: [SplitTreeRenderModel.PlacedLeaf],
+        container: CGRect,
+        source: PaneID,
+        sourceRect: CGRect,
+    ) -> PaneDragDestination {
+        if container.contains(loc) || paneDrag == nil {
+            return .canvas(resolveZone(
+                at: loc, leaves: leaves, container: container, source: source, sourceRect: sourceRect,
+            ))
+        }
+        guard let paneDrag, let canvas = paneDrag.targetFrame(.canvas) else { return .canvas(.none) }
+        return paneDrag.resolveTreeExternalDestination(
+            at: PaneDragResolver.screenPoint(fromCanvasLocal: loc, canvas: canvas),
+            source: source,
+            sourceIsSoleLeafOfItsTab: leaves.count <= 1,
+        )
+    }
+
+    /// Mirror the live tree drag to the coordinator — the sidebar highlights / New-Tab slot / floating
+    /// chip all render off this one published state.
+    private func publishTreeDrag(_ dest: PaneDragDestination, source: PaneID, local: CGPoint) {
+        guard let paneDrag, let canvas = paneDrag.targetFrame(.canvas) else { return }
+        paneDrag.update(
+            source: source,
+            origin: .tree,
+            screenPoint: PaneDragResolver.screenPoint(fromCanvasLocal: local, canvas: canvas),
+            destination: dest,
+        )
+    }
+
+    /// Commits the FULL destination with exactly ONE store op. `.canvas` keeps the original in-tab
+    /// vocabulary; the external destinations map onto the (PaneID-preserving) cross-tab / detach ops,
+    /// so no surface tears down on any path.
+    private func commitDestination(_ dest: PaneDragDestination, source: PaneID, local: CGPoint) {
+        switch dest {
+        case let .canvas(zone):
+            commit(zone, source: source)
+        case let .sidebarRow(anchor):
+            store.moveLeafAcrossTabsTree(source, beside: anchor, axis: .horizontal, before: false)
+        case .newTab:
+            store.breakPaneToTab(source)
+        case .tearOff:
+            // Record the drop point FIRST — the detach op's `detachedPanes` change synchronously drives
+            // the satellite coordinator, which consumes the placement when it opens the window.
+            if let paneDrag, let canvas = paneDrag.targetFrame(.canvas) {
+                paneDrag.recordPlacement(
+                    source, at: PaneDragResolver.screenPoint(fromCanvasLocal: local, canvas: canvas),
+                )
+            }
+            store.detachPaneToWindow(source)
+        case .none:
+            break
+        }
+    }
+
+    /// The in-canvas zone a full destination carries (`.none` for every external destination — the
+    /// local overlay must not preview a drop that will land outside this canvas).
+    static func canvasZone(of dest: PaneDragDestination) -> PaneDropZone {
+        if case let .canvas(zone) = dest { return zone }
+        return .none
+    }
+
     // MARK: - Drop-zone resolution (container gutter > target edge band > target centre)
 
     /// Resolves the cursor `location` to the drop action a release would commit. Precedence: the container
@@ -281,11 +387,11 @@ struct SplitContainer: View {
     ) -> PaneDropZone {
         // 1) Container outer gutter → dock. Suppress an edge the source ALREADY fully spans (docking there is
         //    a visual no-op — also keeps grabbing the top/edge pane from instantly previewing a dock).
-        if let edge = Self.containerEdge(at: location, container: container, sourceRect: sourceRect) {
+        if let edge = PaneDropGeometry.containerEdge(at: location, container: container, sourceRect: sourceRect) {
             return .dock(edge: edge)
         }
         // 2) Over a target leaf (not the source): centre → swap, edge band → re-split.
-        guard let (target, rect) = Self.leaf(at: location, in: leaves, excluding: source),
+        guard let (target, rect) = PaneDropGeometry.leaf(at: location, in: leaves, excluding: source),
               rect.width > 0, rect.height > 0
         else {
             return .none
@@ -298,85 +404,37 @@ struct SplitContainer: View {
         if inCentreX, inCentreY {
             return .swap(target: target)
         }
-        return .resplit(target: target, edge: Self.dominantEdge(u: u, v: v, band: band))
+        return .resplit(target: target, edge: PaneDropGeometry.dominantEdge(u: u, v: v, band: band))
     }
+}
 
-    /// The first leaf (in solver DFS order) whose rect contains `location`, excluding the dragged `source`
-    /// (`nil` for an INSERT drag — a rail-window drop has no source pane to exclude). Iterating the ORDERED
-    /// leaves (not the unordered `frames` dict) keeps the resolved target deterministic if a min-clamped,
-    /// over-subscribed layout ever overlaps two rects.
-    private static func leaf(
-        at location: CGPoint,
-        in leaves: [SplitTreeRenderModel.PlacedLeaf],
-        excluding source: PaneID?,
-    ) -> (PaneID, CGRect)? {
-        for placed in leaves where placed.id != source && placed.rect.contains(location) {
-            return (placed.id, placed.rect)
-        }
-        return nil
-    }
+/// The canvas-side landing preview for a drag that STARTED elsewhere (a satellite window's grab
+/// strip): draws the coordinator's resolved insert zone with the SAME static previews the in-canvas
+/// overlay uses (one drop vocabulary). Reads only the PUBLISHED drag, so it re-renders on destination
+/// transitions — never per cursor frame.
+private struct ExternalDropZonePreview: View {
+    let coordinator: PaneDragCoordinator
+    let frames: [PaneID: CGRect]
+    let container: CGRect
 
-    /// The container outer edge whose gutter contains `location` (deepest wins; tie → a vertical left/right
-    /// edge), or `nil` if the cursor is in no gutter. An edge the `sourceRect` already fully spans is skipped
-    /// (docking there changes nothing); `nil` for an INSERT drag — every edge is meaningful then.
-    private static func containerEdge(
-        at location: CGPoint, container: CGRect, sourceRect: CGRect?,
-    ) -> PaneDropEdge? {
-        guard container.width > 0, container.height > 0 else { return nil }
-        let gutter = Double.minimum(
-            Double(PaneDropMetrics.containerGutterMax),
-            Double.minimum(Double(container.width), Double(container.height))
-                * Double(PaneDropMetrics.containerGutterFraction),
-        )
-        let distances: [(edge: PaneDropEdge, dist: CGFloat)] = [
-            (.left, location.x - container.minX),
-            (.right, container.maxX - location.x),
-            (.top, location.y - container.minY),
-            (.bottom, container.maxY - location.y),
-        ]
-        var best: (edge: PaneDropEdge, dist: CGFloat)?
-        for entry in distances {
-            if let sourceRect, sourceSpans(sourceRect, entry.edge, container) { continue }
-            guard entry.dist >= 0, Double(entry.dist) <= gutter else { continue }
-            // Deepest into the gutter (smallest distance) wins; iteration order left,right,top,bottom makes a
-            // vertical edge win an exact tie (matches the default mental model).
-            if let current = best {
-                if entry.dist < current.dist { best = entry }
-            } else {
-                best = entry
+    var body: some View {
+        if let drag = coordinator.drag, drag.origin == .detached,
+           case let .canvas(zone) = drag.destination
+        {
+            Group {
+                switch zone {
+                case let .swap(target):
+                    if let rect = frames[target] { PaneMoveOverlay.washPreview(rect) }
+                case let .resplit(target, edge):
+                    if let rect = frames[target] { PaneMoveOverlay.slabPreview(in: rect, edge: edge) }
+                case let .dock(edge):
+                    PaneMoveOverlay.railPreview(in: container, edge: edge)
+                case .none:
+                    EmptyView()
+                }
             }
+            .allowsHitTesting(false)
         }
-        return best?.edge
-    }
-
-    /// Whether `rect` already fully spans the container `edge` (so docking the pane there would be a no-op).
-    private static func sourceSpans(_ rect: CGRect, _ edge: PaneDropEdge, _ container: CGRect) -> Bool {
-        let eps: CGFloat = 1
-        switch edge {
-        case .left:
-            return rect.minX <= container.minX + eps && rect.height >= container.height - eps
-        case .right:
-            return rect.maxX >= container.maxX - eps && rect.height >= container.height - eps
-        case .top:
-            return rect.minY <= container.minY + eps && rect.width >= container.width - eps
-        case .bottom:
-            return rect.maxY >= container.maxY - eps && rect.width >= container.width - eps
-        }
-    }
-
-    /// The edge band the cursor (normalized `u`,`v` in the target) has penetrated deepest. Called only when
-    /// the cursor is NOT in the centre box, so at least one penetration is positive. Exact tie → a vertical
-    /// (left/right) edge.
-    private static func dominantEdge(u: CGFloat, v: CGFloat, band: CGFloat) -> PaneDropEdge {
-        let penetrations: [(edge: PaneDropEdge, pen: CGFloat)] = [
-            (.left, band - u),
-            (.right, u - (1 - band)),
-            (.top, band - v),
-            (.bottom, v - (1 - band)),
-        ]
-        var best = penetrations[0]
-        for entry in penetrations.dropFirst() where entry.pen > best.pen { best = entry }
-        return best.edge
     }
 }
 #endif

@@ -1165,3 +1165,42 @@ Fixes, none touching the wire:
   framework default — a mid-walk beachball could stretch one rescan to multi-second latch-held
   stalls (kicker frozen for ALL sessions). Cached pair elements are the same stamped refs, so
   every later `readEnabled` is capped too. Truncated scan ⇒ UNKNOWN, fail open.
+
+## Free pane drag: one grab-handle gesture moves a pane anywhere — across tabs, into a fresh tab, out to its own window, and back (2026-07-17)
+
+The pane grab-handle drag could only rearrange the CURRENT tab (swap / re-split / dock). Getting a
+pane anywhere else took keyboard verbs (⌃⌘T break-to-tab, ⌥⌘P detach) — and merging a satellite
+back landed it wherever `reattachPane`'s origin-tab default chose, never where you pointed. The
+domain layer already spoke cross-tab (the orphaned rail-drag ops `moveLeafAcrossTabs` /
+`moveLeafToActiveTabRootEdge` — deleted UI, surviving tested ops); the ONE drag gesture now reaches
+all of it:
+
+- ✅ **Destination superset** (`PaneDragDestination`): inside the canvas the existing zones apply
+  unchanged; past the hosting-view edge the drag resolves a SIDEBAR ROW (move BESIDE that row's
+  pane, its tab revealed — `moveLeafAcrossTabsTree`), the drag-only **New-Tab slot** pinned above
+  the sidebar footer (`breakPaneToTab`), or — released outside the main window — **tear-off**: the
+  pane detaches into its satellite window opened AT THE DROP POINT (placement handed to
+  `SatelliteWindowsCoordinator` through the drag coordinator, replacing the centre-cascade for
+  drag-born satellites). Sole-leaf panes get the handle too (their exits are exactly these
+  external targets); their New-Tab drop reads `.none` — breaking a lone-leaf tab out is the
+  identity op.
+- ✅ **Merge-back is the same gesture from the satellite**: a hover-revealed grab strip at the
+  satellite's top edge drags with INSERT semantics — over the canvas every leaf is edge-band only
+  (band 0.5, no swap, no dead centre — `PaneDragResolver.insertZone`), the gutter docks full-span,
+  sidebar rows / New-Tab work as above — via three new PaneID-preserving ops
+  `reattachPane(beside:)` / `(toActiveTabRootEdge:)` / `reattachPaneToNewTab` (reattach still
+  no-ops sooner than crossing a session's spec side table or breaching `maxDepth`).
+- ✅ **Why a coordinator, not SwiftUI DnD**: sidebar | content are separate `NSHostingController`s
+  and satellites are separate windows — no coordinate space or `.onDrop` crosses those seams (the
+  docs/45 lesson). `PaneDragCoordinator` is the rendezvous: targets register LAZY screen-rect
+  providers (a weak-NSView closure each — nothing publishes per layout), the drag publishes only
+  destination TRANSITIONS (`@ObservationIgnored` cursor), and hit-testing is the pure
+  `PaneDragResolver` over plain rects (row hits clipped to the list viewport so LazyVStack's
+  mounted-but-scrolled-away rows never shadow a target; no window frame ⇒ never tear off on a
+  guess). Row highlight / slot / canvas landing preview are cheap observation leaves; past the
+  canvas clip the cursor affordance is a borderless non-activating `NSPanel` chip (AppKit-moved
+  per frame, SwiftUI-swapped per transition) speaking the same capsule voice as the in-canvas
+  ghost chip.
+- Every path commits ONE store op on release and keeps the `PaneID` — reconcile stays a registry
+  no-op, so the PTY / video stream survives every hop (tab ↔ tab is pure geometry; tab ↔ satellite
+  remounts only the view).

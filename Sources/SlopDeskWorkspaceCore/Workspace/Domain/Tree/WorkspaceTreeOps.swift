@@ -972,6 +972,90 @@ public enum WorkspaceTreeOps {
         return copy
     }
 
+    /// Reattaches detached pane `target` BESIDE leaf `anchor` along `axis` — the drag-to-merge commit: the
+    /// satellite window's grab strip dropped on an edge band of a tree pane (or a sidebar row). The
+    /// detached entry is removed and the pane re-inserted as `anchor`'s sibling, KEEPING its `PaneID` so
+    /// reconcile is a registry no-op (the live PTY / video session survives; only the view remounts back
+    /// in the main window). The destination is revealed: session selected, anchor's tab selected, pane
+    /// focused, zoom exited. No-op if `target` is not detached, `anchor` is absent, `anchor` lives in a
+    /// DIFFERENT session (the spec cannot leave its session's side table), or the insert would breach
+    /// ``SplitNode/maxDepth``. Preserves the **specs invariant** (the spec never left the side table).
+    public static func reattachPane(
+        _ target: PaneID,
+        beside anchor: PaneID,
+        axis: SplitAxis,
+        before: Bool,
+        in ws: TreeWorkspace,
+    ) -> TreeWorkspace {
+        guard let sIdx = ws.sessions.firstIndex(where: { $0.isDetached(target) }),
+              let (anchorSession, anchorTab) = locate(anchor, in: ws), anchorSession == sIdx
+        else { return ws }
+        var copy = ws
+        var session = copy.sessions[sIdx]
+        var tab = session.tabs[anchorTab]
+        // Validate the insert BEFORE dropping the detached entry, so a rejected drop leaves `ws` intact.
+        guard let grown = tab.root.inserting(target, beside: anchor, axis: axis, before: before),
+              grown.depth <= SplitNode.maxDepth
+        else { return ws }
+        session.detached.removeAll { $0.pane == target }
+        tab.root = grown
+        tab.activePane = target
+        tab.zoomedPane = nil
+        session.tabs[anchorTab] = tab
+        session.activeTabIndex = anchorTab
+        copy.sessions[sIdx] = session
+        copy.activeSessionID = session.id
+        return copy
+    }
+
+    /// Reattaches detached pane `target` at the OUTERMOST `edge` of its session's ACTIVE tab — the
+    /// drag-to-merge gutter drop: the satellite window's grab strip dropped in the main canvas's outer
+    /// gutter, so the pane comes back as a full-span column/row of the tab on screen. KEEPS `PaneID`
+    /// (reconcile is a registry no-op — the live session survives). The active tab keeps selection with
+    /// `target` focused and zoom exited. No-op if `target` is not detached, its session is not the ACTIVE
+    /// session (the canvas the user dropped on renders the active session), or the root insert would
+    /// breach ``SplitNode/maxDepth``. Preserves the **specs invariant**.
+    public static func reattachPane(
+        _ target: PaneID,
+        toActiveTabRootEdge edge: PaneDropEdge,
+        in ws: TreeWorkspace,
+    ) -> TreeWorkspace {
+        guard let sIdx = ws.sessions.firstIndex(where: { $0.isDetached(target) }),
+              ws.activeSessionIndex == sIdx
+        else { return ws }
+        var copy = ws
+        var session = copy.sessions[sIdx]
+        guard session.tabs.indices.contains(session.activeTabIndex) else { return ws }
+        var tab = session.tabs[session.activeTabIndex]
+        let grown = tab.root.insertingAtRoot(target, axis: edge.axis, before: edge.insertsBefore)
+        guard grown.depth <= SplitNode.maxDepth else { return ws }
+        session.detached.removeAll { $0.pane == target }
+        tab.root = grown
+        tab.activePane = target
+        tab.zoomedPane = nil
+        session.tabs[session.activeTabIndex] = tab
+        copy.sessions[sIdx] = session
+        copy.activeSessionID = session.id
+        return copy
+    }
+
+    /// Reattaches detached pane `target` into a FRESH tab of its owning session (the drag-to-merge "New
+    /// Tab" drop — the satellite window's grab strip dropped on the sidebar's new-tab slot). The detached
+    /// entry is removed and a new tab holding the pane as its lone leaf is appended + selected, KEEPING
+    /// its `PaneID` (registry no-op). No-op if `target` is not detached anywhere. Preserves the **specs
+    /// invariant**.
+    public static func reattachPaneToNewTab(_ target: PaneID, in ws: TreeWorkspace) -> TreeWorkspace {
+        guard let sIdx = ws.sessions.firstIndex(where: { $0.isDetached(target) }) else { return ws }
+        var copy = ws
+        var session = copy.sessions[sIdx]
+        session.detached.removeAll { $0.pane == target }
+        session.tabs.append(Tab(root: .leaf(target), activePane: target))
+        session.activeTabIndex = session.tabs.count - 1
+        copy.sessions[sIdx] = session
+        copy.activeSessionID = session.id
+        return copy
+    }
+
     /// Closes DETACHED pane `target` for real: removes its ``Session/detached`` entry AND its spec, so
     /// the store's reconcile tears the live handle down. The close counterpart ``closePane(_:in:)`` only
     /// walks the tree — the store routes a close of a detached id here (PTY exit inside a satellite

@@ -46,6 +46,11 @@ struct NavigatorColumn: View {
     /// is COLLAPSED the titlebar hosts the trailing fallback (`SlateTitlebar`). Threaded in like
     /// `preferences`; `nil` (previews / iOS) omits the cluster.
     var connection: AppConnection?
+    /// The cross-container pane-drag rendezvous — makes every sidebar row a DROP TARGET for a live pane
+    /// drag (the pane moves BESIDE that row's pane, its tab revealed) and mounts the New-Tab drop slot
+    /// while a drag is in flight. Threaded in like `preferences` (the sidebar's `NSHostingController`
+    /// inherits no environment); `nil` (previews / iOS) leaves the rows plain.
+    var paneDrag: PaneDragCoordinator?
     /// Tapping the cluster opens the Connect-to-Host editor (``OverlayCoordinator/openConnect()``).
     var onConnect: () -> Void = {}
 
@@ -228,6 +233,15 @@ struct NavigatorColumn: View {
             }
             .scrollIndicators(.hidden) // scrollbars stay invisible for the flat sidebar look
             .frame(maxHeight: .infinity)
+            // The list VIEWPORT rect — a pane-drag row hit counts only inside it (LazyVStack keeps
+            // scrolled-away rows mounted, so a bare row rect could sit outside the visible clip).
+            .background(sidebarListFrameReader)
+
+            // The New-Tab drop slot: mounted (and its frame registered) only while a pane drag is in
+            // flight, pinned ABOVE the footer so it never needs scrolling into view.
+            if let paneDrag {
+                NewTabDropSlot(coordinator: paneDrag)
+            }
 
             // Connection footer — full-width status row under the tab list (ScrollView maxHeight: .infinity
             // pins this to the bottom). Hairline separates list from chrome; fillWidth so hover/hit read as
@@ -268,6 +282,26 @@ struct NavigatorColumn: View {
         // SELECTION — is read live inside the leaf; focus-only changes keep the same identity (no churn).
         .id(row.leafIdentity)
         .contextMenu { rowContextMenu(row) }
+        // Pane-drag drop target: register this row's screen rect (lazily — nothing publishes per
+        // layout) + draw the accent ring while it is the live drag's resolved destination.
+        .background(rowFrameReader(row.id))
+        .overlay(RowDropHighlight(coordinator: paneDrag, paneID: row.id))
+    }
+
+    /// The per-row screen-frame reader — a no-op without a drag coordinator (previews).
+    @ViewBuilder
+    private func rowFrameReader(_ paneID: PaneID) -> some View {
+        if let paneDrag {
+            DropTargetFrameReader(key: .sidebarRow(paneID), coordinator: paneDrag)
+        }
+    }
+
+    /// The sidebar list viewport reader — see the ScrollView mount above.
+    @ViewBuilder
+    private var sidebarListFrameReader: some View {
+        if let paneDrag {
+            DropTargetFrameReader(key: .sidebarList, coordinator: paneDrag)
+        }
     }
 
     private func emptyLabel(_ text: String) -> some View {
@@ -560,6 +594,61 @@ private struct IOSSidebarLiveRow: View {
         }
     }
 }
+
+#if os(macOS)
+/// The accent ring a sidebar row wears while it is the live pane drag's resolved destination. Its own
+/// leaf view so the per-transition Observation invalidation re-renders these cheap bodies only — never
+/// the sidebar body (which would re-derive the whole rail per destination change).
+private struct RowDropHighlight: View {
+    let coordinator: PaneDragCoordinator?
+    let paneID: PaneID
+
+    var body: some View {
+        if let coordinator, coordinator.drag?.destination == .sidebarRow(paneID) {
+            RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
+                .strokeBorder(Slate.State.accent, lineWidth: 2)
+                .allowsHitTesting(false)
+        }
+    }
+}
+
+/// The "New Tab" drop slot — mounted only while a pane drag is live (so its frame reader registers
+/// exactly for the drag's duration), pinned above the sidebar footer. Dropping here breaks the pane
+/// into its own fresh tab (`breakPaneToTab` for a tree pane, reattach-to-new-tab for a satellite).
+private struct NewTabDropSlot: View {
+    let coordinator: PaneDragCoordinator
+
+    var body: some View {
+        if let drag = coordinator.drag {
+            let active = drag.destination == .newTab
+            HStack(spacing: 6) {
+                Spacer(minLength: 0)
+                Image(systemSymbol: .plusSquareOnSquare)
+                    .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+                Text("New Tab")
+                    .font(.system(size: Slate.Typeface.body, weight: .medium))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(active ? Slate.Text.primary : Slate.Text.secondary)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
+                    .fill(active ? Slate.State.accentMuted : Color.clear),
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
+                    .strokeBorder(
+                        active ? Slate.State.accent : Slate.Line.subtle,
+                        style: StrokeStyle(lineWidth: active ? 2 : 1, dash: [5, 4]),
+                    ),
+            )
+            .background(DropTargetFrameReader(key: .newTabZone, coordinator: coordinator))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+        }
+    }
+}
+#endif
 
 /// The sidebar's connection footer, split into its own leaf: the ``ConnectionTelemetry``
 /// reads tick at ~1 Hz off the live session models — read HERE so each tick re-renders this footer

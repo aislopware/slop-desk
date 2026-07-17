@@ -15,6 +15,10 @@ struct ContentColumn: View {
     /// Opens the Connect-to-Host editor — wired into the titlebar's connection-status cluster. The no-op
     /// default keeps the column standalone-mountable in previews.
     var onConnect: () -> Void = {}
+    /// The cross-container pane-drag rendezvous, threaded down to ``SplitContainer`` (the canvas is both
+    /// a drag SOURCE and — for satellite-origin drags — a drop target). `nil` (previews / iOS) keeps the
+    /// pane drag canvas-only.
+    var paneDrag: PaneDragCoordinator?
 
     private var hasActiveTab: Bool { store.tree.activeSession?.activeTab != nil }
 
@@ -53,7 +57,7 @@ struct ContentColumn: View {
     private var paneArea: some View {
         Group {
             if hasActiveTab {
-                SplitContainer(store: store)
+                SplitContainer(store: store, paneDrag: paneDrag)
             } else {
                 // The Slate empty-state voice (MERIDIAN C3) — the cause names WHY the area is empty
                 // (not-connected vs link-down vs no-tabs) and carries the one next action.

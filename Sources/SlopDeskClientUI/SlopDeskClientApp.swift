@@ -95,6 +95,11 @@ public struct SlopDeskClientApp: App {
     /// ``WorkspaceStore/detachedPanes`` entry) — pure AppKit, never a second `WindowGroup`, so the
     /// single-workspace-window machinery (`windowBox` / chord dispatcher / close gate) is untouched.
     @State private var satelliteWindows = SatelliteWindowsCoordinator()
+    /// The cross-container pane-drag rendezvous: the sidebar rows, the canvas, and every satellite
+    /// window live in SEPARATE hosting views, so the free pane drag (move across tabs / break to a new
+    /// tab / tear off to a window / merge back) meets here. App-owned like `chrome`; its `store` weak
+    /// ref is bound in `init`.
+    @State private var paneDrag = PaneDragCoordinator()
     #endif
     @Environment(\.scenePhase) private var scenePhase
     @State private var lifecycleTask: Task<Void, Never>?
@@ -596,6 +601,7 @@ public struct SlopDeskClientApp: App {
             // chord for `.pinWindow` flips the SAME `chrome.pinned` the menu Button + the `NSWindow.level` glue
             // read, through the one NSEvent monitor that owns every chord.
             installPinToggle: { [keyDispatcher] toggle in keyDispatcher.setTogglePinWindow(toggle) },
+            paneDrag: paneDrag,
         )
         // Bind the coordinator's `openSettingsAction` to the SwiftUI `openSettings`
         // environment action so the palette "Open Settings" row + the agent footer hook open the stock
@@ -801,10 +807,15 @@ public struct SlopDeskClientApp: App {
                 // (v1: they don't persist as windows), so the initial sync is normally a no-op — kept for
                 // the automation/replay paths that could restore a mid-detach state.
                 .onChange(of: store.detachedPanes) { _, panes in
-                    satelliteWindows.sync(panes, store: store, decorate: decorateSatelliteRoot)
+                    satelliteWindows.sync(panes, store: store, paneDrag: paneDrag, decorate: decorateSatelliteRoot)
                 }
                 .task {
-                    satelliteWindows.sync(store.detachedPanes, store: store, decorate: decorateSatelliteRoot)
+                    // Late-bind the drag coordinator's weak store (chip labels + destination gating) —
+                    // `@State` objects cannot reference each other at property-init time.
+                    paneDrag.store = store
+                    satelliteWindows.sync(
+                        store.detachedPanes, store: store, paneDrag: paneDrag, decorate: decorateSatelliteRoot,
+                    )
                 }
             #endif
         }

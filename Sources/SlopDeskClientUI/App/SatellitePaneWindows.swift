@@ -47,10 +47,15 @@ final class SatelliteWindowKeyState {
 /// The satellite window's content: the SAME leaf UI a split-tree slot mounts (``PaneContainer`` routes
 /// terminal / video by kind), sized by the window, focused iff the window is key, always on-screen
 /// (`isVisible: true` — a satellite has no tab to hide behind; miniaturizing keeps streaming, v1).
+/// A hover-revealed grab strip at the top is the MERGE-BACK affordance: drag it onto the main canvas
+/// (insert beside / dock), a sidebar row, or the New-Tab slot — the same pill + drop vocabulary as the
+/// in-canvas pane move.
 struct SatellitePaneRootView: View {
     let store: WorkspaceStore
     let paneID: PaneID
     let keyState: SatelliteWindowKeyState
+    /// The cross-container drag rendezvous — `nil` (previews / no wiring) hides the grab strip.
+    var paneDrag: PaneDragCoordinator?
 
     var body: some View {
         GeometryReader { proxy in
@@ -64,6 +69,75 @@ struct SatellitePaneRootView: View {
         }
         .background(Slate.Surface.face)
         .ignoresSafeArea()
+        .overlay(alignment: .top) {
+            if let paneDrag {
+                SatelliteDragStrip(store: store, paneID: paneID, coordinator: paneDrag)
+            }
+        }
+    }
+}
+
+/// The satellite's top grab strip: the same hover-revealed `-` pill as ``PaneMoveHandle``, but the drag
+/// tracks the GLOBAL mouse location (`NSEvent.mouseLocation`) — the destinations live in other windows,
+/// so the local gesture coordinates are meaningless. Release commits ONE store op: reattach beside the
+/// canvas target / dock at the canvas edge / beside a sidebar row's pane / into a fresh tab; anything
+/// else cancels (the pane simply stays a satellite). Every path keeps the `PaneID`, so the live PTY /
+/// video session survives and only the view remounts.
+private struct SatelliteDragStrip: View {
+    let store: WorkspaceStore
+    let paneID: PaneID
+    let coordinator: PaneDragCoordinator
+
+    @State private var hovering = false
+    @State private var dragging = false
+
+    private var revealed: Bool { hovering || dragging }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                Capsule()
+                    .fill(dragging ? Slate.State.accent : Slate.Text.tertiary)
+                    .frame(width: 30, height: 4)
+                    .opacity(revealed ? 1 : 0)
+                    .scaleEffect(hovering && !dragging ? 1.15 : 1)
+            }
+            .frame(width: 160, height: 14)
+            .contentShape(Rectangle())
+            .onHover { hovering = $0 }
+            .pointerStyle(dragging ? .grabActive : .grabIdle)
+            .gesture(
+                DragGesture(minimumDistance: 2)
+                    .onChanged { _ in
+                        dragging = true
+                        coordinator.updateDetachedDrag(source: paneID)
+                    }
+                    .onEnded { _ in
+                        dragging = false
+                        commit(coordinator.takeDestination())
+                    },
+            )
+            .animation(Slate.Anim.dividerHover, value: revealed)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    /// ONE store op on release — the reattach twin of `SplitContainer.commitDestination`.
+    private func commit(_ destination: PaneDragDestination) {
+        switch destination {
+        case let .canvas(.resplit(target, edge)):
+            store.reattachPaneTree(paneID, beside: target, axis: edge.axis, before: edge.insertsBefore)
+        case let .canvas(.dock(edge)):
+            store.reattachPaneToActiveTabRootEdgeTree(paneID, edge: edge)
+        case let .sidebarRow(anchor):
+            store.reattachPaneTree(paneID, beside: anchor, axis: .horizontal, before: false)
+        case .newTab:
+            store.reattachPaneToNewTabTree(paneID)
+        case .canvas,
+             .tearOff,
+             .none:
+            break // already its own window — releasing anywhere else keeps it one
+        }
     }
 }
 
@@ -83,7 +157,10 @@ final class SatellitePaneWindowController: NSWindowController, NSWindowDelegate 
     /// `detachedPanes`) — `windowShouldClose` must let THAT close pass instead of re-running reattach.
     private var closingFromCoordinator = false
 
-    init(store: WorkspaceStore, paneID: PaneID, title: String, decorate: (AnyView) -> AnyView) {
+    init(
+        store: WorkspaceStore, paneID: PaneID, title: String, paneDrag: PaneDragCoordinator?,
+        decorate: (AnyView) -> AnyView,
+    ) {
         self.store = store
         self.paneID = paneID
         let window = SatellitePaneWindow(
@@ -97,7 +174,7 @@ final class SatellitePaneWindowController: NSWindowController, NSWindowDelegate 
         // The workspace window must survive every satellite: an `NSWindowController`-owned window
         // released on close mid-diff double-frees; the coordinator owns the lifetime instead.
         window.isReleasedWhenClosed = false
-        let root = SatellitePaneRootView(store: store, paneID: paneID, keyState: keyState)
+        let root = SatellitePaneRootView(store: store, paneID: paneID, keyState: keyState, paneDrag: paneDrag)
         window.contentView = NSHostingView(rootView: decorate(AnyView(root)))
         super.init(window: window)
         window.delegate = self
@@ -149,8 +226,13 @@ final class SatelliteWindowsCoordinator {
 
     /// One sync pass. `decorate` wraps each window's root with the scene-level environment (theme tint /
     /// colour scheme / preferences / overlay coordinator) — an `NSHostingView` root inherits NOTHING from
-    /// the main scene, so the app supplies the injection exactly once here.
-    func sync(_ detached: [DetachedPane], store: WorkspaceStore, decorate: (AnyView) -> AnyView) {
+    /// the main scene, so the app supplies the injection exactly once here. `paneDrag` (optional) wires
+    /// the grab strip into each satellite AND supplies the tear-off drop point: a pane detached by
+    /// DRAGGING it out of the main window opens under the cursor, not in the centre-cascade.
+    func sync(
+        _ detached: [DetachedPane], store: WorkspaceStore, paneDrag: PaneDragCoordinator? = nil,
+        decorate: (AnyView) -> AnyView,
+    ) {
         let desired = Set(detached.map(\.pane))
 
         // Close windows whose pane reattached or closed for real.
@@ -159,19 +241,31 @@ final class SatelliteWindowsCoordinator {
             controller.closeFromCoordinator()
         }
 
-        // Open a window per newly-detached pane, cascaded off centre.
+        // Open a window per newly-detached pane — at its recorded tear-off drop point when the detach
+        // came from a drag, else cascaded off centre.
         for entry in detached where controllers[entry.pane] == nil {
             let title = store.tree.spec(for: entry.pane)?.title ?? "Detached Pane"
             let controller = SatellitePaneWindowController(
-                store: store, paneID: entry.pane, title: title, decorate: decorate,
+                store: store, paneID: entry.pane, title: title, paneDrag: paneDrag, decorate: decorate,
             )
             if let window = controller.window {
-                cascadeStep = (cascadeStep + 1) % 8
-                let offset = CGFloat(cascadeStep) * 28
-                window.setFrameTopLeftPoint(NSPoint(
-                    x: window.frame.minX + offset,
-                    y: window.frame.maxY - offset,
-                ))
+                if let drop = paneDrag?.takePlacement(for: entry.pane) {
+                    // Land the window's top edge just above the drop point (screen coords are
+                    // bottom-left origin), roughly centred on the cursor — the pane appears to settle
+                    // where the user let go. AppKit clamps the frame onto the screen if the drop was
+                    // near an edge.
+                    window.setFrameTopLeftPoint(NSPoint(
+                        x: drop.x - window.frame.width / 2,
+                        y: drop.y + 24,
+                    ))
+                } else {
+                    cascadeStep = (cascadeStep + 1) % 8
+                    let offset = CGFloat(cascadeStep) * 28
+                    window.setFrameTopLeftPoint(NSPoint(
+                        x: window.frame.minX + offset,
+                        y: window.frame.maxY - offset,
+                    ))
+                }
             }
             controllers[entry.pane] = controller
             controller.showWindow(nil)

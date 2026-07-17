@@ -74,6 +74,11 @@ public struct WorkspaceRootView: View {
     /// Pin Window's primary entry is then the menu Button + palette.
     private let installPinToggle: ((@escaping () -> Void) -> Void)?
 
+    /// The cross-container pane-drag rendezvous — app-owned (like `chrome`) and threaded into the macOS
+    /// split host, which re-injects it into both hosted columns. `nil` (previews / iOS) keeps the pane
+    /// drag canvas-only.
+    private let paneDrag: PaneDragCoordinator?
+
     // INTERNAL init (not `public`): constructed only inside this module (`SlopDeskClientApp`), and `chrome`
     // is the internal `WorkspaceChromeState`. Keeps the chrome model internal (no public-API widening).
     init(
@@ -83,6 +88,7 @@ public struct WorkspaceRootView: View {
         chrome: WorkspaceChromeState,
         installSidebarToggle: ((@escaping () -> Void) -> Void)? = nil,
         installPinToggle: ((@escaping () -> Void) -> Void)? = nil,
+        paneDrag: PaneDragCoordinator? = nil,
     ) {
         self.store = store
         self.connection = connection
@@ -90,6 +96,7 @@ public struct WorkspaceRootView: View {
         self.chrome = chrome
         self.installSidebarToggle = installSidebarToggle
         self.installPinToggle = installPinToggle
+        self.paneDrag = paneDrag
     }
 
     /// The active tab's active pane's live session, if materialized — the source of the active pane's ping
@@ -114,7 +121,7 @@ public struct WorkspaceRootView: View {
         // (`SlateTitlebar`, inside `ContentColumn`) IS the chrome.
         WorkspaceSplitRepresentable(
             store: store, connection: connection, chrome: chrome, overlay: overlay,
-            preferences: preferencesStore,
+            preferences: preferencesStore, paneDrag: paneDrag,
         )
         .ignoresSafeArea()
         // The floating-overlay layer (palette / cheat sheet / connect / remote-window picker / toasts)
@@ -420,12 +427,16 @@ struct WorkspaceSplitRepresentable: NSViewControllerRepresentable {
     /// The NSHostingController columns do not inherit the WindowGroup environment, hence the explicit thread.
     /// `nil` (no scene injection / a preview) hides the row.
     let preferences: PreferencesStore?
+    /// The pane-drag rendezvous — forwarded into the controller like `preferences` (same
+    /// no-environment-inheritance reason).
+    let paneDrag: PaneDragCoordinator?
 
     func makeNSViewController(context _: Context) -> SlopDeskSplitViewController {
         SlopDeskSplitViewController(
             store: store, connection: connection, chrome: chrome, preferences: preferences,
             onConnect: { [overlay] in overlay.openConnect() },
             overlay: overlay,
+            paneDrag: paneDrag,
         )
     }
 
