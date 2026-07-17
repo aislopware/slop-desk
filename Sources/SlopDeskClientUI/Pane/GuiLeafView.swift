@@ -450,7 +450,10 @@ private struct GuiPaneControlBar: View {
                 GuiPastePlateMenu(model: model, store: store)
             }
             if let model, model.canResizeWindow {
-                SlatePlateButton(symbol: .arrowUpLeftAndArrowDownRight, help: "Resize remote window…") {
+                // The system window-resize glyph (dashed target square + arrow) — HOST window
+                // dimensions, deliberately NOT an arrows-only glyph so it can't be read as the
+                // client-side fit/zoom cluster.
+                SlatePlateButton(symbol: .squareResize, help: "Resize remote window…") {
                     showResizePopover = true
                 }
                 .popover(isPresented: $showResizePopover, arrowEdge: .bottom) {
@@ -482,7 +485,7 @@ private struct GuiPaneControlBar: View {
             // settings sink (withheld while read-only), like Resize.
             if let model, model.canAdjustStreamSettings {
                 SlatePlateButton(
-                    symbol: .speedometer,
+                    symbol: .gaugeWithDotsNeedle67percent,
                     help: "Stream quality — fps cap / bitrate ceiling…",
                     tint: (fpsCapSelection != 0 || bitrateCapMbpsSelection != 0)
                         ? Slate.State.accent : Slate.Text.icon,
@@ -503,8 +506,10 @@ private struct GuiPaneControlBar: View {
             // while the sink is withheld so the user can always turn it OFF.
             #if os(macOS)
             if let model, model.canInjectSystemKeys || immersiveOn {
+                // The ⌘ glyph — immersive routes the SYSTEM chords (⌘Tab, ⌘Space…) to the host, and a
+                // second keyboard icon here was indistinguishable from the paste-menu keyboard.
                 SlatePlateButton(
-                    symbol: .keyboardFill,
+                    symbol: .command,
                     help: immersiveOn
                         ? "Immersive on — system keys (⌘Tab, ⌘Space…) go to the host · ⌃⌥⌘E exits"
                         : "Immersive — send system keys (⌘Tab, ⌘Space…) to the host",
@@ -513,14 +518,16 @@ private struct GuiPaneControlBar: View {
             }
             #endif
             if let model, model.canControlViewport {
-                SlatePlateButton(symbol: .minusMagnifyingglass, help: "Zoom out") { model.sendViewport(.zoomOut) }
                 // FIT: shrink/grow the whole remote window to be fully visible inside the pane (client
                 // compositor zoom = min per-axis pane/window ratio) — the one-tap escape from an
-                // overflowing viewport, beside the 1× reset it complements.
-                SlatePlateButton(symbol: .arrowDownRightAndArrowUpLeft, help: "Fit window to pane") {
+                // overflowing viewport. Arrows-INTO-a-rectangle: "fit content into the frame" (kept
+                // visually distinct from the host-window `squareResize` glyph above).
+                SlatePlateButton(symbol: .rectangleArrowtriangle2Inward, help: "Fit window to pane") {
                     model.sendViewport(.fitToPane)
                 }
-                SlatePlateButton(symbol: .arrowCounterclockwise, help: "Actual size (reset zoom + position)") {
+                // The fine-zoom trio reads as one magnifier family: − / 1× / +.
+                SlatePlateButton(symbol: .minusMagnifyingglass, help: "Zoom out") { model.sendViewport(.zoomOut) }
+                SlatePlateButton(symbol: ._1Magnifyingglass, help: "Actual size (1× + re-anchor top-left)") {
                     model.sendViewport(.reset)
                 }
                 SlatePlateButton(symbol: .plusMagnifyingglass, help: "Zoom in") { model.sendViewport(.zoomIn) }
@@ -814,7 +821,9 @@ private struct GuiPastePlateMenu: View {
                 }
             }
         } label: {
-            Image(systemSymbol: .keyboard)
+            // Clipboard, not a keyboard: the verb is PASTE (the keystroke mechanics live in the
+            // tooltip), and the immersive toggle needs the keyboard family to itself.
+            Image(systemSymbol: .documentOnClipboard)
                 .font(.system(size: Slate.Metric.iconSize, weight: .medium))
                 .foregroundStyle(Slate.Text.icon)
                 .frame(width: Slate.Metric.plate, height: Slate.Metric.plate)
