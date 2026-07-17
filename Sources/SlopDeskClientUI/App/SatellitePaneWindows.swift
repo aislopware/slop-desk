@@ -96,6 +96,20 @@ private struct SatelliteDragStrip: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
+                // Same contrast plate as `PaneMoveHandle.contentIsUnthemed`: a satellite usually
+                // hosts a video stream, and the bare tertiary pill disappears over a light desktop.
+                if store.tree.spec(for: paneID)?.kind.isVideo == true {
+                    Capsule(style: .continuous)
+                        .fill(Slate.Surface.face)
+                        .overlay(
+                            Capsule(style: .continuous)
+                                .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
+                        )
+                        .frame(width: 44, height: 10)
+                        .shadow(color: Slate.State.shadow, radius: 3, y: 1)
+                        .opacity(revealed ? 1 : 0)
+                        .scaleEffect(hovering && !dragging ? 1.15 : 1)
+                }
                 Capsule()
                     .fill(dragging ? Slate.State.accent : Slate.Text.tertiary)
                     .frame(width: 30, height: 4)

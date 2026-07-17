@@ -159,6 +159,12 @@ struct PaneMoveHandle: View {
     /// A plain tap on the strip focuses the pane (so the top strip is not a focus dead-zone).
     let onTap: () -> Void
 
+    /// Whether this leaf renders UNTHEMED content (a `.remoteGUI`/`.desktop` video stream): the bare
+    /// tertiary pill tuned to the terminal palette disappears over an arbitrary — usually light —
+    /// streamed desktop, so the pill gains a small `Surface.face` plate (the same chip voice as the
+    /// rest of the over-video chrome). Terminal leaves keep the flat pill.
+    var contentIsUnthemed: Bool = false
+
     @State private var hovering = false
 
     /// The grab strip is centred + width-limited so it covers minimal terminal real estate and never
@@ -181,6 +187,21 @@ struct PaneMoveHandle: View {
 
     private var strip: some View {
         ZStack {
+            // Over a video stream the pill sits on a small opaque plate — tertiary-on-anything is
+            // otherwise invisible on a light streamed desktop. The plate carries the hairline +
+            // shadow (chip voice); the pill itself keeps the exact terminal styling.
+            if contentIsUnthemed {
+                Capsule(style: .continuous)
+                    .fill(Slate.Surface.face)
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
+                    )
+                    .frame(width: 44, height: 10)
+                    .shadow(color: Slate.State.shadow, radius: 3, y: 1)
+                    .opacity(revealed ? 1 : 0)
+                    .scaleEffect(hovering && !isDragging ? 1.15 : 1)
+            }
             Capsule()
                 .fill(isDragging ? Slate.State.accent : Slate.Text.tertiary)
                 .frame(width: 30, height: 4)

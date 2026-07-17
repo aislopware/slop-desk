@@ -302,6 +302,9 @@ struct SplitContainer: View {
                 paneDrag?.end()
             },
             onTap: { store.focusPaneTree(leaf.id) },
+            // A video leaf streams arbitrary (usually light) content — the handle pill needs its
+            // contrast plate there (see `PaneMoveHandle.contentIsUnthemed`).
+            contentIsUnthemed: store.tree.spec(for: leaf.id)?.kind.isVideo == true,
         )
         .frame(width: leaf.rect.width, height: leaf.rect.height)
         .position(x: leaf.rect.midX, y: leaf.rect.midY)
