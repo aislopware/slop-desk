@@ -57,6 +57,66 @@ final class RemoteWindowStreamControlsTests: XCTestCase {
         XCTAssertEqual(received[1].1, 0)
     }
 
+    // MARK: Viewport lock (the model-owned "lock position" state)
+
+    /// `toggleViewportLock()` flips the model's ``RemoteWindowModel/viewportLocked`` and drives the
+    /// ABSOLUTE `lockOn`/`lockOff` bytes down the published viewport sink — one source of truth for the
+    /// footer icon, the ⌥⌘L chord, and the menu row. Gated on `canControlViewport`: off-stream / sink-less
+    /// flips are graceful no-ops (a lock the view never saw must not strand the mirror).
+    func testToggleViewportLockFlipsStateAndSendsAbsoluteLockBytes() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
+        m.toggleViewportLock() // no sink + not streaming — must not crash, must not flip
+        XCTAssertFalse(m.viewportLocked, "off-stream toggle is a graceful no-op")
+
+        var received: [UInt8] = []
+        m.viewportInjector = { received.append($0) }
+        m.toggleViewportLock()
+        XCTAssertFalse(m.viewportLocked, "a sink alone is not enough — the pane must be streaming")
+        XCTAssertEqual(received, [], "nothing sent while the gate is closed")
+
+        m.open()
+        XCTAssertTrue(m.canControlViewport)
+        m.toggleViewportLock()
+        XCTAssertTrue(m.viewportLocked)
+        m.toggleViewportLock()
+        XCTAssertFalse(m.viewportLocked)
+        XCTAssertEqual(
+            received,
+            [RemoteWindowModel.ViewportCommand.lockOn.rawValue, RemoteWindowModel.ViewportCommand.lockOff.rawValue],
+            "absolute lock bytes, in flip order",
+        )
+    }
+
+    /// Publishing a viewport sink RE-ASSERTS a held lock (`lockOn` fired into the fresh sink): a
+    /// detach/reattach re-binds the SAME model to a fresh view that always starts unlocked, so without
+    /// this the icon would say locked while the new view happily edge-pans. An unlocked model publishes
+    /// nothing (the fresh view's default is already correct), and clearing the sink fires nothing.
+    func testViewportSinkPublishReassertsAHeldLock() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
+        m.open()
+        m.viewportInjector = { _ in }
+        m.toggleViewportLock()
+        XCTAssertTrue(m.viewportLocked)
+
+        // The detach/reattach remount: a FRESH view publishes a replacement sink.
+        var freshSink: [UInt8] = []
+        m.viewportInjector = { freshSink.append($0) }
+        XCTAssertEqual(
+            freshSink, [RemoteWindowModel.ViewportCommand.lockOn.rawValue],
+            "the held lock is re-asserted into the fresh sink",
+        )
+
+        m.close() // clears the sink (nil publish) — must not fire anything / crash
+        XCTAssertNil(m.viewportInjector)
+
+        // Unlocked model: a new publish stays silent (the fresh view's unlocked default is correct).
+        let m2 = RemoteWindowModel(target: { self.target }, windowID: "7", title: "Safari")
+        m2.open()
+        var silent: [UInt8] = []
+        m2.viewportInjector = { silent.append($0) }
+        XCTAssertEqual(silent, [], "no lock held ⇒ nothing re-asserted")
+    }
+
     // MARK: System-key sink
 
     func testCanInjectSystemKeysRequiresStreamingAndASink() {

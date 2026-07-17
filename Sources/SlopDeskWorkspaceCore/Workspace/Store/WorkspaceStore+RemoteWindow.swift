@@ -106,6 +106,16 @@ public extension WorkspaceStore {
         handle(for: id)?.releaseStuckInput()
     }
 
+    /// LOCK VIEWPORT POSITION (the ⌥⌘L chord / palette `view.lockViewport`): toggle the ACTIVE remote-GUI
+    /// pane's edge-hover auto-pan freeze — the viewport stays put as the pointer nudges the pane edges.
+    /// A pure client compositor gate (never touches the host). Routed through the ``PaneSessionHandle``
+    /// seam, so it is a graceful no-op for a terminal / empty / not-streaming active pane (never a dead
+    /// chord).
+    func toggleViewportLockInActivePane() {
+        guard let id = activePaneID else { return }
+        handle(for: id)?.toggleViewportLock()
+    }
+
     /// PASTE AS KEYSTROKES (the ⌥⌘V chord + the pane context menu): type the CURRENT local clipboard
     /// into the ACTIVE remote-GUI pane's host window as paced per-key `CGEvent`s. Reads the live clipboard
     /// through ``currentLocalClipboard()`` (works even when clipboard-history recording is off), then routes

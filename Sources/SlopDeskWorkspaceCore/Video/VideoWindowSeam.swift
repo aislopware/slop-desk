@@ -108,8 +108,9 @@ public struct RemotePaneContext {
     /// while read-only (see ``videoLeaf(isActive:readOnly:...)``).
     public var onResizeInjectorReady: ((((_ width: Double, _ height: Double) -> Void)?) -> Void)?
     /// VIEWPORT CONTROLS: the live video view publishes a client-viewport command sink here once its session
-    /// exists (`nil` on teardown), so the bottom control bar drives zoom / pan-lock. Closure carries a raw
-    /// command byte (``RemoteWindowModel/ViewportCommand``: 0 zoom-in / 1 zoom-out / 2 reset / 3 toggle-lock).
+    /// exists (`nil` on teardown), so the bottom control bar drives zoom / pan-lock / fit. Closure carries a
+    /// raw command byte (``RemoteWindowModel/ViewportCommand``: 0 zoom-in / 1 zoom-out / 2 reset / 3 lock-on
+    /// / 4 lock-off / 5 fit-to-pane).
     /// Pure CLIENT compositor ops (no host input), so — unlike ``onResizeInjectorReady`` — NOT withheld while
     /// read-only. `nil` (standalone default) ⇒ no canvas to receive it.
     public var onViewportInjectorReady: ((((_ command: UInt8) -> Void)?) -> Void)?

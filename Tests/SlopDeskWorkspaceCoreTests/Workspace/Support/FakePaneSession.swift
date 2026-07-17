@@ -67,6 +67,12 @@ final class FakePaneSession: @MainActor PaneSessionHandle, @MainActor Identifiab
 
     func releaseStuckInput() { releaseStuckInputCount += 1 }
 
+    /// How many times ``toggleViewportLock()`` was called (pins the ⌥⌘L routing:
+    /// `view.lockViewport` → store → the ACTIVE pane's handle, and only that pane's).
+    private(set) var toggleViewportLockCount = 0
+
+    func toggleViewportLock() { toggleViewportLockCount += 1 }
+
     /// Every ``pasteAsKeystrokes(_:)`` payload, in call order (C7 — pins the ⌥⌘V chord + pane-menu routing:
     /// `view.pasteAsKeystrokes` / the context menu → store → the ACTIVE pane's handle, and only that pane's).
     private(set) var pastedKeystrokes: [String] = []

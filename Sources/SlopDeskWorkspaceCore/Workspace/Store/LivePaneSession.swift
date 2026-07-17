@@ -168,6 +168,11 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// not streaming). A no-op for every other kind (`remoteWindow == nil`).
     public func releaseStuckInput() { remoteWindow?.releaseStuckInput() }
 
+    /// LOCK VIEWPORT POSITION: route the ⌥⌘L / palette toggle to the `.remoteGUI` pane's
+    /// ``RemoteWindowModel`` (which gates on its live viewport sink — a no-op off-stream). A no-op for
+    /// every other kind (`remoteWindow == nil`).
+    public func toggleViewportLock() { remoteWindow?.toggleViewportLock() }
+
     /// PASTE AS KEYSTROKES: route the pane's clipboard-paste to the `.remoteGUI` pane's
     /// ``RemoteWindowModel`` (whose live key sink the video view publishes; withheld while read-only /
     /// not streaming, so the model no-ops). A no-op for every other kind (`remoteWindow == nil`) — a

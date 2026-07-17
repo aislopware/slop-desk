@@ -199,6 +199,9 @@ public extension WorkspaceBindingRegistry {
         // Release Stuck Input: fire the active remote-GUI pane's synthetic-release escape hatch (all
         // modifiers up + all buttons up). A graceful no-op for a terminal / empty / read-only active pane.
         case .releaseStuckInput: store.releaseStuckInputInActivePane()
+        // Lock Viewport Position (⌥⌘L): toggle the active remote-GUI pane's edge-pan freeze. A pure
+        // client compositor gate; a graceful no-op for a terminal / empty / not-streaming active pane.
+        case .toggleViewportLock: store.toggleViewportLockInActivePane()
         // Paste as Keystrokes (⌥⌘V): type the CURRENT local clipboard into the active remote-GUI pane's
         // host window (paced per-key CGEvents). A graceful no-op for a terminal / empty / read-only pane, or
         // when the local clipboard is empty. The store reads the live clipboard via `currentLocalClipboard()`.
@@ -380,6 +383,9 @@ public extension WorkspaceBindingRegistry {
         // Release Stuck Input: the same store seam fires the active remote-GUI pane's synthetic-release
         // escape hatch on the canvas path too (a no-op for a non-video / empty / read-only active pane).
         case .releaseStuckInput: store.releaseStuckInputInActivePane()
+        // Lock Viewport Position: the same store seam toggles the active remote-GUI pane's edge-pan
+        // freeze on the canvas path too (a no-op for a non-video / empty / not-streaming active pane).
+        case .toggleViewportLock: store.toggleViewportLockInActivePane()
         // Paste as Keystrokes: the same store seam types the local clipboard into the active remote-GUI
         // pane on the canvas path too (a no-op for a non-video / empty / read-only pane or empty clipboard).
         case .pasteAsKeystrokes: store.pasteAsKeystrokesInActivePane()

@@ -600,7 +600,8 @@ final class MetalLayerBackedView: NSView {
     var onSessionRejectedReady: (() -> Void)?
     /// VIEWPORT CONTROLS: the canvas publishes a client-viewport command sink through this (and `nil` on
     /// teardown), so the pane's bottom control bar drives zoom / pan-lock. The byte is `RemoteWindowModel.
-    /// ViewportCommand` (0 zoom-in / 1 zoom-out / 2 reset / 3 toggle-lock). Set by the representable.
+    /// ViewportCommand` (0 zoom-in / 1 zoom-out / 2 reset / 3 lock-on / 4 lock-off / 5 fit-to-pane).
+    /// Set by the representable.
     var onViewportInjectorReady: ((((UInt8) -> Void)?) -> Void)?
     /// RELEASE STUCK INPUT (C5): the canvas publishes a zero-arg release sink through this (and `nil` on
     /// teardown; the seam binds nil while read-only) — the palette's chord-less escape hatch fires it to
@@ -681,15 +682,21 @@ final class MetalLayerBackedView: NSView {
     }
 
     /// Apply one viewport command from the footer control bar (the `RemoteWindowModel.ViewportCommand` byte:
-    /// 0 zoom-in / 1 zoom-out / 2 reset / 3 toggle-lock).
+    /// 0 zoom-in / 1 zoom-out / 2 reset / 3 lock-on / 4 lock-off / 5 fit-to-pane). The lock commands are
+    /// ABSOLUTE (not a toggle): the model owns the lock state and RE-ASSERTS it on every sink publish (a
+    /// detach/reattach re-binds the same model to a fresh, unlocked view), so a redundant re-assert must be
+    /// idempotent here.
     private func handleViewportCommand(_ command: UInt8) {
         switch command {
         case 0: applyZoom(1.25) // zoom in one step
         case 1: applyZoom(1.0 / 1.25) // zoom out one step
         case 2: applyResetZoom() // 1× + re-anchor top-left
-        case 3: // toggle "lock position" (freeze edge-pan)
-            panLocked.toggle()
-            if panLocked { stopEdgePan() }
+        case 3: // "lock position" ON (freeze edge-pan)
+            panLocked = true
+            stopEdgePan()
+        case 4: // "lock position" OFF (resume edge-pan on the next hover)
+            panLocked = false
+        case 5: applyFitToPane() // zoom so the whole window fits inside the pane
         default: break
         }
     }
@@ -744,7 +751,9 @@ final class MetalLayerBackedView: NSView {
     /// (interpolated beyond native) and zoom-out minifies crisply.
     private var clientZoom: CGFloat = 1.0
     /// PAN LOCK ("lock position"): when true the edge-hover auto-pan is FROZEN — the viewport stays put even as
-    /// the pointer nudges the pane edges. Toggled by the footer lock control; clears its timer on engage.
+    /// the pointer nudges the pane edges. A MIRROR of ``RemoteWindowModel/viewportLocked`` (the source of
+    /// truth behind the footer lock control + the ⌥⌘L chord), driven by the absolute `lockOn`/`lockOff`
+    /// viewport commands so the model can re-assert it into a fresh view; clears the pan timer on engage.
     private var panLocked = false
 
     // ── EDGE-PAN (RealVNC-mobile): nudging the pointer into a pane edge auto-translates the video layer
@@ -1165,6 +1174,24 @@ final class MetalLayerBackedView: NSView {
     private func applyResetZoom() {
         viewportTouched = false
         clientZoom = 1
+        panOffset = .zero
+        stopEdgePan()
+        needsLayout = true
+        layoutVideoLayer()
+    }
+
+    /// FIT TO PANE → set the client zoom so the WHOLE remote window is visible inside the pane (the
+    /// smaller of the per-axis pane/window ratios, clamped to the same `[0.25, 4]` ladder as the zoom
+    /// steps) and re-anchor top-left. At the fitted zoom there is no overflow (both displayed axes ≤ the
+    /// pane), so edge-pan goes inert on its own — except when the 0.25 floor clips a >4×-oversized window,
+    /// where the top-left anchor still shows the most content the ladder allows. A no-op until the host
+    /// window's point size is known (`streamPoints`).
+    private func applyFitToPane() {
+        guard let win = streamPoints, win.width > 1, win.height > 1,
+              bounds.width > 1, bounds.height > 1 else { return }
+        let fit = Swift.min(bounds.width / CGFloat(win.width), bounds.height / CGFloat(win.height))
+        clientZoom = Swift.min(Swift.max(fit, 0.25), 4.0)
+        viewportTouched = false
         panOffset = .zero
         stopEdgePan()
         needsLayout = true

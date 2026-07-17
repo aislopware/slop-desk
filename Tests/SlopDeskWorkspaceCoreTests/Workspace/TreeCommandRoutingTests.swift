@@ -1026,6 +1026,43 @@ final class TreeCommandRoutingTests: XCTestCase {
         XCTAssertEqual(store.tree, treeBefore, "a synthetic input release never mutates the tree")
     }
 
+    // MARK: - View: Lock Viewport Position — ⌥⌘L registry pin + active-pane routing
+
+    /// `.toggleViewportLock` is registered, in the View category, and bound to ⌥⌘L (FREE — `l` is otherwise
+    /// only ⌘⇧L Toggle Tabs Panel + ⌃⌘L Cycle Layout, different modifier sets); the chord table resolves
+    /// ⌥⌘L to it. Revert-to-confirm-fail by removing the registry row.
+    func testToggleViewportLockBindingIsViewAndOptCmdL() {
+        let binding = WorkspaceBindingRegistry.binding(for: .toggleViewportLock)
+        XCTAssertEqual(binding?.id, "view.lockViewport", "stable id for override keying")
+        XCTAssertEqual(binding?.category, .view, "Lock Viewport Position is a View command")
+        XCTAssertEqual(binding?.chord, KeyChord(character: "l", [.command, .option]), "⌥⌘L")
+        XCTAssertEqual(
+            WorkspaceBindingRegistry.chordTable[KeyChord(character: "l", [.command, .option])],
+            .toggleViewportLock, "⌥⌘L resolves to .toggleViewportLock in the dispatcher table",
+        )
+    }
+
+    /// Routing `.toggleViewportLock` fires the ACTIVE pane handle's `toggleViewportLock()` — and ONLY the
+    /// active pane's — without mutating the tree. (On a live `.remoteGUI` pane the handle forwards to
+    /// `RemoteWindowModel.toggleViewportLock()`; that forwarding is pinned separately.)
+    func testToggleViewportLockRoutesToActivePaneHandleOnly() throws {
+        let store = makeTreeStore()
+        store.splitActivePane(axis: .horizontal, kind: .terminal) // a sibling proves "only the active" fires
+        let active = try XCTUnwrap(activePane(store))
+        let treeBefore = store.tree
+
+        WorkspaceBindingRegistry.route(.toggleViewportLock, to: store)
+
+        for id in leaves(store) {
+            let fake = try XCTUnwrap(store.handle(for: id) as? FakePaneSession)
+            XCTAssertEqual(
+                fake.toggleViewportLockCount, id == active ? 1 : 0,
+                "the viewport lock toggles exactly once, on the active pane only",
+            )
+        }
+        XCTAssertEqual(store.tree, treeBefore, "a client viewport lock never mutates the tree")
+    }
+
     // MARK: - View: Paste as Keystrokes — ⌥⌘V registry pin + active-pane clipboard routing
 
     /// `.pasteAsKeystrokes` is registered, in the View category, and bound to ⌥⌘V (FREE — `v` is in no other

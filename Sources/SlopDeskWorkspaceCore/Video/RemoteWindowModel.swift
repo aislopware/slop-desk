@@ -187,7 +187,18 @@ public final class RemoteWindowModel {
     /// and freezes the edge-hover auto-pan. These are pure CLIENT compositor ops (never touch the host), so —
     /// UNLIKE ``resizeInjector`` — the sink is NOT withheld while read-only. The argument is a raw command byte
     /// (``ViewportCommand``); the `UInt8` keeps the app-target ``VideoWindowView`` decoupled from this module.
-    public var viewportInjector: ((_ command: UInt8) -> Void)?
+    ///
+    /// Re-asserts ``viewportLocked`` on every publish: a detach/reattach re-binds the SAME model to a FRESH
+    /// view (which always starts unlocked), so the model — the lock's source of truth — pushes the lock back
+    /// down the new sink. The lock commands are ABSOLUTE (`lockOn`/`lockOff`) precisely so this re-assert is
+    /// idempotent (a toggle would flip a still-mounted view's state on a redundant re-publish).
+    public var viewportInjector: ((_ command: UInt8) -> Void)? {
+        didSet {
+            if viewportLocked, let inject = viewportInjector {
+                inject(ViewportCommand.lockOn.rawValue)
+            }
+        }
+    }
 
     /// Whether the footer viewport controls (zoom / lock) are live: streaming AND a viewport sink is wired.
     public var canControlViewport: Bool { active != nil && viewportInjector != nil }
@@ -198,11 +209,27 @@ public final class RemoteWindowModel {
         case zoomIn = 0
         case zoomOut = 1
         case reset = 2
-        case toggleLock = 3
+        case lockOn = 3
+        case lockOff = 4
+        case fitToPane = 5
     }
 
     /// Drive one client-viewport ``ViewportCommand`` through the live ``viewportInjector`` (no-op when no sink).
     public func sendViewport(_ command: ViewportCommand) { viewportInjector?(command.rawValue) }
+
+    /// "LOCK POSITION" — whether the edge-hover auto-pan is frozen. The MODEL owns this state (the footer
+    /// lock icon, the ⌥⌘L chord, and the palette all read/flip ONE place); the view's freeze mirrors it via
+    /// the absolute `lockOn`/`lockOff` commands, re-asserted on every sink publish (see ``viewportInjector``).
+    public private(set) var viewportLocked = false
+
+    /// Toggle the viewport position lock (the ⌥⌘L chord / footer lock button / palette verb). Gated on
+    /// ``canControlViewport`` so an off-stream flip can't strand a lock the view never saw — a graceful
+    /// no-op, like the other video verbs.
+    public func toggleViewportLock() {
+        guard canControlViewport else { return }
+        viewportLocked.toggle()
+        sendViewport(viewportLocked ? .lockOn : .lockOff)
+    }
 
     /// RELEASE STUCK INPUT (the manual escape hatch): a zero-arg closure ``VideoWindowView`` publishes
     /// once its session exists (via ``RemotePaneContext/onInputReleaseReady``; cleared `nil` on teardown,

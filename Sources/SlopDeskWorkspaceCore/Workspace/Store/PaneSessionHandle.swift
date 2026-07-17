@@ -115,6 +115,13 @@ public protocol PaneSessionHandle: AnyObject, Identifiable {
     /// ``RemoteWindowModel``.
     func releaseStuckInput()
 
+    /// LOCK VIEWPORT POSITION: toggle the remote-GUI pane's edge-hover auto-pan freeze (the ⌥⌘L chord /
+    /// footer lock button / palette verb — all converge on ``RemoteWindowModel/toggleViewportLock()``). A
+    /// pure client compositor gate. A no-op for kinds with no video viewport (terminal panes) and while
+    /// the pane is not streaming (the model gates on its live viewport sink). Default does nothing;
+    /// ``LivePaneSession`` routes to the ``RemoteWindowModel``.
+    func toggleViewportLock()
+
     /// PASTE AS KEYSTROKES (C7): type `text` into the remote-GUI pane's host window as paced per-key
     /// `CGEvent`s (via the pane's published key sink) — how LOCAL clipboard text (e.g. a password for the
     /// auto-spawned SecurityAgent dialog pane) reaches a remote field, since a plain ⌘V forwards a raw
@@ -156,6 +163,10 @@ public extension PaneSessionHandle {
     /// Default: no video input sink ⇒ nothing to release. ``LivePaneSession`` routes to the
     /// ``RemoteWindowModel`` for `.remoteGUI` panes.
     func releaseStuckInput() {}
+
+    /// Default: no video viewport ⇒ nothing to lock. ``LivePaneSession`` routes to the
+    /// ``RemoteWindowModel`` for `.remoteGUI` panes.
+    func toggleViewportLock() {}
 
     /// Default: no video key sink ⇒ nothing to type. ``LivePaneSession`` routes to the
     /// ``RemoteWindowModel`` for `.remoteGUI` panes (a terminal pane has its own paste pipeline).

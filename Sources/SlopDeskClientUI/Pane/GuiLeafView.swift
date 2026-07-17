@@ -44,9 +44,6 @@ struct GuiLeafView: View {
     /// flag drives the activation lifecycle: a hidden pane releases its `liveVideoCap` slot
     /// + stops the UDP/VT/Metal pipeline, a visible one (re)requests a slot. Defaults `true` for static-mirror / preview.
     var isVisible: Bool = true
-    /// "LOCK POSITION" button state — mirrored locally so the footer lock icon reflects on/off. The actual
-    /// edge-pan freeze lives in the video view (via ``RemoteWindowModel/sendViewport(_:)``); this tracks it 1:1.
-    @State private var panLocked = false
     /// Whether the in-pane STATS readout is showing (footer toggle). Per-pane view state — resets on
     /// remount, like the client-side zoom.
     @State private var showStats = false
@@ -93,7 +90,7 @@ struct GuiLeafView: View {
             // Only while live.
             if showControlBar {
                 GuiPaneControlBar(
-                    model: model, store: store, paneID: paneID, panLocked: $panLocked,
+                    model: model, store: store, paneID: paneID,
                     showStats: $showStats,
                     fpsCapSelection: $fpsCapSelection,
                     bitrateCapMbpsSelection: $bitrateCapMbpsSelection,
@@ -426,9 +423,6 @@ private struct GuiPaneControlBar: View {
     let store: WorkspaceStore
     /// This pane's id — the detach/reattach target.
     let paneID: PaneID
-    /// Mirrors the pane's "lock position" state so the lock icon reflects on/off (the freeze itself lives in
-    /// the video view; this toggles 1:1 with the `.toggleLock` command).
-    @Binding var panLocked: Bool
     /// The in-pane stats readout toggle (the chip renders in ``GuiLeafView``'s overlay).
     @Binding var showStats: Bool
     /// The live stream-settings selection (0 = auto), owned by the leaf so it outlives the popover.
@@ -520,17 +514,26 @@ private struct GuiPaneControlBar: View {
             #endif
             if let model, model.canControlViewport {
                 SlatePlateButton(symbol: .minusMagnifyingglass, help: "Zoom out") { model.sendViewport(.zoomOut) }
+                // FIT: shrink/grow the whole remote window to be fully visible inside the pane (client
+                // compositor zoom = min per-axis pane/window ratio) — the one-tap escape from an
+                // overflowing viewport, beside the 1× reset it complements.
+                SlatePlateButton(symbol: .arrowDownRightAndArrowUpLeft, help: "Fit window to pane") {
+                    model.sendViewport(.fitToPane)
+                }
                 SlatePlateButton(symbol: .arrowCounterclockwise, help: "Actual size (reset zoom + position)") {
                     model.sendViewport(.reset)
                 }
                 SlatePlateButton(symbol: .plusMagnifyingglass, help: "Zoom in") { model.sendViewport(.zoomIn) }
+                // LOCK: the model owns the on/off state (``RemoteWindowModel/viewportLocked``) so this
+                // icon, the ⌥⌘L chord, and the menu row can never drift.
                 SlatePlateButton(
-                    symbol: panLocked ? .lockFill : .lockOpen,
-                    help: panLocked ? "Unlock viewport (resume edge-pan)" : "Lock viewport position (freeze edge-pan)",
-                    tint: panLocked ? Slate.State.accent : Slate.Text.icon,
+                    symbol: model.viewportLocked ? .lockFill : .lockOpen,
+                    help: model.viewportLocked
+                        ? "Unlock viewport (resume edge-pan) (⌥⌘L)"
+                        : "Lock viewport position (freeze edge-pan) (⌥⌘L)",
+                    tint: model.viewportLocked ? Slate.State.accent : Slate.Text.icon,
                 ) {
-                    panLocked.toggle()
-                    model.sendViewport(.toggleLock)
+                    model.toggleViewportLock()
                 }
             }
         }

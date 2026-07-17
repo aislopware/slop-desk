@@ -77,6 +77,11 @@ public enum WorkspaceAction: Hashable, Sendable {
     // for ALL modifiers + mouse-up for all buttons via the pane's synthetic-release paths. No default
     // chord — palette/menu only; a no-op for a non-video active pane.
     case releaseStuckInput
+    // Lock Viewport Position: ⌥⌘L toggles the ACTIVE remote-GUI pane's viewport position
+    // lock — freezes the edge-hover auto-pan so a pointer reaching for a pane-edge control no longer
+    // drags the content along. A pure client compositor gate (never touches the host); a no-op for a
+    // terminal / empty / not-streaming active pane.
+    case toggleViewportLock
     // Paste as Keystrokes: ⌥⌘V types the LOCAL clipboard into the ACTIVE remote-GUI
     // pane's host window as paced per-key CGEvents (the path that reaches a sudo / SecurityAgent secure
     // field) — since a plain ⌘V forwards a raw Cmd+V that pastes the HOST clipboard. A no-op for a
@@ -201,6 +206,8 @@ public extension WorkspaceAction {
              .secureKeyboardEntry,
              // targets the ACTIVE remote-GUI pane's release sink; no-ops on a terminal / empty / read-only pane.
              .releaseStuckInput,
+             // toggles the ACTIVE remote-GUI pane's viewport lock; no-ops on a terminal / empty / off-stream pane.
+             .toggleViewportLock,
              // types the local clipboard into the ACTIVE remote-GUI pane; no-ops on a terminal / empty / read-only pane.
              .pasteAsKeystrokes,
              .commandNavigator,
@@ -673,6 +680,18 @@ public enum WorkspaceBindingRegistry {
             category: .view, chord: nil,
             symbol: "keyboard.badge.ellipsis",
             keywords: "release stuck input modifier key mouse button unstick reset keyboard command shift remote window video",
+        ),
+        // Lock Viewport Position: ⌥⌘L freezes the active remote-GUI pane's edge-hover
+        // auto-pan (the viewport stays put as the pointer nudges the pane edges — e.g. reaching for a
+        // control that sits near an edge of an overflowing window). ⌥⌘L is FREE (`l` is otherwise only
+        // ⌘⇧L Toggle Tabs Panel + ⌃⌘L Cycle Layout — different modifier sets) and ⌘-prefixed (§5).
+        // Mirrors the footer lock button 1:1 (both flip ``RemoteWindowModel/viewportLocked``). Pinned
+        // unique by the chord-uniqueness guard; a graceful no-op off a streaming video pane.
+        WorkspaceBinding(
+            id: "view.lockViewport", action: .toggleViewportLock, title: "Lock Viewport Position",
+            category: .view, chord: KeyChord(character: "l", [.command, .option]),
+            symbol: "lock.rectangle",
+            keywords: "lock viewport position freeze edge pan auto pan hold pin content remote window video unlock",
         ),
         // Paste as Keystrokes: ⌥⌘V types the LOCAL clipboard into the active remote-GUI
         // pane's host window (paced per-key CGEvents — reaches a sudo / SecurityAgent secure field). ⌥⌘V is
