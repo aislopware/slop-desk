@@ -143,6 +143,48 @@ final class PaneDragResolverTests: XCTestCase {
         )
     }
 
+    // MARK: Sidebar edge auto-scroll step
+
+    func testAutoScrollStepRampsInTheTopAndBottomBands() {
+        let list = CGRect(x: 0, y: 100, width: 220, height: 600) // top edge y=700, bottom y=100
+        // Top band (44pt): scroll UP ⇒ negative, deeper into the band ⇒ faster.
+        let shallow = PaneDragResolver.autoScrollStep(at: CGPoint(x: 100, y: 667), list: list) ?? 0
+        let deep = PaneDragResolver.autoScrollStep(at: CGPoint(x: 100, y: 699), list: list) ?? 0
+        XCTAssertLessThan(shallow, 0)
+        XCTAssertLessThan(deep, shallow, "deeper into the band scrolls faster")
+        // Bottom band: scroll DOWN ⇒ positive.
+        let down = PaneDragResolver.autoScrollStep(at: CGPoint(x: 100, y: 105), list: list)
+        XCTAssertGreaterThan(down ?? 0, 0)
+    }
+
+    func testAutoScrollStepIsNilOutsideTheBandsAndOutsideTheList() {
+        let list = CGRect(x: 0, y: 100, width: 220, height: 600)
+        XCTAssertNil(
+            PaneDragResolver.autoScrollStep(at: CGPoint(x: 100, y: 400), list: list),
+            "the list body between the bands never scrolls",
+        )
+        XCTAssertNil(
+            PaneDragResolver.autoScrollStep(at: CGPoint(x: 300, y: 699), list: list),
+            "band height alone is not enough — the cursor must be over the list",
+        )
+    }
+
+    func testAutoScrollBandsShrinkOnAShortListWithoutOverlapping() {
+        // 60pt list: the default 44pt bands would overlap — they shrink to height/3 (20pt), leaving a
+        // neutral middle third.
+        let list = CGRect(x: 0, y: 100, width: 220, height: 60)
+        XCTAssertNil(
+            PaneDragResolver.autoScrollStep(at: CGPoint(x: 100, y: 130), list: list),
+            "the centre of a short list is neutral — overlapping bands would jitter directions",
+        )
+        XCTAssertLessThan(
+            PaneDragResolver.autoScrollStep(at: CGPoint(x: 100, y: 155), list: list) ?? 0, 0,
+        )
+        XCTAssertGreaterThan(
+            PaneDragResolver.autoScrollStep(at: CGPoint(x: 100, y: 105), list: list) ?? 0, 0,
+        )
+    }
+
     // MARK: Screen ⇄ canvas-local flip
 
     func testScreenAndCanvasLocalConversionsRoundTrip() {

@@ -230,6 +230,9 @@ struct NavigatorColumn: View {
                     }
                 }
                 .padding(.horizontal, 8)
+                // Captures the enclosing NSScrollView (must sit INSIDE the scroll content) so a pane
+                // drag parked at the list's top/bottom edge auto-scrolls rows into reach.
+                .background(sidebarScrollCapturer)
             }
             .scrollIndicators(.hidden) // scrollbars stay invisible for the flat sidebar look
             .frame(maxHeight: .infinity)
@@ -301,6 +304,14 @@ struct NavigatorColumn: View {
     private var sidebarListFrameReader: some View {
         if let paneDrag {
             DropTargetFrameReader(key: .sidebarList, coordinator: paneDrag)
+        }
+    }
+
+    /// The enclosing-NSScrollView capturer for the drag auto-scroll — see the LazyVStack mount above.
+    @ViewBuilder
+    private var sidebarScrollCapturer: some View {
+        if let paneDrag {
+            SidebarScrollCapturer(coordinator: paneDrag)
         }
     }
 

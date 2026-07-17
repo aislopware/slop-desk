@@ -130,6 +130,27 @@ enum PaneDragResolver {
         return .none
     }
 
+    /// The signed sidebar auto-scroll step for a drag cursor at `point` (screen coords, bottom-left
+    /// origin) over the list viewport `list`: inside the TOP band the list should scroll UP (negative —
+    /// the flipped document's origin.y shrinks), inside the BOTTOM band DOWN (positive), anywhere else
+    /// `nil` (no scroll). The step ramps linearly with depth into the band, so grazing the edge creeps
+    /// and burying the cursor in it moves fast. Pure — pinned headlessly.
+    static func autoScrollStep(
+        at point: CGPoint,
+        list: CGRect,
+        band: CGFloat = 44,
+        maxStep: CGFloat = 12,
+    ) -> CGFloat? {
+        guard list.contains(point), list.height > 0, band > 0, maxStep > 0 else { return nil }
+        // A short list would let the bands overlap and jitter between directions — shrink them.
+        let band = Double.minimum(band, list.height / 3)
+        let intoTop = point.y - (list.maxY - band)
+        if intoTop > 0 { return -maxStep * (intoTop / band) }
+        let intoBottom = (list.minY + band) - point.y
+        if intoBottom > 0 { return maxStep * (intoBottom / band) }
+        return nil
+    }
+
     /// Canvas-local (top-left origin) → screen (AppKit bottom-left) given the canvas's screen rect.
     static func screenPoint(fromCanvasLocal p: CGPoint, canvas: CGRect) -> CGPoint {
         CGPoint(x: canvas.minX + p.x, y: canvas.maxY - p.y)
@@ -186,7 +207,29 @@ final class PaneDragCoordinator {
     /// app-lifetime glue, never an owner.
     @ObservationIgnored weak var store: WorkspaceStore?
 
+    /// Whether the live TREE drag's source is the sole leaf of its tab — stashed per frame so the
+    /// auto-scroll tick can re-resolve the external destination without re-asking the canvas.
+    @ObservationIgnored private var treeSourceIsSoleLeaf = false
+
+    /// The armed spring-load: hovering a sidebar row for the dwell REVEALS that row's tab (Finder-style
+    /// spring-loaded folders), so the drag can continue into the newly shown canvas and drop precisely.
+    @ObservationIgnored private var springLoadTask: Task<Void, Never>?
+    @ObservationIgnored private var springLoadArmedRow: PaneID?
+
+    /// Sidebar-row dwell before the spring-loaded tab reveal fires.
+    static let springLoadDwell: Duration = .milliseconds(500)
+
     #if os(macOS)
+    /// The sidebar list's enclosing `NSScrollView` — resolved lazily (registered by a reader INSIDE the
+    /// scroll content; the viewport reader outside it cannot reach the scroller). Drives the drag
+    /// edge-band auto-scroll.
+    @ObservationIgnored var sidebarScrollProvider: () -> NSScrollView? = { nil }
+
+    /// The auto-scroll heartbeat — runs only while the drag cursor sits in the list's edge band, so a
+    /// STATIONARY cursor keeps scrolling (per-pointer-frame stepping alone would stall the moment the
+    /// hand stops).
+    @ObservationIgnored private var autoScrollTimer: Timer?
+
     /// The cursor-following chip for the stretches where no canvas overlay can draw (the drag has left
     /// the content column's hosting view, which clips its SwiftUI overlay).
     @ObservationIgnored private let chipPanel = PaneDragChipPanel()
@@ -225,12 +268,21 @@ final class PaneDragCoordinator {
     // MARK: Drag lifecycle
 
     /// One drag frame: record the cursor, publish the (source, origin, destination) triple only when it
-    /// changed, and move the chip panel.
-    func update(source: PaneID, origin: PaneDragOrigin, screenPoint point: CGPoint, destination: PaneDragDestination) {
+    /// changed, move the chip panel, and (re-)arm the spring-load + edge auto-scroll.
+    func update(
+        source: PaneID,
+        origin: PaneDragOrigin,
+        screenPoint point: CGPoint,
+        destination: PaneDragDestination,
+        sourceIsSoleLeafOfItsTab: Bool = false,
+    ) {
         screenPoint = point
+        treeSourceIsSoleLeaf = sourceIsSoleLeafOfItsTab
         let next = Drag(source: source, origin: origin, destination: destination)
         if drag != next { drag = next }
+        armSpringLoad(for: destination)
         #if os(macOS)
+        updateAutoScroll(at: point)
         chipPanel.update(
             at: point,
             drag: next,
@@ -250,9 +302,53 @@ final class PaneDragCoordinator {
     /// Clears the drag (cancel path — a commit goes through ``takeDestination()``).
     func end() {
         if drag != nil { drag = nil }
+        cancelSpringLoad()
         #if os(macOS)
+        stopAutoScroll()
         chipPanel.hide()
         #endif
+    }
+
+    // MARK: Spring-loaded tab reveal (dwell on a sidebar row → its tab becomes the canvas)
+
+    /// Arm / re-arm / cancel the spring-load for this frame's `destination`. Hovering ONE row for the
+    /// dwell selects that row's tab — the drag keeps going and can now drop into the revealed canvas.
+    /// The dwell re-arms on every row TRANSITION (sweeping down the list never fires), and the fire
+    /// re-checks the published destination so a row the cursor already left can't switch tabs late.
+    private func armSpringLoad(for destination: PaneDragDestination) {
+        guard case let .sidebarRow(row) = destination else {
+            cancelSpringLoad()
+            return
+        }
+        guard row != springLoadArmedRow else { return }
+        springLoadTask?.cancel()
+        springLoadArmedRow = row
+        springLoadTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.springLoadDwell)
+            guard !Task.isCancelled, let self else { return }
+            guard drag?.destination == .sidebarRow(row), let store else { return }
+            if let index = Self.springLoadTabIndex(for: row, in: store.tree) {
+                store.selectTab(index)
+            }
+        }
+    }
+
+    private func cancelSpringLoad() {
+        springLoadTask?.cancel()
+        springLoadTask = nil
+        springLoadArmedRow = nil
+    }
+
+    /// The tab index a spring-load on `row` should reveal: the ACTIVE session's tab owning that pane,
+    /// `nil` when it is already the active tab (nothing to reveal) or the pane is not in the active
+    /// session's tree (a detached pane's row — no tab to spring to). Pure + static so the reveal rule
+    /// is pinned headlessly.
+    static func springLoadTabIndex(for row: PaneID, in tree: TreeWorkspace) -> Int? {
+        guard let session = tree.activeSession,
+              let index = session.tabIndex(containing: row),
+              index != session.activeTabIndex
+        else { return nil }
+        return index
     }
 
     /// One drag frame for a DETACHED (satellite grab strip) drag: the cursor is the global mouse
@@ -292,6 +388,96 @@ final class PaneDragCoordinator {
             sourceIsSoleLeafOfItsTab: sourceIsSoleLeafOfItsTab,
         )
     }
+
+    /// The destination a TREE drag resolves once its source's tab is NO LONGER the active tab (a
+    /// spring-loaded reveal switched tabs mid-drag): the visible canvas is another tab's, so its zones
+    /// resolve with INSERT semantics against the pushed active-tab layout — exactly the satellite case
+    /// (the source isn't in this tab; no swap, no self to exclude). Everything off the canvas keeps the
+    /// tree-drag external precedence (tear-off stays available — it is still a tree pane leaving).
+    func resolveSpringLoadedTreeDestination(
+        at point: CGPoint, source: PaneID, sourceIsSoleLeafOfItsTab: Bool,
+    ) -> PaneDragDestination {
+        if let canvas = targetFrame(.canvas), canvas.contains(point) {
+            let local = PaneDragResolver.canvasLocal(fromScreen: point, canvas: canvas)
+            let zone = PaneDragResolver.insertZone(at: local, frames: canvasFrames, container: canvasBounds)
+            return zone == .none ? .none : .canvas(zone)
+        }
+        return resolveTreeExternalDestination(
+            at: point, source: source, sourceIsSoleLeafOfItsTab: sourceIsSoleLeafOfItsTab,
+        )
+    }
+
+    #if os(macOS)
+
+    // MARK: Sidebar edge auto-scroll (rows outside the viewport become reachable mid-drag)
+
+    /// Start/steer/stop the auto-scroll heartbeat for this frame's cursor. The timer (not the pointer
+    /// stream) does the stepping, so a cursor PARKED in the band keeps scrolling.
+    private func updateAutoScroll(at point: CGPoint) {
+        guard drag != nil,
+              let list = targetFrame(.sidebarList),
+              PaneDragResolver.autoScrollStep(at: point, list: list) != nil,
+              sidebarScrollProvider() != nil
+        else {
+            stopAutoScroll()
+            return
+        }
+        guard autoScrollTimer == nil else { return }
+        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            // Timer on the main run loop fires on the main thread; hop the actor boundary explicitly.
+            MainActor.assumeIsolated { self?.autoScrollTick() }
+        }
+        RunLoop.main.add(timer, forMode: .common) // .common: keep scrolling while the drag tracks
+        autoScrollTimer = timer
+    }
+
+    private func stopAutoScroll() {
+        autoScrollTimer?.invalidate()
+        autoScrollTimer = nil
+    }
+
+    /// One heartbeat: re-derive the step from the CURRENT cursor (it may have left the band), scroll the
+    /// clip view, then re-resolve the destination — the rows moved under a stationary cursor, so the
+    /// highlight must follow without waiting for the next pointer frame.
+    private func autoScrollTick() {
+        guard drag != nil,
+              let scroll = sidebarScrollProvider(),
+              let list = targetFrame(.sidebarList),
+              let step = PaneDragResolver.autoScrollStep(at: screenPoint, list: list)
+        else {
+            stopAutoScroll()
+            return
+        }
+        let clip = scroll.contentView
+        let maxOffset = Double.maximum(0, (scroll.documentView?.frame.height ?? 0) - clip.bounds.height)
+        var origin = clip.bounds.origin
+        origin.y = Double.minimum(Double.maximum(0, origin.y + step), maxOffset)
+        guard origin != clip.bounds.origin else { return }
+        clip.scroll(to: origin)
+        scroll.reflectScrolledClipView(clip)
+        refreshDestinationUnderCursor()
+    }
+
+    /// Re-resolve the live drag's destination at the stashed cursor after an auto-scroll step. The
+    /// cursor is inside the sidebar list here, so a tree drag can only resolve EXTERNAL destinations —
+    /// the canvas' own live resolution is never bypassed.
+    private func refreshDestinationUnderCursor() {
+        guard let drag else { return }
+        let destination: PaneDragDestination =
+            switch drag.origin {
+            case .detached:
+                resolveDetachedDestination(at: screenPoint, source: drag.source)
+            case .tree:
+                resolveTreeExternalDestination(
+                    at: screenPoint, source: drag.source, sourceIsSoleLeafOfItsTab: treeSourceIsSoleLeaf,
+                )
+            }
+        update(
+            source: drag.source, origin: drag.origin, screenPoint: screenPoint,
+            destination: destination, sourceIsSoleLeafOfItsTab: treeSourceIsSoleLeaf,
+        )
+    }
+    #endif
 
     // MARK: Tear-off placement hand-off
 
@@ -387,6 +573,25 @@ struct DropTargetFrameReader: NSViewRepresentable {
             coordinator.mainWindowFrame = { [weak view] in view?.window?.frame }
         }
     }
+}
+
+// MARK: - Sidebar scroll capture (drag edge auto-scroll)
+
+/// Captures the sidebar list's enclosing `NSScrollView` for the coordinator's drag auto-scroll. Must be
+/// mounted INSIDE the ScrollView's content (`enclosingScrollView` walks superviews — the viewport
+/// reader on the ScrollView's `.background` is a sibling and can't reach it). Resolution stays lazy
+/// (a weak-view closure), so a missing scroller (layout not settled / SwiftUI backing change) just
+/// means no auto-scroll — never a crash or a stale strong reference.
+struct SidebarScrollCapturer: NSViewRepresentable {
+    let coordinator: PaneDragCoordinator
+
+    func makeNSView(context _: Context) -> DropTargetFrameReader.PassthroughView {
+        let view = DropTargetFrameReader.PassthroughView()
+        coordinator.sidebarScrollProvider = { [weak view] in view?.enclosingScrollView }
+        return view
+    }
+
+    func updateNSView(_: DropTargetFrameReader.PassthroughView, context _: Context) {}
 }
 
 // MARK: - Cursor-following chip panel

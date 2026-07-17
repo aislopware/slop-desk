@@ -306,12 +306,30 @@ public final class OverlayCoordinator {
     }
 
     /// Rebuild the verbs-only ⌘⇧P mixer: the action catalog grouped into fixed categories (Working Directory /
-    /// Window / Pane / Tab / View / Shell / Settings), one section header each. The multi-source jump-to lives
+    /// Window / Pane / Tab / View / Shell / Settings), one section header each, plus the DYNAMIC
+    /// "Move Pane to Tab: …" rows snapshotted from the live store (a fixed catalog can't enumerate
+    /// tabs — same per-open snapshot pattern the jump-to surface uses). The multi-source jump-to lives
     /// entirely in `OpenQuicklyView`/`OpenQuicklyModel`, NOT here — this mixer stays verbs-only.
     public func rebuildMixer() {
         // The verb-catalog categories, one section header each.
-        mixer = SearchMixer(sources: ActionsPaletteSource.categorySources())
+        var sources = ActionsPaletteSource.categorySources()
+        if let store {
+            let movePane = MovePaneToTabSource.snapshot(store)
+            if !movePane.isEmpty {
+                sources.append(movePane)
+                movePaneToTabItems = movePane.candidates(query: "")
+            } else {
+                movePaneToTabItems = []
+            }
+        } else {
+            movePaneToTabItems = []
+        }
+        mixer = SearchMixer(sources: sources)
     }
+
+    /// The per-open "Move Pane to Tab: …" rows — kept so the zero-state can list them too (the mixer
+    /// alone only surfaces them for a typed query).
+    @ObservationIgnored private var movePaneToTabItems: [PaletteItem] = []
 
     // MARK: Palette results (view binds these)
 
@@ -365,6 +383,12 @@ public final class OverlayCoordinator {
             guard !items.isEmpty else { continue }
             out.append(.separator(category.label, filter: .actions))
             out.append(contentsOf: items)
+        }
+        // The dynamic per-tab move verbs (snapshotted in `rebuildMixer`) — listed in the zero-state too
+        // so they're discoverable without typing.
+        if !movePaneToTabItems.isEmpty {
+            out.append(.separator("Move Pane", filter: .actions))
+            out.append(contentsOf: movePaneToTabItems)
         }
         return out
     }

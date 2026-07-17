@@ -1204,3 +1204,41 @@ all of it:
 - Every path commits ONE store op on release and keeps the `PaneID` — reconcile stays a registry
   no-op, so the PTY / video stream survives every hop (tab ↔ tab is pure geometry; tab ↔ satellite
   remounts only the view).
+
+## Free pane drag, round 2: spring-loaded tabs, edge auto-scroll, keyboard parity (2026-07-17)
+
+The v1 gesture could land a pane on any VISIBLE target; this round makes the hidden ones reachable
+mid-drag and adds the keyboard twins.
+
+- ✅ **Spring-loaded tab reveal** (Finder-folder style): dwelling a live drag ~500 ms on a sidebar
+  row SELECTS that row's tab, so the drag can continue into the newly revealed canvas and drop at a
+  precise split. The reveal rule is pure (`PaneDragCoordinator.springLoadTabIndex` — only a
+  background tab of the active session fires; the active tab's own rows and detached-pane rows
+  never churn selection). The dwell re-arms per row transition, and the fire re-checks the live
+  destination so a row the cursor already left can't switch tabs late.
+- ✅ **Cross-tab canvas drop for tree drags**: after a spring-load the source pane's tab is hidden,
+  so the visible canvas resolves with INSERT semantics against the coordinator's pushed active-tab
+  layout (exactly the satellite case — no swap, no self-exclusion) and commits with the CROSS-TAB
+  ops (`moveLeafAcrossTabsTree` / `moveLeafToActiveTabRootEdgeTree`). The source tab's moveLayer
+  stays MOUNTED while it owns the live drag (hidden at opacity 0) — unmounting it would destroy
+  the grab handle whose gesture is still tracking. The active tab's landing preview reuses
+  `ExternalDropZonePreview`, now keyed on "source not in these frames" instead of origin.
+- ✅ **Sidebar edge auto-scroll**: a drag parked in the list's top/bottom 44 pt band scrolls rows
+  into reach (ramped by band depth — `PaneDragResolver.autoScrollStep`, pure + pinned; bands shrink
+  on short lists so they can't overlap). A 30 Hz timer does the stepping — the pointer stream alone
+  would stall the moment the hand stops — and each tick re-resolves the destination because the
+  rows moved under a stationary cursor. The `NSScrollView` is captured lazily by a reader INSIDE
+  the scroll content (`enclosingScrollView` can't be reached from the viewport reader outside).
+- ✅ **Palette parity**: "Move Pane to New Tab" joins the fixed catalog under TAB — deliberately not
+  PANE: section order beats score across sections, and a `.pane` row matching "new tab" would
+  shadow the exact "New Tab" verb. "Move Pane to Tab N" rows are DYNAMIC (one per non-active tab,
+  `MovePaneToTabSource`, snapshotted per palette open like the jump-to source; destination resolved
+  by stable TabID at accept time). Row titles are position-based ("Move Pane to Tab 2") because
+  every fresh pane is titled "Terminal" — title-based labels rendered indistinguishable twins; the
+  live pane title rides the subtitle.
+- ❎ **Dropping onto ANOTHER satellite window stays a tear-off at the drop point** (deliberate):
+  satellites are single-pane by design, so "merge into that satellite" has no model to land in —
+  a new window exactly where the user let go is the honest outcome. Revisit only if satellites
+  ever host split trees.
+- ❎ Cross-SESSION drags and iOS stay out of scope (the sidebar lists the active session only; iOS
+  has no pointer drag).

@@ -161,6 +161,19 @@ public struct ActionsPaletteSource: PaletteDataSource {
             shortcut: glyph(.reattachAllPanes), category: .pane,
             run: { store in store.reattachAllPanes() },
         ),
+        // "Move Pane to New Tab" — the keyboard twin of dropping a pane on the sidebar's New-Tab slot
+        // (`breakPaneToTab`). PaneID-preserving, so the live session survives. Chord-less ⇒ no hint
+        // chip. Under TAB (with New Tab / Close Tab / Reopen Closed Pane — the tab-shape verbs): the
+        // Pane section renders FIRST, so a `.pane` row matching "new tab" would shadow the exact
+        // "New Tab" verb for that query (section order beats score across sections). Its per-tab
+        // siblings ("Move Pane to Tab N") are DYNAMIC rows the coordinator snapshots per palette open
+        // (``MovePaneToTabSource``) — a fixed catalog can't enumerate tabs.
+        item(
+            id: "action.movePaneToNewTab", icon: "plus.square.on.square", title: "Move Pane to New Tab",
+            keywords: "move break pane new tab own separate split out",
+            shortcut: nil, category: .tab,
+            run: { store in store.breakActivePaneToTab() },
+        ),
         // No registry chord exists for reconnect (the keyboard bank never registers one) ⇒ no hint chip.
         item(
             id: "action.reconnect", icon: "arrow.clockwise", title: "Reconnect Pane",
@@ -398,6 +411,75 @@ public struct CategoryActionsSource: PaletteDataSource {
     }
 
     public func candidates(query _: String) -> [PaletteItem] { items }
+}
+
+// MARK: - MOVE-PANE-TO-TAB source (dynamic per-tab move verbs) — REAL
+
+/// One "Move Pane to Tab: <title>" verb per OTHER tab of the active session — the keyboard twin of
+/// dropping a pane on a sidebar row (`moveLeafAcrossTabsTree`, PaneID-preserving: the live session
+/// survives the hop). DYNAMIC: the fixed ``ActionsPaletteSource/catalog`` can't enumerate tabs, so the
+/// overlay coordinator snapshots this source per palette open (same pattern as ``TabsPaletteSource``).
+/// The moved pane lands BESIDE the destination tab's active pane (a horizontal split after it) — the
+/// same landing the sidebar-row drop commits.
+public struct MovePaneToTabSource: PaletteDataSource {
+    public let filters: Set<QueryFilter> = [.actions]
+    public let sectionTitle: String? = "Move Pane"
+
+    /// A snapshot row: the DESTINATION tab, resolved by stable id at run time (an index could shift
+    /// between snapshot and accept).
+    public struct Entry: Sendable {
+        public let tabID: TabID
+        /// The tab's active pane's live title — the row SUBTITLE (context, not identity).
+        public let title: String
+        /// 1-based position at snapshot time — the row title + the "tab 2" search keyword.
+        public let tabNumber: Int
+    }
+
+    private let entries: [Entry]
+
+    public init(entries: [Entry]) { self.entries = entries }
+
+    public var isEmpty: Bool { entries.isEmpty }
+
+    /// Build a snapshot from the live store: every tab of the active session EXCEPT the active one
+    /// (moving a pane "to its own tab" is the identity op). The row TITLE is the stable position
+    /// ("Move Pane to Tab 2" — every fresh pane is titled "Terminal", so a title-based label would
+    /// render indistinguishable twins); the tab's live pane title rides the SUBTITLE for context.
+    @preconcurrency
+    @MainActor
+    public static func snapshot(_ store: WorkspaceStore) -> Self {
+        guard let session = store.tree.activeSession, session.tabs.count > 1 else { return Self(entries: []) }
+        var out: [Entry] = []
+        for (index, tab) in session.tabs.enumerated() where index != session.activeTabIndex {
+            let spec = tab.activePane.flatMap { session.specs[$0] }
+            let live = spec?.lastKnownTitle ?? spec?.title ?? ""
+            out.append(Entry(tabID: tab.id, title: live, tabNumber: index + 1))
+        }
+        return Self(entries: out)
+    }
+
+    public func candidates(query _: String) -> [PaletteItem] {
+        entries.map { entry in
+            PaletteItem(
+                id: "action.movePaneToTab.\(entry.tabID.raw.uuidString)",
+                icon: "rectangle.stack",
+                title: "Move Pane to Tab \(entry.tabNumber)",
+                subtitle: entry.title.isEmpty ? nil : entry.title,
+                keywords: "move pane tab \(entry.tabNumber) across send transfer",
+                shortcut: nil,
+                filter: .actions,
+                category: .pane,
+                action: .store { store in
+                    guard let session = store.tree.activeSession,
+                          let source = session.activeTab?.activePane,
+                          let dest = session.tabs.first(where: { $0.id == entry.tabID }),
+                          let anchor = dest.activePane
+                    else { return }
+                    store.moveLeafAcrossTabsTree(source, beside: anchor, axis: .horizontal, before: false)
+                },
+            )
+        }
+    }
 }
 
 // MARK: - TABS source (jump to a pane/tab) — REAL

@@ -141,7 +141,11 @@ struct SplitContainer: View {
                 .accessibilityHidden(entry.isHidden)
                 .id(entry.id) // identity hazard: never reuse a surface across panes
             }
-            // Interaction chrome only for the active tab (a hidden tab is non-interactive anyway).
+            // Interaction chrome only for the active tab (a hidden tab is non-interactive anyway) —
+            // EXCEPT the moveLayer of the tab OWNING a live drag: a spring-loaded reveal switches tabs
+            // mid-drag, and unmounting the source tab's layer would destroy the grab handle whose
+            // gesture is still tracking. The hidden layer sits at opacity(0) with hit-testing off, so
+            // keeping it mounted renders nothing.
             if isActive {
                 // Dividers + the grab-handles / live drag overlay sit ABOVE the panes (z 0) via an
                 // explicit z-index band.
@@ -149,11 +153,16 @@ struct SplitContainer: View {
                     dividerView(handle)
                 }
                 .zIndex(Self.dividerZ)
+            }
+            if isActive || moveSourceIsIn(frames) {
                 // Grab-handles + the live drag overlay (extracted to keep this ZStack type-checkable).
                 moveLayer(leaves: layout.leaves, frames: frames, container: bounds)
                     .zIndex(Self.moveZ)
-                // The landing preview for a drag that STARTED elsewhere (a satellite window's grab
-                // strip) — same zone visuals, driven by the coordinator's published destination.
+            }
+            if isActive {
+                // The landing preview for a drag that STARTED OUTSIDE this tab — a satellite window's
+                // grab strip, or a tree pane whose tab was spring-loaded away — same zone visuals,
+                // driven by the coordinator's published destination.
                 if let paneDrag, !staticMirror {
                     ExternalDropZonePreview(coordinator: paneDrag, frames: frames, container: bounds)
                         .zIndex(Self.moveZ)
@@ -185,6 +194,13 @@ struct SplitContainer: View {
     /// then the move-handle / drag-overlay layer.
     static let dividerZ: Double = 10
     static let moveZ: Double = 20
+
+    /// Whether the live drag's SOURCE pane is one of this tab layer's leaves — the keep-mounted gate
+    /// that lets its grab-handle gesture survive a spring-loaded tab switch.
+    private func moveSourceIsIn(_ frames: [PaneID: CGRect]) -> Bool {
+        guard let move else { return false }
+        return frames[move.source] != nil
+    }
 
     /// Whether pane `paneID` (in `tab`) should own the renderer's keyboard focus — the guard that makes
     /// keep-all-mounted safe. TRUE only when `tab` is the ACTIVE tab AND `paneID` is that tab's `activePane`.
@@ -267,11 +283,15 @@ struct SplitContainer: View {
                 let dest = dragDestination(
                     at: loc, leaves: leaves, container: container, source: leaf.id, sourceRect: leaf.rect,
                 )
-                // The local overlay draws only the CANVAS zones; an external destination reads `.none`
-                // here (its cursor chip is clipped at the hosting-view edge anyway — the coordinator's
-                // floating panel + the sidebar highlights are the affordance out there).
-                move = PaneMoveDrag(source: leaf.id, location: loc, zone: Self.canvasZone(of: dest))
-                publishTreeDrag(dest, source: leaf.id, local: loc)
+                // The local overlay draws only the CANVAS zones of the source's OWN (active) tab; an
+                // external destination reads `.none` here (its cursor chip is clipped at the
+                // hosting-view edge anyway — the coordinator's floating panel + the sidebar highlights
+                // are the affordance out there), and so does a spring-loaded canvas zone (the ACTIVE
+                // tab's `ExternalDropZonePreview` owns that preview — this layer's frames are the wrong
+                // tab's).
+                let localZone = sourceIsInActiveTab(leaf.id) ? Self.canvasZone(of: dest) : PaneDropZone.none
+                move = PaneMoveDrag(source: leaf.id, location: loc, zone: localZone)
+                publishTreeDrag(dest, source: leaf.id, local: loc, soleLeaf: leaves.count <= 1)
             },
             onEnded: { loc in
                 let dest = dragDestination(
@@ -309,6 +329,10 @@ struct SplitContainer: View {
     /// resolution applies unchanged; outside it, the coordinator's registered targets (sidebar rows,
     /// the New-Tab slot, the tear-off boundary) take over. Without a coordinator (previews / iOS) the
     /// gesture stays canvas-only, exactly the old behaviour.
+    ///
+    /// A SPRING-LOADED reveal can switch the active tab mid-drag — the source then no longer lives in
+    /// the visible tab, so the canvas resolves with INSERT semantics against the coordinator's pushed
+    /// active-tab layout instead of this (hidden) layer's own leaves.
     private func dragDestination(
         at loc: CGPoint,
         leaves: [SplitTreeRenderModel.PlacedLeaf],
@@ -316,6 +340,14 @@ struct SplitContainer: View {
         source: PaneID,
         sourceRect: CGRect,
     ) -> PaneDragDestination {
+        if let paneDrag, !sourceIsInActiveTab(source) {
+            guard let canvas = paneDrag.targetFrame(.canvas) else { return .canvas(.none) }
+            return paneDrag.resolveSpringLoadedTreeDestination(
+                at: PaneDragResolver.screenPoint(fromCanvasLocal: loc, canvas: canvas),
+                source: source,
+                sourceIsSoleLeafOfItsTab: leaves.count <= 1,
+            )
+        }
         if container.contains(loc) || paneDrag == nil {
             return .canvas(resolveZone(
                 at: loc, leaves: leaves, container: container, source: source, sourceRect: sourceRect,
@@ -329,15 +361,24 @@ struct SplitContainer: View {
         )
     }
 
+    /// Whether `source` still lives in the ACTIVE tab — false after a spring-loaded reveal switched
+    /// tabs under a live drag. Decides both the canvas resolution semantics (in-tab swap/re-split vs
+    /// insert) and the commit family (same-tab move vs cross-tab move).
+    private func sourceIsInActiveTab(_ source: PaneID) -> Bool {
+        store.tree.activeSession?.activeTab?.allPaneIDs().contains(source) ?? true
+    }
+
     /// Mirror the live tree drag to the coordinator — the sidebar highlights / New-Tab slot / floating
-    /// chip all render off this one published state.
-    private func publishTreeDrag(_ dest: PaneDragDestination, source: PaneID, local: CGPoint) {
+    /// chip / spring-load dwell all render off this one published state. `soleLeaf` rides along so the
+    /// coordinator's auto-scroll tick can re-resolve the external destination without re-asking here.
+    private func publishTreeDrag(_ dest: PaneDragDestination, source: PaneID, local: CGPoint, soleLeaf: Bool) {
         guard let paneDrag, let canvas = paneDrag.targetFrame(.canvas) else { return }
         paneDrag.update(
             source: source,
             origin: .tree,
             screenPoint: PaneDragResolver.screenPoint(fromCanvasLocal: local, canvas: canvas),
             destination: dest,
+            sourceIsSoleLeafOfItsTab: soleLeaf,
         )
     }
 
@@ -346,6 +387,18 @@ struct SplitContainer: View {
     /// so no surface tears down on any path.
     private func commitDestination(_ dest: PaneDragDestination, source: PaneID, local: CGPoint) {
         switch dest {
+        case let .canvas(zone) where !sourceIsInActiveTab(source):
+            // Spring-loaded landing: the zone was resolved (insert semantics) against ANOTHER tab's
+            // canvas — commit with the cross-tab ops. `.swap` can't come out of the insert resolution.
+            switch zone {
+            case let .resplit(target, edge):
+                store.moveLeafAcrossTabsTree(source, beside: target, axis: edge.axis, before: edge.insertsBefore)
+            case let .dock(edge):
+                store.moveLeafToActiveTabRootEdgeTree(source, edge: edge)
+            case .swap,
+                 .none:
+                break
+            }
         case let .canvas(zone):
             commit(zone, source: source)
         case let .sidebarRow(anchor):
@@ -408,17 +461,18 @@ struct SplitContainer: View {
     }
 }
 
-/// The canvas-side landing preview for a drag that STARTED elsewhere (a satellite window's grab
-/// strip): draws the coordinator's resolved insert zone with the SAME static previews the in-canvas
-/// overlay uses (one drop vocabulary). Reads only the PUBLISHED drag, so it re-renders on destination
-/// transitions — never per cursor frame.
+/// The canvas-side landing preview for a drag whose SOURCE is not in this tab — a satellite window's
+/// grab strip, or a tree pane whose own tab was spring-loaded away mid-drag: draws the coordinator's
+/// resolved insert zone with the SAME static previews the in-canvas overlay uses (one drop
+/// vocabulary). Reads only the PUBLISHED drag, so it re-renders on destination transitions — never per
+/// cursor frame.
 private struct ExternalDropZonePreview: View {
     let coordinator: PaneDragCoordinator
     let frames: [PaneID: CGRect]
     let container: CGRect
 
     var body: some View {
-        if let drag = coordinator.drag, drag.origin == .detached,
+        if let drag = coordinator.drag, frames[drag.source] == nil,
            case let .canvas(zone) = drag.destination
         {
             Group {
