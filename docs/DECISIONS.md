@@ -983,6 +983,23 @@
   onset and forgives later wobble. Widened trade accepted: a ≥ 240 pt strongly-horizontal (≥ 2×)
   slow drag in an allowlisted app navigates; sub-240 pt wobbly drags and sub-2× diagonal
   explorations still reject (pinned both sides).
+- ✅ **v6 (2026-07-17, HW verdict on v5: dragging the whole pane looks ugly — wanted feedback
+  that does NOT affect the image): the video image NEVER moves — feedback is the edge chip +
+  haptic only.** v5 was the first peel the user actually SAW (v4.1 unblocked the status push),
+  and the on-hardware verdict rejected the concept, not the tuning: Safari peels the PAGE, but
+  a remote pane is a window onto a whole desktop — translating the streamed image reads as
+  dragging the pane itself, and no cap/knee fixes that. All image-motion machinery is REMOVED
+  (not gated): the tracking `videoLayer.transform` write, the curtain + edge shade, the commit
+  snapshot choreography (NV12→RGB freeze + hold + slide-off), the pacer's
+  `lastRenderedImageBuffer` accessor, and the input-mapping peel-shift compensation.
+  `SwipePeelPlanner` simplifies back to chip-only verdicts (`.show(SwipePeelChipState)`; raw
+  `travelX` dropped — nothing geometry-dependent left to map). What remains is the v4
+  affordance grammar, strengthened so the chip still lives with the finger without touching a
+  pixel of video: the chip EMERGES from its pane edge with progress (tucked ~12 pt at the arm
+  line, fully out at commit), ring fill → solid + haptic tap at "release now navigates",
+  confirm pulse on fire (the pulse alone now spans the inject→stream beat the snapshot used to
+  mask). Recognizer, host fire path, status push, and the graduated slow tier are untouched —
+  client-only, no wire change.
 - ✅ **Pinch → CLIENT-side ⌘= / ⌘− ladder; smart zoom → ⌘0** (`PinchZoomKeyPlanner`, 0.2
   magnification/step, ≤ 3 steps/event; `SLOPDESK_PINCH_KEYS` default-ON). Rides the existing key
   path — NO wire change anywhere in this round.

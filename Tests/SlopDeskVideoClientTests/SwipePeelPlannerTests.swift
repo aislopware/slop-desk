@@ -2,13 +2,13 @@ import XCTest
 @testable import SlopDeskVideoClient
 @testable import SlopDeskVideoProtocol
 
-/// Pins the client-side swipe-peel feedback mirror: WHEN the overlay shows (a decisively
+/// Pins the client-side swipe-peel feedback mirror: WHEN the chip shows (a decisively
 /// horizontal candidate past the arm line — never an ordinary scroll's incidental Σx), what it
-/// shows (rubber-banded nudge + quantized chip fill + the committed flip), and how every
-/// gesture CONCLUDES (commit on fire, retract on reject/coast-expiry/cancel — the overlay must
-/// never strand). The planner wraps the same ``SwipeNavRecognizer`` the host runs, so
-/// acceptance itself is pinned in `SwipeNavRecognizerTests`; these tests pin the FEEDBACK
-/// mapping on top.
+/// shows (quantized fill + the committed flip — the chip is the WHOLE feedback; the streamed
+/// image never moves), and how every gesture CONCLUDES (commit on fire, retract on
+/// reject/coast-expiry/cancel — the chip must never strand). The planner wraps the same
+/// ``SwipeNavRecognizer`` the host runs, so acceptance itself is pinned in
+/// `SwipeNavRecognizerTests`; these tests pin the FEEDBACK mapping on top.
 final class SwipePeelPlannerTests: XCTestCase {
     private func began(
         _ planner: inout SwipePeelPlanner, dx: Double = 2, now: TimeInterval = 100,
@@ -66,34 +66,30 @@ final class SwipePeelPlannerTests: XCTestCase {
     func testDominantDragShowsGrowsAndFlipsCommitted() {
         var planner = SwipePeelPlanner()
         XCTAssertEqual(began(&planner), .idle)
-        // Σx = 42 → shown, uncommitted; the overlay carries the RAW travel (the view owns the
-        // geometry-dependent page-follow mapping).
+        // Σx = 42 → shown, uncommitted.
         guard case let .show(early) = changed(&planner, dx: 40, dy: 1, now: 100.02) else {
             XCTFail("expected .show once past the arm line")
             return
         }
-        XCTAssertEqual(early.chip.direction, .back)
-        XCTAssertFalse(early.chip.committed)
-        XCTAssertEqual(early.travelX, 42)
-        // Σx = 102 ≥ fireTravel 80 → committed, fill capped at 1, travel passed through raw.
+        XCTAssertEqual(early.direction, .back)
+        XCTAssertFalse(early.committed)
+        // Σx = 102 ≥ fireTravel 80 → committed, fill capped at 1.
         guard case let .show(late) = changed(&planner, dx: 60, dy: 1, now: 100.05) else {
             XCTFail("expected .show past fireTravel")
             return
         }
-        XCTAssertTrue(late.chip.committed)
-        XCTAssertEqual(late.chip.progress, 1)
-        XCTAssertEqual(late.travelX, 102)
+        XCTAssertTrue(late.committed)
+        XCTAssertEqual(late.progress, 1)
     }
 
-    func testLeftwardDragMirrorsDirectionAndTravelSign() {
+    func testLeftwardDragMirrorsDirection() {
         var planner = SwipePeelPlanner()
         _ = began(&planner, dx: -2)
-        guard case let .show(overlay) = changed(&planner, dx: -60, dy: -1, now: 100.02) else {
+        guard case let .show(chip) = changed(&planner, dx: -60, dy: -1, now: 100.02) else {
             XCTFail("expected .show")
             return
         }
-        XCTAssertEqual(overlay.chip.direction, .forward)
-        XCTAssertEqual(overlay.travelX, -62)
+        XCTAssertEqual(chip.direction, .forward)
     }
 
     func testChipProgressIsQuantized() {
@@ -101,8 +97,8 @@ final class SwipePeelPlannerTests: XCTestCase {
         _ = began(&planner)
         for step in 1...12 {
             let verdict = changed(&planner, dx: 7, dy: 0, now: 100 + Double(step) * 0.008)
-            guard case let .show(overlay) = verdict else { continue }
-            let steps = overlay.chip.progress / SwipePeelPlanner.progressQuantum
+            guard case let .show(chip) = verdict else { continue }
+            let steps = chip.progress / SwipePeelPlanner.progressQuantum
             XCTAssertEqual(
                 steps, steps.rounded(), accuracy: 1e-9,
                 "chip fill must land on the 1/32 grid so 120 Hz events don't re-render per event",
@@ -121,14 +117,14 @@ final class SwipePeelPlannerTests: XCTestCase {
             XCTFail("expected .show")
             return
         }
-        XCTAssertEqual(rightward.chip.direction, .back)
+        XCTAssertEqual(rightward.direction, .back)
         // Σx: +42 → −48 in one event — still decisively horizontal, opposite edge.
         XCTAssertEqual(changed(&planner, dx: -90, dy: 0, now: 100.03), .retract)
         guard case let .show(leftward) = changed(&planner, dx: -10, dy: 0, now: 100.04) else {
             XCTFail("expected .show on the new edge after the conclude")
             return
         }
-        XCTAssertEqual(leftward.chip.direction, .forward)
+        XCTAssertEqual(leftward.direction, .forward)
     }
 
     func testDominanceCollapseRetractsThenGoesIdle() {
@@ -187,7 +183,7 @@ final class SwipePeelPlannerTests: XCTestCase {
         }
         // The coast denominator is confirmTravel 120 (62/120 ≈ 0.52) — the displayed fill must
         // FLOOR at the on-glass value instead of visibly dropping mid-gesture.
-        XCTAssertGreaterThanOrEqual(armed.chip.progress, glass.chip.progress)
+        XCTAssertGreaterThanOrEqual(armed.progress, glass.progress)
         // Momentum accumulates below the confirm line → still showing, fill never regresses…
         guard case let .show(coasting) = planner.ingest(
             dx: 30, dy: 0, scrollPhase: 0, momentumPhase: 1, continuous: true, now: 100.04,
@@ -195,7 +191,7 @@ final class SwipePeelPlannerTests: XCTestCase {
             XCTFail("expected .show while coasting toward confirmation")
             return
         }
-        XCTAssertGreaterThanOrEqual(coasting.chip.progress, armed.chip.progress)
+        XCTAssertGreaterThanOrEqual(coasting.progress, armed.progress)
         // …and the combined 132 ≥ 120 confirms: the mirror commits exactly like the host.
         XCTAssertEqual(
             planner.ingest(dx: 40, dy: 0, scrollPhase: 0, momentumPhase: 2, continuous: true, now: 100.05),
@@ -223,13 +219,13 @@ final class SwipePeelPlannerTests: XCTestCase {
             XCTFail("expected .show")
             return
         }
-        XCTAssertFalse(mid.chip.committed)
+        XCTAssertFalse(mid.committed)
         // …and past 160 the slow commitment flips it.
-        guard case let .show(committed) = changed(&planner, dx: 50, dy: 1, now: 100.7) else {
+        guard case let .show(late) = changed(&planner, dx: 50, dy: 1, now: 100.7) else {
             XCTFail("expected .show")
             return
         }
-        XCTAssertTrue(committed.chip.committed)
+        XCTAssertTrue(late.committed)
         XCTAssertEqual(ended(&planner, now: 100.8), .commit(.back))
     }
 

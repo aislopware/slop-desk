@@ -164,13 +164,6 @@ final class VideoWindowPipeline {
     /// state starts clean, so `activate` re-seeds it from here. `nil` ⇒ never requested.
     private var lastStreamSettings: (fpsCap: Int, bitrateCeilingBps: Int)?
 
-    /// The frame currently on glass, for the swipe-peel COMMIT snapshot (the outgoing page is
-    /// frozen into a plain layer and slid away while the post-navigation page streams in
-    /// underneath). `nil` before the first present or when inactive. ⚠️ Main-confined.
-    func lastRenderedImageBuffer() -> CVImageBuffer? {
-        pacer?.lastRenderedImageBuffer()
-    }
-
     #if os(macOS)
     /// The LOCAL `NSCursor` mirroring the host's CURRENT cursor SHAPE (Parsec model: the OS draws it at
     /// the instant local mouse position, so the pointer never lags by an RTT). `nil` until the shape

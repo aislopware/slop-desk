@@ -24,40 +24,32 @@ public struct SwipePeelChipState: Equatable, Sendable {
 }
 
 /// Client-side mirror of the HOST's swipe-nav recogniser, run purely for FEEDBACK — the piece
-/// of native swipe-back that key translation can never give: the page reacting WHILE the
+/// of native swipe-back that key translation can never give: something reacting WHILE the
 /// fingers are still on the glass. The host remains the sole authority on actually firing
-/// ⌘[/⌘]; this planner drives the view's page-follow translation plus a progress chip, from
-/// the SAME event stream the view forwards (pre-coalescing — coalescing sums same-phase deltas
-/// and keeps the boundary markers, so both recognisers reach the same sums and the same
-/// verdicts).
+/// ⌘[/⌘]; this planner drives the edge chip (+ the view's haptic), from the SAME event stream
+/// the view forwards (pre-coalescing — coalescing sums same-phase deltas and keeps the
+/// boundary markers, so both recognisers reach the same sums and the same verdicts). The
+/// STREAMED IMAGE itself never moves: a remote pane is a window onto a whole desktop, so
+/// translating it reads as dragging the pane, not peeling a page (v6 HW verdict — see
+/// DECISIONS).
 ///
 /// The mirror's thresholds come from the host's ``SwipeNavStatusMessage`` push, so a host-side
 /// `SLOPDESK_SWIPE_NAV_TRAVEL`/`_SLOW` retune never desynchronises the feedback; the view only
 /// feeds the planner while the host says the target app is eligible at all.
 ///
-/// Pure value type (headless-testable): all AppKit work — layer transform, chip publish,
-/// haptic — happens in the view from the returned ``Verdict``.
+/// Pure value type (headless-testable): all AppKit work — chip publish, haptic — happens in
+/// the view from the returned ``Verdict``.
 public struct SwipePeelPlanner: Sendable {
-    /// The full overlay state for one live candidate.
-    public struct Overlay: Equatable, Sendable {
-        /// The candidate's RAW signed horizontal travel (points). The VIEW maps this to the
-        /// page-follow translation — the mapping needs the pane's live geometry (the soft cap
-        /// is a fraction of pane width), which this pure planner deliberately never sees.
-        public var travelX: Double
-        /// The chip to publish.
-        public var chip: SwipePeelChipState
-    }
-
     /// What the view should do after feeding one scroll event.
     public enum Verdict: Equatable, Sendable {
         /// Nothing showing, nothing to change.
         case idle
-        /// A live decisively-horizontal candidate — track it (instant transform write + chip).
-        case show(Overlay)
-        /// The mirror fired: ease the nudge home and play the chip's confirm pulse. The HOST
-        /// fires the actual ⌘[/⌘] from its own recogniser at the same moment.
+        /// A live decisively-horizontal candidate — publish the chip.
+        case show(SwipePeelChipState)
+        /// The mirror fired: play the chip's confirm pulse. The HOST fires the actual ⌘[/⌘]
+        /// from its own recogniser at the same moment.
         case commit(SwipeNavRecognizer.Direction)
-        /// The candidate died without firing (reject, coast expiry, cancel) — ease home.
+        /// The candidate died without firing (reject, coast expiry, cancel) — hide the chip.
         case retract
     }
 
@@ -126,18 +118,15 @@ public struct SwipePeelPlanner: Sendable {
         showing = true
         shownDirection = live.direction
         let quantized = (progress / Self.progressQuantum).rounded(.down) * Self.progressQuantum
-        return .show(Overlay(
-            travelX: live.travelX,
-            chip: SwipePeelChipState(
-                direction: live.direction,
-                progress: Double.minimum(Double.maximum(quantized, Self.progressQuantum), 1),
-                committed: live.wouldFireAtLift,
-            ),
+        return .show(SwipePeelChipState(
+            direction: live.direction,
+            progress: Double.minimum(Double.maximum(quantized, Self.progressQuantum), 1),
+            committed: live.wouldFireAtLift,
         ))
     }
 
     /// The view stopped feeding this gesture mid-flight (scroll rerouted to canvas pan, pane
-    /// lost focus, eligibility flipped off) — abandon the candidate and ease the overlay home.
+    /// lost focus, eligibility flipped off) — abandon the candidate and hide the chip.
     public mutating func cancel() -> Verdict {
         _ = recognizer.ingest(dx: 0, dy: 0, scrollPhase: 8, momentumPhase: 0, continuous: true, now: 0)
         return concludeIfShowing()
