@@ -373,6 +373,13 @@ let package = Package(
         // Diagnostic-only, sibling of slopdesk-fake-client. `swift run slopdesk-swipestatus-probe`.
         .executableTarget(name: "slopdesk-swipestatus-probe", dependencies: ["SlopDeskVideoProtocol"]),
 
+        // Nav-history AX probe: runs the REAL `HostNavHistory` reader (toolbar/menu strategy,
+        // per-window cache currency) against a live app and prints canGoBack/canGoForward per
+        // beat — the runtime proof for the swipe-nav history gate that unit tests cannot give
+        // (hang-safety bars process-external AX from XCTest). Needs Accessibility TCC.
+        // Diagnostic-only. `swift run slopdesk-navhistory-probe [bundle-id] [--seconds N]`.
+        .executableTarget(name: "slopdesk-navhistory-probe", dependencies: ["SlopDeskVideoHost"]),
+
         // VD-120Hz DE-RISK probe: creates a headless CGVirtualDisplay advertising a >60Hz mode and
         // reports the refresh rate WindowServer actually grants — the make-or-break for the
         // "beat-free 60fps via a 120Hz virtual-display capture source" plan (a 60Hz panel can never

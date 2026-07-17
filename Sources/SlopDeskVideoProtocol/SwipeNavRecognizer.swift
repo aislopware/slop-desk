@@ -33,9 +33,12 @@ import Foundation
 ///     and between `slowDominance` and `slowRelaxedDominance` from `slowFireTravel` up to
 ///     `slowRelaxedTravel` (native decides the axis at onset and forgives later wobble that a
 ///     whole-gesture ratio re-taxes; a 2 ms-later lift must not double the requirement — both
-///     step cliffs ate real field swipes that retried right after). Page state (is the content
-///     at its horizontal edge? can it scroll at all?) is what native browsers arbitrate with,
-///     and it is invisible remotely — commitment is the only proxy left. There is no upper
+///     step cliffs ate real field swipes that retried right after). Page CONTENT state (is the
+///     content at its horizontal edge? can it scroll at all?) is what native browsers arbitrate
+///     with, and that remains invisible remotely — commitment is the only proxy left. (History
+///     AVAILABILITY — would ⌘[/⌘] navigate at all — IS readable via AX and gates the client's
+///     chip, `HostNavHistory`/doc 20 §9.6; it never changes this recogniser's decisions.)
+///     There is no upper
 ///     duration bound: natively you may drag, hold, and release whenever. Slow gestures never
 ///     ARM — momentum confirmation is a flick mechanism (a slow lift has no tail).
 ///

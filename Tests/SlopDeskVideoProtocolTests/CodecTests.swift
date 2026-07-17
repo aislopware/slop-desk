@@ -73,9 +73,22 @@ final class CodecTests: XCTestCase {
 
     func testSwipeNavStatusRoundTrip() throws {
         let cases = [
-            SwipeNavStatusMessage(eligible: true, slowTier: true, fireTravel: 80),
-            SwipeNavStatusMessage(eligible: false, slowTier: false, fireTravel: 500),
-            SwipeNavStatusMessage(eligible: true, slowTier: false, fireTravel: 20),
+            SwipeNavStatusMessage(
+                eligible: true, slowTier: true, fireTravel: 80,
+                canGoBack: false, canGoForward: false, historyKnown: false,
+            ),
+            SwipeNavStatusMessage(
+                eligible: false, slowTier: false, fireTravel: 500,
+                canGoBack: false, canGoForward: false, historyKnown: false,
+            ),
+            SwipeNavStatusMessage(
+                eligible: true, slowTier: false, fireTravel: 20,
+                canGoBack: true, canGoForward: false, historyKnown: true,
+            ),
+            SwipeNavStatusMessage(
+                eligible: true, slowTier: true, fireTravel: 80,
+                canGoBack: false, canGoForward: true, historyKnown: true,
+            ),
         ]
         for status in cases {
             XCTAssertEqual(try SwipeNavStatusMessage.decode(status.encode()), status)
@@ -84,13 +97,34 @@ final class CodecTests: XCTestCase {
     }
 
     func testSwipeNavStatusRejectsWrongTypeAndTruncation() {
-        XCTAssertThrowsError(try SwipeNavStatusMessage.decode(Data([99, 1, 1, 0, 80])))
+        XCTAssertThrowsError(try SwipeNavStatusMessage.decode(Data([99, 1, 1, 0, 80, 0])))
         XCTAssertThrowsError(try SwipeNavStatusMessage.decode(Data([3, 1, 1]))) // short datagram
+        XCTAssertThrowsError(try SwipeNavStatusMessage.decode(Data([3, 1, 1, 0, 80]))) // pre-flags 5-byte form
         XCTAssertThrowsError(try SwipeNavStatusMessage.decode(Data()))
     }
 
+    /// The chip affordance gate: known-dead direction suppresses, UNKNOWN fails OPEN (the
+    /// pre-gate behavior) — a failed AX read must never go dark (doc 20 §9.6).
+    func testSwipeNavStatusAllowsChipGatesPerDirectionAndFailsOpen() {
+        let known = SwipeNavStatusMessage(
+            eligible: true, slowTier: true, fireTravel: 80,
+            canGoBack: true, canGoForward: false, historyKnown: true,
+        )
+        XCTAssertTrue(known.allowsChip(.back))
+        XCTAssertFalse(known.allowsChip(.forward))
+        let unknown = SwipeNavStatusMessage(
+            eligible: true, slowTier: true, fireTravel: 80,
+            canGoBack: false, canGoForward: false, historyKnown: false,
+        )
+        XCTAssertTrue(unknown.allowsChip(.back))
+        XCTAssertTrue(unknown.allowsChip(.forward))
+    }
+
     func testCursorChannelRoutesSwipeNavStatusByLeadingByte() throws {
-        let status = SwipeNavStatusMessage(eligible: true, slowTier: true, fireTravel: 120)
+        let status = SwipeNavStatusMessage(
+            eligible: true, slowTier: true, fireTravel: 120,
+            canGoBack: true, canGoForward: true, historyKnown: true,
+        )
         let routed = try CursorChannelMessage.decode(CursorChannelMessage.swipeNavStatus(status).encode())
         XCTAssertEqual(routed, .swipeNavStatus(status))
         // An UNKNOWN leading byte stays a malformed drop — an older client ignores newer kinds.

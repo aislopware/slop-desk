@@ -261,4 +261,38 @@ final class SwipePeelPlannerTests: XCTestCase {
         // Same candidate re-read past 0.45 s: the tier died with the switch off → retract.
         XCTAssertEqual(changed(&planner, dx: 1, dy: 0, now: 100.6), .retract)
     }
+
+    // MARK: History gate (doc 20 §9.6)
+
+    private func status(back: Bool, forward: Bool, known: Bool = true) -> SwipeNavStatusMessage {
+        SwipeNavStatusMessage(
+            eligible: true, slowTier: true, fireTravel: 80,
+            canGoBack: back, canGoForward: forward, historyKnown: known,
+        )
+    }
+
+    /// The user's original report: Back/Forward greyed out in the browser, yet the drag still
+    /// raised, filled, committed and haptic'd a chip for a navigation that could never happen.
+    /// A dead direction must suppress `.show` AND `.commit`; a live one passes untouched.
+    func testHistoryGateSuppressesDeadDirectionShowAndCommit() {
+        let backOnly = status(back: true, forward: false)
+        let chip = SwipePeelChipState(direction: .forward, progress: 0.5, committed: false)
+        XCTAssertEqual(SwipePeelPlanner.historyGated(.show(chip), status: backOnly), .retract)
+        XCTAssertEqual(SwipePeelPlanner.historyGated(.commit(.forward), status: backOnly), .retract)
+        let liveChip = SwipePeelChipState(direction: .back, progress: 0.5, committed: false)
+        XCTAssertEqual(SwipePeelPlanner.historyGated(.show(liveChip), status: backOnly), .show(liveChip))
+        XCTAssertEqual(SwipePeelPlanner.historyGated(.commit(.back), status: backOnly), .commit(.back))
+    }
+
+    /// UNKNOWN history (AX read failed/disabled) fails OPEN — pre-gate behavior, never a dark
+    /// chip; `.idle`/`.retract` pass through the gate regardless of the flags.
+    func testHistoryGateFailsOpenOnUnknownAndPassesConclusions() {
+        let unknown = status(back: false, forward: false, known: false)
+        let chip = SwipePeelChipState(direction: .forward, progress: 0.5, committed: false)
+        XCTAssertEqual(SwipePeelPlanner.historyGated(.show(chip), status: unknown), .show(chip))
+        XCTAssertEqual(SwipePeelPlanner.historyGated(.commit(.back), status: unknown), .commit(.back))
+        let dead = status(back: false, forward: false)
+        XCTAssertEqual(SwipePeelPlanner.historyGated(.idle, status: dead), .idle)
+        XCTAssertEqual(SwipePeelPlanner.historyGated(.retract, status: dead), .retract)
+    }
 }

@@ -74,5 +74,13 @@ public enum HostFrontmostApp {
         guard let pid = frontmostPID() else { return nil }
         return NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
     }
+
+    /// Pid + bundle id from ONE WindowServer query — for callers that need both (the swipe-nav
+    /// status kicker resolves the bundle for eligibility and feeds the pid to the AX history
+    /// read). Same fail-closed nil semantics as ``bundleID()``.
+    public static func frontmost() -> (pid: pid_t, bundleID: String?)? {
+        guard let pid = frontmostPID() else { return nil }
+        return (pid, NSRunningApplication(processIdentifier: pid)?.bundleIdentifier)
+    }
 }
 #endif

@@ -714,20 +714,28 @@ A single cursor PNG fits comfortably in one 1200-byte datagram, so the shape cha
 fragmentation. The client caches each shape by `shapeID` and composites it at
 `position * videoScale − hotspot`, where `videoScale = layerSize.width / decodedSize.width`.
 
-**`SwipeNavStatusMessage` (type `3`) — rare status push, fixed 5 bytes:**
+**`SwipeNavStatusMessage` (type `3`) — rare status push, fixed 6 bytes:**
 
 ```
 off 0: UInt8   type (=3)
 off 1: UInt8   eligible   (0/1) — a qualifying swipe would be translated to ⌘[/⌘] right now
 off 2: UInt8   slowTier   (0/1) — the host's SLOPDESK_SWIPE_NAV_SLOW operating point
 off 3: UInt16  fireTravel — points, the host's clamped SLOPDESK_SWIPE_NAV_TRAVEL
+off 5: UInt8   navFlags   — bit0 canGoBack, bit1 canGoForward, bit2 historyKnown
 ```
 
-Sent by the host on every frontmost-app **activation** plus a ~2 s heartbeat (`SwipeNavStatusKicker`
+Sent by the host on every frontmost-app **activation**, on every **history-state change** (a ~250 ms
+poll of the target's AX Back/Forward state — `HostNavHistory`; history flips on every navigation, so
+change-pushes keep the chip honest between heartbeats), plus a ~2 s heartbeat (`SwipeNavStatusKicker`
 fan-out; a window session resolves eligibility against its own target app instead of the frontmost).
-The client's swipe-peel feedback mirror (doc 05 §8) is gated + threshold-tuned by the latest push;
-until one arrives it stays NOT eligible, so an older host simply never shows the overlay. Pure
-fire-and-forget — a lost datagram self-heals on the next beat. Golden vector: `swipeNavStatus`.
+`navFlags` carries whether ⌘[/⌘] would actually navigate: with `historyKnown` set, the client hides
+the chip for a dead direction; `historyKnown`=0 (AX read failed/disabled, no menu/toolbar pair, or
+`SLOPDESK_SWIPE_NAV_HISTORY=0`) means the client must FAIL OPEN and treat both directions as
+navigable. The host's fire path is deliberately NOT gated on these bits — the chord is a
+validated-menu no-op in an app that cannot navigate. The client's swipe-peel feedback mirror
+(doc 05 §8) is gated + threshold-tuned by the latest push; until one arrives it stays NOT eligible,
+so an older host simply never shows the overlay. Pure fire-and-forget — a lost datagram self-heals
+on the next beat. Golden vector: `swipeNavStatus`.
 
 **Client → host prime (mux only).** On the shared-flow mux the cursor socket is host→client except
 for the lane's flow **prime**: a channelID-framed datagram (`[UInt32 BE channelID][payload…]`, no

@@ -1425,12 +1425,20 @@ final class MetalLayerBackedView: NSView {
     // MARK: Swipe-peel feedback (doc 05 §8)
 
     /// Adopts the host's swipe-nav status push. Eligibility flipping OFF mid-gesture retracts
-    /// immediately (the host would ignore the fire); a knob change rebuilds the (idle) mirror so
-    /// a host-side `SLOPDESK_SWIPE_NAV_TRAVEL`/`_SLOW` retune never desynchronises the feedback.
+    /// immediately (the host would ignore the fire), and so does the shown chip's direction
+    /// going history-DEAD (the ~250 ms change-poll can land mid-gesture) — EXCEPT a confirming
+    /// chip: a fired back-nav flips canGoBack itself within one poll, and cutting the 520 ms
+    /// confirm hold on that push would erase the acknowledgement of the very fire that caused
+    /// it. A knob change rebuilds the (idle) mirror so a host-side
+    /// `SLOPDESK_SWIPE_NAV_TRAVEL`/`_SLOW` retune never desynchronises the feedback.
     private func adoptSwipeNavStatus(_ status: SwipeNavStatusMessage) {
         let previous = peelStatus
         peelStatus = status
-        if !status.eligible { abandonSwipePeel() }
+        if !status.eligible {
+            abandonSwipePeel()
+        } else if let chip = controls?.swipePeel, !chip.confirming, !status.allowsChip(chip.direction) {
+            abandonSwipePeel()
+        }
         if previous?.fireTravel != status.fireTravel || previous?.slowTier != status.slowTier {
             peelPlanner = SwipePeelPlanner(
                 fireTravel: Double(status.fireTravel), slowSwipe: status.slowTier,
@@ -1439,17 +1447,21 @@ final class MetalLayerBackedView: NSView {
     }
 
     /// Mirrors one forwarded scroll event into the peel planner and applies its verdict. Gated
-    /// on the host saying the target app is eligible AT ALL — no push yet (old host) ⇒ nothing.
+    /// on the host saying the target app is eligible AT ALL — no push yet (old host) ⇒ nothing
+    /// — then per-direction on the pushed history state (``SwipePeelPlanner/historyGated``):
+    /// the planner still tracks the gesture (its state must mirror the host recogniser's), but
+    /// a dead-direction chip never surfaces.
     private func feedSwipePeel(_ event: NSEvent) {
-        guard peelStatus?.eligible == true else { return }
-        applySwipePeel(peelPlanner.ingest(
+        guard let status = peelStatus, status.eligible else { return }
+        let verdict = peelPlanner.ingest(
             dx: Double(event.scrollingDeltaX),
             dy: Double(event.scrollingDeltaY),
             scrollPhase: Self.cgScrollPhaseCode(event.phase),
             momentumPhase: Self.cgMomentumPhaseCode(event.momentumPhase),
             continuous: event.hasPreciseScrollingDeltas,
             now: event.timestamp,
-        ))
+        )
+        applySwipePeel(SwipePeelPlanner.historyGated(verdict, status: status))
     }
 
     private func applySwipePeel(_ verdict: SwipePeelPlanner.Verdict) {
@@ -1481,7 +1493,17 @@ final class MetalLayerBackedView: NSView {
             }
         case .retract:
             peelChipCommitted = false
-            controls?.swipePeel = nil
+            // Two guards, both for the history gate's relabelled verdicts (a dead-direction
+            // gesture converts EVERY qualifying event to `.retract`): a nil-over-nil assign
+            // would re-fire the @Published pane invalidation ~80×/gesture for zero visible
+            // change, and a CONFIRMING chip must keep its 520 ms hold — the planner resets
+            // `showing` at commit, so the only live publish a `.retract` can coexist with is
+            // the PREVIOUS gesture's confirm hold (double-back at history end), which the
+            // pending clear task ends. A genuine same-gesture retract always finds a
+            // non-confirming chip and clears it exactly once.
+            if let chip = controls?.swipePeel, !chip.confirming {
+                controls?.swipePeel = nil
+            }
         }
     }
 

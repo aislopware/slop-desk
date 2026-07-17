@@ -1081,3 +1081,58 @@ two host-side robustness holes surfaced on the way. All changes below; no wire c
   host UDP-loss desync — real in theory, negligible on the WireGuard LAN, and a fix needs wire
   seq numbers; a "navigation in flight" spinner state beyond the dim hold — wait for HW feedback
   on the hold first.
+
+## Swipe-nav history gate: the chip only shows when the browser can actually navigate (2026-07-17)
+
+HW report: with the browser's Back/Forward buttons DISABLED (empty history in that direction), a
+drag still raised the chip, filled it, committed, haptic'd — then nothing happened. The recognizer
+docs claimed page state "is invisible remotely — commitment is the only proxy left". An AX probe on
+the live host disproved half of that: history AVAILABILITY is readable; only page-content state
+(edge position, scrollability) remains invisible.
+
+- ✅ **Host reads canGoBack/canGoForward via the Accessibility API** (`HostNavHistory`,
+  daemon-side — videohostd already holds AX trust for the raise chain). Two strategies, probed on
+  real browsers:
+  - **Menu key-equivalent path** (default): find the menu items whose key equivalent is ⌘[ / ⌘]
+    (`AXMenuItemCmdChar`, cmd-only modifiers) and read `AXEnabled`. Locale-independent and
+    semantically exact — it asks "would the chord we are about to send do anything". Chromium
+    (CommandUpdater) updates these EAGERLY: probe-verified live flips on navigation, no menu open.
+  - **Toolbar-identifier path** (preferred when present): buttons with `AXIdentifier`
+    `BackButton`/`ForwardButton` — Safari's autoenabled menus validate LAZILY (probe: after a
+    background navigation the History menu still said Back disabled while the toolbar button had
+    already flipped to enabled), but the toolbar pair is what the user SEES, updates live even in
+    background, and carries stable identifiers.
+  - Elements are cached per pid (full scan 25–180 ms cold, off-main, 0.1 s messaging timeout,
+    bounded walk that skips `AXWebArea`); a cached `AXEnabled` re-read costs ~0.05 ms, so polling
+    is effectively free. Rescan on pid change or invalidated elements; any failure ⇒ UNKNOWN.
+    ⚠️ Review-caught: a pid-only cache serves the wrong WINDOW's history for toolbar pairs —
+    Back/Forward is per-window state there, and window A's buttons keep reading successfully
+    (live elements, no AX error) after focus moves to window B of the same app, so the wrong
+    flags would persist with historyKnown=true for the app's whole lifetime. The pair now
+    remembers the window it was scanned from and every read `CFEqual`-checks it against the
+    app's current focused window, rescanning on mismatch (~0.05 ms extra per beat); menu pairs
+    are exempt — app-global and focus-following by construction. Runtime proof (unit tests
+    can't touch AX): `slopdesk-navhistory-probe`.
+- ✅ **Wire: `SwipeNavStatusMessage` grows one flags byte** (type-3 goes 5 → 6 bytes: bit0
+  canGoBack, bit1 canGoForward, bit2 historyKnown; golden `swipeNavStatus` hand-merged, doc 20
+  §9.6). UNKNOWN ships as historyKnown=0 and the client FAILS OPEN — non-browser allowlist
+  targets, denied AX, or an app with neither menu nor toolbar pair behave exactly as before this
+  change. Freshness: the kicker ticks every 250 ms and pushes on CHANGE (history flips on every
+  navigation — a 2 s-stale "can't go back" right after clicking a link would eat the most common
+  swipe); every 8th tick stays an unconditional heartbeat, preserving the 2 s loss self-heal.
+- ✅ **Only the AFFORDANCE is gated, never the fire.** A dead-direction candidate never shows the
+  chip (and a mid-gesture flip retracts it), but the host still fires the chord on a qualifying
+  swipe: ⌘[/⌘] into a browser that cannot navigate is a validated-menu no-op, so NOT suppressing
+  is strictly safer — a stale-disabled read can cost feedback, never a real navigation, and the
+  dangerous direction (chip hidden while nav happens) needs the state to flip DURING the ~300 ms
+  swipe. Escape hatch: `SLOPDESK_SWIPE_NAV_HISTORY=0` (host) reports UNKNOWN ⇒ pre-gate behavior.
+  ⚠️ Review-caught, twice at the client's `.retract` sink: the gate relabels EVERY qualifying
+  event of a dead-direction gesture to `.retract`, which (a) re-published nil-over-nil ~80×/
+  gesture through the pane's `@Published` chip state, and (b) a double-back at history end — new
+  gesture inside the previous fire's 520 ms confirm hold — wiped that hold, bypassing the
+  confirming-chip exemption that only guarded the status-push path. `.retract` now clears only a
+  visible NON-confirming chip (the planner resets `showing` at commit, so a confirm hold is the
+  only live publish a `.retract` can coexist with — its pending clear task ends it).
+- ❌ **REJECTED: per-app freshness trust list** (gate only browsers proven eager) — the toolbar
+  path already covers the one probed-lazy browser (Safari), fail-open covers the rest, and a
+  curated list is config surface that rots.

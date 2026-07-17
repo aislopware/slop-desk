@@ -139,4 +139,19 @@ public struct SwipePeelPlanner: Sendable {
         showing = false
         return .retract
     }
+
+    /// History gate over one verdict (doc 20 §9.6): a candidate toward a direction the host
+    /// says CANNOT navigate never surfaces — `.show` and `.commit` become `.retract`
+    /// (idempotent when nothing is showing), so neither the chip nor the commit haptic/pulse
+    /// promises a dead navigation. Applied by the VIEW between `ingest` and the chip publish
+    /// rather than inside the recogniser mirror: the host keeps firing the (self-gating) chord
+    /// on these swipes, so the mirror's internal state must keep tracking the gesture exactly
+    /// as the host's does. UNKNOWN history fails open inside ``SwipeNavStatusMessage/allowsChip(_:)``.
+    public static func historyGated(_ verdict: Verdict, status: SwipeNavStatusMessage) -> Verdict {
+        switch verdict {
+        case let .show(chip) where !status.allowsChip(chip.direction): .retract
+        case let .commit(direction) where !status.allowsChip(direction): .retract
+        default: verdict
+        }
+    }
 }

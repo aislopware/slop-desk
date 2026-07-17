@@ -2723,16 +2723,31 @@
   ],
   "swipeNavStatus": [
     {
+      "canGoBack": false,
+      "canGoForward": false,
       "eligible": true,
       "fireTravel": 80,
-      "hex": "0301010050",
+      "hex": "030101005000",
+      "historyKnown": false,
       "slowTier": true
     },
     {
+      "canGoBack": false,
+      "canGoForward": false,
       "eligible": false,
       "fireTravel": 500,
-      "hex": "03000001f4",
+      "hex": "03000001f400",
+      "historyKnown": false,
       "slowTier": false
+    },
+    {
+      "canGoBack": true,
+      "canGoForward": false,
+      "eligible": true,
+      "fireTravel": 80,
+      "hex": "030101005005",
+      "historyKnown": true,
+      "slowTier": true
     }
   ],
   "systemDialogClassify": [

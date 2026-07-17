@@ -3326,10 +3326,13 @@ public actor SlopDeskVideoHostSession {
     /// the chord posts at the HID tap — it lands in the OS key-focus holder — so the fire path
     /// gates on live focus (``InputInjector/fireSwipeNav`` suppresses + raises on a mismatch),
     /// and the chip must mirror that gate or it promises fires the host swallows. A DISPLAY
-    /// session follows the frontmost app, exactly mirroring the fire-time check. Fire-and-forget:
-    /// the kicker re-pushes on every frontmost activation plus a ~2 s heartbeat, so a lost
-    /// datagram self-heals and the window-pane eligibility is at most one beat stale.
-    public func pushSwipeNavStatus(frontmostBundleID: String?) {
+    /// session follows the frontmost app, exactly mirroring the fire-time check. `history` is
+    /// the kicker's AX Back/Forward read of the frontmost app (nil = unknown ⇒ client fails
+    /// open) — it gates only the chip, never the fire (doc 20 §9.6). Fire-and-forget: the
+    /// kicker re-pushes on every frontmost activation, on every history/eligibility CHANGE
+    /// (~250 ms poll), plus a ~2 s heartbeat, so a lost datagram self-heals and the window-pane
+    /// eligibility is at most one beat stale.
+    public func pushSwipeNavStatus(frontmostBundleID: String?, history: NavHistoryFlags?) {
         guard stateMachine.mediaFlowing else { return }
         let status: SwipeNavStatusMessage =
             if let pid = window?.owningApplication?.processID, pid > 0 {
@@ -3337,9 +3340,10 @@ public actor SlopDeskVideoHostSession {
                     // Thread-safe AppKit read, same as InputInjector's off-main usage.
                     paneBundleID: NSRunningApplication(processIdentifier: pid_t(pid))?.bundleIdentifier,
                     frontmostBundleID: frontmostBundleID,
+                    history: history,
                 )
             } else {
-                SwipeNavHostConfig.status(bundleID: frontmostBundleID)
+                SwipeNavHostConfig.status(bundleID: frontmostBundleID, history: history)
             }
         transport.send(scheduler.scheduleCursor(.swipeNavStatus(status)).bytes, on: .cursor)
     }

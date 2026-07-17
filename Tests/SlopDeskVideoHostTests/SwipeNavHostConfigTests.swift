@@ -31,4 +31,42 @@ final class SwipeNavHostConfigTests: XCTestCase {
             paneBundleID: "com.google.Chrome", frontmostBundleID: nil,
         ))
     }
+
+    /// The history bits ride only an ELIGIBLE push (doc 20 §9.6): an ineligible one zeroes
+    /// them (canonical wire — the client ignores them behind a dark chip anyway), and a nil
+    /// read ships historyKnown=false so the client fails OPEN, never dark.
+    func testStatusCarriesHistoryFlagsOnlyWhenEligible() {
+        let history = NavHistoryFlags(canGoBack: true, canGoForward: false)
+        let lit = SwipeNavHostConfig.status(bundleID: "com.google.Chrome", history: history)
+        XCTAssertTrue(lit.eligible)
+        XCTAssertTrue(lit.historyKnown)
+        XCTAssertTrue(lit.canGoBack)
+        XCTAssertFalse(lit.canGoForward)
+        let dark = SwipeNavHostConfig.status(bundleID: "com.apple.dt.Xcode", history: history)
+        XCTAssertFalse(dark.eligible)
+        XCTAssertFalse(dark.historyKnown)
+        XCTAssertFalse(dark.canGoBack)
+        let unknown = SwipeNavHostConfig.status(bundleID: "com.google.Chrome", history: nil)
+        XCTAssertTrue(unknown.eligible)
+        XCTAssertFalse(unknown.historyKnown)
+    }
+
+    func testWindowStatusAppliesTheSameHistoryZeroRule() {
+        let history = NavHistoryFlags(canGoBack: false, canGoForward: true)
+        let lit = SwipeNavHostConfig.windowStatus(
+            paneBundleID: "com.google.Chrome", frontmostBundleID: "com.google.Chrome",
+            history: history,
+        )
+        XCTAssertTrue(lit.historyKnown)
+        XCTAssertFalse(lit.canGoBack)
+        XCTAssertTrue(lit.canGoForward)
+        // Navigable pane app but focus elsewhere: dark chip, zeroed bits.
+        let dark = SwipeNavHostConfig.windowStatus(
+            paneBundleID: "com.google.Chrome", frontmostBundleID: "com.apple.dt.Xcode",
+            history: history,
+        )
+        XCTAssertFalse(dark.eligible)
+        XCTAssertFalse(dark.historyKnown)
+        XCTAssertFalse(dark.canGoForward)
+    }
 }

@@ -146,8 +146,9 @@ Thread.detachNewThread {
         case let .swipeNavStatus(s):
             state.statusCount += 1
             state.lastStatus = s
+            let history = s.historyKnown ? "back=\(s.canGoBack) fwd=\(s.canGoForward)" : "unknown"
             eprint(
-                "\(state.stamp()) SwipeNavStatus #\(state.statusCount): eligible=\(s.eligible) slowTier=\(s.slowTier) fireTravel=\(s.fireTravel)",
+                "\(state.stamp()) SwipeNavStatus #\(state.statusCount): eligible=\(s.eligible) slowTier=\(s.slowTier) fireTravel=\(s.fireTravel) history=\(history)",
             )
         }
         state.lock.unlock()
