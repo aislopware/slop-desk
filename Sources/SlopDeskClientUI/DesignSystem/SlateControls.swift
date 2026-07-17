@@ -39,6 +39,42 @@ struct SlatePlateButton: View {
     }
 }
 
+/// The `Menu` twin of ``SlatePlateButton``: the SAME transparent-plate/hover-fill idiom around an icon
+/// that drops a menu. `.menuStyle(.button)` + `.buttonStyle(.plain)` are load-bearing — without them a
+/// `Menu` renders its label inside the system pull-down bezel, so a menu control sits in a pill while
+/// the plate buttons beside it stay flat (two chromes in one bar).
+struct SlatePlateMenu<Content: View>: View {
+    let symbol: SFSymbol
+    var help: String?
+    var tint: Color = Slate.Text.icon
+    @ViewBuilder var content: () -> Content
+
+    @State private var hovering = false
+
+    var body: some View {
+        Menu {
+            content()
+        } label: {
+            Image(systemSymbol: symbol)
+                .font(.system(size: Slate.Metric.iconSize, weight: .medium))
+                .foregroundStyle(tint)
+                .frame(width: Slate.Metric.plate, height: Slate.Metric.plate)
+                .background(
+                    hovering ? Slate.State.hover : .clear,
+                    in: .rect(cornerRadius: Slate.Metric.radiusControl),
+                )
+                .contentShape(.rect)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .onHover { hovering = $0 }
+        .animation(Slate.Anim.smallFade, value: hovering)
+        .slateHelp(help)
+    }
+}
+
 extension View {
     /// Applies a `.help(_:)` only when a tooltip string is present (keeps call sites terse).
     @ViewBuilder

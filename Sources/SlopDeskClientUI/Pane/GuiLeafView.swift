@@ -684,10 +684,9 @@ private struct GuiStreamTunePopover: View {
 /// The current display is check-marked; a refresh row covers hot-plugged monitors.
 private struct GuiDisplaySwitcherMenu: View {
     let model: RemoteWindowModel
-    @State private var hovering = false
 
     var body: some View {
-        Menu {
+        SlatePlateMenu(symbol: .display, help: "Switch host display") {
             if model.availableDisplays.isEmpty {
                 Button("No display list from host") {}.disabled(true)
             } else {
@@ -707,22 +706,8 @@ private struct GuiDisplaySwitcherMenu: View {
             Button("Refresh Displays") {
                 Task { await model.refreshDisplays() }
             }
-        } label: {
-            Image(systemSymbol: .display)
-                .font(.system(size: Slate.Metric.iconSize, weight: .medium))
-                .foregroundStyle(Slate.Text.icon)
-                .frame(width: Slate.Metric.plate, height: Slate.Metric.plate)
-                .background(
-                    hovering ? Slate.State.hover : .clear,
-                    in: .rect(cornerRadius: Slate.Metric.radiusControl),
-                )
-                .contentShape(.rect)
         }
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .onHover { hovering = $0 }
         .task { await model.refreshDisplays() }
-        .slateHelp("Switch host display")
     }
 }
 
@@ -820,7 +805,6 @@ private struct RemoteWindowSizePopover: View {
 private struct GuiPastePlateMenu: View {
     let model: RemoteWindowModel
     let store: WorkspaceStore
-    @State private var hovering = false
 
     /// The CURRENT local clipboard (live reader, works even with clipboard-history recording off).
     private var clipboard: String? { store.currentLocalClipboard() }
@@ -830,7 +814,12 @@ private struct GuiPastePlateMenu: View {
     }
 
     var body: some View {
-        Menu {
+        // Clipboard, not a keyboard: the verb is PASTE (the keystroke mechanics live in the
+        // tooltip), and the immersive toggle needs the keyboard family to itself.
+        SlatePlateMenu(
+            symbol: .documentOnClipboard,
+            help: "Paste local clipboard into the remote window as keystrokes (⌥⌘V)",
+        ) {
             Button("Paste as Keystrokes") {
                 if let text = clipboard { model.pasteAsKeystrokes(text) }
             }
@@ -848,23 +837,7 @@ private struct GuiPastePlateMenu: View {
                     }
                 }
             }
-        } label: {
-            // Clipboard, not a keyboard: the verb is PASTE (the keystroke mechanics live in the
-            // tooltip), and the immersive toggle needs the keyboard family to itself.
-            Image(systemSymbol: .documentOnClipboard)
-                .font(.system(size: Slate.Metric.iconSize, weight: .medium))
-                .foregroundStyle(Slate.Text.icon)
-                .frame(width: Slate.Metric.plate, height: Slate.Metric.plate)
-                .background(
-                    hovering ? Slate.State.hover : .clear,
-                    in: .rect(cornerRadius: Slate.Metric.radiusControl),
-                )
-                .contentShape(.rect)
         }
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .onHover { hovering = $0 }
-        .slateHelp("Paste local clipboard into the remote window as keystrokes (⌥⌘V)")
     }
 }
 
