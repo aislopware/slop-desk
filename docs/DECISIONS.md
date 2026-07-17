@@ -1109,10 +1109,16 @@ the live host disproved half of that: history AVAILABILITY is readable; only pag
     Back/Forward is per-window state there, and window A's buttons keep reading successfully
     (live elements, no AX error) after focus moves to window B of the same app, so the wrong
     flags would persist with historyKnown=true for the app's whole lifetime. The pair now
-    remembers the window it was scanned from and every read `CFEqual`-checks it against the
-    app's current focused window, rescanning on mismatch (~0.05 ms extra per beat); menu pairs
-    are exempt — app-global and focus-following by construction. Runtime proof (unit tests
-    can't touch AX): `slopdesk-navhistory-probe`.
+    remembers the window it was scanned from and `CFEqual`-checks it against the app's current
+    focused window, rescanning on mismatch; menu pairs are exempt — app-global and
+    focus-following by construction. ⚠️ Perf-audit-caught: that currency check is NOT the
+    ~0.05 ms CFEqual — fetching the focused window to compare against is a live IPC round trip
+    (probe: 1–6 ms), and per-beat it cost 0.4–2.4% of a core into Safari-family targets at
+    4 Hz forever. It now runs only on FORCED beats (~2 s heartbeat + app activation), so an
+    intra-app window switch can serve the old window's flags for ≤2 s — bounded and cosmetic
+    (fire is ungated; a closed window still fails `readEnabled` and rescans next beat), unlike
+    the unbounded staleness the check exists to kill. Runtime proof (unit tests can't touch
+    AX): `slopdesk-navhistory-probe`.
 - ✅ **Wire: `SwipeNavStatusMessage` grows one flags byte** (type-3 goes 5 → 6 bytes: bit0
   canGoBack, bit1 canGoForward, bit2 historyKnown; golden `swipeNavStatus` hand-merged, doc 20
   §9.6). UNKNOWN ships as historyKnown=0 and the client FAILS OPEN — non-browser allowlist
@@ -1136,3 +1142,26 @@ the live host disproved half of that: history AVAILABILITY is readable; only pag
 - ❌ **REJECTED: per-app freshness trust list** (gate only browsers proven eager) — the toolbar
   path already covers the one probed-lazy browser (Safari), fail-open covers the rest, and a
   curated list is config surface that rots.
+
+### Perf audit of the gate (2026-07-17)
+
+Live-daemon profile (Chrome frontmost, worst normal case): whole daemon 0.7–0.8% CPU / ~80
+wakeups/s; the kicker was ~1.4% of wall (mostly blocked IPC), dominated ~4:1 by the 4 Hz
+`CGWindowListCopyWindowInfo` over the AX reads. Adversarial review (5 lenses, per-finding refute)
+confirmed 3 real drains and refuted 10 (fan-out serialization, two-browser cache thrash,
+MainActor/frame-present contention, client publish storms — v8 net-REDUCES client publishes).
+Fixes, none touching the wire:
+
+- **Zero-session tick gate**: with no live session the kicker returns before the WindowServer/AX
+  reads (`VideoMuxSessionRegistry.hasSessions`) — the idle daemon is the COMMON state and was
+  paying the whole 4 Hz loop for an audience of zero. Fresh sessions still bootstrap off the
+  ≤2 s forced beat.
+- **Early-stop frontmost query**: `frontmostPID()` decodes window records one at a time (toll-free
+  NS views) and stops at the first elected layer-0 window instead of deep-bridging every
+  on-screen window's record each tick (~30% of the query's samples; scaled with open windows).
+- **Currency check throttled to forced beats** (see the ⚠️ above).
+- **AX walk wall-clock deadline (1 s) + per-element 0.1 s timeout stamping**: budgets bounded
+  call COUNT, not duration, and elements copied out of a walk (children/windows) carry the ~6 s
+  framework default — a mid-walk beachball could stretch one rescan to multi-second latch-held
+  stalls (kicker frozen for ALL sessions). Cached pair elements are the same stamped refs, so
+  every later `readEnabled` is capped too. Truncated scan ⇒ UNKNOWN, fail open.

@@ -228,6 +228,11 @@ public actor VideoMuxSessionRegistry {
         for session in sessions.values { await body(session) }
     }
 
+    /// Whether any session is live — the swipe-nav kicker's tick gate: with nobody attached,
+    /// its 4 Hz WindowServer + AX polling would otherwise run for the daemon's whole life for
+    /// an audience of zero (the idle-daemon state is the COMMON one for a host).
+    public var hasSessions: Bool { !sessions.isEmpty }
+
     /// The number of live lanes (for a test / lsof-style assertion).
     public var liveChannelCount: Int { sinkTable.count }
 

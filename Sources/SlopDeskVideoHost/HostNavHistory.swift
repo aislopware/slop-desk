@@ -21,10 +21,14 @@ import Foundation
 /// The full scan costs 25–180 ms of blocking AX IPC (cold Chrome); a cached `AXEnabled`
 /// re-read costs ~0.05 ms. So the two elements are cached per pid and re-scanned only when
 /// the pid changes, a read errors, or — toolbar pairs, whose state is per-WINDOW — the app's
-/// focused window is no longer the one the pair was scanned from (see `Pair.window`). EVERY
-/// call blocks on out-of-process IPC (0.1 s messaging timeout) — call off the main actor
-/// only, and never from unit tests (hang-safety: this is process-external state, same rule
-/// as SCStream/VT).
+/// focused window is no longer the one the pair was scanned from (see `Pair.window`; the
+/// currency fetch is itself a live IPC round trip, so it runs only on `verifyWindow` beats —
+/// perf-audit-caught: at every beat it cost 1–6 ms × 4 Hz into the target for as long as a
+/// toolbar-strategy browser stayed frontmost). EVERY call blocks on out-of-process IPC
+/// (0.1 s messaging timeout, stamped on every element the scan touches — children copied out
+/// of a walk otherwise carry the ~6 s framework default) — call off the main actor only, and
+/// never from unit tests (hang-safety: this is process-external state, same rule as
+/// SCStream/VT).
 public final class HostNavHistory: @unchecked Sendable {
     private struct Pair {
         var pid: pid_t
@@ -52,13 +56,20 @@ public final class HostNavHistory: @unchecked Sendable {
     /// The current Back/Forward availability for `pid`, or nil when unknown (fail open).
     /// `rescanUnknown` lets the slow heartbeat retry a pid whose last scan found no pair
     /// (app was mid-launch, window not up yet) while the fast change-poll skips it.
-    public func read(pid: pid_t, rescanUnknown: Bool) -> NavHistoryFlags? {
+    /// `verifyWindow` gates the toolbar-pair currency check the same way: re-fetching the
+    /// focused window is a live IPC round trip per call, so only the forced beats (~2 s
+    /// heartbeat, app activation) pay it. Between them an intra-app window switch can serve
+    /// the OLD window's flags for ≤2 s — cosmetic only: the fire path is ungated, so a stale
+    /// chip is at worst a no-op chord, and a dead element (window CLOSED, not just unfocused)
+    /// still fails `readEnabled` and rescans on the very next beat.
+    public func read(pid: pid_t, rescanUnknown: Bool, verifyWindow: Bool) -> NavHistoryFlags? {
         lock.lock()
         let pair = cached?.pid == pid ? cached : nil
         let knownEmpty = emptyScanPID == pid
         lock.unlock()
         if let pair {
-            if pairIsCurrent(pair), let flags = readEnabled(pair) { return flags }
+            let current = verifyWindow ? pairIsCurrent(pair) : true
+            if current, let flags = readEnabled(pair) { return flags }
             // Focus moved to another window (toolbar pairs are per-window) or the element
             // went stale (window closed, app relaunched its UI) — drop + rescan once.
             store(pair: nil, emptyPID: nil)
@@ -76,7 +87,7 @@ public final class HostNavHistory: @unchecked Sendable {
     private func pairIsCurrent(_ pair: Pair) -> Bool {
         guard let window = pair.window else { return true }
         let appEl = AXUIElementCreateApplication(pair.pid)
-        AXUIElementSetMessagingTimeout(appEl, 0.1)
+        AXUIElementSetMessagingTimeout(appEl, Self.axTimeout)
         guard let focused = focusedOrFirstWindow(appEl: appEl) else { return false }
         return CFEqual(window, focused)
     }
@@ -84,8 +95,8 @@ public final class HostNavHistory: @unchecked Sendable {
     /// The window the ⌘[/⌘] chord would land in: the app's focused window, else its first
     /// (mirrors the scan so the currency check compares like with like).
     private func focusedOrFirstWindow(appEl: AXUIElement) -> AXUIElement? {
-        axElement(attr(appEl, kAXFocusedWindowAttribute))
-            ?? (attr(appEl, kAXWindowsAttribute) as? [AXUIElement])?.first
+        stamped(axElement(attr(appEl, kAXFocusedWindowAttribute))
+            ?? (attr(appEl, kAXWindowsAttribute) as? [AXUIElement])?.first)
     }
 
     private func store(pair: Pair?, emptyPID: pid_t?) {
@@ -99,8 +110,14 @@ public final class HostNavHistory: @unchecked Sendable {
         let appEl = AXUIElementCreateApplication(pid)
         // Cap each blocking AX IPC so a hung target fails fast instead of the ~6 s framework
         // default — a missed read just means one UNKNOWN (fail-open) push.
-        AXUIElementSetMessagingTimeout(appEl, 0.1)
-        guard let pair = findToolbarPair(appEl: appEl, pid: pid) ?? findMenuPair(appEl: appEl, pid: pid)
+        AXUIElementSetMessagingTimeout(appEl, Self.axTimeout)
+        // Wall-clock cap on the WHOLE scan (worst measured cold scan 180 ms; node budgets
+        // bound call COUNT, not duration): the kicker's in-flight latch spans this read, so a
+        // target that keeps answering slowly-but-successfully would otherwise freeze every
+        // status push for all sessions until the walk ran dry. Truncation ⇒ UNKNOWN, fail open.
+        let deadline = DispatchTime.now() + Self.scanDeadline
+        guard let pair = findToolbarPair(appEl: appEl, pid: pid, deadline: deadline)
+            ?? findMenuPair(appEl: appEl, pid: pid, deadline: deadline)
         else {
             store(pair: nil, emptyPID: pid)
             return nil
@@ -130,7 +147,25 @@ public final class HostNavHistory: @unchecked Sendable {
     }
 
     private func children(_ el: AXUIElement) -> [AXUIElement] {
-        (attr(el, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+        let kids = (attr(el, kAXChildrenAttribute) as? [AXUIElement]) ?? []
+        for kid in kids { AXUIElementSetMessagingTimeout(kid, Self.axTimeout) }
+        return kids
+    }
+
+    /// Per-element message cap; the framework default is ~6 s PER element reference.
+    private static let axTimeout: Float = 0.1
+    /// Wall-clock cap on one full pair scan (see `scanAndRead`).
+    private static let scanDeadline: DispatchTimeInterval = .seconds(1)
+
+    /// Every element that leaves a copy-out (children, windows) carries the framework-default
+    /// ~6 s messaging timeout, NOT its parent's — stamp the cap on each before any query so a
+    /// mid-walk beachball costs 0.1 s per call, and the cached `Pair` elements (which are these
+    /// same refs) stay capped for every later `readEnabled`. Local client-side property set,
+    /// no IPC.
+    private func stamped(_ el: AXUIElement?) -> AXUIElement? {
+        guard let el else { return nil }
+        AXUIElementSetMessagingTimeout(el, Self.axTimeout)
+        return el
     }
 
     /// `as?` on a CF type is compile-time-only (always "succeeds") — gate on the actual type id.
@@ -147,7 +182,7 @@ public final class HostNavHistory: @unchecked Sendable {
     private static let backIdentifiers: Set<String> = ["BackButton"]
     private static let forwardIdentifiers: Set<String> = ["ForwardButton"]
 
-    private func findToolbarPair(appEl: AXUIElement, pid: pid_t) -> Pair? {
+    private func findToolbarPair(appEl: AXUIElement, pid: pid_t, deadline: DispatchTime) -> Pair? {
         guard let win = focusedOrFirstWindow(appEl: appEl) else { return nil }
         var back: AXUIElement?
         var forward: AXUIElement?
@@ -156,6 +191,7 @@ public final class HostNavHistory: @unchecked Sendable {
         var budget = 800
         func walk(_ el: AXUIElement, depth: Int) {
             if depth > 8 || budget <= 0 || (back != nil && forward != nil) { return }
+            if DispatchTime.now() > deadline { return }
             budget -= 1
             let role = attr(el, kAXRoleAttribute) as? String
             if role == "AXWebArea" { return }
@@ -175,16 +211,18 @@ public final class HostNavHistory: @unchecked Sendable {
     /// `kAXMenuItemCmdModifiersAttribute` value for a bare-⌘ key equivalent.
     private static let cmdOnlyModifiers = 0
 
-    private func findMenuPair(appEl: AXUIElement, pid: pid_t) -> Pair? {
-        guard let bar = axElement(attr(appEl, kAXMenuBarAttribute)) else { return nil }
+    private func findMenuPair(appEl: AXUIElement, pid: pid_t, deadline: DispatchTime) -> Pair? {
+        guard let bar = stamped(axElement(attr(appEl, kAXMenuBarAttribute))) else { return nil }
         var back: AXUIElement?
         var forward: AXUIElement?
         for topItem in children(bar) {
+            if DispatchTime.now() > deadline { break }
             for menu in children(topItem) {
                 // Depth 1 = the menu's items; one submenu level for apps that nest history.
                 func scan(_ items: [AXUIElement], depth: Int) {
                     for item in items {
                         if back != nil, forward != nil { return }
+                        if DispatchTime.now() > deadline { return }
                         if let cmd = attr(item, kAXMenuItemCmdCharAttribute) as? String,
                            cmd == "[" || cmd == "]",
                            (attr(item, kAXMenuItemCmdModifiersAttribute) as? Int) == Self.cmdOnlyModifiers

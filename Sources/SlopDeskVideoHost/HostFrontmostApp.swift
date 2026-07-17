@@ -33,34 +33,49 @@ public enum HostFrontmostApp {
         }
     }
 
-    /// The pure frontmost rule over a front-to-back window list: the first fully-described
-    /// window at normal level (layer 0) with any visible alpha wins. Records missing a field
-    /// are skipped (validate-then-drop — a malformed record must never elect a frontmost app);
+    /// The pure per-record frontmost rule: a fully-described window at normal level (layer 0)
+    /// with any visible alpha elects its owner. Records missing a field never elect
+    /// (validate-then-drop — a malformed record must never elect a frontmost app);
     /// overlay/panel levels (layer ≠ 0) and fully transparent windows never count.
+    public static func electedOwnerPID(of window: WindowRecord) -> pid_t? {
+        guard let layer = window.layer, layer == 0,
+              let pid = window.ownerPID, pid > 0,
+              let alpha = window.alpha, alpha > 0 else { return nil }
+        return pid
+    }
+
+    /// The frontmost rule over a front-to-back window list: the first electing record wins.
     public static func frontmostOwnerPID(in windows: [WindowRecord]) -> pid_t? {
         for window in windows {
-            guard let layer = window.layer, layer == 0,
-                  let pid = window.ownerPID, pid > 0,
-                  let alpha = window.alpha, alpha > 0 else { continue }
-            return pid
+            if let pid = electedOwnerPID(of: window) { return pid }
         }
         return nil
     }
 
     /// The frontmost app's pid, fresh from the WindowServer. `nil` when the query fails or no
     /// normal-level window is on screen (login/lock screen, display asleep).
+    ///
+    /// Decodes records ONE at a time and stops at the first elected pid — the swipe-nav kicker
+    /// calls this at 4 Hz for the daemon's whole life, and the frontmost window sits at the
+    /// head of the front-to-back list past a handful of overlay layers, so deep-bridging every
+    /// on-screen window's full record each tick paid a per-tick cost that scaled with how many
+    /// windows the desktop had open (profile: ~30% of the query's samples were the bridge).
     public static func frontmostPID() -> pid_t? {
         guard let list = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID,
-        ) as? [[String: Any]] else { return nil }
-        let records = list.map { info in
-            WindowRecord(
-                layer: info[kCGWindowLayer as String] as? Int,
-                ownerPID: (info[kCGWindowOwnerPID as String] as? Int32).map { pid_t($0) },
-                alpha: info[kCGWindowAlpha as String] as? Double,
+        ) else { return nil }
+        // The NS views are toll-free wrappers over the CF list — bridging to [[String: Any]]
+        // would deep-copy every record and defeat the early stop.
+        // swiftlint:disable:next legacy_objc_type
+        for case let info as NSDictionary in list as NSArray {
+            let record = WindowRecord(
+                layer: info[kCGWindowLayer] as? Int,
+                ownerPID: (info[kCGWindowOwnerPID] as? Int32).map { pid_t($0) },
+                alpha: info[kCGWindowAlpha] as? Double,
             )
+            if let pid = electedOwnerPID(of: record) { return pid }
         }
-        return frontmostOwnerPID(in: records)
+        return nil
     }
 
     /// The frontmost app's bundle identifier, fresh from the WindowServer. `nil` when no

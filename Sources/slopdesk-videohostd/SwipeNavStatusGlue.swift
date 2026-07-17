@@ -11,7 +11,9 @@ import SlopDeskVideoHost
 ///
 /// Daemon-level, not per-session: the frontmost app is ONE global truth shared by all
 /// lanes (mirrors ``WindowFeedKicker``); each session resolves its own pid>0 window-target
-/// override inside `pushSwipeNavStatus`.
+/// override inside `pushSwipeNavStatus`. With ZERO sessions every tick returns before the
+/// WindowServer/AX reads (perf-audit-caught: the idle daemon otherwise paid the 4 Hz polling
+/// forever for an audience of zero).
 @MainActor
 final class SwipeNavStatusKicker {
     private let registry: VideoMuxSessionRegistry
@@ -92,15 +94,22 @@ final class SwipeNavStatusKicker {
         Task.detached(priority: .utility) { [registry, state, navHistory] in
             guard state.begin() else { return }
             defer { state.end() }
+            // Zero sessions ⇒ nobody can render the chip: skip the WindowServer query and the
+            // AX read entirely (idle daemon is the COMMON state, and this loop otherwise runs
+            // for its whole life). lastKey is left as-is — a freshly minted session bootstraps
+            // off the ≤2 s forced beat exactly as it does today.
+            guard await registry.hasSessions else { return }
             let front = HostFrontmostApp.frontmost()
             let bundleID = front?.bundleID
             let eligible = SwipeNavHostConfig.eligible(bundleID: bundleID)
             // The AX read only runs for an eligible frontmost (a dark chip needs no history,
             // and ineligible pushes zero the bits anyway); a cached hit is ~0.05 ms, and only
-            // the forced beat may retry a pid whose last scan found no Back/Forward pair.
+            // the forced beat may retry a pid whose last scan found no Back/Forward pair or
+            // pay the toolbar-pair window-currency round trip (perf-audit-caught: verifying
+            // per beat cost 1–6 ms of live IPC × 4 Hz into Safari-family targets).
             let history: NavHistoryFlags? =
                 if SwipeNavHostConfig.historyGate, eligible, let pid = front?.pid {
-                    navHistory.read(pid: pid, rescanUnknown: force)
+                    navHistory.read(pid: pid, rescanUnknown: force, verifyWindow: force)
                 } else {
                     nil
                 }

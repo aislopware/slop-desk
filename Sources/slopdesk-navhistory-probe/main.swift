@@ -40,8 +40,10 @@ var sawKnown = false
 while Date() < deadline {
     beat += 1
     let t0 = DispatchTime.now().uptimeNanoseconds
-    // Every 8th beat forces the unknown-retry, mirroring the kicker's heartbeat cadence.
-    let flags = reader.read(pid: app.processIdentifier, rescanUnknown: beat % 8 == 1)
+    // Every 8th beat is the forced beat (unknown-retry + window-currency verify), mirroring
+    // the kicker's heartbeat cadence.
+    let force = beat % 8 == 1
+    let flags = reader.read(pid: app.processIdentifier, rescanUnknown: force, verifyWindow: force)
     let ms = Double(DispatchTime.now().uptimeNanoseconds - t0) / 1e6
     let desc = flags.map { "back=\($0.canGoBack) fwd=\($0.canGoForward)" } ?? "unknown"
     eprint(String(format: "beat %2d: %@ (%.2f ms)", beat, desc, ms))
