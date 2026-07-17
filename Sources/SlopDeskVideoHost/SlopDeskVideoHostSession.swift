@@ -3322,20 +3322,25 @@ public actor SlopDeskVideoHostSession {
     /// Daemon push (`SwipeNavStatusKicker`): ships the current swipe-nav status over the cursor
     /// socket so the client's peel-feedback mirror knows whether a swipe would translate and
     /// which thresholds the host operates on (doc 05 §8). A WINDOW session's eligibility is its
-    /// own target app — whole-session static, the translated key lands there regardless of the
-    /// desktop's frontmost; a DISPLAY session follows the frontmost app, exactly mirroring
-    /// ``InputInjector``'s fire-time check. Fire-and-forget: the kicker re-pushes on every
-    /// frontmost activation plus a ~2 s heartbeat, so a lost datagram self-heals.
+    /// own target app AND that app being frontmost (``SwipeNavHostConfig/eligibleWindowTarget``):
+    /// the chord posts at the HID tap — it lands in the OS key-focus holder — so the fire path
+    /// gates on live focus (``InputInjector/fireSwipeNav`` suppresses + raises on a mismatch),
+    /// and the chip must mirror that gate or it promises fires the host swallows. A DISPLAY
+    /// session follows the frontmost app, exactly mirroring the fire-time check. Fire-and-forget:
+    /// the kicker re-pushes on every frontmost activation plus a ~2 s heartbeat, so a lost
+    /// datagram self-heals and the window-pane eligibility is at most one beat stale.
     public func pushSwipeNavStatus(frontmostBundleID: String?) {
         guard stateMachine.mediaFlowing else { return }
-        let bundleID: String? =
+        let status: SwipeNavStatusMessage =
             if let pid = window?.owningApplication?.processID, pid > 0 {
-                // Thread-safe AppKit read, same as InputInjector's off-main usage.
-                NSRunningApplication(processIdentifier: pid_t(pid))?.bundleIdentifier
+                SwipeNavHostConfig.windowStatus(
+                    // Thread-safe AppKit read, same as InputInjector's off-main usage.
+                    paneBundleID: NSRunningApplication(processIdentifier: pid_t(pid))?.bundleIdentifier,
+                    frontmostBundleID: frontmostBundleID,
+                )
             } else {
-                frontmostBundleID
+                SwipeNavHostConfig.status(bundleID: frontmostBundleID)
             }
-        let status = SwipeNavHostConfig.status(bundleID: bundleID)
         transport.send(scheduler.scheduleCursor(.swipeNavStatus(status)).bytes, on: .cursor)
     }
 

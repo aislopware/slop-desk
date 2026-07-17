@@ -199,6 +199,24 @@ public final class InputInjector: @unchecked Sendable {
         self.windowID = windowID
         self.windowBoundsCG = windowBoundsCG
         self.balance = balance
+        // REGIME BANNER: one line per injector naming the swipe-nav threshold family, so a field
+        // log spanning host restarts/deploys self-describes which recognizer produced each
+        // verdict — an early audit log carried two lines from a stale build that were
+        // identifiable only by their message format having since changed.
+        if Self.swipeNavTrace, Self.swipeNavEnabled {
+            let travel = Int(Self.swipeNavTravel)
+            let slow = Self.swipeNavSlow ? "on" : "off"
+            let graceLo = Int(SwipeNavRecognizer.flickMaxDuration * 1000)
+            let graceHi = Int(SwipeNavRecognizer.slowGraceMaxDuration * 1000)
+            let bandHi = Int(SwipeNavRecognizer.slowDominance)
+            let bandLo = Int(SwipeNavRecognizer.slowRelaxedDominance)
+            let refractoryMs = Int(SwipeNavRecognizer.refractory * 1000)
+            var line = "slopdesk-videohostd[inject]: swipe-nav regime(pid \(pid) win \(windowID))"
+            line += " fireTravel=\(travel) slow=\(slow) grace=\(graceLo)→\(graceHi)ms"
+            line += " band=\(bandHi)×@\(travel * 2)→\(bandLo)×@\(travel * 3)"
+            line += " refractory=\(refractoryMs)ms\n"
+            FileHandle.standardError.write(Data(line.utf8))
+        }
         eventSource = CGEventSource(stateID: .hidSystemState)
         if let eventSource {
             // Default suppression interval is 0.25s: after a posted/warped event, synthetic events
@@ -702,6 +720,22 @@ public final class InputInjector: @unchecked Sendable {
             }
             return
         }
+        // WINDOW-scoped sessions: the chord posts at the HID tap, which delivers to the OS's
+        // KEY-FOCUS holder — not necessarily this session's target app. The allowlist above
+        // answered "is the PANE's app navigable"; this answers "will the chord actually land
+        // there". If another app holds focus right now, posting would outdent/indent in whoever
+        // has it — suppress instead, and kick the raise chain so an immediate retry lands in
+        // the (now raised) target. A nil frontmost read passes through: best-effort, matching
+        // ``performRaise``'s trust in the same z-order proxy.
+        if pid > 0, let front = HostFrontmostApp.frontmostPID(), front != pid {
+            if Self.swipeNavTrace {
+                let line = "slopdesk-videohostd[inject]: swipe-nav(pid \(pid) win \(windowID)) "
+                    + "suppressed (target not frontmost, front pid \(front))\n"
+                FileHandle.standardError.write(Data(line.utf8))
+            }
+            raiseTargetWindow()
+            return
+        }
         if Self.inputTrace {
             FileHandle.standardError
                 .write(Data("slopdesk-videohostd[inject]: swipe-nav → \(fired == .back ? "⌘[ back" : "⌘] forward")\n"
@@ -729,13 +763,14 @@ public final class InputInjector: @unchecked Sendable {
         if !commandHeld { postKey(keyCode: Self.keyCommand, down: false, modifiers: [], tag: 0) }
     }
 
-    /// The app the translated key would land in: the tracked window's app for a WINDOW-scoped
-    /// session, the frontmost app for a DISPLAY-scoped one (pid 0 — whole-desktop input goes to
-    /// whatever is frontmost, exactly like the scroll it follows). The frontmost read is the
-    /// WindowServer query (``HostFrontmostApp``), NOT `NSWorkspace`: the daemon's NSWorkspace
-    /// snapshot freezes at first access, which here means firing ⌘[ into whatever app happened
-    /// to be frontmost the first time this process looked — an OUTDENT in an editor the user
-    /// switched to later.
+    /// The app whose NAVIGABILITY the translation is judged against: the tracked window's app
+    /// for a WINDOW-scoped session (whether the chord will actually LAND there is re-checked
+    /// separately at fire time — see ``fireSwipeNav``'s frontmost gate), the frontmost app for
+    /// a DISPLAY-scoped one (pid 0 — whole-desktop input goes to whatever is frontmost, exactly
+    /// like the scroll it follows). The frontmost read is the WindowServer query
+    /// (``HostFrontmostApp``), NOT `NSWorkspace`: the daemon's NSWorkspace snapshot freezes at
+    /// first access, which here means firing ⌘[ into whatever app happened to be frontmost the
+    /// first time this process looked — an OUTDENT in an editor the user switched to later.
     private func swipeNavTargetBundleID() -> String? {
         if pid > 0 { return NSRunningApplication(processIdentifier: pid)?.bundleIdentifier }
         return HostFrontmostApp.bundleID()

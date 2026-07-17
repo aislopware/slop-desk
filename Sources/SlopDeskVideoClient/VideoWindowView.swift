@@ -73,6 +73,10 @@ public final class VideoPaneControls: ObservableObject {
 public struct VideoWindowView: View {
     /// The remote window's title, shown for accessibility.
     public let title: String
+    /// The remote window's APP display name ("Xcode"/"Google Chrome" — the picker's
+    /// `appName`); empty for a desktop pane or a legacy binding. Only the smart-zoom ⌘0 gate
+    /// consults it (``PinchZeroPolicy``).
+    public let targetAppName: String
     /// `nil` ⇒ no live connection (the seam's placeholder path / preview). When set,
     /// the backing view brings up the full client pipeline.
     public let connection: VideoWindowConnection?
@@ -160,6 +164,7 @@ public struct VideoWindowView: View {
     /// without a live connection. Kept so `VideoWindowFactory` callers compile.
     public init(title: String) {
         self.title = title
+        targetAppName = ""
         connection = nil
         isActive = true
         inputEnabled = true
@@ -185,6 +190,7 @@ public struct VideoWindowView: View {
     /// activate + non-active scroll-to-pan); they default to the standalone (always-active) values.
     public init(
         title: String,
+        targetAppName: String = "",
         connection: VideoWindowConnection,
         isActive: Bool = true,
         inputEnabled: Bool = true,
@@ -209,6 +215,7 @@ public struct VideoWindowView: View {
         onSessionRejected: (() -> Void)? = nil,
     ) {
         self.title = title
+        self.targetAppName = targetAppName
         self.connection = connection
         self.isActive = isActive
         self.inputEnabled = inputEnabled
@@ -239,6 +246,7 @@ public struct VideoWindowView: View {
         MetalVideoLayerView(
             connection: connection,
             controls: controls,
+            targetAppName: targetAppName,
             isActive: isActive,
             inputEnabled: inputEnabled,
             onActivate: onActivate,
@@ -273,6 +281,10 @@ public struct VideoWindowView: View {
                         alignment: peel.direction == .forward ? .trailing : .leading,
                     )
                     .transition(.opacity)
+                    // Feedback only — never eats pane input (the house convention for overlays
+                    // atop the Metal surface, see `GuiStatsReadout`): a click at the pane edge
+                    // during the ~520 ms confirm hold must reach the remote window.
+                    .allowsHitTesting(false)
             }
         }
         .animation(.timingCurve(0, 0, 0.58, 1, duration: 0.15), value: controls.swipePeel)
@@ -289,11 +301,15 @@ public struct VideoWindowView: View {
 /// users already know), flat fills only (no material — never glass over the `CAMetalLayer`).
 struct SwipePeelChipView: View {
     let state: SwipePeelChipState
+    /// Reduce Motion: the chip renders IN PLACE (no tuck emergence, no scale pulse) and changes
+    /// by fades only. The ring fill, the committed solid state and the haptic stay — they are
+    /// information, not motion.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         // Emergence: progress is quantized to 1/32 by the planner, so the outer `.animation`
         // smooths this into a glide instead of re-laying-out per 120 Hz event.
-        let tuck = (1 - state.progress) * 12
+        let tuck = reduceMotion ? 0 : (1 - state.progress) * 12
         ZStack {
             Circle()
                 .fill(Color.white.opacity(state.committed ? 0.95 : 0.82))
@@ -309,10 +325,15 @@ struct SwipePeelChipView: View {
                 .foregroundStyle(Color.black.opacity(state.committed ? 0.9 : 0.45))
         }
         .frame(width: 36, height: 36)
-        .scaleEffect(state.confirming ? 1.12 : (state.committed ? 1.06 : 1.0))
+        .scaleEffect(reduceMotion ? 1.0 : (state.confirming ? 1.12 : (state.committed ? 1.06 : 1.0)))
         .shadow(color: Color.black.opacity(0.25), radius: 4, y: 1)
         .offset(x: state.direction == .back ? -tuck : tuck)
-        .opacity(state.confirming ? 0 : 1) // confirm pulse: scale up while fading out
+        // Confirm pulse → DIM HOLD: the scale-up plays inside the ambient 0.15 s curve, then the
+        // chip HOLDS at low opacity until the ~520 ms clear task removes it (the removal
+        // transition fades the rest) — the hold is what actually spans the 150–400 ms
+        // inject→capture→stream beat, the only fire acknowledgement there is. Fading to 0 here
+        // would end the visible pulse at ~150 ms and hold an invisible chip.
+        .opacity(state.confirming ? 0.35 : 1)
     }
 }
 
@@ -329,6 +350,9 @@ func videoViewDbg(_ message: @autoclosure () -> String) {
 struct MetalVideoLayerView: NSViewRepresentable {
     let connection: VideoWindowConnection?
     var controls: VideoPaneControls?
+    /// The bound remote app's display name (empty = desktop pane / unknown) — the smart-zoom
+    /// ⌘0 gate's input (``PinchZeroPolicy``).
+    var targetAppName: String = ""
     var isActive: Bool = true
     /// READ-ONLY INPUT GATE: `false` ⇒ the backing view forwards no pointer/scroll/keycode to the
     /// host (gated `isActive && inputEnabled`) and withholds the paste-as-keystrokes sink. Set on every render.
@@ -352,6 +376,7 @@ struct MetalVideoLayerView: NSViewRepresentable {
     func makeNSView(context _: Context) -> MetalLayerBackedView {
         let view = MetalLayerBackedView()
         view.controls = controls
+        view.targetAppName = targetAppName
         view.isActive = isActive
         view.inputEnabled = inputEnabled
         view.onActivate = onActivate
@@ -404,6 +429,7 @@ struct MetalVideoLayerView: NSViewRepresentable {
 
     func updateNSView(_ nsView: MetalLayerBackedView, context _: Context) {
         nsView.controls = controls
+        nsView.targetAppName = targetAppName
         if nsView.isActive != isActive { videoViewDbg("updateNSView isActive \(nsView.isActive)→\(isActive)") }
         nsView.isActive = isActive
         // READ-ONLY INPUT GATE: apply the current gate every render. On a FLIP, re-publish the
@@ -749,6 +775,9 @@ final class MetalLayerBackedView: NSView {
     private var peelChipCommitted = false
     /// Delayed clear of the confirm-pulse chip after a fire.
     private var peelConfirmClear: Task<Void, Never>?
+    /// Per-gesture remote-vs-canvas routing pin (see ``ScrollRoutePinner``): a focus flip
+    /// mid-gesture must not reroute the momentum tail.
+    private var scrollRoutePinner = ScrollRoutePinner()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -1071,6 +1100,14 @@ final class MetalLayerBackedView: NSView {
     /// never zooms from a pinch — it is a fixed ACTUAL-SIZE viewport (footer zoom + edge-pan own
     /// local navigation), so the gesture's only meaning here is REMOTE zoom.
     private static let pinchKeysEnabled = EnvConfig.boolDefaultOn("SLOPDESK_PINCH_KEYS")
+    /// Runtime extension of ``PinchZeroPolicy``'s ⌘0 denylist (comma-separated app display names).
+    private static let pinchZeroExtraUnsafe = PinchZeroPolicy.extraUnsafe(
+        from: EnvConfig.string("SLOPDESK_PINCH_ZERO_UNSAFE_APPS"),
+    )
+    /// The bound remote app's DISPLAY NAME (`RemoteWindowDescriptor.appName` — picker style,
+    /// "Xcode"/"Google Chrome"); empty for a desktop pane or a legacy binding. Only consulted
+    /// by the smart-zoom ⌘0 gate (``PinchZeroPolicy``) — everything else is app-agnostic.
+    var targetAppName = ""
     /// ANSI key POSITIONS (HIToolbox `kVK_ANSI_*`), interpreted by the host layout like any
     /// forwarded keystroke.
     private static let keyEqual: UInt16 = 0x18 // kVK_ANSI_Equal → ⌘= zoom in
@@ -1094,9 +1131,13 @@ final class MetalLayerBackedView: NSView {
     }
 
     /// Two-finger double-tap (smart zoom) → ⌘0 (actual size / reset zoom) on the HOST — the
-    /// natural pairing with the pinch's ⌘= / ⌘− ladder.
+    /// natural pairing with the pinch's ⌘= / ⌘− ladder. Skipped where ⌘0 is NOT a zoom reset
+    /// (``PinchZeroPolicy`` — Xcode toggles its Navigator with it); ⌘=/⌘− stay ungated, they
+    /// are the correct zoom chords in editors too.
     override func smartMagnify(with _: NSEvent) {
         guard isActive, inputEnabled, Self.pinchKeysEnabled else { return }
+        guard PinchZeroPolicy.allowsReset(appName: targetAppName, extraUnsafe: Self.pinchZeroExtraUnsafe)
+        else { return }
         sendHostChord(keyCode: Self.keyZero)
     }
 
@@ -1337,10 +1378,21 @@ final class MetalLayerBackedView: NSView {
         //     accumulator (NOT a per-step commitCamera), so it never blocks the stream either.
         //   • ⌥ held         → ALWAYS pan the canvas, even while focused (escape hatch to pan a focused
         //     pane without first unfocusing it).
+        // The choice is PINNED per gesture (`ScrollRoutePinner`): decided at began/mayBegin and held
+        // through the momentum tail, so a mid-gesture focus flip can't reroute the inertia into the
+        // other destination. Phase-less wheel ticks keep the live per-event decision.
         // Natural-scroll sign matches `CanvasView.PanView` so a pane-pan feels identical to the bg pan.
         // READ-ONLY: a locked focused pane does NOT swallow the scroll into the remote window —
         // `inputEnabled == false` falls through to the canvas-pan branch (view-only, no host relay).
-        if isActive, inputEnabled, !event.modifierFlags.contains(.option) {
+        // Deliberately a LIVE gate, never pinned: locking mid-gesture must stop host relay at once.
+        let scrollPhase = Self.cgScrollPhaseCode(event.phase)
+        let momentumPhase = Self.cgMomentumPhaseCode(event.momentumPhase)
+        let routeRemote = scrollRoutePinner.route(
+            liveRemote: isActive && !event.modifierFlags.contains(.option),
+            scrollPhase: scrollPhase,
+            momentumPhase: momentumPhase,
+        )
+        if routeRemote, inputEnabled {
             videoViewDbg("scroll → remote (focused)")
             // Forward the trackpad gesture state so the host can replay a native continuous/inertial
             // scroll (Began→Changed→Ended, then momentum Begin→Continue→End) instead of a phase-less
@@ -1350,8 +1402,8 @@ final class MetalLayerBackedView: NSView {
                 dx: Double(event.scrollingDeltaX),
                 dy: Double(event.scrollingDeltaY),
                 viewPoint: viewPoint(event),
-                scrollPhase: Self.cgScrollPhaseCode(event.phase),
-                momentumPhase: Self.cgMomentumPhaseCode(event.momentumPhase),
+                scrollPhase: scrollPhase,
+                momentumPhase: momentumPhase,
                 continuous: event.hasPreciseScrollingDeltas,
             )
             feedSwipePeel(event)
@@ -1420,8 +1472,9 @@ final class MetalLayerBackedView: NSView {
             )
             peelConfirmClear?.cancel()
             peelConfirmClear = Task { [weak self] in
-                // The chip's confirm pulse spans the beat where the host's ⌘[/⌘] lands and the
-                // post-navigation page streams in — the only fire acknowledgement there is.
+                // The chip's confirm pulse + DIM HOLD (see `SwipePeelChipView`) span the beat
+                // where the host's ⌘[/⌘] lands and the post-navigation page streams in — the
+                // only fire acknowledgement there is; this clear then fades the held chip out.
                 try? await Task.sleep(nanoseconds: 520_000_000)
                 guard !Task.isCancelled else { return }
                 self?.controls?.swipePeel = nil
@@ -1628,6 +1681,9 @@ import UIKit
 struct MetalVideoLayerView: UIViewRepresentable {
     let connection: VideoWindowConnection?
     var controls: VideoPaneControls?
+    // Signature parity with the macOS representable (the shared `VideoWindowView.body` passes it).
+    // iOS has no trackpad smart-zoom to gate, so this is unused here.
+    var targetAppName: String = ""
     // Signature parity with the macOS representable (the shared `VideoWindowView.body` builds both). iOS
     // pane activation runs through the canvas's per-pane tap gesture + a background `DragGesture`, so unused here.
     var isActive: Bool = true

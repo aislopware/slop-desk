@@ -27,15 +27,17 @@ import Foundation
 ///     pans still can't navigate.
 ///  3. **Slow deliberate swipe**: natively a page-swipe works at ANY speed — the peel tracks the
 ///     fingers and commits at release — so a long duration alone must not disqualify. Past
-///     `flickMaxDuration` the lift decision demands COMMITMENT instead of speed: double the
-///     travel (`slowFireTravel`) and harder dominance (`slowDominance`) — GRADUATED: once the
-///     travel is overwhelming (`slowRelaxedTravel`, 3× fire) the dominance requirement relaxes
-///     to `slowRelaxedDominance`, because native decides the axis at onset and forgives later
-///     wobble that a whole-gesture ratio re-taxes (``slowCommitmentFires``). Page state (is the
-///     content at its horizontal edge? can it scroll at all?) is what native browsers arbitrate
-///     with, and it is invisible remotely — commitment is the only proxy left. There is no
-///     upper duration bound: natively you may drag, hold, and release whenever. Slow gestures
-///     never ARM — momentum confirmation is a flick mechanism (a slow lift has no tail).
+///     `flickMaxDuration` the lift decision demands COMMITMENT instead of speed: a graduated
+///     SURFACE (``slowRequiredTravel``), not steps — the required travel interpolates from the
+///     flick bar at the seam up to `slowFireTravel` @ `slowDominance` by `slowGraceMaxDuration`,
+///     and between `slowDominance` and `slowRelaxedDominance` from `slowFireTravel` up to
+///     `slowRelaxedTravel` (native decides the axis at onset and forgives later wobble that a
+///     whole-gesture ratio re-taxes; a 2 ms-later lift must not double the requirement — both
+///     step cliffs ate real field swipes that retried right after). Page state (is the content
+///     at its horizontal edge? can it scroll at all?) is what native browsers arbitrate with,
+///     and it is invisible remotely — commitment is the only proxy left. There is no upper
+///     duration bound: natively you may drag, hold, and release whenever. Slow gestures never
+///     ARM — momentum confirmation is a flick mechanism (a slow lift has no tail).
 ///
 /// LOSS TOLERANCE (the input channel is fire-and-forget UDP; scroll datagrams are sent once):
 /// a lost `began` is synthesised from the first continuous `changed`; a lost `ended` is
@@ -77,19 +79,26 @@ public struct SwipeNavRecognizer: Sendable {
     /// time to wander, and a 2-D content exploration (maps, canvas) wanders — a deliberate slow
     /// nav swipe is a clean line (field traces run 16×+).
     public static let slowDominance: Double = 4
-    /// GRADUATED slow dominance: past ``slowRelaxedTravel`` (3× fire — overwhelming horizontal
-    /// commitment) the wobble tolerance relaxes to this. Native decides the axis at ONSET and
-    /// then forgives drift; a whole-gesture 4× requirement re-taxes every later wobble — a
-    /// field 856 ms Σ=(355,−155) deliberate swipe (2.3× dominance, 4.4× fire travel) rejected
-    /// under it while native would honour it. Travel buys the tolerance: at 2× the shorter
-    /// gestures still reject, so a modest diagonal nudge can't ride the relaxation. This
-    /// ratio deliberately does NOT scale with `fireTravel` — the knob scales the whole travel
-    /// family (at the clamp floor of 20 the relaxed line sits at 60 pt), which is exactly the
-    /// hair-trigger an operator setting 20 asked for.
+    /// The slow tier's dominance FLOOR: below 2× nothing fires at any travel. Between here and
+    /// ``slowDominance`` the required travel interpolates (``slowRequiredTravel``) — native
+    /// decides the axis at ONSET and then forgives drift; a whole-gesture 4× requirement
+    /// re-taxes every later wobble (field: 856 ms Σ=(355,−155), 2.3×, and 839 ms Σ=(170,45),
+    /// 3.8× — both deliberate swipes a step rule rejected). Travel buys the tolerance: at 2×
+    /// the shorter gestures still reject, so a modest diagonal nudge can't ride the relaxation.
+    /// This ratio deliberately does NOT scale with `fireTravel` — the knob scales the whole
+    /// travel family (at the clamp floor of 20 the relaxed line sits at 60 pt), which is
+    /// exactly the hair-trigger an operator setting 20 asked for.
     public static let slowRelaxedDominance: Double = 2
     /// Began→ended duration (seconds) separating the FLICK tier from the SLOW tier. Also gates
     /// ARMING — a long gesture's momentum tail must never navigate (slow fires at lift only).
     public static let flickMaxDuration: TimeInterval = 0.45
+    /// End of the GRACE RAMP past the flick seam (``slowRequiredTravel``): between
+    /// `flickMaxDuration` and here the requirement eases in from the flick bar (travel
+    /// `fireTravel`, 3× dominance) to the full slow bar (`slowFireTravel`, 4×) — a lift 100 ms
+    /// past the window must not face DOUBLE the travel (field: 550 ms Σ=(−131,25), 5.2×
+    /// dominance, eaten by the step and immediately retried). At the ramp's top the rule
+    /// equals the full-dominance band exactly, so behaviour past it is unchanged.
+    public static let slowGraceMaxDuration: TimeInterval = 0.70
     /// How long after lift momentum may still confirm. Momentum begins within a frame of the
     /// lift; this only needs to absorb wire jitter plus a few coalesced momentum emits.
     public static let momentumWindow: TimeInterval = 0.25
@@ -142,17 +151,51 @@ public struct SwipeNavRecognizer: Sendable {
     /// ``slowRelaxedDominance`` (see that constant for the model).
     public let slowRelaxedTravel: Double
 
-    /// The slow tier's GRADUATED commitment rule, shared verbatim by the lift decision and the
-    /// live-candidate mirror (``LiveCandidate/wouldFireAtLift``) so the client feedback can
-    /// never disagree with the fire: full dominance at double travel, or relaxed dominance once
-    /// travel is overwhelming (triple).
-    public static func slowCommitmentFires(
-        sumX: Double, sumY: Double, slowFireTravel: Double, slowRelaxedTravel: Double,
-    ) -> Bool {
+    /// The slow tier's GRADUATED commitment SURFACE, shared verbatim by the lift decision and
+    /// the live-candidate mirror (``LiveCandidate/wouldFireAtLift`` + the chip's fill) so the
+    /// client feedback can never disagree with the fire. Returns the |Σdx| this candidate must
+    /// reach to fire — `nil` when its dominance is below the 2× floor (no travel fires).
+    ///
+    /// ONE joint interpolation replaces the old two-branch step rule (field-tuned 2026-07-17 —
+    /// both step cliffs ate real swipes that retried right after). The band's cheap-end ANCHOR
+    /// eases along the seam fraction f = (duration − `flickMaxDuration`) / grace span, clamped
+    /// 0…1: dominance 3× → 4×, travel `fireTravel` → `slowFireTravel`. At or above the anchor
+    /// the requirement is the anchor's travel; between the anchor and the fixed 2× floor it
+    /// interpolates linearly toward `slowRelaxedTravel`. So:
+    ///  - f = 0 (the seam): ratio ≥ 3× needs `fireTravel` — CONTINUOUS with the flick tier;
+    ///  - f = 1 (`slowGraceMaxDuration`+): exactly the old endpoints — 4× @ `slowFireTravel`,
+    ///    2× @ `slowRelaxedTravel` — so everything the old steps fired still fires;
+    ///  - continuous in BOTH axes. The first cut combined a duration ramp and a ratio band
+    ///    with `Double.minimum`, whose independently-gated branches FOLD along their crossing
+    ///    (review-caught: at 3.5× the requirement jumped 120 → 180 pt across ~2 ms) — a joint
+    ///    surface is the only shape with no cliff anywhere.
+    /// Verified against a 320-lift field log: the two eaten swipes (550 ms 5.2× 131 pt;
+    /// 839 ms 3.8× 170 pt) flip to FIRE, none of the 204 vertical-dominant true scrolls do.
+    public static func slowRequiredTravel(
+        duration: TimeInterval,
+        sumX: Double,
+        sumY: Double,
+        fireTravel: Double,
+        slowFireTravel: Double,
+        slowRelaxedTravel: Double,
+    ) -> Double? {
         let x = abs(sumX)
         let y = abs(sumY)
-        if x >= slowDominance * y, x >= slowFireTravel { return true }
-        return x >= slowRelaxedTravel && x >= slowRelaxedDominance * y
+        // x/0 = +inf (purely horizontal ⇒ every dominance passes); 0/0 = NaN (the guard fails
+        // ⇒ nil — a zero-travel candidate can't reach any threshold anyway).
+        let ratio = x / y
+        guard ratio >= Self.slowRelaxedDominance else { return nil }
+        let graceSpan = Self.slowGraceMaxDuration - Self.flickMaxDuration
+        let graceRaw = (duration - Self.flickMaxDuration) / graceSpan
+        let fraction = Double.minimum(Double.maximum(graceRaw, 0), 1)
+        let anchorDominance = Self.dominance + fraction * (Self.slowDominance - Self.dominance)
+        let anchorEase = fraction * (slowFireTravel - fireTravel)
+        let anchorTravel = fireTravel + anchorEase
+        if ratio >= anchorDominance { return anchorTravel }
+        let span = anchorDominance - Self.slowRelaxedDominance
+        let shortfall = (anchorDominance - ratio) / span
+        let floorEase = shortfall * (slowRelaxedTravel - anchorTravel)
+        return anchorTravel + floorEase
     }
 
     /// Feeds one forwarded scroll event; returns a direction exactly when a gesture qualifies
@@ -279,21 +322,25 @@ public struct SwipeNavRecognizer: Sendable {
                     coasting: false,
                 )
             }
-            // Slow tier — graduated dominance (``slowCommitmentFires``): full dominance fills
-            // toward the double-travel line; a merely-relaxed candidate (2×…4× dominance)
-            // fills toward the FARTHER triple-travel line it must actually reach, so the fill
-            // never promises more than the lift decision would honour.
-            let fullDominance = abs(sumX) >= Self.slowDominance * abs(sumY)
-            let relaxedDominance = abs(sumX) >= Self.slowRelaxedDominance * abs(sumY)
-            let threshold = fullDominance ? slowFireTravel : slowRelaxedTravel
+            // Slow tier — the graduated commitment surface (``slowRequiredTravel``): the fill
+            // tracks the travel this exact (duration, dominance) point must actually reach, so
+            // it never promises more than the lift decision would honour; under the 2× floor
+            // the feedback stays dark however big the travel.
+            guard let required = Self.slowRequiredTravel(
+                duration: duration, sumX: sumX, sumY: sumY,
+                fireTravel: fireTravel, slowFireTravel: slowFireTravel,
+                slowRelaxedTravel: slowRelaxedTravel,
+            ) else {
+                return LiveCandidate(
+                    direction: direction, travelX: sumX, progress: 0,
+                    wouldFireAtLift: false, coasting: false,
+                )
+            }
             return LiveCandidate(
                 direction: direction,
                 travelX: sumX,
-                progress: relaxedDominance ? Double.minimum(abs(sumX) / threshold, 1) : 0,
-                wouldFireAtLift: Self.slowCommitmentFires(
-                    sumX: sumX, sumY: sumY,
-                    slowFireTravel: slowFireTravel, slowRelaxedTravel: slowRelaxedTravel,
-                ),
+                progress: Double.minimum(abs(sumX) / required, 1),
+                wouldFireAtLift: abs(sumX) >= required,
                 coasting: false,
             )
         }
@@ -370,7 +417,7 @@ public struct SwipeNavRecognizer: Sendable {
         let duration = now - startedAt
         let stats = "dur=\(Int(duration * 1000))ms Σ=(\(Int(sumX)),\(Int(sumY)))"
         guard duration <= Self.flickMaxDuration else {
-            return slowLiftDecision(now: now, stats: stats)
+            return slowLiftDecision(now: now, duration: duration, stats: stats)
         }
         guard abs(sumX) >= Self.dominance * abs(sumY) else {
             emitTrace("lift \(stats) → reject dominance")
@@ -401,26 +448,29 @@ public struct SwipeNavRecognizer: Sendable {
     }
 
     /// The slow tier (see decision point 3 in the type doc): a lift past `flickMaxDuration`
-    /// fires on commitment — double travel, harder dominance, no upper duration bound — or
-    /// rejects outright. It never ARMS: momentum confirmation exists for flicks whose energy
-    /// went into the tail; a slow lift has none, and letting a long gesture coast would hand
-    /// content-pan tails a path to navigate again.
-    private mutating func slowLiftDecision(now: TimeInterval, stats: String) -> Direction? {
+    /// fires on the graduated commitment surface (``slowRequiredTravel``) — no upper duration
+    /// bound — or rejects outright. It never ARMS: momentum confirmation exists for flicks
+    /// whose energy went into the tail; a slow lift has none, and letting a long gesture coast
+    /// would hand content-pan tails a path to navigate again.
+    private mutating func slowLiftDecision(
+        now: TimeInterval, duration: TimeInterval, stats: String,
+    ) -> Direction? {
         defer { reset() }
         guard slowSwipe else {
             emitTrace("lift \(stats) → reject duration (slow tier off)")
             return nil
         }
-        guard Self.slowCommitmentFires(
-            sumX: sumX, sumY: sumY, slowFireTravel: slowFireTravel, slowRelaxedTravel: slowRelaxedTravel,
-        ) else {
-            // Name the NEAREST miss so a field trace steers the right knob: a candidate whose
-            // dominance band was acceptable (full 4×, or relaxed 2× in the middle band) failed
-            // on TRAVEL — labelling that band "dominance" would send tuning the wrong way.
-            if abs(sumX) >= Self.slowDominance * abs(sumY) {
-                emitTrace("lift \(stats) → reject slow travel (<\(Int(slowFireTravel)))")
-            } else if abs(sumX) >= Self.slowRelaxedDominance * abs(sumY) {
-                emitTrace("lift \(stats) → reject slow travel (<\(Int(slowRelaxedTravel)) relaxed)")
+        let required = Self.slowRequiredTravel(
+            duration: duration, sumX: sumX, sumY: sumY,
+            fireTravel: fireTravel, slowFireTravel: slowFireTravel,
+            slowRelaxedTravel: slowRelaxedTravel,
+        )
+        guard let required, abs(sumX) >= required else {
+            // Name the NEAREST miss so a field trace steers the right knob: an acceptable-
+            // dominance candidate failed on TRAVEL — say how much THIS (duration, dominance)
+            // point needed; labelling it "dominance" would send tuning the wrong way.
+            if let required {
+                emitTrace("lift \(stats) → reject slow travel (<\(Int(required.rounded(.up))))")
             } else {
                 emitTrace("lift \(stats) → reject slow dominance")
             }
@@ -469,11 +519,17 @@ public enum SwipeNavPolicy {
         "org.mozilla.nightly",
         "org.mozilla.firefoxdeveloperedition",
         "com.microsoft.edgemac",
+        "com.microsoft.edgemac.Beta",
+        "com.microsoft.edgemac.Dev",
+        "com.microsoft.edgemac.Canary",
         "com.brave.Browser",
         "com.brave.Browser.beta",
         "com.brave.Browser.nightly",
         "com.vivaldi.Vivaldi",
+        "com.vivaldi.Vivaldi.snapshot",
         "com.operasoftware.Opera",
+        "com.operasoftware.OperaNext", // Opera beta
+        "com.operasoftware.OperaDeveloper",
         "com.kagi.kagimacOS", // Orion
         "app.zen-browser.zen",
     ]

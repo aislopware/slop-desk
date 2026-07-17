@@ -211,22 +211,44 @@ final class SwipePeelPlannerTests: XCTestCase {
         XCTAssertEqual(planner.cancel(), .idle)
     }
 
-    func testSlowDeliberateDragCommitsAtDoubledTravel() {
+    func testSlowDeliberateDragCommitsPastTheGraduatedThreshold() {
         var planner = SwipePeelPlanner()
         _ = began(&planner)
-        // 0.6 s in with Σx = 122: slow tier (threshold 160) — shown but NOT committed…
+        // 0.6 s in with Σx = 122: the slow surface's grace bar there is 128 — shown, NOT
+        // committed…
         guard case let .show(mid) = changed(&planner, dx: 120, dy: 1, now: 100.6) else {
             XCTFail("expected .show")
             return
         }
         XCTAssertFalse(mid.committed)
-        // …and past 160 the slow commitment flips it.
+        // …and past the ramp-top 160 the commitment flips it.
         guard case let .show(late) = changed(&planner, dx: 50, dy: 1, now: 100.7) else {
             XCTFail("expected .show")
             return
         }
         XCTAssertTrue(late.committed)
         XCTAssertEqual(ended(&planner, now: 100.8), .commit(.back))
+    }
+
+    func testRefractoryWindowSuppressesChipRightAfterCommit() {
+        // The 250 ms post-fire refractory is a CROSS-SIDE trust invariant: the host swallows
+        // any candidate this soon after a fire (UDP-reorder hardening), so the mirror must
+        // stay dark too — a chip (and its haptic) here would promise a fire that can't happen.
+        // The planner inherits the window by wrapping the same recognizer; this pins it at the
+        // layer the client's actual behaviour is decided.
+        var planner = SwipePeelPlanner()
+        _ = began(&planner)
+        _ = changed(&planner, dx: 100, dy: 1, now: 100.05)
+        XCTAssertEqual(ended(&planner, now: 100.06), .commit(.back))
+        // A began + decisive changed INSIDE the window: no chip.
+        XCTAssertEqual(began(&planner, now: 100.2), .idle)
+        XCTAssertEqual(changed(&planner, dx: 60, dy: 0, now: 100.25), .idle)
+        // A fresh gesture past the window shows again.
+        XCTAssertEqual(began(&planner, now: 100.5), .idle)
+        guard case .show = changed(&planner, dx: 40, dy: 1, now: 100.52) else {
+            XCTFail("expected .show once the refractory has passed")
+            return
+        }
     }
 
     func testSlowTierOffRetractsPastTheFlickWindow() {

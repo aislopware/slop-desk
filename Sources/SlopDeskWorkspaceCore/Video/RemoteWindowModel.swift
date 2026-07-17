@@ -425,6 +425,7 @@ public final class RemoteWindowModel {
         guard let wid = parsedWindowID else { return }
         active = RemoteWindowDescriptor(
             title: title.isEmpty ? "window \(wid)" : title,
+            appName: appName,
             windowID: wid,
             host: t.host,
             mediaPort: t.mediaPort,

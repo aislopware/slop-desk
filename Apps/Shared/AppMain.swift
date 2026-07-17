@@ -79,7 +79,11 @@ struct ClientAppMain {
                     displayID: descriptor.displayID, // full-desktop pane → wire helloDisplay
                 )
                 return AnyView(VideoWindowView(
-                    title: descriptor.title, connection: connection,
+                    title: descriptor.title,
+                    // Smart-zoom ⌘0 gate (`PinchZeroPolicy`): the pane's app display name rides
+                    // the descriptor (client seam, not wire); empty (desktop pane) fails open.
+                    targetAppName: descriptor.appName,
+                    connection: connection,
                     isActive: paneContext.isActive,
                     inputEnabled: paneContext.inputEnabled,
                     onActivate: paneContext.onActivate,

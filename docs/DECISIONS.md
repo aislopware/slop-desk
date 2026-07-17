@@ -1009,3 +1009,75 @@
   (no universal equivalent / not faithfully synthesisable). ❌ **3/4-finger system gestures**: the
   client's own WindowServer consumes them before any app sees an event — host equivalents stay
   reachable as keystrokes (⌃↑/⌃↓/⌃←→) via immersive capture.
+
+## Trackpad gesture audit batch: graduated commitment surface + fire-landing gate + feedback fixes (2026-07-17)
+
+A field audit over 320 real lift decisions (per-gesture trace, one daily-driver session) plus an
+adversarial multi-agent review of the whole gesture stack. The dominance gate proved essentially
+perfect (204/204 rejects were true vertical scrolls); every real miss sat on a THRESHOLD CLIFF, and
+two host-side robustness holes surfaced on the way. All changes below; no wire change anywhere.
+
+- ✅ **Slow tier becomes a graduated commitment SURFACE** (`SwipeNavRecognizer.slowRequiredTravel`,
+  shared verbatim by lift + the client mirror). ONE joint interpolation replaces both step
+  cliffs, endpoints unchanged: the band's cheap-end ANCHOR eases along the seam fraction
+  (450 → 700 ms: dominance 3× → 4×, travel 80 → 160 pt); at/above the anchor the requirement is
+  the anchor's travel, below it interpolates linearly toward the fixed 2× floor @ 240 pt. Fixes
+  both field misses: 839 ms Σ=(170,45) 3.8× (old step: 240 required; now ~169) and 550 ms
+  Σ=(−131,25) 5.2× (old: +2 ms past the window ⇒ double travel; now ~112) — both were eaten and
+  immediately retried. ⚠️ The first cut combined a duration ramp and a ratio band with
+  `Double.minimum`; the adversarial review numerically proved the independently-gated branches
+  FOLD along their crossing (at 3.5× the requirement jumped 120 → 180 pt across ~2 ms — a new
+  cliff, and a chip-committed-then-host-rejects window). Only a JOINT surface is cliff-free; a
+  dense continuity + ratio-monotonicity property test now pins it. Checked against the whole
+  log: both eaten swipes flip to FIRE, zero of the 204 true scrolls do. Same trade-off as
+  v3/v5, same escape hatch (`SLOPDESK_SWIPE_NAV_SLOW=0` kills the whole tier, grace included).
+  Travel-reject traces now name the interpolated requirement the candidate actually faced.
+- ✅ **WINDOW-pane fire gate: the chord must LAND where eligibility was judged.** The ⌘[/⌘] chord
+  posts at the HID tap — it reaches the OS key-focus holder, not the pane's app; the old check
+  asked only "is the PANE's app navigable" against a static bundle id. Firing while another app
+  holds focus would outdent/indent in an editor. Now: pid>0 sessions re-check live focus
+  (`HostFrontmostApp.frontmostPID()`) at fire time — mismatch suppresses the chord (traced) and
+  kicks the raise chain so the immediate retry lands. The false doc-comment invariant ("lands
+  there regardless of frontmost") is corrected. And the STATUS PUSH mirrors the same gate
+  (`SwipeNavHostConfig.eligibleWindowTarget`: navigable AND frontmost, ≤2 s stale like the
+  display path) — review-caught: without it the chip commits + haptics for a fire the host
+  silently swallows, exactly the "affordance never lies" breach the type-3 push exists to
+  prevent.
+- ✅ **`HostFrontmostApp.bundleID()` NSWorkspace fallback DELETED** — it reintroduced the exact
+  frozen-snapshot bug this type exists to fix, on precisely the no-layer-0-window paths (bare
+  desktop, lock transitions) where it would fire. `nil` now flows into `isNavigable`'s nil ⇒ false:
+  fail CLOSED (no chord, chip dark) beats fail-frozen.
+- ✅ **Confirm pulse actually spans the nav round trip.** The v6 pulse claimed ~520 ms but the
+  `.opacity(confirming ? 0 : 1)` played entirely inside the ambient 150 ms curve — the remaining
+  ~370 ms held an invisible chip. The confirming chip now DIMS to a hold (35 %) instead of
+  vanishing, then the existing clear task fades it out: pulse → dim hold → fade genuinely covers
+  the 150–400 ms inject→capture→stream beat (the only fire acknowledgement v6 has). The chip
+  overlay also gains `.allowsHitTesting(false)` (review-caught, house convention for overlays
+  atop the Metal surface): a click at the pane edge during the now-visible hold must reach the
+  remote window, not the chip.
+- ✅ **Scroll route PINNED per gesture** (`ScrollRoutePinner`, pure): remote-vs-canvas is decided
+  at began/mayBegin and held through the momentum tail — a mid-gesture focus flip no longer
+  reroutes inertia into the other destination. `inputEnabled` stays a LIVE gate (read-only lock
+  stops host relay immediately); phase-less wheel ticks keep per-event routing.
+- ✅ **Smart-zoom ⌘0 gated per app** (`PinchZeroPolicy`, client-only): ⌘0 in Xcode is a navigator
+  toggle, not "actual size" — known-unsafe app names skip the translation
+  (`SLOPDESK_PINCH_ZERO_UNSAFE_APPS` extends; empty/desktop appName fails open; ⌘=/⌘− stay
+  ungated — they are correct zoom chords in editors too). `RemoteWindowDescriptor` gains a
+  client-seam `appName` (not wire) to carry the picker's app name to the view.
+- ✅ **Reduce Motion respected in the chip**: tuck emergence + scale pulses collapse to in-place
+  fades under `accessibilityReduceMotion`; ring fill, committed state and the haptic stay (they
+  are information, not motion).
+- ✅ **Allowlist: pre-release browser channels completed** (Edge Beta/Dev/Canary, Opera
+  Next/Developer, Vivaldi Snapshot) — the list already carried every other browser's channels.
+- ✅ **Swipe-nav regime BANNER** under the existing trace flag: one line per injector naming the
+  threshold family (travel/slow/grace/band/refractory), so a field log spanning restarts/deploys
+  self-describes which recognizer produced each verdict (two pre-slow-tier lines in the audit log
+  were identifiable only by their stale message format).
+- ✅ **Test debt**: planner-layer refractory pin (chip cannot re-show inside the host's 250 ms
+  swallow window) and `SwipeNavPolicy.fireTravel(fromEnv:)` clamp/reject-to-default pins (the one
+  parse keeping host fire and client mirror in sync — and the `UInt16(fireTravel)` crash guard).
+- ❌ **REJECTED (audit findings judged not worth acting on)**: momentum arm/confirm path unused in
+  320/320 field lifts — it is a defensive net for tail-heavy flicks, keep as is; client-mirror vs
+  host UDP-loss desync — real in theory, negligible on the WireGuard LAN, and a fix needs wire
+  seq numbers; a "navigation in flight" spinner state beyond the dim hold — wait for HW feedback
+  on the hold first.

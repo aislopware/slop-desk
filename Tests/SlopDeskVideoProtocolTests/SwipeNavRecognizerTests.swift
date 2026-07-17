@@ -62,8 +62,9 @@ final class SwipeNavRecognizerTests: XCTestCase {
     }
 
     func testSlowModestDragNeverFiresNorArms() {
-        // Σdx = 122 clears the FLICK travel (80) but not the slow tier's doubled 160 — past the
-        // flick duration a modest horizontal drag is a content nudge, not a navigation.
+        // Σdx = 122 clears the FLICK travel (80) but not the slow tier's bar at 600 ms — the
+        // grace ramp asks 128 pt there (easing 80 → 160 across 450–700 ms) — a modest
+        // horizontal drag past the flick duration is a content nudge, not a navigation.
         var rec = SwipeNavRecognizer()
         XCTAssertNil(run(deltas: Array(repeating: (dx: 15.0, dy: 0.0), count: 8), t0: 100, endedAt: 100.6, rec: &rec))
         // …and the rejected slow lift never ARMS: its momentum tail must not confirm either.
@@ -227,11 +228,81 @@ final class SwipeNavRecognizerTests: XCTestCase {
         )
     }
 
-    func testSlowArcFailsTheHarderDominance() {
-        // Σ=(202,60): 3.4× passes the flick's 3× but NOT the slow tier's 4×, and 202 is short
-        // of the 240 relaxed-dominance line — over a long gesture the hand has time to wander,
-        // and a wandering 2-D content pan must not navigate on moderate horizontal travel.
-        XCTAssertNil(run(deltas: Array(repeating: (dx: 25.0, dy: 7.5), count: 8), t0: 100, endedAt: 100.6))
+    func testSlowArcBelowTheInterpolatedTravelRejects() {
+        // Σ=(162,54): 3.0× dominance at 600 ms sits below the surface's anchor (3.6× there),
+        // where the joint interpolation asks 170 pt — a wandering 2-D content pan with
+        // moderate travel must not navigate.
+        XCTAssertNil(run(deltas: Array(repeating: (dx: 20.0, dy: 6.75), count: 8), t0: 100, endedAt: 100.6))
+    }
+
+    func testSlowSurfaceIsContinuousAndMonotoneAcrossTheGrace() {
+        // The review-caught trap this pins against: the first cut combined a duration ramp and
+        // a ratio band with `min`, whose independently-gated branches FOLD along their
+        // crossing — a ~2 ms duration step jumped the requirement 120 → 180 pt. The surface
+        // must be cliff-free: sample densely; along duration it may move ≤ 1 pt per ms
+        // (true slope tops out ≈ 0.6 pt/ms), and along ratio it must never RISE.
+        for ratioStep in 0...60 {
+            let ratio = 2.0 + Double(ratioStep) * 0.05
+            var previous: Double?
+            for durationStep in 0...300 {
+                let duration = 0.451 + Double(durationStep) * 0.001
+                let required = SwipeNavRecognizer.slowRequiredTravel(
+                    duration: duration, sumX: ratio * 100, sumY: 100,
+                    fireTravel: 80, slowFireTravel: 160, slowRelaxedTravel: 240,
+                )
+                guard let required else {
+                    XCTFail("ratio \(ratio) ≥ 2 must always have a requirement")
+                    return
+                }
+                if let previous {
+                    XCTAssertLessThanOrEqual(
+                        abs(required - previous), 1.0,
+                        "fold at ratio \(ratio), duration \(duration)",
+                    )
+                }
+                previous = required
+            }
+        }
+        for durationStep in 0...25 {
+            let duration = 0.451 + Double(durationStep) * 0.01
+            var previous = Double.infinity
+            for ratioStep in 0...60 {
+                let ratio = 2.0 + Double(ratioStep) * 0.05
+                guard let required = SwipeNavRecognizer.slowRequiredTravel(
+                    duration: duration, sumX: ratio * 100, sumY: 100,
+                    fireTravel: 80, slowFireTravel: 160, slowRelaxedTravel: 240,
+                ) else {
+                    XCTFail("ratio \(ratio) ≥ 2 must always have a requirement")
+                    return
+                }
+                XCTAssertLessThanOrEqual(
+                    required, previous + 1e-9,
+                    "more dominance must never RAISE the bar (ratio \(ratio), duration \(duration))",
+                )
+                previous = required
+            }
+        }
+    }
+
+    func testFieldSeamGraceRampFiresJustPastTheFlickWindow() {
+        // The field shape the 450 ms step function ate (550 ms Σ=(−131,25), 5.2× dominance —
+        // the user retried and re-fired immediately): 100 ms past the window the requirement
+        // eases in from the flick bar instead of doubling — the ramp asks ~112 pt @ ≥3.4× here.
+        XCTAssertEqual(run(deltas: [(dx: -133.0, dy: 25.0)], t0: 100, endedAt: 100.55), .forward)
+    }
+
+    func testFieldMidBandInterpolatedTravelFires() {
+        // The field shape the dominance-band step ate (839 ms Σ=(170,45), 3.8× — retried and
+        // re-fired): between 4× and 2× the required travel interpolates 160 → 240; at 3.8× it
+        // is ~169 pt, not a cliff-jump to 240.
+        XCTAssertEqual(run(deltas: [(dx: 168.0, dy: 45.0)], t0: 100, endedAt: 100.84), .back)
+    }
+
+    func testSeamGraceStillRejectsWeakDominance() {
+        // Same seam window, weak dominance (field 503 ms Σ=(−89,37), 2.4×): the anchor's
+        // dominance eases 3× → 4× alongside its travel, so a scroll-ish diagonal cannot ride
+        // the grace — the surface asks ~191 pt at (2.4×, 500 ms), far past this travel.
+        XCTAssertNil(run(deltas: [(dx: -91.0, dy: 37.0)], t0: 100, endedAt: 100.5))
     }
 
     func testFieldWobblySlowSwipeFiresOnGraduatedDominance() {
@@ -246,8 +317,8 @@ final class SwipeNavRecognizerTests: XCTestCase {
     }
 
     func testGraduatedRelaxationStillNeedsTripleTravel() {
-        // Σ=(220,−100): 2.2× dominance fails the full rule, and 220 < 240 keeps the relaxed
-        // rule out of reach — a modest wobbly drag must not ride the relaxation.
+        // Σ=(220,−100): at 2.2× dominance and 600 ms the surface asks 226 pt (interpolating
+        // toward the 240 @ 2× floor) — a modest wobbly drag must not ride the relaxation.
         XCTAssertNil(run(deltas: Array(repeating: (dx: 27.25, dy: -12.5), count: 8), t0: 100, endedAt: 100.6))
     }
 
@@ -259,8 +330,9 @@ final class SwipeNavRecognizerTests: XCTestCase {
 
     func testSlowBoundaryTravelAndDominanceFire() {
         // Σdx = 2 (began) + 158 = 160 exactly = slowFireTravel; Σdy = 40 → dominance exactly
-        // 4×. `>=` on both, matching the flick tier's boundary semantics.
-        XCTAssertEqual(run(deltas: [(dx: 158.0, dy: 40.0)], t0: 100, endedAt: 100.6), .back)
+        // 4×. `>=` on both, matching the flick tier's boundary semantics. Lifted at 800 ms —
+        // past the grace ramp — so the pin sits on the BAND line itself, not the ramp.
+        XCTAssertEqual(run(deltas: [(dx: 158.0, dy: 40.0)], t0: 100, endedAt: 100.8), .back)
     }
 
     func testDragHoldReleaseFiresLikeNative() {
@@ -296,7 +368,8 @@ final class SwipeNavRecognizerTests: XCTestCase {
     }
 
     func testSlowFireTravelScalesWithTheKnob() {
-        // fireTravel 160 → slow tier 320: Σ=242 (fires at the default) is short here…
+        // fireTravel 160 → slow tier 320 (grace-ramp bar at 600 ms: 256): Σ=242 (fires at the
+        // default family) is short here…
         var rec = SwipeNavRecognizer(fireTravel: 160)
         XCTAssertNil(run(deltas: Array(repeating: (dx: 30.0, dy: 0.0), count: 8), t0: 100, endedAt: 100.6, rec: &rec))
         // …and Σ=402 clears it.
@@ -390,7 +463,8 @@ final class SwipeNavRecognizerTests: XCTestCase {
 
     func testSynthesisedCandidateNeverArmsMomentumConfirmation() {
         var rec = SwipeNavRecognizer()
-        // A long modest content pan is REJECTED at lift (slow tier: Σ=102 < 160)…
+        // A long modest content pan is REJECTED at lift (slow tier: Σ=102 < the 600 ms grace
+        // bar of 128)…
         XCTAssertNil(rec.ingest(dx: 2, dy: 0, scrollPhase: 1, momentumPhase: 0, continuous: true, now: 100))
         XCTAssertNil(rec.ingest(dx: 100, dy: 5, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.3))
         XCTAssertNil(rec.ingest(dx: 0, dy: 0, scrollPhase: 4, momentumPhase: 0, continuous: true, now: 100.6))
@@ -519,6 +593,32 @@ final class SwipeNavRecognizerTests: XCTestCase {
         XCTAssertEqual(SwipeNavPolicy.extraApps(from: nil), [])
     }
 
+    func testBrowserPreReleaseChannelsAreNavigable() {
+        // The list carries every browser's pre-release channels (Chrome beta/dev/canary, Brave
+        // beta/nightly, Firefox nightly/dev-edition) — Edge/Opera/Vivaldi's must not be the
+        // silent exceptions. Exact-match Set lookup ⇒ casing matters.
+        for id in [
+            "com.microsoft.edgemac.Beta", "com.microsoft.edgemac.Dev", "com.microsoft.edgemac.Canary",
+            "com.operasoftware.OperaNext", "com.operasoftware.OperaDeveloper",
+            "com.vivaldi.Vivaldi.snapshot",
+        ] {
+            XCTAssertTrue(SwipeNavPolicy.isNavigable(bundleID: id), id)
+        }
+    }
+
+    func testFireTravelEnvParseRejectsToDefaultAndAcceptsBounds() {
+        // The ONE parse both the injector's recogniser and the status push share — a typo must
+        // not make every scroll navigate (too low) or dead the feature silently (too high).
+        // Semantics are REJECT-to-default (80), not clamp-to-nearest-bound. The [20, 500]
+        // acceptance is also the crash guard for `UInt16(fireTravel)` in the status message.
+        for bad in [nil, "", "garbage", "nan", "inf", "-inf", "19.9", "0", "-5", "500.1", "1e9"] as [String?] {
+            XCTAssertEqual(SwipeNavPolicy.fireTravel(fromEnv: bad), 80, String(describing: bad))
+        }
+        XCTAssertEqual(SwipeNavPolicy.fireTravel(fromEnv: "20"), 20)
+        XCTAssertEqual(SwipeNavPolicy.fireTravel(fromEnv: "500"), 500)
+        XCTAssertEqual(SwipeNavPolicy.fireTravel(fromEnv: "240"), 240)
+    }
+
     // MARK: Live candidate (client peel feedback)
 
     func testLiveCandidateIsNilWhenIdle() {
@@ -559,11 +659,12 @@ final class SwipeNavRecognizerTests: XCTestCase {
         XCTAssertNil(rec.ingest(dx: 118, dy: 1, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.2))
         // Inside the flick window Σx = 120 ≥ 80 → committed…
         XCTAssertEqual(rec.liveCandidate(now: 100.2)?.wouldFireAtLift, true)
-        // …but the SAME sums past 0.45 s re-gate on the slow tier: 120 < 160 → 0.75, uncommitted.
+        // …but the SAME sums past 0.45 s re-gate on the slow surface: the 600 ms grace bar is
+        // 128 → fill 120/128, uncommitted (accuracy: the ramp fraction is a float quotient).
         let slow = rec.liveCandidate(now: 100.6)
-        XCTAssertEqual(slow?.progress, 0.75)
+        XCTAssertEqual(slow?.progress ?? -1, 120.0 / 128.0, accuracy: 1e-9)
         XCTAssertEqual(slow?.wouldFireAtLift, false)
-        // More travel across the slow threshold commits again.
+        // More travel across the (ramp-top) threshold commits again.
         XCTAssertNil(rec.ingest(dx: 44, dy: 1, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.7))
         XCTAssertEqual(rec.liveCandidate(now: 100.7)?.wouldFireAtLift, true)
     }
@@ -571,15 +672,15 @@ final class SwipeNavRecognizerTests: XCTestCase {
     func testLiveCandidateSlowTierGraduatedDominanceMirror() {
         var rec = SwipeNavRecognizer()
         XCTAssertNil(rec.ingest(dx: 2, dy: 0, scrollPhase: 1, momentumPhase: 0, continuous: true, now: 100))
-        // Σ = (202, 60) → 3.4×: clears the flick's 3× inside the window…
-        XCTAssertNil(rec.ingest(dx: 200, dy: 60, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.2))
+        // Σ = (150, 50) → 3.0×: clears the flick's 3× inside the window…
+        XCTAssertNil(rec.ingest(dx: 148, dy: 50, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.2))
         XCTAssertEqual(rec.liveCandidate(now: 100.2)?.wouldFireAtLift, true)
-        // …and past the window sits BETWEEN the slow dominances (2×…4×): the fill re-bases on
-        // the farther relaxed line (240) it must actually reach — honest, not a retract.
+        // …and past the window sits below the 600 ms anchor (3.6×): the fill re-bases on the
+        // INTERPOLATED travel it must actually reach — 170 pt at 3.0× — honest, not a retract.
         let slow = rec.liveCandidate(now: 100.6)
-        XCTAssertEqual(slow?.progress, 202.0 / 240.0)
+        XCTAssertEqual(slow?.progress ?? -1, 150.0 / 170.0, accuracy: 1e-9)
         XCTAssertEqual(slow?.wouldFireAtLift, false)
-        // More travel flips FULL dominance back on (Σ=(242,60) → 4.03×) → primary rule commits.
+        // More travel raises the dominance (Σ=(190,50) → 3.8×, bar ≈168) → the surface commits.
         XCTAssertNil(rec.ingest(dx: 40, dy: 0, scrollPhase: 2, momentumPhase: 0, continuous: true, now: 100.7))
         XCTAssertEqual(rec.liveCandidate(now: 100.7)?.wouldFireAtLift, true)
     }

@@ -26,6 +26,10 @@ import SwiftUI
 public struct RemoteWindowDescriptor: Sendable, Equatable {
     /// The remote window's last-known title (from the geometry channel).
     public var title: String
+    /// The remote window's APP display name (the picker's `appName`, "Xcode" style). Empty for
+    /// a desktop target or a legacy binding with no recorded app. CLIENT-seam only (not wire) —
+    /// carried so the video view can gate app-sensitive key translations (smart-zoom ⌘0).
+    public var appName: String
     /// A stable identifier for the remote window (host CGWindowID). `0` for a display target.
     public var windowID: UInt32
     /// FULL-DESKTOP TARGET: non-nil ⇒ stream a whole host display (`0` = the main display)
@@ -41,6 +45,7 @@ public struct RemoteWindowDescriptor: Sendable, Equatable {
 
     public init(
         title: String,
+        appName: String = "",
         windowID: UInt32,
         displayID: UInt32? = nil,
         host: String = "",
@@ -48,6 +53,7 @@ public struct RemoteWindowDescriptor: Sendable, Equatable {
         cursorPort: UInt16 = 0,
     ) {
         self.title = title
+        self.appName = appName
         self.windowID = windowID
         self.displayID = displayID
         self.host = host

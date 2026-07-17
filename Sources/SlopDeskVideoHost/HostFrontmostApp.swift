@@ -63,15 +63,16 @@ public enum HostFrontmostApp {
         return frontmostOwnerPID(in: records)
     }
 
-    /// The frontmost app's bundle identifier, fresh from the WindowServer. Falls back to the
-    /// `NSWorkspace` snapshot only when the WindowServer query yields nothing at all — inside a
-    /// GUI app that snapshot is live, and in the daemon a frozen answer still beats none for a
-    /// best-effort affordance (the fire path re-checks at fire time either way).
+    /// The frontmost app's bundle identifier, fresh from the WindowServer. `nil` when no
+    /// normal-level window is on screen at all (bare desktop, login/lock transitions, display
+    /// asleep) — deliberately NO `NSWorkspace` fallback: in this daemon that snapshot is FROZEN
+    /// at first access (the very bug this type exists to fix), and the no-window case is
+    /// precisely where a fallback would fire. `nil` flows into `SwipeNavPolicy.isNavigable`'s
+    /// nil ⇒ false at every caller, so both the status push and the fire path fail CLOSED
+    /// (chip dark, no chord) instead of fail-frozen.
     public static func bundleID() -> String? {
-        if let pid = frontmostPID() {
-            return NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
-        }
-        return NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        guard let pid = frontmostPID() else { return nil }
+        return NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
     }
 }
 #endif

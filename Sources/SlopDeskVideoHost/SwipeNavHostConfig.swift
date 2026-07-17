@@ -31,4 +31,25 @@ public enum SwipeNavHostConfig {
             fireTravel: UInt16(fireTravel), // clamped [20, 500] — always fits
         )
     }
+
+    /// WINDOW-scoped eligibility (pid > 0 sessions): the pane's app must be navigable AND
+    /// actually frontmost. The fire path gates the chord on live focus (a HID-tap post lands
+    /// in the OS key-focus holder — ``InputInjector/fireSwipeNav`` suppresses + raises on a
+    /// mismatch), so the chip must go dark on the same condition or the affordance LIES: a
+    /// committed chip + haptic for a fire the host silently swallows. Bundle-id equality is
+    /// the same-app proxy the push has (the kicker fans out a bundle id, not a pid); the
+    /// ≤ 2 s heartbeat staleness matches the display-session eligibility path.
+    public static func eligibleWindowTarget(paneBundleID: String?, frontmostBundleID: String?) -> Bool {
+        guard let paneBundleID, let frontmostBundleID else { return false }
+        return eligible(bundleID: paneBundleID) && frontmostBundleID == paneBundleID
+    }
+
+    /// The status message for one WINDOW-scoped session (see ``eligibleWindowTarget``).
+    public static func windowStatus(paneBundleID: String?, frontmostBundleID: String?) -> SwipeNavStatusMessage {
+        SwipeNavStatusMessage(
+            eligible: eligibleWindowTarget(paneBundleID: paneBundleID, frontmostBundleID: frontmostBundleID),
+            slowTier: slowTier,
+            fireTravel: UInt16(fireTravel), // clamped [20, 500] — always fits
+        )
+    }
 }
