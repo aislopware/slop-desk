@@ -52,6 +52,14 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     /// `SLOPDESK_MOTION_HEARTBEAT=1` restores the periodic motion IDR (for a genuinely lossy WAN).
     static let motionHeartbeatEnabled = ProcessInfo.processInfo.environment["SLOPDESK_MOTION_HEARTBEAT"] == "1"
 
+    /// APP-AUDIO master gate (`SLOPDESK_AUDIO`, default ON; `=0` masters the feature off). Gates the
+    /// SCStream audio-tap CONFIGURATION (`capturesAudio` + the second `.audio` stream output) here,
+    /// and the whole encode→send lane session-side. The per-session client toggle (`audioControl`)
+    /// deliberately never touches the stream config — an `updateConfiguration` mid-stream costs a
+    /// visible capture hitch — so OFF just drops `.audio` buffers at the delegate
+    /// (``setAudioForwardingEnabled(_:)``).
+    static let audioCaptureEnabled = ProcessInfo.processInfo.environment["SLOPDESK_AUDIO"] != "0"
+
     /// Called for each captured frame with its NV12 `CVPixelBuffer`, whether the encoder should
     /// force a keyframe (heartbeat or first frame), and whether this frame should be a CRISP
     /// near-lossless intra refresh (`crisp`). `crisp` is true ONLY on the static-IDR timer path
@@ -408,8 +416,37 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
 
     private let log = Logger(subsystem: "slopdesk.video.host", category: "WindowCapturer")
     private let frameQueue = DispatchQueue(label: "slopdesk.video.capture", qos: .userInteractive)
+    /// Dedicated serial queue for the SCStream `.audio` output — NEVER `frameQueue`, so a slow
+    /// synchronous video encode can't delay a ~10 ms audio buffer (and the audio path never
+    /// touches frameQueue-owned state).
+    private let audioQueue = DispatchQueue(label: "slopdesk.video.capture.audio", qos: .userInteractive)
     private var stream: SCStream?
     private let frameHandler: FrameHandler
+
+    /// APP-AUDIO forward gate + sink under one lock: the session actor toggles/installs off-queue
+    /// (the enable flips mid-stream on a client `audioControl`), the `.audio` delegate arm reads
+    /// both once per ~10 ms buffer — the `keyframeLock` latch discipline on a dedicated lock so
+    /// audio delivery never contends with the per-frame video reads. Gate default FALSE: audio is
+    /// per-session opt-in; a nil sink also drops (the capturer without a wired session lane).
+    private let audioLock = NSLock()
+    private var audioForwardingEnabled = false
+    private var audioSampleHandler: (@Sendable (CMSampleBuffer) -> Void)?
+
+    /// APP-AUDIO sink: called on the dedicated audio queue with each captured `.audio`
+    /// `CMSampleBuffer` while forwarding is enabled (nil ⇒ drop). The session wires this at
+    /// capturer install time (like `onScrollOffset`) to its encode→send lane; lock-guarded
+    /// because the `.audio` output delivers on its own queue.
+    var onAudioSampleBuffer: (@Sendable (CMSampleBuffer) -> Void)? {
+        get { audioLock.withLock { audioSampleHandler } }
+        set { audioLock.withLock { audioSampleHandler = newValue } }
+    }
+
+    /// CHEAP per-session audio gate (the client's `audioControl` wish). Disabled drops `.audio`
+    /// buffers BEFORE any extract/encode work; the SCStream config (`capturesAudio`) is never
+    /// touched, so toggling costs no `updateConfiguration` restart/hitch. Thread-safe.
+    public func setAudioForwardingEnabled(_ enabled: Bool) {
+        audioLock.withLock { audioForwardingEnabled = enabled }
+    }
 
     /// Moves a single-owner `CVPixelBuffer` copy across the encode-queue hop. `CVPixelBuffer` is not
     /// `Sendable`; the copy has exactly one owner (just allocated), so the transfer is safe.
@@ -1146,6 +1183,18 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             config.ignoreShadowsSingleWindow = true // don't let the window's drop-shadow pad the rect
             config.ignoreGlobalClipSingleWindow = true // don't pad the rect to the global clip
         }
+        // APP-AUDIO (`SLOPDESK_AUDIO`, default ON): tap the captured content's audio alongside the
+        // pixels — 48 kHz stereo, the fixed wire contract (``AudioStreamConfig``). Configured at
+        // BUILD time only; the per-session enable toggle never reaches `updateConfiguration`
+        // (disabled just drops `.audio` buffers at the delegate — see
+        // ``setAudioForwardingEnabled(_:)``). `excludesCurrentProcessAudio` keeps this process's
+        // own output out of the tap (no feedback loop if the host ever plays audio itself).
+        if audioCaptureEnabled {
+            config.capturesAudio = true
+            config.excludesCurrentProcessAudio = true
+            config.sampleRate = Int(AudioStreamEncoder.sampleRate)
+            config.channelCount = AudioStreamEncoder.channelCount
+        }
         return config
     }
 
@@ -1352,6 +1401,11 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         }
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: frameQueue)
+        // APP-AUDIO: a SECOND output on its own serial queue, so audio delivery never queues
+        // behind a synchronous video encode on `frameQueue`.
+        if Self.audioCaptureEnabled {
+            try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQueue)
+        }
         try await stream.startCapture()
         self.stream = stream
         log.info("WindowCapturer started for window \(window.windowID)")
@@ -1376,6 +1430,11 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         let filter = SCContentFilter(display: display, excludingWindows: [])
         let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: frameQueue)
+        // APP-AUDIO: same second output as the window path — whole-display audio for the
+        // full-desktop pane.
+        if Self.audioCaptureEnabled {
+            try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: audioQueue)
+        }
         try await stream.startCapture()
         self.stream = stream
         log.info("WindowCapturer started for display \(display.displayID)")
@@ -1550,6 +1609,16 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
         of type: SCStreamOutputType,
     ) {
+        if type == .audio {
+            // Delivered on `audioQueue` (its own serial output), so no frameQueue-owned state is
+            // touched here. One lock read per ~10 ms buffer covers gate + sink together; a
+            // disabled session drops the buffer BEFORE any extract/encode work.
+            let handler: (@Sendable (CMSampleBuffer) -> Void)? = audioLock.withLock {
+                audioForwardingEnabled ? audioSampleHandler : nil
+            }
+            handler?(sampleBuffer)
+            return
+        }
         guard type == .screen else { return }
 
         // Idle-skip (doc 17 §3.5): read SCStreamFrameInfo.status; on .idle return

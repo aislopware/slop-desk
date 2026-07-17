@@ -148,6 +148,41 @@ public final class RemoteWindowModel {
         streamSettingsInjector?(fpsCap, bitrateCeilingBps)
     }
 
+    /// HOST AUDIO (footer speaker toggle): the live ``VideoWindowView`` publishes this once its session
+    /// exists (cleared `nil` on teardown; WITHHELD by the seam while read-only — it changes HOST capture
+    /// behaviour, like ``streamSettingsInjector``). Absolute `enabled` — the session stores the wish and
+    /// re-sends it after every re-hello.
+    ///
+    /// Re-asserts ``audioStreamEnabled`` on every publish: a detach/reattach re-binds the SAME model to a
+    /// FRESH view whose new session (and so the host) starts with audio OFF, so the model — the toggle's
+    /// source of truth — pushes the wish back down the new sink. The command is ABSOLUTE
+    /// (enable/disable, never a toggle), so the re-assert is idempotent on a still-live session.
+    public var audioInjector: ((_ enabled: Bool) -> Void)? {
+        didSet {
+            if audioStreamEnabled, let inject = audioInjector {
+                inject(true)
+            }
+        }
+    }
+
+    /// Whether the footer speaker toggle is live: streaming AND an audio sink is wired (withheld while
+    /// read-only).
+    public var canToggleAudio: Bool { active != nil && audioInjector != nil }
+
+    /// Whether host app audio is streaming into this pane (the speaker's status light). The MODEL owns
+    /// the state (mirrors ``viewportLocked``) so the toggle survives a view remount; defaults OFF,
+    /// matching every fresh session's host state.
+    public private(set) var audioStreamEnabled = false
+
+    /// Flip host-audio streaming through the published sink. Gated on ``canToggleAudio`` so an
+    /// off-stream / read-only flip can't strand an ON state the session never saw — a graceful no-op,
+    /// like the other video verbs. A same-value apply is a no-op (the sink is absolute; nothing to say).
+    public func applyAudioEnabled(_ enabled: Bool) {
+        guard canToggleAudio, audioStreamEnabled != enabled else { return }
+        audioStreamEnabled = enabled
+        audioInjector?(enabled)
+    }
+
     /// SYSTEM-KEY INJECTOR (immersive-capture plumbing): programmatic key events driven through the
     /// SAME wire path the pane's local keyDown/keyUp uses. `(keyCode, modifierFlags [raw platform
     /// flags], isDown)`. Published by ``VideoWindowView`` once its session exists (cleared `nil` on
@@ -613,6 +648,7 @@ public final class RemoteWindowModel {
         revalidationTask?.cancel()
         endAwaitingReflow() // a closed window will not re-capture — never leave the scrim hung
         isStreamStalled = false // a closed pane shows the picker, not a stale "Reconnecting…" scrim
+        audioStreamEnabled = false // the next session mints with audio OFF — keep the speaker honest
         // Drop every published sink HERE — the model's own lifecycle, not the view's dismantle. The old
         // view's `deactivate()` deliberately publishes NOTHING (see `VideoWindowView.deactivate`): during a
         // pane detach/reattach the SAME model is re-bound by a view in ANOTHER hosting root, and SwiftUI may
@@ -624,6 +660,7 @@ public final class RemoteWindowModel {
         viewportInjector = nil
         inputReleaseInjector = nil
         streamSettingsInjector = nil
+        audioInjector = nil
         systemKeyInjector = nil
     }
 

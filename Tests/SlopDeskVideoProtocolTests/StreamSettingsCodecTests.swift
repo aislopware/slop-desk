@@ -64,10 +64,10 @@ final class StreamSettingsCodecTests: XCTestCase {
         }
     }
 
-    /// The decoder's `default` arm still rejects a type PAST the highest defined (25) as
-    /// `.malformed` — the forward-compatibility contract for a future type 26.
+    /// The decoder's `default` arm still rejects a type PAST the highest defined (26,
+    /// `audioControl`) as `.malformed` — the forward-compatibility contract for a future type 27.
     func testUnknownTypePastStreamSettingsThrowsMalformed() {
-        XCTAssertThrowsError(try VideoControlMessage.decode(Data([26]))) { error in
+        XCTAssertThrowsError(try VideoControlMessage.decode(Data([27]))) { error in
             guard case VideoProtocolError.malformed = error else {
                 return XCTFail("unknown type must throw .malformed, got \(error)")
             }

@@ -451,6 +451,38 @@ root["videoControl"] = [
         .streamSettings(fpsCap: 24, bitrateCeilingBps: 8_000_000),
         ["fpsCap": 24, "bitrateCeilingBps": 8_000_000],
     ),
+    vc("audioControlOn", .audioControl(enabled: true), ["enabled": true]),
+    vc("audioControlOff", .audioControl(enabled: false), ["enabled": false]),
+]
+
+// MARK: AudioChannelMessage
+
+func aw(_ name: String, _ msg: AudioChannelMessage, _ extra: [String: Any]) -> [String: Any] {
+    var r: [String: Any] = ["variant": name, "hex": hex(msg.encode())]
+    r.merge(extra) { a, _ in a }
+    return r
+}
+
+root["audioWire"] = [
+    aw(
+        "configAacEld",
+        .config(
+            seq: 1,
+            hostSendTsMillis: 250,
+            config: AudioStreamConfig(format: .aacEld, sampleRate: 48000, channels: 2, cookie: Data([0xDE, 0xAD])),
+        ),
+        ["seq": 1, "hostTs": 250, "format": 1, "sampleRate": 48000, "channels": 2, "cookieHex": "dead"],
+    ),
+    aw(
+        "frame",
+        .frame(seq: 2, hostSendTsMillis: 251, payload: Data([0x01, 0x02, 0x03, 0x04])),
+        ["seq": 2, "hostTs": 251, "payloadHex": "01020304"],
+    ),
+    aw(
+        "frameExtremes",
+        .frame(seq: 0xFFFF_FFFF, hostSendTsMillis: 0xDEAD_BEEF, payload: Data()),
+        ["seq": 0xFFFF_FFFF, "hostTs": 0xDEAD_BEEF, "payloadHex": ""],
+    ),
 ]
 
 // MARK: RecoveryMessage

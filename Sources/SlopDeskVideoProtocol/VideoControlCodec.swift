@@ -60,6 +60,7 @@ import Foundation
 /// type 24 helloDisplay:  UInt16 protocolVersion | UInt32 requestedDisplayID
 ///                            | Float64 viewportW | Float64 viewportH
 /// type 25 streamSettings: UInt8 fpsCap | UInt32 bitrateCeilingBps
+/// type 26 audioControl:  UInt8 enabled(0/1)
 /// ```
 ///
 /// Liveness keepalive: guards against a client that crashes without sending `bye` — a zero-body
@@ -367,6 +368,13 @@ public enum VideoControlMessage: Equatable, Sendable {
     /// session re-mint, so the client re-sends its last-requested values after every accepted
     /// (re-)hello. Inert to an old host (unknown type → dropped).
     case streamSettings(fpsCap: UInt8, bitrateCeilingBps: UInt32)
+    /// Client → host: the LIVE per-session audio wish — `enabled` turns the host's app-audio
+    /// capture→encode→send lane (media channel tag 6) on or off. The ``streamSettings(fpsCap:bitrateCeilingBps:)``
+    /// twin: applied only while STREAMING (the host SM drops it otherwise), per-session HOST
+    /// state that dies with a session re-mint — a fresh session starts with audio OFF — so the
+    /// client stores its last wish and re-sends it after every accepted (re-)hello. A later
+    /// message REPLACES the earlier one. Inert to an old host (unknown type → dropped).
+    case audioControl(enabled: Bool)
 
     public var messageType: UInt8 {
         switch self {
@@ -395,6 +403,7 @@ public enum VideoControlMessage: Equatable, Sendable {
         case .displayList: 23
         case .helloDisplay: 24
         case .streamSettings: 25
+        case .audioControl: 26
         }
     }
 
@@ -558,6 +567,8 @@ public enum VideoControlMessage: Equatable, Sendable {
         case let .streamSettings(fpsCap, bitrateCeilingBps):
             out.append(fpsCap)
             out.appendBE(bitrateCeilingBps)
+        case let .audioControl(enabled):
+            out.append(enabled ? 1 : 0)
         }
         return out
     }
@@ -785,6 +796,9 @@ public enum VideoControlMessage: Equatable, Sendable {
             let fpsCap = try reader.readUInt8()
             let ceiling = try reader.readUInt32()
             return .streamSettings(fpsCap: fpsCap, bitrateCeilingBps: ceiling)
+        case 26:
+            // Body is the 1-byte enable flag; like every wire bool it decodes as `byte != 0`.
+            return try .audioControl(enabled: reader.readUInt8() != 0)
         default:
             throw VideoProtocolError.malformed("unknown video control message type \(type)")
         }

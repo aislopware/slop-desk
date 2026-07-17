@@ -69,6 +69,12 @@ public struct VideoSessionStateMachine: Sendable {
         /// values ride RAW — the actor clamps on apply (``UserStreamSettingsPolicy``) and actuates
         /// through the same paths a governed fps step / ABR tick takes.
         case applyStreamSettings(fpsCap: UInt8, bitrateCeilingBps: UInt32)
+        /// Apply the client's audio wish (wire `audioControl`) to the running session — the
+        /// `applyStreamSettings` twin for the audio lane: ON opens the capture→encode→send gate
+        /// for the host's app audio (media channel tag 6), OFF drops captured `.audio` buffers
+        /// before encode (capture config never changes). Per-session HOST state, reset to OFF on
+        /// `.startCapture`; the client re-sends its wish after every accepted (re-)hello.
+        case applyAudioControl(enabled: Bool)
     }
 
     /// The highest resize epoch already APPLIED for the current streaming session, so a
@@ -155,6 +161,12 @@ public struct VideoSessionStateMachine: Sendable {
             // apply (fps 5…120, bitrate 500 kbps…200 Mbps; 0 = restore auto).
             guard state == .streaming else { return [] }
             return [.applyStreamSettings(fpsCap: fpsCap, bitrateCeilingBps: bitrateCeilingBps)]
+        case let .audioControl(enabled):
+            // The `streamSettings` twin: only a STREAMING session has an audio lane to gate, and
+            // the client re-sends its wish after every accepted hello, so a pre-stream message is
+            // never load-bearing.
+            guard state == .streaming else { return [] }
+            return [.applyAudioControl(enabled: enabled)]
         case .helloAck,
              .resizeAck,
              .streamCadence:

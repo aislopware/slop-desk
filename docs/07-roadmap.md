@@ -73,7 +73,7 @@ View 1 host window on 1 Mac client over LAN.
 - [ ] Adaptive bitrate from loss/RTT ([03 §5](03-transport-protocol.md)).
 - [ ] Metal rendering (vs AVSampleBufferDisplayLayer) if lower latency is needed.
 - [ ] Adaptive FEC for Wi-Fi.
-- [ ] Audio (optional — SCKit captures at app level, not per-window).
+- [x] Audio (per-APP scope — SCKit captures at app level, not per-window; shipped 2026-07-17, see DECISIONS).
 - [ ] Device pairing (PIN/QR).
 - [ ] Developer-ID signing + notarization + auto-update ([06](06-permissions-distribution.md)).
 

@@ -27,6 +27,12 @@ public enum VideoChannel: UInt8, Sendable, CaseIterable {
     /// so sharing `.input` would have the host mis-decode recovery as a phantom mouse
     /// event. Byte-identical raw value (5) to the host's `VideoChannel.recovery`.
     case recovery = 5
+    /// Host → client app audio (``AudioChannelMessage``: a config packet + ~10 ms
+    /// encoded frames) — RECEIVED by the client on the media socket (the socket-selection
+    /// predicate routes every non-cursor tag there). Plain fire-and-forget datagrams: no
+    /// FEC, no retransmit — a lost frame is concealed by the client's jitter ring, never
+    /// waited for. Byte-identical raw value (6) to the host's `VideoChannel.audio`.
+    case audio = 6
 }
 
 /// Seam over the UDP transport the client orchestrator sends datagrams on (control /

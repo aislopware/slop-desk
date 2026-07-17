@@ -39,9 +39,11 @@ public enum UnboundLaneByeDecider {
             case .keepalive,
                  .resizeRequest,
                  .focusWindow,
-                 .streamSettings:
-                // `streamSettings` is in-session-only like the trio above (the client only sends
-                // it while it believes a session streams) — a live-session belief worth correcting.
+                 .streamSettings,
+                 .audioControl:
+                // `streamSettings` + `audioControl` are in-session-only like the trio above (the
+                // client only sends them while it believes a session streams) — a live-session
+                // belief worth correcting.
                 return true
             case .hello,
                  .helloAck,
@@ -72,7 +74,8 @@ public enum UnboundLaneByeDecider {
             }
         case .video,
              .geometry,
-             .cursor:
+             .cursor,
+             .audio:
             // Host→client-only payloads arriving inbound: corrupt/hostile — never reflect.
             return false
         }

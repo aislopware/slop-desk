@@ -528,6 +528,32 @@
       "tier": 4
     }
   ],
+  "audioWire": [
+    {
+      "channels": 2,
+      "cookieHex": "dead",
+      "format": 1,
+      "hex": "00000001000000fa01000a010000bb80020002dead",
+      "hostTs": 250,
+      "sampleRate": 48000,
+      "seq": 1,
+      "variant": "configAacEld"
+    },
+    {
+      "hex": "00000002000000fb00000401020304",
+      "hostTs": 251,
+      "payloadHex": "01020304",
+      "seq": 2,
+      "variant": "frame"
+    },
+    {
+      "hex": "ffffffffdeadbeef000000",
+      "hostTs": 3735928559,
+      "payloadHex": "",
+      "seq": 4294967295,
+      "variant": "frameExtremes"
+    }
+  ],
   "blocksWireMessages": [
     {
       "hex": "000000050f00000000",
@@ -4078,6 +4104,16 @@
       "fpsCap": 24,
       "hex": "1918007a1200",
       "variant": "streamSettings"
+    },
+    {
+      "enabled": true,
+      "hex": "1a01",
+      "variant": "audioControlOn"
+    },
+    {
+      "enabled": false,
+      "hex": "1a00",
+      "variant": "audioControlOff"
     }
   ],
   "virtualDisplayGeometry": [

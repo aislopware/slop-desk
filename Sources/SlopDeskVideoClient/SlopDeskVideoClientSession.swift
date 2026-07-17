@@ -49,7 +49,8 @@ public struct ClientNetworkStatsSnapshot: Sendable, Equatable {
 ///   ├─ control  ─▶ VideoClientStateMachine (hello/helloAck/bye)
 ///   ├─ video    ─▶ FrameReassembler ─▶ FECScheme ─▶ VideoDecoder (VTDecompressionSession)
 ///   │                                            ─▶ FramePacer ─▶ MetalVideoRenderer
-///   └─ geometry ─▶ window move/resize/title (drives the host view layout)
+///   ├─ geometry ─▶ window move/resize/title (drives the host view layout)
+///   └─ audio    ─▶ AudioStreamDecoder ─▶ AudioJitterBuffer ─▶ AudioPlaybackEngine (output AU)
 /// UDP cursor datagrams (own socket) ─▶ CursorChannelMessage ─▶ ClientCursorCompositor
 /// view input (mouse/key/scroll/text) ─▶ InputEventEncoder ─▶ UDP input datagrams (→ host)
 /// dropped frames ─▶ RecoveryPolicy ─▶ requestLTRRefresh / requestIDR (→ host)
@@ -322,6 +323,23 @@ public actor SlopDeskVideoClientSession {
     /// hop stays `Sendable`; `.failed` has already run `invalidateSession()` on the decode queue.
     private enum DecodeOutcome { case success, awaitingKeyframe, failed(String) }
 
+    // MARK: App audio (channel 6)
+
+    /// Serial queue owning ALL AudioToolbox work — the AAC-ELD `AudioConverter` decode and the
+    /// output-AU lifecycle — the audio mirror of ``decodeQueue``: a converter call must never
+    /// block fragment ingest / input sends on this actor. The engine's jitter ring is the only
+    /// state shared past this queue (locked inside the engine; the render callback pulls it).
+    private let audioQueue = DispatchQueue(label: "slopdesk.client.audio", qos: .userInteractive)
+    /// The audio config in force. The host re-sends it ~1 s apart (loss tolerance), so the
+    /// decoder/engine rebuild below fires only when a received config actually DIFFERS.
+    private var audioConfig: AudioStreamConfig?
+    /// Decodes wire payloads → interleaved Float32 on ``audioQueue``. Rebuilt on config change;
+    /// `nil` until the first config locks the stream parameters.
+    private var audioDecoder: AudioStreamDecoder?
+    /// Output AU + jitter ring, one per locked `(sampleRate, channels)`. Started lazily on the
+    /// first config while enabled; stopped on disable, invalidated with the pipeline.
+    private var audioEngine: AudioPlaybackEngine?
+
     /// Decoded-frame geometry, used for the cursor placement scale. The capture size
     /// is the host's window-point size; the layer size is the on-screen point size.
     private var decodedSize: VideoSize = .init(width: 0, height: 0)
@@ -584,6 +602,11 @@ public actor SlopDeskVideoClientSession {
     /// and die with a session re-mint, so the handshake must re-establish them. `nil` ⇒ never
     /// requested (nothing rides the handshake).
     private var lastStreamSettings: (fpsCap: Int, bitrateCeilingBps: Int)?
+    /// APP AUDIO wish (wire type 26): the last-requested enable state, re-sent automatically
+    /// after every accepted (re-)hello — the exact ``lastStreamSettings`` twin (per-session HOST
+    /// state, reset to the default OFF by a session re-mint). `nil` ⇒ never requested (nothing
+    /// rides the handshake).
+    private var lastAudioEnabled: Bool?
     /// The self-owned ~50 ms NetworkStats timer (mirrors ``keepaliveTask``'s safe weak pattern).
     /// Cancelled in ``stop()``.
     private var networkStatsTask: Task<Void, Never>?
@@ -1119,12 +1142,88 @@ public actor SlopDeskVideoClientSession {
             ingestVideo(fragment)
         case let .geometry(message):
             applyGeometry(message)
+        case let .audio(message):
+            handleAudio(message)
         case let .drop(reason):
             log.error("dropping media datagram: \(reason)")
             dbg("media datagram DROPPED: \(reason)")
         case .ignore:
             break
         }
+    }
+
+    // MARK: Inbound app audio (channel 6)
+
+    /// One decoded tag-6 datagram. Gated on the LOCAL wish, not just the host's send gate:
+    /// datagrams still in flight when the user disabled audio must not re-fill the just-cleared
+    /// ring (and a stale host that missed the OFF keeps sending until it applies it).
+    private func handleAudio(_ message: AudioChannelMessage) {
+        guard lastAudioEnabled == true else { return }
+        switch message {
+        case let .config(_, _, config):
+            applyAudioConfig(config)
+        case let .frame(seq, _, payload):
+            // Frames before the first config are undecodable — drop; the ~1 s config re-send
+            // locks the stream on promptly.
+            guard let decoder = audioDecoder, let engine = audioEngine else { return }
+            // OFF-QUEUE like video decode: the converter call runs on the serial audio queue so
+            // it never blocks fragment ingest on this actor; the ring (inside the engine, locked)
+            // re-orders by seq, so queue-serialised decode order is sufficient.
+            audioQueue.async {
+                let samples = decoder.decode(payload)
+                guard !samples.isEmpty else { return } // corrupt frame — concealed like wire loss
+                engine.enqueue(seq: seq, samples: samples)
+            }
+        }
+    }
+
+    /// (Re)locks the stream parameters from a received config. Idempotent for the ~1 s re-send:
+    /// an UNCHANGED config only re-asserts playback (`start()` is idempotent — this is also how
+    /// a re-enable's config restarts the stopped AU). A changed format/cookie rebuilds the
+    /// decoder; changed `(sampleRate, channels)` also rebuilds the engine (its AU + ring are
+    /// format-bound).
+    private func applyAudioConfig(_ config: AudioStreamConfig) {
+        if config == audioConfig, audioDecoder != nil, let engine = audioEngine {
+            audioQueue.async { engine.start() }
+            return
+        }
+        guard let decoder = try? AudioStreamDecoder(config: config) else {
+            // Validate-then-drop: a config this client cannot build a decoder for (converter
+            // refusal) is dropped wholesale — keep whatever stream was in force.
+            log.error("audio config rejected (no decoder for it) — dropped")
+            return
+        }
+        audioConfig = config
+        audioDecoder = decoder
+        dbg(
+            "audio config: format=\(config.format) \(config.sampleRate)Hz ch=\(config.channels) cookie=\(config.cookie.count)B",
+        )
+        let rate = Double(config.sampleRate)
+        let ch = Int(config.channels)
+        if let engine = audioEngine, engine.sampleRate == rate, engine.channels == ch {
+            audioQueue.async { engine.start() }
+            return
+        }
+        let old = audioEngine
+        let engine = AudioPlaybackEngine(sampleRate: rate, channels: ch)
+        audioEngine = engine
+        // Engine lifecycle stays on the audio queue (its single-owner discipline): retire the
+        // old AU before starting the fresh one so two units never render at once.
+        audioQueue.async {
+            old?.invalidate()
+            engine.start()
+        }
+    }
+
+    /// Tears the audio path down with the pipeline (bye / local stop / rebuild): the AU must not
+    /// keep running for a dead session, and the next session locks onto a fresh config anyway.
+    /// The stored ``lastAudioEnabled`` wish survives — it re-rides the next handshake.
+    private func stopAudioPipeline() {
+        audioConfig = nil
+        audioDecoder = nil
+        guard let engine = audioEngine else { return }
+        audioEngine = nil
+        audioQueue.async { engine.invalidate() }
     }
 
     private func ingestVideo(_ fragment: FrameFragment) {
@@ -1790,6 +1889,31 @@ public actor SlopDeskVideoClientSession {
         )
     }
 
+    /// APP AUDIO (wire type 26): request host app-audio for this session on/off. The wish is
+    /// stored and RE-SENT after every accepted (re-)hello — per-session HOST state that dies
+    /// with a session re-mint (host default OFF), the exact
+    /// ``updateStreamSettings(fpsCap:bitrateCeilingBps:)`` twin. Disable also acts LOCALLY —
+    /// stop the output AU and drop everything buffered — so the pane falls silent NOW, not one
+    /// control round-trip plus a ring-drain later.
+    public func updateAudioEnabled(_ enabled: Bool) {
+        lastAudioEnabled = enabled
+        if !enabled, let engine = audioEngine {
+            audioQueue.async {
+                engine.stop()
+                engine.flushBuffered()
+            }
+        }
+        sendAudioControlIfStreaming()
+    }
+
+    /// Sends the stored audio wish iff a session streams (the host SM ignores a pre-stream
+    /// message, and the handshake completion re-sends — see ``updateAudioEnabled(_:)``).
+    private func sendAudioControlIfStreaming() {
+        guard let enabled = lastAudioEnabled, stateMachine.mediaFlowing else { return }
+        dbg("→ audioControl enabled=\(enabled)")
+        transport.send(VideoControlMessage.audioControl(enabled: enabled).encode(), on: .control)
+    }
+
     /// Tells the host to RAISE the captured window to frontmost because this pane was focused on the
     /// client (hover / first-responder). Sent fire-and-forget on the `.control` channel WHILE streaming.
     /// Proactive + idempotent: the host raises once (short-circuiting if already frontmost), so the
@@ -1986,6 +2110,9 @@ public actor SlopDeskVideoClientSession {
         // freshly-minted session that knows nothing of the user's cap/ceiling, so re-establish
         // the last request now (no-op when none was ever made).
         sendStreamSettingsIfStreaming()
+        // APP AUDIO is the same class of per-session host state (a re-mint resets it to the
+        // default OFF) — re-assert the stored wish alongside the settings.
+        sendAudioControlIfStreaming()
         reapplyCursor()
         log
             .info(
@@ -1995,6 +2122,7 @@ public actor SlopDeskVideoClientSession {
 
     private func stopDecodePipeline() {
         decoder = nil
+        stopAudioPipeline()
     }
 
     // MARK: PNG decode (cross-platform, no window-server)

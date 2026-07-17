@@ -604,6 +604,16 @@ public actor SlopDeskVideoHostSession {
                     Task { await self.onCaptureDied(installed) }
                 }
             }
+            // APP-AUDIO: point every freshly-installed capturer's `.audio` tap at the SESSION-
+            // lifetime lane (so the wire seq stays monotonic across resize/dialog-expand
+            // rebuilds), and re-assert the cheap forwarding gate — a rebuilt capturer starts with
+            // the gate down, and a mid-session resize must not silently kill enabled audio. The
+            // sink runs on the capturer's audio queue; the lane is `@unchecked Sendable`. Inert
+            // (nil sender) when `SLOPDESK_AUDIO=0` masters the feature off.
+            if let installed = capturer, let sender = ensureAudioSender() {
+                installed.onAudioSampleBuffer = { [sender] buffer in sender.handle(buffer) }
+                installed.setAudioForwardingEnabled(sender.isEnabled)
+            }
         }
     }
 
@@ -710,6 +720,26 @@ public actor SlopDeskVideoHostSession {
     /// `.stopCapture` + ``stop()`` (a bye → `.listening` session must go silent so the client's stall
     /// monitor sees the truth).
     private var heartbeatTask: Task<Void, Never>?
+
+    /// APP-AUDIO lane: the SESSION-lifetime encode→send state for channel tag 6 (seq stays
+    /// monotonic across capturer rebuilds — the packetize lane's frameID discipline). Built
+    /// lazily at the first capturer install (``ensureAudioSender()``); stays nil for the whole
+    /// session when `SLOPDESK_AUDIO=0` masters the feature off.
+    private var audioSender: AudioStreamSender?
+    /// The client's per-session `audioControl` wish. Default OFF, reset at every `.startCapture`
+    /// so a re-minted session starts silent until the client re-sends its wish after the fresh
+    /// helloAck — the exact `userFPSCap`/`userBitrateCeilingBps` discipline.
+    private var audioEnabled = false
+
+    /// Builds (once) the session's audio lane. nil ⇒ `SLOPDESK_AUDIO=0` — the capturer then has
+    /// no audio tap either, so the whole feature is off end-to-end.
+    private func ensureAudioSender() -> AudioStreamSender? {
+        guard WindowCapturer.audioCaptureEnabled else { return nil }
+        if let audioSender { return audioSender }
+        let sender = AudioStreamSender(transport: transport, sessionStartUptime: sessionStartUptime)
+        audioSender = sender
+        return sender
+    }
 
     /// - Parameters:
     ///   - window: the desktop-independent window to remote.
@@ -943,7 +973,8 @@ public actor SlopDeskVideoHostSession {
                 handleRecovery(data)
             case .video,
                  .geometry,
-                 .cursor:
+                 .cursor,
+                 .audio:
                 // Host does not receive these (host→client). Ignore defensively.
                 break
             }
@@ -1754,6 +1785,10 @@ public actor SlopDeskVideoHostSession {
             // the client re-sends its last-requested values after the ack.
             userFPSCap = nil
             userBitrateCeilingBps = nil
+            // APP-AUDIO dies with the re-mint too: default OFF until the client re-sends its wish
+            // post-helloAck (the fresh capturer's forwarding gate also starts down).
+            audioEnabled = false
+            audioSender?.setEnabled(false)
             await startLiveComponents(width: Int(width), height: Int(height))
             // FPS GOVERNOR: announce the session's content cadence up front (+dup) so the
             // streamCadence message is the single cadence truth even before any governed step.
@@ -1778,7 +1813,27 @@ public actor SlopDeskVideoHostSession {
             await applyResize(width: width, height: height, epoch: epoch)
         case let .applyStreamSettings(fpsCap, bitrateCeilingBps):
             applyUserStreamSettings(fpsCap: fpsCap, bitrateCeilingBps: bitrateCeilingBps)
+        case let .applyAudioControl(enabled):
+            applyAudioControl(enabled: enabled)
         }
+    }
+
+    /// APP-AUDIO (the `.applyAudioControl` effect): latch the client's wish and open/close the
+    /// capture→encode→send gate. NO SCStream reconfiguration — the audio tap always runs while
+    /// the master env gate allows; OFF just drops `.audio` buffers at the capturer's delegate,
+    /// so toggling is hitch-free. Re-ENABLE re-arms the lane's config resend
+    /// (``AudioStreamSender/setEnabled(_:)``) so a fresh ``AudioStreamConfig`` datagram precedes
+    /// the first frame — the client may have missed (or predate) every earlier copy. A second
+    /// message replaces the first wholesale; the SM only emits this while `.streaming`.
+    private func applyAudioControl(enabled: Bool) {
+        audioEnabled = enabled
+        guard let sender = ensureAudioSender() else {
+            dbg("audioControl \(enabled ? "ON" : "OFF") ignored — SLOPDESK_AUDIO=0 masters audio off")
+            return
+        }
+        sender.setEnabled(enabled)
+        capturer?.setAudioForwardingEnabled(enabled)
+        dbg("audioControl → \(enabled ? "ON" : "OFF")")
     }
 
     /// A swappable encoder + its configured pixel size behind a lock, so the capture queue's hot
@@ -2490,6 +2545,11 @@ public actor SlopDeskVideoHostSession {
         // down — drop them (a mid-pace job aborts at its next chunk boundary). The lane itself
         // survives for the next hello; `stop()` is what closes it.
         sendLane?.flush()
+        // APP-AUDIO: close the send gate BEFORE stopping the stream — a buffer already queued on
+        // the capturer's audio queue must not race a datagram onto the wire mid-teardown
+        // ("streaming AND enabled" is the lane's send contract). The wish itself resets at the
+        // next `.startCapture`; the lane (and its seq) survives for a possible re-hello.
+        audioSender?.setEnabled(false)
         // Compare-and-clear race guard. `bye → .listening` is re-armable, so a bye's stopCapture
         // (this teardown) can overlap a reconnect hello's startCapture: `await capturer?.stop()`
         // (a slow SCStream stopCapture) is a suspension point across which a newer
@@ -3454,6 +3514,121 @@ final class EncodedFrameQueue: @unchecked Sendable {
         let out = items
         items = []
         return out
+    }
+}
+
+/// APP-AUDIO encode→send lane (channel tag 6). ONE per session, shared by every capturer the
+/// session installs, so the wire `seq` stays monotonic across resize/dialog-expand rebuilds (the
+/// packetize lane's frameID discipline for audio).
+///
+/// Threading: ``handle(_:)`` runs on the capturer's dedicated audio sample-handler queue — the
+/// session ACTOR never encodes (it only flips the gate, a Bool set). One lock guards the whole
+/// pipeline: two capturers can briefly overlap around a rebuild, and encoder/seq/config-cadence
+/// must stay consistent across that. The encode of one ~10 ms buffer holds the lock far under a
+/// buffer interval; a disabled buffer releases it immediately (gate before any work).
+///
+/// Datagrams go out IMMEDIATE (`transport.send`, thread-safe fire-and-forget UDP) — NEVER through
+/// `VideoSendLane`/`sendPaced`: audio must not queue behind a fat video frame, and at ≤ ~2 KB a
+/// datagram needs no chunking (the cursor-channel discipline, sharing the media socket).
+final class AudioStreamSender: @unchecked Sendable {
+    /// Wire codec pick: `SLOPDESK_AUDIO_CODEC=pcm` selects raw s16le (the codec-free A/B arm);
+    /// default AAC-ELD.
+    static let wireFormat: AudioWireFormat =
+        ProcessInfo.processInfo.environment["SLOPDESK_AUDIO_CODEC"] == "pcm" ? .pcmS16LE : .aacEld
+    /// AAC-ELD target bitrate (`SLOPDESK_AUDIO_BITRATE`, clamp 32k…320k, default 128k). The PCM
+    /// arm ignores it.
+    static let bitrateBps: Int = {
+        if let s = ProcessInfo.processInfo.environment["SLOPDESK_AUDIO_BITRATE"], let v = Int(s) {
+            return min(320_000, max(32000, v))
+        }
+        return 128_000
+    }()
+
+    /// Config re-send cadence (seconds): UDP may drop any single copy and a client may lock on
+    /// late, so the config is re-asserted ~1 s apart — piggybacked on the encode path (a stamp
+    /// compare per buffer), no dedicated timer. Client re-application is idempotent.
+    private static let configResendInterval: TimeInterval = 1.0
+
+    private let lock = NSLock()
+    /// The send gate: true only while the session is STREAMING and the client's `audioControl`
+    /// wish is ON (the actor maintains both transitions), so a buffer that races a teardown is
+    /// dropped here — "streaming AND enabled" is the lane's send contract.
+    private var enabled = false
+    /// Built lazily at the FIRST enabled buffer, so a session whose client never turns audio on
+    /// never constructs an AudioConverter.
+    private var encoder: AudioStreamEncoder?
+    /// ONE monotonic counter for ALL tag-6 datagrams of this session (config + frames share it —
+    /// the client orders/late-drops on it). Wraps via `&+` like every wire counter.
+    private var seq: UInt32 = 0
+    /// Monotonic uptime of the last config send; −∞ ⇒ send one before the next frame (reset on
+    /// every OFF→ON transition so a (re-)enable always leads with a fresh config).
+    private var lastConfigSentUptime = -Double.infinity
+
+    private let transport: any VideoDatagramTransport
+    /// The session's monotonic epoch — `hostSendTsMillis` shares `FrameFragmentHeader`'s clock
+    /// contract (host-relative ms, never cross-clock).
+    private let sessionStartUptime: Double
+
+    init(transport: any VideoDatagramTransport, sessionStartUptime: Double) {
+        self.transport = transport
+        self.sessionStartUptime = sessionStartUptime
+    }
+
+    var isEnabled: Bool { lock.withLock { enabled } }
+
+    /// Actor-driven gate flip (`.applyAudioControl` / `.startCapture` reset / teardown). Cheap by
+    /// contract: the actor must never wait on an encode — worst case it waits out one in-flight
+    /// ~10 ms buffer's encode (well under a frame interval), and only on a rare user-driven toggle.
+    func setEnabled(_ on: Bool) {
+        lock.withLock {
+            if on, !enabled {
+                lastConfigSentUptime = -.infinity
+                // The sub-frame remainder left by the last pre-disable buffer is stale by now —
+                // starting clean keeps the first fresh frame free of an old-audio shard.
+                encoder?.resetAccumulator()
+            }
+            enabled = on
+        }
+    }
+
+    /// The capturer's `.audio` sink: extract→encode→packetize→send. Runs on the capturer's audio
+    /// queue; everything but the actual `transport.send` happens under the lane lock.
+    func handle(_ sampleBuffer: CMSampleBuffer) {
+        lock.lock()
+        guard enabled else {
+            lock.unlock()
+            return
+        }
+        if encoder == nil {
+            encoder = AudioStreamEncoder(format: Self.wireFormat, bitrateBps: Self.bitrateBps)
+        }
+        guard let encoder else {
+            lock.unlock()
+            return
+        }
+        let payloads = encoder.encode(sampleBuffer: sampleBuffer)
+        // `config` is non-nil once the encoder can produce (PCM: always; AAC: converter built) —
+        // and payloads imply it. No completed frame ⇒ nothing to announce or send yet.
+        guard !payloads.isEmpty, let config = encoder.config else {
+            lock.unlock()
+            return
+        }
+        var datagrams: [Data] = []
+        let now = ProcessInfo.processInfo.systemUptime
+        let ts = UInt32(truncatingIfNeeded: Int64((now - sessionStartUptime) * 1000))
+        if now - lastConfigSentUptime >= Self.configResendInterval {
+            lastConfigSentUptime = now
+            datagrams.append(AudioChannelMessage.config(seq: seq, hostSendTsMillis: ts, config: config).encode())
+            seq &+= 1
+        }
+        for payload in payloads {
+            datagrams.append(AudioChannelMessage.frame(seq: seq, hostSendTsMillis: ts, payload: payload).encode())
+            seq &+= 1
+        }
+        lock.unlock()
+        // Send OUTSIDE the lock: fire-and-forget UDP enqueue, and a racing gate flip must never
+        // wait behind socket work.
+        for datagram in datagrams { transport.send(datagram, on: .audio) }
     }
 }
 #endif

@@ -270,4 +270,81 @@ final class RemoteWindowStreamControlsTests: XCTestCase {
         XCTAssertNil(m.desktopDisplayID)
         XCTAssertEqual(m.active?.windowID, 42, "window target untouched")
     }
+
+    // MARK: Audio toggle (host app-audio opt-in)
+
+    /// `applyAudioEnabled` is gated exactly like the other host-affecting sinks: no sink or no
+    /// stream ⇒ inert no-op (state never flips, nothing fires); a same-value apply is dropped so
+    /// the sink only ever sees transitions.
+    func testApplyAudioEnabledRequiresStreamingAndASinkAndDropsSameValue() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
+        m.applyAudioEnabled(true) // no sink + not streaming — must not crash, must not flip
+        XCTAssertFalse(m.audioStreamEnabled)
+        XCTAssertFalse(m.canToggleAudio)
+
+        var received: [Bool] = []
+        m.audioInjector = { received.append($0) }
+        m.applyAudioEnabled(true)
+        XCTAssertFalse(m.audioStreamEnabled, "a sink alone is not enough — the pane must be streaming")
+        XCTAssertEqual(received, [], "nothing sent while the gate is closed")
+
+        m.open()
+        XCTAssertTrue(m.canToggleAudio)
+        m.applyAudioEnabled(true)
+        m.applyAudioEnabled(true) // same-value — dropped, the sink sees transitions only
+        m.applyAudioEnabled(false)
+        XCTAssertEqual(received, [true, false])
+        XCTAssertFalse(m.audioStreamEnabled)
+    }
+
+    /// Publishing an audio sink RE-ASSERTS a held ON state (the viewportLocked precedent): a
+    /// detach/reattach re-binds the SAME model to a fresh view whose new session — and so the host
+    /// — starts with audio OFF, so the model's wish must re-push. OFF publishes nothing (the fresh
+    /// session's default is already correct).
+    func testAudioSinkPublishReassertsAHeldOnState() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
+        m.open()
+        m.audioInjector = { _ in }
+        m.applyAudioEnabled(true)
+        XCTAssertTrue(m.audioStreamEnabled)
+
+        var freshSink: [Bool] = []
+        m.audioInjector = { freshSink.append($0) }
+        XCTAssertEqual(freshSink, [true], "the held ON is re-asserted into the fresh sink")
+
+        m.close()
+        XCTAssertNil(m.audioInjector)
+        XCTAssertFalse(m.audioStreamEnabled, "the next session mints with audio OFF — the light resets")
+
+        let m2 = RemoteWindowModel(target: { self.target }, windowID: "7", title: "Safari")
+        m2.open()
+        var silent: [Bool] = []
+        m2.audioInjector = { silent.append($0) }
+        XCTAssertEqual(silent, [], "audio OFF ⇒ nothing re-asserted")
+    }
+
+    #if canImport(SwiftUI)
+    /// **Read-only WITHHOLDS the audio sink at the seam.** Enabling audio changes HOST capture
+    /// behaviour, so — exactly like the stream-settings sink — the `.videoLeaf` derivation binds
+    /// `nil` while read-only: the speaker is inert on a locked pane.
+    func testReadOnlyWithholdsTheAudioSinkAtTheSeam() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "7", title: "Safari")
+        m.open()
+        let liveSink: (Bool) -> Void = { _ in }
+
+        RemotePaneContext.videoLeaf(
+            isActive: true, readOnly: false, bindKeyInjector: { _ in },
+            bindAudioInjector: { m.audioInjector = $0 },
+        ).onAudioInjectorReady?(liveSink)
+        XCTAssertNotNil(m.audioInjector, "writable: the published sink reaches the model")
+        XCTAssertTrue(m.canToggleAudio)
+
+        RemotePaneContext.videoLeaf(
+            isActive: true, readOnly: true, bindKeyInjector: { _ in },
+            bindAudioInjector: { m.audioInjector = $0 },
+        ).onAudioInjectorReady?(liveSink)
+        XCTAssertNil(m.audioInjector, "read-only: the seam clears the audio sink")
+        XCTAssertFalse(m.canToggleAudio, "read-only: a locked pane cannot start host audio")
+    }
+    #endif
 }

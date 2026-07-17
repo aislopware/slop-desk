@@ -1242,3 +1242,50 @@ mid-drag and adds the keyboard twins.
   ever host split trees.
 - ❎ Cross-SESSION drags and iOS stay out of scope (the sidebar lists the active session only; iOS
   has no pointer drag).
+
+## Audio streaming: host app audio rides the media socket as channel 6 (2026-07-17)
+
+Audio was deferred at design time ("no per-window audio" — 07 §Phase 4, 08 Q5) on a framing that
+research now narrows: ScreenCaptureKit's `capturesAudio` on a window-filtered stream delivers the
+whole APP's audio, not the window's. Per-window stays impossible; per-app is enough for a coding
+tool (one IDE/browser window ≈ one app), so the deferral lifts with reduced scope. Latency research
+in 11 §7 (#13/#14, action item 10) already names the levers; this decision applies them with one
+substitution forced by the pure-native-Swift rule.
+
+- ✅ **Capture: SCK `capturesAudio` on the session's existing SCStream** (48 kHz stereo,
+  `excludesCurrentProcessAudio`; a second `addStreamOutput(.audio)` on its OWN sample-handler
+  queue). Same TCC bucket the video grant already covers, same lifecycle/teardown as the stream it
+  rides. Capture is configured whenever the host gate (`SLOPDESK_AUDIO`, default-ON) allows;
+  ENCODE+SEND run only while the client has opted in — the toggle never reconfigures the live
+  SCStream. ❌ REJECTED: Core Audio process taps (macOS 26 added `bundleIDs`/`processRestoreEnabled`)
+  — a second capture stack with its own TCC prompt, and the tap's all-zero-buffer failure is still
+  live in 26.5 forum reports. Revisit only for audio-without-video sessions.
+- ✅ **Codec: AAC-ELD via AudioConverter** (480-sample frames = 10 ms @ 48 kHz, ~128 kbps stereo,
+  `kAudioConverterEncodeBitRate`). ❌ REJECTED: Opus — 11 §7 #13 assumed it, but
+  `kAudioFormatOpus` encode via AudioConverter has years of unresolved corruption reports (Apple's
+  only working recipe: mono/CBR forum code, unchanged through the 26 SDK), and libopus violates
+  "only C = CSlopDeskSIMD". AAC-ELD is the same family FaceTime ships. Escape hatch:
+  `SLOPDESK_AUDIO_CODEC=pcm` (s16le raw, ~1.5 Mbps on LAN, zero codec risk/latency) — the wire
+  config packet carries the format ID, so the client follows whatever the host sends.
+- ✅ **Transport: `VideoChannel.audio = 6` on the media socket, sent IMMEDIATE** — never through
+  `VideoSendLane`/`sendPaced` (the cursor precedent: a keyframe burst must not head-of-line-block a
+  200-byte audio frame; conversely 100 small datagrams/s cannot hurt video pacing). One datagram
+  per audio frame (`[u32 seq][u32 hostSendTsMillis][u8 flags][u16 len][payload]`, BE,
+  validate-then-drop); flags bit0 marks an in-band CONFIG packet (format ID + sample rate +
+  channels + AAC magic cookie, re-sent ~1 s) so decoder bring-up needs no extra control round-trip
+  and survives loss.
+- ✅ **Control: wire type 26 `audioControl(enabled)`, client→host, in-session** (streamSettings
+  twin: host SM applies only while `.streaming`, client stores the wish and re-sends after every
+  accepted re-hello, host resets to OFF on session mint). Default OFF — audio is per-pane opt-in
+  from the footer toggle.
+- ✅ **Playback: raw output AudioUnit (HALOutput / RemoteIO) + own jitter ring** (11 §7 #14: small
+  IO buffers), render callback pulls; target depth ~2 frames, underrun fills silence, high-water
+  drops oldest. **Audio never waits for video and video never waits for audio** — no
+  cross-stream sync (11 §7 #6: PTS fire-and-forget; the ~10–20 ms audio-behind-glass skew is far
+  under lip-sync threshold). Host clock rides `hostSendTsMillis` uncompared to client clocks, same
+  contract as video.
+- ❎ **No audio FEC in v1** (header reserves flags bits): the link is WireGuard LAN, concealment is
+  frame-sized silence, and an RS block over K×10 ms frames adds more delay than the jitter ring it
+  would protect. Revisit with `FECScheme` reuse if Wi-Fi loss proves audible.
+- ⚠️ macOS 26.0 shipped Core Audio capture regressions (fixed in 26.1) — audio work is
+  verified/shipped against 26.1+.

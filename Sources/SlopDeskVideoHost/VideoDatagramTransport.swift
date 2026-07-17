@@ -28,6 +28,14 @@ public enum VideoChannel: UInt8, Sendable, CaseIterable {
     /// a recovery datagram as a phantom mouse event. Keeping the per-purpose channel
     /// design lets the host route recovery to ``InputDatagramRouter``-free handling.
     case recovery = 5
+    /// Host → client app audio (``AudioChannelMessage``: config + ~10 ms encoded
+    /// frames) — sent, not received, by the host. Rides the shared MEDIA socket (the
+    /// socket-selection predicate routes every non-cursor tag there), one datagram per
+    /// message, always IMMEDIATE (`transport.send`) — never through
+    /// `VideoSendLane`/`sendPaced`, so audio never queues behind a fat video frame
+    /// (the cursor-channel discipline, minus the dedicated socket). No FEC, no
+    /// retransmit: a lost frame is concealed client-side (jitter-ring silence).
+    case audio = 6
 }
 
 /// Seam over the UDP transport the host orchestrator sends datagrams on and receives

@@ -34,7 +34,7 @@
 | Q2 | First renderer? | AVSampleBufferDisplayLayer (fastest to pixels), Metal later |
 | Q3 | Transport? | Plain UDP (video) / plain TCP (terminal), no app-layer crypto; runs over a trusted private network |
 | Q4 | Auth/pairing? | None at the app layer — security boundary is the network (WireGuard mesh provides encryption + node auth + ACLs) |
-| Q5 | Audio? | Deferred (audio is app-level; no per-window audio) |
+| Q5 | Audio? | Shipped 2026-07-17 at per-APP scope (SCK `capturesAudio`; per-window remains impossible) — see DECISIONS |
 | Q6 | Concurrent windows? | 1 window/session for MVP |
 | Q7 | Client cursor? | Exclude from video (`showsCursor=false`) + draw client-side from the input channel (instant feel). See [10 §7](10-latency-optimization.md) |
 | Q8 | Minimum macOS? | macOS 26 (build floor; affects R2 activation testing) |
@@ -56,4 +56,4 @@
 - ❌ Windows/Linux host (macOS only).
 - ❌ Mac App Store (sandbox incompatible — [06](06-permissions-distribution.md)).
 - ❌ Controlling multiple background windows concurrently (macOS limitation — [05 §0](05-input-window-control.md)).
-- ❌ Per-window audio (macOS doesn't support it).
+- ❌ Per-window audio (macOS doesn't support it; per-APP audio shipped 2026-07-17 instead).

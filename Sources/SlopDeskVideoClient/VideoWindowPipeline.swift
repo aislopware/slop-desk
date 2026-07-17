@@ -164,6 +164,11 @@ final class VideoWindowPipeline {
     /// state starts clean, so `activate` re-seeds it from here. `nil` ⇒ never requested.
     private var lastStreamSettings: (fpsCap: Int, bitrateCeilingBps: Int)?
 
+    /// APP AUDIO: the last requested enable state, preserved ACROSS a host-ended rebuild for the
+    /// same reason as ``lastStreamSettings`` (the fresh session's host state starts at the
+    /// default OFF). `nil` ⇒ never requested.
+    private var lastAudioEnabled: Bool?
+
     #if os(macOS)
     /// The LOCAL `NSCursor` mirroring the host's CURRENT cursor SHAPE (Parsec model: the OS draws it at
     /// the instant local mouse position, so the pointer never lags by an RTT). `nil` until the shape
@@ -576,6 +581,11 @@ final class VideoWindowPipeline {
                 )
             }
         }
+        // APP AUDIO survives a rebuild the same way: the fresh session stores the wish and
+        // (re-)sends it once the new handshake completes.
+        if let audioEnabled = lastAudioEnabled {
+            Task { await session.updateAudioEnabled(audioEnabled) }
+        }
 
         // Bring up the single ordered outbound-input consumer before any input can be enqueued.
         startOutboundConsumer()
@@ -747,6 +757,16 @@ final class VideoWindowPipeline {
         lastStreamSettings = (fpsCap: fpsCap, bitrateCeilingBps: bitrateCeilingBps)
         guard let session else { return }
         Task { await session.updateStreamSettings(fpsCap: fpsCap, bitrateCeilingBps: bitrateCeilingBps) }
+    }
+
+    /// APP AUDIO: forward the per-session enable wish to the session (which stores it, acts on it
+    /// locally, and re-sends after every re-hello) and remember it here so a host-ended rebuild's
+    /// fresh session inherits it (see `activate`) — the ``updateStreamSettings(fpsCap:bitrateCeilingBps:)``
+    /// twin.
+    func setAudioEnabled(_ enabled: Bool) {
+        lastAudioEnabled = enabled
+        guard let session else { return }
+        Task { await session.updateAudioEnabled(enabled) }
     }
 
     /// VNC-style zoom/pan, forwarded to the renderer (applied as a UV crop next vsync)

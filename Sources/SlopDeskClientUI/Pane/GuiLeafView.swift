@@ -304,6 +304,9 @@ struct GuiLeafView: View {
                     // LIVE STREAM SETTINGS (fps cap / bitrate ceiling): host encode behaviour — the
                     // seam binds nil while read-only (exactly like the resize sink).
                     bindStreamSettingsInjector: { [weak model] sink in model?.streamSettingsInjector = sink },
+                    // HOST AUDIO (footer speaker): starts host-side audio capture+send — the seam
+                    // binds nil while read-only (exactly like the stream-settings sink).
+                    bindAudioInjector: { [weak model] sink in model?.audioInjector = sink },
                     // SYSTEM-KEY INJECTOR (immersive capture): host key input — the seam binds nil
                     // while read-only (exactly like the paste-keystrokes sink).
                     bindSystemKeyInjector: { [weak model] sink in model?.systemKeyInjector = sink },
@@ -413,11 +416,11 @@ private struct StreamStallCaption: View {
 /// The bottom CONTROL bar for a LIVE window pane: window controls kept OUT of the pane CONTENT. A flat
 /// strip along the pane bottom, a single top hairline (never a floating card), split BY KIND: everything
 /// LEFT of the spacer is a COMMAND (momentary — window verbs paste/resize/display/detach, then viewport
-/// verbs fit/−/1×/+), everything RIGHT carries STATE (stats overlay, quality override, immersive,
-/// viewport lock — the accent tint is a status light, and only the right side ever shows one). Resize is
-/// gated on a live host-resize sink (``RemoteWindowModel/canResizeWindow``, withheld while read-only);
-/// the viewport verbs + lock on ``RemoteWindowModel/canControlViewport`` (live even while read-only —
-/// pure client ops).
+/// verbs fit/−/1×/+), everything RIGHT carries STATE (stats overlay, quality override, host audio,
+/// immersive, viewport lock — the accent tint is a status light, and only the right side ever shows one).
+/// Resize is gated on a live host-resize sink (``RemoteWindowModel/canResizeWindow``, withheld while
+/// read-only); the viewport verbs + lock on ``RemoteWindowModel/canControlViewport`` (live even while
+/// read-only — pure client ops).
 private struct GuiPaneControlBar: View {
     let model: RemoteWindowModel?
     /// The store — supplies the LOCAL clipboard (current + the recent-clips ring) for the paste menu,
@@ -517,8 +520,8 @@ private struct GuiPaneControlBar: View {
                 }
             }
             Spacer(minLength: Slate.Metric.space2)
-            // ── STREAM STATE: what the feed is doing — telemetry readout + quality override, both accent
-            // while engaged.
+            // ── STREAM STATE: what the feed is doing — telemetry readout, quality override, host-audio
+            // speaker, each accent while engaged.
             HStack(spacing: Slate.Metric.space1) {
                 // STATS: toggle the client-local telemetry readout — informational, so it stays live even
                 // on a read-only pane.
@@ -545,6 +548,21 @@ private struct GuiPaneControlBar: View {
                                 bitrateCapMbps: $bitrateCapMbpsSelection,
                             )
                         }
+                }
+                // HOST AUDIO: the speaker toggle — accent while the host streams its app audio into this
+                // pane. Stays visible while ON even when the sink is withheld (read-only), so the status
+                // light never vanishes mid-stream; the verb itself is disabled then (mirrors the
+                // immersive toggle's engaged-while-withheld visibility). Speaker family — no other glyph
+                // in the bar uses it.
+                if let model, model.canToggleAudio || model.audioStreamEnabled {
+                    SlatePlateButton(
+                        symbol: model.audioStreamEnabled ? .speakerWave2 : .speakerSlash,
+                        help: model.audioStreamEnabled
+                            ? "Mute host audio"
+                            : "Play host audio in this pane",
+                        tint: model.audioStreamEnabled ? Slate.State.accent : Slate.Text.icon,
+                    ) { model.applyAudioEnabled(!model.audioStreamEnabled) }
+                        .disabled(!model.canToggleAudio)
                 }
             }
             // ── MODE STATE: the two latched input/view modes, at the bar's outer edge where their accent

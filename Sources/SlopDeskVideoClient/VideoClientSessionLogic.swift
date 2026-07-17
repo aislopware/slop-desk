@@ -232,9 +232,10 @@ public struct VideoClientStateMachine: Sendable {
              .appIconRequest,
              .blobChunk,
              .windowPreviewRequest,
-             .streamSettings:
+             .streamSettings,
+             .audioControl:
             // hello / resizeRequest / keepalive / listWindows / focusWindow / listSystemDialogs /
-            // windowFeedSubscribe / appIconRequest / streamSettings are all client→host.
+            // windowFeedSubscribe / appIconRequest / streamSettings / audioControl are all client→host.
             // `windowList` + `systemDialogList` + `windowFeedSnapshot` + `windowFeedCurrent` +
             // `blobChunk` ARE host→client but handled out-of-band by the discovery /
             // system-dialog-monitor / window-feed / blob queries (their own lanes), NOT by a
@@ -617,6 +618,9 @@ public struct ReceivedDatagramRouter: Sendable {
         case videoFragment(FrameFragment)
         /// A window-geometry update (move/resize/title).
         case geometry(WindowGeometryMessage)
+        /// A parsed app-audio datagram (config or one ~10 ms encoded frame — feed the
+        /// audio decode path).
+        case audio(AudioChannelMessage)
         /// Drop a malformed / undecodable datagram (a corrupt single packet must never
         /// crash the receiver — same contract as the reassembler).
         case drop(reason: String)
@@ -648,6 +652,11 @@ public struct ReceivedDatagramRouter: Sendable {
             guard mediaFlowing else { return .ignore }
             do { return try .geometry(WindowGeometryMessage.decode(data)) } catch {
                 return .drop(reason: "undecodable geometry datagram")
+            }
+        case .audio:
+            guard mediaFlowing else { return .ignore }
+            do { return try .audio(AudioChannelMessage.decode(data)) } catch {
+                return .drop(reason: "undecodable audio datagram")
             }
         case .cursor,
              .input,

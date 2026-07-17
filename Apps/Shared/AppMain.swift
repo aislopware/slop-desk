@@ -96,12 +96,14 @@ struct ClientAppMain {
                     onWindowGeometryReady: paneContext.onWindowGeometryChanged,
                     onStreamCadenceReady: paneContext.onStreamCadenceChanged,
                     onStreamBitrateReady: paneContext.onStreamBitrateChanged,
-                    // NETWORK-STATS MIRROR + LIVE STREAM SETTINGS + SYSTEM-KEY INJECTOR: the pane's
-                    // stats overlay / tune popover / immersive-capture forward path. Defaults are nil,
-                    // so forgetting these threads compiles headlessly but leaves the real app's
-                    // controls dead — they must ride the factory like every other seam callback.
+                    // NETWORK-STATS MIRROR + LIVE STREAM SETTINGS + HOST AUDIO + SYSTEM-KEY INJECTOR:
+                    // the pane's stats overlay / tune popover / speaker toggle / immersive-capture
+                    // forward path. Defaults are nil, so forgetting these threads compiles headlessly
+                    // but leaves the real app's controls dead — they must ride the factory like every
+                    // other seam callback.
                     onNetworkStatsReady: paneContext.onNetworkStats,
                     onStreamSettingsInjectorReady: paneContext.onStreamSettingsInjectorReady,
+                    onAudioInjectorReady: paneContext.onAudioInjectorReady,
                     onSystemKeyInjectorReady: paneContext.onSystemKeyInjectorReady,
                     onStreamStallChanged: paneContext.onStreamStallChanged,
                     // TERMINAL REJECTION: host refused the session — the seam routes it to

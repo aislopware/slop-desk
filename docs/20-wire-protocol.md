@@ -474,13 +474,13 @@ geometry/cursor/input fields are big-endian IEEE-754 `Float64`. Each codec seria
 `[UInt8 messageType][body…]` and is decoded defensively — a short or inconsistent **single datagram**
 throws `VideoProtocolError.truncated` / `.malformed(_)` and is dropped, never crashing the receiver.
 
-## 9.1 Transport topology — two sockets, six logical channels
+## 9.1 Transport topology — two sockets, seven logical channels
 
 A session uses **two UDP sockets**, not one:
 
 | Socket | Carries | Framing |
 |--------|---------|---------|
-| **media** | control, video, geometry, input, recovery | each datagram is prefixed with a **1-byte channel tag** (`VideoChannel.rawValue`) |
+| **media** | control, video, geometry, input, recovery, audio | each datagram is prefixed with a **1-byte channel tag** (`VideoChannel.rawValue`) |
 | **cursor** | cursor updates + cursor shapes | **bare bytes** (single-purpose socket, no tag) |
 
 The cursor channel is split onto its own socket so pointer latency = RTT, fully decoupled from the
@@ -497,6 +497,7 @@ bulk traffic delay latency-critical control" rationale as PATH 1's dual TCP (§1
 | `3` | `cursor`   | host → client | *(logical id; physically carried on the dedicated cursor socket, untagged — §9.6)* |
 | `4` | `input`    | client → host | `InputEvent` (§9.7) |
 | `5` | `recovery` | client → host | `RecoveryMessage` (§9.8) |
+| `6` | `audio`    | host → client | one `AudioChannelMessage` (§9.9) |
 
 > The `cursor` tag value (`3`) is reserved for completeness/symmetry; cursor datagrams physically
 > travel on the dedicated cursor socket as bare bytes, so they carry no leading channel tag.
@@ -579,6 +580,11 @@ media flows. `[UInt8 type][body]`, big-endian:
   target clamps down immediately; climbs never exceed it). Per-session HOST state: it dies with a
   session re-mint, so the client re-sends its last-requested values after every accepted
   (re-)hello. Inert to an old host (unknown type → dropped).
+- **Audio opt-in (26, client → host, 2026-07-17):** `audioControl` = `UInt8 enabled` (`!= 0` ⇒ on) —
+  the per-pane switch for the host's app-audio stream (§9.9). streamSettings twin: applies only
+  while streaming, per-session HOST state that resets OFF on session mint, so the client stores the
+  wish and re-sends it after every accepted (re-)hello. A later message replaces the earlier one.
+  Inert to an old host (unknown type → dropped).
 - **Session-LESS discovery (no capture mint; the request bootstraps its reply flow at the mux, is
   never answered with an unbound-lane `bye`, and its lane is retired after the reply):**
   `listWindows` (7, zero body) → `windowList` (8) powers the remote-window picker AND the client's
@@ -634,23 +640,30 @@ client self-configures its `CMVideoFormatDescription` from those parameter sets,
 parameter exchange) is fragmented into datagrams ≤ **1200 bytes** (`VideoPacketizer.maxDatagramSize`,
 doc 17 §3.6 — under the runtime MTU including WireGuard-mesh overhead).
 
-**Fragment header — fixed 15 bytes, big-endian:**
+**Fragment header — fixed 19 bytes, big-endian:**
 
 ```
-off 0: UInt32 streamSeq    — monotonic per-datagram sequence (loss / ordering)
-off 4: UInt32 frameID      — groups all fragments of one encoded frame
-off 8: UInt16 fragIndex    — 0-based fragment index within the frame
-off10: UInt16 fragCount    — total fragments in the frame (data + parity)
-off12: UInt8  flags        — bit0 keyframe(IDR) | bit1 parity(FEC) | bit2 crisp(Session B)
-off13: UInt16 payloadLen   — payload byte count that follows
-off15: [payloadLen] bytes  — fragment payload (AVCC bytes, or FEC parity)
+off 0: UInt32 streamSeq        — monotonic per-datagram sequence (loss / ordering)
+off 4: UInt32 frameID          — groups all fragments of one encoded frame
+off 8: UInt16 fragIndex        — 0-based fragment index within the frame
+off10: UInt16 fragCount        — total fragments in the frame (data + parity)
+off12: UInt8  flags            — bit0 keyframe(IDR) | bit1 parity(FEC) | bit2 crisp(Session B) |
+                                 bits3-5 fecTier | bit6 isLTR | bit7 ackedAnchored
+off13: UInt32 hostSendTsMillis — host-monotonic ms since host session start (0 = unstamped); the
+                                 client echoes it verbatim in NetworkStats (§9.8) so the host
+                                 derives RTT in its OWN clock — never compared across machines
+off17: UInt16 payloadLen       — payload byte count that follows
+off19: [payloadLen] bytes      — fragment payload (AVCC bytes, or FEC parity)
 ```
 
 `streamSeq` is a monotonic per-**datagram** index (every emitted datagram, data and parity alike,
 increments it) — the loss/ordering signal, analogous to PATH 1's per-message `output.seq` but at
 datagram granularity. `frameID` is a monotonic per-**frame** index. `flags` bits: `keyframe` (fresh
 decode anchor / IDR), `parity` (this fragment is FEC parity, not original data), `crisp` (the frame
-came from the on-demand all-intra "crisp" Session-B encoder).
+came from the on-demand all-intra "crisp" Session-B encoder), `fecTier` (3-bit loss-adaptive parity
+tier echo), `isLTR` (long-term-reference frame), `ackedAnchored` (delta anchored on an acked LTR).
+All eight flag bits are allocated — a new datagram kind gets its own channel + header, never a
+stolen bit here.
 
 ## 9.4 Forward error correction (FEC)
 
@@ -800,7 +813,39 @@ heavier, refresh; the dedicated LTR-refresh encode is a future optimisation. An 
 window yet (no retransmit buffer) and is recorded for diagnostics. This re-anchors a loss-recovering
 client immediately rather than waiting for the ~1 s heartbeat IDR.
 
-## 9.9 Errors (`VideoProtocolError`)
+## 9.9 Audio stream — `AudioChannelMessage` (audio channel, host → client)
+
+The session's app audio (ScreenCaptureKit `capturesAudio` — the captured APP's whole audio, not
+per-window; 48 kHz stereo, own sample-handler queue) rides media-socket tag `6`, encoded as
+AAC-ELD (~10 ms / 480-sample frames, `SLOPDESK_AUDIO_BITRATE`, default 128 kbps) or raw s16le PCM
+(`SLOPDESK_AUDIO_CODEC=pcm`). One datagram per message, **sent immediate** — never through the
+video send-lane/pacer (the cursor rationale: a keyframe burst must not head-of-line-block a
+200-byte audio frame). Streaming starts only after an `audioControl(enabled)` opt-in (§9.2 type 26)
+and the host gate `SLOPDESK_AUDIO` (default-ON) allows it.
+
+**Header — fixed 11 bytes, big-endian:**
+
+```
+off 0: UInt32 seq              — monotonic across ALL tag-6 datagrams of a session (reorder/late drop)
+off 4: UInt32 hostSendTsMillis — same host-clock contract as §9.3 (never compared across machines)
+off 8: UInt8  flags            — bit0 config | bits1-7 reserved (encode 0, ignore on decode)
+off 9: UInt16 payloadLen       — must equal the remaining byte count exactly; > 8192 ⇒ malformed
+off11: [payloadLen] bytes
+```
+
+A **frame** message (`flags.bit0 = 0`) carries one encoded codec frame (an AAC-ELD access unit, or
+`480 × channels × 2` bytes of interleaved s16le PCM). A **config** message (`flags.bit0 = 1`)
+carries `UInt8 formatID` (1 = aacEld, 2 = pcmS16LE; unknown ⇒ malformed → dropped) + `UInt32
+sampleRate` + `UInt8 channels` + `UInt16 cookieLen` + the AAC magic cookie (empty for PCM) — sent
+on (re-)enable and re-sent ~1 s so decoder bring-up needs no control round-trip and survives loss.
+The client rebuilds its decoder only when the config actually changes.
+
+No FEC, no retransmit, no cross-stream A/V sync: a lost frame is concealed as one 10 ms silence
+fill from the client's jitter ring (target depth ≈ 2 frames), and audio never waits for video (nor
+vice versa) — playout is PTS-free fire-and-forget per doc 11 §7. Inert both directions to an old
+peer: an unknown tag is dropped at the demux, an unknown control type at the decoder.
+
+## 9.10 Errors (`VideoProtocolError`)
 
 | Case | Meaning |
 |------|---------|

@@ -22,6 +22,7 @@
 //   slopdesk-loopback-validate            # full run: 6 scenarios + FEC-tier sweep + controllers
 //   slopdesk-loopback-validate --smoke    # quick 10-frame clean scenario + controllers (liveness)
 //   slopdesk-loopback-validate --frames N # override per-scenario frame count (default 120)
+//   slopdesk-loopback-validate --audio    # audio lane only: encoder → wire → loss/reorder → ring → decoder
 //   SLOPDESK_LV_FRAMES=N slopdesk-loopback-validate
 
 import Foundation
@@ -3569,6 +3570,184 @@ func printSummary(_ all: [ScenarioStats]) {
     print("============================================================")
 }
 
+// MARK: - Audio scenario (--audio)
+
+/// One codec arm's outcome for the audio scenario (`AudioWireFormat.aacEld` / `.pcmS16LE`).
+struct AudioArmResult {
+    var name: String
+    /// The encoder published a wire config (the AAC arm: AudioConverterNew succeeded — the
+    /// AAC-ELD feasibility proof).
+    var configBuilt = false
+    /// The first config datagram survives `encode()` → `decode()` byte-identical in meaning.
+    var configRoundTrips = false
+    /// `AudioStreamDecoder` initialised from the WIRE-decoded config (not the host's local copy).
+    var decoderBuilt = false
+    /// Datagrams whose `decode(encode())` failed or differed from the original message.
+    var wireMismatches = 0
+    var framesSent = 0
+    var framesArrived = 0
+    var framesDecoded = 0
+    var pulledSamples = 0
+    var steadyRMS = 0.0
+    var ringStats = AudioJitterBuffer.Stats()
+    var passed = false
+}
+
+/// Drives ONE codec arm through the REAL audio software loop the live session uses:
+///
+///   synthetic 2 s 440 Hz stereo sine @48 kHz
+///     -> AudioStreamEncoder.encodePCM (the headless core; the AAC arm builds a REAL
+///        AudioConverter — kAudioFormatMPEG4AAC_ELD encode feasibility is proven or fails HERE)
+///     -> AudioChannelMessage encode()/decode() wire round-trip on EVERY datagram
+///     -> deterministic loss (every 17th wire position; the first config always survives) +
+///        ONE adjacent reorder swap (UDP re-order)
+///     -> AudioStreamDecoder built from the wire config -> AudioJitterBuffer push
+///     -> one 480-frame pull per push (the render cadence) -> steady-state RMS sanity.
+///
+/// A 0.5-amplitude sine has RMS 0.5/√2 ≈ 0.354 — the assert band [0.2, 0.6] is generous for
+/// AAC onset/concealment while clearly separating signal from silence and from garbage.
+func runAudioArm(format: AudioWireFormat, verbose: Bool) -> AudioArmResult {
+    var r = AudioArmResult(name: format == .aacEld ? "aacEld" : "pcmS16LE")
+
+    // ── Host side: synthesize + encode. 512-frame feed chunks are deliberately NOT a multiple
+    // of the 480-frame wire block, so the encoder's sub-block remainder accumulator carries
+    // samples across every call (real SCK delivery sizes are similarly misaligned).
+    let sampleRate = Int(AudioStreamEncoder.sampleRate)
+    let channels = AudioStreamEncoder.channelCount
+    let totalFrames = sampleRate * 2
+    let amplitude = 0.5
+    let encoder = AudioStreamEncoder(format: format, bitrateBps: 128_000)
+    let chunkFrames = 512
+    var payloads: [Data] = []
+    var fed = 0
+    while fed < totalFrames {
+        let n = min(chunkFrames, totalFrames - fed)
+        var chunk = [Float](repeating: 0, count: n * channels)
+        for f in 0..<n {
+            let t = Double(fed + f) / Double(sampleRate)
+            let s = Float(sin(2.0 * Double.pi * 440.0 * t) * amplitude)
+            chunk[f * 2] = s
+            chunk[f * 2 + 1] = s
+        }
+        payloads.append(contentsOf: encoder.encodePCM(chunk, frameCount: n))
+        fed += n
+    }
+    guard let hostConfig = encoder.config, !payloads.isEmpty else {
+        // The AAC arm landing here means AudioConverterNew(kAudioFormatMPEG4AAC_ELD) refused or
+        // produced nothing — the feasibility proof FAILED; report loudly, never a silent pass.
+        print("    ❌ \(r.name): encoder produced no config/payloads — AAC-ELD AudioConverter encode unavailable?")
+        return r
+    }
+    r.configBuilt = true
+    r.framesSent = payloads.count
+
+    // ── Wire datagrams: ONE monotonic seq for ALL tag-6 packets (config + frames share the
+    // counter — the live sender's contract), config re-sent every ~1 s (100 × 10 ms frames)
+    // piggybacked on the frame path, exactly like AudioStreamSender.
+    var datagrams: [AudioChannelMessage] = []
+    var nextSeq: UInt32 = 0
+    var framesSinceConfig = 0
+    datagrams.append(.config(seq: nextSeq, hostSendTsMillis: 0, config: hostConfig))
+    nextSeq += 1
+    for (i, payload) in payloads.enumerated() {
+        if framesSinceConfig >= 100 {
+            datagrams.append(.config(seq: nextSeq, hostSendTsMillis: UInt32(i * 10), config: hostConfig))
+            nextSeq += 1
+            framesSinceConfig = 0
+        }
+        datagrams.append(.frame(seq: nextSeq, hostSendTsMillis: UInt32(i * 10), payload: payload))
+        nextSeq += 1
+        framesSinceConfig += 1
+    }
+
+    // ── Wire round-trip + deterministic loss + one reorder swap. Wire position 0 (the first
+    // config) always survives; a dropped mid-stream re-send is exactly what the ~1 s resend
+    // cadence exists to absorb.
+    var arrived: [AudioChannelMessage] = []
+    for (index, message) in datagrams.enumerated() {
+        guard let decoded = try? AudioChannelMessage.decode(message.encode()), decoded == message else {
+            r.wireMismatches += 1
+            continue
+        }
+        if index == 0 { r.configRoundTrips = true }
+        if index != 0, index % 17 == 0 { continue } // deterministic loss
+        arrived.append(decoded)
+    }
+    if arrived.count > 41 { arrived.swapAt(40, 41) } // one adjacent UDP re-order
+
+    // ── Client side: config → (re)build decoder only on CHANGE (the resend path must be
+    // idempotent); frame → decode → jitter ring; one 480-frame pull per push mirrors the render
+    // callback's cadence, so the ring's depth holds ≈ target and the swap re-sorts inside it.
+    var decoder: AudioStreamDecoder?
+    var ring = AudioJitterBuffer(channels: channels)
+    var pulled: [Float] = []
+    pulled.reserveCapacity(totalFrames * channels)
+    for message in arrived {
+        switch message {
+        case let .config(_, _, config):
+            guard decoder?.config != config else { continue }
+            do {
+                decoder = try AudioStreamDecoder(config: config)
+                r.decoderBuilt = true
+            } catch {
+                print("    ❌ \(r.name): AudioStreamDecoder init from wire config failed: \(error)")
+            }
+        case let .frame(seq, _, payload):
+            r.framesArrived += 1
+            guard let samples = decoder?.decode(payload), !samples.isEmpty else { continue }
+            r.framesDecoded += 1
+            ring.push(seq: seq, samples: samples)
+            pulled.append(contentsOf: ring.pull(frameCount: AudioStreamEncoder.samplesPerFrame))
+        }
+    }
+    // Drain the ≈ target-depth tail still buffered at stream end.
+    for _ in 0..<ring.pendingFrames {
+        pulled.append(contentsOf: ring.pull(frameCount: AudioStreamEncoder.samplesPerFrame))
+    }
+    r.ringStats = ring.stats
+    r.pulledSamples = pulled.count
+
+    // ── RMS over the steady-state second half (skips priming silence and any codec onset).
+    let window = pulled.suffix(pulled.count / 2)
+    var sumSquares = 0.0
+    for sample in window { sumSquares += Double(sample) * Double(sample) }
+    r.steadyRMS = window.isEmpty ? 0 : (sumSquares / Double(window.count)).squareRoot()
+
+    let decodedPct = r.framesArrived > 0 ? Double(r.framesDecoded) / Double(r.framesArrived) * 100 : 0
+    let decodeOK = r.framesArrived > 0 && Double(r.framesDecoded) >= Double(r.framesArrived) * 0.95
+    let rmsOK = r.steadyRMS >= 0.2 && r.steadyRMS <= 0.6
+    r.passed = r.configBuilt && r.configRoundTrips && r.decoderBuilt
+        && r.wireMismatches == 0 && decodeOK && rmsOK
+    if verbose {
+        let avgBytes = payloads.reduce(0) { $0 + $1.count } / max(1, payloads.count)
+        print("    \(pad(r.name, 9)): frames sent=\(r.framesSent) (avg \(avgBytes)B) arrived=\(r.framesArrived)"
+            + " decoded=\(r.framesDecoded)  ring pushed=\(r.ringStats.framesPushed)"
+            + " late=\(r.ringStats.lateDropped) overflow=\(r.ringStats.overflowDropped)"
+            + " underruns=\(r.ringStats.underruns)  pulledSamples=\(r.pulledSamples)")
+    }
+    print(String(
+        format: "    #audio %@: config-roundtrip=%@  decoder-from-wire=%@  wire-mismatch=%d  decoded≥95%%=%@ (%.1f%%)  steady RMS=%.3f (expect ≈0.354)  %@",
+        pad(r.name, 9),
+        r.configRoundTrips ? "YES" : "no",
+        r.decoderBuilt ? "YES" : "no",
+        r.wireMismatches,
+        decodeOK ? "YES" : "no",
+        decodedPct,
+        r.steadyRMS,
+        r.passed ? "✅" : "❌",
+    ))
+    return r
+}
+
+/// Runs BOTH codec arms; true only when both pass. The AAC arm doubles as the
+/// AAC-ELD-via-AudioConverter feasibility proof, so its failure must fail the whole run.
+func runAudioScenario(verbose: Bool) -> Bool {
+    print("=== AUDIO: 2 s 440 Hz stereo sine — encoder → wire → every-17th loss + reorder → ring → decoder ===")
+    let pcm = runAudioArm(format: .pcmS16LE, verbose: verbose)
+    let aac = runAudioArm(format: .aacEld, verbose: verbose)
+    return pcm.passed && aac.passed
+}
+
 // MARK: - Entry (top-level, synchronous)
 
 let args = CommandLine.arguments
@@ -3695,6 +3874,14 @@ if args.contains("--recovery-loss") {
     exit(0)
 }
 
+if args.contains("--audio") {
+    // Audio standalone: both codec arms through the real encoder/decoder (fast — no video HW
+    // sessions) for quick iteration; the ONLY place the AAC-ELD AudioConverter encode is proven.
+    let audioPassed = runAudioScenario(verbose: true)
+    print("\nslopdesk-loopback-validate: COMPLETE (audio only) — exiting \(audioPassed ? 0 : 1)")
+    exit(audioPassed ? 0 : 1)
+}
+
 if closedLoopOnly {
     runClosedLoopSuite(framesPerPhase: max(60, frameCount))
     print("\nslopdesk-loopback-validate: COMPLETE (closed-loop only) — exiting 0")
@@ -3708,10 +3895,14 @@ if ackRefOnly {
 }
 
 var allStats: [ScenarioStats] = []
+// Audio has its own pass/fail (no ScenarioStats — it is not a frame loop); a failed audio arm
+// must still fail the run's exit code, checked after the summary.
+var audioPassed = true
 
 if smoke {
     print("=== SMOKE: clean link, FEC OFF (10 frames) ===")
     allStats.append(runScenario(name: "SMOKE clean FEC OFF", frames: frameCount, tier: 1, loss: .none))
+    audioPassed = runAudioScenario(verbose: false)
 } else {
     print("=== 1. clean link, FEC OFF ===")
     allStats.append(runScenario(name: "1. clean link, FEC OFF", frames: frameCount, tier: 1, loss: .none))
@@ -3809,11 +4000,18 @@ if smoke {
     print("=== 6. LTR HW (record -> ack -> ForceLTRRefresh -> decode) ===")
     allStats.append(runLTRHWScenario(frames: max(6, min(frameCount, 12))))
 
+    audioPassed = runAudioScenario(verbose: true)
+
     runClosedLoopSuite(framesPerPhase: 90)
 }
 
 runControllerDrive()
 printSummary(allStats)
+
+guard audioPassed else {
+    print("\nslopdesk-loopback-validate: AUDIO scenario FAILED — exiting 1")
+    exit(1)
+}
 
 print("\nslopdesk-loopback-validate: COMPLETE — exiting 0")
 exit(0)
