@@ -410,12 +410,13 @@ private struct StreamStallCaption: View {
     }
 }
 
-/// The bottom CONTROL bar for a LIVE window pane: window controls kept OUT of the pane CONTENT —
-/// "Resize…" (a numeric size popover rather than an in-content DRAG grip), a "lock position" toggle (freezes
-/// edge-hover auto-pan), and zoom out / reset / in (client-side compositor zoom of the actual-size viewport). A
-/// flat strip along the pane bottom, a single top hairline (never a floating card). Resize is gated on a live
-/// host-resize sink (``RemoteWindowModel/canResizeWindow``, withheld while read-only); zoom/lock on a viewport
-/// sink (``RemoteWindowModel/canControlViewport``, live even while read-only — pure client ops).
+/// The bottom CONTROL bar for a LIVE window pane: window controls kept OUT of the pane CONTENT. A flat
+/// strip along the pane bottom, a single top hairline (never a floating card), grouped BY TARGET:
+/// everything LEFT of the spacer acts on the HOST (input verbs paste/immersive, then the host
+/// window/display), everything RIGHT is the LOCAL view (pane detach, stream stats/quality, then the
+/// client viewport cluster fit/−/1×/+ with the position lock at the outer edge). Resize is gated on a
+/// live host-resize sink (``RemoteWindowModel/canResizeWindow``, withheld while read-only); the viewport
+/// cluster on ``RemoteWindowModel/canControlViewport`` (live even while read-only — pure client ops).
 private struct GuiPaneControlBar: View {
     let model: RemoteWindowModel?
     /// The store — supplies the LOCAL clipboard (current + the recent-clips ring) for the paste menu,
@@ -441,28 +442,63 @@ private struct GuiPaneControlBar: View {
     private var isDetached: Bool { store.tree.isDetached(paneID) }
 
     var body: some View {
-        HStack(spacing: Slate.Metric.space1) {
-            // PASTE: local-clipboard affordances — "Paste as Keystrokes" (types the CURRENT local clipboard
-            // into the host window) + a "Clipboard Ring" submenu of recent clips (masked preview for secrets). A
-            // footer MENU, not a surface context menu, which would steal the secondary-click the pane forwards to
-            // the host window. Also via ⌥⌘V + the command palette.
-            if let model {
-                GuiPastePlateMenu(model: model, store: store)
-            }
-            if let model, model.canResizeWindow {
-                // The system window-resize glyph (dashed target square + arrow) — HOST window
-                // dimensions, deliberately NOT an arrows-only glyph so it can't be read as the
-                // client-side fit/zoom cluster.
-                SlatePlateButton(symbol: .squareResize, help: "Resize remote window…") {
-                    showResizePopover = true
+        // GROUPED BY TARGET, tightest-first: LEFT of the spacer = controls that ACT ON THE HOST (input
+        // verbs, then host window/display), RIGHT = the LOCAL view (pane placement, stream info, then the
+        // viewport cluster with its mode lock at the outer edge). Groups are `space1`-tight inside and
+        // `space3`-separated — grouping by RHYTHM, not divider ornament.
+        HStack(spacing: Slate.Metric.space3) {
+            // ── INPUT → HOST: the two "type into the remote" verbs, together.
+            HStack(spacing: Slate.Metric.space1) {
+                // PASTE: local-clipboard affordances — "Paste as Keystrokes" (types the CURRENT local
+                // clipboard into the host window) + a "Clipboard Ring" submenu of recent clips (masked
+                // preview for secrets). A footer MENU, not a surface context menu, which would steal the
+                // secondary-click the pane forwards to the host window. Also via ⌥⌘V + the command palette.
+                if let model {
+                    GuiPastePlateMenu(model: model, store: store)
                 }
-                .popover(isPresented: $showResizePopover, arrowEdge: .bottom) {
-                    RemoteWindowSizePopover(model: model, isPresented: $showResizePopover)
+                // IMMERSIVE (system keys → host): macOS CGEventTap capture; the engaged state also shows
+                // while the sink is withheld so the user can always turn it OFF.
+                #if os(macOS)
+                if let model, model.canInjectSystemKeys || immersiveOn {
+                    // The ⌘ glyph — immersive routes the SYSTEM chords (⌘Tab, ⌘Space…) to the host, and a
+                    // second keyboard icon here was indistinguishable from the paste-menu keyboard.
+                    SlatePlateButton(
+                        symbol: .command,
+                        help: immersiveOn
+                            ? "Immersive on — system keys (⌘Tab, ⌘Space…) go to the host · ⌃⌥⌘E exits"
+                            : "Immersive — send system keys (⌘Tab, ⌘Space…) to the host",
+                        tint: immersiveOn ? Slate.State.accent : Slate.Text.icon,
+                    ) { onToggleImmersive() }
+                }
+                #endif
+            }
+            // ── HOST WINDOW / TARGET: what the host is capturing — size for a window pane, display for a
+            // desktop pane. The group `if` keeps an all-absent state (read-only window pane) from leaving
+            // a stray double gap.
+            if let model, model.canResizeWindow || model.desktopDisplayID != nil {
+                HStack(spacing: Slate.Metric.space1) {
+                    if model.canResizeWindow {
+                        // The system window-resize glyph (dashed target square + arrow) — HOST window
+                        // dimensions, deliberately NOT an arrows-only glyph so it can't be read as the
+                        // client-side fit/zoom cluster.
+                        SlatePlateButton(symbol: .squareResize, help: "Resize remote window…") {
+                            showResizePopover = true
+                        }
+                        .popover(isPresented: $showResizePopover, arrowEdge: .bottom) {
+                            RemoteWindowSizePopover(model: model, isPresented: $showResizePopover)
+                        }
+                    }
+                    // DISPLAY SWITCHER (desktop panes): re-target the stream at another host display.
+                    if model.desktopDisplayID != nil {
+                        GuiDisplaySwitcherMenu(model: model)
+                    }
                 }
             }
-            // DETACH ⇄ REATTACH: pop this pane out into its own OS window (the live stream survives —
-            // only the view remounts), or fold a satellite back into its tab. Mirrors ⌥⌘P / the menu.
-            // macOS-only: iOS has no satellite NSWindow — a detached pane there would vanish into nowhere.
+            Spacer(minLength: Slate.Metric.space2)
+            // ── PANE PLACEMENT (local chrome): detach ⇄ reattach — pop this pane out into its own OS
+            // window (the live stream survives — only the view remounts), or fold a satellite back into
+            // its tab. Mirrors ⌥⌘P / the menu. macOS-only: iOS has no satellite NSWindow — a detached
+            // pane there would vanish into nowhere.
             #if os(macOS)
             SlatePlateButton(
                 symbol: isDetached ? .macwindowAndPointerArrow : .macwindowOnRectangle,
@@ -471,76 +507,68 @@ private struct GuiPaneControlBar: View {
                 if isDetached { store.reattachPane(paneID) } else { store.detachPaneToWindow(paneID) }
             }
             #endif
-            Spacer(minLength: Slate.Metric.space2)
-            // STATS: toggle the client-local telemetry readout — informational, so it stays live even on
-            // a read-only pane.
-            if model != nil {
-                SlatePlateButton(
-                    symbol: .chartBarXaxis,
-                    help: showStats ? "Hide stream stats" : "Show stream stats",
-                    tint: showStats ? Slate.State.accent : Slate.Text.icon,
-                ) { showStats.toggle() }
+            // ── STREAM INFO: the feed you're looking at — telemetry readout + quality tuning, together.
+            HStack(spacing: Slate.Metric.space1) {
+                // STATS: toggle the client-local telemetry readout — informational, so it stays live even
+                // on a read-only pane.
+                if model != nil {
+                    SlatePlateButton(
+                        symbol: .chartBarXaxis,
+                        help: showStats ? "Hide stream stats" : "Show stream stats",
+                        tint: showStats ? Slate.State.accent : Slate.Text.icon,
+                    ) { showStats.toggle() }
+                }
+                // STREAM QUALITY (fps cap / bitrate ceiling): live host-encode overrides. Gated on the
+                // settings sink (withheld while read-only), like Resize.
+                if let model, model.canAdjustStreamSettings {
+                    SlatePlateButton(
+                        symbol: .gaugeWithDotsNeedle67percent,
+                        help: "Stream quality — fps cap / bitrate ceiling…",
+                        tint: (fpsCapSelection != 0 || bitrateCapMbpsSelection != 0)
+                            ? Slate.State.accent : Slate.Text.icon,
+                    ) { showTunePopover = true }
+                        .popover(isPresented: $showTunePopover, arrowEdge: .bottom) {
+                            GuiStreamTunePopover(
+                                model: model,
+                                fpsCap: $fpsCapSelection,
+                                bitrateCapMbps: $bitrateCapMbpsSelection,
+                            )
+                        }
+                }
             }
-            // STREAM QUALITY (fps cap / bitrate ceiling): live host-encode overrides. Gated on the
-            // settings sink (withheld while read-only), like Resize.
-            if let model, model.canAdjustStreamSettings {
-                SlatePlateButton(
-                    symbol: .gaugeWithDotsNeedle67percent,
-                    help: "Stream quality — fps cap / bitrate ceiling…",
-                    tint: (fpsCapSelection != 0 || bitrateCapMbpsSelection != 0)
-                        ? Slate.State.accent : Slate.Text.icon,
-                ) { showTunePopover = true }
-                    .popover(isPresented: $showTunePopover, arrowEdge: .bottom) {
-                        GuiStreamTunePopover(
-                            model: model,
-                            fpsCap: $fpsCapSelection,
-                            bitrateCapMbps: $bitrateCapMbpsSelection,
-                        )
-                    }
-            }
-            // DISPLAY SWITCHER (desktop panes): re-target the stream at another host display.
-            if let model, model.desktopDisplayID != nil {
-                GuiDisplaySwitcherMenu(model: model)
-            }
-            // IMMERSIVE (system keys → host): macOS CGEventTap capture; the engaged state also shows
-            // while the sink is withheld so the user can always turn it OFF.
-            #if os(macOS)
-            if let model, model.canInjectSystemKeys || immersiveOn {
-                // The ⌘ glyph — immersive routes the SYSTEM chords (⌘Tab, ⌘Space…) to the host, and a
-                // second keyboard icon here was indistinguishable from the paste-menu keyboard.
-                SlatePlateButton(
-                    symbol: .command,
-                    help: immersiveOn
-                        ? "Immersive on — system keys (⌘Tab, ⌘Space…) go to the host · ⌃⌥⌘E exits"
-                        : "Immersive — send system keys (⌘Tab, ⌘Space…) to the host",
-                    tint: immersiveOn ? Slate.State.accent : Slate.Text.icon,
-                ) { onToggleImmersive() }
-            }
-            #endif
+            // ── VIEWPORT (pure client compositor): fit / − / 1× / + with the position lock at the bar's
+            // outer edge — the mode toggle gets the corner (fastest to hit, and its accent tint reads as
+            // the bar's state light).
             if let model, model.canControlViewport {
-                // FIT: shrink/grow the whole remote window to be fully visible inside the pane (client
-                // compositor zoom = min per-axis pane/window ratio) — the one-tap escape from an
-                // overflowing viewport. Arrows-INTO-a-rectangle: "fit content into the frame" (kept
-                // visually distinct from the host-window `squareResize` glyph above).
-                SlatePlateButton(symbol: .rectangleArrowtriangle2Inward, help: "Fit window to pane") {
-                    model.sendViewport(.fitToPane)
-                }
-                // The fine-zoom trio reads as one magnifier family: − / 1× / +.
-                SlatePlateButton(symbol: .minusMagnifyingglass, help: "Zoom out") { model.sendViewport(.zoomOut) }
-                SlatePlateButton(symbol: ._1Magnifyingglass, help: "Actual size (1× + re-anchor top-left)") {
-                    model.sendViewport(.reset)
-                }
-                SlatePlateButton(symbol: .plusMagnifyingglass, help: "Zoom in") { model.sendViewport(.zoomIn) }
-                // LOCK: the model owns the on/off state (``RemoteWindowModel/viewportLocked``) so this
-                // icon, the ⌥⌘L chord, and the menu row can never drift.
-                SlatePlateButton(
-                    symbol: model.viewportLocked ? .lockFill : .lockOpen,
-                    help: model.viewportLocked
-                        ? "Unlock viewport (resume edge-pan) (⌥⌘L)"
-                        : "Lock viewport position (freeze edge-pan) (⌥⌘L)",
-                    tint: model.viewportLocked ? Slate.State.accent : Slate.Text.icon,
-                ) {
-                    model.toggleViewportLock()
+                HStack(spacing: Slate.Metric.space1) {
+                    // FIT: shrink/grow the whole remote window to be fully visible inside the pane (client
+                    // compositor zoom = min per-axis pane/window ratio) — the one-tap escape from an
+                    // overflowing viewport. Arrows-INTO-a-rectangle: "fit content into the frame" (kept
+                    // visually distinct from the host-window `squareResize` glyph above).
+                    SlatePlateButton(symbol: .rectangleArrowtriangle2Inward, help: "Fit window to pane") {
+                        model.sendViewport(.fitToPane)
+                    }
+                    // The fine-zoom trio reads as one magnifier family: − / 1× / +.
+                    SlatePlateButton(symbol: .minusMagnifyingglass, help: "Zoom out") {
+                        model.sendViewport(.zoomOut)
+                    }
+                    SlatePlateButton(symbol: ._1Magnifyingglass, help: "Actual size (1× + re-anchor top-left)") {
+                        model.sendViewport(.reset)
+                    }
+                    SlatePlateButton(symbol: .plusMagnifyingglass, help: "Zoom in") {
+                        model.sendViewport(.zoomIn)
+                    }
+                    // LOCK: the model owns the on/off state (``RemoteWindowModel/viewportLocked``) so this
+                    // icon, the ⌥⌘L chord, and the menu row can never drift.
+                    SlatePlateButton(
+                        symbol: model.viewportLocked ? .lockFill : .lockOpen,
+                        help: model.viewportLocked
+                            ? "Unlock viewport (resume edge-pan) (⌥⌘L)"
+                            : "Lock viewport position (freeze edge-pan) (⌥⌘L)",
+                        tint: model.viewportLocked ? Slate.State.accent : Slate.Text.icon,
+                    ) {
+                        model.toggleViewportLock()
+                    }
                 }
             }
         }
