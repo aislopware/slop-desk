@@ -23,9 +23,15 @@
 import AppKit
 
 /// Owns ONE immersive-mode CGEvent tap: created on ``engage(forward:keyWindow:)``, torn down on
-/// ``disengage()`` / app-resign / key-window-resign / deinit. Default state is OFF — nothing is captured until
-/// a caller engages, and there is no env flag. `@MainActor`: engage/disengage ride UI edges, and the tap's
-/// run-loop source is added to the MAIN run loop so the callback lands on the main actor too.
+/// ``disengage()`` (the toggle, the ⌃⌥⌘E escape chord, unmount) / deinit. Default state is OFF — nothing is
+/// captured until a caller engages, and there is no env flag. `@MainActor`: engage/disengage ride UI edges,
+/// and the tap's run-loop source is added to the MAIN run loop so the callback lands on the main actor too.
+///
+/// SUSPEND ≠ DISENGAGE: losing the app's active state, the pane window's key state, or the caller's own
+/// eligibility (pane focus / a writable sink) only SUSPENDS the tap — swallowing stops (keys flow to macOS
+/// again, so there is never a trap) but the engagement, and therefore the user's toggle, SURVIVES, and
+/// capture resumes by itself the moment every gate re-opens. The old tear-down-on-resign design made the
+/// toggle silently flake off every time a popover/palette went key or the app briefly deactivated.
 @preconcurrency
 @MainActor
 public final class SystemKeyCaptureController {
@@ -49,12 +55,13 @@ public final class SystemKeyCaptureController {
         _ = AXIsProcessTrustedWithOptions(options)
     }
 
-    /// Whether the tap is currently live. Read-only mirror for the caller's UI (the immersive badge).
+    /// Whether an engagement is live (the tap exists and the user's toggle is ON — capture itself may be
+    /// SUSPENDED behind one of the gates). Read-only mirror for the caller's UI (the immersive badge).
     public private(set) var isEngaged = false
 
-    /// Fired at the START of every ``disengage()`` — the auto-disengage paths (app-resign / window-resign /
-    /// the ⌃⌥⌘E escape chord) tear the tap down without the caller's involvement, so a UI toggle mirroring
-    /// ``isEngaged`` needs this to stay truthful. Set it before ``engage(forward:keyWindow:)``.
+    /// Fired at the START of every ``disengage()`` — the ⌃⌥⌘E escape chord tears the tap down without the
+    /// caller's involvement, so a UI toggle mirroring ``isEngaged`` needs this to stay truthful. Set it
+    /// before ``engage(forward:keyWindow:)``. Suspensions never fire it — the engagement survives them.
     public var onDisengage: (() -> Void)?
 
     // The CF handles are `nonisolated(unsafe)` so the nonisolated `deinit` can invalidate them (they are only
@@ -62,7 +69,14 @@ public final class SystemKeyCaptureController {
     // swallowing the session's keys with no owner left to disengage it — deinit teardown is non-negotiable.
     private nonisolated(unsafe) var tap: CFMachPort?
     private nonisolated(unsafe) var runLoopSource: CFRunLoopSource?
-    private nonisolated(unsafe) var autoDisengageObservers: [any NSObjectProtocol] = []
+    private nonisolated(unsafe) var suspendResumeObservers: [any NSObjectProtocol] = []
+
+    // The three suspension gates — the tap actively swallows only while ALL are open. Each flips
+    // independently (AppKit notifications for the first two, the caller for the third), so a popover going
+    // key and a pane-focus change can overlap without fighting over one flag.
+    private var appIsActive = true
+    private var windowIsKey = true
+    private var callerSuspended = false
 
     private var forward: Forward?
     /// Every keyCode forwarded DOWN but not yet UP (modifiers and regular keys alike). Flushed as releases on
@@ -82,18 +96,18 @@ public final class SystemKeyCaptureController {
             CFMachPortInvalidate(tap)
         }
         if let runLoopSource { CFRunLoopSourceInvalidate(runLoopSource) }
-        for token in autoDisengageObservers { NotificationCenter.default.removeObserver(token) }
+        for token in suspendResumeObservers { NotificationCenter.default.removeObserver(token) }
     }
 
-    /// Engages capture: creates the session-level tap, arms the auto-disengage observers, and starts
+    /// Engages capture: creates the session-level tap, arms the suspend/resume observers, and starts
     /// forwarding. Returns `false` — leaving the controller fully disengaged — when Accessibility trust is
     /// missing or tap creation fails; `true` when capture is live (or already was: idempotent, the existing
     /// engagement is kept untouched so a re-render can call it freely).
     ///
     /// - `forward`: the remote key delivery (see ``Forward``).
-    /// - `keyWindow`: the pane's window, if the caller wants capture to auto-disengage the moment that window
-    ///   resigns key (recommended — a swallowed keyboard on a non-key window is a trap). App-resign
-    ///   auto-disengage is always armed regardless.
+    /// - `keyWindow`: the pane's window, if the caller wants capture to auto-SUSPEND while that window is
+    ///   not key (recommended — a swallowed keyboard on a non-key window is a trap) and resume when it goes
+    ///   key again. App-active suspend/resume is always armed regardless.
     @discardableResult
     public func engage(forward: @escaping Forward, keyWindow: NSWindow? = nil) -> Bool {
         guard !isEngaged else { return true }
@@ -125,33 +139,45 @@ public final class SystemKeyCaptureController {
             return false
         }
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
 
         self.tap = tap
         runLoopSource = source
         self.forward = forward
         forwardedDownKeyCodes = []
         isEngaged = true
-        installAutoDisengageObservers(keyWindow: keyWindow)
+        // Seed the gates from the CURRENT app/window state (engage rides a click in the pane's window, so
+        // both are normally open) and let `applyGates()` decide the tap's initial enablement.
+        appIsActive = NSApp.isActive
+        windowIsKey = keyWindow?.isKeyWindow ?? true
+        callerSuspended = false
+        installSuspendResumeObservers(keyWindow: keyWindow)
+        applyGates()
         return true
     }
 
-    /// Tears capture down: flushes release events for every key still forwarded-down (the remote host must
-    /// never be left with stuck modifiers — the escape chord ends with ⌃⌥⌘ physically held), removes the
-    /// observers, and invalidates the tap + run-loop source. Idempotent — the auto-disengage observers, the
-    /// escape chord, and a manual caller can all race here harmlessly.
+    /// The CALLER's suspension gate — pane focus lost, sink withheld (read-only), anything that should
+    /// pause swallowing WITHOUT forgetting the user's toggle. While suspended, keys flow to macOS normally;
+    /// capture resumes by itself when the caller re-opens the gate (and the app/window gates agree). No-op
+    /// while disengaged.
+    public func setSuspended(_ suspended: Bool) {
+        guard isEngaged, callerSuspended != suspended else { return }
+        callerSuspended = suspended
+        applyGates()
+    }
+
+    /// Tears capture down FOR REAL (the toggle, the ⌃⌥⌘E escape chord, unmount): flushes release events for
+    /// every key still forwarded-down (the remote host must never be left with stuck modifiers — the escape
+    /// chord ends with ⌃⌥⌘ physically held), removes the observers, and invalidates the tap + run-loop
+    /// source. Idempotent — the escape chord and a manual caller can race here harmlessly.
     public func disengage() {
         guard isEngaged else { return }
         isEngaged = false
         onDisengage?()
-        if let forward {
-            // Sorted for a deterministic release order (a Set iterates arbitrarily).
-            for keyCode in forwardedDownKeyCodes.sorted() { forward(keyCode, 0, false) }
-        }
-        forwardedDownKeyCodes = []
+        flushForwardedDownKeys()
         forward = nil
-        for token in autoDisengageObservers { NotificationCenter.default.removeObserver(token) }
-        autoDisengageObservers = []
+        callerSuspended = false
+        for token in suspendResumeObservers { NotificationCenter.default.removeObserver(token) }
+        suspendResumeObservers = []
         if let tap {
             CGEvent.tapEnable(tap: tap, enable: false)
             CFMachPortInvalidate(tap)
@@ -165,15 +191,41 @@ public final class SystemKeyCaptureController {
 
     // MARK: - private
 
+    /// Whether every suspension gate is open — the tap should be actively swallowing.
+    private var gatesOpen: Bool { appIsActive && windowIsKey && !callerSuspended }
+
+    /// Syncs the tap's enablement to the gates. Entering suspension flushes release events for every key
+    /// still forwarded-down FIRST (the remote must not be left holding modifiers while the user works
+    /// locally); resuming just re-enables — the tap picks up from live hardware state.
+    private func applyGates() {
+        guard isEngaged, let tap else { return }
+        if gatesOpen {
+            CGEvent.tapEnable(tap: tap, enable: true)
+        } else {
+            flushForwardedDownKeys()
+            CGEvent.tapEnable(tap: tap, enable: false)
+        }
+    }
+
+    /// Forwards a release for every keyCode delivered DOWN but not yet UP, then clears the ledger. Sorted
+    /// for a deterministic release order (a Set iterates arbitrarily).
+    private func flushForwardedDownKeys() {
+        if let forward {
+            for keyCode in forwardedDownKeyCodes.sorted() { forward(keyCode, 0, false) }
+        }
+        forwardedDownKeyCodes = []
+    }
+
     /// The main-actor body of the tap callback. Returns whether to SWALLOW the event (`nil` from the C
     /// callback). All policy is ``SystemKeyCapturePolicy``; this only actuates + re-arms.
     private func handleTapEvent(type: CGEventType, event: CGEvent) -> Bool {
         // The system disables a tap whose callback stalls (`tapDisabledByTimeout`) or on certain user input
         // (`tapDisabledByUserInput`). Re-enable immediately — otherwise capture dies SILENTLY while the UI
-        // still shows immersive as on, and every "swallowed" chord starts firing locally again. The wake
-        // event itself is not a key event; pass it through.
+        // still shows immersive as on, and every "swallowed" chord starts firing locally again. Only while
+        // the gates are open — a suspension-disabled tap must stay disabled. The wake event itself is not a
+        // key event; pass it through.
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            if gatesOpen, let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return false
         }
         let keyCode = UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode))
@@ -197,25 +249,45 @@ public final class SystemKeyCaptureController {
         }
     }
 
-    /// Arms the auto-disengage safety net: capture NEVER survives the app resigning active (⌘Q passthrough,
-    /// a mouse click into another app, a system dialog stealing focus), nor — when the caller supplies its
-    /// window — that window resigning key. A swallowed keyboard while the pane is not even frontmost would be
-    /// a trap with no visible cause. AppKit posts both notifications on the main thread (`queue: nil` =
+    /// Arms the suspend/resume safety net: capture never SWALLOWS while the app is not active (a mouse
+    /// click into another app, a system dialog stealing focus) nor — when the caller supplies its window —
+    /// while that window is not key (a popover, the palette, Settings, a second satellite). A swallowed
+    /// keyboard while the pane is not even frontmost would be a trap with no visible cause. But the
+    /// ENGAGEMENT survives: the matching did-become notifications re-open the gates so capture resumes
+    /// without the user re-clicking the toggle. AppKit posts these on the main thread (`queue: nil` =
     /// synchronous delivery, staying on the main actor).
-    private func installAutoDisengageObservers(keyWindow: NSWindow?) {
-        let resignApp = NotificationCenter.default.addObserver(
+    private func installSuspendResumeObservers(keyWindow: NSWindow?) {
+        suspendResumeObservers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didResignActiveNotification, object: nil, queue: nil,
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.disengage() }
-        }
-        autoDisengageObservers.append(resignApp)
+            MainActor.assumeIsolated { self?.setAppActive(false) }
+        })
+        suspendResumeObservers.append(NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: nil,
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.setAppActive(true) }
+        })
         guard let keyWindow else { return }
-        let resignKey = NotificationCenter.default.addObserver(
+        suspendResumeObservers.append(NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification, object: keyWindow, queue: nil,
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.disengage() }
-        }
-        autoDisengageObservers.append(resignKey)
+            MainActor.assumeIsolated { self?.setWindowKey(false) }
+        })
+        suspendResumeObservers.append(NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: keyWindow, queue: nil,
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.setWindowKey(true) }
+        })
+    }
+
+    private func setAppActive(_ active: Bool) {
+        appIsActive = active
+        applyGates()
+    }
+
+    private func setWindowKey(_ key: Bool) {
+        windowIsKey = key
+        applyGates()
     }
 }
 #endif

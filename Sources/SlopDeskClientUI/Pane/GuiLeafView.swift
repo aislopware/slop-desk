@@ -53,11 +53,13 @@ struct GuiLeafView: View {
     @State private var fpsCapSelection = 0
     @State private var bitrateCapMbpsSelection = 0
     #if os(macOS)
-    /// IMMERSIVE capture (system keys → host): the CGEventTap owner, engaged only while the toggle is on
-    /// AND this pane can inject (live + not read-only). One controller per pane view.
+    /// IMMERSIVE capture (system keys → host): the CGEventTap owner. Engaged while the toggle is ON —
+    /// focus/app/window/read-only edges only SUSPEND swallowing (capture resumes by itself), so the
+    /// toggle never silently flakes off. One controller per pane view.
     @State private var systemKeyCapture = SystemKeyCaptureController()
     /// Mirrors ``systemKeyCapture``'s engaged state for the footer toggle tint (the controller
-    /// self-disengages on app-resign / the ⌃⌥⌘E escape chord — `onDisengage` keeps this in step).
+    /// self-disengages only on the ⌃⌥⌘E escape chord — `onDisengage` keeps this in step; suspensions
+    /// never clear it).
     @State private var immersiveOn = false
     #endif
 
@@ -173,15 +175,18 @@ struct GuiLeafView: View {
             store.deactivateVideo(paneID)
         }
         #if os(macOS)
-        // IMMERSIVE SAFETY: capture follows pane focus + injectability. Losing workspace focus (or the
-        // satellite window's key state, which drives `isFocused` there) releases the keyboard; a read-only
-        // flip withholds the sink → `canInjectSystemKeys` flips false → release too. The controller's own
-        // app-resign observer + the ⌃⌥⌘E escape chord cover the rest; `onDisengage` keeps the toggle honest.
+        // IMMERSIVE SAFETY: capture follows pane focus + injectability — but as a SUSPENSION, never a
+        // tear-down. Losing workspace focus (or the satellite window's key state, which drives `isFocused`
+        // there) pauses swallowing; a read-only flip withholds the sink → `canInjectSystemKeys` flips false →
+        // pause too. Either gate re-opening resumes capture by itself — the user's toggle survives (the old
+        // disengage-on-every-edge design made it silently flake off on any popover/focus blip). The
+        // controller's own app/window observers cover the app-level edges the same way; only the toggle,
+        // the ⌃⌥⌘E escape chord, and unmount fully disengage, and `onDisengage` keeps the toggle honest.
         .onChange(of: isFocused) { _, focused in
-            if !focused { systemKeyCapture.disengage() }
+            systemKeyCapture.setSuspended(!focused || model?.canInjectSystemKeys != true)
         }
         .onChange(of: model?.canInjectSystemKeys ?? false) { _, can in
-            if !can { systemKeyCapture.disengage() }
+            systemKeyCapture.setSuspended(!can || !isFocused)
         }
         #endif
     }
@@ -213,9 +218,9 @@ struct GuiLeafView: View {
         }
         systemKeyCapture.onDisengage = { immersiveOn = false }
         // The toggle click happened in this pane's window, so it IS the key window right now — arm the
-        // controller's window-resign auto-disengage on it. Without this, another window of the SAME app
-        // going key (Settings, a second satellite) keeps the app active and the pane focused, so neither
-        // the app-resign observer nor the focus onChange would release the swallowed keyboard.
+        // controller's window-key suspend/resume on it. Without this, another window of the SAME app going
+        // key (Settings, a second satellite) keeps the app active and the pane focused, so neither the
+        // app-active observer nor the focus onChange would pause the swallowed keyboard.
         immersiveOn = systemKeyCapture.engage(
             forward: { [weak model] keyCode, flags, isDown in
                 model?.systemKeyInjector?(keyCode, flags, isDown)
@@ -584,8 +589,8 @@ private struct GuiPaneControlBar: View {
                         SlatePlateButton(
                             symbol: .command,
                             help: immersiveOn
-                                ? "Immersive on — system keys (⌘Tab, ⌘Space…) go to the host · ⌃⌥⌘E exits"
-                                : "Immersive — send system keys (⌘Tab, ⌘Space…) to the host",
+                                ? "Immersive on — system keys (⌘Tab, ⌘Q, ⌘Space…) go to the host · ⌃⌥⌘E exits"
+                                : "Immersive — send system keys (⌘Tab, ⌘Q, ⌘Space…) to the host",
                             tint: immersiveOn ? Slate.State.accent : Slate.Text.icon,
                         ) { onToggleImmersive() }
                     }

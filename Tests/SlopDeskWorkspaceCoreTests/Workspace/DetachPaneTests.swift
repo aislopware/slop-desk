@@ -91,19 +91,53 @@ final class DetachPaneTests: XCTestCase {
         XCTAssertTrue(out.isInvariantHeld())
     }
 
-    func testReattachFallsBackToActiveTabWhenOriginTabClosed() {
+    func testReattachRecreatesOwnTabWhenOriginTabClosed() {
         let (ws, left, right) = twoPaneWorkspace()
         var detached = WorkspaceTreeOps.detachPane(right, in: ws)
         // Close the origin tab (its sole survivor `left` cascades the tab away; the session survives
         // because it still owns the detached pane) — a fresh default tab is re-seeded.
         detached = WorkspaceTreeOps.closePane(left, in: detached)
         XCTAssertTrue(detached.isDetached(right), "satellite survives its origin tab closing")
+        let reseededTab = detached.sessions[0].tabs[0].id
 
         let out = WorkspaceTreeOps.reattachPane(right, in: detached)
 
         XCTAssertTrue(out.contains(right))
         XCTAssertFalse(out.isDetached(right))
-        XCTAssertEqual(out.activeSession?.activeTab?.activePane, right, "landed focused in the active tab")
+        // A dead origin gets a FRESH tab, never a dock into whatever tab is active — that would graft
+        // the pane into an unrelated split.
+        XCTAssertEqual(out.sessions[0].tabs.count, 2, "origin dead → a tab of its own, not a split")
+        XCTAssertEqual(out.sessions[0].tabs[1].root.allPaneIDs(), [right])
+        XCTAssertFalse(
+            out.sessions[0].tabs.first { $0.id == reseededTab }?.contains(right) ?? true,
+            "the re-seeded default tab is untouched",
+        )
+        XCTAssertEqual(out.activeSession?.activeTab?.activePane, right, "landed focused + revealed")
+        XCTAssertTrue(out.isInvariantHeld())
+    }
+
+    /// The reported daily-driver flow: a desktop pane living in a SPLIT is moved to its own fresh tab,
+    /// detached into a satellite, and the satellite closed (close = reattach). The pane's origin tab
+    /// died at detach (it was the sole leaf), so the reattach must recreate a lone tab — NOT fall back
+    /// into the previously-split tab and become `left`'s split sibling again.
+    func testReattachAfterMoveToOwnTabThenDetachDoesNotRejoinOldSplit() {
+        let (ws, left, right) = twoPaneWorkspace()
+        // Move `right` out of the split into its own fresh tab (the drag-to-New-Tab shape).
+        var moved = WorkspaceTreeOps.breakPaneToTab(right, in: ws)
+        XCTAssertEqual(moved.sessions[0].tabs.count, 2, "precondition: the pane owns a lone tab")
+        // Detach it — the lone tab is pruned, so the recorded origin tab is now dead.
+        moved = WorkspaceTreeOps.detachPane(right, in: moved)
+        XCTAssertEqual(moved.sessions[0].tabs.count, 1, "precondition: the lone origin tab was pruned")
+
+        let out = WorkspaceTreeOps.reattachPane(right, in: moved)
+
+        XCTAssertEqual(
+            out.sessions[0].tabs[0].root.allPaneIDs(), [left],
+            "the old split partner keeps its tab to itself — the pane must NOT rejoin the split",
+        )
+        XCTAssertEqual(out.sessions[0].tabs.count, 2)
+        XCTAssertEqual(out.sessions[0].tabs[1].root.allPaneIDs(), [right], "back as a lone tab")
+        XCTAssertEqual(out.activeSession?.activeTab?.activePane, right)
         XCTAssertTrue(out.isInvariantHeld())
     }
 

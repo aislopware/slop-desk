@@ -2,7 +2,8 @@
 // destructured (keyCode, flags, type) values. NEVER instantiates `SystemKeyCaptureController`: a live event
 // tap needs Accessibility trust and would swallow the TEST RUNNER's keyboard (the hang-safety rule). Each
 // test pins a safety invariant the controller relies on: the always-reachable escape chord, the never-trapped
-// local quit / Force Quit chords, the everything-else-forwards default, and the flagsChanged isDown mapping.
+// Force Quit chord, the everything-else-forwards default (⌘Q included — quitting the remote app is a
+// first-class immersive verb), and the flagsChanged isDown mapping.
 
 #if os(macOS)
 import CoreGraphics
@@ -60,33 +61,24 @@ final class SystemKeyCapturePolicyTests: XCTestCase {
         )
     }
 
-    /// SAFETY INVARIANT: ⌘Q passes through locally — capture must never trap the user out of quitting the
-    /// client. Both the down and the up pass through (a consistent pair for the local app), and ⌘⇧Q (log
-    /// out) is a bail-out too.
-    func testCommandQPassesThrough() {
+    /// ⌘Q FORWARDS to the host — quitting the remote frontmost app is a first-class immersive verb, and the
+    /// local bail-outs stay ⌘⌥Esc (Force Quit) + ⌃⌥⌘E (escape chord). Down and up both forward (the remote
+    /// needs the release edge), and the ⌘⇧Q / ⌘⌥Q variants forward too — no Q carve-out survives.
+    func testCommandQForwards() {
         XCTAssertEqual(
             SystemKeyCapturePolicy.decision(keyCode: keyQ, flags: [.maskCommand], type: .keyDown),
-            .passThrough,
-        )
-        XCTAssertEqual(
-            SystemKeyCapturePolicy.decision(keyCode: keyQ, flags: [.maskCommand], type: .keyUp),
-            .passThrough,
-        )
-        XCTAssertEqual(
-            SystemKeyCapturePolicy.decision(keyCode: keyQ, flags: [.maskCommand, .maskShift], type: .keyDown),
-            .passThrough,
-        )
-    }
-
-    /// ⌘⌥Q / ⌘⌃Q are NOT quit chords — they forward like any key. Pins the boundary of the ⌘Q carve-out so
-    /// it never silently widens into "any chord containing Q stays local".
-    func testCommandQVariantsWithExtraModifiersForward() {
-        XCTAssertEqual(
-            SystemKeyCapturePolicy.decision(keyCode: keyQ, flags: [.maskCommand, .maskAlternate], type: .keyDown),
             .forwardAndSwallow,
         )
         XCTAssertEqual(
-            SystemKeyCapturePolicy.decision(keyCode: keyQ, flags: [.maskCommand, .maskControl], type: .keyDown),
+            SystemKeyCapturePolicy.decision(keyCode: keyQ, flags: [.maskCommand], type: .keyUp),
+            .forwardAndSwallow,
+        )
+        XCTAssertEqual(
+            SystemKeyCapturePolicy.decision(keyCode: keyQ, flags: [.maskCommand, .maskShift], type: .keyDown),
+            .forwardAndSwallow,
+        )
+        XCTAssertEqual(
+            SystemKeyCapturePolicy.decision(keyCode: keyQ, flags: [.maskCommand, .maskAlternate], type: .keyDown),
             .forwardAndSwallow,
         )
     }

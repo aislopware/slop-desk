@@ -5,10 +5,11 @@
 // this returns; all POLICY lives here, all MECHANISM lives in the controller.
 //
 // SAFETY INVARIANT — never trap the user: while capture is engaged every key is swallowed locally, so the two
-// local bail-outs must stay reachable no matter what: ⌘Q (local quit) and ⌘⌥Esc (Force Quit) ALWAYS pass
-// through, and the escape chord ⌃⌥⌘E ALWAYS disengages (checked with `contains`, not equality, so a stuck
-// caps-lock/fn/shift bit can never dead-lock the escape hatch). Weakening any of these turns an engaged pane
-// into a keyboard trap whose only exit is another machine.
+// local bail-outs must stay reachable no matter what: ⌘⌥Esc (Force Quit) ALWAYS passes through, and the escape
+// chord ⌃⌥⌘E ALWAYS disengages (checked with `contains`, not equality, so a stuck caps-lock/fn/shift bit can
+// never dead-lock the escape hatch). Weakening either turns an engaged pane into a keyboard trap whose only
+// exit is another machine. ⌘Q deliberately FORWARDS — quitting the remote frontmost app is a first-class
+// immersive verb, and the two bail-outs above keep the local exit reachable without it.
 
 #if os(macOS)
 import CoreGraphics
@@ -28,10 +29,9 @@ enum SystemKeyCapturePolicy {
         case disengage
     }
 
-    // Hardware-independent virtual key codes (Carbon `kVK_ANSI_E` / `kVK_ANSI_Q` / `kVK_Escape`) — literal so
-    // this file needs no Carbon import and stays a pure-value dependency.
+    // Hardware-independent virtual key codes (Carbon `kVK_ANSI_E` / `kVK_Escape`) — literal so this file
+    // needs no Carbon import and stays a pure-value dependency.
     private static let keyCodeE: UInt16 = 14
-    private static let keyCodeQ: UInt16 = 12
     private static let keyCodeEscape: UInt16 = 53
 
     /// The one decision per tap event. `keyCode` = `.keyboardEventKeycode`, `flags` = the event's modifier
@@ -55,16 +55,9 @@ enum SystemKeyCapturePolicy {
             {
                 return .disengage
             }
-            // ⌘Q (and ⌘⇧Q — log out is a bail-out too): local quit is never trapped. ⌥/⌃ variants are NOT
-            // quit chords and forward like any key. Both the down AND the up pass through so the local app
-            // sees a consistent pair.
-            if keyCode == keyCodeQ, flags.contains(.maskCommand),
-               !flags.contains(.maskControl), !flags.contains(.maskAlternate)
-            {
-                return .passThrough
-            }
             // ⌘⌥Esc (and ⌘⌥⇧Esc — force-quit-frontmost): the Force Quit dialog is the user's recovery path
-            // when the app itself wedges, so it must survive capture.
+            // when the app itself wedges, so it must survive capture. (⌘Q forwards on purpose — quitting the
+            // remote app is a first-class immersive verb; this chord + ⌃⌥⌘E stay the local bail-outs.)
             if keyCode == keyCodeEscape, flags.contains(.maskCommand), flags.contains(.maskAlternate) {
                 return .passThrough
             }

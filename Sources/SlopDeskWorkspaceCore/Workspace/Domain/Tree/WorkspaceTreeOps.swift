@@ -929,14 +929,16 @@ public enum WorkspaceTreeOps {
         return copy.normalized()
     }
 
-    /// Reattaches detached pane `target` back into a tab: its origin tab when still alive, else the
-    /// owning session's active tab — docked at the trailing ROOT edge (full-span column, the
-    /// ``moveLeafToRootEdge(_:edge:in:)`` insert shape), KEEPING its `PaneID` so reconcile is a registry
-    /// no-op (the live session survives, only the view remounts back in the main window). A root insert
-    /// that would breach ``SplitNode/maxDepth`` — or a session left with no tabs mid-repair — falls back
-    /// to a fresh tab holding the pane as its lone leaf. The destination is revealed: session selected,
-    /// tab selected, pane focused, zoom exited. No-op if `target` is not detached anywhere. Preserves the
-    /// **specs invariant** (the spec never left the side table).
+    /// Reattaches detached pane `target` back into a tab: its origin tab when still alive — docked at
+    /// the trailing ROOT edge (full-span column, the ``moveLeafToRootEdge(_:edge:in:)`` insert shape) —
+    /// KEEPING its `PaneID` so reconcile is a registry no-op (the live session survives, only the view
+    /// remounts back in the main window). A DEAD origin tab (the pane was its tab's sole leaf, so the
+    /// detach pruned the tab; or the tab was closed while the pane was out) gets the FRESH-TAB fallback:
+    /// the pane owned a tab when it left, so it gets a tab of its own back — never a dock into whatever
+    /// tab happens to be active, which would graft it into an unrelated split. A root insert that would
+    /// breach ``SplitNode/maxDepth`` falls back to the fresh tab too. The destination is revealed:
+    /// session selected, tab selected, pane focused, zoom exited. No-op if `target` is not detached
+    /// anywhere. Preserves the **specs invariant** (the spec never left the side table).
     public static func reattachPane(_ target: PaneID, in ws: TreeWorkspace) -> TreeWorkspace {
         guard let sIdx = ws.sessions.firstIndex(where: { $0.isDetached(target) }) else { return ws }
         var copy = ws
@@ -944,13 +946,8 @@ public enum WorkspaceTreeOps {
         let originTab = session.detached.first { $0.pane == target }?.originTab
         session.detached.removeAll { $0.pane == target }
 
-        // Destination: origin tab when alive, else the session's active tab (clamped).
-        let destIdx = originTab.flatMap { origin in session.tabs.firstIndex { $0.id == origin } }
-            ?? Int(Double.minimum(
-                Double(session.activeTabIndex),
-                Double.maximum(Double(session.tabs.count - 1), 0),
-            ))
-        if session.tabs.indices.contains(destIdx) {
+        // Destination: the origin tab, only while it is still alive.
+        if let destIdx = originTab.flatMap({ origin in session.tabs.firstIndex { $0.id == origin } }) {
             var tab = session.tabs[destIdx]
             let grown = tab.root.insertingAtRoot(target, axis: .horizontal, before: false)
             if grown.depth <= SplitNode.maxDepth {
@@ -964,7 +961,7 @@ public enum WorkspaceTreeOps {
                 return copy
             }
         }
-        // Fallback: a fresh tab holding the pane (depth breach / no destination tab).
+        // Fallback: a fresh tab holding the pane (origin tab gone / depth breach).
         session.tabs.append(Tab(root: .leaf(target), activePane: target))
         session.activeTabIndex = session.tabs.count - 1
         copy.sessions[sIdx] = session

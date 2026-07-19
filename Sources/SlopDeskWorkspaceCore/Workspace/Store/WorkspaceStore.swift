@@ -2400,9 +2400,10 @@ public final class WorkspaceStore {
         reconcileTree()
     }
 
-    /// Reattaches detached pane `target` back into a tab (origin tab when alive, else the session's
-    /// active tab; fresh-tab fallback) and reveals it. The satellite-window coordinator closes the
-    /// window when the pane leaves ``detachedPanes``. No-op if `target` is not detached.
+    /// Reattaches detached pane `target` back into a tab (origin tab when alive, else a fresh tab of
+    /// its own — never a dock into an unrelated active tab) and reveals it. The satellite-window
+    /// coordinator closes the window when the pane leaves ``detachedPanes``. No-op if `target` is not
+    /// detached.
     public func reattachPane(_ target: PaneID) {
         guard tree.isDetached(target) else { return }
         tree = WorkspaceTreeOps.reattachPane(target, in: tree)
