@@ -47,6 +47,10 @@ struct GuiLeafView: View {
     /// Whether the in-pane STATS readout is showing (footer toggle). Per-pane view state — resets on
     /// remount, like the client-side zoom.
     @State private var showStats = false
+    /// Whether the window CONTROL BAR overlay is expanded. Collapsed by default — the pane's resting
+    /// state is all stream, with the corner chip as the way in. Per-pane view state — resets on
+    /// remount, like `showStats`.
+    @State private var controlsExpanded = false
     /// The pane's LIVE stream-settings selection (0 = auto) — mirrors what was last requested through
     /// ``RemoteWindowModel/applyStreamSettings(fpsCap:bitrateCeilingBps:)``. View state by design: a
     /// remount mints a NEW client session whose host state also resets to auto, so the two stay in step.
@@ -79,115 +83,132 @@ struct GuiLeafView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // EDGE-TO-EDGE: no inner padding — every point of a video pane is remote pixels (a gutter
-            // here is pure wasted stream area, unlike a terminal where the inset is a reading margin).
-            // The Metal-hosting view is sized to the FULL leaf rect, so its pointer→host coordinate
-            // mapping (relative to view bounds) stays consistent.
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // WINDOW-PANE CONTROL BAR: window CONTROLS, kept out of the pane CONTENT and in the
-            // footer — resize, lock-position (freeze edge-hover auto-pan), zoom in / out / reset — NOT a
-            // status strip. Host + connection state live ONCE in the sidebar header, not duplicated here.
-            // Only while live.
-            if showControlBar {
-                GuiPaneControlBar(
-                    model: model, store: store, paneID: paneID,
-                    showStats: $showStats,
-                    fpsCapSelection: $fpsCapSelection,
-                    bitrateCapMbpsSelection: $bitrateCapMbpsSelection,
-                    immersiveOn: immersiveActive,
-                    onToggleImmersive: { toggleImmersive() },
-                )
-            }
-        }
-        .background(NativePaneColor.terminalBackground)
-        // PASTE-AS-KEYSTROKES RESULT BANNER: the model's transient "typed N, skipped M" feedback (set only
-        // when some clipboard chars had no US-QWERTY mapping and were dropped) so the user learns a paste was
-        // incomplete. Tap to dismiss; auto-clears on a timer. Never on the static-mirror path. Flat bottom pill.
-        .overlay(alignment: .bottom) {
-            if !staticMirror, let feedback = model?.pasteFeedback {
-                PasteFeedbackBanner(feedback: feedback) { model?.dismissPasteFeedback() }
-                    .padding(
-                        .bottom,
-                        showControlBar ? Slate.Metric.paneHeaderHeight + Slate.Metric.space2
-                            : Slate.Metric.space2,
+        // EDGE-TO-EDGE: no inner padding — every point of a video pane is remote pixels (a gutter
+        // here is pure wasted stream area, unlike a terminal where the inset is a reading margin).
+        // The Metal-hosting view is sized to the FULL leaf rect, so its pointer→host coordinate
+        // mapping (relative to view bounds) stays consistent.
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(NativePaneColor.terminalBackground)
+            // WINDOW-PANE CONTROL BAR — COLLAPSED CHROME: the bar is an OVERLAY along the pane bottom,
+            // hidden by default behind the corner chip below, so a video pane spends its whole leaf rect
+            // on remote pixels (a resident footer would tax every pane ~28 pt of stream area forever for
+            // controls used in bursts). Expanded it covers the bottom strip of the stream — a deliberate,
+            // transient occlusion the user opted into. Only while live.
+            .overlay(alignment: .bottom) {
+                if showControlBar, controlsExpanded {
+                    GuiPaneControlBar(
+                        model: model, store: store, paneID: paneID,
+                        showStats: $showStats,
+                        fpsCapSelection: $fpsCapSelection,
+                        bitrateCapMbpsSelection: $bitrateCapMbpsSelection,
+                        immersiveOn: immersiveActive,
+                        onToggleImmersive: { toggleImmersive() },
+                        onCollapse: { controlsExpanded = false },
                     )
                     .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
-        }
-        .animation(Slate.Anim.reveal, value: model?.pasteFeedback)
-        // The `🔒 READ ONLY ×` pill (``ReadOnlyPill``) so a read-only `.remoteGUI` /
-        // `.systemDialog` pane is a VISUAL peer of a read-only terminal leaf (same top-trailing overlay/reveal as
-        // ``TerminalLeafView``). Without it a locked remote window silently swallows clicks/keys with ZERO
-        // feedback and no exit affordance. A video pane has no ``TerminalViewModel`` (no `exitReadOnly()`), so
-        // `×` releases the lock via ``WorkspaceStore/setPaneReadOnly(_:_:)`` — the SAME source of truth the input
-        // gate, View-menu item, and sidebar lock read. Gated by the pure
-        // ``showReadOnlyPill(staticMirror:isReadOnly:)`` (never on the static-mirror path).
-        .overlay(alignment: .topTrailing) {
-            if Self.showReadOnlyPill(staticMirror: staticMirror, isReadOnly: store.isReadOnly(for: paneID)) {
-                ReadOnlyPill(onDeactivate: { store.setPaneReadOnly(paneID, false) })
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .padding(Slate.Metric.space2)
+            // The COLLAPSED chip (Parsec-style): a single small plate, bottom-trailing (bottom-leading
+            // belongs to the stall caption). Accent-tinted while any latched pane mode is engaged —
+            // immersive / viewport lock / host audio / a stream override — so collapsing the bar never
+            // hides a status light. A CLICK target, never hover-reveal: the bottom edge of a video pane
+            // is the edge-hover auto-pan strip, so a hover-revealed bar would fight the pan gesture.
+            .overlay(alignment: .bottomTrailing) {
+                if showControlBar, !controlsExpanded {
+                    collapsedControlsChip
+                        .padding(Slate.Metric.space2)
+                        .transition(.opacity)
+                }
             }
-        }
-        .animation(Slate.Anim.reveal, value: store.isReadOnly(for: paneID))
-        // STATS READOUT (footer toggle): the client-local telemetry chip — instrument voice, top-leading
-        // (top-trailing belongs to the read-only pill), hit-testing off so it never eats pane input.
-        .overlay(alignment: .topLeading) {
-            if showStats, !staticMirror, let model, model.active != nil {
-                GuiStatsReadout(model: model)
-                    .allowsHitTesting(false)
-                    .padding(Slate.Metric.space2)
-                    .transition(.opacity)
+            .animation(Slate.Anim.reveal, value: controlsExpanded)
+            // PASTE-AS-KEYSTROKES RESULT BANNER: the model's transient "typed N, skipped M" feedback (set only
+            // when some clipboard chars had no US-QWERTY mapping and were dropped) so the user learns a paste was
+            // incomplete. Tap to dismiss; auto-clears on a timer. Never on the static-mirror path. Flat bottom pill.
+            .overlay(alignment: .bottom) {
+                if !staticMirror, let feedback = model?.pasteFeedback {
+                    PasteFeedbackBanner(feedback: feedback) { model?.dismissPasteFeedback() }
+                        .padding(
+                            .bottom,
+                            showControlBar && controlsExpanded
+                                ? Slate.Metric.paneHeaderHeight + Slate.Metric.space2
+                                : Slate.Metric.space2,
+                        )
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
             }
-        }
-        .animation(Slate.Anim.reveal, value: showStats)
-        // CAP ADMISSION: request a slot when ON-SCREEN, on appear AND whenever a sibling
-        // frees one (`videoPromotionGeneration` bumps); `.task(id:)` cancels+restarts on either. Gated on
-        // `isVisible` so a background-tab / zoom-hidden pane does NOT claim a `liveVideoCap` slot (else the
-        // launch-time race where hidden tabs win the cap over the visible pane). NEVER calls `live.setVideoActive`
-        // directly — the store enforces the cap + tearingDownVideo accounting. iOS resume re-activates
-        // `wasVideoActiveBeforePause` in `LivePaneSession.resume`, so this is idempotent there.
-        .task(id: activationKey) {
-            guard !staticMirror, model != nil, isVisible else { return }
-            _ = store.activateVideo(paneID)
-        }
-        // VISIBILITY-DRIVEN LIFECYCLE: under keep-all-mounted a hidden tab's leaf is never
-        // unmounted, so `onDisappear` does NOT fire on a tab switch — driving (de)activation off `isVisible`
-        // frees the slot + stops the decode pipeline off-screen and re-activates on return. (Zoom collapse too.)
-        .onChange(of: isVisible) { _, nowVisible in
-            guard !staticMirror, model != nil else { return }
-            if nowVisible { _ = store.activateVideo(paneID) } else { store.deactivateVideo(paneID) }
-        }
-        // Belt-and-braces: a genuine unmount (pane close before reconcile teardown) also frees the slot.
-        .onDisappear {
-            guard !staticMirror else { return }
-            #if os(macOS)
-            systemKeyCapture.disengage() // an unmounted pane must never keep swallowing the keyboard
-            #endif
-            // RELOCATION GUARD (detach/reattach): this leaf unmounts while the pane is STILL desired —
-            // in the tree (just reattached) or detached (just popped out) — and ANOTHER hosting root is
-            // mounting the same PaneID. Deactivating here would close the model mid-handoff and race the
-            // replacement view's fresh session/sinks. Only a pane gone from BOTH (a genuine close) frees
-            // the slot; tab-hide never unmounts (keep-all-mounted), so the `isVisible` path is untouched.
-            guard !store.tree.contains(paneID), !store.tree.isDetached(paneID) else { return }
-            store.deactivateVideo(paneID)
-        }
+            .animation(Slate.Anim.reveal, value: model?.pasteFeedback)
+            // The `🔒 READ ONLY ×` pill (``ReadOnlyPill``) so a read-only `.remoteGUI` /
+            // `.systemDialog` pane is a VISUAL peer of a read-only terminal leaf (same top-trailing overlay/reveal as
+            // ``TerminalLeafView``). Without it a locked remote window silently swallows clicks/keys with ZERO
+            // feedback and no exit affordance. A video pane has no ``TerminalViewModel`` (no `exitReadOnly()`), so
+            // `×` releases the lock via ``WorkspaceStore/setPaneReadOnly(_:_:)`` — the SAME source of truth the input
+            // gate, View-menu item, and sidebar lock read. Gated by the pure
+            // ``showReadOnlyPill(staticMirror:isReadOnly:)`` (never on the static-mirror path).
+            .overlay(alignment: .topTrailing) {
+                if Self.showReadOnlyPill(staticMirror: staticMirror, isReadOnly: store.isReadOnly(for: paneID)) {
+                    ReadOnlyPill(onDeactivate: { store.setPaneReadOnly(paneID, false) })
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .padding(Slate.Metric.space2)
+                }
+            }
+            .animation(Slate.Anim.reveal, value: store.isReadOnly(for: paneID))
+            // STATS READOUT (footer toggle): the client-local telemetry chip — instrument voice, top-leading
+            // (top-trailing belongs to the read-only pill), hit-testing off so it never eats pane input.
+            .overlay(alignment: .topLeading) {
+                if showStats, !staticMirror, let model, model.active != nil {
+                    GuiStatsReadout(model: model)
+                        .allowsHitTesting(false)
+                        .padding(Slate.Metric.space2)
+                        .transition(.opacity)
+                }
+            }
+            .animation(Slate.Anim.reveal, value: showStats)
+            // CAP ADMISSION: request a slot when ON-SCREEN, on appear AND whenever a sibling
+            // frees one (`videoPromotionGeneration` bumps); `.task(id:)` cancels+restarts on either. Gated on
+            // `isVisible` so a background-tab / zoom-hidden pane does NOT claim a `liveVideoCap` slot (else the
+            // launch-time race where hidden tabs win the cap over the visible pane). NEVER calls `live.setVideoActive`
+            // directly — the store enforces the cap + tearingDownVideo accounting. iOS resume re-activates
+            // `wasVideoActiveBeforePause` in `LivePaneSession.resume`, so this is idempotent there.
+            .task(id: activationKey) {
+                guard !staticMirror, model != nil, isVisible else { return }
+                _ = store.activateVideo(paneID)
+            }
+            // VISIBILITY-DRIVEN LIFECYCLE: under keep-all-mounted a hidden tab's leaf is never
+            // unmounted, so `onDisappear` does NOT fire on a tab switch — driving (de)activation off `isVisible`
+            // frees the slot + stops the decode pipeline off-screen and re-activates on return. (Zoom collapse too.)
+            .onChange(of: isVisible) { _, nowVisible in
+                guard !staticMirror, model != nil else { return }
+                if nowVisible { _ = store.activateVideo(paneID) } else { store.deactivateVideo(paneID) }
+            }
+            // Belt-and-braces: a genuine unmount (pane close before reconcile teardown) also frees the slot.
+            .onDisappear {
+                guard !staticMirror else { return }
+                #if os(macOS)
+                systemKeyCapture.disengage() // an unmounted pane must never keep swallowing the keyboard
+                #endif
+                // RELOCATION GUARD (detach/reattach): this leaf unmounts while the pane is STILL desired —
+                // in the tree (just reattached) or detached (just popped out) — and ANOTHER hosting root is
+                // mounting the same PaneID. Deactivating here would close the model mid-handoff and race the
+                // replacement view's fresh session/sinks. Only a pane gone from BOTH (a genuine close) frees
+                // the slot; tab-hide never unmounts (keep-all-mounted), so the `isVisible` path is untouched.
+                guard !store.tree.contains(paneID), !store.tree.isDetached(paneID) else { return }
+                store.deactivateVideo(paneID)
+            }
         #if os(macOS)
-        // IMMERSIVE SAFETY: capture follows pane focus + injectability — but as a SUSPENSION, never a
-        // tear-down. Losing workspace focus (or the satellite window's key state, which drives `isFocused`
-        // there) pauses swallowing; a read-only flip withholds the sink → `canInjectSystemKeys` flips false →
-        // pause too. Either gate re-opening resumes capture by itself — the user's toggle survives (the old
-        // disengage-on-every-edge design made it silently flake off on any popover/focus blip). The
-        // controller's own app/window observers cover the app-level edges the same way; only the toggle,
-        // the ⌃⌥⌘E escape chord, and unmount fully disengage, and `onDisengage` keeps the toggle honest.
-        .onChange(of: isFocused) { _, focused in
-            systemKeyCapture.setSuspended(!focused || model?.canInjectSystemKeys != true)
-        }
-        .onChange(of: model?.canInjectSystemKeys ?? false) { _, can in
-            systemKeyCapture.setSuspended(!can || !isFocused)
-        }
+            // IMMERSIVE SAFETY: capture follows pane focus + injectability — but as a SUSPENSION, never a
+            // tear-down. Losing workspace focus (or the satellite window's key state, which drives `isFocused`
+            // there) pauses swallowing; a read-only flip withholds the sink → `canInjectSystemKeys` flips false →
+            // pause too. Either gate re-opening resumes capture by itself — the user's toggle survives (the old
+            // disengage-on-every-edge design made it silently flake off on any popover/focus blip). The
+            // controller's own app/window observers cover the app-level edges the same way; only the toggle,
+            // the ⌃⌥⌘E escape chord, and unmount fully disengage, and `onDisengage` keeps the toggle honest.
+            .onChange(of: isFocused) { _, focused in
+                systemKeyCapture.setSuspended(!focused || model?.canInjectSystemKeys != true)
+            }
+            .onChange(of: model?.canInjectSystemKeys ?? false) { _, can in
+                systemKeyCapture.setSuspended(!can || !isFocused)
+            }
         #endif
     }
 
@@ -250,6 +271,29 @@ struct GuiLeafView: View {
     /// stream, so the picker / cap-gated states show no footer.
     private var showControlBar: Bool {
         !staticMirror && model?.active != nil
+    }
+
+    /// Whether any LATCHED pane mode is engaged — the states whose accent tint the control bar carries
+    /// as status lights. While the bar is collapsed the chip inherits that tint, so no latched mode is
+    /// ever invisible. `showStats` is deliberately absent: its readout is its own visibility.
+    private var hasLatchedMode: Bool {
+        immersiveActive || model?.viewportLocked == true || model?.audioStreamEnabled == true
+            || fpsCapSelection != 0 || bitrateCapMbpsSelection != 0
+    }
+
+    /// The collapsed-chrome chip: one plate button on the same dim-ground material as the stall caption /
+    /// stats readout, expanding the control bar. It costs one plate of remote pixels in the corner — the
+    /// price of keeping the whole bar off-screen at rest.
+    private var collapsedControlsChip: some View {
+        SlatePlateButton(
+            symbol: .ellipsis,
+            help: "Window controls",
+            tint: hasLatchedMode ? Slate.State.accent : Slate.Text.icon,
+        ) { controlsExpanded = true }
+            .background(
+                Slate.Surface.ground.opacity(0.88),
+                in: .rect(cornerRadius: Slate.Metric.radiusControl),
+            )
     }
 
     @ViewBuilder private var content: some View {
@@ -418,8 +462,10 @@ private struct StreamStallCaption: View {
     }
 }
 
-/// The bottom CONTROL bar for a LIVE window pane: window controls kept OUT of the pane CONTENT. A flat
-/// strip along the pane bottom, a single top hairline (never a floating card), split BY KIND: everything
+/// The bottom CONTROL bar for a LIVE window pane: window controls kept OUT of the pane CONTENT. An
+/// on-demand OVERLAY strip (collapsed to ``GuiLeafView``'s corner chip at rest — the leaf owns that
+/// state), still a flat strip along the pane bottom, a single top hairline (never a floating card), split
+/// BY KIND: everything
 /// LEFT of the spacer is a COMMAND (momentary — window verbs paste/resize/display/detach, then viewport
 /// verbs fit/−/1×/+), everything RIGHT carries STATE (stats overlay, quality override, host audio,
 /// immersive, viewport lock — the accent tint is a status light, and only the right side ever shows one).
@@ -441,6 +487,8 @@ private struct GuiPaneControlBar: View {
     /// Immersive system-key capture state + toggle (constant `false`/no-op off macOS).
     let immersiveOn: Bool
     let onToggleImmersive: () -> Void
+    /// Folds the bar back into the leaf's corner chip (the leaf owns the expanded state).
+    let onCollapse: () -> Void
 
     /// Whether the numeric "Resize…" size popover is open.
     @State private var showResizePopover = false
@@ -610,6 +658,10 @@ private struct GuiPaneControlBar: View {
                     }
                 }
             }
+            // ── COLLAPSE: fold the bar back into the corner chip — the way OUT lives where the way IN
+            // was, at the bar's outer edge. A momentary command, so it never carries a tint. The bar's
+            // only chevron.
+            SlatePlateButton(symbol: .chevronDown, help: "Hide controls") { onCollapse() }
         }
         .padding(.horizontal, Slate.Metric.space2)
         .frame(height: Slate.Metric.paneHeaderHeight)
