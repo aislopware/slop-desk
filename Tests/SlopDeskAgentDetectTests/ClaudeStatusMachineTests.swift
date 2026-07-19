@@ -147,6 +147,16 @@ final class ClaudeStatusMachineTests: XCTestCase {
         XCTAssertEqual(m.reduce(.manifestVerdict(.none), at: 2), .working, "unsure manifest doesn't downgrade")
     }
 
+    func testManifestDoneDecaysToIdleAfterTimeout() {
+        // A manifest-sourced `.done` anchors the SAME done→idle decay clock as a hook Stop —
+        // a nil anchor would latch the pane `.done` forever (decayIfDue requires `doneSince`).
+        var m = ClaudeStatusMachine(doneToIdleTimeout: 5)
+        _ = m.reduce(.processPresent(true), at: 0)
+        XCTAssertEqual(m.reduce(.manifestVerdict(.done), at: 10), .done)
+        XCTAssertEqual(m.reduce(.tick, at: 14), .done, "4s after the verdict → still done")
+        XCTAssertEqual(m.reduce(.tick, at: 15), .idle, "5s after the verdict → decays to idle")
+    }
+
     // MARK: Hooks outweigh manifest (defense-in-depth precedence)
 
     func testHookBlockedSurvivesAManifestWorkingGuess() {

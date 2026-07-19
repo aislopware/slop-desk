@@ -144,4 +144,48 @@ final class FrameDecoderTests: XCTestCase {
         decoder.append(Data(second.suffix(3)))
         XCTAssertEqual(try decoder.nextMessage(), .title("incomplete"))
     }
+
+    // MARK: - Poison-on-fault (fail-stop)
+
+    func testDecodeFaultPoisonsDecoderDroppingFurtherAppends() {
+        // A bogus length prefix never advances the cursor, so without the poison every later
+        // nextMessage() re-reads the same stuck prefix while append() grows the buffer without
+        // bound off a still-open socket. The fault must clear the buffer and drop all later input.
+        let oversized = SlopDesk.maxFramePayloadLength + 1
+        var frame = Data()
+        frame.appendBE(UInt32(oversized))
+
+        let decoder = FrameDecoder()
+        decoder.append(frame)
+        XCTAssertThrowsError(try decoder.nextMessage())
+        XCTAssertEqual(decoder.bufferedByteCountForTesting, 0, "the fault frees the buffer")
+
+        decoder.append(Data(count: 1024 * 1024))
+        XCTAssertEqual(
+            decoder.bufferedByteCountForTesting, 0,
+            "a poisoned decoder drops appended input — a peer keeping the socket open cannot grow it",
+        )
+        XCTAssertThrowsError(try decoder.nextMessage()) { error in
+            XCTAssertEqual(error as? SlopDeskError, .frameTooLarge(oversized), "the original fault is rethrown")
+        }
+    }
+
+    func testBodyDecodeFaultAlsoPoisons() {
+        // A malformed BODY (unknown message type) is the other fault class — same fail-stop: a
+        // valid trailing frame after the fault must NOT be resynchronized onto.
+        var frame = Data()
+        frame.appendBE(UInt32(1))
+        frame.append(0xFF) // unknown type
+        frame.append(WireMessage.bell.encode()) // a valid frame after the poison point
+
+        let decoder = FrameDecoder()
+        decoder.append(frame)
+        XCTAssertThrowsError(try decoder.nextMessage()) { error in
+            XCTAssertEqual(error as? SlopDeskError, .unknownMessageType(0xFF))
+        }
+        XCTAssertThrowsError(try decoder.nextMessage()) { error in
+            XCTAssertEqual(error as? SlopDeskError, .unknownMessageType(0xFF), "rethrown, never nil/resync")
+        }
+        XCTAssertEqual(decoder.bufferedByteCountForTesting, 0)
+    }
 }

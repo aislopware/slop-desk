@@ -10,10 +10,15 @@ import Foundation
 public struct StreamedWindowRef: Equatable, Sendable {
     public let paneID: PaneID
     public let tabOrdinal: Int
+    /// `true` when the pane is currently DETACHED into its own satellite window rather than living in a
+    /// tab — `tabOrdinal` is meaningless for these (kept at `0`); callers must branch on this before
+    /// treating the ref as a tab to switch to.
+    public let isDetached: Bool
 
-    public init(paneID: PaneID, tabOrdinal: Int) {
+    public init(paneID: PaneID, tabOrdinal: Int, isDetached: Bool = false) {
         self.paneID = paneID
         self.tabOrdinal = tabOrdinal
+        self.isDetached = isDetached
     }
 }
 
@@ -40,13 +45,17 @@ public extension WorkspaceStore {
     }
 
     /// Opens host window `windowID` on the tree shell — the ONE remote-window ingress (Open Quickly,
-    /// palette). A window already streaming in the active session is REVEALED (tab switch + focus),
-    /// never duplicated; a fresh window opens as a new `.remoteGUI` tab. Returns the pane id, or `nil`
-    /// with no active session.
+    /// palette). A window already streaming in the active session is REVEALED — tab switch + focus for a
+    /// tiled pane, ``revealSatelliteWindow`` for one detached into its own window — never duplicated; a
+    /// fresh window opens as a new `.remoteGUI` tab. Returns the pane id, or `nil` with no active session.
     @discardableResult
     func openRemoteWindow(windowID: UInt32, title: String, appName: String) -> PaneID? {
         if let existing = streamedWindowPane(for: windowID) {
-            focusPaneTree(existing.paneID)
+            if existing.isDetached {
+                _ = revealSatelliteWindow?(existing.paneID)
+            } else {
+                focusPaneTree(existing.paneID)
+            }
             return existing.paneID
         }
         return newRemoteWindowTab(windowID: windowID, title: title, appName: appName)
@@ -67,11 +76,13 @@ public extension WorkspaceStore {
     }
 
     /// Where host window `windowID` is already streaming: the pane + its 1-based tab ordinal in the
-    /// ACTIVE session. The earliest tab wins for a window streamed twice. Reads `PaneSpec.video` — the
-    /// binding `RemoteWindowModel` persists on every open/rebind, so the answer self-corrects through
-    /// `WindowRebind` after a host restart. This is the ONE "is it already open?" rule every ingress
-    /// shares (two resolutions would drift). Active-session-only ON PURPOSE: every consumer acts on
-    /// the visible workspace.
+    /// ACTIVE session, OR a detached pane living in its own satellite window (``StreamedWindowRef/isDetached``).
+    /// The earliest tab wins for a window streamed twice; tiled panes are checked before detached ones.
+    /// Reads `PaneSpec.video` — the binding `RemoteWindowModel` persists on every open/rebind, so the
+    /// answer self-corrects through `WindowRebind` after a host restart. This is the ONE "is it already
+    /// open?" rule every ingress shares (two resolutions would drift) — a `.remoteGUI` pane keeps
+    /// streaming after detach, so skipping ``Session/detached`` would mint a SECOND live stream of the
+    /// same host window. Active-session-only ON PURPOSE: every consumer acts on the visible workspace.
     func streamedWindowPane(for windowID: UInt32) -> StreamedWindowRef? {
         guard let session = tree.activeSession else { return nil }
         for (index, tab) in session.tabs.enumerated() {
@@ -80,6 +91,11 @@ public extension WorkspaceStore {
                       spec.video?.windowID == windowID else { continue }
                 return StreamedWindowRef(paneID: paneID, tabOrdinal: index + 1)
             }
+        }
+        for entry in session.detached {
+            guard let spec = session.specs[entry.pane], spec.kind == .remoteGUI,
+                  spec.video?.windowID == windowID else { continue }
+            return StreamedWindowRef(paneID: entry.pane, tabOrdinal: 0, isDetached: true)
         }
         return nil
     }
@@ -114,6 +130,23 @@ public extension WorkspaceStore {
     func toggleViewportLockInActivePane() {
         guard let id = activePaneID else { return }
         handle(for: id)?.toggleViewportLock()
+    }
+
+    /// FIT VIEWPORT TO PANE (the palette `view.fitViewportToPane`): the discoverability twin of the
+    /// footer [fit] button — shrink/grow the ACTIVE remote-GUI pane's whole window to be fully visible
+    /// inside the pane. Routed through the ``PaneSessionHandle`` seam, so it is a graceful no-op for a
+    /// terminal / empty / not-streaming / locked active pane (never a dead chord).
+    func fitViewportToPaneInActivePane() {
+        guard let id = activePaneID else { return }
+        handle(for: id)?.fitViewportToPane()
+    }
+
+    /// ACTUAL SIZE (the palette `view.resetViewportZoom`): the discoverability twin of the footer [1×]
+    /// button — reset the ACTIVE remote-GUI pane's zoom to 1× and re-anchor top-left. Same no-op family
+    /// as ``fitViewportToPaneInActivePane()``.
+    func resetViewportZoomInActivePane() {
+        guard let id = activePaneID else { return }
+        handle(for: id)?.resetViewportZoom()
     }
 
     /// PASTE AS KEYSTROKES (the ⌥⌘V chord + the pane context menu): type the CURRENT local clipboard

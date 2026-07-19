@@ -520,9 +520,13 @@ final class OverlayCoordinatorMountTests: XCTestCase {
                 // Reattach All Panes is chord-less (each satellite's close button reattaches
                 // itself; the bulk fold is a menu/palette verb).
                 "pane.reattachAll",
+                // Fit Viewport to Pane + Reset Viewport Zoom are chord-less (palette/menu
+                // discoverability verbs for the footer's viewport cluster).
+                "view.fitViewportToPane", "view.resetViewportZoom",
             ],
             "the no-chip rows: collapsed select-tab representative + chord-less Rename/Close Tab "
-                + "+ the three E17 view toggles + E10 Hint to Reveal + E19 Pin Window + Reattach All",
+                + "+ the three E17 view toggles + E10 Hint to Reveal + E19 Pin Window + Reattach All "
+                + "+ the two viewport verbs",
         )
 
         // Every chord-bearing row resolves a non-empty glyph (the chips) — no drift between display + chord.

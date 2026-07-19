@@ -106,9 +106,12 @@ public struct MuxFrameFragmentHeader: Equatable, Sendable {
         self.payloadLength = payloadLength
     }
 
-    /// Header size in bytes = the existing ``FrameFragmentHeader/size`` (15) plus the
-    /// 4-byte channelID prefix = **19**.
-    public static let size = VideoMuxHeaderCodec.channelIDLength + FrameFragmentHeader.size
+    /// Header size in bytes, from this type's OWN field widths (it does NOT carry
+    /// ``FrameFragmentHeader/hostSendTsMillis`` — see the type doc's field list above):
+    /// channelID(4) + streamSeq(4) + frameID(4) + fragIndex(2) + fragCount(2) + flags(1)
+    /// + payloadLen(2) = **19**. Must equal what `encode()`/`decode(_:)` actually
+    /// read/write.
+    public static let size = 4 + 4 + 4 + 2 + 2 + 1 + 2
 
     /// Max payload bytes per fragment when the channelID is folded into the header
     /// (datagram budget minus the 19-byte header). Mirrors

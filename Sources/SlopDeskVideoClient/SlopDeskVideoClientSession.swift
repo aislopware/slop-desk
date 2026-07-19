@@ -327,8 +327,8 @@ public actor SlopDeskVideoClientSession {
 
     /// Serial queue owning ALL AudioToolbox work — the AAC-ELD `AudioConverter` decode and the
     /// output-AU lifecycle — the audio mirror of ``decodeQueue``: a converter call must never
-    /// block fragment ingest / input sends on this actor. The engine's jitter ring is the only
-    /// state shared past this queue (locked inside the engine; the render callback pulls it).
+    /// block fragment ingest / input sends on this actor. The engine's lock-free sample ring is
+    /// the only state shared past this queue (the render callback consumes it wait-free).
     private let audioQueue = DispatchQueue(label: "slopdesk.client.audio", qos: .userInteractive)
     /// The audio config in force. The host re-sends it ~1 s apart (loss tolerance), so the
     /// decoder/engine rebuild below fires only when a received config actually DIFFERS.
@@ -336,6 +336,14 @@ public actor SlopDeskVideoClientSession {
     /// Decodes wire payloads → interleaved Float32 on ``audioQueue``. Rebuilt on config change;
     /// `nil` until the first config locks the stream parameters.
     private var audioDecoder: AudioStreamDecoder?
+    /// Monotonic stamp for the OFF-ACTOR decoder build (`AudioConverterNew` runs on
+    /// ``audioQueue``): bumped by every build dispatch and by pipeline teardown, and checked at
+    /// install-back, so a stale build can never overwrite a newer config's decoder (or resurrect
+    /// a torn-down pipeline).
+    private var audioConfigGeneration = 0
+    /// The config whose decoder build is in flight on ``audioQueue`` (`nil` when none) — the ~1 s
+    /// config re-send must not queue a duplicate `AudioConverter` build while the first runs.
+    private var audioPendingConfig: AudioStreamConfig?
     /// Output AU + jitter ring, one per locked `(sampleRate, channels)`. Started lazily on the
     /// first config while enabled; stopped on disable, invalidated with the pipeline.
     private var audioEngine: AudioPlaybackEngine?
@@ -1167,8 +1175,8 @@ public actor SlopDeskVideoClientSession {
             // locks the stream on promptly.
             guard let decoder = audioDecoder, let engine = audioEngine else { return }
             // OFF-QUEUE like video decode: the converter call runs on the serial audio queue so
-            // it never blocks fragment ingest on this actor; the ring (inside the engine, locked)
-            // re-orders by seq, so queue-serialised decode order is sufficient.
+            // it never blocks fragment ingest on this actor; the engine's jitter stage re-orders
+            // by seq, so queue-serialised decode order is sufficient.
             audioQueue.async {
                 let samples = decoder.decode(payload)
                 guard !samples.isEmpty else { return } // corrupt frame — concealed like wire loss
@@ -1187,9 +1195,34 @@ public actor SlopDeskVideoClientSession {
             audioQueue.async { engine.start() }
             return
         }
-        guard let decoder = try? AudioStreamDecoder(config: config) else {
-            // Validate-then-drop: a config this client cannot build a decoder for (converter
-            // refusal) is dropped wholesale — keep whatever stream was in force.
+        // A build for this exact config is already in flight — don't queue a duplicate.
+        if config == audioPendingConfig { return }
+        audioConfigGeneration += 1
+        audioPendingConfig = config
+        let generation = audioConfigGeneration
+        // OFF-ACTOR like frame decode: `AudioConverterNew` is real AudioToolbox codec setup (a
+        // framework warm-up on the first call in the process), so building here would stall
+        // video-fragment ingest on this actor. Build on the audio queue and install back on the
+        // actor; the generation stamp discards a build superseded by a newer config or teardown.
+        // Frames arriving meanwhile keep flowing to the OLD decoder (or drop pre-first-config).
+        audioQueue.async { [weak self] in
+            let decoder = try? AudioStreamDecoder(config: config)
+            guard let self else { return }
+            Task { await self.installAudioDecoder(decoder, config: config, generation: generation) }
+        }
+    }
+
+    /// Actor-side install of an off-queue decoder build. `decoder == nil` ⇒ the converter refused
+    /// the config (validate-then-drop: keep whatever stream was in force; the host's ~1 s re-send
+    /// retries).
+    private func installAudioDecoder(
+        _ decoder: AudioStreamDecoder?,
+        config: AudioStreamConfig,
+        generation: Int,
+    ) {
+        guard generation == audioConfigGeneration else { return } // superseded — a newer config/teardown won
+        audioPendingConfig = nil
+        guard let decoder else {
             log.error("audio config rejected (no decoder for it) — dropped")
             return
         }
@@ -1221,6 +1254,9 @@ public actor SlopDeskVideoClientSession {
     private func stopAudioPipeline() {
         audioConfig = nil
         audioDecoder = nil
+        // Invalidate any in-flight off-queue decoder build — it must not resurrect the pipeline.
+        audioConfigGeneration += 1
+        audioPendingConfig = nil
         guard let engine = audioEngine else { return }
         audioEngine = nil
         audioQueue.async { engine.invalidate() }
@@ -1434,7 +1470,17 @@ public actor SlopDeskVideoClientSession {
                     "decode budget: frame #\(frame.frameID) dropped pre-dispatch (pending \(decodeBudget.pendingCount) frames / \(decodeBudget.pendingBytes)B, total \(dbgBudgetDrops)) — decode stage saturated",
                 )
                 decodeGate.noteAwaitingKeyframe()
-                requestIDR()
+                // Recovery rides the escalation cadence, NOT once per drop: a keyframe always
+                // passes the gate, so during sustained saturation EVERY incoming keyframe (the
+                // heartbeat IDR + each recovery IDR answering our own request) lands here — an
+                // unconditional request would re-fire a redundant-copy IDR burst per keyframe,
+                // exactly while the client is least able to cope. The FIRST drop of an episode
+                // still requests immediately (arming the escalation clock); repeats wait out the
+                // 2·RTT / floor window, mirroring the gate-drop branch above.
+                if !escalation.hasOutstandingRequest || shouldEscalateToIDR() {
+                    requestIDR()
+                    escalation.noteEscalated(now: FramePacer.currentHostTimeSeconds())
+                }
                 return
             }
             // OFF-QUEUE: run the blocking VT decode on the serial decode queue so it never blocks

@@ -649,6 +649,19 @@ public final class RemoteWindowModel {
         endAwaitingReflow() // a closed window will not re-capture — never leave the scrim hung
         isStreamStalled = false // a closed pane shows the picker, not a stale "Reconnecting…" scrim
         audioStreamEnabled = false // the next session mints with audio OFF — keep the speaker honest
+        viewportLocked = false // ditto for the viewport lock — a freshly (re)bound window starts unlocked
+        // The titlebar/sidebar connection cluster (`ConnectionTelemetry`) reads these unconditionally — a
+        // closed/re-bound pane must not keep showing the LAST session's cadence/bitrate/network numbers as
+        // if it were still streaming.
+        streamFps = nil
+        streamKbps = nil
+        statsFps = nil
+        statsFecPerSec = nil
+        statsUnrecoveredPerSec = nil
+        statsHoldMs = nil
+        statsPacerDepth = nil
+        windowPointSize = nil
+        windowMaxPointSize = nil
         // Drop every published sink HERE — the model's own lifecycle, not the view's dismantle. The old
         // view's `deactivate()` deliberately publishes NOTHING (see `VideoWindowView.deactivate`): during a
         // pane detach/reattach the SAME model is re-bound by a view in ANOTHER hosting root, and SwiftUI may

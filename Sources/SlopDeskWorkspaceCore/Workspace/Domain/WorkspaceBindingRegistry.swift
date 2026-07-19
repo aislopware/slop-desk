@@ -82,6 +82,14 @@ public enum WorkspaceAction: Hashable, Sendable {
     // drags the content along. A pure client compositor gate (never touches the host); a no-op for a
     // terminal / empty / not-streaming active pane.
     case toggleViewportLock
+    // Fit Viewport to Pane / Actual Size: the ACTIVE remote-GUI pane's [fit] / [1×] footer
+    // buttons, palette/menu-surfaced so they're discoverable outside that small control-bar icon
+    // cluster (mirrors `toggleViewportLock`'s active-pane routing — same pure client compositor gate,
+    // never touches the host). No default chord — chord-less like `pane.rename` / `view.readOnly`; a
+    // no-op for a terminal / empty / not-streaming active pane, or while the viewport is LOCKED (the
+    // footer buttons are disabled then too — unlock first).
+    case fitViewportToPane
+    case resetViewportZoom
     // Paste as Keystrokes: ⌥⌘V types the LOCAL clipboard into the ACTIVE remote-GUI
     // pane's host window as paced per-key CGEvents (the path that reaches a sudo / SecurityAgent secure
     // field) — since a plain ⌘V forwards a raw Cmd+V that pastes the HOST clipboard. A no-op for a
@@ -208,6 +216,9 @@ public extension WorkspaceAction {
              .releaseStuckInput,
              // toggles the ACTIVE remote-GUI pane's viewport lock; no-ops on a terminal / empty / off-stream pane.
              .toggleViewportLock,
+             // fit / actual-size the ACTIVE remote-GUI pane's viewport; no-ops on a terminal / empty / off-stream / locked pane.
+             .fitViewportToPane,
+             .resetViewportZoom,
              // types the local clipboard into the ACTIVE remote-GUI pane; no-ops on a terminal / empty / read-only pane.
              .pasteAsKeystrokes,
              .commandNavigator,
@@ -692,6 +703,23 @@ public enum WorkspaceBindingRegistry {
             category: .view, chord: KeyChord(character: "l", [.command, .option]),
             symbol: "lock.rectangle",
             keywords: "lock viewport position freeze edge pan auto pan hold pin content remote window video unlock",
+        ),
+        // Fit Viewport to Pane / Actual Size: discoverability twins of the footer [fit]/[1×] buttons —
+        // reachable ONLY via that small control-bar icon cluster before this (docs audit finding #37).
+        // `chord: nil` (chord-less idiom — like `view.readOnly` / `pane.rename`); bindable in
+        // Settings → Keybindings. A graceful no-op off a streaming video pane, or while the viewport is
+        // locked (mirrors the footer buttons' own disabled-while-locked gate).
+        WorkspaceBinding(
+            id: "view.fitViewportToPane", action: .fitViewportToPane, title: "Fit to Pane",
+            category: .view, chord: nil,
+            symbol: "rectangle.arrowtriangle.2.inward",
+            keywords: "fit window pane zoom shrink grow whole visible remote video",
+        ),
+        WorkspaceBinding(
+            id: "view.resetViewportZoom", action: .resetViewportZoom, title: "Actual Size",
+            category: .view, chord: nil,
+            symbol: "1.magnifyingglass",
+            keywords: "actual size reset zoom 1x one to one native remote video",
         ),
         // Paste as Keystrokes: ⌥⌘V types the LOCAL clipboard into the active remote-GUI
         // pane's host window (paced per-key CGEvents — reaches a sudo / SecurityAgent secure field). ⌥⌘V is

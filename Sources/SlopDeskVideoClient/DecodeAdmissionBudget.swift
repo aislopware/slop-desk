@@ -33,8 +33,16 @@ public struct DecodeAdmissionBudget: Sendable {
     /// Admits one compressed frame of `bytes` AVCC bytes onto the decode queue. `false` means
     /// the stage is saturated — the caller must drop the frame before dispatch and arm the
     /// loss-recovery path (the stream re-syncs on the next admitted anchor).
+    ///
+    /// An IDLE stage (`pendingCount == 0`) ALWAYS admits, whatever the byte size: the budget
+    /// bounds QUEUED work, and a frame whose size alone exceeds the byte cap (an extreme
+    /// recovery keyframe, or an inflated mis-recovered reassembly) would otherwise be refused
+    /// forever — every replacement IDR is the same size class, so the pane livelocks while the
+    /// decode stage sits empty.
     public mutating func admit(bytes: Int) -> Bool {
-        guard pendingCount < maxPendingCount, pendingBytes + bytes <= maxPendingBytes else { return false }
+        if pendingCount > 0 {
+            guard pendingCount < maxPendingCount, pendingBytes + bytes <= maxPendingBytes else { return false }
+        }
         pendingCount += 1
         pendingBytes += bytes
         return true

@@ -3,8 +3,8 @@ import XCTest
 @testable import SlopDeskVideoClient
 
 /// PURE HEVC parameter-set extraction: walk the length-prefixed NAL units of an AVCC
-/// keyframe and pull out VPS(32)/SPS(33)/PPS(34), and detect an IDR slice (19/20). NO
-/// VideoToolbox — the format-description build is the GUI-only step.
+/// keyframe and pull out VPS(32)/SPS(33)/PPS(34). NO VideoToolbox — the
+/// format-description build is the GUI-only step.
 final class HEVCParameterSetsTests: XCTestCase {
     /// Builds a single NAL-unit payload whose HEVC `nal_unit_type` is `type`, followed
     /// by `extra` filler bytes. HEVC NAL header byte 0 = `forbidden(1) type(6) hi(1)`,
@@ -48,12 +48,5 @@ final class HEVCParameterSetsTests: XCTestCase {
         let sps2 = nal(type: 33, extra: [0x02, 0x03])
         let avcc = NALUnit.join([nal(type: 32), sps1, sps2, nal(type: 34), nal(type: 20)])
         XCTAssertEqual(HEVCParameterSets.extract(from: avcc)?.sps, sps2)
-    }
-
-    func testContainsIDR() {
-        XCTAssertTrue(HEVCParameterSets.containsIDR(NALUnit.join([nal(type: 32), nal(type: 19)])))
-        XCTAssertTrue(HEVCParameterSets.containsIDR(NALUnit.join([nal(type: 20)])))
-        // A delta frame (slice type 1 = TRAIL_R) carries no IDR.
-        XCTAssertFalse(HEVCParameterSets.containsIDR(NALUnit.join([nal(type: 1)])))
     }
 }

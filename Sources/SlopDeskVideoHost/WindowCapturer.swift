@@ -238,6 +238,14 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         measured && changeMilli == 0
     }
 
+    /// Whether the capture callback needs the shared full-NV12 hash this frame — the union of all
+    /// three hash-consuming gates (kept as its own function, not inlined at the call site, so the
+    /// branch doesn't add to the already-large capture callback's cyclomatic complexity).
+    private static func needsFrameHash(measured: Bool, changeMilli: UInt32) -> Bool {
+        stillCrispEnabled || staticSuppressEnabled
+            || (idleSkipEnabled && idleSkipEligible(measured: measured, changeMilli: changeMilli))
+    }
+
     /// SCROLL-FPS CAP (default OFF, `SLOPDESK_SCROLL_FPS`=N): during sustained FAST scroll (changed-row
     /// fraction ≥ `scrollMotionThresholdMilli`) encode only ~N of the 60 captured fps (even Bresenham
     /// decimation), so the HW encoder never overruns the 16.7 ms frame budget — the involuntary-VT-drop
@@ -1738,6 +1746,18 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // frame against the PREVIOUS one, which is still what `cachedPixelBuffer` holds up here.
         defer { cachedPixelBuffer = Self.copyPixelBuffer(pixelBuffer) }
 
+        // Compute the full NV12 hash AT MOST ONCE per frame — idle-skip, still-crisp, and
+        // static-suppress are three independently env-gated deciders that would otherwise each pay
+        // their own CVPixelBufferLockBaseAddress + full-frame scalar hash on this userInteractive
+        // capture queue when stacked together. Trigger is the union of all three gates: idle-skip only
+        // once ELIGIBLE (its own cheap luma pre-check still avoids the hash when it alone is enabled
+        // and the frame is obviously non-idle); still-crisp/static-suppress compute unconditionally
+        // when enabled. The SAME hash value then feeds every decider below — deterministic, so reusing
+        // it changes nothing about their individual verdicts.
+        let frameHash: UInt64? = Self.needsFrameHash(measured: measured, changeMilli: changeMilli)
+            ? Self.hashFrame(pixelBuffer)
+            : nil
+
         // TRUE IDLE-SKIP decision (default OFF): drop a frame ONLY when it is byte-identical to the
         // previous one by the FULL NV12 hash (luma+chroma, `hashFrame`) — so a chroma-only change (a
         // syntax-highlight color flip, theme toggle) is NOT mistaken for idle (the luma-only `changeMilli`
@@ -1748,7 +1768,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         var idleSkip = false
         if Self.idleSkipEnabled,
            Self.idleSkipEligible(measured: measured, changeMilli: changeMilli),
-           let fullHash = Self.hashFrame(pixelBuffer),
+           let fullHash = frameHash,
            fullHash != FrameHash.SENTINEL
         {
             idleSkip = lastIdleFullHash == fullHash
@@ -1771,11 +1791,11 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // of byte-identical .complete re-deliveries can trip the crisp re-anchor before the quiet window
         // (the IDR timer drains it). Runs BEFORE the suppression block so the decider sees every frame.
         if Self.stillCrispEnabled,
-           let frameHash = Self.hashFrame(pixelBuffer),
-           frameHash != FrameHash.SENTINEL
+           let hash = frameHash,
+           hash != FrameHash.SENTINEL
         {
-            stillnessDecider.onFrame(hashEqualToPrevious: lastStillnessHash == frameHash)
-            lastStillnessHash = frameHash
+            stillnessDecider.onFrame(hashEqualToPrevious: lastStillnessHash == hash)
+            lastStillnessHash = hash
         }
 
         // TRUE IDLE-SKIP (default OFF): drop this byte-identical, obligation-free frame entirely — no
@@ -1828,8 +1848,8 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // clock above ARE updated first, so the static-IDR timer still re-anchors on a quiet window.
         // Gate OFF ⇒ this block is skipped entirely (no hash computed).
         if Self.staticSuppressEnabled,
-           let frameHash = Self.hashFrame(pixelBuffer),
-           frameHash != FrameHash.SENTINEL,
+           let hash = frameHash,
+           hash != FrameHash.SENTINEL,
            let lastHash = lastSubmittedFrameHash
         {
             // PEEK (do not drain) the forced obligations so a suppressed frame never swallows a
@@ -1837,7 +1857,7 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
             // as the FPS-governor cadence gate peeks. The first-frame case is covered by
             // `lastSubmittedFrameHash == nil` (this branch is skipped until a frame has been sent).
             if staticSuppressDecider.shouldSuppress(
-                hashEqualToLast: frameHash == lastHash,
+                hashEqualToLast: hash == lastHash,
                 isFirstFrame: !hasEmittedFirstFrame,
                 forcedKeyframePending: peekPendingForcedKeyframe(),
                 recoveryPending: peekPendingLTRRefresh(),

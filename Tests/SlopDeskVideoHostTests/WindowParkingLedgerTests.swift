@@ -71,6 +71,47 @@ final class WindowParkingLedgerTests: XCTestCase {
         XCTAssertNil(l.unpark(channelID: 99))
     }
 
+    // A channel re-parking a DIFFERENT window (retarget) must release its old hold — decrement
+    // refcount, produce a restore target — not silently overwrite the binding and orphan window A's
+    // refcount forever.
+    func testRetargetReleasesOldWindowAndCountsNewOnce() {
+        let l = WindowParkingLedger()
+        _ = l.park(channelID: 1, windowID: 42) // park A
+        l.recordMove(channelID: 1, windowID: 42, pid: 7, originalFrame: frameA, achievedSize: sizeA)
+        XCTAssertEqual(l.parkedCount, 1)
+
+        let frameB = CGRect(x: 0, y: 0, width: 800, height: 600)
+        let sizeB = CGSize(width: 800, height: 600)
+        XCTAssertEqual(l.park(channelID: 1, windowID: 43), .needsMove) // retarget same channel to B
+        XCTAssertEqual(
+            l.takePendingRetargetRestore(),
+            WindowParkingLedger.RestoreTarget(windowID: 42, pid: 7, originalFrame: frameA),
+            "A's refcount was released (last lane) — restorable",
+        )
+        XCTAssertNil(l.takePendingRetargetRestore(), "draining clears it — a second read is nil")
+        XCTAssertEqual(l.parkedCount, 0, "A released; B not yet recorded (needsMove)")
+        XCTAssertNil(l.unpark(channelID: 1), "A's binding is already gone — a stale unpark must not double-restore it")
+
+        l.recordMove(channelID: 1, windowID: 43, pid: 8, originalFrame: frameB, achievedSize: sizeB)
+        XCTAssertEqual(l.parkedCount, 1, "B counted exactly once")
+        XCTAssertEqual(l.parkedChannelIDs, [1])
+        XCTAssertEqual(l.unpark(channelID: 1)?.windowID, 43, "channel 1 now releases B, not A")
+    }
+
+    // Retargeting away from a window still held by ANOTHER lane must NOT restore it — only decrement.
+    func testRetargetOfSharedWindowDoesNotRestoreWhileStillHeld() {
+        let l = WindowParkingLedger()
+        _ = l.park(channelID: 1, windowID: 42)
+        l.recordMove(channelID: 1, windowID: 42, pid: 7, originalFrame: frameA, achievedSize: sizeA)
+        _ = l.park(channelID: 2, windowID: 42) // channel 2 shares window 42 (refcount 2)
+        XCTAssertEqual(l.parkedCount, 1)
+
+        _ = l.park(channelID: 1, windowID: 99) // channel 1 retargets away from 42
+        XCTAssertNil(l.takePendingRetargetRestore(), "42 is still held by channel 2 — not restorable yet")
+        XCTAssertEqual(l.parkedCount, 1, "42 remains parked for channel 2")
+        XCTAssertEqual(l.unpark(channelID: 2)?.windowID, 42, "channel 2 still solely holds 42")
+    }
+
     // drainAll returns every parked window once and clears state; a second drain is empty.
     func testDrainAll() {
         let l = WindowParkingLedger()

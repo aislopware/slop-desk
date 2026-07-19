@@ -500,6 +500,11 @@ private struct GuiPaneControlBar: View {
             }
             // ── VIEWPORT COMMANDS (pure client compositor): fit, then the magnifier trio − / 1× / +.
             if let model, model.canControlViewport {
+                // While the viewport is LOCKED these re-anchor the pan (fit/1×) or would otherwise read as
+                // live controls the lock doesn't actually hold — disabling + dimming them (the same
+                // `.disabled` + `.opacity(0.5)` pair `FontSettingsView`'s locked face-pickers use) is the
+                // affordance that tells the user the lock button is the one to press first. The lock
+                // button itself stays OUTSIDE this cluster (mode-state row below) and stays enabled.
                 HStack(spacing: Slate.Metric.space1) {
                     // FIT: shrink/grow the whole remote window to be fully visible inside the pane (client
                     // compositor zoom = min per-axis pane/window ratio) — the one-tap escape from an
@@ -518,6 +523,8 @@ private struct GuiPaneControlBar: View {
                         model.sendViewport(.zoomIn)
                     }
                 }
+                .disabled(model.viewportLocked)
+                .opacity(model.viewportLocked ? 0.5 : 1)
             }
             Spacer(minLength: Slate.Metric.space2)
             // ── STREAM STATE: what the feed is doing — telemetry readout, quality override, host-audio

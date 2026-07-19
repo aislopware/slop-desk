@@ -240,6 +240,57 @@ final class RemoteWindowStreamControlsTests: XCTestCase {
         XCTAssertFalse(m.canInjectSystemKeys)
     }
 
+    /// **`close()` resets `viewportLocked`, mirroring the `audioStreamEnabled` reset.** Without it a lock
+    /// set on window A silently re-applies itself (via ``RemoteWindowModel/viewportInjector``'s re-assert
+    /// `didSet`) the instant a totally unrelated window B's view publishes its sink on the SAME reused
+    /// model — freezing B's edge-hover auto-pan with no action from the user for B.
+    func testCloseResetsViewportLocked() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
+        m.open()
+        m.viewportInjector = { _ in }
+        m.toggleViewportLock()
+        XCTAssertTrue(m.viewportLocked, "precondition: locked")
+
+        m.close()
+
+        XCTAssertFalse(m.viewportLocked, "close() clears the lock — the next (re)bound window starts unlocked")
+
+        // Proves the re-assert hazard is actually defused: publishing a fresh sink after close+reopen must
+        // stay silent (an unlocked model asserts nothing), unlike ``testViewportSinkPublishReassertsAHeldLock``.
+        m.open()
+        var freshSink: [UInt8] = []
+        m.viewportInjector = { freshSink.append($0) }
+        XCTAssertEqual(freshSink, [], "no stale lock carries into the re-bound window")
+    }
+
+    /// **`close()` clears the cadence/bitrate/network-stats/geometry telemetry.** `ConnectionTelemetry`
+    /// reads `streamFps`/`streamKbps` unconditionally (no gate on `active != nil`), so a closed/re-bound
+    /// pane must not keep the titlebar/sidebar connection cluster showing the LAST session's numbers as if
+    /// it were still streaming.
+    func testCloseClearsStreamTelemetryAndGeometry() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
+        m.open()
+        m.noteStreamFps(30)
+        m.noteStreamKbps(4000)
+        m.noteNetworkStats(fps: 29.5, fecPerSec: 0.5, unrecoveredPerSec: 0.0, holdMs: 12, pacerDepth: 1)
+        m.noteWindowGeometry(currentW: 1280, currentH: 800, maxW: 1920, maxH: 1080)
+        XCTAssertNotNil(m.streamFps)
+        XCTAssertNotNil(m.windowPointSize)
+        XCTAssertNotNil(m.windowMaxPointSize)
+
+        m.close()
+
+        XCTAssertNil(m.streamFps, "a closed pane must not keep showing the last session's cadence")
+        XCTAssertNil(m.streamKbps)
+        XCTAssertNil(m.statsFps)
+        XCTAssertNil(m.statsFecPerSec)
+        XCTAssertNil(m.statsUnrecoveredPerSec)
+        XCTAssertNil(m.statsHoldMs)
+        XCTAssertNil(m.statsPacerDepth)
+        XCTAssertNil(m.windowPointSize)
+        XCTAssertNil(m.windowMaxPointSize)
+    }
+
     // MARK: Display switcher (desktop pane)
 
     /// **`switchDisplay(to:)` re-targets a desktop pane and re-commits its endpoint** (the persisted

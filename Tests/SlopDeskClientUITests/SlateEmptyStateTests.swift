@@ -19,6 +19,14 @@ final class SlateEmptyStateTests: XCTestCase {
 
         XCTAssertEqual(SlateEmptyState.title(for: .noTabs), "No Open Tabs")
         XCTAssertEqual(SlateEmptyState.actionLabel(for: .noTabs), "New Tab")
+
+        // Connect-failed names the REAL reason verbatim and re-offers the Connect editor.
+        XCTAssertEqual(SlateEmptyState.title(for: .connectFailed(reason: "Connection refused")), "Connect Failed")
+        XCTAssertEqual(SlateEmptyState.caption(for: .connectFailed(reason: "Connection refused")), "Connection refused")
+        XCTAssertEqual(
+            SlateEmptyState.actionLabel(for: .connectFailed(reason: "Connection refused")),
+            "Connect to Host…",
+        )
     }
 
     func testEmptyCauseResolution() {
@@ -27,11 +35,21 @@ final class SlateEmptyStateTests: XCTestCase {
             ContentColumn.emptyCause(status: .reconnecting(attempt: 2, nextRetry: nil), host: "mac-studio"),
             .linkDown(host: "mac-studio"),
         )
-        // Fresh launch, in-flight first dial, and the give-up states all read not-connected (whose
-        // action opens the Connect editor) — never the self-healing "Reconnecting…" caption.
+        // Fresh launch, in-flight first dial, and unreachable all read not-connected (whose action
+        // opens the Connect editor) — never the self-healing "Reconnecting…" caption.
         XCTAssertEqual(ContentColumn.emptyCause(status: .disconnected, host: "h"), .neverConnected)
         XCTAssertEqual(ContentColumn.emptyCause(status: .connecting, host: "h"), .neverConnected)
         XCTAssertEqual(ContentColumn.emptyCause(status: .unreachable, host: "h"), .neverConnected)
-        XCTAssertEqual(ContentColumn.emptyCause(status: .failed("boom"), host: "h"), .neverConnected)
+        // An explicit failed connect keeps its reason — it must NOT fold into the generic copy.
+        // Unknown payloads pass through verbatim; known transport dumps arrive already run through
+        // `ConnectionPresenter.friendlyFailure` (the same voice as the status pill).
+        XCTAssertEqual(
+            ContentColumn.emptyCause(status: .failed("boom"), host: "h"),
+            .connectFailed(reason: "boom"),
+        )
+        XCTAssertEqual(
+            ContentColumn.emptyCause(status: .failed("POSIXErrorCode(rawValue: 61): Connection refused"), host: "h"),
+            .connectFailed(reason: "Connection refused — is slopdesk-hostd running on the host?"),
+        )
     }
 }

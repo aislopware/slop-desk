@@ -208,31 +208,19 @@ if let agentControlListener {
 // --transcript value (if any), tailed straight into the engine. Without a path the
 // server still binds (so a client can connect) and the replay log stays empty until
 // per-session tailing is wired up.
+//
+// Construction is deferred to inside the startup Task, AFTER `server.start()` resolves the
+// REAL bound port (`--port 0` mints an OS-chosen ephemeral port that can differ from
+// `parsed.port`) — `inspectorPort` is `terminalPort &+ 1` for the object's whole lifetime, so
+// building it from the raw requested port would bind the wrong port under `--port 0`.
 let inspectorEngine = InspectorEngine()
 let inspectorReplayLog = InspectorReplayLog()
 inspectorReplayLog.ingest(inspectorEngine.events)
 
-let inspectorServer: InspectorServer?
-if parsed.inspectorEnabled {
-    let inspector = InspectorServer(
-        terminalPort: parsed.port,
-        replayLog: inspectorReplayLog,
-        transcriptPath: parsed.transcriptPath,
-    )
-    inspector.onLog = log
-    inspectorServer = inspector
-
-    // If a transcript path was injected, tail it into the engine now (per-PTY discovery
-    // will replace this later). The tailer tolerates the file not existing
-    // yet, so it is safe to start before `claude` creates it.
-    if let path = parsed.transcriptPath {
-        let tailer = TranscriptTailer(path: path)
-        inspectorEngine.run(tailer: tailer, subagents: nil)
-        log("inspector tailing transcript \(path)")
-    }
-} else {
-    inspectorServer = nil
-}
+// Set inside the startup Task once `server.start()` resolves the real bound port. Read by
+// the SIGINT/SIGTERM handler (main-actor) below — a signal racing construction just sees `nil`
+// and skips the (not-yet-started) inspector, which `Task.stop()` on `nil` already tolerates.
+var inspectorServer: InspectorServer?
 
 // A one-shot latch so a SECOND SIGINT during the (potentially ~0.25s/pane) async shutdown does not
 // spawn a second teardown Task that calls `exit(0)` again — two concurrent libc `exit()` calls are UB
@@ -286,31 +274,45 @@ let sigintSource = makeShutdownSignalSource(SIGINT, name: "SIGINT")
 let sigtermSource = makeShutdownSignalSource(SIGTERM, name: "SIGTERM")
 
 Task {
+    let bound: UInt16
     do {
         try await server.start()
-        let bound = await server.boundPort() ?? parsed.port
+        bound = await server.boundPort() ?? parsed.port
         log("listening on 0.0.0.0:\(bound) (shell=\(server.shellPath), mode=shell)")
     } catch {
         log("failed to start: \(error)")
         exit(1)
     }
 
-    // Bring up the inspector listener (port + 1) once the terminal server is up. This is SEPARATE from
-    // the terminal-server bring-up above: by now the terminal server is already bound + accepting, so
-    // an inspector-bind failure (e.g. EADDRINUSE on port+1 while the main port was free) must tear the
-    // terminal server down CLEANLY — the orderly child-reap / `bye` path — before exiting, not `exit(1)`
-    // and leak a just-accepted shell un-reaped.
-    if let inspectorServer {
+    // Bring up the inspector listener (port + 1) once the terminal server is up and its REAL
+    // bound port is known — `--port 0` mints an OS-chosen ephemeral port that can differ from
+    // `parsed.port`, and `inspectorPort` is `terminalPort &+ 1` for the object's whole lifetime, so
+    // this must be built from `bound`, not the raw requested port. The inspector is read-only
+    // tooling layered on top of an already-healthy terminal server: a bind failure here (bad
+    // `--port 0`+privileged-port math, EADDRINUSE, …) is logged loudly and non-fatal — it must
+    // NOT tear down the terminal server that just successfully bound and could serve clients.
+    if parsed.inspectorEnabled {
+        let inspector = InspectorServer(
+            terminalPort: bound,
+            replayLog: inspectorReplayLog,
+            transcriptPath: parsed.transcriptPath,
+        )
+        inspector.onLog = log
+        inspectorServer = inspector
+
+        if let path = parsed.transcriptPath {
+            let tailer = TranscriptTailer(path: path)
+            inspectorEngine.run(tailer: tailer, subagents: nil)
+            log("inspector tailing transcript \(path)")
+        }
+
         do {
-            try await inspectorServer.start()
+            try await inspector.start()
         } catch {
-            // Route this exit(1) through the SAME one-shot latch as the SIGINT
-            // handler, so an inspector-bind failure and a concurrent Ctrl-C can never both call exit()
-            // (two concurrent libc exit()s are UB). If SIGINT already owns shutdown, let it finish.
-            guard shutdownLatch.tryFire() else { return }
-            log("inspector failed to start: \(error) — shutting down")
-            await server.stop()
-            exit(1)
+            log(
+                "inspector failed to bind on port \(inspector.inspectorPort) (\(error)) — continuing with terminal server only, no inspector",
+            )
+            inspectorServer = nil
         }
     }
 }

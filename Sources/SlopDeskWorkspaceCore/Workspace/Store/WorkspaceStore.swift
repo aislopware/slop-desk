@@ -232,6 +232,17 @@ public final class WorkspaceStore {
     /// `@MainActor`, serialized with the `teardownTasks` self-prune — no data race.
     private var tearingDownVideo: Set<PaneID> = []
 
+    /// The ids of every currently VIDEO-ACTIVE pane — a small, narrowly-scoped `@Observable` mirror of
+    /// "which handles have `isVideoActive == true`" kept in lockstep with the registry at every site that
+    /// can flip it: ``activateVideo(_:)`` / ``deactivateVideo(_:)`` (the store-driven cap admission), the
+    /// iOS ``pauseSession(_:)`` / ``resumeSession(_:)`` fan-out (which flips `isVideoActive` on the handle
+    /// directly, bypassing the store verbs), and orphan removal in ``reconcileRegistry(desiredLeafIDs:spec:onMaterialize:)``
+    /// (a closed pane's id must not linger). ``hasFreeVideoSlot(for:)`` reads ONLY this set (never the
+    /// `registry` stored property) — Swift's Observation tracks per STORED PROPERTY, so a
+    /// `GuiLeafView.display` reading the whole `registry` would re-render on EVERY unrelated pane
+    /// materializing/closing; reading this instead means it only re-renders on an actual cap-relevant edge.
+    private var activeVideoPaneIDs: Set<PaneID> = []
+
     /// The last layout the view solved, cached so geometric ``move(_:)`` can resolve a neighbour
     /// without the store knowing the view's size. `nil` until the view reports one (compact mode never
     /// solves a multi-pane layout — `.next`/`.previous` still work via the pre-order cycle fallback).
@@ -1528,6 +1539,13 @@ public final class WorkspaceStore {
     /// test default) ⇒ fall back to ``clipboardRing`` head via ``currentLocalClipboard()``.
     @ObservationIgnored public var clipboardTextProvider: (() -> String?)?
 
+    /// Brings a DETACHED pane's satellite `NSWindow` to the front, injected by the app (macOS:
+    /// `SatelliteWindowsCoordinator`) so the pure store stays AppKit-free + testable. Returns `true` iff a
+    /// satellite for `paneID` was found and revealed. `nil` (the headless / test default) or a `false`
+    /// return means ``openRemoteWindow(windowID:title:appName:)`` still returns the existing pane WITHOUT
+    /// revealing it — better a silent no-op than a duplicate live video stream.
+    @ObservationIgnored public var revealSatelliteWindow: ((PaneID) -> Bool)?
+
     /// The current local clipboard text: the injected ``clipboardTextProvider`` if wired, else the most
     /// recent recorded clip (``clipboardRing`` head). `nil`/empty ⇒ nothing to paste.
     public func currentLocalClipboard() -> String? {
@@ -2070,6 +2088,7 @@ public final class WorkspaceStore {
         if handle.isVideoActive { return true }
         guard hasFreeVideoSlot(for: id) else { return false }
         handle.setVideoActive(true)
+        if handle.isVideoActive { activeVideoPaneIDs.insert(id) }
         return handle.isVideoActive
     }
 
@@ -2082,11 +2101,12 @@ public final class WorkspaceStore {
     /// in-flight `tearingDownVideo` stacks against the cap so the answer agrees with what an admission
     /// attempt this same tick would actually decide.
     ///
-    /// `@Observable` reads of `registry` make this reactive — but the view layer ALSO re-attempts via
-    /// the explicit ``videoPromotionGeneration`` nudge on slot-freeing events, so this read need not be
-    /// the only liveness trigger; it is the cap-vs-config discriminator for the display decision.
+    /// `@Observable` reads of ``activeVideoPaneIDs`` (NOT the whole `registry`) make this reactive to
+    /// exactly cap-relevant edges — but the view layer ALSO re-attempts via the explicit
+    /// ``videoPromotionGeneration`` nudge on slot-freeing events, so this read need not be the only
+    /// liveness trigger; it is the cap-vs-config discriminator for the display decision.
     public func hasFreeVideoSlot(for id: PaneID) -> Bool {
-        let activeOthers = registry.values.count(where: { $0.kind.isVideo && $0.isVideoActive && $0.id != id })
+        let activeOthers = activeVideoPaneIDs.subtracting([id]).count
         // Count panes whose video stack is still TEARING DOWN against the cap too: an orphan
         // closed this same tick is already gone from the registry but its UDP / VTDecompression /
         // CVDisplayLink stack is not released until its async teardown completes, so admitting a new
@@ -2107,6 +2127,7 @@ public final class WorkspaceStore {
     public func deactivateVideo(_ id: PaneID) {
         let wasActive = registry[id]?.isVideoActive == true
         registry[id]?.setVideoActive(false)
+        activeVideoPaneIDs.remove(id)
         if wasActive { videoPromotionGeneration &+= 1 }
     }
 
@@ -2143,10 +2164,26 @@ public final class WorkspaceStore {
     /// `PaneID` crosses; the handle is re-resolved here, never sent across the boundary).
     private func pauseSession(_ id: PaneID) async {
         await registry[id]?.pause()
+        // `pause()` flips `isVideoActive` directly on the handle (bypassing ``deactivateVideo(_:)``) —
+        // resync the ``activeVideoPaneIDs`` mirror so ``hasFreeVideoSlot(for:)`` stays truthful.
+        syncActiveVideoMirror(id)
     }
 
     private func resumeSession(_ id: PaneID) async {
         await registry[id]?.resume()
+        // `resume()` flips `isVideoActive` directly too (re-opens video active before pause) — same resync.
+        syncActiveVideoMirror(id)
+    }
+
+    /// Reconciles ``activeVideoPaneIDs`` for `id` against its CURRENT handle state — idempotent, the
+    /// single re-sync point for the two sites that flip `isVideoActive` OUTSIDE ``activateVideo(_:)``/
+    /// ``deactivateVideo(_:)`` (``pauseSession(_:)`` / ``resumeSession(_:)``).
+    private func syncActiveVideoMirror(_ id: PaneID) {
+        if registry[id]?.isVideoActive == true {
+            activeVideoPaneIDs.insert(id)
+        } else {
+            activeVideoPaneIDs.remove(id)
+        }
     }
 
     /// Awaits every in-flight orphan ``PaneSessionHandle/teardown()`` spawned by ``reconcile()`` to
@@ -3091,6 +3128,25 @@ public final class WorkspaceStore {
         }
     }
 
+    /// Which DETACHED (satellite-window) pane, if any, currently holds the AppKit key-window state — the
+    /// focus truth for a pane living outside every tab's split tree, where ``tree/activeSession``'s
+    /// active-tab/active-pane chain can never point (docs/DECISIONS.md — detach ↔ reattach). Written by
+    /// ``noteSatelliteKey(paneID:isKey:)``, which the app layer (``SatelliteWindowsCoordinator``) calls
+    /// from the satellite `NSWindow`'s `didBecomeKey`/`didResignKey`. Read by ``isPaneFocused(_:)`` so a
+    /// command finishing in the satellite the user is actively looking at neither badges nor notifies.
+    public internal(set) var keySatellitePaneID: PaneID?
+
+    /// Records a satellite window's key-state transition for ``keySatellitePaneID``. `isKey == true` sets
+    /// it (the satellite the user is now looking at); `isKey == false` clears it ONLY if `paneID` is still
+    /// the current holder — a stale resign racing a newer satellite's become-key must not clobber it.
+    public func noteSatelliteKey(paneID: PaneID, isKey: Bool) {
+        if isKey {
+            keySatellitePaneID = paneID
+        } else if keySatellitePaneID == paneID {
+            keySatellitePaneID = nil
+        }
+    }
+
     /// The THIN long-command notification sink: the app sets it to call
     /// `notifier.notifyIfLong(...)`. Kept off the store so `UNUserNotificationCenter` never enters the
     /// store (→ the focus-gated handler stays unit-testable with a spy). `nil` in tests / headless ⇒ the
@@ -3463,6 +3519,10 @@ public final class WorkspaceStore {
         let orphans = registry.filter { !leafSet.contains($0.key) }.map(\.value)
         for orphan in orphans {
             registry.removeValue(forKey: orphan.id)
+            // A closed pane must not linger in the cap mirror — its occupancy (if it was active) is about
+            // to transfer entirely to `tearingDownVideo` below, so drop it here unconditionally (a no-op
+            // for a never-active / non-video orphan).
+            activeVideoPaneIDs.remove(orphan.id)
             // Hold the cap slot for an orphan that is STILL holding a live video stack. Read
             // `isVideoActive` NOW, before the async teardown nils it, and record the id so
             // `activateVideo` keeps counting it until its teardown task actually releases the resources.

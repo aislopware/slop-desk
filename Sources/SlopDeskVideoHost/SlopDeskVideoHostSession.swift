@@ -970,7 +970,7 @@ public actor SlopDeskVideoHostSession {
                 let run = inputRun
                 inputRun = []
                 await injectCoalesced(run)
-                handleRecovery(data)
+                await handleRecovery(data)
             case .video,
                  .geometry,
                  .cursor,
@@ -1212,7 +1212,7 @@ public actor SlopDeskVideoHostSession {
         UInt32(truncatingIfNeeded: Int64((ProcessInfo.processInfo.systemUptime - sessionStartUptime) * 1000))
     }
 
-    private func handleRecovery(_ data: Data) {
+    private func handleRecovery(_ data: Data) async {
         switch recoveryRouter.route(datagram: data, mediaFlowing: stateMachine.mediaFlowing) {
         case let .forceKeyframe(lastDecoded):
             // Drop byte-identical redundant copies (the client sends 3× per logical request). A
@@ -1472,6 +1472,12 @@ public actor SlopDeskVideoHostSession {
                     gapNanos: 0,
                     chunkFragments: Self.paceChunkFragments,
                 ))
+            } else {
+                // SLOPDESK_SEND_LANE=0 (inline-pacing path): no lane to enqueue on — mirror the primary
+                // frame-send path's own fallback (`sendPaced`) so a NACK hit is never silently dropped
+                // just because the lane is disabled.
+                dbg("NACK frame=\(frameID): retransmitting \(resend.count)/\(fragIndices.count) frags (inline)")
+                await sendPaced(resend)
             }
         case let .drop(reason):
             log.error("dropping recovery datagram: \(reason)")
@@ -3584,8 +3590,13 @@ final class AudioStreamSender: @unchecked Sendable {
             if on, !enabled {
                 lastConfigSentUptime = -.infinity
                 // The sub-frame remainder left by the last pre-disable buffer is stale by now —
-                // starting clean keeps the first fresh frame free of an old-audio shard.
+                // starting clean keeps the first fresh frame free of an old-audio shard. The
+                // converter's own internal codec state (bit reservoir / window history) is just as
+                // stale after an arbitrarily long disable window — reset both together so the first
+                // post-resume frame is a clean encoder start, not a continuation of audio from long
+                // before the gap.
                 encoder?.resetAccumulator()
+                encoder?.resetConverterState()
             }
             enabled = on
         }

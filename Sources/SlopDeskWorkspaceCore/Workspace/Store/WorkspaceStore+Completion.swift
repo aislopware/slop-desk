@@ -177,10 +177,13 @@ public extension WorkspaceStore {
         }
     }
 
-    /// Whether `id` is the focused leaf RIGHT NOW: the app is active AND `id` is the active session's
-    /// active tab's active pane. Cross-platform (reads `tree.activePane`, NOT the iOS focus coordinator).
+    /// Whether `id` is the focused leaf RIGHT NOW: `id` is the DETACHED pane whose satellite window is
+    /// currently key (``keySatellitePaneID`` — checked FIRST since a detached pane is never a tab's
+    /// active pane), else the app is active AND `id` is the active session's active tab's active pane.
+    /// Cross-platform (reads `tree.activePane`, NOT the iOS focus coordinator).
     internal func isPaneFocused(_ id: PaneID) -> Bool {
-        isAppActive && id == tree.activeSession?.activeTab?.activePane
+        if let keySatellitePaneID, id == keySatellitePaneID { return true }
+        return isAppActive && id == tree.activeSession?.activeTab?.activePane
     }
 
     /// Whether pane `id` is the focused leaf RIGHT NOW — the `sourcePaneFocused` input the macOS notifier's

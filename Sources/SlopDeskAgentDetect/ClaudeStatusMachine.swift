@@ -83,7 +83,7 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
             apply(event, at: now)
 
         case let .manifestVerdict(verdict):
-            applyManifest(verdict)
+            applyManifest(verdict, at: now)
 
         case let .oscTitle(title):
             if Self.titleNamesClaude(title) { liftPresenceFloor() }
@@ -143,7 +143,7 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
 
     // MARK: - Manifest verdict (conservative fallback)
 
-    private mutating func applyManifest(_ verdict: ClaudeStatus) {
+    private mutating func applyManifest(_ verdict: ClaudeStatus, at now: TimeInterval) {
         switch verdict {
         case .none:
             // Unsure → never downgrade; presence is the floor.
@@ -160,7 +160,10 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
         case .idle:
             if blockSource != .hook, status == .none { enter(.idle, label: nil) }
         case .done:
-            if blockSource != .hook { enter(.done, label: label, at: nil) }
+            // Anchor the done→idle decay clock exactly like the hook `.stop` path — a
+            // manifest-sourced done with a nil anchor would never decay (`decayIfDue` requires
+            // `doneSince`), latching the pane `.done` until some other signal overrides it.
+            if blockSource != .hook { enter(.done, label: label, at: now) }
         }
     }
 

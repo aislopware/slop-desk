@@ -33,13 +33,25 @@ public struct MuxFrameDecoder {
     /// physically removed (reclaimed by ``compactConsumed()``).
     private var readOffset = 0
 
+    /// Set once a decode error has been thrown — the byte-boundary for the whole stream is lost, so
+    /// no later byte can be trusted to start a frame. A poisoned decoder DROPS all further input
+    /// (``append(_:)`` is a no-op; the buffer was cleared at the fault, so a peer that keeps the
+    /// socket open cannot grow it without bound) and ``nextFrame()`` rethrows the original fault.
+    private var fault: Error?
+
     public init() {}
 
     /// Appends a freshly received chunk of bytes to the internal buffer.
     /// Safe to call with empty data, a single byte, or many frames' worth.
+    /// Dropped entirely once the decoder is poisoned by a prior decode fault.
     public mutating func append(_ data: Data) {
+        guard fault == nil else { return }
         buffer.append(data)
     }
+
+    /// Test-only: current buffered byte count — asserts a poisoned decoder cannot be grown by
+    /// further ``append(_:)`` traffic.
+    var bufferedByteCountForTesting: Int { buffer.count }
 
     /// Returns the next complete mux frame, or `nil` if a full frame is not yet
     /// buffered (caller should `append` more bytes and retry).
@@ -49,6 +61,9 @@ public struct MuxFrameDecoder {
     ///   ``MuxEnvelopeCodec/decode(inner:)`` (unknown mux type, malformed/truncated
     ///   body).
     public mutating func nextFrame() throws -> MuxFrame? {
+        // Poisoned: a prior fault already lost the stream's byte-boundary — rethrow it so every
+        // caller keeps failing (fail-stop), never resynchronizes onto attacker-chosen bytes.
+        if let fault { throw fault }
         // Bytes not yet consumed by a completed frame.
         let available = buffer.count - readOffset
         // Need at least the length prefix to know how big the frame is.
@@ -60,7 +75,7 @@ public struct MuxFrameDecoder {
 
         // Reject implausibly large frames before allocating / waiting for them.
         guard muxFrameLength <= SlopDesk.maxFramePayloadLength else {
-            throw SlopDeskError.frameTooLarge(muxFrameLength)
+            throw poison(SlopDeskError.frameTooLarge(muxFrameLength))
         }
 
         // Wait until the whole inner run has arrived (partial read — not an error).
@@ -78,7 +93,21 @@ public struct MuxFrameDecoder {
         // Bound the wasted head mid-burst; a drain that returns nil reclaims the rest.
         if readOffset >= Self.compactionThreshold { compactConsumed() }
 
-        return try MuxEnvelopeCodec.decode(inner: inner)
+        do {
+            return try MuxEnvelopeCodec.decode(inner: inner)
+        } catch {
+            throw poison(error)
+        }
+    }
+
+    /// Marks the decoder poisoned by `error` and frees the buffer (the remaining bytes are past a
+    /// lost boundary — undecodable by definition — and the owner may not tear the socket down
+    /// synchronously). Returns the error so fault sites read `throw poison(error)`.
+    private mutating func poison(_ error: Error) -> Error {
+        fault = error
+        buffer.removeAll(keepingCapacity: false)
+        readOffset = 0
+        return error
     }
 
     /// Physically drops the consumed prefix (`readOffset` bytes) from the front of the buffer ONCE,

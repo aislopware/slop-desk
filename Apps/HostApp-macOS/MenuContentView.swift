@@ -57,7 +57,7 @@ struct MenuContentView: View {
         ) { action in
             Button(action.confirmLabel, role: .destructive) {
                 switch action {
-                case .stopHost: controller.stop()
+                case .stopHost: Task { await controller.stop() }
                 case .quit: NSApplication.shared.terminate(nil)
                 }
                 pendingDestruction = nil
@@ -212,7 +212,7 @@ struct MenuContentView: View {
             if hasConnectedClients {
                 pendingDestruction = .stopHost(clientCount: controller.clientCount ?? 0)
             } else {
-                controller.stop()
+                Task { await controller.stop() }
             }
         } else {
             // Start ONLY on a valid port; the button is disabled otherwise, so this is

@@ -268,6 +268,15 @@ struct SplitContainer: View {
                 // overlay) — NOT the 0.20s slab frame-morph, which swept a big rectangle edge-to-edge.
                 .animation(Slate.Anim.smallFade, value: move.zone)
             }
+            #if os(macOS)
+            // Escape bails out of a live move without committing — armed only while a drag is in flight,
+            // so it never shadows Escape for anything else at rest.
+            PaneMoveEscapeMonitor(isActive: move != nil) {
+                move = nil
+                paneDrag?.end()
+            }
+            .frame(width: 0, height: 0)
+            #endif
         }
     }
 
@@ -302,6 +311,14 @@ struct SplitContainer: View {
                 paneDrag?.end()
             },
             onTap: { store.focusPaneTree(leaf.id) },
+            // The interruption safety net: a cancel, or this leaf closing mid-drag (torn out of the
+            // `ForEach` before `onEnded` can fire), still clears the view-local move state + the
+            // cross-window coordinator — otherwise `.allowsHitTesting(move == nil || …)` below wedges
+            // EVERY other handle non-interactive forever. No commit here — a cancel commits nothing.
+            onInterrupted: {
+                move = nil
+                paneDrag?.end()
+            },
             // A video leaf streams arbitrary (usually light) content — the handle pill needs its
             // contrast plate there (see `PaneMoveHandle.contentIsUnthemed`).
             contentIsUnthemed: store.tree.spec(for: leaf.id)?.kind.isVideo == true,

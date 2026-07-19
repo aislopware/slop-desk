@@ -48,4 +48,17 @@ final class DecodeAdmissionBudgetTests: XCTestCase {
         var budget = DecodeAdmissionBudget()
         XCTAssertTrue(budget.admit(bytes: 2 << 20))
     }
+
+    func testOversizedFrameAdmitsWhenIdle() {
+        // A frame whose byte size ALONE exceeds the cap must still admit onto an IDLE stage —
+        // rejecting it drops every same-size-class replacement keyframe forever (a livelock)
+        // while the decode stage sits empty. The budget bounds QUEUED work, not frame size.
+        var budget = DecodeAdmissionBudget(maxPendingCount: 4, maxPendingBytes: 5000)
+        XCTAssertTrue(budget.admit(bytes: 9000), "an idle stage must admit regardless of byte size")
+        XCTAssertEqual(budget.pendingCount, 1)
+        XCTAssertEqual(budget.pendingBytes, 9000)
+        XCTAssertFalse(budget.admit(bytes: 100), "the oversized admission still counts against the byte cap")
+        budget.complete(bytes: 9000)
+        XCTAssertTrue(budget.admit(bytes: 100), "the budget recovers once the oversized decode completes")
+    }
 }

@@ -42,7 +42,19 @@ public final class WindowParkingManager {
     /// records its original frame for restore. Returns the ACHIEVED point size to capture/ack at, or
     /// `nil` if the move failed (caller then captures the window in place at 1×). Crash-free.
     public func park(channelID: UInt32, windowID: CGWindowID, pid: pid_t, displayID: CGDirectDisplayID) -> CGSize? {
-        switch ledger.park(channelID: channelID, windowID: windowID) {
+        let decision = ledger.park(channelID: channelID, windowID: windowID)
+        // A retarget (same channel, DIFFERENT window) releases the old window's hold inside
+        // `ledger.park`; if that was its last lane, put it back now — exactly what `unpark` does —
+        // so the old window doesn't sit shrunk on the VD until the whole session tears down.
+        if let retarget = ledger.takePendingRetargetRestore() {
+            WindowPlacement.restoreWindow(
+                windowID: retarget.windowID,
+                pid: retarget.pid,
+                toFrame: retarget.originalFrame,
+            )
+            persistParkedSet()
+        }
+        switch decision {
         case let .reuse(size):
             return size
         case .needsMove:

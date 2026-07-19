@@ -373,6 +373,11 @@ root["videoControl"] = [
         ["x": 0, "y": 0, "w": 2880, "h": 1800],
         ["x": 96, "y": 1406, "w": 538, "h": 172],
     ]]),
+    vc(
+        "displayMax",
+        .displayMax(width: 1920, height: 1080),
+        ["maxWidth": 1920, "maxHeight": 1080],
+    ),
     vc("listSystemDialogs", .listSystemDialogs, [:]),
     vc("systemDialogList", .systemDialogList([
         SystemDialogSummary(windowID: 9, owner: "SecurityAgent", title: "", width: 400, height: 200, isSecure: true),
@@ -522,6 +527,11 @@ root["recovery"] = [
             "pacerPresentGaps": 6,
             "pacerDepth": 2,
         ],
+    ),
+    rc(
+        "requestFragments",
+        .requestFragments(frameID: 0x0102_0304, fragIndices: [0x0005, 0x000A]),
+        ["frameID": 0x0102_0304, "fragIndices": [0x0005, 0x000A]],
     ),
 ]
 

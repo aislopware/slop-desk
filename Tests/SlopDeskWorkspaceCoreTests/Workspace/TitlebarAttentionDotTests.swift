@@ -185,6 +185,35 @@ final class TitlebarAttentionDotTests: XCTestCase {
         XCTAssertNil(entry.since)
     }
 
+    /// A DETACHED (satellite-window) pane lives outside every tab's split tree, so the tab-walk alone
+    /// would never see it — a blocked/failed satellite must still surface in the titlebar dot / jump
+    /// queue while its window is not the key one (i.e. not looked at).
+    func testDetachedPaneAppearsInRollupWhenNotKey() throws {
+        let store = makeStore()
+        let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
+        store.detachPaneToWindow(paneID)
+        XCTAssertTrue(store.tree.isDetached(paneID), "precondition: the pane left the tree into a satellite")
+
+        store.setAgentStatus(.needsPermission, for: paneID)
+
+        XCTAssertTrue(store.hasUnseenAttention, "a blocked detached pane lights the titlebar dot")
+        XCTAssertEqual(store.unseenAttentionPanes.map(\.pane), [paneID])
+    }
+
+    /// The SAME detached pane drops out of the rollup the instant its satellite becomes the key window —
+    /// it is no longer "unseen", it's the one you're looking at (mirrors the tiled focused-leaf exclusion).
+    func testDetachedPaneDropsFromRollupWhenItsSatelliteIsKey() throws {
+        let store = makeStore()
+        let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
+        store.detachPaneToWindow(paneID)
+        store.setAgentStatus(.needsPermission, for: paneID)
+        XCTAssertTrue(store.hasUnseenAttention, "precondition: it lists while not key")
+
+        store.noteSatelliteKey(paneID: paneID, isKey: true)
+
+        XCTAssertFalse(store.hasUnseenAttention, "the pane you're actively looking at never lists")
+    }
+
     /// Within a rank, entries sort `since`-ASCENDING (the longer-waiting entry is topmost) rather than by
     /// traversal order — the trailing age column then reads as a monotonically-decreasing gauge.
     func testUnseenAttentionPanesSortsSinceAscendingWithinRank() throws {

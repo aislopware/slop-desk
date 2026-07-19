@@ -489,37 +489,24 @@ public struct AgentControlHandler: Sendable {
             return errorResponse(id: id, message: "invalid regex: \(error.localizedDescription)")
         }
 
-        // Box the mutable accumulator + matched flag in a class so the @Sendable observer closure
+        // Box the mutable scanner + matched flag in a class so the @Sendable observer closure
         // (PTY read-loop thread) and the NSCondition wait (connection thread) share state without
         // capturing `var`s across concurrency boundaries — Swift 6 strict sendability.
         final class WaitState: @unchecked Sendable {
             let condition = NSCondition()
             var matched = false
-            var accumulator = Data()
+            var scanner: WaitUntilScanner
+            init(regex: NSRegularExpression) { scanner = WaitUntilScanner(regex: regex) }
         }
-        let state = WaitState()
+        let state = WaitState(regex: regex)
 
         let observerID = UUID()
-        // Register the observer; it runs on the PTY read-loop thread.
+        // Register the observer; it runs on the PTY read-loop thread — so the per-chunk work MUST
+        // stay bounded (the scanner strips/decodes/matches incrementally; re-processing the whole
+        // accumulated buffer here was O(n²) over a chatty command and visibly lagged the pane).
         session.registerOutputObserver(id: observerID) { chunk in
             state.condition.lock()
-            state.accumulator.append(chunk)
-            // Trim the oldest half if the buffer exceeds the cap.
-            if state.accumulator.count > waitBufferCap {
-                state.accumulator = Data(state.accumulator.suffix(waitBufferCap / 2))
-            }
-            // ANSI-strip the accumulated text and test the regex.
-            let bytes = state.accumulator
-            let rawStr: String =
-                if let utf8 = String(bytes: bytes, encoding: .utf8) {
-                    utf8
-                } else {
-                    String(bytes.map { $0 < 0x80 ? $0 : UInt8(0x3F) }
-                        .map { Character(UnicodeScalar($0)) })
-                }
-            let text = ANSIStripper.strip(rawStr)
-            let range = NSRange(text.startIndex..., in: text)
-            if regex.firstMatch(in: text, range: range) != nil {
+            if !state.matched, state.scanner.ingest(chunk) {
                 state.matched = true
                 state.condition.signal()
             }
@@ -750,6 +737,169 @@ public struct AgentControlHandler: Sendable {
         else { return nil }
         let params = obj["params"] as? [String: Any] ?? [:]
         return (id, method, params)
+    }
+}
+
+// MARK: - Incremental `wait --until` scanner
+
+/// Incremental matcher for the `wait --until` output scan: decodes UTF-8 + strips ANSI
+/// CHUNK-BY-CHUNK and regex-matches only a bounded window, so per-chunk work on the PTY
+/// read-loop thread stays O(chunk) instead of O(accumulated) — the old whole-buffer
+/// re-decode/re-strip/re-regex was O(n²) over a chatty command's output and lagged the pane's
+/// live echo for the duration of the run.
+///
+/// - A small RAW CARRY (≤ ``maxCarryBytes``) holds back a trailing incomplete UTF-8 sequence or
+///   an unterminated ANSI escape so sequences split across chunk boundaries decode/strip exactly
+///   as if they had arrived whole. A "sequence" that does not terminate within the carry budget is
+///   force-flushed through the stripper — hostile/garbage bytes (or a giant inline-image OSC) must
+///   not buffer raw output indefinitely; their body may then surface as plain text, the bounded
+///   trade this scanner makes.
+/// - The regex runs over the newly stripped text plus the last ``overlapWindow`` characters of
+///   what came before (cross-chunk marker matches). A marker longer than the overlap window is not
+///   guaranteed to match across a chunk boundary; `^` anchors match the window, not the whole run.
+/// - ``stripped`` keeps the full stripped accumulation under the same ``AgentControlHandler/waitBufferCap``
+///   cap + trim-oldest-half semantics the raw accumulator had.
+struct WaitUntilScanner {
+    /// Raw-byte budget for the held-back tail (an escape/UTF-8 sequence still awaiting its
+    /// terminator/continuation). Real terminal escapes are far shorter; past this the tail is
+    /// force-flushed.
+    static let maxCarryBytes = 128
+
+    /// Characters of already-stripped text re-included ahead of each new chunk's match window so a
+    /// marker spanning a chunk boundary still matches.
+    static let overlapWindow = 4096
+
+    private let regex: NSRegularExpression
+    private let bufferCap: Int
+
+    /// Raw bytes held back from the previous chunk (see ``maxCarryBytes``).
+    private var carry = Data()
+
+    /// The last ``overlapWindow`` characters of stripped text — the cross-chunk match prefix.
+    private var recent = ""
+
+    /// The full stripped accumulation (UTF-8 bytes; storage only — matching is windowed), capped
+    /// at `bufferCap` with the oldest half trimmed past the cap.
+    private(set) var stripped = Data()
+
+    init(regex: NSRegularExpression, bufferCap: Int = AgentControlHandler.waitBufferCap) {
+        self.regex = regex
+        self.bufferCap = bufferCap
+    }
+
+    /// Feeds one raw PTY chunk. Returns `true` when the pattern matched in the window this chunk
+    /// completed (a match is latched by the caller; ingest never needs to re-report it).
+    mutating func ingest(_ chunk: Data) -> Bool {
+        var pending = [UInt8](carry)
+        pending.append(contentsOf: chunk)
+        carry.removeAll(keepingCapacity: true)
+
+        var cut = Self.holdbackStart(in: pending)
+        // Bound the carry: a sequence that will not terminate within the budget is not a real
+        // escape worth waiting for — flush it through the stripper (whose skip helpers handle a
+        // runaway body safely) rather than buffering raw bytes without bound.
+        if pending.count - cut > Self.maxCarryBytes { cut = pending.count }
+        if cut < pending.count { carry = Data(pending[cut...]) }
+        guard cut > 0 else { return false }
+
+        let text = ANSIStripper.strip(AgentControlHandler.decodeLossyUTF8(Array(pending[..<cut])))
+        guard !text.isEmpty else { return false }
+
+        // Storage accumulator: same cap + trim-oldest-half semantics as the raw buffer had.
+        stripped.append(contentsOf: text.utf8)
+        if stripped.count > bufferCap {
+            stripped = Data(stripped.suffix(bufferCap / 2))
+        }
+
+        // Windowed match: the new text plus the trailing overlap of everything before it.
+        let searchText = recent + text
+        recent = String(searchText.suffix(Self.overlapWindow))
+        let range = NSRange(searchText.startIndex..., in: searchText)
+        return regex.firstMatch(in: searchText, range: range) != nil
+    }
+
+    /// Returns the index from which the tail of `bytes` must be HELD BACK into the next chunk: the
+    /// start of a trailing escape sequence that has not terminated yet, or of a trailing truncated
+    /// UTF-8 multi-byte codepoint — either can only be stripped/decoded once its continuation
+    /// arrives. Mirrors ``ANSIStripper``'s grammar exactly (a forward scan, so a `0x9B`/`0x9D`
+    /// UTF-8 continuation byte is never misread as a C1 introducer). `bytes.count` = nothing held.
+    static func holdbackStart(in bytes: [UInt8]) -> Int {
+        var i = 0
+        let n = bytes.count
+        while i < n {
+            let b = bytes[i]
+            // Multi-byte UTF-8 lead: hold the whole codepoint back if its continuations are missing.
+            if b >= 0xC2, b <= 0xF7 {
+                let tail = b >= 0xF0 ? 3 : (b >= 0xE0 ? 2 : 1)
+                if i + tail >= n { return i }
+                i += tail + 1
+                continue
+            }
+            if b == 0x1B { // ESC
+                guard i + 1 < n else { return i } // lone trailing ESC — introducer unknown yet
+                switch bytes[i + 1] {
+                case 0x5B: // CSI
+                    guard let end = csiEnd(bytes, from: i + 2) else { return i }
+                    i = end
+                case 0x5D, // OSC
+                     0x50, // DCS
+                     0x58, // SOS
+                     0x5E, // PM
+                     0x5F: // APC
+                    guard let end = stringCommandEnd(bytes, from: i + 2) else { return i }
+                    i = end
+                case 0x28, // charset designator: ESC + introducer + one designator byte
+                     0x29,
+                     0x2A,
+                     0x2B:
+                    guard i + 2 < n else { return i }
+                    i += 3
+                default:
+                    i += 2 // two-byte ESC sequence — complete as-is
+                }
+                continue
+            }
+            if b == 0x9B { // raw C1 CSI (never a continuation here — those are consumed above)
+                guard let end = csiEnd(bytes, from: i + 1) else { return i }
+                i = end
+            } else if b == 0x9D { // raw C1 OSC
+                guard let end = stringCommandEnd(bytes, from: i + 1) else { return i }
+                i = end
+            } else {
+                i += 1
+            }
+        }
+        return n
+    }
+
+    /// The index just past a CSI body starting at `start` (params + intermediates + one final
+    /// byte), or `nil` when the body runs off the end of `bytes` (final byte not yet arrived).
+    /// A non-final, non-body byte ends the sequence malformed-but-complete, matching
+    /// `ANSIStripper.skipCSI`.
+    private static func csiEnd(_ bytes: [UInt8], from start: Int) -> Int? {
+        var i = start
+        while i < bytes.count, bytes[i] >= 0x30, bytes[i] <= 0x3F { i += 1 } // parameter bytes
+        while i < bytes.count, bytes[i] >= 0x20, bytes[i] <= 0x2F { i += 1 } // intermediate bytes
+        guard i < bytes.count else { return nil }
+        return (bytes[i] >= 0x40 && bytes[i] <= 0x7E) ? i + 1 : i // final byte (or malformed stop)
+    }
+
+    /// The index just past an OSC/DCS/SOS/PM/APC body starting at `start` (terminated by BEL, C1
+    /// ST, or `ESC \` — a bare ESC counts as a malformed terminator, matching
+    /// `ANSIStripper.skipStringCommand`), or `nil` when no terminator has arrived yet (a trailing
+    /// lone ESC is undecidable — it may be the first byte of ST).
+    private static func stringCommandEnd(_ bytes: [UInt8], from start: Int) -> Int? {
+        var i = start
+        while i < bytes.count {
+            let b = bytes[i]
+            if b == 0x07 || b == 0x9C { return i + 1 }
+            if b == 0x1B {
+                guard i + 1 < bytes.count else { return nil }
+                return bytes[i + 1] == 0x5C ? i + 2 : i + 1
+            }
+            i += 1
+        }
+        return nil
     }
 }
 

@@ -331,8 +331,11 @@ public actor MuxSubChannel: MessageChannel {
 
     /// Feeds an inbound `.channelData` payload for THIS channel into its decoder and yields every
     /// complete inner ``WireMessage`` frame. Called by ``MuxNWConnection`` after it demuxes the
-    /// shared stream. A decode fault is fatal for this channel only (finishes the inbound stream with
-    /// the error) — other channels on the shared connection are untouched.
+    /// shared stream. A decode fault is fatal for this channel only — the channel is FINISHED with
+    /// the error (`isFinished` flips, parked senders wake and throw), which the owner's `route`
+    /// reads to stop feeding it and unregister it — other channels on the shared connection are
+    /// untouched. The per-channel decoder poisons itself on the fault, so a payload that races in
+    /// before the owner unregisters is dropped, never re-buffered.
     ///
     /// Returns the `.channelData` BODY byte count (the wire payload length) so the owner can feed its
     /// ``ReceiveWindowAccountant`` and emit a `windowAdjust` once the half-window threshold is
@@ -346,7 +349,7 @@ public actor MuxSubChannel: MessageChannel {
                 inboundContinuation.yield(message)
             }
         } catch {
-            inboundContinuation.finish(throwing: error)
+            finish(throwing: error)
         }
         return payload.count
     }

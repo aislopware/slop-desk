@@ -41,6 +41,18 @@ public final class VirtualDisplay {
 
     public init() {}
 
+    /// Whether the four private `CGVirtualDisplay*` classes actually exist in the running process's
+    /// CoreGraphics.framework. They are `weak_import`ed (see `CGVirtualDisplayPrivate.h`) precisely
+    /// so this can be a plain runtime check instead of a dyld-time hard failure — a future macOS
+    /// point release that removes/renames one of them just flips this to `false` instead of
+    /// crashing the daemon on launch. Checked once (`static let` is lazy + thread-safe-once) and
+    /// cached for the process lifetime; never instantiates a display.
+    static let privateClassesAvailable: Bool =
+        NSClassFromString("CGVirtualDisplay") != nil &&
+        NSClassFromString("CGVirtualDisplayDescriptor") != nil &&
+        NSClassFromString("CGVirtualDisplaySettings") != nil &&
+        NSClassFromString("CGVirtualDisplayMode") != nil
+
     /// Create a HiDPI virtual display for `geometry`, advertising refresh modes that cover `fps`.
     /// Returns its `CGDirectDisplayID` on success, `nil` on ANY failure (private API absent on this
     /// OS, WindowServer refusal, applySettings timeout/failure, displayID stayed 0, pixel-limit
@@ -50,6 +62,15 @@ public final class VirtualDisplay {
         name: String = "SlopDesk Remote",
         fps: Int = 60,
     ) async -> CGDirectDisplayID? {
+        // Gate the FIRST use of any of the four private classes behind the weak-linked existence
+        // check — constructing `CGVirtualDisplayDescriptor()` below with a class that dyld resolved
+        // to nil (a removed/renamed private API on a future OS) would crash on the first message
+        // send. This keeps the documented "EVERY failure returns nil → 1× fallback, NEVER crashes"
+        // contract even when the private API itself is gone.
+        guard Self.privateClassesAvailable else {
+            log.error("CGVirtualDisplay* private classes unavailable on this OS — fallback to 1×")
+            return nil
+        }
         guard !geometry.exceedsPixelLimit else {
             log
                 .error(

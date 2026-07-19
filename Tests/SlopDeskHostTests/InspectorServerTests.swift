@@ -220,4 +220,25 @@ final class InspectorServerTests: XCTestCase {
         XCTAssertEqual(server.inspectorPort, 7421)
         XCTAssertEqual(server.terminalPort, 7420)
     }
+
+    /// Regression (`--port 0` + `--inspector`): `terminalPort` is `&+ 1`'d for the object's
+    /// whole lifetime with no rebuild, so the CALLER (hostd's main.swift) must construct
+    /// `InspectorServer` with the REAL bound port, never the raw `0` sentinel the CLI parses
+    /// for "OS-assigned ephemeral port". Constructing with the stale sentinel yields the
+    /// nonsensical (and often unbindable, e.g. privileged-port EACCES) `inspectorPort == 1`;
+    /// constructing with the resolved bound port yields the correct sibling port. This
+    /// pins the port arithmetic itself — main.swift's ordering (defer construction until
+    /// after `server.start()`/`boundPort()` resolves) is not exercisable headlessly here.
+    func testInspectorPortFromRawZeroSentinelIsWrongButFromResolvedBoundPortIsCorrect() {
+        let staleFromRequestedPort = InspectorServer(terminalPort: 0, replayLog: InspectorReplayLog())
+        XCTAssertEqual(
+            staleFromRequestedPort.inspectorPort, 1,
+            "constructing from the raw '--port 0' sentinel computes the wrong (and often unbindable) port — this is the bug, not the fix",
+        )
+
+        let resolvedBoundPort: UInt16 = 54321
+        let correct = InspectorServer(terminalPort: resolvedBoundPort, replayLog: InspectorReplayLog())
+        XCTAssertEqual(correct.terminalPort, resolvedBoundPort)
+        XCTAssertEqual(correct.inspectorPort, 54322)
+    }
 }

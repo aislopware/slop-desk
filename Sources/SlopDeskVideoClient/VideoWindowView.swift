@@ -718,16 +718,20 @@ final class MetalLayerBackedView: NSView {
     /// detach/reattach re-binds the same model to a fresh, unlocked view), so a redundant re-assert must be
     /// idempotent here.
     private func handleViewportCommand(_ command: UInt8) {
+        // PAN LOCK gates every pan-moving command HERE, not only at the footer buttons: zoom
+        // re-anchors `panOffset` and reset/fit re-anchor top-left, so any of them would silently
+        // defeat a held lock — and palette/chord-originated commands reach this handler directly.
+        // While locked, they no-op entirely; only the lock commands themselves still apply.
         switch command {
-        case 0: applyZoom(1.25) // zoom in one step
-        case 1: applyZoom(1.0 / 1.25) // zoom out one step
-        case 2: applyResetZoom() // 1× + re-anchor top-left
+        case 0 where !panLocked: applyZoom(1.25) // zoom in one step
+        case 1 where !panLocked: applyZoom(1.0 / 1.25) // zoom out one step
+        case 2 where !panLocked: applyResetZoom() // 1× + re-anchor top-left
         case 3: // "lock position" ON (freeze edge-pan)
             panLocked = true
             stopEdgePan()
         case 4: // "lock position" OFF (resume edge-pan on the next hover)
             panLocked = false
-        case 5: applyFitToPane() // zoom so the whole window fits inside the pane
+        case 5 where !panLocked: applyFitToPane() // zoom so the whole window fits inside the pane
         default: break
         }
     }

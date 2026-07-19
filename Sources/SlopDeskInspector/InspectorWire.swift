@@ -113,7 +113,23 @@ public enum InspectorCodec {
 /// arbitrary byte chunks: partial reads return `nil` (not an error); a full frame
 /// decodes to one ``InspectorWireMessage``.
 public struct InspectorFrameDecoder {
+    /// Reclaim the consumed prefix once the read cursor has advanced past this many bytes, so the
+    /// buffer's wasted head stays bounded during a long burst — the same idiom as
+    /// `SlopDeskProtocol.FrameDecoder`/`MuxFrameDecoder`. 64 KiB == the max single `recv` chunk, so in
+    /// the common case compaction happens at most once per received chunk.
+    private static let compactionThreshold = 64 * 1024
+
+    /// Received bytes. Completed frames are NOT removed per-parse (that front-removal memmoves the
+    /// entire tail forward — O(n) per frame, O(n²) for a chunk of many small frames, exactly the shape
+    /// an `InspectorReplayLog` full-history replay produces on reconnect). Instead a ``readOffset``
+    /// cursor advances past consumed frames and the head is compacted LAZILY (on a drain that returns
+    /// `nil`, or when the cursor crosses ``compactionThreshold``), amortizing total work to O(bytes).
+    /// All indexing is relative to `buffer.startIndex + readOffset`.
     private var buffer = Data()
+
+    /// Number of leading bytes in ``buffer`` already consumed by completed frames but not yet
+    /// physically removed (reclaimed by ``compactConsumed()``).
+    private var readOffset = 0
 
     public init() {}
 
@@ -122,19 +138,54 @@ public struct InspectorFrameDecoder {
     }
 
     public mutating func nextMessage() throws -> InspectorWireMessage? {
-        guard buffer.count >= InspectorCodec.prefixLength else { return nil }
-        let payloadLength = Int(buffer.readBELength())
+        // Bytes not yet consumed by a completed frame.
+        let available = buffer.count - readOffset
+        // Need at least the length prefix to know how big the frame is.
+        guard available >= InspectorCodec.prefixLength else { compactConsumed()
+            return nil
+        }
+
+        let payloadLength = Int(readPrefix())
         guard payloadLength <= SlopDesk.maxFramePayloadLength else {
             throw InspectorCodec.CodecError.frameTooLarge(payloadLength)
         }
-        let frameLength = InspectorCodec.prefixLength + payloadLength
-        guard buffer.count >= frameLength else { return nil }
 
-        let start = buffer.startIndex
-        let payloadStart = start + InspectorCodec.prefixLength
-        let payload = Data(buffer[payloadStart..<start + frameLength])
-        buffer.removeSubrange(start..<start + frameLength)
+        // Wait until the whole payload has arrived (partial read — not an error).
+        let frameLength = InspectorCodec.prefixLength + payloadLength
+        guard available >= frameLength else { compactConsumed()
+            return nil
+        }
+
+        // Slice out the payload (after the prefix) and ADVANCE the cursor past the frame (no per-frame
+        // front-removal). `base` is the absolute index of this frame's first byte.
+        let base = buffer.startIndex + readOffset
+        let payloadStart = base + InspectorCodec.prefixLength
+        let payload = Data(buffer[payloadStart..<base + frameLength])
+        readOffset += frameLength
+        // Bound the wasted head mid-burst; a drain that returns nil reclaims the rest.
+        if readOffset >= Self.compactionThreshold { compactConsumed() }
+
         return try InspectorCodec.decode(payload: payload)
+    }
+
+    /// Physically drops the consumed prefix (`readOffset` bytes) from the front of the buffer ONCE,
+    /// resetting the cursor — the single O(remaining) memmove that replaces the per-frame one.
+    private mutating func compactConsumed() {
+        guard readOffset > 0 else { return }
+        buffer.removeSubrange(buffer.startIndex..<buffer.startIndex + readOffset)
+        readOffset = 0
+    }
+
+    /// Reads the 4-byte big-endian length prefix at the cursor without consuming it. (The cursor
+    /// advances in ``nextMessage()`` once the full frame is confirmed present, so an incomplete frame
+    /// leaves the prefix in place for the next call.)
+    private func readPrefix() -> UInt32 {
+        let base = buffer.startIndex + readOffset
+        var value: UInt32 = 0
+        for i in 0..<InspectorCodec.prefixLength {
+            value = (value << 8) | UInt32(buffer[base + i])
+        }
+        return value
     }
 }
 
@@ -153,13 +204,6 @@ private extension Data {
         for shift in stride(from: 56, through: 0, by: -8) {
             append(UInt8(truncatingIfNeeded: bits >> UInt64(shift)))
         }
-    }
-
-    /// Reads the 4-byte BE length prefix at the front WITHOUT consuming it.
-    func readBELength() -> UInt32 {
-        var value: UInt32 = 0
-        for i in 0..<4 { value = (value << 8) | UInt32(self[startIndex + i]) }
-        return value
     }
 
     /// Reads an 8-byte BE Int64 from the front of this (exactly-8-byte) slice.

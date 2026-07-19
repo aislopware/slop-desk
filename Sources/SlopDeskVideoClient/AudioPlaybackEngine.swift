@@ -7,21 +7,22 @@ import AVFAudio
 #endif
 
 /// The client's audio OUTPUT: one system output AudioUnit (macOS `kAudioUnitSubType_HALOutput`,
-/// iOS `kAudioUnitSubType_RemoteIO`) whose render callback pulls interleaved Float32 from the
-/// session's ``AudioJitterBuffer``. One instance per locked `(sampleRate, channels)` — a config
+/// iOS `kAudioUnitSubType_RemoteIO`) whose render callback consumes interleaved Float32 from a
+/// lock-free ``AudioSampleRing``. One instance per locked `(sampleRate, channels)` — a config
 /// change that moves either rebuilds the engine (the session's job).
 ///
 /// ⚠️ **GUI/DEVICE-ONLY**: starting the AU opens a real HAL/RemoteIO I/O proc — NEVER
-/// constructed in a test (repo hang-safety; same class as `SCStream`/VT sessions). The pull
-/// POLICY it drives is the pure ``AudioJitterBuffer`` and IS unit-tested.
+/// constructed in a test (repo hang-safety; same class as `SCStream`/VT sessions). The buffering
+/// POLICY it drives (``AudioJitterBuffer`` + ``AudioPlaybackPump`` + ``AudioSampleRing``) is
+/// pure and IS unit-tested.
 ///
 /// Threading contract (`@unchecked Sendable`):
-/// - ``enqueue(seq:samples:)`` and the render callback share ONLY the ring, guarded by `lock`
-///   (both hold it just for a copy — render-callback lock-brief discipline; the reclaim/free
-///   side of the ring runs on the push thread, never the render thread).
-/// - AU lifecycle (``start()`` / ``stop()`` / ``invalidate()``) is confined to the session's
-///   serial `audioQueue` — the same single-owner discipline as ``VideoDecoder`` on the decode
-///   queue — so the unit needs no lock of its own.
+/// - The PRODUCER side (``enqueue(seq:samples:)`` / ``flushBuffered()``) and the AU lifecycle
+///   (``start()`` / ``stop()`` / ``invalidate()``) are confined to the session's serial
+///   `audioQueue` — the same single-owner discipline as ``VideoDecoder`` on the decode queue.
+/// - The render callback shares ONLY `ring` with the producer — a wait-free SPSC hand-off.
+///   The real-time thread must never block on a lock a preemptible pusher can hold (priority
+///   inversion = audible dropout), so there is NO lock anywhere on this path.
 final class AudioPlaybackEngine: @unchecked Sendable {
     private let log = Logger(subsystem: "slopdesk.video.client", category: "AudioPlaybackEngine")
 
@@ -29,8 +30,14 @@ final class AudioPlaybackEngine: @unchecked Sendable {
     let sampleRate: Double
     let channels: Int
 
-    private let lock = NSLock()
-    private var ring: AudioJitterBuffer
+    /// Producer-side jitter stage + hand-off pump. audioQueue-confined — the render callback
+    /// never touches it (a mutable struct read cross-thread would violate exclusivity anyway).
+    private var pump: AudioPlaybackPump
+    /// The SPSC hand-off the render callback drains — the ONE thing shared with the real-time
+    /// thread. Held strongly here: ``invalidate()`` / `deinit` stop the AU (AudioOutputUnitStop
+    /// waits out an in-flight render) before this reference — and with it the ring's storage —
+    /// can go away, so the unretained refcon never dangles.
+    private let ring: AudioSampleRing
 
     /// The output AU (`nil` until the first ``start()`` builds it; `nil` again after
     /// ``invalidate()``). audioQueue-confined.
@@ -40,7 +47,16 @@ final class AudioPlaybackEngine: @unchecked Sendable {
     init(sampleRate: Double, channels: Int) {
         self.sampleRate = sampleRate
         self.channels = max(1, channels)
-        ring = AudioJitterBuffer(channels: self.channels)
+        let stage = AudioJitterBuffer(channels: self.channels)
+        // Hand-off STORAGE = a high-water worth of ~10 ms frames, but the pump tops the fill up
+        // only to the stage's target depth: the render side needs ~2 frames of headroom, and any
+        // backlog beyond that must stay STAGED, where the pump's combined depth bound can still
+        // shed it (samples committed to the ring are the consumer's — the producer can never
+        // take them back). The spare capacity is slack so a flush's not-yet-skipped span never
+        // blocks the re-primed hand-off.
+        let samplesPerFrame = max(1, Int(sampleRate / 100)) * self.channels
+        ring = AudioSampleRing(capacity: stage.highWaterFrames * samplesPerFrame)
+        pump = AudioPlaybackPump(stage: stage, ring: ring, samplesPerFrame: samplesPerFrame)
     }
 
     deinit {
@@ -50,20 +66,16 @@ final class AudioPlaybackEngine: @unchecked Sendable {
         invalidate()
     }
 
-    /// One decoded frame from the audio decode queue → the ring (reorder/late/overflow policy
-    /// lives in ``AudioJitterBuffer``).
+    /// One decoded frame from the audio decode queue → the jitter stage (reorder/late/overflow
+    /// policy lives in ``AudioJitterBuffer``), then whatever is playable hands off to the ring.
     func enqueue(seq: UInt32, samples: [Float]) {
-        lock.lock()
-        ring.push(seq: seq, samples: samples)
-        lock.unlock()
+        pump.enqueue(seq: seq, samples: samples)
     }
 
     /// Drops everything buffered (local disable) — playback falls silent NOW, not after the
     /// ring drains.
     func flushBuffered() {
-        lock.lock()
-        ring.clear()
-        lock.unlock()
+        pump.flush()
     }
 
     /// Starts output (idempotent). Builds the AU lazily on first start; a build/start failure
@@ -169,23 +181,20 @@ final class AudioPlaybackEngine: @unchecked Sendable {
         return unit
     }
 
-    /// The real-time render pull: copy from the ring under the lock, nothing else. The ring's
-    /// ``AudioJitterBuffer/pull(into:)`` is allocation- and free-free by contract, and both lock
-    /// holders only copy — so the render thread blocks at most one memcpy behind the decode
-    /// side, never behind a malloc.
+    /// The real-time render pull: a wait-free SPSC consume plus a zero-fill of the shortfall
+    /// (priming / underrun silence — the conceal the jitter policy calls for). No lock, no
+    /// allocation, no syscall: the render deadline can never wait on the (preemptible) decode
+    /// side, so a busy pusher costs zero render-thread stall.
     private static let renderCallback: AURenderCallback = { inRefCon, _, _, _, _, ioData in
         guard let ioData else { return noErr }
         let engine = Unmanaged<AudioPlaybackEngine>.fromOpaque(inRefCon).takeUnretainedValue()
         let buffers = UnsafeMutableAudioBufferListPointer(ioData)
         for buffer in buffers {
             guard let base = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
-            let out = UnsafeMutableBufferPointer(
-                start: base,
-                count: Int(buffer.mDataByteSize) / MemoryLayout<Float>.size,
-            )
-            engine.lock.lock()
-            engine.ring.pull(into: out)
-            engine.lock.unlock()
+            let count = Int(buffer.mDataByteSize) / MemoryLayout<Float>.size
+            let out = UnsafeMutableBufferPointer(start: base, count: count)
+            let copied = engine.ring.consume(into: out)
+            if copied < count { (base + copied).update(repeating: 0, count: count - copied) }
         }
         return noErr
     }

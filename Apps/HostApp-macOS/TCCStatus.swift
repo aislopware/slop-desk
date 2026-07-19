@@ -74,9 +74,10 @@ enum TCC {
         ),
     ]
 
-    /// Whether ANY required permission is currently missing — drives the red menu-bar glyph
-    /// (research §C1: "Red menu-bar glyph whenever any required perm is missing"). Re-evaluated
-    /// each time it is read.
+    /// Whether ANY required permission is currently missing — drives the menu-bar glyph swap to a
+    /// warning symbol in `SlopDeskHostApp.MenuBarIcon` (research §C1's intent; the menu bar
+    /// renders SF Symbols as monochrome templates, so the affordance is a symbol change, not a
+    /// literal red tint). Re-evaluated each time it is read — grants go stale, never cache.
     static var anyPermissionMissing: Bool {
         rows.contains { !$0.isGranted() }
     }

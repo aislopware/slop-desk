@@ -321,7 +321,15 @@ public actor MuxNWConnection {
                 await route(frame, on: link)
             }
         } catch {
-            // A decode fault loses the byte boundary for the whole link — fatal for the link.
+            // A decode fault loses the byte boundary for the whole link — fatal for the whole
+            // CONNECTION, so close BOTH byte links SYNCHRONOUSLY here (client role included).
+            // `finishLink` alone never closes a socket: on the host the reap is an indirect async
+            // chain, and on the client nothing proactively closes at all — the peer's still-open
+            // socket would keep feeding bytes into a decoder wedged on the same bad prefix while
+            // this loop kept re-faulting per chunk. Closing ends both receive loops at the fault
+            // (the poisoned decoder additionally drops any chunk already in flight).
+            await controlLink.close()
+            await dataLink.close()
             await finishLink(link, error: error)
         }
     }
@@ -446,6 +454,45 @@ public actor MuxNWConnection {
         case let .deliverData(channelID, payload):
             let target = (link == .control) ? controlChannels[channelID] : dataChannels[channelID]
             if let target {
+                // A FINISHED target that is still registered means its PER-CHANNEL decoder faulted
+                // (`deliver` finishes the inbound on a decode error — the channel's inner framing is
+                // unrecoverable) while the rest of the mux is healthy. Stop routing to it: drop the
+                // bytes and unregister the channel so siblings keep working. On the host the DATA
+                // entry anchors a live PTY session — tear it down exactly like a peer channelClose
+                // (finish the control sibling, terminal-close both tables, fire the reap hook) so a
+                // poisoned channel never leaves a zombie shell behind.
+                if target.isFinished {
+                    if link == .control {
+                        controlChannels.removeValue(forKey: channelID)
+                        controlTable.localClose(channelID)
+                        if role == .host {
+                            // The pair anchors ONE terminal session — a poisoned CONTROL channel
+                            // must reap the DATA sibling + PTY exactly like a poisoned data
+                            // channel, or the shell outlives its only close trigger as a zombie
+                            // (the peer's side already finished; no further channelClose is coming).
+                            if let dataCh = dataChannels.removeValue(forKey: channelID) {
+                                await dataCh.finish()
+                            }
+                            dataReceiveWindows.removeValue(forKey: channelID)
+                            dataTable.localClose(channelID)
+                            if let hostCloseHandler { hostCloseHandler(channelID) }
+                            else { pendingHostCloses.append(channelID) }
+                        }
+                    } else {
+                        dataChannels.removeValue(forKey: channelID)
+                        dataReceiveWindows.removeValue(forKey: channelID)
+                        dataTable.localClose(channelID)
+                        if role == .host {
+                            if let controlCh = controlChannels.removeValue(forKey: channelID) {
+                                await controlCh.finish()
+                            }
+                            controlTable.localClose(channelID)
+                            if let hostCloseHandler { hostCloseHandler(channelID) }
+                            else { pendingHostCloses.append(channelID) }
+                        }
+                    }
+                    return
+                }
                 // Await INLINE (no Task) so this frame is fully delivered before the next frame on
                 // this link is routed — per-channel order = wire order.
                 //

@@ -219,10 +219,14 @@ final class SatellitePaneWindowController: NSWindowController, NSWindowDelegate 
 
     func windowDidBecomeKey(_: Notification) {
         keyState.isKey = true
+        // Satellite focus truth (``WorkspaceStore/keySatellitePaneID``): a completion badge / desktop
+        // notification for THIS pane must not fire while its window is the one the user is looking at.
+        store?.noteSatelliteKey(paneID: paneID, isKey: true)
     }
 
     func windowDidResignKey(_: Notification) {
         keyState.isKey = false
+        store?.noteSatelliteKey(paneID: paneID, isKey: false)
     }
 }
 
@@ -292,6 +296,15 @@ final class SatelliteWindowsCoordinator {
                 controller.window?.title = title
             }
         }
+    }
+
+    /// Brings `paneID`'s satellite to the front (the ``WorkspaceStore/revealSatelliteWindow`` seam) —
+    /// `openRemoteWindow` calls this instead of minting a duplicate live stream when the window is
+    /// already detached. Returns `false` if no controller exists yet (e.g. this sync pass hasn't run).
+    func reveal(_ paneID: PaneID) -> Bool {
+        guard let controller = controllers[paneID] else { return false }
+        controller.window?.makeKeyAndOrderFront(nil)
+        return true
     }
 }
 #endif

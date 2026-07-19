@@ -211,6 +211,31 @@ public extension WorkspaceStore {
                     }
                 }
             }
+            // DETACHED (satellite-window) panes live outside every tab's split tree, so the loop above
+            // never sees them — without this, a blocked/failed satellite pane is invisible to the
+            // titlebar dot / ⌘⇧U jump queue while it sits unfocused in the background (no tab pill of
+            // its own, so no manual override to consult).
+            for entry in session.detached where !isPaneFocused(entry.pane) {
+                let paneID = entry.pane
+                let badge = TabBadgeGating.resolve(
+                    agent: agentStatus(for: paneID),
+                    completion: panePendingCompletion[paneID],
+                    isBusy: paneShowsBusyDot(paneID),
+                    foregroundProcess: paneForegroundProcess[paneID],
+                    completionFreshness: .settled,
+                    progress: progress(for: paneID),
+                    agentGates: agentBadgeGates(for: paneID),
+                    commandGates: commandBadgeGates,
+                )
+                if let badge, badge.needsAttention {
+                    found.append(UnseenAttentionEntry(
+                        pane: paneID,
+                        badge: badge,
+                        label: agentLabel(for: paneID),
+                        since: paneCompletedAt[paneID] ?? paneAttentionAt[paneID],
+                    ))
+                }
+            }
         }
         // Stable urgency sort (Swift's sort is not guaranteed stable — the enumerated offset is the tie).
         return found.enumerated()

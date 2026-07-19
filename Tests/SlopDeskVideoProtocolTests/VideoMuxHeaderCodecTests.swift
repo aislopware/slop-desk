@@ -43,14 +43,16 @@ final class VideoMuxHeaderCodecTests: XCTestCase {
         }
     }
 
-    func testMuxFrameFragmentHeaderSizeIs23() {
-        // 19-byte live FrameFragmentHeader (15-byte base + 4-byte host-send-timestamp) + 4-byte channelID.
-        XCTAssertEqual(MuxFrameFragmentHeader.size, 23)
-        XCTAssertEqual(MuxFrameFragmentHeader.size, FrameFragmentHeader.size + 4)
+    func testMuxFrameFragmentHeaderSizeIs19() {
+        // `MuxFrameFragmentHeader` does NOT carry `FrameFragmentHeader.hostSendTsMillis` (see the
+        // type doc's field list) — it is its OWN 19-byte shape: channelID(4) + streamSeq(4) +
+        // frameID(4) + fragIndex(2) + fragCount(2) + flags(1) + payloadLen(2), matching exactly what
+        // `encode()`/`decode(_:)` read and write.
+        XCTAssertEqual(MuxFrameFragmentHeader.size, 19)
     }
 
-    func testMuxMaxPayloadSizeIsDatagramMinus23() {
-        XCTAssertEqual(MuxFrameFragmentHeader.maxPayloadSize, VideoPacketizer.maxDatagramSize - 23)
+    func testMuxMaxPayloadSizeIsDatagramMinus19() {
+        XCTAssertEqual(MuxFrameFragmentHeader.maxPayloadSize, VideoPacketizer.maxDatagramSize - 19)
         XCTAssertEqual(
             MuxFrameFragmentHeader.maxPayloadSize,
             VideoPacketizer.maxDatagramSize - MuxFrameFragmentHeader.size,
@@ -126,12 +128,16 @@ final class VideoMuxHeaderCodecTests: XCTestCase {
 
     // MARK: Frame-fragment framing sizes (the mux wire wraps the 19-byte FrameFragmentHeader)
 
-    func testMuxFrameFragmentHeaderWrapsTheLiveHeader() {
-        // The mux frame-fragment header is the 19-byte FrameFragmentHeader (15-byte base + 4-byte
-        // host-send-timestamp) prefixed by the 4-byte channelID. Pinning the relationship guards the
-        // on-wire framing math.
+    func testMuxFrameFragmentHeaderWrapsTheLiveHeaderMinusTheTimestamp() {
+        // The mux frame-fragment header reuses the live 19-byte FrameFragmentHeader's fields MINUS
+        // `hostSendTsMillis` (4 bytes — not carried, see the type doc's field list) PLUS the 4-byte
+        // channelID prefix — net zero change in size. Pinning the relationship guards the on-wire
+        // framing math against silently drifting from what `encode()`/`decode(_:)` actually produce.
         XCTAssertEqual(FrameFragmentHeader.size, 19)
-        XCTAssertEqual(MuxFrameFragmentHeader.size, FrameFragmentHeader.size + VideoMuxHeaderCodec.channelIDLength)
+        XCTAssertEqual(
+            MuxFrameFragmentHeader.size,
+            (FrameFragmentHeader.size - 4) + VideoMuxHeaderCodec.channelIDLength,
+        )
     }
 
     func testMuxMediaFramingPrefixesChannelIDBeforeTheTodayTagAndPayload() throws {

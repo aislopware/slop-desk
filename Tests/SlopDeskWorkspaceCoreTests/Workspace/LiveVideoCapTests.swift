@@ -788,4 +788,61 @@ final class LiveVideoCapTests: XCTestCase {
         store.deactivateVideo(ids[0])
         XCTAssertTrue(store.hasFreeVideoSlot(for: ids[2]), "a freed slot reads as free again")
     }
+
+    /// `hasFreeVideoSlot` must depend on a NARROW active-video mirror, not the whole registry: growing
+    /// or shrinking the canvas with UNRELATED terminal panes must never perturb the answer for an
+    /// already-saturated remote-GUI cap. (The over-observation bug this guards is a SwiftUI
+    /// re-render-scope issue that a pure XCTest can't see directly — this pins the functional half: the
+    /// mirror's accounting survives registry churn byte-for-byte.)
+    func testHasFreeVideoSlotUnaffectedByUnrelatedRegistryChurn() {
+        let (store, ids) = makeStoreWithRemoteGUILeaves(2, cap: 2)
+        XCTAssertTrue(store.activateVideo(ids[0]))
+        XCTAssertTrue(store.activateVideo(ids[1]))
+        XCTAssertTrue(store.hasFreeVideoSlot(for: ids[0]), "sanity: both active panes self-exclude to free")
+
+        // Materialize + close an UNRELATED terminal pane (registry churn with no video content).
+        store.addPane(kind: .terminal)
+        let terminalID = try? XCTUnwrap(store.workspace.canvas.allIDs().first { !ids.contains($0) })
+        XCTAssertNotNil(terminalID)
+        XCTAssertTrue(store.hasFreeVideoSlot(for: ids[0]), "an unrelated materialize does not perturb the mirror")
+        if let terminalID { store.closePane(terminalID) }
+        XCTAssertTrue(store.hasFreeVideoSlot(for: ids[0]), "an unrelated close does not perturb the mirror either")
+
+        // A THIRD remote-GUI pane still correctly reads gated — the churn above didn't leak a phantom slot.
+        store.addPane(kind: .remoteGUI)
+        let thirdID = try? XCTUnwrap(store.workspace.canvas.allIDs().first { !ids.contains($0) })
+        XCTAssertNotNil(thirdID)
+        if let thirdID {
+            XCTAssertFalse(store.hasFreeVideoSlot(for: thirdID), "the cap is still correctly saturated")
+        }
+    }
+
+    // MARK: - iOS pause/resume fan-out flips isVideoActive OUTSIDE activateVideo/deactivateVideo
+
+    /// `pause()`/`resume()` (the ``WorkspaceStore/pauseAll()`` / ``WorkspaceStore/resumeAll()`` iOS
+    /// background/foreground fan-out) flip a video pane's `isVideoActive` DIRECTLY on the handle,
+    /// bypassing ``WorkspaceStore/activateVideo(_:)`` / ``WorkspaceStore/deactivateVideo(_:)``. The
+    /// active-video mirror ``WorkspaceStore/hasFreeVideoSlot(for:)`` reads must still track this: a
+    /// paused video pane frees its slot for a previously-gated sibling, and resume re-occupies it
+    /// (re-gating that sibling would be wrong, but this store only asserts the mirror stays truthful —
+    /// re-admission ordering across a full pause/resume cycle is the view's concern).
+    func testPauseAllFreesSlotAndResumeAllReoccupiesIt() async {
+        let (store, ids) = makeStoreWithRemoteGUILeaves(2, cap: 1)
+        XCTAssertTrue(store.activateVideo(ids[0]))
+        XCTAssertFalse(store.hasFreeVideoSlot(for: ids[1]), "cap=1 saturated by the one active pane")
+
+        await store.pauseAll()
+
+        XCTAssertTrue(
+            store.hasFreeVideoSlot(for: ids[1]),
+            "pause() flips isVideoActive off directly — the mirror must resync and free the slot",
+        )
+
+        await store.resumeAll()
+
+        XCTAssertFalse(
+            store.hasFreeVideoSlot(for: ids[1]),
+            "resume() re-activates the pane that was active before pause — the mirror must resync back",
+        )
+    }
 }

@@ -816,6 +816,10 @@ public struct SlopDeskClientApp: App {
                     satelliteWindows.sync(
                         store.detachedPanes, store: store, paneDrag: paneDrag, decorate: decorateSatelliteRoot,
                     )
+                    // `openRemoteWindow` re-opening an already-detached host window reveals the satellite
+                    // instead of minting a second live stream — the store stays AppKit-free, so it calls
+                    // back into this coordinator through the injected seam.
+                    store.revealSatelliteWindow = { paneID in satelliteWindows.reveal(paneID) }
                 }
             #endif
         }

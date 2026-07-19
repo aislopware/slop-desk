@@ -302,6 +302,31 @@ public final class FrameReassembler {
     /// surface it as `.stale`.
     static let maxFragmentsPerFrame = 8192
 
+    /// Upper bound on how far a SINGLE fragment may advance the loss frontier (hostile-input guard,
+    /// the `frameID` companion to `maxFragmentsPerFrame`). The legitimate encoder's `frameID` counter
+    /// (`VideoPacketizer.nextFrameID`) advances by 1 per frame, so a real in-flight window is at most a
+    /// few thousand frames; a jump larger than this can only be a corrupt/off-path/stray datagram.
+    /// Reject it BEFORE creating any per-frame buffer and WITHOUT moving the frontier — see
+    /// `resyncStreak` for how a genuine resync still gets through.
+    static let maxFrontierJump = 4096
+
+    /// How many CONSECUTIVE fragments rejected for jumping the frontier too far, all clustered within
+    /// `resyncClusterWindow` of each other, it takes to accept a resync (latch the frontier at the new
+    /// region instead of dropping forever). A real stream that genuinely moved keeps proposing frameIDs
+    /// near each other; a lone corrupt/hostile datagram does not repeat.
+    static let resyncStreak = 8
+    /// How close consecutive jump candidates must be to each other to count as the SAME resync attempt
+    /// (not two unrelated bad jumps).
+    static let resyncClusterWindow = 256
+
+    /// Consecutive fragments rejected for jumping the frontier, oldest first — reset whenever a
+    /// candidate falls outside `resyncClusterWindow` of the previous one, or a normal (non-jumping)
+    /// fragment arrives. Bounded by `resyncStreak`.
+    private var frontierJumpCandidates: [UInt32] = []
+    /// Telemetry: total fragments dropped for jumping the frontier too far (including ones later
+    /// absorbed into an accepted resync run).
+    public private(set) var frontierJumpRejectedCount = 0
+
     /// Builds a reassembler matching the host's FEC. `fec` supplies the per-group data count (`k =
     /// fec.groupSize`) and configured parity multiplicity (`m = fec.parityCount`); a `nil` `fec` (or
     /// an `m == 0` scheme) builds a no-FEC reassembler.
@@ -372,9 +397,19 @@ public final class FrameReassembler {
             return .stale
         }
 
-        // Advance the loss frontier.
+        // Advance the loss frontier — bounded to at most `maxFrontierJump` per fragment (hostile-input
+        // guard, mirrors the fragCount guard above). A farther-forward frameID is dropped outright: no
+        // entry started, frontier untouched. `resyncOnConsistentJump` still lets a GENUINE resync
+        // (several consecutive jump candidates clustered near each other) through.
         if let seen = highestSeenFrameID {
-            if frameID.distanceWrapped(from: seen) > 0 { highestSeenFrameID = frameID }
+            let jump = frameID.distanceWrapped(from: seen)
+            if jump > Self.maxFrontierJump {
+                frontierJumpRejectedCount += 1
+                guard resyncOnConsistentJump(frameID) else { return .stale }
+            } else {
+                frontierJumpCandidates.removeAll()
+            }
+            if jump > 0 { highestSeenFrameID = frameID }
         } else {
             highestSeenFrameID = frameID
         }
@@ -388,9 +423,16 @@ public final class FrameReassembler {
         // already-buffered data (frame declared "complete" while real data is missing — corrupted
         // decoder input AND a suppressed loss-recovery signal); a grown count would wedge the frame.
         // Equality also re-establishes `fragIndex < pinned fragCount` for the accepted fragment.
+        // Removed (not read) so `entry` holds the ONLY live reference to its `data`/`parity`
+        // dictionaries while we mutate it below — a plain `pending[frameID]` read would leave a second
+        // reference sitting in `pending`, forcing copy-on-write to duplicate the WHOLE fragment buffer
+        // on every mutation (O(fragmentCount) per fragment, O(fragmentCount²) per frame).
         var entry: Pending
-        if let existing = pending[frameID] {
-            guard header.fragCount == existing.fragCount else { return .stale }
+        if let existing = pending.removeValue(forKey: frameID) {
+            guard header.fragCount == existing.fragCount else {
+                pending[frameID] = existing // put back — reject only THIS fragment, not the frame.
+                return .stale
+            }
             entry = existing
         } else {
             entry = makePending(fragCount: header.fragCount, fecTier: header.flags.fecTier)
@@ -437,6 +479,24 @@ public final class FrameReassembler {
             return .dropped(frameID: frameID)
         }
         return .incomplete
+    }
+
+    /// True once `frameID` extends a run of `resyncStreak` consecutive rejected-for-jump candidates all
+    /// clustered within `resyncClusterWindow` of each other — a stream that genuinely moved, not a lone
+    /// corrupt/hostile datagram. Clears the run (starting a fresh one at `frameID`) when the candidate
+    /// falls outside the window, so an unrelated second bad jump can't compound into a false resync.
+    private func resyncOnConsistentJump(_ frameID: UInt32) -> Bool {
+        if let last = frontierJumpCandidates.last,
+           abs(frameID.distanceWrapped(from: last)) > Self.resyncClusterWindow
+        {
+            frontierJumpCandidates.removeAll()
+        }
+        frontierJumpCandidates.append(frameID)
+        if frontierJumpCandidates.count >= Self.resyncStreak {
+            frontierJumpCandidates.removeAll()
+            return true
+        }
+        return false
     }
 
     private func tryComplete(frameID: UInt32) -> ReassemblyResult {

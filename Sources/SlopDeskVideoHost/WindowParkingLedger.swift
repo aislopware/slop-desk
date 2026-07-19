@@ -1,5 +1,6 @@
 #if os(macOS)
 import CoreGraphics
+import OSLog
 
 /// PURE refcount + channel→window bookkeeping for ``WindowParkingManager`` (feature #1). No AX, no
 /// IPC — only the DECISIONS: when to AX-move a window onto the VD (first park), when to REUSE an
@@ -38,13 +39,29 @@ final class WindowParkingLedger {
 
     private var parked: [CGWindowID: Parked] = [:]
     private var channelWindow: [UInt32: CGWindowID] = [:]
+    private let log = Logger(subsystem: "slopdesk.video.host", category: "WindowParking")
+
+    /// A restore obligation `park(channelID:windowID:)` produced from a RETARGET (the channel already
+    /// held a DIFFERENT windowID) that the caller has not yet drained via
+    /// ``takePendingRetargetRestore()``. `ParkDecision`'s shape is unchanged (source-compatible with
+    /// existing callers); a caller that wants retarget-restore support opts in by polling this right
+    /// after `park` — one at a time is sufficient since `park` is called serially per request.
+    private var pendingRetargetRestore: RestoreTarget?
 
     init() {}
 
     /// Decide a park request, applying the refcount bookkeeping for the REUSE cases. A fresh window
     /// returns `.needsMove`; the caller AX-moves it and commits via ``recordMove`` ONLY on success
-    /// (so a failed move leaves no orphan record).
+    /// (so a failed move leaves no orphan record). If `channelID` already held a DIFFERENT windowID
+    /// (a retarget), that old binding is released FIRST — mirroring `unpark`'s decrement/restore-target
+    /// bookkeeping exactly — so its refcount never over-counts and strands it parked forever; the
+    /// released target (if this was its last lane) is queued for ``takePendingRetargetRestore()`` so
+    /// the caller can AX-restore it, the same way an `unpark`-produced target is handled.
     func park(channelID: UInt32, windowID: CGWindowID) -> ParkDecision {
+        if let existing = channelWindow[channelID], existing != windowID {
+            log.notice("park: channel \(channelID) retargeted window \(existing) -> \(windowID)")
+            pendingRetargetRestore = releaseHold(channelID: channelID, windowID: existing)
+        }
         // Same lane re-parking the same window (UDP hello retransmit / re-mint) — never double-count.
         if channelWindow[channelID] == windowID, let p = parked[windowID] {
             return .reuse(p.achievedSize)
@@ -57,6 +74,29 @@ final class WindowParkingLedger {
             return .reuse(p.achievedSize)
         }
         return .needsMove
+    }
+
+    /// Drains (and clears) the restore obligation the MOST RECENT ``park(channelID:windowID:)`` call
+    /// produced from a retarget, if any. Returns `nil` on every ordinary (non-retargeting) park.
+    func takePendingRetargetRestore() -> RestoreTarget? {
+        defer { pendingRetargetRestore = nil }
+        return pendingRetargetRestore
+    }
+
+    /// Release `channelID`'s hold on `windowID`: removes the channel binding UNCONDITIONALLY FIRST,
+    /// decrements the refcount, and — iff this was the last lane — removes the parked record and
+    /// returns its `RestoreTarget`. Shared by ``unpark(channelID:)`` and the retarget path in
+    /// ``park(channelID:windowID:)`` so both release a hold identically.
+    private func releaseHold(channelID: UInt32, windowID: CGWindowID) -> RestoreTarget? {
+        channelWindow.removeValue(forKey: channelID)
+        guard var p = parked[windowID] else { return nil }
+        p.refcount -= 1
+        if p.refcount <= 0 {
+            parked.removeValue(forKey: windowID)
+            return RestoreTarget(windowID: windowID, pid: p.pid, originalFrame: p.originalFrame)
+        }
+        parked[windowID] = p
+        return nil
     }
 
     /// Commit a successful first move (after ``park`` returned `.needsMove`). NOTE: a plain
@@ -78,14 +118,8 @@ final class WindowParkingLedger {
     /// unknown channel, or a channel whose window is no longer parked, both return `nil` with the
     /// binding already gone. Idempotent.
     func unpark(channelID: UInt32) -> RestoreTarget? {
-        guard let windowID = channelWindow.removeValue(forKey: channelID), var p = parked[windowID] else { return nil }
-        p.refcount -= 1
-        if p.refcount <= 0 {
-            parked.removeValue(forKey: windowID)
-            return RestoreTarget(windowID: windowID, pid: p.pid, originalFrame: p.originalFrame)
-        }
-        parked[windowID] = p
-        return nil
+        guard let windowID = channelWindow[channelID] else { return nil }
+        return releaseHold(channelID: channelID, windowID: windowID)
     }
 
     /// Drain ALL parked windows (shutdown / VD termination): return one restore target per DISTINCT

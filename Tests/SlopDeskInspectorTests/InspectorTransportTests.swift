@@ -201,6 +201,29 @@ final class InspectorTransportTests: XCTestCase {
         XCTAssertEqual(decoded, messages)
     }
 
+    /// Many complete frames delivered in ONE chunk (the shape an `InspectorReplayLog` full-history
+    /// replay produces after a reconnect: one ≤64KiB TCP read packed with small JSON event frames).
+    /// Exercises the lazy `readOffset` cursor draining several frames from a single `append` without
+    /// any front-removal in between, and that decode order/content survive a later compaction.
+    func testManyFramesInOneChunkDecodeInOrder() throws {
+        let messages: [InspectorWireMessage] = (0..<200).map {
+            .event(.message(MessageEvent(role: .user, text: "line \($0)")))
+        }
+        var blob = Data()
+        for message in messages { try blob.append(InspectorCodec.encode(message)) }
+
+        var decoder = InspectorFrameDecoder()
+        decoder.append(blob) // one chunk holding every frame.
+        var decoded: [InspectorWireMessage] = []
+        while let message = try decoder.nextMessage() { decoded.append(message) }
+        XCTAssertEqual(decoded, messages, "every frame in the chunk decodes, in order")
+
+        // The cursor-then-compact discipline must still work for a SUBSEQUENT chunk after the drain.
+        let tail: InspectorWireMessage = .event(.message(MessageEvent(role: .assistant, text: "after")))
+        try decoder.append(InspectorCodec.encode(tail))
+        XCTAssertEqual(try decoder.nextMessage(), tail)
+    }
+
     func testFrameTooLargeRejected() {
         // Length prefix claiming > 16 MiB must be rejected, not allocated.
         var decoder = InspectorFrameDecoder()

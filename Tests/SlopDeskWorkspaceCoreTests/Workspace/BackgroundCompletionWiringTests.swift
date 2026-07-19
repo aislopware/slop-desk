@@ -255,6 +255,50 @@ final class BackgroundCompletionWiringTests: XCTestCase {
         XCTAssertNil(store.pendingCompletion(for: paneID), "returning active clears the focused leaf's badge")
     }
 
+    // MARK: - satellite (detached-window) focus truth
+
+    /// A pane DETACHED into its own satellite window is never a tab's active pane, so without
+    /// ``WorkspaceStore/keySatellitePaneID`` it reads as unfocused forever. Marking it the KEY satellite
+    /// (``WorkspaceStore/noteSatelliteKey(paneID:isKey:)`` — what `SatelliteWindowsCoordinator` calls from
+    /// the window's `didBecomeKey`) must suppress the badge + notification exactly like watching a tiled
+    /// focused pane — the user IS looking at it.
+    func testSatelliteKeySuppressesCompletionNotification() throws {
+        let store = makeStore()
+        let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
+        store.detachPaneToWindow(paneID)
+        var fired = false
+        store.onLongCommandNotify = { _, _, _, _ in fired = true }
+
+        store.noteSatelliteKey(paneID: paneID, isKey: true)
+        store.handleCommandCompleted(id: paneID, exitCode: 1, durationMS: longMS, paneTitle: "sat")
+
+        XCTAssertNil(store.pendingCompletion(for: paneID), "the KEY satellite never badges — you're looking at it")
+        XCTAssertFalse(fired, "the KEY satellite never notifies")
+
+        // Resigning key (the window lost focus) flips it back to backgrounded behaviour.
+        store.noteSatelliteKey(paneID: paneID, isKey: false)
+        store.handleCommandCompleted(id: paneID, exitCode: 1, durationMS: longMS, paneTitle: "sat")
+        XCTAssertEqual(store.pendingCompletion(for: paneID), .failure, "once resigned key it badges like any bg pane")
+        XCTAssertTrue(fired, "once resigned key it notifies like any bg pane")
+    }
+
+    /// A resign-key for a DIFFERENT pane than the current holder must not clobber it (a stale resign racing
+    /// a newer satellite's become-key).
+    func testSatelliteResignKeyOnlyClearsItsOwnHolder() throws {
+        let store = makeStore()
+        let first = try XCTUnwrap(store.tree.allPaneIDs().first)
+        store.splitActivePane(axis: .horizontal, kind: .terminal)
+        let second = try XCTUnwrap(store.tree.allPaneIDs().first { $0 != first })
+        store.detachPaneToWindow(first)
+        store.detachPaneToWindow(second)
+
+        store.noteSatelliteKey(paneID: first, isKey: true)
+        store.noteSatelliteKey(paneID: second, isKey: true) // second becomes key
+        store.noteSatelliteKey(paneID: first, isKey: false) // a stale resign for the OLD holder
+
+        XCTAssertEqual(store.keySatellitePaneID, second, "the stale resign must not clear the CURRENT holder")
+    }
+
     // MARK: - the long-command notification sink (the B3 focus gate end-to-end)
 
     /// The `onLongCommandNotify` sink fires EXACTLY ONCE for a backgrounded LONG command and NEVER for a

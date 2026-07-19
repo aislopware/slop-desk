@@ -502,6 +502,15 @@ struct NavigatorColumn: View {
 /// ``RailRowsBuilder/liveChrome(for:store:)``. Observation still invalidates each row body when ANY pane's
 /// status dict ticks (dict-granularity tracking), but that re-renders these cheap leaf bodies only — the
 /// sidebar body above no longer rebuilds its rows + `disambiguated()` + sections + list diff per tick.
+/// The sidebar row tooltip's pure text assembly, pulled out of ``SidebarLiveRow/body`` so it's headlessly
+/// testable — a raw `\(cwd)` interpolation of the `String?` field renders the literal `Optional(...)`
+/// wrapper, so `cwd` MUST be unwrapped before it lands in either branch.
+enum SidebarRowTooltip {
+    static func text(cwd: String?, scent: String?) -> String? {
+        scent.map { "\(cwd ?? "")\n\($0)" } ?? cwd
+    }
+}
+
 private struct SidebarLiveRow: View {
     let store: WorkspaceStore
     let row: RailRow
@@ -551,7 +560,7 @@ private struct SidebarLiveRow: View {
             badge: chrome.badge,
             readOnly: chrome.readOnly,
             isEditing: chrome.isEditing,
-            helpText: scent.map { "\(row.cwd)\n\($0)" } ?? row.cwd,
+            helpText: SidebarRowTooltip.text(cwd: row.cwd, scent: scent),
             onSelect: onSelect,
             onClose: onClose,
             onRename: onRename,

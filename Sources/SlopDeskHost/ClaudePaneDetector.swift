@@ -66,6 +66,14 @@ public struct ClaudePaneDetector: Sendable {
     /// this, and a genuinely finished/exited agent decays normally once the window lapses.
     static let reportGraceWindow: TimeInterval = 30
 
+    /// Seconds a hook/report-established status stays preserved by a WRAPPER-basename foreground
+    /// (suppressor (b) in ``sample(name:at:)``) past the last authoritative fold. An order of
+    /// magnitude above ``reportGraceWindow``: a wrapper-launched claude quietly between turns
+    /// refreshes the anchor with its next hook/report well inside this, while a claude that died
+    /// WITHOUT a SessionEnd (kill/crash/link drop — hooks are best-effort) cannot pin its stale
+    /// verdict onto an unrelated later `node`/`npx`/`bun` process reusing the same pane forever.
+    static let wrapperSuppressionWindow: TimeInterval = 600
+
     /// The wire `kind` byte for the LAST hook Notification class (`0` until a Notification arrives;
     /// carried so a type-27 emitted by a subsequent tick/presence fold still reports the live block
     /// class). Reset to `0` by any non-Notification transition through the machine that leaves the
@@ -128,10 +136,14 @@ public struct ClaudePaneDetector: Sendable {
         // suppressors:
         // (a) within the grace window of the last authoritative fold, ANY absence is dropped;
         // (b) while a hook/report-established status is live (`hookAuthority`), an absence whose
-        //     basename is a known WRAPPER (`node`/`npx`/`bun`/`deno`/`mise`) is dropped even past
-        //     the window — a wrapper-launched claude sitting quietly between turns (no hook traffic
-        //     to re-stamp the window) must not flap to `.none` while the wrapper still holds the
-        //     PTY foreground. A wrapper never LIFTS the floor (absence cannot lift `.none`).
+        //     basename is a known WRAPPER (`node`/`npx`/`bun`/`deno`/`mise`) is dropped for the
+        //     LONGER ``wrapperSuppressionWindow`` — a wrapper-launched claude sitting quietly
+        //     between turns (no hook traffic to re-stamp the short window) must not flap to `.none`
+        //     while the wrapper still holds the PTY foreground. Still TIME-BOUND off the same
+        //     `lastAuthoritativeAt` anchor: hooks are best-effort, so a claude killed without a
+        //     SessionEnd would otherwise pin its stale verdict onto any later node-based tool
+        //     (`npm run dev`, `bun test`, …) run in the same pane for as long as it lives. A
+        //     wrapper never LIFTS the floor (absence cannot lift `.none`).
         // Once neither holds, absence terminates normally (a genuinely exited agent decays).
         // Ordered comparison (NaN-faithful) — never a bare `<` ternary.
         let absenceSuppressed: Bool = {
@@ -141,8 +153,12 @@ public struct ClaudePaneDetector: Sendable {
                 if Double.minimum(elapsed, Self.reportGraceWindow) < Self.reportGraceWindow,
                    elapsed >= 0
                 { return true }
+                if hookAuthority, matcher.isLikelyWrapper(processName: base),
+                   Double.minimum(elapsed, Self.wrapperSuppressionWindow) < Self.wrapperSuppressionWindow,
+                   elapsed >= 0
+                { return true }
             }
-            return hookAuthority && matcher.isLikelyWrapper(processName: base)
+            return false
         }()
         if absenceSuppressed {
             // Skip the terminating absence fold; keep the authoritative status intact.

@@ -158,6 +158,12 @@ struct PaneMoveHandle: View {
     let onEnded: (CGPoint) -> Void
     /// A plain tap on the strip focuses the pane (so the top strip is not a focus dead-zone).
     let onTap: () -> Void
+    /// Fires when the gesture goes inactive WITHOUT `onEnded` having run — a cancel, a system interrupt,
+    /// or this very handle's view being torn out of the `ForEach` mid-drag (the pane it belongs to closed
+    /// while the mouse button was still down). Safe to treat as idempotent: on a normal release both this
+    /// and `onEnded` fire, but `onEnded`'s commit reads its own captured location, not caller state, so
+    /// this running first (or twice) never drops or reorders the commit.
+    var onInterrupted: () -> Void = {}
 
     /// Whether this leaf renders UNTHEMED content (a `.remoteGUI`/`.desktop` video stream): the bare
     /// tertiary pill tuned to the terminal palette disappears over an arbitrary — usually light —
@@ -166,6 +172,10 @@ struct PaneMoveHandle: View {
     var contentIsUnthemed: Bool = false
 
     @State private var hovering = false
+    /// `true` for the duration of the gesture. SwiftUI auto-resets `@GestureState` on end/cancel/interrupt
+    /// — including this view being removed from its `ForEach` mid-drag — so `onInterrupted` can NEVER be
+    /// skipped the way a bare `.onEnded` closure can (see `PaneDivider`'s identical safety net).
+    @GestureState private var dragActive = false
 
     /// The grab strip is centred + width-limited so it covers minimal terminal real estate and never
     /// overlaps the side dividers. Short panes get a proportionally smaller strip.
@@ -216,11 +226,17 @@ struct PaneMoveHandle: View {
         #endif
             .gesture(
                 DragGesture(minimumDistance: 2, coordinateSpace: .named(PaneMoveSpace.name))
+                    .updating($dragActive) { _, state, _ in state = true }
                     .onChanged { onChanged($0.location) }
                     .onEnded { onEnded($0.location) },
             )
             .onTapGesture { onTap() }
             .animation(Slate.Anim.dividerHover, value: revealed)
+            // Fires on end AND on a cancel/teardown (`dragActive` resets either way) — the safety net a
+            // bare `.onEnded` cannot provide.
+            .onChange(of: dragActive) { wasActive, active in
+                if wasActive, !active { onInterrupted() }
+            }
     }
 }
 
@@ -449,4 +465,68 @@ struct PaneMoveOverlay: View {
         }
     }
 }
+
+#if os(macOS)
+import AppKit
+
+/// Escape-to-cancel for an in-flight pane-move drag. The drag is a plain `DragGesture` — it never takes
+/// keyboard focus (the terminal surface underneath usually still holds it), so `.onExitCommand` /
+/// `.onKeyPress(.escape)` (the idiom `ViModeOverlay`/`HintModeOverlay` use for THEIR cancel key) can
+/// never reach it. Mirrors `KeybindingsEditorView`'s recorder monitor instead: a scoped `.keyDown` local
+/// monitor installed only while the drag is live, so Escape cancels regardless of first-responder state
+/// and the monitor never lingers to swallow a key once the drag ends.
+struct PaneMoveEscapeMonitor: NSViewRepresentable {
+    var isActive: Bool
+    var onCancel: () -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        context.coordinator.onCancel = onCancel
+        context.coordinator.isActive = isActive
+        return view
+    }
+
+    func updateNSView(_: NSView, context: Context) {
+        context.coordinator.onCancel = onCancel
+        context.coordinator.isActive = isActive
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    static func dismantleNSView(_: NSView, coordinator: Coordinator) {
+        coordinator.teardown()
+    }
+
+    @MainActor
+    final class Coordinator {
+        var onCancel: () -> Void = {}
+        private var monitor: Any?
+        // Hardware-independent virtual key code (Carbon `kVK_Escape`) — literal, matching the same
+        // no-Carbon-import convention `SystemKeyCapturePolicy` uses.
+        private static let keyCodeEscape: UInt16 = 53
+
+        var isActive: Bool = false {
+            didSet {
+                guard isActive != oldValue else { return }
+                if isActive { install() } else { teardown() }
+            }
+        }
+
+        private func install() {
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self else { return event }
+                guard event.keyCode == Self.keyCodeEscape else { return event }
+                onCancel()
+                return nil // swallow — Escape cancels the drag, never types into the focused pane
+            }
+        }
+
+        func teardown() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+        }
+    }
+}
+#endif
 #endif

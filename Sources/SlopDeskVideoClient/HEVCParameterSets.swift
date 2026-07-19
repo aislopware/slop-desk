@@ -24,9 +24,6 @@ public enum HEVCParameterSets {
     public static let vpsType: UInt8 = 32
     public static let spsType: UInt8 = 33
     public static let ppsType: UInt8 = 34
-    /// IDR slice types (a coded keyframe slice): IDR_W_RADL (19) / IDR_N_LP (20).
-    public static let idrWRADL: UInt8 = 19
-    public static let idrNLP: UInt8 = 20
 
     /// The VPS/SPS/PPS payloads extracted from a keyframe's AVCC bytes, in the order
     /// `CMVideoFormatDescriptionCreateFromHEVCParameterSets` wants them.
@@ -49,15 +46,6 @@ public enum HEVCParameterSets {
     public static func nalType(of unit: Data) -> UInt8? {
         guard let first = unit.first else { return nil }
         return (first >> 1) & 0x3F
-    }
-
-    /// Whether an AVCC buffer's NAL units include a coded IDR slice — i.e. this frame
-    /// is a self-contained decode anchor that carries its own parameter sets.
-    public static func containsIDR(_ avcc: Data) -> Bool {
-        for unit in NALUnit.split(avcc) {
-            if let type = nalType(of: unit), type == idrWRADL || type == idrNLP { return true }
-        }
-        return false
     }
 
     /// Pulls the VPS/SPS/PPS payloads out of an AVCC keyframe buffer. Returns `nil`

@@ -240,9 +240,9 @@ final class ClaudePaneDetectorTests: XCTestCase {
     /// (genuinely exited — the SHELL is back in the foreground), a foreground-absence sample DOES
     /// terminate — a stale report does not pin the pane forever. Complements
     /// ``testReportStickyAgainstForegroundAbsence``. The basename here must be a NON-wrapper — a
-    /// wrapper basename like `node` deliberately stays sticky beyond the window while a
-    /// hook/report-established status is live, see
-    /// ``testWrapperAbsenceBeyondGraceWindowKeepsHookStatus``.
+    /// wrapper basename like `node` deliberately stays sticky beyond the window (bounded by the
+    /// longer suppression window) while a hook/report-established status is live, see
+    /// ``testWrapperAbsenceBeyondGraceWindowKeepsHookStatusWithinSuppressionWindow``.
     func testReportStickinessLapsesAfterGraceWindow() {
         var d = ClaudePaneDetector()
         _ = d.report(state: "working", message: nil, at: 0)
@@ -290,18 +290,56 @@ final class ClaudePaneDetectorTests: XCTestCase {
         XCTAssertEqual(d.status, .needsPermission, "the blocked state must outlive the ~1 Hz poll")
     }
 
-    /// WRAPPER absence never terminates a hook-established status even BEYOND the grace window — the
-    /// wrapped claude sitting quietly between turns (or inside a long tool run with no hook traffic)
-    /// keeps its status while `node`/`npx`/`bun`/`deno`/`mise` holds the PTY foreground. Only a
-    /// non-wrapper foreground (the shell back at its prompt) or a SessionEnd hook ends it.
-    func testWrapperAbsenceBeyondGraceWindowKeepsHookStatus() {
+    /// WRAPPER absence keeps a hook-established status alive well BEYOND the (30 s) grace window —
+    /// the wrapped claude sitting quietly between turns (or inside a long tool run with no hook
+    /// traffic) keeps its status while `node`/`npx`/`bun`/`deno`/`mise` holds the PTY foreground,
+    /// for as long as the LONGER wrapper suppression window off the last hook/report.
+    func testWrapperAbsenceBeyondGraceWindowKeepsHookStatusWithinSuppressionWindow() {
         var d = ClaudePaneDetector()
         _ = d.hook(bytes: json(#"{"hook_event_name":"SessionStart"}"#), at: 0) // hook-established idle
         XCTAssertEqual(d.status, .idle)
-        let wayPast = ClaudePaneDetector.reportGraceWindow * 10
+        let wayPast = ClaudePaneDetector.reportGraceWindow * 10 // 300 s — past grace, inside suppression
         _ = d.tick(at: wayPast)
         _ = d.sample(name: "node", at: wayPast)
-        XCTAssertEqual(d.status, .idle, "a wrapper foreground keeps a hook-established status alive indefinitely")
+        XCTAssertEqual(
+            d.status, .idle,
+            "a wrapper foreground preserves a hook-established status inside the suppression window",
+        )
+    }
+
+    /// The wrapper suppression is TIME-BOUND: a claude killed WITHOUT a SessionEnd (hooks are
+    /// best-effort on abrupt termination) followed by a long-running node-based tool in the SAME
+    /// pane (`npm run dev` → foreground basename `node` for hours) must decay once the wrapper
+    /// suppression window lapses with no hook/report traffic to refresh it — the stale verdict
+    /// must not ride an unrelated process forever.
+    func testWrapperAbsencePastSuppressionWindowDecays() {
+        var d = ClaudePaneDetector()
+        _ = d.hook(bytes: json(#"{"hook_event_name":"UserPromptSubmit"}"#), at: 0)
+        XCTAssertEqual(d.status, .working) // then killed abruptly — no SessionEnd ever fires
+        let late = ClaudePaneDetector.wrapperSuppressionWindow + 1
+        let e = d.sample(name: "node", at: late)
+        XCTAssertEqual(
+            d.status, .none,
+            "a stale hook verdict decays once the wrapper suppression window lapses",
+        )
+        XCTAssertNotNil(e.status, "the termination emits the type-27 transition")
+    }
+
+    /// Real hook traffic REFRESHES the wrapper suppression anchor: a wrapper-launched claude whose
+    /// hooks keep firing stays preserved indefinitely, measured from the LAST hook — only silence
+    /// for a whole window decays it.
+    func testHookTrafficRefreshesWrapperSuppressionWindow() {
+        var d = ClaudePaneDetector()
+        _ = d.hook(bytes: json(#"{"hook_event_name":"UserPromptSubmit"}"#), at: 0)
+        let mid = ClaudePaneDetector.wrapperSuppressionWindow - 100
+        // A PostToolUse mid-run re-stamps the suppression anchor.
+        _ = d.hook(bytes: json(#"{"hook_event_name":"PostToolUse","tool_name":"Bash"}"#), at: mid)
+        // Past the ORIGINAL window but inside the refreshed one → still preserved.
+        _ = d.sample(name: "node", at: ClaudePaneDetector.wrapperSuppressionWindow + 1)
+        XCTAssertEqual(d.status, .working, "the window is measured from the last hook, not the first")
+        // A whole window of silence after the last hook → decays.
+        _ = d.sample(name: "node", at: mid + ClaudePaneDetector.wrapperSuppressionWindow + 1)
+        XCTAssertEqual(d.status, .none, "silence for a full window decays even a wrapper foreground")
     }
 
     /// A NON-wrapper absence (zsh back in the foreground) past the grace window DOES terminate a

@@ -127,4 +127,44 @@ final class MuxFrameDecoderTests: XCTestCase {
         decoder.append(Data([0x00, 0x00])) // fewer than 4 prefix bytes
         XCTAssertNil(try decoder.nextFrame())
     }
+
+    // MARK: - Poison-on-fault (fail-stop)
+
+    func testDecodeFaultPoisonsDecoderDroppingFurtherAppends() {
+        // A bogus length prefix never advances readOffset, so without the poison every later
+        // nextFrame() re-reads the same stuck prefix while append() grows the buffer without bound
+        // as long as the socket stays open. The fault must clear the buffer and drop later input.
+        let oversized = SlopDesk.maxFramePayloadLength + 1
+        var frame = Data()
+        frame.appendBE(UInt32(oversized))
+
+        var decoder = MuxFrameDecoder()
+        decoder.append(frame)
+        XCTAssertThrowsError(try decoder.nextFrame())
+        XCTAssertEqual(decoder.bufferedByteCountForTesting, 0, "the fault frees the buffer")
+
+        decoder.append(Data(count: 1024 * 1024))
+        XCTAssertEqual(
+            decoder.bufferedByteCountForTesting, 0,
+            "a poisoned decoder drops appended input — a peer keeping the socket open cannot grow it",
+        )
+        XCTAssertThrowsError(try decoder.nextFrame()) { error in
+            XCTAssertEqual(error as? SlopDeskError, .frameTooLarge(oversized), "the original fault is rethrown")
+        }
+    }
+
+    func testEnvelopeDecodeFaultAlsoPoisons() {
+        // A malformed envelope BODY (unknown mux type) is the other fault class — same fail-stop:
+        // a valid trailing frame after the fault must NOT be resynchronized onto.
+        var frame = Data()
+        frame.appendBE(UInt32(1))
+        frame.append(0xFF) // unknown mux frame type
+        frame.append(MuxEnvelopeCodec.encode(.channelClose(channelID: 1))) // valid frame after the poison point
+
+        var decoder = MuxFrameDecoder()
+        decoder.append(frame)
+        XCTAssertThrowsError(try decoder.nextFrame())
+        XCTAssertThrowsError(try decoder.nextFrame()) // rethrown, never nil/resync
+        XCTAssertEqual(decoder.bufferedByteCountForTesting, 0)
+    }
 }

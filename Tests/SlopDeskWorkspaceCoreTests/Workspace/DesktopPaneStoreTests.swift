@@ -87,6 +87,56 @@ final class DesktopPaneStoreTests: XCTestCase {
         XCTAssertNil(store.streamedWindowPane(for: 777))
     }
 
+    /// A `.remoteGUI` pane keeps streaming after being detached into its own satellite window — the
+    /// window is still "already open" and must be found, not just tiled panes.
+    func testStreamedWindowPaneFindsDetachedPane() throws {
+        let store = makeStore()
+        let id = try XCTUnwrap(store.openRemoteWindow(windowID: 9, title: "T", appName: "A"))
+        store.detachPaneToWindow(id)
+        XCTAssertTrue(store.tree.isDetached(id), "precondition: the window pane left the tree")
+
+        let ref = try XCTUnwrap(store.streamedWindowPane(for: 9))
+
+        XCTAssertEqual(ref.paneID, id)
+        XCTAssertTrue(ref.isDetached, "the ref must flag it as a satellite, not a tab")
+    }
+
+    /// Reopening a window that's currently detached must NOT mint a second `.remoteGUI` tab (a second
+    /// live video stream) — it resolves to the SAME pane id and, when a satellite reveal seam is wired,
+    /// calls it instead of touching the tree.
+    func testOpenRemoteWindowRevealsDetachedPaneInsteadOfDuplicating() throws {
+        let store = makeStore()
+        let first = try XCTUnwrap(store.openRemoteWindow(windowID: 9, title: "T", appName: "A"))
+        store.detachPaneToWindow(first)
+        var revealed: [PaneID] = []
+        store.revealSatelliteWindow = { paneID in revealed.append(paneID)
+            return true
+        }
+        let tabsBefore = store.tree.activeSession?.tabs.count ?? 0
+
+        let second = store.openRemoteWindow(windowID: 9, title: "T", appName: "A")
+
+        XCTAssertEqual(second, first, "resolves to the SAME pane — no duplicate stream")
+        XCTAssertEqual(store.tree.activeSession?.tabs.count, tabsBefore, "no new tab was minted")
+        XCTAssertFalse(store.tree.contains(first), "the pane stays detached, not folded back into a tab")
+        XCTAssertEqual(revealed, [first], "the reveal seam was called with the detached pane")
+    }
+
+    /// Without the reveal seam wired (headless / test default) reopening a detached window still
+    /// resolves to the existing pane and mints no duplicate — degrade to silent no-reveal, never a
+    /// second live stream.
+    func testOpenRemoteWindowNoDuplicateEvenWithoutRevealSeam() throws {
+        let store = makeStore()
+        let first = try XCTUnwrap(store.openRemoteWindow(windowID: 9, title: "T", appName: "A"))
+        store.detachPaneToWindow(first)
+        let tabsBefore = store.tree.activeSession?.tabs.count ?? 0
+
+        let second = store.openRemoteWindow(windowID: 9, title: "T", appName: "A")
+
+        XCTAssertEqual(second, first)
+        XCTAssertEqual(store.tree.activeSession?.tabs.count, tabsBefore, "still no new tab — no duplicate stream")
+    }
+
     // MARK: - Stage-era persistence is decode-tolerated (the Stage domain is gone)
 
     /// A Session JSON written during the short-lived Stage era carries `stagePanes` /

@@ -152,6 +152,19 @@ public final class AudioStreamEncoder {
         pending.removeAll(keepingCapacity: true)
     }
 
+    /// Resets the cached AAC-ELD converter's own internal codec state (bit reservoir / window
+    /// history) on the enable transition, alongside ``resetAccumulator()`` — same disable-window
+    /// staleness this pairs with, just for the codec's carried-over state rather than the raw PCM
+    /// remainder. No-op for the PCM arm (no converter) or before the converter has ever been built
+    /// (nil until the first AAC frame / a failed build — `converterFailed` is untouched either way,
+    /// a failed converter stays failed). `AudioConverterReset` cannot fail for a live converter
+    /// instance; its result is intentionally ignored (mirrors the codebase's crash-free posture for
+    /// audio-pipeline plumbing).
+    public func resetConverterState() {
+        guard let converter else { return }
+        AudioConverterReset(converter)
+    }
+
     /// HEADLESS core (loopback-driven): append `frameCount` interleaved-stereo sample frames and
     /// encode every completed 480-frame block. `interleaved.count` must be exactly
     /// `frameCount × 2`; a mismatched call is dropped (a length lie must not shear the

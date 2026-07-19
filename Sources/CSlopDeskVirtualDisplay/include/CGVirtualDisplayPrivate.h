@@ -20,6 +20,15 @@
 // Mach IPC) and the process must keep a live run loop (NSApplication.run / CFRunLoopRun) or the
 // display is torn down. The VD object must be RETAINED for its whole lifetime (ARC dealloc
 // unregisters it). `applySettings:` blocks on WindowServer IPC — call it off the main thread.
+//
+// ⚠️ NOT ABI-STABLE: only the FRAMEWORK (CoreGraphics.framework) is public — these four classes
+// are undocumented private API with no Apple ABI guarantee across macOS point releases. Each
+// `@interface` below is `weak_import`ed so a future OS that removes/renames one does NOT fail
+// dyld's symbol bind at process launch (which would crash the whole daemon before any of the
+// graceful nil-return / 1×-fallback logic in VirtualDisplay.swift ever runs). The Swift side
+// additionally gates its FIRST use behind a runtime `NSClassFromString` existence check (see
+// `VirtualDisplay.privateClassesAvailable`) so a missing class degrades to the documented "returns
+// nil → caller falls back to 1×" contract instead of a late crash on first message send.
 
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
@@ -28,6 +37,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// One display mode. width/height are POINT (logical) dimensions; with settings.hiDPI=1 the OS
 /// doubles them to the pixel framebuffer (so a 1920×1080-point mode is backed by 3840×2160 px).
+__attribute__((weak_import))
 @interface CGVirtualDisplayMode : NSObject
 @property (readonly, nonatomic) NSUInteger width;       // POINTS
 @property (readonly, nonatomic) NSUInteger height;      // POINTS
@@ -37,6 +47,7 @@ NS_ASSUME_NONNULL_BEGIN
                   refreshRate:(double)refreshRate;
 @end
 
+__attribute__((weak_import))
 @interface CGVirtualDisplaySettings : NSObject
 @property (nonatomic)         unsigned int  hiDPI;       // 0 = none, 1 = 2× Retina backing
 @property (retain, nonatomic) NSArray<CGVirtualDisplayMode *> *modes;
@@ -44,6 +55,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (instancetype)init;
 @end
 
+__attribute__((weak_import))
 @interface CGVirtualDisplayDescriptor : NSObject
 @property (nonatomic) unsigned int  vendorID;           // MUST be non-zero (else initWithDescriptor: → nil)
 @property (nonatomic) unsigned int  productID;
@@ -61,6 +73,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (instancetype)init;
 @end
 
+__attribute__((weak_import))
 @interface CGVirtualDisplay : NSObject
 @property (readonly, nonatomic) CGDirectDisplayID displayID;   // valid after applySettings: returns YES
 @property (readonly, nonatomic) unsigned int      hiDPI;

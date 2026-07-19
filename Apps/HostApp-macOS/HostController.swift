@@ -48,8 +48,11 @@ final class HostController {
 
     var isBusy: Bool { state == .starting || state == .stopping }
 
-    /// SF Symbol for the menu-bar status item. Red-tinted "missing-permission" affordance is
-    /// applied at the view layer (research §C1); this just reflects the running state.
+    /// SF Symbol for the menu-bar status item, reflecting only the daemon's own running state.
+    /// The missing-permission affordance (research §C1) is layered on top of this at the view
+    /// layer (`SlopDeskHostApp.MenuBarIcon`) as a SYMBOL SWAP, not a color tint — the menu bar
+    /// renders SF Symbols as monochrome templates, so a `.foregroundStyle` tint would be flattened
+    /// back to the template color anyway.
     var menuBarSymbol: String {
         switch state {
         case .running: "bolt.horizontal.circle.fill"
@@ -116,7 +119,7 @@ final class HostController {
         server.onListenerFailed = { [weak self, weak server] err in
             Task { @MainActor in
                 guard let self, let server, self.server === server else { return }
-                self.stop()
+                await self.stop()
                 self.state = .failed(Self.describe(err, port: port))
             }
         }
@@ -138,26 +141,24 @@ final class HostController {
         }
     }
 
-    /// Stop the in-process host and return to `.stopped`. No-op when not running.
-    func stop() {
+    /// Stop the in-process host and return to `.stopped`, awaiting the drain (SIGTERM-with-grace to
+    /// every live session, journal flush, listener close) rather than firing it off and returning
+    /// early. Idempotent / no-op when not running — safe to call from Quit's graceful-shutdown path
+    /// even if the host was never started or a user-initiated Stop already raced it to `nil`.
+    func stop() async {
         guard let server else { return }
         self.server = nil
-        // Go to `.stopping` (BUSY), not straight to `.stopped`. `server.stop()` is async and only
-        // releases the bound listener socket near the end (transport.stop() → listener.cancel());
-        // re-enabling Start before that completes lets a fast Stop→Start race the old listener and fail
-        // with a spurious "Port already in use". Flip to `.stopped` only AFTER the drain — and only if a
-        // newer start()/failure has not superseded us in the meantime.
+        // Go to `.stopping` (BUSY) before the first suspension point, so a concurrent stop() call
+        // (already a no-op via the `server == nil` guard above) or a Start attempt can't slip in
+        // mid-drain and race the old listener into a spurious "Port already in use".
         state = .stopping
         clientCount = nil
         // End the count consumer: cancelling the task makes its `for await` return nil, so no late
         // drain-time `0` is applied after we leave `.running`.
         countConsumerTask?.cancel()
         countConsumerTask = nil
-        Task { @MainActor [weak self] in
-            await server.stop()
-            guard let self else { return }
-            if case .stopping = state { state = .stopped }
-        }
+        await server.stop()
+        if case .stopping = state { state = .stopped }
     }
 
     /// A compact, user-facing error description (avoid dumping a giant Swift error). The listener-start

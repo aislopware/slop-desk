@@ -22,6 +22,10 @@ struct SlateEmptyState: View {
         case linkDown(host: String)
         /// Connected fine — just no open tabs; the next action mints one.
         case noTabs
+        /// The last explicit connect attempt failed — the caption carries the REAL reason (not the
+        /// generic not-connected copy) so a wrong host/port reads as its own mistake, and the action
+        /// reopens the Connect editor to correct it.
+        case connectFailed(reason: String)
     }
 
     let cause: Cause
@@ -37,6 +41,7 @@ struct SlateEmptyState: View {
         case .neverConnected: "bolt.horizontal"
         case .linkDown: "wifi.exclamationmark"
         case .noTabs: "terminal"
+        case .connectFailed: "exclamationmark.triangle"
         }
     }
 
@@ -45,6 +50,7 @@ struct SlateEmptyState: View {
         case .neverConnected: "Not Connected"
         case .linkDown: "Connection Lost"
         case .noTabs: "No Open Tabs"
+        case .connectFailed: "Connect Failed"
         }
     }
 
@@ -53,6 +59,7 @@ struct SlateEmptyState: View {
         case .neverConnected: "Connect to a host to open a terminal."
         case let .linkDown(host): "Reconnecting to \(host)…"
         case .noTabs: "Open a tab to get started."
+        case let .connectFailed(reason): reason
         }
     }
 
@@ -63,6 +70,7 @@ struct SlateEmptyState: View {
         case .neverConnected: "Connect to Host…"
         case .linkDown: nil
         case .noTabs: "New Tab"
+        case .connectFailed: "Connect to Host…"
         }
     }
 

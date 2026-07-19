@@ -64,7 +64,8 @@ struct ContentColumn: View {
                 let cause = Self.emptyCause(status: connection.status, host: connection.target.host)
                 SlateEmptyState(cause: cause) {
                     switch cause {
-                    case .neverConnected: onConnect()
+                    case .neverConnected,
+                         .connectFailed: onConnect()
                     case .noTabs: store.newTerminalPane(.newTab)
                     case .linkDown: break // redials itself; no user action offered
                     }
@@ -83,10 +84,10 @@ struct ContentColumn: View {
         switch status {
         case .connected: .noTabs
         case .reconnecting: .linkDown(host: host)
+        case let .failed(reason): .connectFailed(reason: ConnectionPresenter.friendlyFailure(reason))
         case .disconnected,
              .connecting,
-             .unreachable,
-             .failed: .neverConnected
+             .unreachable: .neverConnected
         }
     }
 }

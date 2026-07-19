@@ -2426,6 +2426,15 @@
       "pacerPresentGaps": 6,
       "unrecovered": 2,
       "variant": "networkStats"
+    },
+    {
+      "fragIndices": [
+        5,
+        10
+      ],
+      "frameID": 16909060,
+      "hex": "060102030400020005000a",
+      "variant": "requestFragments"
     }
   ],
   "sizeNegotiationClamp": [
@@ -3988,6 +3997,12 @@
         }
       ],
       "variant": "contentMask"
+    },
+    {
+      "hex": "0f07800438",
+      "maxHeight": 1080,
+      "maxWidth": 1920,
+      "variant": "displayMax"
     },
     {
       "hex": "0b",

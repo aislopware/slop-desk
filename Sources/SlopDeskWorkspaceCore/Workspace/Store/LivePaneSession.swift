@@ -173,6 +173,15 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// every other kind (`remoteWindow == nil`).
     public func toggleViewportLock() { remoteWindow?.toggleViewportLock() }
 
+    /// FIT VIEWPORT TO PANE: route the palette verb to the `.remoteGUI` pane's footer [fit] command
+    /// (the model itself gates re-anchoring while locked / off-stream). A no-op for every other kind
+    /// (`remoteWindow == nil`).
+    public func fitViewportToPane() { remoteWindow?.sendViewport(.fitToPane) }
+
+    /// ACTUAL SIZE: route the palette verb to the `.remoteGUI` pane's footer [1×] command. Same no-op
+    /// family as ``fitViewportToPane()``.
+    public func resetViewportZoom() { remoteWindow?.sendViewport(.reset) }
+
     /// PASTE AS KEYSTROKES: route the pane's clipboard-paste to the `.remoteGUI` pane's
     /// ``RemoteWindowModel`` (whose live key sink the video view publishes; withheld while read-only /
     /// not streaming, so the model no-ops). A no-op for every other kind (`remoteWindow == nil`) — a

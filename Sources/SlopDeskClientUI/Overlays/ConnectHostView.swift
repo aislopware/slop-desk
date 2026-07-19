@@ -57,6 +57,14 @@ struct ConnectHostView: View {
                     Label(hint, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                         .font(.callout)
+                } else if case let .failed(reason) = connection.status {
+                    // The sheet stays open on a failed connect (see `connectAndClose`) — the same
+                    // validation-hint row voice carries the reason, run through the presenter so it
+                    // reads as the actionable copy every other connection surface shows, never the
+                    // raw transport dump (which stays reachable via the status pill's tooltip).
+                    Label(ConnectionPresenter.friendlyFailure(reason), systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .font(.callout)
                 }
             }
             .formStyle(.grouped)
@@ -88,11 +96,13 @@ struct ConnectHostView: View {
     }
 
     /// Validate-then-connect: no-op unless the form parses (the button is also disabled then), then fire the
-    /// app's `connect()` and close. Never force-unwraps — `canConnect` gates here and `connect()` re-guards
-    /// the parse internally. The close is DOUBLE-guarded: the Task is stored + cancelled on
-    /// Cancel/teardown, AND the completion only closes if the coordinator's `connectGeneration` still matches
-    /// the presentation this Task started under — a slow connect resolving after cancel + reopen must not
-    /// dismiss the fresh sheet.
+    /// app's `connect()`. Never force-unwraps — `canConnect` gates here and `connect()` re-guards the parse
+    /// internally. Only a SUCCESSFUL connect closes the sheet — a `.failed` result leaves it open with the
+    /// real reason inline (`connection.validationHint` already renders as the same warning row above; a
+    /// dropped sheet with the reason reachable only via the status-pill tooltip is a silent failure). The
+    /// close is DOUBLE-guarded: the Task is stored + cancelled on Cancel/teardown, AND the completion only
+    /// closes if the coordinator's `connectGeneration` still matches the presentation this Task started
+    /// under — a slow connect resolving after cancel + reopen must not dismiss the fresh sheet.
     private func connectAndClose() {
         guard connection.canConnect else { return }
         connectTask?.cancel()
@@ -100,8 +110,18 @@ struct ConnectHostView: View {
         connectTask = Task {
             await connection.connect()
             guard !Task.isCancelled else { return }
+            guard Self.shouldCloseAfterConnect(status: connection.status) else { return }
             coordinator.closeConnect(ifCurrent: generation)
         }
+    }
+
+    /// Whether a `connect()` completion should dismiss the sheet — every terminal status except
+    /// `.failed` does (a live `.connecting`/`.reconnecting` in between never reaches here; `connect()`
+    /// has already resolved by the time this is checked). Pure + `static` so it's pinned headlessly
+    /// without driving the view or a real socket.
+    static func shouldCloseAfterConnect(status: ConnectionStatus) -> Bool {
+        if case .failed = status { return false }
+        return true
     }
 
     /// Cancel: kill the in-flight connect Task (its completion must never fire) and close the sheet.

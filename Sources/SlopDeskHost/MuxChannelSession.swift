@@ -449,6 +449,70 @@ final class MuxChannelSession: @unchecked Sendable {
         case exit(code: Int32)
     }
 
+    // MARK: - Serial PTY-input writer (ONE queue for every write path)
+
+    /// The ONE serial queue every PTY input write lands on — client `input` frames (live relay AND
+    /// the rebound relay after a reattach) and the agent-control `write`/`send-keys` raw injection.
+    /// A dedicated serial queue (mirroring PTYReadLoop's dedicated read thread) because the master
+    /// fd is deliberately blocking; funneling EVERY writer here is what makes teardown safe:
+    /// ``shutdown()`` closes ``inputWritesClosed`` and `sync`-drains this queue BEFORE
+    /// `pty.closeMaster()`, so a stale write can never land on a recycled fd number after the close
+    /// (the write-side sibling of the `exitLock` TOCTOU guard on `setWindowSize`).
+    private let inputQueue: DispatchQueue
+
+    /// Teardown gate for PTY input writes. Guarded by `inputGateLock` (set by ``shutdown()`` on the
+    /// teardown queue; read at the top of every `inputQueue` write block). Once true, every queued
+    /// or future write block is a no-op — bytes for a dying pane are dropped, never written.
+    private let inputGateLock = NSLock()
+    private var inputWritesClosed = false
+
+    /// Test seam for the serial PTY-input writer: when set, invoked ON `inputQueue` IN PLACE of the
+    /// real blocking `write(2)` for every payload that passed the teardown gate. Hang-safe tests
+    /// drive the gate/drain semantics on an UNSPAWNED PTY (whose fd −1 no-ops the real write before
+    /// anything is observable). `nil` (production) writes to the live master fd.
+    var ptyWriteOverrideForTesting: ((Data) -> Void)?
+
+    private func inputWritesAreClosed() -> Bool {
+        inputGateLock.lock()
+        defer { inputGateLock.unlock() }
+        return inputWritesClosed
+    }
+
+    /// Writes one client `input` payload on `inputQueue` and suspends until the write lands (or is
+    /// dropped by the teardown gate) — credit-at-consumption needs the completion. The fd is
+    /// re-read AT WRITE TIME inside the queue block (never captured at relay start): a reattach
+    /// swaps relays while the same PTY lives on, so a captured fd could be stale by the time a
+    /// queued write runs.
+    private func writePTYInput(_ bytes: Data) async {
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            inputQueue.async { [weak self] in
+                defer { done.resume() }
+                guard let self, !inputWritesAreClosed() else { return }
+                performPTYWriteOnInputQueue(bytes)
+            }
+        }
+    }
+
+    /// Fire-and-forget variant for the agent-control raw-injection path (the control socket's
+    /// handler thread must never park on a stalled PTY). Same queue, same gate.
+    private func enqueuePTYWrite(_ bytes: Data) {
+        inputQueue.async { [weak self] in
+            guard let self, !inputWritesAreClosed() else { return }
+            performPTYWriteOnInputQueue(bytes)
+        }
+    }
+
+    /// The gated write body — MUST run on `inputQueue`, after the ``inputWritesClosed`` check.
+    private func performPTYWriteOnInputQueue(_ bytes: Data) {
+        if let override = ptyWriteOverrideForTesting {
+            override(bytes)
+            return
+        }
+        let fd = pty.masterFD
+        guard fd >= 0 else { return }
+        Self.writeAll(fd: fd, data: bytes)
+    }
+
     /// - Parameter resizeDebounce: the latest-wins settle window for `TIOCSWINSZ` applies (default
     ///   ~one frame). See ``scheduleResize(cols:rows:px:py:)`` for WHY a host-side debounce exists.
     /// - Parameter sessionID: the UUID the client included in the `channelOpen` preamble; used by
@@ -483,6 +547,7 @@ final class MuxChannelSession: @unchecked Sendable {
         self.blocksEnabled = blocksEnabled
         self.scrollbackJournal = scrollbackJournal
         self.restoredScrollback = restoredScrollback
+        inputQueue = DispatchQueue(label: "slopdesk.host.pty-input.\(channelID)", qos: .userInitiated)
         // Instantiate the per-channel Blocks tracker only when enabled — otherwise the byte
         // pipeline + sniffer stay byte-identical (no segmenter touches the stream, no emit).
         // The tracker's segmenter carries the resolved auto-progress prefix list (from
@@ -574,28 +639,22 @@ final class MuxChannelSession: @unchecked Sendable {
         enqueueRestoredScrollback()
         readLoop.start()
 
-        // INPUT: the DATA sub-channel carries `input`. The blocking `write(2)` runs on a
-        // DEDICATED serial queue (mirroring PTYReadLoop's dedicated read thread): the PTY
-        // master fd is deliberately blocking, so on the cooperative pool a paste into a
+        // INPUT: the DATA sub-channel carries `input`. The blocking `write(2)` runs on the
+        // session's ONE serial `inputQueue` (mirroring PTYReadLoop's dedicated read thread): the
+        // PTY master fd is deliberately blocking, so on the cooperative pool a paste into a
         // non-reading foreground program would park a width-limited thread — a few wedged
         // writers would degrade every other pane's drains. Credit is granted only AFTER the
         // write returns (credit-at-consumption), so a stalled PTY transitively parks the
         // CLIENT's sender at one window instead of buffering the paste in host RAM.
-        let inputQueue = DispatchQueue(label: "slopdesk.host.pty-input.\(channelID)", qos: .userInitiated)
         inputTask = Task.detached { [weak self] in
             do {
                 for try await message in data.inbound {
                     if case let .input(bytes) = message {
-                        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
-                            inputQueue.async {
-                                Self.writeAll(fd: masterFD, data: bytes)
-                                done.resume()
-                            }
-                        }
+                        await self?.writePTYInput(bytes)
                         // termios ECHO flips fastest around a password prompt — re-probe right
                         // after writing this keystroke so AUTO Secure Keyboard Entry engages with minimal
                         // lag. The detector dedupes, so the steady (echo-on) state emits nothing.
-                        self?.sampleEcho(masterFD: masterFD)
+                        if let self { sampleEcho(masterFD: pty.masterFD) }
                     }
                     // Consumed (written to the PTY / processed): grant the window back.
                     await data.noteConsumed(message.wireByteCount)
@@ -1049,26 +1108,19 @@ final class MuxChannelSession: @unchecked Sendable {
         // control-sender rebuild).
         reestablishActivityOnReattach()
 
-        // Restart the input task (reads from the NEW data sub-channel).
-        let masterFD = pty.masterFD
-        let localChannelID = channelID
-        let inputQueue = DispatchQueue(
-            label: "slopdesk.host.pty-input.\(localChannelID).rebind", qos: .userInitiated,
-        )
+        // Restart the input task (reads from the NEW data sub-channel). Writes land on the SAME
+        // serial `inputQueue` as every other life of this pane — teardown drains ONE queue, and the
+        // fd is re-read at write time inside ``writePTYInput`` (never captured here, where it could
+        // go stale under a later rebind).
         inputTask = Task.detached { [weak self] in
             do {
                 for try await message in newData.inbound {
                     if case let .input(bytes) = message {
-                        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
-                            inputQueue.async {
-                                Self.writeAll(fd: masterFD, data: bytes)
-                                done.resume()
-                            }
-                        }
+                        await self?.writePTYInput(bytes)
                         // Re-probe termios ECHO right after writing input on the reattached
                         // channel too (same rationale as the live relay) — AUTO Secure Keyboard Entry
                         // must keep working after a reconnect. The detector dedupes the steady state.
-                        self?.sampleEcho(masterFD: masterFD)
+                        if let self { sampleEcho(masterFD: pty.masterFD) }
                     }
                     await newData.noteConsumed(message.wireByteCount)
                 }
@@ -1238,6 +1290,18 @@ final class MuxChannelSession: @unchecked Sendable {
             pty.forceTerminate()
             pty.waitUntilExited(timeout: 0.25)
         }
+        // Quiesce the PTY WRITER before closing the master — the write-side sibling of the
+        // read-loop discipline above. Every input write runs as a blocking `write(2)` block on the
+        // serial `inputQueue`; close the gate (any block enqueued from here on is a no-op), then
+        // sync-drain the queue so an in-flight write COMPLETES before `close(masterFD)` — otherwise
+        // the freed fd number could be recycled by a concurrent `openpty()` and the stale write
+        // would inject bytes into an unrelated pane's PTY (the write-path TOCTOU). Bounded: the
+        // child is already dead (SIGTERM→SIGKILL above), so a write parked on a full kernel PTY
+        // buffer returns EIO once the slave side is gone — the drain cannot hang.
+        inputGateLock.lock()
+        inputWritesClosed = true
+        inputGateLock.unlock()
+        inputQueue.sync {}
         pty.closeMaster()
         // The child has exited, so its ZDOTDIR shim dir is dead — delete it so the host's temp dir
         // does not accumulate one `slopdesk-zdotdir-*` dir per opened pane forever.
@@ -1527,19 +1591,16 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// Writes `bytes` to the PTY master fd (control-plane input injection).
     ///
-    /// Fire-and-forget on a background queue: the blocking `write(2)` on a stalled PTY must
-    /// NOT park the control socket's per-connection handler thread (it serves other verbs).
-    /// Uses the same `writeAll` helper the regular input task uses (handles `EINTR`, partial writes).
-    /// Validate-then-drop: an empty slice or a closed PTY master fd is silently ignored.
+    /// Fire-and-forget on the session's serial `inputQueue`: the blocking `write(2)` on a stalled
+    /// PTY must NOT park the control socket's per-connection handler thread (it serves other
+    /// verbs). Funnelled through the SAME queue as client `input` writes — an anonymous
+    /// global-queue hop would escape ``shutdown()``'s writer drain and could land on a recycled fd
+    /// after `closeMaster()`. Uses the same `writeAll` helper (handles `EINTR`, partial writes).
+    /// Validate-then-drop: an empty slice, a closed PTY master fd, or a torn-down session is
+    /// silently ignored.
     func writeRawForControl(_ bytes: Data) {
         guard !bytes.isEmpty else { return }
-        let masterFD = pty.masterFD
-        guard masterFD >= 0 else { return }
-        // Hop off the caller's thread: `write(2)` on a blocking master fd may park when the PTY
-        // kernel buffer is full (shell not reading), so a stalled shell must not block the listener.
-        DispatchQueue.global(qos: .utility).async {
-            Self.writeAll(fd: masterFD, data: bytes)
-        }
+        enqueuePTYWrite(bytes)
     }
 
     /// Resizes the PTY for the agent-control `resize` verb.
