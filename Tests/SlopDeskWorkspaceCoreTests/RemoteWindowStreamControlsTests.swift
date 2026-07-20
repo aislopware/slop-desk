@@ -374,6 +374,142 @@ final class RemoteWindowStreamControlsTests: XCTestCase {
         XCTAssertEqual(silent, [], "audio OFF ⇒ nothing re-asserted")
     }
 
+    // MARK: Latched modes (model-owned wishes — detach-remount + restart survival)
+
+    /// `applyStreamSettings` STORES the override on the model (mirrors ``audioStreamEnabled``): gated on
+    /// `canAdjustStreamSettings` (off-stream / sink-less applies are inert — no stored wish the session
+    /// never saw), and a same-values apply is dropped so the absolute sink sees transitions only.
+    func testApplyStreamSettingsStoresTheOverrideAndDropsSameValues() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
+        m.applyStreamSettings(fpsCap: 24, bitrateCeilingBps: 8_000_000) // no sink + not streaming
+        XCTAssertEqual(m.streamFpsCap, 0, "an inert apply must not store a wish the session never saw")
+        XCTAssertEqual(m.streamBitrateCeilingBps, 0)
+
+        var received: [(Int, Int)] = []
+        m.streamSettingsInjector = { received.append(($0, $1)) }
+        m.open()
+        m.applyStreamSettings(fpsCap: 24, bitrateCeilingBps: 8_000_000)
+        XCTAssertEqual(m.streamFpsCap, 24, "the model remembers the override")
+        XCTAssertEqual(m.streamBitrateCeilingBps, 8_000_000)
+        m.applyStreamSettings(fpsCap: 24, bitrateCeilingBps: 8_000_000) // same values — dropped
+        XCTAssertEqual(received.count, 1, "the sink sees transitions only")
+        m.applyStreamSettings(fpsCap: 0, bitrateCeilingBps: 0)
+        XCTAssertEqual(m.streamFpsCap, 0, "auto restores the stored wish too")
+        XCTAssertEqual(received.count, 2)
+    }
+
+    /// Publishing a stream-settings sink RE-ASSERTS a held non-auto override (the audio/viewport
+    /// precedent): a detach/reattach re-binds the SAME model to a fresh view whose new session — and so
+    /// the host — starts at auto. An all-auto model publishes nothing.
+    func testStreamSettingsSinkPublishReassertsAHeldOverride() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
+        m.open()
+        m.streamSettingsInjector = { _, _ in }
+        m.applyStreamSettings(fpsCap: 30, bitrateCeilingBps: 10_000_000)
+
+        // The detach/reattach remount: a FRESH view publishes a replacement sink.
+        var freshSink: [(Int, Int)] = []
+        m.streamSettingsInjector = { freshSink.append(($0, $1)) }
+        XCTAssertEqual(freshSink.count, 1, "the held override is re-asserted into the fresh sink")
+        XCTAssertEqual(freshSink[0].0, 30)
+        XCTAssertEqual(freshSink[0].1, 10_000_000)
+
+        // All-auto model: a new publish stays silent (the fresh session's default is correct).
+        let m2 = RemoteWindowModel(target: { self.target }, windowID: "7", title: "Safari")
+        m2.open()
+        var silent: [(Int, Int)] = []
+        m2.streamSettingsInjector = { silent.append(($0, $1)) }
+        XCTAssertEqual(silent.count, 0, "auto ⇒ nothing re-asserted")
+    }
+
+    /// **`close()` resets the stream overrides (the audio/lock discipline) but KEEPS the immersive
+    /// wish.** The overrides would otherwise re-assert onto an unrelated window re-bound on the same
+    /// model; immersive's tap survives a close as a SUSPENSION today (capture resumes when a stream is
+    /// back), so its wish must survive too.
+    func testCloseResetsStreamOverridesButKeepsImmersiveWish() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
+        m.open()
+        m.streamSettingsInjector = { _, _ in }
+        m.applyStreamSettings(fpsCap: 60, bitrateCeilingBps: 20_000_000)
+        m.setImmersiveDesired(true)
+
+        m.close()
+
+        XCTAssertEqual(m.streamFpsCap, 0, "close() resets the overrides — no stale re-assert onto a re-bound window")
+        XCTAssertEqual(m.streamBitrateCeilingBps, 0)
+        XCTAssertTrue(m.immersiveDesired, "the immersive wish survives close (the tap only suspends)")
+
+        // Proves the re-assert hazard is defused: a fresh sink after close+reopen stays silent.
+        m.open()
+        var freshSink: [(Int, Int)] = []
+        m.streamSettingsInjector = { freshSink.append(($0, $1)) }
+        XCTAssertEqual(freshSink.count, 0, "no stale override carries into the re-bound window")
+    }
+
+    /// `onModesChanged` fires the full snapshot on every EXPLICIT toggle — and `close()`'s runtime
+    /// resets never fire it (an app-quit teardown routes through close(), and wiping the persisted
+    /// intent there would defeat restart restore).
+    func testOnModesChangedFiresOnExplicitTogglesOnly() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
+        var snapshots: [VideoPaneModes] = []
+        m.onModesChanged = { snapshots.append($0) }
+        m.open()
+        m.audioInjector = { _ in }
+        m.viewportInjector = { _ in }
+        m.streamSettingsInjector = { _, _ in }
+
+        m.applyAudioEnabled(true)
+        XCTAssertEqual(snapshots.count, 1)
+        XCTAssertEqual(snapshots.last?.audioEnabled, true)
+
+        m.toggleViewportLock()
+        XCTAssertEqual(snapshots.count, 2)
+        XCTAssertEqual(snapshots.last?.viewportLocked, true)
+
+        m.applyStreamSettings(fpsCap: 30, bitrateCeilingBps: 0)
+        XCTAssertEqual(snapshots.count, 3)
+        XCTAssertEqual(snapshots.last?.fpsCap, 30)
+
+        m.setImmersiveDesired(true)
+        m.setImmersiveDesired(true) // dedupe — a redundant mirror-sync never spams the sink
+        XCTAssertEqual(snapshots.count, 4)
+        XCTAssertEqual(snapshots.last, VideoPaneModes(
+            immersive: true, audioEnabled: true, viewportLocked: true, fpsCap: 30, bitrateCeilingBps: 0,
+        ))
+
+        m.close()
+        XCTAssertEqual(snapshots.count, 4, "close()'s runtime resets never write the persisted intent")
+    }
+
+    /// **The restart-restore path:** `seedModes` adopts a persisted snapshot silently (no
+    /// `onModesChanged` echo, no sink touch), then the injector `didSet`s re-assert each wish into the
+    /// FIRST published sinks exactly like a detach remount would.
+    func testSeedModesReassertsIntoTheFirstPublishedSinks() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Safari")
+        var snapshots: [VideoPaneModes] = []
+        m.onModesChanged = { snapshots.append($0) }
+        m.seedModes(VideoPaneModes(
+            immersive: true, audioEnabled: true, viewportLocked: true,
+            fpsCap: 30, bitrateCeilingBps: 10_000_000,
+        ))
+        XCTAssertEqual(snapshots.count, 0, "seeding echoes nothing — the spec already holds these values")
+        XCTAssertTrue(m.immersiveDesired)
+
+        m.open()
+        var audio: [Bool] = []
+        var viewport: [UInt8] = []
+        var settings: [(Int, Int)] = []
+        m.audioInjector = { audio.append($0) }
+        m.viewportInjector = { viewport.append($0) }
+        m.streamSettingsInjector = { settings.append(($0, $1)) }
+
+        XCTAssertEqual(audio, [true], "the seeded audio wish reaches the first session")
+        XCTAssertEqual(viewport, [RemoteWindowModel.ViewportCommand.lockOn.rawValue])
+        XCTAssertEqual(settings.count, 1)
+        XCTAssertEqual(settings[0].0, 30)
+        XCTAssertEqual(settings[0].1, 10_000_000)
+    }
+
     #if canImport(SwiftUI)
     /// **Read-only WITHHOLDS the audio sink at the seam.** Enabling audio changes HOST capture
     /// behaviour, so — exactly like the stream-settings sink — the `.videoLeaf` derivation binds

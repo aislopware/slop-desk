@@ -51,24 +51,36 @@ struct GuiLeafView: View {
     /// state is all stream, with the corner chip as the way in. Per-pane view state — resets on
     /// remount, like `showStats`.
     @State private var controlsExpanded = false
-    /// The pane's LIVE stream-settings selection (0 = auto) — mirrors what was last requested through
-    /// ``RemoteWindowModel/applyStreamSettings(fpsCap:bitrateCeilingBps:)``. View state by design: a
-    /// remount mints a NEW client session whose host state also resets to auto, so the two stay in step.
-    @State private var fpsCapSelection = 0
-    @State private var bitrateCapMbpsSelection = 0
     #if os(macOS)
     /// IMMERSIVE capture (system keys → host): the CGEventTap owner. Engaged while the toggle is ON —
     /// focus/app/window/read-only edges only SUSPEND swallowing (capture resumes by itself), so the
-    /// toggle never silently flakes off. One controller per pane view.
+    /// toggle never silently flakes off. One controller per pane VIEW (the tap must die with its
+    /// mount) — the toggle's on/off state itself lives on ``RemoteWindowModel/immersiveDesired`` so a
+    /// detach/reattach remount re-engages instead of silently dropping the mode.
     @State private var systemKeyCapture = SystemKeyCaptureController()
-    /// Mirrors ``systemKeyCapture``'s engaged state for the footer toggle tint (the controller
-    /// self-disengages only on the ⌃⌥⌘E escape chord — `onDisengage` keeps this in step; suspensions
-    /// never clear it).
-    @State private var immersiveOn = false
     #endif
 
     /// The pane's remote-window model (picker/open/close/keyInjector). `nil` for a non-video handle.
     private var model: RemoteWindowModel? { live?.remoteWindow }
+
+    /// The stream-quality selections as write-through bindings onto the MODEL's remembered overrides
+    /// (``RemoteWindowModel/streamFpsCap`` / ``streamBitrateCeilingBps``) — model-owned so the footer
+    /// selection survives a detach/reattach remount and persists across relaunches. The popover edits
+    /// one axis at a time; each write carries the other axis' current value (the sink is absolute).
+    private var fpsCapSelection: Binding<Int> {
+        Binding(
+            get: { model?.streamFpsCap ?? 0 },
+            set: { model?.applyStreamSettings(fpsCap: $0, bitrateCeilingBps: model?.streamBitrateCeilingBps ?? 0) },
+        )
+    }
+
+    /// Mbps at the surface (the picker's unit), bps on the model/wire.
+    private var bitrateCapMbpsSelection: Binding<Int> {
+        Binding(
+            get: { (model?.streamBitrateCeilingBps ?? 0) / 1_000_000 },
+            set: { model?.applyStreamSettings(fpsCap: model?.streamFpsCap ?? 0, bitrateCeilingBps: $0 * 1_000_000) },
+        )
+    }
 
     /// The pure three-state display decision (live / entry-form / cap-gated), from the model's active
     /// descriptor + configured + free slot. Reads `store.videoPromotionGeneration` indirectly via
@@ -100,8 +112,8 @@ struct GuiLeafView: View {
                     GuiPaneControlBar(
                         model: model, store: store, paneID: paneID,
                         showStats: $showStats,
-                        fpsCapSelection: $fpsCapSelection,
-                        bitrateCapMbpsSelection: $bitrateCapMbpsSelection,
+                        fpsCapSelection: fpsCapSelection,
+                        bitrateCapMbpsSelection: bitrateCapMbpsSelection,
                         immersiveOn: immersiveActive,
                         onToggleImmersive: { toggleImmersive() },
                         onCollapse: { controlsExpanded = false },
@@ -173,6 +185,12 @@ struct GuiLeafView: View {
             .task(id: activationKey) {
                 guard !staticMirror, model != nil, isVisible else { return }
                 _ = store.activateVideo(paneID)
+                #if os(macOS)
+                // A remount (detach/reattach) may find the model's sinks ALREADY live — then neither
+                // `canInjectSystemKeys` nor `isFocused` fires an onChange edge, so the mount itself must
+                // attempt the immersive re-engage.
+                maybeAutoEngageImmersive()
+                #endif
             }
             // VISIBILITY-DRIVEN LIFECYCLE: under keep-all-mounted a hidden tab's leaf is never
             // unmounted, so `onDisappear` does NOT fire on a tab switch — driving (de)activation off `isVisible`
@@ -185,7 +203,12 @@ struct GuiLeafView: View {
             .onDisappear {
                 guard !staticMirror else { return }
                 #if os(macOS)
-                systemKeyCapture.disengage() // an unmounted pane must never keep swallowing the keyboard
+                // An unmounted pane must never keep swallowing the keyboard — but an unmount must NOT
+                // clear the model's immersive WISH either (a detach/reattach remount re-engages from it),
+                // so drop the onDisengage mirror-sync before tearing the tap down. The wish clears only
+                // on the manual toggle-off / the ⌃⌥⌘E escape chord.
+                systemKeyCapture.onDisengage = nil
+                systemKeyCapture.disengage()
                 #endif
                 // RELOCATION GUARD (detach/reattach): this leaf unmounts while the pane is STILL desired —
                 // in the tree (just reattached) or detached (just popped out) — and ANOTHER hosting root is
@@ -205,17 +228,21 @@ struct GuiLeafView: View {
             // the ⌃⌥⌘E escape chord, and unmount fully disengage, and `onDisengage` keeps the toggle honest.
             .onChange(of: isFocused) { _, focused in
                 systemKeyCapture.setSuspended(!focused || model?.canInjectSystemKeys != true)
+                maybeAutoEngageImmersive()
             }
             .onChange(of: model?.canInjectSystemKeys ?? false) { _, can in
                 systemKeyCapture.setSuspended(!can || !isFocused)
+                maybeAutoEngageImmersive()
             }
         #endif
     }
 
-    /// Whether immersive capture is live (macOS; constant `false` elsewhere — no CGEventTap).
+    /// Whether immersive capture is ON for the footer toggle/chip tint (macOS; constant `false`
+    /// elsewhere — no CGEventTap). This is the model's WISH — like a suspension, a not-yet-re-engaged
+    /// remount still shows the latched tint so the mode never silently reads as off.
     private var immersiveActive: Bool {
         #if os(macOS)
-        immersiveOn
+        model?.immersiveDesired == true
         #else
         false
         #endif
@@ -229,7 +256,13 @@ struct GuiLeafView: View {
     private func toggleImmersive() {
         #if os(macOS)
         if systemKeyCapture.isEngaged {
-            systemKeyCapture.disengage() // onDisengage clears the mirror
+            systemKeyCapture.disengage() // onDisengage clears the model's wish
+            return
+        }
+        // Toggling OFF a wish whose tap never re-engaged (e.g. Accessibility trust revoked since the
+        // relaunch that restored it) — nothing to disengage, just drop the wish so the tint is honest.
+        if model?.immersiveDesired == true {
+            model?.setImmersiveDesired(false)
             return
         }
         guard model?.canInjectSystemKeys == true else { return }
@@ -237,19 +270,42 @@ struct GuiLeafView: View {
             SystemKeyCaptureController.promptForTrust()
             return
         }
-        systemKeyCapture.onDisengage = { immersiveOn = false }
-        // The toggle click happened in this pane's window, so it IS the key window right now — arm the
-        // controller's window-key suspend/resume on it. Without this, another window of the SAME app going
-        // key (Settings, a second satellite) keeps the app active and the pane focused, so neither the
-        // app-active observer nor the focus onChange would pause the swallowed keyboard.
-        immersiveOn = systemKeyCapture.engage(
-            forward: { [weak model] keyCode, flags, isDown in
-                model?.systemKeyInjector?(keyCode, flags, isDown)
+        if engageImmersiveTap() { model?.setImmersiveDesired(true) }
+        #endif
+    }
+
+    #if os(macOS)
+    /// Arms `onDisengage` (the wish's mirror-sync) and engages the tap against the CURRENT key window.
+    /// The toggle click / focused remount happened in this pane's window, so it IS the key window right
+    /// now — arming the controller's window-key suspend/resume on it matters because another window of
+    /// the SAME app going key (Settings, a second satellite) keeps the app active and the pane focused,
+    /// so neither the app-active observer nor the focus onChange would pause the swallowed keyboard.
+    @discardableResult
+    private func engageImmersiveTap() -> Bool {
+        guard let m = model else { return false }
+        systemKeyCapture.onDisengage = { [weak m] in m?.setImmersiveDesired(false) }
+        return systemKeyCapture.engage(
+            forward: { [weak m] keyCode, flags, isDown in
+                m?.systemKeyInjector?(keyCode, flags, isDown)
             },
             keyWindow: NSApp.keyWindow,
         )
-        #endif
     }
+
+    /// RE-ENGAGE from the model's remembered wish — the detach/reattach (and relaunch-restore) path,
+    /// where this fresh view's controller starts disengaged while ``RemoteWindowModel/immersiveDesired``
+    /// is still ON. Engages only once the pane is focused (its window is key — the right window for the
+    /// suspend/resume observers) and injectable; a missing Accessibility trust leaves the wish latched
+    /// but the tap down (no prompt from a passive remount — the user re-toggles to get one).
+    private func maybeAutoEngageImmersive() {
+        guard model?.immersiveDesired == true,
+              !systemKeyCapture.isEngaged,
+              isFocused,
+              model?.canInjectSystemKeys == true,
+              SystemKeyCaptureController.isTrusted else { return }
+        engageImmersiveTap()
+    }
+    #endif
 
     /// The `.task` identity: re-run admission when THIS session changes (mount), a sibling frees a slot, OR
     /// visibility flips (so a pane returning to screen re-requests its slot immediately).
@@ -278,7 +334,7 @@ struct GuiLeafView: View {
     /// ever invisible. `showStats` is deliberately absent: its readout is its own visibility.
     private var hasLatchedMode: Bool {
         immersiveActive || model?.viewportLocked == true || model?.audioStreamEnabled == true
-            || fpsCapSelection != 0 || bitrateCapMbpsSelection != 0
+            || (model?.streamFpsCap ?? 0) != 0 || (model?.streamBitrateCeilingBps ?? 0) != 0
     }
 
     /// The collapsed-chrome chip: one plate button on the same dim-ground material as the stall caption /
@@ -481,7 +537,9 @@ private struct GuiPaneControlBar: View {
     let paneID: PaneID
     /// The in-pane stats readout toggle (the chip renders in ``GuiLeafView``'s overlay).
     @Binding var showStats: Bool
-    /// The live stream-settings selection (0 = auto), owned by the leaf so it outlives the popover.
+    /// The live stream-settings selection (0 = auto) — write-through bindings onto the MODEL's
+    /// remembered overrides (see ``GuiLeafView/fpsCapSelection``), so they outlive the popover, the
+    /// remount, and the relaunch alike.
     @Binding var fpsCapSelection: Int
     @Binding var bitrateCapMbpsSelection: Int
     /// Immersive system-key capture state + toggle (constant `false`/no-op off macOS).
@@ -603,7 +661,6 @@ private struct GuiPaneControlBar: View {
                     ) { showTunePopover = true }
                         .popover(isPresented: $showTunePopover, arrowEdge: .bottom) {
                             GuiStreamTunePopover(
-                                model: model,
                                 fpsCap: $fpsCapSelection,
                                 bitrateCapMbps: $bitrateCapMbpsSelection,
                             )
@@ -716,10 +773,10 @@ private struct GuiStatsReadout: View {
 
 /// The stream-quality popover: a LIVE fps cap + bitrate ceiling for this session (0 = auto — the host's
 /// governor/ABR run unclamped). Applies on every change (no Apply button — the override is cheap and
-/// reversible); the host clamps on apply and the client session re-sends after any re-hello. Selections
-/// reset to Auto with the session (a remount mints a new session whose host state is auto too).
+/// reversible); the bindings write through to ``RemoteWindowModel/applyStreamSettings(fpsCap:bitrateCeilingBps:)``,
+/// the host clamps on apply, and the model re-asserts the remembered override into every fresh session
+/// (remount / re-hello) — so a selection survives detach/reattach and a relaunch.
 private struct GuiStreamTunePopover: View {
-    let model: RemoteWindowModel
     @Binding var fpsCap: Int
     @Binding var bitrateCapMbps: Int
 
@@ -761,12 +818,6 @@ private struct GuiStreamTunePopover: View {
         }
         .padding(Slate.Metric.space4)
         .frame(width: 300)
-        .onChange(of: fpsCap) { apply() }
-        .onChange(of: bitrateCapMbps) { apply() }
-    }
-
-    private func apply() {
-        model.applyStreamSettings(fpsCap: fpsCap, bitrateCeilingBps: bitrateCapMbps * 1_000_000)
     }
 }
 

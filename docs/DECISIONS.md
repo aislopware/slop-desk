@@ -1289,3 +1289,27 @@ substitution forced by the pure-native-Swift rule.
   would protect. Revisit with `FECScheme` reuse if Wi-Fi loss proves audible.
 - ⚠️ macOS 26.0 shipped Core Audio capture regressions (fixed in 26.1) — audio work is
   verified/shipped against 26.1+.
+
+## Latched video-pane modes: client-owned, persisted with the workspace (2026-07-21)
+
+- ✅ **Problem:** detaching a pane to a satellite window (⌥⌘P) silently dropped immersive
+  system-key capture and the stream fps/bitrate overrides — they were `@State` on `GuiLeafView`,
+  so the remount minted fresh view storage while `viewportLocked`/`audioStreamEnabled` (already
+  model-owned with injector-`didSet` re-asserts) survived.
+- ✅ **Fix = extend the proven model-owned-wish pattern, then persist it.** `RemoteWindowModel`
+  now owns `immersiveDesired` + `streamFpsCap`/`streamBitrateCeilingBps`; the settings sink's
+  `didSet` re-asserts a non-auto override into every fresh session (detach remount, re-hello,
+  relaunch alike); the view auto-re-engages the CGEventTap from the wish (focused + injectable +
+  AX-trusted only — never a prompt from a passive remount, and a plain unmount no longer clears
+  the wish). All five latched modes persist as the additive `PaneSpec.videoModes` (encoded only
+  when non-default; absent key decodes to defaults) and re-seed the model at materialization.
+- ❌ **REJECTED: host as the single source of truth for these modes.** (a) Immersive is a
+  client-LOCAL CGEventTap — the host cannot own another machine's keyboard routing. (b) The video
+  host is deliberately per-session ephemeral (`userFPSCap`/audio reset on every `.startCapture`;
+  the wire contract is "client re-sends its wish after every accepted hello") — host-side
+  durability would need a persistent per-pane identity the host doesn't have (PaneID/workspace
+  is a client concept) and would fight the reset-on-mint discipline. (c) A second client
+  (iPad/macbook) viewing the same host must NOT inherit the first client's per-pane view prefs.
+  The host-authoritative re-assert precedent (terminal types 23/26/27/32) covers HOST-owned
+  facts; these are client wishes. No wire change; `close()`'s runtime resets never write the
+  persisted intent (an app-quit teardown routes through `close()`).

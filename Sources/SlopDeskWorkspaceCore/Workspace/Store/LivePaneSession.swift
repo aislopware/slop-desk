@@ -389,6 +389,11 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
             } else {
                 RemoteWindowModel(target: target)
             }
+        // LATCHED-MODE RESTORE: seed the persisted toggles (immersive / audio / viewport lock / stream
+        // overrides) as the fresh model's wishes BEFORE any view mounts — the injector `didSet`
+        // re-asserts and the view's immersive auto-engage then push them into the first session exactly
+        // like a detach remount would.
+        if let modes = spec.videoModes { model.seedModes(modes) }
         return LivePaneSession(
             id: PaneID(),
             kind: spec.kind,

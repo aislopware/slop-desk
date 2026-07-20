@@ -141,6 +141,63 @@ public struct VideoEndpoint: Codable, Sendable, Equatable {
     }
 }
 
+/// The user's LATCHED per-pane video modes (a `.remoteGUI` / `.desktop` pane): immersive system-key
+/// capture, host audio, the viewport position lock, and the stream-quality overrides. Persisted with the
+/// tree so a relaunch restores the pane's toggles — the runtime source of truth is ``RemoteWindowModel``
+/// (which re-asserts each wish into every freshly-published sink on a detach/reattach remount); this
+/// struct is only the restart snapshot of the user's last EXPLICIT toggles.
+///
+/// Additive (synthesized-key `decodeIfPresent` per field): an older file without the key — or a newer
+/// file with fields this build doesn't know — decodes to the defaults, never traps.
+public struct VideoPaneModes: Codable, Sendable, Equatable {
+    /// Immersive system-key capture (⌘Tab/⌘Space… → host). macOS-only at runtime; the flag itself is
+    /// platform-neutral so a shared workspace file round-trips losslessly.
+    public var immersive: Bool
+    /// Host app-audio streaming into this pane (the footer speaker).
+    public var audioEnabled: Bool
+    /// The viewport position lock (edge-hover auto-pan frozen, ⌥⌘L).
+    public var viewportLocked: Bool
+    /// Live stream-quality overrides (`0` = auto): host encode fps cap + bitrate ceiling.
+    public var fpsCap: Int
+    public var bitrateCeilingBps: Int
+
+    public init(
+        immersive: Bool = false,
+        audioEnabled: Bool = false,
+        viewportLocked: Bool = false,
+        fpsCap: Int = 0,
+        bitrateCeilingBps: Int = 0,
+    ) {
+        self.immersive = immersive
+        self.audioEnabled = audioEnabled
+        self.viewportLocked = viewportLocked
+        self.fpsCap = fpsCap
+        self.bitrateCeilingBps = bitrateCeilingBps
+    }
+
+    /// Every mode at its default — the spec then stores `nil` instead (additive-minimal JSON, like
+    /// ``PaneSpec/userRenamed``'s encode-only-when-true discipline).
+    public var isDefault: Bool { self == Self() }
+
+    private enum CodingKeys: String, CodingKey {
+        case immersive
+        case audioEnabled
+        case viewportLocked
+        case fpsCap
+        case bitrateCeilingBps
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        immersive = try c.decodeIfPresent(Bool.self, forKey: .immersive) ?? false
+        audioEnabled = try c.decodeIfPresent(Bool.self, forKey: .audioEnabled) ?? false
+        viewportLocked = try c.decodeIfPresent(Bool.self, forKey: .viewportLocked) ?? false
+        // Validate-then-default (untrusted persisted data): a negative override is nonsense — auto.
+        fpsCap = try Swift.max(0, c.decodeIfPresent(Int.self, forKey: .fpsCap) ?? 0)
+        bitrateCeilingBps = try Swift.max(0, c.decodeIfPresent(Int.self, forKey: .bitrateCeilingBps) ?? 0)
+    }
+}
+
 /// The full value-typed description of a leaf: its kind, its display title, and (for `.remoteGUI`) the
 /// window it mirrors. The connection host is NOT here — terminals/Claude open a channel on the app-global
 /// ``ConnectionTarget`` and `.remoteGUI` opens a lane on the same host's UDP flow, selecting its window
@@ -161,6 +218,12 @@ public struct PaneSpec: Sendable, Equatable {
     public var title: String
     /// Set for `remoteGUI` panes (which host-side window to mirror).
     public var video: VideoEndpoint?
+    /// The user's latched video-pane modes (immersive / audio / viewport lock / stream overrides),
+    /// persisted so a relaunch restores them. `nil` = all defaults (the common case — additive-minimal
+    /// JSON). Written only through the model's explicit-toggle sink (``RemoteWindowModel``'s
+    /// `onModesChanged`); the model's own `close()`-time runtime resets never write here, so an app-quit
+    /// teardown can't wipe the restart intent.
+    public var videoModes: VideoPaneModes?
 
     // MARK: Stage-1 additive persistence fields (schema v11)
 
@@ -255,6 +318,7 @@ public struct PaneSpec: Sendable, Equatable {
         kind: PaneKind,
         title: String,
         video: VideoEndpoint? = nil,
+        videoModes: VideoPaneModes? = nil,
         resumeSessionID: UUID? = nil,
         resumeLastReceivedSeq: Int64? = nil,
         lastKnownCwd: String? = nil,
@@ -265,6 +329,7 @@ public struct PaneSpec: Sendable, Equatable {
         self.kind = kind
         self.title = title
         self.video = video
+        self.videoModes = videoModes
         self.resumeSessionID = resumeSessionID
         self.resumeLastReceivedSeq = resumeLastReceivedSeq
         self.lastKnownCwd = lastKnownCwd
@@ -283,6 +348,7 @@ extension PaneSpec: Codable {
         case kind
         case title
         case video
+        case videoModes
         case resumeSessionID
         case resumeLastReceivedSeq
         case lastKnownCwd
@@ -296,6 +362,8 @@ extension PaneSpec: Codable {
         kind = try c.decode(PaneKind.self, forKey: .kind)
         title = try c.decode(String.self, forKey: .title)
         video = try c.decodeIfPresent(VideoEndpoint.self, forKey: .video)
+        // Additive: an older file without the key decodes to `nil` (all modes default).
+        videoModes = try c.decodeIfPresent(VideoPaneModes.self, forKey: .videoModes)
         resumeSessionID = try c.decodeIfPresent(UUID.self, forKey: .resumeSessionID)
         resumeLastReceivedSeq = try c.decodeIfPresent(Int64.self, forKey: .resumeLastReceivedSeq)
         lastKnownCwd = try c.decodeIfPresent(String.self, forKey: .lastKnownCwd)
@@ -311,6 +379,8 @@ extension PaneSpec: Codable {
         try c.encode(kind, forKey: .kind)
         try c.encode(title, forKey: .title)
         try c.encodeIfPresent(video, forKey: .video)
+        // Encoded only when some mode is latched, so an untouched pane's JSON is unchanged.
+        if let videoModes, !videoModes.isDefault { try c.encode(videoModes, forKey: .videoModes) }
         try c.encodeIfPresent(resumeSessionID, forKey: .resumeSessionID)
         try c.encodeIfPresent(resumeLastReceivedSeq, forKey: .resumeLastReceivedSeq)
         try c.encodeIfPresent(lastKnownCwd, forKey: .lastKnownCwd)

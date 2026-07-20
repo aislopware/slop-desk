@@ -3223,6 +3223,17 @@ public final class WorkspaceStore {
                     spec.video = endpoint
                 }
             }
+            // LATCHED-MODE PERSISTENCE: every explicit mode toggle (immersive / audio / viewport lock /
+            // stream overrides) persists into the pane's spec so a relaunch restores it (the model seeds
+            // from `spec.videoModes` at materialization). Default-normalized to `nil` + dirty-guarded so
+            // an all-off pane stays additive-minimal and a redundant fire never churns a save.
+            model.onModesChanged = { [weak self] modes in
+                self?.updateSpecLive(id) { spec in
+                    let normalized: VideoPaneModes? = modes.isDefault ? nil : modes
+                    guard spec.videoModes != normalized else { return }
+                    spec.videoModes = normalized
+                }
+            }
         }
         // EXPLICIT NOTIFICATIONS (OSC 9 / OSC 777): route a terminal pane's child-requested notification
         // to the app poster, tagged with this pane id so a click reveals it.
@@ -3649,6 +3660,15 @@ public final class WorkspaceStore {
                                 spec.title = endpoint.title
                             }
                             spec.video = endpoint
+                        }
+                    }
+                    // LATCHED-MODE PERSISTENCE (canvas path): same guarded persist as
+                    // `wireMaterializedLeaf` — see the tree-path comment.
+                    model.onModesChanged = { [weak self] modes in
+                        self?.updateSpec(id) { spec in
+                            let normalized: VideoPaneModes? = modes.isDefault ? nil : modes
+                            guard spec.videoModes != normalized else { return }
+                            spec.videoModes = normalized
                         }
                     }
                 }

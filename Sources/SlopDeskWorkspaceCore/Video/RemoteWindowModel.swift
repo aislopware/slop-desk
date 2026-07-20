@@ -136,16 +136,39 @@ public final class RemoteWindowModel {
     /// session exists (cleared `nil` on teardown; WITHHELD by the seam while read-only — it changes HOST
     /// encode behaviour, like ``resizeInjector``). `(fpsCap, bitrateCeilingBps)`, `0` = auto; the host
     /// clamps on apply and the session re-sends the request after every re-hello.
-    public var streamSettingsInjector: ((_ fpsCap: Int, _ bitrateCeilingBps: Int) -> Void)?
+    ///
+    /// Re-asserts a NON-AUTO ``streamFpsCap``/``streamBitrateCeilingBps`` on every publish (the
+    /// ``audioInjector`` precedent): a detach/reattach re-binds the SAME model to a FRESH view whose new
+    /// session — and so the host — starts at auto, so the model's remembered override must re-push. An
+    /// all-auto model publishes nothing (the fresh session's default is already correct).
+    public var streamSettingsInjector: ((_ fpsCap: Int, _ bitrateCeilingBps: Int) -> Void)? {
+        didSet {
+            if streamFpsCap != 0 || streamBitrateCeilingBps != 0, let inject = streamSettingsInjector {
+                inject(streamFpsCap, streamBitrateCeilingBps)
+            }
+        }
+    }
 
     /// Whether the stream-settings controls should be live: streaming AND a settings sink is wired
     /// (withheld while read-only).
     public var canAdjustStreamSettings: Bool { active != nil && streamSettingsInjector != nil }
 
-    /// Request a live fps cap / bitrate ceiling (`0` = auto) through the published sink (no-op when
-    /// none is wired — not streaming or read-only).
+    /// The last-requested stream-quality overrides (`0` = auto). The MODEL owns them (mirrors
+    /// ``audioStreamEnabled``) so the footer selection survives a view remount (detach/reattach) —
+    /// re-asserted into every freshly-published sink via ``streamSettingsInjector``'s `didSet`.
+    public private(set) var streamFpsCap = 0
+    public private(set) var streamBitrateCeilingBps = 0
+
+    /// Request a live fps cap / bitrate ceiling (`0` = auto). Gated on ``canAdjustStreamSettings`` so an
+    /// off-stream / read-only apply can't strand an override the session never saw — a graceful no-op,
+    /// like the other video verbs. A same-values apply is dropped (the sink is absolute; nothing to say).
     public func applyStreamSettings(fpsCap: Int, bitrateCeilingBps: Int) {
+        guard canAdjustStreamSettings,
+              streamFpsCap != fpsCap || streamBitrateCeilingBps != bitrateCeilingBps else { return }
+        streamFpsCap = fpsCap
+        streamBitrateCeilingBps = bitrateCeilingBps
         streamSettingsInjector?(fpsCap, bitrateCeilingBps)
+        notifyModesChanged()
     }
 
     /// HOST AUDIO (footer speaker toggle): the live ``VideoWindowView`` publishes this once its session
@@ -181,6 +204,67 @@ public final class RemoteWindowModel {
         guard canToggleAudio, audioStreamEnabled != enabled else { return }
         audioStreamEnabled = enabled
         audioInjector?(enabled)
+        notifyModesChanged()
+    }
+
+    // MARK: Immersive wish (macOS system-key capture — the model-owned toggle state)
+
+    /// IMMERSIVE (system keys → host): whether the user's immersive toggle is ON. The MODEL owns the
+    /// wish (mirrors ``viewportLocked``/``audioStreamEnabled``) so a detach/reattach remount — which
+    /// mints a fresh view whose per-view `SystemKeyCaptureController` starts disengaged — can re-engage
+    /// the tap from this remembered state instead of silently dropping the toggle. The CGEventTap itself
+    /// stays view-owned (`GuiLeafView`): only a mounted, focused, Accessibility-trusted view may
+    /// actually swallow the keyboard; this flag is the intent, not the tap.
+    ///
+    /// Deliberately NOT reset by ``close()``: the tap survives a window close/re-pick as a SUSPENSION
+    /// today (`canInjectSystemKeys` flips false → the view suspends, capture resumes when a stream is
+    /// back), so the wish mirrors that lifecycle — unlike audio/lock, whose absolute re-assert into a
+    /// re-bound window's fresh sink is exactly the hazard `close()`'s resets defuse.
+    public private(set) var immersiveDesired = false
+
+    /// Records the immersive toggle's state (the view calls this on a successful engage, on the manual
+    /// toggle-off, and on the ⌃⌥⌘E escape chord — never on a plain unmount, which must keep the wish so
+    /// the remounted view re-engages). Dedups so a redundant mirror-sync never spams the persistence sink.
+    public func setImmersiveDesired(_ on: Bool) {
+        guard immersiveDesired != on else { return }
+        immersiveDesired = on
+        notifyModesChanged()
+    }
+
+    // MARK: Latched-modes persistence (restart survival)
+
+    /// Fired after every EXPLICIT user mode toggle (immersive / audio / viewport lock / stream
+    /// overrides) with the full latched-mode snapshot — the store persists it into the pane's spec
+    /// (wired at session materialization, like ``onEndpointCommitted``). `close()`'s runtime resets
+    /// never fire this: an app-quit teardown must not wipe the persisted restart intent.
+    public var onModesChanged: ((VideoPaneModes) -> Void)?
+
+    /// The current latched-mode snapshot (what ``onModesChanged`` publishes / a restore seeds).
+    public var currentModes: VideoPaneModes {
+        VideoPaneModes(
+            immersive: immersiveDesired,
+            audioEnabled: audioStreamEnabled,
+            viewportLocked: viewportLocked,
+            fpsCap: streamFpsCap,
+            bitrateCeilingBps: streamBitrateCeilingBps,
+        )
+    }
+
+    private func notifyModesChanged() {
+        onModesChanged?(currentModes)
+    }
+
+    /// RESTORE SEED: adopts a persisted mode snapshot as the model's starting wishes — set at session
+    /// materialization (``LivePaneSession``), BEFORE any view exists, so the injector `didSet`
+    /// re-asserts (audio / lock / stream overrides) and the view's immersive auto-engage push each wish
+    /// into the first session exactly like a detach remount. Never fires ``onModesChanged`` (the spec
+    /// already holds these values) and never touches a sink (none is published yet).
+    public func seedModes(_ modes: VideoPaneModes) {
+        immersiveDesired = modes.immersive
+        audioStreamEnabled = modes.audioEnabled
+        viewportLocked = modes.viewportLocked
+        streamFpsCap = Swift.max(0, modes.fpsCap)
+        streamBitrateCeilingBps = Swift.max(0, modes.bitrateCeilingBps)
     }
 
     /// SYSTEM-KEY INJECTOR (immersive-capture plumbing): programmatic key events driven through the
@@ -264,6 +348,7 @@ public final class RemoteWindowModel {
         guard canControlViewport else { return }
         viewportLocked.toggle()
         sendViewport(viewportLocked ? .lockOn : .lockOff)
+        notifyModesChanged()
     }
 
     /// RELEASE STUCK INPUT (the manual escape hatch): a zero-arg closure ``VideoWindowView`` publishes
@@ -650,6 +735,14 @@ public final class RemoteWindowModel {
         isStreamStalled = false // a closed pane shows the picker, not a stale "Reconnecting…" scrim
         audioStreamEnabled = false // the next session mints with audio OFF — keep the speaker honest
         viewportLocked = false // ditto for the viewport lock — a freshly (re)bound window starts unlocked
+        // Ditto for the stream overrides — without this a cap set on window A would re-assert itself
+        // (via `streamSettingsInjector`'s didSet) onto an unrelated window B re-bound on the SAME model.
+        // RUNTIME resets only: none of these fire `onModesChanged` — the persisted spec keeps the user's
+        // last explicit toggles so a relaunch (whose teardown routes through here) still restores them.
+        // `immersiveDesired` deliberately survives (see its doc — the tap itself outlives a close as a
+        // suspension, so the wish must too).
+        streamFpsCap = 0
+        streamBitrateCeilingBps = 0
         // The titlebar/sidebar connection cluster (`ConnectionTelemetry`) reads these unconditionally — a
         // closed/re-bound pane must not keep showing the LAST session's cadence/bitrate/network numbers as
         // if it were still streaming.
