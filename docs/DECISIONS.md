@@ -1301,8 +1301,14 @@ substitution forced by the pure-native-Swift rule.
   `didSet` re-asserts a non-auto override into every fresh session (detach remount, re-hello,
   relaunch alike); the view auto-re-engages the CGEventTap from the wish (focused + injectable +
   AX-trusted only — never a prompt from a passive remount, and a plain unmount no longer clears
-  the wish). All five latched modes persist as the additive `PaneSpec.videoModes` (encoded only
-  when non-default; absent key decodes to defaults) and re-seed the model at materialization.
+  the wish). All five latched modes persist in the additive TARGET-keyed
+  `TreeWorkspace.videoModesByTarget` (`VideoEndpoint.modesKey`: a desktop pane keys by display, a
+  window pane by its owning app — ids recycle, titles churn) — deliberately NOT pane-keyed: a
+  close-tab → reopen-the-same-target mints a brand-new PaneID/spec, so pane-keyed storage dies
+  with the tab (the first cut stored `PaneSpec.videoModes` and lost exactly that case). The store
+  seeds the model at materialization AND on every endpoint commit (re-pick / display switch /
+  rebind re-seed the NEW target's saved modes; the view syncs the immersive tap to wish changes
+  both ways); entries normalize away when toggled back to default.
 - ❌ **REJECTED: host as the single source of truth for these modes.** (a) Immersive is a
   client-LOCAL CGEventTap — the host cannot own another machine's keyboard routing. (b) The video
   host is deliberately per-session ephemeral (`userFPSCap`/audio reset on every `.startCapture`;

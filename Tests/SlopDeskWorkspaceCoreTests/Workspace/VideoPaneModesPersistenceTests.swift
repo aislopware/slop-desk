@@ -1,7 +1,7 @@
-// VideoPaneModesPersistenceTests — pins the latched video-pane modes' restart survival: the additive
-// `PaneSpec.videoModes` codable contract, the store's explicit-toggle → spec persistence wiring, and the
-// `LivePaneSession.make` restore seed. The runtime (detach-remount) half — injector `didSet` re-asserts —
-// is pinned in `RemoteWindowStreamControlsTests`.
+// VideoPaneModesPersistenceTests — pins the latched video-pane modes' TARGET-keyed persistence
+// (`TreeWorkspace.videoModesByTarget`): the additive codable contract, the explicit-toggle → map
+// wiring, close-tab → reopen-the-same-target restore, and the relaunch restore seed. The runtime
+// (detach-remount) half — injector `didSet` re-asserts — is pinned in `RemoteWindowStreamControlsTests`.
 
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -16,54 +16,48 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
 
     private let decoder = JSONDecoder()
 
-    // MARK: - PaneSpec codable (additive)
+    // MARK: - Target key (VideoEndpoint.modesKey)
 
-    func testPaneSpecRoundTripsVideoModes() throws {
-        let spec = PaneSpec(
-            kind: .remoteGUI,
-            title: "Safari",
-            video: VideoEndpoint(windowID: 42, title: "Safari", appName: "Safari"),
-            videoModes: VideoPaneModes(
-                immersive: true, audioEnabled: true, viewportLocked: true,
-                fpsCap: 30, bitrateCeilingBps: 10_000_000,
-            ),
-        )
-        let restored = try decoder.decode(PaneSpec.self, from: makeEncoder().encode(spec))
-        XCTAssertEqual(restored, spec, "PaneSpec round-trips the latched modes")
-        XCTAssertEqual(restored.videoModes?.immersive, true)
-        XCTAssertEqual(restored.videoModes?.bitrateCeilingBps, 10_000_000)
+    /// Desktop keys by DISPLAY; a window keys by its owning APP (ids recycle, titles churn); a
+    /// manual-id binding (no app) falls back to the raw window id.
+    func testModesKeyDerivation() {
+        XCTAssertEqual(VideoEndpoint(windowID: 0, title: "Desktop", displayID: 2).modesKey, "display:2")
+        XCTAssertEqual(VideoEndpoint(windowID: 42, title: "Docs", appName: "Safari").modesKey, "app:Safari")
+        XCTAssertEqual(VideoEndpoint(windowID: 42, title: "Docs").modesKey, "window:42")
     }
 
-    /// A nil / all-default modes value emits NO `videoModes` key (additive-minimal — an untouched
-    /// pane's JSON is byte-unchanged from the pre-modes shape).
-    func testDefaultModesAreNotEmitted() throws {
-        let nilModes = PaneSpec(kind: .remoteGUI, title: "Safari")
-        let defaultModes = PaneSpec(kind: .remoteGUI, title: "Safari", videoModes: VideoPaneModes())
-        for spec in [nilModes, defaultModes] {
-            let json = try XCTUnwrap(String(data: makeEncoder().encode(spec), encoding: .utf8))
-            XCTAssertFalse(json.contains("videoModes"), "default modes must not be emitted")
-        }
+    // MARK: - TreeWorkspace codable (additive)
+
+    func testTreeRoundTripsVideoModesByTarget() throws {
+        var tree = TreeWorkspace.defaultWorkspace()
+        tree.videoModesByTarget = [
+            "display:0": VideoPaneModes(immersive: true, fpsCap: 30),
+            "app:Safari": VideoPaneModes(audioEnabled: true, bitrateCeilingBps: 10_000_000),
+        ]
+        let restored = try decoder.decode(TreeWorkspace.self, from: makeEncoder().encode(tree))
+        XCTAssertEqual(restored.videoModesByTarget, tree.videoModesByTarget)
     }
 
-    /// An older file without the key decodes `nil` — never traps (the additive decode contract).
-    func testAbsentVideoModesKeyDecodesNil() throws {
-        let json = """
-        { "kind": "remoteGUI", "title": "Safari",
-          "video": { "windowID": 99, "title": "Safari", "appName": "Safari" } }
-        """
-        let spec = try decoder.decode(PaneSpec.self, from: Data(json.utf8))
-        XCTAssertNil(spec.videoModes)
+    /// An older file without the key decodes to an empty map — never traps (additive contract).
+    func testAbsentVideoModesByTargetKeyDecodesEmpty() throws {
+        var tree = TreeWorkspace.defaultWorkspace()
+        tree.videoModesByTarget = ["display:0": VideoPaneModes(immersive: true)]
+        let data = try makeEncoder().encode(tree)
+        // Simulate a pre-modes file by stripping the key from the emitted JSON object.
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNotNil(object.removeValue(forKey: "videoModesByTarget"), "precondition: the key was emitted")
+        let stripped = try JSONSerialization.data(withJSONObject: object)
+        let restored = try decoder.decode(TreeWorkspace.self, from: stripped)
+        XCTAssertEqual(restored.videoModesByTarget, [:])
     }
 
-    /// Per-field additive decode + validate-then-default: a partial `videoModes` object (a future/older
-    /// build's key set) fills the rest with defaults, and a negative persisted cap is repaired to auto.
+    /// Per-field additive decode + validate-then-default on the mode struct itself: a partial object
+    /// fills the rest with defaults, and a negative persisted cap is repaired to auto.
     func testPartialAndInvalidModesDecodeToDefaults() throws {
         let json = """
-        { "kind": "remoteGUI", "title": "Safari",
-          "videoModes": { "audioEnabled": true, "fpsCap": -5 } }
+        { "audioEnabled": true, "fpsCap": -5 }
         """
-        let spec = try decoder.decode(PaneSpec.self, from: Data(json.utf8))
-        let modes = try XCTUnwrap(spec.videoModes)
+        let modes = try decoder.decode(VideoPaneModes.self, from: Data(json.utf8))
         XCTAssertTrue(modes.audioEnabled)
         XCTAssertFalse(modes.immersive, "absent field decodes to its default")
         XCTAssertFalse(modes.viewportLocked)
@@ -71,13 +65,13 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
         XCTAssertEqual(modes.bitrateCeilingBps, 0)
     }
 
-    // MARK: - Store wiring: explicit toggle → spec, spec → restored session
+    // MARK: - Store wiring: explicit toggle → target map, reopen/relaunch → seeded model
 
     /// One real session factory for the store tests. `makeClient` is never called here: a video pane
     /// has no PATH-1 connection, and the default workspace's terminal pane is lazy-connect (no view
     /// ever triggers `connect()` in a headless store test).
-    private func makeLiveStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { spec in
+    private func makeLiveStore(restoringTree: TreeWorkspace? = nil) -> WorkspaceStore {
+        WorkspaceStore(restoringTree: restoringTree, liveModel: .tree, makeSession: { spec in
             LivePaneSession.make(
                 spec,
                 makeClient: { _ in fatalError("connect() never runs in this test") },
@@ -86,68 +80,105 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
         })
     }
 
-    /// The end-to-end persistence edge: an explicit audio toggle on a materialized pane's model lands in
-    /// the pane's spec (`videoModes`), default-normalized to `nil` when everything is back off.
-    func testExplicitToggleLandsInThePaneSpec() throws {
+    private func remoteWindowModel(in store: WorkspaceStore, for id: PaneID) throws -> RemoteWindowModel {
+        try XCTUnwrap((store.handle(for: id) as? LivePaneSession)?.remoteWindow)
+    }
+
+    /// The persistence edge: an explicit audio toggle lands under the pane's TARGET key, and toggling
+    /// everything back off removes the entry (default-normalized — the map never accretes no-op rows).
+    func testExplicitToggleLandsUnderTheTargetKey() throws {
         let store = makeLiveStore()
         let id = try XCTUnwrap(store.openRemoteWindow(windowID: 42, title: "Docs", appName: "Safari"))
-        let session = try XCTUnwrap(store.handle(for: id) as? LivePaneSession)
-        let model = try XCTUnwrap(session.remoteWindow)
+        let model = try remoteWindowModel(in: store, for: id)
 
         model.open()
         model.audioInjector = { _ in }
         model.applyAudioEnabled(true)
 
         XCTAssertEqual(
-            store.tree.spec(for: id)?.videoModes,
+            store.tree.videoModesByTarget["app:Safari"],
             VideoPaneModes(audioEnabled: true),
-            "the explicit toggle persists into the pane's spec",
+            "the explicit toggle persists under the target key, not the pane",
         )
 
         model.applyAudioEnabled(false)
         XCTAssertNil(
-            store.tree.spec(for: id)?.videoModes,
-            "all-default modes normalize back to nil (additive-minimal JSON)",
+            store.tree.videoModesByTarget["app:Safari"],
+            "all-default modes remove the entry",
         )
     }
 
-    /// The restore half: `LivePaneSession.make` seeds a fresh model from `spec.videoModes`, so a
-    /// relaunch's first session starts with the persisted wishes (which the injector `didSet`s then
-    /// re-assert — pinned in `RemoteWindowStreamControlsTests`).
-    func testMakeSeedsModelFromPersistedModes() throws {
-        let spec = PaneSpec(
-            kind: .remoteGUI,
-            title: "Safari",
-            video: VideoEndpoint(windowID: 42, title: "Safari", appName: "Safari"),
-            videoModes: VideoPaneModes(
-                immersive: true, audioEnabled: true, viewportLocked: true,
-                fpsCap: 60, bitrateCeilingBps: 20_000_000,
-            ),
-        )
-        let session = LivePaneSession.make(
-            spec,
-            makeClient: { _ in fatalError("unused for a video pane") },
-            makeInspector: { _ in nil },
-        )
-        let model = try XCTUnwrap(session.remoteWindow)
-        XCTAssertTrue(model.immersiveDesired)
-        XCTAssertTrue(model.audioStreamEnabled)
-        XCTAssertTrue(model.viewportLocked)
-        XCTAssertEqual(model.streamFpsCap, 60)
-        XCTAssertEqual(model.streamBitrateCeilingBps, 20_000_000)
+    /// **Close tab → reopen the same target restores the modes.** The reopened pane is a brand-new
+    /// PaneID/spec (everything pane-keyed died with the tab); the target-keyed map re-seeds the fresh
+    /// model at materialization, and the injector `didSet` re-asserts push the wish into its first session.
+    func testCloseTabThenReopenSameTargetRestoresModes() throws {
+        let store = makeLiveStore()
+        let first = try XCTUnwrap(store.openRemoteWindow(windowID: 42, title: "Docs", appName: "Safari"))
+        let firstModel = try remoteWindowModel(in: store, for: first)
+        firstModel.open()
+        firstModel.audioInjector = { _ in }
+        firstModel.streamSettingsInjector = { _, _ in }
+        firstModel.applyAudioEnabled(true)
+        firstModel.applyStreamSettings(fpsCap: 30, bitrateCeilingBps: 0)
+
+        store.closePaneTree(first)
+        XCTAssertNil(store.handle(for: first), "the pane is gone with its tab")
+
+        // Reopen the SAME window (same app) — a brand-new pane.
+        let second = try XCTUnwrap(store.openRemoteWindow(windowID: 42, title: "Docs", appName: "Safari"))
+        XCTAssertNotEqual(second, first)
+        let secondModel = try remoteWindowModel(in: store, for: second)
+
+        XCTAssertTrue(secondModel.audioStreamEnabled, "the target's saved modes seed the reopened pane")
+        XCTAssertEqual(secondModel.streamFpsCap, 30)
+
+        // And the re-assert half: the fresh session's sink publish pushes the restored wish.
+        secondModel.open()
+        var audio: [Bool] = []
+        secondModel.audioInjector = { audio.append($0) }
+        XCTAssertEqual(audio, [true])
     }
 
-    /// A spec WITHOUT modes seeds nothing — the fresh-pane defaults stand.
-    func testMakeWithoutModesLeavesDefaults() throws {
-        let spec = PaneSpec(kind: .remoteGUI, title: "Safari")
-        let session = LivePaneSession.make(
-            spec,
-            makeClient: { _ in fatalError("unused for a video pane") },
-            makeInspector: { _ in nil },
+    /// **Relaunch restores too:** the map rides the persisted tree, so a store restored from it seeds
+    /// the re-materialized pane's model.
+    func testRelaunchRestoreSeedsFromPersistedTree() throws {
+        let store = makeLiveStore()
+        let id = try XCTUnwrap(store.openRemoteWindow(windowID: 42, title: "Docs", appName: "Safari"))
+        let model = try remoteWindowModel(in: store, for: id)
+        model.open()
+        model.viewportInjector = { _ in }
+        model.toggleViewportLock()
+
+        // Simulate the relaunch: encode → decode the tree, restore a fresh store from it.
+        let restoredTree = try decoder.decode(TreeWorkspace.self, from: makeEncoder().encode(store.tree))
+        let relaunched = makeLiveStore(restoringTree: restoredTree)
+        let restoredID = try XCTUnwrap(
+            relaunched.tree.allPaneIDs().first { relaunched.tree.spec(for: $0)?.video?.windowID == 42 },
         )
-        let model = try XCTUnwrap(session.remoteWindow)
-        XCTAssertFalse(model.immersiveDesired)
-        XCTAssertFalse(model.audioStreamEnabled)
-        XCTAssertEqual(model.streamFpsCap, 0)
+        let restoredModel = try remoteWindowModel(in: relaunched, for: restoredID)
+        XCTAssertTrue(restoredModel.viewportLocked, "the persisted target modes seed the relaunched pane")
+    }
+
+    /// A RE-TARGET inside one pane (pick a different window) re-seeds from the NEW target's saved
+    /// modes — each target keeps its own latched set.
+    func testRepickSeedsTheNewTargetsModes() throws {
+        let store = makeLiveStore()
+        // Save modes for Notes under its own key first.
+        let notes = try XCTUnwrap(store.openRemoteWindow(windowID: 7, title: "Ideas", appName: "Notes"))
+        let notesModel = try remoteWindowModel(in: store, for: notes)
+        notesModel.open()
+        notesModel.audioInjector = { _ in }
+        notesModel.applyAudioEnabled(true)
+        store.closePaneTree(notes)
+
+        // A Safari pane with no saved modes re-picks to Notes → inherits Notes' saved modes.
+        let pane = try XCTUnwrap(store.openRemoteWindow(windowID: 42, title: "Docs", appName: "Safari"))
+        let model = try remoteWindowModel(in: store, for: pane)
+        model.open()
+        XCTAssertFalse(model.audioStreamEnabled, "Safari has no saved modes")
+        model.close()
+        model.pick(RemoteWindowSummary(windowID: 7, appName: "Notes", title: "Ideas", width: 800, height: 600))
+        model.open()
+        XCTAssertTrue(model.audioStreamEnabled, "the endpoint commit seeds the NEW target's saved modes")
     }
 }

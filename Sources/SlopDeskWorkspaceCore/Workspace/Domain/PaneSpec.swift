@@ -133,6 +133,16 @@ public struct VideoEndpoint: Codable, Sendable, Equatable {
     /// (`0` = the main display) instead of a window. Additive (synthesized Codable decodes a
     /// missing key to `nil` — an older file's window endpoints are unaffected).
     public var displayID: UInt32?
+
+    /// The stable TARGET identity latched modes are keyed by (``TreeWorkspace/videoModesByTarget``):
+    /// a desktop pane keys by its DISPLAY; a window pane keys by its owning APP (CGWindowIDs recycle
+    /// across host restarts and titles churn per page/file — the app is the identity a re-picked or
+    /// rebound window shares); a manual-id binding (no app name) falls back to the raw window id.
+    public var modesKey: String {
+        if let displayID { return "display:\(displayID)" }
+        return appName.isEmpty ? "window:\(windowID)" : "app:\(appName)"
+    }
+
     public init(windowID: UInt32, title: String, appName: String = "", displayID: UInt32? = nil) {
         self.windowID = windowID
         self.title = title
@@ -141,11 +151,13 @@ public struct VideoEndpoint: Codable, Sendable, Equatable {
     }
 }
 
-/// The user's LATCHED per-pane video modes (a `.remoteGUI` / `.desktop` pane): immersive system-key
+/// The user's LATCHED video-pane modes (a `.remoteGUI` / `.desktop` pane): immersive system-key
 /// capture, host audio, the viewport position lock, and the stream-quality overrides. Persisted with the
-/// tree so a relaunch restores the pane's toggles — the runtime source of truth is ``RemoteWindowModel``
+/// tree keyed by the stream TARGET (``TreeWorkspace/videoModesByTarget`` / ``VideoEndpoint/modesKey``) —
+/// deliberately NOT per pane, so close-tab → reopen-the-same-target restores them (a reopened target
+/// mints a brand-new pane) as well as a relaunch. The runtime source of truth is ``RemoteWindowModel``
 /// (which re-asserts each wish into every freshly-published sink on a detach/reattach remount); this
-/// struct is only the restart snapshot of the user's last EXPLICIT toggles.
+/// struct is only the persisted snapshot of the user's last EXPLICIT toggles for a target.
 ///
 /// Additive (synthesized-key `decodeIfPresent` per field): an older file without the key — or a newer
 /// file with fields this build doesn't know — decodes to the defaults, never traps.
@@ -218,12 +230,6 @@ public struct PaneSpec: Sendable, Equatable {
     public var title: String
     /// Set for `remoteGUI` panes (which host-side window to mirror).
     public var video: VideoEndpoint?
-    /// The user's latched video-pane modes (immersive / audio / viewport lock / stream overrides),
-    /// persisted so a relaunch restores them. `nil` = all defaults (the common case — additive-minimal
-    /// JSON). Written only through the model's explicit-toggle sink (``RemoteWindowModel``'s
-    /// `onModesChanged`); the model's own `close()`-time runtime resets never write here, so an app-quit
-    /// teardown can't wipe the restart intent.
-    public var videoModes: VideoPaneModes?
 
     // MARK: Stage-1 additive persistence fields (schema v11)
 
@@ -318,7 +324,6 @@ public struct PaneSpec: Sendable, Equatable {
         kind: PaneKind,
         title: String,
         video: VideoEndpoint? = nil,
-        videoModes: VideoPaneModes? = nil,
         resumeSessionID: UUID? = nil,
         resumeLastReceivedSeq: Int64? = nil,
         lastKnownCwd: String? = nil,
@@ -329,7 +334,6 @@ public struct PaneSpec: Sendable, Equatable {
         self.kind = kind
         self.title = title
         self.video = video
-        self.videoModes = videoModes
         self.resumeSessionID = resumeSessionID
         self.resumeLastReceivedSeq = resumeLastReceivedSeq
         self.lastKnownCwd = lastKnownCwd
@@ -348,7 +352,6 @@ extension PaneSpec: Codable {
         case kind
         case title
         case video
-        case videoModes
         case resumeSessionID
         case resumeLastReceivedSeq
         case lastKnownCwd
@@ -362,8 +365,6 @@ extension PaneSpec: Codable {
         kind = try c.decode(PaneKind.self, forKey: .kind)
         title = try c.decode(String.self, forKey: .title)
         video = try c.decodeIfPresent(VideoEndpoint.self, forKey: .video)
-        // Additive: an older file without the key decodes to `nil` (all modes default).
-        videoModes = try c.decodeIfPresent(VideoPaneModes.self, forKey: .videoModes)
         resumeSessionID = try c.decodeIfPresent(UUID.self, forKey: .resumeSessionID)
         resumeLastReceivedSeq = try c.decodeIfPresent(Int64.self, forKey: .resumeLastReceivedSeq)
         lastKnownCwd = try c.decodeIfPresent(String.self, forKey: .lastKnownCwd)
@@ -379,8 +380,6 @@ extension PaneSpec: Codable {
         try c.encode(kind, forKey: .kind)
         try c.encode(title, forKey: .title)
         try c.encodeIfPresent(video, forKey: .video)
-        // Encoded only when some mode is latched, so an untouched pane's JSON is unchanged.
-        if let videoModes, !videoModes.isDefault { try c.encode(videoModes, forKey: .videoModes) }
         try c.encodeIfPresent(resumeSessionID, forKey: .resumeSessionID)
         try c.encodeIfPresent(resumeLastReceivedSeq, forKey: .resumeLastReceivedSeq)
         try c.encodeIfPresent(lastKnownCwd, forKey: .lastKnownCwd)

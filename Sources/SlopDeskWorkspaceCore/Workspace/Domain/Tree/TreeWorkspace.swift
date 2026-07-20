@@ -41,6 +41,15 @@ public struct TreeWorkspace: Codable, Sendable, Equatable {
     /// (`decodeIfPresent` ⇒ `[]`) and the store re-seeds the built-ins — NO schema bump, NO migration step
     /// (mirrors the ``launchPresets`` additive field exactly).
     public var sessionTemplates: [SessionTemplate]
+    /// The user's latched video-pane modes (immersive / audio / viewport lock / stream overrides),
+    /// keyed by the stream TARGET (``VideoEndpoint/modesKey`` — a display, or a window's owning app) —
+    /// NOT by pane. Keying by target is what lets the modes survive a close-tab → reopen (the reopened
+    /// target mints a brand-new ``PaneID``/spec, so anything pane-keyed dies with the tab) as well as a
+    /// relaunch. Written only through the store's explicit-toggle sink
+    /// (``WorkspaceStore``'s `persistVideoModes`); read to seed a freshly-materialized / re-targeted
+    /// ``RemoteWindowModel``. Additive (`decodeIfPresent` ⇒ `[:]`); unbounded but tiny (one entry per
+    /// distinct app/display the user ever latched a mode on — entries clear when toggled back to default).
+    public var videoModesByTarget: [String: VideoPaneModes]
 
     public init(
         schemaVersion: Int = Self.currentSchemaVersion,
@@ -49,6 +58,7 @@ public struct TreeWorkspace: Codable, Sendable, Equatable {
         layoutPresets: [LayoutPreset] = [],
         launchPresets: [LaunchPreset] = LaunchPreset.builtIns,
         sessionTemplates: [SessionTemplate] = SessionTemplate.builtIns,
+        videoModesByTarget: [String: VideoPaneModes] = [:],
     ) {
         self.schemaVersion = schemaVersion
         self.sessions = sessions
@@ -56,6 +66,7 @@ public struct TreeWorkspace: Codable, Sendable, Equatable {
         self.layoutPresets = layoutPresets
         self.launchPresets = launchPresets
         self.sessionTemplates = sessionTemplates
+        self.videoModesByTarget = videoModesByTarget
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -65,6 +76,7 @@ public struct TreeWorkspace: Codable, Sendable, Equatable {
         case layoutPresets
         case launchPresets
         case sessionTemplates
+        case videoModesByTarget
     }
 
     /// Additive-tolerant decode (docs/42 W14): every existing key decodes normally; `launchPresets` is the
@@ -80,6 +92,9 @@ public struct TreeWorkspace: Codable, Sendable, Equatable {
         layoutPresets = try c.decodeIfPresent([LayoutPreset].self, forKey: .layoutPresets) ?? []
         launchPresets = try c.decodeIfPresent([LaunchPreset].self, forKey: .launchPresets) ?? []
         sessionTemplates = try c.decodeIfPresent([SessionTemplate].self, forKey: .sessionTemplates) ?? []
+        // Additive: an older file without the key decodes to an empty map (no latched modes).
+        videoModesByTarget =
+            try c.decodeIfPresent([String: VideoPaneModes].self, forKey: .videoModesByTarget) ?? [:]
     }
 
     /// The schema version this redesigned shape writes (docs/42 §Domain model = 10; bumped to 11 for

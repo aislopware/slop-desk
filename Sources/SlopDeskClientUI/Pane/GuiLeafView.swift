@@ -234,6 +234,18 @@ struct GuiLeafView: View {
                 systemKeyCapture.setSuspended(!can || !isFocused)
                 maybeAutoEngageImmersive()
             }
+            // WISH SYNC: the model's wish can change UNDER a mounted view — a re-target (pick / display
+            // switch / rebind) re-seeds it from the target's saved modes. Keep the tap truthful both
+            // ways: wish OFF tears an engaged tap down (dropping onDisengage first — it would only
+            // re-clear the already-off wish), wish ON re-engages through the usual gates.
+            .onChange(of: model?.immersiveDesired ?? false) { _, wish in
+                if wish {
+                    maybeAutoEngageImmersive()
+                } else if systemKeyCapture.isEngaged {
+                    systemKeyCapture.onDisengage = nil
+                    systemKeyCapture.disengage()
+                }
+            }
         #endif
     }
 

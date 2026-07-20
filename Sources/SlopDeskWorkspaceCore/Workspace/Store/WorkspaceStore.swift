@@ -3215,24 +3215,36 @@ public final class WorkspaceStore {
         // spec update, so the nested reconcile is a no-op + save. The title follows the binding only
         // while it was tracking the previous binding (a user rename survives re-picks).
         if let model = (handle as? LivePaneSession)?.remoteWindow {
-            model.onEndpointCommitted = { [weak self] endpoint in
-                self?.updateSpecLive(id) { spec in
+            model.onEndpointCommitted = { [weak self, weak model] endpoint in
+                guard let self else { return }
+                updateSpecLive(id) { spec in
                     if spec.video == nil || spec.title == spec.video?.title {
                         spec.title = endpoint.title
                     }
                     spec.video = endpoint
                 }
-            }
-            // LATCHED-MODE PERSISTENCE: every explicit mode toggle (immersive / audio / viewport lock /
-            // stream overrides) persists into the pane's spec so a relaunch restores it (the model seeds
-            // from `spec.videoModes` at materialization). Default-normalized to `nil` + dirty-guarded so
-            // an all-off pane stays additive-minimal and a redundant fire never churns a save.
-            model.onModesChanged = { [weak self] modes in
-                self?.updateSpecLive(id) { spec in
-                    let normalized: VideoPaneModes? = modes.isDefault ? nil : modes
-                    guard spec.videoModes != normalized else { return }
-                    spec.videoModes = normalized
+                // LATCHED-MODE RESTORE follows the TARGET: every (re-)commit — first open of a restored
+                // binding, a picker re-pick, a display switch, a stale-id rebind — re-seeds the model
+                // from the target's saved modes (`close()` reset the runtime just before). The
+                // fresh session's sink publishes then re-assert each wish. No entry ⇒ leave the model
+                // as-is (nothing saved for this target; the post-close defaults are already correct).
+                if let saved = tree.videoModesByTarget[endpoint.modesKey] {
+                    model?.seedModes(saved)
                 }
+            }
+            // LATCHED-MODE PERSISTENCE: every explicit mode toggle persists under the pane's TARGET key
+            // (`TreeWorkspace.videoModesByTarget`) — target-keyed, not pane-keyed, so a close-tab →
+            // reopen-the-same-target restores it (the reopened target mints a brand-new pane/spec).
+            model.onModesChanged = { [weak self] modes in
+                self?.persistVideoModes(modes, for: id)
+            }
+            // Seed a freshly-materialized pane whose spec already carries its binding (a relaunch
+            // restore / openRemoteWindow / ⌥⌘N desktop mint) — reconcile is synchronous, so this lands
+            // before any view publishes a sink.
+            if let key = tree.spec(for: id)?.video?.modesKey,
+               let saved = tree.videoModesByTarget[key]
+            {
+                model.seedModes(saved)
             }
         }
         // EXPLICIT NOTIFICATIONS (OSC 9 / OSC 777): route a terminal pane's child-requested notification
@@ -3430,6 +3442,21 @@ public final class WorkspaceStore {
         case .canvas:
             updateSpec(id, transform)
         }
+    }
+
+    /// LATCHED-MODE PERSISTENCE (the `RemoteWindowModel.onModesChanged` sink): records pane `id`'s
+    /// explicit mode toggles under its TARGET key in ``TreeWorkspace/videoModesByTarget`` — keyed by
+    /// target (display / owning app), not pane, so a close-tab → reopen-the-same-target restores them.
+    /// Default-normalized to a removed entry + dirty-guarded (a redundant fire never churns a save).
+    /// An ephemeral system-dialog pane never persists (its target is a transient auth prompt), and a
+    /// still-unbound pane (no endpoint yet) has no key to file under.
+    private func persistVideoModes(_ modes: VideoPaneModes, for id: PaneID) {
+        guard let spec = tree.spec(for: id) ?? spec(for: id),
+              !spec.kind.isEphemeral, let key = spec.video?.modesKey else { return }
+        let normalized: VideoPaneModes? = modes.isDefault ? nil : modes
+        guard tree.videoModesByTarget[key] != normalized else { return }
+        tree.videoModesByTarget[key] = normalized
+        scheduleSave()
     }
 
     // MARK: - reconcileRegistry (the shared, leaf-source-agnostic diff core)
@@ -3662,14 +3689,11 @@ public final class WorkspaceStore {
                             spec.video = endpoint
                         }
                     }
-                    // LATCHED-MODE PERSISTENCE (canvas path): same guarded persist as
-                    // `wireMaterializedLeaf` — see the tree-path comment.
+                    // LATCHED-MODE PERSISTENCE (canvas path): same target-keyed persist as
+                    // `wireMaterializedLeaf` — see the tree-path comment. (No seed here: the canvas
+                    // shell is the legacy/test path and persists the canvas value, not the tree.)
                     model.onModesChanged = { [weak self] modes in
-                        self?.updateSpec(id) { spec in
-                            let normalized: VideoPaneModes? = modes.isDefault ? nil : modes
-                            guard spec.videoModes != normalized else { return }
-                            spec.videoModes = normalized
-                        }
+                        self?.persistVideoModes(modes, for: id)
                     }
                 }
                 // EXPLICIT NOTIFICATIONS (OSC 9 / OSC 777): route a terminal pane's child-requested
