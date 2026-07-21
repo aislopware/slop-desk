@@ -50,7 +50,7 @@ Sessions survive disconnect; clients resume from the replay buffer. Claude is a 
 
 ```sh
 .build/release/slopdesk-videohostd --list
-.build/release/slopdesk-videohostd --window-id <N>   # default 60 fps; `--fps N` to override
+.build/release/slopdesk-videohostd --window-id <N>   # window panes default 30 fps (desktop panes 60); `--fps N` to override
 ```
 
 **CLI client:**
