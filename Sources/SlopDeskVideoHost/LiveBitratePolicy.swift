@@ -17,21 +17,24 @@ import Foundation
 /// Pure Int/Double arithmetic — unit-tested. (The `VideoEncoder` it feeds is HW-gated and never
 /// instantiated in a test; this keeps the bitrate decision headlessly verifiable.)
 public enum LiveBitratePolicy {
-    /// Bits per pixel per frame. 0.15 ≈ the proven-good density bumped a notch for motion headroom:
-    /// 1920·1080·60·0.15 ≈ 18.7 Mbps at 1080p60, scaling to ≈45 Mbps at a 2816×1778@60 HiDPI window.
+    /// Bits per pixel per frame. 0.25: 1920·1080·60·0.25 ≈ 31.1 Mbps at 1080p60, scaling to
+    /// ≈75 Mbps at a 2816×1778@60 HiDPI window. HW-calibrated (2026-07-21, RTT 5–8 ms link): this is
+    /// the ceiling that lets the budget-adaptive sharp QP ceiling (`VideoEncoder.sharpQPCeiling`)
+    /// hold QP≤38 through a hard 1080p60 scroll with ZERO VT drops — at the old 0.15 (18.7 Mbps)
+    /// the same scroll either blurred to QP 51 or dropped 97 frames/18s when the QP was capped.
+    /// This is the CEILING, not the wire rate: the ABR (`LiveCongestionController`) still cuts the
+    /// live target on loss/RTT, so a constrained WAN never sees these bits.
     ///
-    /// MOTION-SMOOTHNESS: at 2× the 0.15 density makes a fast-scroll frame balloon to 50–280 KB — a
-    /// wildly VARIABLE per-frame transmit/decode time that the client's (no-jitter-buffer) vsync pacer
-    /// turns into judder. HW A/B testing shows frame SIZE is the dominant lever: dropping to 1× (¼ the
-    /// bytes) makes scroll markedly smoother. This is env-tunable (`SLOPDESK_BPP`) to dial the
-    /// smooth↔sharp balance without a rebuild: a LOWER bpp shrinks motion frames toward 1× size (smooth
-    /// scroll, coarser DURING motion only — natural motion blur), while the crisp static refresh
-    /// (`encodeLiveCrispKeyframe`) restores razor-sharp text the instant the screen goes still. With the
-    /// `MaxAllowedFrameQP=40` ceiling a leaner budget COARSENS motion frames, never drops them.
+    /// MOTION-SMOOTHNESS: frame SIZE is the dominant smoothness lever (HW A/B) — a LOWER
+    /// `SLOPDESK_BPP` shrinks motion frames (smooth scroll, coarser DURING motion only — natural
+    /// motion blur), while the crisp static refresh (`encodeLiveCrispKeyframe`) restores razor-sharp
+    /// text the instant the screen goes still. The delta send-pace floor + budget-adaptive QP
+    /// ceiling absorb the variance a denser budget adds, so 0.25 no longer buys judder on a clean
+    /// link the way it did before those shipped.
     public static let bitsPerPixelPerFrame: Double = {
         if let s = ProcessInfo.processInfo.environment["SLOPDESK_BPP"], let v = Double(s), v > 0,
            v <= 1.0 { return v }
-        return 0.15
+        return 0.25
     }()
 
     /// Absolute lower bound so a tiny window never starves the encoder (matches `VideoEncoder.init`'s

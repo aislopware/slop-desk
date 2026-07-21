@@ -101,9 +101,59 @@ public final class VideoEncoder: @unchecked Sendable {
            v <= 51 { return v }
         // 51 = uncapped, paired with default pure-VBR: the encoder must ALWAYS be able to coarsen its
         // way under the budget rather than drop (HW-validated; the crisp static refresh restores
-        // sharpness the moment motion stops).
+        // sharpness the moment motion stops). This is the WORST-CASE bound the budget-adaptive
+        // ceiling (``qpCeiling(forTargetBps:pixelWidth:pixelHeight:fps:)``) relaxes toward when the
+        // ABR budget is thin; when the budget is healthy the live ceiling sits at
+        // ``sharpQPCeiling`` instead, so hard-scroll frames never blur to 51 on a fast link.
         return 51
     }()
+
+    /// BUDGET-ADAPTIVE SHARP CEILING (Parsec pins MaxAllowedFrameQP=35; 38 keeps a little more
+    /// coarsening headroom). Holding 38 UNCONDITIONALLY drops frames whenever the ABR target cannot
+    /// carry sharp motion (HW-measured: 97 VT `frameDropped` in one 18s scroll at target 6–16 Mbps ⇒
+    /// visible stutter), while an unconditional 51 blurs hard scroll on a link with plenty of budget.
+    /// So the live ceiling FOLLOWS the budget: sharp (38) while the ABR target's bits/pixel/frame is
+    /// dense enough to fit QP-38 motion, relaxing linearly to ``maxAllowedFrameQP`` (51) as the
+    /// budget thins — the encoder always keeps its coarsen-don't-drop escape exactly when it needs it.
+    /// `SLOPDESK_MAX_QP` pins a STATIC ceiling and disables adaptation; `SLOPDESK_QP_CEILING_ADAPT=0`
+    /// also disables (pure legacy 51 behavior). Const-QP mode owns the QP dials outright.
+    public static let sharpQPCeiling = 38
+    /// ABR-target density (bits/pixel/frame) at or above which QP-38 motion fits without drops
+    /// (HW: zero drops at ≥0.14 under a 31 Mbps ceiling at 1080p60).
+    static let qpCeilingSharpBpp = 0.14
+    /// Density at or below which the ceiling is fully relaxed to ``maxAllowedFrameQP``
+    /// (HW: the drop-storm regime sat at 0.05–0.13).
+    static let qpCeilingCoarseBpp = 0.07
+
+    /// Whether the budget-adaptive ceiling drives `MaxAllowedFrameQP`.
+    static let qpCeilingAdaptive: Bool = ProcessInfo.processInfo.environment["SLOPDESK_MAX_QP"] == nil
+        && ProcessInfo.processInfo.environment["SLOPDESK_QP_CEILING_ADAPT"] != "0"
+        && constQP == nil
+
+    /// PURE: the QP ceiling for an ABR target of `targetBps` on a `pixelWidth×pixelHeight@fps`
+    /// session. `sharp` at/above `sharpBpp` density, `coarse` at/below `coarseBpp`, linear between
+    /// (round half-away). Degenerate dims/fps → `coarse` (never risk a drop on a malformed config).
+    static func qpCeiling(
+        forTargetBps targetBps: Int,
+        pixelWidth: Int,
+        pixelHeight: Int,
+        fps: Int,
+        sharp: Int = sharpQPCeiling,
+        coarse: Int = maxAllowedFrameQP,
+        sharpBpp: Double = qpCeilingSharpBpp,
+        coarseBpp: Double = qpCeilingCoarseBpp,
+    ) -> Int {
+        guard pixelWidth > 0, pixelHeight > 0, fps > 0, targetBps > 0, coarse >= sharp,
+              sharpBpp > coarseBpp else { return coarse }
+        let pixelRate = Double(pixelWidth) * Double(pixelHeight) * Double(fps)
+        let bpp = Double(targetBps) / pixelRate
+        if bpp >= sharpBpp { return sharp }
+        if bpp <= coarseBpp { return coarse }
+        // keep mul+add separate — no FMA (bit-exact float convention)
+        let t = (sharpBpp - bpp) / (sharpBpp - coarseBpp)
+        let span = Double(coarse - sharp) * t
+        return sharp + Int(span.rounded())
+    }
 
     /// OWN RATE-CONTROL — CONSTANT-QP (`SLOPDESK_CONST_QP`, default OFF = nil). When set
     /// (1…51), the LIVE delta path pins `MinAllowedFrameQP` to this value — the sharp FLOOR VT may
@@ -326,6 +376,11 @@ public final class VideoEncoder: @unchecked Sendable {
     /// ``setConstQP(_:)`` — the constant quality adapts to the link (coarsen on congestion) without VT's
     /// per-frame VBR clawback. Only read on the live delta path when ``constQP`` != nil.
     private var liveConstQP: Int = VideoEncoder.constQP ?? maxAllowedFrameQP
+    /// LIVE budget-adaptive QP ceiling (bitrateLock-guarded) — the value every create/restore site
+    /// writes to `MaxAllowedFrameQP`. Recomputed from the ABR target on each ``setLiveBitrate(_:)``
+    /// when ``qpCeilingAdaptive``; pinned to ``maxAllowedFrameQP`` otherwise. Seeded in `init` from
+    /// the ceiling bitrate so the first session config already carries the right cap.
+    private var liveQPCeiling: Int = VideoEncoder.maxAllowedFrameQP
     /// Last per-frame adaptive `MaxAllowedFrameQP` written (bitrateLock-guarded). Skips the redundant
     /// VTSessionSetProperty + CFNumber bridge when the QP is unchanged (the common static/typing case).
     /// INVALIDATED to nil by every crisp/compact bracket restore (which writes the static ceiling) so
@@ -362,7 +417,7 @@ public final class VideoEncoder: @unchecked Sendable {
         let sess = liveSession
         bitrateLock.unlock()
         guard let sess else { return }
-        set(sess, kVTCompressionPropertyKey_MaxAllowedFrameQP, Self.maxAllowedFrameQP as CFNumber)
+        set(sess, kVTCompressionPropertyKey_MaxAllowedFrameQP, currentQPCeiling() as CFNumber)
         set(sess, kVTCompressionPropertyKey_AverageBitRate, live as CFNumber)
         set(sess, kVTCompressionPropertyKey_DataRateLimits, Self.dataRateLimits(bytesPerSecond: live / 8))
         bitrateLock.lock()
@@ -388,6 +443,22 @@ public final class VideoEncoder: @unchecked Sendable {
         self.fullRange = fullRange
         self.ltrEnabled = ltrEnabled
         self.outputHandler = outputHandler
+        if Self.qpCeilingAdaptive {
+            liveQPCeiling = Self.qpCeiling(
+                forTargetBps: self.bitrate,
+                pixelWidth: width,
+                pixelHeight: height,
+                fps: self.fps,
+            )
+        }
+    }
+
+    /// The CURRENT QP ceiling every `MaxAllowedFrameQP` create/restore site writes — the live
+    /// budget-adaptive value under ``qpCeilingAdaptive``, else the static ``maxAllowedFrameQP``.
+    private func currentQPCeiling() -> Int {
+        bitrateLock.lock()
+        defer { bitrateLock.unlock() }
+        return liveQPCeiling
     }
 
     /// Stage a token the client has ACKNOWLEDGED (decoded an LTR frame for) so the next encode
@@ -445,19 +516,42 @@ public final class VideoEncoder: @unchecked Sendable {
     @discardableResult
     public func setLiveBitrate(_ target: Int) -> Bool {
         let clamped = max(LiveBitratePolicy.minimumBitrate, min(bitrate, target))
+        // Budget-adaptive QP ceiling follows the ABR target (see ``sharpQPCeiling``): sharp while the
+        // budget carries QP-38 motion, relaxed toward 51 as it thins so VT coarsens instead of
+        // dropping. Computed OUTSIDE the lock (pure), stored + compared inside it.
+        let ceilingQP = Self.qpCeilingAdaptive
+            ? Self.qpCeiling(
+                forTargetBps: clamped,
+                pixelWidth: Int(width),
+                pixelHeight: Int(height),
+                fps: fps,
+            )
+            : Self.maxAllowedFrameQP
         bitrateLock.lock()
         let changed = clamped != liveBitrate
         liveBitrate = clamped
+        let qpChanged = ceilingQP != liveQPCeiling
+        liveQPCeiling = ceilingQP
         let midBracket = bracketDepth > 0
         let sess = liveSession
         bitrateLock.unlock()
-        guard changed, let sess else { return false }
+        guard changed || qpChanged, let sess else { return false }
         if !midBracket {
-            // Not mid-bracket: apply both RC properties now so steady-state stays consistent.
-            set(sess, kVTCompressionPropertyKey_AverageBitRate, clamped as CFNumber)
-            set(sess, kVTCompressionPropertyKey_DataRateLimits, Self.dataRateLimits(bytesPerSecond: clamped / 8))
+            // Not mid-bracket: apply the RC properties now so steady-state stays consistent.
+            if changed {
+                set(sess, kVTCompressionPropertyKey_AverageBitRate, clamped as CFNumber)
+                set(
+                    sess,
+                    kVTCompressionPropertyKey_DataRateLimits,
+                    Self.dataRateLimits(bytesPerSecond: clamped / 8),
+                )
+            }
+            if qpChanged {
+                set(sess, kVTCompressionPropertyKey_MaxAllowedFrameQP, ceilingQP as CFNumber)
+            }
         }
-        // Mid-bracket: skip — the active bracket's defer re-reads currentLiveBitrate() and applies it.
+        // Mid-bracket: skip — the active bracket's defer re-reads currentLiveBitrate() +
+        // currentQPCeiling() and applies them.
         return changed
     }
 
@@ -609,7 +703,7 @@ public final class VideoEncoder: @unchecked Sendable {
         // BEST-EFFORT (NOT setCritical): MaxAllowedFrameQP is -12900 on some HEVC encoders — the same
         // -12900-prone family as SpatialAdaptiveQPLevel; forcing it critical would abort the whole
         // encoder. Exists on macOS 26; tolerated as a no-op on older OSes.
-        set(session, kVTCompressionPropertyKey_MaxAllowedFrameQP, Self.maxAllowedFrameQP as CFNumber)
+        set(session, kVTCompressionPropertyKey_MaxAllowedFrameQP, currentQPCeiling() as CFNumber)
         // EXPLICIT BT.709 VUI (color primaries / transfer / matrix). GATED behind `fullRange`
         // so the OFF path sets NO VUI key and the SPS VUI stays as VT emits it — an UNCONDITIONAL set
         // would change the parameter-set bytes (→ needless client decoder rebuild on the first keyframe)
@@ -921,12 +1015,12 @@ public final class VideoEncoder: @unchecked Sendable {
         //    keeps them consistent (each a no-op when no controller change occurred).
         defer {
             let live = currentLiveBitrate()
-            set(session, kVTCompressionPropertyKey_MaxAllowedFrameQP, Self.maxAllowedFrameQP as CFNumber)
+            set(session, kVTCompressionPropertyKey_MaxAllowedFrameQP, currentQPCeiling() as CFNumber)
             set(session, kVTCompressionPropertyKey_AverageBitRate, live as CFNumber)
             set(session, kVTCompressionPropertyKey_DataRateLimits, Self.dataRateLimits(bytesPerSecond: live / 8))
             bitrateLock.lock()
             bracketDepth -= 1
-            lastAdaptiveQP = nil // bracket restored the static ceiling → next live frame re-applies its QP
+            lastAdaptiveQP = nil // bracket restored the live ceiling → next live frame re-applies its QP
             bitrateLock.unlock()
         }
         // 3. Encode the forced crisp keyframe.
@@ -990,12 +1084,12 @@ public final class VideoEncoder: @unchecked Sendable {
             // and a complex frame can exceed a concurrent congestion back-off. Each write is a no-op
             // when no controller change occurred.
             let live = currentLiveBitrate()
-            set(session, kVTCompressionPropertyKey_MaxAllowedFrameQP, Self.maxAllowedFrameQP as CFNumber)
+            set(session, kVTCompressionPropertyKey_MaxAllowedFrameQP, currentQPCeiling() as CFNumber)
             set(session, kVTCompressionPropertyKey_AverageBitRate, live as CFNumber)
             set(session, kVTCompressionPropertyKey_DataRateLimits, Self.dataRateLimits(bytesPerSecond: live / 8))
             bitrateLock.lock()
             bracketDepth -= 1
-            lastAdaptiveQP = nil // bracket restored the static ceiling → next live frame re-applies its QP
+            lastAdaptiveQP = nil // bracket restored the live ceiling → next live frame re-applies its QP
             bitrateLock.unlock()
         }
         try encode(

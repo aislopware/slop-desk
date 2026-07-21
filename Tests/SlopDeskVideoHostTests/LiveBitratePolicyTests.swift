@@ -7,16 +7,16 @@ import XCTest
 /// `AverageBitRate`/`DataRateLimits` so the 2× HiDPI window is provisioned proportionally (a flat
 /// 1080p-tuned cap starved scroll frames → drops → stutter).
 final class LiveBitratePolicyTests: XCTestCase {
-    // 1080p60: resolution-derived budget (1920·1080·60·0.15) wins over the 12 Mbps floor.
+    // 1080p60: resolution-derived budget (1920·1080·60·0.25) wins over the 12 Mbps floor.
     func testStandard1080pScalesAboveFloor() {
         let b = LiveBitratePolicy.targetBitrate(pixelWidth: 1920, pixelHeight: 1080, fps: 60, floor: 12_000_000)
-        XCTAssertEqual(b, 18_662_400)
+        XCTAssertEqual(b, 31_104_000)
     }
 
-    // 2× HiDPI window (2816×1778 = a 1408×889-pt window at captureScale 2): ~45 Mbps, NOT starved.
+    // 2× HiDPI window (2816×1778 = a 1408×889-pt window at captureScale 2): ~75 Mbps, NOT starved.
     func testTwoXHiDPIWindowGetsFullBudget() {
         let b = LiveBitratePolicy.targetBitrate(pixelWidth: 2816, pixelHeight: 1778, fps: 60, floor: 12_000_000)
-        XCTAssertEqual(b, 45_061_632)
+        XCTAssertEqual(b, 75_102_720)
     }
 
     // The whole point of the fix: doubling captureScale (→ 4× the pixels) QUADRUPLES the budget,

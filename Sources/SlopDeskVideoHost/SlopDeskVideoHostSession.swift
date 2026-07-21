@@ -120,21 +120,22 @@ public actor SlopDeskVideoHostSession {
         return 12_000_000
     }()
 
-    /// DELTA send-pace FLOOR. DEFAULT **OFF** (unset/≤0 ⇒ 0 ⇒ `max(ABR, 0) == ABR`, delta send timing
-    /// byte- AND cadence-identical to the pre-floor path). A non-keyframe delta paces at the RAW live ABR;
-    /// a scroll-onset delta landing on a stale-low static-window ABR (~4–8Mbps on the 1× 1080p dongle)
-    /// then serializes over ~30–46ms of pure send-span, and the depth-1 present-on-arrival client converts
-    /// that span 1:1 into present-cadence JITTER the loss-0 link never demanded (Parsec blasts the same
-    /// delta at link rate ≈ 2ms — it paces at a connection-AIMD window, not at the encoder's low
-    /// steady-state bitrate). When set (clamp 1–100 Mbps, mirroring ``kfPaceFloorBps``), a low-ABR delta
-    /// drains at ≥ floor·k instead: a 12Mbps floor ⇒ 30Mbps instantaneous (gap 7.68→2.56ms @4Mbps ABR),
+    /// DELTA send-pace FLOOR. DEFAULT **12 Mbps** (`SLOPDESK_DELTA_PACE_FLOOR_BPS` overrides; an
+    /// explicit `0`/negative disables ⇒ `max(ABR, 0) == ABR`, the raw-ABR pacing). A non-keyframe
+    /// delta paces at the RAW live ABR; a scroll-onset delta landing on a stale-low static-window ABR
+    /// (~4–8Mbps on the 1× 1080p dongle) then serializes over ~30–46ms of pure send-span, and the
+    /// depth-1 present-on-arrival client converts that span 1:1 into present-cadence JITTER the loss-0
+    /// link never demanded (Parsec blasts the same delta at link rate ≈ 2ms — it paces at a
+    /// connection-AIMD window, not at the encoder's low steady-state bitrate). A low-ABR delta drains
+    /// at ≥ floor·k instead: the 12Mbps floor ⇒ 30Mbps instantaneous (gap 7.68→2.56ms @4Mbps ABR),
     /// 5× below the ~146Mbps un-paced blast that caused the documented Wi-Fi 2–13% burst loss — so this
     /// FLOORS the pace rate, never UN-paces, and reintroduces no ABR sawtooth. Inert whenever ABR ≥ floor
-    /// (an active scene already paces fast). The keyframe floor is the existence proof a smaller delta floor
-    /// is safe on this exact path. `SLOPDESK_DELTA_PACE_FLOOR_BPS`.
+    /// (an active scene already paces fast). The keyframe floor (same 12M, always-on on this exact path)
+    /// is the existence proof the floor is burst-safe. Clamp 1–100 Mbps, mirroring ``kfPaceFloorBps``.
     private static let deltaPaceFloorBps: Int = {
         guard let s = ProcessInfo.processInfo.environment["SLOPDESK_DELTA_PACE_FLOOR_BPS"],
-              let v = Int(s), v > 0 else { return 0 } // unset/≤0 ⇒ OFF: max(ABR, 0) == ABR ⇒ byte-identical
+              let v = Int(s) else { return 12_000_000 } // unset ⇒ default floor (HW-validated 07-21)
+        guard v > 0 else { return 0 } // explicit 0/negative ⇒ OFF: max(ABR, 0) == ABR ⇒ raw-ABR pacing
         return min(100_000_000, max(1_000_000, v))
     }()
 

@@ -621,14 +621,46 @@ final class VideoShutdownLatch: @unchecked Sendable {
 
 let videoShutdownLatch = VideoShutdownLatch()
 
+/// Single-claim exit arbiter: exactly ONE of {orderly drain, wedge watchdog} gets to exit the
+/// process (two concurrent libc `exit()` calls are UB; the loser parks and dies with the process).
+final class ShutdownExitArbiter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if claimed { return false }
+        claimed = true
+        return true
+    }
+}
+
+let shutdownExitArbiter = ShutdownExitArbiter()
+
+/// How long the orderly drain may run before the watchdog force-exits. Normal drain is well under
+/// 2s (bye ×2 + stopAll + restoreAll + VD destroy); 5s only trips on a genuine wedge.
+let shutdownWatchdogSeconds: Double = 5
+
 /// Orderly shutdown drain — shared by every termination signal so parked windows are ALWAYS restored
 /// (not only on Ctrl-C). The latch makes it run exactly once even if several signals arrive (or one
 /// repeats during the async drain).
+///
+/// WEDGE WATCHDOG: the drain awaits SCStream/mux teardown, and a leaked SCStream continuation
+/// (SWIFT TASK CONTINUATION MISUSE — observed on live daemons) suspends it FOREVER; the one-shot
+/// latch then swallows every later SIGINT/SIGTERM too, leaving a daemon only SIGKILL can stop (and
+/// a relaunch that double-binds :9000). So the drain runs against a deadline: if it has not exited
+/// within ``shutdownWatchdogSeconds``, a global-queue watchdog force-exits. `_exit` (not `exit`)
+/// because the process state is by definition wedged — no atexit hygiene is worth staying undead.
 @Sendable
 func performGracefulShutdown(_ signalName: String) {
     guard videoShutdownLatch.tryFire() else { return }
     log("\(signalName) — shutting down")
     shutdownGate.close() // reject any hello that lands during the drain (no new mint onto the VD)
+    DispatchQueue.global().asyncAfter(deadline: .now() + shutdownWatchdogSeconds) {
+        guard shutdownExitArbiter.claim() else { return } // drain already exited cleanly
+        log("shutdown drain wedged >\(Int(shutdownWatchdogSeconds))s — force-exiting")
+        _exit(0)
+    }
     Task {
         if let (registry, mux) = holder.currentMux() {
             // Tell every live client FIRST — closing the sockets silently on a
@@ -653,6 +685,7 @@ func performGracefulShutdown(_ signalName: String) {
         if let vd = holder.currentVirtualDisplay() {
             await MainActor.run { vd.destroy() }
         }
+        guard shutdownExitArbiter.claim() else { return } // watchdog already force-exiting
         exit(0)
     }
 }
