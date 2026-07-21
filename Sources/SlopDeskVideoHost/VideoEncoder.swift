@@ -130,6 +130,60 @@ public final class VideoEncoder: @unchecked Sendable {
         && ProcessInfo.processInfo.environment["SLOPDESK_QP_CEILING_ADAPT"] != "0"
         && constQP == nil
 
+    /// DROP-FEEDBACK RELIEF for the budget-adaptive ceiling. The budget-density mapping alone is
+    /// BLIND to content complexity: a rich target (bpp ≥0.14 ⇒ sharp 38) on pathological content
+    /// (video/noise — HW: mandelbrot offered ≈95–119 Mbps against a 30 Mbps target) leaves VT unable
+    /// to fit frames at QP≤38, and under RealTime low-latency RC it DROPS them (209 in 25s = ragged
+    /// motion, the exact failure the old unconditional 51 never had). So the encoder watches its own
+    /// drops: each dropped frame ATTACKS the ceiling up `attackStep` immediately (a storm reaches 51
+    /// within ~4 frames ≈ 70ms — coarse-but-moving beats sharp-but-missing), then after
+    /// `holdFrames` clean encodes the relief DECAYS 1 QP per `decayEvery` frames back toward the
+    /// budget-derived sharp ceiling (re-sharpening is gradual, never a pop). Pure value type —
+    /// folded on the encode path under `bitrateLock`.
+    struct QPDropRelief: Equatable {
+        static let attackStep = 4
+        static let holdFrames = 180 // ~3s @60fps of clean encodes before relief starts to decay
+        static let decayEvery = 4 // then −1 QP per 4 clean frames (full 13-QP decay ≈ 0.9s)
+
+        private(set) var relief = 0
+        private(set) var cleanFrames = 0
+
+        /// Fold one encode tick: `drops` = VT drops observed since the last tick. Returns the
+        /// current relief (extra QP above the budget-derived ceiling, clamped by the caller's
+        /// `min(maxAllowedFrameQP, …)` composition).
+        mutating func fold(drops: Int) -> Int {
+            if drops > 0 {
+                relief = min(relief + Self.attackStep * drops, 51)
+                cleanFrames = 0
+            } else {
+                cleanFrames += 1
+                if cleanFrames > Self.holdFrames, relief > 0,
+                   cleanFrames.isMultiple(of: Self.decayEvery) { relief -= 1 }
+            }
+            return relief
+        }
+    }
+
+    /// Lock-guarded drop counter the VT output callback increments (the callback deliberately does
+    /// NOT capture `self`; policy folds on the encode thread via ``QPDropRelief``).
+    final class DropCounterBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var drops = 0
+        func note() {
+            lock.lock()
+            drops += 1
+            lock.unlock()
+        }
+
+        func drain() -> Int {
+            lock.lock()
+            defer { lock.unlock() }
+            let d = drops
+            drops = 0
+            return d
+        }
+    }
+
     /// PURE: the QP ceiling for an ABR target of `targetBps` on a `pixelWidth×pixelHeight@fps`
     /// session. `sharp` at/above `sharpBpp` density, `coarse` at/below `coarseBpp`, linear between
     /// (round half-away). Degenerate dims/fps → `coarse` (never risk a drop on a malformed config).
@@ -376,11 +430,18 @@ public final class VideoEncoder: @unchecked Sendable {
     /// ``setConstQP(_:)`` — the constant quality adapts to the link (coarsen on congestion) without VT's
     /// per-frame VBR clawback. Only read on the live delta path when ``constQP`` != nil.
     private var liveConstQP: Int = VideoEncoder.constQP ?? maxAllowedFrameQP
-    /// LIVE budget-adaptive QP ceiling (bitrateLock-guarded) — the value every create/restore site
-    /// writes to `MaxAllowedFrameQP`. Recomputed from the ABR target on each ``setLiveBitrate(_:)``
-    /// when ``qpCeilingAdaptive``; pinned to ``maxAllowedFrameQP`` otherwise. Seeded in `init` from
-    /// the ceiling bitrate so the first session config already carries the right cap.
+    /// LIVE budget-adaptive QP ceiling (bitrateLock-guarded) — the BUDGET-derived component.
+    /// Recomputed from the ABR target on each ``setLiveBitrate(_:)`` when ``qpCeilingAdaptive``;
+    /// pinned to ``maxAllowedFrameQP`` otherwise. Seeded in `init` from the ceiling bitrate so the
+    /// first session config already carries the right cap. The EFFECTIVE ceiling every
+    /// create/restore/apply site writes is `min(maxAllowedFrameQP, liveQPCeiling + dropRelief)`
+    /// (``currentQPCeiling()``) — budget says how sharp we can AFFORD, drop-relief says how sharp
+    /// the CONTENT lets us be.
     private var liveQPCeiling: Int = VideoEncoder.maxAllowedFrameQP
+    /// Drop-feedback relief state (bitrateLock-guarded); see ``QPDropRelief``.
+    private var dropRelief = QPDropRelief()
+    /// VT-drop counter incremented by the output callback (which never captures `self`).
+    private let dropCounter = DropCounterBox()
     /// Last per-frame adaptive `MaxAllowedFrameQP` written (bitrateLock-guarded). Skips the redundant
     /// VTSessionSetProperty + CFNumber bridge when the QP is unchanged (the common static/typing case).
     /// INVALIDATED to nil by every crisp/compact bracket restore (which writes the static ceiling) so
@@ -453,12 +514,14 @@ public final class VideoEncoder: @unchecked Sendable {
         }
     }
 
-    /// The CURRENT QP ceiling every `MaxAllowedFrameQP` create/restore site writes — the live
-    /// budget-adaptive value under ``qpCeilingAdaptive``, else the static ``maxAllowedFrameQP``.
+    /// The CURRENT EFFECTIVE QP ceiling every `MaxAllowedFrameQP` create/restore/apply site writes —
+    /// budget-derived ceiling + drop-feedback relief, clamped to the static worst-case bound. Under
+    /// a pinned `SLOPDESK_MAX_QP` / adaptation-off, `liveQPCeiling == maxAllowedFrameQP` and relief
+    /// only ever composes up to the same bound — the pinned value is honoured verbatim.
     private func currentQPCeiling() -> Int {
         bitrateLock.lock()
         defer { bitrateLock.unlock() }
-        return liveQPCeiling
+        return min(Self.maxAllowedFrameQP, liveQPCeiling + dropRelief.relief)
     }
 
     /// Stage a token the client has ACKNOWLEDGED (decoded an LTR frame for) so the next encode
@@ -535,20 +598,15 @@ public final class VideoEncoder: @unchecked Sendable {
         let midBracket = bracketDepth > 0
         let sess = liveSession
         bitrateLock.unlock()
-        guard changed || qpChanged, let sess else { return false }
+        _ = qpChanged // ceiling applies on the next encode entry (single-writer, deduped there)
+        guard changed, let sess else { return false }
         if !midBracket {
-            // Not mid-bracket: apply the RC properties now so steady-state stays consistent.
-            if changed {
-                set(sess, kVTCompressionPropertyKey_AverageBitRate, clamped as CFNumber)
-                set(
-                    sess,
-                    kVTCompressionPropertyKey_DataRateLimits,
-                    Self.dataRateLimits(bytesPerSecond: clamped / 8),
-                )
-            }
-            if qpChanged {
-                set(sess, kVTCompressionPropertyKey_MaxAllowedFrameQP, ceilingQP as CFNumber)
-            }
+            // Not mid-bracket: apply both RC properties now so steady-state stays consistent. The
+            // QP ceiling is deliberately NOT written here — the encode entry is the single writer
+            // (it composes budget ceiling + drop relief and dedups per frame), and a second writer
+            // would flip-flop the property against the relief-composed value every ABR tick.
+            set(sess, kVTCompressionPropertyKey_AverageBitRate, clamped as CFNumber)
+            set(sess, kVTCompressionPropertyKey_DataRateLimits, Self.dataRateLimits(bytesPerSecond: clamped / 8))
         }
         // Mid-bracket: skip — the active bracket's defer re-reads currentLiveBitrate() +
         // currentQPCeiling() and applies them.
@@ -1216,6 +1274,23 @@ public final class VideoEncoder: @unchecked Sendable {
             if shouldSet {
                 set(session, kVTCompressionPropertyKey_MaxAllowedFrameQP, q as CFNumber)
             }
+        } else {
+            // BUDGET-ADAPTIVE CEILING + DROP-FEEDBACK RELIEF (the default regime; const-QP and
+            // per-frame AQP own the property above). Fold the VT drops observed since the last
+            // encode into the relief (attack fast, decay slow — see ``QPDropRelief``), compose the
+            // effective ceiling, and apply it iff it changed and no crisp/compact bracket owns the
+            // property. `lastAdaptiveQP` doubles as the dedup here — brackets nil it on restore so
+            // the next live frame re-applies.
+            let drops = dropCounter.drain()
+            bitrateLock.lock()
+            let relief = dropRelief.fold(drops: drops)
+            let q = min(Self.maxAllowedFrameQP, liveQPCeiling + relief)
+            let shouldSet = bracketDepth == 0 && lastAdaptiveQP != q
+            if shouldSet { lastAdaptiveQP = q }
+            bitrateLock.unlock()
+            if shouldSet {
+                set(session, kVTCompressionPropertyKey_MaxAllowedFrameQP, q as CFNumber)
+            }
         }
         var props: [CFString: Any] = [:]
         if forceKeyframe { props[kVTEncodeFrameOptionKey_ForceKeyFrame] = true }
@@ -1236,13 +1311,16 @@ public final class VideoEncoder: @unchecked Sendable {
         let frameProperties: CFDictionary? = props.isEmpty ? nil : (props as CFDictionary)
         let handler = outputHandler
         let readLTRToken = ltrEnabled
+        let dropCounter = dropCounter // captured by value — the callback must not capture self
         let status = VTCompressionSessionEncodeFrame(
             session, imageBuffer: pixelBuffer, presentationTimeStamp: presentationTime,
             duration: .invalid, frameProperties: frameProperties, infoFlagsOut: nil,
         ) { status, infoFlags, sampleBuffer in
             guard status == noErr, let sampleBuffer else {
                 // A nil sampleBuffer at status==noErr IS a VT frame drop (rate-control budget,
-                // `.frameDropped` flag) — surface it rather than swallowing the stutter (``dbgDropEnabled``).
+                // `.frameDropped` flag) — feed the drop-relief loop (the ceiling attacks up so the
+                // NEXT frames coarsen instead of dropping too) and surface it (``dbgDropEnabled``).
+                dropCounter.note()
                 if Self.dbgDropEnabled {
                     FileHandle.standardError
                         .write(

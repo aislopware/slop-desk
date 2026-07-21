@@ -72,7 +72,7 @@ final class QPCeilingTests: XCTestCase {
 
     // A pinned static ceiling (sharp == coarse, the SLOPDESK_MAX_QP path shape) is honoured verbatim
     // at every density.
-    func testPinnedStaticShape() {
+    func testPinnedStaticShapeHonoured() {
         for target in [1_000_000, 13_063_680, 31_104_000] {
             XCTAssertEqual(
                 VideoEncoder.qpCeiling(
@@ -88,6 +88,61 @@ final class QPCeilingTests: XCTestCase {
                 40,
             )
         }
+    }
+}
+
+/// Drop-feedback relief (``VideoEncoder/QPDropRelief``) — the content-complexity escape valve for
+/// the budget-adaptive ceiling. Pins the HW-calibrated failure it exists for: a rich budget (bpp
+/// 0.21–0.24 ⇒ sharp 38) on mandelbrot-class content (offered ≈95–119 Mbps vs a 30 Mbps target)
+/// produced 209 VT drops in 25s because QP-38 physically cannot fit noise into the budget — the
+/// relief must attack toward 51 within a few dropped frames and only re-sharpen gradually.
+final class QPDropReliefTests: XCTestCase {
+    // One drop attacks +attackStep immediately; a 4-drop storm saturates within ~4 frames.
+    func testDropAttacksImmediately() {
+        var r = VideoEncoder.QPDropRelief()
+        XCTAssertEqual(r.fold(drops: 1), VideoEncoder.QPDropRelief.attackStep)
+        XCTAssertEqual(r.fold(drops: 1), VideoEncoder.QPDropRelief.attackStep * 2)
+        var storm = VideoEncoder.QPDropRelief()
+        for _ in 0..<4 { _ = storm.fold(drops: 1) }
+        XCTAssertGreaterThanOrEqual(storm.relief, 13, "a storm must reach the full 38→51 span fast")
+    }
+
+    // Relief is capped — a pathological drop flood can't overflow past the composition clamp's input.
+    func testReliefSaturates() {
+        var r = VideoEncoder.QPDropRelief()
+        for _ in 0..<100 { _ = r.fold(drops: 10) }
+        XCTAssertEqual(r.relief, 51)
+    }
+
+    // No decay during the hold window: relief is sticky while the regime may still be bursty.
+    func testNoDecayBeforeHold() {
+        var r = VideoEncoder.QPDropRelief()
+        _ = r.fold(drops: 1)
+        for _ in 0..<VideoEncoder.QPDropRelief.holdFrames { _ = r.fold(drops: 0) }
+        XCTAssertEqual(r.relief, VideoEncoder.QPDropRelief.attackStep, "hold window must not decay")
+    }
+
+    // After the hold, relief decays 1 QP per decayEvery clean frames — gradual re-sharpen, no pop.
+    func testDecaysGraduallyAfterHold() {
+        var r = VideoEncoder.QPDropRelief()
+        _ = r.fold(drops: 1) // relief = 4
+        let framesToFullDecay = VideoEncoder.QPDropRelief.holdFrames
+            + VideoEncoder.QPDropRelief.attackStep * VideoEncoder.QPDropRelief.decayEvery
+        for _ in 0..<framesToFullDecay { _ = r.fold(drops: 0) }
+        XCTAssertEqual(r.relief, 0, "relief fully decays after hold + span·decayEvery clean frames")
+    }
+
+    // A drop mid-decay re-arms: attack from the current level and the hold restarts.
+    func testDropMidDecayReArms() {
+        var r = VideoEncoder.QPDropRelief()
+        _ = r.fold(drops: 1)
+        for _ in 0..<(VideoEncoder.QPDropRelief.holdFrames + VideoEncoder.QPDropRelief.decayEvery) {
+            _ = r.fold(drops: 0)
+        }
+        XCTAssertEqual(r.relief, VideoEncoder.QPDropRelief.attackStep - 1, "one decay step landed")
+        _ = r.fold(drops: 1)
+        XCTAssertEqual(r.relief, VideoEncoder.QPDropRelief.attackStep * 2 - 1)
+        XCTAssertEqual(r.cleanFrames, 0, "hold restarts on a new drop")
     }
 }
 #endif
