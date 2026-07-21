@@ -172,13 +172,19 @@ public actor SlopDeskVideoHostSession {
     /// Minimum wall-clock interval between injected (summed) scroll events when coalescing is on.
     /// The inbound datagrams are drained one-at-a-time (interleaved with recovery acks), so a pure
     /// per-batch collapse never engages — this TIME GATE holds a delta accumulator ACROSS drains
-    /// and posts at most one summed scroll per interval (default 16ms ≈ 60/s = the refresh rate the
-    /// WindowServer downsamples to anyway), cutting the ~200/s `CGEvent.post` flood ~3-4×.
+    /// and posts at most one summed scroll per interval, cutting the ~200/s `CGEvent.post` flood.
+    ///
+    /// DEFAULT 8ms (~120/s), NOT 1/refresh: the gate's post times are quantized by inbound-datagram
+    /// arrival, so a 16.7ms gate makes the host content advance on an IRREGULAR ~60/s lattice that
+    /// beats against the display's own 60Hz commit — HW-measured (2026-07-21, RTT 5-8ms link) as the
+    /// dominant scroll-smoothness gap vs Parsec: 16.7ms ⇒ capture beat 190×28-40ms gaps/scroll,
+    /// windowed fps 33-51; 8ms ⇒ 70 gaps, fps 55-59 ≈ Parsec's 58.8-60 on the same host. 120/s
+    /// summed posts stay well under the ~200/s per-delta flood that stalls the WindowServer.
     /// `SLOPDESK_SCROLL_INJECT_MS` overrides (clamp 4…50).
     private static let scrollInjectInterval: Double = {
         if let s = ProcessInfo.processInfo.environment["SLOPDESK_SCROLL_INJECT_MS"], let v = Double(s),
            v >= 4, v <= 50 { return v / 1000.0 }
-        return 1.0 / 60.0
+        return 0.008
     }()
 
     // Which scroll phases accumulate lives in ``ScrollCoalescePlanner/isCoalescableScrollPhase`` — the
