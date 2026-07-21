@@ -108,23 +108,24 @@ final class EnvConfigMigrationPolarityTests: XCTestCase {
 
     // MARK: Int-parse + clamp — SLOPDESK_SCROLL_RESAMPLE_HZ
 
-    /// The scroll-resample site routes only its lookup through `EnvConfig.string`; the `Int?`+`> 0`
-    /// guard + `0`-default + `[60, 1000]` clamp idiom is unchanged. This asserts the migrated resolver
-    /// drives the SAME result as the legacy `Int(env[k])` expression across the matrix (incl. a real
-    /// value, a below-floor value clamped up, an above-ceiling value clamped down, and garbage → 0).
+    /// The scroll-resample site routes only its lookup through `EnvConfig.string`. Default is now
+    /// **ON at 250 Hz** (unset ⇒ 250); an EXPLICIT `0`/garbage/≤0 disables (direct-post path);
+    /// parseable values keep the `[60, 1000]` clamp. This asserts the resolver drives the same
+    /// result as that expression across the matrix.
     func testScrollResampleHzPreservesIntParseAndClamp() {
         let key = "SLOPDESK_SCROLL_RESAMPLE_HZ"
-        // (overlay value, expected resolved Hz). The legacy expression, applied to the resolved string.
+        // (overlay value, expected resolved Hz).
         let cases: [(String?, Int)] = [
-            (nil, 0), // unset ⇒ 0 (OFF)
-            ("0", 0), // not > 0 ⇒ 0
+            (nil, 250), // unset ⇒ default ON at 250
+            ("0", 0), // explicit 0 ⇒ OFF
             ("250", 250), // in band
             ("30", 60), // below floor ⇒ clamped up to 60
             ("5000", 1000), // above ceiling ⇒ clamped down to 1000
-            ("garbage", 0), // unparseable ⇒ 0
+            ("garbage", 0), // unparseable ⇒ OFF
         ]
         func resolveHz(_ resolved: String?) -> Int {
-            guard let s = resolved, let v = Int(s), v > 0 else { return 0 }
+            guard let s = resolved else { return 250 }
+            guard let v = Int(s), v > 0 else { return 0 }
             return max(60, min(1000, v))
         }
         for (value, expected) in cases {

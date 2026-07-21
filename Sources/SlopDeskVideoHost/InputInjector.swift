@@ -165,20 +165,23 @@ public final class InputInjector: @unchecked Sendable {
     private static let swipeNavTrace = ProcessInfo.processInfo
         .environment["SLOPDESK_SWIPE_NAV_TRACE"] != nil || inputTrace
 
-    /// SCROLL RESAMPLE output rate (`SLOPDESK_SCROLL_RESAMPLE_HZ`, default **0 = OFF**). HW-measured:
+    /// SCROLL RESAMPLE output rate (`SLOPDESK_SCROLL_RESAMPLE_HZ`, default **250**; explicit
+    /// `0`/garbage disables → direct-post path). HW-measured:
     /// Chromium/Electron renders INJECTED smooth-scroll at a rate that climbs with the
     /// injection rate, only hitting the display's 60 fps near ~250 Hz (4× vsync); the wire delivers
-    /// scroll at the client trackpad rate (~60–120 Hz, burstier under jitter), so a captured VS Code
-    /// scroll renders a visibly juddery ~20–35 fps. When > 0, the bursty wire scroll is resampled
-    /// (``ScrollResampler``) to a STEADY `Hz` stream via a timer, driving the source app's native
-    /// 60 fps smooth-scroll — fixing it at the source, not client-side reprojection. `0` keeps the
-    /// direct-post path (byte-identical). Set to `250` to enable. Clamped [60, 1000].
+    /// scroll at the client trackpad rate (~60–120 Hz, burstier under jitter — and the session's
+    /// scroll-coalesce gate sums it further), so a captured Chrome/VS Code scroll renders a visibly
+    /// juddery ~20–35 fps. The resampler (``ScrollResampler``) re-emits the bursty wire scroll as a
+    /// STEADY `Hz` stream via a timer (markers + the first chunk post immediately — flick response
+    /// stays instant), driving the source app's native 60 fps smooth-scroll — fixing it at the
+    /// source, not client-side reprojection. Default-ON verdict (2026-07-21 fast-LAN A/B): feel
+    /// "nhẹ hơn"/closer to Parsec, capture fps unchanged, zero VT drops, no WindowServer-stall
+    /// signature at 250 Hz. Clamped [60, 1000].
     private static let scrollResampleHz: Int = {
         // Resolve through `EnvConfig` (ProcessInfo env → settings overlay → nil) so a GUI setting
-        // can drive it; an EMPTY overlay is byte-identical to the raw read. The parse + 0-default +
-        // [60, 1000] clamp idiom is kept VERBATIM (this site clamps, not validate-then-default).
-        guard let s = EnvConfig.string("SLOPDESK_SCROLL_RESAMPLE_HZ"), let v = Int(s), v > 0
-        else { return 0 }
+        // can drive it; an EMPTY overlay is byte-identical to the raw read.
+        guard let s = EnvConfig.string("SLOPDESK_SCROLL_RESAMPLE_HZ") else { return 250 }
+        guard let v = Int(s), v > 0 else { return 0 } // explicit 0/garbage ⇒ OFF (direct post)
         return max(60, min(1000, v))
     }()
 
