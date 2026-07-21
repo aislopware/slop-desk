@@ -58,7 +58,25 @@ public final class InputInjector: @unchecked Sendable {
     /// hands each arriving wire scroll to the resampler on this queue; the timer drains it at
     /// ``scrollResampleHz`` and posts the steady high-rate sub-events. See ``scrollResampleHz``.
     private let scrollQueue = DispatchQueue(label: "slopdesk.scroll-resample", qos: .userInteractive)
-    private var scrollResampler = ScrollResampler()
+    /// Resampler drain-curve knob (`SLOPDESK_SCROLL_SPREAD`, default 3): each 4ms tick emits
+    /// ~`residual/spread`, so a larger spread trails a LIGHT push out over more ticks (smoother
+    /// slow scroll, ≈`(spread−1)·4ms` extra lag); `ScrollResampler.init` sanitizes to [1, 16].
+    /// HW A/B (2026-07-21): at 2 a light push emitted a front-loaded chunk then a 1px trickle
+    /// ("chưa mượt"); 3 spreads it over ~12ms and the light-push judder is gone, flick response
+    /// unchanged (markers + first chunk still post on the ingest hop).
+    private static let scrollSpread: Double = {
+        guard let s = EnvConfig.string("SLOPDESK_SCROLL_SPREAD"), let v = Double(s) else { return 3.0 }
+        return v
+    }()
+
+    /// Whether the scroll resampler drives injection (see ``scrollResampleHz``) — read by the
+    /// session's scroll-coalesce default: the resampler already caps the post rate (the gate's
+    /// anti-flood job), and stacking the 8ms summing gate UNDER it double-quantizes the stream
+    /// into uneven chunk sizes (HW: the 60-100ms capture-stall bucket went 212 → 25 when the gate
+    /// was lifted with the resampler on).
+    static var scrollResamplerActive: Bool { scrollResampleHz > 0 }
+
+    private var scrollResampler = ScrollResampler(spread: InputInjector.scrollSpread)
     private var scrollTimer: DispatchSourceTimer?
     /// The tag of the latest forwarded scroll, stamped on the resampler's interpolated sub-events
     /// (so the self-inject filter still recognises them). Confined to `scrollQueue`.

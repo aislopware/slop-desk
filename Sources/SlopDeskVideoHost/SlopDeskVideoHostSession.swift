@@ -165,9 +165,16 @@ public actor SlopDeskVideoHostSession {
     /// STALLS (HW-measured 61ms capture-gap / 1210ms send-gap) → the scroll/reversal hitch + jerky
     /// host-side scroll. When ON, the drain SUMS consecutive same-phase scroll deltas → one smooth phased
     /// post per drain (≈ refresh rate, as Parsec/Sunshine and macOS do), preserving total travel.
-    /// DEFAULT ON; `SLOPDESK_SCROLL_COALESCE=0` selects the per-delta barrier (A/B).
-    private static let scrollCoalesceEnabled =
-        ProcessInfo.processInfo.environment["SLOPDESK_SCROLL_COALESCE"] != "0"
+    /// DEFAULT: **follows the injector's scroll resampler** — OFF while the resampler is active
+    /// (it caps the post rate itself, and stacking this summing gate under it double-quantizes the
+    /// stream into uneven chunks = scroll ripple + the 60-100ms capture-stall bucket going 25 → 212
+    /// HW-measured), ON when the resampler is explicitly disabled (the gate then resumes its
+    /// anti-flood job on the direct-post path). Explicit `SLOPDESK_SCROLL_COALESCE=1`/`0` overrides
+    /// either way (A/B).
+    private static let scrollCoalesceEnabled: Bool = {
+        if let s = ProcessInfo.processInfo.environment["SLOPDESK_SCROLL_COALESCE"] { return s != "0" }
+        return !InputInjector.scrollResamplerActive
+    }()
 
     /// Minimum wall-clock interval between injected (summed) scroll events when coalescing is on.
     /// The inbound datagrams are drained one-at-a-time (interleaved with recovery acks), so a pure
