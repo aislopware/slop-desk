@@ -123,6 +123,58 @@ public enum WindowSizeMath {
         return CGSize(width: width, height: height)
     }
 
+    // MARK: Saved-frame descriptor (`remember` — the scene-creation seed)
+
+    /// Parse an `NSWindow.frameDescriptor` string ("x y w h screenX screenY screenW screenH" — the
+    /// window FRAME then the screen's frame at save time; bottom-left origin, points). Returns `nil`
+    /// unless the FIRST 8 whitespace tokens are all finite numbers with positive, ≤ ``maxPx`` window +
+    /// screen extents (validate-then-drop — a truncated / corrupted / hostile persisted string yields
+    /// `nil`, never a degenerate or absurd rect). Extra trailing tokens are ignored (AppKit's format
+    /// has grown before; tolerate more).
+    ///
+    /// Consumed by the macOS scene glue to SEED `.defaultSize` / `.defaultPosition` so a `remember`
+    /// window is CREATED at the persisted geometry — the post-first-paint `setFrame(from:)` in the
+    /// introspect hook then reconciles exactly (screen topology changes) without a visible wrong-size
+    /// first frame.
+    public static func parseFrameDescriptor(_ descriptor: String) -> (frame: CGRect, screen: CGRect)? {
+        let tokens = descriptor.split(separator: " ")
+        guard tokens.count >= 8 else { return nil }
+        var values = [CGFloat]()
+        values.reserveCapacity(8)
+        for token in tokens.prefix(8) {
+            guard let value = Double(String(token)), value.isFinite else { return nil }
+            values.append(CGFloat(value))
+        }
+        // Validate the RAW extents (indices 2/3 = window w/h, 6/7 = screen w/h) — `CGRect.width`/
+        // `.height` standardize to their absolute value, so a rect check would wave a negative through.
+        let cap = CGFloat(maxPx)
+        for extent in [values[2], values[3], values[6], values[7]] {
+            guard extent > 0, extent <= cap else { return nil }
+        }
+        let frame = CGRect(x: values[0], y: values[1], width: values[2], height: values[3])
+        let screen = CGRect(x: values[4], y: values[5], width: values[6], height: values[7])
+        return (frame, screen)
+    }
+
+    /// The `defaultPosition` unit point that reproduces `frame` on `screen`: per axis, the origin
+    /// offset over the FREE extent (screen − window), so 0 = flush leading/top edge and 1 = flush
+    /// trailing/bottom edge — exactly SwiftUI's `UnitPoint` placement model. The y-axis flips
+    /// (`UnitPoint` grows DOWN from the top edge; AppKit frames grow UP from the bottom): the TOP gap
+    /// over the free height. A window as large as the screen (free ≤ 0) centres at 0.5 — position is
+    /// irrelevant there. Ordered TERNARY clamp into 0…1 (NaN-faithful — the file's float discipline);
+    /// separate `-` / `/` per axis, no fma.
+    public static func unitPosition(frame: CGRect, screen: CGRect) -> CGPoint {
+        let freeWidth = screen.width - frame.width
+        let freeHeight = screen.height - frame.height
+        let rawX = freeWidth > 0 ? (frame.minX - screen.minX) / freeWidth : 0.5
+        let rawY = freeHeight > 0 ? (screen.maxY - frame.maxY) / freeHeight : 0.5
+        let flooredX = rawX < 0 ? 0 : rawX
+        let flooredY = rawY < 0 ? 0 : rawY
+        let x = flooredX > 1 ? 1 : flooredX
+        let y = flooredY > 1 ? 1 : flooredY
+        return CGPoint(x: x, y: y)
+    }
+
     // MARK: Resolution (the single glue entry point)
 
     // The pure math takes the persisted size settings + cell + screen + the two chrome terms as independent

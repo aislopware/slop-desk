@@ -205,6 +205,74 @@ final class WindowSizeMathTests: XCTestCase {
         XCTAssertEqual(huge.cellHeight, 32 * WindowSizeMath.fallbackCellHeightRatio, accuracy: 0.0001, "caps at 32pt")
     }
 
+    // MARK: parseFrameDescriptor + unitPosition (the `remember` scene-creation seed)
+
+    /// A real `frameDescriptor` shape parses to the exact window frame + screen rect; trailing tokens
+    /// beyond the first 8 (AppKit's format has grown before) are tolerated.
+    func testParseFrameDescriptorRoundTrip() {
+        let parsed = WindowSizeMath.parseFrameDescriptor("260 189 1280 800 0 0 1800 1130 ")
+        XCTAssertEqual(parsed?.frame, CGRect(x: 260, y: 189, width: 1280, height: 800))
+        XCTAssertEqual(parsed?.screen, CGRect(x: 0, y: 0, width: 1800, height: 1130))
+        let extra = WindowSizeMath.parseFrameDescriptor("-100 50 640 480 0 0 1440 900 future tokens")
+        XCTAssertEqual(
+            extra?.frame,
+            CGRect(x: -100, y: 50, width: 640, height: 480),
+            "negative origin is legal (left display); extra tokens ignored",
+        )
+    }
+
+    /// Validate-then-drop: truncated, non-numeric, non-finite, zero/negative-extent, and absurdly
+    /// gigantic descriptors all yield `nil` — never a degenerate rect.
+    func testParseFrameDescriptorRejectsMalformed() {
+        XCTAssertNil(WindowSizeMath.parseFrameDescriptor(""))
+        XCTAssertNil(WindowSizeMath.parseFrameDescriptor("260 189 1280 800 0 0 1800"), "7 tokens — truncated")
+        XCTAssertNil(WindowSizeMath.parseFrameDescriptor("260 189 xyz 800 0 0 1800 1130"), "non-numeric token")
+        XCTAssertNil(
+            WindowSizeMath.parseFrameDescriptor("260 189 nan 800 0 0 1800 1130"),
+            "NaN parses as a Double but is non-finite",
+        )
+        XCTAssertNil(WindowSizeMath.parseFrameDescriptor("260 189 inf 800 0 0 1800 1130"))
+        XCTAssertNil(WindowSizeMath.parseFrameDescriptor("260 189 0 800 0 0 1800 1130"), "zero window width")
+        XCTAssertNil(WindowSizeMath.parseFrameDescriptor("260 189 1280 -800 0 0 1800 1130"), "negative window height")
+        XCTAssertNil(
+            WindowSizeMath.parseFrameDescriptor("260 189 99999 800 0 0 1800 1130"),
+            "window width above the 16384 ceiling",
+        )
+        XCTAssertNil(WindowSizeMath.parseFrameDescriptor("260 189 1280 800 0 0 1800 0"), "zero screen height")
+    }
+
+    /// The unit point reproduces SwiftUI's `defaultPosition` placement model: origin offset over the
+    /// free extent per axis, y flipped (UnitPoint grows down, AppKit frames grow up). Corners, centre,
+    /// no-free-space, and off-screen clamping all pinned against hand-computed expectations.
+    func testUnitPositionCornersCentreAndClamp() {
+        let screen = CGRect(x: 0, y: 0, width: 1000, height: 1000)
+        // Bottom-left corner window → leading (x 0), bottom (y 1).
+        XCTAssertEqual(
+            WindowSizeMath.unitPosition(frame: CGRect(x: 0, y: 0, width: 500, height: 500), screen: screen),
+            CGPoint(x: 0, y: 1),
+        )
+        // Top-left corner (AppKit maxY == screen maxY) → topLeading (0, 0).
+        XCTAssertEqual(
+            WindowSizeMath.unitPosition(frame: CGRect(x: 0, y: 500, width: 500, height: 500), screen: screen),
+            CGPoint.zero,
+        )
+        // Dead centre → (0.5, 0.5): free = 500 per axis, offset 250 each.
+        XCTAssertEqual(
+            WindowSizeMath.unitPosition(frame: CGRect(x: 250, y: 250, width: 500, height: 500), screen: screen),
+            CGPoint(x: 0.5, y: 0.5),
+        )
+        // Screen-filling window (free extent 0) → centre; position is irrelevant.
+        XCTAssertEqual(
+            WindowSizeMath.unitPosition(frame: screen, screen: screen),
+            CGPoint(x: 0.5, y: 0.5),
+        )
+        // A stale frame hanging off-screen clamps into 0…1 rather than propagating out of band.
+        XCTAssertEqual(
+            WindowSizeMath.unitPosition(frame: CGRect(x: -400, y: 1200, width: 500, height: 500), screen: screen),
+            CGPoint.zero,
+        )
+    }
+
     // MARK: WindowSizeMode raw values + Defaults round-trip / repair
 
     /// The enum raw values are the `window-size` config tokens and round-trip exactly.

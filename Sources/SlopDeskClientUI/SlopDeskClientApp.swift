@@ -769,8 +769,11 @@ public struct SlopDeskClientApp: App {
                     store.saveImmediately()
                     // `.remember` window-size: capture the final frame at quit — the end-of-gesture
                     // observers (`applyRememberedFrame`) cover resize/move, but a plain ⌘Q after a
-                    // zoom (no live-resize gesture) would otherwise miss the last frame.
-                    if SettingsKey.windowSize == .remember, let window = windowBox.window {
+                    // zoom (no live-resize gesture) would otherwise miss the last frame. Automation
+                    // quits never save (they run at the odiff reference geometry, not the user's).
+                    if SettingsKey.windowSize == .remember, !Self.hasAutomationEnvironment(),
+                       let window = windowBox.window
+                    {
                         SettingsKey.savedWindowFrame = window.frameDescriptor
                     }
                     // Reset the process-global Dock tile on teardown so a quit never leaves a
@@ -820,8 +823,19 @@ public struct SlopDeskClientApp: App {
         // full-size content view) so its own hover-reveal titlebar (`SlateTitlebar`) is the only chrome.
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.automatic)
-        // Open at the odiff reference geometry (1280×800) so a fresh window matches the reference.
-        .defaultSize(width: 1280, height: 800)
+        // `.remember` seeds the CREATION geometry from the saved frame so the window never paints a
+        // wrong-size first frame (the introspect `setFrame(from:)` fires post-first-paint — alone it
+        // restores correctly but with a visible default-size flash). Fallback = the odiff reference
+        // geometry (1280×800, fresh install / other modes / automation) so a fresh window still
+        // matches the reference.
+        .defaultSize(
+            width: Self.rememberedFrameSeed?.frame.width ?? 1280,
+            height: Self.rememberedFrameSeed?.frame.height ?? 800,
+        )
+        .defaultPosition(Self.rememberedFrameSeed.map { seed in
+            let unit = WindowSizeMath.unitPosition(frame: seed.frame, screen: seed.screen)
+            return UnitPoint(x: unit.x, y: unit.y)
+        } ?? .center)
         // Pin Window (chord-less; menu/palette flips `chrome.pinned`) maps to the WINDOW LEVEL.
         // Reading the live `chrome.pinned` @Observable in the scene body re-applies this on every flip — a
         // native scene modifier is used rather than an `.introspect(.window)` pin-apply + `.onChange(of:)`
@@ -1047,7 +1061,9 @@ public struct SlopDeskClientApp: App {
 
         let mode = SettingsKey.windowSize
         if mode == .remember {
-            applyRememberedFrame(to: window)
+            // Automation launches keep the deterministic odiff geometry: no restore, and no
+            // observers — an automation run must never overwrite the user's saved frame either.
+            if !hasAutomationEnvironment() { applyRememberedFrame(to: window) }
             objc_setAssociatedObject(window, &windowSizeAppliedKey, true, .OBJC_ASSOCIATION_RETAIN)
             return
         }
@@ -1086,6 +1102,18 @@ public struct SlopDeskClientApp: App {
         if mode == .frame || liveCell != nil {
             objc_setAssociatedObject(window, &windowSizeAppliedKey, true, .OBJC_ASSOCIATION_RETAIN)
         }
+    }
+
+    /// The scene-creation seed for ``WindowSizeMode/remember`` — the parsed saved frame, or `nil`
+    /// (other modes / nothing saved / malformed descriptor / automation). Consumed by the scene's
+    /// `.defaultSize` / `.defaultPosition` so the window is CREATED at the remembered geometry and the
+    /// first paint is already right; ``applyRememberedFrame(to:)`` then reconciles exactly via
+    /// `setFrame(from:)` (screen topology changes — `defaultPosition` is proportional, not absolute).
+    /// Automation launches opt out (matching ``applyRememberedFrame(to:)``): the odiff reference
+    /// geometry must stay the deterministic 1280×800.
+    private static var rememberedFrameSeed: (frame: CGRect, screen: CGRect)? {
+        guard SettingsKey.windowSize == .remember, !hasAutomationEnvironment() else { return nil }
+        return WindowSizeMath.parseFrameDescriptor(SettingsKey.savedWindowFrame)
     }
 
     /// Associated-object key retaining the `.remember`-mode frame-save subscription — tied to the
