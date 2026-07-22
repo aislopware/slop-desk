@@ -1469,16 +1469,20 @@ private struct AppearanceSettingsTab: View {
                 .font(.system(size: Slate.Typeface.footnote))
                 .foregroundStyle(Slate.Text.secondary)
             // REMOTE DESKTOP (`desktop-window`): how the dedicated desktop window opens (⌥⌘N) —
-            // a regular window, or straight into native fullscreen (the Parsec model). Read once
-            // per desktop-window open by the satellite coordinator; fullscreen also auto-arms
-            // immersive system-key capture while it lasts.
+            // a regular window, straight into native fullscreen (the Parsec model), or a borderless
+            // cover of the current Space whose LOCAL menu bar needs a top-edge DWELL to reveal (the
+            // Parallels model — a bare touch at the top reaches the REMOTE menu bar). Read once per
+            // desktop-window open by the satellite coordinator; both fullscreen flavours auto-arm
+            // immersive system-key capture while they last.
             pickerRow(
                 "Remote Desktop Opens",
-                "Fullscreen also captures system shortcuts (⌘Tab) for the host while it lasts.",
+                "Fullscreen captures system shortcuts (⌘Tab) for the host while it lasts. "
+                    + "Borderless keeps the local menu bar away until the pointer dwells at the top edge.",
                 selection: $desktopWindowPresentation,
             ) {
                 Text("In a window").tag(DesktopWindowPresentation.window)
                 Text("Fullscreen").tag(DesktopWindowPresentation.fullscreen)
+                Text("Borderless fullscreen").tag(DesktopWindowPresentation.borderless)
             }
         }
     }

@@ -9,6 +9,11 @@ import Foundation
 ///   letterboxes inside it.
 /// - ``fullscreen``: enter NATIVE macOS fullscreen (its own Space) immediately after the window
 ///   opens. Exiting fullscreen leaves the same regular window on screen.
+/// - ``borderless``: cover the screen with a BORDERLESS window on the current Space (no Spaces
+///   transition), with the local menu bar hidden behind a DWELL gate — the Parallels model, and
+///   the researched answer to the top-edge conflict (a bare pointer touch at the top reveals the
+///   REMOTE menu bar; holding it there ~half a second reveals the LOCAL one). The fullscreen menu
+///   verb (⌃⌘F / the green-button chord) toggles it off.
 ///
 /// `String`-raw (the case names ARE the config tokens) + `CaseIterable` so it bridges to `Defaults`
 /// (see `SettingsKey`) and the Settings picker can enumerate it. A stale / invalid persisted raw
@@ -16,4 +21,5 @@ import Foundation
 public enum DesktopWindowPresentation: String, Codable, Sendable, CaseIterable {
     case window
     case fullscreen
+    case borderless
 }

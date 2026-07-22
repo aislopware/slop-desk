@@ -29,7 +29,24 @@ import SwiftUI
 /// The satellite `NSWindow` subclass — a MARKER: key-window-sensitive actuators (`overlayCoordinator
 /// .closeWindow`, the menu Close Window item) test `NSApp.keyWindow is SatellitePaneWindow` to target
 /// the satellite the user is looking at instead of the captured main workspace window.
-final class SatellitePaneWindow: NSWindow {}
+final class SatellitePaneWindow: NSWindow {
+    /// A BORDERLESS-engaged satellite must keep taking keys/main (AppKit defaults a `.borderless`
+    /// styleMask to neither) — the desktop stream is useless without keyboard input. Harmless for
+    /// the titled resting state (titled windows already say yes).
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+
+    /// Routes the standard fullscreen verb (the View-menu item / ⌃⌘F / the green-button chord)
+    /// through the controller first: a borderless-engaged window EXITS borderless, and a desktop
+    /// window whose presentation setting is `.borderless` ENTERS it — native Spaces fullscreen
+    /// remains the fallthrough for everything else.
+    override func toggleFullScreen(_ sender: Any?) {
+        if let controller = delegate as? SatellitePaneWindowController, controller.handleFullscreenVerb() {
+            return
+        }
+        super.toggleFullScreen(sender)
+    }
+}
 
 // MARK: - Key-state relay (window key ⇄ pane focus)
 
@@ -173,6 +190,23 @@ final class SatellitePaneWindowController: NSWindowController, NSWindowDelegate 
     /// `detachedPanes`) — `windowShouldClose` must let THAT close pass instead of re-running reattach.
     private var closingFromCoordinator = false
 
+    // MARK: Borderless fullscreen (the dwell-gated Parallels model)
+
+    /// Non-nil while BORDERLESS fullscreen is engaged: the window covers its screen with a
+    /// `.borderless` mask, the local menu bar/Dock hide behind ``BorderlessDwellGate``, and this
+    /// remembers everything needed to restore the titled resting state on exit.
+    private struct BorderlessEngagement {
+        var savedFrame: NSRect
+        var savedStyleMask: NSWindow.StyleMask
+        var gate = BorderlessDwellGate()
+        var trackingArea: NSTrackingArea?
+    }
+
+    private var borderless: BorderlessEngagement?
+    /// One-shot dwell completion for a MOTIONLESS pointer (mouse-moved events stop when the hand
+    /// stops; the gate's deadline still has to fire).
+    private var dwellTimer: Timer?
+
     init(
         store: WorkspaceStore, paneID: PaneID, title: String, paneDrag: PaneDragCoordinator?,
         decorate: (AnyView) -> AnyView,
@@ -232,11 +266,27 @@ final class SatellitePaneWindowController: NSWindowController, NSWindowDelegate 
         // Satellite focus truth (``WorkspaceStore/keySatellitePaneID``): a completion badge / desktop
         // notification for THIS pane must not fire while its window is the one the user is looking at.
         store?.noteSatelliteKey(paneID: paneID, isKey: true)
+        // Borderless chrome-hiding is APP-WIDE state (`NSApp.presentationOptions`) — it may only
+        // stand while this window is the key one, so it re-applies on every key gain…
+        applyBorderlessPresentationOptions()
     }
 
     func windowDidResignKey(_: Notification) {
         keyState.isKey = false
         store?.noteSatelliteKey(paneID: paneID, isKey: false)
+        // …and always releases on key loss (another window — even another satellite — must get the
+        // normal menu bar back).
+        if borderless != nil { NSApp.presentationOptions = [] }
+    }
+
+    func windowWillClose(_: Notification) {
+        // A borderless window closing (⌘W ends the desktop session) must not strand the app-wide
+        // chrome-hiding — release it and the dwell timer on the way out.
+        if borderless != nil {
+            NSApp.presentationOptions = []
+            dwellTimer?.invalidate()
+            dwellTimer = nil
+        }
     }
 
     // FULLSCREEN AUTO-ARMS system-key capture (docs/DECISIONS.md 2026-07-22, the industry-converged
@@ -249,6 +299,106 @@ final class SatellitePaneWindowController: NSWindowController, NSWindowDelegate 
 
     func windowDidExitFullScreen(_: Notification) {
         store?.noteSatelliteFullscreen(paneID: paneID, isFullscreen: false)
+    }
+
+    // MARK: Borderless fullscreen engagement
+
+    /// The fullscreen verb arrived (View menu / ⌃⌘F / green-button chord — routed by
+    /// ``SatellitePaneWindow/toggleFullScreen(_:)``). Returns `true` when borderless handled it:
+    /// engaged → exit; a desktop window whose presentation setting is `.borderless` → enter.
+    /// `false` falls through to native Spaces fullscreen.
+    func handleFullscreenVerb() -> Bool {
+        if borderless != nil {
+            disengageBorderless()
+            return true
+        }
+        if store?.tree.spec(for: paneID)?.kind == .desktop,
+           SettingsKey.desktopWindowPresentation == .borderless
+        {
+            engageBorderless()
+            return true
+        }
+        return false
+    }
+
+    /// Covers the window's screen with a borderless mask, hides the local menu bar/Dock behind the
+    /// dwell gate, and auto-arms immersive system-key capture (both fullscreen flavours are "the
+    /// remote desktop owns this screen" — the docs/DECISIONS.md 2026-07-22 pattern). Idempotent.
+    func engageBorderless() {
+        guard borderless == nil, let window, let screen = window.screen ?? NSScreen.main else { return }
+        var engagement = BorderlessEngagement(savedFrame: window.frame, savedStyleMask: window.styleMask)
+        // Mouse-moved events feed the dwell gate; `.activeAlways` because the gate must also track
+        // while a host app has focus inside the stream (the window stays key either way).
+        if let content = window.contentView {
+            let area = NSTrackingArea(
+                rect: .zero, options: [.mouseMoved, .activeAlways, .inVisibleRect], owner: self,
+            )
+            content.addTrackingArea(area)
+            engagement.trackingArea = area
+        }
+        borderless = engagement
+        window.styleMask = [.borderless]
+        window.setFrame(screen.frame, display: true)
+        window.isMovable = false // the cover IS the screen; a background-drag would tear it off it
+        window.makeKeyAndOrderFront(nil)
+        applyBorderlessPresentationOptions()
+        store?.noteSatelliteFullscreen(paneID: paneID, isFullscreen: true)
+    }
+
+    /// Restores the titled resting window (saved frame + mask), releases the app-wide chrome
+    /// hiding, and returns immersive capture to the latched per-target value. Idempotent.
+    func disengageBorderless() {
+        guard let engagement = borderless, let window else { return }
+        dwellTimer?.invalidate()
+        dwellTimer = nil
+        if let area = engagement.trackingArea { window.contentView?.removeTrackingArea(area) }
+        borderless = nil
+        NSApp.presentationOptions = []
+        window.styleMask = engagement.savedStyleMask
+        window.setFrame(engagement.savedFrame, display: true)
+        window.isMovable = true
+        store?.noteSatelliteFullscreen(paneID: paneID, isFullscreen: false)
+    }
+
+    /// Tracking-area callback (this controller is the area's owner): feed the gate the pointer's
+    /// distance from the screen's top edge, in points.
+    override func mouseMoved(with _: NSEvent) {
+        tickDwellGate()
+    }
+
+    /// One gate fold from the CURRENT global pointer position (mouse-moved event or dwell timer —
+    /// both re-read `NSEvent.mouseLocation`, so a stale timer can never reveal for a pointer that
+    /// already left the edge).
+    private func tickDwellGate() {
+        guard borderless != nil, let screen = window?.screen ?? NSScreen.main else { return }
+        let yFromTop = screen.frame.maxY - NSEvent.mouseLocation.y
+        let now = ProcessInfo.processInfo.systemUptime
+        let before = borderless?.gate.phase
+        borderless?.gate.update(pointerYFromTop: yFromTop, now: now)
+        guard let engagement = borderless else { return }
+        if engagement.gate.phase != before { applyBorderlessPresentationOptions() }
+        // A motionless pointer emits no more moves — complete (or cancel) the dwell on a timer.
+        dwellTimer?.invalidate()
+        dwellTimer = nil
+        if let deadline = engagement.gate.armingDeadline {
+            let delay = Double.maximum(0.01, deadline - now)
+            let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+                Task { @MainActor in self?.tickDwellGate() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            dwellTimer = timer
+        }
+    }
+
+    /// Maps the gate phase onto the APP-WIDE presentation options — only while this window is key
+    /// (the options are global; a background satellite must not hide another window's menu bar).
+    /// Hidden ⇒ hard-hide (a top-edge touch reaches the REMOTE menu bar); revealed ⇒ auto-hide
+    /// (macOS slides the local bar in for the already-dwelling pointer, and back out when it leaves).
+    private func applyBorderlessPresentationOptions() {
+        guard let engagement = borderless, window?.isKeyWindow == true else { return }
+        NSApp.presentationOptions = engagement.gate.isRevealed
+            ? [.autoHideMenuBar, .autoHideDock]
+            : [.hideMenuBar, .hideDock]
     }
 }
 
@@ -325,13 +475,16 @@ final class SatelliteWindowsCoordinator {
             controllers[entry.pane] = controller
             controller.showWindow(nil)
             controller.window?.makeKeyAndOrderFront(nil)
-            // Default presentation (`desktopWindow.presentation`, the Parsec model): a desktop
-            // window can open STRAIGHT into native fullscreen. Never under automation — an E2E run
-            // needs deterministic window geometry (the window-size gate precedent).
-            if isDesktop, SettingsKey.desktopWindowPresentation == .fullscreen,
-               !Self.hasAutomationEnvironment()
-            {
-                controller.window?.toggleFullScreen(nil)
+            // Default presentation (`desktopWindow.presentation`): a desktop window can open
+            // STRAIGHT into native fullscreen (the Parsec model) or the dwell-gated borderless
+            // cover (the Parallels model). Never under automation — an E2E run needs deterministic
+            // window geometry (the window-size gate precedent).
+            if isDesktop, !Self.hasAutomationEnvironment() {
+                switch SettingsKey.desktopWindowPresentation {
+                case .window: break
+                case .fullscreen: controller.window?.toggleFullScreen(nil)
+                case .borderless: controller.engageBorderless()
+                }
             }
         }
 
