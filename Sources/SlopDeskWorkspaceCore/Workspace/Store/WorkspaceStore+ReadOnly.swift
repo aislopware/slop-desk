@@ -14,13 +14,13 @@ import Foundation
 /// pill `×` (``setPaneReadOnly(_:_:)`` with `false`), the View-menu item / command-palette term
 /// (``toggleReadOnlyInActivePane()``), or a programmatic model toggle — lands on one value. ``setPaneReadOnly``
 /// ALSO writes the set DIRECTLY so the convergence holds even for a pane with no live terminal model wired
-/// (a non-terminal `.remoteGUI` / `.systemDialog` pane, or a headless / test handle whose
+/// (a non-terminal `.desktop` / `.systemDialog` pane, or a headless / test handle whose
 /// `onReadOnlyChanged` the store never installed); the two writes are idempotent (the same value), so they
 /// never fight, and the model mutators are guarded idempotent so the one level of re-entrancy through
 /// `onReadOnlyChanged` terminates immediately.
 public extension WorkspaceStore {
     /// The live ``TerminalViewModel`` for pane `id` (resolved through the ``TerminalModelProviding`` seam,
-    /// the same one ``activeTerminalModel`` uses) — `nil` for a non-terminal pane (`.remoteGUI` /
+    /// the same one ``activeTerminalModel`` uses) — `nil` for a non-terminal pane (`.desktop` /
     /// `.systemDialog`), a headless / fake handle, or an absent pane. Keyed by an explicit id (not the
     /// active pane) so the pill `×`, which carries its own ``PaneID``, can target exactly its pane.
     private func terminalModel(for id: PaneID) -> TerminalViewModel? {

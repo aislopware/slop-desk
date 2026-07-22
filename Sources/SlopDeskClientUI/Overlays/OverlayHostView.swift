@@ -120,7 +120,6 @@ struct OverlayHostView: View {
         case connect
         case palette
         case cheatSheet
-        case remotePicker
         case openQuickly
         case peekReply
         case globalSearch
@@ -131,7 +130,6 @@ struct OverlayHostView: View {
         if coordinator.connectVisible { return .connect }
         if coordinator.paletteVisible { return .palette }
         if coordinator.cheatSheetVisible { return .cheatSheet }
-        if coordinator.remotePickerVisible { return .remotePicker }
         if coordinator.openQuicklyVisible { return .openQuickly }
         if coordinator.peekReplyVisible { return .peekReply }
         if coordinator.globalSearchVisible { return .globalSearch }
@@ -153,7 +151,6 @@ struct OverlayHostView: View {
         if coordinator.connectVisible { coordinator.closeConnect() }
         else if coordinator.paletteVisible { coordinator.closePalette() }
         else if coordinator.cheatSheetVisible { coordinator.closeCheatSheet() }
-        else if coordinator.remotePickerVisible { coordinator.closeRemotePicker() }
         else if coordinator.openQuicklyVisible { coordinator.closeOpenQuickly() }
         else if coordinator.peekReplyVisible { coordinator.closePeekReply() }
         else if coordinator.globalSearchVisible { coordinator.closeGlobalSearch() }
@@ -168,8 +165,6 @@ struct OverlayHostView: View {
             PaletteView(coordinator: coordinator, store: store, toggledState: toggledState)
         case .cheatSheet:
             KeyboardCheatSheetView(coordinator: coordinator)
-        case .remotePicker:
-            RemoteWindowPickerModal(coordinator: coordinator)
         case .openQuickly:
             OpenQuicklyView(store: store, coordinator: coordinator, folders: coordinator.folders)
         case .peekReply:

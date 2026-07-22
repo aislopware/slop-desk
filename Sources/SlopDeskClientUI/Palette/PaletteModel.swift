@@ -94,9 +94,6 @@ public enum PaletteAction: Sendable {
     case openConnect
     /// Open the keyboard cheat sheet overlay (handled by the overlay coordinator).
     case openCheatSheet
-    /// Open the Remote-Window picker (handled by the overlay coordinator; a pick opens a
-    /// `.remoteGUI` pane streaming the chosen host window).
-    case openRemotePicker
     /// Toggle the left navigator / Tabs panel — routed by the overlay coordinator to the LIVE
     /// ``WorkspaceChromeState`` (the macOS split + the palette's ✓ both read `chrome.sidebarCollapsed`), NOT
     /// the legacy `store.sidebarCollapsed` the native shell never reads. Same live flag the ⌘⇧L chord + the

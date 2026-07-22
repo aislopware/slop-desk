@@ -29,7 +29,6 @@ final class SettingsKeyTests: XCTestCase {
             SettingsKey.tabBadgeOnCommandFail,
             SettingsKey.tabBadgeOnCommandAwaitInput,
             SettingsKey.systemDialogPanes,
-            SettingsKey.defaultPaneKindKey,
             SettingsKey.autoSwitchLayouts,
             SettingsKey.redactSecrets,
             SettingsKey.recordClipboardHistory,
@@ -125,18 +124,6 @@ final class SettingsKeyTests: XCTestCase {
         // The wire keys are the single source of truth shared with the @AppStorage consumers.
         XCTAssertEqual(SettingsKey.showBlockDividers, "terminal.showBlockDividers")
         XCTAssertEqual(SettingsKey.density, "appearance.density")
-    }
-
-    func testDefaultPaneKindDefaultsToTerminalAndRoundTrips() {
-        XCTAssertEqual(SettingsKey.defaultPaneKind, .terminal)
-        SettingsKey.store.set(PaneKind.remoteGUI.rawValue, forKey: SettingsKey.defaultPaneKindKey)
-        XCTAssertEqual(SettingsKey.defaultPaneKind, .remoteGUI)
-        // A stale persisted `claudeCode` value (the retired kind) is no longer a valid raw value
-        // here → falls back to `.terminal` (the safe default), like any other invalid raw value.
-        SettingsKey.store.set("claudeCode", forKey: SettingsKey.defaultPaneKindKey)
-        XCTAssertEqual(SettingsKey.defaultPaneKind, .terminal, "a retired/invalid raw value falls back to terminal")
-        SettingsKey.store.set("garbage", forKey: SettingsKey.defaultPaneKindKey)
-        XCTAssertEqual(SettingsKey.defaultPaneKind, .terminal, "an invalid raw value falls back to terminal")
     }
 
     // MARK: - Notification policy keys + the resolved `notificationSettings` bundle

@@ -115,7 +115,7 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
             panes: [
                 (a0, PaneSpec(kind: .terminal, title: "a0")),
                 (a1, PaneSpec(kind: .terminal, title: "a1")),
-                (b0, PaneSpec(kind: .remoteGUI, title: "b0")),
+                (b0, PaneSpec(kind: .desktop, title: "b0")),
             ],
             focused: a0,
         )
@@ -124,7 +124,7 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
 
         XCTAssertEqual(store.allSessions.count, 3, "all three panes on the canvas materialized at init")
         assertInvariant(store, "after init(restored 3-pane canvas)")
-        XCTAssertEqual(fake(store, b0)?.kind, .remoteGUI, "pane spec kind preserved through materialization")
+        XCTAssertEqual(fake(store, b0)?.kind, .desktop, "pane spec kind preserved through materialization")
         // No connect/video at materialization — sessions are idle.
         XCTAssertEqual(fake(store, b0)?.isVideoActive, false, "materialized session is idle (no video)")
         XCTAssertEqual(fake(store, b0)?.pauseCount, 0, "materialized session is not paused")
@@ -300,7 +300,7 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
         let group = store.addGroup(name: "Work")
         XCTAssertEqual(registryIDs(store), before, "addGroup is metadata-only — no new session")
 
-        store.addPane(kind: .remoteGUI, inGroup: group)
+        store.addPane(kind: .desktop, inGroup: group)
 
         let after = registryIDs(store)
         XCTAssertEqual(after.count, before.count + 1, "addPane materializes exactly one new pane")
@@ -308,7 +308,7 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
         assertInvariant(store, "after addPane(inGroup:)")
 
         let newPane = try XCTUnwrap(after.subtracting(before).first)
-        XCTAssertEqual(fake(store, newPane)?.kind, .remoteGUI, "new pane materialized with its kind")
+        XCTAssertEqual(fake(store, newPane)?.kind, .desktop, "new pane materialized with its kind")
         XCTAssertEqual(store.workspace.group(ofPane: newPane)?.id, group, "the new pane joined the group")
         XCTAssertTrue(
             store.workspace.canvas.ids(inGroup: group).contains(newPane),
@@ -613,19 +613,19 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
     // MARK: - in-flight video-cap accounting does not perturb the registry invariant (ITEM #3)
 
     /// The ITEM #3 in-flight-teardown video accounting (`tearingDownVideo`) is a SEPARATE bookkeeping
-    /// set from the registry: closing a live `.remoteGUI` pane removes its key from the registry
+    /// set from the registry: closing a live `.desktop` pane removes its key from the registry
     /// SYNCHRONOUSLY (the invariant `registry.keys == canvas.allIDs()` holds the instant `closePane`
     /// returns) even while its teardown — and hence its in-flight cap slot — is still parked. The cap
     /// accounting must never leak into or perturb the registry/pane-set invariant.
     func testInFlightVideoAccountingDoesNotPerturbRegistryInvariant() async throws {
-        // A single remoteGUI canvas grown to two panes.
+        // A single desktop canvas grown to two panes.
         let rootID = PaneID()
-        let spec = PaneSpec(kind: .remoteGUI, title: "Remote window")
+        let spec = PaneSpec(kind: .desktop, title: "Desktop")
         let store = makeStore(restoring: Workspace.make(panes: [(rootID, spec)], focused: rootID))
-        store.addPane(kind: .remoteGUI)
+        store.addPane(kind: .desktop)
         let ids = paneIDs(store)
         XCTAssertEqual(ids.count, 2)
-        assertInvariant(store, "two remoteGUI panes")
+        assertInvariant(store, "two desktop panes")
 
         // Park the close-victim's teardown so its in-flight cap slot is held across the assertions.
         let gate = FakeTeardownGate()

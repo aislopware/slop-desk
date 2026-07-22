@@ -305,8 +305,8 @@ public extension WorkspaceBindingRegistry {
              .splitUp,
              .newTab:
             apply(.newPaneDefault, to: store)
-        // Canvas analogue of the desktop tab: a `.remoteGUI` pane is the nearest canvas kind.
-        case .newDesktopTab: apply(.newPane(.remoteGUI), to: store)
+        // Canvas analogue of the desktop tab: the same kind, minted as a flat canvas pane.
+        case .newDesktopTab: apply(.newPane(.desktop), to: store)
         case .closePane: apply(.closePane, to: store)
         // Reopen the last closed pane: the canvas has its own retained single-slot reopen (distinct from the
         // tree shell's LIFO stack) — route to it so the canvas path still responds.

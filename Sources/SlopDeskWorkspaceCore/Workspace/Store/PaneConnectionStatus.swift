@@ -11,7 +11,7 @@ import Foundation
 /// no actor for the derivation — so the mapping and the tab-level salience fold are unit-tested directly.
 struct PaneConnectionStatus: Equatable {
     /// The presented phase — a flattened projection of `ConnectionViewModel.Status` plus a `.none`
-    /// sentinel for a pane that has no PATH-1 connection (a `.remoteGUI` / faked handle ⇒ no dot).
+    /// sentinel for a pane that has no PATH-1 connection (a video / faked handle ⇒ no dot).
     enum Phase: Equatable {
         case idle // .disconnected — known, deliberately not connected
         case connecting // .connecting — initial dial
@@ -55,7 +55,7 @@ struct PaneConnectionStatus: Equatable {
         }
     }
 
-    /// Whether a dot should be drawn at all (a `.remoteGUI` / faked handle has no connection ⇒ none).
+    /// Whether a dot should be drawn at all (a video / faked handle has no connection ⇒ none).
     var showsDot: Bool { phase != .none }
 
     /// Whether the dot pulses (the "something is in flight" cue): connecting + reconnecting only.

@@ -38,7 +38,6 @@ struct AllSettingsListView: View {
     @Default(.oscNotifications) private var oscNotifications
     @Default(.longCommandNotifications) private var longCommandNotifications
     @Default(.redactSecrets) private var redactSecrets
-    @Default(.defaultPaneKind) private var defaultPaneKind
     @Default(.workingDirectoryNewWindow) private var workingDirNewWindow
     @Default(.workingDirectoryNewTab) private var workingDirNewTab
     @Default(.workingDirectoryNewSplit) private var workingDirNewSplit
@@ -310,11 +309,6 @@ struct AllSettingsListView: View {
             menuPicker($onLaunch) {
                 Text("Restore Last Session").tag(OnLaunchBehavior.restoreLastSession)
                 Text("New Window").tag(OnLaunchBehavior.newWindow)
-            }
-        case SettingsKey.defaultPaneKindKey:
-            menuPicker($defaultPaneKind) {
-                Text("Terminal").tag(PaneKind.terminal)
-                Text("Remote GUI").tag(PaneKind.remoteGUI)
             }
         case SettingsKey.newTabPositionKey:
             menuPicker($newTabPosition) {

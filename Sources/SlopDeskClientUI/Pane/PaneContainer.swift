@@ -1,7 +1,7 @@
 // PaneContainer — one placed leaf = the flush, borderless pane content.
 //
 // Resolves the pane's `LivePaneSession` handle + `PaneSpec` from the store, routes by pane kind to the
-// content view (terminal → `TerminalLeafView`; `.remoteGUI`/`.systemDialog` → the `VideoWindowFactory`
+// content view (terminal → `TerminalLeafView`; `.desktop`/`.systemDialog` → the `VideoWindowFactory`
 // seam, else a native placeholder). The terminal renders as a FLUSH, borderless panel on paper — there
 // is NO floating card, NO accent ring, NO drop shadow and NO inset gutter. The per-pane controls
 // (split/close) hover-reveal as a top overlay instead of a resting header bar; focus is conveyed only by
@@ -25,7 +25,7 @@ struct PaneContainer: View {
     /// Whether this pane is the active tab's active (focused) pane.
     let isFocused: Bool
     /// Whether this pane is currently ON-SCREEN (its tab is active AND it is not zoom-hidden). Drives the video
-    /// activation lifecycle for a `.remoteGUI` pane (see ``GuiLeafView``). Defaults to `true` so terminal /
+    /// activation lifecycle for a video pane (see ``GuiLeafView``). Defaults to `true` so terminal /
     /// static-mirror callers are unaffected.
     var isVisible: Bool = true
     /// This pane's current laid-out size (from the solver, via ``SplitContainer``). The SINGLE generic resize
@@ -109,7 +109,7 @@ struct PaneContainer: View {
 
     /// Whether this is a video (PATH 2) pane. `PaneKind.isVideo` is internal to WorkspaceCore, so the
     /// equivalent check is inlined here (the case set matches `PaneKind.isVideo`).
-    private var isVideo: Bool { kind == .remoteGUI || kind == .systemDialog || kind == .desktop }
+    private var isVideo: Bool { kind == .systemDialog || kind == .desktop }
 
     /// The leaf content, routed by pane kind. A terminal pane renders the `TerminalLeafView` over the
     /// terminal-renderer seam; a video pane renders the `GuiLeafView` over the `VideoWindowFactory` seam

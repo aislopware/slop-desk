@@ -9,15 +9,15 @@ import XCTest
 /// live-video ceiling protecting the PATH 2 resource budget (2N UDP sockets / N
 /// `VTDecompressionSession` / N `CVDisplayLink`). Enforced at **activation**
 /// (``WorkspaceStore/activateVideo(_:)``), NOT at materialization — `reconcile()` always
-/// materializes an IDLE `.remoteGUI` session; the store admits the video stack only when a slot is free.
+/// materializes an IDLE `.desktop` session; the store admits the video stack only when a slot is free.
 ///
 /// Everything injects ``FakePaneSession`` through the `makeSession` seam — never a `SlopDeskClient`
 /// or `HostServer`. The double's `setVideoActive` flips `isVideoActive` UNCONDITIONALLY for
-/// `.remoteGUI` (no internal cap), so the cap under test is purely the store's: exercised only
+/// `.desktop` (no internal cap), so the cap under test is purely the store's: exercised only
 /// through `store.activateVideo` / `store.deactivateVideo`, never by poking the double.
 ///
 /// The asserted contract:
-/// - the first `liveVideoCap` `.remoteGUI` panes activate (`true`); the next is GATED (`false`) and
+/// - the first `liveVideoCap` `.desktop` panes activate (`true`); the next is GATED (`false`) and
 ///   left inactive (view shows the gated placeholder);
 /// - re-activating an already-active pane is an idempotent `true`;
 /// - `deactivateVideo` frees a slot, after which a previously-gated pane CAN activate. The store
@@ -44,10 +44,10 @@ final class LiveVideoCapTests: XCTestCase {
         return f
     }
 
-    /// Builds a store whose canvas is `n` `.remoteGUI` panes (root + `n−1` added), returning the store
-    /// and pane ids in canvas order. `restoring:` a single-remoteGUI-pane workspace, NOT the default
+    /// Builds a store whose canvas is `n` `.desktop` panes (root + `n−1` added), returning the store
+    /// and pane ids in canvas order. `restoring:` a single-desktop-pane workspace, NOT the default
     /// terminal canvas (which would leave a stray terminal pane in the registry, contaminating cap
-    /// accounting). Each `addPane` adds one `.remoteGUI` session; reconcile materializes them all IDLE.
+    /// accounting). Each `addPane` adds one `.desktop` session; reconcile materializes them all IDLE.
     private func makeStoreWithRemoteGUILeaves(
         _ n: Int,
         cap: Int,
@@ -55,7 +55,7 @@ final class LiveVideoCapTests: XCTestCase {
     ) -> (store: WorkspaceStore, ids: [PaneID]) {
         precondition(n >= 1)
         let rootID = PaneID()
-        let spec = PaneSpec(kind: .remoteGUI, title: "Remote window")
+        let spec = PaneSpec(kind: .desktop, title: "Desktop")
         let ws = Workspace.make(panes: [(rootID, spec)])
         let store = WorkspaceStore(
             restoring: ws,
@@ -65,19 +65,19 @@ final class LiveVideoCapTests: XCTestCase {
         )
 
         var ids = store.workspace.canvas.allIDs()
-        // Grow the canvas to `n` remoteGUI panes.
+        // Grow the canvas to `n` desktop panes.
         while ids.count < n {
-            store.addPane(kind: .remoteGUI)
+            store.addPane(kind: .desktop)
             ids = store.workspace.canvas.allIDs()
         }
-        XCTAssertEqual(ids.count, n, "canvas should have exactly \(n) remoteGUI panes")
-        XCTAssertEqual(store.allSessions.count, n, "registry holds only the remoteGUI panes (no stray default pane)")
+        XCTAssertEqual(ids.count, n, "canvas should have exactly \(n) desktop panes")
+        XCTAssertEqual(store.allSessions.count, n, "registry holds only the desktop panes (no stray default pane)")
         return (store, ids)
     }
 
     // MARK: - Materialization is idle (cap is NOT a materialization gate)
 
-    /// `reconcile()` materializes one IDLE `.remoteGUI` session per pane regardless of the cap — the cap
+    /// `reconcile()` materializes one IDLE `.desktop` session per pane regardless of the cap — the cap
     /// only bites at activation. Build 3 panes under cap=2: all 3 sessions exist, none video-active.
     func testRemoteGUIPanesMaterializeIdleEvenBeyondCap() throws {
         let (store, ids) = makeStoreWithRemoteGUILeaves(3, cap: 2)
@@ -86,7 +86,7 @@ final class LiveVideoCapTests: XCTestCase {
         for id in ids {
             let h = store.handle(for: id)
             XCTAssertNotNil(h, "pane \(id) has a live session")
-            XCTAssertEqual(h?.kind, .remoteGUI)
+            XCTAssertEqual(h?.kind, .desktop)
             XCTAssertFalse(try XCTUnwrap(h?.isVideoActive), "materialized sessions are idle — no video activated")
         }
         // Registry-key invariant holds: one handle per pane, keyed by pane id.
@@ -98,7 +98,7 @@ final class LiveVideoCapTests: XCTestCase {
 
     // MARK: - The cap admits up to N, then gates
 
-    /// With cap=2, the first two `.remoteGUI` panes activate (`true`) and the third is GATED:
+    /// With cap=2, the first two `.desktop` panes activate (`true`) and the third is GATED:
     /// `activateVideo` returns `false` and leaves the pane inactive.
     func testActivateAdmitsUpToCapThenGatesThird() {
         let (store, ids) = makeStoreWithRemoteGUILeaves(3, cap: 2)
@@ -121,7 +121,7 @@ final class LiveVideoCapTests: XCTestCase {
         )
 
         // Exactly cap panes are live.
-        let activeCount = store.allSessions.count(where: { $0.kind == .remoteGUI && $0.isVideoActive })
+        let activeCount = store.allSessions.count(where: { $0.kind == .desktop && $0.isVideoActive })
         XCTAssertEqual(activeCount, store.liveVideoCap)
     }
 
@@ -205,8 +205,8 @@ final class LiveVideoCapTests: XCTestCase {
     /// slot. (Claude Code is no longer a distinct kind — a `claude` runs inside a plain terminal, W11 —
     /// so the single non-video PTY kind covers the whole "non-video never gated" rule.)
     func testTerminalIsNeverGatedAndNeverConsumesSlots() throws {
-        // cap=2, saturated by two live remoteGUI panes on the canvas.
-        let (store, guiIDs) = makeStoreWithRemoteGUILeaves(2, cap: 2) // two remoteGUI panes
+        // cap=2, saturated by two live desktop panes on the canvas.
+        let (store, guiIDs) = makeStoreWithRemoteGUILeaves(2, cap: 2) // two desktop panes
         XCTAssertTrue(store.activateVideo(guiIDs[0]))
         XCTAssertTrue(store.activateVideo(guiIDs[1])) // cap now saturated
 
@@ -249,7 +249,7 @@ final class LiveVideoCapTests: XCTestCase {
         XCTAssertTrue(store.activateVideo(ids[1]))
         XCTAssertFalse(store.activateVideo(ids[2]))
 
-        // A new terminal pane triggers reconcile but leaves existing remoteGUI sessions (and their
+        // A new terminal pane triggers reconcile but leaves existing desktop sessions (and their
         // video state) untouched.
         store.addPane(kind: .terminal)
         await store.quiesce() // no orphans here, but pin the teardown-completion seam regardless
@@ -393,14 +393,14 @@ final class LiveVideoCapTests: XCTestCase {
 
     // MARK: - same-tick close+reopen does NOT exceed the ceiling (ITEM #3)
 
-    /// The load-bearing ITEM #3 case: a `.remoteGUI` pane closed while video-active keeps its slot
+    /// The load-bearing ITEM #3 case: a `.desktop` pane closed while video-active keeps its slot
     /// occupied until its teardown ACTUALLY releases the video stack. We suspend the teardown on the
     /// opt-in `FakeTeardownGate`, so the closed pane is gone from the registry but still tearing down —
     /// and a pane opened the same tick must NOT be admitted (its stack would overlap the not-yet-released
     /// one, breaching the 2-pane ceiling). The slot frees only after the gate releases and `quiesce()`
     /// confirms the release.
     func testSameTickCloseReopenDoesNotExceedCeiling() async throws {
-        // cap=2, two remoteGUI leaves both live.
+        // cap=2, two desktop leaves both live.
         let (store, ids) = makeStoreWithRemoteGUILeaves(2, cap: 2)
         let gate = FakeTeardownGate()
         // Install the blocking gate on the pane we will close, so its teardown parks in flight.
@@ -414,8 +414,8 @@ final class LiveVideoCapTests: XCTestCase {
         store.closePane(ids[0])
         XCTAssertNil(store.handle(for: ids[0]), "closed pane gone from the registry synchronously")
 
-        // Same tick, open a replacement remoteGUI pane. It materializes idle.
-        store.addPane(kind: .remoteGUI)
+        // Same tick, open a replacement desktop pane. It materializes idle.
+        store.addPane(kind: .desktop)
         let reopened = try XCTUnwrap(store.workspace.canvas.allIDs().first { $0 != ids[1] })
 
         // The replacement must be GATED: ids[1] is live (1) + ids[0] still tearing down (1) = the cap of
@@ -456,7 +456,7 @@ final class LiveVideoCapTests: XCTestCase {
         // Same tick, open a replacement. It must be GATED while the closing pane's slot is still held by
         // the settle (ids[1] live + ids[0] settling = cap of 2 occupied). Yield a few turns so teardown()
         // has returned but the settle sleep is still in flight.
-        store.addPane(kind: .remoteGUI)
+        store.addPane(kind: .desktop)
         let reopened = try XCTUnwrap(store.workspace.canvas.allIDs().first { $0 != ids[1] })
         await Task.yield()
         XCTAssertFalse(
@@ -482,7 +482,7 @@ final class LiveVideoCapTests: XCTestCase {
         XCTAssertTrue(store.activateVideo(ids[0]))
         XCTAssertTrue(store.activateVideo(ids[1]))
         store.closePane(ids[0])
-        store.addPane(kind: .remoteGUI)
+        store.addPane(kind: .desktop)
         let reopened = try XCTUnwrap(store.workspace.canvas.allIDs().first { $0 != ids[1] })
         await store.quiesce() // no settle sleep — teardown completes promptly
         XCTAssertTrue(
@@ -491,7 +491,7 @@ final class LiveVideoCapTests: XCTestCase {
         )
     }
 
-    /// An in-flight teardown of a NON-active (never video-activated) `.remoteGUI` pane must NOT gate the
+    /// An in-flight teardown of a NON-active (never video-activated) `.desktop` pane must NOT gate the
     /// cap: it was never holding a video stack, so `reconcile()` does not record it in
     /// `tearingDownVideo`, and a same-tick reopen activates immediately even while its teardown is
     /// parked. (The cap counts only stacks that were genuinely live.)
@@ -510,7 +510,7 @@ final class LiveVideoCapTests: XCTestCase {
 
         // Open a replacement. Because the closing pane was NEVER video-active, it is not counted in
         // flight — so with only ids[1] live (1 of 2) the reopened pane admits right now.
-        store.addPane(kind: .remoteGUI)
+        store.addPane(kind: .desktop)
         let reopened = try XCTUnwrap(store.workspace.canvas.allIDs().first { $0 != ids[1] })
         XCTAssertTrue(
             store.activateVideo(reopened),
@@ -523,7 +523,7 @@ final class LiveVideoCapTests: XCTestCase {
         XCTAssertEqual(activeIDs, Set([ids[1], reopened]))
     }
 
-    /// `quiesce()` clears the in-flight video accounting defensively: after it returns, no `.remoteGUI`
+    /// `quiesce()` clears the in-flight video accounting defensively: after it returns, no `.desktop`
     /// stack can still be tearing down, so a fresh activation sees a fully-free cap (ITEM #3). Proven by
     /// closing a live video pane, draining, and confirming a new pane admits with zero phantom in-flight
     /// slots stranded.
@@ -696,24 +696,24 @@ final class LiveVideoCapTests: XCTestCase {
         XCTAssertEqual(RemoteGUIDisplay.resolve(admitted: false, configured: true, hasFreeSlot: false), .gated)
     }
 
-    /// A fresh `.remoteGUI` pane created with no video endpoint (New Pane → Remote Window) has an
-    /// UNconfigured ``RemoteWindowModel`` (`canOpen == false`), so even when the cap is saturated its
+    /// A WINDOW-shaped video pane created with no video endpoint (a `.systemDialog` spec before its
+    /// window id lands) has an UNconfigured ``RemoteWindowModel`` (`canOpen == false`), so even when the cap is saturated its
     /// display resolves to `.entryForm` — NOT `.gated`. This is the BUG-A invariant: an unconfigured pane
     /// can always reach its host/port form (it was previously stuck forever on the cap placeholder). Once
     /// it becomes configured the display depends on whether a slot is free (F1): free ⇒ still the form
     /// (the retry admits it), saturated ⇒ the gated placeholder.
     func testUnconfiguredRemoteGUIPaneIsNotCapGatedInDisplay() throws {
-        // Build a live (production) remoteGUI session with no video endpoint, mirroring addPane.
-        // The mux registry's factory is never invoked for a .remoteGUI pane (it has no terminal client).
+        // Build a live (production) window-shaped video session with no video endpoint.
+        // The mux registry's factory is never invoked for a video pane (it has no terminal client).
         let registry = ConnectionRegistry { _, _ in
-            throw SlopDeskTransportError.invalidState("remoteGUI pane never builds a terminal mux connection")
+            throw SlopDeskTransportError.invalidState("a video pane never builds a terminal mux connection")
         }
         let session = WorkspaceStore.liveMakeSession(muxRegistry: registry)(PaneSpec(
-            kind: .remoteGUI,
+            kind: .systemDialog,
             title: "Remote window",
         ))
         let live = try XCTUnwrap(session as? LivePaneSession)
-        XCTAssertNotNil(live.remoteWindow, "a remoteGUI session always has a RemoteWindowModel")
+        XCTAssertNotNil(live.remoteWindow, "a video session always has a RemoteWindowModel")
         XCTAssertFalse(
             try XCTUnwrap(live.remoteWindow?.canOpen),
             "a fresh unconfigured model cannot open (empty fields)",
@@ -809,7 +809,7 @@ final class LiveVideoCapTests: XCTestCase {
         XCTAssertTrue(store.hasFreeVideoSlot(for: ids[0]), "an unrelated close does not perturb the mirror either")
 
         // A THIRD remote-GUI pane still correctly reads gated — the churn above didn't leak a phantom slot.
-        store.addPane(kind: .remoteGUI)
+        store.addPane(kind: .desktop)
         let thirdID = try? XCTUnwrap(store.workspace.canvas.allIDs().first { !ids.contains($0) })
         XCTAssertNotNil(thirdID)
         if let thirdID {

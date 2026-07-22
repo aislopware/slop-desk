@@ -2,7 +2,7 @@ import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore
 
-/// The `🔒 READ ONLY ×` pill mounts on a read-only `.remoteGUI` video pane.
+/// The `🔒 READ ONLY ×` pill mounts on a read-only video pane.
 ///
 /// A locked remote window needs to be a VISUAL peer of a read-only terminal leaf (the input gate already
 /// withholds keys/clicks, but without the pill there is ZERO in-pane feedback and no `×` exit affordance).
@@ -33,25 +33,22 @@ final class GuiLeafReadOnlyPillTests: XCTestCase {
         )
     }
 
-    /// End-to-end through the store: a `.remoteGUI` pane that is locked feeds a TRUE gate, and the pill's `×`
+    /// End-to-end through the store: a `.desktop` pane that is locked feeds a TRUE gate, and the pill's `×`
     /// release path (``WorkspaceStore/setPaneReadOnly(_:_:)`` with `false`) clears the convergent set so the
     /// gate falls back to false — proving the in-pane exit affordance the body wires actually unlocks the pane.
-    func testReadOnlyPillReleasesTheRemoteWindowLock() throws {
+    func testReadOnlyPillReleasesTheRemoteWindowLock() {
         let store = WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
-        let video = try XCTUnwrap(
-            store.openRemoteWindow(windowID: 7, title: "Safari", appName: "Safari"),
-            "the remote window opens as a `.remoteGUI` tab",
-        )
+        let video = store.newDesktopTab()
 
         XCTAssertFalse(
             GuiLeafView.showReadOnlyPill(staticMirror: false, isReadOnly: store.isReadOnly(for: video)),
-            "a fresh remote window is writable ⇒ no pill",
+            "a fresh video pane is writable ⇒ no pill",
         )
 
         store.setPaneReadOnly(video, true)
         XCTAssertTrue(
             GuiLeafView.showReadOnlyPill(staticMirror: false, isReadOnly: store.isReadOnly(for: video)),
-            "locking the `.remoteGUI` pane lights the pill",
+            "locking the `.desktop` pane lights the pill",
         )
 
         // The pill `×` wires exactly this call (a video pane has no `terminalModel.exitReadOnly()`).

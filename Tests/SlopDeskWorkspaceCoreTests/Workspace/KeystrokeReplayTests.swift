@@ -97,8 +97,8 @@ final class KeystrokeReplayTests: XCTestCase {
 
     func testPasteEmitsBalancedDownUpPerStrokeInOrder() async {
         let model = RemoteWindowModel(pasteInterval: .zero)
-        // Drive `active` by picking + opening a window so canPasteKeystrokes can be true.
-        model.pick(RemoteWindowSummary(windowID: 1, appName: "Term", title: "t", width: 10, height: 10))
+        // Drive `active` by dialing a window id + opening so canPasteKeystrokes can be true.
+        model.windowID = "1"
         model.open()
 
         var events: [(UInt16, Bool, Bool)] = []
@@ -126,7 +126,7 @@ final class KeystrokeReplayTests: XCTestCase {
 
     func testPasteIsNoopWithoutSink() {
         let model = RemoteWindowModel(pasteInterval: .zero)
-        model.pick(RemoteWindowSummary(windowID: 1, appName: "Term", title: "t", width: 10, height: 10))
+        model.windowID = "1"
         model.open()
         XCTAssertFalse(model.canPasteKeystrokes, "no injector wired → cannot paste")
         let encoded = model.pasteAsKeystrokes("abc") // must not trap
@@ -137,7 +137,7 @@ final class KeystrokeReplayTests: XCTestCase {
         let model = RemoteWindowModel(pasteInterval: .zero)
         model.keyInjector = { _, _, _ in }
         XCTAssertFalse(model.canPasteKeystrokes, "a sink but no active stream → cannot paste")
-        model.pick(RemoteWindowSummary(windowID: 1, appName: "Term", title: "t", width: 10, height: 10))
+        model.windowID = "1"
         model.open()
         XCTAssertTrue(model.canPasteKeystrokes)
     }
@@ -146,7 +146,7 @@ final class KeystrokeReplayTests: XCTestCase {
 
     private func streamingModel() -> RemoteWindowModel {
         let model = RemoteWindowModel(pasteInterval: .zero)
-        model.pick(RemoteWindowSummary(windowID: 1, appName: "Term", title: "t", width: 10, height: 10))
+        model.windowID = "1"
         model.open()
         model.keyInjector = { _, _, _ in }
         return model
@@ -189,7 +189,7 @@ final class KeystrokeReplayTests: XCTestCase {
     func testNoFeedbackWithoutASink() {
         // Nothing is typed without an injector, so there is nothing to report.
         let model = RemoteWindowModel(pasteInterval: .zero)
-        model.pick(RemoteWindowSummary(windowID: 1, appName: "Term", title: "t", width: 10, height: 10))
+        model.windowID = "1"
         model.open()
         _ = model.pasteAsKeystrokes("aé😀b")
         XCTAssertNil(model.pasteFeedback)

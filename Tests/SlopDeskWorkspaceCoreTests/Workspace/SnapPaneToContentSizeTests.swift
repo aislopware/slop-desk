@@ -13,7 +13,7 @@ import XCTest
 final class SnapPaneToContentSizeTests: XCTestCase {
     private func makeStoreWithPane() -> (WorkspaceStore, PaneID, CGRect) {
         let store = WorkspaceStore(restoring: nil, makeSession: { FakePaneSession($0) }, liveVideoCap: 2)
-        store.addPane(kind: .remoteGUI)
+        store.addPane(kind: .desktop)
         let id = store.workspace.focusedPane!
         let frame = store.workspace.canvas.frame(of: id)!
         return (store, id, frame)

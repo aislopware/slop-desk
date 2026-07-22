@@ -15,7 +15,7 @@ enum ConnectionTelemetry {
     }
 
     /// The RTT (ms) for the cluster. Prefers the ACTIVE pane's per-channel `latencyMS`, falling back to
-    /// ANY live pane's when the active pane has none — a `.remoteGUI` window pane has no terminal-channel
+    /// ANY live pane's when the active pane has none — a video pane has no terminal-channel
     /// ping (`connection == nil`), so without this the ping would VANISH the moment you focus a window.
     /// Every pane pings the SAME host, so a sibling terminal's RTT is representative; `.min()` keeps it
     /// deterministic across the unordered registry.

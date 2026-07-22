@@ -19,7 +19,7 @@ extension WorkspaceStore {
     /// through ``ConnectionViewModel/connectIfNeeded()``, which NO-OPS on a healthy / in-flight / supervised
     /// channel and only actually dials a genuinely idle/dead one — so it is safe to fan across every pane. Only
     /// reachable once the app connection is up (its sole caller), so a channel build never races the
-    /// connect-gate. A no-op for non-terminal (`.remoteGUI` / faked) handles. Unions in
+    /// connect-gate. A no-op for non-terminal (video / faked) handles. Unions in
     /// ``TreeWorkspace/detachedPaneIDs()`` (mirroring ``WorkspaceStore/reconcileTree()``'s desired-set union) so a
     /// satellite-window pane's channel redials too — otherwise it stays dead until a manual per-pane Reconnect.
     public func redialDisconnectedPanes() {

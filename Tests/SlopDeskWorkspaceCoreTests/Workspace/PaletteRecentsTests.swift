@@ -57,7 +57,7 @@ final class PaletteRecentsTests: XCTestCase {
         )
         XCTAssertEqual(
             store.recentCommands.first,
-            .newPane(SettingsKey.defaultPaneKind),
+            .newPane(.terminal),
             "the resolved default kind is recorded so the recent resolves in the catalog",
         )
     }

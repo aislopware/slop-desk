@@ -88,16 +88,8 @@ public struct ActionsPaletteSource: PaletteDataSource {
             shortcut: glyph(.newDesktopTab), category: .tab,
             run: { store in
                 store.newDesktopTab()
-                store.recordRecentCommand(.newPane(.remoteGUI))
+                store.recordRecentCommand(.newPane(.desktop))
             },
-        ),
-        // "New Remote Window Tab" opens the Remote-Window picker (the host window list) rather
-        // than minting an UNBOUND `.remoteGUI` pane — the pick then opens a pre-bound streaming pane. The
-        // overlay coordinator handles `.openRemotePicker` (it records the recent command on open). No
-        // registry chord exists for it ⇒ no hint.
-        PaletteItem(
-            id: "action.newRemoteTab", icon: "rectangle.on.rectangle", title: "New Remote Window Tab",
-            shortcut: nil, filter: .actions, category: .tab, action: .openRemotePicker,
         ),
         item(
             id: "action.closeTab", icon: "xmark.rectangle", title: "Close Tab",

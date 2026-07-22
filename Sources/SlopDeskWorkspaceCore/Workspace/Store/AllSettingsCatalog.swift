@@ -101,14 +101,6 @@ public enum AllSettingsCatalog {
             keywords: "privacy secret redact mask token password api key",
         ),
         SettingEntry(
-            key: SettingsKey.defaultPaneKindKey,
-            label: "Default Pane Kind",
-            description: "The kind used when opening a generic new pane.",
-            defaultText: "Terminal",
-            bucket: .advancedOnly,
-            keywords: "pane kind terminal gui remote default new",
-        ),
-        SettingEntry(
             key: SettingsKey.closeConfirmTabKey,
             label: "Close Confirmation · Tab",
             description: "When to confirm before closing a tab or pane.",
@@ -701,7 +693,7 @@ public enum AllSettingsCatalog {
     /// Lives here (pure, headless) so the contract is testable without instantiating the SwiftUI view.
     public static let inlineEditableKeys: Set<String> = [
         // General
-        SettingsKey.onLaunchKey, SettingsKey.redactSecrets, SettingsKey.defaultPaneKindKey,
+        SettingsKey.onLaunchKey, SettingsKey.redactSecrets,
         SettingsKey.closeConfirmTabKey, SettingsKey.closeConfirmWindowKey,
         // Shell — notifications / sounds / agent-notify
         SettingsKey.oscNotifications, SettingsKey.longCommandNotifications,

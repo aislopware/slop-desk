@@ -329,8 +329,11 @@ public extension TreeWorkspace {
     /// Applied by the store AFTER `normalized()` and ONLY at restore time — never op-internally (see
     /// ``normalized()``).
     func redockingDetachedPanes() -> TreeWorkspace {
-        guard sessions.contains(where: { !$0.detached.isEmpty }) else { return self }
-        var copy = self
+        // The remote desktop NEVER restores across relaunch (docs/DECISIONS.md 2026-07-22): a
+        // persisted `.desktop` pane — detached (its window) or a stale tree leaf from an older
+        // file — is dropped here, launch-only, instead of redocked (it must never land in a tab).
+        var copy = droppingDesktopPanes()
+        guard copy.sessions.contains(where: { !$0.detached.isEmpty }) else { return copy }
         // Snapshot the persisted selection; reattach mutates it per pane.
         let savedActiveSession = copy.activeSessionID
         let savedTabIndices = copy.sessions.map { ($0.id, $0.activeTabIndex) }
@@ -347,5 +350,27 @@ public extension TreeWorkspace {
             }
         }
         return copy.normalizingActive()
+    }
+
+    /// LAUNCH-ONLY companion of ``redockingDetachedPanes()``: removes every `.desktop` pane — the
+    /// detached entries (their satellite windows do not restore) AND any tree-resident leaves an
+    /// older file may carry from the era when the desktop was a tab. Specs are dropped with them so
+    /// reconcile never opens a stream for a pane no window will show. Pure.
+    private func droppingDesktopPanes() -> TreeWorkspace {
+        var copy = self
+        for (sIdx, session) in copy.sessions.enumerated() {
+            let desktopIDs = session.specs.filter { $0.value.kind == .desktop }.map(\.key)
+            guard !desktopIDs.isEmpty else { continue }
+            var repaired = session
+            repaired.detached.removeAll { entry in desktopIDs.contains(entry.pane) }
+            for id in desktopIDs {
+                repaired.specs.removeValue(forKey: id)
+            }
+            copy.sessions[sIdx] = repaired
+            for id in desktopIDs {
+                copy = WorkspaceTreeOps.closePane(id, in: copy)
+            }
+        }
+        return copy.normalized()
     }
 }

@@ -103,7 +103,7 @@ final class Round2FixTests: XCTestCase {
     func testNativeSizeEvictedWhenPaneCloses() {
         let a = PaneID()
         let store = makeStore(restoring: Workspace(canvas: Canvas(items: [
-            item(a, CGRect(x: 0, y: 0, width: 800, height: 600), .remoteGUI),
+            item(a, CGRect(x: 0, y: 0, width: 800, height: 600), .desktop),
         ]), focusedPane: a))
         store.snapPaneToContentSize(
             a,

@@ -397,8 +397,6 @@ struct OpenQuicklyView: View {
         case .agent: "Resume"
         case .command,
              .prompt: "Jump to"
-        // A Host row's verb tracks its act — a streamed window SWITCHES to its pane, the rest open.
-        case .hostWindow: selectedItem.map { if case .focusPane = $0.act { "Switch to" } else { "Open" } } ?? "Open"
         case .path,
              .url,
              .fileURL: "Open"
@@ -596,17 +594,6 @@ struct OpenQuicklyView: View {
                 })
             }
             return actions
-        case let .openHostWindow(windowID, title, appName):
-            // A Host row: the default ↩ opens (an already-streaming window is revealed, not duplicated).
-            return [
-                RowAction(title: "Open Window", symbol: "macwindow") {
-                    store.openRemoteWindow(windowID: windowID, title: title, appName: appName)
-                    store.recordRecentCommand(.newPane(.remoteGUI))
-                },
-                RowAction(title: "Copy Window Title", symbol: "doc.on.doc") {
-                    LinkActionActuator.copyToPasteboard(title.isEmpty ? appName : title)
-                },
-            ]
         }
     }
 
@@ -671,29 +658,8 @@ struct OpenQuicklyView: View {
             .recent: OpenQuicklyModel.recentItems(from: store.recentlyClosedTabs),
             .folders: OpenQuicklyModel.folderItems(from: folders?.ranked() ?? []),
             .agents: agentItems,
-            .hostWindows: hostWindowItems,
             .current: OpenQuicklyModel.currentItems(from: currentJumpItems),
         ]
-    }
-
-    /// The **Host** rows (docs/45): the live host-window feed, the rail's exact click grammar —
-    /// streamed windows focus their pane, the rest open a new `.remoteGUI` pane. The feed's renewal
-    /// loop already treats "Open Quickly visible" as an active gate, so these rows are fresh while
-    /// the picker is up. Empty (no rows, honest empty-state) when the feed is absent (iOS/tests) or
-    /// nothing has loaded yet.
-    private var hostWindowItems: [OpenQuicklyItem] {
-        guard let feed = coordinator.hostWindowFeed else { return [] }
-        return OpenQuicklyModel.hostWindowItems(
-            structure: feed.structure,
-            titles: feed.titles,
-            streamedPaneFor: { windowID in Self.streamedPane(for: windowID, in: store) },
-        )
-    }
-
-    /// The pane already streaming `windowID` in the active session — the store's ONE derivation
-    /// (``WorkspaceStore/streamedWindowPane(for:)``), shared with every other ingress.
-    static func streamedPane(for windowID: UInt32, in store: WorkspaceStore) -> PaneID? {
-        store.streamedWindowPane(for: windowID)?.paneID
     }
 
     /// The ranked, sectioned result list for the active pill — `.all` merges every non-empty source under its
@@ -949,11 +915,6 @@ struct OpenQuicklyView: View {
             case let .link(link):
                 LinkActionActuator.actuate(LinkActionPolicy.explicitOpenAction(link: link), model: activeModel)
             }
-        case let .openHostWindow(windowID, title, appName):
-            // Host row: the ONE sanctioned per-window ingress (endpoint persisted, idempotent by
-            // windowID — an already-streaming window is revealed).
-            store.openRemoteWindow(windowID: windowID, title: title, appName: appName)
-            store.recordRecentCommand(.newPane(.remoteGUI))
         }
         close()
     }

@@ -82,7 +82,7 @@ public final class WorkspaceStore {
     /// id via `adopt(id:)` (see ``PaneSessionIDAdopting``).
     private let makeSession: @MainActor (PaneSpec) -> any PaneSessionHandle
 
-    /// Maximum number of `.remoteGUI` panes that may hold a LIVE video stack at once (docs/22 §7 the
+    /// Maximum number of video panes that may hold a LIVE video stack at once (docs/22 §7 the
     /// 2N-UDP / N-VTDecompression / N-CVDisplayLink ceiling). Injectable; default 2. The app resolves it
     /// per device class via ``VideoCapPolicy`` (phone 1 / pad 2 / mac 3); the store keeps the plain `Int`
     /// shape and is agnostic to how the number was chosen.
@@ -171,7 +171,7 @@ public final class WorkspaceStore {
     /// mutation"). One write per quiet period, not one per keystroke-driven split/resize.
     private let saveDebounce: Duration
 
-    /// How long to let a closed `.remoteGUI` pane's video stack ACTUALLY release before the store frees its
+    /// How long to let a closed video pane's stack ACTUALLY release before the store frees its
     /// ``liveVideoCap`` slot. `teardown()` sets `RemoteWindowModel.active = nil`, which only triggers the
     /// SwiftUI dismantle → `VideoWindowPipeline.deactivate()` → detached `session.stop()` closing the two UDP
     /// `NWConnection`s + `VTDecompressionSession` + display link — completing a few runloop turns AFTER
@@ -222,7 +222,7 @@ public final class WorkspaceStore {
     /// The next teardown-task id (monotonic, wraps harmlessly).
     private var nextTeardownID = 0
 
-    /// The ids of `.remoteGUI` panes whose video stack is STILL tearing down (orphaned + removed from the
+    /// The ids of video panes whose video stack is STILL tearing down (orphaned + removed from the
     /// registry, but their async `teardown()` — stopping the UDP / VTDecompression / CVDisplayLink stack —
     /// has not completed). Protects the ``liveVideoCap`` ceiling across a same-tick close+reopen (docs/22
     /// §7): a pane gone from the registry but still holding its video resources must keep counting
@@ -498,8 +498,7 @@ public final class WorkspaceStore {
     /// new session.
     ///
     /// All terminal/Claude panes open a channel on the ONE app-global connection (docs/31), so a new
-    /// pane carries no per-pane endpoint — it just rides the app target. A `.remoteGUI` pane is created
-    /// without a window yet (the user picks one in the pane).
+    /// pane carries no per-pane endpoint — it just rides the app target.
     public func addPane(kind: PaneKind, inGroup group: PaneGroupID? = nil) {
         let newSpec = PaneSpec(kind: kind, title: defaultTitle(for: kind))
         let viewport = lastViewport
@@ -516,29 +515,6 @@ public final class WorkspaceStore {
         // invisible — pan the camera to centre it unless its CENTRE is already inside the viewport.
         recenterIfOffscreen(id, viewport: viewport)
         reconcile()
-    }
-
-    /// Adds a `.remoteGUI` pane PRE-BOUND to host window `windowID` (the ⌘K palette host-window result):
-    /// the spec carries the video endpoint, so the pane streams immediately — skipping the
-    /// create-then-pick two-step. Placed/focused/in-view exactly like ``addPane(kind:inGroup:)``; the
-    /// video cap is still enforced at activation (the pane shows the gated placeholder if saturated).
-    /// Returns the new pane id.
-    @discardableResult
-    public func addRemoteWindowPane(windowID: UInt32, title: String, appName: String) -> PaneID {
-        let label = title.isEmpty ? (appName.isEmpty ? "Remote window" : appName) : title
-        let spec = PaneSpec(
-            kind: .remoteGUI,
-            title: label,
-            video: VideoEndpoint(windowID: windowID, title: label, appName: appName),
-        )
-        let viewport = lastViewport
-        let (canvas, id) = workspace.canvas.adding(spec, near: workspace.focusedPane, viewport: viewport)
-        workspace.canvas = canvas
-        focusOnPlacement(id)
-        if workspace.maximizedPane != nil { workspace.maximizedPane = nil }
-        recenterIfOffscreen(id, viewport: viewport)
-        reconcile()
-        return id
     }
 
     /// Closes pane `id`. Focus re-points to a surviving neighbour; closing the LAST pane leaves an empty
@@ -1212,7 +1188,7 @@ public final class WorkspaceStore {
     /// reaches it (extensions can't add stored state).
     @ObservationIgnored var blockBookmarks = BlockBookmarkSeam()
 
-    /// The pane frame size at which each `.remoteGUI` pane renders its stream pixel-for-pixel, cached
+    /// The pane frame size at which each video pane renders its stream pixel-for-pixel, cached
     /// from the last ``snapPaneToContentSize`` report. Drives "Resize to Native Stream Size".
     private var nativeFrameSize: [PaneID: CGSize] = [:]
 
@@ -2047,7 +2023,7 @@ public final class WorkspaceStore {
     /// Re-dials pane `id`'s connection — the recovery path for a `.failed` / `.unreachable` / dropped
     /// terminal pane (the command palette's "Reconnect Pane"). `ConnectionViewModel.connect()` already
     /// tears down the prior session and re-dials the stored `host`/`port`, so it is correct from ANY
-    /// non-connected state; a no-op for a pane with no live connection (a `.remoteGUI` / faked handle).
+    /// non-connected state; a no-op for a pane with no live connection (a video / faked handle).
     /// The connect runs in a detached `Task` (the store mutation surface stays synchronous), exactly as
     /// the leaf's connect-on-appear does.
     public func reconnect(_ id: PaneID) {
@@ -2093,7 +2069,7 @@ public final class WorkspaceStore {
 
     // MARK: - Video activation (cap-enforced)
 
-    /// Requests live-video activation for `.remoteGUI` pane `id`, enforcing ``liveVideoCap`` (docs/22
+    /// Requests live-video activation for video pane `id`, enforcing ``liveVideoCap`` (docs/22
     /// §7). Returns `true` if the pane is now active, `false` if the cap is already saturated by OTHER
     /// active video panes (the caller then shows the gated placeholder until a slot frees). A no-op
     /// `true` if it is already active. Non-video panes return `false`.
@@ -2109,7 +2085,7 @@ public final class WorkspaceStore {
 
     /// Whether a live-video slot is currently free FOR pane `id` — a pure READ that mirrors the exact
     /// admission guard ``activateVideo(_:)`` uses, with NO mutation. The view layer consults
-    /// this to tell the two false-activation reasons apart: a `.remoteGUI` pane whose `activateVideo`
+    /// this to tell the two false-activation reasons apart: a video pane whose `activateVideo`
     /// would refuse because the cap is **saturated** (→ the gated placeholder) versus one that is merely
     /// **unconfigured** (→ the entry form so the user can still dial in). It self-excludes `id` exactly
     /// as `activateVideo` does (an already-active pane sees its own slot as free), and counts the
@@ -2221,7 +2197,7 @@ public final class WorkspaceStore {
                 await task.value
             }
         }
-        // Defensive: after every teardown has completed, no `.remoteGUI` stack can still be tearing
+        // Defensive: after every teardown has completed, no video stack can still be tearing
         // down, so the in-flight video accounting must be empty. Clear it so a dropped self-remove (a
         // task whose `tearingDownVideo.remove` somehow did not run) can never strand a phantom slot
         // against the cap.
@@ -2238,7 +2214,7 @@ public final class WorkspaceStore {
     /// - `SLOPDESK_AUTOCONNECT_HOST` + `SLOPDESK_AUTOCONNECT_PORT` ⇒ the app ``Workspace/connection`` target is
     ///   that host:port and pane 0 is a plain terminal (it rides the app connection).
     /// - `SLOPDESK_VIDEO_AUTOCONNECT_HOST` + media/cursor ports + window id ⇒ the app target is that host
-    ///   (+ video ports) and pane 0 is a `.remoteGUI` for that window (video takes precedence). Title
+    ///   (+ video ports) and pane 0 is a window-targeted `.systemDialog` (video takes precedence). Title
     ///   from `SLOPDESK_VIDEO_AUTOCONNECT_TITLE` if set.
     /// - neither set ⇒ the plain default single-terminal workspace.
     ///
@@ -2266,7 +2242,11 @@ public final class WorkspaceStore {
             if let (target, video) = Self
                 .videoTarget(from: env)
             {
-                (PaneSpec(kind: .remoteGUI, title: video.title, video: video), target)
+                // The window-targeted video autoconnect (check-video / check-system-dialog E2E) minted a
+                // `.remoteGUI` pane before that kind was removed; `.systemDialog` is the remaining
+                // window-shaped video kind and rides the identical stack. The dialog MONITOR never
+                // touches it (it only closes panes it spawned itself).
+                (PaneSpec(kind: .systemDialog, title: video.title, video: video), target)
             } else if let target = Self.terminalTarget(from: env) {
                 (PaneSpec(kind: .terminal, title: "Terminal"), target)
             } else {
@@ -2303,7 +2283,7 @@ public final class WorkspaceStore {
 
     /// The app target + the per-pane window from the video-autoconnect env vars, or `nil`. The terminal
     /// port defaults (the video automation only specifies UDP ports); the app target carries the host +
-    /// both UDP ports so the `.remoteGUI` pane rides the shared flow.
+    /// both UDP ports so the video pane rides the shared flow.
     public static func videoTarget(from env: [String: String]) -> (ConnectionTarget, VideoEndpoint)? {
         guard let host = env["SLOPDESK_VIDEO_AUTOCONNECT_HOST"], !host.isEmpty,
               let mediaStr = env["SLOPDESK_VIDEO_AUTOCONNECT_MEDIA_PORT"], let media = UInt16(mediaStr),
@@ -2335,7 +2315,7 @@ public final class WorkspaceStore {
     /// ``reconcileTree()`` to materialize/orphan the registry — the exact shape of the canvas mutations,
     /// driven by the tree model. They keep the **specs == leafIDs invariant** (the ops do). They belong to
     /// the ``LiveModel/tree`` path ONLY: on a canvas-driven store they would orphan its canvas panes. The
-    /// kind is taken EXPLICITLY (`kind:`) — these methods do NOT resolve ``SettingsKey/defaultPaneKind``; it
+    /// kind is taken EXPLICITLY (`kind:`) — these methods do NOT resolve a settings default; it
     /// is the CALLER (the command routing, as for `addPane`) that resolves the user's default before
     /// invoking them.
 
@@ -2765,12 +2745,12 @@ public final class WorkspaceStore {
     /// Canvas). The command/menu/palette "split right/down" entry — it resolves the default kind here,
     /// because the CALLER, not the tree ops, owns default-kind resolution.
     public func splitActivePaneDefault(axis: SplitAxis) {
-        splitActivePane(axis: axis, kind: SettingsKey.defaultPaneKind)
+        splitActivePane(axis: axis, kind: .terminal)
     }
 
     /// Adds a tab to the active session carrying the user's default-kind leaf. The "new tab" command entry.
     public func newTabDefault() {
-        newTab(kind: SettingsKey.defaultPaneKind)
+        newTab(kind: .terminal)
     }
 
     /// The SINGLE source of the default new-session name — "Session N" where N is one past the current
@@ -3602,13 +3582,13 @@ public final class WorkspaceStore {
             teardownTasks[id] = Task { @MainActor in
                 for orphan in orphans {
                     await orphan.teardown()
-                    // For a `.remoteGUI` orphan that was holding a live stack, `teardown()` only KICKS OFF
+                    // For a video orphan that was holding a live stack, `teardown()` only KICKS OFF
                     // the release — it sets `RemoteWindowModel.active = nil`, and the actual
                     // UDP/VTDecompression/display-link teardown happens a few runloop turns later inside the
                     // SwiftUI dismantle → `VideoWindowPipeline.deactivate()` → detached `session.stop()`.
                     // Hold the cap slot for `videoTeardownSettle` past `teardown()` so a same-tick sibling
                     // cannot be admitted while the outgoing stack is still up (transient cap+1). Only
-                    // entered for an id actually IN `tearingDownVideo` (a `.remoteGUI` pane that was live)
+                    // entered for an id actually IN `tearingDownVideo` (a video pane that was live)
                     // and only when a settle is configured, so the terminal-only / `.zero`-settle paths are
                     // unaffected. The sleep is cancel-safe.
                     if self.tearingDownVideo.contains(orphan.id), self.videoTeardownSettle > .zero {
@@ -3664,7 +3644,7 @@ public final class WorkspaceStore {
     /// (hence the leaf set) is unchanged, so even if called it would be a no-op (docs/22 §4, §9.9).
     ///
     /// NOTE — same-tick close+reopen and the video ceiling: step-1 teardown is launched (not
-    /// awaited) before step-2 materialize, so a same-tick close+open of two `.remoteGUI` panes would
+    /// awaited) before step-2 materialize, so a same-tick close+open of two video panes would
     /// transiently overlap their live video stacks. The ceiling IS still protected without making reconcile
     /// `async`: step-1 records an orphan whose `isVideoActive` was true into `tearingDownVideo` (reading the
     /// flag BEFORE teardown nils it), the teardown task removes it after the `await`, and ``activateVideo(_:)``
@@ -4040,7 +4020,7 @@ public extension WorkspaceStore {
     /// live-resizes the content column every cell-step; for a remote terminal each forward is a host PTY
     /// reflow + a re-streamed redraw. Holding them and flushing the final grid ONCE on release keeps the
     /// content from re-rendering per drag step (the same commit-on-release rule as the pane divider). The
-    /// non-terminal handles (`.remoteGUI`/`.systemDialog`) have no `terminalModel`, so they are skipped.
+    /// non-terminal handles (`.desktop`/`.systemDialog`) have no `terminalModel`, so they are skipped.
     func setTerminalResizeSuspended(_ suspended: Bool) {
         // The interactive-resize bracket for BOTH dividers (the SwiftUI pane divider's begin/end and the
         // AppKit sidebar divider's drag-active/settle). Drives the pane scrim's "drag in progress" hold so
@@ -4367,11 +4347,11 @@ public func apply(_ command: WorkspaceCommand, to store: WorkspaceStore) {
     // entry (only the explicit .newPane(kind) items), so recording it verbatim would silently drop it from
     // the recents block AND waste a ring slot. Record the RESOLVED kind instead — it resolves in the
     // catalog and names what was actually created.
-    let recordable: WorkspaceCommand = (command == .newPaneDefault) ? .newPane(SettingsKey.defaultPaneKind) : command
+    let recordable: WorkspaceCommand = (command == .newPaneDefault) ? .newPane(.terminal) : command
     if recordable.isRecentsWorthy { store.recordRecentCommand(recordable) }
     switch command {
     case .newPaneDefault:
-        store.addPane(kind: SettingsKey.defaultPaneKind)
+        store.addPane(kind: .terminal)
     case let .newPane(kind):
         store.addPane(kind: kind)
     case .duplicatePane:
@@ -4426,7 +4406,7 @@ public func apply(_ command: WorkspaceCommand, to store: WorkspaceStore) {
         store.requestRenameFocusedPane()
     case .reconnectPane:
         // Re-dial the focused pane (recovers a `.failed` / `.unreachable` / dropped pane). A no-op when
-        // there is no focused pane or it has no live connection (e.g. a `.remoteGUI` pane / faked handle).
+        // there is no focused pane or it has no live connection (e.g. a video pane / faked handle).
         if let pane = store.focusedPane {
             store.reconnect(pane)
         }
@@ -4582,7 +4562,7 @@ public extension WorkspaceStore {
     }
 
     /// The context-menu "Refresh Git Status" entry: re-probe pane `id`'s git line on demand
-    /// through its OWN live connection. A `.remoteGUI` / faked pane (no ``LivePaneSession``) is a silent
+    /// through its OWN live connection. A video / faked pane (no ``LivePaneSession``) is a silent
     /// no-op via ``refreshGitSummary(for:from:)``'s `nil`-connection guard.
     func refreshGitSummary(for id: PaneID) {
         refreshGitSummary(for: id, from: (handle(for: id) as? LivePaneSession)?.connection)

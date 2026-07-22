@@ -461,7 +461,7 @@ final class CwdInheritanceStoreTests: XCTestCase {
         let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
         let before = allPaneIDs(store)
 
-        store.newSession(name: "Local 2", kind: .remoteGUI, launchGrace: .zero)
+        store.newSession(name: "Local 2", kind: .desktop, launchGrace: .zero)
 
         let newPane = try XCTUnwrap(allPaneIDs(store).subtracting(before).first)
         let newFake = store.handle(for: newPane) as? FakePaneSession

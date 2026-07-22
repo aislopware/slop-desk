@@ -66,7 +66,7 @@ final class AllSettingsCatalogTests: XCTestCase {
     func testCatalogCoversEveryClientSettingsKey() {
         let required: [String] = [
             // General (close confirmation is on the General page — launch-option.png)
-            SettingsKey.onLaunchKey, SettingsKey.redactSecrets, SettingsKey.defaultPaneKindKey,
+            SettingsKey.onLaunchKey, SettingsKey.redactSecrets,
             SettingsKey.closeConfirmTabKey, SettingsKey.closeConfirmWindowKey,
             // Shell (notifications — notification-setting.png — + working directory — window-tab-split spec)
             SettingsKey.oscNotifications, SettingsKey.longCommandNotifications,

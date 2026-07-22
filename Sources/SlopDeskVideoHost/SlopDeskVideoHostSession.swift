@@ -588,6 +588,10 @@ public actor SlopDeskVideoHostSession {
     private let recoveryRouter = RecoveryDatagramRouter()
 
     private var stateMachine: VideoSessionStateMachine
+    /// Whether THIS session currently holds a ``HostDisplayWake`` unit (a streaming display-target
+    /// session keeps the host display awake). Actor-isolated flag so acquire/release stay balanced
+    /// across duplicate `.stopCapture` effects (bye then local stop) and re-hellos.
+    private var holdsDisplayWake = false
     /// The send-path packetize lane (keystroke latency): OWNS the `VideoPacketizer` (MTU-split,
     /// per-frame FEC parity, header stamp, interleave — all native Swift) on its own serial executor, so
     /// that heavy per-frame work does not block this actor's input consumer. `onEncodedFrame` awaits it
@@ -820,6 +824,12 @@ public actor SlopDeskVideoHostSession {
         // Same SLOPDESK_FEC=0 A/B gate as the window init (see the comment there).
         let fecDisabled = ProcessInfo.processInfo.environment["SLOPDESK_FEC"] == "0"
         packetizeLane = PacketizeLane(fec: fecDisabled ? nil : fec)
+    }
+
+    deinit {
+        // Balance a wake hold if the actor is dropped without a `stop()` (defensive — the daemon
+        // always stops sessions; this keeps an abandoned actor from pinning the display awake).
+        if holdsDisplayWake { HostDisplayWake.shared.release() }
     }
 
     // MARK: Lifecycle
@@ -1825,9 +1835,19 @@ public actor SlopDeskVideoHostSession {
             videoPausedForSilence = false
             // STALL-SCRIM HEARTBEAT: start the 1 s host→client liveness keepalive for this stream.
             startHeartbeat()
+            // KEEP THE HOST DISPLAY AWAKE while a full-desktop session streams (the display-sleep
+            // timer does not count a remote viewer as activity). Window/dialog targets never hold.
+            if stateMachine.isDisplayTarget, !holdsDisplayWake {
+                holdsDisplayWake = true
+                HostDisplayWake.shared.acquire()
+            }
         case .stopCapture:
             dbg("effect stopCapture")
             stopHeartbeat()
+            if holdsDisplayWake {
+                holdsDisplayWake = false
+                HostDisplayWake.shared.release()
+            }
             await teardownLiveComponents()
         case let .resizeCapture(width, height, epoch):
             await applyResize(width: width, height: height, epoch: epoch)

@@ -6,7 +6,7 @@ import SlopDeskTransport
 /// the editable host/port form, the single ``ConnectionStatus`` the editor + toolbar render, and the
 /// lifecycle that PINS the shared mux up (via ``ConnectionRegistry/pin(host:port:)``)
 /// so the app is "connected" before any pane opens a channel and stays connected across closing the last
-/// pane. Panes are pure channels on this connection; `.remoteGUI` panes are lanes on the same host's UDP
+/// pane. Panes are pure channels on this connection; video panes are lanes on the same host's UDP
 /// flow. The committed ``target`` is what every pane/video session reads for its host/ports.
 ///
 /// Reconnect is app-level: while connected it polls the registry's liveness and, on a drop, surfaces
@@ -307,7 +307,7 @@ public final class AppConnection {
 
     /// Mark the app connected WITHOUT pinning a TCP mux — used ONLY by the video-only automation seam
     /// (`check-video.sh`): `slopdesk-videohostd` serves UDP only and runs no TCP listener, so there is no mux
-    /// to pin; a `.remoteGUI` pane rides the shared UDP flow independently. This dismisses the gate +
+    /// to pin; a video pane rides the shared UDP flow independently. This dismisses the gate +
     /// mounts the canvas so that pane can open its UDP lane. Never used in the normal user flow (which
     /// always pins the terminal mux via ``connect()``).
     public func markConnectedForAutomation() {

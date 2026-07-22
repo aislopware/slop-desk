@@ -5,7 +5,7 @@ import Foundation
 /// The single host the whole app connects to (docs/31 app-global connection): the TCP-mux terminal
 /// port AND the two UDP video ports all live on ONE host. Per-pane host/port fields are avoided —
 /// every terminal/Claude pane opens a *channel* on the one shared mux at `host:port`, and every
-/// `.remoteGUI` pane opens a *lane* on the one shared UDP flow at `host:mediaPort`/`cursorPort` (the
+/// video pane opens a *lane* on the one shared UDP flow at `host:mediaPort`/`cursorPort` (the
 /// transport already pools both per-host — see `ConnectionRegistry` / `VideoConnectionRegistry`).
 /// Only the per-pane `windowID` (which remote window to mirror) stays on the pane (``VideoEndpoint``).
 ///
@@ -16,9 +16,9 @@ public struct ConnectionTarget: Codable, Sendable, Equatable {
     public var host: String
     /// TCP-mux control/data port (terminals + Claude Code).
     public var port: UInt16
-    /// UDP port carrying the encoded video frames (`.remoteGUI` panes).
+    /// UDP port carrying the encoded video frames (video panes).
     public var mediaPort: UInt16
-    /// UDP port carrying the cursor side-channel (`.remoteGUI` panes).
+    /// UDP port carrying the cursor side-channel (video panes).
     public var cursorPort: UInt16
 
     public init(

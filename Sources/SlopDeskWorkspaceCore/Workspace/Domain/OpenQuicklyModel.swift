@@ -23,18 +23,15 @@ public enum OpenQuicklyFilter: String, CaseIterable, Equatable, Hashable, Sendab
     case folders
     /// Claude Code agent sessions for the current project (`⌘G`). Claude-only (carry-over).
     case agents
-    /// The HOST machine's windows from the live feed (docs/45) — streamed ones focus their pane,
-    /// the rest open a new `.remoteGUI` pane (`⌘H`).
-    case hostWindows
     /// The focused pane's detected links + command/prompt index (`⌘J` / Jump-To).
     case current
 
     /// The pill order rendered in the filter bar (Tab/⇧Tab cycle this ring). `⌘⇧O` opens to ``defaultFilter``.
-    public static let pickerPills: [Self] = [.all, .opened, .recent, .folders, .agents, .hostWindows, .current]
+    public static let pickerPills: [Self] = [.all, .opened, .recent, .folders, .agents, .current]
 
     /// The section order the `.all` list merges in (every pill EXCEPT `.all`, in pill order). `.all` itself is
     /// never a section — it is the merged view of these.
-    public static let sectionOrder: [Self] = [.opened, .recent, .folders, .agents, .hostWindows, .current]
+    public static let sectionOrder: [Self] = [.opened, .recent, .folders, .agents, .current]
 
     /// The pill `⌘⇧O` opens to (the merged All list).
     public static let defaultFilter: OpenQuicklyFilter = .all
@@ -47,7 +44,6 @@ public enum OpenQuicklyFilter: String, CaseIterable, Equatable, Hashable, Sendab
         case .recent: "Recent"
         case .folders: "Folders"
         case .agents: "Agents"
-        case .hostWindows: "Host"
         case .current: "Current"
         }
     }
@@ -63,7 +59,6 @@ public enum OpenQuicklyFilter: String, CaseIterable, Equatable, Hashable, Sendab
         case .recent: "clock.arrow.circlepath"
         case .folders: "folder"
         case .agents: "sparkles"
-        case .hostWindows: "macwindow"
         case .current: "scope"
         }
     }
@@ -77,7 +72,6 @@ public enum OpenQuicklyFilter: String, CaseIterable, Equatable, Hashable, Sendab
         case .recent: "r"
         case .folders: "z"
         case .agents: "g"
-        case .hostWindows: "h"
         case .current: "j"
         }
     }
@@ -90,7 +84,6 @@ public enum OpenQuicklyFilter: String, CaseIterable, Equatable, Hashable, Sendab
         case .recent: "No recently closed tabs"
         case .folders: "No folders yet"
         case .agents: "No agent sessions"
-        case .hostWindows: "No windows on the host"
         case .current: "Nothing detected in this pane"
         }
     }
@@ -109,8 +102,6 @@ public enum OpenQuicklyKind: String, CaseIterable, Equatable, Hashable, Sendable
     case path
     case url
     case fileURL
-    /// A HOST machine window from the live feed (docs/45) — not yet necessarily streamed.
-    case hostWindow
 
     /// The trailing type-badge label the row renders flush-right.
     public var badge: String {
@@ -124,7 +115,6 @@ public enum OpenQuicklyKind: String, CaseIterable, Equatable, Hashable, Sendable
         case .path: "Path"
         case .url: "URL"
         case .fileURL: "File"
-        case .hostWindow: "Host"
         }
     }
 
@@ -140,7 +130,6 @@ public enum OpenQuicklyKind: String, CaseIterable, Equatable, Hashable, Sendable
         case .path: "doc.text"
         case .url: "link"
         case .fileURL: "doc"
-        case .hostWindow: "macwindow"
         }
     }
 
@@ -176,9 +165,6 @@ public struct OpenQuicklyItem: Identifiable, Equatable, Hashable, Sendable {
         /// Act on a focused-pane detection (Current `↩`) — wraps the underlying ``JumpToItem/Act`` (a link
         /// open or a scrollback jump) so the Current rows actuate through the SAME path as the Jump-To panel.
         case jumpTo(JumpToItem.Act)
-        /// Open a NOT-yet-streamed host window into a new `.remoteGUI` pane (Host `↩`, docs/45). A
-        /// window already streaming surfaces as `.focusPane` instead — the rail's exact click grammar.
-        case openHostWindow(windowID: UInt32, title: String, appName: String)
     }
 
     /// A stable, unique id (the `ForEach` key). Prefixed by source: `pane:` / `folder:` / `agent:` /
@@ -196,26 +182,26 @@ public struct OpenQuicklyItem: Identifiable, Equatable, Hashable, Sendable {
     public let searchText: String
     public let act: Act
 
-    /// The WORKSPACE pane kind a `.pane` row is backed by. For a `.remoteGUI`/`.systemDialog` VIDEO
-    /// pane it differentiates ``symbol``/``badge`` so the row reads as a *window* (window glyph +
-    /// "Window"/"Dialog" badge) instead of a generic split "Pane", while ``act`` stays kind-generic
+    /// The WORKSPACE pane kind a `.pane` row is backed by. For a `.desktop`/`.systemDialog` VIDEO
+    /// pane it differentiates ``symbol``/``badge`` so the row reads as its stream target (display glyph +
+    /// "Desktop"/"Dialog" badge) instead of a generic split "Pane", while ``act`` stays kind-generic
     /// (`.focusPane` — `↩` focuses the pane exactly as a terminal row does). Defaults to `.terminal` (the
     /// non-differentiating value) for every NON-pane source (folders / agents / recent / current), where it is
     /// inert (those rows keep their ``OpenQuicklyKind`` chrome).
     public let paneKind: PaneKind
 
-    /// The trailing type badge. A `.pane` row backed by a VIDEO pane reads as a *window* — "Window" for
-    /// `.remoteGUI`, "Dialog" for the auto `.systemDialog` — differentiating it from a generic terminal
-    /// "Pane"; every other row delegates to its ``OpenQuicklyKind``.
+    /// The trailing type badge. A `.pane` row backed by a VIDEO pane reads as its stream target —
+    /// "Desktop" for `.desktop`, "Dialog" for the auto `.systemDialog` — differentiating it from a
+    /// generic terminal "Pane"; every other row delegates to its ``OpenQuicklyKind``.
     public var badge: String {
         switch paneKind {
-        case .remoteGUI: "Window"
+        case .desktop: "Desktop"
         case .systemDialog: "Dialog"
         default: kind.badge
         }
     }
 
-    /// The leading icon symbol. A video pane (`.remoteGUI`/`.systemDialog`) uses the window glyph (`display`);
+    /// The leading icon symbol. A video pane (`.desktop`/`.systemDialog`) uses the display glyph;
     /// every other row delegates to its ``OpenQuicklyKind``.
     public var symbol: String {
         paneKind.isVideo ? "display" : kind.symbol
@@ -448,8 +434,8 @@ public enum OpenQuicklyModel {
     /// Build one **Opened** row for a live pane (the view enumerates `tree.sessions[].tabs[].root` panes).
     /// `↩` focuses the pane; title + cwd are both matchable.
     ///
-    /// `paneKind` differentiates a VIDEO pane (`.remoteGUI`/`.systemDialog`) so the row reads as a
-    /// *window* (glyph + "Window"/"Dialog" badge + host/window subtitle) while ``Act`` stays the kind-generic
+    /// `paneKind` differentiates a VIDEO pane (`.desktop`/`.systemDialog`) so the row reads as its
+    /// stream target (glyph + badge + host subtitle) while ``Act`` stays the kind-generic
     /// `.focusPane`. Defaults to `.terminal`, so every existing caller and non-video pane keeps "Pane" chrome.
     public static func paneItem(
         paneID: PaneID,
@@ -472,7 +458,7 @@ public enum OpenQuicklyModel {
     }
 
     /// The subtitle for an Opened pane row. A terminal pane shows its cwd (or nothing when unknown —
-    /// never a blank line). A VIDEO pane (`.remoteGUI`/`.systemDialog`) has no shell cwd, so the host window's
+    /// never a blank line). A VIDEO pane (`.desktop`/`.systemDialog`) has no shell cwd, so the host target's
     /// owning APP name (`appName`) stands in — mirroring the sidebar's ``PaneSpec/railSubtitle`` discipline
     /// (window title on line 1, host app on line 2) so the row never echoes its title on both lines. It falls
     /// back to the window ``title`` only when `appName` is empty (a manual-id binding), keeping the row a
@@ -520,14 +506,14 @@ public enum OpenQuicklyModel {
                         paneID: paneID,
                         title: paneDisplayTitle(spec),
                         cwd: nonEmpty(spec?.lastKnownCwd),
-                        // Thread the workspace pane kind so a `.remoteGUI`/`.systemDialog` row reads as a
-                        // window (glyph + "Window"/"Dialog" badge + host/window subtitle). Defaults to
+                        // Thread the workspace pane kind so a `.desktop`/`.systemDialog` row reads as its
+                        // stream target (glyph + badge + host subtitle). Defaults to
                         // `.terminal` when the spec side-table is momentarily missing (the gap
                         // ``paneDisplayTitle`` also tolerates) — a spec-less pane stays a generic "Pane".
                         paneKind: spec?.kind ?? .terminal,
                         // Thread the host-side app name (same `VideoEndpoint.appName` the rail's
-                        // `railSubtitle` reads) so a remote-window row's subtitle is the host app, not an echo
-                        // of the line-1 window title. Falls back to the title when absent.
+                        // `railSubtitle` reads) so a video row's subtitle is the host app, not an echo
+                        // of the line-1 target title. Falls back to the title when absent.
                         appName: spec?.video?.appName,
                     ))
                 }
@@ -548,37 +534,6 @@ public enum OpenQuicklyModel {
                 index: index,
                 title: recentDisplayTitle(tabTitle: record.tab.title, activeSpec: activeSpec),
                 cwd: nonEmpty(activeSpec?.lastKnownCwd),
-            )
-        }
-    }
-
-    /// Build the **Host** rows from the live host-window feed (docs/45): one row per host window,
-    /// the rail's exact click grammar — a window already streaming acts `.focusPane` (its badge stays
-    /// "Host"; the pane row in Opened is the pane-side view of the same thing), the rest act
-    /// `.openHostWindow`. `streamedPaneFor` is injected (the view derives it from the live tree) so
-    /// the builder stays pure. Row order = feed structure order (position-stable, like the rail).
-    public static func hostWindowItems(
-        structure: [HostWindowIdentity],
-        titles: [UInt32: String],
-        streamedPaneFor: (UInt32) -> PaneID?,
-    ) -> [OpenQuicklyItem] {
-        structure.map { identity in
-            let title = titles[identity.windowID] ?? ""
-            let display = title.isEmpty ? identity.appName : title
-            let act: OpenQuicklyItem.Act =
-                if let paneID = streamedPaneFor(identity.windowID) {
-                    .focusPane(paneID)
-                } else {
-                    .openHostWindow(windowID: identity.windowID, title: title, appName: identity.appName)
-                }
-            return OpenQuicklyItem(
-                id: "hostwindow:\(identity.leafIdentity)",
-                kind: .hostWindow,
-                title: display,
-                subtitle: identity.appName,
-                timestamp: nil,
-                searchText: "\(display) \(identity.appName)",
-                act: act,
             )
         }
     }

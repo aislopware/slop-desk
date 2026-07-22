@@ -82,7 +82,7 @@ public enum WorkspaceLayout {
 
 // MARK: - Per-device live-video ceiling (pure)
 
-/// The device class the live-video ceiling is keyed on (docs/22 §7). A `.remoteGUI` pane's video stack
+/// The device class the live-video ceiling is keyed on (docs/22 §7). A video pane's stack
 /// is 2 UDP sockets + a `VTDecompressionSession` + a `CVDisplayLink`; the safe concurrent count scales
 /// with the host's decode/compositing headroom, which differs sharply between a phone, an iPad, and a
 /// Mac. `Sendable` so it can cross into the (Sendable-`Int`) store init without ceremony.

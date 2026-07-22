@@ -11,7 +11,7 @@ final class SnapToNativeTests: XCTestCase {
         let item = CanvasItem(
             id: id,
             spec: PaneSpec(
-                kind: .remoteGUI,
+                kind: .desktop,
                 title: "win",
                 video: VideoEndpoint(windowID: 1, title: "win"),
             ),

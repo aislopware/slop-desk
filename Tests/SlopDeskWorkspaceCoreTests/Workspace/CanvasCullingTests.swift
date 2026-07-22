@@ -3,7 +3,7 @@ import XCTest
 @testable import SlopDeskWorkspaceCore
 
 /// Pure tests for the kind-aware culling decision (docs/30 §1, §6, §9.1): terminals are NEVER culled
-/// (no stale-replay risk), the focused pane is never culled, `.remoteGUI` panes ARE culled outside
+/// (no stale-replay risk), the focused pane is never culled, `.desktop` panes ARE culled outside
 /// viewport+margin (freeing a `liveVideoCap` slot), and the viewport-membership signal is
 /// intersection-only with no margin / no kind filter.
 final class CanvasCullingTests: XCTestCase {
@@ -27,13 +27,13 @@ final class CanvasCullingTests: XCTestCase {
     }
 
     func testVideoCulledOffViewport() {
-        let items = [item(1, onScreen, kind: .remoteGUI), item(2, farOff, kind: .remoteGUI)]
+        let items = [item(1, onScreen, kind: .desktop), item(2, farOff, kind: .desktop)]
         let visible = CanvasGeometry.visibleItems(items, camera: .zero, viewport: viewport, focused: nil)
         XCTAssertEqual(visible.map(\.id), [pid(1)], "off-viewport video is culled; on-screen video kept")
     }
 
     func testFocusedVideoNeverCulled() {
-        let items = [item(2, farOff, kind: .remoteGUI)]
+        let items = [item(2, farOff, kind: .desktop)]
         let visible = CanvasGeometry.visibleItems(items, camera: .zero, viewport: viewport, focused: pid(2))
         XCTAssertEqual(visible.map(\.id), [pid(2)], "the focused pane is never culled, even video far off")
     }
@@ -41,7 +41,7 @@ final class CanvasCullingTests: XCTestCase {
     func testVideoWithinMarginKept() {
         // Just outside the viewport but within cullMargin (600) → kept warm.
         let nearEdge = CGRect(x: 1000 + 100, y: 100, width: 300, height: 200) // 100pt past the right edge
-        let items = [item(1, nearEdge, kind: .remoteGUI)]
+        let items = [item(1, nearEdge, kind: .desktop)]
         let visible = CanvasGeometry.visibleItems(items, camera: .zero, viewport: viewport, focused: nil)
         XCTAssertEqual(visible.map(\.id), [pid(1)], "within cullMargin → still mounted")
     }
@@ -53,7 +53,7 @@ final class CanvasCullingTests: XCTestCase {
             item(
                 3,
                 CGRect(x: 1000 + 100, y: 100, width: 300, height: 200),
-                kind: .remoteGUI,
+                kind: .desktop,
             ), // within margin but NOT viewport
         ]
         let members = CanvasGeometry.viewportMembers(items, camera: .zero, viewport: viewport)

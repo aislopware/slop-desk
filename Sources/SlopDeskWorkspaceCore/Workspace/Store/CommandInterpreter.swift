@@ -8,7 +8,7 @@ import Foundation
 /// so the chord → command mapping is fully unit-testable with no view.
 public enum WorkspaceCommand: Sendable, Equatable {
     case newPaneDefault // ⌘N   — a pane of the user's default kind (Settings ▸ Canvas)
-    case newPane(PaneKind) // ⌘T terminal, ⌥⌘N remoteGUI
+    case newPane(PaneKind) // ⌘T terminal, ⌥⌘N desktop
     case duplicatePane // ⌘D   — copy the focused pane's spec (incl. endpoint) beside it
     case tidy // ⇧⌘D  — pack panes into a grid
     case centerFocusedPane // ⌥⌘C  — centre the camera on the focused pane (the pan-only "recenter")
@@ -216,7 +216,7 @@ public extension CommandInterpreter {
         // process is auto-detected in any terminal — so ⇧⌘N stays unbound.
         map[KeyChord(character: "n", [.command])] = .newPaneDefault
         map[KeyChord(character: "t", [.command])] = .newPane(.terminal)
-        map[KeyChord(character: "n", [.command, .option])] = .newPane(.remoteGUI)
+        map[KeyChord(character: "n", [.command, .option])] = .newPane(.desktop)
 
         // Duplicate the focused pane (spec + endpoint + group, cascaded beside it): ⌘D — the Finder
         // duplicate idiom. (⇧⌘D = tidy, unchanged.)

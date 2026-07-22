@@ -390,7 +390,7 @@ public final class PreferencesStore {
     /// Reset All at a non-default value.
     nonisolated static let tabReachableDefaultsKeys: [Defaults.Keys] = [
         // General
-        .onLaunch, .redactSecrets, .defaultPaneKind, .closeConfirmTab, .closeConfirmWindow,
+        .onLaunch, .redactSecrets, .closeConfirmTab, .closeConfirmWindow,
         // Shell — notifications / sounds / agent-notify
         .oscNotifications, .longCommandNotifications,
         .notifyOnFinish, .notifyOnError, .notifyOnWatchFinish, .notifyWhileForeground,

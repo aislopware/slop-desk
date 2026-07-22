@@ -22,7 +22,8 @@ import SlopDeskVideoProtocol // EnvConfig — the behaviour-preserving config re
 ///   types 26/27 fold into ``claudeStatus``), and the inspector second channel opens/closes
 ///   DYNAMICALLY on that runtime status (≠ `.none` opens it). The terminal|inspector split is per-pane
 ///   VIEW state, NOT a tree node — one leaf.
-/// - `.remoteGUI`  → a `remoteWindow` (`RemoteWindowModel`) instead of a connection-backed terminal.
+/// - video kinds (`.desktop` / `.systemDialog`) → a `remoteWindow` (`RemoteWindowModel`) instead of a
+///   connection-backed terminal.
 ///
 /// ### Lazy connect (load-bearing, docs/22 §6 RESTORED-vs-RECONNECTED)
 /// ``make(_:makeClient:makeInspector:)`` BUILDS the `ConnectionViewModel` (host/port pre-filled from
@@ -44,14 +45,14 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     // MARK: Proven per-session objects (wrapped verbatim)
 
     /// Owns the ordered-OUT drain + single events loop + `ReconnectManager`. `nil` only for a
-    /// `.remoteGUI` pane (no PATH-1 terminal connection).
+    /// video pane (no PATH-1 terminal connection).
     public let connection: ConnectionViewModel?
 
     /// The per-pane external input affordance (A / B1 dedup ring). Present for the `.terminal` kind.
     public let inputBar: InputBarModel?
 
     /// The read-only structured inspector for a terminal pane (NWConnection #2). `nil` for non-terminal
-    /// kinds (`.remoteGUI` / `.systemDialog`); present for EVERY `.terminal` pane (any terminal can
+    /// kinds (`.desktop` / `.systemDialog`); present for EVERY `.terminal` pane (any terminal can
     /// become a Claude session), but the second channel is SUBSCRIBED only while ``claudeStatus`` `≠ .none`.
     /// The model is durable across pause/resume; the client is closed on pause, rebuilt on resume. `model`
     /// is `let` (upsert/dedup keeps a re-tail safe); `client` is `var` because resume swaps in a fresh one.
@@ -89,14 +90,14 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// scenePhase foreground fan-out). Tracked + cancellable, not awaited.
     private var inspectorTask: Task<Void, Never>?
 
-    /// The remote-GUI (video) model for a `.remoteGUI` pane. `nil` for other kinds.
+    /// The video model for a `.desktop` / `.systemDialog` pane. `nil` for a terminal.
     public let remoteWindow: RemoteWindowModel?
 
     // MARK: Re-open glue for pause/resume
 
     /// The store's factory, retained so `resume()` can rebuild a fresh ``InspectorClient`` after `pause()`
     /// closed the previous one (iOS kills an app that strands a background socket — docs/22 DECISIONS).
-    /// Set for every `.terminal` pane; `nil` for the video kinds (`.remoteGUI` / `.systemDialog`).
+    /// Set for every `.terminal` pane; `nil` for the video kinds (`.desktop` / `.systemDialog`).
     private let makeInspector: (@MainActor (ConnectionTarget) -> InspectorClient?)?
     /// Resolves the CURRENT app target for the inspector build/rebuild (inspector rides the same host as
     /// the terminal, on terminal port + 1). Read fresh at subscribe-time to pick up a host change. Set
@@ -106,10 +107,10 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     // MARK: Video activation
 
     /// See ``PaneSessionHandle/isVideoActive``. Mirrors whether the `remoteWindow` has an active
-    /// descriptor; always `false` for non-`.remoteGUI` panes.
+    /// descriptor; always `false` for non-video panes.
     public private(set) var isVideoActive: Bool = false
 
-    /// Whether this `.remoteGUI` pane's video was active when ``pause()`` suspended it, so ``resume()``
+    /// Whether this video pane's stream was active when ``pause()`` suspended it, so ``resume()``
     /// re-opens exactly the set admitted before background. Cap-safe WITHOUT consulting the store: resume
     /// re-opens at most what already satisfied `liveVideoCap`, so it cannot exceed it.
     private var wasVideoActiveBeforePause = false
@@ -118,13 +119,6 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// (password/auth) prompt — the pane shows a "view-only — type on the host" hint. A pure-live property
     /// the store sets via ``markSystemDialog(isSecure:)`` (never persisted).
     public private(set) var isSecureDialog = false
-
-    /// PANE REBIND: whether the one-shot stale-binding revalidation already ran for this session
-    /// (only the RESTORED binding is suspect — see ``maybeRevalidateBinding(_:)``).
-    private var didRevalidateBinding = false
-    /// PANE REBIND: the in-flight revalidation, cancelled by ``teardown()`` so a discovery
-    /// round-trip racing a pane close can never re-open the model.
-    private var rebindTask: Task<Void, Never>?
 
     // MARK: Automation seam (SLOPDESK_AUTOTYPE)
 
@@ -137,7 +131,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
 
     // MARK: Passthrough
 
-    /// The terminal model the leaf view renders, or `nil` for a `.remoteGUI` pane. A convenience over
+    /// The terminal model the leaf view renders, or `nil` for a video pane. A convenience over
     /// `connection.terminalModel` so the view never reaches into the connection.
     public var terminalModel: TerminalViewModel? { connection?.terminalModel }
 
@@ -151,38 +145,38 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
 
     /// Whether an OSC 133 command is currently executing in this pane's shell — the
     /// ``PaneSessionHandle/isShellBusy`` close-guard signal and the pill's "running…" cue. `false`
-    /// for panes with no terminal (`.remoteGUI` / `.systemDialog`).
+    /// for panes with no terminal (`.desktop` / `.systemDialog`).
     public var isShellBusy: Bool { terminalModel?.shellActivity == .running }
 
     /// Broadcast / synchronized-input target primitive: types `text` into this pane's shell by routing
     /// to the per-pane ``InputBarModel`` (the same recorded-for-echo-dedup path a normal submit uses).
-    /// A no-op when there is no input bar (a `.remoteGUI` / `.systemDialog` pane).
+    /// A no-op when there is no input bar (a `.desktop` / `.systemDialog` pane).
     public func sendText(_ text: String) { inputBar?.sendText(text) }
 
     /// Snippet / send-keys primitive: feeds raw bytes (incl. control codes) into the shell via the input
     /// bar, NOT recorded for echo-dedup (a programmatic send has no local pre-echo to suppress).
     public func sendBytes(_ bytes: [UInt8]) { inputBar?.sendRaw(bytes, record: false) }
 
-    /// RELEASE STUCK INPUT: route the palette escape hatch to the `.remoteGUI` pane's
+    /// RELEASE STUCK INPUT: route the palette escape hatch to the video pane's
     /// ``RemoteWindowModel`` (whose live sink the video view publishes; withheld while read-only /
     /// not streaming). A no-op for every other kind (`remoteWindow == nil`).
     public func releaseStuckInput() { remoteWindow?.releaseStuckInput() }
 
-    /// LOCK VIEWPORT POSITION: route the ⌥⌘L / palette toggle to the `.remoteGUI` pane's
+    /// LOCK VIEWPORT POSITION: route the ⌥⌘L / palette toggle to the video pane's
     /// ``RemoteWindowModel`` (which gates on its live viewport sink — a no-op off-stream). A no-op for
     /// every other kind (`remoteWindow == nil`).
     public func toggleViewportLock() { remoteWindow?.toggleViewportLock() }
 
-    /// FIT VIEWPORT TO PANE: route the palette verb to the `.remoteGUI` pane's footer [fit] command
+    /// FIT VIEWPORT TO PANE: route the palette verb to the video pane's footer [fit] command
     /// (the model itself gates re-anchoring while locked / off-stream). A no-op for every other kind
     /// (`remoteWindow == nil`).
     public func fitViewportToPane() { remoteWindow?.sendViewport(.fitToPane) }
 
-    /// ACTUAL SIZE: route the palette verb to the `.remoteGUI` pane's footer [1×] command. Same no-op
+    /// ACTUAL SIZE: route the palette verb to the video pane's footer [1×] command. Same no-op
     /// family as ``fitViewportToPane()``.
     public func resetViewportZoom() { remoteWindow?.sendViewport(.reset) }
 
-    /// PASTE AS KEYSTROKES: route the pane's clipboard-paste to the `.remoteGUI` pane's
+    /// PASTE AS KEYSTROKES: route the pane's clipboard-paste to the video pane's
     /// ``RemoteWindowModel`` (whose live key sink the video view publishes; withheld while read-only /
     /// not streaming, so the model no-ops). A no-op for every other kind (`remoteWindow == nil`) — a
     /// terminal pane has its own paste pipeline.
@@ -190,13 +184,13 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
 
     /// Reflects the live connection: `.terminal`/Claude panes are ready only once the handshake completes
     /// (``ConnectionViewModel/status`` `== .connected`) — before that, `InputBarModel.sendSink` is wired but
-    /// `TerminalViewModel.inputSink` is not, so a send would silently drop. A `.remoteGUI` / `.systemDialog`
+    /// `TerminalViewModel.inputSink` is not, so a send would silently drop. A `.desktop` / `.systemDialog`
     /// pane has no `connection` and is always "ready" (no text funnel to gate).
     public var isReadyForInput: Bool { connection.map { $0.status == .connected } ?? true }
 
     /// `slopdesk pane capture --lines N`: the last `count` lines of this pane's scrollback, read through
     /// the same `TerminalSurfaceActions` seam find/copy-mode use (``TerminalViewModel/searchScrollbackLines()``
-    /// → `[]` on a headless / preview surface, hang-safety). `nil` terminal (a `.remoteGUI` pane) ⇒ `[]`.
+    /// → `[]` on a headless / preview surface, hang-safety). `nil` terminal (a video pane) ⇒ `[]`.
     public func captureScrollback(lines count: Int) -> [String] {
         guard count > 0, let lines = terminalModel?.searchScrollbackLines() else { return [] }
         return Array(lines.suffix(count))
@@ -277,14 +271,12 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         switch spec.kind {
         case .terminal:
             makeTerminal(spec, makeClient: makeClient, makeInspector: makeInspector, target: target)
-        case .remoteGUI,
-             .desktop,
+        case .desktop,
              .systemDialog:
-            // A system-dialog pane uses the SAME video stack as a remote-GUI pane (streams one host
-            // window by id); the differences — auto-management, no picker, skip revalidation, not
-            // persisted — live in the store/monitor and `setVideoActive`, not the session shape.
-            // A DESKTOP pane rides the same stack too — its model carries the display target.
-            makeRemoteGUI(spec, target: target)
+            // Both video kinds share ONE session shape: a `RemoteWindowModel` on the shared UDP flow.
+            // A system-dialog pane streams one host window by id; a desktop pane a whole display —
+            // the differences (auto-management, ephemerality) live in the store/monitor, not here.
+            makeVideo(spec, target: target)
         }
     }
 
@@ -364,16 +356,16 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         )
     }
 
-    /// Builds a `.remoteGUI` session: a `RemoteWindowModel` bound to the app target with the per-pane
-    /// window pre-filled, NOT opened (UDP is user-initiated — docs/22 §6).
-    private static func makeRemoteGUI(
+    /// Builds a VIDEO session (`.desktop` / `.systemDialog`): a `RemoteWindowModel` bound to the app
+    /// target with the per-pane target pre-filled, NOT opened (UDP is user-initiated — docs/22 §6).
+    private static func makeVideo(
         _ spec: PaneSpec,
         target: @escaping @MainActor () -> ConnectionTarget,
     ) -> LivePaneSession {
         let model =
             if spec.kind == .desktop {
-                // FULL-DESKTOP pane: the model carries the display target (0 = main) — no picker,
-                // no window id, no rebind. `setVideoActive` opens it like any configured video pane.
+                // FULL-DESKTOP pane: the model carries the display target (0 = main) — no window id.
+                // `setVideoActive` opens it like any configured video pane.
                 RemoteWindowModel(
                     target: target,
                     title: spec.video?.title ?? spec.title,
@@ -523,32 +515,11 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
             // Open only if configured; mirror the resulting active state.
             if model.active == nil, model.canOpen {
                 model.open()
-                // A `.systemDialog` pane SKIPS stale-binding revalidation: its windowID is always fresh
-                // from the live poll, and revalidation re-resolves against the picker list — which
-                // EXCLUDES system apps — so it would wrongly unbind the dialog back to the picker form.
-                if !kind.isEphemeral { maybeRevalidateBinding(model) }
             }
             isVideoActive = model.active != nil
         } else {
             model.close()
             isVideoActive = false
-        }
-    }
-
-    /// PANE REBIND: ONE-SHOT stale-binding revalidation after the first optimistic
-    /// `open()`. CGWindowIDs die with the window and get recycled across host restarts, and the host
-    /// rejects a dead id SILENTLY (`helloAck(accepted:false)` → zero client effects → a permanent black
-    /// pane). The model checks the live window list and re-binds by app+title (`WindowRebind`);
-    /// `.unbound` closed back to the picker form, so the cap mirror must follow. One-shot per session:
-    /// only the RESTORED binding is suspect — endpoints the user just picked came from a live list.
-    private func maybeRevalidateBinding(_ model: RemoteWindowModel) {
-        guard !didRevalidateBinding else { return }
-        didRevalidateBinding = true
-        rebindTask = Task { @MainActor [weak self, weak model] in
-            guard let model else { return }
-            let outcome = await model.revalidateBinding()
-            guard let self, !Task.isCancelled else { return }
-            if outcome == .unbound { isVideoActive = model.active != nil }
         }
     }
 
@@ -644,9 +615,6 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
             await client.close()
             inspectorClient = nil
         }
-        // PANE REBIND: a revalidation racing teardown must not reopen a closed pane.
-        rebindTask?.cancel()
-        rebindTask = nil
         if isVideoActive || remoteWindow?.active != nil {
             remoteWindow?.close()
             isVideoActive = false

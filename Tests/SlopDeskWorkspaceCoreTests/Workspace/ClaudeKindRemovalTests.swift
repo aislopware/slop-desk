@@ -6,7 +6,7 @@ import XCTest
 /// W11 — the removal of the dedicated `PaneKind.claudeCode` (a Claude session is now just a `.terminal`
 /// pane, auto-detected). Pins the load-bearing no-data-loss / no-trap contract:
 ///
-///  1. `PaneKind` has exactly `{ terminal, remoteGUI, systemDialog }` — the `.claudeCode` case is gone
+///  1. `PaneKind` has exactly `{ terminal, desktop, systemDialog }` — the `.claudeCode` case is gone
 ///     (this file would not COMPILE if anything still referenced it).
 ///  2. A persisted spec carrying the LEGACY `"claudeCode"` raw value decodes to `.terminal` (forward/
 ///     back-tolerant) — never trapping now the case is removed.
@@ -20,8 +20,8 @@ final class ClaudeKindRemovalTests: XCTestCase {
         // CaseIterable would include `.claudeCode` if it still existed; the live set is exactly these.
         XCTAssertEqual(
             Set(PaneKind.allCasesForTest),
-            Set([.terminal, .remoteGUI, .systemDialog]),
-            "PaneKind is { terminal, remoteGUI, systemDialog } — claudeCode is retired",
+            Set([.terminal, .desktop, .systemDialog]),
+            "PaneKind is { terminal, desktop, systemDialog } — claudeCode is retired",
         )
         // The legacy raw value is no longer a valid synthesized case.
         XCTAssertNil(PaneKind(rawValue: "claudeCode"), "the synthesized rawValue init does not know claudeCode")
@@ -75,6 +75,24 @@ final class ClaudeKindRemovalTests: XCTestCase {
         XCTAssertNil(PaneKind(rawValue: "chooser"), "the synthesized rawValue init does not know chooser")
     }
 
+    // MARK: - 2d. Legacy `"remoteGUI"` raw value decodes to `.terminal` (the removed remote-window pane)
+
+    /// The removed `PaneKind.remoteGUI` (per-window streaming — retired by the dedicated-desktop-window
+    /// re-scope, docs/DECISIONS.md 2026-07-22) rides the SAME decode bridge: a persisted remote-window
+    /// leaf folds to a plain `.terminal` (the stream identity is deliberately dropped — no-backcompat
+    /// rule), its now-unknown `video` endpoint decode-tolerated. Revert-to-confirm-fail: without the
+    /// bridge in `PaneKind.init(from:)` the decode throws and this test fails.
+    func testLegacyRemoteGUIRawValueDecodesToTerminal() throws {
+        let json = Data(
+            #"{ "kind": "remoteGUI", "title": "Docs", "video": { "windowID": 42, "title": "Docs", "appName": "Safari" } }"#
+                .utf8,
+        )
+        let spec = try JSONDecoder().decode(PaneSpec.self, from: json)
+        XCTAssertEqual(spec.kind, .terminal, "a legacy remote-window spec decodes to a plain terminal (no trap)")
+        XCTAssertEqual(spec.title, "Docs", "the title survives the tolerant decode")
+        XCTAssertNil(PaneKind(rawValue: "remoteGUI"), "the synthesized rawValue init does not know remoteGUI")
+    }
+
     // MARK: - 3. Legacy claude pane handling
 
     // L0 / D2: testMigrationRewritesLegacyClaudeCodePaneToTerminal was DELETED — it exercised the deleted
@@ -121,5 +139,5 @@ final class ClaudeKindRemovalTests: XCTestCase {
 extension PaneKind {
     /// The live case set, for the removal assertion. (PaneKind is not `CaseIterable` in production — this
     /// is a test-local witness; it MUST list every case, so a future case addition surfaces here.)
-    static var allCasesForTest: [PaneKind] { [.terminal, .remoteGUI, .systemDialog] }
+    static var allCasesForTest: [PaneKind] { [.terminal, .desktop, .systemDialog] }
 }

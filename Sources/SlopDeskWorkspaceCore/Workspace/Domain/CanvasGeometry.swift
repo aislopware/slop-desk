@@ -188,11 +188,11 @@ public enum CanvasGeometry {
     // MARK: Culling (kind-aware)
 
     /// The items to MOUNT (pure culling, kind-aware, docs/30 §1):
-    /// - every NON-`remoteGUI` item (terminals / claudeCode are **never culled** — removing a live
+    /// - every NON-video item (terminals / claudeCode are **never culled** — removing a live
     ///   terminal host closes its surface and a revisit can show a stale alt-screen frame; the OS
     ///   occludes off-viewport views cheaply, so they stay mounted and repaint on pan-back);
     /// - the `focused` item, regardless of kind (never culled);
-    /// - any `.remoteGUI` item whose frame intersects the viewport expanded by `margin` (video panes
+    /// - any video item whose frame intersects the viewport expanded by `margin` (video panes
     ///   ARE culled off-viewport, which beneficially frees a `liveVideoCap` slot via the existing
     ///   `.onDisappear` gate).
     ///

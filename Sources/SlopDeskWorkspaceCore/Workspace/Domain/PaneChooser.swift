@@ -28,9 +28,6 @@ public struct PaneChooserOption: Sendable, Equatable {
     /// A video (PATH 2) pane that rides the shared UDP flow and counts against the live-video cap.
     /// Mirrors ``PaneKind/isVideo`` (kept here so the option is self-describing for chooser rows).
     public let isVideo: Bool
-    /// Whether resolving this option must first run the remote-window picker (it cannot mint a bare
-    /// pane — it needs a host-side window id). True for ``PaneKind/remoteGUI``.
-    public let requiresWindowPick: Bool
 
     public init(
         kind: PaneKind,
@@ -38,14 +35,12 @@ public struct PaneChooserOption: Sendable, Equatable {
         symbol: String,
         mnemonic: Character,
         isVideo: Bool,
-        requiresWindowPick: Bool,
     ) {
         self.kind = kind
         self.title = title
         self.symbol = symbol
         self.mnemonic = mnemonic
         self.isVideo = isVideo
-        self.requiresWindowPick = requiresWindowPick
     }
 }
 
@@ -64,16 +59,6 @@ public enum PaneChooserRegistry {
                 symbol: "apple.terminal",
                 mnemonic: "t",
                 isVideo: false,
-                requiresWindowPick: false,
-            )
-        case .remoteGUI:
-            PaneChooserOption(
-                kind: .remoteGUI,
-                title: "Remote window",
-                symbol: "macwindow",
-                mnemonic: "r",
-                isVideo: true,
-                requiresWindowPick: true,
             )
         case .desktop:
             PaneChooserOption(
@@ -82,7 +67,6 @@ public enum PaneChooserRegistry {
                 symbol: "display",
                 mnemonic: "d",
                 isVideo: true,
-                requiresWindowPick: false, // the display target is fixed at mint (0 = main display)
             )
         case .systemDialog:
             PaneChooserOption(
@@ -91,7 +75,6 @@ public enum PaneChooserRegistry {
                 symbol: "lock.shield",
                 mnemonic: "s",
                 isVideo: true,
-                requiresWindowPick: false,
             )
         }
     }

@@ -12,7 +12,7 @@ import Foundation
 /// production conformer ``LivePaneSession`` wraps the proven per-session objects verbatim
 /// (one `ConnectionViewModel` + `TerminalViewModel` + `InputBarModel`, plus a latent inspector for a
 /// `.terminal` — opened dynamically when a `claude` is detected, W11 — or a `RemoteWindowModel` for
-/// `.remoteGUI`).
+/// a video pane).
 ///
 /// `@MainActor` because every conformer owns `@Observable` UI state bound on the main actor; `AnyObject`
 /// because the registry stores it by reference (1:1 with a ``PaneID``, never copied, never shared).
@@ -26,7 +26,7 @@ public protocol PaneSessionHandle: AnyObject, Identifiable {
     var id: PaneID { get }
 
     /// What this pane is. The store reads this to enforce the ``WorkspaceStore/liveVideoCap`` ceiling
-    /// (only `.remoteGUI` handles count against it) without reaching into the concrete type.
+    /// (only video handles count against it) without reaching into the concrete type.
     var kind: PaneKind { get }
 
     // MARK: Video activation gating (docs/22 §7)
@@ -38,7 +38,7 @@ public protocol PaneSessionHandle: AnyObject, Identifiable {
     var isShellBusy: Bool { get }
 
     /// Whether this session is currently holding live video resources (the 2-UDP-socket /
-    /// VTDecompression / CVDisplayLink stack). Always `false` for non-`.remoteGUI` kinds.
+    /// VTDecompression / CVDisplayLink stack). Always `false` for non-video kinds.
     ///
     /// This is the single hook the store reads to count concurrent live video panes against
     /// ``WorkspaceStore/liveVideoCap``. Activation itself is driven by the view layer's
@@ -47,7 +47,7 @@ public protocol PaneSessionHandle: AnyObject, Identifiable {
     var isVideoActive: Bool { get }
 
     /// Requests this session activate (`true`) or deactivate (`false`) its live video stack. A no-op
-    /// for non-`.remoteGUI` kinds. Idempotent. STORE-INTERNAL in practice: the view layer routes
+    /// for non-video kinds. Idempotent. STORE-INTERNAL in practice: the view layer routes
     /// appear/disappear through ``WorkspaceStore/activateVideo(_:)`` / ``WorkspaceStore/deactivateVideo(_:)``
     /// so `liveVideoCap` is consulted — the store is the admit/evict authority against the cap. (It
     /// cannot be made fully private: it is part of this protocol and the store + pause/resume call it;
@@ -175,23 +175,23 @@ public extension PaneSessionHandle {
     func clearBell() {}
 
     /// Default: no video input sink ⇒ nothing to release. ``LivePaneSession`` routes to the
-    /// ``RemoteWindowModel`` for `.remoteGUI` panes.
+    /// ``RemoteWindowModel`` for video panes.
     func releaseStuckInput() {}
 
     /// Default: no video viewport ⇒ nothing to lock. ``LivePaneSession`` routes to the
-    /// ``RemoteWindowModel`` for `.remoteGUI` panes.
+    /// ``RemoteWindowModel`` for video panes.
     func toggleViewportLock() {}
 
     /// Default: no video viewport ⇒ nothing to fit. ``LivePaneSession`` routes to the
-    /// ``RemoteWindowModel`` for `.remoteGUI` panes.
+    /// ``RemoteWindowModel`` for video panes.
     func fitViewportToPane() {}
 
     /// Default: no video viewport ⇒ nothing to reset. ``LivePaneSession`` routes to the
-    /// ``RemoteWindowModel`` for `.remoteGUI` panes.
+    /// ``RemoteWindowModel`` for video panes.
     func resetViewportZoom() {}
 
     /// Default: no video key sink ⇒ nothing to type. ``LivePaneSession`` routes to the
-    /// ``RemoteWindowModel`` for `.remoteGUI` panes (a terminal pane has its own paste pipeline).
+    /// ``RemoteWindowModel`` for video panes (a terminal pane has its own paste pipeline).
     func pasteAsKeystrokes(_: String) {}
 }
 

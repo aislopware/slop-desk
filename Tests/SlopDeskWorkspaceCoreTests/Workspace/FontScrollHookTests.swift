@@ -128,14 +128,14 @@ final class FontScrollHookTests: XCTestCase {
 
     // MARK: - Graceful no-op (non-terminal active pane)
 
-    /// A non-terminal active pane (`.remoteGUI`) has no terminal model / no seam, so every font + scroll hook
+    /// A non-terminal active pane (`.desktop`) has no terminal model / no seam, so every font + scroll hook
     /// is a clean no-op — nothing is recorded and nothing traps. Mirrors the block hooks' graceful
     /// degradation; this is what makes the hooks safe to bind unconditionally.
     func testFontScrollAreNoOpOnNonTerminalActivePane() throws {
         let store = makeStore()
-        // Replace the active leaf's session with a non-terminal one by splitting in a `.remoteGUI` pane and
+        // Replace the active leaf's session with a non-terminal one by splitting in a `.desktop` pane and
         // focusing it; the recorder of the ORIGINAL terminal pane must stay empty after we act on the GUI pane.
-        store.splitActivePane(axis: .horizontal, kind: .remoteGUI)
+        store.splitActivePane(axis: .horizontal, kind: .desktop)
         let active = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
         let guiSession = try XCTUnwrap(store.handle(for: active) as? RecordingTerminalPaneSession)
         XCTAssertNil(guiSession.terminalModel, "the active pane is non-terminal (no model)")

@@ -47,7 +47,7 @@ final class SystemDialogPaneTests: XCTestCase {
     }
 
     // THE key invariant: a `.systemDialog` pane is NOT written to disk — a relaunch restores only the
-    // real (terminal/remoteGUI) panes, never a stale dialog windowID.
+    // real (terminal/desktop) panes, never a stale dialog windowID.
     func testSystemDialogPaneIsNotPersisted() {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("slopdesk-sysdialog-test-\(ProcessInfo.processInfo.globallyUniqueString)")
@@ -77,8 +77,8 @@ final class SystemDialogPaneTests: XCTestCase {
     func testKindClassification() {
         XCTAssertTrue(PaneKind.systemDialog.isVideo)
         XCTAssertTrue(PaneKind.systemDialog.isEphemeral)
-        XCTAssertTrue(PaneKind.remoteGUI.isVideo)
-        XCTAssertFalse(PaneKind.remoteGUI.isEphemeral)
+        XCTAssertTrue(PaneKind.desktop.isVideo)
+        XCTAssertFalse(PaneKind.desktop.isEphemeral)
         XCTAssertFalse(PaneKind.terminal.isVideo)
     }
 }

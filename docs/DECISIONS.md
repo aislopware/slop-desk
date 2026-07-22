@@ -1505,3 +1505,58 @@ substitution forced by the pure-native-Swift rule.
   must not mirror the developer's real pasteboard).
 - ✅ **Paste-as-keystrokes (⌥⌘V) stays** — it is the fallback for a read-only-disabled sync future and
   the only path that types into a host field that blocks programmatic paste.
+
+## Remote desktop is a DEDICATED OS WINDOW — remote-window mode is REMOVED (2026-07-22)
+
+> User-directed re-scope: (1) per-window streaming (`.remoteGUI`) is removed outright — full-desktop
+> is the only remote-viewing mode; (2) the desktop stream must NEVER be a pane or tab inside the
+> workspace window — it always opens as its own OS window, with a setting for the default
+> presentation (windowed vs fullscreen, the Parsec model); (3) research-backed UX additions.
+
+- 🔁 **RE-SCOPE (reverses the 2026-07-14 "per-window streaming survives as a SECONDARY path"
+  ruling): `PaneKind.remoteGUI` is DELETED.** Gone client-side: `newRemoteWindowTab` /
+  `openRemoteWindow` / `streamedWindowPane` / `StreamedWindowRef` / `remoteWindowSpec`, the
+  `RemoteWindowPickerModal`/`RemoteWindowPickerView` picker UI, the palette "New Remote Window Tab"
+  row, Open Quickly's Host rows (their ONLY action was opening a window pane), and `WindowRebind`
+  (CGWindowID-recycling rebind existed solely for persisted `.remoteGUI` panes). A persisted
+  `"remoteGUI"` leaf folds to `.terminal` via the established legacy-raw-value decode bridge
+  (`claudeCode`/`web`/`chooser` precedent — no-backcompat rule, stale stream identity is dropped).
+- ✅ **The WIRE is untouched — window-shaped types go dormant, not deleted.** `hello` (1) stays
+  LIVE (the `.systemDialog` pane still streams a host window by id); `resizeAck` (5), `listWindows`/
+  `windowList` (7/8), `displayMax` (15), geometry datagrams (§9.5) lose their `.remoteGUI` caller and
+  join types 19–21 in the dormant set (codec + golden vectors byte-identical, zero golden churn).
+  `HostWindowFeed` + types 16–18 stay KEPT-SHARED for `AppLaunchMonitor`'s layout auto-switch. Host
+  window-capture machinery (parking, geometry watcher) stays — systemDialog and any future window
+  consumer ride it; deleting it buys nothing the dormant rule doesn't.
+- ✅ **The desktop stream lives ONLY in a satellite window — never in the tree.** `.desktop` panes
+  are minted DIRECTLY into `Session.detached` (⌥⌘N / palette; reveal-dedupe per display — a second
+  ⌥⌘N on the same display raises the existing window; different displays mint siblings). The
+  satellite close semantic branches by kind: a desktop satellite's close is a REAL close
+  (`closeDetachedPane` — the session ends), never the reattach-fold; reattach affordances
+  (`reattachAllPanes`, free-drag-into-tree) skip desktop panes. Launch restore DROPS persisted
+  detached desktop panes instead of redocking them (satellites don't restore as windows — v1 rule —
+  and a desktop pane must never redock into a tab).
+- ✅ **Presentation setting: `desktopWindowPresentation` = windowed (default) | fullscreen** —
+  a `SettingsKey` + macOS Settings row. Fullscreen v1 is NATIVE macOS fullscreen (Spaces): most-Mac
+  behaviour, zero custom chrome. The known top-edge conflict (pointer at top reveals the LOCAL menu
+  bar over the remote one — unsolved across Parsec/Screens/Jump/Apple; Parallels' dwell-delay gate
+  on a borderless window is the researched best-in-class) is ACCEPTED for v1 and the dwell-gate
+  borderless mode is the documented follow-up.
+- ✅ **UX additions v1 (survey-backed, `docs/DECISIONS.md` is the research record):**
+  (a) **fullscreen auto-arms immersive system-key capture** — the industry-converged pattern
+  (Parsec Immersive / CRD "Send system keys" scoped to fullscreen / Moonlight's capture toggle):
+  entering native fullscreen arms the existing `SystemKeyCaptureController` regardless of the
+  latched per-target immersive mode; exiting returns to the latched value. The in-session escape
+  hatch already exists (the immersive toggle chord) — the Moonlight lesson (capture with no
+  in-stream off switch traps the user) is already satisfied.
+  (b) **hostd keeps the host display awake while a display session is attached**
+  (`IOPMAssertionCreateWithName` / PreventUserIdleDisplaySleep — released when the last display
+  session detaches). No surveyed product does this declaratively; it closes the "host slept mid-
+  session" failure mode for free.
+- 📌 **Researched, deliberately NOT v1** (each is its own future epic): dwell-gated borderless
+  fullscreen; a Parsec-grade stats HUD (decode/encode/RTT + FEC recovery rate — our pipeline already
+  measures these); an in-window display switcher (Jump Desktop's Active-Displays model; `listDisplays`
+  22/23 already carries the data); host-display privacy blank (RustDesk's gamma-table + event-tap
+  technique — driver-free, primary-display-only caveat); match-window dynamic resolution (wrong
+  default for a REAL physical host display — scale-to-fit letterbox stays); drag-and-drop file
+  transfer into the desktop window (Apple Screen Sharing precedent).

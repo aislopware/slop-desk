@@ -143,10 +143,10 @@ final class ReadOnlyStoreTests: XCTestCase {
         XCTAssertTrue(store.paneReadOnly.contains(a), "the survivor keeps its lock")
     }
 
-    // MARK: - Read-only DRIVES the `.remoteGUI` video-input gate (the load-bearing one)
+    // MARK: - Read-only DRIVES the `.desktop` video-input gate (the load-bearing one)
 
     #if canImport(SwiftUI)
-    /// **The read-only INPUT gate on the video seam.** A `.remoteGUI` pane has no live terminal
+    /// **The read-only INPUT gate on the video seam.** A `.desktop` pane has no live terminal
     /// model, so `setPaneReadOnly` lands purely in the convergent ``WorkspaceStore/paneReadOnly`` set (the
     /// set-only path). The pure ``RemotePaneContext/videoLeaf(isActive:readOnly:...)`` derivation `GuiLeafView`
     /// uses maps that policy onto the app-target client's gate: `inputEnabled == !readOnly`. So a locked remote
@@ -155,23 +155,23 @@ final class ReadOnlyStoreTests: XCTestCase {
     /// accepted input.
     func testReadOnlyDerivesTheVideoInputGate() {
         let store = makeFakeStore()
-        let video = store.newRemoteWindowTab(windowID: 7, title: "Safari", appName: "Safari")
+        let video = store.newDesktopTab()
 
         // WRITABLE: the seam derivation enables input forwarding.
         let writable = RemotePaneContext.videoLeaf(
             isActive: true, readOnly: store.isReadOnly(for: video), bindKeyInjector: { _ in },
         )
-        XCTAssertTrue(writable.inputEnabled, "a writable `.remoteGUI` pane forwards pointer/scroll/keycodes")
+        XCTAssertTrue(writable.inputEnabled, "a writable `.desktop` pane forwards pointer/scroll/keycodes")
 
         // LOCK (set-only path — a video pane carries no live `TerminalViewModel`).
         store.setPaneReadOnly(video, true)
-        XCTAssertTrue(store.isReadOnly(for: video), "read-only records the `.remoteGUI` pane in the convergent set")
+        XCTAssertTrue(store.isReadOnly(for: video), "read-only records the `.desktop` pane in the convergent set")
 
         // READ-ONLY: the SAME derivation now disables the input gate.
         let locked = RemotePaneContext.videoLeaf(
             isActive: true, readOnly: store.isReadOnly(for: video), bindKeyInjector: { _ in },
         )
-        XCTAssertFalse(locked.inputEnabled, "a read-only `.remoteGUI` pane forwards NO input (the app-target gate)")
+        XCTAssertFalse(locked.inputEnabled, "a read-only `.desktop` pane forwards NO input (the app-target gate)")
     }
 
     /// **Read-only CLEARS the paste-as-keystrokes sink at the seam (no model→store coupling).**

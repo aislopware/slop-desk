@@ -316,7 +316,7 @@ extension WorkspaceStoreReconcileTests {
 
     // MARK: - Finding 1: the tree path honors the SAME video-cap teardown accounting as the canvas path
 
-    /// Closing a `.remoteGUI` leaf that holds a LIVE video slot through the TREE path
+    /// Closing a `.desktop` leaf that holds a LIVE video slot through the TREE path
     /// (``WorkspaceStore/closePaneTree(_:)``) drives the SAME ceiling-accounting the canvas
     /// `LiveVideoCapTests` pin — proving the shared ``WorkspaceStore`` reconcile core (not a duplicated
     /// branch) bites on the tree path too. Mirrors `LiveVideoCapTests.testClosingActiveVideoPaneFreesSlot`
@@ -326,9 +326,14 @@ extension WorkspaceStoreReconcileTests {
     ///  (c) with a NON-ZERO `videoTeardownSettle` the slot stays HELD past `teardown()`'s return until
     ///      `quiesce()` drains the settle — only then does the gated reopen admit.
     func testCloseTreeVideoPaneHonorsCapTeardownAccounting() async throws {
-        // A two-`.remoteGUI`-leaf tree (split the seed) under cap=2 + a non-zero settle, so a same-tick
-        // reopen has nowhere to go until the closing pane's stack actually releases.
-        let videoSpec = PaneSpec(kind: .remoteGUI, title: "Remote window")
+        // A two-video-leaf tree (split the seed) under cap=2 + a non-zero settle, so a same-tick
+        // reopen has nowhere to go until the closing pane's stack actually releases. The RESTORED seed
+        // is `.systemDialog`-shaped (a `.desktop` leaf never survives the launch restore — the
+        // dedicated-window model); the split-in leaves exercise `.desktop`.
+        let videoSpec = PaneSpec(
+            kind: .systemDialog, title: "Dialog",
+            video: VideoEndpoint(windowID: 5, title: "Dialog", appName: "App"),
+        )
         let store = makeTreeStore(
             restoringTree: .singlePane(spec: videoSpec),
             liveVideoCap: 2,
@@ -336,9 +341,9 @@ extension WorkspaceStoreReconcileTests {
         )
         store.reconcileTree()
         let a = store.tree.allPaneIDs()[0]
-        store.splitActivePane(axis: .horizontal, kind: .remoteGUI)
+        store.splitActivePane(axis: .horizontal, kind: .desktop)
         let b = try XCTUnwrap(store.tree.allPaneIDs().first { $0 != a })
-        XCTAssertEqual(store.allSessions.count, 2, "two remoteGUI leaves materialized")
+        XCTAssertEqual(store.allSessions.count, 2, "two desktop leaves materialized")
 
         // Mark BOTH leaves' handles video-active through the store's cap-checked admission (cap=2).
         XCTAssertTrue(store.activateVideo(a))
@@ -360,9 +365,9 @@ extension WorkspaceStoreReconcileTests {
             "closing a live video tree leaf is a slot-freeing event ⇒ one close-time promotion nudge",
         )
 
-        // (a) + (c) Same tick, split a third `.remoteGUI` leaf in. While the closing pane's slot is still
+        // (a) + (c) Same tick, split a third `.desktop` leaf in. While the closing pane's slot is still
         // held by the settle (a live (1) + b settling (1) = cap of 2 occupied), the reopen is GATED.
-        store.splitActivePane(axis: .horizontal, kind: .remoteGUI)
+        store.splitActivePane(axis: .horizontal, kind: .desktop)
         let reopened = try XCTUnwrap(store.tree.allPaneIDs().first { $0 != a })
         await Task.yield() // let teardown() return but leave the settle sleep in flight
         XCTAssertFalse(

@@ -80,7 +80,7 @@ public struct RemotePaneContext {
     /// hover/clicks/pinch to the remote window ONLY when active; scroll is forwarded regardless of
     /// focus (⌥-scroll routes to ``onCanvasScroll``).
     public var isActive: Bool
-    /// READ-ONLY INPUT GATE. `false` ⇒ a read-only `.remoteGUI` pane: the app-target video client
+    /// READ-ONLY INPUT GATE. `false` ⇒ a read-only video pane: the app-target video client
     /// forwards NEITHER pointer/scroll NOR keycodes to the host while `!inputEnabled` — it gates every forward
     /// on `isActive && inputEnabled` (a click may still ACTIVATE the workspace pane, but nothing is relayed to
     /// the remote window, the host window is not raised, and the paste-as-keystrokes sink is cleared).
@@ -225,7 +225,7 @@ public struct RemotePaneContext {
     public static var standalone: Self { Self() }
 
     /// **The read-only-gated video-leaf context derivation (the pure seam the leaf and its tests
-    /// share).** Maps a pane's `readOnly` policy onto the two input gates a `.remoteGUI` leaf needs, so
+    /// share).** Maps a pane's `readOnly` policy onto the two input gates a video leaf needs, so
     /// `GuiLeafView` stays a thin renderer and the policy is unit-testable headlessly (no Metal/VT):
     ///   • `inputEnabled = !readOnly` — the app-target client gates forwarding on `isActive && inputEnabled`,
     ///     so a read-only pane relays NOTHING to the host (wire-compatible silence).

@@ -42,8 +42,8 @@ final class CanvasReviewFixTests: XCTestCase {
     func testIsPaneVisibleReportedVsEmptySemantics() {
         let p0 = PaneID(), p1 = PaneID()
         let store = makeStore(restoring: .make(panes: [
-            (p0, PaneSpec(kind: .remoteGUI, title: "0")),
-            (p1, PaneSpec(kind: .remoteGUI, title: "1")),
+            (p0, PaneSpec(kind: .desktop, title: "0")),
+            (p1, PaneSpec(kind: .desktop, title: "1")),
         ]))
 
         // Pre-report: falls back to isPaneOnCanvas (both true).

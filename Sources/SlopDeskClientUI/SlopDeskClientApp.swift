@@ -221,7 +221,7 @@ public struct SlopDeskClientApp: App {
             ),
             liveVideoCap: liveVideoCap,
             persistence: persistence,
-            // Hold a closed `.remoteGUI` pane's cap slot briefly past `teardown()` so the dismantle
+            // Hold a closed video pane's cap slot briefly past `teardown()` so the dismantle
             // releases the stack before a same-tick sibling is admitted (avoids a transient cap+1).
             videoTeardownSettle: .milliseconds(250),
         )
@@ -477,18 +477,16 @@ public struct SlopDeskClientApp: App {
         let chromeState = WorkspaceChromeState()
         _chrome = State(initialValue: chromeState)
         #if os(macOS)
-        // Host-windows FEED: the ONE app-owned store Open Quickly's Host rows render (the dedicated
-        // rail is retired — full-desktop pivot). Its renewal loop (a scene `.task` below) gates on OQ
-        // visibility + connection — no OQ up costs the host exactly 0 Hz. Strong capture of the
-        // app-lifetime overlay local; the connection is weak like `overlay.connectionTarget`.
+        // Host-windows FEED: kept for `AppLaunchMonitor`'s layout auto-switch (its live snapshot
+        // answers the monitor's poll for free). Its renewal loop (a scene `.task` below) gates on OQ
+        // visibility + connection — no OQ up costs the host exactly 0 Hz; a dormant feed falls back
+        // to the monitor's own wire query. The connection is weak like `overlay.connectionTarget`.
         let feed = HostWindowFeed(
             isActive: { overlay.openQuicklyVisible },
             isConnected: { [weak appConnection] in appConnection?.status == .connected },
             target: { [weak appConnection] in appConnection?.target ?? .default },
         )
         _hostWindowFeed = State(initialValue: feed)
-        // Open Quickly's Host rows read the live feed (weak — @State owns it).
-        overlay.hostWindowFeed = feed
         // While the feed is live its snapshot answers the app-launch monitor's
         // poll for free (one poller replaces two); a dormant feed falls back to the wire query.
         launchMonitor.hostWindowFeed = feed
@@ -733,7 +731,7 @@ public struct SlopDeskClientApp: App {
                         await connection.connect()
                     } else {
                         // Video-only automation (the video host serves UDP only, no TCP listener): mark
-                        // connected so the workspace mounts and the .remoteGUI pane opens its UDP flow.
+                        // connected so the workspace mounts and the video pane opens its UDP flow.
                         connection.markConnectedForAutomation()
                     }
                 }
@@ -836,7 +834,6 @@ public struct SlopDeskClientApp: App {
                     satelliteWindows.sync(
                         store.detachedPanes, store: store, paneDrag: paneDrag, decorate: decorateSatelliteRoot,
                     )
-                    // `openRemoteWindow` re-opening an already-detached host window reveals the satellite
                     // instead of minting a second live stream — the store stays AppKit-free, so it calls
                     // back into this coordinator through the injected seam.
                     store.revealSatelliteWindow = { paneID in satelliteWindows.reveal(paneID) }

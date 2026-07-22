@@ -127,23 +127,23 @@ final class SessionTemplateEngineTests: XCTestCase {
         XCTAssertEqual(captured.layout, .pane(TemplatePane(kind: .terminal, title: "Solo")))
     }
 
-    /// `captureTemplate` must PRESERVE a non-terminal pane kind (not hardcode `.terminal`): a `.remoteGUI`
-    /// leaf's spec round-trips into a `.remoteGUI` ``TemplatePane``. Without this, hardcoding the capture's
+    /// `captureTemplate` must PRESERVE a non-terminal pane kind (not hardcode `.terminal`): a `.desktop`
+    /// leaf's spec round-trips into a `.desktop` ``TemplatePane``. Without this, hardcoding the capture's
     /// `kind:` to `.terminal` (SessionTemplateEngine.swift:83) would pass the rest of the suite.
     func testCaptureNonTerminalKindIsPreserved() {
-        let session = Session.singlePane(name: "G", spec: PaneSpec(kind: .remoteGUI, title: "GUI"))
+        let session = Session.singlePane(name: "G", spec: PaneSpec(kind: .desktop, title: "GUI"))
         let captured = SessionTemplateEngine.captureTemplate(from: session, name: "Cap", symbol: "x")
-        XCTAssertEqual(captured.layout, .pane(TemplatePane(kind: .remoteGUI, title: "GUI")))
+        XCTAssertEqual(captured.layout, .pane(TemplatePane(kind: .desktop, title: "GUI")))
     }
 
     /// `makeSession` must PRESERVE a non-terminal template-pane kind when seeding the spec (not hardcode
-    /// `.terminal`): a `.remoteGUI` ``TemplatePane`` seeds a `.remoteGUI` ``PaneSpec``. Without this,
+    /// `.terminal`): a `.desktop` ``TemplatePane`` seeds a `.desktop` ``PaneSpec``. Without this,
     /// hardcoding the build's `kind:` to `.terminal` (SessionTemplateEngine.swift:44) would pass the suite.
     func testMakeSessionNonTerminalKindIsPreserved() {
         let template = SessionTemplate(
             name: "Mixed",
             layout: .split(axis: .horizontal, children: [
-                .pane(TemplatePane(kind: .remoteGUI, title: "GUI")),
+                .pane(TemplatePane(kind: .desktop, title: "GUI")),
                 .pane(TemplatePane(kind: .terminal, title: "Term")),
             ]),
         )
@@ -151,7 +151,7 @@ final class SessionTemplateEngineTests: XCTestCase {
         let kindByTitle = Dictionary(
             uniqueKeysWithValues: session.specs.values.map { ($0.title, $0.kind) },
         )
-        XCTAssertEqual(kindByTitle["GUI"], .remoteGUI)
+        XCTAssertEqual(kindByTitle["GUI"], .desktop)
         XCTAssertEqual(kindByTitle["Term"], .terminal)
     }
 

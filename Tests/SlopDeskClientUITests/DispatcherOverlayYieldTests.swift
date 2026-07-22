@@ -160,14 +160,13 @@ final class DispatcherOverlayYieldTests: XCTestCase {
         XCTAssertNotNil(selectTab, "\(name): ⌘2 is passed through to the overlay (not the background tab-switch)")
     }
 
-    /// HIGH: the four SCRIMMED modals (Command Palette / Cheat Sheet / Connect / Remote-Picker) each yield the
+    /// HIGH: the SCRIMMED modals (Command Palette / Cheat Sheet / Connect) each yield the
     /// destructive global chords through the real gate — they were in `anyModalVisible` but NOT in
     /// `capturesKeyboardWhileVisible`, so ⌘W/⌘T/⌘2 leaked to the workspace behind their scrim.
     func testScrimmedModalsYieldDestructiveChordsThroughTheRealOverlayGate() {
         assertOverlayYieldsDestructiveChords("palette") { $0.openPalette() }
         assertOverlayYieldsDestructiveChords("cheatSheet") { $0.openCheatSheet() }
         assertOverlayYieldsDestructiveChords("connect") { $0.openConnect() }
-        assertOverlayYieldsDestructiveChords("remotePicker") { $0.openRemotePicker() }
     }
 
     /// MEDIUM: the non-scrimmed Global Search surface (whose query field holds focus) likewise yields the

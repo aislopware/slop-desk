@@ -53,9 +53,9 @@ final class WorkspacePersistenceTests: XCTestCase {
         CanvasItem(
             id: id,
             spec: PaneSpec(
-                kind: .remoteGUI,
+                kind: .desktop,
                 title: title,
-                video: VideoEndpoint(windowID: 42, title: title),
+                video: VideoEndpoint(windowID: 0, title: title, displayID: 0),
             ),
             frame: frame, z: z, groupID: groupID,
         )
@@ -97,7 +97,7 @@ final class WorkspacePersistenceTests: XCTestCase {
                 ),
                 CanvasItem(
                     id: pC,
-                    spec: PaneSpec(kind: .remoteGUI, title: "agent"),
+                    spec: PaneSpec(kind: .desktop, title: "agent"),
                     frame: CGRect(x: 0, y: 0, width: 640, height: 420),
                     z: 2,
                     groupID: groupB.id,
@@ -237,7 +237,7 @@ final class WorkspacePersistenceTests: XCTestCase {
         let p0 = PaneID(), p1 = PaneID()
         let original = Workspace.make(panes: [
             (p0, PaneSpec(kind: .terminal, title: "shell")),
-            (p1, PaneSpec(kind: .remoteGUI, title: "agent")),
+            (p1, PaneSpec(kind: .desktop, title: "agent")),
         ])
         let data = try makeEncoder().encode(original)
         let restored = decodeOrDefault(data)
@@ -250,7 +250,7 @@ final class WorkspacePersistenceTests: XCTestCase {
     func testMigrationIdentityForCurrentVersion() {
         let original = Workspace.make(panes: [
             (PaneID(), PaneSpec(kind: .terminal, title: "shell")),
-            (PaneID(), PaneSpec(kind: .remoteGUI, title: "agent")),
+            (PaneID(), PaneSpec(kind: .desktop, title: "agent")),
         ])
         let migrated = WorkspaceSchemaMigration.migrate(original, from: Workspace.currentSchemaVersion)
         XCTAssertEqual(migrated, original, "from == to is the identity migration")
@@ -290,7 +290,7 @@ final class WorkspacePersistenceTests: XCTestCase {
         let persistence = WorkspacePersistence(fileURL: url)
         let original = Workspace.make(panes: [
             (PaneID(), PaneSpec(kind: .terminal, title: "shell")),
-            (PaneID(), PaneSpec(kind: .remoteGUI, title: "agent")),
+            (PaneID(), PaneSpec(kind: .desktop, title: "agent")),
         ])
         try persistence.save(original)
         XCTAssertEqual(persistence.load(), original, "a current-version payload loads verbatim")
@@ -348,7 +348,7 @@ final class WorkspacePersistenceTests: XCTestCase {
     func testLoadDoesNotBackUpAGoodFile() throws {
         let url = try tempURL()
         let persistence = WorkspacePersistence(fileURL: url)
-        try persistence.save(Workspace.make(panes: [(PaneID(), PaneSpec(kind: .remoteGUI, title: "x"))]))
+        try persistence.save(Workspace.make(panes: [(PaneID(), PaneSpec(kind: .desktop, title: "x"))]))
         _ = persistence.load()
         let backup = url.appendingPathExtension("corrupt")
         XCTAssertFalse(FileManager.default.fileExists(atPath: backup.path), "a good load writes no backup")
@@ -402,7 +402,7 @@ final class WorkspacePersistenceTests: XCTestCase {
         let p0 = PaneID(), p1 = PaneID()
         let base = Workspace.make(panes: [
             (p0, PaneSpec(kind: .terminal, title: "shell")),
-            (p1, PaneSpec(kind: .remoteGUI, title: "agent")),
+            (p1, PaneSpec(kind: .desktop, title: "agent")),
         ])
 
         let (withGroup, gid) = base.addingGroup(name: "Work")
@@ -547,13 +547,13 @@ final class WorkspacePersistenceTests: XCTestCase {
         let url = try tempURL()
         let persistence = WorkspacePersistence(fileURL: url)
         let session = Session.singlePane(name: "Local", spec: PaneSpec(kind: .terminal, title: "build"))
-        // Add a second TERMINAL tab + a WINDOW tab so the round-trip exercises the mixed-kind tree
-        // (the current shape: terminal / desktop / window panes are all ordinary leaves).
+        // Add a second TERMINAL tab + a DESKTOP tab so the round-trip exercises the mixed-kind tree
+        // (terminal / desktop panes are ordinary leaves).
         let (withWindow, windowPane) = WorkspaceTreeOps.newTab(
             in: TreeWorkspace(sessions: [session], activeSessionID: session.id),
             spec: PaneSpec(
-                kind: .remoteGUI, title: "agent",
-                video: VideoEndpoint(windowID: 3, title: "agent", appName: "Xcode"),
+                kind: .desktop, title: "agent",
+                video: VideoEndpoint(windowID: 0, title: "agent", displayID: 0),
             ),
         )
         let (grown, _) = WorkspaceTreeOps.newTab(
@@ -570,8 +570,8 @@ final class WorkspacePersistenceTests: XCTestCase {
         )
         XCTAssertEqual(Set(loaded.allPaneIDs()), Set(grown.allPaneIDs()), "every leaf survived the round-trip")
         XCTAssertEqual(
-            loaded.spec(for: windowPane)?.kind, .remoteGUI,
-            "the window pane survived the round-trip as an ordinary tree leaf",
+            loaded.spec(for: windowPane)?.kind, .desktop,
+            "the desktop pane survived the round-trip as an ordinary tree leaf",
         )
         XCTAssertTrue(loaded.isInvariantHeld(), "the loaded tree holds specs == paneIDs")
         let backup = url.appendingPathExtension("corrupt")

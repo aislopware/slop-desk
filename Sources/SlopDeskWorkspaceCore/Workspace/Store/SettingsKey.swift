@@ -35,8 +35,6 @@ public enum SettingsKey {
         return suite
     }()
 
-    // Canvas
-    public static let defaultPaneKindKey = "canvas.defaultPaneKind" // PaneKind.rawValue
     // General / launch
     /// The `On Launch` general setting — restore the last session vs open a fresh window.
     /// Stored as the ``OnLaunchBehavior`` rawValue (`restore-last-session` / `new-window`); default
@@ -273,7 +271,7 @@ public enum SettingsKey {
     // Shell / window behaviour
     /// Where a new tab is inserted in the active session's tab bar (`new-tab-position`). Stored as the
     /// ``NewTabPosition`` rawValue (`auto`/`end`/`after-current`); default `.auto` (= append). Read at the ⌘T
-    /// fire-site (`WorkspaceStore.newTab`). `Key` suffix (like ``defaultPaneKindKey``) frees the bare
+    /// fire-site (`WorkspaceStore.newTab`). `Key` suffix frees the bare
     /// ``newTabPosition`` name for the typed accessor.
     public static let newTabPositionKey = "shell.newTabPosition" // NewTabPosition.rawValue
 
@@ -336,6 +334,11 @@ public enum SettingsKey {
     /// that changes every launch and can never restore. Default empty (a fresh install keeps the scene's
     /// `.defaultSize`).
     public static let windowSavedFrameKey = "window.savedFrame"
+    /// How the dedicated remote-desktop window presents when it opens (`desktop-window`), default
+    /// ``DesktopWindowPresentation/window``. Stored as the ``DesktopWindowPresentation`` rawValue
+    /// (`window` / `fullscreen`). Read once per desktop-window open by the satellite-window glue
+    /// (a `.fullscreen` value enters native fullscreen right after the window fronts).
+    public static let desktopWindowPresentationKey = "desktopWindow.presentation"
 
     // (First-launch flow + Shell → SlopDesk CLI card — getting-started__first-launch.md). A
     // `firstLaunch.*` / `shell.cli.*` namespace, so a stale read decode-fails to the key default per
@@ -545,12 +548,6 @@ public enum SettingsKey {
     /// default ON (macOS-only; inert on iOS). Read fire-time by ``DockProgressController`` via ``DockTintPolicy``.
     public static var dockIconErrorBadgeEnabled: Bool { Defaults[.dockIconErrorBadge] }
 
-    /// The default kind for a generic "New Pane" (toolbar primary action / empty state), default `.terminal`.
-    /// The ⌥⌘N per-kind shortcut is unaffected. A stale persisted `"claudeCode"` value (a retired kind) is not
-    /// a valid raw value here → falls back to `.terminal` via the `RawRepresentableBridge` (returns
-    /// the key default when the stored raw value no longer maps).
-    public static var defaultPaneKind: PaneKind { Defaults[.defaultPaneKind] }
-
     /// Where a new tab opens in the active session's tab bar (`new-tab-position`), default `.auto`
     /// (= append, matching the original behaviour before this setting existed). A stale / invalid persisted
     /// raw value falls back to `.auto` via the `RawRepresentableBridge`. Read at the ⌘T fire-site.
@@ -629,6 +626,14 @@ public enum SettingsKey {
     public static var savedWindowFrame: String {
         get { Defaults[.savedWindowFrame] }
         set { Defaults[.savedWindowFrame] = newValue }
+    }
+
+    /// How the dedicated remote-desktop window presents when it opens (`desktop-window`), default
+    /// ``DesktopWindowPresentation/window``. A stale / invalid persisted raw value repairs to
+    /// `.window` via the `RawRepresentableBridge`. Read once per desktop-window open by the macOS
+    /// satellite-window glue.
+    public static var desktopWindowPresentation: DesktopWindowPresentation {
+        Defaults[.desktopWindowPresentation]
     }
 
     // MARK: First-launch + SlopDesk CLI (getting-started__first-launch.md)
@@ -882,7 +887,6 @@ public extension Defaults.Keys {
     // Fire-time flags, never folded into a typed prefs model → golden-safe. Animate default OFF, error-tint ON.
     static let dockIconAnimateProgress = Key<Bool>(slopDesk: SettingsKey.dockIconAnimateProgress, default: false)
     static let dockIconErrorBadge = Key<Bool>(slopDesk: SettingsKey.dockIconErrorBadge, default: true)
-    static let defaultPaneKind = Key<PaneKind>(slopDesk: SettingsKey.defaultPaneKindKey, default: .terminal)
     static let newTabPosition = Key<NewTabPosition>(slopDesk: SettingsKey.newTabPositionKey, default: .auto)
     // Vertical-sidebar auto-hide (`auto-hide-tabs-panel`). Stores the bare `AutoHideTabsPanelMode`
     // rawValue via the `RawRepresentableBridge` (the `PreferRawRepresentable` conformance below), repairing a
@@ -926,6 +930,12 @@ public extension Defaults.Keys {
     static let windowHeightPx = Key<Int>(slopDesk: SettingsKey.windowHeightPxKey, default: 600)
     // `remember`-mode frame descriptor — a native `String` (`NSWindow.frameDescriptor`); empty = none saved.
     static let savedWindowFrame = Key<String>(slopDesk: SettingsKey.windowSavedFrameKey, default: "")
+    // Desktop-window presentation stored as the `DesktopWindowPresentation` rawValue (`desktop-window`);
+    // default `.window` (regular titled window — fullscreen is the Parsec-style opt-in).
+    static let desktopWindowPresentation = Key<DesktopWindowPresentation>(
+        slopDesk: SettingsKey.desktopWindowPresentationKey,
+        default: .window,
+    )
     // First-launch + SlopDesk CLI (getting-started__first-launch.md). Fire-time flags → golden-safe;
     // client-side. `hasCompletedFirstLaunch` gates the one-time sheet (default OFF — present once on a fresh
     // install); the three `shell.cli.*` toggles default OFF (CLI opt-in, prefix-less functions opt-in, never
@@ -1006,7 +1016,7 @@ public extension Defaults.Keys {
 }
 
 /// Store ``PaneKind`` as its bare `String` rawValue (not JSON-wrapped) so it stays wire-compatible with the
-/// existing direct-string writes + `defaultPaneKindKey` `@AppStorage`/`@Default` consumers.
+/// existing direct-string writes + `@AppStorage`/`@Default` consumers.
 /// `PreferRawRepresentable` selects `RawRepresentableBridge`, which yields the key default for a
 /// retired/invalid raw value (e.g. the retired `"claudeCode"`).
 extension PaneKind: Defaults.Serializable, Defaults.PreferRawRepresentable {}
@@ -1033,6 +1043,12 @@ extension CloseConfirmationPolicy: Defaults.Serializable, Defaults.PreferRawRepr
 /// the `RawRepresentableBridge`. A stale / invalid raw value repairs to `.restoreLastSession` via the enum's
 /// own non-failable ``OnLaunchBehavior/init(rawValue:)`` (and the key default is also `.restoreLastSession`).
 extension OnLaunchBehavior: Defaults.Serializable, Defaults.PreferRawRepresentable {}
+
+/// Store ``DesktopWindowPresentation`` as its bare `String` rawValue (`window`/`fullscreen`) so the
+/// persisted `desktop-window` setting round-trips with the config value; `PreferRawRepresentable`
+/// selects the `RawRepresentableBridge`, which yields the key default (`.window`) for a stale / invalid
+/// raw value.
+extension DesktopWindowPresentation: Defaults.Serializable, Defaults.PreferRawRepresentable {}
 
 /// Store ``WindowSizeMode`` as its bare `String` rawValue (`remember`/`grid`/`frame`) so the persisted
 /// `window-size` setting round-trips with the config value; `PreferRawRepresentable`

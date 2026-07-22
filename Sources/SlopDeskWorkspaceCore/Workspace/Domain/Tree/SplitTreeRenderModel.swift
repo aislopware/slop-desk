@@ -19,7 +19,7 @@ import Foundation
 /// The other leaves are NOT in `leaves` — but they ARE still emitted, as ``Layout/hiddenLeaves`` at their
 /// un-zoomed rects, so ``Layout/compositorLeaves`` always carries EVERY pane of the tab and the view keeps
 /// the siblings MOUNTED at `opacity 0` (the proven no-teardown trick — unmounting them dismantles the
-/// libghostty surface / `.remoteGUI` stream and un-zoom repaints from the lossy replay ring).
+/// libghostty surface / video stream and un-zoom repaints from the lossy replay ring).
 ///
 /// Free of SwiftUI; `CGRect`/`CGFloat` math only (the house float idiom: separate `*`+`+`, never
 /// `addingProduct`/`fma`; NaN-faithful ordered `Double.maximum`/`Double.minimum`). Headless-unit-tested
@@ -167,7 +167,7 @@ public enum SplitTreeRenderModel {
     }
 
     /// One placed leaf tagged with its zoom-visibility — the unit the SINGLE-`ForEach` compositor iterates
-    /// so a pane's SwiftUI identity (and its hosted terminal / `.remoteGUI` video surface) survives the
+    /// so a pane's SwiftUI identity (and its hosted terminal / video surface) survives the
     /// zoom hidden↔visible flip within ONE keyed collection (`.id` dedups only within one `ForEach`).
     public struct CompositorLeaf: Equatable, Sendable {
         public let leaf: PlacedLeaf

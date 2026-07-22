@@ -1,11 +1,11 @@
 // GuiLeafView — content of a video (PATH 2) pane leaf; the video parallel of
-// ``TerminalLeafView``. Mounts the ``VideoWindowFactory`` seam for a `.remoteGUI` / `.systemDialog` pane,
-// drives the cap-enforced activation lifecycle, else shows the in-pane picker / gated placeholder.
+// ``TerminalLeafView``. Mounts the ``VideoWindowFactory`` seam for a `.desktop` / `.systemDialog` pane,
+// drives the cap-enforced activation lifecycle, else shows the idle / gated placeholder.
 //
 // THREE display states, decided by the PURE ``RemoteGUIDisplay/resolve(admitted:configured:hasFreeSlot:)``
 // (headless-tested in `LiveVideoCapTests`):
 //   • `.live`      → model has an active descriptor → mount `VideoWindowFactory.make(descriptor, context)`.
-//   • `.entryForm` → no active stream and either unconfigured OR a cap slot free → the in-pane picker.
+//   • `.entryForm` → no active stream (pre-admission beat) → the calm idle placeholder.
 //   • `.gated`     → configured but the 2-stream `liveVideoCap` is saturated → the cap placeholder.
 //
 // CAP LIFECYCLE: `.task` calls `store.activateVideo(paneID)` (NOT `live.setVideoActive` — that bypasses
@@ -150,7 +150,7 @@ struct GuiLeafView: View {
                 }
             }
             .animation(Slate.Anim.reveal, value: model?.pasteFeedback)
-            // The `🔒 READ ONLY ×` pill (``ReadOnlyPill``) so a read-only `.remoteGUI` /
+            // The `🔒 READ ONLY ×` pill (``ReadOnlyPill``) so a read-only `.desktop` /
             // `.systemDialog` pane is a VISUAL peer of a read-only terminal leaf (same top-trailing overlay/reveal as
             // ``TerminalLeafView``). Without it a locked remote window silently swallows clicks/keys with ZERO
             // feedback and no exit affordance. A video pane has no ``TerminalViewModel`` (no `exitReadOnly()`), so
@@ -378,13 +378,9 @@ struct GuiLeafView: View {
                 // CONTROL bar (`GuiPaneControlBar`), not an in-content corner grip.
                 liveSurface
             case .entryForm:
-                // A DESKTOP pane has no picker (its display target is fixed at mint) — the transient
-                // pre-admission beat shows the calm placeholder, never the window-entry form.
-                if let model, live?.kind != .desktop {
-                    RemoteWindowPickerView(model: model, onActivate: { store.focusPaneTree(paneID) })
-                } else {
-                    placeholder(.entryForm)
-                }
+                // Every video pane's target is fixed at mint (a display, or the dialog monitor's fresh
+                // window id) — the transient pre-admission beat shows the calm placeholder.
+                placeholder(.entryForm)
             case .gated:
                 placeholder(.gated)
             }
@@ -488,11 +484,7 @@ struct GuiLeafView: View {
 
     private func placeholderLabel(_ state: RemoteGUIDisplay) -> String {
         if state == .gated { return "Video paused — too many live streams" }
-        return switch live?.kind {
-        case .systemDialog: "system dialog"
-        case .desktop: "desktop"
-        default: "remote window"
-        }
+        return live?.kind == .systemDialog ? "system dialog" : "desktop"
     }
 }
 
@@ -534,11 +526,10 @@ private struct StreamStallCaption: View {
 /// on-demand OVERLAY strip (collapsed to ``GuiLeafView``'s corner chip at rest — the leaf owns that
 /// state), still a flat strip along the pane bottom, a single top hairline (never a floating card), split
 /// BY KIND: everything
-/// LEFT of the spacer is a COMMAND (momentary — window verbs paste/resize/display/detach, then viewport
+/// LEFT of the spacer is a COMMAND (momentary — window verbs paste/display/detach, then viewport
 /// verbs fit/−/1×/+), everything RIGHT carries STATE (stats overlay, quality override, host audio,
 /// immersive, viewport lock — the accent tint is a status light, and only the right side ever shows one).
-/// Resize is gated on a live host-resize sink (``RemoteWindowModel/canResizeWindow``, withheld while
-/// read-only); the viewport verbs + lock on ``RemoteWindowModel/canControlViewport`` (live even while
+/// The viewport verbs + lock gate on ``RemoteWindowModel/canControlViewport`` (live even while
 /// read-only — pure client ops).
 private struct GuiPaneControlBar: View {
     let model: RemoteWindowModel?
@@ -560,8 +551,6 @@ private struct GuiPaneControlBar: View {
     /// Folds the bar back into the leaf's corner chip (the leaf owns the expanded state).
     let onCollapse: () -> Void
 
-    /// Whether the numeric "Resize…" size popover is open.
-    @State private var showResizePopover = false
     /// Whether the stream-quality (fps cap / bitrate ceiling) popover is open.
     @State private var showTunePopover = false
 
@@ -587,22 +576,11 @@ private struct GuiPaneControlBar: View {
             // ── WINDOW COMMANDS: paste into it, resize it, re-target it, pop it out.
             HStack(spacing: Slate.Metric.space1) {
                 // PASTE: local-clipboard affordances — "Paste as Keystrokes" (types the CURRENT local
-                // clipboard into the host window) + a "Clipboard Ring" submenu of recent clips (masked
+                // clipboard into the host target) + a "Clipboard Ring" submenu of recent clips (masked
                 // preview for secrets). A footer MENU, not a surface context menu, which would steal the
-                // secondary-click the pane forwards to the host window. Also via ⌥⌘V + the command palette.
+                // secondary-click the pane forwards to the host. Also via ⌥⌘V + the command palette.
                 if let model {
                     GuiPastePlateMenu(model: model, store: store)
-                }
-                if let model, model.canResizeWindow {
-                    // The system window-resize glyph (dashed target square + arrow) — HOST window
-                    // dimensions, deliberately NOT an arrows-only glyph so it can't be read as the
-                    // client-side fit/zoom cluster.
-                    SlatePlateButton(symbol: .squareResize, help: "Resize remote window…") {
-                        showResizePopover = true
-                    }
-                    .popover(isPresented: $showResizePopover, arrowEdge: .bottom) {
-                        RemoteWindowSizePopover(model: model, isPresented: $showResizePopover)
-                    }
                 }
                 // DISPLAY SWITCHER (desktop panes): re-target the stream at another host display.
                 if let model, model.desktopDisplayID != nil {
@@ -862,90 +840,6 @@ private struct GuiDisplaySwitcherMenu: View {
             }
         }
         .task { await model.refreshDisplays() }
-    }
-}
-
-/// The numeric size popover — set the remote window's POINT size by typing width/height instead of dragging a
-/// grip. Native SwiftUI controls: the fields pre-fill at the window's CURRENT size and cap at the host-reported
-/// display MAX (``RemoteWindowModel/windowMaxPointSize``); "Maximize" jumps to that max (reachable because the
-/// host re-anchors the window at its display origin). Apply requests an absolute host-window resize.
-private struct RemoteWindowSizePopover: View {
-    let model: RemoteWindowModel
-    @Binding var isPresented: Bool
-
-    @State private var width: Double = 0
-    @State private var height: Double = 0
-
-    /// UI floor (the session clamps to its own min too); fall back to a generous ceiling until the host
-    /// reports the real display max.
-    private static let minSide: Double = 240
-    private static let fallbackMax: Double = 8192
-
-    private var maxW: Double { Swift.max(
-        Self.minSide,
-        model.windowMaxPointSize.map { Double($0.width) } ?? Self.fallbackMax,
-    ) }
-    private var maxH: Double { Swift.max(
-        Self.minSide,
-        model.windowMaxPointSize.map { Double($0.height) } ?? Self.fallbackMax,
-    ) }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Slate.Metric.space3) {
-            Text("Resize remote window")
-                .font(.system(size: Slate.Typeface.body, weight: .semibold))
-                .foregroundStyle(Slate.Text.primary)
-            axisRow("Width", value: $width, range: Self.minSide...maxW)
-            axisRow("Height", value: $height, range: Self.minSide...maxH)
-            if let mx = model.windowMaxPointSize {
-                Text("Display max \(Int(mx.width)) × \(Int(mx.height)) pt")
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.Text.secondary)
-            }
-            HStack(spacing: Slate.Metric.space2) {
-                if model.windowMaxPointSize != nil {
-                    Button("Maximize") { width = maxW
-                        height = maxH
-                    }
-                }
-                Spacer()
-                Button("Cancel") { isPresented = false }
-                    .keyboardShortcut(.cancelAction)
-                Button("Apply") { apply() }
-                    .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(Slate.Metric.space4)
-        .frame(width: 280)
-        .onAppear {
-            let cur = model.windowPointSize ?? CGSize(width: 1280, height: 800)
-            width = clamp(Double(cur.width), Self.minSide, maxW)
-            height = clamp(Double(cur.height), Self.minSide, maxH)
-        }
-    }
-
-    private func axisRow(_ label: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
-        HStack(spacing: Slate.Metric.space2) {
-            Text(label)
-                .frame(width: 52, alignment: .leading)
-                .foregroundStyle(Slate.Text.secondary)
-            TextField(label, value: value, format: .number)
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 92)
-            Stepper(label, value: value, in: range, step: 20)
-                .labelsHidden()
-            Text("pt").foregroundStyle(Slate.Text.secondary)
-        }
-        .font(.system(size: Slate.Typeface.body))
-    }
-
-    private func apply() {
-        model.resizeWindow(toWidth: clamp(width, Self.minSide, maxW), height: clamp(height, Self.minSide, maxH))
-        isPresented = false
-    }
-
-    private func clamp(_ v: Double, _ lo: Double, _ hi: Double) -> Double {
-        Swift.min(Swift.max(v, lo), Swift.max(lo, hi))
     }
 }
 

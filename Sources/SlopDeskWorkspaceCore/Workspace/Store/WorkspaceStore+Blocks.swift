@@ -25,7 +25,7 @@ extension CommandBlock: PeekBlockLine {}
 /// launch (same session instance).
 @MainActor
 protocol TerminalModelProviding: AnyObject {
-    /// The live terminal model the block ops drive, or `nil` for a non-terminal session (`.remoteGUI`).
+    /// The live terminal model the block ops drive, or `nil` for a non-terminal session (a video pane).
     var terminalModel: TerminalViewModel? { get }
 
     /// The per-session key block bookmarks persist under (see the type doc). Distinct per materialization.
@@ -174,7 +174,7 @@ public extension WorkspaceStore {
 
     /// The active pane's live terminal model in WHICHEVER live model is active: the tree's active pane
     /// on the IDE shell, the canvas focus on the retained-but-dead path. `nil` for a non-terminal active
-    /// pane (`.remoteGUI` / `.systemDialog`) or an empty shell. Shared by the block ops so the
+    /// pane (`.desktop` / `.systemDialog`) or an empty shell. Shared by the block ops so the
     /// navigator / jump work on both paths — and by the ``WorkspaceStore+FontScroll`` hooks (font/scroll
     /// resolve the same active terminal model), so it is `internal` (cross-file) rather than `private`.
     internal var activeTerminalModel: TerminalViewModel? {

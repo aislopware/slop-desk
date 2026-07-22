@@ -1,32 +1,24 @@
 import Foundation
 
-// Per-pane `@MainActor @Observable` LOGIC for opening one remote GUI window (PATH 2): picker
-// refresh/pick, open/close, rebind, and paste-as-keystrokes. No SwiftUI usage (a rebuilt view binds to it).
+// Per-pane `@MainActor @Observable` LOGIC for one PATH-2 video stream (a whole display for a
+// `.desktop` pane, one host window for a `.systemDialog` pane): open/close, the latched pane modes,
+// and paste-as-keystrokes. No SwiftUI usage (a rebuilt view binds to it).
 @preconcurrency
 @MainActor
 @Observable
 public final class RemoteWindowModel {
-    // MARK: Entry fields (bound to the form)
+    // MARK: Target fields
 
-    /// Which host-side window to mirror (picker or manual fallback). Host/ports come from the app target.
+    /// Which host-side window to stream (a `.systemDialog` pane's pre-bound id, as a string — the
+    /// historical entry-field shape). Host/ports come from the app target. Unused for a display target.
     public var windowID: String
     public var title: String
-    /// PANE REBIND: the owning app's name (filled by ``pick(_:)``; empty for manual entry). Persisted
-    /// with the endpoint so a restored binding can re-resolve a stale CGWindowID by app+title.
+    /// The owning app's name for a window-shaped target (empty for manual/display bindings).
     public var appName: String
 
-    /// PANE REBIND: the store persists each committed endpoint into the pane's spec through this
-    /// (wired at session materialization). Fired by ``open()``.
+    /// The store persists each committed endpoint into the pane's spec through this (wired at session
+    /// materialization). Fired by ``open()``.
     public var onEndpointCommitted: ((VideoEndpoint) -> Void)?
-
-    // MARK: Picker state (docs/31 discovery)
-
-    /// The host's shareable windows, fetched by ``refresh()`` — what the picker lists.
-    public private(set) var availableWindows: [RemoteWindowSummary] = []
-    /// True while a discovery query is in flight (the panel shows a spinner).
-    public private(set) var isLoading = false
-    /// A short message when discovery yielded nothing / no discovery seam (the panel offers manual entry).
-    public private(set) var loadError: String?
 
     /// Resolves the app-global ``ConnectionTarget`` (host + UDP ports) at open-time so every video pane
     /// rides the one shared UDP flow at the app host (docs/31).
@@ -34,15 +26,18 @@ public final class RemoteWindowModel {
 
     /// FULL-DESKTOP TARGET (a `.desktop` pane): non-nil ⇒ this model streams a whole host display
     /// (`0` = the main display) instead of a window. ``open()`` then builds a display descriptor
-    /// directly — no picker, no window id, and ``revalidateBinding()`` is a `.skipped` no-op (a
-    /// display target never goes stale the way CGWindowIDs do).
+    /// directly — no window id (a display target never goes stale the way CGWindowIDs do).
     /// Mutable only via ``switchDisplay(to:)`` (the desktop pane's display switcher) — every other
     /// consumer treats it as the fixed mint-time target.
     public private(set) var desktopDisplayID: UInt32?
 
-    /// The opened window's descriptor (carries the full endpoint). `nil` ⇒ the form is shown;
+    /// The opened window's descriptor (carries the full endpoint). `nil` ⇒ the placeholder is shown;
     /// non-nil ⇒ the live ``VideoWindowFactory`` view is shown.
     public private(set) var active: RemoteWindowDescriptor?
+
+    /// A short human-readable reason the stream fell back to the placeholder (e.g. the host rejected
+    /// the session — target gone / version skew). Cleared on a successful re-open.
+    public private(set) var loadError: String?
 
     // MARK: Paste as Keystrokes (per-key CGEvent typing into secure fields)
 
@@ -372,15 +367,6 @@ public final class RemoteWindowModel {
 
     /// The in-flight paste (cancelled if a new one starts or the pane tears down).
     private var pasteTask: Task<Void, Never>?
-    /// The in-flight post-pick binding revalidation (see ``pickAndOpen(_:)``) — cancelled if the user
-    /// re-picks or the pane closes, so a stale query can't unbind a freshly re-picked window. Readable so a
-    /// test can `await` its completion deterministically (the setter stays private).
-    @ObservationIgnored private(set) var revalidationTask: Task<Void, Never>?
-    /// TEARDOWN GENERATION: bumped by every ``close()``. ``revalidateBinding()`` snapshots it before
-    /// suspending on the discovery query and drops its verdict if it changed — outer-task cancellation is
-    /// only cooperative, so without this a close() racing the await would let a stale `.rebind` verdict
-    /// silently re-open a torn-down pane's video stream.
-    @ObservationIgnored private var closeGeneration: UInt64 = 0
     /// Per-character pacing — slow enough that a secure field's focus/IME keeps up, fast enough to
     /// feel instant for a password. Injectable for deterministic tests (`.zero`).
     private let pasteInterval: Duration
@@ -477,75 +463,6 @@ public final class RemoteWindowModel {
         self.pasteFeedbackDuration = pasteFeedbackDuration
     }
 
-    // MARK: Discovery (picker)
-
-    /// Queries the host for its shareable windows via the ``RemoteWindowDiscovery`` seam and populates
-    /// ``availableWindows``. Best-effort: on no seam / empty result it sets ``loadError`` so the panel
-    /// offers the manual-id fallback. Idempotent-safe to call repeatedly (Refresh / on-appear).
-    public func refresh() async {
-        // Coalesce overlapping refreshes (the on-appear `.task` vs a manual Refresh tap, or a double tap):
-        // a second call while one is in flight is a no-op rather than racing two queries to the same host.
-        guard !isLoading else { return }
-        guard let query = RemoteWindowDiscovery.shared else {
-            loadError = "Window discovery is unavailable — enter a window id manually."
-            return
-        }
-        isLoading = true
-        loadError = nil
-        let t = target()
-        let windows = await query(t.host, t.mediaPort, t.cursorPort)
-        isLoading = false
-        // If the user opened a window while the query was in flight, don't stamp stale picker state onto a
-        // now-active pane (it would briefly show on a later close()→form).
-        guard active == nil else { return }
-        availableWindows = windows
-        loadError = windows.isEmpty
-            ? "No windows found on the host (screen-recording permission?). You can enter a window id manually."
-            : nil
-    }
-
-    /// Pre-warms the picker list from the LIVE host-window feed (see docs/45):
-    /// the panel renders instantly from ≤2 s-fresh push data instead of waiting a discovery round
-    /// trip; the on-appear ``refresh()`` still runs its wire round (freshness re-validated). No-op
-    /// once a window is open (the same stale-stamp guard `refresh()` takes) or with nothing to show.
-    public func prewarm(_ windows: [RemoteWindowSummary]) {
-        guard active == nil, !windows.isEmpty else { return }
-        availableWindows = windows
-        loadError = nil
-    }
-
-    /// The window list narrowed by a filter query — every whitespace-separated token must match
-    /// case-insensitively in the title OR the app name (token-AND, the picker's filter-field policy;
-    /// 10+ windows on a busy host made the unfiltered list scroll-blind). Pure + static for tests.
-    public static func filtered(
-        _ windows: [RemoteWindowSummary], query: String,
-    ) -> [RemoteWindowSummary] {
-        let tokens = query.lowercased().split(separator: " ").map(String.init)
-        guard !tokens.isEmpty else { return windows }
-        return windows.filter { window in
-            let haystack = "\(window.title.lowercased()) \(window.appName.lowercased())"
-            return tokens.allSatisfy { haystack.contains($0) }
-        }
-    }
-
-    /// The message shown inside the discovered-window list when the active filter excludes every window.
-    /// The list renders only when discovery found ≥1 window (empty filter matches all), so this is always a
-    /// filter-exclusion case — name the filter AND point at the fix (clearing it reveals `totalCount`
-    /// windows), not the dead-end "no windows match". Pure for tests.
-    public static func windowFilterEmptyMessage(filter: String, totalCount: Int) -> String {
-        let trimmed = filter.trimmingCharacters(in: .whitespaces)
-        let windowWord = totalCount == 1 ? "window" : "windows"
-        return "No windows match “\(trimmed)” — clear the filter to see all \(totalCount) \(windowWord)."
-    }
-
-    /// Picks a window from the list: fills ``windowID`` + ``title`` + ``appName`` (the caller then
-    /// ``open()``s).
-    public func pick(_ summary: RemoteWindowSummary) {
-        windowID = String(summary.windowID)
-        title = summary.title.isEmpty ? summary.appName : summary.title
-        appName = summary.appName
-    }
-
     var parsedWindowID: UInt32? { UInt32(windowID.trimmingCharacters(in: .whitespaces)) }
 
     /// Whether the model can open. A DESKTOP target always can (the display id is fixed at init);
@@ -557,6 +474,7 @@ public final class RemoteWindowModel {
     /// the live ``VideoWindowView``). No-op if a window target's id is invalid.
     public func open() {
         let t = target()
+        loadError = nil
         if let did = desktopDisplayID {
             active = RemoteWindowDescriptor(
                 title: title,
@@ -585,80 +503,6 @@ public final class RemoteWindowModel {
             title: title.isEmpty ? "window \(wid)" : title,
             appName: appName,
         ))
-    }
-
-    /// The user picked `window` and wants it live. Opens optimistically (surface mounts instantly on the
-    /// common case), THEN revalidates the binding against a FRESH host query.
-    ///
-    /// WHY not a bare `pick`+`open`: the picker list is fetched on appear and only refreshed manually, so a
-    /// window can close on the host between fetch and tap. The host then rejects the dead CGWindowID SILENTLY
-    /// (`helloAck(accepted:false)` → zero client effects, or the mux drops the hello) — the pane streams a
-    /// permanent black surface with NO error. Revalidation re-queries the live list: if the window is gone it
-    /// closes back to the picker with a ``loadError`` (the re-pick affordance); if the id was merely recycled
-    /// it re-binds the same app+title; a live window is `.kept` (one extra query, no visible change). Mirrors
-    /// the restored-binding self-heal (``LivePaneSession`` runs it once on restore).
-    public func pickAndOpen(_ window: RemoteWindowSummary) {
-        pick(window)
-        open()
-        revalidationTask?.cancel()
-        revalidationTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            _ = await revalidateBinding()
-        }
-    }
-
-    // MARK: Stale-binding revalidation (PANE REBIND)
-
-    /// What ``revalidateBinding()`` decided (observability/tests).
-    public enum RebindOutcome: Equatable, Sendable {
-        /// No discovery seam / no parseable id / host unreachable (empty list) — left as-is.
-        case skipped
-        /// The saved id is still valid (same app) — nothing changed.
-        case kept
-        /// The id was stale; re-picked the same app's window (by title tiebreak) and re-opened.
-        case rebound
-        /// The app has no windows on the host anymore — closed back to the picker form.
-        case unbound
-    }
-
-    /// Validates the CURRENT (typically restored) binding against the host's live window list and self-heals
-    /// a stale CGWindowID via ``WindowRebind``. Called once per session by `LivePaneSession.setVideoActive`
-    /// AFTER the optimistic `open()` (a stale binding re-binds within the discovery round-trip instead of
-    /// sitting on a silent black pane). Best-effort: an unreachable host / missing seam changes nothing.
-    public func revalidateBinding() async -> RebindOutcome {
-        // A DESKTOP target has no window binding to go stale — nothing to revalidate.
-        guard desktopDisplayID == nil else { return .skipped }
-        guard let query = RemoteWindowDiscovery.shared, let wid = parsedWindowID else { return .skipped }
-        let t = target()
-        // STALE-VERDICT GUARD: snapshot liveness BEFORE suspending. The spawn sites cancel
-        // the outer task on teardown, but cancellation is cooperative and the discovery closure has no
-        // checkpoint — so a close() (or re-pick/re-open) racing the await must be caught HERE, after the
-        // query resumes, or the verdict below would act on a pane that no longer exists.
-        let generation = closeGeneration
-        let startedActive = active
-        let windows = await query(t.host, t.mediaPort, t.cursorPort)
-        // Torn down / re-targeted while the query was in flight ⇒ the verdict is stale. Acting on it
-        // would silently REACTIVATE a closed pane (the `.rebind` arm re-open()s). Drop it as a no-op.
-        guard !Task.isCancelled, generation == closeGeneration, active == startedActive else {
-            return .skipped
-        }
-        guard !windows.isEmpty else { return .skipped } // unreachable/empty: not evidence of staleness
-        switch WindowRebind.resolve(windowID: wid, appName: appName, title: title, in: windows) {
-        case .keep:
-            return .kept
-        case let .rebind(window):
-            close()
-            pick(window)
-            open()
-            return .rebound
-        case .unresolved:
-            // The window's app is gone — fall back to the entry form, pre-warmed with the list we
-            // already fetched so the picker renders instantly.
-            close()
-            availableWindows = windows
-            loadError = "\"\(title)\" is no longer open on the host — pick a window."
-            return .unbound
-        }
     }
 
     // MARK: Resize-reflow scrim signal (generic with the terminal pane)
@@ -705,32 +549,23 @@ public final class RemoteWindowModel {
         if awaitingResizeReflow { awaitingResizeReflow = false }
     }
 
-    /// TERMINAL REFUSAL: the host REJECTED the live session (`helloAck(accepted: false)` — the window is
+    /// TERMINAL REFUSAL: the host REJECTED the live session (`helloAck(accepted: false)` — the target is
     /// gone on the host / version mismatch, incl. the mux mint-failure refusal). The video pipeline has
     /// already torn itself down WITHOUT the bye path's auto-rebuild (a rebuild would re-hello the same
-    /// doomed request forever), so the pane must not keep a dead black surface: leave ``active`` and fall
-    /// back to the picker with a ``loadError`` explaining why — the same fallback the stale-binding
-    /// revalidation's `.unresolved` arm takes. No-op when nothing is active (a late/duplicate refusal
-    /// after a user close must not stamp an error onto a fresh picker).
+    /// doomed request forever), so the pane must not keep a dead black surface: drop ``active`` (the pane
+    /// falls back to its placeholder) and record ``loadError``. No-op when nothing is active (a late/
+    /// duplicate refusal after a user close must not stamp an error onto a fresh pane).
     public func noteSessionRejected() {
         guard active != nil else { return }
-        let name = title.isEmpty ? "That window" : "“\(title)”"
+        let name = title.isEmpty ? "The stream target" : "“\(title)”"
         close()
-        loadError = "\(name) is no longer available on the host — pick a window."
+        loadError = "\(name) is no longer available on the host."
     }
 
     /// Closes the remote window (tears down the live view → its orchestrator `stop()`).
     public func close() {
         active = nil
-        closeGeneration &+= 1 // invalidate any in-flight revalidateBinding() verdict (see its guard)
         pasteTask?.cancel() // a torn-down pane must not keep injecting a paste-in-flight into the host
-        // Cancel any in-flight post-pick revalidation. Cancellation alone is COOPERATIVE (the discovery
-        // await is not a reliable checkpoint), so the real teardown guarantee is `closeGeneration` above:
-        // revalidateBinding() snapshots it before suspending and drops a verdict that lands after this
-        // close — a stale query can never re-open a torn-down pane. Safe against self-cancel from the
-        // `.rebound` path (which calls close() then re-open()s synchronously — its guard already passed
-        // before that close, and there is no further suspension point).
-        revalidationTask?.cancel()
         endAwaitingReflow() // a closed window will not re-capture — never leave the scrim hung
         isStreamStalled = false // a closed pane shows the picker, not a stale "Reconnecting…" scrim
         audioStreamEnabled = false // the next session mints with audio OFF — keep the speaker honest

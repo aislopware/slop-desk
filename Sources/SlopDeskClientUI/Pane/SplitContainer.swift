@@ -113,7 +113,7 @@ struct SplitContainer: View {
             // EVERY pane — visible AND zoom-hidden — renders from ONE `ForEach` over
             // ``SplitTreeRenderModel/Layout/compositorLeaves``. `.id` only dedups WITHIN one `ForEach`, so
             // one keyed list keeps the zoom hidden↔visible flip within one collection and the hosted
-            // terminal / `.remoteGUI` video surface is never torn down.
+            // terminal / video surface is never torn down.
             ForEach(layout.compositorLeaves, id: \.id) { entry in
                 PaneContainer(
                     store: store,
@@ -122,7 +122,7 @@ struct SplitContainer: View {
                     // focus-steal guard for hidden tabs).
                     isFocused: !entry.isHidden && Self.isPaneFocused(entry.id, in: tab, activeTabID: activeTabID),
                     // ON-SCREEN gate: visible ⟺ the pane's tab is the active tab AND it is
-                    // not zoom-hidden. A `.remoteGUI` pane drives its `liveVideoCap` activation off THIS — a
+                    // not zoom-hidden. A video pane drives its `liveVideoCap` activation off THIS — a
                     // hidden tab / zoom-collapsed sibling releases its slot + stops the UDP/VT/Metal pipeline,
                     // re-activating when it returns (onDisappear never fires under keep-all-mounted).
                     isVisible: isActive && !entry.isHidden,
@@ -134,7 +134,7 @@ struct SplitContainer: View {
                 .position(x: entry.leaf.rect.midX, y: entry.leaf.rect.midY)
                 // ZOOM keep-mounted: a zoomed tab still emits every sibling as a HIDDEN compositor leaf at
                 // its un-zoomed rect — revealed/hidden here exactly like an inactive tab's layer, so the
-                // libghostty surface / `.remoteGUI` stream survives the zoom toggle and un-zoom is a pure
+                // libghostty surface / video stream survives the zoom toggle and un-zoom is a pure
                 // visibility flip (no teardown, no lossy ring-replay).
                 .opacity(entry.isHidden ? 0 : 1)
                 .allowsHitTesting(!entry.isHidden)

@@ -345,7 +345,6 @@ private struct GeneralSettingsTab: View {
     @Default(.closeConfirmTab) private var closeConfirmTab
     @Default(.closeConfirmWindow) private var closeConfirmWindow
     @Default(.redactSecrets) private var redactSecrets
-    @Default(.defaultPaneKind) private var defaultPaneKind
     // The OS Integration "Default Terminal" status, refreshed on appear + after Set.
     // macOS-only — `DefaultTerminalIntegration` is `#if os(macOS)` (no iOS LaunchServices / deep-links).
     #if os(macOS)
@@ -370,10 +369,6 @@ private struct GeneralSettingsTab: View {
 
             slateFormSection(GeneralSettingsLayout.privacyAndNewPanes) {
                 Toggle("Redact likely secrets from titles", isOn: $redactSecrets)
-                Picker("Default pane kind", selection: $defaultPaneKind) {
-                    Text("Terminal").tag(PaneKind.terminal)
-                    Text("Remote GUI").tag(PaneKind.remoteGUI)
-                }
                 timingFooter(.live)
             }
 

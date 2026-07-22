@@ -792,11 +792,6 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         overlay.closeConnect()
         XCTAssertFalse(overlay.anyModalVisible)
 
-        overlay.openRemotePicker()
-        XCTAssertTrue(overlay.anyModalVisible, "the remote-window picker is a modal")
-        overlay.closeRemotePicker()
-        XCTAssertFalse(overlay.anyModalVisible)
-
         // The Open-Quickly picker is a centered, SCRIMMED modal (it folded in Jump-To), so it
         // MUST register here. Fails if `openQuicklyVisible` is not folded into `anyModalVisible`.
         overlay.openOpenQuickly()
@@ -813,8 +808,8 @@ final class OverlayCoordinatorMountTests: XCTestCase {
 
     /// `capturesKeyboardWhileVisible` is the SINGLE source of truth the app's `isOverlayCapturingKeys` gate
     /// reads so the global NSEvent dispatcher YIELDS modeled chords to a focused overlay. Pin that it tracks
-    /// EVERY keyboard-owning overlay: Open-Quickly, Peek & Reply, AND the four
-    /// SCRIMMED modals (palette / cheat sheet / connect / remote picker). The NSEvent monitor PREEMPTS the
+    /// EVERY keyboard-owning overlay: Open-Quickly, Peek & Reply, AND the
+    /// SCRIMMED modals (palette / cheat sheet / connect). The NSEvent monitor PREEMPTS the
     /// responder chain, so sheet-presented panels can't rely on it alone; ⌘W/⌘T/⌘2 would destructively mutate
     /// the BACKGROUND tree behind their scrim without this gate.
     func testCapturesKeyboardWhileVisibleFoldsInKeyboardOwningOverlays() throws {
@@ -834,42 +829,11 @@ final class OverlayCoordinatorMountTests: XCTestCase {
         XCTAssertFalse(overlay.capturesKeyboardWhileVisible)
 
         // The scrimmed panels are in the gate: the NSEvent monitor preempts the
-        // responder chain, so palette / cheat-sheet / connect / remote-picker must trip it or ⌘W/⌘T/⌘2
+        // responder chain, so palette / cheat-sheet / connect must trip it or ⌘W/⌘T/⌘2
         // destructively mutates the background tree. (Pinned deeper by DispatcherOverlayYieldTests.)
         overlay.openPalette()
         XCTAssertTrue(overlay.capturesKeyboardWhileVisible, "the palette scrim owns ⌘-chords via the dispatcher gate")
         overlay.closePalette()
-    }
-
-    // MARK: - A picked window opens a `.remoteGUI` TAB + closes the picker
-
-    /// `RemoteWindowPickerModal` routes a pick through `coordinator.openRemoteWindow(_:)` (NOT the in-pane
-    /// `pick()→open()`). Pin that it opens a `.remoteGUI` TAB pre-bound to the picked window AND
-    /// closes the modal — the app-global path the modal depends on (the full-desktop pivot: the Stage is
-    /// retired, so the pick lands on the tree like any pane).
-    func testOpenRemoteWindowOpensWindowTabAndCloses() throws {
-        let (overlay, store) = makeCoordinator()
-        overlay.openRemotePicker()
-        XCTAssertTrue(overlay.remotePickerVisible, "openRemotePicker presents the modal")
-        XCTAssertNotNil(overlay.remotePickerModel, "a fresh discovery model is built per open")
-
-        let tabsBefore = store.tree.activeSession?.tabs.count ?? 0
-        let summary = RemoteWindowSummary(
-            windowID: 4242, appName: "Safari", title: "Docs", width: 1200, height: 800,
-        )
-        overlay.openRemoteWindow(summary)
-
-        XCTAssertFalse(overlay.remotePickerVisible, "picking a window closes the modal")
-        XCTAssertNil(overlay.remotePickerModel, "the per-open model is released on close")
-
-        let session = try XCTUnwrap(store.tree.activeSession)
-        XCTAssertEqual(session.tabs.count, tabsBefore + 1, "the pick opened a new tab")
-        let newPane = try XCTUnwrap(session.activeTab?.activePane, "the picked window's tab is selected")
-        XCTAssertEqual(session.specs[newPane]?.kind, .remoteGUI, "the new pane is a remote-GUI pane")
-        XCTAssertEqual(
-            session.specs[newPane]?.video?.windowID, 4242,
-            "the new pane is pre-bound to the picked host window id",
-        )
     }
 
     // MARK: - The host's toggled-state predicate reflects live chrome

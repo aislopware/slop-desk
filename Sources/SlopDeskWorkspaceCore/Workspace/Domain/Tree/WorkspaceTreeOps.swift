@@ -940,7 +940,9 @@ public enum WorkspaceTreeOps {
     /// session selected, tab selected, pane focused, zoom exited. No-op if `target` is not detached
     /// anywhere. Preserves the **specs invariant** (the spec never left the side table).
     public static func reattachPane(_ target: PaneID, in ws: TreeWorkspace) -> TreeWorkspace {
-        guard let sIdx = ws.sessions.firstIndex(where: { $0.isDetached(target) }) else { return ws }
+        guard let sIdx = ws.sessions.firstIndex(where: { $0.isDetached(target) }),
+              ws.sessions[sIdx].specs[target]?.kind != .desktop // the desktop never joins a tab
+        else { return ws }
         var copy = ws
         var session = copy.sessions[sIdx]
         let originTab = session.detached.first { $0.pane == target }?.originTab
@@ -985,6 +987,7 @@ public enum WorkspaceTreeOps {
         in ws: TreeWorkspace,
     ) -> TreeWorkspace {
         guard let sIdx = ws.sessions.firstIndex(where: { $0.isDetached(target) }),
+              ws.sessions[sIdx].specs[target]?.kind != .desktop, // the desktop never joins a tab
               let (anchorSession, anchorTab) = locate(anchor, in: ws), anchorSession == sIdx
         else { return ws }
         var copy = ws
@@ -1018,6 +1021,7 @@ public enum WorkspaceTreeOps {
         in ws: TreeWorkspace,
     ) -> TreeWorkspace {
         guard let sIdx = ws.sessions.firstIndex(where: { $0.isDetached(target) }),
+              ws.sessions[sIdx].specs[target]?.kind != .desktop, // the desktop never joins a tab
               ws.activeSessionIndex == sIdx
         else { return ws }
         var copy = ws
@@ -1042,7 +1046,9 @@ public enum WorkspaceTreeOps {
     /// its `PaneID` (registry no-op). No-op if `target` is not detached anywhere. Preserves the **specs
     /// invariant**.
     public static func reattachPaneToNewTab(_ target: PaneID, in ws: TreeWorkspace) -> TreeWorkspace {
-        guard let sIdx = ws.sessions.firstIndex(where: { $0.isDetached(target) }) else { return ws }
+        guard let sIdx = ws.sessions.firstIndex(where: { $0.isDetached(target) }),
+              ws.sessions[sIdx].specs[target]?.kind != .desktop // the desktop never joins a tab
+        else { return ws }
         var copy = ws
         var session = copy.sessions[sIdx]
         session.detached.removeAll { $0.pane == target }
@@ -1051,6 +1057,28 @@ public enum WorkspaceTreeOps {
         copy.sessions[sIdx] = session
         copy.activeSessionID = session.id
         return copy
+    }
+
+    /// Mints a BRAND-NEW pane DIRECTLY into the active session's ``Session/detached`` list — it never
+    /// passes through a tab. This is how a `.desktop` pane is born (docs/DECISIONS.md 2026-07-22: the
+    /// remote desktop is always its own OS window, never a pane in the workspace window): the spec
+    /// joins the side table, reconcile counts the id as desired (the video session opens), and the
+    /// satellite coordinator materializes the window. `originTab` is nil-equivalent — recorded as the
+    /// active tab purely because ``DetachedPane`` requires one; a desktop pane never reattaches, so
+    /// the origin is never consulted. Preserves the (detach-widened) **specs invariant**.
+    public static func mintDetachedPane(spec: PaneSpec, in ws: TreeWorkspace) -> (TreeWorkspace, PaneID) {
+        var copy = ws
+        let id = PaneID()
+        guard let sIdx = copy.activeSessionIndex ?? copy.sessions.indices.first else { return (ws, id) }
+        var session = copy.sessions[sIdx]
+        session.specs[id] = spec
+        let originTab = session.tabs.indices.contains(session.activeTabIndex)
+            ? session.tabs[session.activeTabIndex].id
+            : session.tabs.first?.id
+        guard let originTab else { return (ws, id) }
+        session.detached.append(DetachedPane(pane: id, originTab: originTab))
+        copy.sessions[sIdx] = session
+        return (copy, id)
     }
 
     /// Closes DETACHED pane `target` for real: removes its ``Session/detached`` entry AND its spec, so

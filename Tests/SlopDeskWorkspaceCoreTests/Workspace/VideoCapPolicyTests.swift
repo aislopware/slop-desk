@@ -5,7 +5,7 @@ import XCTest
 
 /// Pins the pure per-device live-video ceiling policy (``VideoCapPolicy`` / ``VideoDeviceClass``,
 /// docs/22 §7, ITEM #5): the number the app injects into ``WorkspaceStore/liveVideoCap`` differs by
-/// device class because the `.remoteGUI` video stack (2 UDP sockets + `VTDecompressionSession` +
+/// device class because the `.desktop` video stack (2 UDP sockets + `VTDecompressionSession` +
 /// `CVDisplayLink`) scales with the host's decode/compositing headroom — a phone can hold the fewest
 /// concurrent windows, a Mac the most.
 ///
@@ -124,28 +124,28 @@ final class VideoCapPolicyTests: XCTestCase {
         )
     }
 
-    // MARK: - the store honours the policy-chosen Int (cap-1 gates the 2nd remoteGUI pane)
+    // MARK: - the store honours the policy-chosen Int (cap-1 gates the 2nd desktop pane)
 
     /// The store keeps the plain `liveVideoCap: Int` shape; building it with the PHONE tier
-    /// (``VideoCapPolicy/phoneCap`` = 1) makes the second `.remoteGUI` pane gate — proving the
+    /// (``VideoCapPolicy/phoneCap`` = 1) makes the second `.desktop` pane gate — proving the
     /// policy-chosen Int flows straight into the activation ceiling.
     func testStoreBuiltWithPhoneCapGatesTheSecondRemoteGUIPane() {
         let phoneCap = VideoCapPolicy.cap(for: .phone)
         XCTAssertEqual(phoneCap, 1, "the phone tier admits exactly one live video pane")
 
-        // A single-remoteGUI-pane canvas grown to two remoteGUI leaves (no stray default terminal pane).
+        // A single-desktop-pane canvas grown to two desktop leaves (no stray default terminal pane).
         let rootID = PaneID()
-        let spec = PaneSpec(kind: .remoteGUI, title: "Remote window")
+        let spec = PaneSpec(kind: .desktop, title: "Desktop")
         let store = WorkspaceStore(
             restoring: Workspace.make(panes: [(rootID, spec)], focused: rootID),
             makeSession: { FakePaneSession($0) },
             liveVideoCap: phoneCap,
         )
-        store.addPane(kind: .remoteGUI)
+        store.addPane(kind: .desktop)
         let ids = store.workspace.canvas.allIDs()
-        XCTAssertEqual(ids.count, 2, "two remoteGUI leaves")
+        XCTAssertEqual(ids.count, 2, "two desktop leaves")
 
         XCTAssertTrue(store.activateVideo(ids[0]), "the single phone-cap slot admits the first pane")
-        XCTAssertFalse(store.activateVideo(ids[1]), "the second remoteGUI pane is gated at the phone cap of 1")
+        XCTAssertFalse(store.activateVideo(ids[1]), "the second desktop pane is gated at the phone cap of 1")
     }
 }

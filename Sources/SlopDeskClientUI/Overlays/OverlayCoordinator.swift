@@ -113,19 +113,9 @@ public final class OverlayCoordinator {
     /// re-targets cleanly.
     public private(set) var peekReplyExcluding: Set<PaneID> = []
 
-    // MARK: Remote-window picker state
-
-    /// Whether the Remote-Window picker modal is presented (the `/remote-control` pill + the "New Remote
-    /// Window Tab" palette action open it; a pick opens a `.remoteGUI` pane).
-    public private(set) var remotePickerVisible = false
-    /// The dedicated discovery-driving model for the live picker (NOT a pane's). Built per open from a
-    /// fresh app target so its `refresh()` queries the current host. `nil` until first opened.
-    @ObservationIgnored public private(set) var remotePickerModel: RemoteWindowModel?
-    /// Resolves the app-global ``ConnectionTarget`` for the picker's discovery query. Injected by the root.
+    /// Resolves the app-global ``ConnectionTarget`` (kept for overlay features that query the host).
+    /// Injected by the root.
     @ObservationIgnored public var connectionTarget: @MainActor () -> ConnectionTarget = { .default }
-    /// The app-owned host-windows feed (docs/45) — set once at app init so Open Quickly's Host rows
-    /// read the SAME live store the rail renders. Weak: the App's `@State` owns the feed.
-    @ObservationIgnored public weak var hostWindowFeed: HostWindowFeed?
 
     // MARK: Chrome toggles (injected by the root, which owns the live `WorkspaceChromeState`)
 
@@ -215,7 +205,7 @@ public final class OverlayCoordinator {
     /// on `!toasts.isEmpty`). Excludes Settings AND the non-scrimmed Global Search surface (which must not dim
     /// the workspace) — the host gates Global Search's hit-testing separately on ``globalSearchVisible``.
     public var anyModalVisible: Bool {
-        paletteVisible || cheatSheetVisible || connectVisible || remotePickerVisible || openQuicklyVisible
+        paletteVisible || cheatSheetVisible || connectVisible || openQuicklyVisible
             || peekReplyVisible
     }
 
@@ -396,7 +386,7 @@ public final class OverlayCoordinator {
             switch command {
             case .newPane(.terminal),
                  .newPaneDefault: "action.newTerminalTab"
-            case .newPane(.remoteGUI): "action.newRemoteTab"
+            case .newPane(.desktop): "action.newDesktopTab"
             case .newPane: nil
             case .closePane: "action.closePane"
             case .toggleZoom: "action.toggleZoom"
@@ -481,9 +471,6 @@ public final class OverlayCoordinator {
         case .openCheatSheet:
             closePalette()
             openCheatSheet()
-        case .openRemotePicker:
-            closePalette()
-            openRemotePicker()
         // A live theme switch — chainable (⌘↩ keep-open) like `.store` rows, so the
         // user can cycle themes without re-opening. No-op by default (tests / previews).
         case .switchTheme:
@@ -645,46 +632,6 @@ public final class OverlayCoordinator {
     public func advancePeekReply(answered pane: PaneID) {
         peekReplyExcluding.insert(pane)
         if peekReplyTarget() == nil { closePeekReply() }
-    }
-
-    // MARK: Remote-window picker
-
-    /// Present the Remote-Window picker (the `/remote-control` pill + the "New Remote Window Tab" action).
-    /// Builds a fresh discovery-driving ``RemoteWindowModel`` bound to the live app target so its
-    /// `refresh()` lists the current host's windows.
-    public func openRemotePicker() {
-        let model = RemoteWindowModel(target: connectionTarget)
-        // docs/45: the LIVE push feed pre-warms the picker so it renders
-        // instantly from ≤2 s-fresh data; the panel's on-appear refresh still re-validates.
-        if let feed = hostWindowFeed, feed.isLive {
-            model.prewarm(feed.structure.map { identity in
-                RemoteWindowSummary(
-                    windowID: identity.windowID,
-                    appName: identity.appName,
-                    title: feed.titles[identity.windowID] ?? "",
-                    width: UInt16(clamping: feed.metrics[identity.windowID]?.widthPt ?? 0),
-                    height: UInt16(clamping: feed.metrics[identity.windowID]?.heightPt ?? 0),
-                )
-            })
-        }
-        remotePickerModel = model
-        remotePickerVisible = true
-    }
-
-    public func closeRemotePicker() {
-        remotePickerVisible = false
-        remotePickerModel = nil
-    }
-
-    /// A window was chosen in the picker → open it as a `.remoteGUI` tab (pre-bound endpoint;
-    /// idempotent by windowID — an already-streaming window is revealed), then close the picker. The
-    /// materialized pane's own ``RemoteWindowModel`` drives the live stream.
-    public func openRemoteWindow(_ summary: RemoteWindowSummary) {
-        store?.openRemoteWindow(
-            windowID: summary.windowID, title: summary.title, appName: summary.appName,
-        )
-        store?.recordRecentCommand(.newPane(.remoteGUI))
-        closeRemotePicker()
     }
 
     // MARK: Toasts

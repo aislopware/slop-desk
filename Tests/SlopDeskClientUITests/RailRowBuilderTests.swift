@@ -436,8 +436,8 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertEqual(RailRowsBuilder.rowTitle(kind: .terminal, spec: noCwd), "Terminal")
 
         // Non-terminal kinds keep the title-fallback chain untouched.
-        let video = PaneSpec(kind: .remoteGUI, title: "Docs", lastKnownTitle: "Docs — Safari")
-        XCTAssertEqual(RailRowsBuilder.rowTitle(kind: .remoteGUI, spec: video), "Docs — Safari")
+        let video = PaneSpec(kind: .desktop, title: "Docs", lastKnownTitle: "Docs — Safari")
+        XCTAssertEqual(RailRowsBuilder.rowTitle(kind: .desktop, spec: video), "Docs — Safari")
     }
 
     /// Regression: a `title != lastKnownTitle` heuristic MISFIRES once a shell emits a SECOND
@@ -492,18 +492,6 @@ final class RailRowBuilderTests: XCTestCase {
 
     // MARK: - Video panes are rail rows again (the full-desktop pivot: the navigator is the ONE sidebar)
 
-    /// A `.remoteGUI` pane lists like any pane — the right rail that used to carry it is retired, so
-    /// the navigator must not skip video kinds anymore (a skipped pane would be untracked everywhere
-    /// but the tab strip). Fails on the Stage-era builder, which excluded `.remoteGUI`.
-    func testRemoteWindowPanesAreRailRows() throws {
-        let store = makeStore()
-        let remote = try XCTUnwrap(store.openRemoteWindow(windowID: 4242, title: "Docs", appName: "Safari"))
-
-        let rows = RailRowsBuilder.rows(for: store)
-        let row = try XCTUnwrap(rows.first { $0.id == remote }, "a window pane has a navigator row")
-        XCTAssertEqual(row.kind, .remoteGUI)
-    }
-
     /// A `.desktop` pane (the full-desktop stream) lists too, under its own kind.
     func testDesktopPanesAreRailRows() {
         let store = makeStore()
@@ -513,10 +501,10 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertEqual(rows.first { $0.id == desktop }?.kind, .desktop)
     }
 
-    /// The ⌘K jump-to-pane palette enumerates panes itself — a remote window is jumpable there too.
-    func testRemoteWindowPanesStayInTheJumpPalette() throws {
+    /// The ⌘K jump-to-pane palette enumerates panes itself — a video pane is jumpable there too.
+    func testRemoteWindowPanesStayInTheJumpPalette() {
         let store = makeStore()
-        let remote = try XCTUnwrap(store.openRemoteWindow(windowID: 7777, title: "Docs", appName: "Safari"))
+        let remote = store.newDesktopTab()
         store.splitActivePane(axis: .horizontal, kind: .terminal, leading: false, launchGrace: .zero)
 
         let paletteIDs = TabsPaletteSource.snapshot(store)
@@ -524,7 +512,7 @@ final class RailRowBuilderTests: XCTestCase {
             .map(\.id)
         XCTAssertTrue(
             paletteIDs.contains("tab.\(remote.raw.uuidString)"),
-            "a remote window must stay in the ⌘K jump-to-pane palette",
+            "a video pane must stay in the ⌘K jump-to-pane palette",
         )
     }
 

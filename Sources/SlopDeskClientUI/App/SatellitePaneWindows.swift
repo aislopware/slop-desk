@@ -299,7 +299,7 @@ final class SatelliteWindowsCoordinator {
     }
 
     /// Brings `paneID`'s satellite to the front (the ``WorkspaceStore/revealSatelliteWindow`` seam) —
-    /// `openRemoteWindow` calls this instead of minting a duplicate live stream when the window is
+    /// Reveal-style ingresses call this instead of minting a duplicate live stream when the pane is
     /// already detached. Returns `false` if no controller exists yet (e.g. this sync pass hasn't run).
     func reveal(_ paneID: PaneID) -> Bool {
         guard let controller = controllers[paneID] else { return false }

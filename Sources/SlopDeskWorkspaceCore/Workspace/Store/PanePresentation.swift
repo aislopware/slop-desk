@@ -6,7 +6,7 @@ import Foundation
 // usage; the rebuilt pane chrome (L3) will read these same helpers.
 @MainActor
 enum PanePresentation {
-    /// The connection-status presentation (production handle only; a `.remoteGUI` / faked handle has
+    /// The connection-status presentation (production handle only; a video / faked handle has
     /// no PATH-1 connection ⇒ `.none` ⇒ no dot).
     static func connectionStatus(_ handle: (any PaneSessionHandle)?) -> PaneConnectionStatus {
         PaneConnectionStatus.from((handle as? LivePaneSession)?.connection?.status)

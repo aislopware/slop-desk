@@ -177,7 +177,7 @@ enum RailRowsBuilder {
     ///
     /// Line 2: a terminal shows its git line (branch ↑/↓ · N changed) when the store has a summary for a
     /// repo cwd, else the kind-generic ``PaneSpec/railSubtitle`` — a terminal's plain cwd, or (for a
-    /// `.remoteGUI`/`.systemDialog` video pane, which has no shell cwd) the host-side window's owning app
+    /// `.desktop`/`.systemDialog` video pane, which has no shell cwd) the host-side target's owning app
     /// name (falling back to the window title). So a remote window reads as a labelled WINDOW rather than a
     /// bare single line. (The coarse video-CONNECTION dot is deferred as a follow-up.)
     ///

@@ -1,7 +1,6 @@
-// DesktopPaneStoreTests — pins the full-desktop pivot's store surface (docs/DECISIONS.md
-// 2026-07-14): `.desktop` panes are ordinary tree leaves minted by `newDesktopTab` (⌥⌘N), the
-// per-window ingress is `openRemoteWindow` (reveal-not-duplicate), and the Stage domain is GONE —
-// a persisted Stage-era file loads with its orphaned stage specs pruned, never a trap.
+// DesktopPaneStoreTests — pins the full-desktop store surface: `.desktop` panes are minted by
+// `newDesktopTab` (⌥⌘N), and the retired Stage domain stays decode-tolerated — a persisted
+// Stage-era file loads with its orphaned stage specs pruned, never a trap.
 
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -48,95 +47,6 @@ final class DesktopPaneStoreTests: XCTestCase {
         XCTAssertEqual(store.tree.spec(for: id)?.video?.displayID, 7)
     }
 
-    // MARK: - openRemoteWindow (Open Quickly / palette — the per-window secondary path)
-
-    /// A fresh window opens as a `.remoteGUI` tab pre-bound to the picked id.
-    func testOpenRemoteWindowMintsWindowTab() throws {
-        let store = makeStore()
-        let id = try XCTUnwrap(store.openRemoteWindow(windowID: 42, title: "Docs", appName: "Safari"))
-        let spec = try XCTUnwrap(store.tree.spec(for: id))
-        XCTAssertEqual(spec.kind, .remoteGUI)
-        XCTAssertEqual(spec.video?.windowID, 42)
-        XCTAssertEqual(store.tree.activeSession?.activeTab?.activePane, id, "selected + focused")
-    }
-
-    /// An already-streaming window is REVEALED (tab switch + focus), never duplicated — the
-    /// one-home rule every per-window ingress shares.
-    func testOpenRemoteWindowRevealsExistingPane() throws {
-        let store = makeStore()
-        let first = try XCTUnwrap(store.openRemoteWindow(windowID: 42, title: "Docs", appName: "Safari"))
-        store.newTab(kind: .terminal, launchGrace: .zero) // move focus away
-        XCTAssertNotEqual(store.tree.activeSession?.activeTab?.activePane, first)
-
-        let tabsBefore = store.tree.activeSession?.tabs.count ?? 0
-        let second = store.openRemoteWindow(windowID: 42, title: "Docs", appName: "Safari")
-
-        XCTAssertEqual(second, first, "the same window resolves to its existing pane")
-        XCTAssertEqual(store.tree.activeSession?.tabs.count, tabsBefore, "no new tab was minted")
-        XCTAssertEqual(store.tree.activeSession?.activeTab?.activePane, first, "the pane was revealed")
-    }
-
-    /// `streamedWindowPane` is the ONE already-open derivation: it resolves the pane + its 1-based
-    /// tab ordinal, and misses cleanly for an unknown id.
-    func testStreamedWindowPaneResolvesTabOrdinal() throws {
-        let store = makeStore()
-        let id = try XCTUnwrap(store.openRemoteWindow(windowID: 9, title: "T", appName: "A"))
-        let ref = try XCTUnwrap(store.streamedWindowPane(for: 9))
-        XCTAssertEqual(ref.paneID, id)
-        XCTAssertEqual(ref.tabOrdinal, 2, "the window tab landed after the seed terminal tab")
-        XCTAssertNil(store.streamedWindowPane(for: 777))
-    }
-
-    /// A `.remoteGUI` pane keeps streaming after being detached into its own satellite window — the
-    /// window is still "already open" and must be found, not just tiled panes.
-    func testStreamedWindowPaneFindsDetachedPane() throws {
-        let store = makeStore()
-        let id = try XCTUnwrap(store.openRemoteWindow(windowID: 9, title: "T", appName: "A"))
-        store.detachPaneToWindow(id)
-        XCTAssertTrue(store.tree.isDetached(id), "precondition: the window pane left the tree")
-
-        let ref = try XCTUnwrap(store.streamedWindowPane(for: 9))
-
-        XCTAssertEqual(ref.paneID, id)
-        XCTAssertTrue(ref.isDetached, "the ref must flag it as a satellite, not a tab")
-    }
-
-    /// Reopening a window that's currently detached must NOT mint a second `.remoteGUI` tab (a second
-    /// live video stream) — it resolves to the SAME pane id and, when a satellite reveal seam is wired,
-    /// calls it instead of touching the tree.
-    func testOpenRemoteWindowRevealsDetachedPaneInsteadOfDuplicating() throws {
-        let store = makeStore()
-        let first = try XCTUnwrap(store.openRemoteWindow(windowID: 9, title: "T", appName: "A"))
-        store.detachPaneToWindow(first)
-        var revealed: [PaneID] = []
-        store.revealSatelliteWindow = { paneID in revealed.append(paneID)
-            return true
-        }
-        let tabsBefore = store.tree.activeSession?.tabs.count ?? 0
-
-        let second = store.openRemoteWindow(windowID: 9, title: "T", appName: "A")
-
-        XCTAssertEqual(second, first, "resolves to the SAME pane — no duplicate stream")
-        XCTAssertEqual(store.tree.activeSession?.tabs.count, tabsBefore, "no new tab was minted")
-        XCTAssertFalse(store.tree.contains(first), "the pane stays detached, not folded back into a tab")
-        XCTAssertEqual(revealed, [first], "the reveal seam was called with the detached pane")
-    }
-
-    /// Without the reveal seam wired (headless / test default) reopening a detached window still
-    /// resolves to the existing pane and mints no duplicate — degrade to silent no-reveal, never a
-    /// second live stream.
-    func testOpenRemoteWindowNoDuplicateEvenWithoutRevealSeam() throws {
-        let store = makeStore()
-        let first = try XCTUnwrap(store.openRemoteWindow(windowID: 9, title: "T", appName: "A"))
-        store.detachPaneToWindow(first)
-        let tabsBefore = store.tree.activeSession?.tabs.count ?? 0
-
-        let second = store.openRemoteWindow(windowID: 9, title: "T", appName: "A")
-
-        XCTAssertEqual(second, first)
-        XCTAssertEqual(store.tree.activeSession?.tabs.count, tabsBefore, "still no new tab — no duplicate stream")
-    }
-
     // MARK: - Stage-era persistence is decode-tolerated (the Stage domain is gone)
 
     /// A Session JSON written during the short-lived Stage era carries `stagePanes` /
@@ -150,7 +60,7 @@ final class DesktopPaneStoreTests: XCTestCase {
         let terminal = try XCTUnwrap(session.allPaneIDs().first)
         let staged = PaneID()
         session.specs[staged] = PaneSpec(
-            kind: .remoteGUI, title: "W",
+            kind: .systemDialog, title: "W",
             video: VideoEndpoint(windowID: 5, title: "W", appName: "App"),
         )
         var json = try XCTUnwrap(

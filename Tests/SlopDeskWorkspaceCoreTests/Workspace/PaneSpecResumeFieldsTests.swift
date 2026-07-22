@@ -97,14 +97,15 @@ final class PaneSpecResumeFieldsTests: XCTestCase {
     }
 
     func testV10EraVideoSpecDecodesWithAllFourNil() throws {
-        // A v10-era .remoteGUI spec carrying only the pre-v11 fields.
+        // A v10-era video spec carrying only the pre-v11 fields. The retired `"remoteGUI"` kind folds
+        // to `.terminal` via the legacy bridge; the resume fields still decode nil (never trap).
         let json = """
         { "kind": "remoteGUI", "title": "Safari",
           "video": { "windowID": 99, "title": "Safari", "appName": "Safari" } }
         """
         let spec = try decoder.decode(PaneSpec.self, from: Data(json.utf8))
-        XCTAssertEqual(spec.kind, .remoteGUI)
-        XCTAssertEqual(spec.video?.windowID, 99)
+        XCTAssertEqual(spec.kind, .terminal, "the retired remote-window kind folds to terminal")
+        XCTAssertEqual(spec.video?.windowID, 99, "the stale endpoint still decodes (ignored at runtime)")
         XCTAssertNil(spec.resumeSessionID)
         XCTAssertNil(spec.lastKnownTitle)
     }

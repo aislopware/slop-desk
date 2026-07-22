@@ -293,7 +293,7 @@ final class RailRowsMemoTests: XCTestCase {
         )
 
         XCTAssertFalse(
-            RailStructureKey.titledByProcess(kind: .remoteGUI, spec: bareTerminal),
+            RailStructureKey.titledByProcess(kind: .desktop, spec: bareTerminal),
             "only a terminal pane's title chain ever escapes to the process fallback",
         )
 

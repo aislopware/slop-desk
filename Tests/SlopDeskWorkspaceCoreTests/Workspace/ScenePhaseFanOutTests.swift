@@ -109,14 +109,14 @@ final class ScenePhaseFanOutTests: XCTestCase {
 
     // MARK: - Video suspend/restore across the fan-out (docs/22 §4)
 
-    /// A `.remoteGUI` pane that is video-active when the app backgrounds must have its video SUSPENDED
+    /// A `.desktop` pane that is video-active when the app backgrounds must have its video SUSPENDED
     /// by `pauseAll()` (iOS kills an app that strands the UDP/VTDecompress/CADisplayLink stack) and
     /// RESTORED by `resumeAll()`. The restore re-opens at most the set that was already admitted, so it
     /// cannot exceed `liveVideoCap`. Driven through `FakePaneSession`, which mirrors the contract.
     func testVideoPaneSuspendsOnPauseAndRestoresOnResume() async throws {
         let store = WorkspaceStore(makeSession: { FakePaneSession($0) }, liveVideoCap: 2)
-        store.addPane(kind: .remoteGUI)
-        let videoID = try XCTUnwrap(store.focusedPane) // the new remoteGUI pane is focused
+        store.addPane(kind: .desktop)
+        let videoID = try XCTUnwrap(store.focusedPane) // the new desktop pane is focused
         XCTAssertTrue(store.activateVideo(videoID), "video pane admitted under the cap")
         let video = try XCTUnwrap(store.handle(for: videoID) as? FakePaneSession)
         XCTAssertTrue(video.isVideoActive, "active before background")
@@ -128,11 +128,11 @@ final class ScenePhaseFanOutTests: XCTestCase {
         XCTAssertTrue(video.isVideoActive, "resumeAll restored the video that was active before pause")
     }
 
-    /// A `.remoteGUI` pane that was NOT video-active at background stays inactive after resume — the
+    /// A `.desktop` pane that was NOT video-active at background stays inactive after resume — the
     /// restore re-opens only what was admitted, never spuriously activating an idle video pane.
     func testInactiveVideoPaneStaysInactiveAcrossFanOut() async throws {
         let store = WorkspaceStore(makeSession: { FakePaneSession($0) }, liveVideoCap: 2)
-        store.addPane(kind: .remoteGUI)
+        store.addPane(kind: .desktop)
         let videoID = try XCTUnwrap(store.focusedPane)
         let video = try XCTUnwrap(store.handle(for: videoID) as? FakePaneSession)
         XCTAssertFalse(video.isVideoActive, "never activated")
@@ -389,7 +389,7 @@ private final class GatedFakePaneSession: @MainActor PaneSessionHandle, @MainAct
     func adopt(id: PaneID) { self.id = id }
 
     func setVideoActive(_ active: Bool) {
-        guard kind == .remoteGUI else { return }
+        guard kind == .desktop else { return }
         isVideoActive = active
     }
 

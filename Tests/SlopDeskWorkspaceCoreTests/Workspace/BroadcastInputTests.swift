@@ -45,7 +45,7 @@ final class BroadcastInputTests: XCTestCase {
         let v = CanvasItem(
             id: PaneID(),
             spec: PaneSpec(
-                kind: .remoteGUI,
+                kind: .desktop,
                 title: "v",
                 video: VideoEndpoint(windowID: 1, title: "v", appName: ""),
             ),

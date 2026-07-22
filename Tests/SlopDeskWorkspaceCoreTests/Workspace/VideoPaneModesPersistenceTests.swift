@@ -18,8 +18,8 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
 
     // MARK: - Target key (VideoEndpoint.modesKey)
 
-    /// Desktop keys by DISPLAY; a window keys by its owning APP (ids recycle, titles churn); a
-    /// manual-id binding (no app) falls back to the raw window id.
+    /// Desktop keys by DISPLAY; a window-shaped endpoint (`.systemDialog`) keys by its owning APP
+    /// (ids recycle, titles churn); a manual-id binding (no app) falls back to the raw window id.
     func testModesKeyDerivation() {
         XCTAssertEqual(VideoEndpoint(windowID: 0, title: "Desktop", displayID: 2).modesKey, "display:2")
         XCTAssertEqual(VideoEndpoint(windowID: 42, title: "Docs", appName: "Safari").modesKey, "app:Safari")
@@ -88,7 +88,7 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
     /// everything back off removes the entry (default-normalized — the map never accretes no-op rows).
     func testExplicitToggleLandsUnderTheTargetKey() throws {
         let store = makeLiveStore()
-        let id = try XCTUnwrap(store.openRemoteWindow(windowID: 42, title: "Docs", appName: "Safari"))
+        let id = store.newDesktopTab()
         let model = try remoteWindowModel(in: store, for: id)
 
         model.open()
@@ -96,14 +96,14 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
         model.applyAudioEnabled(true)
 
         XCTAssertEqual(
-            store.tree.videoModesByTarget["app:Safari"],
+            store.tree.videoModesByTarget["display:0"],
             VideoPaneModes(audioEnabled: true),
             "the explicit toggle persists under the target key, not the pane",
         )
 
         model.applyAudioEnabled(false)
         XCTAssertNil(
-            store.tree.videoModesByTarget["app:Safari"],
+            store.tree.videoModesByTarget["display:0"],
             "all-default modes remove the entry",
         )
     }
@@ -113,7 +113,7 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
     /// model at materialization, and the injector `didSet` re-asserts push the wish into its first session.
     func testCloseTabThenReopenSameTargetRestoresModes() throws {
         let store = makeLiveStore()
-        let first = try XCTUnwrap(store.openRemoteWindow(windowID: 42, title: "Docs", appName: "Safari"))
+        let first = store.newDesktopTab(displayID: 2)
         let firstModel = try remoteWindowModel(in: store, for: first)
         firstModel.open()
         firstModel.audioInjector = { _ in }
@@ -124,8 +124,8 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
         store.closePaneTree(first)
         XCTAssertNil(store.handle(for: first), "the pane is gone with its tab")
 
-        // Reopen the SAME window (same app) — a brand-new pane.
-        let second = try XCTUnwrap(store.openRemoteWindow(windowID: 42, title: "Docs", appName: "Safari"))
+        // Reopen the SAME target (same display) — a brand-new pane.
+        let second = store.newDesktopTab(displayID: 2)
         XCTAssertNotEqual(second, first)
         let secondModel = try remoteWindowModel(in: store, for: second)
 
@@ -139,46 +139,49 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
         XCTAssertEqual(audio, [true])
     }
 
-    /// **Relaunch restores too:** the map rides the persisted tree, so a store restored from it seeds
-    /// the re-materialized pane's model.
+    /// **Relaunch restores too:** the map rides the persisted tree. The desktop PANE itself never
+    /// restores across relaunch (docs/DECISIONS.md 2026-07-22 — the launch restore drops it), so the
+    /// relaunch contract is: reopening the SAME target in the restored store seeds the fresh model
+    /// from the persisted target-keyed map.
     func testRelaunchRestoreSeedsFromPersistedTree() throws {
         let store = makeLiveStore()
-        let id = try XCTUnwrap(store.openRemoteWindow(windowID: 42, title: "Docs", appName: "Safari"))
+        let id = store.newDesktopTab(displayID: 2)
         let model = try remoteWindowModel(in: store, for: id)
         model.open()
         model.viewportInjector = { _ in }
         model.toggleViewportLock()
 
-        // Simulate the relaunch: encode → decode the tree, restore a fresh store from it.
+        // Simulate the relaunch: encode → decode the tree, restore a fresh store from it. The desktop
+        // pane is dropped by the launch restore; the target-keyed modes map survives on the tree.
         let restoredTree = try decoder.decode(TreeWorkspace.self, from: makeEncoder().encode(store.tree))
         let relaunched = makeLiveStore(restoringTree: restoredTree)
-        let restoredID = try XCTUnwrap(
-            relaunched.tree.allPaneIDs().first { relaunched.tree.spec(for: $0)?.video?.windowID == 42 },
+        XCTAssertNil(
+            relaunched.tree.allPaneIDs().first { relaunched.tree.spec(for: $0)?.kind == .desktop },
+            "a persisted desktop pane never restores (the dedicated-window model)",
         )
-        let restoredModel = try remoteWindowModel(in: relaunched, for: restoredID)
-        XCTAssertTrue(restoredModel.viewportLocked, "the persisted target modes seed the relaunched pane")
+        let reopened = relaunched.newDesktopTab(displayID: 2)
+        let restoredModel = try remoteWindowModel(in: relaunched, for: reopened)
+        XCTAssertTrue(restoredModel.viewportLocked, "the persisted target modes seed the reopened target")
     }
 
-    /// A RE-TARGET inside one pane (pick a different window) re-seeds from the NEW target's saved
-    /// modes — each target keeps its own latched set.
+    /// A RE-TARGET inside one pane (switch to a different display) re-seeds from the NEW target's
+    /// saved modes — each target keeps its own latched set.
     func testRepickSeedsTheNewTargetsModes() throws {
         let store = makeLiveStore()
-        // Save modes for Notes under its own key first.
-        let notes = try XCTUnwrap(store.openRemoteWindow(windowID: 7, title: "Ideas", appName: "Notes"))
-        let notesModel = try remoteWindowModel(in: store, for: notes)
-        notesModel.open()
-        notesModel.audioInjector = { _ in }
-        notesModel.applyAudioEnabled(true)
-        store.closePaneTree(notes)
+        // Save modes for display 7 under its own key first.
+        let second = store.newDesktopTab(displayID: 7)
+        let secondModel = try remoteWindowModel(in: store, for: second)
+        secondModel.open()
+        secondModel.audioInjector = { _ in }
+        secondModel.applyAudioEnabled(true)
+        store.closePaneTree(second)
 
-        // A Safari pane with no saved modes re-picks to Notes → inherits Notes' saved modes.
-        let pane = try XCTUnwrap(store.openRemoteWindow(windowID: 42, title: "Docs", appName: "Safari"))
+        // A main-display pane with no saved modes switches to display 7 → inherits its saved modes.
+        let pane = store.newDesktopTab()
         let model = try remoteWindowModel(in: store, for: pane)
         model.open()
-        XCTAssertFalse(model.audioStreamEnabled, "Safari has no saved modes")
-        model.close()
-        model.pick(RemoteWindowSummary(windowID: 7, appName: "Notes", title: "Ideas", width: 800, height: 600))
-        model.open()
+        XCTAssertFalse(model.audioStreamEnabled, "the main display has no saved modes")
+        model.switchDisplay(to: 7)
         XCTAssertTrue(model.audioStreamEnabled, "the endpoint commit seeds the NEW target's saved modes")
     }
 }
