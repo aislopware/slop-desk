@@ -27,6 +27,11 @@ targets:
     platform: iOS
     sources:
       - path: ../Shared
+      # Brand: the Signal S app icon as an Icon Composer bundle (canonical copy in
+      # docs/brand — one source, three targets). actool compiles it for iOS 26's
+      # layered/tinted icon variants; pairs with ASSETCATALOG_COMPILER_APPICON_NAME.
+      - path: ../../docs/brand/SlopDesk.icon
+        buildPhase: resources
       # PATH 1 (libghostty renderer): the gated renderer host + binding (GhosttySurface.swift
       # + GhosttyTerminalView.swift). NOT members of any Package.swift target — they join THIS
       # app target so `import CGhostty` resolves and `#if canImport(CGhostty)` flips true.
@@ -70,6 +75,7 @@ targets:
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
+        ASSETCATALOG_COMPILER_APPICON_NAME: SlopDesk
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic
