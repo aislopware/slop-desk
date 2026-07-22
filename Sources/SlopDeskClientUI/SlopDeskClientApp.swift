@@ -560,6 +560,19 @@ public struct SlopDeskClientApp: App {
             // the coordinator so the workspace shows a minimal "prefix" chip while the follow-up key is
             // awaited (arm lights it; fire / unbound / double-tap / timeout clear it).
             onPrefixArmedChange: { [overlay] in overlay.setPrefixArmed($0) },
+            // Announce every PREFIX-fired action with a toast naming it. The implied-⌘ fold makes any
+            // workspace chord reachable from two stray terminal keystrokes (`⌃B` is readline back-char /
+            // vi page-up; `⌃B, ⇧i` → ⌘⇧I = sync input), and a silently-fired MODE toggle reads as a bug
+            // — the "two panes leaking into each other" field report was exactly this. Same-id toasts
+            // replace each other, so rapid prefix use never stacks.
+            onPrefixActionFired: { [overlay] action in
+                let title = WorkspaceBindingRegistry.allBindings.first { $0.action == action }?.title
+                overlay.pushToast(Toast(
+                    id: "prefix.action",
+                    title: title ?? "Workspace action",
+                    body: "fired by the prefix key",
+                ))
+            },
         )
         _keyDispatcher = State(initialValue: keyDispatcher)
         // LIVE prefix re-key: recording a new Prefix Key in Settings (or clearing it back to ⌃B) fires

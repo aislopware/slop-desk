@@ -1388,3 +1388,12 @@ substitution forced by the pure-native-Swift rule.
   keystrokes, SS3/CSI keys, kitty `CSI u`, and bracketed paste survive byte-exact. Accepted gap:
   modified F3 shares the CPR byte shape and is dropped from the mirror only. Truncated trailing
   sequences pass through verbatim (input arrives one whole event per chunk).
+- ✅ **Follow-up — HOW it armed "by itself": the prefix implied-⌘ fold.** The user never pressed
+  ⌘⇧I. `PrefixStateMachine`'s tmux-faithful fold makes any workspace chord reachable from two bare
+  terminal keystrokes: `⌃B` (the default prefix — also readline back-char and vi page-up) arms and
+  is swallowed, and the next bare key within the 1 s timeout fires its ⌘-folded binding with ⇧/⌥
+  carried through — `⌃B, ⇧i` → ⌘⇧I = sync input, silently (the armed chip lights for ≤1 s; nothing
+  names the fired action). Fix: `WorkspaceKeyDispatcher.onPrefixActionFired` — every PREFIX-resolved
+  action (bound follow-up or fold) now pushes a toast naming the action (registry title, same-id
+  replace). A DIRECT single chord deliberately does NOT toast. Pinned by `PrefixActionToastTests`,
+  including a proof that `⌃B` + `⇧i` really arms `syncInputTabs`.

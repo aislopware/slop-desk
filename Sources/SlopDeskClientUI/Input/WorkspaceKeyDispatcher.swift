@@ -89,6 +89,15 @@ final class WorkspaceKeyDispatcher {
     /// exactly while a follow-up key is awaited. `{ _ in }` (headless / test default) keeps the dispatcher inert.
     private let onPrefixArmedChange: (Bool) -> Void
 
+    /// Fired whenever an action resolves through the PREFIX path — a bound follow-up chord OR the
+    /// tmux-faithful implied-⌘ fold (`⌃B, ⇧i` → the ⌘⇧I binding). The app wires this to a toast naming
+    /// the action, because the fold makes workspace actions reachable from TWO stray terminal keystrokes
+    /// (`⌃B` is readline back-char / vi page-up) and a silently-fired MODE toggle reads as a bug: the
+    /// field report "two panes leaking into each other" was sync-input armed exactly this way, with no
+    /// feedback. A direct single chord (⌘⇧I typed deliberately) does NOT fire this — only prefix
+    /// resolutions, where the user's intent is least certain. `nil` (headless / test default) is inert.
+    private let onPrefixActionFired: ((WorkspaceAction) -> Void)?
+
     /// The pure prefix machine. Its sequence resolver reads the override-aware `resolvedSequenceTable`
     /// (single-chord fallback to `resolvedChordTable`) so a rebind — single OR multi-key — takes effect; the
     /// prefix chord is configurable (defaults to the store's live `workspaceKeyPrefix`).
@@ -121,6 +130,7 @@ final class WorkspaceKeyDispatcher {
         isOverlayCapturingKeys: @escaping () -> Bool = { false },
         isWorkspaceWindowKey: @escaping () -> Bool = { true },
         onPrefixArmedChange: @escaping (Bool) -> Void = { _ in },
+        onPrefixActionFired: ((WorkspaceAction) -> Void)? = nil,
     ) {
         self.store = store
         self.togglePalette = togglePalette
@@ -135,6 +145,7 @@ final class WorkspaceKeyDispatcher {
         self.isOverlayCapturingKeys = isOverlayCapturingKeys
         self.isWorkspaceWindowKey = isWorkspaceWindowKey
         self.onPrefixArmedChange = onPrefixArmedChange
+        self.onPrefixActionFired = onPrefixActionFired
         // Resolve a post-prefix key against the override-aware SEQUENCE table FIRST (so a multi-key sequence
         // whose tail key isn't a standalone binding still fires), falling back to the SINGLE-CHORD table (so the
         // seeded ⌃B→⌘D keeps working and an override is honoured). Prefix defaults to the store's live
@@ -254,6 +265,9 @@ final class WorkspaceKeyDispatcher {
 
         case let .resolved(action):
             dispatch(action)
+            // Announce the PREFIX-fired action (toast seam): the implied-⌘ fold makes this reachable
+            // from two stray terminal keystrokes, so it must never fire silently.
+            onPrefixActionFired?(action)
             return nil // a bound key resolved while armed → run + swallow
 
         case .sendPrefixLiteral:
