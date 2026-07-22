@@ -55,6 +55,65 @@ final class PromptEOLMarkStripperTests: XCTestCase {
         XCTAssertEqual(strip(input), "cd ~\r\n\u{1B}[0 q" + reset + dMark + aMark)
     }
 
+    func testColumnZeroReachedAcrossPrivateModeSetResetIsExcised() {
+        // Captured claude-exit shape: CRLF, SGR pair, then cursor-show (`\e[?25h`) — a DECSET
+        // never moves the cursor, so the walk must look through it to the newline.
+        let input = "done\r\n\u{1B}[2m\u{1B}[22m\u{1B}[?25h" + cluster() + aMark
+        XCTAssertEqual(strip(input), "done\r\n\u{1B}[2m\u{1B}[22m\u{1B}[?25h" + reset + aMark)
+    }
+
+    func testColumnZeroReachedAcrossSyncEndAndAutowrapIsExcised() {
+        // Captured inline-TUI epilogue: CRLF, DECSCUSR, sync-frame end (`\e[?2026l`), autowrap
+        // re-enable (`\e[?7h`) — all zero-width, all looked through.
+        let input = "ok.\r\n\u{1B}[0 q\u{1B}[?2026l\u{1B}[?7h" + cluster() + dMark + aMark
+        XCTAssertEqual(strip(input), "ok.\r\n\u{1B}[0 q\u{1B}[?2026l\u{1B}[?7h" + reset + dMark + aMark)
+    }
+
+    func testColumnZeroReachedAcrossEraseInDisplayIsExcised() {
+        // Captured prompt-redraw shape: CR, erase-below (`\e[J` — never moves the cursor),
+        // cursor-show. The CR alone proves column 0.
+        let input = "tail\r\u{1B}[J\u{1B}[?25h" + cluster() + aMark
+        XCTAssertEqual(strip(input), "tail\r\u{1B}[J\u{1B}[?25h" + reset + aMark)
+    }
+
+    func testColumnOneCHAIsDirectColumnZeroProof() {
+        // Captured inline-TUI redraw epilogue: `\e[13A\e[G` — CUU preserves the column and a
+        // bare CHA (`\e[G`) sets column 1, so the cluster provably overprints at column 0.
+        let input = "row\n\u{1B}[G\n\u{1B}[G\u{1B}[13A\u{1B}[G" + cluster() + dMark + aMark
+        XCTAssertEqual(strip(input), "row\n\u{1B}[G\n\u{1B}[G\u{1B}[13A\u{1B}[G" + reset + dMark + aMark)
+    }
+
+    func testCursorUpPreservesColumnAcrossTheWalk() {
+        // CUU/CUD move rows, never columns — looked through to the newline behind them.
+        let input = "x\r\n\u{1B}[3A" + cluster() + aMark
+        XCTAssertEqual(strip(input), "x\r\n\u{1B}[3A" + reset + aMark)
+    }
+
+    func testCHAToAnotherColumnEndsTheWalkAsUnknown() {
+        // `\e[5G` parks the cursor at column 5 — not column 0, keep the safe CRLF.
+        let input = "x\r\n\u{1B}[5G" + cluster() + aMark
+        XCTAssertEqual(strip(input), "x\r\n\u{1B}[5G" + reset + "\r\n" + aMark)
+    }
+
+    func testCursorBackEndsTheWalkAsUnknown() {
+        // CUB changes the column by a relative amount — unknowable, keep the safe CRLF.
+        let input = "x\r\n\u{1B}[24D" + cluster() + aMark
+        XCTAssertEqual(strip(input), "x\r\n\u{1B}[24D" + reset + "\r\n" + aMark)
+    }
+
+    func testAltScreenSwitchEndsTheWalkAsUnknown() {
+        // `\e[?1049l` restores a SAVED cursor — the column is unknowable across it, so the safe
+        // mid-line CRLF replacement must be kept even though a newline sits further back.
+        let input = "x\r\n\u{1B}[?1049l" + cluster() + aMark
+        XCTAssertEqual(strip(input), "x\r\n\u{1B}[?1049l" + reset + "\r\n" + aMark)
+    }
+
+    func testNonPrivateSetModeEndsTheWalkAsUnknown() {
+        // ANSI SM (no `?` — e.g. IRM `\e[4h`) is not in the looked-through set: stay safe.
+        let input = "x\r\n\u{1B}[4h" + cluster() + aMark
+        XCTAssertEqual(strip(input), "x\r\n\u{1B}[4h" + reset + "\r\n" + aMark)
+    }
+
     // MARK: Mid-line clusters (partial line / empty-Enter / Ctrl-C at prompt) — become reset+CRLF
 
     func testMidLineClusterBecomesCRLF() {

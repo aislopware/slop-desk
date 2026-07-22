@@ -52,6 +52,10 @@ enum PromptEOLMarkStripper {
     /// ordinary aligned output).
     private static let minFillSpaces = 8
 
+    /// DEC private modes that switch grids and restore a saved cursor — the column is unknowable
+    /// across them, so they END the zero-width walk (mirrors the sibling strippers' alt trio).
+    private static let altModes: Set<Int> = [47, 1047, 1049]
+
     /// Byte/sequence budgets for the backward column-0 classification walk (a wrong bail-out just
     /// downgrades an excision to the safe CRLF replacement, never corrupts).
     private static let zeroWidthWalkByteBudget = 4096
@@ -175,6 +179,9 @@ enum PromptEOLMarkStripper {
         var budget = zeroWidthWalkSequenceBudget
         let floor = max(0, start - zeroWidthWalkByteBudget)
         while i > floor, budget > 0 {
+            // A bare CHA (`ESC [ G` / `ESC [ 1 G`) parks the cursor at column 1 — direct proof,
+            // regardless of what came before it (the captured inline-TUI `\e[13A\e[G` epilogue).
+            if columnOneCHAEnds(at: i, in: bytes) { return true }
             if let s = zeroWidthSequenceStart(before: i, floor: floor, in: bytes) {
                 i = s
                 budget -= 1
@@ -187,12 +194,23 @@ enum PromptEOLMarkStripper {
         return bytes[i - 1] == lf || bytes[i - 1] == cr
     }
 
+    /// Whether a column-1 CHA (`ESC [ G` or `ESC [ 1 G`) ends exactly at `end`.
+    private static func columnOneCHAEnds(at end: Int, in bytes: [UInt8]) -> Bool {
+        guard end >= 3, bytes[end - 1] == UInt8(ascii: "G") else { return false }
+        var i = end - 2
+        if bytes[i] == UInt8(ascii: "1") { i -= 1 }
+        return i >= 1 && bytes[i] == UInt8(ascii: "[") && bytes[i - 1] == esc
+    }
+
     /// Matches one zero-width sequence ending exactly at `end`; returns its start (the `ESC`).
     private static func zeroWidthSequenceStart(before end: Int, floor: Int, in bytes: [UInt8]) -> Int? {
         guard end >= 3 else { return nil }
         let last = bytes[end - 1]
-        // CSI finals that never move the cursor or print: SGR `m`, EL `K`, DECSCUSR `SP q`.
-        if last == UInt8(ascii: "m") || last == UInt8(ascii: "K") || last == UInt8(ascii: "q") {
+        // CSI finals that never change the COLUMN (this walk classifies the column only):
+        // SGR `m`, EL `K`, DECSCUSR `SP q`, and CUU/CUD `A`/`B` (rows move, columns don't).
+        if last == UInt8(ascii: "m") || last == UInt8(ascii: "K") || last == UInt8(ascii: "q")
+            || last == UInt8(ascii: "A") || last == UInt8(ascii: "B")
+        {
             var i = end - 2
             if last == UInt8(ascii: "q") {
                 guard bytes[i] == sp else { return nil } // DECSCUSR's intermediate
@@ -202,6 +220,30 @@ enum PromptEOLMarkStripper {
                 i -= 1
             }
             guard i >= 1, bytes[i] == UInt8(ascii: "["), bytes[i - 1] == esc else { return nil }
+            return i - 1
+        }
+        // DECSET/DECRST (`ESC [ ? … h/l`) never move the cursor — cursor-show `?25h`, autowrap
+        // `?7h`, sync-frame `?2026h/l`, bracketed-paste `?2004h` all interpose between a prompt
+        // cycle's CRLF and its cluster. The EXCEPTION is the alt-screen trio (47/1047/1049):
+        // those switch grids and restore a SAVED cursor, so the column is unknowable across
+        // them — end the walk. ED (`ESC [ … J`) erases without ever moving the cursor. ANSI
+        // SM/RM (no `?`) are out of scope: unrecognized ⇒ the safe mid-line answer.
+        if last == UInt8(ascii: "h") || last == UInt8(ascii: "l") || last == UInt8(ascii: "J") {
+            var i = end - 2
+            while i > floor, (0x30...0x3B).contains(bytes[i]) { // digits ; :
+                i -= 1
+            }
+            let isPrivate = bytes[i] == UInt8(ascii: "?")
+            let paramsStart = i + 1
+            if isPrivate { i -= 1 }
+            guard i >= 1, bytes[i] == UInt8(ascii: "["), bytes[i - 1] == esc else { return nil }
+            if last == UInt8(ascii: "J") { return i - 1 }
+            guard isPrivate else { return nil }
+            // swiftlint:disable:next optional_data_string_conversion
+            let fields = String(decoding: bytes[paramsStart..<(end - 1)], as: UTF8.self)
+                .split(separator: ";")
+                .compactMap { Int($0) }
+            guard !fields.contains(where: altModes.contains) else { return nil }
             return i - 1
         }
         // OSC (title set, hyperlink, a 133 mark…), BEL- or ST-terminated: scan back to `ESC ]`.
