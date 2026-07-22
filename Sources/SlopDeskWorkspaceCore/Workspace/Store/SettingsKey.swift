@@ -328,6 +328,14 @@ public enum SettingsKey {
     /// The height (px) for a new window when ``windowSize`` is ``WindowSizeMode/frame``
     /// (`window-height-px`), default `600`. Clamped by ``WindowSizeMath/clampPx(_:)`` at the sizing fire-site.
     public static let windowHeightPxKey = "window.heightPx"
+    /// The last window frame for ``WindowSizeMode/remember`` (`window.savedFrame`) — an
+    /// `NSWindow.frameDescriptor` string the macOS glue writes on resize-end / move / quit and re-applies
+    /// via `setFrame(from:)` once per window open. App-owned persistence (NOT `setFrameAutosaveName`):
+    /// SwiftUI asserts its own type-derived autosave name on the scene window — a name containing a
+    /// per-launch `(unknown context at $…)` address — so AppKit's autosave machinery saves under a key
+    /// that changes every launch and can never restore. Default empty (a fresh install keeps the scene's
+    /// `.defaultSize`).
+    public static let windowSavedFrameKey = "window.savedFrame"
 
     // (First-launch flow + Shell → SlopDesk CLI card — getting-started__first-launch.md). A
     // `firstLaunch.*` / `shell.cli.*` namespace, so a stale read decode-fails to the key default per
@@ -613,6 +621,15 @@ public enum SettingsKey {
     /// The persisted `frame`-mode height in px (`window-height-px`), default `600`. The RAW value —
     /// clamped by ``WindowSizeMath/clampPx(_:)``.
     public static var windowHeightPx: Int { Defaults[.windowHeightPx] }
+
+    /// The persisted `remember`-mode frame descriptor (`window.savedFrame`), default empty (no frame
+    /// saved yet — the scene's `.defaultSize` stands). Settable: the macOS glue WRITES it on
+    /// resize-end / move / quit and re-applies it via `NSWindow.setFrame(from:)` once per window open
+    /// (see ``windowSavedFrameKey`` for why AppKit's autosave machinery cannot own this).
+    public static var savedWindowFrame: String {
+        get { Defaults[.savedWindowFrame] }
+        set { Defaults[.savedWindowFrame] = newValue }
+    }
 
     // MARK: First-launch + SlopDesk CLI (getting-started__first-launch.md)
 
@@ -907,6 +924,8 @@ public extension Defaults.Keys {
     static let windowRows = Key<Int>(slopDesk: SettingsKey.windowRowsKey, default: 24)
     static let windowWidthPx = Key<Int>(slopDesk: SettingsKey.windowWidthPxKey, default: 1000)
     static let windowHeightPx = Key<Int>(slopDesk: SettingsKey.windowHeightPxKey, default: 600)
+    // `remember`-mode frame descriptor — a native `String` (`NSWindow.frameDescriptor`); empty = none saved.
+    static let savedWindowFrame = Key<String>(slopDesk: SettingsKey.windowSavedFrameKey, default: "")
     // First-launch + SlopDesk CLI (getting-started__first-launch.md). Fire-time flags → golden-safe;
     // client-side. `hasCompletedFirstLaunch` gates the one-time sheet (default OFF — present once on a fresh
     // install); the three `shell.cli.*` toggles default OFF (CLI opt-in, prefix-less functions opt-in, never

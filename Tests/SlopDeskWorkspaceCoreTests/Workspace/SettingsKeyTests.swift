@@ -79,6 +79,7 @@ final class SettingsKeyTests: XCTestCase {
             SettingsKey.windowRowsKey,
             SettingsKey.windowWidthPxKey,
             SettingsKey.windowHeightPxKey,
+            SettingsKey.windowSavedFrameKey,
             SettingsKey.autoHideTabsPanelKey,
         ]
     }

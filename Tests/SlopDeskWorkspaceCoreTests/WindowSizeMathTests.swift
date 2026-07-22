@@ -20,6 +20,7 @@ final class WindowSizeMathTests: XCTestCase {
         SettingsKey.windowRowsKey,
         SettingsKey.windowWidthPxKey,
         SettingsKey.windowHeightPxKey,
+        SettingsKey.windowSavedFrameKey,
     ]
 
     override func setUp() { windowKeys.forEach { SettingsKey.store.removeObject(forKey: $0) } }
@@ -238,5 +239,21 @@ final class WindowSizeMathTests: XCTestCase {
         // A bogus persisted raw repairs to the default rather than trapping.
         SettingsKey.store.set("garbage-from-a-future-version", forKey: SettingsKey.windowSizeKey)
         XCTAssertEqual(SettingsKey.windowSize, .remember, "an invalid raw value repairs to remember")
+    }
+
+    /// The `remember`-mode saved-frame descriptor: key string pinned (the `window.*` namespace), default
+    /// empty when unset (a fresh install keeps the scene's `.defaultSize`), and the settable
+    /// ``SettingsKey/savedWindowFrame`` accessor round-trips through the persisted store — the headless
+    /// half of the frame persistence; the `NSWindow` glue (`applyRememberedFrame`) is GUI-verified only.
+    func testSavedWindowFrameKeyDefaultAndRoundTrip() {
+        XCTAssertEqual(SettingsKey.windowSavedFrameKey, "window.savedFrame")
+        XCTAssertEqual(SettingsKey.savedWindowFrame, "", "unset → empty (no saved frame)")
+        SettingsKey.savedWindowFrame = "620 355 1080 720 0 0 1800 1130 "
+        XCTAssertEqual(SettingsKey.savedWindowFrame, "620 355 1080 720 0 0 1800 1130 ")
+        XCTAssertEqual(
+            SettingsKey.store.string(forKey: SettingsKey.windowSavedFrameKey),
+            "620 355 1080 720 0 0 1800 1130 ",
+            "the setter writes the persisted store the @Default views bind",
+        )
     }
 }

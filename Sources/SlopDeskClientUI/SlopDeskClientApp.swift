@@ -16,6 +16,7 @@ import UIKit // UIDevice.current.userInterfaceIdiom — the per-device live-vide
 #endif
 #if os(macOS)
 import AppKit // NSApplication — AUTOMATION-ONLY window-front so an autoconnect launch goes live in one shot
+import Combine // AnyCancellable — the `.remember` frame-save observers, retained on the window
 import ObjectiveC // objc_setAssociatedObject — retain the window-close delegate for the window's life
 import SlopDeskTerminal // TerminalCellMetrics + TerminalViewportSnapshotting (live cell advance, macOS window-size glue)
 import UserNotifications // explicit OSC 9/777 child notifications → local UNUserNotification
@@ -766,6 +767,12 @@ public struct SlopDeskClientApp: App {
                 // save; the delegate also saves up front in case the drain window is interrupted.)
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
                     store.saveImmediately()
+                    // `.remember` window-size: capture the final frame at quit — the end-of-gesture
+                    // observers (`applyRememberedFrame`) cover resize/move, but a plain ⌘Q after a
+                    // zoom (no live-resize gesture) would otherwise miss the last frame.
+                    if SettingsKey.windowSize == .remember, let window = windowBox.window {
+                        SettingsKey.savedWindowFrame = window.frameDescriptor
+                    }
                     // Reset the process-global Dock tile on teardown so a quit never leaves a
                     // stuck progress/red tile behind for the next app to inherit.
                     dockProgress.clear()
@@ -1012,7 +1019,8 @@ public struct SlopDeskClientApp: App {
 
     /// Apply the configured initial window size at most once per window open (guarded by an
     /// associated object, mirroring the close-gate retain idiom), so a later manual resize always stands:
-    ///   * ``WindowSizeMode/remember`` → `setFrameAutosaveName` and commit (let the autosaved frame restore);
+    ///   * ``WindowSizeMode/remember`` → restore the app-persisted frame descriptor + install the
+    ///     save-on-change observers (``applyRememberedFrame(to:)``) and commit;
     ///   * ``WindowSizeMode/grid`` / ``WindowSizeMode/frame`` → resolve a CONTENT size via the pure
     ///     ``WindowSizeMath/resolvedContentSize(mode:cols:rows:widthPx:heightPx:cell:visible:chromeInsets:chromeOverhead:)``
     ///     and `setContentSize`.
@@ -1039,7 +1047,7 @@ public struct SlopDeskClientApp: App {
 
         let mode = SettingsKey.windowSize
         if mode == .remember {
-            window.setFrameAutosaveName("SlopDeskMainWindow")
+            applyRememberedFrame(to: window)
             objc_setAssociatedObject(window, &windowSizeAppliedKey, true, .OBJC_ASSOCIATION_RETAIN)
             return
         }
@@ -1078,6 +1086,36 @@ public struct SlopDeskClientApp: App {
         if mode == .frame || liveCell != nil {
             objc_setAssociatedObject(window, &windowSizeAppliedKey, true, .OBJC_ASSOCIATION_RETAIN)
         }
+    }
+
+    /// Associated-object key retaining the `.remember`-mode frame-save subscription — tied to the
+    /// window so the observer lives exactly as long as it does. Address-only key, `nonisolated(unsafe)`
+    /// like ``windowCloseDelegateKey``.
+    private nonisolated(unsafe) static var frameSaveObserversKey: UInt8 = 0
+
+    /// ``WindowSizeMode/remember``: restore the frame persisted under the app's OWN Defaults key
+    /// (``SettingsKey/savedWindowFrame``) and install the save-on-change observers.
+    /// `setFrameAutosaveName` is deliberately NOT used — SwiftUI asserts its own type-derived autosave
+    /// name on the scene window (containing a per-launch `(unknown context at $…)` address), so AppKit's
+    /// autosave machinery saves under a key that changes every launch and can never restore. Both halves
+    /// are owned here instead: `NSWindow.frameDescriptor` (screen-aware) is written at end-of-gesture
+    /// granularity (`didEndLiveResize` / `didMove` — not per-tick `didResize`) plus the scene's
+    /// `willTerminateNotification` save, and re-applied via `setFrame(from:)` — which itself constrains
+    /// an off-screen / stale-display frame back onto a live screen — on the next window open.
+    @MainActor
+    private static func applyRememberedFrame(to window: NSWindow) {
+        let saved = SettingsKey.savedWindowFrame
+        if !saved.isEmpty { window.setFrame(from: saved) }
+        // Combine publishers (not block-based `addObserver`) — both notifications post on the main
+        // thread, so the MainActor-formed sink closure needs no Sendable dance to read the window.
+        let cancellable = NotificationCenter.default
+            .publisher(for: NSWindow.didEndLiveResizeNotification, object: window)
+            .merge(with: NotificationCenter.default.publisher(for: NSWindow.didMoveNotification, object: window))
+            .sink { [weak window] _ in
+                guard let window else { return }
+                SettingsKey.savedWindowFrame = window.frameDescriptor
+            }
+        objc_setAssociatedObject(window, &frameSaveObserversKey, cancellable, .OBJC_ASSOCIATION_RETAIN)
     }
 
     /// The live per-cell advance of the active terminal pane, or `nil` when the active pane is not

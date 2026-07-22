@@ -133,8 +133,8 @@ public enum WindowSizeMath {
     /// Resolve the CONTENT size a newly opened window should adopt, or `nil` when the autosaved frame should
     /// stand (the `.remember` path). The ONE function the macOS `NSWindow` glue calls:
     ///
-    /// - ``WindowSizeMode/remember`` → `nil` — let `setFrameAutosaveName` restore the last frame; apply no
-    ///   explicit size.
+    /// - ``WindowSizeMode/remember`` → `nil` — the glue restores the app-persisted frame descriptor
+    ///   itself (`setFrame(from:)`); apply no explicit size here.
     /// - ``WindowSizeMode/grid`` → ``clampToScreen(_:visible:chromeInsets:)`` of
     ///   ``gridContentSize(cols:rows:cell:)`` PLUS `chromeOverhead`.
     /// - ``WindowSizeMode/frame`` → ``clampToScreen(_:visible:chromeInsets:)`` of the clamped pixel size
