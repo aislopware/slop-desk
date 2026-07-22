@@ -113,9 +113,12 @@ final class TerminalQueryStripperTests: XCTestCase {
 
     // MARK: - The composed replay transform (ring + journal share it)
 
-    /// Cold ring replay through `ScrollbackReplayTransform`: queries are stripped from the RING
-    /// portion while the un-acked tail stays byte-exact (its issuer may still await the answer).
-    func testRingReplayStripsQueriesButTailStaysRaw() {
+    /// COLD replay (`after: 0` — a fresh client) through `ScrollbackReplayTransform`: ring AND
+    /// un-acked tail are transformed as ONE stream — the client has rendered nothing, so even
+    /// the tail's queries must not re-arm the terminal (the reconnect-while-Claude-runs
+    /// hygiene). A WARM reconnect keeps the tail byte-exact (its issuer may still await the
+    /// answer).
+    func testColdReplayStripsQueriesFromRingAndTailWarmKeepsTailRaw() {
         var buffer = ReplayBuffer(
             scrollbackBytes: 1 << 20,
             scrollbackDistiller: ScrollbackReplayTransform.make(environment: [:]),
@@ -124,16 +127,23 @@ final class TerminalQueryStripperTests: XCTestCase {
         let tail = Data("pending\u{1B}[c".utf8)
         let s1 = buffer.append(bytes: history)
         buffer.ack(upTo: s1) // moves history into the scrollback ring
-        _ = buffer.append(bytes: tail) // un-acked live tail
+        let s2 = buffer.append(bytes: tail) // un-acked live tail
 
-        let replayed = buffer.replay(after: 0)
-        var ringBytes = Data()
-        var tailBytes = Data()
-        for case let .output(seq, bytes) in replayed {
-            if seq <= s1 { ringBytes.append(bytes) } else { tailBytes.append(bytes) }
+        let cold = buffer.replay(after: 0)
+        var coldBytes = Data()
+        var coldSeqs: [Int64] = []
+        for case let .output(seq, bytes) in cold {
+            coldBytes.append(bytes)
+            coldSeqs.append(seq)
         }
-        XCTAssertEqual(ringBytes, Data("oldoutput\n".utf8), "ring history must be query-free")
-        XCTAssertEqual(tailBytes, tail, "the un-acked tail must stay byte-exact")
+        XCTAssertEqual(
+            coldBytes, Data("oldoutput\npending".utf8),
+            "cold replay must be query-free end to end (ring AND tail)",
+        )
+        XCTAssertEqual(coldSeqs.last, s2, "last chunk carries the top tail seq (ack release)")
+
+        let warm = buffer.replay(after: s1)
+        XCTAssertEqual(warm, [.output(seq: s2, bytes: tail)], "warm tail stays byte-exact")
     }
 
     /// The disk journal's restore runs the same pipeline: a journal poisoned with queries
@@ -225,7 +235,7 @@ final class TerminalQueryStripperTests: XCTestCase {
         XCTAssertEqual(TerminalQueryStripper.strip(Data(input.utf8)), Data(expected.utf8))
     }
 
-    /// Env gates: `STRIP_QUERIES=0` disables only the stripper; ALL FIVE off → nil transform.
+    /// Env gates: `STRIP_QUERIES=0` disables only the stripper; ALL SIX off → nil transform.
     func testTransformEnvGates() throws {
         let stripOff = ScrollbackReplayTransform.make(
             environment: ["SLOPDESK_SCROLLBACK_STRIP_QUERIES": "0"],
@@ -240,6 +250,7 @@ final class TerminalQueryStripperTests: XCTestCase {
             "SLOPDESK_SCROLLBACK_DISTILL": "0",
             "SLOPDESK_SCROLLBACK_STRIP_INPUT_MODES": "0",
             "SLOPDESK_SCROLLBACK_STRIP_ALT_SCREEN": "0",
+            "SLOPDESK_SCROLLBACK_COLLAPSE_SYNC": "0",
             "SLOPDESK_SCROLLBACK_STRIP_EOL_MARKS": "0",
         ]))
         XCTAssertNotNil(
@@ -248,6 +259,7 @@ final class TerminalQueryStripperTests: XCTestCase {
                 "SLOPDESK_SCROLLBACK_DISTILL": "0",
                 "SLOPDESK_SCROLLBACK_STRIP_INPUT_MODES": "0",
                 "SLOPDESK_SCROLLBACK_STRIP_ALT_SCREEN": "0",
+                "SLOPDESK_SCROLLBACK_COLLAPSE_SYNC": "0",
             ]),
             "the PROMPT_SP mark stripper keeps the transform alive on its own",
         )

@@ -131,11 +131,13 @@ public struct ReplayBuffer: Sendable {
     public let scrollbackBytesCap: Int
 
     /// Optional COLD-reattach scrollback cleaner (host injects an OSC-133 distiller). When present,
-    /// ``replay(after:)`` runs it over the scrollback-ring portion of a cold replay to collapse the
+    /// ``replay(after:)`` runs it over the history portion of a cold replay to collapse the
     /// transient B→C line-editor churn (completion menus, autosuggestions, per-keystroke redraws) to
     /// the committed command line — see ``ScrollbackDistiller``. `nil` ⇒ ring replays raw (all transport
-    /// tests default to this). NEVER touches the un-acked live tail (byte-exact resume) or
-    /// ``messages(after:)`` (the raw primitive for control-channel snapshots).
+    /// tests default to this). The un-acked live tail is included ONLY for a FRESH client
+    /// (`lastReceivedSeq == 0` — nothing rendered yet, so no byte-exact continuity to protect);
+    /// a warm reconnect always gets the raw tail. ``messages(after:)`` (the raw primitive for
+    /// control-channel snapshots) is never touched.
     public let scrollbackDistiller: (@Sendable (Data) -> Data)?
 
     @preconcurrency
@@ -326,11 +328,32 @@ public struct ReplayBuffer: Sendable {
     /// reattach — `lastReceivedSeq` below the acked frontier), the scrollback portion is DISTILLED
     /// (transient B→C editing churn collapsed to the committed command) and RE-CHUNKED across the same
     /// seq range (distilled bytes ≤ raw, so chunk count never exceeds entry count → seqs stay ascending
-    /// and strictly below the un-acked tail). The un-acked live tail is ALWAYS re-sent RAW (byte-exact
-    /// resume). Without a distiller, or on a warm reconnect (no scrollback passes the filter), this is
-    /// byte-identical to `messages(after:)` mapped to `.output`.
+    /// and strictly below the un-acked tail).
+    ///
+    /// **FRESH client (`lastReceivedSeq == 0`)**: the un-acked live tail is history to a client
+    /// that has rendered nothing — there is no byte-exact continuity to protect, and a session
+    /// that ran detached for hours retains up to the offline gate (64 MiB) of raw live-TUI churn
+    /// (Claude Code repaint frames) that would replay for seconds and then render wrong at the
+    /// new geometry. Ring + tail are therefore transformed as ONE chronological stream and
+    /// re-chunked across the combined seq range; the LAST emitted chunk always carries the
+    /// highest tail seq, so the client's ack releases every retained entry (the transform can
+    /// shrink the byte count below the seq count — an unsent top seq would otherwise strand
+    /// un-acked bytes against the 256 MiB pause gate forever).
+    ///
+    /// **Warm reconnect (`lastReceivedSeq > 0`)**: the un-acked tail is ALWAYS re-sent RAW —
+    /// the client's grid is live mid-stream and transformed bytes would corrupt it. Without a
+    /// distiller this is byte-identical to `messages(after:)` mapped to `.output`.
     public func replay(after lastReceivedSeq: Int64) -> [WireMessage] {
         let scrollback = scrollbackRing.filter { $0.seq > lastReceivedSeq }
+        if let scrollbackDistiller, lastReceivedSeq == 0, !entries.isEmpty {
+            // COLD replay to a fresh client — transform ring + tail as one stream.
+            var raw = Data()
+            for entry in scrollback { raw.append(entry.bytes) }
+            for entry in entries { raw.append(entry.bytes) }
+            let cleaned = scrollbackDistiller(raw)
+            let seqs = scrollback.map(\.seq) + entries.map(\.seq)
+            return Self.rechunk(cleaned, across: seqs, mustCoverLastSeq: true)
+        }
         var result: [WireMessage] = []
         if let scrollbackDistiller, !scrollback.isEmpty {
             var raw = Data()
@@ -340,7 +363,7 @@ public struct ReplayBuffer: Sendable {
         } else {
             for entry in scrollback { result.append(.output(seq: entry.seq, bytes: entry.bytes)) }
         }
-        // Un-acked live tail — never distilled (byte-exact resume of in-flight output).
+        // Un-acked live tail — raw (byte-exact resume of in-flight output on a warm grid).
         for entry in entries where entry.seq > lastReceivedSeq {
             result.append(.output(seq: entry.seq, bytes: entry.bytes))
         }
@@ -353,6 +376,12 @@ public struct ReplayBuffer: Sendable {
     /// absorbs the remainder so every byte is emitted and no seq is reused. Empty `data` ⇒ no messages
     /// (the client's forward-jump tolerance in `deliverOutput` handles the seq gap).
     ///
+    /// `mustCoverLastSeq` (the cold fresh-client replay, where `seqs` includes UN-ACKED tail seqs):
+    /// the final emitted message is relabeled to `seqs.last` — ascending order holds (every earlier
+    /// chunk uses a strictly lower seq from the same list) and the client's `deliverOutput` accepts
+    /// the forward jump — so the ack that follows releases the entire retained tail. With empty
+    /// `data` an empty `.output` still carries `seqs.last` for the same reason.
+    ///
     /// The chunk size is CLAMPED to ``MuxFlowControl/maxOutputFramePayloadBytes``: every emitted
     /// frame must satisfy the credit progress invariant (wire bytes ≤ window/2), exactly like the
     /// live drain's `takeMergedFrame` cap. Without the clamp, the `max(32 KiB, …)` floor alone can
@@ -362,8 +391,15 @@ public struct ReplayBuffer: Sendable {
     /// ≤ the same cap, so `ceil(count / maxChunks)` ≤ cap and the chunk count stays
     /// ≤ `maxChunks` even at the clamped size; the last-chunk absorb then never exceeds the
     /// cap either.
-    private static func rechunk(_ data: Data, across seqs: [Int64]) -> [WireMessage] {
-        guard !data.isEmpty, !seqs.isEmpty else { return [] }
+    private static func rechunk(
+        _ data: Data, across seqs: [Int64], mustCoverLastSeq: Bool = false,
+    ) -> [WireMessage] {
+        guard !seqs.isEmpty else { return [] }
+        guard !data.isEmpty else {
+            // No bytes, but a cold-tail replay must still deliver the top seq — un-acked
+            // entries release only on the ack this message provokes.
+            return mustCoverLastSeq ? [.output(seq: seqs[seqs.count - 1], bytes: Data())] : []
+        }
         let maxChunks = seqs.count
         let chunkSize = min(
             MuxFlowControl.maxOutputFramePayloadBytes,
@@ -380,6 +416,11 @@ public struct ReplayBuffer: Sendable {
             result.append(.output(seq: seqs[k], bytes: Data(data[start..<end])))
             start = end
             k += 1
+        }
+        if mustCoverLastSeq, case let .output(seq, bytes) = result[result.count - 1],
+           seq != seqs[seqs.count - 1]
+        {
+            result[result.count - 1] = .output(seq: seqs[seqs.count - 1], bytes: bytes)
         }
         return result
     }

@@ -1319,3 +1319,41 @@ substitution forced by the pure-native-Swift rule.
   The host-authoritative re-assert precedent (terminal types 23/26/27/32) covers HOST-owned
   facts; these are client wishes. No wire change; `close()`'s runtime resets never write the
   persisted intent (an app-quit teardown routes through `close()`).
+
+## Reconnect while a live inline TUI (Claude Code) runs: transform EVERY cold-replay domain (2026-07-22)
+
+- ✅ **Problem (field report):** reconnecting a client while Claude Code was running broke the
+  pane wholesale, and cold reattaches replayed minutes-old churn "for a while" before settling.
+  Measured on real journals: a 2 MiB transcript with Claude live carried 13,426 synchronized-
+  output repaint frames; the existing transform pipeline left 260 KiB / 2,255 frames because the
+  churn is INLINE (never enters the alt screen — `AltScreenSegmentStripper` can't see it) and
+  lives in an OPEN command span (the distiller passes it verbatim). Worse, the transform only
+  ever ran on the scrollback RING: the un-acked tail replayed raw, and the detached-window
+  bytes live in the out-FIFO (sequenced at drain time, never in the ReplayBuffer at reattach),
+  so up to the 64 MiB detached budget of raw absolute-positioned repaint frames shipped to a
+  FRESH grid — stale geometry shredding the pane until Claude's next repaint.
+- ✅ **Fix 1 — `SyncUpdateFrameCollapser`** (`SLOPDESK_SCROLLBACK_COLLAPSE_SYNC`, default-ON;
+  runs after the alt-screen strip, before the distiller): drops `?2026h…?2026l` frames that
+  repaint in place. Kept: frames that scroll content into history (LF/IND/NEL/`CSI S/T`),
+  viewport-global effects (RI/RIS/`2J`/`3J`/DECSTBM), alt-screen transitions, OSC `133;` marks,
+  piggybacked opener/closer params, and ALWAYS the stream-final frame (newest widget state
+  until the post-reattach SIGWINCH repaint). Real-journal result: 2 MiB → 2.1 KiB with the
+  final frame + net input-mode reassert intact. Accepted gap: autowrap-only scrolling inside a
+  frame is invisible without a grid emulator — sync-frame TUIs disable autowrap per frame.
+- ✅ **Fix 2 — cold replay transforms ring + un-acked tail as ONE stream**
+  (`ReplayBuffer.replay(after: 0)`): a fresh client (`lastReceivedSeq == 0`) has rendered
+  nothing, so there is no byte-exact continuity to protect. The re-chunk's LAST message always
+  carries the top tail seq (else a shrinking transform strands un-acked bytes against the
+  256 MiB pause gate forever — the ack anchor is emitted even when the clean output is empty).
+  Warm reconnects (`lastReceivedSeq > 0`) keep the raw tail byte-exact, unchanged.
+- ✅ **Fix 3 — cold reattach transforms the detached out-FIFO backlog**
+  (`rebindRelay(transformDetachedBacklog:)`, set by `performReattach` iff the client presented
+  seq 0): the chunk prefix is snapshotted under `fifoLock`, transformed unlocked (splice range
+  stays valid — only the not-yet-restarted drain moves `fifoHead`; producers append after),
+  spliced back as one chunk carrying the coalesced sniffed control, and the queue-gate
+  accounting is rebalanced by the size delta (a leaked residue would wedge the read loop).
+- ✅ **Segment-boundary independence is what makes three domains safe:** each stripper treats
+  an unmatched close as defensive passthrough and an unmatched open as live-and-kept, so a
+  frame/segment cut at a domain boundary (ring│tail│FIFO) degrades to "kept verbatim", never
+  corruption; the input-mode reassert appears at each domain's end and later domains override
+  earlier ones — the final assert is the true net state.

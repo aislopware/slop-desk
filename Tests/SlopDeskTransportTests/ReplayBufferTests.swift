@@ -513,28 +513,43 @@ final class ReplayBufferTests: XCTestCase {
         return (seq, bytes)
     }
 
-    func testColdReplayDistillsScrollbackPortion() {
+    /// COLD replay to a FRESH client (`after: 0`): ring AND un-acked tail are transformed as one
+    /// chronological stream — a client that has rendered nothing has no byte-exact continuity to
+    /// protect, and the raw tail is exactly the detached live-TUI churn the transform exists for.
+    func testColdReplayTransformsRingAndTailForFreshClient() {
         var buf = ReplayBuffer(scrollbackBytes: 256, scrollbackDistiller: Self.dropDashes)
         buf.append(bytes: Data("a-b".utf8)) // seq 1 → will be acked into the ring
         buf.append(bytes: Data("c-d".utf8)) // seq 2 → ring
         buf.append(bytes: Data("tail-raw".utf8)) // seq 3 → un-acked live tail
         buf.ack(upTo: 2) // seqs 1,2 move to scrollback
         let replayed = buf.replay(after: 0)
-        // Scrollback bytes are distilled (dashes dropped); the un-acked tail is RAW (dash preserved).
-        var scrollbackText = ""
-        var tailText = ""
-        for m in replayed {
-            let (seq, bytes) = output(m)
-            let s = String(bytes: bytes, encoding: .utf8) ?? ""
-            if seq <= 2 { scrollbackText += s } else { tailText += s }
-        }
-        XCTAssertEqual(scrollbackText, "abcd", "scrollback churn (dashes) collapsed")
-        XCTAssertEqual(tailText, "tail-raw", "un-acked tail replayed byte-exact (never distilled)")
-        // Seqs remain ascending and the distilled scrollback stays strictly below the un-acked tail seq.
+        let joined = replayed.map { String(bytes: output($0).bytes, encoding: .utf8) ?? "" }.joined()
+        XCTAssertEqual(joined, "abcdtailraw", "ring + tail transformed as one stream")
+        // Seqs ascend and the LAST message carries the highest tail seq, so the client's ack
+        // releases every retained entry (nothing stranded against the pause gate).
         let seqs = replayed.map { output($0).seq }
         XCTAssertEqual(seqs, seqs.sorted())
-        XCTAssertTrue(seqs.filter { $0 <= 2 }.allSatisfy { $0 < 3 })
-        XCTAssertTrue(seqs.contains(3), "tail seq present")
+        XCTAssertEqual(seqs.last, 3, "last chunk must carry the top tail seq")
+        buf.ack(upTo: seqs.last ?? 0)
+        XCTAssertEqual(buf.retainedBytes, 0, "post-replay ack releases the whole tail")
+    }
+
+    /// Cold replay with NO ring (nothing acked yet) still transforms the tail and covers the
+    /// top seq; a transform that cleans to zero bytes must still emit an ack anchor.
+    func testColdReplayTailOnlyAndEmptyTransformOutput() {
+        var buf = ReplayBuffer(scrollbackBytes: 256, scrollbackDistiller: Self.dropDashes)
+        buf.append(bytes: Data("x-y".utf8)) // seq 1, un-acked
+        buf.append(bytes: Data("z-".utf8)) // seq 2, un-acked
+        let replayed = buf.replay(after: 0)
+        let joined = replayed.map { String(bytes: output($0).bytes, encoding: .utf8) ?? "" }.joined()
+        XCTAssertEqual(joined, "xyz")
+        XCTAssertEqual(replayed.map { output($0).seq }.last, 2)
+
+        var churn = ReplayBuffer(scrollbackBytes: 256, scrollbackDistiller: Self.dropDashes)
+        churn.append(bytes: Data("---".utf8)) // seq 1 — cleans to nothing
+        churn.append(bytes: Data("--".utf8)) // seq 2 — cleans to nothing
+        let anchor = churn.replay(after: 0)
+        XCTAssertEqual(anchor, [.output(seq: 2, bytes: Data())], "empty clean still anchors the ack")
     }
 
     func testWarmReconnectNeverDistills() {
@@ -549,22 +564,22 @@ final class ReplayBufferTests: XCTestCase {
     }
 
     func testDistilledScrollbackRechunkSeqsStayBelowTail() {
-        // Many tiny scrollback entries + a distiller that passes the (dash-free) bytes through unchanged:
-        // the re-chunker must assign only scrollback seqs, ascending, each strictly below the un-acked tail
-        // seq, and the concatenated distilled bytes must equal the distiller output.
+        // The RING-ONLY distill path (a returning client whose `lastReceivedSeq` sits inside the
+        // ring, NOT the fresh-client `after: 0` path): the re-chunker must assign only scrollback
+        // seqs, ascending, each strictly below the un-acked tail seq, and the tail stays raw.
         var buf = ReplayBuffer(scrollbackBytes: 4096, scrollbackDistiller: Self.dropDashes)
         var expected = ""
         for i in 0..<50 {
             let s = "L\(i)\n" // no dashes → dropDashes is a no-op here (effective identity)
-            expected += s
+            if i >= 1 { expected += s } // seq 1 (L0) is below the replay point
             buf.append(bytes: Data(s.utf8)) // seqs 1...50
         }
         buf.ack(upTo: 50) // all → scrollback ring
         buf.append(bytes: Data("TAIL".utf8)) // seq 51 un-acked
-        let replayed = buf.replay(after: 0)
+        let replayed = buf.replay(after: 1) // client already holds seq 1 → ring-only distill path
         let sbSeqs = replayed.map { output($0).seq }.filter { $0 <= 50 }
         XCTAssertEqual(sbSeqs, sbSeqs.sorted(), "scrollback chunk seqs ascending")
-        XCTAssertTrue(sbSeqs.allSatisfy { $0 >= 1 && $0 <= 50 }, "chunk seqs drawn from the scrollback range")
+        XCTAssertTrue(sbSeqs.allSatisfy { $0 >= 2 && $0 <= 50 }, "chunk seqs drawn from the scrollback range")
         XCTAssertEqual(Set(sbSeqs).count, sbSeqs.count, "no seq reused across chunks")
         XCTAssertTrue(sbSeqs.allSatisfy { $0 < 51 }, "distilled scrollback stays below the un-acked tail seq")
         let sbText = replayed
@@ -573,6 +588,31 @@ final class ReplayBufferTests: XCTestCase {
             .joined()
         XCTAssertEqual(sbText, expected, "distilled bytes preserved across the re-chunk")
         XCTAssertEqual(replayed.last, .output(seq: 51, bytes: Data("TAIL".utf8)))
+    }
+
+    /// The cold fresh-client path also honours the credit progress invariant: a combined
+    /// ring+tail re-chunk never emits a frame above the window/2 payload cap, is byte-preserving,
+    /// and its last chunk carries the top tail seq.
+    func testColdCombinedRechunkRespectsPayloadCapAndTopSeq() {
+        let identity: @Sendable (Data) -> Data = \.self
+        var buf = ReplayBuffer(scrollbackBytes: 8 * 1024 * 1024, scrollbackDistiller: identity)
+        let cap = MuxFlowControl.maxOutputFramePayloadBytes
+        var joinedIn = Data()
+        for i in 0..<8 {
+            let chunk = Data(repeating: UInt8(0x30 + i), count: cap)
+            joinedIn += chunk
+            buf.append(bytes: chunk) // seqs 1...8
+        }
+        buf.ack(upTo: 4) // 1...4 → ring; 5...8 stay un-acked
+        let replayed = buf.replay(after: 0)
+        var joinedOut = Data()
+        for m in replayed {
+            let (_, bytes) = output(m)
+            XCTAssertLessThanOrEqual(bytes.count, cap, "window/2 progress invariant")
+            joinedOut += bytes
+        }
+        XCTAssertEqual(joinedOut, joinedIn, "combined re-chunk is byte-preserving")
+        XCTAssertEqual(replayed.map { output($0).seq }.last, 8, "top tail seq covered")
     }
 
     /// Every re-chunked replay frame must respect the credit progress

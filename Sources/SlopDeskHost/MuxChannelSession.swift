@@ -248,6 +248,11 @@ final class MuxChannelSession: @unchecked Sendable {
     private let taskLock = NSLock()
     private var replay: ReplayBuffer
     private let replayLock = NSLock()
+    /// The replay transform (``ScrollbackReplayTransform``), captured at init from the injected
+    /// ``ReplayBuffer/scrollbackDistiller`` so ``compactDetachedBacklogForColdClient()`` can run
+    /// the SAME pipeline over the out-FIFO's detached-window backlog without touching `replay`
+    /// under a lock (the field is immutable; the pre-concurrency init read is race-free).
+    private let coldBacklogTransform: (@Sendable (Data) -> Data)?
     /// Serializes ``updateReplayBackpressure()``'s [recompute → gate apply] pair across the
     /// independent caller tasks (output drain / ack path / detach) — see that method's docs.
     private let backpressureApplyLock = NSLock()
@@ -378,6 +383,54 @@ final class MuxChannelSession: @unchecked Sendable {
             bytes = merged
         }
         return .output(bytes: bytes, byteCount: byteCount, control: control)
+    }
+
+    /// Replaces the out-FIFO's detached-window chunk backlog with its replay-transformed
+    /// equivalent — the un-sequenced counterpart of ``ReplayBuffer/replay(after:)``'s cold path.
+    ///
+    /// Called ONLY from ``rebindRelay`` with `transformDetachedBacklog: true` (a COLD client),
+    /// BEFORE the output drain restarts: bytes produced while detached live in the out-FIFO (seq
+    /// assignment happens at drain time), so the ring/tail transform inside the ReplayBuffer
+    /// never sees them — without this pass a client whose Claude Code ran detached for hours
+    /// receives up to the detached budget (64 MiB) of raw repaint churn AFTER the clean replay.
+    ///
+    /// The chunk prefix is snapshotted under `fifoLock`, transformed UNLOCKED (the transform is
+    /// seconds-scale on a full budget; producers may append meanwhile), then spliced back under
+    /// the lock. The splice range stays valid across the unlock: only the drain advances
+    /// `fifoHead` (not running yet) and producers only append past the snapshot — appended
+    /// chunks stay chronologically AFTER the transformed block. Sniffed control messages ride
+    /// the single replacement chunk in order (same coalescing `takeMergedFrame` performs).
+    /// The queue-gate accounting is rebalanced by the size delta so the books still sum to zero
+    /// after the backlog ships (a leaked positive residue would wedge the read loop paused).
+    private func compactDetachedBacklogForColdClient() {
+        guard let transform = coldBacklogTransform else { return }
+        fifoLock.lock()
+        var chunkEnd = fifoHead
+        var raw = Data()
+        var control: [WireMessage] = []
+        while chunkEnd < outFIFO.count, case let .chunk(bytes, chunkControl) = outFIFO[chunkEnd] {
+            raw.append(bytes)
+            control.append(contentsOf: chunkControl)
+            chunkEnd += 1
+        }
+        let spliceRange = fifoHead..<chunkEnd
+        fifoLock.unlock()
+        guard !raw.isEmpty else { return }
+        let cleaned = transform(raw)
+        var replacement: [OutputItem] = []
+        // An all-churn backlog can clean to zero bytes; the sniffed control must still ship.
+        if !cleaned.isEmpty || !control.isEmpty {
+            replacement.append(.chunk(bytes: cleaned, control: control))
+        }
+        fifoLock.lock()
+        outFIFO.replaceSubrange(spliceRange, with: replacement)
+        fifoLock.unlock()
+        let delta = raw.count - cleaned.count
+        if delta > 0 {
+            outputGate?.dequeue(delta)
+        } else if delta < 0 {
+            outputGate?.enqueue(-delta)
+        }
     }
 
     /// EOF latch: set true by ``PTYReadLoop``'s `onEOF` once the read loop has drained the
@@ -540,6 +593,7 @@ final class MuxChannelSession: @unchecked Sendable {
         self.sessionID = sessionID
         self.resizeDebounce = resizeDebounce
         self.replay = replay
+        coldBacklogTransform = replay.scrollbackDistiller
         self.shimDir = shimDir
         self.agentDetectEnabled = agentDetectEnabled
         self.agentPollInterval = agentPollInterval
@@ -960,6 +1014,11 @@ final class MuxChannelSession: @unchecked Sendable {
     ///   - onExit: The handler the reattached session's exit task must fire. Assigned under
     ///     `taskLock` before `exitTask` is (re)started, making the assignment atomic with the
     ///     task launch and eliminating the race between a racing exit and a post-call assignment.
+    ///   - transformDetachedBacklog: `true` for a COLD client (`channelOpen.lastReceivedSeq == 0`
+    ///     — a fresh surface that has rendered nothing). The detached-window backlog in the
+    ///     out-FIFO is then replay-transformed before the drain restarts (see
+    ///     ``compactDetachedBacklogForColdClient()``); a WARM client keeps the raw backlog —
+    ///     its live grid needs byte-exact continuation.
     ///
     /// - Precondition: `isDetached == true`. A no-op (safe) if called on a live session —
     ///   returning `false` so the caller can REFUSE the channel instead of acking a pane whose
@@ -972,6 +1031,7 @@ final class MuxChannelSession: @unchecked Sendable {
         data newData: MuxSubChannel,
         control newControl: MuxSubChannel,
         onExit newOnExit: (@Sendable (UInt32) -> Void)?,
+        transformDetachedBacklog: Bool = false,
     ) -> Bool {
         taskLock.lock()
         guard isDetached else { taskLock.unlock()
@@ -1015,6 +1075,13 @@ final class MuxChannelSession: @unchecked Sendable {
         // restarted drain ships the backlog, dequeues its accounting, and resumes it — the exact
         // rebalance the note above describes.
         outputGate?.setCapacity(MuxFlowControl.hostQueueCapacityBytes)
+
+        // COLD client: the detached-window backlog is history to a terminal that has rendered
+        // nothing — run the replay transform over it BEFORE the drain restarts (the drain would
+        // otherwise ship up to the detached budget of raw live-TUI churn, seconds of stale
+        // Claude Code repaint frames rendering wrong at the new geometry). Placed after the
+        // capacity restore so the gate rebalance below acts on the attached sizing.
+        if transformDetachedBacklog { compactDetachedBacklogForColdClient() }
 
         // Rebuild the control wake stream and restart the control sender FIRST — BEFORE the output
         // drain below exists. The restarted drain pops the detached backlog and hands its sniffed

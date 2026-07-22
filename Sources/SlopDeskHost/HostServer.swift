@@ -699,6 +699,10 @@ public final class HostServer: @unchecked Sendable {
             data: open.data,
             control: open.control,
             onExit: { [weak self] _ in self?.removeMuxSession(key) },
+            // COLD client (fresh surface): the detached-window out-FIFO backlog is replay-
+            // transformed before the drain restarts, mirroring the ring/tail transform the
+            // replayTail above already applied. A warm client needs the raw backlog.
+            transformDetachedBacklog: open.lastReceivedSeq == 0,
         )
         guard rebound else {
             // The new link can die MID-REPLAY: `finishLink` parks the sub-channels and
