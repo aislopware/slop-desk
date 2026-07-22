@@ -729,11 +729,25 @@ public final class HostServer: @unchecked Sendable {
         // Nudge the PTY foreground process to repaint after reattach — the client terminal is
         // fresh (no buffered output) so without this the pane is blank until the user presses
         // a key. A brief delay lets the client's first `.resize` land and wires the sub-channels
-        // before SIGWINCH fires, so zsh/bash redraw with the correct terminal dimensions.
+        // before the nudge fires, so zsh/bash redraw with the correct terminal dimensions.
+        //
+        // COLD client (fresh surface): the replayed transcript is transform-collapsed, so a
+        // full-screen TUI's live frame arrives incomplete — and a differential renderer (Claude
+        // Code) ignores a same-size SIGWINCH for the rows it believes are already painted, leaving
+        // the collapsed rows (input dividers, status line) blank forever. Only a REAL size change
+        // forces the full re-layout: shrink one row, hold long enough for the app's event loop to
+        // observe the intermediate size (too short and both SIGWINCHes coalesce into "unchanged"),
+        // then restore. A warm client still holds its rendered grid — the plain nudge suffices.
         let nudgePTY = session.pty
+        let coldClient = open.lastReceivedSeq == 0
         Task.detached {
             try? await Task.sleep(for: .milliseconds(200))
-            nudgePTY.nudgeRedraw()
+            if coldClient, let jiggle = nudgePTY.beginRedrawJiggle() {
+                try? await Task.sleep(for: .milliseconds(200))
+                nudgePTY.endRedrawJiggle(jiggle)
+            } else {
+                nudgePTY.nudgeRedraw()
+            }
         }
     }
 

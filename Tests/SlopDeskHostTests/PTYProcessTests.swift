@@ -646,6 +646,95 @@ final class PTYProcessTests: XCTestCase {
         )
     }
 
+    // MARK: Redraw jiggle (cold-reattach full-repaint resize dance)
+
+    /// The applied winsize straight off the master fd (`TIOCGWINSZ`) — the FULL struct, pixel fields
+    /// included (``PTYProcess/currentWindowSize()`` drops them, and the jiggle must preserve them).
+    private func appliedWinsize(_ fd: Int32) -> winsize? {
+        var ws = winsize()
+        guard ioctl(fd, TIOCGWINSZ, &ws) == 0 else { return nil }
+        return ws
+    }
+
+    /// `beginRedrawJiggle()` shrinks the PTY by exactly one ROW (columns + pixel fields untouched)
+    /// and `endRedrawJiggle(_:)` restores the original size. The two REAL size changes are what force
+    /// a differential-rendering TUI (Claude Code) to fully re-layout after a cold-reattach replay — a
+    /// bare same-size SIGWINCH only repaints the rows the app believes changed, leaving the replayed
+    /// frame's collapsed rows (input dividers, status line) permanently blank.
+    func testRedrawJiggleShrinksOneRowThenRestores() throws {
+        let pty = PTYProcess()
+        try pty.spawn("/bin/sh", environment: curatedEnv(), cols: 80, rows: 24)
+        defer {
+            pty.forceTerminate()
+            pty.waitUntilExited(timeout: 1.0)
+            pty.closeMaster()
+        }
+        pty.setWindowSize(cols: 80, rows: 24, pxWidth: 1280, pxHeight: 800)
+
+        let jiggle = try XCTUnwrap(pty.beginRedrawJiggle())
+        let shrunk = try XCTUnwrap(appliedWinsize(pty.masterFD))
+        XCTAssertEqual(shrunk.ws_row, 23)
+        XCTAssertEqual(shrunk.ws_col, 80)
+        XCTAssertEqual(shrunk.ws_xpixel, 1280, "jiggle must not clobber the pixel fields")
+        XCTAssertEqual(shrunk.ws_ypixel, 800)
+
+        pty.endRedrawJiggle(jiggle)
+        let restored = try XCTUnwrap(appliedWinsize(pty.masterFD))
+        XCTAssertEqual(restored.ws_row, 24)
+        XCTAssertEqual(restored.ws_col, 80)
+        XCTAssertEqual(restored.ws_xpixel, 1280)
+        XCTAssertEqual(restored.ws_ypixel, 800)
+    }
+
+    /// A client `.resize` that lands DURING the jiggle hold wins: `endRedrawJiggle(_:)` sees the
+    /// current size no longer matches the shrunk one and SKIPS the restore — the client's own resize
+    /// already delivered a real-size-change SIGWINCH at the size the client actually wants, and
+    /// restoring the pre-jiggle size would stomp it.
+    func testRedrawJiggleRestoreYieldsToInterveningResize() throws {
+        let pty = PTYProcess()
+        try pty.spawn("/bin/sh", environment: curatedEnv(), cols: 80, rows: 24)
+        defer {
+            pty.forceTerminate()
+            pty.waitUntilExited(timeout: 1.0)
+            pty.closeMaster()
+        }
+
+        let jiggle = try XCTUnwrap(pty.beginRedrawJiggle())
+        pty.setWindowSize(cols: 120, rows: 40) // the client's reattach resize, mid-hold
+        pty.endRedrawJiggle(jiggle)
+
+        let final = try XCTUnwrap(appliedWinsize(pty.masterFD))
+        XCTAssertEqual(final.ws_row, 40, "intervening resize must win over the jiggle restore")
+        XCTAssertEqual(final.ws_col, 120)
+    }
+
+    /// Degenerate single-row PTY: there is no row to give, so the jiggle shrinks a COLUMN instead.
+    func testRedrawJiggleOnSingleRowShrinksColumnInstead() throws {
+        let pty = PTYProcess()
+        try pty.spawn("/bin/sh", environment: curatedEnv(), cols: 80, rows: 1)
+        defer {
+            pty.forceTerminate()
+            pty.waitUntilExited(timeout: 1.0)
+            pty.closeMaster()
+        }
+
+        let jiggle = try XCTUnwrap(pty.beginRedrawJiggle())
+        let shrunk = try XCTUnwrap(appliedWinsize(pty.masterFD))
+        XCTAssertEqual(shrunk.ws_row, 1)
+        XCTAssertEqual(shrunk.ws_col, 79)
+
+        pty.endRedrawJiggle(jiggle)
+        let restored = try XCTUnwrap(appliedWinsize(pty.masterFD))
+        XCTAssertEqual(restored.ws_row, 1)
+        XCTAssertEqual(restored.ws_col, 80)
+    }
+
+    /// Unspawned master (`masterFD == -1`): `beginRedrawJiggle()` refuses with `nil` so the caller
+    /// falls back to a plain `nudgeRedraw()` (which is itself a guarded no-op there).
+    func testRedrawJiggleIsNilOnUnspawnedPTY() {
+        XCTAssertNil(PTYProcess().beginRedrawJiggle())
+    }
+
     func testMasterFDIsBlockingAfterSpawn() throws {
         let pty = PTYProcess()
         try pty.spawn("/bin/sh", arguments: ["-c", "exit 0"], environment: curatedEnv())

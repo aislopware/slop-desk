@@ -301,6 +301,71 @@ public final class PTYProcess: @unchecked Sendable {
         return (rows: ws.ws_row, cols: ws.ws_col)
     }
 
+    // MARK: Redraw jiggle (full-repaint resize dance)
+
+    /// Opaque token from ``beginRedrawJiggle()`` — carries the pre-jiggle size for
+    /// ``endRedrawJiggle(_:)`` to restore, plus the shrunk size so the restore can detect (and
+    /// yield to) an intervening client resize.
+    public struct RedrawJiggle: Sendable {
+        let original: winsize
+        let jiggled: winsize
+    }
+
+    /// Full-repaint "resize dance", step 1: shrink the PTY by one ROW (one COLUMN for a
+    /// single-row PTY) via `TIOCSWINSZ`, preserving the pixel fields.
+    ///
+    /// Why a real size change and not ``nudgeRedraw()``: differential renderers (Claude Code's
+    /// full-screen TUI) keep an in-memory model of the screen and, on a SIGWINCH whose size is
+    /// unchanged, only repaint the rows they believe changed. After a cold-reattach replay — whose
+    /// transcript is transform-collapsed, so the live alt-screen frame arrives incomplete — that
+    /// leaves the collapsed rows (input dividers, status line) permanently blank. Shrinking by one
+    /// row is a REAL size change: the kernel delivers SIGWINCH and the app must re-layout the whole
+    /// frame. The caller holds the shrunk size briefly (so the app's event loop observes it — two
+    /// back-to-back ioctls would coalesce into "size unchanged"), then calls
+    /// ``endRedrawJiggle(_:)`` for the second full re-layout at the true size.
+    ///
+    /// Returns `nil` on a closed/unspawned master or a degenerate 1×1 PTY — callers fall back to a
+    /// plain ``nudgeRedraw()``. Same `exitLock` TOCTOU discipline as
+    /// ``setWindowSize(cols:rows:pxWidth:pxHeight:)``.
+    public func beginRedrawJiggle() -> RedrawJiggle? {
+        exitLock.lock()
+        defer { exitLock.unlock() }
+        guard masterFD >= 0 else { return nil }
+        var ws = winsize()
+        guard ioctl(masterFD, TIOCGWINSZ, &ws) == 0 else { return nil }
+        var jiggled = ws
+        if jiggled.ws_row > 1 {
+            jiggled.ws_row -= 1
+        } else if jiggled.ws_col > 1 {
+            jiggled.ws_col -= 1
+        } else {
+            return nil
+        }
+        var apply = jiggled
+        _ = ioctl(masterFD, TIOCSWINSZ, &apply)
+        return RedrawJiggle(original: ws, jiggled: jiggled)
+    }
+
+    /// Full-repaint "resize dance", step 2: restore the pre-jiggle size (second real size change →
+    /// second full re-layout, now at the size the client renders).
+    ///
+    /// Yields to an intervening resize: if the CURRENT size no longer matches the shrunk one, a
+    /// client `.resize` landed during the hold — its own SIGWINCH already forced the full repaint
+    /// at the size the client actually wants, and restoring the stale pre-jiggle size would stomp
+    /// it. Safe no-op on a closed master.
+    public func endRedrawJiggle(_ jiggle: RedrawJiggle) {
+        exitLock.lock()
+        defer { exitLock.unlock() }
+        guard masterFD >= 0 else { return }
+        var current = winsize()
+        guard ioctl(masterFD, TIOCGWINSZ, &current) == 0 else { return }
+        guard current.ws_row == jiggle.jiggled.ws_row, current.ws_col == jiggle.jiggled.ws_col,
+              current.ws_xpixel == jiggle.jiggled.ws_xpixel, current.ws_ypixel == jiggle.jiggled.ws_ypixel
+        else { return }
+        var restore = jiggle.original
+        _ = ioctl(masterFD, TIOCSWINSZ, &restore)
+    }
+
     // MARK: Redraw nudge
 
     /// Delivers `SIGWINCH` to the PTY's foreground process group so shells and full-screen
