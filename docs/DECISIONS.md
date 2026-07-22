@@ -1357,3 +1357,34 @@ substitution forced by the pure-native-Swift rule.
   frame/segment cut at a domain boundary (ring│tail│FIFO) degrades to "kept verbatim", never
   corruption; the input-mode reassert appears at each domain's end and later domains override
   earlier ones — the final assert is the true net state.
+
+## Sync-input armed with no indicator = the "panes leak into each other" bug (2026-07-22)
+
+- ✅ **Field diagnosis: the cross-pane "input/output leak" between two same-project panes was the
+  per-tab synchronized-input feature (⌘⇧I / palette "Sync Input to All Panes") armed with ZERO
+  surfacing.** The host-side identity plumbing was audited clean end-to-end (composite
+  `(connectionID, channelID)` session keying, exclusive `DetachedSessionStore.claim`,
+  attached-elsewhere refusal, monotonic `ChannelTable` ids, per-channel journal claim/rotation —
+  no cross-pane path exists). The byte-level evidence was in the two panes' scrollback journals:
+  the SAME keystroke-by-keystroke echo and the SAME final command executed in BOTH shells (one
+  `exit 0`, one `exit 1`), plus an SGR mouse burst + XTWINOPS window report that ran AS A COMMAND
+  in the sibling. The 2026-06 decision above claimed the armed state was "surfaced in the tab
+  bar + pane status bar" — that indicator did not survive the v6 UI reset; `syncInputTabs` had
+  no reader outside the store. An invisibly-armed fan-out mode is indistinguishable from a
+  transport-layer leak to the user — armed state must be loud, everywhere it acts.
+- ✅ **Fix 1 — visibility:** a vivid `⚠ SYNC INPUT ×` pane pill (fixed theme-independent
+  `Slate.Status.syncInput` amber, the `SecureInputPill` rationale) on EVERY pane of an armed tab,
+  with `×` → `disarmSyncInput(for:)` (disarms the whole tab); plus an amber grouped-panes glyph
+  on the sidebar row (`SlateTabRow.syncInput`, the `readOnly` lock idiom). Both gate on
+  `syncInputArmed(for:)`, which reads the observable `syncInputTabs` — arming from the chord,
+  the palette, or any sibling's `×` re-renders all surfaces live. The pill is deliberately NOT
+  hidden under read-only/vi mode: the mode leaks INTO the pane regardless of its own input gate.
+- ✅ **Fix 2 — keyboard-only mirror (`SyncInputByteFilter`):** the fan tap rides
+  `TerminalViewModel.sendInput`, which carries MORE than keystrokes — the terminal's own query
+  replies (CPR/DA/DSR/XTWINOPS/DECRPM/kitty-flags) and mouse/focus reports flow through the same
+  funnel. Those are answers to questions only the SOURCE pane's shell asked; mirrored into a
+  sibling they type garbage a later mirrored `↩` executes (observed). Both fans
+  (`fanSyncInput` + `fanBroadcastInput`) now strip reply/report sequences from the mirrored copy;
+  keystrokes, SS3/CSI keys, kitty `CSI u`, and bracketed paste survive byte-exact. Accepted gap:
+  modified F3 shares the CPR byte shape and is dropped from the mirror only. Truncated trailing
+  sequences pass through verbatim (input arrives one whole event per chunk).

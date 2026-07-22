@@ -202,6 +202,14 @@ struct TerminalLeafView: View {
                     SecureInputPill()
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
+                // SAFETY chrome, never hidden by read-only/vi gates: while this pane's tab is armed for
+                // synchronized input (⌘⇧I), every keystroke here fans into the tab's siblings — a mode
+                // that MUST be visible wherever it acts (an invisibly-armed tab reads as a cross-pane
+                // input leak). The `×` disarms the whole tab.
+                if !staticMirror, showSyncInputPill, let paneID = live?.id {
+                    SyncInputPill(onDisarm: { store.disarmSyncInput(for: paneID) })
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
                 if !staticMirror, findBar.visible, live?.terminalModel != nil {
                     TerminalFindBar(model: findBar)
                         .transition(.move(edge: .top).combined(with: .opacity))
@@ -236,6 +244,7 @@ struct TerminalLeafView: View {
         .animation(Slate.Anim.reveal, value: findBar.visible)
         .animation(Slate.Anim.reveal, value: showReadOnlyPill)
         .animation(Slate.Anim.reveal, value: showSecureInputPill)
+        .animation(Slate.Anim.reveal, value: showSyncInputPill)
         .animation(Slate.Anim.reveal, value: showViModePill)
         .animation(Slate.Anim.reveal, value: showViHintBar)
         .animation(Slate.Anim.reveal, value: navigatorChrome.isVisible)
@@ -246,6 +255,16 @@ struct TerminalLeafView: View {
     /// setting is on, AND the pane is NOT read-only (under read-only no input can fire, so the cue is moot —
     /// spec). `secureInputActive` is always `false` off macOS, so the pill never lights on iOS. `false` for a
     /// not-yet-live pane.
+    /// Whether the `⚠ SYNC INPUT ×` pill is shown: the pane's TAB is armed for synchronized input.
+    /// Deliberately NOT gated by read-only / vi mode (unlike the other pills): the mode leaks INTO this
+    /// pane from siblings regardless of this pane's own input gate, so the warning must stay up.
+    /// `store.syncInputArmed(for:)` reads the observable `syncInputTabs` — arming/disarming anywhere
+    /// re-renders this leaf live. `false` for a not-yet-live pane.
+    private var showSyncInputPill: Bool {
+        guard let paneID = live?.id else { return false }
+        return store.syncInputArmed(for: paneID)
+    }
+
     private var showSecureInputPill: Bool {
         guard let model = live?.terminalModel else { return false }
         // Read the OBSERVED `secureInputIndicator` default (not the bare `SettingsKey` accessor) so SwiftUI

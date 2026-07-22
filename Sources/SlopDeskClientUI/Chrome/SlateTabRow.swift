@@ -38,6 +38,10 @@ struct SlateTabRow: View {
     /// read-only indicator, twin of the pane's `🔒 READ ONLY ×` pill). Default `false` keeps existing call
     /// sites source-compatible.
     var readOnly: Bool = false
+    /// Whether this pane's TAB is armed for synchronized input (⌘⇧I) — renders a small trailing amber
+    /// grouped-panes glyph (the sidebar twin of the pane's `⚠ SYNC INPUT ×` pill), so an armed tab is
+    /// visible even from the rail. Default `false` keeps existing call sites source-compatible.
+    var syncInput: Bool = false
     /// Whether the row is in inline-RENAME mode — swaps the title `Text` for a committing `TextField`.
     /// Default `false` keeps existing call sites source-compatible.
     var isEditing: Bool = false
@@ -190,6 +194,15 @@ struct SlateTabRow: View {
                     .foregroundStyle(Slate.Text.secondary)
                     .accessibilityLabel("Read only")
                     .help("Read only")
+            }
+            if syncInput {
+                // The FIXED sync-amber (NOT the muted secondary tone the lock uses): sync input is a
+                // fan-out mode, and its rail indicator must be as unmissable as the pane pill.
+                Image(systemSymbol: .rectangle3Group)
+                    .font(.system(size: Slate.Typeface.small, weight: .semibold))
+                    .foregroundStyle(Slate.Status.syncInput)
+                    .accessibilityLabel("Sync input")
+                    .help("Sync input — keystrokes mirror to every pane in this tab")
             }
             if let command = RailRowsBuilder.processDisplayName(processLabel) {
                 Text(command)

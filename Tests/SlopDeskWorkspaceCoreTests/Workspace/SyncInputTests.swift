@@ -147,6 +147,57 @@ final class SyncInputTests: XCTestCase {
         XCTAssertEqual(reached, 0, "an unknown sourceID produces no fan-out")
     }
 
+    /// The fan mirrors KEYBOARD bytes only: mouse reports / query replies embedded in the source's
+    /// input stream are stripped before delivery (``SyncInputByteFilter``), and a chunk that is
+    /// ENTIRELY reports fans nothing — the field-observed "scroll burst executed as a command in the
+    /// sibling" leak.
+    func testFanSyncStripsNonKeyboardBytes() throws {
+        let store = makeTreeStore()
+        route(.splitRight, store)
+        let all = store.tree.activeSession?.activeTab?.allPaneIDs() ?? []
+        let source = all[0]
+        let sibling = try XCTUnwrap(all.first(where: { $0 != source }))
+        let tabID = try XCTUnwrap(activeTabID(store))
+        store.toggleSyncInput(tabID: tabID)
+
+        // Keystrokes with an embedded SGR mouse burst + window report → siblings get keystrokes only.
+        let mixed = Data("cp \u{1B}[<65;31;18M\u{1B}[8;33;96tx\r".utf8)
+        XCTAssertEqual(store.fanSyncInput(from: source, mixed), 1)
+        XCTAssertEqual(bytes(store, sibling), [Array("cp x\r".utf8)])
+
+        // A chunk that is ENTIRELY reports fans nothing at all.
+        let reportsOnly = Data("\u{1B}[<64;10;10M\u{1B}[24;80R".utf8)
+        XCTAssertEqual(store.fanSyncInput(from: source, reportsOnly), 0, "reports-only chunk reaches nobody")
+        XCTAssertEqual(bytes(store, sibling).count, 1, "sibling saw no second delivery")
+    }
+
+    // MARK: - Armed-state visibility (the pill/rail gate)
+
+    /// `syncInputArmed(for:)` reflects the pane's TAB arming — the `⚠ SYNC INPUT` pill's visibility
+    /// gate — and `disarmSyncInput(for:)` (the pill's `×`) disarms the whole tab from any member pane.
+    func testSyncInputArmedAndDisarmPerPane() throws {
+        let store = makeTreeStore()
+        route(.splitRight, store)
+        let all = store.tree.activeSession?.activeTab?.allPaneIDs() ?? []
+        let tabID = try XCTUnwrap(activeTabID(store))
+
+        XCTAssertFalse(store.syncInputArmed(for: all[0]), "disarmed by default")
+        store.toggleSyncInput(tabID: tabID)
+        for id in all {
+            XCTAssertTrue(store.syncInputArmed(for: id), "EVERY pane of the armed tab reports armed")
+        }
+        XCTAssertFalse(store.syncInputArmed(for: PaneID()), "a pane outside any tab is never armed")
+
+        // The pill's ×: disarming from ONE pane clears the whole tab.
+        store.disarmSyncInput(for: all[1])
+        for id in all {
+            XCTAssertFalse(store.syncInputArmed(for: id), "disarm from any member clears every pane")
+        }
+        // Idempotent + graceful for an unknown pane.
+        store.disarmSyncInput(for: all[1])
+        store.disarmSyncInput(for: PaneID())
+    }
+
     // MARK: - Reentrancy guard (shared isFanningBroadcast)
 
     /// When a sibling's `sendBytes` re-enters `fanSyncInput`, the reentrancy guard collapses the

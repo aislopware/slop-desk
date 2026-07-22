@@ -135,4 +135,76 @@ struct SecureInputPill: View {
         .accessibilityHint("Secure keyboard entry is active — other apps cannot read your keystrokes")
     }
 }
+
+/// The `⚠ SYNC INPUT ×` pill — shown in the pane's top-trailing overlay while the pane's TAB is armed
+/// for synchronized input (⌘⇧I / palette "Sync Input to All Panes"): every keystroke typed in ANY pane
+/// of the tab is mirrored into all its sibling panes.
+///
+/// This pill is LOAD-BEARING safety chrome, not decoration: sync-input armed with no indicator is a
+/// cross-pane input leak the user cannot explain — a command typed in one pane silently executes in
+/// every sibling (field report: two same-project panes "leaking into each other"; the armed state had
+/// NO surfacing after the v6 UI reset dropped the old tab-bar badge). Like ``SecureInputPill`` it is a
+/// VIVID FILLED chip in a FIXED theme-independent tone (`Slate.Status.syncInput` amber — a mode this
+/// dangerous never blends with the chrome); like ``ReadOnlyPill`` it carries an `×` so the mode can be
+/// disarmed right where its effect is felt (routes to ``WorkspaceStore/disarmSyncInput(for:)``, which
+/// disarms the WHOLE tab — the pill disappears from every sibling at once).
+///
+/// Shown on EVERY pane of the armed tab (each one both leaks and receives), gated by the LEAF on
+/// `store.syncInputArmed(for:)` — reading the observable `syncInputTabs`, so arming/disarming from the
+/// chord, the palette, or any sibling's `×` re-renders all panes live.
+struct SyncInputPill: View {
+    /// The pill's FIXED fill — the theme-INDEPENDENT sync-amber (see `Slate.Status.syncInput`). One
+    /// source for the view and its colour test, mirroring ``SecureInputPill/fillColor``.
+    static var fillColor: Color { Slate.Status.syncInput }
+
+    /// Called when the user clicks `×` — the leaf routes it to `WorkspaceStore.disarmSyncInput(for:)`.
+    let onDisarm: () -> Void
+
+    @State private var closeHover = false
+
+    var body: some View {
+        HStack(spacing: Slate.Metric.space1) {
+            // The grouped-panes glyph — the same symbol the palette entry uses, so the pill and the
+            // command that armed it read as one feature.
+            Image(systemSymbol: .rectangle3Group)
+                .font(.system(size: Slate.Typeface.small, weight: .bold))
+                .foregroundStyle(.white)
+            Text("SYNC INPUT")
+                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+                .tracking(0.5)
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .fixedSize()
+            closeButton
+        }
+        .padding(.horizontal, Slate.Metric.space2)
+        .padding(.vertical, Slate.Metric.space1)
+        // VIVID-AMBER FILLED chip in the FIXED sync-amber (theme-INDEPENDENT, never the theme accent) —
+        // a mode this dangerous must never blend with the chrome. A small shadow lifts it off busy output.
+        .background(Self.fillColor, in: .rect(cornerRadius: Slate.Metric.radiusControl))
+        .shadow(color: Slate.State.shadow, radius: 4, x: 0, y: 1)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Sync input")
+        .accessibilityHint("Keystrokes typed here are mirrored into every other pane in this tab")
+    }
+
+    /// The `×` close glyph — white-on-amber (the fill is vivid, so the ReadOnlyPill's secondary tone
+    /// would vanish), with the same subtle hover plate. Disarms the WHOLE tab via ``onDisarm``.
+    private var closeButton: some View {
+        Button(action: onDisarm) {
+            Image(systemSymbol: .xmark)
+                .font(.system(size: Slate.Typeface.small, weight: .medium))
+                .foregroundStyle(.white)
+                .frame(width: 16, height: 16)
+                .background(
+                    closeHover ? Slate.State.selected : .clear,
+                    in: .rect(cornerRadius: Slate.Metric.radiusSmall),
+                )
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .onHover { closeHover = $0 }
+        .slateHelp("Turn off sync input for this tab")
+    }
+}
 #endif

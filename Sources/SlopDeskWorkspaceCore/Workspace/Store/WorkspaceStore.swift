@@ -1447,9 +1447,13 @@ public final class WorkspaceStore {
         guard broadcastActive, !isFanningBroadcast, !data.isEmpty else { return 0 }
         let targets = broadcastTargets()
         guard targets.contains(sourceID), targets.count > 1 else { return 0 }
+        // KEYBOARD-ONLY mirror (see ``SyncInputByteFilter``): the tap rides `sendInput`, which also
+        // carries the terminal's query replies and mouse/focus reports — mirroring those types garbage
+        // into shells that never asked.
+        let bytes = Array(SyncInputByteFilter.keyboardOnly(data))
+        guard !bytes.isEmpty else { return 0 }
         isFanningBroadcast = true
         defer { isFanningBroadcast = false }
-        let bytes = Array(data)
         var reached = 0
         for id in targets where id != sourceID {
             registry[id]?.sendBytes(bytes)
@@ -1467,6 +1471,23 @@ public final class WorkspaceStore {
         } else {
             syncInputTabs.insert(tabID)
         }
+    }
+
+    /// Whether pane `id`'s tab is armed for synchronized input — the `⚠ SYNC INPUT` pill's visibility
+    /// gate (every keystroke typed in this pane is mirrored into the tab's other panes, and theirs into
+    /// this one). Armed state MUST be visible: an invisibly-armed tab is a cross-pane input leak the
+    /// user cannot explain (field report: two same-project panes "leaking into each other"). Reading
+    /// this in a view body registers observation of `syncInputTabs`, so the pill lights/clears live.
+    public func syncInputArmed(for paneID: PaneID) -> Bool {
+        guard let (_, tabID) = tree.tab(containing: paneID) else { return false }
+        return syncInputTabs.contains(tabID)
+    }
+
+    /// Disarms synchronized input for the tab containing `paneID` — the pill's `×`. Idempotent; a
+    /// pane outside any tab is a no-op.
+    public func disarmSyncInput(for paneID: PaneID) {
+        guard let (_, tabID) = tree.tab(containing: paneID) else { return }
+        syncInputTabs.remove(tabID)
     }
 
     /// The per-tab synchronized-input fan-out (Zellij `ToggleActiveSyncTab`): mirrors the bytes that the
@@ -1493,9 +1514,14 @@ public final class WorkspaceStore {
         guard let tab else { return 0 }
         let siblings = tab.allPaneIDs().filter { $0 != sourceID }
         guard !siblings.isEmpty else { return 0 }
+        // KEYBOARD-ONLY mirror (see ``SyncInputByteFilter``): the tap rides `sendInput`, which also
+        // carries the terminal's query replies (CPR/DA/XTWINOPS/DECRPM) and mouse/focus reports.
+        // Mirroring those into a sibling shell that never asked types garbage onto its command line —
+        // and a later mirrored `↩` executes it. Strip everything that is not a key/paste byte.
+        let bytes = Array(SyncInputByteFilter.keyboardOnly(data))
+        guard !bytes.isEmpty else { return 0 }
         isFanningBroadcast = true
         defer { isFanningBroadcast = false }
-        let bytes = Array(data)
         var reached = 0
         for id in siblings {
             registry[id]?.sendBytes(bytes)

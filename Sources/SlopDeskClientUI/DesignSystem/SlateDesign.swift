@@ -389,6 +389,13 @@ enum Slate {
         /// from the accent. Pinned to `secure-input.png`'s royal-blue (#2D6FE8) — a mid royal-blue that keeps
         /// white pill text legible on BOTH light and dark themes. Never re-route this through the theme.
         static let secureInput = Color(slateHex: 0x2D6FE8)
+
+        /// FIXED sync-amber — theme-INDEPENDENT, same rationale as ``secureInput``: the `⚠ SYNC INPUT`
+        /// pill flags a MODE where every keystroke fans into multiple shells, so it must read as the
+        /// same unmistakable amber on every theme and never collapse into a theme accent (the default
+        /// Monokai Pro seed's `statusWarn` yellow sits in the accent family). A mid amber keeps white
+        /// pill text legible on BOTH light and dark themes. Never re-route this through the theme.
+        static let syncInput = Color(slateHex: 0xD97A1F)
     }
 
     /// Geometry — theme-independent. Radii + the 8pt grid + chrome dimensions.

@@ -559,6 +559,7 @@ private struct SidebarLiveRow: View {
             processLabel: chrome.processLabel,
             badge: chrome.badge,
             readOnly: chrome.readOnly,
+            syncInput: store.syncInputArmed(for: row.id),
             isEditing: chrome.isEditing,
             helpText: SidebarRowTooltip.text(cwd: row.cwd, scent: scent),
             onSelect: onSelect,
