@@ -96,55 +96,6 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
         }
     }
 
-    /// A serialisable multi-key SEQUENCE (tmux/zellij prefix idiom — e.g. `⌃B` then `D`): an ordered,
-    /// non-empty list of ``KeyChord``s. A single-chord override is the degenerate length-1 sequence; the
-    /// registry bridge (`asRegistrySequence`) lifts BOTH into the dispatcher's `KeySequence`. Pure data —
-    /// no AppKit. Its CANONICAL form (`"ctrl+a ; d"`) is the conflict-detection key, so a sequence and a
-    /// single chord that begin the same way are distinguishable yet a prefix-clash is detectable.
-    public struct KeySequence: Codable, Sendable, Equatable, Hashable {
-        /// The chords in press order. The custom decoder REJECTS an empty list (a sequence needs ≥1 chord);
-        /// the memberwise init asserts the same in debug and falls back to a single empty-key chord in
-        /// release (validate-then-default — the registry bridge then drops the unmappable chord).
-        public var chords: [KeyChord]
-
-        public init(chords: [KeyChord]) {
-            self.chords = chords.isEmpty ? [KeyChord(key: "")] : chords
-        }
-
-        /// A single-chord (length-1) sequence — the bridge from an ordinary chord override into the
-        /// sequence world (so the editor can keep writing single chords and they round-trip as sequences).
-        public init(single chord: KeyChord) {
-            chords = [chord]
-        }
-
-        public init(from decoder: any Decoder) throws {
-            let c = try decoder.singleValueContainer()
-            let decoded = try c.decode([KeyChord].self)
-            guard !decoded.isEmpty else {
-                throw DecodingError.dataCorruptedError(
-                    in: c, debugDescription: "a key sequence must contain at least one chord",
-                )
-            }
-            chords = decoded
-        }
-
-        public func encode(to encoder: any Encoder) throws {
-            var c = encoder.singleValueContainer()
-            try c.encode(chords)
-        }
-
-        /// Whether this is a multi-key sequence (≥2 chords) rather than a plain single chord.
-        public var isMultiKey: Bool { chords.count > 1 }
-
-        /// Canonical, order-stable identity string for conflict detection — the per-chord ``KeyChord``
-        /// canonical forms joined by `" ; "` (e.g. `"ctrl+a ; d"`). A length-1 sequence's canonical is its
-        /// single chord's canonical (no separator), so a single-chord override and a 1-element sequence
-        /// override of the same chord COLLIDE in ``conflicts()`` as they must.
-        public var canonical: String {
-            chords.map(\.canonical).joined(separator: " ; ")
-        }
-    }
-
     /// A literal-byte override: a chord bound to send raw bytes to the focused terminal instead
     /// of firing a named action — the `text:` / `csi:` / `esc:` config bindings (see
     /// `spec/customization__custom-keybindings.md`). The bytes are RESOLVED at parse time (by
@@ -172,19 +123,15 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
 
     /// The persisted schema version. No-backcompat (single-user): a stored blob whose version is not the
     /// CURRENT one decode-FAILS so the store falls back to a default (empty) override set rather than
-    /// mis-reading a stale shape. Version 3 covers the sequence model plus the ``textBindings``
-    /// + ``unbinds`` maps; a blob with no version field, or version 1 / 2, predates one or both of those
-    /// fields, so it is intentionally rejected rather than partially decoded.
+    /// mis-reading a stale shape. Version 3 covers the ``textBindings`` + ``unbinds`` maps; a blob with no
+    /// version field, or version 1 / 2, predates one or both of those fields, so it is intentionally
+    /// rejected rather than partially decoded. (Version STAYS 3 after the 2026-07-22 prefix-mode removal:
+    /// fields were only REMOVED — a v3 blob still carrying `prefixKey`/`sequenceOverrides` decodes fine,
+    /// those keys are simply never read.)
     public static let currentSchemaVersion = 3
 
-    /// Sparse override map: `bindingID → chord`. An id absent here uses the registry default. A
-    /// single-chord override (the editor's common case). For a MULTI-KEY override see ``sequenceOverrides``.
+    /// Sparse override map: `bindingID → chord`. An id absent here uses the registry default.
     public var overrides: [String: KeyChord]
-
-    /// Sparse multi-key SEQUENCE override map: `bindingID → sequence`. Separate from ``overrides`` so the
-    /// single-chord editor path is unchanged; an id present here takes precedence over a single-chord
-    /// override for the same id (a sequence is the richer rebind). Empty by default ⇒ no behaviour change.
-    public var sequenceOverrides: [String: KeySequence]
 
     /// Literal-byte bindings, keyed by the CHORD (not a registry binding id — a text binding has
     /// no action id). The dispatcher consults this BEFORE the action table: a chord present here sends its
@@ -197,41 +144,29 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
     /// registry action. Empty by default ⇒ no behaviour change.
     public var unbinds: Set<KeyChord>
 
-    /// The user's WORKSPACE PREFIX chord override (the tmux-style two-step arm key), or `nil` to keep the
-    /// registry default (⌃B). Stored here — not as its own UserDefaults key — so the prefix rides the ONE
-    /// keybinding persistence channel (schema gate, Reset-to-Default, `activeOverrides` publish) like every
-    /// other rebind. The registry resolves it via `resolvedPrefixChord` (validate-then-default: an unmappable
-    /// or modifier-less stored chord falls back to the default rather than hijacking bare typing).
-    public var prefixKey: KeyChord?
-
     public init(
         overrides: [String: KeyChord] = [:],
-        sequenceOverrides: [String: KeySequence] = [:],
         textBindings: [KeyChord: TextBinding] = [:],
         unbinds: Set<KeyChord> = [],
-        prefixKey: KeyChord? = nil,
     ) {
         self.overrides = overrides
-        self.sequenceOverrides = sequenceOverrides
         self.textBindings = textBindings
         self.unbinds = unbinds
-        self.prefixKey = prefixKey
     }
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
         case overrides
-        case sequenceOverrides
         case textBindings
         case unbinds
-        case prefixKey
     }
 
     /// Decode with a STRICT schema-version gate (no-backcompat): a blob missing the version field (the
     /// pre-W-B shape) or carrying a version ≠ ``currentSchemaVersion`` THROWS, so the store's
     /// `try? decode ?? .init()` lands on the empty default rather than silently importing a stale shape.
-    /// `sequenceOverrides` / `textBindings` / `unbinds` are optional-in-decode (forward-only additive fields
-    /// within v3 are fine), defaulting to empty when absent.
+    /// `textBindings` / `unbinds` are optional-in-decode (forward-only additive fields within v3 are
+    /// fine), defaulting to empty when absent. Unknown keys in the blob (e.g. the retired
+    /// `prefixKey`/`sequenceOverrides`) are simply not read.
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let version = try c.decodeIfPresent(Int.self, forKey: .schemaVersion)
@@ -243,10 +178,8 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
             )
         }
         overrides = try c.decodeIfPresent([String: KeyChord].self, forKey: .overrides) ?? [:]
-        sequenceOverrides = try c.decodeIfPresent([String: KeySequence].self, forKey: .sequenceOverrides) ?? [:]
         textBindings = try c.decodeIfPresent([KeyChord: TextBinding].self, forKey: .textBindings) ?? [:]
         unbinds = try c.decodeIfPresent(Set<KeyChord>.self, forKey: .unbinds) ?? []
-        prefixKey = try c.decodeIfPresent(KeyChord.self, forKey: .prefixKey)
     }
 
     /// Encode WITH the current schema version stamped (so a round-trip / future read passes the gate).
@@ -254,33 +187,18 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(Self.currentSchemaVersion, forKey: .schemaVersion)
         try c.encode(overrides, forKey: .overrides)
-        try c.encode(sequenceOverrides, forKey: .sequenceOverrides)
         try c.encode(textBindings, forKey: .textBindings)
         try c.encode(unbinds, forKey: .unbinds)
-        try c.encodeIfPresent(prefixKey, forKey: .prefixKey)
     }
 
-    /// The single-chord override for a binding id, or `nil` (⇒ use the registry default). A MULTI-KEY
-    /// override for the same id is NOT returned here (it would not fit the single-chord shape) — use
-    /// ``sequence(for:)`` for the full rebind.
+    /// The single-chord override for a binding id, or `nil` (⇒ use the registry default).
     public func chord(for bindingID: String) -> KeyChord? {
         overrides[bindingID]
     }
 
-    /// The override SEQUENCE for a binding id: the explicit multi-key sequence if one is set, else a
-    /// length-1 sequence wrapping a single-chord override, else `nil` (⇒ use the registry default). The ONE
-    /// accessor the dispatcher reads so single and multi-key overrides are honoured uniformly.
-    public func sequence(for bindingID: String) -> KeySequence? {
-        if let seq = sequenceOverrides[bindingID] { return seq }
-        if let chord = overrides[bindingID] { return KeySequence(single: chord) }
-        return nil
-    }
-
-    /// Whether two DISTINCT binding ids resolve to the same chord/sequence (a conflict the UI highlights).
+    /// Whether two DISTINCT binding ids resolve to the same chord (a conflict the UI highlights).
     /// Only considers explicit overrides — reconciling against registry defaults is the registry's own
-    /// concern. A single-chord override and a 1-element SEQUENCE override of the same chord collide (their
-    /// canonicals match); a multi-key sequence collides only with another binding bound to the IDENTICAL
-    /// full sequence.
+    /// concern.
     ///
     /// ``textBindings`` and ``unbinds`` participate too — they own the SAME chord namespace as a
     /// single-chord action override, so a text binding (or an unbind) on a chord that an action override
@@ -288,12 +206,8 @@ public struct KeybindingPreferences: Codable, Sendable, Equatable {
     /// (`"text:<canonical>"` / `"unbind:<canonical>"`) so a collision lists every contender on that chord.
     public func conflicts() -> [String: [String]] {
         var byCanonical: [String: [String]] = [:]
-        // Iterate the unified accessor so a single-chord and a sequence override compare on one canonical
-        // axis; an id present in both maps is counted ONCE (sequence wins, per `sequence(for:)`).
-        let ids = Set(overrides.keys).union(sequenceOverrides.keys)
-        for id in ids {
-            guard let seq = sequence(for: id) else { continue }
-            byCanonical[seq.canonical, default: []].append(id)
+        for (id, chord) in overrides {
+            byCanonical[chord.canonical, default: []].append(id)
         }
         // Text bindings and unbinds key by chord directly — fold each under a synthetic id so a clash with
         // an action override (or with each other) shows up on the same canonical bucket.

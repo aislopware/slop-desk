@@ -1586,13 +1586,13 @@ final class MetalLayerBackedView: NSView {
     // Send ONLY `.key` per keypress — sending `.key` + `.text` together for the same keypress double-injects
     // one character per path. The `.text` / pipeline.text(...) / host `postText` plumbing stays (unused by
     // live typing) for future layout-independent input like paste.
-    // WORKSPACE PREFIX over the video pane.
+    // WORKSPACE CHORDS over the video pane.
     //
-    // The tmux/zellij prefix (⌃B) MUST NOT leak to the remote host when arming a LOCAL workspace command.
-    // That interception is UPSTREAM: the app-level `WorkspaceKeyDispatcher` installs ONE
+    // A LOCAL workspace chord (⌘D/⌘T/…) MUST NOT leak to the remote host. That interception is UPSTREAM:
+    // the app-level `WorkspaceKeyDispatcher` installs ONE
     // `NSEvent.addLocalMonitorForEvents(matching: .keyDown)` at launch, firing BEFORE the first responder —
-    // so a prefix arm / resolved chord / send-prefix double-tap is consumed (handler returns `nil`) and
-    // this `keyDown` is NEVER reached for those. A bare key returns unchanged and lands here as normal typing.
+    // so a resolved chord is consumed (handler returns `nil`) and this `keyDown` is NEVER reached for
+    // those. A bare key returns unchanged and lands here as normal typing.
     //
     // No thin pre-check is mirrored here (unlike the libghostty surface's) ON PURPOSE: `TerminalKeyInterceptor`
     // lives in `SlopDeskWorkspaceCore`, and `SlopDeskVideoClient` depends ONLY on `SlopDeskVideoProtocol`

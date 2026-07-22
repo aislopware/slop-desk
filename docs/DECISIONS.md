@@ -1397,3 +1397,31 @@ substitution forced by the pure-native-Swift rule.
   action (bound follow-up or fold) now pushes a toast naming the action (registry title, same-id
   replace). A DIRECT single chord deliberately does NOT toast. Pinned by `PrefixActionToastTests`,
   including a proof that `⌃B` + `⇧i` really arms `syncInputTabs`.
+
+## Prefix mode is REMOVED — the ⌘ plane is the only workspace-chord surface (2026-07-22)
+
+- 🔁 **RE-SCOPE (user-directed, supersedes WS-B B2 and every prefix follow-up above): the tmux-style
+  multi-key prefix (`⌃B` then a key) is deleted outright — not default-off, not opt-in.** The sync-input
+  leak post-mortem settled the design question. A native client already has the partition tmux lacks:
+  the PTY never sees ⌘-chords, so ⌘ is a collision-free chrome plane, while a prefix (a) claims a live
+  PTY key (`⌃B` = readline back-char / vi page-up / Claude Code background / nested tmux), (b) swallows
+  the follow-up of a mistyped arm — typing loss, and (c) via the implied-⌘ fold turned the ENTIRE chord
+  table into two-bare-keystroke sequences, which is how sync input armed itself invisibly. The owner of
+  the product never knew the feature existed until it misfired — wrong default, wrong feature.
+- ✅ **Deleted:** `PrefixStateMachine` + `PrefixIntent` + `KeySequence` (registry AND persisted shapes),
+  the sequence tables/aliases (`sequenceTable`, `resolvedSequenceTable`, `aliasSequences`,
+  `WorkspaceBinding.sequence`/`effectiveSequence`, sequence glyphs), `defaultPrefixChord` /
+  `resolvedPrefixChord` / `KeybindingPreferences.prefixKey` + `sequenceOverrides`,
+  `WorkspaceStore.workspaceKeyPrefix` / `applyWorkspaceKeyPrefix`, `PreferencesStore.onPrefixKeyApply`,
+  the Settings ▸ Key Bindings ▸ Workspace Prefix row, the armed-pill chrome
+  (`OverlayCoordinator.prefixArmed` / `PrefixArmedPill`), and the `onPrefixActionFired` toast seam
+  (shipped hours earlier as visibility triage — eradication supersedes visibility). Schema version
+  STAYS 3 (fields removed, none added; a stored `prefixKey`/`sequenceOverrides` blob decodes fine —
+  unknown keys are simply not read).
+- ✅ **Kept:** `WorkspaceKeyDispatcher`'s NSEvent monitor (single ⌘-chords, `text:`/`csi:`/`esc:`
+  literal-byte bindings, `unbind:` passthrough, key-window + overlay-yield gates — all non-prefix
+  duties), and `TerminalKeyInterceptor` slimmed to the pure single-chord fallback the libghostty
+  surface / iOS substrate consult (dispositions now just forward/swallow). `⌃⇧Space` remains the
+  Vi-Mode alias chord; the `prefix,[` alias died with the machine.
+- **Result contract:** `⌃B` reaches the PTY untouched again; NO bare key is ever swallowed; every
+  workspace action is reachable only via its ⌘/⌥ chord, the palette, or the menu.

@@ -306,11 +306,11 @@ public final class TerminalViewModel {
         return selection
     }
 
-    /// The PURE keybinding interceptor (prefix engine + override-aware single-chord table) the
-    /// libghostty surface's `keyDown` consults BEFORE its raw-byte branches. The store wires it (in
-    /// `wireMaterializedLeaf`) so a tmux-style prefix sequence and a rebindable ⌘D/⌘⇧D split are owned by the
-    /// shared engine rather than a hard-coded split branch. `nil` for headless/preview callers (no store),
-    /// where the surface keeps its plain libghostty path. `@ObservationIgnored`: wiring, not view state.
+    /// The PURE keybinding interceptor (the override-aware single-chord table) the libghostty surface's
+    /// `keyDown` consults BEFORE its raw-byte branches. The store wires it (in `wireMaterializedLeaf`) so a
+    /// rebindable ⌘D/⌘⇧D split is owned by the shared engine rather than a hard-coded split branch. `nil`
+    /// for headless/preview callers (no store), where the surface keeps its plain libghostty path.
+    /// `@ObservationIgnored`: wiring, not view state.
     @ObservationIgnored public var keyInterceptor: TerminalKeyInterceptor?
 
     /// Fired the instant an interactive resize ENDS — i.e. ``setResizeSuspended(false)`` flushes the

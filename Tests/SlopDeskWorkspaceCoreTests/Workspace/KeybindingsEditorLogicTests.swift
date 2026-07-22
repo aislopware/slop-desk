@@ -139,28 +139,25 @@ final class KeybindingsEditorLogicTests: XCTestCase {
 
     // MARK: - Single-row edit preserves config-file bindings (setOverride / clearOverride)
 
-    /// A base model carrying a config.toml-sourced literal-byte binding, an `unbind:` directive, and a
-    /// multi-key sequence override — the three collections `KeybindingPreferences(overrides:)` defaults to
-    /// empty, so a rebuild-on-edit would wipe them.
+    /// A base model carrying a config.toml-sourced literal-byte binding and an `unbind:` directive — the
+    /// collections `KeybindingPreferences(overrides:)` defaults to empty, so a rebuild-on-edit would wipe
+    /// them.
     private func modelWithConfigBindings() -> KeybindingPreferences {
         let textChord = KeybindingPreferences.KeyChord(key: "k", command: true)
         let unbindChord = KeybindingPreferences.KeyChord(key: "d", command: true)
         return KeybindingPreferences(
             overrides: ["pane.close": .init(key: "w", command: true)],
-            sequenceOverrides: ["tab.new": .init(chords: [
-                .init(key: "a", control: true), .init(key: "t"),
-            ])],
             textBindings: [textChord: .init(kind: .text, payload: Array("clear\n".utf8))],
             unbinds: [unbindChord],
         )
     }
 
     /// THE audit fix (Bug 2): recording a replacement chord for ONE action must PRESERVE the config.toml
-    /// literal-byte bindings, unbind directives, and sequence overrides. The old editor rebuilt the model as
-    /// `KeybindingPreferences(overrides:)`, whose initializer defaults those three collections to empty —
+    /// literal-byte bindings and unbind directives. The old editor rebuilt the model as
+    /// `KeybindingPreferences(overrides:)`, whose initializer defaults those collections to empty —
     /// silently wiping them on every single-row rebind. REVERT-TO-CONFIRM-FAIL: point `settingOverride` back
     /// to `KeybindingPreferences(overrides:)` and every preservation assertion below trips.
-    func testSettingOverridePreservesTextUnbindAndSequenceBindings() {
+    func testSettingOverridePreservesTextAndUnbindBindings() {
         let base = modelWithConfigBindings()
         let newChord = KeybindingPreferences.KeyChord(key: "x", command: true, shift: true)
 
@@ -172,12 +169,11 @@ final class KeybindingsEditorLogicTests: XCTestCase {
         // …and NONE of the config-sourced collections were dropped.
         XCTAssertEqual(next.textBindings, base.textBindings, "text: literal-byte bindings are preserved")
         XCTAssertEqual(next.unbinds, base.unbinds, "unbind: directives are preserved")
-        XCTAssertEqual(next.sequenceOverrides, base.sequenceOverrides, "multi-key sequence overrides are preserved")
     }
 
     /// The clear-one-row counterpart (Backspace-to-clear): removing a single override must likewise preserve
-    /// the text / unbind / sequence collections. Same rebuild-wipes-them bug, same fix.
-    func testClearingOverridePreservesTextUnbindAndSequenceBindings() {
+    /// the text / unbind collections. Same rebuild-wipes-them bug, same fix.
+    func testClearingOverridePreservesTextAndUnbindBindings() {
         let base = modelWithConfigBindings()
 
         let next = KeybindingsEditorModel.clearingOverride(for: "pane.close", in: base)
@@ -185,7 +181,6 @@ final class KeybindingsEditorLogicTests: XCTestCase {
         XCTAssertNil(next.chord(for: "pane.close"), "the cleared override is removed (registry default restored)")
         XCTAssertEqual(next.textBindings, base.textBindings, "text: literal-byte bindings are preserved")
         XCTAssertEqual(next.unbinds, base.unbinds, "unbind: directives are preserved")
-        XCTAssertEqual(next.sequenceOverrides, base.sequenceOverrides, "multi-key sequence overrides are preserved")
     }
 
     // MARK: - Search filter ("Search key bindings")

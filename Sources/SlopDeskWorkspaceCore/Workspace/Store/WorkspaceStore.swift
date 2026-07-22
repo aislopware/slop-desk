@@ -348,9 +348,8 @@ public final class WorkspaceStore {
     /// The live handle for `id`, or `nil` if no such leaf is materialized.
     public func handle(for id: PaneID) -> (any PaneSessionHandle)? { registry[id] }
 
-    /// Every materialized live handle — the whole-registry sweep ``applyWorkspaceKeyPrefix(_:)`` re-keys
-    /// (unordered; a sweep is per-handle idempotent so order can't matter). Internal so the `registry`
-    /// stays private to this file.
+    /// Every materialized live handle (unordered; whole-registry sweeps are per-handle idempotent so order
+    /// can't matter). Internal so the `registry` stays private to this file.
     var allSessionHandles: [any PaneSessionHandle] { Array(registry.values) }
 
     /// Whether pane `id`'s shell currently reports a running foreground command (the live
@@ -1778,16 +1777,6 @@ public final class WorkspaceStore {
     /// embeds OSC/PTY-settable titles — the app-side wiring masks secrets before display. `nil` in
     /// tests / headless ⇒ the cue is dropped. `@ObservationIgnored`: wiring, not view state.
     @ObservationIgnored public var onCrossTabJump: ((_ breadcrumb: String) -> Void)?
-
-    /// The configured tmux/zellij PREFIX chord. The app-level `WorkspaceKeyDispatcher` and the per-surface
-    /// ``TerminalKeyInterceptor``s (wired per pane in `wireMaterializedLeaf`) must read the SAME prefix or
-    /// they disagree on what arms the engine — so it lives here, the one place a settings change re-points
-    /// it (``applyWorkspaceKeyPrefix(_:)``, which also re-keys every already-materialized pane's
-    /// interceptor). Seeded from the override-aware ``WorkspaceBindingRegistry/resolvedPrefixChord`` (the
-    /// Settings ▸ Key Bindings ▸ Prefix Key override, else the ⌃B default): the app builds `PreferencesStore`
-    /// BEFORE this store, so the persisted prefix is live from the first materialized pane.
-    /// `@ObservationIgnored`: wiring, not view state.
-    @ObservationIgnored public var workspaceKeyPrefix: KeyChord = WorkspaceBindingRegistry.resolvedPrefixChord
 
     /// View-injected overlay-toggle closures the per-pane hardware-keyboard ``TerminalKeyInterceptor`` threads
     /// into ``WorkspaceBindingRegistry/route`` (see ``routeInterceptedKey(_:)``). On iOS the per-pane
@@ -3408,9 +3397,9 @@ public final class WorkspaceStore {
         terminal?.onContextMenuSplit = { [weak self] horizontal in
             self?.splitFromContextMenu(paneID: id, horizontal: horizontal)
         }
-        // Hand the libghostty surface its PURE keybinding interceptor (prefix engine + override-aware
-        // single-chord table). The helper lives in WorkspaceStore+Keybinding so this body stays under the
-        // lint ceiling (same pattern as `seedBlockBookmarks`).
+        // Hand the libghostty surface its PURE keybinding interceptor (the override-aware single-chord
+        // table). The helper lives in WorkspaceStore+Keybinding so this body stays under the lint ceiling
+        // (same pattern as `seedBlockBookmarks`).
         wireKeyInterceptor(terminal: terminal)
         // FOCUS-ON-CLICK: the surface's mouseDown calls `onRequestFocus`; route it to the tree focus so the
         // workspace focus (chrome / inspector / which pane the next split or close targets) follows a click.

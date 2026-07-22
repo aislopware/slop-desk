@@ -83,24 +83,9 @@ enum KeyChordNormalizer {
         }
         // Reject whitespace / control scalars: those are never workspace chords and must pass through to the
         // terminal (a bare key is normal typing). A Ctrl-letter still reports its printable base here (e.g.
-        // ⌃B → "b") so a Ctrl-prefixed chord/prefix is recognised.
+        // ⌃B → "b") so a Ctrl-modified chord is recognised.
         guard !first.isWhitespace, first.unicodeScalars.allSatisfy({ $0.value >= 0x20 }) else { return nil }
         return KeyChord(character: first, mods)
-    }
-
-    /// The literal C0 byte(s) a Ctrl-letter prefix would have sent raw to the PTY (tmux `send-prefix`). For
-    /// the default ⌃B this is `0x02`; for any `Control + <a…z>` it is the letter's position in the alphabet
-    /// (the standard C0 mapping `Ctrl-letter → letter & 0x1F`). Returns `nil` for a non-Ctrl-letter prefix
-    /// (a custom prefix moved off a Ctrl-letter has no single literal byte — the double-tap then no-ops).
-    static func literalBytes(for prefix: KeyChord) -> [UInt8]? {
-        guard prefix.modifiers.contains(.control),
-              !prefix.modifiers.contains(.command),
-              !prefix.modifiers.contains(.option),
-              case let .character(c) = prefix.key,
-              let ascii = c.asciiValue,
-              ascii >= 0x61, ascii <= 0x7A // a…z (already lowercased by KeyChord.init)
-        else { return nil }
-        return [ascii & 0x1F]
     }
 }
 #endif

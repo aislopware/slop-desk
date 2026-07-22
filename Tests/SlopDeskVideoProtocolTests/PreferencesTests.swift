@@ -157,40 +157,18 @@ final class PreferencesTests: XCTestCase {
         XCTAssertThrowsError(try JSONDecoder().decode(KeybindingPreferences.self, from: v2))
     }
 
-    /// A multi-key SEQUENCE override round-trips and bridges to the registry: `⌃A` then `D` (the tmux split
-    /// idiom). The sequence canonical distinguishes it from a single-chord override, and `sequence(for:)`
-    /// returns the full list. (FAILS on the single-chord-only model — no `sequenceOverrides` / `KeySequence`.)
-    func testKeySequenceOverrideRoundTrips() throws {
-        let seq = KeybindingPreferences.KeySequence(chords: [
-            .init(key: "a", control: true),
-            .init(key: "d"),
-        ])
-        let prefs = KeybindingPreferences(sequenceOverrides: ["pane.splitRight": seq])
-        XCTAssertEqual(try roundTrip(prefs), prefs)
-        XCTAssertEqual(prefs.sequence(for: "pane.splitRight")?.chords.count, 2)
-        XCTAssertTrue(prefs.sequence(for: "pane.splitRight")?.isMultiKey == true)
-        XCTAssertEqual(prefs.sequence(for: "pane.splitRight")?.canonical, "ctrl+a ; d")
-    }
-
-    /// `conflicts()` detects a SEQUENCE-vs-SINGLE collision: a single-chord override and a length-1 sequence
-    /// override of the SAME chord collide (their canonicals match); a multi-key sequence only collides with
-    /// an identical full sequence. (FAILS on the single-chord-only model — sequences aren't compared.)
-    func testKeySequenceVsSingleConflictDetection() {
-        // A single-chord override `⌘X` and a length-1 SEQUENCE override `⌘X` on a different id collide.
-        let collide = KeybindingPreferences(
-            overrides: ["a": .init(key: "x", command: true)],
-            sequenceOverrides: ["b": .init(chords: [.init(key: "x", command: true)])],
-        )
-        let conflicts = collide.conflicts()
-        XCTAssertEqual(conflicts.count, 1)
-        XCTAssertEqual(conflicts["cmd+x"].map { Set($0) }, Set(["a", "b"]))
-
-        // A multi-key sequence does NOT collide with a single chord sharing only its HEAD.
-        let noCollide = KeybindingPreferences(
-            overrides: ["a": .init(key: "a", control: true)], // ⌃A single
-            sequenceOverrides: ["b": .init(chords: [.init(key: "a", control: true), .init(key: "d")])], // ⌃A D
-        )
-        XCTAssertTrue(noCollide.conflicts().isEmpty, "a prefix-head overlap is not a full-sequence collision")
+    /// PREFIX-REMOVAL PIN: a v3 blob still carrying the RETIRED `prefixKey` / `sequenceOverrides` fields
+    /// (written before the 2026-07-22 prefix-mode removal) decodes cleanly — the unknown keys are simply
+    /// not read, and no schema bump was needed (fields were only removed, never re-shaped).
+    func testRetiredPrefixFieldsInBlobAreIgnored() throws {
+        let legacy = Data("""
+        {"schemaVersion":3,
+         "overrides":{"pane.splitRight":{"key":"d","command":true}},
+         "prefixKey":{"key":"g","control":true},
+         "sequenceOverrides":{"tab.new":[{"key":"a","control":true},{"key":"t"}]}}
+        """.utf8)
+        let prefs = try JSONDecoder().decode(KeybindingPreferences.self, from: legacy)
+        XCTAssertEqual(prefs.chord(for: "pane.splitRight")?.canonical, "cmd+d", "live fields still decode")
     }
 
     func testKeybindingPreferencesRoundTrip() throws {
@@ -201,20 +179,6 @@ final class PreferencesTests: XCTestCase {
         XCTAssertEqual(try roundTrip(prefs), prefs)
         XCTAssertEqual(prefs.chord(for: "pane.splitRight")?.canonical, "cmd+d")
         XCTAssertNil(prefs.chord(for: "pane.notOverridden"))
-    }
-
-    /// The workspace `prefixKey` override rides the same v3 blob: a set prefix round-trips, and a blob
-    /// WITHOUT the field (any pre-prefix v3 write) decodes to `nil` — the resolver then keeps the ⌃B
-    /// default. Additive-within-v3 by design: an existing user's overrides survive the field's arrival.
-    func testPrefixKeyRoundTripsAndAbsentFieldDecodesNil() throws {
-        let prefs = KeybindingPreferences(prefixKey: .init(key: "g", control: true))
-        let decoded = try roundTrip(prefs)
-        XCTAssertEqual(decoded, prefs)
-        XCTAssertEqual(decoded.prefixKey?.canonical, "ctrl+g")
-
-        let prePrefixBlob = Data(#"{"schemaVersion":3,"overrides":{}}"#.utf8)
-        let bare = try JSONDecoder().decode(KeybindingPreferences.self, from: prePrefixBlob)
-        XCTAssertNil(bare.prefixKey, "an absent field decodes nil so the default prefix stands")
     }
 
     // MARK: Keybindings — text bindings + unbinds (schema v3)

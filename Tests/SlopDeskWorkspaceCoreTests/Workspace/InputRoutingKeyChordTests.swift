@@ -57,22 +57,21 @@ final class InputRoutingKeyChordTests: XCTestCase {
         XCTAssertEqual(InputRouting.keyChord(for: press("\u{F701}", special: true)), KeyChord(.downArrow))
     }
 
-    /// End-to-end iOS substrate wiring: an iOS press → `keyChord` → ``TerminalKeyInterceptor`` arms on the
-    /// prefix and routes the bound follow-up — the exact path the `pressesBegan` responder will run.
-    func testIOSPressThroughInterceptorRoutesPrefixSequence() {
+    /// End-to-end iOS substrate wiring: an iOS press → `keyChord` → ``TerminalKeyInterceptor`` resolves a
+    /// bound chord — the exact path the `pressesBegan` responder will run. A Ctrl-letter (⌃A) is FORWARDED
+    /// untouched (no prefix machine exists to claim it — DECISIONS.md 2026-07-22).
+    func testIOSPressThroughInterceptorRoutesBoundChord() {
         var routed: [WorkspaceAction] = []
         let interceptor = TerminalKeyInterceptor(
-            prefix: KeyChord(character: "a", [.control]),
             resolveChord: { $0 == KeyChord(character: "d", [.command]) ? .splitRight : nil },
             onAction: { routed.append($0) },
-            now: { 0 },
         )
-        // ⌃A press → arm + swallow.
-        let prefixChord = InputRouting.keyChord(for: press("a", control: true))
-        XCTAssertEqual(prefixChord.map { interceptor.intercept($0) }, .swallow)
+        // ⌃A press → ordinary terminal input, forwarded.
+        let ctrlA = InputRouting.keyChord(for: press("a", control: true))
+        XCTAssertEqual(ctrlA.map { interceptor.intercept($0) }, ctrlA.map { .forward($0) })
         // ⌘D press → resolve + swallow.
         let dChord = InputRouting.keyChord(for: press("d", command: true))
         XCTAssertEqual(dChord.map { interceptor.intercept($0) }, .swallow)
-        XCTAssertEqual(routed, [.splitRight], "the iOS prefix sequence routed the split")
+        XCTAssertEqual(routed, [.splitRight], "the iOS bound chord routed the split")
     }
 }

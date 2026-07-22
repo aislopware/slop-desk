@@ -84,17 +84,16 @@ public enum InputRouting {
     /// Maps a `KeyPress` to the framework-neutral ``KeyChord`` the ``TerminalKeyInterceptor``
     /// keys on, or `nil` for a key it cannot classify (which the iOS responder then routes normally —
     /// never swallows). The iOS UIKit responder (`pressesBegan`) consults this BEFORE ``route(_:)`` /
-    /// ``KeyEncoding/encode(_:arrowFallback:)`` so the SAME pure prefix machine + override-aware
-    /// `resolvedChordTable` that drives macOS owns the workspace chords / tmux-style prefix on iOS too:
+    /// ``KeyEncoding/encode(_:arrowFallback:)`` so the SAME override-aware `resolvedChordTable` that
+    /// drives macOS owns the workspace chords on iOS too:
     ///
     /// ```swift
     /// // inside pressesBegan, per UIPress.key:
     /// let press = InputRouting.KeyPress(/* from UIKey */)
     /// if let chord = InputRouting.keyChord(for: press) {
     ///     switch interceptor.intercept(chord) {        // interceptor: a TerminalKeyInterceptor the host owns
-    ///     case .forward:               break            // fall through to the normal iOS key/IME path
-    ///     case .swallow:               return           // armed/resolved/disarmed — send nothing
-    ///     case let .sendLiteral(bytes): sendInput(Data(bytes)); return  // tmux send-prefix double-tap
+    ///     case .forward: break                          // fall through to the normal iOS key/IME path
+    ///     case .swallow: return                         // resolved — send nothing
     ///     }
     /// }
     /// // …existing route(press)/KeyEncoding.encode(press) path…

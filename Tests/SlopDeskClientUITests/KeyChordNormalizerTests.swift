@@ -137,19 +137,5 @@ final class KeyChordNormalizerTests: XCTestCase {
             "a ⇧-only Space is normal typing, not a chord",
         )
     }
-
-    /// `literalBytes(for:)` maps a Ctrl-letter prefix to its C0 byte (tmux send-prefix): ⌃A → 0x01, ⌃B → 0x02.
-    func testLiteralBytesForControlLetterPrefix() {
-        XCTAssertEqual(KeyChordNormalizer.literalBytes(for: KeyChord(character: "a", [.control])), [0x01])
-        XCTAssertEqual(KeyChordNormalizer.literalBytes(for: KeyChord(character: "b", [.control])), [0x02])
-    }
-
-    /// A prefix moved OFF a Ctrl-letter (e.g. a ⌘-prefix, or a named key) has no single literal byte → `nil`
-    /// (the double-tap send-prefix path then no-ops rather than emitting garbage).
-    func testLiteralBytesNilForNonControlLetterPrefix() {
-        XCTAssertNil(KeyChordNormalizer.literalBytes(for: KeyChord(character: "a", [.command])))
-        XCTAssertNil(KeyChordNormalizer.literalBytes(for: KeyChord(.tab, [.control])))
-        XCTAssertNil(KeyChordNormalizer.literalBytes(for: KeyChord(character: "a", [.control, .command])))
-    }
 }
 #endif

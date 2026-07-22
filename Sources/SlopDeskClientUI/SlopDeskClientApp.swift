@@ -505,8 +505,7 @@ public struct SlopDeskClientApp: App {
         // Build the live keybinding dispatcher over the single store. A new-pane action (split /
         // new-tab / new-session) mints a terminal pane directly via the store's routing, focused,
         // so the user picks Terminal / Remote window INSIDE the new pane; ⌘T stays a direct-terminal escape
-        // hatch (it routes via `.newPane(.terminal)`, never `.newTab`). The prefix is the store's live
-        // `workspaceKeyPrefix` (Settings ▸ Key Bindings ▸ Prefix Key override, else ⌃B).
+        // hatch (it routes via `.newPane(.terminal)`, never `.newTab`).
         //
         // The dispatcher's `textBinding`/`unbind` resolution is LIVE here regardless of the overlay layer —
         // a user `text:`/`csi:`/`esc:` config binding injects via `sendBytes` and an `unbind:` passes through, both
@@ -556,35 +555,8 @@ public struct SlopDeskClientApp: App {
             isWorkspaceWindowKey: { [windowBox] in
                 Self.workspaceWindowIsKey(captured: windowBox.window, keyWindow: NSApp.keyWindow)
             },
-            // Report every armed edge of the prefix machine to
-            // the coordinator so the workspace shows a minimal "prefix" chip while the follow-up key is
-            // awaited (arm lights it; fire / unbound / double-tap / timeout clear it).
-            onPrefixArmedChange: { [overlay] in overlay.setPrefixArmed($0) },
-            // Announce every PREFIX-fired action with a toast naming it. The implied-⌘ fold makes any
-            // workspace chord reachable from two stray terminal keystrokes (`⌃B` is readline back-char /
-            // vi page-up; `⌃B, ⇧i` → ⌘⇧I = sync input), and a silently-fired MODE toggle reads as a bug
-            // — the "two panes leaking into each other" field report was exactly this. Same-id toasts
-            // replace each other, so rapid prefix use never stacks.
-            onPrefixActionFired: { [overlay] action in
-                let title = WorkspaceBindingRegistry.allBindings.first { $0.action == action }?.title
-                overlay.pushToast(Toast(
-                    id: "prefix.action",
-                    title: title ?? "Workspace action",
-                    body: "fired by the prefix key",
-                ))
-            },
         )
         _keyDispatcher = State(initialValue: keyDispatcher)
-        // LIVE prefix re-key: recording a new Prefix Key in Settings (or clearing it back to ⌃B) fires
-        // `applyKeybindings` → this hook, which re-points BOTH cached consumers in one place — the store
-        // (+ its per-pane `TerminalKeyInterceptor` sweep) and this app monitor — so the two layers can
-        // never arm on different prefixes. At LAUNCH the hook is not yet installed when `PreferencesStore`
-        // first applies; that's correct — the store and dispatcher above were just built FROM the resolved
-        // prefix, so there is nothing stale to re-key.
-        PreferencesStore.onPrefixKeyApply = { [store, keyDispatcher] chord in
-            store.applyWorkspaceKeyPrefix(chord)
-            keyDispatcher.setPrefix(chord)
-        }
         // The client control socket server over a ``WorkspaceControlBackend`` adapter on the SAME
         // live stores the GUI uses (the backend holds them WEAKLY — the app retains the originals). Built
         // here so it outlives the scene; BOUND in a launch `.task` (the bind/listen is deferred off init).

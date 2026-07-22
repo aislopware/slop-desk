@@ -157,22 +157,6 @@ public final class OverlayCoordinator {
     /// previews / a disconnected pane), and spends NO new wire message (the `cwd()` RPC already exists).
     @ObservationIgnored public var resolveActiveCwd: @MainActor () -> Void = {}
 
-    // MARK: Prefix-armed indicator (keyboard improvement)
-
-    /// Whether the tmux-style workspace PREFIX (default ⌃B) is currently ARMED — swallowed, awaiting the
-    /// follow-up key. Driven by ``WorkspaceKeyDispatcher`` through ``setPrefixArmed(_:)`` on every armed edge
-    /// (arm → true; a resolved/unbound follow-up, double-tap send-prefix, or escape timeout → false), so the
-    /// connection cluster's armed-pill swap (`ConnectionCluster` → `PrefixArmedPill`) shows exactly while a
-    /// follow-up is awaited. Stays `false` on iOS / tests.
-    public private(set) var prefixArmed = false
-
-    /// Publish one armed edge (the dispatcher's `onPrefixArmedChange` target). Idempotent — a redundant edge
-    /// never re-publishes the `@Observable` flag.
-    public func setPrefixArmed(_ armed: Bool) {
-        guard prefixArmed != armed else { return }
-        prefixArmed = armed
-    }
-
     // MARK: Copy receipt (the window-level `COPIED · N` chip)
 
     /// The window-level copy receipt — published for NON-pane-scoped copies (palette "Copy Path",

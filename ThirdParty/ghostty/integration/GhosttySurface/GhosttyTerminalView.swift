@@ -1093,8 +1093,8 @@ final class GhosttyLayerBackedView: NSView {
     /// already false). Stamped in keyDown's hint branch and swallowed ONCE by keyUp. `nil` = nothing pending.
     private var hintConsumedReleaseKeyCode: UInt16?
 
-    /// WS-B / B4: the keyCode whose PRESS the workspace interceptor SWALLOWED (a prefix arm, a resolved
-    /// chord, a send-prefix double-tap, or a tmux-faithful disarm) so the matching RELEASE is suppressed too.
+    /// WS-B / B4: the keyCode whose PRESS the workspace interceptor SWALLOWED (a resolved chord) so the
+    /// matching RELEASE is suppressed too.
     /// libghostty never saw the press, so without this its `keyUp` would encode an orphan CSI-u release under
     /// a kitty `report_events` TUI (the exact press/release-symmetry hazard the copy-mode + Ctrl+C0 branches
     /// already guard). Stamped in `keyDown` on swallow, cleared once by the matching `keyUp`. `nil` = nothing
@@ -1228,31 +1228,21 @@ final class GhosttyLayerBackedView: NSView {
         // WS-B / B4·B5 — WORKSPACE KEYBINDING INTERCEPT (claimed BEFORE the Ctrl+C0 raw-byte branch below).
         // The app-level `WorkspaceKeyDispatcher` (B3) is the PRIMARY interceptor — its `.keyDown` monitor
         // fires before this responder — but when this focused libghostty surface handles the event in its own
-        // `keyDown` (the monitor bypassed), this belt-and-suspenders pass keeps the prefix engine + the
-        // rebindable workspace chords working. ALL transition logic lives in the pure, headless-tested
-        // `TerminalKeyInterceptor` (B2 prefix machine + override-aware single-chord table); here we ONLY map
-        // the NSEvent → `KeyChord` and act on the returned disposition.
-        //
-        // CRITICAL ORDERING: this MUST precede the Ctrl+<C0> branch — the tmux prefix is ⌃B by default, whose
-        // raw byte (0x02) that branch would otherwise send straight to the PTY, so the prefix would leak
-        // instead of arming. The interceptor claims the prefix; only a send-prefix DOUBLE-TAP emits the
-        // literal byte (via `.sendLiteral`).
+        // `keyDown` (the monitor bypassed), this belt-and-suspenders pass keeps the rebindable workspace
+        // chords working. ALL resolution lives in the pure, headless-tested `TerminalKeyInterceptor` (the
+        // override-aware single-chord table); here we ONLY map the NSEvent → `KeyChord` and act on the
+        // returned disposition. (The tmux-style prefix engine that once shared this pass is REMOVED —
+        // DECISIONS.md 2026-07-22 — so ⌃B and every other bare/Ctrl key reaches the PTY untouched.)
         if let interceptor = model?.keyInterceptor,
            let chord = Self.workspaceChord(for: event)
         {
             switch interceptor.intercept(chord) {
             case .forward:
-                break // not a workspace chord/prefix — fall through to the normal libghostty path below
+                break // not a workspace chord — fall through to the normal libghostty path below
             case .swallow:
-                // Armed/resolved/disarmed: swallow the PRESS and remember to swallow its matching RELEASE,
+                // Resolved: swallow the PRESS and remember to swallow its matching RELEASE,
                 // so a kitty `report_events` TUI never sees an orphan CSI-u release for a key the surface
                 // never sent a press for (the same symmetry the copy-mode / Ctrl+C0 branches enforce).
-                workspaceConsumedReleaseKeyCode = UInt16(event.keyCode)
-                return
-            case let .sendLiteral(bytes):
-                // tmux `send-prefix` double-tap: emit the literal prefix byte to the PTY, then swallow PRESS +
-                // RELEASE. `sendInput` carries the byte; the release is suppressed for the same reason.
-                if !bytes.isEmpty { model?.sendInput(Data(bytes)) }
                 workspaceConsumedReleaseKeyCode = UInt16(event.keyCode)
                 return
             }
@@ -1579,7 +1569,7 @@ final class GhosttyLayerBackedView: NSView {
         }
 
         // WS-B / B4 PRESS/RELEASE SYMMETRY: keyDown swallowed this key's PRESS via the workspace interceptor
-        // (prefix arm / resolved chord / send-prefix / disarm), so libghostty never saw it — suppress the
+        // (a resolved chord), so libghostty never saw it — suppress the
         // matching RELEASE once, or a kitty `report_events` TUI emits an orphan CSI-u release. Mirrors the
         // copy-mode pending-release guard above.
         if let pending = workspaceConsumedReleaseKeyCode, pending == UInt16(event.keyCode) {

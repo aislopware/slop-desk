@@ -63,75 +63,6 @@ public extension WorkspaceBindingRegistry {
         for (chord, action) in aliasChords where map[chord] == nil { map[chord] = action }
         return map
     }
-
-    // MARK: - Prefix-key resolution (the tmux-style workspace prefix chord)
-
-    /// The DEFAULT workspace prefix chord — ⌃B. The single source every prefix consumer defaults to
-    /// (`WorkspaceStore.workspaceKeyPrefix`, `TerminalKeyInterceptor`, `PrefixStateMachine`), so the app
-    /// monitor and the per-surface interceptors can never disagree on the out-of-the-box prefix. ⌃B (not
-    /// tmux's ⌃A / screen's ⌃A): ⌃A is readline beginning-of-line — heavily typed at a shell prompt — while
-    /// ⌃B (backward-char) has the arrow keys as its idiomatic spelling, so claiming it costs the PTY least.
-    /// The double-tap send-prefix still delivers the literal 0x02 when it's genuinely wanted.
-    nonisolated static let defaultPrefixChord = KeyChord(character: "b", [.control])
-
-    /// The workspace prefix chord that should arm RIGHT NOW: the user override (Settings ▸ Key Bindings ▸
-    /// Prefix Key) if one is set AND usable, else ``defaultPrefixChord``.
-    static var resolvedPrefixChord: KeyChord {
-        resolvedPrefixChord(overrides: activeOverrides)
-    }
-
-    /// Prefix resolution against an EXPLICIT override set (pure, testable). Validate-then-default: a stored
-    /// chord that can't map to a registry chord, or that carries NO ⌃/⌥/⌘ modifier (a bare or shift-only key
-    /// as prefix would swallow normal typing), is IGNORED → the default stands. Never traps.
-    static func resolvedPrefixChord(overrides: KeybindingPreferences) -> KeyChord {
-        guard let stored = overrides.prefixKey, let mapped = stored.asRegistryChord,
-              !mapped.modifiers.isDisjoint(with: [.control, .option, .command])
-        else { return defaultPrefixChord }
-        return mapped
-    }
-
-    // MARK: - Sequence-aware resolution (prefix sequences)
-
-    /// The full SEQUENCE that should fire `action` RIGHT NOW: the user override sequence (single-chord OR
-    /// multi-key) if one is set for the action's binding id, else the registry default sequence. The prefix
-    /// dispatcher reads this so a rebind to a multi-key prefix takes effect everywhere from one place.
-    static func resolvedSequence(for action: WorkspaceAction) -> KeySequence? {
-        resolvedSequence(for: action, overrides: activeOverrides)
-    }
-
-    /// Sequence resolution against an EXPLICIT override set (pure, testable). An override sequence whose
-    /// chords can't all map to registry chords (a malformed stored value) is IGNORED → falls back to the
-    /// registry default (validate-then-default, never traps).
-    static func resolvedSequence(for action: WorkspaceAction, overrides: KeybindingPreferences) -> KeySequence? {
-        guard let binding = binding(for: action) else { return nil }
-        if let override = overrides.sequence(for: binding.id), let mapped = override.asRegistrySequence {
-            return mapped
-        }
-        return binding.effectiveSequence
-    }
-
-    /// The sequence → action lookup table WITH the active overrides applied — the override-aware sibling of
-    /// ``sequenceTable``. The prefix state machine reads THIS so a rebind (single OR multi-key) routes.
-    static var resolvedSequenceTable: [KeySequence: WorkspaceAction] {
-        resolvedSequenceTable(overrides: activeOverrides)
-    }
-
-    /// The override-aware sequence table against an explicit override set (pure, testable). The
-    /// ``aliasSequences(prefix:)`` (e.g. `prefix, [` → Vi Mode) fold in over the RESOLVED prefix, so a
-    /// Settings prefix rebind carries them without any stored override.
-    static func resolvedSequenceTable(overrides: KeybindingPreferences) -> [KeySequence: WorkspaceAction] {
-        var map: [KeySequence: WorkspaceAction] = [:]
-        for binding in allBindings {
-            if let seq = resolvedSequence(for: binding.action, overrides: overrides) {
-                map[seq] = binding.action
-            }
-        }
-        let prefix = resolvedPrefixChord(overrides: overrides)
-        for (seq, action) in aliasSequences(prefix: prefix) where map[seq] == nil {
-            map[seq] = action
-        }
-        return map
-    }
 }
 
 // MARK: - Text-binding / unbind resolution
@@ -256,22 +187,5 @@ public extension KeybindingPreferences.KeyChord {
             guard key.count == 1, let c = key.first else { return nil }
             return .character(c)
         }
-    }
-}
-
-// MARK: - KeybindingPreferences.KeySequence → registry KeySequence
-
-public extension KeybindingPreferences.KeySequence {
-    /// Map the persisted sequence (a list of serialisable chords) into the dispatcher's framework-neutral
-    /// ``KeySequence``. EVERY chord must map (via ``KeybindingPreferences/KeyChord/asRegistryChord``); if ANY
-    /// chord is unmappable (a malformed stored value) the whole sequence yields `nil` (validate-then-default:
-    /// the resolver then keeps the registry default rather than firing a partial / wrong sequence).
-    var asRegistrySequence: KeySequence? {
-        var mapped: [KeyChord] = []
-        for chord in chords {
-            guard let registryChord = chord.asRegistryChord else { return nil }
-            mapped.append(registryChord)
-        }
-        return KeySequence(mapped) // nil only if `chords` was empty (rejected at decode/init)
     }
 }

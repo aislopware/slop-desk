@@ -208,53 +208,6 @@ final class SlateSnapshotRender: XCTestCase {
         )
     }
 
-    /// Renders the LIVE ``ConnectionCluster`` in its workspace-prefix ARMED swap (the cluster crossfades
-    /// to the `⌃B …` capsule pill while the prefix awaits its follow-up key) beside the resting cluster —
-    /// the visual lock for the armed cue, in BOTH mounts (sidebar-footer `fillWidth` row + the titlebar's
-    /// hugging trailing mount). The armed flag rides the scene ``OverlayCoordinator`` through the
-    /// `\.overlayCoordinator` environment — exactly the app's wiring, no view-internal test seam. Writes
-    /// `cluster-armed.png` into `SLOPDESK_TITLEBAR_SNAPSHOT_DIR` (same opt-in as the dot render).
-    /// Headless — the connection is a throwing-registry double, no socket / video / Metal.
-    @MainActor
-    func testRenderClusterPrefixArmed() throws {
-        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TITLEBAR_SNAPSHOT_DIR"] else {
-            throw XCTSkip("set SLOPDESK_TITLEBAR_SNAPSHOT_DIR=<dir> to render the armed cluster")
-        }
-        let (store, _) = makeAttentionStore()
-        let connection = try AppConnection(
-            registry: ConnectionRegistry { _, _ in throw CocoaError(.fileNoSuchFile) },
-            defaults: XCTUnwrap(UserDefaults(suiteName: "render.cluster.scratch")),
-        )
-        let idle = OverlayCoordinator(store: store)
-        let armed = OverlayCoordinator(store: store)
-        armed.setPrefixArmed(true)
-
-        // Footer mount (fillWidth, sidebar width) + titlebar mount (hugging), resting beside armed.
-        func footerPanel(_ overlay: OverlayCoordinator) -> some View {
-            ConnectionCluster(connection: connection, pingMS: 11, fillWidth: true)
-                .padding(Slate.Metric.space2)
-                .frame(width: 240)
-                .background(Slate.Surface.ground)
-                .overlayCoordinator(overlay)
-        }
-        func titlebarPanel(_ overlay: OverlayCoordinator) -> some View {
-            ConnectionCluster(connection: connection, pingMS: 11)
-                .padding(Slate.Metric.space2)
-                .frame(width: 240, alignment: .trailing)
-                .background(Slate.Surface.ground)
-                .overlayCoordinator(overlay)
-        }
-        let panel = VStack(spacing: 1) {
-            HStack(spacing: 1) { footerPanel(idle)
-                footerPanel(armed)
-            }
-            HStack(spacing: 1) { titlebarPanel(idle)
-                titlebarPanel(armed)
-            }
-        }
-        try render(panel, size: CGSize(width: 482, height: 90), to: dir, named: "cluster-armed.png")
-    }
-
     /// The three macOS traffic lights, mocked for the strip render (the real ones are window chrome and
     /// never render under `ImageRenderer`).
     private var trafficLights: some View {

@@ -2,6 +2,12 @@
 
 Gap analysis vs the documented default keymap. Assessed 2026-06-25.
 
+> **2026-07-22 — PREFIX MODE REMOVED.** Every row/note below referencing the tmux-style prefix
+> (`PrefixStateMachine`, `defaultPrefixChord`, `prefixKey`, sequence tables, send-prefix, the Settings
+> Workspace-Prefix row) is HISTORICAL: the feature was deleted outright — see `docs/DECISIONS.md`
+> ("Prefix mode is REMOVED", 2026-07-22). The ⌘ plane (single chords + `text:`/`unbind:` overrides) is
+> the only workspace-chord surface; `TerminalKeyInterceptor` survives as a single-chord-only fallback.
+
 ---
 
 ## Overview

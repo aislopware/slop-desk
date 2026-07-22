@@ -120,46 +120,15 @@ public enum KeybindingsEditorModel {
     /// NO per-row revert; see `docs/ui-shell/spec/customization__custom-keybindings.md:15`). Clearing resets to
     /// `KeybindingPreferences()`.
     public static func hasCustomizations(_ prefs: KeybindingPreferences) -> Bool {
-        !prefs.overrides.isEmpty || !prefs.sequenceOverrides.isEmpty
+        !prefs.overrides.isEmpty
             || !prefs.textBindings.isEmpty || !prefs.unbinds.isEmpty
-            || prefs.prefixKey != nil
-    }
-
-    // MARK: Prefix-key capture (the Settings ▸ Key Bindings ▸ Prefix Key row)
-
-    /// Whether a captured chord is USABLE as the workspace prefix: it must map to a registry chord AND carry
-    /// at least one of ⌃/⌥/⌘ — a bare or shift-only key as prefix would arm on (and so swallow) normal
-    /// typing. Mirrors the ``WorkspaceBindingRegistry/resolvedPrefixChord(overrides:)`` acceptance gate, so
-    /// the editor never records a chord the resolver would silently discard (a lying chip).
-    public static func isUsablePrefixKey(_ chord: KeybindingPreferences.KeyChord) -> Bool {
-        guard let mapped = chord.asRegistryChord else { return false }
-        return !mapped.modifiers.isDisjoint(with: [.control, .option, .command])
-    }
-
-    /// Return `prefs` with the workspace prefix override set to `chord`, PRESERVING every other collection
-    /// (the same mutate-a-copy contract as ``settingOverride`` — rebuilding the model would wipe them).
-    public static func settingPrefixKey(
-        _ chord: KeybindingPreferences.KeyChord,
-        in prefs: KeybindingPreferences,
-    ) -> KeybindingPreferences {
-        var next = prefs
-        next.prefixKey = chord
-        return next
-    }
-
-    /// Return `prefs` with the workspace prefix override removed (restoring the ⌃B default), PRESERVING
-    /// every other collection — the Backspace-to-clear path of the Prefix Key row.
-    public static func clearingPrefixKey(in prefs: KeybindingPreferences) -> KeybindingPreferences {
-        var next = prefs
-        next.prefixKey = nil
-        return next
     }
 
     /// Return `prefs` with `id`'s single-chord override set to `chord`, PRESERVING every other collection
-    /// (`sequenceOverrides` / `textBindings` / `unbinds`). The editor previously rebuilt the whole model as
-    /// `KeybindingPreferences(overrides:)`, whose initializer defaults those three to empty — so ANY
+    /// (`textBindings` / `unbinds`). The editor previously rebuilt the whole model as
+    /// `KeybindingPreferences(overrides:)`, whose initializer defaults those to empty — so ANY
     /// single-chord rebind in Settings silently wiped every config.toml `text:`/`csi:`/`esc:` literal-byte
-    /// binding, `unbind:` directive, and multi-key sequence override (the audit bug). Mutating a copy keeps
+    /// binding and `unbind:` directive (the audit bug). Mutating a copy keeps
     /// them intact while still yielding a fresh value so the store's `didSet` republishes.
     public static func settingOverride(
         _ chord: KeybindingPreferences.KeyChord,
@@ -172,7 +141,7 @@ public enum KeybindingsEditorModel {
     }
 
     /// Return `prefs` with `id`'s single-chord override removed (restoring the registry default), PRESERVING
-    /// `sequenceOverrides` / `textBindings` / `unbinds` — the clear-one-row counterpart to ``settingOverride``
+    /// `textBindings` / `unbinds` — the clear-one-row counterpart to ``settingOverride``
     /// (the editor's Backspace-to-clear path), same audit fix.
     public static func clearingOverride(
         for id: String,

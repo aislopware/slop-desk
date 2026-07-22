@@ -124,7 +124,6 @@ public enum KeybindConfigLoader {
 
         return KeybindingPreferences(
             overrides: overrides,
-            sequenceOverrides: base.sequenceOverrides,
             textBindings: textBindings,
             unbinds: unbinds,
         )

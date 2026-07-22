@@ -289,19 +289,10 @@ public final class PreferencesStore {
         try? EnvBridge.writeSidecar(sidecar, to: url)
     }
 
-    /// App-installed hook fired on every keybinding (re)apply with the RESOLVED workspace prefix chord
-    /// (override else the ⌃B default). The app layer re-points the live consumers that cache the prefix —
-    /// `WorkspaceStore.applyWorkspaceKeyPrefix` (+ its per-pane interceptor sweep) and the macOS
-    /// `WorkspaceKeyDispatcher` — which this headless store cannot reach itself (the same one-way seam as
-    /// ``AppearanceApplier``). `nil` (headless / tests / iOS, where the prefix can't change mid-session) ⇒
-    /// consumers keep reading ``WorkspaceBindingRegistry/resolvedPrefixChord`` at their own build time.
-    public static var onPrefixKeyApply: ((KeyChord) -> Void)?
-
     /// Publish the live keybinding overrides to the registry so a chord resolves with the user
     /// override when present (the registry stays the single binding TABLE; this supplies the overrides).
     private func applyKeybindings() {
         WorkspaceBindingRegistry.activeOverrides = keybindings
-        Self.onPrefixKeyApply?(WorkspaceBindingRegistry.resolvedPrefixChord(overrides: keybindings))
     }
 
     /// Apply the CLIENT-chrome appearance: repoint the runtime ``ThemeStore`` (via ``AppearanceApplier`` —

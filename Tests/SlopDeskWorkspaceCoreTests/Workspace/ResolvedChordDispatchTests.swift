@@ -78,24 +78,4 @@ final class ResolvedChordDispatchTests: XCTestCase {
         XCTAssertTrue(dispatch(KeyChord(character: "e", [.command]), to: store), "⌘E now resolves to splitRight")
         XCTAssertEqual(leaves(store).count, 2, "routing the override chord landed the split")
     }
-
-    /// The prefix-machine path the dispatcher feeds: after the configured prefix arms, a bound follow-up
-    /// chord resolves its action against `resolvedChordTable` (the dispatcher's `resolveAfterPrefix`), so a
-    /// tmux-style ⌃A→⌘D prefix sequence routes the SAME `.splitRight` op. Pins the prefix→route wiring.
-    func testPrefixThenBoundChordResolvesViaTheSameTable() {
-        let store = makeTreeStore()
-        let machine = PrefixStateMachine(
-            prefix: KeyChord(character: "a", [.control]),
-            resolveAfterPrefix: { WorkspaceBindingRegistry.resolvedChordTable[$0] },
-        )
-        // Arm on the prefix (swallowed), then feed the bound chord.
-        XCTAssertEqual(machine.feed(KeyChord(character: "a", [.control]), at: 0), .consumedArm)
-        guard case let .resolved(action) = machine.feed(KeyChord(character: "d", [.command]), at: 0.1) else {
-            XCTFail("a bound follow-up chord should resolve while armed")
-            return
-        }
-        XCTAssertEqual(action, .splitRight)
-        WorkspaceBindingRegistry.route(action, to: store)
-        XCTAssertEqual(leaves(store).count, 2, "the prefix-resolved action routed the split")
-    }
 }
