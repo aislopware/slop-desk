@@ -99,6 +99,13 @@ public struct ReplayBuffer: Sendable {
     /// Running byte total in ``scrollbackRing``.
     private var scrollbackBytes: Int = 0
 
+    /// Alt-screen re-opener carried across a ring-emptying eviction: when eviction drops the
+    /// LAST ring entry while the cut is inside an open alt-screen segment, there is no head to
+    /// repair yet — the opener attaches to the next acked bytes that enter the ring. Set only
+    /// while the ring is empty (a non-empty ring is repaired in place, keeping the invariant
+    /// that ring content is always a well-formed stream w.r.t. alt-screen segments).
+    private var pendingAltReopen: Data?
+
     /// Highest seq assigned so far (last produced `output.seq`). Starts at 0; the
     /// first output is seq 1.
     public private(set) var highestSeq: Int64 = 0
@@ -226,9 +233,19 @@ public struct ReplayBuffer: Sendable {
         guard dropCount > 0 else { return }
         if scrollbackBytesCap > 0 {
             // Move the acked prefix into the ring (retain for cold replay).
+            let ringWasEmpty = scrollbackRing.isEmpty
             for entry in entries.prefix(dropCount) {
                 scrollbackRing.append(entry)
                 scrollbackBytes += entry.bytes.count
+            }
+            // A prior eviction emptied the ring mid-alt-segment: these are the first surviving
+            // bytes, so the re-opener lands here — BEFORE evictScrollbackToFit, whose cut scan
+            // must see the opener to keep tracking the still-open segment.
+            if ringWasEmpty, let reopen = pendingAltReopen, !scrollbackRing.isEmpty {
+                let head = scrollbackRing[0]
+                scrollbackRing[0] = Entry(seq: head.seq, bytes: reopen + head.bytes)
+                scrollbackBytes += reopen.count
+                pendingAltReopen = nil
             }
             evictScrollbackToFit()
         }
@@ -254,6 +271,10 @@ public struct ReplayBuffer: Sendable {
             droppedBytes += scrollbackRing[dropCount].bytes.count
             dropCount += 1
         }
+        // Collect the dropped prefix for the alt-screen cut scan (cost bounded by the bytes
+        // leaving the ring, so amortized O(stream) across the session).
+        var dropped = Data(capacity: droppedBytes)
+        for entry in scrollbackRing.prefix(dropCount) { dropped.append(entry.bytes) }
         scrollbackRing.removeFirst(dropCount)
         scrollbackBytes -= droppedBytes
         // Landed at/under cap: line-align the new oldest so the ring never starts mid-escape-sequence.
@@ -265,8 +286,25 @@ public struct ReplayBuffer: Sendable {
                 let removed = head.bytes.count - trimmed.count
                 scrollbackRing[0] = Entry(seq: head.seq, bytes: trimmed)
                 scrollbackBytes -= removed
+                dropped.append(head.bytes.prefix(removed)) // trimmed bytes are dropped too
             }
             // No \n: leave intact — replay starts at this entry's beginning, a PTY-read chunk boundary.
+        }
+        // Alt-screen cut repair: a cut inside an open alt segment beheads it, and a cold replay
+        // would pour the surviving interior onto the MAIN screen (the unpaired ?1049l reads as a
+        // defensive reset downstream). Re-open the segment at the surviving head so replay-side
+        // segmentation pairs it like any other. The prepend keeps the ring a well-formed stream,
+        // so the NEXT eviction's scan needs no carried state — it reads the opener like any byte.
+        if let reopen = AltScreenCutScanner.reopenSequence(
+            afterDropped: dropped, keptHead: scrollbackRing.first?.bytes ?? Data(),
+        ) {
+            if scrollbackRing.isEmpty {
+                pendingAltReopen = reopen // attaches to the next bytes that enter the ring
+            } else {
+                let head = scrollbackRing[0]
+                scrollbackRing[0] = Entry(seq: head.seq, bytes: reopen + head.bytes)
+                scrollbackBytes += reopen.count
+            }
         }
     }
 

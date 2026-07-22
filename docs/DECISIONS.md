@@ -1444,3 +1444,34 @@ substitution forced by the pure-native-Swift rule.
   `ScrollRoutePinner` still pins the route per gesture — now against mid-gesture ⌥ flips.
 - **Stays active-pane-only:** click-to-activate, hover tracking / cursor shape, and pinch-zoom
   (a pinch is a zoom command aimed at the pane you're working in, not a reading gesture).
+
+## Scrollback front-truncation vs alt-screen segments: the cut is REPAIRED in the bytes (2026-07-22)
+
+- ✅ **Problem (the documented ring-cap hole, closed proactively):** both scrollback retainers cut
+  their stream from the FRONT at the 64 MiB cap — the in-memory ring (`ReplayBuffer` eviction) and
+  the disk journal (`ScrollbackJournal.compact`) — with only newline alignment. Claude Code
+  (07-2026) holds ONE `?1049h` alt-screen segment open for its whole run (17 MB+ observed), so a
+  long session's cut lands INSIDE it: the surviving stream starts with segment interior and ends it
+  with an unpaired `?1049l`. `AltScreenSegmentStripper` rightly treats an unpaired close as a
+  defensive reset (apps emit redundant `?1049l` on the main screen — Claude's exit cleanup does),
+  so the whole beheaded interior replayed onto the MAIN screen on cold reattach — tens of MiB of
+  full-screen churn flooding the client's scrollback. "Drop the prefix to the first unpaired `l`"
+  was rejected for exactly the redundant-close reason: it guesses; a guess eats real history.
+- ✅ **Fix — `AltScreenCutScanner` + repair AT the cut, state lives IN the bytes.** The evictor
+  scans exactly the bytes it drops (net DECSET/DECRST 47/1047/1049 state; OSC/DCS bodies opaque; a
+  CSI straddling the cut resolves via a bounded kept-head peek; sequences starting in the kept head
+  are never applied) and, when the cut is inside an open segment, PREPENDS the re-opening DECSET —
+  same mode that entered — to the surviving head (ring head entry / journal file tail, on disk).
+  The stream is then well-formed again: the next eviction's scan starts clean (no carried state,
+  survives daemon restarts because the journal repair is in the file), and the replay transform
+  pairs the segment like any other — closed → dropped whole, still-open → replayed INTO the alt
+  screen where it belongs (the cold-reattach resize-dance jiggle repaints the end state). The
+  scanner lives in `SlopDeskTransport` (deliberate "mirror, don't share" exception: ring and
+  journal both need it, and transport already owns the newline-align eviction discipline). Ring
+  edge: an eviction that EMPTIES the ring mid-segment parks the opener (`pendingAltReopen`) and
+  attaches it to the next acked bytes entering the ring. Un-acked entries stay byte-exact (warm
+  replay untouched); `messages(after:)` raw primitive untouched.
+- 📌 **Accepted residuals:** `SLOPDESK_SCROLLBACK_PERSIST=0` (ring disabled by explicit opt-out)
+  does not track cap-0 ack discards — the cold tail can still start mid-segment there (pre-existing
+  behaviour; the jiggle repaint covers the visible outcome). A journal already beheaded by a
+  pre-fix daemon life scans as main-screen until the bad head compacts away (no-backcompat rule).

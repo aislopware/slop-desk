@@ -151,6 +151,53 @@ final class ScrollbackJournalTests: XCTestCase {
         )
     }
 
+    /// Compaction whose cut lands INSIDE an open alt-screen segment must prepend the re-opening
+    /// DECSET to the surviving tail — on disk, so the repair survives the daemon (a later life's
+    /// restore/compaction sees a well-formed stream). Without it, a restored transcript replays
+    /// the segment's interior onto the main screen (the scrollback-flood hole).
+    func testCompactionMidAltSegmentPrependsReopenOnDisk() throws {
+        let cap = 1024
+        let sessionID = UUID()
+        let store = makeStore(byteCap: cap)
+        let journal = store.journal(for: sessionID)
+
+        // A short main-screen prologue, then one huge OPEN alt-screen segment (no \n inside, so
+        // the compaction cut cannot line-align its way out of the segment).
+        journal.append(Data("prompt-history\n".utf8))
+        journal.append(Data("\u{1B}[?1049h".utf8))
+        journal.append(Data(repeating: UInt8(ascii: "A"), count: cap * 3)) // forces compaction
+        journal.synchronize()
+
+        let bytes = try? Data(contentsOf: tempDir.appendingPathComponent("\(sessionID.uuidString).scrollback"))
+        let file = try XCTUnwrap(bytes)
+        XCTAssertLessThanOrEqual(file.count, cap + 4096, "compaction must bound the file near the cap")
+        XCTAssertTrue(
+            file.prefix(8) == Data("\u{1B}[?1049h".utf8),
+            "the beheaded open segment must be re-opened at the surviving file head",
+        )
+        XCTAssertEqual(file.dropFirst(8).first, UInt8(ascii: "A"), "the tail after the opener is segment interior")
+    }
+
+    /// A cut that lands AFTER the segment closed must not synthesize an opener.
+    func testCompactionAfterClosedSegmentDoesNotRepair() throws {
+        let cap = 1024
+        let sessionID = UUID()
+        let store = makeStore(byteCap: cap)
+        let journal = store.journal(for: sessionID)
+
+        // The whole alt segment opens AND closes inside the dropped prefix; the survivor is
+        // plain main-screen output (no \n, so no line-trim interference).
+        journal.append(Data("\u{1B}[?1049h".utf8))
+        journal.append(Data(repeating: UInt8(ascii: "B"), count: cap))
+        journal.append(Data("\u{1B}[?1049l".utf8))
+        journal.append(Data(repeating: UInt8(ascii: "C"), count: cap * 2)) // forces compaction
+        journal.synchronize()
+
+        let bytes = try? Data(contentsOf: tempDir.appendingPathComponent("\(sessionID.uuidString).scrollback"))
+        let file = try XCTUnwrap(bytes)
+        XCTAssertEqual(file.first, UInt8(ascii: "C"), "a cut past the close needs no repair")
+    }
+
     // MARK: - Deletion / sweep
 
     func testDeleteRemovesFileAndLateAppendDoesNotResurrect() {

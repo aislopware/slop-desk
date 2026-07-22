@@ -474,7 +474,17 @@ final class ScrollbackJournal: @unchecked Sendable {
         if let newline = current[cut..<scanEnd].firstIndex(of: 0x0A) {
             cut = newline + 1
         }
-        let tail = current[cut...]
+        var tail = Data(current[cut...])
+        // Alt-screen cut repair, same as the in-memory ring's eviction: a cut inside an open
+        // alt segment beheads it, and the restore-time transform would replay the surviving
+        // interior onto the MAIN screen. Re-opening the segment at the surviving head — ON
+        // DISK — keeps the file a well-formed stream, so the repair (and the next compaction's
+        // scan, this life or a later daemon's) needs no state outside the bytes.
+        if let reopen = AltScreenCutScanner.reopenSequence(
+            afterDropped: current.prefix(cut), keptHead: tail.prefix(64),
+        ) {
+            tail = reopen + tail
+        }
         // Close FIRST, clearing `handle` even when close() itself throws. Wrapping the close in
         // the do/catch below would skip `handle = nil` on a throwing close, leaving a POISONED
         // FileHandle in place — openIfNeeded() would return it forever and every subsequent

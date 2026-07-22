@@ -663,4 +663,107 @@ final class ReplayBufferTests: XCTestCase {
             .output(seq: 2, bytes: Data("c-d".utf8)),
         ])
     }
+
+    // MARK: Scrollback ring — alt-screen cut repair (mid-segment eviction)
+
+    /// Eviction that beheads an OPEN alt-screen segment must prepend the re-opening DECSET to
+    /// the surviving ring head — otherwise a cold replay pours the segment's interior onto the
+    /// main screen (the >64 MiB "scrollback flood" hole).
+    func testEvictionMidAltSegmentPrependsReopenToRingHead() {
+        // cap = 30. s1 = "before\n" (7B), s2 = opener+"alt\n" (12B) — both evicted; the cut
+        // lands INSIDE the still-open segment. s3 has no \n so the line-trim stays out of the way.
+        var buf = ReplayBuffer(scrollbackBytes: 30)
+        let s1 = buf.append(bytes: Data("before\n".utf8))
+        let s2 = buf.append(bytes: Data("\u{1B}[?1049halt\n".utf8))
+        let s3 = buf.append(bytes: Data("frame-two-no-newline".utf8)) // 20B
+        _ = buf.append(bytes: Data("live".utf8))
+        buf.ack(upTo: s2) // ring = 19B ≤ 30 — no eviction
+        XCTAssertEqual(buf.scrollbackRingSeqsForTesting, [s1, s2])
+        buf.ack(upTo: s3) // ring = 39B > 30 → evict s1 (32B) then s2 (20B ≤ 30)
+        XCTAssertEqual(buf.scrollbackRingSeqsForTesting, [s3])
+        XCTAssertEqual(
+            buf.scrollbackRingOldestBytesForTesting,
+            Data("\u{1B}[?1049hframe-two-no-newline".utf8),
+            "the beheaded open segment must be re-opened at the surviving ring head",
+        )
+        XCTAssertEqual(buf.scrollbackRingBytesForTesting, 28, "20B entry + 8B synthetic opener")
+    }
+
+    func testEvictionOnMainScreenDoesNotRepair() {
+        var buf = ReplayBuffer(scrollbackBytes: 30)
+        _ = buf.append(bytes: Data("plain-history-1\n".utf8)) // 16B
+        let s2 = buf.append(bytes: Data("\u{1B}[?1049halt-opens-in-kept".utf8)) // 25B
+        buf.ack(upTo: s2) // 41B > 30 → evict s1; cut is BEFORE the opener — main screen
+        XCTAssertEqual(
+            buf.scrollbackRingOldestBytesForTesting,
+            Data("\u{1B}[?1049halt-opens-in-kept".utf8),
+            "a cut before the opener needs no repair",
+        )
+    }
+
+    func testEvictionAfterClosedSegmentDoesNotRepair() {
+        var buf = ReplayBuffer(scrollbackBytes: 20)
+        // s1 contains a CLOSED segment (h…l) — net state at the cut is the main screen.
+        let s1 = buf.append(bytes: Data("\u{1B}[?1049hchurn\u{1B}[?1049l\n".utf8)) // 22B
+        let s2 = buf.append(bytes: Data("after-close".utf8)) // 11B
+        buf.ack(upTo: s1) // 22B > 20 → evict s1 entirely → ring empty… then s2 arrives clean
+        buf.ack(upTo: s2)
+        XCTAssertEqual(
+            buf.scrollbackRingOldestBytesForTesting,
+            Data("after-close".utf8),
+            "a closed segment before the cut must not synthesize an opener",
+        )
+    }
+
+    /// Line-trim and repair compose: the trimmed head bytes are part of the dropped prefix, and
+    /// the opener lands BEFORE the post-\n survivor.
+    func testLineTrimThenRepairPrependsOpenerToTrimmedHead() {
+        // cap = 12. s1 = opener+"x\n" (10B) evicts whole; s2 = "in-alt\nrest" (11B) survives and
+        // is line-trimmed to "rest" — still inside the segment → opener + "rest".
+        var buf = ReplayBuffer(scrollbackBytes: 12)
+        let s1 = buf.append(bytes: Data("\u{1B}[?1049hx\n".utf8))
+        let s2 = buf.append(bytes: Data("in-alt\nrest".utf8))
+        buf.ack(upTo: s1) // 10B ≤ 12 — no eviction
+        buf.ack(upTo: s2) // 21B > 12 → evict s1 (11B ≤ 12) → trim s2 to "rest" → repair
+        XCTAssertEqual(
+            buf.scrollbackRingOldestBytesForTesting,
+            Data("\u{1B}[?1049hrest".utf8),
+            "repair must apply after the line-trim, covering the trimmed bytes in the scan",
+        )
+        XCTAssertEqual(buf.scrollbackRingBytesForTesting, 12, "4B survivor + 8B opener")
+    }
+
+    /// The repair invariant lives IN the ring bytes: a later eviction that drops a repaired head
+    /// scans the synthetic opener like any other byte and repairs the next head correctly.
+    func testRepairedHeadSurvivesSubsequentEvictionScan() {
+        var buf = ReplayBuffer(scrollbackBytes: 30)
+        _ = buf.append(bytes: Data("before\n".utf8))
+        _ = buf.append(bytes: Data("\u{1B}[?1049halt\n".utf8))
+        let s3 = buf.append(bytes: Data("frame-two-no-newline".utf8))
+        buf.ack(upTo: s3) // evicts s1+s2 → head s3 repaired (opener + 20B = 28B)
+        let s4 = buf.append(bytes: Data("frame-three-no-newlin".utf8)) // 21B
+        buf.ack(upTo: s4) // 49B > 30 → evict repaired s3 (28B) → head s4 must be repaired again
+        XCTAssertEqual(
+            buf.scrollbackRingOldestBytesForTesting,
+            Data("\u{1B}[?1049hframe-three-no-newlin".utf8),
+            "the synthetic opener must round-trip through the next eviction's scan",
+        )
+    }
+
+    /// An eviction that empties the ring entirely (single entry over the cap) carries the reopen
+    /// forward: the next entries to enter the ring get the opener prepended.
+    func testRingEmptyingEvictionCarriesReopenToNextEntries() {
+        var buf = ReplayBuffer(scrollbackBytes: 12)
+        let s1 = buf.append(bytes: Data("\u{1B}[?1049hlong-alt-frame".utf8)) // 22B > cap
+        buf.ack(upTo: s1) // evicted whole → ring EMPTY, cut inside the open segment
+        XCTAssertEqual(buf.scrollbackRingCountForTesting, 0)
+        let s2 = buf.append(bytes: Data("next".utf8))
+        buf.ack(upTo: s2)
+        XCTAssertEqual(
+            buf.scrollbackRingOldestBytesForTesting,
+            Data("\u{1B}[?1049hnext".utf8),
+            "the pending reopen must attach to the first bytes that survive the emptied ring",
+        )
+        XCTAssertEqual(buf.scrollbackRingBytesForTesting, 12)
+    }
 }
