@@ -130,6 +130,10 @@ public struct VideoClientStateMachine: Sendable {
         /// captured window sits on). Stored + forwarded to the view → the "Resize…" popover caps
         /// its width/height fields at it. Purely informational — no capture/decode effect.
         case applyDisplayMax(VideoSize)
+        /// Adopt the host's ~2 Hz stats-HUD reading (smoothed RTT + encode-wall EWMA, tenths of a
+        /// millisecond; 0 = no reading yet). The actor stores the latest pair and folds it into the
+        /// client-local network-stats mirror. Purely informational — no capture/decode effect.
+        case applyHostStats(rttTenthsMillis: UInt16, encodeTenthsMillis: UInt16)
         /// The HOST ended this session (a received `bye` — daemon shutdown, VD termination, or the
         /// restarted daemon answering an unbound lane). The actor surfaces it to the GUI layer,
         /// which rebuilds the WHOLE pipeline (fresh lane + hello + renderer/pacer/decoder) — the
@@ -215,6 +219,11 @@ public struct VideoClientStateMachine: Sendable {
             // the field max to 0.
             guard state == .streaming, w >= 1, h >= 1 else { return [] }
             return [.applyDisplayMax(VideoSize(width: Double(w), height: Double(h)))]
+        case let .hostStats(rttTenths, encodeTenths):
+            // Host→client stats-HUD halves (~2 Hz). Streaming only; zeros flow (0 = "no reading
+            // yet" — the readout renders it as a dash, never a fake 0.0 ms).
+            guard state == .streaming else { return [] }
+            return [.applyHostStats(rttTenthsMillis: rttTenths, encodeTenthsMillis: encodeTenths)]
         case .hello,
              .helloDisplay,
              .resizeRequest,

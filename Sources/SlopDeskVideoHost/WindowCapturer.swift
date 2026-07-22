@@ -499,6 +499,12 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
     private var encodeLoadPacer: EncodeLoadPacer
     private let pacerLock = NSLock()
     private var encodePacedFPS: Int
+    /// ENCODE-WALL EWMA (the stats HUD's host encode axis, wire type 27): folded on the serial
+    /// `encodeQueue` after every hand-off, published under `pacerLock` so the session actor can
+    /// read it from the ~500 ms `hostStats` sender. Unlike the pacer's load EWMA this one is
+    /// ALWAYS measured (two clock reads per frame — noise next to a multi-ms encode) and folds
+    /// anchors too: the HUD reports what encode actually costs, spikes included. `0` = none yet.
+    private var encodeMsEWMAShared: Double = 0
     /// Last paced fps we logged a transition for (frameQueue/encodeQueue diagnostic dedup).
     private var lastLoggedPacedFPS: Int
 
@@ -571,39 +577,61 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         // pacer's load EWMA (as the governor excludes them from its bytes EWMA); compact + LTR
         // refreshes are near steady-state and ARE folded.
         let pacerAnchor = forceKeyframe || crisp
-        let measure = Self.encodePacerEnabled || Self.dbgGapEnabled
         encodeQueue.async { [weak self] in
             // Measure the encode+packetize+send wall-time. Past the 60fps budget (16.7ms) it fills
             // the backlog and forces the ragged [drop] above — the pacer folds it to step the rate
             // down cleanly instead. [enc] + [drop] localize a hitch to encoder over-run under DEBUG.
-            let encStart = measure ? Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) : 0
+            let encStart = Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW))
             handler(boxed.value, pts, forceKeyframe, crisp, compact, ltrRefresh, perFrameMaxQP)
             guard let self else { return }
-            if measure {
-                let ms = (Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) - encStart) / 1_000_000.0
-                // ENCODE-LOAD PACER: the struct is confined to THIS serial queue; only its output fps
-                // crosses to the frameQueue (published under `pacerLock`).
-                if Self.encodePacerEnabled {
-                    let paced = encodeLoadPacer.note(encodeMs: ms, isAnchor: pacerAnchor)
-                    pacerLock.lock()
-                    encodePacedFPS = paced
-                    pacerLock.unlock()
-                    if Self.dbgGapEnabled, paced != lastLoggedPacedFPS {
-                        let msg = "slopdesk-videohostd[pace]: \(Int(ms))ms ⇒ fps \(lastLoggedPacedFPS)→\(paced)\n"
-                        FileHandle.standardError.write(Data(msg.utf8))
-                        lastLoggedPacedFPS = paced
-                    }
-                }
-                if Self.dbgGapEnabled, ms > 16.7 {
-                    FileHandle.standardError
-                        .write(Data("slopdesk-videohostd[enc]: encode \(Int(ms))ms\(pacerAnchor ? " ANCHOR" : "")\n"
-                                .utf8))
-                }
-            }
+            let ms = (Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) - encStart) / 1_000_000.0
+            noteEncodeWall(milliseconds: ms, pacerAnchor: pacerAnchor)
             encodePendingLock.lock()
             encodePending -= 1
             encodePendingLock.unlock()
         }
+    }
+
+    /// Post-encode wall-time bookkeeping shared by both hand-off paths (default async block +
+    /// freshest-wins drain), on the serial `encodeQueue`: fold the ALWAYS-ON stats-HUD EWMA,
+    /// then the flag-gated pacer fold + DEBUG prints exactly as before.
+    private func noteEncodeWall(milliseconds ms: Double, pacerAnchor: Bool) {
+        pacerLock.lock()
+        encodeMsEWMAShared = Self.foldEncodeEWMA(current: encodeMsEWMAShared, sampleMs: ms)
+        pacerLock.unlock()
+        // ENCODE-LOAD PACER: the struct is confined to THIS serial queue; only its output fps
+        // crosses to the frameQueue (published under `pacerLock`).
+        if Self.encodePacerEnabled {
+            let paced = encodeLoadPacer.note(encodeMs: ms, isAnchor: pacerAnchor)
+            pacerLock.lock()
+            encodePacedFPS = paced
+            pacerLock.unlock()
+            if Self.dbgGapEnabled, paced != lastLoggedPacedFPS {
+                let msg = "slopdesk-videohostd[pace]: \(Int(ms))ms ⇒ fps \(lastLoggedPacedFPS)→\(paced)\n"
+                FileHandle.standardError.write(Data(msg.utf8))
+                lastLoggedPacedFPS = paced
+            }
+        }
+        if Self.dbgGapEnabled, ms > 16.7 {
+            FileHandle.standardError
+                .write(Data("slopdesk-videohostd[enc]: encode \(Int(ms))ms\(pacerAnchor ? " ANCHOR" : "")\n"
+                        .utf8))
+        }
+    }
+
+    /// PURE EWMA fold for the encode-wall sample (the stats-HUD axis): the first sample seeds the
+    /// average whole (no zero-drag warmup), later samples fold at ``EncodeLoadPacer/alpha``.
+    static func foldEncodeEWMA(current: Double, sampleMs: Double) -> Double {
+        guard current > 0 else { return sampleMs }
+        return current * (1 - EncodeLoadPacer.alpha) + sampleMs * EncodeLoadPacer.alpha
+    }
+
+    /// The current encode-wall EWMA in milliseconds (`0` = nothing encoded yet). Lock-guarded,
+    /// callable from any thread — the session actor's `hostStats` sender reads it.
+    public func encodeMillisEWMA() -> Double {
+        pacerLock.lock()
+        defer { pacerLock.unlock() }
+        return encodeMsEWMAShared
     }
 
     /// FRESHEST-WINS encode hand-off (``Self/freshestWins``): keep an explicit backlog deque so the
@@ -655,26 +683,10 @@ public final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate, @
         let e = pendingEncodes.removeFirst()
         encodePendingLock.unlock()
 
-        let measure = Self.encodePacerEnabled || Self.dbgGapEnabled
-        let encStart = measure ? Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) : 0
+        let encStart = Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW))
         frameHandler(e.buffer.value, e.pts, e.forceKeyframe, e.crisp, e.compact, e.ltrRefresh, e.perFrameMaxQP)
-        guard measure else { return }
         let ms = (Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) - encStart) / 1_000_000.0
-        if Self.encodePacerEnabled {
-            let paced = encodeLoadPacer.note(encodeMs: ms, isAnchor: e.pacerAnchor)
-            pacerLock.lock()
-            encodePacedFPS = paced
-            pacerLock.unlock()
-            if Self.dbgGapEnabled, paced != lastLoggedPacedFPS {
-                let msg = "slopdesk-videohostd[pace]: \(Int(ms))ms ⇒ fps \(lastLoggedPacedFPS)→\(paced)\n"
-                FileHandle.standardError.write(Data(msg.utf8))
-                lastLoggedPacedFPS = paced
-            }
-        }
-        if Self.dbgGapEnabled, ms > 16.7 {
-            FileHandle.standardError
-                .write(Data("slopdesk-videohostd[enc]: encode \(Int(ms))ms\(e.pacerAnchor ? " ANCHOR" : "")\n".utf8))
-        }
+        noteEncodeWall(milliseconds: ms, pacerAnchor: e.pacerAnchor)
     }
 
     /// Last time we forced a heartbeat IDR (uptime seconds).

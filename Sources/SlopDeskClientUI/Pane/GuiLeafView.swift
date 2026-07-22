@@ -437,10 +437,11 @@ struct GuiLeafView: View {
                     onStreamBitrate: { [weak model] kbps in model?.noteStreamKbps(kbps) },
                     // NETWORK-STATS MIRROR (~2 Hz): feeds the toggleable in-pane stats readout
                     // (informational; not read-only-gated).
-                    onNetworkStats: { [weak model] fps, fec, unrecovered, holdMs, depth in
+                    onNetworkStats: { [weak model] fps, fec, unrecovered, holdMs, depth, rtt, enc, dec in
                         model?.noteNetworkStats(
                             fps: fps, fecPerSec: fec, unrecoveredPerSec: unrecovered,
                             holdMs: holdMs, pacerDepth: depth,
+                            rttMs: rtt, encodeMs: enc, decodeMs: dec,
                         )
                     },
                     // STALL SCRIM: the live view pushes the stream's stall flips (host silent ↔ traffic
@@ -735,6 +736,9 @@ private struct GuiStatsReadout: View {
             row("RX \(model.statsFps.map { String(format: "%.0f", $0) } ?? "—") FPS · DEPTH "
                 + "\(model.statsPacerDepth.map(String.init) ?? "—")")
             row("FEC \(perSecLabel(model.statsFecPerSec)) · LOST \(perSecLabel(model.statsUnrecoveredPerSec))")
+            row(
+                "RTT \(msLabel(model.statsRttMs)) · ENC \(msLabel(model.statsEncodeMs)) · DEC \(msLabel(model.statsDecodeMs))",
+            )
             row("HOLD \(model.statsHoldMs.map(String.init) ?? "—") MS")
         }
         .padding(.horizontal, Slate.Metric.space2)
@@ -753,6 +757,11 @@ private struct GuiStatsReadout: View {
     private func perSecLabel(_ value: Double?) -> String {
         guard let value else { return "—/S" }
         return String(format: "%.1f/S", value)
+    }
+
+    private func msLabel(_ value: Double?) -> String {
+        guard let value else { return "—" }
+        return String(format: "%.1f", value)
     }
 
     private func row(_ text: String) -> some View {

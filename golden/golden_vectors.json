@@ -4129,6 +4129,12 @@
       "enabled": false,
       "hex": "1a00",
       "variant": "audioControlOff"
+    },
+    {
+      "encodeTenthsMillis": 45,
+      "hex": "1b007b002d",
+      "rttTenthsMillis": 123,
+      "variant": "hostStats"
     }
   ],
   "virtualDisplayGeometry": [

@@ -138,10 +138,12 @@ public struct RemotePaneContext {
     public var onStreamBitrateChanged: ((_ kbps: Int) -> Void)?
     /// NETWORK-STATS MIRROR: the live video view PUSHES the ~2 Hz client-local telemetry aggregate —
     /// received frames/sec, FEC recoveries/sec, unrecovered losses/sec, latest host-stamp hold (ms),
-    /// pacer depth. Primitives only (this seam is headless). Informational view→model push (never
+    /// pacer depth, host-reported RTT/encode (ms) and client decode (ms) EWMAs (`0` = no reading
+    /// yet). Primitives only (this seam is headless). Informational view→model push (never
     /// reaches the host), so NOT read-only-gated. `nil` ⇒ none.
     public var onNetworkStats: ((
         _ fps: Double, _ fecPerSec: Double, _ unrecoveredPerSec: Double, _ holdMs: Int, _ pacerDepth: Int,
+        _ rttMs: Double, _ encodeMs: Double, _ decodeMs: Double,
     ) -> Void)?
     /// STREAM SETTINGS (fps cap / bitrate ceiling): the live video view publishes a settings-drive closure
     /// here once its session exists (`nil` on teardown), so the pane can request a live encode fps cap /
@@ -191,6 +193,7 @@ public struct RemotePaneContext {
         onStreamBitrateChanged: ((_ kbps: Int) -> Void)? = nil,
         onNetworkStats: ((
             _ fps: Double, _ fecPerSec: Double, _ unrecoveredPerSec: Double, _ holdMs: Int, _ pacerDepth: Int,
+            _ rttMs: Double, _ encodeMs: Double, _ decodeMs: Double,
         ) -> Void)? = nil,
         onStreamSettingsInjectorReady: ((((_ fpsCap: Int, _ bitrateCeilingBps: Int) -> Void)?) -> Void)? = nil,
         onAudioInjectorReady: ((((_ enabled: Bool) -> Void)?) -> Void)? = nil,
@@ -255,7 +258,8 @@ public struct RemotePaneContext {
         onStreamBitrate: @escaping (_ kbps: Int) -> Void = { _ in },
         onNetworkStats: @escaping (
             _ fps: Double, _ fecPerSec: Double, _ unrecoveredPerSec: Double, _ holdMs: Int, _ pacerDepth: Int,
-        ) -> Void = { _, _, _, _, _ in },
+            _ rttMs: Double, _ encodeMs: Double, _ decodeMs: Double,
+        ) -> Void = { _, _, _, _, _, _, _, _ in },
         onStreamStall: @escaping (_ stalled: Bool) -> Void = { _ in },
         onSessionRejected: @escaping () -> Void = {},
     ) -> Self {

@@ -112,19 +112,35 @@ public final class RemoteWindowModel {
     public private(set) var statsUnrecoveredPerSec: Double?
     public private(set) var statsHoldMs: Int?
     public private(set) var statsPacerDepth: Int?
+    /// LATENCY AXES (the Parsec-grade HUD rows): host-reported smoothed RTT + encode-wall EWMA
+    /// (wire type 27) and the client's decode-wall EWMA. Unlike the rate axes a ZERO here means
+    /// "no reading yet" (old host / telemetry off / first window filling), so it maps to `nil`
+    /// and the readout renders a dash — never a fake 0.0 ms.
+    public private(set) var statsRttMs: Double?
+    public private(set) var statsEncodeMs: Double?
+    public private(set) var statsDecodeMs: Double?
 
     /// Records one ~2 Hz network-stats reading. A negative value on any axis is nonsense (rates and
     /// gauges are non-negative by construction) — the whole reading is dropped rather than mixing a
     /// good axis with garbage. Each observable is only written on a real change.
     public func noteNetworkStats(
         fps: Double, fecPerSec: Double, unrecoveredPerSec: Double, holdMs: Int, pacerDepth: Int,
+        rttMs: Double = 0, encodeMs: Double = 0, decodeMs: Double = 0,
     ) {
-        guard fps >= 0, fecPerSec >= 0, unrecoveredPerSec >= 0, holdMs >= 0, pacerDepth >= 0 else { return }
+        guard fps >= 0, fecPerSec >= 0, unrecoveredPerSec >= 0, holdMs >= 0, pacerDepth >= 0,
+              rttMs >= 0, encodeMs >= 0, decodeMs >= 0 else { return }
         if statsFps != fps { statsFps = fps }
         if statsFecPerSec != fecPerSec { statsFecPerSec = fecPerSec }
         if statsUnrecoveredPerSec != unrecoveredPerSec { statsUnrecoveredPerSec = unrecoveredPerSec }
         if statsHoldMs != holdMs { statsHoldMs = holdMs }
         if statsPacerDepth != pacerDepth { statsPacerDepth = pacerDepth }
+        // 0 = "no reading yet" on the latency axes → nil (dash), and a later real reading upgrades it.
+        let rtt: Double? = rttMs > 0 ? rttMs : nil
+        let enc: Double? = encodeMs > 0 ? encodeMs : nil
+        let dec: Double? = decodeMs > 0 ? decodeMs : nil
+        if statsRttMs != rtt { statsRttMs = rtt }
+        if statsEncodeMs != enc { statsEncodeMs = enc }
+        if statsDecodeMs != dec { statsDecodeMs = dec }
     }
 
     /// STREAM SETTINGS (fps cap / bitrate ceiling): the live ``VideoWindowView`` publishes this once its
@@ -610,6 +626,9 @@ public final class RemoteWindowModel {
         statsUnrecoveredPerSec = nil
         statsHoldMs = nil
         statsPacerDepth = nil
+        statsRttMs = nil
+        statsEncodeMs = nil
+        statsDecodeMs = nil
         windowPointSize = nil
         windowMaxPointSize = nil
         // Drop every published sink HERE — the model's own lifecycle, not the view's dismantle. The old

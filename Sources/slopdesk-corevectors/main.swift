@@ -458,6 +458,11 @@ root["videoControl"] = [
     ),
     vc("audioControlOn", .audioControl(enabled: true), ["enabled": true]),
     vc("audioControlOff", .audioControl(enabled: false), ["enabled": false]),
+    vc(
+        "hostStats",
+        .hostStats(rttTenthsMillis: 123, encodeTenthsMillis: 45),
+        ["rttTenthsMillis": 123, "encodeTenthsMillis": 45],
+    ),
 ]
 
 // MARK: AudioChannelMessage

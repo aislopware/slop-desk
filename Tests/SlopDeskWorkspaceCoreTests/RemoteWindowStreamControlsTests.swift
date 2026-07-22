@@ -198,17 +198,42 @@ final class RemoteWindowStreamControlsTests: XCTestCase {
         m.open()
         let locked = RemotePaneContext.videoLeaf(
             isActive: true, readOnly: true, bindKeyInjector: { _ in },
-            onNetworkStats: { fps, fec, unrec, holdMs, depth in
+            onNetworkStats: { fps, fec, unrec, holdMs, depth, rtt, enc, dec in
                 m.noteNetworkStats(
                     fps: fps, fecPerSec: fec, unrecoveredPerSec: unrec, holdMs: holdMs, pacerDepth: depth,
+                    rttMs: rtt, encodeMs: enc, decodeMs: dec,
                 )
             },
         )
-        locked.onNetworkStats?(30, 0, 0, 9, 1)
+        locked.onNetworkStats?(30, 0, 0, 9, 1, 12.5, 4.2, 1.1)
         XCTAssertEqual(m.statsFps, 30, "informational push flows on a read-only pane")
         XCTAssertEqual(m.statsHoldMs, 9)
+        XCTAssertEqual(m.statsRttMs, 12.5, "the HUD latency axes ride the same informational push")
+        XCTAssertEqual(m.statsEncodeMs, 4.2)
+        XCTAssertEqual(m.statsDecodeMs, 1.1)
     }
     #endif
+
+    /// **Latency-axis zeros mean "no reading yet" → nil (dash), never a fake 0.0 ms.** The rate
+    /// axes keep their zeros-are-real semantics (an idle stream receives nothing); only the
+    /// RTT/encode/decode trio maps 0 → nil — and a later real reading upgrades it, a later zero
+    /// (host session re-mint) downgrades back to the dash.
+    func testNetworkStatsLatencyZerosMapToNil() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "7", title: "Safari")
+        m.open()
+        m.noteNetworkStats(fps: 0, fecPerSec: 0, unrecoveredPerSec: 0, holdMs: 0, pacerDepth: 0)
+        XCTAssertEqual(m.statsFps, 0, "rate zeros are REAL readings")
+        XCTAssertNil(m.statsRttMs, "latency zero = no reading yet → dash")
+        XCTAssertNil(m.statsEncodeMs)
+        XCTAssertNil(m.statsDecodeMs)
+        m.noteNetworkStats(
+            fps: 30, fecPerSec: 0, unrecoveredPerSec: 0, holdMs: 5, pacerDepth: 1,
+            rttMs: 8.0, encodeMs: 3.0, decodeMs: 0.9,
+        )
+        XCTAssertEqual(m.statsRttMs, 8.0)
+        m.noteNetworkStats(fps: 30, fecPerSec: 0, unrecoveredPerSec: 0, holdMs: 5, pacerDepth: 1)
+        XCTAssertNil(m.statsRttMs, "a re-minted host session (zeros again) drops back to the dash")
+    }
 
     // MARK: close() owns sink teardown (the detach remount race)
 

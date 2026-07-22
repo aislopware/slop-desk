@@ -134,9 +134,11 @@ public struct VideoWindowView: View {
     let onStreamBitrateReady: ((_ kbps: Int) -> Void)?
     /// NETWORK-STATS MIRROR: the live view pushes the ~2 Hz client-local telemetry aggregate here —
     /// received frames/sec, FEC recoveries/sec, unrecovered losses/sec, latest hold (ms), pacer
-    /// depth — for the pane's stats surface. Primitives only (the seam is headless). `nil` ⇒ none.
+    /// depth, host-reported RTT/encode (ms) and client decode (ms) EWMAs (`0` = no reading yet) —
+    /// for the pane's stats surface. Primitives only (the seam is headless). `nil` ⇒ none.
     let onNetworkStatsReady: ((
         _ fps: Double, _ fecPerSec: Double, _ unrecoveredPerSec: Double, _ holdMs: Int, _ pacerDepth: Int,
+        _ rttMs: Double, _ encodeMs: Double, _ decodeMs: Double,
     ) -> Void)?
     /// STREAM SETTINGS (fps cap / bitrate ceiling): the live view publishes a settings-drive closure
     /// here once its session exists (and `nil` on teardown), so the pane can request a live encode
@@ -214,6 +216,7 @@ public struct VideoWindowView: View {
         onStreamBitrateReady: ((_ kbps: Int) -> Void)? = nil,
         onNetworkStatsReady: ((
             _ fps: Double, _ fecPerSec: Double, _ unrecoveredPerSec: Double, _ holdMs: Int, _ pacerDepth: Int,
+            _ rttMs: Double, _ encodeMs: Double, _ decodeMs: Double,
         ) -> Void)? = nil,
         onStreamSettingsInjectorReady: ((((_ fpsCap: Int, _ bitrateCeilingBps: Int) -> Void)?) -> Void)? = nil,
         onAudioInjectorReady: ((((_ enabled: Bool) -> Void)?) -> Void)? = nil,
@@ -378,7 +381,7 @@ struct MetalVideoLayerView: NSViewRepresentable {
     var onWindowGeometryReady: ((Double, Double, Double, Double) -> Void)?
     var onStreamCadenceReady: ((Int) -> Void)?
     var onStreamBitrateReady: ((Int) -> Void)?
-    var onNetworkStatsReady: ((Double, Double, Double, Int, Int) -> Void)?
+    var onNetworkStatsReady: ((Double, Double, Double, Int, Int, Double, Double, Double) -> Void)?
     var onStreamSettingsInjectorReady: ((((Int, Int) -> Void)?) -> Void)?
     var onAudioInjectorReady: ((((Bool) -> Void)?) -> Void)?
     var onSystemKeyInjectorReady: ((((UInt16, UInt64, Bool) -> Void)?) -> Void)?
@@ -599,7 +602,7 @@ final class MetalLayerBackedView: NSView {
     /// NETWORK-STATS MIRROR: the canvas publishes a stats SINK through this — the view pushes the ~2 Hz
     /// client-local aggregate `(fps, fecPerSec, unrecoveredPerSec, holdMs, pacerDepth)` for the pane's
     /// stats surface. Set by the representable.
-    var onNetworkStatsReady: ((Double, Double, Double, Int, Int) -> Void)?
+    var onNetworkStatsReady: ((Double, Double, Double, Int, Int, Double, Double, Double) -> Void)?
     /// STREAM SETTINGS: the canvas publishes a settings-drive sink through this (and `nil` on teardown;
     /// the seam binds nil while read-only — host-affecting, like the resize sink). `(fpsCap,
     /// bitrateCeilingBps)`, 0 = auto. Set by the representable.
@@ -905,6 +908,9 @@ final class MetalLayerBackedView: NSView {
                 snapshot.unrecoveredPerSecond,
                 snapshot.holdMillis,
                 snapshot.pacerDepth,
+                snapshot.rttMillis,
+                snapshot.encodeMillis,
+                snapshot.decodeMillis,
             )
         }
         // STALL: drain THIS surface to grayscale (MERIDIAN L1 — the material says "stale", see
@@ -1790,7 +1796,7 @@ struct MetalVideoLayerView: UIViewRepresentable {
     // host-cadence + bitrate + stats pushes are accepted + ignored here.
     var onStreamCadenceReady: ((Int) -> Void)?
     var onStreamBitrateReady: ((Int) -> Void)?
-    var onNetworkStatsReady: ((Double, Double, Double, Int, Int) -> Void)?
+    var onNetworkStatsReady: ((Double, Double, Double, Int, Int, Double, Double, Double) -> Void)?
     // Signature parity with the macOS representable. iOS has no stream-settings UI nor a
     // programmatic key drive (it forwards no host key input) — accepted + ignored here.
     var onStreamSettingsInjectorReady: ((((Int, Int) -> Void)?) -> Void)?

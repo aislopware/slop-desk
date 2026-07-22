@@ -61,6 +61,7 @@ import Foundation
 ///                            | Float64 viewportW | Float64 viewportH
 /// type 25 streamSettings: UInt8 fpsCap | UInt32 bitrateCeilingBps
 /// type 26 audioControl:  UInt8 enabled(0/1)
+/// type 27 hostStats:     UInt16 rttTenthsMillis | UInt16 encodeTenthsMillis
 /// ```
 ///
 /// Liveness keepalive: guards against a client that crashes without sending `bye` — a zero-body
@@ -375,6 +376,13 @@ public enum VideoControlMessage: Equatable, Sendable {
     /// client stores its last wish and re-sends it after every accepted (re-)hello. A later
     /// message REPLACES the earlier one. Inert to an old host (unknown type → dropped).
     case audioControl(enabled: Bool)
+    /// Host → client: the HOST-side halves of the stats HUD, ~2 Hz while streaming — the smoothed
+    /// RTT the host derives from the client's `networkStats` reports (the client cannot measure RTT
+    /// itself: its telemetry fields are all relative, §9.8) and the host's encode-wall-time EWMA.
+    /// Both in TENTHS of a millisecond (UInt16 saturating ⇒ caps at ~6.5 s); `0` = no reading yet
+    /// (telemetry off / first window still filling). Fire-and-forget single send — the next tick
+    /// heals a loss. Inert to an old client (unknown type → dropped).
+    case hostStats(rttTenthsMillis: UInt16, encodeTenthsMillis: UInt16)
 
     public var messageType: UInt8 {
         switch self {
@@ -404,6 +412,7 @@ public enum VideoControlMessage: Equatable, Sendable {
         case .helloDisplay: 24
         case .streamSettings: 25
         case .audioControl: 26
+        case .hostStats: 27
         }
     }
 
@@ -569,6 +578,9 @@ public enum VideoControlMessage: Equatable, Sendable {
             out.appendBE(bitrateCeilingBps)
         case let .audioControl(enabled):
             out.append(enabled ? 1 : 0)
+        case let .hostStats(rttTenths, encodeTenths):
+            out.appendBE(rttTenths)
+            out.appendBE(encodeTenths)
         }
         return out
     }
@@ -799,6 +811,12 @@ public enum VideoControlMessage: Equatable, Sendable {
         case 26:
             // Body is the 1-byte enable flag; like every wire bool it decodes as `byte != 0`.
             return try .audioControl(enabled: reader.readUInt8() != 0)
+        case 27:
+            // Length is the only decode-time validation (a short body throws `.truncated`); any
+            // value is a legal tenths reading (0 = none yet), so there is nothing to clamp.
+            let rttTenths = try reader.readUInt16()
+            let encodeTenths = try reader.readUInt16()
+            return .hostStats(rttTenthsMillis: rttTenths, encodeTenthsMillis: encodeTenths)
         default:
             throw VideoProtocolError.malformed("unknown video control message type \(type)")
         }

@@ -23,6 +23,15 @@ public struct ClientNetworkStatsSnapshot: Sendable, Equatable {
     public let holdMillis: Int
     /// The pacer's live presentation depth (0 = no pacer attached).
     public let pacerDepth: Int
+    /// HOST-reported smoothed RTT (ms) off the type-27 `hostStats` message — the host derives it
+    /// from our `networkStats` echoes in its own clock (the client can't measure RTT itself).
+    /// `0` = no reading yet (old host / telemetry off / first window filling).
+    public let rttMillis: Double
+    /// HOST-reported encode-wall EWMA (ms) off the same `hostStats` message. `0` = no reading yet.
+    public let encodeMillis: Double
+    /// CLIENT-measured decode-wall EWMA (ms) — timed around the synchronous VT decode submit.
+    /// `0` = nothing decoded yet.
+    public let decodeMillis: Double
 
     public init(
         framesPerSecond: Double,
@@ -30,12 +39,18 @@ public struct ClientNetworkStatsSnapshot: Sendable, Equatable {
         unrecoveredPerSecond: Double,
         holdMillis: Int,
         pacerDepth: Int,
+        rttMillis: Double,
+        encodeMillis: Double,
+        decodeMillis: Double,
     ) {
         self.framesPerSecond = framesPerSecond
         self.fecRecoveredPerSecond = fecRecoveredPerSecond
         self.unrecoveredPerSecond = unrecoveredPerSecond
         self.holdMillis = holdMillis
         self.pacerDepth = pacerDepth
+        self.rttMillis = rttMillis
+        self.encodeMillis = encodeMillis
+        self.decodeMillis = decodeMillis
     }
 }
 
@@ -603,6 +618,11 @@ public actor SlopDeskVideoClientSession {
     private var mirrorFecRecovered: UInt32 = 0
     private var mirrorUnrecovered: UInt32 = 0
     private var mirrorWindowStartS: Double = 0
+    /// The latest host-reported stats-HUD halves (wire type 27 `hostStats`, tenths of a millisecond;
+    /// 0 = no reading yet). Latest-wins on the lossy control lane; folded into every mirror flush and
+    /// reset by a session re-mint (a rebuilt host session re-derives them within a tick).
+    private var hostStatsRttTenths: UInt16 = 0
+    private var hostStatsEncodeTenths: UInt16 = 0
     /// Minimum mirror-window span (seconds) — the ~2 Hz push cadence.
     private static let statsMirrorInterval: Double = 0.5
     /// USER STREAM SETTINGS: the last-requested fps cap / bitrate ceiling (`0` = auto), re-sent
@@ -958,6 +978,9 @@ public actor SlopDeskVideoClientSession {
             unrecoveredPerSecond: Double(mirrorUnrecovered) / elapsed,
             holdMillis: holdMs,
             pacerDepth: gui.readPacerDepth?() ?? 0,
+            rttMillis: Double(hostStatsRttTenths) / 10.0,
+            encodeMillis: Double(hostStatsEncodeTenths) / 10.0,
+            decodeMillis: decoder?.decodeMillisEWMA() ?? 0,
         )
         mirrorFrames = 0
         mirrorFecRecovered = 0
@@ -2066,6 +2089,11 @@ public actor SlopDeskVideoClientSession {
             // so the "Resize…" popover caps its width/height fields at a size the remote can adopt.
             dbg("displayMax → max resize \(Int(size.width))x\(Int(size.height))pt")
             gui.notifyDisplayMax?(size)
+        case let .applyHostStats(rttTenths, encodeTenths):
+            // Stats HUD (host halves): latest-wins storage; the ~2 Hz mirror flush carries them to
+            // the GUI with the client-local axes.
+            hostStatsRttTenths = rttTenths
+            hostStatsEncodeTenths = encodeTenths
         case .sessionEndedByHost:
             // The host ended this session (bye) — surface it so the pipeline rebuilds (fresh lane +
             // hello + presentation path), instead of wedging the pane. The FSM is already `.stopped`, so
@@ -2085,6 +2113,10 @@ public actor SlopDeskVideoClientSession {
 
     private func startDecodePipeline(captureSize: VideoSize, fullRange: Bool) {
         decodedSize = captureSize
+        // Host stats-HUD halves die with the session re-mint (a rebuilt host session re-derives
+        // them within a tick) — start the fresh pipeline at "no reading yet".
+        hostStatsRttTenths = 0
+        hostStatsEncodeTenths = 0
         dbg(
             "decode pipeline up — native(capture)=\(Int(captureSize.width))x\(Int(captureSize.height)) fullRange=\(fullRange); this is the FIXED aspect-fit denominator for the session",
         )

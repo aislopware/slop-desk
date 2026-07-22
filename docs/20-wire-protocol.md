@@ -593,7 +593,7 @@ media flows. `[UInt8 type][body]`, big-endian:
   must go silent so the monitor sees the truth).
 - Beyond the handshake the control channel also carries additive host→client info messages, each an
   unknown type an old peer simply drops: `resizeAck` (5), `streamCadence` (10), `scrollOffset` (13),
-  `contentMask` (14), and **`displayMax` (15)** = `UInt16 maxWidthPt` + `UInt16 maxHeightPt`, the max
+  `contentMask` (14), `hostStats` (27, below), and **`displayMax` (15)** = `UInt16 maxWidthPt` + `UInt16 maxHeightPt`, the max
   POINT size the captured window can reach (the bounds of its display, or the parked VD). The host
   sends it once at capture start, paired with its resize-to-display-origin step. (`resizeRequest`/
   `resizeAck`/`displayMax` are **client-dormant since the remote-window removal** — docs/DECISIONS.md
@@ -615,6 +615,16 @@ media flows. `[UInt8 type][body]`, big-endian:
   while streaming, per-session HOST state that resets OFF on session mint, so the client stores the
   wish and re-sends it after every accepted (re-)hello. A later message replaces the earlier one.
   Inert to an old host (unknown type → dropped).
+- **Host stats (27, host → client, 2026-07-22, the stats HUD):** `hostStats` =
+  `UInt16 rttTenthsMillis` + `UInt16 encodeTenthsMillis` — the HOST-side latency halves of the
+  in-pane stats readout: the smoothed RTT the host derives from the client's `networkStats` echoes
+  (§9.8 — every client-report field is relative, so only the host can compute RTT, in its own
+  clock) and the capturer's encode-wall-time EWMA. Tenths of a millisecond, saturating (caps at
+  ~6.5 s); `0` = no reading yet (telemetry off / first window filling) — the client renders it as a
+  dash, never a fake 0.0. Sent at most every ~500 ms, riding the client's ~50 ms report clock (a
+  client that sends no reports gets none), single-send fire-and-forget (the next tick heals a
+  loss). Streaming-only on both ends; inert to an old client (unknown type → dropped). The client
+  pairs it with its own decode-wall EWMA (local, never on the wire) for the RTT/ENC/DEC row.
 - **Session-LESS discovery (no capture mint; the request bootstraps its reply flow at the mux, is
   never answered with an unbound-lane `bye`, and its lane is retired after the reply):**
   `listWindows` (7, zero body) → `windowList` (8) — the picker + `WindowRebind` callers are gone

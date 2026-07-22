@@ -108,6 +108,36 @@ public final class VideoDecoder: @unchecked Sendable {
         )
     }
 
+    /// DECODE-WALL EWMA (the stats HUD's client-local decode axis): folded around every
+    /// synchronous VT decode submit under `decodeStatsLock` — decode runs on the serial decode
+    /// queue (or the actor, inline mode) while the session actor reads the EWMA from the ~2 Hz
+    /// mirror flush, so the reading crosses threads. `0` = nothing decoded yet.
+    private let decodeStatsLock = NSLock()
+    private var decodeMsEWMA: Double = 0
+    /// EWMA weight for the decode-wall fold (the ``EncodeLoadPacer`` alpha — ~4-frame memory).
+    static let decodeEWMAAlpha = 0.25
+
+    /// The current decode-wall EWMA in milliseconds (`0` = nothing decoded yet). Lock-guarded,
+    /// callable from any thread; never touches the VT session (hang-safe).
+    public func decodeMillisEWMA() -> Double {
+        decodeStatsLock.lock()
+        defer { decodeStatsLock.unlock() }
+        return decodeMsEWMA
+    }
+
+    /// PURE EWMA fold for the decode-wall sample: the first sample seeds the average whole
+    /// (no zero-drag warmup), later samples fold at ``decodeEWMAAlpha``.
+    static func foldDecodeEWMA(current: Double, sampleMs: Double) -> Double {
+        guard current > 0 else { return sampleMs }
+        return current * (1 - decodeEWMAAlpha) + sampleMs * decodeEWMAAlpha
+    }
+
+    private func noteDecodeWall(milliseconds: Double) {
+        decodeStatsLock.lock()
+        decodeMsEWMA = Self.foldDecodeEWMA(current: decodeMsEWMA, sampleMs: milliseconds)
+        decodeStatsLock.unlock()
+    }
+
     public init(decodedFrameHandler: @escaping DecodedFrameHandler) {
         self.decodedFrameHandler = decodedFrameHandler
     }
@@ -261,6 +291,9 @@ public final class VideoDecoder: @unchecked Sendable {
         // A Sendable box for the callback status (the output handler is `@Sendable`; the decode is
         // synchronous so the write-then-read is race-free, but the box keeps the capture Sendable-clean).
         let callbackStatus = DecodeStatusBox()
+        // Stats HUD: time the synchronous decode submit (callback included — `flags: []` runs it
+        // on this thread before the call returns, so the wall time IS the decode time).
+        let decodeStart = Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW))
         let status = VTDecompressionSessionDecodeFrame(
             session, sampleBuffer: sampleBuffer, flags: [], infoFlagsOut: nil,
         ) { status, _, imageBuffer, _, _ in
@@ -270,6 +303,9 @@ public final class VideoDecoder: @unchecked Sendable {
             guard let imageBuffer else { return }
             handler(imageBuffer) // NV12 CVPixelBuffer → MetalVideoRenderer at vsync
         }
+        noteDecodeWall(
+            milliseconds: (Double(clock_gettime_nsec_np(CLOCK_UPTIME_RAW)) - decodeStart) / 1_000_000.0,
+        )
         guard status == noErr else { throw VideoDecoderError.decodeFailed(status) }
         guard callbackStatus.value == noErr else { throw VideoDecoderError.decodeFailed(callbackStatus.value) }
     }

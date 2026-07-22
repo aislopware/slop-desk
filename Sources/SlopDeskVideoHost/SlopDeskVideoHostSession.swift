@@ -477,6 +477,11 @@ public actor SlopDeskVideoHostSession {
     /// Host-side network estimate folded from the client's periodic NetworkStats reports. A pure value
     /// type — no reference capture, so no retain-cycle risk.
     private var networkEstimate = NetworkEstimate()
+    /// Monotonic time (systemUptime) of the last `hostStats` (wire type 27) send — the ~2 Hz
+    /// throttle over the client's ~50 ms report clock (see ``maybeSendHostStats()``).
+    private var lastHostStatsSentAt: TimeInterval = 0
+    /// Minimum spacing between `hostStats` sends (seconds) — matches the client mirror's ~2 Hz flush.
+    private static let hostStatsInterval: TimeInterval = 0.5
     /// Delivery-keyed recovery-IDR admission (sent-keyframe ring + decode-acked id + casualty bypass +
     /// token bucket). Pure value type, consulted ONLY by ``gateRecoveryIDR(lastDecoded:)`` when
     /// `SLOPDESK_RECOVERY_IDR_V2` is on. Deliberately NOT reset on encoder rebuilds (see
@@ -1476,6 +1481,10 @@ public actor SlopDeskVideoHostSession {
             dbg(
                 "netstats rx: frames=\(report.framesReceived) fec=\(report.fecRecovered) lost=\(report.unrecovered) hostTs=\(report.latestHostSendTs) hold=\(report.clientHoldMs)ms jitter=\(report.owdJitterMicros)us → rtt=\(rttStr)ms smoothedRTT=\(smoothedStr)ms minRTT=\(minRTTStr)ms loss=\(lossStr) rising=\(rising) trend=\(trendStr) tstate=\(tstate) tdeltas=\(tdeltas) late=\(report.pacerLateFrames) gaps=\(report.pacerPresentGaps) depth=\(report.pacerDepth)",
             )
+            // STATS HUD (wire type 27): echo the host-side halves — the smoothed RTT just folded
+            // above and the capturer's encode-wall EWMA — back to the client, throttled to ~2 Hz off
+            // this ~50 ms report clock. Fire-and-forget single send (periodic ⇒ self-healing).
+            maybeSendHostStats()
         case let .retransmitFragments(frameID, fragIndices):
             // NACK / selective ARQ: re-send exactly the missing fragments from the send-history ring
             // — no IDR. Dedup the client's 3× redundant NACK copies (same byte-keyed gate as the
@@ -1712,6 +1721,25 @@ public actor SlopDeskVideoHostSession {
         capturer?.setClientSilencePaused(shouldPause)
         let silentFor = String(format: "%.1f", now - lastClientInboundUptime)
         dbg("client-silence: video \(shouldPause ? "PAUSED" : "RESUMED") (silent \(silentFor)s)")
+    }
+
+    /// STATS HUD (wire type 27): sends `hostStats(rttTenthsMillis:encodeTenthsMillis:)` at most
+    /// every ``hostStatsInterval`` — rides the client's ~50 ms `networkStats` report clock (no report
+    /// ⇒ no RTT anyway, and an old/telemetry-off client that wants no HUD costs zero datagrams).
+    /// Values saturate into tenths-of-ms UInt16 (`0` = no reading yet); a lost send heals next tick.
+    private func maybeSendHostStats() {
+        guard stateMachine.mediaFlowing else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastHostStatsSentAt >= Self.hostStatsInterval else { return }
+        lastHostStatsSentAt = now
+        let rttTenths = UInt16(clamping: Int((networkEstimate.smoothedRTTMillis * 10).rounded()))
+        let encodeTenths = UInt16(clamping: Int(((capturer?.encodeMillisEWMA() ?? 0) * 10).rounded()))
+        transport.send(
+            scheduler.scheduleControl(.hostStats(
+                rttTenthsMillis: rttTenths, encodeTenthsMillis: encodeTenths,
+            )).bytes,
+            on: .control,
+        )
     }
 
     /// Sends the `streamCadence(fps:)` control message, duplicated once ~25 ms later with a

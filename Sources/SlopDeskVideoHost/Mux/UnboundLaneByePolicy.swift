@@ -65,11 +65,12 @@ public enum UnboundLaneByeDecider {
                  .windowFeedCurrent,
                  .appIconRequest,
                  .blobChunk,
-                 .windowPreviewRequest:
+                 .windowPreviewRequest,
+                 .hostStats:
                 // `windowFeedSubscribe` + `appIconRequest` + `listDisplays` are session-LESS discovery
                 // like the list requests (answered by the daemon — they must bootstrap, never bye);
                 // `helloDisplay` bootstraps a mint exactly like `hello`; the snapshot/current/blob/
-                // displayList replies are host→client and never arrive inbound legitimately.
+                // displayList/hostStats replies are host→client and never arrive inbound legitimately.
                 return false
             }
         case .video,

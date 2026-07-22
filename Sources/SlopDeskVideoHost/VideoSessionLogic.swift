@@ -169,8 +169,10 @@ public struct VideoSessionStateMachine: Sendable {
             return [.applyAudioControl(enabled: enabled)]
         case .helloAck,
              .resizeAck,
-             .streamCadence:
-            // Host never receives a helloAck/resizeAck/streamCadence (all host→client) — defensive no-op.
+             .streamCadence,
+             .hostStats:
+            // Host never receives a helloAck/resizeAck/streamCadence/hostStats (all host→client) —
+            // defensive no-op.
             return []
         case .keepalive,
              .focusWindow:
