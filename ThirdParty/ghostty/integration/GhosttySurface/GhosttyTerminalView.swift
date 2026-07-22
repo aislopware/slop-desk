@@ -1378,6 +1378,16 @@ final class GhosttyLayerBackedView: NSView {
             }
         }
 
+        // ── macos-option-as-alt TRANSLATION (upstream `SurfaceView_AppKit.keyDown`) ──
+        // Ask libghostty which mods remain for CHARACTER translation on this surface: with
+        // "Option as Alt" on (Settings → Controls → Keyboard), the claimed Option side is
+        // REMOVED from the translation mods, so ⌥b re-translates to "b" (not "∫"), no ⌥-dead-key
+        // composition starts, and the encoder — seeing Option NOT consumed — emits the Meta form
+        // (ESC-prefix / CSI-u). Config off ⇒ identity ⇒ `translationEvent === event`, byte-identical
+        // behaviour. Everything downstream (interpretKeyEvents, consumed mods, encoder text) uses
+        // the TRANSLATION event; `mods`/keycode still come from the ORIGINAL event.
+        let translationEvent = self.translationEvent(for: event)
+
         // ── IME / NSTextInputClient routing (upstream `SurfaceView_AppKit.keyDown`) ──
         // Every remaining key goes through the macOS INPUT CONTEXT FIRST so marked-text
         // composition (Vietnamese Telex, CJK conversion, ⌥-dead-keys) can begin/continue:
@@ -1404,7 +1414,7 @@ final class GhosttyLayerBackedView: NSView {
         // interpretKeyEvents may fire doCommand and must not re-send the event into a loop.
         lastPerformKeyEvent = nil
 
-        interpretKeyEvents([event])
+        interpretKeyEvents([translationEvent])
 
         if !markedTextBefore && keyboardIdBefore != Self.keyboardLayoutID {
             return
@@ -1420,7 +1430,13 @@ final class GhosttyLayerBackedView: NSView {
             // send the composed result. NEVER `composing` — this is composition OUTPUT
             // ("việt" after Telex `v i e e j t`, "é" after ⌥e e, a chosen CJK candidate).
             for text in committed {
-                sendGhosttyKey(action, event: event, text: text, composing: false)
+                sendGhosttyKey(
+                    action,
+                    event: event,
+                    translationMods: translationEvent.modifierFlags,
+                    text: text,
+                    composing: false,
+                )
             }
         } else {
             // Nothing committed: a plain key, or a composition in flight. `composing` covers
@@ -1428,16 +1444,51 @@ final class GhosttyLayerBackedView: NSView {
             // preedit must not ALSO encode a DEL to the PTY (upstream's Japanese-backspace
             // case — it clears the composing state, not the prior committed characters).
             // `KeyEventTextPolicy` (headless-tested) strips AppKit's function-key PUA
-            // placeholders (arrows = U+F700… — upstream `ghosttyCharacters`); forwarding one
-            // makes ghostty's KITTY encoder write the raw PUA bytes to the PTY instead of the
-            // CSI sequence (arrows typed garbage into Claude Code).
+            // placeholders (arrows = U+F700… — upstream `ghosttyCharacters`) AND control-led
+            // text (`\t`/`\r`/0x19): forwarding either makes ghostty's KITTY encoder emit the
+            // wrong bytes — raw PUA garbage for arrows, or a modifier-stripped bare `\t`/`\r`
+            // for Shift+Tab / Shift+Enter / ⌥Enter (`effectiveMods` subtracts consumed mods
+            // whenever utf8 is non-empty). Text reads off the TRANSLATION event so an
+            // option-as-alt ⌥b hands the encoder "b", not "∫".
             sendGhosttyKey(
                 action,
                 event: event,
-                text: KeyEventTextPolicy.encoderText(for: event.characters),
+                translationMods: translationEvent.modifierFlags,
+                text: KeyEventTextPolicy.encoderText(for: translationEvent.characters),
                 composing: markedText.length > 0 || markedTextBefore,
             )
         }
+    }
+
+    /// The event whose modifiers/characters drive INPUT-CONTEXT interpretation and encoder text —
+    /// the original event with the option-as-alt-claimed Option side(s) stripped and its characters
+    /// re-translated without them (upstream `SurfaceView_AppKit.keyDown`'s translation event).
+    /// Identity (`=== event`) when nothing is stripped — REQUIRED, not an optimisation: AppKit's
+    /// input-method machinery (Korean IME) relies on receiving the SAME object it was handed.
+    private func translationEvent(for event: NSEvent) -> NSEvent {
+        guard let surface else { return event }
+        let translated = Self.eventModifierFlags(
+            surface.keyTranslationMods(Self.ghosttyMods(event.modifierFlags)))
+        // The raw event flags carry hidden device-dependent bits that matter for dead keys, so
+        // never adopt the round-tripped set wholesale — copy only the four mod STATES onto the
+        // original flags (upstream's exact-state loop).
+        var mods = event.modifierFlags
+        for flag in [NSEvent.ModifierFlags.shift, .control, .option, .command] {
+            if translated.contains(flag) { mods.insert(flag) } else { mods.remove(flag) }
+        }
+        guard mods != event.modifierFlags else { return event }
+        return NSEvent.keyEvent(
+            with: event.type,
+            location: event.locationInWindow,
+            modifierFlags: mods,
+            timestamp: event.timestamp,
+            windowNumber: event.windowNumber,
+            context: nil,
+            characters: event.characters(byApplyingModifiers: mods) ?? "",
+            charactersIgnoringModifiers: event.charactersIgnoringModifiers ?? "",
+            isARepeat: event.isARepeat,
+            keyCode: event.keyCode,
+        ) ?? event
     }
 
     /// The ONE funnel into libghostty's key encoder (DECISIONS: never hand-roll VT).
@@ -1446,18 +1497,22 @@ final class GhosttyLayerBackedView: NSView {
     private func sendGhosttyKey(
         _ action: ghostty_input_action_e,
         event: NSEvent,
+        translationMods: NSEvent.ModifierFlags? = nil,
         text: String?,
         composing: Bool,
     ) {
         var key = ghostty_input_key_s()
         key.action = action
         key.mods = Self.ghosttyMods(event.modifierFlags)
-        // consumed_mods: the mods AppKit already "used up" producing `event.characters`. Upstream
-        // (NSEvent+Extension `consumedModifiers`) reports the layout-consumed set; we approximate it
-        // as all mods EXCEPT control/command — those never alter the produced character on a US/Latin
-        // layout, so libghostty must still see them to encode Ctrl-/Cmd- combos. This stops Ghostty
-        // from double-applying Shift/Option (e.g. a shifted `!` being re-shifted) in its encoder.
-        key.consumed_mods = Self.ghosttyMods(event.modifierFlags.subtracting([.control, .command]))
+        // consumed_mods: the mods AppKit already "used up" producing the text. Upstream
+        // (`ghosttyKeyEvent(_:translationMods:)`) reports the TRANSLATION mods minus control/command —
+        // those never alter the produced character on a US/Latin layout, so libghostty must still see
+        // them to encode Ctrl-/Cmd- combos. This stops Ghostty from double-applying Shift/Option (a
+        // shifted `!` being re-shifted) in its encoder. `translationMods` (keyDown's option-as-alt
+        // dance) has the claimed Option side already STRIPPED, so with "Option as Alt" on, Option is
+        // NOT consumed and the encoder emits the Meta form; `nil` (keyUp) falls back to the event mods.
+        key.consumed_mods = Self.ghosttyMods(
+            (translationMods ?? event.modifierFlags).subtracting([.control, .command]))
         key.keycode = UInt32(event.keyCode)
         // unshifted_codepoint: the character the key would produce with NO modifiers (header field).
         // `charactersIgnoringModifiers` STILL reflects Shift (it ignores Cmd/Ctrl/Opt but not Shift),
@@ -1563,7 +1618,14 @@ final class GhosttyLayerBackedView: NSView {
     override func flagsChanged(with event: NSEvent) {
         super.flagsChanged(with: event)
         guard let model else { return }
+        // ⌘ with ⌃ or ⌥ added is a CHORD in flight (⌃⌘[ / ⌃⌘] prompt-jump, ⌥⌘ workspace verbs), not a
+        // link-reveal hold — underlining through those reads as the app changing modes mid-shortcut
+        // (the reported bug: prompt-jumping with ⌘ still down kept every path underlined). ⇧ stays
+        // allowed: ⌘⇧-click is a first-class link gesture (`linkCmdShiftClick`). Adding ⌃/⌥ mid-hold
+        // clears the highlight; releasing them with ⌘ still down re-fires this handler and restores it.
         let commandHeld = event.modifierFlags.contains(.command)
+            && !event.modifierFlags.contains(.control)
+            && !event.modifierFlags.contains(.option)
         if model.linkHighlightActive != commandHeld {
             model.linkHighlightActive = commandHeld
             // ⌘ just went down → drop the link-snapshot cache: `viewportRevision` only ticks while the
@@ -2594,6 +2656,20 @@ final class GhosttyLayerBackedView: NSView {
         // runtime break. Use the importer's UNLABELED non-failable init over the raw
         // integer instead — matches upstream Ghostty.Input.swift `ghosttyMods`.
         return ghostty_input_mods_e(raw)
+    }
+
+    /// Maps libghostty mods → AppKit modifier flags (upstream `Ghostty.eventModifierFlags`) — the
+    /// reverse of ``ghosttyMods(_:)``, used to read `ghostty_surface_key_translation_mods`' answer
+    /// back into `NSEvent` space for the option-as-alt translation event. Side bits (left/right)
+    /// collapse into the plain flag; the caller only copies the four mod STATES anyway.
+    static func eventModifierFlags(_ mods: ghostty_input_mods_e) -> NSEvent.ModifierFlags {
+        var flags: NSEvent.ModifierFlags = []
+        if mods.rawValue & GHOSTTY_MODS_SHIFT.rawValue != 0 { flags.insert(.shift) }
+        if mods.rawValue & GHOSTTY_MODS_CTRL.rawValue != 0 { flags.insert(.control) }
+        if mods.rawValue & GHOSTTY_MODS_ALT.rawValue != 0 { flags.insert(.option) }
+        if mods.rawValue & GHOSTTY_MODS_SUPER.rawValue != 0 { flags.insert(.command) }
+        if mods.rawValue & GHOSTTY_MODS_CAPS.rawValue != 0 { flags.insert(.capsLock) }
+        return flags
     }
 
     /// WS-B / B4: map an `NSEvent` keystroke to the framework-neutral `KeyChord` the `TerminalKeyInterceptor`

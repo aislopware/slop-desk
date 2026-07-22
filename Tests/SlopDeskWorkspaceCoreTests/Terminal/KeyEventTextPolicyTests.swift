@@ -1,12 +1,13 @@
 import XCTest
 @testable import SlopDeskWorkspaceCore
 
-/// Pins the pure ``KeyEventTextPolicy`` — the testable heart of the
-/// "arrow keys type garbage into kitty-protocol apps (Claude Code)" fix. AppKit reports named function
-/// keys as PUA placeholders (U+F700–F8FF) in `event.characters`; forwarding one as `ghostty_input_key_s
-/// .text` makes ghostty's kitty encoder write the raw PUA bytes to the PTY instead of the `CSI A`-family
-/// sequence. The policy must drop exactly that class and NOTHING else — real text, IME output, and
-/// unmodified C0 controls all pass verbatim (ghostty's encoder owns their handling).
+/// Pins the pure ``KeyEventTextPolicy`` — the testable heart of two encoder-text fixes: "arrow keys type
+/// garbage into kitty-protocol apps (Claude Code)" (PUA placeholders U+F700–F8FF forwarded as
+/// `ghostty_input_key_s.text` make the kitty encoder write raw PUA bytes instead of `CSI A`), and
+/// "Shift+Tab / Shift+Enter / ⌥Enter lose their modifier under the kitty protocol" (control-char text
+/// makes `effectiveMods` subtract the consumed Shift/Option, collapsing the chord to a bare `\t`/`\r`).
+/// The policy drops exactly those two classes — PUA placeholders and control-led text — and NOTHING
+/// else: real text and IME output pass verbatim.
 final class KeyEventTextPolicyTests: XCTestCase {
     // MARK: the fix — function-key placeholders are dropped
 
@@ -38,12 +39,28 @@ final class KeyEventTextPolicyTests: XCTestCase {
         XCTAssertEqual(KeyEventTextPolicy.encoderText(for: "đ"), "đ") // non-ASCII layout output
     }
 
-    func testUnmodifiedC0ControlsPassThrough() {
-        // Enter / Tab / Esc / DEL — ghostty's encoder filters control text itself (isControlUtf8);
-        // dropping them here would break the enter/backspace IME special cases.
-        XCTAssertEqual(KeyEventTextPolicy.encoderText(for: "\r"), "\r")
-        XCTAssertEqual(KeyEventTextPolicy.encoderText(for: "\t"), "\t")
-        XCTAssertEqual(KeyEventTextPolicy.encoderText(for: "\u{1B}"), "\u{1B}")
+    func testC0ControlTextYieldsNil() {
+        // Enter / Tab / Shift+Tab (AppKit's 0x19 back-tab) / Esc must NOT carry text into the encoder.
+        // ghostty's `effectiveMods` subtracts `consumed_mods` whenever `utf8` is NON-EMPTY, and the kitty
+        // path short-circuits enter/tab/backspace on empty binding mods — so a "\t" payload for Shift+Tab
+        // made the encoder emit a bare `\t` instead of `CSI 9;2u` (Claude Code's permission-mode toggle),
+        // and "\r" for Shift+Enter emitted a bare `\r` (submit) instead of `CSI 13;2u` (newline). Upstream
+        // drops any text whose first UTF-8 byte is < 0x20 (SurfaceView_AppKit `keyAction`); mirror that.
+        XCTAssertNil(KeyEventTextPolicy.encoderText(for: "\r"))
+        XCTAssertNil(KeyEventTextPolicy.encoderText(for: "\t"))
+        XCTAssertNil(KeyEventTextPolicy.encoderText(for: "\u{19}"))
+        XCTAssertNil(KeyEventTextPolicy.encoderText(for: "\u{1B}"))
+    }
+
+    func testControlLedMultiScalarTextYieldsNil() {
+        // Upstream's guard is on the FIRST UTF-8 byte of the whole payload, not a single-scalar special
+        // case — a control-led string is never legitimate IME output.
+        XCTAssertNil(KeyEventTextPolicy.encoderText(for: "\u{1B}[A"))
+    }
+
+    func testDELPassesThrough() {
+        // DEL (0x7F) is ≥ 0x20 by upstream's first-byte check and both encoder paths special-case
+        // backspace text via `isControlUtf8` — keep parity with upstream, which forwards it.
         XCTAssertEqual(KeyEventTextPolicy.encoderText(for: "\u{7F}"), "\u{7F}")
     }
 

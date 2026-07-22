@@ -577,6 +577,18 @@ public final class GhosttySurface: @MainActor TerminalSurface, FeedBackpressurin
         return ghostty_surface_key(s, event)   // header 1180
     }
 
+    /// Asks libghostty which of `mods` remain available for CHARACTER TRANSLATION on this surface —
+    /// i.e. `mods` minus the Option side(s) the surface config claims as Alt/Meta
+    /// (`macos-option-as-alt`, Settings → Controls → "Option as Alt").
+    ///
+    /// `ghostty_surface_key_translation_mods(surface, mods)` (header 1134). The seam the view's
+    /// option-as-alt translation dance (upstream `SurfaceView_AppKit.keyDown`) builds its translation
+    /// event from; an identity mapping when the config is off, or with no live surface.
+    public func keyTranslationMods(_ mods: ghostty_input_mods_e) -> ghostty_input_mods_e {
+        guard let s = surface else { return mods }
+        return ghostty_surface_key_translation_mods(s, mods)   // header 1134
+    }
+
     /// Sends committed text (IME / paste / printable input) to the surface.
     ///
     /// `ghostty_surface_text(surface, ptr, len)` (header 1184). For CJK/IME the GUI
