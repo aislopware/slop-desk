@@ -82,9 +82,10 @@ public struct VideoWindowView: View {
     public let connection: VideoWindowConnection?
 
     /// Whether this pane is the active/focused pane on the canvas. Only the active pane forwards
-    /// pointer/scroll to the remote window; a non-active pane routes scroll to ``onCanvasScroll`` (the
-    /// "only the active pane swallows pointer" rule). Plain (non-isolated) closures + Bool so the
-    /// `AppMain` factory can bridge them across the seam without importing `SlopDeskClientUI`.
+    /// pointer hover/clicks/pinch to the remote window; SCROLL follows the pointer instead (any pane
+    /// under the cursor forwards it, ⌥-scroll routes to ``onCanvasScroll``). Plain (non-isolated)
+    /// closures + Bool so the `AppMain` factory can bridge them across the seam without importing
+    /// `SlopDeskClientUI`.
     let isActive: Bool
     /// READ-ONLY INPUT GATE. `false` ⇒ this pane is read-only: forward NEITHER pointer/scroll
     /// NOR keycodes to the host. A click may still ACTIVATE the workspace pane (`onActivate`), but it is not
@@ -94,8 +95,8 @@ public struct VideoWindowView: View {
     /// Make this pane active (set workspace focus) — called on click. The host window is also raised
     /// (via the pane's own `focusWindow`).
     let onActivate: () -> Void
-    /// Pan the canvas when a NON-active pane is scrolled (so scroll over a background pane navigates the
-    /// canvas instead of being swallowed by the remote window).
+    /// Pan the canvas on ⌥-scroll (a plain scroll is forwarded to the remote window under the pointer,
+    /// focused or not).
     let onCanvasScroll: (CGSize) -> Void
     /// 1:1 PANE SNAP: ask the surrounding canvas pane to resize its VIDEO CONTENT from `current`
     /// to `target` points so the stream renders pixel-for-pixel (`target` = decoded pixels /
@@ -194,7 +195,7 @@ public struct VideoWindowView: View {
 
     /// Live remote-window view: brings up the orchestrator against `connection`. `isActive` /
     /// `onActivate` / `onCanvasScroll` carry the canvas pane behaviour (active-only pointer + click-to-
-    /// activate + non-active scroll-to-pan); they default to the standalone (always-active) values.
+    /// activate + ⌥-scroll-to-pan); they default to the standalone (always-active) values.
     public init(
         title: String,
         targetAppName: String = "",
@@ -349,8 +350,8 @@ struct SwipePeelChipView: View {
 
 #if os(macOS)
 /// Env-gated (`SLOPDESK_VIDEO_DEBUG`) stderr diagnostics for the remote-GUI VIEW layer (scroll routing +
-/// isActive delivery) — the BUG-2 ground-truth probe. A non-active pane that logs `isActive=true` proves a
-/// stale/sticky focus value; `isActive=false` with no pan proves a downstream scroll-routing problem.
+/// isActive delivery) — the BUG-2 ground-truth probe: logging both distinguishes a stale/sticky
+/// `isActive` value from a downstream scroll-routing problem.
 func videoViewDbg(_ message: @autoclosure () -> String) {
     guard ProcessInfo.processInfo.environment["SLOPDESK_VIDEO_DEBUG"] != nil else { return }
     FileHandle.standardError.write(Data("SlopDesk[video.client.view]: \(message())\n".utf8))
@@ -568,7 +569,7 @@ final class MetalLayerBackedView: NSView {
     /// Make this pane the active pane — called at the top of `mouseDown` (click-to-activate). Sets the
     /// *workspace* focus; the host window is raised separately via `pipeline.focusWindow()`.
     var onActivate: () -> Void = {}
-    /// Pan the canvas by a (sign-adjusted) delta — called from `scrollWheel` when this pane is NOT active.
+    /// Pan the canvas by a (sign-adjusted) delta — called from `scrollWheel` on ⌥-scroll.
     var onCanvasScroll: (CGSize) -> Void = { _ in }
     /// 1:1 PANE SNAP: ask the canvas pane to resize its video content from `current` to `target`
     /// points so the stream renders pixel-for-pixel. `nil` ⇒ standalone (no pane). Set by the
@@ -819,7 +820,7 @@ final class MetalLayerBackedView: NSView {
     private var peelChipCommitted = false
     /// Delayed clear of the confirm-pulse chip after a fire.
     private var peelConfirmClear: Task<Void, Never>?
-    /// Per-gesture remote-vs-canvas routing pin (see ``ScrollRoutePinner``): a focus flip
+    /// Per-gesture remote-vs-canvas routing pin (see ``ScrollRoutePinner``): an ⌥ press/release
     /// mid-gesture must not reroute the momentum tail.
     private var scrollRoutePinner = ScrollRoutePinner()
 
@@ -1161,9 +1162,9 @@ final class MetalLayerBackedView: NSView {
     private static let keyRightCommandModifier: UInt16 = 0x36 // kVK_RightCommand — same latch
     private var pinchPlanner = PinchZoomKeyPlanner()
 
-    /// Two-finger pinch → ⌘= / ⌘− steps on the HOST. Same routing rule as `scrollWheel`: only the
-    /// ACTIVE, writable pane forwards; an unfocused or read-only pane swallows the pinch (it must
-    /// not perturb local geometry either — the historical no-op behaviour).
+    /// Two-finger pinch → ⌘= / ⌘− steps on the HOST. Unlike scroll (which follows the pointer), a
+    /// pinch is a zoom COMMAND: only the ACTIVE, writable pane forwards; an unfocused or read-only
+    /// pane swallows the pinch (it must not perturb local geometry either).
     override func magnify(with event: NSEvent) {
         guard isActive, inputEnabled, Self.pinchKeysEnabled else { return }
         if event.phase.contains(.began) { pinchPlanner.begin() }
@@ -1430,32 +1431,29 @@ final class MetalLayerBackedView: NSView {
         // hijacked to pan the viewport. Moving the viewport is the EDGE-PAN's job (hover-to-edge, RealVNC
         // model). So there is no local crop-pan branch here.
         //
-        // SCROLL ROUTING — gated on EXPLICIT canvas focus (`isActive == store.isFocused(id)`),
-        // the desktop model the user asked for — once a GUI pane is focused, it must swallow the scroll:
-        //   • FOCUSED pane   → forward the scroll to the REMOTE window (you clicked in, you're scrolling
-        //     its content). Forwarding is a UDP send — no `@Observable` mutation, so it never blocks the
-        //     stream. Mirrors the terminal pane's focused-scrollback rule.
-        //   • UNFOCUSED pane → PAN THE CANVAS, never swallow — so panning across a background pane keeps
-        //     navigating instead of stopping at its edge. Routed through the debounced `onCanvasScroll`
-        //     accumulator (NOT a per-step commitCamera), so it never blocks the stream either.
-        //   • ⌥ held         → ALWAYS pan the canvas, even while focused (escape hatch to pan a focused
-        //     pane without first unfocusing it).
+        // SCROLL ROUTING — scroll follows the POINTER, not focus (the terminal pane's rule too):
+        //   • plain scroll → forward to the REMOTE window under the pointer, focused or NOT, so a
+        //     background editor can be scrolled/compared while focus (and typing) stays in the working
+        //     pane. Forwarding is a UDP send — no `@Observable` mutation, so it never blocks the stream.
+        //   • ⌥ held       → PAN THE CANVAS — the one deliberate pan-over-a-pane route. Routed through
+        //     the debounced `onCanvasScroll` accumulator (NOT a per-step commitCamera), so it never
+        //     blocks the stream either.
         // The choice is PINNED per gesture (`ScrollRoutePinner`): decided at began/mayBegin and held
-        // through the momentum tail, so a mid-gesture focus flip can't reroute the inertia into the
-        // other destination. Phase-less wheel ticks keep the live per-event decision.
+        // through the momentum tail, so pressing/releasing ⌥ mid-gesture can't reroute the inertia into
+        // the other destination. Phase-less wheel ticks keep the live per-event decision.
         // Natural-scroll sign matches `CanvasView.PanView` so a pane-pan feels identical to the bg pan.
-        // READ-ONLY: a locked focused pane does NOT swallow the scroll into the remote window —
+        // READ-ONLY: a locked pane does NOT swallow the scroll into the remote window —
         // `inputEnabled == false` falls through to the canvas-pan branch (view-only, no host relay).
         // Deliberately a LIVE gate, never pinned: locking mid-gesture must stop host relay at once.
         let scrollPhase = Self.cgScrollPhaseCode(event.phase)
         let momentumPhase = Self.cgMomentumPhaseCode(event.momentumPhase)
         let routeRemote = scrollRoutePinner.route(
-            liveRemote: isActive && !event.modifierFlags.contains(.option),
+            liveRemote: !event.modifierFlags.contains(.option),
             scrollPhase: scrollPhase,
             momentumPhase: momentumPhase,
         )
         if routeRemote, inputEnabled {
-            videoViewDbg("scroll → remote (focused)")
+            videoViewDbg("scroll → remote")
             // Forward the trackpad gesture state so the host can replay a native continuous/inertial
             // scroll (Began→Changed→Ended, then momentum Begin→Continue→End) instead of a phase-less
             // wheel tick. `event.phase` (finger-on-glass) and `event.momentumPhase` (coast) are

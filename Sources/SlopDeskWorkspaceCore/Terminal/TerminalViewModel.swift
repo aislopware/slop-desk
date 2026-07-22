@@ -202,11 +202,12 @@ public final class TerminalViewModel {
     /// / preview callers (no store), never invoked.
     @ObservationIgnored public var onRequestFocus: (() -> Void)?
 
-    /// Pans the CANVAS by a (sign-adjusted) delta when a scroll lands on this terminal while it is NOT the
-    /// active pane — so scrolling over a background terminal navigates the canvas instead of being swallowed
-    /// by libghostty's scrollback ("only the active pane swallows pointer"). The renderer's `scrollWheel` calls
-    /// this when `!isFocusedPane`; the leaf wires it to the store's camera pan. `@ObservationIgnored`: wiring,
-    /// not view state. Nil for headless/preview callers (never invoked).
+    /// Pans the CANVAS by a (sign-adjusted) delta when an ⌥-scroll lands on this terminal. A plain scroll
+    /// always goes to the pane's OWN scrollback — scroll follows the pointer, not focus, so a background
+    /// pane can be read/compared without stealing focus — and ⌥ is the deliberate canvas-pan route
+    /// (mirroring the GUI pane's ⌥ escape hatch). The renderer's `scrollWheel` calls this when ⌥ is held;
+    /// the leaf wires it to the store's camera pan. `@ObservationIgnored`: wiring, not view state. Nil for
+    /// headless/preview callers (never invoked).
     @ObservationIgnored public var onCanvasScroll: ((CGSize) -> Void)?
 
     /// Synchronized-input tap (tmux `synchronize-panes`). When set, every OUT chunk this pane sends (macOS

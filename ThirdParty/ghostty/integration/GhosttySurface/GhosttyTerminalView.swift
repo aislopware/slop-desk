@@ -2018,11 +2018,13 @@ final class GhosttyLayerBackedView: NSView {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        // ONLY the active pane swallows scroll: a scroll on a NON-focused terminal pans the CANVAS
-        // (matching the macOS background pan's natural-scroll sign) instead of being eaten by
-        // libghostty's scrollback. The leaf wires `onCanvasScroll` to the store camera pan; if it's
-        // not wired (headless/preview) the scroll is simply dropped rather than mis-routed.
-        if !isFocusedPane {
+        // Scroll follows the POINTER, not focus: a scroll on a NON-focused terminal scrolls ITS OWN
+        // scrollback, so a background pane's output can be read/compared while focus (and typing)
+        // stays in the working pane. ⌥-scroll is the deliberate canvas-pan route instead — same ⌥
+        // escape hatch as the GUI pane, same natural-scroll sign as the background pan. The leaf
+        // wires `onCanvasScroll` to the store camera pan; if it's not wired (headless/preview) the
+        // ⌥ pan is simply dropped rather than mis-routed.
+        if event.modifierFlags.contains(.option) {
             let dx: CGFloat, dy: CGFloat
             if event.hasPreciseScrollingDeltas { dx = event.scrollingDeltaX; dy = event.scrollingDeltaY }
             else { dx = event.scrollingDeltaX * 10; dy = event.scrollingDeltaY * 10 }

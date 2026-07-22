@@ -1425,3 +1425,22 @@ substitution forced by the pure-native-Swift rule.
   Vi-Mode alias chord; the `prefix,[` alias died with the machine.
 - **Result contract:** `⌃B` reaches the PTY untouched again; NO bare key is ever swallowed; every
   workspace action is reachable only via its ⌘/⌥ chord, the palette, or the menu.
+
+## Scroll follows the pointer, not focus (2026-07-22)
+
+- 🔁 **RE-SCOPE (user-directed, supersedes the "only the active pane swallows pointer" scroll rule):
+  a scroll lands in the pane UNDER THE CURSOR, focused or not.** The dominant real gesture is
+  reading: focus (and typing) stays in the working pane while a second pane's output is scrolled for
+  comparison — and that gesture previously did nothing useful (⌥-less scroll on an unfocused pane
+  panned the whole canvas, or was dropped where no canvas pan is wired). Native macOS scroll routing
+  already delivers `scrollWheel` to the view under the pointer; we now stop re-routing it by focus.
+  - Terminal panes scroll their OWN libghostty scrollback (or emit wheel reports in a mouse-mode
+    TUI — `mouseMoved` was never focus-gated, so report coordinates are already correct).
+  - GUI panes forward the scroll to their remote window; the READ-ONLY gate is unchanged
+    (`inputEnabled == false` still falls through to canvas pan, live, never pinned).
+  - Scrolling does NOT activate the pane — scroll is reading, not focus intent.
+- ✅ **⌥-scroll is the one deliberate canvas-pan route**, now uniform across terminal and GUI panes
+  (previously the GUI pane's focused-only escape hatch). Background (non-pane) pan is unchanged.
+  `ScrollRoutePinner` still pins the route per gesture — now against mid-gesture ⌥ flips.
+- **Stays active-pane-only:** click-to-activate, hover tracking / cursor shape, and pinch-zoom
+  (a pinch is a zoom command aimed at the pane you're working in, not a reading gesture).

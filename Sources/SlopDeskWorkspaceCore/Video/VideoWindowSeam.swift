@@ -72,12 +72,13 @@ public struct RemoteWindowDescriptor: Sendable, Equatable {
 }
 
 /// Per-render context the canvas passes through the seam to the gated video view, so the remote-GUI pane
-/// behaves like one canvas item: only the ACTIVE pane consumes pointer/scroll, a click ACTIVATES it (and
-/// raises the host window), and a scroll over a NON-active pane pans the canvas instead of being swallowed
-/// by the background window.
+/// behaves like one canvas item: only the ACTIVE pane consumes pointer hover/clicks/pinch, a click
+/// ACTIVATES it (and raises the host window), while a SCROLL follows the pointer — any pane under the
+/// cursor forwards it to its remote window, and ⌥-scroll pans the canvas instead.
 public struct RemotePaneContext {
-    /// Whether this pane is the workspace's active/focused pane. The video view forwards pointer/scroll
-    /// to the remote window ONLY when active; a non-active pane routes scroll to ``onCanvasScroll``.
+    /// Whether this pane is the workspace's active/focused pane. The video view forwards pointer
+    /// hover/clicks/pinch to the remote window ONLY when active; scroll is forwarded regardless of
+    /// focus (⌥-scroll routes to ``onCanvasScroll``).
     public var isActive: Bool
     /// READ-ONLY INPUT GATE. `false` ⇒ a read-only `.remoteGUI` pane: the app-target video client
     /// forwards NEITHER pointer/scroll NOR keycodes to the host while `!inputEnabled` — it gates every forward
@@ -89,8 +90,8 @@ public struct RemotePaneContext {
     /// Make this pane the workspace's active pane — called on click (mouseDown). For a GUI pane the host
     /// window is ALSO raised by the pane's own `focusWindow`; this sets the *workspace* focus.
     public var onActivate: () -> Void
-    /// Pan the canvas by a (sign-adjusted) delta — called when a NON-active pane receives a scroll, so the
-    /// gesture navigates the canvas rather than scrolling the background remote window.
+    /// Pan the canvas by a (sign-adjusted) delta — called on ⌥-scroll (a plain scroll goes to the remote
+    /// window under the pointer, focused or not).
     public var onCanvasScroll: (CGSize) -> Void
     /// 1:1 PANE SNAP: resize this pane so its VIDEO CONTENT goes from `current` to `target` points — fired
     /// when the stream's native 1:1 point size becomes known (first decoded frame) or changes (host resize),
