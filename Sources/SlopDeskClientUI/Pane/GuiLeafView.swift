@@ -422,6 +422,9 @@ struct GuiLeafView: View {
                     // HOST AUDIO (footer speaker): starts host-side audio capture+send — the seam
                     // binds nil while read-only (exactly like the stream-settings sink).
                     bindAudioInjector: { [weak model] sink in model?.audioInjector = sink },
+                    // PRIVACY BLANK (desktop shield): host display-blank sink — the seam binds nil
+                    // while read-only (exactly like the audio sink).
+                    bindPrivacyInjector: { [weak model] sink in model?.privacyInjector = sink },
                     // SYSTEM-KEY INJECTOR (immersive capture): host key input — the seam binds nil
                     // while read-only (exactly like the paste-keystrokes sink).
                     bindSystemKeyInjector: { [weak model] sink in model?.systemKeyInjector = sink },
@@ -673,6 +676,22 @@ private struct GuiPaneControlBar: View {
                         tint: model.audioStreamEnabled ? Slate.State.accent : Slate.Text.icon,
                     ) { model.applyAudioEnabled(!model.audioStreamEnabled) }
                         .disabled(!model.canToggleAudio)
+                }
+                // PRIVACY BLANK (DESKTOP panes only — the host verb is display-scoped): the shield
+                // blacks the host's physical display + swallows local host input while ON, so a
+                // bystander at the Mac sees nothing and cannot interfere. Accent while engaged;
+                // stays visible ON even when withheld (read-only), like the speaker.
+                if store.tree.spec(for: paneID)?.kind == .desktop, let model,
+                   model.canTogglePrivacy || model.privacyEnabled
+                {
+                    SlatePlateButton(
+                        symbol: model.privacyEnabled ? .eyeSlashFill : .eye,
+                        help: model.privacyEnabled
+                            ? "Show the host display + restore its input"
+                            : "Privacy: black the host display + block its keyboard/mouse",
+                        tint: model.privacyEnabled ? Slate.State.accent : Slate.Text.icon,
+                    ) { model.applyPrivacyEnabled(!model.privacyEnabled) }
+                        .disabled(!model.canTogglePrivacy)
                 }
             }
             // ── MODE STATE: the two latched input/view modes, at the bar's outer edge where their accent

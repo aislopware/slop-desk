@@ -38,13 +38,13 @@ final class StreamCadenceCodecTests: XCTestCase {
         XCTAssertThrowsError(try VideoControlMessage.decode(Data([10, 0x00])))
     }
 
-    /// The decoder's `default` arm still drops a type PAST the highest defined (27 =
-    /// hostStats) as `.malformed` — the forward-compatibility contract (a future control
-    /// type claims 28+). Types 16–27 (window-feed trio + icon/blob/preview + the display trio +
-    /// streamSettings + audioControl + hostStats) are DEFINED, so a bare type byte for them throws
+    /// The decoder's `default` arm still drops a type PAST the highest defined (28 =
+    /// privacyMode) as `.malformed` — the forward-compatibility contract (a future control
+    /// type claims 29+). Types 16–28 (window-feed trio + icon/blob/preview + the display trio +
+    /// streamSettings + audioControl + hostStats + privacyMode) are DEFINED, so a bare type byte for them throws
     /// `.truncated` (short body), not `.malformed`; the "unknown type" probe sits past the max.
     func testUnknownTypePastDefinedStillThrowsMalformed() {
-        XCTAssertThrowsError(try VideoControlMessage.decode(Data([28]))) { error in
+        XCTAssertThrowsError(try VideoControlMessage.decode(Data([29]))) { error in
             guard case VideoProtocolError.malformed = error else {
                 return XCTFail("unknown type must throw .malformed, got \(error)")
             }

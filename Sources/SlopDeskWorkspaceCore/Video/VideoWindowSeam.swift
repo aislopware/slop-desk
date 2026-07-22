@@ -158,6 +158,11 @@ public struct RemotePaneContext {
     /// ``onStreamSettingsInjectorReady`` — WITHHELD (bound `nil`) while read-only. `nil` (standalone
     /// default) ⇒ no canvas.
     public var onAudioInjectorReady: ((((_ enabled: Bool) -> Void)?) -> Void)?
+    /// PRIVACY BLANK (footer shield toggle): the live video view publishes a privacy enable/disable
+    /// closure here once its DISPLAY session exists (`nil` on teardown). Changes HOST behaviour
+    /// (blacks the display + swallows local input), so — like ``onAudioInjectorReady`` — WITHHELD
+    /// (bound `nil`) while read-only. `nil` (standalone default) ⇒ no canvas.
+    public var onPrivacyInjectorReady: ((((_ enabled: Bool) -> Void)?) -> Void)?
     /// SYSTEM-KEY INJECTOR (immersive-capture plumbing): the live video view publishes a programmatic
     /// key-event closure here (`nil` on teardown) driving the SAME wire path the pane's local
     /// keyDown/keyUp uses. `(keyCode, modifierFlags [raw platform flags], isDown)`. SENDS host input, so —
@@ -197,6 +202,7 @@ public struct RemotePaneContext {
         ) -> Void)? = nil,
         onStreamSettingsInjectorReady: ((((_ fpsCap: Int, _ bitrateCeilingBps: Int) -> Void)?) -> Void)? = nil,
         onAudioInjectorReady: ((((_ enabled: Bool) -> Void)?) -> Void)? = nil,
+        onPrivacyInjectorReady: ((((_ enabled: Bool) -> Void)?) -> Void)? = nil,
         onSystemKeyInjectorReady: ((((
             _ keyCode: UInt16, _ modifierFlags: UInt64, _ isDown: Bool,
         ) -> Void)?) -> Void)? = nil,
@@ -218,6 +224,7 @@ public struct RemotePaneContext {
         self.onNetworkStats = onNetworkStats
         self.onStreamSettingsInjectorReady = onStreamSettingsInjectorReady
         self.onAudioInjectorReady = onAudioInjectorReady
+        self.onPrivacyInjectorReady = onPrivacyInjectorReady
         self.onSystemKeyInjectorReady = onSystemKeyInjectorReady
         self.onStreamStallChanged = onStreamStallChanged
         self.onSessionRejected = onSessionRejected
@@ -249,6 +256,7 @@ public struct RemotePaneContext {
         bindStreamSettingsInjector: @escaping (((_ fpsCap: Int, _ bitrateCeilingBps: Int) -> Void)?)
             -> Void = { _ in },
         bindAudioInjector: @escaping (((_ enabled: Bool) -> Void)?) -> Void = { _ in },
+        bindPrivacyInjector: @escaping (((_ enabled: Bool) -> Void)?) -> Void = { _ in },
         bindSystemKeyInjector: @escaping (((_ keyCode: UInt16, _ modifierFlags: UInt64, _ isDown: Bool) -> Void)?)
             -> Void = { _ in },
         onWindowGeometry: @escaping (_ curW: Double, _ curH: Double, _ maxW: Double, _ maxH: Double)
@@ -296,6 +304,9 @@ public struct RemotePaneContext {
             // HOST AUDIO: starts host-side audio capture+send — a read-only pane must not drive it.
             // Withhold the sink (bind nil), exactly like the stream-settings sink.
             onAudioInjectorReady: { sink in bindAudioInjector(readOnly ? nil : sink) },
+            // PRIVACY BLANK: blacks the host display + swallows local host input — a read-only pane
+            // must not drive it. Withhold the sink (bind nil), exactly like the audio sink.
+            onPrivacyInjectorReady: { sink in bindPrivacyInjector(readOnly ? nil : sink) },
             // SYSTEM-KEY INJECTOR: sends host KEY input — a read-only pane must not inject. Withhold
             // the sink (bind nil), exactly like the paste-keystrokes sink.
             onSystemKeyInjectorReady: { sink in bindSystemKeyInjector(readOnly ? nil : sink) },

@@ -4135,6 +4135,16 @@
       "hex": "1b007b002d",
       "rttTenthsMillis": 123,
       "variant": "hostStats"
+    },
+    {
+      "enabled": true,
+      "hex": "1c01",
+      "variant": "privacyModeOn"
+    },
+    {
+      "enabled": false,
+      "hex": "1c00",
+      "variant": "privacyModeOff"
     }
   ],
   "virtualDisplayGeometry": [

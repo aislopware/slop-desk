@@ -104,6 +104,7 @@ struct ClientAppMain {
                     onNetworkStatsReady: paneContext.onNetworkStats,
                     onStreamSettingsInjectorReady: paneContext.onStreamSettingsInjectorReady,
                     onAudioInjectorReady: paneContext.onAudioInjectorReady,
+                    onPrivacyInjectorReady: paneContext.onPrivacyInjectorReady,
                     onSystemKeyInjectorReady: paneContext.onSystemKeyInjectorReady,
                     onStreamStallChanged: paneContext.onStreamStallChanged,
                     // TERMINAL REJECTION: host refused the session — the seam routes it to

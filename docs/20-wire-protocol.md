@@ -615,6 +615,17 @@ media flows. `[UInt8 type][body]`, big-endian:
   while streaming, per-session HOST state that resets OFF on session mint, so the client stores the
   wish and re-sends it after every accepted (re-)hello. A later message replaces the earlier one.
   Inert to an old host (unknown type → dropped).
+- **Privacy blank (28, client → host, 2026-07-22, display sessions only):** `privacyMode` =
+  `UInt8 enabled` (`!= 0` ⇒ on) — the RustDesk technique for a full-desktop session: ON blacks the
+  streamed host display with a zero `CGDisplayGammaTable` (the encoder still captures the real
+  framebuffer, so the CLIENT keeps seeing the desktop while a bystander at the physical Mac sees
+  black) and swallows local host keyboard/mouse via a `CGEventTap`. `audioControl` twin: applies
+  only while a DISPLAY session streams (a window/dialog target drops it — there is no whole display
+  to blank), per-session HOST state that resets OFF on mint, so the client re-sends its wish after
+  every accepted (re-)hello. Caveat: gamma blackout is per-display, the input swallow is global. The
+  gamma blank ships live; the local-input `CGEventTap` half is behind a host seam (a HW-verified
+  follow-up — a wrong tap would also block the remote operator's injected input). Inert to an old
+  host (unknown type → dropped).
 - **Host stats (27, host → client, 2026-07-22, the stats HUD):** `hostStats` =
   `UInt16 rttTenthsMillis` + `UInt16 encodeTenthsMillis` — the HOST-side latency halves of the
   in-pane stats readout: the smoothed RTT the host derives from the client's `networkStats` echoes

@@ -1553,10 +1553,26 @@ substitution forced by the pure-native-Swift rule.
   (`IOPMAssertionCreateWithName` / PreventUserIdleDisplaySleep — released when the last display
   session detaches). No surveyed product does this declaratively; it closes the "host slept mid-
   session" failure mode for free.
-- 📌 **Researched, deliberately NOT v1** (each is its own future epic): dwell-gated borderless
-  fullscreen; a Parsec-grade stats HUD (decode/encode/RTT + FEC recovery rate — our pipeline already
-  measures these); an in-window display switcher (Jump Desktop's Active-Displays model; `listDisplays`
-  22/23 already carries the data); host-display privacy blank (RustDesk's gamma-table + event-tap
-  technique — driver-free, primary-display-only caveat); match-window dynamic resolution (wrong
-  default for a REAL physical host display — scale-to-fit letterbox stays); drag-and-drop file
-  transfer into the desktop window (Apple Screen Sharing precedent).
+- ✅ **UX backlog SHIPPED (2026-07-22, "làm hết tất cả những thứ hay đáng học hỏi"):**
+  - **In-window display switcher** — already existed (the footer `GuiDisplaySwitcherMenu` +
+    `RemoteWindowModel.switchDisplay(to:)` over the `listDisplays` 22/23 discovery). Verified in
+    place; no new work.
+  - **Parsec-grade stats HUD** — the in-pane readout gained a RTT / ENC / DEC latency row. New wire
+    type 27 `hostStats` (host→client, ~2 Hz over the client's report clock) carries the host's
+    smoothed RTT (only the host can compute it — every client-report field is relative, §9.8) + its
+    now-always-measured encode-wall EWMA; the client times its own decode-wall EWMA around the VT
+    submit. Zeros map to a dash (no fake 0.0). Additive golden splice.
+  - **Dwell-gated borderless fullscreen** — a third `desktopWindow.presentation` (`borderless`): a
+    `.borderless` cover of the current Space whose local menu bar/Dock hard-hide behind a
+    `BorderlessDwellGate` (0.5 s dwell, 2 pt arm, 36 pt conceal hysteresis) — a bare top-edge touch
+    reaches the REMOTE menu bar, a held one reveals the LOCAL. The Parallels answer to the top-edge
+    conflict. The standard fullscreen verb (⌃⌘F) toggles it; engaging auto-arms immersive capture.
+  - **Host-display privacy blank** — new wire type 28 `privacyMode` (client→host, display sessions
+    only). `HostPrivacyBlank` blacks the streamed display with a zero `CGDisplayGammaTable` (client
+    still sees the desktop; a bystander sees black). The RustDesk gamma technique ships live; the
+    local-input `CGEventTap` swallow is behind a host seam (a HW-verified follow-up — a wrong tap
+    would block the remote operator's injected input too). Desktop-pane footer shield toggle.
+- 📌 **Deliberately NOT done** (rejected, not deferred): match-window dynamic resolution — the
+  research verdict stands that it is the WRONG default for a real physical host display (scale-to-fit
+  letterbox stays). **Still a future epic:** drag-and-drop file transfer into the desktop window
+  (Apple Screen Sharing precedent — needs a whole transfer channel, no existing plumbing).

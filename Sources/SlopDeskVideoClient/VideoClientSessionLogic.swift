@@ -242,9 +242,10 @@ public struct VideoClientStateMachine: Sendable {
              .blobChunk,
              .windowPreviewRequest,
              .streamSettings,
-             .audioControl:
+             .audioControl,
+             .privacyMode:
             // hello / resizeRequest / keepalive / listWindows / focusWindow / listSystemDialogs /
-            // windowFeedSubscribe / appIconRequest / streamSettings / audioControl are all client→host.
+            // windowFeedSubscribe / appIconRequest / streamSettings / audioControl / privacyMode are client→host.
             // `windowList` + `systemDialogList` + `windowFeedSnapshot` + `windowFeedCurrent` +
             // `blobChunk` ARE host→client but handled out-of-band by the discovery /
             // system-dialog-monitor / window-feed / blob queries (their own lanes), NOT by a

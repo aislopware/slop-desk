@@ -40,10 +40,10 @@ final class HostStatsCodecTests: XCTestCase {
         XCTAssertThrowsError(try VideoControlMessage.decode(Data([27, 0x00, 0x01, 0x02])))
     }
 
-    /// The decoder's `default` arm still drops a type PAST 27 as `.malformed` — the
-    /// forward-compatibility contract (a future control type claims 28+).
+    /// The decoder's `default` arm still drops a type PAST the highest defined (28 = privacyMode) as
+    /// `.malformed` — the forward-compatibility contract (a future control type claims 29+).
     func testUnknownTypePastDefinedStillThrowsMalformed() {
-        XCTAssertThrowsError(try VideoControlMessage.decode(Data([28]))) { error in
+        XCTAssertThrowsError(try VideoControlMessage.decode(Data([29]))) { error in
             guard case VideoProtocolError.malformed = error else {
                 return XCTFail("unknown type must throw .malformed, got \(error)")
             }

@@ -218,6 +218,39 @@ public final class RemoteWindowModel {
         notifyModesChanged()
     }
 
+    // MARK: Privacy blank (host display blackout — display sessions only)
+
+    /// PRIVACY BLANK (footer shield toggle, DESKTOP panes only): the live ``VideoWindowView``
+    /// publishes this once its display session exists (cleared `nil` on teardown; WITHHELD while
+    /// read-only — it changes HOST behaviour, like ``audioInjector``). Absolute `enabled`; the
+    /// session stores the wish and re-sends it after every re-hello. Re-asserts ``privacyEnabled``
+    /// on every publish (the ``audioInjector`` precedent — a re-mint resets the host OFF).
+    public var privacyInjector: ((_ enabled: Bool) -> Void)? {
+        didSet {
+            if privacyEnabled, let inject = privacyInjector {
+                inject(true)
+            }
+        }
+    }
+
+    /// Whether the footer privacy toggle is live: streaming AND a privacy sink is wired (withheld
+    /// while read-only — the host blackout must never be driven from a locked pane).
+    public var canTogglePrivacy: Bool { active != nil && privacyInjector != nil }
+
+    /// Whether the host display is privacy-blanked for this session (the shield's status light). The
+    /// MODEL owns the state so the toggle survives a view remount; defaults OFF, matching a fresh
+    /// session's host state.
+    public private(set) var privacyEnabled = false
+
+    /// Flip the host privacy blank through the published sink. Gated on ``canTogglePrivacy``; a
+    /// same-value apply is a no-op (the sink is absolute).
+    public func applyPrivacyEnabled(_ enabled: Bool) {
+        guard canTogglePrivacy, privacyEnabled != enabled else { return }
+        privacyEnabled = enabled
+        privacyInjector?(enabled)
+        notifyModesChanged()
+    }
+
     // MARK: Immersive wish (macOS system-key capture — the model-owned toggle state)
 
     /// IMMERSIVE (system keys → host): whether the user's immersive toggle is ON. The MODEL owns the
@@ -607,6 +640,7 @@ public final class RemoteWindowModel {
         endAwaitingReflow() // a closed window will not re-capture — never leave the scrim hung
         isStreamStalled = false // a closed pane shows the picker, not a stale "Reconnecting…" scrim
         audioStreamEnabled = false // the next session mints with audio OFF — keep the speaker honest
+        privacyEnabled = false // the next session mints un-blanked — keep the shield honest
         viewportLocked = false // ditto for the viewport lock — a freshly (re)bound window starts unlocked
         // Ditto for the stream overrides — without this a cap set on window A would re-assert itself
         // (via `streamSettingsInjector`'s didSet) onto an unrelated window B re-bound on the SAME model.
@@ -643,6 +677,7 @@ public final class RemoteWindowModel {
         inputReleaseInjector = nil
         streamSettingsInjector = nil
         audioInjector = nil
+        privacyInjector = nil
         systemKeyInjector = nil
     }
 

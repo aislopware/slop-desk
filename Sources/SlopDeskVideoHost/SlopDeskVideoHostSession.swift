@@ -597,6 +597,12 @@ public actor SlopDeskVideoHostSession {
     /// session keeps the host display awake). Actor-isolated flag so acquire/release stay balanced
     /// across duplicate `.stopCapture` effects (bye then local stop) and re-hellos.
     private var holdsDisplayWake = false
+    /// PRIVACY BLANK controller for this session's target display (``HostPrivacyBlank``), built
+    /// lazily on the first `privacyMode` wish. Reset to disengaged-and-nil per `.startCapture`
+    /// (a fresh session starts un-blanked) and torn down on `.stopCapture` — a dropped session must
+    /// never strand the host with a black screen + dead keyboard. `nil` until first requested / for
+    /// a window target.
+    private var privacyBlank: HostPrivacyBlank?
     /// The send-path packetize lane (keystroke latency): OWNS the `VideoPacketizer` (MTU-split,
     /// per-frame FEC parity, header stamp, interleave — all native Swift) on its own serial executor, so
     /// that heavy per-frame work does not block this actor's input consumer. `onEncodedFrame` awaits it
@@ -1723,25 +1729,6 @@ public actor SlopDeskVideoHostSession {
         dbg("client-silence: video \(shouldPause ? "PAUSED" : "RESUMED") (silent \(silentFor)s)")
     }
 
-    /// STATS HUD (wire type 27): sends `hostStats(rttTenthsMillis:encodeTenthsMillis:)` at most
-    /// every ``hostStatsInterval`` — rides the client's ~50 ms `networkStats` report clock (no report
-    /// ⇒ no RTT anyway, and an old/telemetry-off client that wants no HUD costs zero datagrams).
-    /// Values saturate into tenths-of-ms UInt16 (`0` = no reading yet); a lost send heals next tick.
-    private func maybeSendHostStats() {
-        guard stateMachine.mediaFlowing else { return }
-        let now = ProcessInfo.processInfo.systemUptime
-        guard now - lastHostStatsSentAt >= Self.hostStatsInterval else { return }
-        lastHostStatsSentAt = now
-        let rttTenths = UInt16(clamping: Int((networkEstimate.smoothedRTTMillis * 10).rounded()))
-        let encodeTenths = UInt16(clamping: Int(((capturer?.encodeMillisEWMA() ?? 0) * 10).rounded()))
-        transport.send(
-            scheduler.scheduleControl(.hostStats(
-                rttTenthsMillis: rttTenths, encodeTenthsMillis: encodeTenths,
-            )).bytes,
-            on: .control,
-        )
-    }
-
     /// Sends the `streamCadence(fps:)` control message, duplicated once ~25 ms later with a
     /// `mediaFlowing` re-check (cursor-shape dup-send pattern): a cadence change often coincides
     /// with congestion (the lossiest moment) and the client's application is idempotent.
@@ -1847,6 +1834,9 @@ public actor SlopDeskVideoHostSession {
             // post-helloAck (the fresh capturer's forwarding gate also starts down).
             audioEnabled = false
             audioSender?.setEnabled(false)
+            // PRIVACY BLANK dies with the re-mint: a fresh session starts un-blanked (gamma
+            // restored, no input tap). The client re-sends its wish after the ack if it wants it.
+            teardownPrivacyBlank()
             await startLiveComponents(width: Int(width), height: Int(height))
             // FPS GOVERNOR: announce the session's content cadence up front (+dup) so the
             // streamCadence message is the single cadence truth even before any governed step.
@@ -1876,6 +1866,9 @@ public actor SlopDeskVideoHostSession {
                 holdsDisplayWake = false
                 HostDisplayWake.shared.release()
             }
+            // PRIVACY BLANK must never outlive the stream — a session ending while blanked would
+            // leave the host dark + input-dead. Restore unconditionally.
+            teardownPrivacyBlank()
             await teardownLiveComponents()
         case let .resizeCapture(width, height, epoch):
             await applyResize(width: width, height: height, epoch: epoch)
@@ -1883,6 +1876,8 @@ public actor SlopDeskVideoHostSession {
             applyUserStreamSettings(fpsCap: fpsCap, bitrateCeilingBps: bitrateCeilingBps)
         case let .applyAudioControl(enabled):
             applyAudioControl(enabled: enabled)
+        case let .applyPrivacyMode(enabled):
+            applyPrivacyMode(enabled: enabled)
         }
     }
 
@@ -3702,6 +3697,57 @@ final class AudioStreamSender: @unchecked Sendable {
         // Send OUTSIDE the lock: fire-and-forget UDP enqueue, and a racing gate flip must never
         // wait behind socket work.
         for datagram in datagrams { transport.send(datagram, on: .audio) }
+    }
+}
+
+// STATS-HUD sender + PRIVACY BLANK actuator — in an extension (not the actor body) so the
+// type-body-length lint stays satisfied. Same-file, so they reach the actor's private state.
+extension SlopDeskVideoHostSession {
+    /// STATS HUD (wire type 27): sends `hostStats(rttTenthsMillis:encodeTenthsMillis:)` at most
+    /// every ``hostStatsInterval`` — rides the client's ~50 ms `networkStats` report clock (no report
+    /// ⇒ no RTT anyway, and an old/telemetry-off client that wants no HUD costs zero datagrams).
+    /// Values saturate into tenths-of-ms UInt16 (`0` = no reading yet); a lost send heals next tick.
+    func maybeSendHostStats() {
+        guard stateMachine.mediaFlowing else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard now - lastHostStatsSentAt >= Self.hostStatsInterval else { return }
+        lastHostStatsSentAt = now
+        let rttTenths = UInt16(clamping: Int((networkEstimate.smoothedRTTMillis * 10).rounded()))
+        let encodeTenths = UInt16(clamping: Int(((capturer?.encodeMillisEWMA() ?? 0) * 10).rounded()))
+        transport.send(
+            scheduler.scheduleControl(.hostStats(
+                rttTenthsMillis: rttTenths, encodeTenthsMillis: encodeTenths,
+            )).bytes,
+            on: .control,
+        )
+    }
+
+    /// PRIVACY BLANK (the `.applyPrivacyMode` effect, display sessions only): black the streamed
+    /// host display + swallow local host input while `enabled` (the RustDesk technique via
+    /// ``HostPrivacyBlank``). Lazily builds the controller for the session's target display; a
+    /// gamma-blank failure logs and stays disengaged (the client re-sends and retries). The SM only
+    /// emits this for a `.streaming` display target, so `display` is present here.
+    func applyPrivacyMode(enabled: Bool) {
+        guard let display else {
+            dbg("privacyMode \(enabled ? "ON" : "OFF") ignored — no display target")
+            return
+        }
+        if privacyBlank == nil {
+            privacyBlank = HostPrivacyBlank(displayID: display.displayID)
+        }
+        let resolved = privacyBlank?.setEnabled(enabled) ?? false
+        if enabled, !resolved {
+            dbg("privacyMode ON — gamma blank failed on display \(display.displayID); client will retry")
+        } else {
+            dbg("privacyMode → \(resolved ? "ON (display blacked, local input swallowed)" : "OFF")")
+        }
+    }
+
+    /// Restore + drop the privacy blank (session re-mint / teardown). Extracted so the actor body
+    /// carries a one-liner at each of its two call sites (type-body-length budget).
+    func teardownPrivacyBlank() {
+        privacyBlank?.disengage()
+        privacyBlank = nil
     }
 }
 #endif

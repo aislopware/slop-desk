@@ -151,6 +151,11 @@ public struct VideoWindowView: View {
     /// every re-hello). Host-affecting — the seam withholds it while read-only, like the
     /// stream-settings sink. `nil` ⇒ no canvas.
     let onAudioInjectorReady: ((((_ enabled: Bool) -> Void)?) -> Void)?
+    /// PRIVACY BLANK: the live view publishes a privacy enable/disable closure here once its display
+    /// session exists (and `nil` on teardown), so the desktop pane's shield toggle can black the host
+    /// display + swallow local input. Host-affecting — the seam withholds it while read-only, like
+    /// the audio sink. `nil` ⇒ no canvas.
+    let onPrivacyInjectorReady: ((((_ enabled: Bool) -> Void)?) -> Void)?
     /// SYSTEM-KEY INJECTOR (immersive capture plumbing): the live view publishes a programmatic
     /// key-event closure here (and `nil` on teardown) driving the SAME wire path the Metal view's
     /// local keyDown/keyUp uses. `(keyCode, modifierFlags [raw NSEvent flags], isDown)`.
@@ -190,6 +195,7 @@ public struct VideoWindowView: View {
         onNetworkStatsReady = nil
         onStreamSettingsInjectorReady = nil
         onAudioInjectorReady = nil
+        onPrivacyInjectorReady = nil
         onSystemKeyInjectorReady = nil
         onStreamStallChanged = nil
         onSessionRejected = nil
@@ -220,6 +226,7 @@ public struct VideoWindowView: View {
         ) -> Void)? = nil,
         onStreamSettingsInjectorReady: ((((_ fpsCap: Int, _ bitrateCeilingBps: Int) -> Void)?) -> Void)? = nil,
         onAudioInjectorReady: ((((_ enabled: Bool) -> Void)?) -> Void)? = nil,
+        onPrivacyInjectorReady: ((((_ enabled: Bool) -> Void)?) -> Void)? = nil,
         onSystemKeyInjectorReady: ((((
             _ keyCode: UInt16, _ modifierFlags: UInt64, _ isDown: Bool,
         ) -> Void)?) -> Void)? = nil,
@@ -244,6 +251,7 @@ public struct VideoWindowView: View {
         self.onNetworkStatsReady = onNetworkStatsReady
         self.onStreamSettingsInjectorReady = onStreamSettingsInjectorReady
         self.onAudioInjectorReady = onAudioInjectorReady
+        self.onPrivacyInjectorReady = onPrivacyInjectorReady
         self.onSystemKeyInjectorReady = onSystemKeyInjectorReady
         self.onStreamStallChanged = onStreamStallChanged
         self.onSessionRejected = onSessionRejected
@@ -275,6 +283,7 @@ public struct VideoWindowView: View {
             onNetworkStatsReady: onNetworkStatsReady,
             onStreamSettingsInjectorReady: onStreamSettingsInjectorReady,
             onAudioInjectorReady: onAudioInjectorReady,
+            onPrivacyInjectorReady: onPrivacyInjectorReady,
             onSystemKeyInjectorReady: onSystemKeyInjectorReady,
             onStreamStallChanged: onStreamStallChanged,
             onSessionRejected: onSessionRejected,
@@ -384,6 +393,7 @@ struct MetalVideoLayerView: NSViewRepresentable {
     var onNetworkStatsReady: ((Double, Double, Double, Int, Int, Double, Double, Double) -> Void)?
     var onStreamSettingsInjectorReady: ((((Int, Int) -> Void)?) -> Void)?
     var onAudioInjectorReady: ((((Bool) -> Void)?) -> Void)?
+    var onPrivacyInjectorReady: ((((Bool) -> Void)?) -> Void)?
     var onSystemKeyInjectorReady: ((((UInt16, UInt64, Bool) -> Void)?) -> Void)?
     var onStreamStallChanged: ((Bool) -> Void)?
     var onSessionRejected: (() -> Void)?
@@ -437,6 +447,10 @@ struct MetalVideoLayerView: NSViewRepresentable {
         // while read-only, like the stream-settings sink.
         view.onAudioInjectorReady = onAudioInjectorReady
         view.publishAudioInjector()
+        // PRIVACY BLANK: publish the enable/disable drive (stored + re-sent at handshake). Host-
+        // affecting, so the seam binds nil while read-only, like the audio sink.
+        view.onPrivacyInjectorReady = onPrivacyInjectorReady
+        view.publishPrivacyInjector()
         // SYSTEM-KEY INJECTOR: publish the programmatic key drive (same wire path as local keyDown/keyUp;
         // `pipeline.key` no-ops until the session is up). Host input — seam binds nil while read-only.
         view.onSystemKeyInjectorReady = onSystemKeyInjectorReady
@@ -492,6 +506,8 @@ struct MetalVideoLayerView: NSViewRepresentable {
             nsView.publishStreamSettingsInjector()
             nsView.onAudioInjectorReady = onAudioInjectorReady
             nsView.publishAudioInjector()
+            nsView.onPrivacyInjectorReady = onPrivacyInjectorReady
+            nsView.publishPrivacyInjector()
             nsView.onSystemKeyInjectorReady = onSystemKeyInjectorReady
             nsView.publishSystemKeyInjector()
         }
@@ -611,6 +627,9 @@ final class MetalLayerBackedView: NSView {
     /// teardown; the seam binds nil while read-only — host-affecting, like the stream-settings
     /// sink). Absolute `enabled`. Set by the representable.
     var onAudioInjectorReady: ((((Bool) -> Void)?) -> Void)?
+    /// PRIVACY BLANK: the canvas publishes the host-display-blank enable sink through this (and `nil`
+    /// on teardown; the seam binds nil while read-only). Absolute `enabled`. Set by the representable.
+    var onPrivacyInjectorReady: ((((Bool) -> Void)?) -> Void)?
     /// SYSTEM-KEY INJECTOR: the canvas publishes a programmatic key sink through this (and `nil` on
     /// teardown; the seam binds nil while read-only — host input, like the paste-keystrokes sink).
     /// `(keyCode, modifierFlags [raw NSEvent flags], isDown)`. Set by the representable.
@@ -666,6 +685,15 @@ final class MetalLayerBackedView: NSView {
     func publishAudioInjector() {
         onAudioInjectorReady? { [weak self] enabled in
             self?.pipeline.setAudioEnabled(enabled)
+        }
+    }
+
+    /// Hands the canvas a privacy enable/disable drive routed to THIS view's pipeline (the session
+    /// stores the wish and re-sends it after every re-hello). `self` weak so a torn-down view drives
+    /// nothing. Idempotent — safe to call on every render.
+    func publishPrivacyInjector() {
+        onPrivacyInjectorReady? { [weak self] enabled in
+            self?.pipeline.setPrivacyEnabled(enabled)
         }
     }
 
@@ -1803,6 +1831,8 @@ struct MetalVideoLayerView: UIViewRepresentable {
     // Signature parity with the macOS representable. The iOS footer has no speaker toggle wired yet
     // (the seam never binds the sink there), so the audio drive is accepted + ignored here.
     var onAudioInjectorReady: ((((Bool) -> Void)?) -> Void)?
+    // Signature parity: iOS has no desktop-window privacy toggle wired yet — accepted + ignored.
+    var onPrivacyInjectorReady: ((((Bool) -> Void)?) -> Void)?
     var onSystemKeyInjectorReady: ((((UInt16, UInt64, Bool) -> Void)?) -> Void)?
     // Signature parity with the macOS representable. The iOS pane has no scrim overlay wired yet, so the
     // stall push is accepted + ignored here.

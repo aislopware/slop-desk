@@ -168,6 +168,7 @@ final class VideoWindowPipeline {
     /// same reason as ``lastStreamSettings`` (the fresh session's host state starts at the
     /// default OFF). `nil` ⇒ never requested.
     private var lastAudioEnabled: Bool?
+    private var lastPrivacyEnabled: Bool?
 
     #if os(macOS)
     /// The LOCAL `NSCursor` mirroring the host's CURRENT cursor SHAPE (Parsec model: the OS draws it at
@@ -586,6 +587,10 @@ final class VideoWindowPipeline {
         if let audioEnabled = lastAudioEnabled {
             Task { await session.updateAudioEnabled(audioEnabled) }
         }
+        // PRIVACY BLANK survives a rebuild the same way.
+        if let privacyEnabled = lastPrivacyEnabled {
+            Task { await session.updatePrivacyMode(privacyEnabled) }
+        }
 
         // Bring up the single ordered outbound-input consumer before any input can be enqueued.
         startOutboundConsumer()
@@ -767,6 +772,14 @@ final class VideoWindowPipeline {
         lastAudioEnabled = enabled
         guard let session else { return }
         Task { await session.updateAudioEnabled(enabled) }
+    }
+
+    /// PRIVACY BLANK: the ``setAudioEnabled(_:)`` twin — forward the wish to the session (store /
+    /// act / re-send after every re-hello) and remember it so a rebuild's fresh session inherits it.
+    func setPrivacyEnabled(_ enabled: Bool) {
+        lastPrivacyEnabled = enabled
+        guard let session else { return }
+        Task { await session.updatePrivacyMode(enabled) }
     }
 
     /// VNC-style zoom/pan, forwarded to the renderer (applied as a UV crop next vsync)

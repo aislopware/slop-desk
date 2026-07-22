@@ -399,6 +399,50 @@ final class RemoteWindowStreamControlsTests: XCTestCase {
         XCTAssertEqual(silent, [], "audio OFF ⇒ nothing re-asserted")
     }
 
+    // MARK: Privacy blank (host display blackout — the audio-toggle twin)
+
+    /// `applyPrivacyEnabled` is gated exactly like the audio toggle: no sink or no stream ⇒ inert;
+    /// a same-value apply is dropped so the absolute sink only sees transitions.
+    func testApplyPrivacyEnabledRequiresStreamingAndASinkAndDropsSameValue() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Mac")
+        m.applyPrivacyEnabled(true) // no sink + not streaming
+        XCTAssertFalse(m.privacyEnabled)
+        XCTAssertFalse(m.canTogglePrivacy)
+
+        var received: [Bool] = []
+        m.privacyInjector = { received.append($0) }
+        m.applyPrivacyEnabled(true)
+        XCTAssertFalse(m.privacyEnabled, "a sink alone is not enough — the pane must be streaming")
+        XCTAssertEqual(received, [])
+
+        m.open()
+        XCTAssertTrue(m.canTogglePrivacy)
+        m.applyPrivacyEnabled(true)
+        m.applyPrivacyEnabled(true) // same-value — dropped
+        m.applyPrivacyEnabled(false)
+        XCTAssertEqual(received, [true, false])
+        XCTAssertFalse(m.privacyEnabled)
+    }
+
+    /// Publishing a privacy sink RE-ASSERTS a held ON state (the audioInjector precedent): a
+    /// detach/reattach re-binds the SAME model to a fresh view whose new session starts un-blanked,
+    /// so the wish must re-push. `close()` resets it OFF; a fresh model re-asserts nothing.
+    func testPrivacySinkPublishReassertsAHeldOnState() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "42", title: "Mac")
+        m.open()
+        m.privacyInjector = { _ in }
+        m.applyPrivacyEnabled(true)
+        XCTAssertTrue(m.privacyEnabled)
+
+        var freshSink: [Bool] = []
+        m.privacyInjector = { freshSink.append($0) }
+        XCTAssertEqual(freshSink, [true], "the held ON re-asserts into the fresh sink")
+
+        m.close()
+        XCTAssertNil(m.privacyInjector)
+        XCTAssertFalse(m.privacyEnabled, "the next session mints un-blanked — the shield resets")
+    }
+
     // MARK: Latched modes (model-owned wishes — detach-remount + restart survival)
 
     /// `applyStreamSettings` STORES the override on the model (mirrors ``audioStreamEnabled``): gated on

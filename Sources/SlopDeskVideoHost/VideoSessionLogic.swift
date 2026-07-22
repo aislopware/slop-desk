@@ -75,6 +75,12 @@ public struct VideoSessionStateMachine: Sendable {
         /// before encode (capture config never changes). Per-session HOST state, reset to OFF on
         /// `.startCapture`; the client re-sends its wish after every accepted (re-)hello.
         case applyAudioControl(enabled: Bool)
+        /// Apply the client's privacy-blank wish (wire `privacyMode`) — the `applyAudioControl`
+        /// twin for a DISPLAY session: ON blacks the streamed host display (zero gamma) + swallows
+        /// local host input; OFF restores both. Per-session HOST state, reset to OFF on
+        /// `.startCapture`; the client re-sends its wish after every accepted (re-)hello. Emitted
+        /// ONLY for a display target (a window/dialog session has no whole-display to blank).
+        case applyPrivacyMode(enabled: Bool)
     }
 
     /// The highest resize epoch already APPLIED for the current streaming session, so a
@@ -167,6 +173,12 @@ public struct VideoSessionStateMachine: Sendable {
             // never load-bearing.
             guard state == .streaming else { return [] }
             return [.applyAudioControl(enabled: enabled)]
+        case let .privacyMode(enabled):
+            // The `audioControl` twin, scoped to a DISPLAY target: only a streaming full-desktop
+            // session has a whole host display to blank. A window/dialog session drops it (there is
+            // no display to black without hiding an unrelated app), as does a pre-stream message.
+            guard state == .streaming, isDisplayTarget else { return [] }
+            return [.applyPrivacyMode(enabled: enabled)]
         case .helloAck,
              .resizeAck,
              .streamCadence,
@@ -174,6 +186,7 @@ public struct VideoSessionStateMachine: Sendable {
             // Host never receives a helloAck/resizeAck/streamCadence/hostStats (all host→client) —
             // defensive no-op.
             return []
+        // `privacyMode` is handled above (client→host, display-only).
         case .keepalive,
              .focusWindow:
             // `keepalive` carries NO state-machine semantics — its only effect is the

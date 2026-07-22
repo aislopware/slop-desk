@@ -40,10 +40,11 @@ public enum UnboundLaneByeDecider {
                  .resizeRequest,
                  .focusWindow,
                  .streamSettings,
-                 .audioControl:
-                // `streamSettings` + `audioControl` are in-session-only like the trio above (the
-                // client only sends them while it believes a session streams) — a live-session
-                // belief worth correcting.
+                 .audioControl,
+                 .privacyMode:
+                // `streamSettings` + `audioControl` + `privacyMode` are in-session-only like the
+                // trio above (the client only sends them while it believes a session streams) — a
+                // live-session belief worth correcting.
                 return true
             case .hello,
                  .helloAck,

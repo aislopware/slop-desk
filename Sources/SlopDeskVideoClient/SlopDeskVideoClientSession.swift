@@ -635,6 +635,10 @@ public actor SlopDeskVideoClientSession {
     /// state, reset to the default OFF by a session re-mint). `nil` ⇒ never requested (nothing
     /// rides the handshake).
     private var lastAudioEnabled: Bool?
+    /// PRIVACY BLANK wish (wire type 28): the last-requested enable state, re-sent after every
+    /// accepted (re-)hello — the ``lastAudioEnabled`` twin (per-session HOST state, reset OFF on
+    /// mint). `nil` ⇒ never requested (nothing rides the handshake).
+    private var lastPrivacyEnabled: Bool?
     /// The self-owned ~50 ms NetworkStats timer (mirrors ``keepaliveTask``'s safe weak pattern).
     /// Cancelled in ``stop()``.
     private var networkStatsTask: Task<Void, Never>?
@@ -1983,6 +1987,23 @@ public actor SlopDeskVideoClientSession {
         transport.send(VideoControlMessage.audioControl(enabled: enabled).encode(), on: .control)
     }
 
+    /// PRIVACY BLANK (wire type 28): request the host black its streamed display + swallow local
+    /// input on/off. The ``updateAudioEnabled(_:)`` twin — the wish is stored and re-sent after
+    /// every accepted (re-)hello (per-session HOST state, reset OFF on mint). Display sessions only;
+    /// the host drops it for a window target.
+    public func updatePrivacyMode(_ enabled: Bool) {
+        lastPrivacyEnabled = enabled
+        sendPrivacyModeIfStreaming()
+    }
+
+    /// Sends the stored privacy wish iff a session streams (host ignores a pre-stream message; the
+    /// handshake completion re-sends — see ``updatePrivacyMode(_:)``).
+    private func sendPrivacyModeIfStreaming() {
+        guard let enabled = lastPrivacyEnabled, stateMachine.mediaFlowing else { return }
+        dbg("→ privacyMode enabled=\(enabled)")
+        transport.send(VideoControlMessage.privacyMode(enabled: enabled).encode(), on: .control)
+    }
+
     /// Tells the host to RAISE the captured window to frontmost because this pane was focused on the
     /// client (hover / first-responder). Sent fire-and-forget on the `.control` channel WHILE streaming.
     /// Proactive + idempotent: the host raises once (short-circuiting if already frontmost), so the
@@ -2191,6 +2212,8 @@ public actor SlopDeskVideoClientSession {
         // APP AUDIO is the same class of per-session host state (a re-mint resets it to the
         // default OFF) — re-assert the stored wish alongside the settings.
         sendAudioControlIfStreaming()
+        // PRIVACY BLANK is the same class again (host resets it OFF on mint) — re-assert.
+        sendPrivacyModeIfStreaming()
         reapplyCursor()
         log
             .info(

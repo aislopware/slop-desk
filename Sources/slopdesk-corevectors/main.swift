@@ -463,6 +463,8 @@ root["videoControl"] = [
         .hostStats(rttTenthsMillis: 123, encodeTenthsMillis: 45),
         ["rttTenthsMillis": 123, "encodeTenthsMillis": 45],
     ),
+    vc("privacyModeOn", .privacyMode(enabled: true), ["enabled": true]),
+    vc("privacyModeOff", .privacyMode(enabled: false), ["enabled": false]),
 ]
 
 // MARK: AudioChannelMessage

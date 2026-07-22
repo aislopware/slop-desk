@@ -62,6 +62,7 @@ import Foundation
 /// type 25 streamSettings: UInt8 fpsCap | UInt32 bitrateCeilingBps
 /// type 26 audioControl:  UInt8 enabled(0/1)
 /// type 27 hostStats:     UInt16 rttTenthsMillis | UInt16 encodeTenthsMillis
+/// type 28 privacyMode:   UInt8 enabled(0/1)
 /// ```
 ///
 /// Liveness keepalive: guards against a client that crashes without sending `bye` — a zero-body
@@ -383,6 +384,15 @@ public enum VideoControlMessage: Equatable, Sendable {
     /// (telemetry off / first window still filling). Fire-and-forget single send — the next tick
     /// heals a loss. Inert to an old client (unknown type → dropped).
     case hostStats(rttTenthsMillis: UInt16, encodeTenthsMillis: UInt16)
+    /// Client → host: PRIVACY BLANK for a full-desktop session — `enabled` blacks the streamed
+    /// host display (a zero `CGDisplayGammaTable`, driver-free) AND swallows local keyboard/mouse
+    /// at the host (a `CGEventTap`), so a bystander at the physical Mac sees a dark screen and
+    /// cannot interfere while the remote operator works. The RustDesk technique; primary-display
+    /// caveat (gamma blackout is per-display but local-input tap is global). The `streamSettings`
+    /// twin: applied only while a DISPLAY session streams, per-session HOST state that resets OFF
+    /// on session mint, so the client re-sends its wish after every accepted (re-)hello. A later
+    /// message replaces the earlier one. Inert to an old host (unknown type → dropped).
+    case privacyMode(enabled: Bool)
 
     public var messageType: UInt8 {
         switch self {
@@ -413,6 +423,7 @@ public enum VideoControlMessage: Equatable, Sendable {
         case .streamSettings: 25
         case .audioControl: 26
         case .hostStats: 27
+        case .privacyMode: 28
         }
     }
 
@@ -581,6 +592,8 @@ public enum VideoControlMessage: Equatable, Sendable {
         case let .hostStats(rttTenths, encodeTenths):
             out.appendBE(rttTenths)
             out.appendBE(encodeTenths)
+        case let .privacyMode(enabled):
+            out.append(enabled ? 1 : 0)
         }
         return out
     }
@@ -817,6 +830,9 @@ public enum VideoControlMessage: Equatable, Sendable {
             let rttTenths = try reader.readUInt16()
             let encodeTenths = try reader.readUInt16()
             return .hostStats(rttTenthsMillis: rttTenths, encodeTenthsMillis: encodeTenths)
+        case 28:
+            // Body is the 1-byte enable flag; like every wire bool it decodes as `byte != 0`.
+            return try .privacyMode(enabled: reader.readUInt8() != 0)
         default:
             throw VideoProtocolError.malformed("unknown video control message type \(type)")
         }
