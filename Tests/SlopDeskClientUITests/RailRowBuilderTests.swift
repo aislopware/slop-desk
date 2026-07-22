@@ -490,29 +490,37 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertNil(RailRowsBuilder.cwdFolderName(nil))
     }
 
-    // MARK: - Video panes are rail rows again (the full-desktop pivot: the navigator is the ONE sidebar)
+    // MARK: - The desktop lives in its OWN window (docs/DECISIONS.md 2026-07-22) — not in the rail
 
-    /// A `.desktop` pane (the full-desktop stream) lists too, under its own kind.
-    func testDesktopPanesAreRailRows() {
+    /// A `.desktop` pane is born detached (its dedicated window) — the rail lists TABS, so the
+    /// desktop never gets a row. ⌥⌘N / the palette "Remote Desktop" verb is its reveal path.
+    func testDesktopPanesAreNotRailRows() {
         let store = makeStore()
-        let desktop = store.newDesktopTab()
+        let desktop = store.openDesktopWindow()
 
         let rows = RailRowsBuilder.rows(for: store)
-        XCTAssertEqual(rows.first { $0.id == desktop }?.kind, .desktop)
+        XCTAssertNil(rows.first { $0.id == desktop }, "the desktop window is not a rail row")
+        XCTAssertNotNil(store.handle(for: desktop), "yet its stream session is live (detached)")
     }
 
-    /// The ⌘K jump-to-pane palette enumerates panes itself — a video pane is jumpable there too.
-    func testRemoteWindowPanesStayInTheJumpPalette() {
+    /// The ⌘K jump-to-pane palette enumerates TAB panes — the desktop (its own window) is not among
+    /// them; a `.systemDialog` video pane (tree-resident) still is.
+    func testJumpPaletteListsTreeVideoPanesButNotTheDesktopWindow() {
         let store = makeStore()
-        let remote = store.newDesktopTab()
+        let desktop = store.openDesktopWindow()
+        let dialog = store.addSystemDialogPane(windowID: 9, owner: "SecurityAgent", title: "", isSecure: false)
         store.splitActivePane(axis: .horizontal, kind: .terminal, leading: false, launchGrace: .zero)
 
         let paletteIDs = TabsPaletteSource.snapshot(store)
             .candidates(query: "")
             .map(\.id)
         XCTAssertTrue(
-            paletteIDs.contains("tab.\(remote.raw.uuidString)"),
-            "a video pane must stay in the ⌘K jump-to-pane palette",
+            paletteIDs.contains("tab.\(dialog.raw.uuidString)"),
+            "a tree-resident video pane stays in the ⌘K jump-to-pane palette",
+        )
+        XCTAssertFalse(
+            paletteIDs.contains("tab.\(desktop.raw.uuidString)"),
+            "the desktop window is revealed by ⌥⌘N, not the tab jumper",
         )
     }
 

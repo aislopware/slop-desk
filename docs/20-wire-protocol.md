@@ -595,8 +595,10 @@ media flows. `[UInt8 type][body]`, big-endian:
   unknown type an old peer simply drops: `resizeAck` (5), `streamCadence` (10), `scrollOffset` (13),
   `contentMask` (14), and **`displayMax` (15)** = `UInt16 maxWidthPt` + `UInt16 maxHeightPt`, the max
   POINT size the captured window can reach (the bounds of its display, or the parked VD). The host
-  sends it once at capture start, paired with its resize-to-display-origin step, so the client's
-  "Resize…" popover can cap its width/height fields at a size the remote can actually adopt.
+  sends it once at capture start, paired with its resize-to-display-origin step. (`resizeRequest`/
+  `resizeAck`/`displayMax` are **client-dormant since the remote-window removal** — docs/DECISIONS.md
+  2026-07-22: display sessions never resize and the "Resize…" popover is gone; the wire stays
+  pinned, the host still answers.)
 - **Live stream settings (25, client → host, 2026-07-16):** `streamSettings` = `UInt8 fpsCap` +
   `UInt32 bitrateCeilingBps` — the user's per-session encode fps CAP and bitrate CEILING. `0` on
   either axis means AUTO (clear that override); non-zero values are clamped on the HOST at apply
@@ -615,8 +617,9 @@ media flows. `[UInt8 type][body]`, big-endian:
   Inert to an old host (unknown type → dropped).
 - **Session-LESS discovery (no capture mint; the request bootstraps its reply flow at the mux, is
   never answered with an unbound-lane `bye`, and its lane is retired after the reply):**
-  `listWindows` (7, zero body) → `windowList` (8) powers the remote-window picker AND the client's
-  `WindowRebind` open-time/reconnect revalidation. The reply enumerates ALL streamable windows —
+  `listWindows` (7, zero body) → `windowList` (8) — the picker + `WindowRebind` callers are gone
+  with the remote-window removal (docs/DECISIONS.md 2026-07-22); the pair survives for
+  `AppLaunchMonitor`'s feed-fallback app detection. The reply enumerates ALL streamable windows —
   on-screen first, then titled minimized / other-Space ones (the mint path rescues those via AX
   un-minimize), so absence in the reply really does mean "gone from the host";
   `listSystemDialogs` (11, zero body) → `systemDialogList` (12) powers the system-popup panes;
@@ -625,9 +628,9 @@ media flows. `[UInt8 type][body]`, big-endian:
   full-desktop pane (the client defaults to the main display via `requestedDisplayID 0`, so this
   pair is informational/multi-display only). Exact record layouts live in the
   `VideoControlCodec.swift` header table (golden-pinned).
-- **Host-window FEED (2026-07-11; the dedicated rail UI was retired by the 2026-07-14 full-desktop
-  pivot — the feed remains LOAD-BEARING for Open Quickly's Host rows + the app-launch layout
-  auto-switch):** `windowFeedSubscribe` (16, client → host,
+- **Host-window FEED (2026-07-11; the rail was retired 2026-07-14 and Open Quickly's Host rows went
+  with the remote-window removal 2026-07-22 — the feed remains LOAD-BEARING for the app-launch
+  layout auto-switch only):** `windowFeedSubscribe` (16, client → host,
   `UInt32 knownGeneration`, 0 = have nothing) is the ONE feed message — sent every ~2 s while
   Open Quickly is visible it is simultaneously the poll, the (Phase-2)
   subscription renewal, and the loss-healing resync anchor. The host answers with either

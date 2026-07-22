@@ -88,7 +88,7 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
     /// everything back off removes the entry (default-normalized — the map never accretes no-op rows).
     func testExplicitToggleLandsUnderTheTargetKey() throws {
         let store = makeLiveStore()
-        let id = store.newDesktopTab()
+        let id = store.openDesktopWindow()
         let model = try remoteWindowModel(in: store, for: id)
 
         model.open()
@@ -113,7 +113,7 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
     /// model at materialization, and the injector `didSet` re-asserts push the wish into its first session.
     func testCloseTabThenReopenSameTargetRestoresModes() throws {
         let store = makeLiveStore()
-        let first = store.newDesktopTab(displayID: 2)
+        let first = store.openDesktopWindow(displayID: 2)
         let firstModel = try remoteWindowModel(in: store, for: first)
         firstModel.open()
         firstModel.audioInjector = { _ in }
@@ -125,7 +125,7 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
         XCTAssertNil(store.handle(for: first), "the pane is gone with its tab")
 
         // Reopen the SAME target (same display) — a brand-new pane.
-        let second = store.newDesktopTab(displayID: 2)
+        let second = store.openDesktopWindow(displayID: 2)
         XCTAssertNotEqual(second, first)
         let secondModel = try remoteWindowModel(in: store, for: second)
 
@@ -145,7 +145,7 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
     /// from the persisted target-keyed map.
     func testRelaunchRestoreSeedsFromPersistedTree() throws {
         let store = makeLiveStore()
-        let id = store.newDesktopTab(displayID: 2)
+        let id = store.openDesktopWindow(displayID: 2)
         let model = try remoteWindowModel(in: store, for: id)
         model.open()
         model.viewportInjector = { _ in }
@@ -159,7 +159,7 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
             relaunched.tree.allPaneIDs().first { relaunched.tree.spec(for: $0)?.kind == .desktop },
             "a persisted desktop pane never restores (the dedicated-window model)",
         )
-        let reopened = relaunched.newDesktopTab(displayID: 2)
+        let reopened = relaunched.openDesktopWindow(displayID: 2)
         let restoredModel = try remoteWindowModel(in: relaunched, for: reopened)
         XCTAssertTrue(restoredModel.viewportLocked, "the persisted target modes seed the reopened target")
     }
@@ -169,7 +169,7 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
     func testRepickSeedsTheNewTargetsModes() throws {
         let store = makeLiveStore()
         // Save modes for display 7 under its own key first.
-        let second = store.newDesktopTab(displayID: 7)
+        let second = store.openDesktopWindow(displayID: 7)
         let secondModel = try remoteWindowModel(in: store, for: second)
         secondModel.open()
         secondModel.audioInjector = { _ in }
@@ -177,7 +177,7 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
         store.closePaneTree(second)
 
         // A main-display pane with no saved modes switches to display 7 → inherits its saved modes.
-        let pane = store.newDesktopTab()
+        let pane = store.openDesktopWindow()
         let model = try remoteWindowModel(in: store, for: pane)
         model.open()
         XCTAssertFalse(model.audioStreamEnabled, "the main display has no saved modes")

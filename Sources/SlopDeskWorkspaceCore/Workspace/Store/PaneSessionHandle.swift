@@ -122,6 +122,12 @@ public protocol PaneSessionHandle: AnyObject, Identifiable {
     /// ``LivePaneSession`` routes to the ``RemoteWindowModel``.
     func toggleViewportLock()
 
+    /// FULLSCREEN PRESENTATION report (the desktop satellite window's enter/exit of native
+    /// fullscreen): fullscreen auto-arms immersive system-key capture WITHOUT touching the latched
+    /// per-target toggle (``RemoteWindowModel/noteFullscreenPresentation(_:)``). A no-op for kinds
+    /// with no video stream. Default does nothing; ``LivePaneSession`` routes to the model.
+    func noteFullscreenPresentation(_ isFullscreen: Bool)
+
     /// FIT VIEWPORT TO PANE: shrink/grow the remote-GUI pane's whole window to be fully visible inside
     /// the pane (the footer [fit] button / palette verb — both converge on
     /// ``RemoteWindowModel/sendViewport(_:)`` with ``RemoteWindowModel/ViewportCommand/fitToPane``). A
@@ -181,6 +187,10 @@ public extension PaneSessionHandle {
     /// Default: no video viewport ⇒ nothing to lock. ``LivePaneSession`` routes to the
     /// ``RemoteWindowModel`` for video panes.
     func toggleViewportLock() {}
+
+    /// Default: no video stream ⇒ fullscreen carries no capture semantics. ``LivePaneSession``
+    /// routes to the ``RemoteWindowModel`` for video panes.
+    func noteFullscreenPresentation(_: Bool) {}
 
     /// Default: no video viewport ⇒ nothing to fit. ``LivePaneSession`` routes to the
     /// ``RemoteWindowModel`` for video panes.

@@ -38,7 +38,7 @@ final class GuiLeafReadOnlyPillTests: XCTestCase {
     /// gate falls back to false — proving the in-pane exit affordance the body wires actually unlocks the pane.
     func testReadOnlyPillReleasesTheRemoteWindowLock() {
         let store = WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
-        let video = store.newDesktopTab()
+        let video = store.openDesktopWindow()
 
         XCTAssertFalse(
             GuiLeafView.showReadOnlyPill(staticMirror: false, isReadOnly: store.isReadOnly(for: video)),

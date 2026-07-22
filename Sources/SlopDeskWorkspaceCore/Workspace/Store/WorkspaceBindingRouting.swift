@@ -255,9 +255,10 @@ public extension WorkspaceBindingRegistry {
         // path (the chooser is retired); non-terminal kinds have their own explicit actions below.
         case .newTab:
             store.newTerminalPane(.newTab)
-        // `.newDesktopTab` (⌥⌘N): a `.desktop` pane streaming the host's whole main display.
+        // `.newDesktopTab` (⌥⌘N): the remote-desktop WINDOW — reveal-or-mint, never a tab (the
+        // action keeps its historical case name; keybinding schemas persist it).
         case .newDesktopTab:
-            store.newDesktopTab()
+            store.openDesktopWindow()
         case .nextTab: store.cycleTab(by: 1)
         case .prevTab: store.cycleTab(by: -1)
         case let .selectTab(n): store.selectTabNumber(n)

@@ -167,6 +167,13 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// every other kind (`remoteWindow == nil`).
     public func toggleViewportLock() { remoteWindow?.toggleViewportLock() }
 
+    /// FULLSCREEN PRESENTATION: route the satellite window's fullscreen enter/exit report to the
+    /// video pane's ``RemoteWindowModel`` (fullscreen auto-arms immersive capture). A no-op for
+    /// every other kind (`remoteWindow == nil`).
+    public func noteFullscreenPresentation(_ isFullscreen: Bool) {
+        remoteWindow?.noteFullscreenPresentation(isFullscreen)
+    }
+
     /// FIT VIEWPORT TO PANE: route the palette verb to the video pane's footer [fit] command
     /// (the model itself gates re-anchoring while locked / off-stream). A no-op for every other kind
     /// (`remoteWindow == nil`).

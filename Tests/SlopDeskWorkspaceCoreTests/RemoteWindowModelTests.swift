@@ -259,6 +259,48 @@ final class RemoteWindowModelTests: XCTestCase {
         let d = RemoteWindowDescriptor(title: "x", windowID: 3)
         XCTAssertFalse(d.hasEndpoint)
     }
+
+    // MARK: - Fullscreen auto-arm (docs/DECISIONS.md 2026-07-22)
+
+    /// Entering native fullscreen arms the EFFECTIVE immersive wish without touching the latched
+    /// toggle or the persistence sink; exiting returns to the latched value.
+    func testFullscreenArmsEffectiveImmersiveWithoutPersisting() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "1")
+        var persisted: [VideoPaneModes] = []
+        m.onModesChanged = { persisted.append($0) }
+
+        m.noteFullscreenPresentation(true)
+        XCTAssertTrue(m.immersiveEffective, "fullscreen arms capture")
+        XCTAssertFalse(m.immersiveDesired, "…without flipping the latched toggle")
+        XCTAssertEqual(persisted, [], "…and without a persistence write (never latched)")
+
+        m.noteFullscreenPresentation(false)
+        XCTAssertFalse(m.immersiveEffective, "exit returns to the latched value")
+    }
+
+    /// The in-session escape hatch WINS: an explicit immersive-off while fullscreen drops the
+    /// auto-arm too (the Moonlight lesson — capture with no in-stream off switch traps the user).
+    func testExplicitImmersiveOffClearsTheFullscreenArm() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "1")
+        m.noteFullscreenPresentation(true)
+        XCTAssertTrue(m.immersiveEffective)
+
+        m.setImmersiveDesired(false)
+        XCTAssertFalse(m.immersiveEffective, "the user's OFF beats the fullscreen arm")
+
+        m.noteFullscreenPresentation(true)
+        XCTAssertTrue(m.immersiveEffective, "re-entering fullscreen re-arms")
+    }
+
+    /// A latched immersive toggle survives the fullscreen round-trip untouched.
+    func testLatchedImmersiveSurvivesFullscreenRoundTrip() {
+        let m = RemoteWindowModel(target: { self.target }, windowID: "1")
+        m.setImmersiveDesired(true)
+        m.noteFullscreenPresentation(true)
+        m.noteFullscreenPresentation(false)
+        XCTAssertTrue(m.immersiveDesired, "the latch is the user's, fullscreen never rewrites it")
+        XCTAssertTrue(m.immersiveEffective)
+    }
 }
 
 // MARK: - Test support

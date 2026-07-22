@@ -140,7 +140,7 @@ public enum WorkspaceAction: Hashable, Sendable {
 
     // Tabs
     case newTab // ⌘T
-    case newDesktopTab // ⌥⌘N — a `.desktop` pane streaming the host's whole main display
+    case newDesktopTab // ⌥⌘N — the remote-desktop WINDOW (historical case name; schemas persist it)
     case nextTab // ⌘⇧]
     case prevTab // ⌘⇧[
     case selectTab(Int) // ⌘1…⌘9 (1-based)
@@ -251,7 +251,7 @@ public extension WorkspaceAction {
              .cheatSheet,
              .globalSearch, // a cross-tab results surface — acts globally, needs no active pane (like the palette)
              .newTab,
-             .newDesktopTab, // mints a fresh tab — acts on the session, needs no active pane (like .newTab)
+             .newDesktopTab, // reveal-or-mint the desktop window — acts on the session, needs no active pane
              .nextTab,
              .prevTab,
              .selectTab,
@@ -457,15 +457,15 @@ public enum WorkspaceBindingRegistry {
             category: .tabs, chord: KeyChord(character: "t", [.command]),
             symbol: "plus.rectangle.on.rectangle", keywords: "add open create tab",
         ),
-        // New DESKTOP tab (the full-desktop pivot): a `.desktop` pane streaming the host's whole
-        // main display. ⌥⌘N is FREE (`n` appears in no other live chord) and echoes the dead canvas
-        // table's "⌥⌘N = new remote pane" precedent. Terminal keeps the hot chords (⌘T/⌘D — the
-        // chooser stays retired); every non-terminal kind gets its own explicit shortcut like this one.
+        // REMOTE DESKTOP (⌥⌘N): the dedicated desktop WINDOW — reveal-or-mint, never a tab
+        // (docs/DECISIONS.md 2026-07-22). ⌥⌘N is FREE (`n` appears in no other live chord) and
+        // echoes the dead canvas table's "⌥⌘N = new remote pane" precedent. The id + action keep
+        // their historical names (keybinding schemas persist them).
         WorkspaceBinding(
-            id: "tab.newDesktop", action: .newDesktopTab, title: "New Desktop Tab",
+            id: "tab.newDesktop", action: .newDesktopTab, title: "Remote Desktop",
             category: .tabs, chord: KeyChord(character: "n", [.command, .option]),
             symbol: "display",
-            keywords: "desktop display screen full remote stream monitor new tab",
+            keywords: "desktop display screen full remote stream monitor window",
         ),
         // Tab cycling lives on ⌘⇧]/⌘⇧[ (see DECISIONS), NOT plain ⌘]/⌘[ — those drive sequential
         // PANE cycling instead (`focus.cycleNext`/`focus.cyclePrev`), per the reference table; the Muxy tab

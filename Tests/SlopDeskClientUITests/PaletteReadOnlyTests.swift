@@ -49,14 +49,16 @@ final class PaletteReadOnlyTests: XCTestCase {
     // MARK: - the Read Only palette verb is a first-class peer for a video active pane
 
     /// The "Read Only" palette verb is KIND-GENERIC: its `.store` run-arm (`toggleReadOnlyInActivePane`) reaches
-    /// a `.desktop` active pane (a host display streamed over the video path), flipping the SAME
+    /// a `.systemDialog` active pane (a host window streamed over the video path), flipping the SAME
     /// convergent ``WorkspaceStore/paneReadOnly`` set the pill `🔒 READ ONLY ×` + the sidebar lock read — and
     /// thereby the video seam's `inputEnabled` gate. Drives the catalog row's run-arm against a store whose
     /// active pane is a video pane, proving the palette path does not silently exclude the video kind. Fails on
     /// any build that gated the read-only verb to a terminal pane (it would no-op here and the lock never set).
     func testReadOnlyPaletteVerbReachesARemoteGUIActivePane() throws {
         let store = WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
-        let video = store.newDesktopTab()
+        // The tree-resident video kind (the desktop lives in its own window now and can never be
+        // the tree's ACTIVE pane — a dialog pane is the video kind this verb still reaches in-tree).
+        let video = store.addSystemDialogPane(windowID: 42, owner: "SecurityAgent", title: "", isSecure: false)
         store.focusPaneTree(video)
         XCTAssertEqual(store.activePaneID, video, "the video pane is the tree's focused pane")
         XCTAssertFalse(store.isReadOnly(for: video), "a fresh video pane is writable")
@@ -68,7 +70,7 @@ final class PaletteReadOnlyTests: XCTestCase {
         }
 
         run(store)
-        XCTAssertTrue(store.isReadOnly(for: video), "the palette Read Only verb locks the `.desktop` active pane")
+        XCTAssertTrue(store.isReadOnly(for: video), "the palette Read Only verb locks the video active pane")
         run(store)
         XCTAssertFalse(store.isReadOnly(for: video), "and the same verb unlocks it (kind-generic toggle)")
     }

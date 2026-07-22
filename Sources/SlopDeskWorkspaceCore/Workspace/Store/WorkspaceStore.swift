@@ -3143,6 +3143,14 @@ public final class WorkspaceStore {
         }
     }
 
+    /// FULLSCREEN ⇒ system-key capture (docs/DECISIONS.md 2026-07-22): the satellite window
+    /// delegate reports enter/exit of native fullscreen; a fullscreen desktop window auto-arms
+    /// immersive capture WITHOUT touching the latched per-target toggle. Routed through the
+    /// ``PaneSessionHandle`` seam — a graceful no-op for a terminal / empty / not-streaming pane.
+    public func noteSatelliteFullscreen(paneID: PaneID, isFullscreen: Bool) {
+        handle(for: paneID)?.noteFullscreenPresentation(isFullscreen)
+    }
+
     /// The THIN long-command notification sink: the app sets it to call
     /// `notifier.notifyIfLong(...)`. Kept off the store so `UNUserNotificationCenter` never enters the
     /// store (→ the focus-gated handler stays unit-testable with a spy). `nil` in tests / headless ⇒ the

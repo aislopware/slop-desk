@@ -6,16 +6,36 @@
 import Foundation
 
 public extension WorkspaceStore {
-    /// Opens a NEW FULL-DESKTOP tab (⌥⌘N / palette): a `.desktop` pane streaming the host's whole
-    /// display (`displayID`, `0` = main). Always mints — unlike windows, a second desktop pane is a
-    /// legitimate ask (e.g. one per display), so there is no reveal-dedupe. Selected + focused like
-    /// ``newTab(kind:)``. Returns the new pane id.
+    /// Opens the REMOTE DESKTOP WINDOW (⌥⌘N / palette): a `.desktop` pane streaming the host's whole
+    /// display (`displayID`, `0` = main), born DIRECTLY into ``TreeWorkspace``'s detached set — the
+    /// desktop is ALWAYS its own OS window, never a pane or tab in the workspace window
+    /// (docs/DECISIONS.md 2026-07-22). Reveal-dedupe is PER DISPLAY: a second ⌥⌘N on the same display
+    /// raises the existing window (``revealSatelliteWindow``); a different display mints a sibling
+    /// window. Returns the pane id.
     @discardableResult
-    func newDesktopTab(displayID: UInt32 = 0) -> PaneID {
-        let (next, id) = WorkspaceTreeOps.newTab(in: tree, spec: Self.desktopSpec(displayID: displayID))
+    func openDesktopWindow(displayID: UInt32 = 0) -> PaneID {
+        if let existing = detachedDesktopPane(displayID: displayID) {
+            _ = revealSatelliteWindow?(existing)
+            return existing
+        }
+        let (next, id) = WorkspaceTreeOps.mintDetachedPane(
+            spec: Self.desktopSpec(displayID: displayID), in: tree,
+        )
         tree = next
         reconcileTree()
         return id
+    }
+
+    /// Where display `displayID` is already streaming: the detached `.desktop` pane bound to it in
+    /// the ACTIVE session, else nil. The ONE "is it already open?" rule the desktop ingress uses —
+    /// a desktop window that exists is revealed, never duplicated (a second live stream of the same
+    /// display would double the decode + bandwidth for nothing).
+    func detachedDesktopPane(displayID: UInt32) -> PaneID? {
+        guard let session = tree.activeSession else { return nil }
+        return session.detached.map(\.pane).first { id in
+            guard let spec = session.specs[id], spec.kind == .desktop else { return false }
+            return (spec.video?.displayID ?? 0) == displayID
+        }
     }
 
     /// The ONE `.desktop` spec shape: the endpoint carries the display target (windowID 0 unused).

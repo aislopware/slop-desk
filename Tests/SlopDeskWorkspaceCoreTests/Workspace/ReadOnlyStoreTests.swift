@@ -155,7 +155,7 @@ final class ReadOnlyStoreTests: XCTestCase {
     /// accepted input.
     func testReadOnlyDerivesTheVideoInputGate() {
         let store = makeFakeStore()
-        let video = store.newDesktopTab()
+        let video = store.openDesktopWindow()
 
         // WRITABLE: the seam derivation enables input forwarding.
         let writable = RemotePaneContext.videoLeaf(

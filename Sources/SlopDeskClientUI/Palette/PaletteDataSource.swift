@@ -81,13 +81,12 @@ public struct ActionsPaletteSource: PaletteDataSource {
                 store.recordRecentCommand(.newPane(.terminal))
             },
         ),
-        // "New Desktop Tab" (⌥⌘N): a `.desktop` pane streaming the host's whole main display — the
-        // full-desktop pivot's primary viewing verb.
+        // "Remote Desktop" (⌥⌘N): the dedicated desktop WINDOW — reveal-or-mint, never a tab.
         item(
-            id: "action.newDesktopTab", icon: "display", title: "New Desktop Tab",
+            id: "action.newDesktopTab", icon: "display", title: "Remote Desktop",
             shortcut: glyph(.newDesktopTab), category: .tab,
             run: { store in
-                store.newDesktopTab()
+                store.openDesktopWindow()
                 store.recordRecentCommand(.newPane(.desktop))
             },
         ),

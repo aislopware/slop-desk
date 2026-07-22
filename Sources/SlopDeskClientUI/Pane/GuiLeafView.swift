@@ -234,11 +234,12 @@ struct GuiLeafView: View {
                 systemKeyCapture.setSuspended(!can || !isFocused)
                 maybeAutoEngageImmersive()
             }
-            // WISH SYNC: the model's wish can change UNDER a mounted view — a re-target (pick / display
-            // switch / rebind) re-seeds it from the target's saved modes. Keep the tap truthful both
+            // WISH SYNC: the model's EFFECTIVE wish (latched toggle OR the fullscreen auto-arm) can
+            // change UNDER a mounted view — a re-target re-seeds the latch, and the window
+            // entering/leaving native fullscreen flips the override. Keep the tap truthful both
             // ways: wish OFF tears an engaged tap down (dropping onDisengage first — it would only
             // re-clear the already-off wish), wish ON re-engages through the usual gates.
-            .onChange(of: model?.immersiveDesired ?? false) { _, wish in
+            .onChange(of: model?.immersiveEffective ?? false) { _, wish in
                 if wish {
                     maybeAutoEngageImmersive()
                 } else if systemKeyCapture.isEngaged {
@@ -254,7 +255,7 @@ struct GuiLeafView: View {
     /// remount still shows the latched tint so the mode never silently reads as off.
     private var immersiveActive: Bool {
         #if os(macOS)
-        model?.immersiveDesired == true
+        model?.immersiveEffective == true
         #else
         false
         #endif
@@ -272,8 +273,9 @@ struct GuiLeafView: View {
             return
         }
         // Toggling OFF a wish whose tap never re-engaged (e.g. Accessibility trust revoked since the
-        // relaunch that restored it) — nothing to disengage, just drop the wish so the tint is honest.
-        if model?.immersiveDesired == true {
+        // relaunch that restored it) — nothing to disengage, just drop the wish (latched AND the
+        // fullscreen auto-arm — `setImmersiveDesired(false)` clears both) so the tint is honest.
+        if model?.immersiveEffective == true {
             model?.setImmersiveDesired(false)
             return
         }
@@ -310,7 +312,7 @@ struct GuiLeafView: View {
     /// suspend/resume observers) and injectable; a missing Accessibility trust leaves the wish latched
     /// but the tap down (no prompt from a passive remount — the user re-toggles to get one).
     private func maybeAutoEngageImmersive() {
-        guard model?.immersiveDesired == true,
+        guard model?.immersiveEffective == true,
               !systemKeyCapture.isEngaged,
               isFocused,
               model?.canInjectSystemKeys == true,

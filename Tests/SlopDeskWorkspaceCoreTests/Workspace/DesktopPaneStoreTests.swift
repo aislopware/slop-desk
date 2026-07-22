@@ -1,6 +1,7 @@
-// DesktopPaneStoreTests — pins the full-desktop store surface: `.desktop` panes are minted by
-// `newDesktopTab` (⌥⌘N), and the retired Stage domain stays decode-tolerated — a persisted
-// Stage-era file loads with its orphaned stage specs pruned, never a trap.
+// DesktopPaneStoreTests — pins the dedicated-desktop-window store surface (docs/DECISIONS.md
+// 2026-07-22): `openDesktopWindow` (⌥⌘N) mints a `.desktop` pane DIRECTLY into the detached set
+// (its own OS window — never a tab), reveal-dedupes per display, and the retired Stage domain
+// stays decode-tolerated — a persisted Stage-era file loads with its orphaned specs pruned.
 
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -11,19 +12,19 @@ final class DesktopPaneStoreTests: XCTestCase {
         WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0) })
     }
 
-    // MARK: - newDesktopTab (⌥⌘N)
+    // MARK: - openDesktopWindow (⌥⌘N)
 
-    /// ⌥⌘N mints a `.desktop` tab: a fresh tab whose lone leaf carries the desktop spec — endpoint
-    /// displayID 0 (the host's main display), kind `.desktop` — selected and focused like ⌘T.
-    func testNewDesktopTabMintsSelectedDesktopPane() throws {
+    /// ⌥⌘N mints the desktop pane DETACHED: no tab appears, the spec carries the display target
+    /// (displayID 0 = the host's main display), and reconcile materializes its live session.
+    func testOpenDesktopWindowMintsADetachedPane() throws {
         let store = makeStore()
         let tabsBefore = store.tree.activeSession?.tabs.count ?? 0
 
-        let id = store.newDesktopTab()
+        let id = store.openDesktopWindow()
 
         let session = try XCTUnwrap(store.tree.activeSession)
-        XCTAssertEqual(session.tabs.count, tabsBefore + 1, "a desktop pane opens as a NEW tab")
-        XCTAssertEqual(session.activeTab?.activePane, id, "the new tab is selected + its pane focused")
+        XCTAssertEqual(session.tabs.count, tabsBefore, "the desktop NEVER opens as a tab")
+        XCTAssertTrue(session.isDetached(id), "it is born detached — the dedicated window")
         let spec = try XCTUnwrap(session.specs[id])
         XCTAssertEqual(spec.kind, .desktop)
         XCTAssertEqual(spec.video?.displayID, 0, "displayID 0 = the host's main display")
@@ -31,20 +32,47 @@ final class DesktopPaneStoreTests: XCTestCase {
         XCTAssertNotNil(store.handle(for: id), "reconcile materialized the desktop pane's session")
     }
 
-    /// A second ⌥⌘N mints a SECOND desktop pane — no reveal-dedupe (one per display is a
-    /// legitimate ask, unlike per-window panes where a window has one home).
-    func testNewDesktopTabAlwaysMints() {
+    /// A second ⌥⌘N on the SAME display reveals the existing window instead of minting a second
+    /// live stream of the same display.
+    func testOpenDesktopWindowRevealDedupesPerDisplay() {
         let store = makeStore()
-        let first = store.newDesktopTab()
-        let second = store.newDesktopTab()
-        XCTAssertNotEqual(first, second, "desktop tabs never dedupe")
+        var revealed: [PaneID] = []
+        store.revealSatelliteWindow = { revealed.append($0)
+            return true
+        }
+
+        let first = store.openDesktopWindow()
+        let again = store.openDesktopWindow()
+
+        XCTAssertEqual(again, first, "same display → the existing pane is returned")
+        XCTAssertEqual(revealed, [first], "…and its window revealed, never a duplicate stream")
+        XCTAssertEqual(store.tree.activeSession?.detached.count, 1)
     }
 
-    /// An explicit display id rides the endpoint (the multi-display path).
-    func testNewDesktopTabCarriesExplicitDisplayID() {
+    /// A DIFFERENT display mints a sibling window (one desktop window per display).
+    func testOpenDesktopWindowMintsPerDisplaySiblings() {
         let store = makeStore()
-        let id = store.newDesktopTab(displayID: 7)
-        XCTAssertEqual(store.tree.spec(for: id)?.video?.displayID, 7)
+        let main = store.openDesktopWindow()
+        let second = store.openDesktopWindow(displayID: 7)
+        XCTAssertNotEqual(second, main)
+        XCTAssertEqual(store.tree.spec(for: second)?.video?.displayID, 7)
+        XCTAssertEqual(store.tree.activeSession?.detached.count, 2)
+    }
+
+    /// Closing the desktop window is a REAL close: the pane + spec + live handle all go.
+    func testCloseDesktopWindowEndsTheSession() {
+        let store = makeStore()
+        let id = store.openDesktopWindow()
+        XCTAssertNotNil(store.handle(for: id))
+
+        store.closePaneTree(id)
+
+        XCTAssertNil(store.tree.spec(for: id), "the spec is gone")
+        XCTAssertNil(store.handle(for: id), "reconcile tore the live session down")
+        XCTAssertFalse(store.tree.activeSession?.isDetached(id) == true)
+        // …and the SAME display can be reopened fresh (the dedupe never sees a closed pane).
+        let reopened = store.openDesktopWindow()
+        XCTAssertNotEqual(reopened, id)
     }
 
     // MARK: - Stage-era persistence is decode-tolerated (the Stage domain is gone)

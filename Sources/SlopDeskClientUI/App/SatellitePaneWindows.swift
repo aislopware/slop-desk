@@ -70,7 +70,9 @@ struct SatellitePaneRootView: View {
         .background(Slate.Surface.face)
         .ignoresSafeArea()
         .overlay(alignment: .top) {
-            if let paneDrag {
+            // A `.desktop` satellite has NO merge-back affordance — the desktop never joins a tab
+            // (docs/DECISIONS.md 2026-07-22), so the grab strip would be a dead gesture.
+            if let paneDrag, store.tree.spec(for: paneID)?.kind != .desktop {
                 SatelliteDragStrip(store: store, paneID: paneID, coordinator: paneDrag)
             }
         }
@@ -209,11 +211,19 @@ final class SatellitePaneWindowController: NSWindowController, NSWindowDelegate 
 
     func windowShouldClose(_: NSWindow) -> Bool {
         if closingFromCoordinator { return true }
-        // User-initiated close = REATTACH (non-destructive; the pane folds back into its tab). Veto the
-        // AppKit close — the store mutation drives the coordinator diff, which closes via
-        // `closeFromCoordinator()`. If the store is gone (teardown race) allow the close.
+        // If the store is gone (teardown race) allow the close.
         guard let store else { return true }
-        store.reattachPane(paneID)
+        if store.tree.spec(for: paneID)?.kind == .desktop {
+            // A DESKTOP satellite's close is a REAL close — the desktop never folds into a tab
+            // (docs/DECISIONS.md 2026-07-22), so closing the window ends the stream session. No
+            // confirmation surface: a video pane hosts no running child process to lose.
+            store.closePaneTree(paneID)
+        } else {
+            // User-initiated close = REATTACH (non-destructive; the pane folds back into its tab).
+            store.reattachPane(paneID)
+        }
+        // Veto the AppKit close either way — the store mutation drives the coordinator diff, which
+        // closes via `closeFromCoordinator()` (the ONE real teardown path).
         return false
     }
 
@@ -228,6 +238,18 @@ final class SatellitePaneWindowController: NSWindowController, NSWindowDelegate 
         keyState.isKey = false
         store?.noteSatelliteKey(paneID: paneID, isKey: false)
     }
+
+    // FULLSCREEN AUTO-ARMS system-key capture (docs/DECISIONS.md 2026-07-22, the industry-converged
+    // pattern): a fullscreen desktop window forwards ⌘Tab/⌘Space… to the host regardless of the
+    // latched per-target immersive toggle; exiting returns to the latched value. Routed through the
+    // handle seam — a graceful no-op for a terminal satellite.
+    func windowDidEnterFullScreen(_: Notification) {
+        store?.noteSatelliteFullscreen(paneID: paneID, isFullscreen: true)
+    }
+
+    func windowDidExitFullScreen(_: Notification) {
+        store?.noteSatelliteFullscreen(paneID: paneID, isFullscreen: false)
+    }
 }
 
 // MARK: - Coordinator (detachedPanes ⇄ NSWindows diff)
@@ -241,6 +263,14 @@ final class SatelliteWindowsCoordinator {
     private var controllers: [PaneID: SatellitePaneWindowController] = [:]
     /// Cascade origin so a burst of detaches doesn't stack windows exactly on top of each other.
     private var cascadeStep = 0
+
+    /// Mirror of the app's automation gate (`SlopDeskClientApp.hasAutomationEnvironment`): an E2E
+    /// run must never enter fullscreen (deterministic geometry for pixel checks).
+    private static func hasAutomationEnvironment() -> Bool {
+        let env = WorkspaceStore.automationInputs()
+        return ["SLOPDESK_AUTOCONNECT_HOST", "SLOPDESK_VIDEO_AUTOCONNECT_HOST"]
+            .contains { (env[$0]?.isEmpty == false) }
+    }
 
     /// One sync pass. `decorate` wraps each window's root with the scene-level environment (theme tint /
     /// colour scheme / preferences / overlay coordinator) — an `NSHostingView` root inherits NOTHING from
@@ -262,12 +292,19 @@ final class SatelliteWindowsCoordinator {
         // Open a window per newly-detached pane — at its recorded tear-off drop point when the detach
         // came from a drag, else cascaded off centre.
         for entry in detached where controllers[entry.pane] == nil {
-            let title = store.tree.spec(for: entry.pane)?.title ?? "Detached Pane"
+            let spec = store.tree.spec(for: entry.pane)
+            let isDesktop = spec?.kind == .desktop
+            let title = spec?.title ?? "Detached Pane"
             let controller = SatellitePaneWindowController(
                 store: store, paneID: entry.pane, title: title, paneDrag: paneDrag, decorate: decorate,
             )
             if let window = controller.window {
-                if let drop = paneDrag?.takePlacement(for: entry.pane) {
+                if isDesktop {
+                    // The desktop window is a primary surface, not a popped-out pane — open it
+                    // roomy (the stream letterboxes inside) and centred.
+                    window.setContentSize(NSSize(width: 1280, height: 800))
+                    window.center()
+                } else if let drop = paneDrag?.takePlacement(for: entry.pane) {
                     // Land the window's top edge just above the drop point (screen coords are
                     // bottom-left origin), roughly centred on the cursor — the pane appears to settle
                     // where the user let go. AppKit clamps the frame onto the screen if the drop was
@@ -288,6 +325,14 @@ final class SatelliteWindowsCoordinator {
             controllers[entry.pane] = controller
             controller.showWindow(nil)
             controller.window?.makeKeyAndOrderFront(nil)
+            // Default presentation (`desktopWindow.presentation`, the Parsec model): a desktop
+            // window can open STRAIGHT into native fullscreen. Never under automation — an E2E run
+            // needs deterministic window geometry (the window-size gate precedent).
+            if isDesktop, SettingsKey.desktopWindowPresentation == .fullscreen,
+               !Self.hasAutomationEnvironment()
+            {
+                controller.window?.toggleFullScreen(nil)
+            }
         }
 
         // Keep titles fresh on re-syncs (a rename / video rebind updates the spec title).

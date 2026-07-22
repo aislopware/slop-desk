@@ -220,11 +220,33 @@ public final class RemoteWindowModel {
     /// Records the immersive toggle's state (the view calls this on a successful engage, on the manual
     /// toggle-off, and on the ⌃⌥⌘E escape chord — never on a plain unmount, which must keep the wish so
     /// the remounted view re-engages). Dedups so a redundant mirror-sync never spams the persistence sink.
+    /// An EXPLICIT off also drops the fullscreen auto-arm (the escape hatch must win — the Moonlight
+    /// lesson: capture with no in-stream off switch traps the user).
     public func setImmersiveDesired(_ on: Bool) {
+        if !on, fullscreenImmersiveOverride {
+            fullscreenImmersiveOverride = false
+        }
         guard immersiveDesired != on else { return }
         immersiveDesired = on
         notifyModesChanged()
     }
+
+    /// FULLSCREEN AUTO-ARM (docs/DECISIONS.md 2026-07-22): while the pane's dedicated window is in
+    /// native fullscreen, system-key capture is armed regardless of the LATCHED immersive toggle —
+    /// the industry-converged pattern (fullscreen ⇒ the remote owns the keyboard). Never persisted
+    /// (``currentModes`` reads only ``immersiveDesired``); exiting fullscreen returns capture to the
+    /// latched value. Cleared by an explicit immersive-off (see ``setImmersiveDesired(_:)``).
+    public private(set) var fullscreenImmersiveOverride = false
+
+    /// The satellite window delegate's fullscreen report (via the handle seam).
+    public func noteFullscreenPresentation(_ isFullscreen: Bool) {
+        guard fullscreenImmersiveOverride != isFullscreen else { return }
+        fullscreenImmersiveOverride = isFullscreen
+    }
+
+    /// The EFFECTIVE immersive wish the view engages on: the latched toggle OR the fullscreen
+    /// auto-arm.
+    public var immersiveEffective: Bool { immersiveDesired || fullscreenImmersiveOverride }
 
     // MARK: Latched-modes persistence (restart survival)
 

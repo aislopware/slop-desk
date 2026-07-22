@@ -1255,6 +1255,9 @@ private struct AppearanceSettingsTab: View {
     @Default(.windowRows) private var windowRows
     @Default(.windowWidthPx) private var windowWidthPx
     @Default(.windowHeightPx) private var windowHeightPx
+    // Remote-desktop window presentation (`desktop-window`) — macOS-only like window-size (the
+    // dedicated desktop window is an `NSWindow`; iOS has no desktop window yet).
+    @Default(.desktopWindowPresentation) private var desktopWindowPresentation
     @Default(.dockIconAnimateProgress) private var dockIconAnimateProgress
     @Default(.dockIconErrorBadge) private var dockIconErrorBadge
     #endif
@@ -1465,6 +1468,18 @@ private struct AppearanceSettingsTab: View {
             Text("Applied to the next window opened.")
                 .font(.system(size: Slate.Typeface.footnote))
                 .foregroundStyle(Slate.Text.secondary)
+            // REMOTE DESKTOP (`desktop-window`): how the dedicated desktop window opens (⌥⌘N) —
+            // a regular window, or straight into native fullscreen (the Parsec model). Read once
+            // per desktop-window open by the satellite coordinator; fullscreen also auto-arms
+            // immersive system-key capture while it lasts.
+            pickerRow(
+                "Remote Desktop Opens",
+                "Fullscreen also captures system shortcuts (⌘Tab) for the host while it lasts.",
+                selection: $desktopWindowPresentation,
+            ) {
+                Text("In a window").tag(DesktopWindowPresentation.window)
+                Text("Fullscreen").tag(DesktopWindowPresentation.fullscreen)
+            }
         }
     }
     #endif
