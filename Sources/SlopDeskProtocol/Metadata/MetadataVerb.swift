@@ -91,6 +91,28 @@ public enum MetadataVerb: UInt8, Sendable, Equatable, CaseIterable {
     /// host answers `.unsupportedVerb` (forward-tolerance) and the client falls back to reverse-DNS /
     /// the raw target host.
     case hostInfo = 14
+    /// **Side-effecting.** Write the client's clipboard onto the HOST's general pasteboard —
+    /// the push half of bidirectional clipboard sync (copy on the client → paste on the host, incl.
+    /// Claude Code's Ctrl+V image paste and a plain ⌘V inside a remote-desktop pane). Host-global
+    /// like 11/12 (the pasteboard is machine state, not pane state), so any connected pane's channel
+    /// carries it. Request payload: `MetadataCodec.encodeClipboardSet` (`[UInt8 kind][content]`;
+    /// kind 1 = UTF-8 text, 2 = PNG). Response: empty payload — status `.ok` on a successful
+    /// pasteboard write, `.error` on a malformed/over-cap/unknown-kind payload. The host remembers
+    /// the resulting pasteboard `changeCount` so ``readClipboard`` never echoes a client-pushed clip
+    /// straight back (the loop-suppression half of the contract).
+    case setClipboard = 15
+    /// **Pure read.** The host's general-pasteboard content — the pull half of clipboard
+    /// sync (copy on the host, e.g. ⌘C inside a remote-desktop pane → paste on the client). The
+    /// client polls this alongside its local pasteboard watch. Request payload:
+    /// `MetadataCodec.encodeClipboardReadRequest` (`Int64` last-seen host `changeCount`; `-1` =
+    /// baseline probe — the host replies count-only so a fresh connection never overwrites the
+    /// client clipboard with stale host state). Response:
+    /// `MetadataCodec.encodeClipboardReadResponse` (`[Int64 changeCount][UInt8 kind][content]`;
+    /// kind 0 = unchanged/empty/none — no content follows, also used when the current clip is the
+    /// one the client itself pushed via ``setClipboard``). Ships host clipboard CONTENT to the
+    /// client — deliberately unconfined like the mesh-trusted read verbs (both ends are the same
+    /// user's machines; security = WireGuard, docs/DECISIONS).
+    case readClipboard = 16
 }
 
 /// The outcome of a ``WireMessage/metadataResponse(requestID:status:payload:)``. The host ALWAYS

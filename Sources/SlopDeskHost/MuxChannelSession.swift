@@ -2157,6 +2157,17 @@ final class MuxChannelSession: @unchecked Sendable {
                 enqueueControl([response])
                 return
             }
+            // The clipboard-sync verbs (setClipboard = 15 writes the client's clip onto the host's
+            // general pasteboard; readClipboard = 16 ships the host's clip back, with changeCount
+            // dedupe + echo suppression) actuate on host-global pasteboard state via
+            // `HostClipboardPerformer`. Handled HERE — BEFORE, and never reaching, the read-only
+            // `MetadataResponseBuilder`. `response` returns nil for every OTHER verb.
+            if let response = HostClipboardPerformer.response(
+                requestID: requestID, verb: verb, payload: payload,
+            ) {
+                enqueueControl([response])
+                return
+            }
             let probe = HostMetadataProbe(masterFD: masterFD, shellPID: shellPID)
             let response = MetadataResponseBuilder(query: probe)
                 .response(requestID: requestID, verb: verb, payload: payload)

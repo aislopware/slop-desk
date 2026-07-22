@@ -40,6 +40,10 @@ public struct SlopDeskClientApp: App {
     @State private var dialogMonitor: SystemDialogMonitor
     #if os(macOS)
     @State private var clipboardMonitor: ClipboardMonitor
+    /// Bidirectional clipboard sync with the host (copy here → paste there, and back) over the
+    /// metadata RPC. macOS-only, like the monitor; its push/pull seams resolve the first connected
+    /// pane's ``MetadataClient`` lazily at call time (panes churn, the engine outlives them).
+    @State private var clipboardSync: ClipboardSyncEngine
     /// The macOS Dock progress/error-tint controller (`NSApp.dockTile`). macOS-only — there is no
     /// iOS Dock. Fed the store's resolved ``WorkspaceStore/dockTileModel`` on each progress/completion edge;
     /// the Dock bounce rides ``CommandCompletionNotifier/bounceDock``.
@@ -498,6 +502,20 @@ public struct SlopDeskClientApp: App {
         let windowBox = WeakWindowBox()
         _windowBox = State(initialValue: windowBox)
         _clipboardMonitor = State(initialValue: ClipboardMonitor(store: store))
+        // CLIPBOARD SYNC: copy on this Mac → the HOST pasteboard mirrors it within a tick (so
+        // Claude Code's Ctrl+V image paste and a plain ⌘V in a remote-desktop pane just work), and a
+        // host-side copy flows back. Routed through whichever pane carries a live channel — same
+        // resolve-at-call-time idiom as the Agents card / hostInfo fetcher.
+        _clipboardSync = State(initialValue: ClipboardSyncEngine(
+            push: { [weak store] clip in
+                guard let store, let client = Self.firstConnectedMetadataClient(store) else { return false }
+                return await client.setClipboard(clip)
+            },
+            pull: { [weak store] lastSeen in
+                guard let store, let client = Self.firstConnectedMetadataClient(store) else { return nil }
+                return await client.readClipboard(lastSeenChangeCount: lastSeen)
+            },
+        ))
         // PASTE AS KEYSTROKES: the LIVE local-clipboard reader for the ⌥⌘V chord + the remote-GUI pane's
         // paste menu. Reads the CURRENT pasteboard (not the up-to-1s-stale ring head), so it works even when
         // clipboard-history recording is off. Main-actor only (route()/currentLocalClipboard() are @MainActor).
@@ -659,6 +677,13 @@ public struct SlopDeskClientApp: App {
                 .task {
                     guard !Self.hasAutomationEnvironment() else { return }
                     await clipboardMonitor.run()
+                }
+                // Clipboard-sync poll loop (push local copies to the host, pull host copies back).
+                // Skipped under automation like the monitor: an E2E run must not mirror the
+                // developer's real pasteboard onto the test host (or vice versa).
+                .task {
+                    guard !Self.hasAutomationEnvironment() else { return }
+                    await clipboardSync.run()
                 }
                 // Install the app-level keybinding dispatcher's `.keyDown` local monitor once the
                 // scene is up. It runs under automation too (the keybinding path is part of what HW E2E

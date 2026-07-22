@@ -400,6 +400,121 @@ public enum MetadataCodec {
         return items
     }
 
+    // MARK: - Clipboard sync  (setClipboard = 15 / readClipboard = 16)
+
+    /// One synced clipboard clip: a raw kind byte (forward-tolerant carry, like ``PortInfo/proto``)
+    /// plus the content bytes (UTF-8 text or a PNG image — see ``ClipboardKind``).
+    public struct ClipboardClip: Equatable, Sendable {
+        /// The content kind as a RAW byte; see ``ClipboardKind`` / ``kind``.
+        public var kindByte: UInt8
+        /// The content: UTF-8 text bytes for ``ClipboardKind/text``, PNG bytes for
+        /// ``ClipboardKind/imagePNG``. Opaque at the codec layer (PNG is not UTF-8); the APPLIER
+        /// validates text strictly before use.
+        public var bytes: Data
+
+        public init(kindByte: UInt8, bytes: Data) {
+            self.kindByte = kindByte
+            self.bytes = bytes
+        }
+
+        public init(kind: ClipboardKind, bytes: Data) {
+            self.init(kindByte: kind.rawValue, bytes: bytes)
+        }
+
+        /// The typed kind, or `nil` for an unknown future ``kindByte`` (forward-tolerant — the
+        /// receiver drops the clip, never traps).
+        public var kind: ClipboardKind? { ClipboardKind(rawValue: kindByte) }
+    }
+
+    /// The meaning of ``ClipboardClip/kindByte``. `0` is RESERVED for the read-response's
+    /// "unchanged / empty" arm and is never a clip kind.
+    public enum ClipboardKind: UInt8, Sendable, Equatable, CaseIterable {
+        case text = 1
+        case imagePNG = 2
+    }
+
+    /// The per-clip content cap (12 MiB) — well under the 16 MiB wire frame cap with envelope
+    /// headroom. Both ends enforce it: the sender SKIPS an over-cap clip (the clipboard stays
+    /// local, sync silently lags), the decoder rejects one as malformed.
+    public static let maxClipboardContentBytes = 12 * 1024 * 1024
+
+    /// The ``MetadataVerb/readClipboard`` request value meaning "baseline probe": the host replies
+    /// with its current `changeCount` and NO content, so a fresh connection learns where the host
+    /// clipboard stands without pulling (and applying) stale pre-connection state.
+    public static let clipboardBaselineProbe: Int64 = -1
+
+    /// Encodes a ``MetadataVerb/setClipboard`` request payload: `[UInt8 kind][content]` (the content
+    /// runs to the end of the payload — the RPC envelope already frames it).
+    public static func encodeClipboardSet(_ clip: ClipboardClip) -> Data {
+        var out = Data(capacity: 1 + clip.bytes.count)
+        out.append(clip.kindByte)
+        out.append(clip.bytes)
+        return out
+    }
+
+    /// Decodes a ``MetadataVerb/setClipboard`` request payload (validate-then-drop): an empty payload
+    /// throws `truncated`, an over-cap content throws `malformedBody`. The kind byte is carried RAW
+    /// (an unknown future kind decodes fine; the applier refuses it with `.error`).
+    public static func decodeClipboardSet(_ data: Data) throws -> ClipboardClip {
+        guard let kindByte = data.first else { throw SlopDeskError.truncated }
+        let bytes = data.dropFirst()
+        guard bytes.count <= maxClipboardContentBytes else {
+            throw SlopDeskError.malformedBody("clipboardSet: content exceeds cap")
+        }
+        return ClipboardClip(kindByte: kindByte, bytes: Data(bytes))
+    }
+
+    /// Encodes a ``MetadataVerb/readClipboard`` request payload: the `Int64` (BE) host `changeCount`
+    /// the client last saw (``clipboardBaselineProbe`` = none yet — baseline probe).
+    public static func encodeClipboardReadRequest(lastSeenChangeCount: Int64) -> Data {
+        var out = Data(capacity: 8)
+        out.appendBE(lastSeenChangeCount)
+        return out
+    }
+
+    /// Decodes a ``MetadataVerb/readClipboard`` request payload (throws `truncated` on a short body).
+    public static func decodeClipboardReadRequest(_ data: Data) throws -> Int64 {
+        var reader = BigEndianReader(data)
+        return try reader.readInt64()
+    }
+
+    /// Encodes a ``MetadataVerb/readClipboard`` response payload:
+    /// `[Int64 changeCount][UInt8 kind][content]`, where a `nil` clip writes kind `0` ("unchanged /
+    /// empty / client's own push") and no content.
+    public static func encodeClipboardReadResponse(changeCount: Int64, clip: ClipboardClip?) -> Data {
+        var out = Data(capacity: 8 + 1 + (clip?.bytes.count ?? 0))
+        out.appendBE(changeCount)
+        guard let clip else {
+            out.append(0)
+            return out
+        }
+        out.append(clip.kindByte)
+        out.append(clip.bytes)
+        return out
+    }
+
+    /// Decodes a ``MetadataVerb/readClipboard`` response payload (validate-then-drop): kind `0`
+    /// returns a `nil` clip (any trailing bytes after a kind-0 marker are malformed), an over-cap
+    /// content throws `malformedBody`.
+    public static func decodeClipboardReadResponse(
+        _ data: Data,
+    ) throws -> (changeCount: Int64, clip: ClipboardClip?) {
+        var reader = BigEndianReader(data)
+        let changeCount = try reader.readInt64()
+        let kindByte = try reader.readUInt8()
+        let bytes = try reader.readBytes(reader.bytesRemaining)
+        guard kindByte != 0 else {
+            guard bytes.isEmpty else {
+                throw SlopDeskError.malformedBody("clipboardRead: content after kind-0 marker")
+            }
+            return (changeCount, nil)
+        }
+        guard bytes.count <= maxClipboardContentBytes else {
+            throw SlopDeskError.malformedBody("clipboardRead: content exceeds cap")
+        }
+        return (changeCount, ClipboardClip(kindByte: kindByte, bytes: bytes))
+    }
+
     // MARK: - Shared encode/decode helpers
 
     /// A list count clamped to the `[0, 65535]` the `UInt16` count field can hold, so a >65535-entry

@@ -199,6 +199,35 @@ public final class MetadataClient {
         return name
     }
 
+    /// Pushes the client's clipboard clip onto the HOST's general pasteboard
+    /// (``MetadataVerb/setClipboard``; the push half of clipboard sync). Host-global like the
+    /// agent-hooks verbs — routed through whichever pane carries a live channel. Returns `true` only
+    /// on a host `.ok`; `false` for `.error` (malformed/over-cap/unknown kind), an OLD host answering
+    /// `.unsupportedVerb`, or a dropped reply (the registry timeout → `.error`) — the caller keeps
+    /// the clip pending and retries. The response payload is empty (side-effect-only verb).
+    public func setClipboard(_ clip: MetadataCodec.ClipboardClip) async -> Bool {
+        let (status, _) = await request(.setClipboard, payload: MetadataCodec.encodeClipboardSet(clip))
+        return status == .ok
+    }
+
+    /// Pulls the HOST's general-pasteboard state (``MetadataVerb/readClipboard``; the pull half of
+    /// clipboard sync). `lastSeenChangeCount` is the host `changeCount` from the previous pull
+    /// (``MetadataCodec/clipboardBaselineProbe`` = first pull — the host answers count-only so a
+    /// fresh connection never applies stale host state). Returns the host's current count plus the
+    /// clip when it changed (`nil` clip = unchanged / empty / the client's own push), or `nil`
+    /// entirely on any failure (non-`ok` status, an old host's `.unsupportedVerb`, a malformed body,
+    /// a dropped reply) — the caller keeps its last-seen count and retries next tick.
+    public func readClipboard(
+        lastSeenChangeCount: Int64,
+    ) async -> (changeCount: Int64, clip: MetadataCodec.ClipboardClip?)? {
+        let (status, payload) = await request(
+            .readClipboard,
+            payload: MetadataCodec.encodeClipboardReadRequest(lastSeenChangeCount: lastSeenChangeCount),
+        )
+        guard status == .ok else { return nil }
+        return try? MetadataCodec.decodeClipboardReadResponse(payload)
+    }
+
     // MARK: Core round-trip
 
     /// The decoded `agentHookStatus` (verb 13) reply — the two flag bytes, typed.

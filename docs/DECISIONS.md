@@ -1475,3 +1475,33 @@ substitution forced by the pure-native-Swift rule.
   does not track cap-0 ack discards — the cold tail can still start mid-segment there (pre-existing
   behaviour; the jiggle repaint covers the visible outcome). A journal already beheaded by a
   pre-fix daemon life scans as main-screen until the bad head compacts away (no-backcompat rule).
+
+## Clipboard sync = two MetadataVerbs on the E4 RPC, host pasteboard is the meeting point (2026-07-22)
+
+- ✅ **Problem:** copy on the client did NOT reach the host pasteboard — Claude Code's Ctrl+V found
+  "no image in clipboard", and pasting into a remote-desktop pane needed the manual paste-as-keystrokes
+  action (text-only, CGEvents). Host-side copies never reached the client at all.
+- ✅ **Transport = verbs `15` setClipboard / `16` readClipboard on the EXISTING E4 metadata RPC** (the
+  E10/E13 pattern: new verb bytes, no new wire type, envelope byte-identical → golden zero-diff).
+  Host-global like the agent-hooks verbs — routed through whichever pane carries a live channel
+  (`firstConnectedMetadataClient`); a desktop-pane-only workspace with zero terminal channels does not
+  sync (accepted residual — the workspace is terminal-first). Content kinds: UTF-8 text + PNG (image
+  preferred; TIFF transcoded both ways so screenshots and app copies land everywhere, incl. Claude
+  Code's `PNGf` read). Per-clip cap 12 MiB under the 16 MiB frame cap.
+- ✅ **Pull is a POLL, not a push wire type.** The client's `ClipboardSyncEngine` ticks at 1 Hz (the
+  `ClipboardMonitor` pattern) and polls `readClipboard` with the last-seen host `changeCount` — one
+  tiny count-only RPC per tick when nothing changed. A host→client push type would have cost a new
+  frozen wire type + golden churn for a 1 s latency win on a non-latency path.
+- ✅ **Loop safety is DOUBLE-guarded, baseline-first.** Host: remembers the changeCount its last
+  client push produced and answers "unchanged" for it (never echoes a push back). Client: remembers
+  the last clip pushed OR applied and skips both re-push (its own apply) and re-apply by content
+  compare. A ping-pong therefore needs both ends to fail. First pull after (re)connect is a baseline
+  probe (`lastSeen = -1` → count-only), so connecting never overwrites the client clipboard with
+  stale pre-connection host state; a pull failure resets the baseline.
+- ✅ **Skips:** concealed clips (`org.nspasteboard.ConcealedType`, password managers) are never
+  pushed; file-copy clips (`public.file-url`) are never synced either way (a path is meaningless on
+  the other machine); over-cap clips silently stay local. Push failures stay PENDING and retry every
+  tick until a newer local copy replaces them. Under automation the engine does not run (an E2E run
+  must not mirror the developer's real pasteboard).
+- ✅ **Paste-as-keystrokes (⌥⌘V) stays** — it is the fallback for a read-only-disabled sync future and
+  the only path that types into a host field that blocks programmatic paste.

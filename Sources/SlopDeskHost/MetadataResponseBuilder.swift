@@ -176,6 +176,15 @@ struct MetadataResponseBuilder {
             // marker), so they never reach here in production. Reaching this case is a routing bug;
             // answer `.error` defensively (this pure reducer must NEVER perform a host side effect).
             return reply(requestID, .error, Data())
+
+        case .setClipboard,
+             .readClipboard:
+            // The clipboard-sync verbs are likewise NOT this READ-ONLY builder's job —
+            // `MuxChannelSession.serveMetadata` routes them to `HostClipboardPerformer` BEFORE the
+            // builder (both touch the host's general pasteboard), so they never reach here in
+            // production. Reaching this case is a routing bug; answer `.error` defensively (this
+            // pure reducer must NEVER perform a host side effect).
+            return reply(requestID, .error, Data())
         }
     }
 

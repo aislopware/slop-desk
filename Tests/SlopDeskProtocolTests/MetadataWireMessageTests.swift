@@ -264,9 +264,12 @@ final class MetadataWireMessageTests: XCTestCase {
         XCTAssertEqual(MetadataVerb.agentHookStatus.rawValue, 13)
         // The host-identity pure read (raw UTF-8 hostname payload, docs/20).
         XCTAssertEqual(MetadataVerb.hostInfo.rawValue, 14)
+        // The two clipboard-sync verbs (15 side-effecting push, 16 the pull read — docs/20).
+        XCTAssertEqual(MetadataVerb.setClipboard.rawValue, 15)
+        XCTAssertEqual(MetadataVerb.readClipboard.rawValue, 16)
         // Unknown verb bytes map to nil (caller answers unsupportedVerb) — never a trap.
         XCTAssertNil(MetadataVerb(rawValue: 0))
-        XCTAssertNil(MetadataVerb(rawValue: 15))
+        XCTAssertNil(MetadataVerb(rawValue: 17))
         XCTAssertNil(MetadataVerb(rawValue: 200))
     }
 

@@ -183,13 +183,15 @@ never offers or falls back to another version.
     count) + changed files), `5` gitDiff, `6` listDirectory, `7` listAgentSessions,
     `8` readAgentSession — all **read-only** — plus the two **side-effecting** verbs `9` openPath and
     `10` revealPath (E10), the **agent-hooks** verbs `11` installAgentHooks / `12` uninstallAgentHooks
-    (side-effecting) / `13` agentHookStatus (a pure read returning a 2-byte flag payload) (E13), and
-    `14` hostInfo (a **pure read** returning the host machine's own hostname). `payload` is the
+    (side-effecting) / `13` agentHookStatus (a pure read returning a 2-byte flag payload) (E13),
+    `14` hostInfo (a **pure read** returning the host machine's own hostname), and the **clipboard-sync**
+    verbs `15` setClipboard (side-effecting) / `16` readClipboard (a pure read). `payload` is the
     verb's length-prefixed argument — empty for the pane-scoped verbs (`processes`/`ports`/`cwd`/`gitStatus`)
     AND for the host-global verbs (`installAgentHooks`/`uninstallAgentHooks`/`agentHookStatus`/`hostInfo`),
     a UTF-8 path/id for the parameterized ones
-    (`gitDiff`/`listDirectory`/`listAgentSessions`/`readAgentSession`), and a raw UTF-8 **absolute host
-    path** for `openPath`/`revealPath`.
+    (`gitDiff`/`listDirectory`/`listAgentSessions`/`readAgentSession`), a raw UTF-8 **absolute host
+    path** for `openPath`/`revealPath`, and the `MetadataCodec` clipboard encodings for
+    `setClipboard`/`readClipboard` (below).
   - **`openPath` (9) / `revealPath` (10) are the ONLY side-effecting verbs** (E10 — the ⌘click /
     ⌘⇧click link actions; the file lives on the host Mac, not the client). The host opens the path in its
     default app / Finder (`NSWorkspace.open`) or reveals it in Finder
@@ -224,6 +226,30 @@ never offers or falls back to another version.
     NAME even when the user connected by IP; an old host answers `unsupportedVerb` and the client falls
     back to reverse-DNS, then the raw target host. Served by the read-only responder
     (`MetadataResponseBuilder` → `HostMetadataProbe.hostName()`).
+  - **`setClipboard` (15) / `readClipboard` (16) are the clipboard-sync verbs** (bidirectional
+    client↔host pasteboard mirroring — a client-side copy pastes on the host, incl. Claude Code's
+    Ctrl+V image paste and a plain ⌘V inside a remote-desktop pane, and a host-side copy flows back).
+    Both are **host-global** like 11/12/13 (the pasteboard is machine state; any connected pane's
+    channel carries them). `setClipboard` is **side-effecting**: request payload =
+    `[UInt8 kind][content…]` (kind `1` = UTF-8 text, `2` = PNG; content runs to the end of the RPC
+    payload), the host validates (strict UTF-8 for text, a decodable PNG for images, an unknown kind
+    or over-cap content → `error` — the per-clip cap is **12 MiB**, under the 16 MiB frame cap) and
+    writes its general pasteboard (PNG clips also get a transcoded TIFF twin so every host app can
+    paste them), replying with an **empty payload** + status. `readClipboard` is a **pure read**:
+    request payload = `[Int64 BE lastSeenChangeCount]` (`-1` = **baseline probe**), response payload =
+    `[Int64 BE changeCount][UInt8 kind][content…]` where kind `0` means "unchanged / empty / the
+    client's own push" and carries NO content. The host answers count-only for a baseline probe (a
+    fresh connection learns where the host clipboard stands WITHOUT pulling stale pre-connection
+    state), for an unchanged `changeCount`, and for the changeCount produced by the last
+    `setClipboard` (**echo suppression** — the host never ships the client's own clip back; the
+    client holds the mirror-image content-compare guard, so a sync loop needs both ends to fail).
+    A changed host clip ships image-preferred (PNG as-is, else TIFF transcoded to PNG, else non-empty
+    text); file-copy clips (`public.file-url` — a host path is meaningless on the client) and
+    over-cap clips answer kind `0`. `readClipboard` deliberately ships host clipboard CONTENT
+    unconfined (both ends are the same user's machines; security = the WireGuard mesh, like every
+    read verb's trust model). The host routes 15/16 to `HostClipboardPerformer` BEFORE the read-only
+    responder; the client's `ClipboardSyncEngine` polls both directions at 1 Hz and skips concealed
+    (`org.nspasteboard.ConcealedType` password-manager) clips on push.
   - **`metadataResponse`** body = `[UInt32 BE requestID][UInt8 status][UInt32 BE payloadLen][payload]`.
     The host **always replies** (so the client's pending-request registry never hangs — `status =
     error`/empty on any failure). `status` is the raw `UInt8` of `MetadataStatus`: `0` ok, `1`
@@ -239,11 +265,13 @@ never offers or falls back to another version.
     stream host file CONTENTS back) path args are confined to the pane's cwd subtree (reject `..` escapes
     / absolute paths outside the repo root) and entry counts / byte sizes are capped before reading, so a
     hostile `listDirectory("/etc")` / `readAgentSession("../../secrets")` cannot exfiltrate arbitrary host
-    files. The side-effecting `openPath`/`revealPath` (9/10) and the agent-hooks verbs (11/12/13) are
-    exempt from cwd confinement — they return only a status byte (and, for `agentHookStatus`, the two
-    flag bytes), so no host file contents cross the wire and there is nothing to exfiltrate — but still
-    validate-then-drop (`openPath`/`revealPath`: empty/relative → `error`, missing → `notFound`;
-    `install`/`uninstall`: a thrown disk write → `error`). All ride the
+    files. The side-effecting `openPath`/`revealPath` (9/10), the agent-hooks verbs (11/12/13), and the
+    clipboard-sync verbs (15/16) are exempt from cwd confinement — 9–13 return only a status byte (and,
+    for `agentHookStatus`, the two flag bytes), so no host file contents cross the wire and there is
+    nothing to exfiltrate; 15/16 move pasteboard content by design (same-user machines, mesh-trusted) —
+    but all still validate-then-drop (`openPath`/`revealPath`: empty/relative → `error`, missing →
+    `notFound`; `install`/`uninstall`: a thrown disk write → `error`; `setClipboard`: malformed /
+    over-cap / unknown-kind → `error`). All ride the
     head-of-line-independent CONTROL channel like `title`/`commandStatus` and are **not**
     sequenced/replayed.
 
