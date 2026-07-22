@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96">
+  <!-- SlopDesk — "Dual Caret". Two shell prompts facing each other: the host's ❯ and
+       the client's ❮, middle strokes parallel so the pair reads as one S-zigzag.
+       The remote prompt carries the live colour. -->
+  <path d="M 28 22 L 57 39 L 28 56" fill="none" stroke="currentColor" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 68 40 L 39 57 L 68 74" fill="none" stroke="#34E27A" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

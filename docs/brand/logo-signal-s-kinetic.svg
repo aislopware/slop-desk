@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96">
+  <!-- SlopDesk — Signal S, kinetic variant (runs ONCE). The brand's single orchestrated
+       moment, same grammar as the app's connect flood: the host node lands, the wire
+       routes to the client, the client node pops live. Mechanical easing, no springs.
+       For loops (socials), re-trigger by reloading the file. -->
+  <style>
+    .wire {
+      stroke-dasharray: 1;
+      stroke-dashoffset: 1;
+      animation: slopdesk-draw 0.42s cubic-bezier(0.3, 0, 0.1, 1) 0.18s forwards;
+    }
+    .node {
+      transform-box: fill-box;
+      transform-origin: center;
+      transform: scale(0);
+      animation: slopdesk-pop 0.16s cubic-bezier(0.2, 0, 0.2, 1) forwards;
+    }
+    .host { animation-delay: 0.06s; }
+    .client { animation-delay: 0.58s; }
+    @keyframes slopdesk-draw { to { stroke-dashoffset: 0; } }
+    @keyframes slopdesk-pop { to { transform: scale(1); } }
+    @media (prefers-reduced-motion: reduce) {
+      .wire, .node { animation: none; stroke-dashoffset: 0; transform: scale(1); }
+    }
+  </style>
+  <path class="wire" pathLength="1"
+        d="M 70 26 H 40 C 30 26 26 31 26 37 C 26 43 30 48 40 48 H 56 C 66 48 70 53 70 59 C 70 65 66 70 56 70 H 26"
+        fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle class="node host" cx="70" cy="26" r="11" fill="#34E27A"/>
+  <circle class="node client" cx="26" cy="70" r="11" fill="#34E27A"/>
+</svg>

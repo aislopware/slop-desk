@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- SlopDesk app icon mock — Signal S on a flat slate squircle. Zero at-rest ornament:
+       no gradient, no glow, no border. The squircle is the Apple icon-grid superellipse
+       (continuous corners), not a plain rounded rect. Ship source = SlopDesk.icon
+       (Icon Composer, two glass layers); this SVG is the static preview of that mark. -->
+  <path d="M 256 0 C 65.5 0 0 65.5 0 256 C 0 446.5 65.5 512 256 512 C 446.5 512 512 446.5 512 256 C 512 65.5 446.5 0 256 0 Z" fill="#17191D"/>
+  <path d="M 373 139 H 213 C 160 139 139 165 139 197 C 139 229 160 256 213 256 H 299 C 352 256 373 283 373 315 C 373 347 352 373 299 373 H 139"
+        fill="none" stroke="#F2F1EC" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="373" cy="139" r="58.5" fill="#34E27A"/>
+  <circle cx="139" cy="373" r="58.5" fill="#34E27A"/>
+</svg>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96">
+  <!-- SlopDesk — "Meridian Dial". The design system made literal: a measuring
+       instrument's dial with a meridian line, needle parked at the connect-flood
+       angle. Needle + hub are the only colour — the live reading. -->
+  <circle cx="48" cy="48" r="33" fill="none" stroke="currentColor" stroke-width="7"/>
+  <ellipse cx="48" cy="48" rx="13.5" ry="33" fill="none" stroke="currentColor" stroke-width="4" opacity="0.55"/>
+  <path d="M 48 48 L 67.5 28.5" fill="none" stroke="#34E27A" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="48" cy="48" r="6.5" fill="#34E27A"/>
+</svg>

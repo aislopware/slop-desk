@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SlopDesk — logo concepts</title>
+<style>
+  :root {
+    --ink: #23262B;
+    --paper: #F2F1EC;
+    --ground-light: #F4F3EF;
+    --face-light: #FFFFFF;
+    --ground-dark: #131519;
+    --face-dark: #1C1F24;
+    --live: #34E27A;
+    --mono: "Berkeley Mono", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font-family: var(--mono);
+    background: var(--ground-light);
+    color: var(--ink);
+    padding: 56px clamp(24px, 6vw, 96px) 120px;
+  }
+  h1 { font-size: 15px; letter-spacing: .22em; text-transform: uppercase; font-weight: 600; }
+  .sub { font-size: 12px; opacity: .55; margin-top: 6px; letter-spacing: .04em; }
+  section { margin-top: 64px; }
+  h2 { font-size: 12px; letter-spacing: .2em; text-transform: uppercase; font-weight: 600; opacity: .8; }
+  .note { font-size: 12px; line-height: 1.7; opacity: .6; max-width: 68ch; margin-top: 10px; letter-spacing: .02em; }
+  .row { display: flex; gap: 20px; flex-wrap: wrap; margin-top: 20px; }
+  .card {
+    border: 1px solid rgba(35,38,43,.14);
+    padding: 28px;
+    display: flex; flex-direction: column; gap: 18px;
+    min-width: 300px; flex: 1;
+  }
+  .card.light { background: var(--face-light); color: var(--ink); }
+  .card.dark  { background: var(--face-dark);  color: var(--paper); border-color: rgba(242,241,236,.10); }
+  .card .label { font-size: 10px; letter-spacing: .18em; text-transform: uppercase; opacity: .45; }
+  .sizes { display: flex; align-items: flex-end; gap: 28px; }
+  .sizes figure { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .sizes figcaption { font-size: 10px; opacity: .4; }
+  .lockup { display: flex; align-items: center; gap: 14px; }
+  .lockup .word { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; }
+  .lockup .word b { font-weight: 600; }
+  .lockup.small { gap: 9px; }
+  .lockup.small .word { font-size: 15px; }
+  .gray svg { filter: grayscale(1); opacity: .55; }
+  .iconrow { display: flex; align-items: flex-end; gap: 36px; margin-top: 20px; }
+  .iconrow figure { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .iconrow figcaption { font-size: 10px; opacity: .45; }
+  .icon svg { filter: drop-shadow(0 1px 2px rgba(0,0,0,.18)); }
+  .replay {
+    align-self: flex-start; font-family: var(--mono); font-size: 10px;
+    letter-spacing: .14em; text-transform: uppercase; cursor: pointer;
+    background: none; border: 1px solid currentColor; color: inherit;
+    padding: 6px 12px; opacity: .55;
+  }
+  .replay:hover { opacity: 1; }
+  .verdict { margin-top: 14px; font-size: 12px; line-height: 1.7; max-width: 68ch; letter-spacing: .02em; }
+  .verdict b { color: #0E9F52; }
+</style>
+</head>
+<body>
+
+<h1>SlopDesk · logo concepts</h1>
+<div class="sub">MERIDIAN grounding — colour = live data · zero at-rest ornament · one accent (#34E27A “live”)</div>
+
+<!-- ============ CONCEPT A ============ -->
+<section>
+  <h2>A · Signal S — <span style="opacity:.5">recommended</span></h2>
+  <p class="note">The wire is the product: one low-latency trace routed between two machines,
+     shaped as the monogram S. Structure (the wire) stays ink/paper; the only colour is the two
+     endpoint nodes — the live machines. Greyscale it and it reads “disconnected”, exactly the
+     L1 drain rule the app already speaks.</p>
+  <div class="row">
+    <div class="card light">
+      <div class="label">on ground / light</div>
+      <div class="sizes">
+        <figure><svg width="128" height="128" viewBox="0 0 96 96"><path d="M 70 26 H 40 C 30 26 26 31 26 37 C 26 43 30 48 40 48 H 56 C 66 48 70 53 70 59 C 70 65 66 70 56 70 H 26" fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/><circle cx="70" cy="26" r="11" fill="#34E27A"/><circle cx="26" cy="70" r="11" fill="#34E27A"/></svg><figcaption>128</figcaption></figure>
+        <figure><svg width="48" height="48" viewBox="0 0 96 96"><path d="M 70 26 H 40 C 30 26 26 31 26 37 C 26 43 30 48 40 48 H 56 C 66 48 70 53 70 59 C 70 65 66 70 56 70 H 26" fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/><circle cx="70" cy="26" r="11" fill="#34E27A"/><circle cx="26" cy="70" r="11" fill="#34E27A"/></svg><figcaption>48</figcaption></figure>
+        <figure><svg width="24" height="24" viewBox="0 0 96 96"><path d="M 70 26 H 40 C 30 26 26 31 26 37 C 26 43 30 48 40 48 H 56 C 66 48 70 53 70 59 C 70 65 66 70 56 70 H 26" fill="none" stroke="currentColor" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/><circle cx="70" cy="26" r="12" fill="#34E27A"/><circle cx="26" cy="70" r="12" fill="#34E27A"/></svg><figcaption>24</figcaption></figure>
+        <figure><svg width="16" height="16" viewBox="0 0 96 96"><path d="M 70 26 H 40 C 30 26 26 31 26 37 C 26 43 30 48 40 48 H 56 C 66 48 70 53 70 59 C 70 65 66 70 56 70 H 26" fill="none" stroke="currentColor" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/><circle cx="70" cy="26" r="13.5" fill="#34E27A"/><circle cx="26" cy="70" r="13.5" fill="#34E27A"/></svg><figcaption>16</figcaption></figure>
+        <figure class="gray"><svg width="48" height="48" viewBox="0 0 96 96"><path d="M 70 26 H 40 C 30 26 26 31 26 37 C 26 43 30 48 40 48 H 56 C 66 48 70 53 70 59 C 70 65 66 70 56 70 H 26" fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/><circle cx="70" cy="26" r="11" fill="#34E27A"/><circle cx="26" cy="70" r="11" fill="#34E27A"/></svg><figcaption>offline</figcaption></figure>
+      </div>
+      <div class="lockup">
+        <svg width="34" height="34" viewBox="0 0 96 96"><path d="M 70 26 H 40 C 30 26 26 31 26 37 C 26 43 30 48 40 48 H 56 C 66 48 70 53 70 59 C 70 65 66 70 56 70 H 26" fill="none" stroke="currentColor" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="70" cy="26" r="11" fill="#34E27A"/><circle cx="26" cy="70" r="11" fill="#34E27A"/></svg>
+        <div class="word">slop<b>desk</b></div>
+      </div>
+    </div>
+    <div class="card dark">
+      <div class="label">on face / dark</div>
+      <div class="sizes">
+        <figure><svg width="128" height="128" viewBox="0 0 96 96"><path d="M 70 26 H 40 C 30 26 26 31 26 37 C 26 43 30 48 40 48 H 56 C 66 48 70 53 70 59 C 70 65 66 70 56 70 H 26" fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/><circle cx="70" cy="26" r="11" fill="#34E27A"/><circle cx="26" cy="70" r="11" fill="#34E27A"/></svg><figcaption>128</figcaption></figure>
+        <figure><svg width="48" height="48" viewBox="0 0 96 96"><path d="M 70 26 H 40 C 30 26 26 31 26 37 C 26 43 30 48 40 48 H 56 C 66 48 70 53 70 59 C 70 65 66 70 56 70 H 26" fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/><circle cx="70" cy="26" r="11" fill="#34E27A"/><circle cx="26" cy="70" r="11" fill="#34E27A"/></svg><figcaption>48</figcaption></figure>
+        <figure><svg width="24" height="24" viewBox="0 0 96 96"><path d="M 70 26 H 40 C 30 26 26 31 26 37 C 26 43 30 48 40 48 H 56 C 66 48 70 53 70 59 C 70 65 66 70 56 70 H 26" fill="none" stroke="currentColor" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/><circle cx="70" cy="26" r="12" fill="#34E27A"/><circle cx="26" cy="70" r="12" fill="#34E27A"/></svg><figcaption>24</figcaption></figure>
+        <figure><svg width="16" height="16" viewBox="0 0 96 96"><path d="M 70 26 H 40 C 30 26 26 31 26 37 C 26 43 30 48 40 48 H 56 C 66 48 70 53 70 59 C 70 65 66 70 56 70 H 26" fill="none" stroke="currentColor" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/><circle cx="70" cy="26" r="13.5" fill="#34E27A"/><circle cx="26" cy="70" r="13.5" fill="#34E27A"/></svg><figcaption>16</figcaption></figure>
+      </div>
+      <div class="lockup small">
+        <svg width="20" height="20" viewBox="0 0 96 96"><path d="M 70 26 H 40 C 30 26 26 31 26 37 C 26 43 30 48 40 48 H 56 C 66 48 70 53 70 59 C 70 65 66 70 56 70 H 26" fill="none" stroke="currentColor" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/><circle cx="70" cy="26" r="11.5" fill="#34E27A"/><circle cx="26" cy="70" r="11.5" fill="#34E27A"/></svg>
+        <div class="word">slop<b>desk</b></div>
+      </div>
+    </div>
+  </div>
+  <div class="iconrow">
+    <figure>
+      <div class="icon" style="width:128px;height:128px"><svg width="128" height="128" viewBox="0 0 512 512"><path d="M 256 0 C 65.5 0 0 65.5 0 256 C 0 446.5 65.5 512 256 512 C 446.5 512 512 446.5 512 256 C 512 65.5 446.5 0 256 0 Z" fill="#17191D"/><path d="M 373 139 H 213 C 160 139 139 165 139 197 C 139 229 160 256 213 256 H 299 C 352 256 373 283 373 315 C 373 347 352 373 299 373 H 139" fill="none" stroke="#F2F1EC" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/><circle cx="373" cy="139" r="58.5" fill="#34E27A"/><circle cx="139" cy="373" r="58.5" fill="#34E27A"/></svg></div>
+      <figcaption>app icon 128</figcaption>
+    </figure>
+    <figure>
+      <div class="icon" style="width:64px;height:64px"><svg width="64" height="64" viewBox="0 0 512 512"><path d="M 256 0 C 65.5 0 0 65.5 0 256 C 0 446.5 65.5 512 256 512 C 446.5 512 512 446.5 512 256 C 512 65.5 446.5 0 256 0 Z" fill="#17191D"/><path d="M 373 139 H 213 C 160 139 139 165 139 197 C 139 229 160 256 213 256 H 299 C 352 256 373 283 373 315 C 373 347 352 373 299 373 H 139" fill="none" stroke="#F2F1EC" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/><circle cx="373" cy="139" r="58.5" fill="#34E27A"/><circle cx="139" cy="373" r="58.5" fill="#34E27A"/></svg></div>
+      <figcaption>dock 64</figcaption>
+    </figure>
+    <figure>
+      <div class="icon" style="width:32px;height:32px"><svg width="32" height="32" viewBox="0 0 512 512"><path d="M 256 0 C 65.5 0 0 65.5 0 256 C 0 446.5 65.5 512 256 512 C 446.5 512 512 446.5 512 256 C 512 65.5 446.5 0 256 0 Z" fill="#17191D"/><path d="M 373 139 H 213 C 160 139 139 165 139 197 C 139 229 160 256 213 256 H 299 C 352 256 373 283 373 315 C 373 347 352 373 299 373 H 139" fill="none" stroke="#F2F1EC" stroke-width="60" stroke-linecap="round" stroke-linejoin="round"/><circle cx="373" cy="139" r="68" fill="#34E27A"/><circle cx="139" cy="373" r="68" fill="#34E27A"/></svg></div>
+      <figcaption>32</figcaption>
+    </figure>
+    <figure>
+      <div class="icon" style="width:128px;height:128px"><svg width="128" height="128" viewBox="0 0 512 512"><path d="M 256 0 C 65.5 0 0 65.5 0 256 C 0 446.5 65.5 512 256 512 C 446.5 512 512 446.5 512 256 C 512 65.5 446.5 0 256 0 Z" fill="#F2F1EC"/><path d="M 373 139 H 213 C 160 139 139 165 139 197 C 139 229 160 256 213 256 H 299 C 352 256 373 283 373 315 C 373 347 352 373 299 373 H 139" fill="none" stroke="#23262B" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/><circle cx="373" cy="139" r="58.5" fill="#34E27A"/><circle cx="139" cy="373" r="58.5" fill="#34E27A"/></svg></div>
+      <figcaption>light alt</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============ CONCEPT B ============ -->
+<section>
+  <h2>B · Dual Caret</h2>
+  <p class="note">Two shell prompts facing each other — the local ❯ and the remote ❮ — middle
+     strokes exactly parallel so the pair reads as one S-zigzag. The remote prompt carries the
+     live colour. Most “terminal” of the three; loses the most at 16&nbsp;px.</p>
+  <div class="row">
+    <div class="card light">
+      <div class="label">on ground / light</div>
+      <div class="sizes">
+        <figure><svg width="128" height="128" viewBox="0 0 96 96"><path d="M 28 22 L 57 39 L 28 56" fill="none" stroke="currentColor" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M 68 40 L 39 57 L 68 74" fill="none" stroke="#34E27A" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/></svg><figcaption>128</figcaption></figure>
+        <figure><svg width="48" height="48" viewBox="0 0 96 96"><path d="M 28 22 L 57 39 L 28 56" fill="none" stroke="currentColor" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M 68 40 L 39 57 L 68 74" fill="none" stroke="#34E27A" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/></svg><figcaption>48</figcaption></figure>
+        <figure><svg width="24" height="24" viewBox="0 0 96 96"><path d="M 28 22 L 57 39 L 28 56" fill="none" stroke="currentColor" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/><path d="M 68 40 L 39 57 L 68 74" fill="none" stroke="#34E27A" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/></svg><figcaption>24</figcaption></figure>
+        <figure><svg width="16" height="16" viewBox="0 0 96 96"><path d="M 28 22 L 57 39 L 28 56" fill="none" stroke="currentColor" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/><path d="M 68 40 L 39 57 L 68 74" fill="none" stroke="#34E27A" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/></svg><figcaption>16</figcaption></figure>
+      </div>
+      <div class="lockup">
+        <svg width="34" height="34" viewBox="0 0 96 96"><path d="M 28 22 L 57 39 L 28 56" fill="none" stroke="currentColor" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/><path d="M 68 40 L 39 57 L 68 74" fill="none" stroke="#34E27A" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div class="word">slop<b>desk</b></div>
+      </div>
+    </div>
+    <div class="card dark">
+      <div class="label">on face / dark</div>
+      <div class="sizes">
+        <figure><svg width="128" height="128" viewBox="0 0 96 96"><path d="M 28 22 L 57 39 L 28 56" fill="none" stroke="currentColor" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M 68 40 L 39 57 L 68 74" fill="none" stroke="#34E27A" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/></svg><figcaption>128</figcaption></figure>
+        <figure><svg width="48" height="48" viewBox="0 0 96 96"><path d="M 28 22 L 57 39 L 28 56" fill="none" stroke="currentColor" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M 68 40 L 39 57 L 68 74" fill="none" stroke="#34E27A" stroke-width="9.5" stroke-linecap="round" stroke-linejoin="round"/></svg><figcaption>48</figcaption></figure>
+        <figure><svg width="24" height="24" viewBox="0 0 96 96"><path d="M 28 22 L 57 39 L 28 56" fill="none" stroke="currentColor" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/><path d="M 68 40 L 39 57 L 68 74" fill="none" stroke="#34E27A" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/></svg><figcaption>24</figcaption></figure>
+        <figure><svg width="16" height="16" viewBox="0 0 96 96"><path d="M 28 22 L 57 39 L 28 56" fill="none" stroke="currentColor" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/><path d="M 68 40 L 39 57 L 68 74" fill="none" stroke="#34E27A" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/></svg><figcaption>16</figcaption></figure>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CONCEPT C ============ -->
+<section>
+  <h2>C · Meridian Dial</h2>
+  <p class="note">The design system made literal: a precision instrument's dial with a meridian
+     line, needle parked at the connect-flood angle. Elegant at large sizes, but the ellipse
+     detail dies at 16&nbsp;px and it says “measurement” more than “terminal”.</p>
+  <div class="row">
+    <div class="card light">
+      <div class="label">on ground / light</div>
+      <div class="sizes">
+        <figure><svg width="128" height="128" viewBox="0 0 96 96"><circle cx="48" cy="48" r="33" fill="none" stroke="currentColor" stroke-width="7"/><ellipse cx="48" cy="48" rx="13.5" ry="33" fill="none" stroke="currentColor" stroke-width="4" opacity="0.55"/><path d="M 48 48 L 67.5 28.5" fill="none" stroke="#34E27A" stroke-width="8" stroke-linecap="round"/><circle cx="48" cy="48" r="6.5" fill="#34E27A"/></svg><figcaption>128</figcaption></figure>
+        <figure><svg width="48" height="48" viewBox="0 0 96 96"><circle cx="48" cy="48" r="33" fill="none" stroke="currentColor" stroke-width="7"/><ellipse cx="48" cy="48" rx="13.5" ry="33" fill="none" stroke="currentColor" stroke-width="4" opacity="0.55"/><path d="M 48 48 L 67.5 28.5" fill="none" stroke="#34E27A" stroke-width="8" stroke-linecap="round"/><circle cx="48" cy="48" r="6.5" fill="#34E27A"/></svg><figcaption>48</figcaption></figure>
+        <figure><svg width="24" height="24" viewBox="0 0 96 96"><circle cx="48" cy="48" r="33" fill="none" stroke="currentColor" stroke-width="9"/><path d="M 48 48 L 67.5 28.5" fill="none" stroke="#34E27A" stroke-width="11" stroke-linecap="round"/><circle cx="48" cy="48" r="11" fill="#34E27A"/></svg><figcaption>24*</figcaption></figure>
+        <figure><svg width="16" height="16" viewBox="0 0 96 96"><circle cx="48" cy="48" r="33" fill="none" stroke="currentColor" stroke-width="11"/><path d="M 48 48 L 67.5 28.5" fill="none" stroke="#34E27A" stroke-width="13" stroke-linecap="round"/><circle cx="48" cy="48" r="12" fill="#34E27A"/></svg><figcaption>16*</figcaption></figure>
+      </div>
+      <div class="lockup">
+        <svg width="34" height="34" viewBox="0 0 96 96"><circle cx="48" cy="48" r="33" fill="none" stroke="currentColor" stroke-width="7.5"/><ellipse cx="48" cy="48" rx="13.5" ry="33" fill="none" stroke="currentColor" stroke-width="4.5" opacity="0.55"/><path d="M 48 48 L 67.5 28.5" fill="none" stroke="#34E27A" stroke-width="8.5" stroke-linecap="round"/><circle cx="48" cy="48" r="7" fill="#34E27A"/></svg>
+        <div class="word">slop<b>desk</b></div>
+      </div>
+    </div>
+    <div class="card dark">
+      <div class="label">on face / dark · * = ellipse dropped at small sizes</div>
+      <div class="sizes">
+        <figure><svg width="128" height="128" viewBox="0 0 96 96"><circle cx="48" cy="48" r="33" fill="none" stroke="currentColor" stroke-width="7"/><ellipse cx="48" cy="48" rx="13.5" ry="33" fill="none" stroke="currentColor" stroke-width="4" opacity="0.55"/><path d="M 48 48 L 67.5 28.5" fill="none" stroke="#34E27A" stroke-width="8" stroke-linecap="round"/><circle cx="48" cy="48" r="6.5" fill="#34E27A"/></svg><figcaption>128</figcaption></figure>
+        <figure><svg width="48" height="48" viewBox="0 0 96 96"><circle cx="48" cy="48" r="33" fill="none" stroke="currentColor" stroke-width="7"/><ellipse cx="48" cy="48" rx="13.5" ry="33" fill="none" stroke="currentColor" stroke-width="4" opacity="0.55"/><path d="M 48 48 L 67.5 28.5" fill="none" stroke="#34E27A" stroke-width="8" stroke-linecap="round"/><circle cx="48" cy="48" r="6.5" fill="#34E27A"/></svg><figcaption>48</figcaption></figure>
+        <figure><svg width="24" height="24" viewBox="0 0 96 96"><circle cx="48" cy="48" r="33" fill="none" stroke="currentColor" stroke-width="9"/><path d="M 48 48 L 67.5 28.5" fill="none" stroke="#34E27A" stroke-width="11" stroke-linecap="round"/><circle cx="48" cy="48" r="11" fill="#34E27A"/></svg><figcaption>24*</figcaption></figure>
+        <figure><svg width="16" height="16" viewBox="0 0 96 96"><circle cx="48" cy="48" r="33" fill="none" stroke="currentColor" stroke-width="11"/><path d="M 48 48 L 67.5 28.5" fill="none" stroke="#34E27A" stroke-width="13" stroke-linecap="round"/><circle cx="48" cy="48" r="12" fill="#34E27A"/></svg><figcaption>16*</figcaption></figure>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ KINETIC ============ -->
+<section>
+  <h2>Kinetic · the connect moment</h2>
+  <p class="note">The brand's single orchestrated moment, same grammar as the app's connect
+     flood (L4): the host node lands, the wire routes across, the client node pops live.
+     Mechanical easing, runs ONCE — the at-rest mark stays static. Standalone asset:
+     <code>logo-signal-s-kinetic.svg</code> (respects prefers-reduced-motion). For launch
+     screens, socials, loading states.</p>
+  <div class="row">
+    <div class="card light">
+      <div class="label">connect · light</div>
+      <div id="kin-light"><svg width="160" height="160" viewBox="0 0 96 96">
+        <style>
+          #kin-light .wire { stroke-dasharray: 1; stroke-dashoffset: 1; animation: kdraw .42s cubic-bezier(.3,0,.1,1) .18s forwards; }
+          #kin-light .node { transform-box: fill-box; transform-origin: center; transform: scale(0); animation: kpop .16s cubic-bezier(.2,0,.2,1) forwards; }
+          #kin-light .host { animation-delay: .06s; }
+          #kin-light .client { animation-delay: .58s; }
+          @keyframes kdraw { to { stroke-dashoffset: 0; } }
+          @keyframes kpop { to { transform: scale(1); } }
+        </style>
+        <path class="wire" pathLength="1" d="M 70 26 H 40 C 30 26 26 31 26 37 C 26 43 30 48 40 48 H 56 C 66 48 70 53 70 59 C 70 65 66 70 56 70 H 26" fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle class="node host" cx="70" cy="26" r="11" fill="#34E27A"/>
+        <circle class="node client" cx="26" cy="70" r="11" fill="#34E27A"/>
+      </svg></div>
+      <button class="replay" onclick="var e=document.getElementById('kin-light');e.innerHTML=e.innerHTML">replay</button>
+    </div>
+    <div class="card dark">
+      <div class="label">connect · dark</div>
+      <div id="kin-dark"><svg width="160" height="160" viewBox="0 0 96 96">
+        <style>
+          #kin-dark .wire { stroke-dasharray: 1; stroke-dashoffset: 1; animation: kdraw2 .42s cubic-bezier(.3,0,.1,1) .18s forwards; }
+          #kin-dark .node { transform-box: fill-box; transform-origin: center; transform: scale(0); animation: kpop2 .16s cubic-bezier(.2,0,.2,1) forwards; }
+          #kin-dark .host { animation-delay: .06s; }
+          #kin-dark .client { animation-delay: .58s; }
+          @keyframes kdraw2 { to { stroke-dashoffset: 0; } }
+          @keyframes kpop2 { to { transform: scale(1); } }
+        </style>
+        <path class="wire" pathLength="1" d="M 70 26 H 40 C 30 26 26 31 26 37 C 26 43 30 48 40 48 H 56 C 66 48 70 53 70 59 C 70 65 66 70 56 70 H 26" fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle class="node host" cx="70" cy="26" r="11" fill="#34E27A"/>
+        <circle class="node client" cx="26" cy="70" r="11" fill="#34E27A"/>
+      </svg></div>
+      <button class="replay" onclick="var e=document.getElementById('kin-dark');e.innerHTML=e.innerHTML">replay</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ SHIP FORMAT ============ -->
+<section>
+  <h2>Ship format · macOS 26 Liquid Glass</h2>
+  <p class="note">The dock icon ships as <code>SlopDesk.icon</code> (Icon Composer bundle,
+     this folder): flat slate fill + two glass layers (wire, nodes) so Tahoe renders native
+     specular/shadow around a still-flat mark instead of auto-glassing a single PNG —
+     the artwork itself stays zero-ornament. Node/wire ratio is the trend-corrected 1.2×
+     (r11 on the 96 grid); the squircle in these mocks is the Apple icon-grid superellipse,
+     and the system applies the real mask at render time.</p>
+</section>
+
+<section>
+  <h2>Verdict</h2>
+  <p class="verdict"><b>A — Signal S</b> is the recommendation: it is the only mark that is
+     simultaneously the monogram, the product story (one wire, two live machines), and a state
+     display (drain the nodes to grey = offline, exactly MERIDIAN L1). It survives 16&nbsp;px,
+     needs no gradient or ornament, and the endpoint dots rhyme with the connection cluster's
+     health plate already in the app. B is the most “terminal” but muddies at menubar sizes;
+     C is beautiful big and dead small.</p>
+</section>
+
+</body>
+</html>
