@@ -1258,6 +1258,9 @@ private struct AppearanceSettingsTab: View {
     // Remote-desktop window presentation (`desktop-window`) — macOS-only like window-size (the
     // dedicated desktop window is an `NSWindow`; iOS has no desktop window yet).
     @Default(.desktopWindowPresentation) private var desktopWindowPresentation
+    // Satellite background-pointer interaction (`satellite-window`) — macOS-only (key-window
+    // semantics are an `NSWindow` concept; iOS forwards no pointer input).
+    @Default(.satelliteBackgroundPointer) private var satelliteBackgroundPointer
     @Default(.dockIconAnimateProgress) private var dockIconAnimateProgress
     @Default(.dockIconErrorBadge) private var dockIconErrorBadge
     #endif
@@ -1484,6 +1487,16 @@ private struct AppearanceSettingsTab: View {
                 Text("Fullscreen").tag(DesktopWindowPresentation.fullscreen)
                 Text("Borderless fullscreen").tag(DesktopWindowPresentation.borderless)
             }
+            // BACKGROUND INTERACTION (`satellite-window`): pointer interaction with a remote-desktop /
+            // pop-out window that is NOT key — hover, scroll and click forward to the host and a click
+            // leaves the window inactive, so typing stays where it is. Focusing for typing stays
+            // explicit (title-bar click / ⌥⌘N). Threaded per render by `GuiLeafView`.
+            Toggle("Background Interaction", isOn: $satelliteBackgroundPointer)
+            Text(
+                "Point, click, and scroll in a remote desktop window without focusing it — typing stays in the window you're working in.",
+            )
+            .font(.system(size: Slate.Typeface.footnote))
+            .foregroundStyle(Slate.Text.secondary)
         }
     }
     #endif

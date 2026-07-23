@@ -1637,3 +1637,19 @@ substitution forced by the pure-native-Swift rule.
     old host degrades gracefully to poll-only. The status probe gained `--no-optional-locks` (a
     read-only cadence probe must never contend the user's own git on `index.lock`). → [20 §type 35],
     `RepoStatusWatcher.swift`, `ProjectGitStatusLine.swift`, `WorkspaceStore.swift` (§Section git line)
+- ✅ **2026-07-23 — Satellite windows take POINTER interaction while NOT key ("background interaction", user-directed).**
+  The dedicated remote-desktop window (and any ⌥⌘P pop-out) went inert the moment another window had
+  focus: hover/cursor tracking was `.activeInKeyWindow`-gated, AppKit consumed the first click purely
+  to activate the window, and every pointer forward was gated on `isActive` (== window key for a
+  satellite). Now a satellite surface forwards hover, clicks, drags and scroll to the host while the
+  window stays INACTIVE — and a click deliberately does NOT activate it (`acceptsFirstMouse` +
+  `shouldDelayWindowOrdering` + `preventWindowOrdering`, the drag-from-a-background-window mechanism):
+  the pointer operates the remote desktop while the KEYBOARD stays wherever the user is typing — the
+  scroll-follows-the-pointer philosophy extended to the whole satellite window. Focusing for typing
+  stays explicit (title-bar click / ⌥⌘N / ⌘\`). Keyboard while not key is untouched (macOS routes keys
+  to the key window; the immersive CGEvent tap already self-suspends on resign-key; the borderless
+  dwell gate keeps its own key guard). Canvas panes keep click-to-activate unchanged — the flag rides
+  the `RemotePaneContext` seam and `GuiLeafView` threads it ONLY for a detached pane. The pure gate
+  decisions are `BackgroundPointerPolicy` (headless-pinned; the video view itself is never
+  instantiated in tests). Setting: "Background Interaction" (Window section,
+  `satelliteWindow.backgroundPointer`, default ON). Client-only — no wire change, no host redeploy.

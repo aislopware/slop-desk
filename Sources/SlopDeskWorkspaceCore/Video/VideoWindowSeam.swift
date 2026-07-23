@@ -87,6 +87,12 @@ public struct RemotePaneContext {
     /// Wire-compatible silence: enforced purely by NOT forwarding input — no VideoControl change, no golden
     /// touch. Defaults `true` (a normal, writable pane).
     public var inputEnabled: Bool
+    /// BACKGROUND POINTER (satellite windows): `true` ⇒ the video surface keeps taking POINTER input
+    /// while its window is NOT key — hover/scroll/click forward to the host and a click leaves the
+    /// window un-activated, so typing stays wherever the user is working. Granted by the leaf ONLY for
+    /// a DETACHED pane (the dedicated remote desktop / a ⌥⌘P pop-out) with the "Background
+    /// Interaction" setting ON; canvas panes keep the click-to-activate rule. Defaults `false`.
+    public var backgroundPointer: Bool
     /// Make this pane the workspace's active pane — called on click (mouseDown). For a GUI pane the host
     /// window is ALSO raised by the pane's own `focusWindow`; this sets the *workspace* focus.
     public var onActivate: () -> Void
@@ -186,6 +192,7 @@ public struct RemotePaneContext {
     public init(
         isActive: Bool = true,
         inputEnabled: Bool = true,
+        backgroundPointer: Bool = false,
         onActivate: @escaping () -> Void = {},
         onCanvasScroll: @escaping (CGSize) -> Void = { _ in },
         onStreamNativeSize: ((_ target: CGSize, _ current: CGSize) -> Void)? = nil,
@@ -211,6 +218,7 @@ public struct RemotePaneContext {
     ) {
         self.isActive = isActive
         self.inputEnabled = inputEnabled
+        self.backgroundPointer = backgroundPointer
         self.onActivate = onActivate
         self.onCanvasScroll = onCanvasScroll
         self.onStreamNativeSize = onStreamNativeSize
@@ -246,6 +254,7 @@ public struct RemotePaneContext {
     public static func videoLeaf(
         isActive: Bool,
         readOnly: Bool,
+        backgroundPointer: Bool = false,
         onActivate: @escaping () -> Void = {},
         onCanvasScroll: @escaping (CGSize) -> Void = { _ in },
         onStreamNativeSize: ((_ target: CGSize, _ current: CGSize) -> Void)? = nil,
@@ -274,6 +283,9 @@ public struct RemotePaneContext {
         Self(
             isActive: isActive,
             inputEnabled: !readOnly,
+            // BACKGROUND POINTER: pointer-only interaction while not key — NOT read-only-gated here
+            // (the read-only gate `inputEnabled` already silences every relay downstream).
+            backgroundPointer: backgroundPointer,
             onActivate: onActivate,
             onCanvasScroll: onCanvasScroll,
             onStreamNativeSize: onStreamNativeSize,

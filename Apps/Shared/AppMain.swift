@@ -86,6 +86,7 @@ struct ClientAppMain {
                     connection: connection,
                     isActive: paneContext.isActive,
                     inputEnabled: paneContext.inputEnabled,
+                    backgroundPointer: paneContext.backgroundPointer,
                     onActivate: paneContext.onActivate,
                     onCanvasScroll: paneContext.onCanvasScroll,
                     onStreamNativeSize: paneContext.onStreamNativeSize,

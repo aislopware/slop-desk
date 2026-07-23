@@ -22,6 +22,7 @@
 // registers no factory, so `VideoWindowFactory.make` yields an `EmptyView`. SYSTEM/Slate tokens only.
 
 #if canImport(SwiftUI)
+import Defaults
 import SFSafeSymbols
 import SlopDeskWorkspaceCore
 import SwiftUI
@@ -44,6 +45,11 @@ struct GuiLeafView: View {
     /// flag drives the activation lifecycle: a hidden pane releases its `liveVideoCap` slot
     /// + stops the UDP/VT/Metal pipeline, a visible one (re)requests a slot. Defaults `true` for static-mirror / preview.
     var isVisible: Bool = true
+    /// BACKGROUND INTERACTION (satellite windows): the user setting behind the background-pointer
+    /// grant. Observed via `@Default` so a Settings flip re-renders the leaf and re-threads the seam
+    /// context (no remount). Granted below ONLY for a detached pane — canvas panes keep
+    /// click-to-activate.
+    @Default(.satelliteBackgroundPointer) private var satelliteBackgroundPointer
     /// Whether the in-pane STATS readout is showing (footer toggle). Per-pane view state — resets on
     /// remount, like the client-side zoom.
     @State private var showStats = false
@@ -456,6 +462,9 @@ struct GuiLeafView: View {
                 context: RemotePaneContext.videoLeaf(
                     isActive: isFocused,
                     readOnly: store.isReadOnly(for: paneID),
+                    // BACKGROUND INTERACTION: a DETACHED pane's satellite window keeps taking pointer
+                    // input while not key (setting-gated); a canvas pane never does.
+                    backgroundPointer: store.tree.isDetached(paneID) && satelliteBackgroundPointer,
                     onActivate: { store.focusPaneTree(paneID) },
                     onCanvasScroll: { _ in },
                     onStreamNativeSize: nil,

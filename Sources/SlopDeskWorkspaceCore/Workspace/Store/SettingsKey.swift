@@ -339,6 +339,11 @@ public enum SettingsKey {
     /// (`window` / `fullscreen`). Read once per desktop-window open by the satellite-window glue
     /// (a `.fullscreen` value enters native fullscreen right after the window fronts).
     public static let desktopWindowPresentationKey = "desktopWindow.presentation"
+    /// Whether SATELLITE windows (the dedicated remote desktop + ⌥⌘P pop-out panes) keep taking
+    /// POINTER input while NOT key (`satellite-window`): hover/scroll/click forward to the host and a
+    /// click leaves the window un-activated, so typing stays in the window the user is working in.
+    /// Default ON. Read per render by the video-leaf seam (`GuiLeafView` → `RemotePaneContext`).
+    public static let satelliteBackgroundPointerKey = "satelliteWindow.backgroundPointer"
 
     // (First-launch flow + Shell → SlopDesk CLI card — getting-started__first-launch.md). A
     // `firstLaunch.*` / `shell.cli.*` namespace, so a stale read decode-fails to the key default per
@@ -635,6 +640,10 @@ public enum SettingsKey {
     public static var desktopWindowPresentation: DesktopWindowPresentation {
         Defaults[.desktopWindowPresentation]
     }
+
+    /// Whether satellite windows keep taking pointer input while not key (`satellite-window`),
+    /// default ON. Read per render by the video-leaf seam.
+    public static var satelliteBackgroundPointerEnabled: Bool { Defaults[.satelliteBackgroundPointer] }
 
     // MARK: First-launch + SlopDesk CLI (getting-started__first-launch.md)
 
@@ -935,6 +944,12 @@ public extension Defaults.Keys {
     static let desktopWindowPresentation = Key<DesktopWindowPresentation>(
         slopDesk: SettingsKey.desktopWindowPresentationKey,
         default: .window,
+    )
+    // Satellite background-pointer interaction (`satellite-window`); default ON — the dedicated
+    // desktop window stays pointer-operable while another window holds the keyboard.
+    static let satelliteBackgroundPointer = Key<Bool>(
+        slopDesk: SettingsKey.satelliteBackgroundPointerKey,
+        default: true,
     )
     // First-launch + SlopDesk CLI (getting-started__first-launch.md). Fire-time flags → golden-safe;
     // client-side. `hasCompletedFirstLaunch` gates the one-time sheet (default OFF — present once on a fresh

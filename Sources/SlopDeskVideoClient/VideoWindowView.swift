@@ -92,6 +92,10 @@ public struct VideoWindowView: View {
     /// relayed and the host window is not raised; the paste-as-keystrokes sink is also withheld. Gated with
     /// `isActive && inputEnabled` on every relay. Defaults `true` (a writable pane).
     let inputEnabled: Bool
+    /// BACKGROUND POINTER (satellite windows): `true` ⇒ the surface keeps taking pointer input while
+    /// its window is NOT key, and a click leaves the window un-activated (``BackgroundPointerPolicy``).
+    /// Defaults `false` (canvas panes keep click-to-activate).
+    let backgroundPointer: Bool
     /// Make this pane active (set workspace focus) — called on click. The host window is also raised
     /// (via the pane's own `focusWindow`).
     let onActivate: () -> Void
@@ -182,6 +186,7 @@ public struct VideoWindowView: View {
         connection = nil
         isActive = true
         inputEnabled = true
+        backgroundPointer = false
         onActivate = {}
         onCanvasScroll = { _ in }
         onStreamNativeSize = nil
@@ -210,6 +215,7 @@ public struct VideoWindowView: View {
         connection: VideoWindowConnection,
         isActive: Bool = true,
         inputEnabled: Bool = true,
+        backgroundPointer: Bool = false,
         onActivate: @escaping () -> Void = {},
         onCanvasScroll: @escaping (CGSize) -> Void = { _ in },
         onStreamNativeSize: ((_ target: CGSize, _ current: CGSize) -> Void)? = nil,
@@ -238,6 +244,7 @@ public struct VideoWindowView: View {
         self.connection = connection
         self.isActive = isActive
         self.inputEnabled = inputEnabled
+        self.backgroundPointer = backgroundPointer
         self.onActivate = onActivate
         self.onCanvasScroll = onCanvasScroll
         self.onStreamNativeSize = onStreamNativeSize
@@ -270,6 +277,7 @@ public struct VideoWindowView: View {
             targetAppName: targetAppName,
             isActive: isActive,
             inputEnabled: inputEnabled,
+            backgroundPointer: backgroundPointer,
             onActivate: onActivate,
             onCanvasScroll: onCanvasScroll,
             onStreamNativeSize: onStreamNativeSize,
@@ -380,6 +388,9 @@ struct MetalVideoLayerView: NSViewRepresentable {
     /// READ-ONLY INPUT GATE: `false` ⇒ the backing view forwards no pointer/scroll/keycode to the
     /// host (gated `isActive && inputEnabled`) and withholds the paste-as-keystrokes sink. Set on every render.
     var inputEnabled: Bool = true
+    /// BACKGROUND POINTER (satellite windows): pointer interaction while the window is NOT key —
+    /// see ``BackgroundPointerPolicy``. Set on every render.
+    var backgroundPointer: Bool = false
     var onActivate: () -> Void = {}
     var onCanvasScroll: (CGSize) -> Void = { _ in }
     var onStreamNativeSize: ((CGSize, CGSize) -> Void)?
@@ -404,6 +415,7 @@ struct MetalVideoLayerView: NSViewRepresentable {
         view.targetAppName = targetAppName
         view.isActive = isActive
         view.inputEnabled = inputEnabled
+        view.backgroundPointer = backgroundPointer
         view.onActivate = onActivate
         view.onCanvasScroll = onCanvasScroll
         view.onStreamNativeSize = onStreamNativeSize // before activate — its nil-ness picks snap vs host-follow
@@ -471,6 +483,7 @@ struct MetalVideoLayerView: NSViewRepresentable {
         // re-evaluates — locking a live pane withholds the sink, unlocking restores it, with no view rebuild.
         let inputGateFlipped = nsView.inputEnabled != inputEnabled
         nsView.inputEnabled = inputEnabled
+        nsView.backgroundPointer = backgroundPointer
         nsView.onActivate = onActivate
         nsView.onCanvasScroll = onCanvasScroll
         nsView.onStreamNativeSize = onStreamNativeSize
@@ -567,6 +580,31 @@ final class MetalLayerBackedView: NSView {
     /// workspace pane but is not relayed and the host window is not raised. The paste-as-keystrokes sink is
     /// withheld by the seam (a `nil` `keyInjector`). Set by `MetalVideoLayerView` on every render.
     var inputEnabled: Bool = true
+
+    /// BACKGROUND POINTER (satellite windows): `true` ⇒ this surface keeps taking pointer input while
+    /// its window is NOT key — hover/scroll/click/drag forward to the host and a click leaves the
+    /// window un-activated (typing stays wherever the user is working; see
+    /// ``BackgroundPointerPolicy``). Threaded from the `RemotePaneContext` seam — the leaf grants it
+    /// only to a DETACHED pane, so canvas panes keep the click-to-activate rule. A flip rebuilds the
+    /// tracking area: its activation scope (`.activeAlways` vs `.activeInKeyWindow`) is baked in at
+    /// install. Set by `MetalVideoLayerView` on every render.
+    var backgroundPointer: Bool = false {
+        didSet {
+            guard backgroundPointer != oldValue else { return }
+            updateTrackingAreas()
+            // Flag flips OFF while the window is NOT key with the pointer parked inside: removing the
+            // `.activeAlways` area synthesizes NO mouseExited, and the replacement `.activeInKeyWindow`
+            // area is inert in a not-key window — so run mouseExited's cleanup here, or `pointerInside`
+            // stays stale, an in-flight edge-pan keeps panning, and the host cursor shape stays frozen
+            // over the pane. (The ON direction self-heals: adding an active area under the pointer
+            // synthesizes mouseEntered.)
+            if !backgroundPointer, window?.isKeyWindow != true, pointerInside {
+                pointerInside = false
+                stopEdgePan()
+                NSCursor.arrow.set()
+            }
+        }
+    }
 
     // ── CURSOR (Parsec model): the host streams its cursor SHAPE (cached bitmaps); the OS draws that
     //    shape on the LOCAL cursor at the INSTANT mouse position — zero added latency, and exactly ONE
@@ -1017,7 +1055,9 @@ final class MetalLayerBackedView: NSView {
     /// global cursor).
     private func applyLocalCursor() {
         guard pointerInside else { return }
-        if isActive, pipeline.isServerCursorVisible, let cursor = pipeline.currentRemoteCursor {
+        if BackgroundPointerPolicy.forwardsPointer(isActive: isActive, backgroundPointer: backgroundPointer),
+           pipeline.isServerCursorVisible, let cursor = pipeline.currentRemoteCursor
+        {
             cursor.set()
         } else {
             NSCursor.arrow.set()
@@ -1028,7 +1068,8 @@ final class MetalLayerBackedView: NSView {
     /// bare mouse-move so the host cursor WARPS to the client pointer — resyncing the remote cursor
     /// SHAPE without waiting for the next hover move. Gated exactly like `mouseMoved`.
     private func forwardPointer(atWindowLocation winLoc: NSPoint) {
-        guard isActive, inputEnabled else { return }
+        guard BackgroundPointerPolicy.forwardsPointer(isActive: isActive, backgroundPointer: backgroundPointer),
+              inputEnabled else { return }
         let p = convert(winLoc, from: nil)
         pipeline.mouseMove(VideoPoint(x: Double(p.x), y: Double(bounds.height - p.y)))
     }
@@ -1353,7 +1394,9 @@ final class MetalLayerBackedView: NSView {
         panOffset = CGPoint(x: nx, y: ny)
         viewportTouched = true // explicit edge-pan → stop re-anchoring to top-left
         layoutVideoLayer() // compositor translate (smooth) + republish input viewport
-        if isActive, inputEnabled {
+        if BackgroundPointerPolicy.forwardsPointer(isActive: isActive, backgroundPointer: backgroundPointer),
+           inputEnabled
+        {
             pipeline.mouseMove(VideoPoint(x: Double(lastPointerView.x), y: Double(bounds.height - lastPointerView.y)))
         }
         if xDone, yDone { stopEdgePan() }
@@ -1377,10 +1420,13 @@ final class MetalLayerBackedView: NSView {
     /// (`max(1, Int(clickCount))`), so saturating is harmless.
     nonisolated static func clampClickCount(_ n: Int) -> UInt8 { UInt8(clamping: n) }
 
-    // Only the ACTIVE pane tracks hover (the "only the active pane swallows pointer" rule). A non-active
-    // pane ignores hover so it never injects a stray remote mouse-move; you must click it first.
+    // Only the ACTIVE pane tracks hover (the "only the active pane swallows pointer" rule) — plus a
+    // BACKGROUND-POINTER satellite, whose whole point is hover-following while another window holds
+    // the keyboard. A non-active canvas pane still ignores hover so it never injects a stray remote
+    // mouse-move; you must click it first.
     override func mouseMoved(with event: NSEvent) {
-        guard isActive else { return }
+        guard BackgroundPointerPolicy.forwardsPointer(isActive: isActive, backgroundPointer: backgroundPointer)
+        else { return }
         // Edge-pan is local view-nav (moves the zoomed crop) — runs even on a read-only pane; inert at 1×.
         updateEdgePan(at: convert(event.locationInWindow, from: nil))
         guard inputEnabled else { return } // read-only ⇒ no remote mouse-move
@@ -1406,12 +1452,25 @@ final class MetalLayerBackedView: NSView {
     // the host window (`focusWindow`), THEN lands as a remote click — raising on hover instead would steal
     // the host window the moment the pointer merely crosses an unfocused pane. The activating click is
     // always forwarded so clicking a control in a background window just works.
+    // BACKGROUND-POINTER exception: on a NOT-key satellite the click is delivered to the host with the
+    // LOCAL window left un-activated — `preventWindowOrdering` cancels the ordering that
+    // `shouldDelayWindowOrdering` deferred (the drag-from-a-background-window mechanism), and
+    // `onActivate` is skipped so local (workspace + key-window + first-responder) focus stays wherever
+    // the user is typing. The HOST-side raise (`focusWindow`) still runs: it never touches local focus,
+    // and a window-scoped satellite needs raise-then-click for the positional click to land right.
     override func mouseDown(with event: NSEvent) {
         // BUG-1 probe: clicking is the reported freeze trigger. Correlate this line with `cursorAPPLY`/
         // `RENDER` gaps (client main-actor block from focus()) and `mediaRX` gaps (host capture hitch on
         // window-raise) to see which path stalls on a click.
-        videoViewDbg("click → activate isActive=\(isActive)")
-        onActivate()
+        let backgroundClick = BackgroundPointerPolicy.backgroundClick(
+            backgroundPointer: backgroundPointer, windowIsKey: window?.isKeyWindow == true,
+        )
+        videoViewDbg("click → \(backgroundClick ? "background" : "activate") isActive=\(isActive)")
+        if backgroundClick {
+            NSApp.preventWindowOrdering()
+        } else {
+            onActivate()
+        }
         // READ-ONLY: a locked pane still ACTIVATES (workspace focus, above), but the click is NOT
         // relayed to the host and the host window is NOT raised — the pane is view-only.
         guard inputEnabled else { return }
@@ -1428,7 +1487,13 @@ final class MetalLayerBackedView: NSView {
     }
 
     override func rightMouseDown(with event: NSEvent) {
-        onActivate()
+        // BACKGROUND-POINTER: a right-click never orders a window front on macOS, so only the local
+        // activation is skipped — the context-click still reaches the host below.
+        if !BackgroundPointerPolicy.backgroundClick(
+            backgroundPointer: backgroundPointer, windowIsKey: window?.isKeyWindow == true,
+        ) {
+            onActivate()
+        }
         guard inputEnabled else { return } // read-only ⇒ activate only, no remote relay
         if !isActive { pipeline.focusWindow() }
         pipeline.mouseDown(.right, viewPoint(event), Self.clampClickCount(event.clickCount), mods(event))
@@ -1659,6 +1724,15 @@ final class MetalLayerBackedView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
 
+    /// BACKGROUND POINTER: the FIRST click on a not-key satellite must reach `mouseDown` — by default
+    /// AppKit consumes it purely to activate the window, so the remote click would be lost.
+    override func acceptsFirstMouse(for _: NSEvent?) -> Bool { backgroundPointer }
+
+    /// …and the window ordering that first click triggers is DELAYED (to mouseUp) so `mouseDown` can
+    /// cancel it outright with `preventWindowOrdering` — the click then acts on the host with the
+    /// local window left inactive, exactly like a drag lifted from a background Finder window.
+    override func shouldDelayWindowOrdering(for _: NSEvent) -> Bool { backgroundPointer }
+
     /// AppKit only delivers `mouseMoved` when a tracking area requests it, and
     /// `acceptsFirstResponder` alone does NOT focus a bare layer-backed view inside a
     /// SwiftUI sheet — so without these two the cursor-follow + keyboard input paths are
@@ -1668,11 +1742,16 @@ final class MetalLayerBackedView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let existing = trackingArea { removeTrackingArea(existing) }
+        // BACKGROUND POINTER: a satellite surface keeps hover/cursor tracking alive while its window
+        // is NOT key (`.activeAlways` — the window server still delivers tracking events to a
+        // background window). Everywhere else `.activeInKeyWindow` stands: a background WORKSPACE
+        // window must not start forwarding hover just because the pointer crosses it.
+        let activation: NSTrackingArea.Options = backgroundPointer ? .activeAlways : .activeInKeyWindow
         let area = NSTrackingArea(
             // `.mouseEnteredAndExited` tracks whether the pointer is in the pane; `.cursorUpdate` makes
             // AppKit call `cursorUpdate(with:)` on each move so we re-assert the host's cursor shape.
             rect: bounds,
-            options: [.mouseMoved, .mouseEnteredAndExited, .cursorUpdate, .activeInKeyWindow, .inVisibleRect],
+            options: [.mouseMoved, .mouseEnteredAndExited, .cursorUpdate, activation, .inVisibleRect],
             owner: self, userInfo: nil,
         )
         addTrackingArea(area)
@@ -1697,7 +1776,9 @@ final class MetalLayerBackedView: NSView {
     /// AppKit's per-move cursor callback while the pointer is in the pane: re-assert the host shape (or
     /// fall through to AppKit's default arrow) so a transient `.set()` from elsewhere can't win on a move.
     override func cursorUpdate(with event: NSEvent) {
-        if isActive, pipeline.isServerCursorVisible, let cursor = pipeline.currentRemoteCursor {
+        if BackgroundPointerPolicy.forwardsPointer(isActive: isActive, backgroundPointer: backgroundPointer),
+           pipeline.isServerCursorVisible, let cursor = pipeline.currentRemoteCursor
+        {
             cursor.set()
         } else {
             super.cursorUpdate(with: event) // AppKit already set the window's default (arrow) pre-callback
@@ -1806,6 +1887,9 @@ struct MetalVideoLayerView: UIViewRepresentable {
     // Read-only gate — signature parity only. The iOS video view forwards NO host pointer/key
     // input (its gestures are LOCAL zoom/pan), so there is nothing to suppress; accepted + ignored here.
     var inputEnabled: Bool = true
+    // Signature parity with the macOS representable. iOS has no NSWindow key state (and forwards no
+    // pointer input), so background-pointer interaction has no meaning here — accepted + ignored.
+    var backgroundPointer: Bool = false
     var onActivate: () -> Void = {}
     var onCanvasScroll: (CGSize) -> Void = { _ in }
     var onStreamNativeSize: ((CGSize, CGSize) -> Void)?
