@@ -455,12 +455,6 @@ enum Slate {
         static let iconSize: CGFloat = 13
         /// The host-identity monogram plate (``SlateMonogram``) — sized to sit inside a control-height row.
         static let monogram: CGFloat = 18
-        /// The sidebar row's right-aligned TELEMETRY column (ages / percent / exit code) — sized for the
-        /// clamped ≤4-character duration grammar in the instrument small voice, reserved on every row so
-        /// a value appearing/ticking shifts nothing.
-        static let telemetryCol: CGFloat = 26
-        /// The sidebar row's leading ATTENTION-TICK bar width (amber = awaiting input, red = error).
-        static let attentionTick: CGFloat = 2
     }
 
     /// Typography scale — one named role per size; UI = system, code = JetBrains Mono. A closed scale (no

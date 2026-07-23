@@ -57,6 +57,22 @@ final class RailRowReadoutTests: XCTestCase {
         XCTAssertEqual(line?.text, "exit 137 · npm test")
     }
 
+    /// The RUNNING command sits between the error line and the structural cwd: a busy shell's row
+    /// says what it is doing, but any lifecycle outcome (error) outranks it.
+    func testCommandLineBeatsStrayedCwdButNotError() {
+        let command = RailRowReadout.resolve(
+            question: nil, scent: nil, workingLabel: nil,
+            doneLine: nil, errorLine: nil, commandLine: "make check", strayedCwd: "packages/api",
+        )
+        XCTAssertEqual(command, RailRowReadout.Line(text: "make check", truncation: .tail))
+        let error = RailRowReadout.resolve(
+            question: nil, scent: nil, workingLabel: nil,
+            doneLine: nil, errorLine: "exit 137 · npm test", commandLine: "make check",
+            strayedCwd: nil,
+        )
+        XCTAssertEqual(error?.text, "exit 137 · npm test")
+    }
+
     /// The structural strayed-cwd is the LOWEST rung — it returns when the row settles, with the
     /// path-shaped `.middle` truncation (the one non-prose source).
     func testStrayedCwdIsLastAndMiddleTruncated() {

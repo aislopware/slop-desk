@@ -22,27 +22,32 @@ struct SlateStatusDot: View {
     }
 }
 
-/// The ONE-SHAPE status instrument: every lifecycle state renders as a READING of the SAME ring — Ø12,
-/// fixed centre in a 16pt box — so a state edge reads as one gauge changing its reading, never an icon
-/// swap (four different silhouettes trading places in one box read as a jump even though the box never
-/// moves). Stroke style + hue + centre content carry the state:
-///   • `working`  → the DASHED ring (8 segments) with one lead segment ticking forward in discrete
-///                  steps — a mechanical escapement, not a smooth spinner (motion is agent-only);
-///   • `awaiting` → solid ring + filled centre dot, plus ONE stepped halo pulse per cycle (agent-only);
-///   • `done`     → solid ring + inner check;
-///   • `error`    → solid ring + inner cross;
-///   • `progress` → muted ring + centre micro-dot, STATIC (an instrumented command is not an agent);
-///   • `glyph`    → muted ring + a small SF-symbol (the at-rest privilege markers).
-/// All motion rides the WALL CLOCK on stepped `TimelineView` schedules — a rail re-render can't reset
-/// the phase, and frames advance in discrete steps (never an eased "breathing" pulse). Pure SwiftUI;
-/// no video/capture (hang-safety #6).
+/// The ONE-SHAPE status instrument, in the Linear fill-fraction vocabulary: every lifecycle state is
+/// the SAME circle — Ø12, fixed centre in a 16pt box — varying only HOW MUCH of it is drawn/filled
+/// (the `◌ ○ ◔ ◉ ●` terminal-glyph ladder), never its silhouette:
+///   • `working`  → the DASHED ring (8 dashes, dash:gap 1:1 — a true `◌` glyph). The GEOMETRY is
+///                  static; the whole glyph flickers between two opacity plateaus on a stepped ramp
+///                  (discrete frames, e-ink-refresh cadence) — nothing rotates, nothing breathes;
+///   • `awaiting` → ring + filled centre dot (`◉`) — armed, waiting on you. Static;
+///   • `pie`      → ring + a centre pie wedge swept to the REAL 0…1 fraction (`◔` at 25%) — an
+///                  OSC 9;4 command's progress drawn as geometry, not decoration;
+///   • `hollow`   → the bare ring (`○`) — a command is running, nothing more to say;
+///   • `done`     → the FILLED disc with a knocked-out check (`●` + ✓) — the terminal state earns the
+///                  only solid fill;
+///   • `error`    → the filled disc with a knocked-out cross — same weight as done: an outcome;
+///   • `glyph`    → a small SF-symbol in the muted ring (the at-rest privilege markers).
+/// The one animation rides the WALL CLOCK on a stepped `TimelineView` schedule — a re-render can't
+/// reset its phase, and frames advance in hard steps (T3's `steps(10)` duty-cycle, never an eased
+/// pulse). Pure SwiftUI; no video/capture (hang-safety #6).
 struct StatusRing: View {
     enum Reading: Equatable {
         case working
         case awaiting
         case done
         case error
-        case progress
+        case hollow
+        /// The 0…1 progress sweep; `nil` (an indeterminate report) draws the bare ring.
+        case pie(Double?)
         case glyph(String)
     }
 
@@ -54,26 +59,36 @@ struct StatusRing: View {
     private static let diameter: CGFloat = 12
     private static let stroke: CGFloat = 1.5
     private static let mutedStroke: CGFloat = 1.2
-    /// Seconds per escapement step (8 segments ⇒ one full revolution every 1.6s).
-    private static let workingBeat: Double = 0.2
-    /// Seconds per awaiting halo cycle: the pulse spends the first half stepping outward, then holds
-    /// invisible — one front-loaded "pulse of life" per cycle, not a continuous halo.
-    private static let haloPeriod: Double = 2.0
+    /// The pie wedge's radius — Linear's fill sits well inside the ring (their 3.5 : 6), so the sweep
+    /// reads as a gauge needle area, not a second ring.
+    private static let pieRadius: CGFloat = 3.5
+    /// The working flicker's duty cycle (T3's `sidebar-working-text` timing): one 3.4s period holding
+    /// full strength for a third, dipping to the low plateau for a third, with stepped ramps between.
+    private static let flickerPeriod: Double = 3.4
+    /// The flicker's re-render cadence — 20 discrete frames per period (the two ramps get ~3 hard
+    /// steps each; the plateaus hold).
+    private static let flickerBeat: Double = 0.17
+    /// The flicker's low plateau.
+    private static let flickerFloor: Double = 0.75
 
     var body: some View {
         ZStack {
             switch reading {
             case .working: workingRing
-            case .awaiting: awaitingRing
-            case .done:
+            case .awaiting:
                 solidRing
+                Circle().fill(tint).frame(width: 5, height: 5)
+            case .done:
+                filledDisc
                 checkMark
             case .error:
-                solidRing
+                filledDisc
                 crossMark
-            case .progress:
+            case .hollow:
                 mutedRing
-                Circle().fill(tint).frame(width: 4, height: 4)
+            case let .pie(fraction):
+                mutedRing
+                if let fraction { pieWedge(fraction) }
             case let .glyph(name):
                 mutedRing
                 Image(systemName: name)
@@ -97,79 +112,98 @@ struct StatusRing: View {
             .frame(width: Self.diameter, height: Self.diameter)
     }
 
-    /// The dashed working ring: 8 fixed segments; the LEAD segment renders at full strength and advances
-    /// one slot per beat off the wall clock — motion by discrete step, no rotation tween, so the ring
-    /// reads as a ticking mechanism and a re-mount lands mid-cycle instead of restarting it.
-    private var workingRing: some View {
-        TimelineView(.periodic(from: .now, by: Self.workingBeat)) { timeline in
-            let lead = Int(timeline.date.timeIntervalSinceReferenceDate / Self.workingBeat) % 8
-            ZStack {
-                ForEach(0..<8, id: \.self) { index in
-                    segment(index)
-                        .stroke(
-                            tint.opacity(index == lead ? 1 : 0.35),
-                            style: StrokeStyle(lineWidth: Self.stroke, lineCap: .round),
-                        )
-                }
-            }
+    private var filledDisc: some View {
+        Circle()
+            .fill(tint)
             .frame(width: Self.diameter, height: Self.diameter)
-            .rotationEffect(.degrees(-90)) // segment 0 starts at 12 o'clock
+    }
+
+    /// The working `◌`: 8 dashes at dash:gap 1:1 (each dash 22.5°, each gap 22.5° — the icon-family
+    /// proportion; a thinner gap collapses into a "cracked circle" at this size), one dash centred at
+    /// 12 o'clock. The geometry never moves — the whole glyph flickers through ``flickerOpacity(at:)``.
+    private var workingRing: some View {
+        TimelineView(.periodic(from: Date(timeIntervalSinceReferenceDate: 0), by: Self.flickerBeat)) { timeline in
+            dashedRing.opacity(Self.flickerOpacity(at: timeline.date))
         }
     }
 
-    /// One of the 8 dashed-ring segments — a trimmed circle slice with a small fixed gap on each side.
-    private func segment(_ index: Int) -> some Shape {
-        let slice = 1.0 / 8.0
-        let gap = 0.018
-        return Circle().trim(from: Double(index) * slice + gap, to: Double(index + 1) * slice - gap)
-    }
-
-    /// The awaiting reading: the solid ring + centre dot at rest, with one halo pulse per cycle that
-    /// expands in 8 DISCRETE steps across the first half of the cycle and holds invisible for the rest.
-    /// The halo peaks at the box edge, so it never bleeds into the neighbouring telemetry column.
-    private var awaitingRing: some View {
-        TimelineView(.periodic(from: .now, by: Self.haloPeriod / 16)) { timeline in
-            let phase = timeline.date.timeIntervalSinceReferenceDate
-                .truncatingRemainder(dividingBy: Self.haloPeriod) / Self.haloPeriod
-            ZStack {
-                if phase < 0.5 {
-                    // Quantized 0…7/8 ramp — each frame is a hard step (no easing between them). The
-                    // 0.24 gain caps the peak at ×1.21: the halo's stroked outer edge (13.2pt × 1.21 ≈
-                    // 16pt) reaches exactly the box, never past it into the telemetry column.
-                    let step = (phase * 16).rounded(.down) / 8
-                    Circle()
-                        .stroke(tint, lineWidth: Self.mutedStroke)
-                        .frame(width: Self.diameter, height: Self.diameter)
-                        .scaleEffect(1 + step * 0.24)
-                        .opacity(0.5 - 0.5 * step)
-                }
-                solidRing
-                Circle().fill(tint).frame(width: 5, height: 5)
+    private var dashedRing: some View {
+        ZStack {
+            ForEach(0..<8, id: \.self) { index in
+                Circle()
+                    .trim(from: Double(index) / 8.0, to: Double(index) / 8.0 + 1.0 / 16.0)
+                    .stroke(tint, style: StrokeStyle(lineWidth: Self.stroke, lineCap: .round))
             }
         }
+        .frame(width: Self.diameter, height: Self.diameter)
+        // −90° puts trim 0 at 12 o'clock; the extra −11.25° centres dash 0 ON 12 o'clock.
+        .rotationEffect(.degrees(-101.25))
     }
 
-    /// The inner check of the `done` reading — drawn in the ring's own 16pt space so its optical centre
-    /// matches every other reading's.
-    private var checkMark: some View {
-        Path { path in
-            path.move(to: CGPoint(x: 5.2, y: 8.4))
-            path.addLine(to: CGPoint(x: 7.2, y: 10.2))
-            path.addLine(to: CGPoint(x: 10.8, y: 6.2))
+    /// The stepped duty-cycle opacity (T3's recipe verbatim: hold 1.0 through 36%, step down to the
+    /// 0.75 plateau by 50%, hold through 86%, step back up). Ramps quantize to hard 1/10 steps —
+    /// discrete frames, no easing — and the phase rides the wall clock from a fixed epoch, so every
+    /// working ring in the sidebar flickers in unison and a re-mount lands mid-cycle.
+    static func flickerOpacity(at date: Date) -> Double {
+        let phase = date.timeIntervalSinceReferenceDate
+            .truncatingRemainder(dividingBy: flickerPeriod) / flickerPeriod
+        let depth = 1.0 - flickerFloor
+        switch phase {
+        case ..<0.36: return 1.0
+        case ..<0.50:
+            let step = ((phase - 0.36) / 0.14 * 10).rounded(.down) / 10
+            return 1.0 - depth * step
+        case ..<0.86: return flickerFloor
+        default:
+            let step = ((phase - 0.86) / 0.14 * 10).rounded(.down) / 10
+            return flickerFloor + depth * step
         }
-        .stroke(tint, style: StrokeStyle(lineWidth: Self.stroke, lineCap: .round, lineJoin: .round))
+    }
+
+    /// The determinate pie wedge: a solid sector swept clockwise from 12 o'clock to `fraction` of the
+    /// full turn, at the inner ``pieRadius`` — progress as filled AREA inside the constant ring.
+    private func pieWedge(_ fraction: Double) -> some View {
+        let sweep = Double.minimum(Double.maximum(fraction, 0), 1)
+        return Path { path in
+            let centre = CGPoint(x: Self.box / 2, y: Self.box / 2)
+            path.move(to: centre)
+            path.addArc(
+                center: centre,
+                radius: Self.pieRadius,
+                startAngle: .degrees(-90),
+                endAngle: .degrees(-90 + sweep * 360),
+                clockwise: false,
+            )
+            path.closeSubpath()
+        }
+        .fill(tint)
         .frame(width: Self.box, height: Self.box)
     }
 
-    /// The inner cross of the `error` reading.
+    /// The knocked-out check of the `done` disc — drawn in the ground tone so it reads as a cut-out,
+    /// in the ring's own 16pt space so its optical centre matches every other reading's.
+    private var checkMark: some View {
+        Path { path in
+            path.move(to: CGPoint(x: 5.4, y: 8.3))
+            path.addLine(to: CGPoint(x: 7.3, y: 10.1))
+            path.addLine(to: CGPoint(x: 10.6, y: 6.3))
+        }
+        .stroke(
+            Slate.Surface.ground,
+            style: StrokeStyle(lineWidth: Self.stroke, lineCap: .round, lineJoin: .round),
+        )
+        .frame(width: Self.box, height: Self.box)
+    }
+
+    /// The knocked-out cross of the `error` disc.
     private var crossMark: some View {
         Path { path in
-            path.move(to: CGPoint(x: 6.2, y: 6.2))
-            path.addLine(to: CGPoint(x: 9.8, y: 9.8))
-            path.move(to: CGPoint(x: 9.8, y: 6.2))
-            path.addLine(to: CGPoint(x: 6.2, y: 9.8))
+            path.move(to: CGPoint(x: 6.3, y: 6.3))
+            path.addLine(to: CGPoint(x: 9.7, y: 9.7))
+            path.move(to: CGPoint(x: 9.7, y: 6.3))
+            path.addLine(to: CGPoint(x: 6.3, y: 9.7))
         }
-        .stroke(tint, style: StrokeStyle(lineWidth: Self.stroke, lineCap: .round))
+        .stroke(Slate.Surface.ground, style: StrokeStyle(lineWidth: Self.stroke, lineCap: .round))
         .frame(width: Self.box, height: Self.box)
     }
 }

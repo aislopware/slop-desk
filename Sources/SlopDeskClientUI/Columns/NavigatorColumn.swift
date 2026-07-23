@@ -595,9 +595,6 @@ private struct SidebarLiveRow: View {
     let onRename: (String) -> Void
     let onCancelRename: () -> Void
 
-    /// How long the tall agent shell outlives the agent process — rapid agent restarts must not
-    /// breathe the row's height rung.
-    private static let shellDecay: TimeInterval = 10
     /// The working-label minimum dwell — a mid-turn label churning faster than this holds the previous
     /// line so the readout reads as a feed, not a flicker.
     private static let labelDwell: TimeInterval = 2
@@ -606,11 +603,6 @@ private struct SidebarLiveRow: View {
     /// telemetry value.
     private static let telemetryCadence: TimeInterval = 10
 
-    /// The STICKY agent-session shell: latched while the pane reads as an agent session, released
-    /// ``shellDecay`` after it stops. This is the ONLY remote-caused height change — a session
-    /// boundary, never a status edge.
-    @State private var stickyAgentShell = false
-    @State private var shellDecayTask: Task<Void, Never>?
     /// The dwell-committed working label + its commit instant (see ``commitDwell(_:)``).
     @State private var dwellLabel: String?
     @State private var dwellCommittedAt = Date.distantPast
@@ -647,21 +639,15 @@ private struct SidebarLiveRow: View {
                 rowBody(chrome: chrome, active: active, isAgent: isAgent, now: Date())
             }
         }
-        // A fresh mount seeds both machines raw — the leaf's `.id(row.leafIdentity)` re-keys on a
-        // structural change (title/cwd), which discards this @State. Accepted residual: a user-typed
-        // `cd` landing inside the 10s shell decay re-seeds `stickyAgentShell` and the row drops early —
-        // narrow, user-driven, and still a session boundary (mid-turn agent work never re-keys the
-        // leaf: the shell's OSC hooks don't fire while the agent owns the foreground).
+        // A fresh mount seeds the dwell machine raw — the leaf's `.id(row.leafIdentity)` re-keys on a
+        // structural change (title/cwd), which discards this @State.
         .onAppear {
-            stickyAgentShell = isAgent
             dwellLabel = workingCandidate
             dwellCommittedAt = Date()
         }
         .onDisappear {
-            shellDecayTask?.cancel()
             dwellTask?.cancel()
         }
-        .onChange(of: isAgent) { _, nowAgent in noteAgentSession(nowAgent) }
         .onChange(of: workingCandidate) { _, candidate in commitDwell(candidate) }
     }
 
@@ -692,6 +678,17 @@ private struct SidebarLiveRow: View {
         // completion badge can never show a stale agent line.
         let doneLine: String? = (chrome.badge == .completed || chrome.badge == .finished)
             && chrome.status == .done ? store.agentLabel(for: row.id) : nil
+        // The RUNNING command readout (busy non-agent shells): the OPEN block's command text — what
+        // the row is doing right now — falling back to the coarse foreground-process label when the
+        // block model hasn't seen the command (e.g. a command launched before attach).
+        let runningCommand: String? = (chrome.badge == .commandRunning || chrome.badge == .commandBusy)
+            ? {
+                let open = blocks.last(where: { !$0.complete })?
+                    .commandText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let open, !open.isEmpty { return open }
+                return RailRowsBuilder.processDisplayName(chrome.processLabel)
+            }()
+            : nil
         let readout = RailRowReadout.resolve(
             question: chrome.question,
             scent: scent,
@@ -700,6 +697,7 @@ private struct SidebarLiveRow: View {
             errorLine: RailRowReadout.errorLine(
                 exitCode: failedBlock?.exitCode, commandText: failedBlock?.commandText,
             ),
+            commandLine: runningCommand,
             strayedCwd: chrome.subtitle,
         )
         let telemetry = RailRowTelemetry.value(
@@ -714,15 +712,20 @@ private struct SidebarLiveRow: View {
         )
         let lastCommand = blocks.last(where: { $0.complete || $0.durationMS != nil })
             .flatMap(SidebarRowTooltip.commandLine)
+        // The pane's live OSC 9;4 determinate fraction — swept as the glyph column's pie wedge.
+        let progressFraction: Double? = {
+            if case let .determinate(fraction, _) =
+                StatusPresentation.progressPresentation(store.progress(for: row.id)) { return fraction }
+            return nil
+        }()
         SlateTabRow(
             title: row.title.isEmpty ? fallbackTitle : row.title,
             active: active,
             subtitle: readout?.text,
             subtitleTruncation: readout?.truncation == .middle ? .middle : .tail,
-            processLabel: chrome.processLabel,
             badge: chrome.badge,
+            progressFraction: progressFraction,
             telemetry: telemetry,
-            isAgentSession: isAgent || stickyAgentShell,
             readOnly: chrome.readOnly,
             syncInput: store.syncInputArmed(for: row.id),
             isEditing: chrome.isEditing,
@@ -754,22 +757,6 @@ private struct SidebarLiveRow: View {
              .sudo,
              nil:
             false
-        }
-    }
-
-    /// Latches the tall agent shell on entry and schedules the decay on exit — the decay is
-    /// load-bearing: rapid agent restarts must not breathe the rung.
-    private func noteAgentSession(_ nowAgent: Bool) {
-        shellDecayTask?.cancel()
-        shellDecayTask = nil
-        if nowAgent {
-            stickyAgentShell = true
-        } else {
-            shellDecayTask = Task {
-                try? await Task.sleep(for: .seconds(Self.shellDecay))
-                guard !Task.isCancelled else { return }
-                stickyAgentShell = false
-            }
         }
     }
 

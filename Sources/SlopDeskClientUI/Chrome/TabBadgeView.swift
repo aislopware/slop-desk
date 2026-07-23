@@ -1,11 +1,10 @@
-// TabBadgeView — the single trailing status badge on a sidebar tab row. Maps a pure
-// ``TabBadgeKind`` to its ring reading via ``StatusPresentation/tabBadge(_:)``. ONE SHAPE for every
-// lifecycle state (``StatusRing``): the same Ø12 ring changes stroke style / hue / centre content —
-// working = dashed escapement, awaiting = ring⊙ + stepped halo, done = ring✓, error = ring✕,
-// OSC 9;4 progress = muted ring⊙ static, caffeinate/sudo = glyph inside the muted ring. Only the plain
-// busy shell stays a sub-ring micro-dot (concentric — an agent taking over reads as the dot growing a
-// ring). One reading, fixed 16pt box, right-aligned: state changes never move a pixel of layout AND
-// never swap silhouettes.
+// TabBadgeView — the single status glyph for one sidebar tab row (the LEADING glyph column). Maps a
+// pure ``TabBadgeKind`` to its reading via ``StatusPresentation/tabBadge(_:progressFraction:)``. ONE
+// SHAPE for every lifecycle state (``StatusRing``, the Linear fill-fraction vocabulary): the same Ø12
+// circle varies only how much of it is drawn/filled — working = dashed `◌` (stepped flicker),
+// awaiting = ring+dot `◉`, done = solid disc✓, error = solid disc✕, busy = hollow `○`, OSC 9;4 =
+// ring + pie wedge at the real fraction, caffeinate/sudo = glyph in the muted ring. One reading,
+// fixed 16pt box: state changes never move a pixel of layout AND never swap silhouettes.
 //
 // Hang-safety (CLAUDE.md rule #6): a badge NEVER instantiates an `SCStream` / `VTCompressionSession` /
 // `VTDecompressionSession` / Metal device — the ring is plain SwiftUI drawing, nothing more.
@@ -14,15 +13,17 @@
 import SlopDeskWorkspaceCore
 import SwiftUI
 
-/// The trailing status badge for one sidebar tab row. One ring reading centered in a fixed box,
-/// AX-labelled so the icon-only badge is VoiceOver-legible (and snapshot/AX-testable).
+/// The status glyph for one sidebar tab row. One reading centered in a fixed box, AX-labelled so the
+/// icon-only glyph is VoiceOver-legible (and snapshot/AX-testable).
 struct TabBadgeView: View {
     let kind: TabBadgeKind
+    /// The pane's live OSC 9;4 determinate fraction (0…1) — consumed by the `.commandRunning` pie
+    /// reading only; every other kind ignores it.
+    var progressFraction: Double?
 
-    /// The trailing badge column is ~16px (`tab-badge.png`); the reading centers in this fixed box so
-    /// rows keep a stable trailing edge. Internal so the row can RESERVE this box unconditionally —
-    /// without the reserve a badge appearing would grow the line and re-centre the row (a visible
-    /// height jump).
+    /// The glyph column is 16pt; the reading centers in this fixed box so rows keep a stable leading
+    /// edge. Internal so the row can RESERVE this box unconditionally — without the reserve a badge
+    /// appearing would shift the title.
     static let side: CGFloat = 16
 
     var body: some View {
@@ -34,7 +35,7 @@ struct TabBadgeView: View {
     }
 
     @ViewBuilder private var glyph: some View {
-        switch StatusPresentation.tabBadge(kind) {
+        switch StatusPresentation.tabBadge(kind, progressFraction: progressFraction) {
         case let .ringWorking(tint):
             StatusRing(reading: .working, tint: tint)
         case let .ringAwaiting(tint):
@@ -43,12 +44,12 @@ struct TabBadgeView: View {
             StatusRing(reading: .done, tint: tint)
         case let .ringError(tint):
             StatusRing(reading: .error, tint: tint)
-        case let .ringProgress(tint):
-            StatusRing(reading: .progress, tint: tint)
+        case let .ringHollow(tint):
+            StatusRing(reading: .hollow, tint: tint)
+        case let .ringPie(fraction, tint):
+            StatusRing(reading: .pie(fraction), tint: tint)
         case let .ringGlyph(name, tint):
             StatusRing(reading: .glyph(name), tint: tint)
-        case let .dot(color):
-            SlateStatusDot(color: color, size: 6)
         }
     }
 }

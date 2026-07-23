@@ -91,7 +91,6 @@ final class SlateSnapshotRender: XCTestCase {
                 title: "slopdesk",
                 active: true,
                 subtitle: "main · 3 changed",
-                processLabel: "npm run dev",
                 onSelect: {},
                 onClose: {},
             )

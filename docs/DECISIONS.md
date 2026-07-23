@@ -1720,3 +1720,42 @@ substitution forced by the pure-native-Swift rule.
   Client-only; no wire change (every element binds to signals already crossing: wire 26/27/32, the
   attention/completion/command stamps, `TerminalBlockModel`, `PendingToolSummary.scent`). iOS keeps
   its system rows (ring badge inherited; readout/telemetry/tally deferred, macOS-first).
+
+## Tab-row v2: Linear fill-fraction glyphs in a LEADING column, uniform two-line rows (2026-07-23)
+
+- **Decision:** Rebuild the sidebar tab row around ONE leading status-glyph column speaking the
+  Linear fill-fraction vocabulary, and make EVERY row the same two-line shape. Supersedes the
+  same-day READOUT+RAIL trailing-rail design (its resolvers survive; its layout and its animated
+  ring do not).
+- **Why:** On hardware the trailing rail read as cramped and the escapement ring as generic
+  "AI slop". Root causes, confirmed against the T3 Code source and the icon-family geometry it
+  leans on: (1) a lead segment advancing around a circle is still a SPINNER — the crafted systems
+  (T3, Linear, Octicons) never rotate anything; their only motion is a stepped opacity duty cycle
+  (`steps(n)` ramps between two plateaus — discrete frames, e-ink cadence, on an already-simple
+  shape); (2) our dash gaps (~6.5° vs ~38° dashes) collapsed into a "cracked circle" at Ø12 — the
+  icon-family proportion is dash:gap 1:1 (8 × 22.5°); (3) semantics carried by 12pt micro-geometry
+  plus a bare 4-char number is illegible — the crafted systems encode state as HOW MUCH of one
+  fixed circle is drawn/filled (the `◌ ○ ◔ ◉ ●` terminal-glyph ladder), with terminal states
+  earning the only solid fill; (4) a 46pt rail reserved on BOTH lines of a 220pt sidebar squeezed
+  the title and left the number context-free.
+- **The vocabulary (`StatusRing`, one Ø12 circle, 16pt box):** working = dashed `◌` (8 dashes, 1:1,
+  one centred at 12 o'clock), whole-glyph flicker 1.0↔0.75 on T3's duty cycle (3.4s, hard 1/10
+  steps, wall-clock phase from a fixed epoch — all working rings tick in unison, remounts land
+  mid-cycle); awaiting = amber ring + centre dot `◉`, STATIC (halo deleted); done/error = the
+  SOLID disc with a knocked-out ✓/✕ (ground-tone cutout); commandBusy = hollow muted `○`;
+  commandRunning = muted ring + a centre pie wedge swept to the REAL OSC 9;4 fraction (r 3.5 —
+  Linear's inner-fill proportion; indeterminate = bare ring); sudo/caffeinate glyphs unchanged.
+  The only motion in the sidebar is the working flicker.
+- **The layout:** `[16pt glyph column][title + readout][trailing telemetry text]`. The glyph column
+  leads (a vertical scan line of readings, lazygit-style) and anchors on line 1; the attention
+  tick is deleted (an amber/red glyph at a constant leading x IS the tick). The trailing rail and
+  its reserved telemetry column are deleted — the telemetry value is right-aligned TEXT in the
+  title line's timestamp slot (the T3 idiom), and line 2 runs the row's full width (minus the
+  hover-`×` reserve). EVERY row is two-line (`reserveSubtitle` always): the height ladder and the
+  session-scoped rung + 10s sticky decay are deleted outright — no state edge can EVER move
+  layout because there is nothing left to move. Line 2 gains a RUNNING-COMMAND rung (open block's
+  command text, fallback process label) between error and strayed-cwd; the line-1 process label is
+  gone. A RESTING row (no badge, not active, not hovered) RECEDES to the secondary title tone —
+  the T3 `shouldRecede`: the quiet state is dimness, colour + full ink are earned by live state.
+- Client-only; no wire change; golden untouched. The readout/telemetry resolvers, hue budget,
+  header tally and iOS system rows carry over unchanged.

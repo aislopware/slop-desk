@@ -28,9 +28,10 @@ enum RailRowReadout {
     ///   4. done-unseen → the agent's FINAL assistant line (the same label at `.done` — it crosses the
     ///      wire today and was discarded; now you read the result without focusing the tab);
     ///   5. error → the `exit N · command` line from the block model;
-    ///   6. the strayed relative cwd (structural — any live agent state displaces it, it returns when
-    ///      the row settles);
-    ///   7. nothing (an agent row's reserved blank line — absence, no placeholder).
+    ///   6. the RUNNING command (a busy non-agent shell — the command text is what the row is doing);
+    ///   7. the strayed relative cwd (structural — any live state displaces it, it returns when the
+    ///      row settles);
+    ///   8. nothing (the reserved blank line — absence, no placeholder).
     /// Every input is pre-gated by the caller (only handed over when its state holds), so the resolver
     /// is a pure precedence ladder.
     static func resolve(
@@ -39,6 +40,7 @@ enum RailRowReadout {
         workingLabel: String?,
         doneLine: String?,
         errorLine: String?,
+        commandLine: String? = nil,
         strayedCwd: String?,
     ) -> Line? {
         if let question { return Line(text: question, truncation: .tail) }
@@ -46,6 +48,7 @@ enum RailRowReadout {
         if let workingLabel { return Line(text: workingLabel, truncation: .tail) }
         if let doneLine { return Line(text: doneLine, truncation: .tail) }
         if let errorLine { return Line(text: errorLine, truncation: .tail) }
+        if let commandLine { return Line(text: commandLine, truncation: .tail) }
         if let strayedCwd { return Line(text: strayedCwd, truncation: .middle) }
         return nil
     }

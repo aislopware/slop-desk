@@ -67,34 +67,37 @@ enum StatusPresentation {
 
     // MARK: Tab badge
 
-    /// How a sidebar tab's fused ``TabBadgeKind`` renders — the ONE-SHAPE ring vocabulary
-    /// (``StatusRing``): every lifecycle state is a READING of the same Ø12 ring (stroke style + hue +
-    /// centre content change, the silhouette never does), so a state edge reads as one instrument
-    /// changing its reading rather than an icon swap. The view layer (``TabBadgeView``) switches on this
-    /// so the reading + tint have a single source, reused verbatim by every surface that mounts a badge
-    /// (sidebar rail, title-menu attention rows, iOS rows) — one frozen vocabulary, never re-derived
-    /// per surface.
+    /// How a sidebar tab's fused ``TabBadgeKind`` renders — the ONE-SHAPE fill-fraction vocabulary
+    /// (``StatusRing``): every lifecycle state is the same Ø12 circle varying only how much of it is
+    /// drawn/filled (dashed → hollow → pie → armed → solid), so a state edge reads as one instrument
+    /// changing its reading rather than an icon swap. The view layer (``TabBadgeView``) switches on
+    /// this so the reading + tint have a single source, reused verbatim by every surface that mounts a
+    /// badge (sidebar glyph column, title-menu attention rows, iOS rows) — one frozen vocabulary,
+    /// never re-derived per surface.
     ///
     /// The hue budget: colour is spent ONLY on act-now (amber), in-motion (accent), broken (red) and
     /// unread-done (green); the command tiers and privilege markers stay muted, and the resting row has
     /// no badge at all.
-    static func tabBadge(_ kind: TabBadgeKind) -> TabBadgeStyle {
+    ///
+    /// `progressFraction` is the pane's live OSC 9;4 determinate 0…1 (from
+    /// ``progressPresentation(_:)``); only the `.commandRunning` tier consumes it.
+    static func tabBadge(_ kind: TabBadgeKind, progressFraction: Double? = nil) -> TabBadgeStyle {
         switch kind {
-        // Agent WORKING — the dashed ring ticking forward, in the ACCENT (in-motion) hue.
+        // Agent WORKING — the dashed `◌`, flickering on the stepped duty cycle, in the ACCENT hue.
         case .running: .ringWorking(tint: Slate.State.accent)
-        // An OSC 9;4 progress load — the muted ring + centre micro-dot, STATIC (a program that
-        // instruments its progress is still not the agent; its number rides the telemetry column).
-        case .commandRunning: .ringProgress(tint: Slate.Text.secondary)
-        // A plain busy shell — the bare static muted micro-dot, no ring (concentric with the ring
-        // family: an agent taking over reads as the dot growing a ring, not an icon swap).
-        case .commandBusy: .dot(Slate.Text.secondary)
-        // Completed flash + the unread finish — one reading: the green ring + check, held until seen.
+        // An OSC 9;4 progress load — the muted ring with the REAL fraction swept as a pie wedge (an
+        // instrumented command earns geometry, not the agent's hue); indeterminate = the bare ring.
+        case .commandRunning: .ringPie(fraction: progressFraction, tint: Slate.Text.secondary)
+        // A plain busy shell — the hollow muted ring `○`: alive, nothing more to say.
+        case .commandBusy: .ringHollow(tint: Slate.Text.secondary)
+        // Completed flash + the unread finish — one reading: the solid green disc + knocked-out check,
+        // held until seen. Terminal states earn the only full fill.
         case .completed: .ringDone(tint: Slate.Status.ok)
         case .finished: .ringDone(tint: Slate.Status.ok)
-        // Error — the red ring + cross: broken, waits on you, nothing spins.
+        // Error — the solid red disc + knocked-out cross: broken, waits on you, nothing moves.
         case .error: .ringError(tint: Slate.Status.err)
-        // Awaiting input — the amber (act-now) ring + centre dot with the stepped halo pulse. Amber is
-        // the "answer me" hue; red stays reserved for something actually broken.
+        // Awaiting input — the amber (act-now) ring + centre dot `◉`: armed, waiting. Static — amber
+        // is the "answer me" hue; red stays reserved for something actually broken.
         case .awaitingInput: .ringAwaiting(tint: Slate.Status.warn)
         case .caffeinate: .ringGlyph(name: "cup.and.saucer.fill", tint: Slate.Text.secondary)
         case .sudo: .ringGlyph(name: "shield.lefthalf.filled", tint: Slate.Text.secondary)
@@ -154,25 +157,24 @@ enum ProgressPresentation: Equatable {
     case error
 }
 
-/// The rendering recipe for one tab badge (see ``StatusPresentation/tabBadge(_:)``) — the ring readings
-/// map 1:1 onto ``StatusRing/Reading``; `.dot` is the one sub-ring shape (the quiet busy-shell
-/// micro-dot, concentric with the ring family). A pure value (no view), so the badge map can be
-/// unit-tested without rendering.
+/// The rendering recipe for one tab badge (see ``StatusPresentation/tabBadge(_:progressFraction:)``) —
+/// the readings map 1:1 onto ``StatusRing/Reading``: one circle, state encoded by fill fraction. A
+/// pure value (no view), so the badge map can be unit-tested without rendering.
 enum TabBadgeStyle {
-    /// A WORKING agent — the dashed ring, lead segment ticking forward (the only spinning-class motion).
+    /// A WORKING agent — the dashed `◌`, whole-glyph stepped flicker (the only motion in the system).
     case ringWorking(tint: Color)
-    /// A blocked agent / interactive prompt — the ring + centre dot with the stepped halo pulse.
+    /// A blocked agent / interactive prompt — the ring + filled centre dot `◉`. Static: armed.
     case ringAwaiting(tint: Color)
-    /// Done (flash + unread) — the ring + inner check, held until the tab is viewed.
+    /// Done (flash + unread) — the solid disc + knocked-out check, held until the tab is viewed.
     case ringDone(tint: Color)
-    /// A failed command / held progress error — the ring + inner cross. Static: it waits on you.
+    /// A failed command / held progress error — the solid disc + knocked-out cross. Static.
     case ringError(tint: Color)
-    /// An OSC 9;4 progress load — the muted ring + centre micro-dot, static (not the agent).
-    case ringProgress(tint: Color)
+    /// A plain busy shell — the hollow ring `○` (running, uninstrumented).
+    case ringHollow(tint: Color)
+    /// An OSC 9;4 progress load — the ring + centre pie wedge swept to the real 0…1 fraction
+    /// (`nil` = indeterminate: the bare ring).
+    case ringPie(fraction: Double?, tint: Color)
     /// An at-rest privilege marker (caffeinate / sudo) — a small SF-symbol inside the muted ring.
     case ringGlyph(name: String, tint: Color)
-    /// A plain busy shell — the bare static muted micro-dot (no ring; the ring is earned by an agent or
-    /// an explicit progress report).
-    case dot(Color)
 }
 #endif

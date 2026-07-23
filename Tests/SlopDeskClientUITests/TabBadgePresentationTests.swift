@@ -1,11 +1,11 @@
 // TabBadgePresentationTests — pins the pure view-side badge map. `StatusPresentation.tabBadge` resolves
-// each `TabBadgeKind` to its ONE-SHAPE ring reading (working = dashed ring, awaiting = ring+halo,
-// done = ring+check, error = ring+cross, progress = muted ring, privilege = glyph-in-ring; the plain
-// busy shell keeps the sub-ring micro-dot), and `tabBadgeLabel` gives every kind a distinct non-empty
-// AX/tooltip string. Headless VALUE assertions — no SwiftUI render, no video/Metal/SCStream. Each test
-// fails if the two helpers don't exist, so none is tautological. (Tints are deliberately NOT asserted
-// here — `Color` equality is provider-fragile; the reading CLASS is the load-bearing spec, with the
-// visual tint left to the snapshot.)
+// each `TabBadgeKind` to its ONE-SHAPE fill-fraction reading (working = dashed `◌`, awaiting =
+// ring+dot `◉`, done/error = the solid disc + knockout, busy = hollow `○`, OSC 9;4 = ring + pie at
+// the real fraction, privilege = glyph-in-ring), and `tabBadgeLabel` gives every kind a distinct
+// non-empty AX/tooltip string. Headless VALUE assertions — no SwiftUI render, no video/Metal/SCStream.
+// Each test fails if the two helpers don't exist, so none is tautological. (Tints are deliberately NOT
+// asserted here — `Color` equality is provider-fragile; the reading CLASS is the load-bearing spec,
+// with the visual tint left to the snapshot.)
 
 import SlopDeskWorkspaceCore
 import XCTest
@@ -39,23 +39,27 @@ final class TabBadgePresentationTests: XCTestCase {
         return false
     }
 
-    private func isProgressRing(_ kind: TabBadgeKind) -> Bool {
-        if case .ringProgress = StatusPresentation.tabBadge(kind) { return true }
+    /// The pie reading's carried fraction, or `.none` when the kind isn't the pie at all (a `nil`
+    /// fraction inside the pie is a real state — indeterminate — so the two must stay distinguishable).
+    private func pieFraction(of kind: TabBadgeKind, progressFraction: Double? = nil) -> Double?? {
+        if case let .ringPie(fraction, _) = StatusPresentation.tabBadge(
+            kind, progressFraction: progressFraction,
+        ) { return fraction }
+        return Double??.none
+    }
+
+    /// Whether the kind renders the hollow ring `○` (the quiet busy-shell tier).
+    private func isHollowRing(_ kind: TabBadgeKind) -> Bool {
+        if case .ringHollow = StatusPresentation.tabBadge(kind) { return true }
         return false
     }
 
-    /// Whether the kind renders the bare STATIC micro-dot (the quiet busy-shell tier; no ring).
-    private func isStaticDot(_ kind: TabBadgeKind) -> Bool {
-        if case .dot = StatusPresentation.tabBadge(kind) { return true }
-        return false
-    }
-
-    /// `.running` (a WORKING agent) ⇒ the dashed working ring — the only spinning-class reading;
-    /// never a static dot, never a glyph.
+    /// `.running` (a WORKING agent) ⇒ the dashed working `◌` — the only reading that moves at all;
+    /// never the hollow command ring, never a glyph.
     func testRunningIsTheWorkingRing() {
         XCTAssertTrue(isWorkingRing(.running))
         XCTAssertNil(glyphName(of: .running), "the working ring is a bespoke reading, not an SF-symbol")
-        XCTAssertFalse(isStaticDot(.running), "working is live — never the static dot")
+        XCTAssertFalse(isHollowRing(.running), "working is the agent's dashed ring, not the command ring")
     }
 
     /// `.awaitingInput` ⇒ the awaiting ring (ring + centre dot + halo) — distinct from BOTH the
@@ -67,20 +71,59 @@ final class TabBadgePresentationTests: XCTestCase {
         XCTAssertFalse(isErrorRing(.awaitingInput))
     }
 
-    /// `.commandRunning` (an OSC 9;4 progress load) ⇒ the muted progress ring — NOT the agent's
-    /// working ring (command ≠ agent), not a dot, not a glyph.
-    func testCommandRunningIsTheMutedProgressRing() {
-        XCTAssertTrue(isProgressRing(.commandRunning))
+    /// `.commandRunning` (an OSC 9;4 progress load) ⇒ the pie reading carrying the REAL fraction
+    /// through untouched — NOT the agent's working ring (command ≠ agent), not a glyph. An
+    /// indeterminate report (no fraction) stays the pie reading with a `nil` sweep (the bare ring).
+    func testCommandRunningIsThePieAtTheRealFraction() {
+        XCTAssertEqual(pieFraction(of: .commandRunning, progressFraction: 0.68), .some(.some(0.68)))
+        XCTAssertEqual(pieFraction(of: .commandRunning), .some(.none), "indeterminate = pie with no sweep")
         XCTAssertFalse(isWorkingRing(.commandRunning), "a program's progress must not use the agent reading")
         XCTAssertNil(glyphName(of: .commandRunning))
     }
 
-    /// `.commandBusy` (a plain busy shell) ⇒ the bare STATIC muted micro-dot — no ring (the ring is
-    /// earned by an agent or an explicit progress report).
-    func testCommandBusyIsBareStaticDot() {
-        XCTAssertTrue(isStaticDot(.commandBusy))
-        XCTAssertFalse(isProgressRing(.commandBusy), "a plain busy shell earns no ring")
+    /// `.commandBusy` (a plain busy shell) ⇒ the hollow ring `○` — running, uninstrumented; the
+    /// fraction input is ignored (no pie without an explicit progress report).
+    func testCommandBusyIsTheHollowRing() {
+        XCTAssertTrue(isHollowRing(.commandBusy))
+        XCTAssertEqual(
+            pieFraction(of: .commandBusy, progressFraction: 0.5), Double??.none,
+            "a plain busy shell never sweeps a pie",
+        )
         XCTAssertNil(glyphName(of: .commandBusy))
+    }
+
+    /// The pie fraction is consumed ONLY by `.commandRunning` — handing a fraction to any other kind
+    /// must not bend its reading (the working agent stays dashed, done stays the solid disc).
+    func testFractionDoesNotLeakIntoOtherReadings() {
+        if case .ringPie = StatusPresentation.tabBadge(.running, progressFraction: 0.4) {
+            XCTFail("the agent reading must ignore a stray fraction")
+        }
+        XCTAssertTrue(isDoneRing(.finished))
+        if case .ringPie = StatusPresentation.tabBadge(.finished, progressFraction: 0.4) {
+            XCTFail("a terminal reading must ignore a stray fraction")
+        }
+    }
+
+    // MARK: - The working flicker (the one animation in the system)
+
+    /// The stepped duty-cycle: full strength on the high plateau, the 0.75 floor on the low one, and
+    /// the ramp between them QUANTIZED to hard steps (a ramp instant must sit strictly between the
+    /// plateaus, on a 1/10 grid — no continuous easing). Anchored to the fixed epoch, so the phase is
+    /// deterministic.
+    func testWorkingFlickerIsSteppedDutyCycle() {
+        func at(_ phase: Double) -> Double {
+            StatusRing.flickerOpacity(at: Date(timeIntervalSinceReferenceDate: phase * 3.4))
+        }
+        XCTAssertEqual(at(0.0), 1.0)
+        XCTAssertEqual(at(0.35), 1.0, "the high plateau holds through 36%")
+        XCTAssertEqual(at(0.60), 0.75, "the low plateau holds 50%…86%")
+        XCTAssertEqual(at(0.85), 0.75)
+        let ramp = at(0.43)
+        XCTAssertLessThan(ramp, 1.0)
+        XCTAssertGreaterThan(ramp, 0.75)
+        // The quantization: a mid-ramp value lands exactly on the 1/10 step grid between the plateaus.
+        let step = (1.0 - ramp) / 0.25 * 10
+        XCTAssertEqual(step, step.rounded(), accuracy: 1e-9, "ramp frames are hard 1/10 steps")
     }
 
     /// The done tier — the flash AND the unread marker — is ONE reading: the ring + check. The unread
