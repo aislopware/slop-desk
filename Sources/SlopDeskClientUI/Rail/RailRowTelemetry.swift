@@ -1,8 +1,9 @@
 // RailRowTelemetry — the pure resolution of a sidebar row's right-aligned telemetry slot: at most ONE
 // value per row, picked by the badge's own precedence, rendered in the instrument voice. The slot answers
 // the supervision questions a glance needs — "how long has this question been ignored", "how long has
-// this turn run", "what did that command exit with" — without a click. Pure + clock-injected so every
-// rule is unit-pinned headlessly (no view, no store).
+// this turn run", "how long has that failure sat" — without a click (the exit code itself rides the
+// badge's `!<code>` reading). Pure + clock-injected so every rule is unit-pinned headlessly (no view,
+// no store).
 
 import Foundation
 import SlopDeskWorkspaceCore
@@ -46,8 +47,8 @@ enum RailRowTelemetry {
 
     /// Resolve the row's one telemetry value (or `nil` for an empty slot), by badge precedence:
     ///   • awaitingInput → blocked-age (AMBER — the sole coloured number), from the attention stamp;
-    ///   • error → a non-agent row shows the bare exit code immediately (the cross alarms, the number
-    ///     informs); an agent row shows its time-in-error;
+    ///   • error → the time-in-error (the exit code rides the badge's own `!<code>` reading, so the
+    ///     slot answers "how long has it sat broken", not "with what");
     ///   • running → the turn's elapsed (the `.working` edge stamps the attention clock), escalating
     ///     one luminance step past ``workingEscalationDelay``;
     ///   • command tiers → a determinate OSC 9;4 percent immediately when present, else the command's
@@ -57,12 +58,10 @@ enum RailRowTelemetry {
     ///   • privilege markers / no badge → nothing.
     static func value(
         badge: TabBadgeKind?,
-        isAgentSession: Bool,
         attentionAt: Date?,
         completedAt: Date?,
         commandStartedAt: Date?,
         progressPercent: String?,
-        exitCode: Int32?,
         now: Date,
     ) -> RailTelemetryValue? {
         switch badge {
@@ -70,9 +69,6 @@ enum RailRowTelemetry {
             guard let age = revealedAge(since: attentionAt, now: now) else { return nil }
             return RailTelemetryValue(text: age, tone: .amber)
         case .error:
-            if !isAgentSession, let exitCode {
-                return RailTelemetryValue(text: clampedExitCode(exitCode), tone: .secondary)
-            }
             guard let age = revealedAge(since: attentionAt, now: now) else { return nil }
             return RailTelemetryValue(text: age, tone: .secondary)
         case .running:
@@ -105,14 +101,5 @@ enum RailRowTelemetry {
         let elapsed = now.timeIntervalSince(since)
         guard !elapsed.isLess(than: revealDelay) else { return nil }
         return compactDuration(elapsed)
-    }
-
-    /// The exit code clamped to the 4-character column — a shell code is 0…255, but the wire carries an
-    /// `Int32`, so an out-of-band value must not push the rail sideways. Beyond 4 digits (or negative
-    /// past `-999`) the number stops informing at a glance; the cross already alarms, so it degrades to
-    /// `err` (the tooltip keeps the exact line).
-    private static func clampedExitCode(_ code: Int32) -> String {
-        let text = "\(code)"
-        return text.count <= 4 ? text : "err"
     }
 }

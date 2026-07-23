@@ -83,7 +83,7 @@ final class SlateSnapshotRender: XCTestCase {
             badgeRow("full-release.sh", badge: .running)
             badgeRow("brew upgrade", badge: .commandRunning)
             badgeRow("make check", badge: .commandBusy)
-            badgeRow("running build task", badge: .error)
+            badgeRow("running build task", badge: .error, exitCode: 137)
             badgeRow("plan next move", badge: .awaitingInput)
             badgeRow("OpenCode", badge: .completed)
             badgeRow("abner@MacBook-AB:…", badge: .finished)
@@ -103,16 +103,18 @@ final class SlateSnapshotRender: XCTestCase {
 
     /// A resting (non-active) tab row carrying one fused badge, for the badge-state showcase.
     @MainActor
-    private func badgeRow(_ title: String, badge: TabBadgeKind) -> some View {
-        SlateTabRow(title: title, active: false, badge: badge, onSelect: {}, onClose: {})
+    private func badgeRow(_ title: String, badge: TabBadgeKind, exitCode: Int32? = nil) -> some View {
+        SlateTabRow(
+            title: title, active: false, badge: badge, errorExitCode: exitCode, onSelect: {}, onClose: {},
+        )
     }
 
     // MARK: - Opt-in render of one By-Project sidebar section (header + two-line rows)
 
-    /// Renders the REAL ``SidebarSectionHeaderRow`` (the TWO-LINE header: caps title + tally over
-    /// the git line) over a seeded headless store, above representative flush-left two-line
-    /// ``SlateTabRow`` states at the true sidebar width — the visual lock for the header↔row
-    /// alignment and the trailing ASCII status glyphs (`✻` pulse / braille / `? ✗ ✓`). SAME opt-in
+    /// Renders the REAL ``SidebarSectionHeaderRow`` (the TWO-LINE header: caps title + section rule +
+    /// `?N !N` tally over the git line) over a seeded headless store, above representative flush-left
+    /// two-line ``SlateTabRow`` states at the true sidebar width — the visual lock for the header↔row
+    /// alignment and the trailing ASCII status glyphs (`✻` pulse / braille / `? !137 ok`). SAME opt-in
     /// idiom; writes `sidebar-section.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
     @MainActor
     func testRenderSidebarSection() throws {
@@ -144,8 +146,9 @@ final class SlateSnapshotRender: XCTestCase {
             )
             SlateTabRow(
                 title: "api", active: false,
-                subtitle: "exit 137 · npm test", subtitleTruncation: .tail,
-                badge: .error, telemetry: RailTelemetryValue(text: "137", tone: .secondary),
+                subtitle: "npm test", subtitleTruncation: .tail,
+                badge: .error, errorExitCode: 137,
+                telemetry: RailTelemetryValue(text: "12m", tone: .secondary),
                 onSelect: {}, onClose: {},
             )
             // The settled floor rungs: an idle shell reads its identity; a fresh pane its `⌘N`.
@@ -161,10 +164,10 @@ final class SlateSnapshotRender: XCTestCase {
         )
     }
 
-    /// A headless `.tree` store whose panes all live AT `key` (the project root), one of them blocked —
-    /// so the REAL builder yields the section's rows (program-titled, folder names suppressed at root)
-    /// and the header's act-now tally lights. The project's git summary is seeded directly
-    /// (`internal(set)` via `@testable`).
+    /// A headless `.tree` store whose panes all live AT `key` (the project root), one blocked and one
+    /// failed — so the REAL builder yields the section's rows (program-titled, folder names suppressed
+    /// at root) and the header's tally lights BOTH classes (`?1 !1`). The project's git summary is
+    /// seeded directly (`internal(set)` via `@testable`).
     @MainActor
     private func makeSectionStore(key: String) -> (store: WorkspaceStore, rows: [RailRow]) {
         var tabs: [SlopDeskWorkspaceCore.Tab] = []
@@ -189,6 +192,7 @@ final class SlateSnapshotRender: XCTestCase {
         let panes = tabs.compactMap(\.activePane)
         store.setForegroundProcess("claude", for: panes[0])
         store.setAgentStatus(.needsPermission, for: panes[1])
+        store.setCompletionBadge(.failure, for: panes[2])
         return (store, RailRowsBuilder.rows(for: store))
     }
 

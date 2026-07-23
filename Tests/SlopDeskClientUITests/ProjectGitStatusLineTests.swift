@@ -1,11 +1,12 @@
 // ProjectGitStatusLineTests — pins the section header's git segment (`ProjectGitStatusLine`): the
-// per-token STATUS colouring of the main run (branch inherits the header gray base — no explicit
-// colour; `↑`ahead/`+`staged ok-green, `↓`behind/`!`modified warn-amber, `?`untracked info-blue),
-// the conflict/stash SPLIT (both render as separate views — the conflict pill needs a background
-// shape, so `=`/`$` must never leak into the attributed main run), and the branch cap (the sigil
-// counts are the glanceable payload and may never be truncated away, so the BRANCH pre-truncates).
+// `__git_ps1` ASCII sigils (`>`ahead `<`behind `+ ! ?` — no arrow dingbats), the ONE-tone rule (every
+// count reads the same secondary grey — colour is rationed to the conflict token, the sole state that
+// blocks work; the branch inherits the header gray base), the conflict/stash SPLIT (both render as
+// separate views, so `=`/`$` must never leak into the attributed main run), and the branch cap (the
+// sigil counts are the glanceable payload and may never be truncated away, so the BRANCH
+// pre-truncates).
 //
-// Revert-to-confirm-fail: dropping a token colour fails its colour leg; appending conflict/stash to
+// Revert-to-confirm-fail: recolouring a token fails its tone leg; appending conflict/stash to
 // `mainLine` fails the split pins; removing the cap fails `testLongBranchCapsInTheMiddle`.
 // Headless / pure-token — no SCStream/VT/Metal touched.
 
@@ -19,7 +20,7 @@ import XCTest
 final class ProjectGitStatusLineTests: XCTestCase {
     override func setUp() {
         super.setUp()
-        ThemeStore.shared.apply(.monokaiProClassic) // deterministic status palette (ok/warn/info)
+        ThemeStore.shared.apply(.monokaiProClassic) // deterministic palette (secondary/err)
     }
 
     /// The single colour carried by the run that spells `substring`, or `nil` if that run has no explicit
@@ -29,34 +30,32 @@ final class ProjectGitStatusLineTests: XCTestCase {
         return line[range].foregroundColor
     }
 
-    /// Green (ok) = outgoing/index work: `↑`ahead and `+`staged both read OK-green.
-    func testAheadAndStagedAreOk() {
-        let g = PaneGitSummary(hasRepo: true, branch: "main", ahead: 1, behind: 0, changedCount: 2, staged: 2)
+    /// Every dirt count wears the SAME secondary tone — one quiet grey, no status rainbow — and the
+    /// sigils speak the `__git_ps1` ASCII dialect: `>`ahead, `<`behind, `+`staged, `!`modified,
+    /// `?`untracked, in that fixed order.
+    func testEveryCountReadsSecondaryInFixedOrder() {
+        let g = PaneGitSummary(
+            hasRepo: true, branch: "main", ahead: 1, behind: 2, changedCount: 6,
+            staged: 3, modified: 4, untracked: 5,
+        )
         let line = ProjectGitStatusLine.mainLine(g)
-        XCTAssertEqual(colour(of: "↑1", in: line), .some(Slate.Status.ok))
-        XCTAssertEqual(colour(of: "+2", in: line), .some(Slate.Status.ok))
+        XCTAssertEqual(String(line.characters), "main >1 <2 +3 !4 ?5")
+        for token in [">1", "<2", "+3", "!4", "?5"] {
+            XCTAssertEqual(colour(of: token, in: line), .some(Slate.Text.secondary), token)
+        }
     }
 
-    /// Amber (warn) = needs-attention: `↓`behind and `!`modified both read warn-amber.
-    func testBehindAndModifiedAreWarn() {
-        let g = PaneGitSummary(hasRepo: true, branch: "main", ahead: 0, behind: 2, changedCount: 3, modified: 3)
-        let line = ProjectGitStatusLine.mainLine(g)
-        XCTAssertEqual(colour(of: "↓2", in: line), .some(Slate.Status.warn))
-        XCTAssertEqual(colour(of: "!3", in: line), .some(Slate.Status.warn))
-    }
-
-    /// `?`untracked reads info-blue; the branch carries NO explicit colour (inherits the header gray
-    /// base — the section TITLE stays the anchor, the branch recedes with it).
-    func testUntrackedIsInfoAndBranchIsUncoloured() {
+    /// The branch carries NO explicit colour (inherits the header gray base — the section TITLE stays
+    /// the anchor, the branch recedes with it).
+    func testBranchIsUncoloured() {
         let g = PaneGitSummary(
             hasRepo: true, branch: "feature-x", ahead: 0, behind: 0, changedCount: 1, untracked: 1,
         )
         let line = ProjectGitStatusLine.mainLine(g)
-        XCTAssertEqual(colour(of: "?1", in: line), .some(Slate.Status.info))
         XCTAssertEqual(colour(of: "feature-x", in: line), .some(Color?.none), "branch inherits the base")
     }
 
-    /// Conflict (`=`) and stash (`$`) render as SEPARATE views (the pill needs a background shape;
+    /// Conflict (`=`) and stash (`$`) render as SEPARATE views (the conflict is the line's one colour;
     /// the stash its own muted tone) — neither may leak into the attributed main run.
     func testConflictAndStashStayOutOfTheMainRun() {
         let g = PaneGitSummary(
@@ -64,8 +63,8 @@ final class ProjectGitStatusLineTests: XCTestCase {
             staged: 1, conflicted: 2, stash: 3,
         )
         let text = String(ProjectGitStatusLine.mainLine(g).characters)
-        XCTAssertEqual(text, "main ↑1 +1", "the main run carries branch + ↑↓+!? only")
-        XCTAssertFalse(text.contains("="), "conflict renders as the pill view, not a main-run token")
+        XCTAssertEqual(text, "main >1 +1", "the main run carries branch + ><+!? only")
+        XCTAssertFalse(text.contains("="), "conflict renders as its own err-tinted view")
         XCTAssertFalse(text.contains("$"), "stash renders as its own muted view")
     }
 
@@ -75,7 +74,7 @@ final class ProjectGitStatusLineTests: XCTestCase {
         let line = ProjectGitStatusLine.mainLine(g)
         XCTAssertEqual(String(line.characters), "main")
         for run in line.runs {
-            XCTAssertNil(run.foregroundColor, "a clean repo's line carries no status colour")
+            XCTAssertNil(run.foregroundColor, "a clean repo's line carries no explicit colour")
         }
     }
 
@@ -99,7 +98,7 @@ final class ProjectGitStatusLineTests: XCTestCase {
             ahead: 2, behind: 0, changedCount: 0,
         )
         XCTAssertEqual(
-            String(ProjectGitStatusLine.mainLine(g).characters), "feature/…-name-fix ↑2",
+            String(ProjectGitStatusLine.mainLine(g).characters), "feature/…-name-fix >2",
             "the capped branch never eats the sigil suffix",
         )
     }

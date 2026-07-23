@@ -1,5 +1,6 @@
 // RailRowTelemetryTests — pins the sidebar row's telemetry slot: the ≤4-character duration grammar and
 // the one-value-per-row resolution (which badge shows which number, when it reveals, and its tone).
+// The slot is AGES only — the failed exit code rides the badge's `!<code>` reading, never this slot.
 // Headless VALUE assertions over the pure resolver — no view, no store, injected clock.
 
 import SlopDeskWorkspaceCore
@@ -39,12 +40,12 @@ final class RailRowTelemetryTests: XCTestCase {
     // MARK: - Reveal delay (fresh states carry no number)
 
     func testYoungStatesShowNothing() {
-        for badge in [TabBadgeKind.awaitingInput, .running, .completed, .finished] {
+        for badge in [TabBadgeKind.awaitingInput, .error, .running, .completed, .finished] {
             XCTAssertNil(
                 RailRowTelemetry.value(
-                    badge: badge, isAgentSession: true,
+                    badge: badge,
                     attentionAt: ago(30), completedAt: ago(30), commandStartedAt: ago(30),
-                    progressPercent: nil, exitCode: nil, now: now,
+                    progressPercent: nil, now: now,
                 ),
                 "\(badge): under the 60s reveal the slot stays empty",
             )
@@ -56,9 +57,9 @@ final class RailRowTelemetryTests: XCTestCase {
     /// The blocked-age is the SOLE amber number — asked AND ignored is live attention data.
     func testAwaitingShowsAmberBlockedAge() {
         let value = RailRowTelemetry.value(
-            badge: .awaitingInput, isAgentSession: true,
+            badge: .awaitingInput,
             attentionAt: ago(12 * 60), completedAt: nil, commandStartedAt: nil,
-            progressPercent: nil, exitCode: nil, now: now,
+            progressPercent: nil, now: now,
         )
         XCTAssertEqual(value, RailTelemetryValue(text: "12m", tone: .amber))
     }
@@ -66,42 +67,36 @@ final class RailRowTelemetryTests: XCTestCase {
     /// A working turn's elapsed stays on the grey ladder, escalating one luminance step at ≥10m.
     func testWorkingElapsedEscalatesAtTenMinutes() {
         let young = RailRowTelemetry.value(
-            badge: .running, isAgentSession: true,
+            badge: .running,
             attentionAt: ago(5 * 60), completedAt: nil, commandStartedAt: nil,
-            progressPercent: nil, exitCode: nil, now: now,
+            progressPercent: nil, now: now,
         )
         XCTAssertEqual(young, RailTelemetryValue(text: "5m", tone: .secondary))
         let stuck = RailRowTelemetry.value(
-            badge: .running, isAgentSession: true,
+            badge: .running,
             attentionAt: ago(25 * 60), completedAt: nil, commandStartedAt: nil,
-            progressPercent: nil, exitCode: nil, now: now,
+            progressPercent: nil, now: now,
         )
         XCTAssertEqual(stuck, RailTelemetryValue(text: "25m", tone: .primary))
     }
 
-    /// A non-agent error shows its bare exit code IMMEDIATELY (the cross alarms, the number informs);
-    /// an agent error shows its time-in-error instead.
-    func testErrorSplitsByAgency() {
-        let command = RailRowTelemetry.value(
-            badge: .error, isAgentSession: false,
-            attentionAt: ago(5), completedAt: nil, commandStartedAt: nil,
-            progressPercent: nil, exitCode: 137, now: now,
-        )
-        XCTAssertEqual(command, RailTelemetryValue(text: "137", tone: .secondary))
-        let agent = RailRowTelemetry.value(
-            badge: .error, isAgentSession: true,
+    /// An error shows its TIME-IN-ERROR — "how long has it sat broken". The exit code is the badge's
+    /// `!<code>` reading, so the slot never repeats the number next to it.
+    func testErrorShowsTimeInError() {
+        let value = RailRowTelemetry.value(
+            badge: .error,
             attentionAt: ago(4 * 60), completedAt: nil, commandStartedAt: nil,
-            progressPercent: nil, exitCode: 137, now: now,
+            progressPercent: nil, now: now,
         )
-        XCTAssertEqual(agent, RailTelemetryValue(text: "4m", tone: .secondary))
+        XCTAssertEqual(value, RailTelemetryValue(text: "4m", tone: .secondary))
     }
 
     /// A determinate OSC 9;4 percent shows immediately on the command tiers, displacing the elapsed.
     func testCommandPercentBeatsElapsed() {
         let value = RailRowTelemetry.value(
-            badge: .commandRunning, isAgentSession: false,
+            badge: .commandRunning,
             attentionAt: nil, completedAt: nil, commandStartedAt: ago(10 * 60),
-            progressPercent: "68%", exitCode: nil, now: now,
+            progressPercent: "68%", now: now,
         )
         XCTAssertEqual(value, RailTelemetryValue(text: "68%", tone: .secondary))
     }
@@ -109,9 +104,9 @@ final class RailRowTelemetryTests: XCTestCase {
     /// Without a percent, a long-running command shows its elapsed from the command-start stamp.
     func testCommandElapsedFromStartStamp() {
         let value = RailRowTelemetry.value(
-            badge: .commandBusy, isAgentSession: false,
+            badge: .commandBusy,
             attentionAt: nil, completedAt: nil, commandStartedAt: ago(14 * 60),
-            progressPercent: nil, exitCode: nil, now: now,
+            progressPercent: nil, now: now,
         )
         XCTAssertEqual(value, RailTelemetryValue(text: "14m", tone: .secondary))
     }
@@ -119,9 +114,9 @@ final class RailRowTelemetryTests: XCTestCase {
     /// The unread finish shows its age from the completion stamp.
     func testUnreadFinishShowsAge() {
         let value = RailRowTelemetry.value(
-            badge: .finished, isAgentSession: true,
+            badge: .finished,
             attentionAt: nil, completedAt: ago(8 * 60), commandStartedAt: nil,
-            progressPercent: nil, exitCode: nil, now: now,
+            progressPercent: nil, now: now,
         )
         XCTAssertEqual(value, RailTelemetryValue(text: "8m", tone: .secondary))
     }
@@ -130,62 +125,35 @@ final class RailRowTelemetryTests: XCTestCase {
     func testPrivilegeAndClearShowNothing() {
         for badge in [TabBadgeKind.caffeinate, .sudo] {
             XCTAssertNil(RailRowTelemetry.value(
-                badge: badge, isAgentSession: false,
+                badge: badge,
                 attentionAt: ago(3600), completedAt: ago(3600), commandStartedAt: ago(3600),
-                progressPercent: "50%", exitCode: 1, now: now,
+                progressPercent: "50%", now: now,
             ))
         }
         XCTAssertNil(RailRowTelemetry.value(
-            badge: nil, isAgentSession: false,
+            badge: nil,
             attentionAt: ago(3600), completedAt: ago(3600), commandStartedAt: ago(3600),
-            progressPercent: "50%", exitCode: 1, now: now,
+            progressPercent: "50%", now: now,
         ))
     }
 
     /// A state with no stamp shows nothing (no placeholder) rather than a bogus age.
     func testMissingStampShowsNothing() {
         XCTAssertNil(RailRowTelemetry.value(
-            badge: .awaitingInput, isAgentSession: true,
+            badge: .awaitingInput,
             attentionAt: nil, completedAt: nil, commandStartedAt: nil,
-            progressPercent: nil, exitCode: nil, now: now,
+            progressPercent: nil, now: now,
         ))
     }
 
-    /// The LIVE progress-error wiring (an OSC 9;4;2 while the command still runs): the leaf passes NO
-    /// exit code (the alarming block is still open) and no attention stamp exists — the slot stays
-    /// empty rather than showing a stale number.
-    func testProgressErrorWithoutBlockOrStampShowsNothing() {
+    /// The LIVE progress-error wiring (an OSC 9;4;2 while the command still runs): no attention stamp
+    /// exists yet — the slot stays empty rather than showing a stale number.
+    func testProgressErrorWithoutStampShowsNothing() {
         XCTAssertNil(RailRowTelemetry.value(
-            badge: .error, isAgentSession: false,
+            badge: .error,
             attentionAt: nil, completedAt: nil, commandStartedAt: ago(10 * 60),
-            progressPercent: nil, exitCode: nil, now: now,
+            progressPercent: nil, now: now,
         ))
-    }
-
-    /// A non-agent error with no exit code but a real attention stamp falls back to its age.
-    func testNonAgentErrorWithoutExitCodeFallsToAge() {
-        let value = RailRowTelemetry.value(
-            badge: .error, isAgentSession: false,
-            attentionAt: ago(3 * 60), completedAt: nil, commandStartedAt: nil,
-            progressPercent: nil, exitCode: nil, now: now,
-        )
-        XCTAssertEqual(value, RailTelemetryValue(text: "3m", tone: .secondary))
-    }
-
-    /// An out-of-band exit code (an Int32 off the wire, not a shell 0…255) clamps to the 4ch column.
-    func testOversizedExitCodeClampsToColumn() {
-        let wide = RailRowTelemetry.value(
-            badge: .error, isAgentSession: false,
-            attentionAt: nil, completedAt: nil, commandStartedAt: nil,
-            progressPercent: nil, exitCode: 100_000, now: now,
-        )
-        XCTAssertEqual(wide, RailTelemetryValue(text: "err", tone: .secondary))
-        let negative = RailRowTelemetry.value(
-            badge: .error, isAgentSession: false,
-            attentionAt: nil, completedAt: nil, commandStartedAt: nil,
-            progressPercent: nil, exitCode: -11, now: now,
-        )
-        XCTAssertEqual(negative, RailTelemetryValue(text: "-11", tone: .secondary))
     }
 
     // MARK: - Exact boundaries
@@ -199,14 +167,14 @@ final class RailRowTelemetryTests: XCTestCase {
     /// The reveal boundary: exactly 60s shows "1m"; one second under shows nothing.
     func testRevealBoundaryIsInclusive() {
         XCTAssertNil(RailRowTelemetry.value(
-            badge: .awaitingInput, isAgentSession: true,
+            badge: .awaitingInput,
             attentionAt: ago(59), completedAt: nil, commandStartedAt: nil,
-            progressPercent: nil, exitCode: nil, now: now,
+            progressPercent: nil, now: now,
         ))
         let atBoundary = RailRowTelemetry.value(
-            badge: .awaitingInput, isAgentSession: true,
+            badge: .awaitingInput,
             attentionAt: ago(60), completedAt: nil, commandStartedAt: nil,
-            progressPercent: nil, exitCode: nil, now: now,
+            progressPercent: nil, now: now,
         )
         XCTAssertEqual(atBoundary, RailTelemetryValue(text: "1m", tone: .amber))
     }
@@ -214,15 +182,15 @@ final class RailRowTelemetryTests: XCTestCase {
     /// The working escalation boundary: exactly 10 minutes steps the tone to primary.
     func testEscalationBoundaryIsInclusive() {
         let under = RailRowTelemetry.value(
-            badge: .running, isAgentSession: true,
+            badge: .running,
             attentionAt: ago(599), completedAt: nil, commandStartedAt: nil,
-            progressPercent: nil, exitCode: nil, now: now,
+            progressPercent: nil, now: now,
         )
         XCTAssertEqual(under?.tone, .secondary)
         let at = RailRowTelemetry.value(
-            badge: .running, isAgentSession: true,
+            badge: .running,
             attentionAt: ago(600), completedAt: nil, commandStartedAt: nil,
-            progressPercent: nil, exitCode: nil, now: now,
+            progressPercent: nil, now: now,
         )
         XCTAssertEqual(at, RailTelemetryValue(text: "10m", tone: .primary))
     }

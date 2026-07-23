@@ -15,7 +15,7 @@ final class RailRowReadoutTests: XCTestCase {
     func testQuestionWins() {
         let line = RailRowReadout.resolve(
             question: "Allow edit to Config.swift?", scent: "3/5 · Editing", workingLabel: "Wiring",
-            doneLine: "Done", errorLine: "exit 1 · make", strayedCwd: "packages/api",
+            doneLine: "Done", errorLine: "make", strayedCwd: "packages/api",
         )
         XCTAssertEqual(line, RailRowReadout.Line(text: "Allow edit to Config.swift?", truncation: .tail))
     }
@@ -48,13 +48,13 @@ final class RailRowReadoutTests: XCTestCase {
         XCTAssertEqual(line?.truncation, .tail)
     }
 
-    /// Error: the `exit N · command` line.
+    /// Error: the failing-command line (the badge's `!<code>` carries the number).
     func testErrorLineBeatsStructuralCwd() {
         let line = RailRowReadout.resolve(
             question: nil, scent: nil, workingLabel: nil,
-            doneLine: nil, errorLine: "exit 137 · npm test", strayedCwd: "packages/api",
+            doneLine: nil, errorLine: "npm test", strayedCwd: "packages/api",
         )
-        XCTAssertEqual(line?.text, "exit 137 · npm test")
+        XCTAssertEqual(line?.text, "npm test")
     }
 
     /// The RUNNING command sits between the error line and the structural cwd: a busy shell's row
@@ -67,10 +67,10 @@ final class RailRowReadoutTests: XCTestCase {
         XCTAssertEqual(command, RailRowReadout.Line(text: "make check", truncation: .tail))
         let error = RailRowReadout.resolve(
             question: nil, scent: nil, workingLabel: nil,
-            doneLine: nil, errorLine: "exit 137 · npm test", commandLine: "make check",
+            doneLine: nil, errorLine: "npm test", commandLine: "make check",
             strayedCwd: nil,
         )
-        XCTAssertEqual(error?.text, "exit 137 · npm test")
+        XCTAssertEqual(error?.text, "npm test")
     }
 
     /// The structural strayed-cwd outranks the settled floor rungs, with the path-shaped `.middle`
@@ -150,6 +150,42 @@ final class RailRowReadoutTests: XCTestCase {
         XCTAssertEqual(AsciiStatusBadge.frame(at: epoch, frames: [], beat: beat), "")
     }
 
+    /// The attention blink alternates halves one per beat off the same wall-clock epoch — a pure
+    /// function of the date, so every blinking tally dips in unison and re-renders can't reset it.
+    func testBlinkAlternatesPerBeat() {
+        let beat = AsciiStatusBadge.blinkBeat
+        let epoch = Date(timeIntervalSinceReferenceDate: 0)
+        XCTAssertFalse(AsciiStatusBadge.blinkDimmed(at: epoch, beat: beat))
+        XCTAssertTrue(AsciiStatusBadge.blinkDimmed(at: epoch.addingTimeInterval(beat), beat: beat))
+        XCTAssertFalse(AsciiStatusBadge.blinkDimmed(at: epoch.addingTimeInterval(beat * 2), beat: beat))
+        XCTAssertFalse(AsciiStatusBadge.blinkDimmed(at: epoch, beat: 0), "a degenerate beat never dims")
+    }
+
+    // MARK: - The header's act-now tally
+
+    /// The tally splits by WHY: `?` counts blocked questions, `!` counts failures; every other badge
+    /// (spinners, finishes, privilege markers, none) is not attention data.
+    func testAttentionCountsSplitByBadge() {
+        let counts = SidebarSectionHeaderRow.attentionCounts([
+            .awaitingInput, .error, .awaitingInput, .running, .commandBusy, .completed, .sudo, nil,
+        ])
+        XCTAssertEqual(counts.questions, 2)
+        XCTAssertEqual(counts.failures, 1)
+        let quiet = SidebarSectionHeaderRow.attentionCounts([.running, nil])
+        XCTAssertEqual(quiet.questions, 0)
+        XCTAssertEqual(quiet.failures, 0)
+    }
+
+    /// The tally's VoiceOver reading spells out only the non-zero classes.
+    func testAttentionLabelSpellsNonZeroClasses() {
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.attentionLabel(questions: 2, failures: 1),
+            "2 waiting for input, 1 failed",
+        )
+        XCTAssertEqual(SidebarSectionHeaderRow.attentionLabel(questions: 0, failures: 3), "3 failed")
+        XCTAssertEqual(SidebarSectionHeaderRow.attentionLabel(questions: 1, failures: 0), "1 waiting for input")
+    }
+
     // MARK: - The two-line header's non-repo place line
 
     /// The header's line-2 fallback: the project's `~`-abbreviated PARENT path — where it lives —
@@ -167,11 +203,25 @@ final class RailRowReadoutTests: XCTestCase {
 
     // MARK: - The error line
 
+    /// The error readout is the failing COMMAND alone — the exit code rides the badge's `!<code>`
+    /// reading, so the pair never repeats a number. No failure evidence (nil code) or no command →
+    /// `nil` (the badge stands alone; lower rungs fill the line).
     func testErrorLineComposition() {
-        XCTAssertEqual(RailRowReadout.errorLine(exitCode: 137, commandText: "npm test"), "exit 137 · npm test")
-        XCTAssertEqual(RailRowReadout.errorLine(exitCode: 1, commandText: "  "), "exit 1")
-        XCTAssertEqual(RailRowReadout.errorLine(exitCode: 1, commandText: nil), "exit 1")
+        XCTAssertEqual(RailRowReadout.errorLine(exitCode: 137, commandText: "npm test"), "npm test")
+        XCTAssertEqual(RailRowReadout.errorLine(exitCode: 137, commandText: " npm test\n"), "npm test")
+        XCTAssertNil(RailRowReadout.errorLine(exitCode: 1, commandText: "  "))
+        XCTAssertNil(RailRowReadout.errorLine(exitCode: 1, commandText: nil))
         XCTAssertNil(RailRowReadout.errorLine(exitCode: nil, commandText: "npm test"))
+    }
+
+    /// The badge's error reading: `!` fused with the exit code; bare `!` without one, and an
+    /// out-of-band code (>4 characters as text) degrades to the bare `!` rather than widening the row.
+    func testErrorReadingFusesBangAndCode() {
+        XCTAssertEqual(AsciiStatusBadge.errorReading(exitCode: 137), "!137")
+        XCTAssertEqual(AsciiStatusBadge.errorReading(exitCode: 1), "!1")
+        XCTAssertEqual(AsciiStatusBadge.errorReading(exitCode: -11), "!-11")
+        XCTAssertEqual(AsciiStatusBadge.errorReading(exitCode: nil), "!")
+        XCTAssertEqual(AsciiStatusBadge.errorReading(exitCode: 100_000), "!")
     }
 
     // MARK: - Agent-session classification (the tall-shell rung)

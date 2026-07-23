@@ -1811,3 +1811,27 @@ to the pre-v2 flush-left row anatomy, keep the uniform two-line shape, and speak
   project's git line (branch + dirt sigils); a non-repo project shows WHERE it lives instead (the
   `~`-abbreviated parent path). Both lines sit at the rows' own content inset, so the header and
   every title share one left edge — the misalignment complaint dies structurally.
+
+### v3.1 — the de-dingbat pass: `!<code>`, `?N !N` tally, one-tone git, section rule (2026-07-23)
+
+Hardware review of v3: the remaining round/nerd-font symbols (`✗ ✓ ●N`, the git arrows, the conflict
+pill) still read as generated chrome. The pass replaces the residual symbol vocabulary with ASCII
+text and spends the freed contrast on ONE animation idiom:
+
+- **Error badge = `!<exit code>`** (`!137`, err-red) — the shell's own bang fused with the number a
+  glance actually wants; a code-less error (agent / live OSC 9;4;2) reads the bare `!`. The
+  telemetry slot drops its exit-code branch (the badge carries the number) and always answers "how
+  long has it sat broken"; the line-2 error rung drops to the failing COMMAND alone — the pair
+  `!137 12m` / `npm test` never repeats a digit. `✓ → ok` (green unread / muted decayed): a word in
+  the instrument voice, not a dingbat.
+- **Header tally speaks the rows' own dialect**: `●N` → `?N` (blocked questions, amber) + `!N`
+  (failures, err) — the header total and the row badges are one vocabulary. The cluster BLINKS like
+  a terminal cursor (soft opacity dip, hard swap, phase-locked to the shared wall-clock epoch so
+  every project's tally dips together) — attention data is the one place the header earns motion.
+- **Git line goes `__git_ps1` ASCII + one tone**: `↑↓` → `>`/`<`; every count reads the same
+  secondary grey (the 10pt token rainbow read as noise); colour is rationed to the conflict `=N`
+  (err-red text — the pill's background plate is gone, the one state that blocks work keeps the one
+  hue).
+- **The header earns its structure from a RULE, not a bead**: a hairline fills the width between
+  the caps name and the tally (the lazygit `── title ──` idiom) — the section reads as drawn
+  TUI chrome, and the tally hangs off the rule's right end.

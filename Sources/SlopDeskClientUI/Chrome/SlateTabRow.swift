@@ -8,8 +8,8 @@
 // status glyph + telemetry text], line 2 is the full-width readout. There is NO leading accessory
 // column — a reserved gutter indented every title off the section header's left edge, so status
 // moved into the line-1 trailing cluster as a TEXT glyph (``AsciiStatusBadge``: the AI-CLI pulse
-// spinner for a working agent, braille for a running command, static `? ✗ ✓ # ∞` otherwise), where
-// `✻ 4m` reads like a CLI status line and a state edge swaps pixels inside a fixed slot. A RESTING
+// spinner for a working agent, braille for a running command, static `? !137 ok # ∞` otherwise),
+// where `✻ 4m` reads like a CLI status line and a state edge swaps the reading. A RESTING
 // row (no status, not active) RECEDES — its title drops to the secondary tone — so the unlabeled
 // quiet state is dimness, and colour + full strength are earned by live state (the T3 recede).
 
@@ -38,6 +38,9 @@ struct SlateTabRow: View {
     /// The single fused status glyph, rendered as an ``AsciiStatusBadge`` text reading in the line-1
     /// trailing cluster. `nil` ⇒ no glyph and the row recedes.
     var badge: TabBadgeKind?
+    /// The failed command's exit code, forwarded into the error badge's `!<code>` reading. Only read
+    /// when `badge == .error`; default `nil` keeps existing call sites source-compatible.
+    var errorExitCode: Int32?
     /// The row's right-aligned telemetry value (blocked-age / turn-elapsed / percent / exit code —
     /// resolved upstream by ``RailRowTelemetry``). `nil` ⇒ nothing renders in the slot.
     var telemetry: RailTelemetryValue?
@@ -163,7 +166,7 @@ struct SlateTabRow: View {
     }
 
     /// LINE 1 trailing (right of the title): the read-only lock, the sync-input glyph, the STATUS
-    /// text glyph (``AsciiStatusBadge`` — the spinner / `? ✗ ✓` reading), then the TELEMETRY value
+    /// text glyph (``AsciiStatusBadge`` — the spinner / `? !137 ok` reading), then the TELEMETRY value
     /// in the timestamp slot (blocked-age / turn-elapsed / percent / exit code — the T3 idiom: the
     /// row's one number lives where a timestamp would, so the pair reads `✻ 4m`). The cluster fades
     /// out under the hover `×` but KEEPS ITS WIDTH (opacity, not removal), so the fade never reflows
@@ -187,7 +190,7 @@ struct SlateTabRow: View {
                     .help("Sync input — keystrokes mirror to every pane in this tab")
             }
             if let badge {
-                AsciiStatusBadge(kind: badge)
+                AsciiStatusBadge(kind: badge, errorExitCode: errorExitCode)
             }
             if let telemetry {
                 Text(telemetry.text)

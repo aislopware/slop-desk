@@ -28,7 +28,7 @@ enum RailRowReadout {
     ///   3. working, feed cold → the host's last assistant line (wire-27 label);
     ///   4. done-unseen → the agent's FINAL assistant line (the same label at `.done` — it crosses the
     ///      wire today and was discarded; now you read the result without focusing the tab);
-    ///   5. error → the `exit N · command` line from the block model;
+    ///   5. error → the FAILING command from the block model (the badge's `!<code>` carries the number);
     ///   6. the RUNNING command (a busy non-agent shell — the command text is what the row is doing);
     ///   7. the strayed relative cwd (structural — any live state displaces it, it returns when the
     ///      row settles);
@@ -65,11 +65,13 @@ enum RailRowReadout {
         return nil
     }
 
-    /// The error readout: `exit 137 · npm test` — the exit code + the command that produced it, so the
-    /// failure is diagnosable from the rail. `nil` without a code; a blank command keeps just the code.
+    /// The error readout: the FAILING command (`npm test`) — the culprit's name; the exit code
+    /// already rides the badge's `!<code>` reading one line up, so the pair never repeats a number.
+    /// `nil` without a code (no failure evidence — the caller may not attribute a stale block) and
+    /// `nil` for a blank command (the badge's reading stands alone; lower rungs fill the line).
     static func errorLine(exitCode: Int32?, commandText: String?) -> String? {
-        guard let exitCode else { return nil }
+        guard exitCode != nil else { return nil }
         let command = commandText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return command.isEmpty ? "exit \(exitCode)" : "exit \(exitCode) · \(command)"
+        return command.isEmpty ? nil : command
     }
 }

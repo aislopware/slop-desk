@@ -526,9 +526,12 @@ enum SidebarRowTooltip {
     }
 }
 
-/// The section header LEAF, a TWO-LINE block: line 1 is the project NAME (caps, instrument voice) +
-/// the act-now `●N` tally; line 2 is the project's git line (branch + dirt sigils) — or, for a
-/// non-repo project, WHERE it lives (the `~`-abbreviated parent path), so the second line always
+/// The section header LEAF, a TWO-LINE block: line 1 is the project NAME (caps, instrument voice), a
+/// hairline RULE filling the remaining width (the lazygit-style section rule — structure drawn as a
+/// line, not a nerd-font bead), and the act-now tally in the row-badge dialect (`?N` waiting amber +
+/// `!N` failed red, blinking softly like a terminal cursor — attention data earns the one motion);
+/// line 2 is the project's git line (branch + dirt sigils) — or, for a non-repo project, WHERE it
+/// lives (the `~`-abbreviated parent path), so the second line always
 /// says something the name alone doesn't. Reads its git summary AND tally INSIDE its own body — the
 /// sidebar body never touches the volatile dicts, so a git/status tick re-renders only the (cheap)
 /// header leaves, mirroring how ``SidebarLiveRow`` isolates the volatile row chrome. Carries the
@@ -544,17 +547,12 @@ struct SidebarSectionHeaderRow: View {
 
     var body: some View {
         let summary = projectKey.flatMap { store.projectGitSummary[$0] }
-        // The act-now tally: how many panes in this project wait on YOU right now (a blocked question
-        // or an error) — the "which PROJECT needs me" answer at a glance. Counts through the gated
-        // badge pipeline; absent at zero (no reserved slot — an empty reserve read as a ragged hole
-        // against the right edge, and the rare shift when a tally appears is a real event).
-        let actNow = rows.count { row in
-            switch RailRowsBuilder.liveChrome(for: row, store: store).badge {
-            case .awaitingInput,
-                 .error: true
-            default: false
-            }
-        }
+        // The act-now tally: how many panes in this project wait on YOU right now, split by WHY in
+        // the rows' own glyph dialect — `?N` blocked questions, `!N` failures — the "which PROJECT
+        // needs me" answer at a glance. Counts through the gated badge pipeline; absent at zero (no
+        // reserved slot — the rule runs to the edge, and the shift when a tally appears is a real
+        // event).
+        let counts = Self.attentionCounts(rows.map { RailRowsBuilder.liveChrome(for: $0, store: store).badge })
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: Slate.Metric.space2) {
                 // MERIDIAN L2: the caps micro-label speaks the INSTRUMENT voice — mono + wide
@@ -564,14 +562,15 @@ struct SidebarSectionHeaderRow: View {
                     .tracking(Slate.Typeface.instrumentTracking)
                     .foregroundStyle(Slate.State.header)
                     .lineLimit(1)
-                Spacer(minLength: Slate.Metric.space2)
-                if actNow > 0 {
-                    Text("●\(actNow)")
-                        .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
-                        .foregroundStyle(Slate.Status.warn)
-                        .lineLimit(1)
-                        .fixedSize()
-                        .accessibilityLabel("\(actNow) panes need attention")
+                // The section RULE: a hairline filling the width between the name and the tally —
+                // the TUI section divider (lazygit's `── title ──` idiom), giving the header its
+                // structure without a glyph. Flexes to zero before the name ever truncates.
+                Rectangle()
+                    .fill(Slate.Line.subtle)
+                    .frame(height: Slate.Metric.hairline)
+                    .frame(maxWidth: .infinity)
+                if counts.questions > 0 || counts.failures > 0 {
+                    attentionTally(questions: counts.questions, failures: counts.failures)
                 }
             }
             if let summary, summary.hasRepo {
@@ -595,6 +594,62 @@ struct SidebarSectionHeaderRow: View {
                 Button("Refresh Git Status") { store.refreshGitSummary(forProject: projectKey) }
             }
         }
+    }
+
+    /// The act-now tally: `?N` (waiting on an answer, amber) + `!N` (failed, red) — the SAME glyphs
+    /// the rows themselves wear, so the header total and the row badges read as one vocabulary. The
+    /// cluster BLINKS like a terminal cursor (a soft opacity dip on the shared wall-clock epoch —
+    /// every project's tally dips together): attention data is the one place the header earns motion.
+    private func attentionTally(questions: Int, failures: Int) -> some View {
+        TimelineView(.periodic(
+            from: Date(timeIntervalSinceReferenceDate: 0),
+            by: AsciiStatusBadge.blinkBeat,
+        )) { timeline in
+            HStack(spacing: Slate.Metric.space1) {
+                if questions > 0 {
+                    Text("?\(questions)")
+                        .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
+                        .foregroundStyle(Slate.Status.warn)
+                }
+                if failures > 0 {
+                    Text("!\(failures)")
+                        .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
+                        .foregroundStyle(Slate.Status.err)
+                }
+            }
+            .lineLimit(1)
+            .fixedSize()
+            .opacity(
+                AsciiStatusBadge.blinkDimmed(at: timeline.date, beat: AsciiStatusBadge.blinkBeat)
+                    ? 0.4 : 1,
+            )
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Self.attentionLabel(questions: questions, failures: failures))
+    }
+
+    /// The tally's one-per-badge counts: blocked questions (`.awaitingInput`) and failures
+    /// (`.error`); every other badge is the agent's/shell's own business. Pure + static so the split
+    /// is unit-pinned.
+    static func attentionCounts(_ badges: [TabBadgeKind?]) -> (questions: Int, failures: Int) {
+        var questions = 0
+        var failures = 0
+        for badge in badges {
+            switch badge {
+            case .awaitingInput: questions += 1
+            case .error: failures += 1
+            default: break
+            }
+        }
+        return (questions, failures)
+    }
+
+    /// The tally's VoiceOver reading — the counts spelled out, only the non-zero classes.
+    static func attentionLabel(questions: Int, failures: Int) -> String {
+        var parts: [String] = []
+        if questions > 0 { parts.append("\(questions) waiting for input") }
+        if failures > 0 { parts.append("\(failures) failed") }
+        return parts.joined(separator: ", ")
     }
 
     /// Line 2's non-repo fallback: the project's PARENT path, `~`-abbreviated (`/Users/me/w/api` →
@@ -657,7 +712,6 @@ private struct SidebarLiveRow: View {
         // exactly the row leaves, never the sidebar body.
         let active = row.id == store.tree.activeSession?.activeTab?.activePane
         let chrome = RailRowsBuilder.liveChrome(for: row, store: store)
-        let isAgent = RailRowsBuilder.isAgentSession(status: chrome.status, processLabel: chrome.processLabel)
         let workingCandidate: String? = chrome.status == .working ? store.agentLabel(for: row.id) : nil
         Group {
             if Self.telemetryEligible(chrome.badge) {
@@ -667,10 +721,10 @@ private struct SidebarLiveRow: View {
                     from: Date(timeIntervalSinceReferenceDate: 0),
                     by: Self.telemetryCadence,
                 )) { context in
-                    rowBody(chrome: chrome, active: active, isAgent: isAgent, now: context.date)
+                    rowBody(chrome: chrome, active: active, now: context.date)
                 }
             } else {
-                rowBody(chrome: chrome, active: active, isAgent: isAgent, now: Date())
+                rowBody(chrome: chrome, active: active, now: Date())
             }
         }
         // A fresh mount seeds the dwell machine raw — the leaf's `.id(row.leafIdentity)` re-keys on a
@@ -689,7 +743,7 @@ private struct SidebarLiveRow: View {
     /// agent-shell rung, then mounts ``SlateTabRow``.
     @ViewBuilder
     private func rowBody(
-        chrome: RailRowsBuilder.RailRowChrome, active: Bool, isAgent: Bool, now: Date,
+        chrome: RailRowsBuilder.RailRowChrome, active: Bool, now: Date,
     ) -> some View {
         // The todo SCENT — promoted from the tooltip to the line-2 readout while the agent is WORKING
         // with a live inspector feed reporting an in-flight todo.
@@ -746,12 +800,10 @@ private struct SidebarLiveRow: View {
         )
         let telemetry = RailRowTelemetry.value(
             badge: chrome.badge,
-            isAgentSession: isAgent,
             attentionAt: store.paneAttentionAt[row.id],
             completedAt: store.paneCompletedAt[row.id],
             commandStartedAt: store.paneCommandStartedAt[row.id],
             progressPercent: StatusPresentation.progressPercentLabel(store.progress(for: row.id)),
-            exitCode: failedBlock?.exitCode,
             now: now,
         )
         SlateTabRow(
@@ -760,6 +812,7 @@ private struct SidebarLiveRow: View {
             subtitle: readout?.text,
             subtitleTruncation: readout?.truncation == .middle ? .middle : .tail,
             badge: chrome.badge,
+            errorExitCode: failedBlock?.exitCode,
             telemetry: telemetry,
             readOnly: chrome.readOnly,
             syncInput: store.syncInputArmed(for: row.id),
