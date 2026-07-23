@@ -32,9 +32,10 @@ import SlopDeskWorkspaceCore
 ///   • each pane's full `PaneSpec` (kind, title + `userRenamed`, cwd, `lastKnownTitle`, `railSubtitle` —
 ///     the title/subtitle/cwd/disambiguation inputs; `PaneSpec` is `Equatable`, so any spec edit misses),
 ///   • the pane's By-Project key (`paneProjectKey` — the host-pushed spec key else cwd; sectioning input),
-///   • A4 only: the foreground process of a pane that would TITLE itself by it (no folder name, no user
-///     rename). Read conditionally so the whole-dict Observation dependency on `paneForegroundProcess` is
-///     registered only while such a pane exists — for cwd-titled panes a process tick stays a cache hit.
+///   • A4 only: the foreground process of a pane that would TITLE itself by it (no folder name, or AT
+///     its project root — the at-root rung; never a user rename). Read conditionally so the whole-dict
+///     Observation dependency on `paneForegroundProcess` is registered only while such a pane exists —
+///     for a strayed folder-titled pane a process tick stays a cache hit.
 /// Deliberately EXCLUDED (stale-safe, row views read them live): agent status, badges, completion,
 /// progress, the PROJECT git summaries (the section-header leaf reads `projectGitSummary` itself),
 /// read-only, `pendingTabRename`, `activeTabIndex`/`activePane` (selection is derived in the
@@ -65,11 +66,14 @@ struct RailStructureKey: Equatable {
             TabKey(id: tab.id, panes: tab.allPaneIDs().map { paneID in
                 let spec = session.specs[paneID]
                 let kind = spec?.kind ?? .terminal
-                let titledByProcess = Self.titledByProcess(kind: kind, spec: spec)
+                let projectKey = kind == .terminal ? store.paneProjectKey(paneID) : nil
+                // Project-key-aware: an AT-ROOT pane titles by its program (the at-root rung), so its
+                // process is part of the SIDEBAR's structural fingerprint too.
+                let titledByProcess = Self.titledByProcess(kind: kind, spec: spec, projectKey: projectKey)
                 return PaneKey(
                     id: paneID,
                     spec: spec,
-                    projectKey: kind == .terminal ? store.paneProjectKey(paneID) : nil,
+                    projectKey: projectKey,
                     titleProcessFallback: titledByProcess ? store.paneForegroundProcess[paneID] : nil,
                 )
             })
@@ -77,18 +81,26 @@ struct RailStructureKey: Equatable {
     }
 
     /// Mirrors `RailRowsBuilder.rowTitle`'s escape order: a terminal pane consults the foreground process
-    /// only when it has a spec, is NOT user-renamed, and has no cwd folder name — exactly the case where a
-    /// process change changes the TITLE (structural). The ONE guard deciding whether reading
-    /// `store.paneForegroundProcess[id]` is even worthwhile — shared by this fingerprint AND the titlebar /
-    /// window-title reads (``SlateTitlebar``'s `activeTitle`, `WorkspaceRootView.windowTitle(for:)`) so all
-    /// three title sites register the volatile process dict as an Observation dependency ONLY for a pane
-    /// that would actually retitle by it — a background pane's process tick otherwise re-evaluates a
-    /// body/view that can never change as a result.
-    static func titledByProcess(kind: PaneKind, spec: PaneSpec?) -> Bool {
-        kind == .terminal
-            && spec != nil
-            && !(spec?.userRenamed == true && spec?.title.isEmpty == false)
-            && RailRowsBuilder.cwdFolderName(spec?.lastKnownCwd) == nil
+    /// when it has a spec, is NOT user-renamed, and either has no cwd folder name OR (with `projectKey`
+    /// supplied — the SIDEBAR fingerprint only) sits AT its project root, where the at-root rung titles by
+    /// the program. Exactly the cases where a process change changes the TITLE (structural). The ONE guard
+    /// deciding whether reading `store.paneForegroundProcess[id]` is even worthwhile — shared by this
+    /// fingerprint AND the titlebar / window-title reads (``SlateTitlebar``'s `activeTitle`,
+    /// `WorkspaceRootView.windowTitle(for:)`, which omit `projectKey` — no section header there, the
+    /// folder name stays their title) so every title site registers the volatile process dict as an
+    /// Observation dependency ONLY for a pane that would actually retitle by it — a background pane's
+    /// process tick otherwise re-evaluates a body/view that can never change as a result.
+    static func titledByProcess(kind: PaneKind, spec: PaneSpec?, projectKey: String? = nil) -> Bool {
+        guard kind == .terminal, spec != nil,
+              !(spec?.userRenamed == true && spec?.title.isEmpty == false)
+        else { return false }
+        if RailRowsBuilder.cwdFolderName(spec?.lastKnownCwd) == nil { return true }
+        if let key = TabOrderingEngine.normalizedProjectKey(projectKey),
+           TabOrderingEngine.normalizedProjectKey(spec?.lastKnownCwd) == key
+        {
+            return true
+        }
+        return false
     }
 }
 

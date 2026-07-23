@@ -530,7 +530,8 @@ enum SidebarRowTooltip {
 /// body — the sidebar body never touches the volatile dicts, so a git/status tick re-renders only the
 /// (cheap) header leaves, mirroring how ``SidebarLiveRow`` isolates the volatile row chrome. Carries
 /// the header-scoped context menu (the project-wide "Refresh Git Status", moved up from the row menu).
-private struct SidebarSectionHeaderRow: View {
+/// Internal (not private) so the opt-in snapshot render can mount the REAL header.
+struct SidebarSectionHeaderRow: View {
     let store: WorkspaceStore
     let title: String
     let projectKey: String?
@@ -538,15 +539,12 @@ private struct SidebarSectionHeaderRow: View {
     /// pipeline the rail renders, so the header count and the row badges can never disagree.
     let rows: [RailRow]
 
-    /// The tally slot's reserved width — constant whether or not a count shows, so the git line to its
-    /// left never shifts when a project gains/loses an act-now pane.
-    private static let tallyWidth: CGFloat = 22
-
     var body: some View {
         let summary = projectKey.flatMap { store.projectGitSummary[$0] }
         // The act-now tally: how many panes in this project wait on YOU right now (a blocked question
         // or an error) — the "which PROJECT needs me" answer at a glance. Counts through the gated
-        // badge pipeline; absent at zero.
+        // badge pipeline; absent at zero (no reserved slot — an empty reserve read as a ragged hole
+        // against the right edge, and the rare git-line shift when a tally appears is a real event).
         let actNow = rows.count { row in
             switch RailRowsBuilder.liveChrome(for: row, store: store).badge {
             case .awaitingInput,
@@ -555,22 +553,25 @@ private struct SidebarSectionHeaderRow: View {
             }
         }
         SlateSectionHeader(title) {
-            HStack(spacing: Slate.Metric.space1) {
+            HStack(spacing: Slate.Metric.space2) {
                 if let summary { ProjectGitStatusLine(summary: summary) }
-                Color.clear
-                    .frame(width: Self.tallyWidth, height: Slate.Metric.space3)
-                    .overlay(alignment: .trailing) {
-                        if actNow > 0 {
-                            Text("●\(actNow)")
-                                .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
-                                .foregroundStyle(Slate.Status.warn)
-                                .lineLimit(1)
-                                .fixedSize()
-                                .accessibilityLabel("\(actNow) panes need attention")
-                        }
-                    }
+                if actNow > 0 {
+                    Text("●\(actNow)")
+                        .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
+                        .foregroundStyle(Slate.Status.warn)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .accessibilityLabel("\(actNow) panes need attention")
+                }
             }
         }
+        // The shared header carries the panel-level `space2` inset; this extra `space1` brings the
+        // header text to `space3` — the SAME content inset the row cards use — so the section title
+        // sits flush over the rows' glyph column instead of hanging into the gutter. The extra top
+        // padding separates a section from the previous section's last row (the header's own top
+        // inset is sized for the panel label above the FIRST section).
+        .padding(.horizontal, Slate.Metric.space1)
+        .padding(.top, Slate.Metric.space2)
         .contextMenu {
             if let projectKey {
                 Button("Refresh Git Status") { store.refreshGitSummary(forProject: projectKey) }

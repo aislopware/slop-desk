@@ -270,20 +270,19 @@ final class RailRowBuilderTests: XCTestCase {
 
     // MARK: - cwd folder-name title + relative-cwd subtitle + the reused title+subtitle filter
 
-    /// A terminal row with a known cwd titles itself by the cwd's FOLDER NAME (line 1); a pane
-    /// sitting AT its section key (here the cwd fallback — key == cwd) carries NO subtitle (the
-    /// section header names the place; the row collapses to single-line). `filtered` still narrows
-    /// by title + the hidden cwd key. Fails on the pre-fix builder (line 1 was the generic "Terminal").
+    /// A pane sitting AT its section key (here the cwd fallback — key == cwd) carries NEITHER the
+    /// folder-name title (it would restate the section header; line 1 stays empty ⇒ the view's
+    /// generic) NOR a subtitle. `filtered` still narrows by the hidden cwd key, so the row stays
+    /// searchable by path even with no visible chrome naming it.
     func testSubtitleCwdAndFilter() {
         let store = makeStore()
         let pane = paneID(store, row: 0)
         store.setLastKnownCwd("/Users/me/project-alpha", for: pane)
         let rows = RailRowsBuilder.rows(for: store)
-        XCTAssertEqual(rows[0].title, "project-alpha", "line 1 is the cwd folder name, not 'Terminal'")
+        XCTAssertEqual(rows[0].title, "", "at its own root the folder name is the SECTION's — line 1 stays empty")
         XCTAssertNil(rows[0].subtitle, "at the section key (key == cwd) line 2 is absent")
-        // The generic default no longer matches anything (the title IS the folder name now).
         XCTAssertTrue(RailRowsBuilder.filtered(rows, query: "term").isEmpty)
-        // Folder-name/title + hidden-cwd match.
+        // Hidden-cwd match — the path still finds the row though nothing visible carries it.
         XCTAssertEqual(RailRowsBuilder.filtered(rows, query: "project-alpha").map(\.id), [pane])
         // No match anywhere.
         XCTAssertTrue(RailRowsBuilder.filtered(rows, query: "zzz-nope").isEmpty)
@@ -483,6 +482,56 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertEqual(
             RailRowsBuilder.rowTitle(kind: .terminal, spec: withCwd, processLabel: "vim"), "app",
             "the cwd folder name is the primary identity; the process fallback is only for a cwd-less pane",
+        )
+    }
+
+    /// A pane sitting AT its project root titles by its foreground PROGRAM, never by the folder name
+    /// the section header already carries; an idle shell yields "" (the view's kind-generic reads).
+    func testRowTitleAtProjectRootIsTheProgramNotTheFolder() {
+        let atRoot = PaneSpec(kind: .terminal, title: "zsh — app", lastKnownCwd: "/srv/app")
+
+        XCTAssertEqual(
+            RailRowsBuilder.rowTitle(
+                kind: .terminal, spec: atRoot, processLabel: "claude", projectKey: "/srv/app",
+            ),
+            "claude",
+            "at the project root the folder name would restate the section header — the program titles the row",
+        )
+        XCTAssertEqual(
+            RailRowsBuilder.rowTitle(
+                kind: .terminal, spec: atRoot, processLabel: "-zsh", projectKey: "/srv/app",
+            ),
+            "",
+            "an idle shell at root yields empty (⇒ the view's generic), NOT the OSC shell title restating the place",
+        )
+        // Trailing-slash / whitespace forms of the same root still count as AT root.
+        XCTAssertEqual(
+            RailRowsBuilder.rowTitle(
+                kind: .terminal, spec: atRoot, processLabel: "vim", projectKey: "/srv/app/",
+            ),
+            "vim",
+        )
+        // A STRAYED pane (cwd inside the project subtree) keeps the folder-name identity.
+        let strayed = PaneSpec(kind: .terminal, title: "Terminal", lastKnownCwd: "/srv/app/packages/api")
+        XCTAssertEqual(
+            RailRowsBuilder.rowTitle(
+                kind: .terminal, spec: strayed, processLabel: "claude", projectKey: "/srv/app",
+            ),
+            "api",
+        )
+        // An explicit rename still beats the at-root rung.
+        let renamed = PaneSpec(
+            kind: .terminal, title: "build box", lastKnownCwd: "/srv/app", userRenamed: true,
+        )
+        XCTAssertEqual(
+            RailRowsBuilder.rowTitle(
+                kind: .terminal, spec: renamed, processLabel: "claude", projectKey: "/srv/app",
+            ),
+            "build box",
+        )
+        // The titlebar call sites omit the key — the folder name stays the window-title identity.
+        XCTAssertEqual(
+            RailRowsBuilder.rowTitle(kind: .terminal, spec: atRoot, processLabel: "claude"), "app",
         )
     }
 
@@ -715,30 +764,36 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertEqual(RailRowsBuilder.filtered(rows, query: "btop").map(\.id), [pane])
     }
 
-    /// Two panes whose cwd folder name COLLIDES (`…/feature-a/myapp` vs `…/feature-b/myapp`) are disambiguated
-    /// by their parent segment, so the sidebar shows `feature-a/myapp` vs `feature-b/myapp` — a
-    /// worktree-distinctiveness fix. Fails on a builder that leaves both rows reading the bare `myapp`.
-    func testCollidingFolderNamesDisambiguatedByParentSegment() {
+    /// Two same-named worktrees (`…/feature-a/myapp` vs `…/feature-b/myapp`) are two distinct project
+    /// keys ⇒ two SECTIONS sharing one basename — the collision is broken on the section HEADER
+    /// (`feature-a/myapp` vs `feature-b/myapp`), since the header is the place identity now (the
+    /// at-root rows themselves stay program-titled). Fails on a sectioner that leaves both headers
+    /// reading the bare `myapp`.
+    func testCollidingWorktreeHeadersDisambiguatedByParentSegment() {
         let store = makeStore()
         store.newTab(kind: .terminal, launchGrace: .zero) // 2nd tab
         let rows0 = RailRowsBuilder.rows(for: store)
         store.setLastKnownCwd("/work/feature-a/myapp", for: rows0[0].id)
         store.setLastKnownCwd("/work/feature-b/myapp", for: rows0[1].id)
         let rows = RailRowsBuilder.rows(for: store)
-        XCTAssertEqual(rows[0].title, "feature-a/myapp", "the collision is broken by the parent segment")
-        XCTAssertEqual(rows[1].title, "feature-b/myapp")
+        let sections = RailRowsBuilder.sectionedByProject(rows, tabOrder: rows.map(\.tabID), query: "")
+        XCTAssertEqual(
+            sections.map(\.header), ["feature-a/myapp", "feature-b/myapp"],
+            "the header collision is broken by each key's parent segment",
+        )
+        XCTAssertEqual(rows.map(\.title), ["", ""], "the at-root rows never repeat the folder name")
     }
 
-    /// A UNIQUE folder name is left bare — disambiguation only fires on an actual collision.
-    func testUniqueFolderNameNotQualified() {
+    /// A UNIQUE section basename is left bare — header disambiguation only fires on an actual collision.
+    func testUniqueSectionHeaderNotQualified() {
         let store = makeStore()
         store.newTab(kind: .terminal, launchGrace: .zero)
         let rows0 = RailRowsBuilder.rows(for: store)
         store.setLastKnownCwd("/work/alpha", for: rows0[0].id)
         store.setLastKnownCwd("/work/beta", for: rows0[1].id)
         let rows = RailRowsBuilder.rows(for: store)
-        XCTAssertEqual(rows[0].title, "alpha", "a unique title is not parent-qualified")
-        XCTAssertEqual(rows[1].title, "beta")
+        let sections = RailRowsBuilder.sectionedByProject(rows, tabOrder: rows.map(\.tabID), query: "")
+        XCTAssertEqual(sections.map(\.header), ["alpha", "beta"], "unique headers are not parent-qualified")
     }
 
     /// An EXPLICIT rename that collides with a folder-name title is left verbatim (only folder-derived titles
@@ -789,13 +844,13 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertFalse(RailRowsBuilder.rows(for: store).contains(where: \.isEditing), "clearing closes the field")
     }
 
-    /// End-to-end through the store: a rename committed via `renamePane` WINS over the cwd folder-name title in
+    /// End-to-end through the store: a rename committed via `renamePane` WINS over the derived title in
     /// the rail (`rowTitle` precedence), and clearing the pending state closes the field.
     func testRenameCommitWinsOverFolderNameInRail() throws {
         let store = makeStore()
         let pane = paneID(store, row: 0)
         store.setLastKnownCwd("/Users/me/project-x", for: pane)
-        XCTAssertEqual(RailRowsBuilder.rows(for: store)[0].title, "project-x", "folder name before rename")
+        XCTAssertEqual(RailRowsBuilder.rows(for: store)[0].title, "", "at-root ⇒ empty (generic) before rename")
         let tab = try XCTUnwrap(store.tree.activeSession?.activeTab?.id)
         store.requestRenameTab(tab)
         store.renamePane(pane, to: "deploy box")

@@ -115,10 +115,17 @@ enum RailRowsBuilder {
                     paneID: paneID, kind: kind, spec: spec, tabID: tab.id,
                     representativePane: representativePane, manualBadge: manualBadge, store: store,
                 )
+                // The pane's OWN project key (guarded host-pushed key / cwd) — the By-Project section
+                // bucket AND the title's at-root test (a row at its project root titles by program,
+                // not by the folder name the section header already carries).
+                let projectKey = kind == .terminal ? store.paneProjectKey(paneID) : nil
                 // A TERMINAL row's line 1 is its cwd's FOLDER NAME (`slopdesk`), not the generic
-                // "Terminal" / raw shell title — an explicit user rename still wins (see `rowTitle`); a
+                // "Terminal" / raw shell title — an explicit user rename still wins (see `rowTitle`); an
+                // at-root pane titles by its foreground program (the section header names the folder); a
                 // cwd-less pane falls back to its foreground program before the generic chain.
-                let title = Self.rowTitle(kind: kind, spec: spec, processLabel: chrome.processLabel)
+                let title = Self.rowTitle(
+                    kind: kind, spec: spec, processLabel: chrome.processLabel, projectKey: projectKey,
+                )
                 let isSelected = tabIsActive && tab.activePane == paneID
                 out.append(RailRow(
                     id: paneID,
@@ -134,9 +141,7 @@ enum RailRowsBuilder {
                     cwd: kind == .terminal ? spec?.lastKnownCwd : nil,
                     isEditing: chrome.isEditing,
                     isSelected: isSelected,
-                    // The pane's OWN project key (guarded host-pushed key / cwd) drives per-pane
-                    // By-Project sectioning; a video pane has no project (⇒ "Other").
-                    projectKey: kind == .terminal ? store.paneProjectKey(paneID) : nil,
+                    projectKey: projectKey,
                 ))
             }
         }
@@ -292,17 +297,26 @@ enum RailRowsBuilder {
     }
 
     /// The row's LINE-1 title. A `.terminal` pane titles itself by its working directory's FOLDER NAME
-    /// (`/Volumes/…/slopdesk` → `slopdesk`) — the identity a coding tool actually navigates by — with two
-    /// escapes: an EXPLICIT user rename always wins (gated on ``PaneSpec/userRenamed``), and a pane
-    /// with no known cwd yet falls back to the host FOREGROUND-PROCESS name (`processLabel`, wire type
-    /// 26 — a real program like `vim`/`npm`, a bare login shell suppressed) before the generic shell-title
-    /// chain. Non-terminal kinds keep the `lastKnownTitle ?? title` chain unchanged. Pure + static so
-    /// the mapping is unit-pinned without a view.
+    /// (`/Volumes/…/slopdesk` → `slopdesk`) — the identity a coding tool actually navigates by — with
+    /// three escapes: an EXPLICIT user rename always wins (gated on ``PaneSpec/userRenamed``); a pane
+    /// sitting AT its project root (under By-Project grouping, via `projectKey`) titles by its
+    /// foreground PROGRAM instead — the folder name would restate the section header verbatim, so the
+    /// header says WHERE and line 1 says WHO (`claude` / `vim` / `make`, the tmux idiom), an idle shell
+    /// yielding "" so the view's kind-generic "Terminal" reads rather than an OSC shell title restating
+    /// the place; and a pane with no known cwd yet falls back to the host FOREGROUND-PROCESS name
+    /// (`processLabel`, wire type 26 — a real program, a bare login shell suppressed) before the generic
+    /// shell-title chain. Non-terminal kinds keep the `lastKnownTitle ?? title` chain unchanged. Pure +
+    /// static so the mapping is unit-pinned without a view.
     ///
     /// - Parameter processLabel: the pane's host-reported foreground process (``WorkspaceStore/paneForegroundProcess``),
-    ///   used ONLY as the no-cwd fallback. Optional so the completion-title / test call sites that do not
-    ///   thread the store's process map still resolve the cwd/rename precedence.
-    static func rowTitle(kind: PaneKind, spec: PaneSpec?, processLabel: String? = nil) -> String {
+    ///   used as the at-root title and the no-cwd fallback. Optional so the completion-title / test call
+    ///   sites that do not thread the store's process map still resolve the cwd/rename precedence.
+    /// - Parameter projectKey: the pane's By-Project section key (``WorkspaceStore/paneProjectKey(_:)``) —
+    ///   supplied by the SIDEBAR builder only, where a section header already names the project. The
+    ///   titlebar/window call sites omit it (no header there — the folder name stays the right title).
+    static func rowTitle(
+        kind: PaneKind, spec: PaneSpec?, processLabel: String? = nil, projectKey: String? = nil,
+    ) -> String {
         let fallback = spec?.lastKnownTitle ?? spec?.title ?? ""
         guard kind == .terminal, let spec else { return fallback }
         // An EXPLICIT user rename (⌘R / palette / inline field) always wins — gated on the unambiguous
@@ -310,6 +324,12 @@ enum RailRowsBuilder {
         // load-time-promoted title as a phantom "rename" the moment a shell emits a SECOND OSC title.
         if spec.userRenamed, !spec.title.isEmpty {
             return spec.title
+        }
+        // At the project root the folder name repeats the section header — title by the program.
+        if let key = TabOrderingEngine.normalizedProjectKey(projectKey),
+           TabOrderingEngine.normalizedProjectKey(spec.lastKnownCwd) == key
+        {
+            return processDisplayName(processLabel) ?? ""
         }
         // Folder name is the primary identity; when the cwd is not known yet (no OSC-7, host pull not
         // landed) the pane is titled by its live foreground program before the generic "Terminal" chain.
@@ -407,7 +427,7 @@ enum RailRowsBuilder {
         // Pass 2 — order rows WITHIN each section by the sorted tab order (respects "Sort By"), pane pre-order
         // as the stable tiebreak. A row whose tab isn't in `tabOrder` (shouldn't happen) sorts last, stably.
         let rank = Dictionary(tabOrder.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { a, _ in a })
-        return order.map { key in
+        let groups = order.map { key in
             let sorted = (buckets[key] ?? []).enumerated()
                 .sorted { lhs, rhs in
                     let lRank = rank[lhs.element.tabID] ?? Int.max
@@ -419,6 +439,25 @@ enum RailRowsBuilder {
             return RailRowGroup(
                 header: TabOrderingEngine.projectSectionHeader(for: key), projectKey: key, rows: sorted,
             )
+        }
+        return headerDisambiguated(groups)
+    }
+
+    /// For any two sections whose basename HEADER collides (same-named worktrees — `/w/feature-a/myapp`
+    /// vs `/w/feature-b/myapp` are two distinct keys, two sections, one basename), parent-qualify each
+    /// colliding header from its KEY (`feature-a/myapp`). The header is the place identity (a row at
+    /// its project root no longer repeats the folder name), so the worktree-distinctiveness break
+    /// lives HERE, not on row titles. Pure + static so the rule is unit-pinned.
+    static func headerDisambiguated(_ groups: [RailRowGroup]) -> [RailRowGroup] {
+        var counts: [String: Int] = [:]
+        for group in groups {
+            if let header = group.header { counts[header, default: 0] += 1 }
+        }
+        return groups.map { group in
+            guard let header = group.header, (counts[header] ?? 0) > 1,
+                  let qualified = parentQualifiedTitle(cwd: group.projectKey, title: header)
+            else { return group }
+            return RailRowGroup(header: qualified, projectKey: group.projectKey, rows: group.rows)
         }
     }
 }

@@ -15,6 +15,20 @@
 #if canImport(SwiftUI)
 import SwiftUI
 
+extension VerticalAlignment {
+    /// The shell's LINE-1 anchor: the leading accessory centres on the TITLE line, not on the whole
+    /// two-line row. The line-1 HStack exposes its own centre as this guide (the explicit value
+    /// propagates up through the VStack), so the accessory tracks the real laid-out title line —
+    /// no hand-tuned offset can drift when a font or line metric changes.
+    private enum SlateLineOne: AlignmentID {
+        static func defaultValue(in context: ViewDimensions) -> CGFloat {
+            context[VerticalAlignment.center]
+        }
+    }
+
+    static let slateLineOne = VerticalAlignment(SlateLineOne.self)
+}
+
 /// One list row: `leading` accessory + `title` slot (+ optional instrument `subtitle`) + PER-LINE trailing
 /// accessories. `titleTrailing` sits on line 1 (right of the title); `subtitleTrailing` sits on the compact
 /// line-2 subtitle (right of the cwd/git line) and renders ONLY when a subtitle exists. Both builders receive
@@ -74,7 +88,9 @@ struct SlateListRow<
     private var hasLineTwo: Bool { hasSubtitle || reserveSubtitle }
 
     var body: some View {
-        HStack(spacing: Slate.Metric.space2) {
+        // `.slateLineOne` pins the leading accessory to LINE 1's centre (the status glyph belongs to
+        // the title, not the two-line block); the guide is exposed by the line-1 HStack below.
+        HStack(alignment: .slateLineOne, spacing: Slate.Metric.space2) {
             leading()
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: Slate.Metric.space2) {
@@ -82,6 +98,7 @@ struct SlateListRow<
                     Spacer(minLength: Slate.Metric.space2)
                     titleTrailing(isHovering)
                 }
+                .alignmentGuide(.slateLineOne) { $0[VerticalAlignment.center] }
                 if hasLineTwo {
                     HStack(spacing: Slate.Metric.space2) {
                         // The COLOURED git line (when supplied) renders in place of the plain string — same

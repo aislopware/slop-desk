@@ -1759,3 +1759,29 @@ substitution forced by the pure-native-Swift rule.
   the T3 `shouldRecede`: the quiet state is dimness, colour + full ink are earned by live state.
 - Client-only; no wire change; golden untouched. The readout/telemetry resolvers, hue budget,
   header tally and iOS system rows carry over unchanged.
+
+### v2.1 — HW-review follow-ups (2026-07-23)
+
+First hardware look at v2 surfaced three faults; all fixed the same day:
+
+- **Glyph "slightly off" line 1** — the leading slot was centred over the whole two-line row and
+  lifted by a hand-tuned `-7pt` offset. Replaced with a real custom vertical alignment
+  (`VerticalAlignment.slateLineOne`): the line-1 HStack exposes its own centre as the guide and the
+  shell's outer HStack aligns the accessory to it, so the glyph tracks the laid-out title line
+  exactly and can never drift with font/metric changes.
+- **Line 1 repeated the section header** — under By-Project grouping, a pane AT its project root
+  titled itself with the same folder name the section header already carries (every at-root row in
+  a section read identically). New `rowTitle` rung: at the project root the row titles by its
+  foreground PROGRAM (`claude` / `vim` / `make` — the tmux idiom: header says WHERE, line 1 says
+  WHO); an idle shell yields the kind-generic "Terminal". Strayed panes keep the folder name; an
+  explicit rename still wins; the titlebar/window-title call sites omit the key and keep folder
+  names. Consequences wired through: the worktree-collision disambiguation moved UP to the section
+  header (`headerDisambiguated` — `feature-a/myapp` vs `feature-b/myapp` as HEADERS now), and
+  `RailStructureKey.titledByProcess` is project-key-aware so an at-root pane's process change is
+  structural (retitles) while a strayed pane's stays a volatile cache hit.
+- **Section header layout** — the header hung into the gutter (8pt inset vs the rows' 12pt content
+  inset) and the act-now tally kept a fixed 22pt reserve that read as a ragged hole against the
+  right edge whenever it was empty. The header now sits at the rows' own content inset (flush over
+  the glyph column), the tally renders only when non-zero, and each section gains breathing room
+  above its header. New opt-in snapshot render (`sidebar-section.png`) locks header↔row alignment
+  visually.

@@ -35,6 +35,10 @@ final class RailRowsMemoTests: XCTestCase {
         store.setLastKnownCwd("/Users/me/alpha", for: rows[0].id)
         store.setLastKnownCwd("/Users/me/alpha", for: rows[1].id)
         store.setLastKnownCwd("/Users/me/beta", for: rows[2].id)
+        // A host-pushed project key ABOVE the alpha cwds keeps those panes STRAYED (folder-titled
+        // "alpha") — the shape whose foreground process is volatile chrome, not a title input.
+        store.setProjectKey("/Users/me", for: rows[0].id)
+        store.setProjectKey("/Users/me", for: rows[1].id)
         store.setAgentStatus(.working, for: rows[0].id)
         store.setForegroundProcess("caffeinate", for: rows[1].id)
         store.projectGitSummary["/Users/me/beta"] = PaneGitSummary(
@@ -44,11 +48,13 @@ final class RailRowsMemoTests: XCTestCase {
     }
 
     /// ⌘T chooser → pick Terminal — the rail row must retitle
-    /// from "New Pane" to the cwd folder name on the very next memo read.
+    /// from "New Pane" to the cwd folder name on the very next memo read. The source pane is STRAYED
+    /// (host key above its cwd), so both rows are folder-titled and the collision qualifier shows.
     func testNewPaneMintRebuildsMemoRowTitle() throws {
         let store = makeStore()
         let source = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
         store.setLastKnownCwd("/Users/me/projects/slop-desk/Sources/CSlopDeskSIMD", for: source)
+        store.setProjectKey("/Users/me/projects/slop-desk", for: source)
         let memo = RailRowsMemo()
         _ = memo.rows(for: store)
 
@@ -98,7 +104,7 @@ final class RailRowsMemoTests: XCTestCase {
         )
         store.handleProgress(.determinate(percent: 40), for: pane)
         store.setPaneReadOnly(pane, true)
-        store.setForegroundProcess("vim", for: pane) // pane HAS a cwd → its title never reads the process
+        store.setForegroundProcess("vim", for: pane) // STRAYED folder-titled pane → process is not a title input
         store.requestRenameTab(before[0].tabID)
 
         let after = memo.rows(for: store)
@@ -123,7 +129,10 @@ final class RailRowsMemoTests: XCTestCase {
         store.setLastKnownCwd("/Users/me/gamma", for: afterNewTab[4].id)
         let afterCwd = memo.rows(for: store)
         XCTAssertEqual(memo.buildCount, 3, "a cwd change retitles/resections → rebuild")
-        XCTAssertEqual(afterCwd[4].title, "gamma", "and the rebuilt row carries the new folder-name title")
+        XCTAssertEqual(
+            afterCwd[4].projectKey, "/Users/me/gamma",
+            "and the rebuilt row carries the new section key (the at-root title stays the generic empty)",
+        )
 
         store.renamePane(afterCwd[4].id, to: "deploy box")
         let afterRename = memo.rows(for: store)
@@ -283,7 +292,18 @@ final class RailRowsMemoTests: XCTestCase {
         let cwdSpec = PaneSpec(kind: .terminal, title: "", lastKnownCwd: "/Users/me/alpha")
         XCTAssertFalse(
             RailStructureKey.titledByProcess(kind: .terminal, spec: cwdSpec),
-            "a known cwd folder name always wins — the process dict is irrelevant once it's known",
+            "a known cwd folder name wins where no section key is supplied (titlebar/window-title sites)",
+        )
+
+        // The sidebar fingerprint supplies the section key: AT the project root the at-root rung
+        // titles by the program (the process IS a title input); a strayed pane keeps the folder name.
+        XCTAssertTrue(
+            RailStructureKey.titledByProcess(kind: .terminal, spec: cwdSpec, projectKey: "/Users/me/alpha"),
+            "at the project root the title resolves from the process — structural for the sidebar",
+        )
+        XCTAssertFalse(
+            RailStructureKey.titledByProcess(kind: .terminal, spec: cwdSpec, projectKey: "/Users/me"),
+            "a strayed pane stays folder-titled — its process ticks stay volatile",
         )
 
         let renamedSpec = PaneSpec(kind: .terminal, title: "deploy box", userRenamed: true)

@@ -107,6 +107,89 @@ final class SlateSnapshotRender: XCTestCase {
         SlateTabRow(title: title, active: false, badge: badge, onSelect: {}, onClose: {})
     }
 
+    // MARK: - Opt-in render of one By-Project sidebar section (header + two-line rows)
+
+    /// Renders the REAL ``SidebarSectionHeaderRow`` (section title + git segment + act-now tally) over
+    /// a seeded headless store, above representative two-line ``SlateTabRow`` states at the true
+    /// sidebar width — the visual lock for the header↔row alignment (the header text flush over the
+    /// rows' glyph column) and the line-1-anchored status glyph. SAME opt-in idiom; writes
+    /// `sidebar-section.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
+    @MainActor
+    func testRenderSidebarSection() throws {
+        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
+            throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the sidebar section")
+        }
+        let key = "/Users/abner/Workplace/slop-desk"
+        let (store, rows) = makeSectionStore(key: key)
+        let panel = VStack(alignment: .leading, spacing: 2) {
+            SidebarSectionHeaderRow(store: store, title: "slop-desk", projectKey: key, rows: rows)
+            SlateTabRow(
+                title: "claude", active: false,
+                subtitle: "Wiring refresh-token rotation", subtitleTruncation: .tail,
+                badge: .running, telemetry: RailTelemetryValue(text: "4m", tone: .secondary),
+                onSelect: {}, onClose: {},
+            )
+            SlateTabRow(
+                title: "claude", active: true,
+                subtitle: "Allow edit to Config.swift?", subtitleTruncation: .tail,
+                badge: .awaitingInput, telemetry: RailTelemetryValue(text: "2m", tone: .amber),
+                onSelect: {}, onClose: {},
+            )
+            SlateTabRow(
+                title: "Terminal", active: false,
+                subtitle: "make check", subtitleTruncation: .tail,
+                badge: .commandRunning, progressFraction: 0.68,
+                telemetry: RailTelemetryValue(text: "68%", tone: .secondary),
+                onSelect: {}, onClose: {},
+            )
+            SlateTabRow(
+                title: "api", active: false,
+                subtitle: "exit 137 · npm test", subtitleTruncation: .tail,
+                badge: .error, telemetry: RailTelemetryValue(text: "137", tone: .secondary),
+                onSelect: {}, onClose: {},
+            )
+            SlateTabRow(title: "Terminal", active: false, onSelect: {}, onClose: {})
+        }
+        .padding(8) // the sidebar list's LazyVStack inset
+        .frame(width: Slate.Metric.sidebarWidth)
+        .background(Slate.Surface.ground)
+        try render(
+            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 290),
+            to: dir, named: "sidebar-section.png",
+        )
+    }
+
+    /// A headless `.tree` store whose panes all live AT `key` (the project root), one of them blocked —
+    /// so the REAL builder yields the section's rows (program-titled, folder names suppressed at root)
+    /// and the header's act-now tally lights. The project's git summary is seeded directly
+    /// (`internal(set)` via `@testable`).
+    @MainActor
+    private func makeSectionStore(key: String) -> (store: WorkspaceStore, rows: [RailRow]) {
+        var tabs: [SlopDeskWorkspaceCore.Tab] = []
+        var specs: [PaneID: PaneSpec] = [:]
+        for _ in 0..<3 {
+            let pane = PaneID()
+            specs[pane] = PaneSpec(kind: .terminal, title: "", lastKnownCwd: key)
+            tabs.append(SlopDeskWorkspaceCore.Tab(title: "", root: .leaf(pane), activePane: pane))
+        }
+        let session = Session(name: "Local", tabs: tabs, activeTabIndex: 0, specs: specs)
+        let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)
+        let store = WorkspaceStore(
+            restoringTree: tree,
+            liveModel: .tree,
+            makeSession: { MountTestPaneSession($0) },
+            liveVideoCap: 2,
+            persistence: nil,
+        )
+        store.projectGitSummary[key] = PaneGitSummary(
+            hasRepo: true, branch: "main", ahead: 2, behind: 0, changedCount: 4, staged: 1, modified: 3,
+        )
+        let panes = tabs.compactMap(\.activePane)
+        store.setForegroundProcess("claude", for: panes[0])
+        store.setAgentStatus(.needsPermission, for: panes[1])
+        return (store, RailRowsBuilder.rows(for: store))
+    }
+
     // MARK: - Opt-in render of the grouped NavigatorColumn (search + By-Project sections)
 
     /// Renders the live ``NavigatorColumn`` over a headless store grouped By-Project — the visual lock for the

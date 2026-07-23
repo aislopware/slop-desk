@@ -79,11 +79,6 @@ struct SlateTabRow: View {
     /// before the overlay instead of running under the revealed button.
     private static let closeReserve: CGFloat = 18
 
-    /// The glyph column's vertical anchor: the leading slot is centred over the whole two-line row, so
-    /// this offset lifts the glyph onto LINE 1's centre (the status belongs to the title, not the
-    /// row). Deterministic: the two-line metrics are fixed tokens.
-    private static let glyphLineOneOffset: CGFloat = -7
-
     var body: some View {
         // The row is the shared ``SlateListRow`` shell: the shell owns the height, padding, hover
         // plate and the active raised-card treatment; this view supplies the tab-specific slots — the
@@ -133,7 +128,8 @@ struct SlateTabRow: View {
     }
 
     /// The leading status-glyph column: a fixed 16pt reservation with the ``StatusRing`` reading (or
-    /// nothing at rest), anchored on line 1. Outside the hover fade — the status never hides.
+    /// nothing at rest). The shell's `.slateLineOne` alignment centres it on the title line — no
+    /// offset here. Outside the hover fade — the status never hides.
     private var glyphColumn: some View {
         Color.clear
             .frame(width: TabBadgeView.side, height: TabBadgeView.side)
@@ -142,7 +138,6 @@ struct SlateTabRow: View {
                     TabBadgeView(kind: badge, progressFraction: progressFraction)
                 }
             }
-            .offset(y: Self.glyphLineOneOffset)
     }
 
     /// The inline-rename `TextField`: seeded from the current title on open, auto-focused, commits
