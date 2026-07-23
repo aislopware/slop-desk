@@ -33,9 +33,14 @@ final class SubprocessE2ETests: XCTestCase {
         }
 
         // --- Launch slopdesk-hostd on an OS-chosen ephemeral port (--port 0). ---
+        let sandboxHome = try makeSandboxHome()
+        defer { try? FileManager.default.removeItem(at: sandboxHome) }
         let hostd = Process()
         hostd.executableURL = hostdURL
-        hostd.arguments = ["--port", "0"]
+        hostd.arguments = ["--port", "0", "--shell", "/bin/sh"]
+        var hostEnv = ProcessInfo.processInfo.environment
+        hostEnv["HOME"] = sandboxHome.path
+        hostd.environment = hostEnv
         let hostdErr = Pipe()
         hostd.standardError = hostdErr
         hostd.standardOutput = Pipe()
@@ -50,10 +55,18 @@ final class SubprocessE2ETests: XCTestCase {
         }
 
         // Parse the bound port from hostd's stderr: "listening on 0.0.0.0:<port>".
-        guard let port = try awaitBoundPort(from: hostdErr.fileHandleForReading, timeout: 10) else {
+        guard let bound = awaitBoundPort(from: hostdErr.fileHandleForReading, timeout: 10) else {
             throw XCTSkip("hostd did not report a bound port in time")
         }
-        XCTAssertGreaterThan(port, 0)
+        XCTAssertGreaterThan(bound.port, 0)
+        // Pin the isolation: the banner reports the spawn shell, and it must be the sandbox
+        // /bin/sh — a real login zsh here writes this test's typed script into the USER'S
+        // ~/.zsh_history on every run (see `makeSandboxHome`).
+        XCTAssertTrue(
+            bound.banner.contains("shell=/bin/sh"),
+            "hostd must spawn the isolated /bin/sh, not the user's login shell: \(bound.banner)",
+        )
+        let port = bound.port
 
         // --- Launch slopdesk-client --no-raw with a piped stdin script. ---
         let client = Process()
@@ -118,8 +131,11 @@ final class SubprocessE2ETests: XCTestCase {
         let journalDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("e2e-scrollback-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: journalDir) }
+        let sandboxHome = try makeSandboxHome()
+        defer { try? FileManager.default.removeItem(at: sandboxHome) }
         var hostEnv = ProcessInfo.processInfo.environment
         hostEnv["SLOPDESK_SCROLLBACK_DIR"] = journalDir.path
+        hostEnv["HOME"] = sandboxHome.path
 
         let sessionID = UUID()
         let marker = "RESTART_SURVIVOR_\(UInt32.random(in: 0..<1_000_000))"
@@ -127,17 +143,20 @@ final class SubprocessE2ETests: XCTestCase {
         func launchHostd() -> (Process, UInt16)? {
             let hostd = Process()
             hostd.executableURL = hostdURL
-            hostd.arguments = ["--port", "0"]
+            hostd.arguments = ["--port", "0", "--shell", "/bin/sh"]
             hostd.environment = hostEnv
             let err = Pipe()
             hostd.standardError = err
             hostd.standardOutput = Pipe()
             do { try hostd.run() } catch { return nil }
-            guard let port = awaitBoundPort(from: err.fileHandleForReading, timeout: 10), port > 0 else {
+            guard let bound = awaitBoundPort(from: err.fileHandleForReading, timeout: 10),
+                  bound.port > 0,
+                  bound.banner.contains("shell=/bin/sh") // same real-history pin as test 1
+            else {
                 if hostd.isRunning { hostd.terminate() }
                 return nil
             }
-            return (hostd, port)
+            return (hostd, bound.port)
         }
 
         // Runs the shipped client against `port` with the pinned session ID; returns its
@@ -212,21 +231,39 @@ final class SubprocessE2ETests: XCTestCase {
 
     // MARK: - Helpers
 
-    /// Reads hostd stderr until a "listening on …:<port>" line, returns the port.
-    private func awaitBoundPort(from handle: FileHandle, timeout: TimeInterval) -> UInt16? {
+    /// A throwaway HOME for a hostd subprocess. The daemon spawns a REAL interactive login
+    /// shell per session — the user's zsh would, via the ShellIntegration shim (which
+    /// deliberately re-points a shim-relative HISTFILE back at the REAL `~/.zsh_history`),
+    /// append every script this test types to the user's shell history on every run, and
+    /// journal scrollback into the real Application Support dir. `--shell /bin/sh` plus this
+    /// sandbox HOME keep the spawned shell's history file AND the default journal dir inside
+    /// the temp sandbox, never the user's.
+    private func makeSandboxHome() throws -> URL {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("e2e-home-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        return home
+    }
+
+    /// Reads hostd stderr until a "listening on …:<port>" line; returns the port plus the
+    /// banner text so far (callers pin the `shell=` isolation on it).
+    private func awaitBoundPort(
+        from handle: FileHandle,
+        timeout: TimeInterval,
+    ) -> (port: UInt16, banner: String)? {
         let deadline = Date().addingTimeInterval(timeout)
         var buffer = Data()
         while Date() < deadline {
             let chunk = handle.availableData // blocks until data or EOF
             if chunk.isEmpty {
-                // EOF (hostd died) — give up.
-                return parsePort(String(bytes: buffer, encoding: .utf8) ?? "")
+                break // EOF (hostd died) — give up with whatever arrived.
             }
             buffer.append(chunk)
             let text = String(bytes: buffer, encoding: .utf8) ?? ""
-            if let p = parsePort(text) { return p }
+            if let p = parsePort(text) { return (p, text) }
         }
-        return parsePort(String(bytes: buffer, encoding: .utf8) ?? "")
+        let text = String(bytes: buffer, encoding: .utf8) ?? ""
+        return parsePort(text).map { ($0, text) }
     }
 
     /// Extracts the port from a line like `…: listening on 0.0.0.0:54321 (shell=…)`.

@@ -112,7 +112,15 @@ if [[ "${CONNECT}" == "1" ]]; then
   # Free the port if a prior run left a daemon behind.
   pkill -f "slopdesk-hostd --port ${CONNECT_PORT}" 2> /dev/null || true
   sleep 0.5
-  "${REPO_ROOT}/.build/debug/slopdesk-hostd" --port "${CONNECT_PORT}" > "${HOSTD_LOG}" 2>&1 &
+  # Isolation: --port stays FIRST so the pkill pattern above keeps matching. The default spawn
+  # is the developer's REAL login zsh — the ShellIntegration shim points its HISTFILE at the
+  # real ~/.zsh_history, so the AUTOTYPE proof command would be appended there on every run
+  # (and scrollback journals would land in the real Application Support dir). A plain sh
+  # computes the $((6*7)) proof just as well, and the throwaway HOME sandboxes both files.
+  HOSTD_HOME="${WORK}/hostd-home"
+  mkdir -p "${HOSTD_HOME}"
+  HOME="${HOSTD_HOME}" "${REPO_ROOT}/.build/debug/slopdesk-hostd" \
+    --port "${CONNECT_PORT}" --shell /bin/sh > "${HOSTD_LOG}" 2>&1 &
   HOSTD_PID=$!
   sleep 1
   if ! kill -0 "${HOSTD_PID}" 2> /dev/null; then

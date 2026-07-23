@@ -1297,10 +1297,13 @@ final class MuxChannelSession: @unchecked Sendable {
     /// loop's `NSCondition` gate but CANNOT interrupt a `read()` already in the kernel — that
     /// read only returns when the slave closes, i.e. when the child dies. For a self-exiting
     /// child the reader is already at EOF, but an INTERACTIVE shell (`/bin/sh` awaiting input)
-    /// never exits on its own, so without killing it `close()` hangs FOREVER. So: `terminate()`
-    /// (SIGTERM) → bounded wait for the reaper → `forceTerminate()` (SIGKILL) if it did not
-    /// take → short re-wait. Once the child is dead the slave closes, the parked `read()`
-    /// returns EOF/EIO, the loop exits, and `closeMaster()` is non-blocking.
+    /// never exits on its own, so without killing it `close()` hangs FOREVER. So: `hangup()`
+    /// (SIGHUP — "terminal closed"; an interactive zsh exits AND persists its command history
+    /// to `$HISTFILE`, which it never does under SIGTERM→SIGKILL) + `terminate()` (SIGTERM,
+    /// for children that catch it for graceful cleanup but treat SIGHUP as a reload) → bounded
+    /// wait for the reaper → `forceTerminate()` (SIGKILL) if neither took → short re-wait.
+    /// Once the child is dead the slave closes, the parked `read()` returns EOF/EIO, the loop
+    /// exits, and `closeMaster()` is non-blocking.
     func shutdown() {
         taskLock.lock()
         readLoop?.stop()
@@ -1348,12 +1351,20 @@ final class MuxChannelSession: @unchecked Sendable {
         // Likewise release the exit-sent latch so a torn-down exit task returns at once instead
         // of polling to its timeout (mirrors the EOF latch above; the cancel above also unblocks it).
         signalExitSent()
-        // DESTROY-path child termination (see the doc comment): SIGTERM, then a bounded wait
-        // for the reaper to observe the exit; if the child blocked/ignored SIGTERM (or a
-        // foreground job kept the slave open), escalate to SIGKILL and re-wait briefly. This
-        // GUARANTEES the parked read() returns before close(masterFD), so close() never hangs.
+        // DESTROY-path child termination (see the doc comment): SIGHUP first — an interactive
+        // shell treats it as "terminal closed" and persists its command history to $HISTFILE
+        // before exiting (it IGNORES SIGTERM, and SIGKILL would discard everything typed in
+        // this pane since it opened) — plus SIGTERM for children that catch it for graceful
+        // cleanup; then a bounded wait for the reaper to observe the exit; if the child
+        // blocked/ignored both (or a foreground job kept the slave open), escalate to SIGKILL
+        // and re-wait briefly. This GUARANTEES the parked read() returns before
+        // close(masterFD), so close() never hangs.
+        pty.hangup()
         pty.terminate()
-        if !pty.waitUntilExited(timeout: 0.25) {
+        // Drain the master while waiting: the read loop is already stopped, and a shell caught
+        // mid-prompt-redraw blocks in tcsetattr(TCSADRAIN) until its pending output is consumed
+        // — undrained, it never processes the SIGHUP (no history save) and eats the SIGKILL.
+        if !pty.waitUntilExitedDrainingMaster(timeout: 0.25) {
             pty.forceTerminate()
             pty.waitUntilExited(timeout: 0.25)
         }
@@ -1363,8 +1374,8 @@ final class MuxChannelSession: @unchecked Sendable {
         // sync-drain the queue so an in-flight write COMPLETES before `close(masterFD)` — otherwise
         // the freed fd number could be recycled by a concurrent `openpty()` and the stale write
         // would inject bytes into an unrelated pane's PTY (the write-path TOCTOU). Bounded: the
-        // child is already dead (SIGTERM→SIGKILL above), so a write parked on a full kernel PTY
-        // buffer returns EIO once the slave side is gone — the drain cannot hang.
+        // child is already dead (SIGHUP/SIGTERM→SIGKILL above), so a write parked on a full kernel
+        // PTY buffer returns EIO once the slave side is gone — the drain cannot hang.
         inputGateLock.lock()
         inputWritesClosed = true
         inputGateLock.unlock()
@@ -1384,9 +1395,10 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// NON-BLOCKING teardown: dispatches ``shutdown()`` to a background queue and returns IMMEDIATELY.
     ///
-    /// ``shutdown()`` blocks the caller for up to ~0.5s (`SIGTERM` → bounded `Thread.sleep` wait →
-    /// `SIGKILL` → re-wait → `closeMaster`) — and for an INTERACTIVE shell, which IGNORES `SIGTERM`,
-    /// the common path is the full ~250ms `SIGKILL` escalation. The host reaches a channel teardown
+    /// ``shutdown()`` blocks the caller for up to ~0.5s (`SIGHUP`+`SIGTERM` → bounded `Thread.sleep`
+    /// wait → `SIGKILL` → re-wait → `closeMaster`). An INTERACTIVE shell exits on the `SIGHUP` within
+    /// milliseconds (persisting its history first), but a child that survives both signals rides the
+    /// full ~250ms `SIGKILL` escalation. The host reaches a channel teardown
     /// SYNCHRONOUSLY from the mux connection's receive loop (a peer `channelClose` / link drop routes
     /// `MuxNWConnection.route`/`finishLink` → `hostCloseHandler` → `HostServer.removeMuxSession`), so
     /// blocking there would (a) stall EVERY OTHER pane riding the same shared connection for that whole

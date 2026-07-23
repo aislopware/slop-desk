@@ -214,7 +214,12 @@ public enum ShellIntegration {
             usleep(10000)
         }
         if process.isRunning {
-            process.terminate()
+            // SIGKILL, not SIGTERM: the probe is an INTERACTIVE zsh, which ignores SIGTERM (it
+            // installs that ignore before sourcing /etc/zshenv — the very file whose hang this
+            // timeout guards against), so a terminate() here would leak one un-killable probe
+            // per pane-spawn attempt for the daemon's whole life. Its output is discarded on
+            // this path anyway; nothing needs a graceful exit.
+            kill(process.processIdentifier, SIGKILL)
             return nil
         }
         guard process.terminationStatus == 0 else { return nil }

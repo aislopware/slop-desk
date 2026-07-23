@@ -13,14 +13,31 @@ import XCTest
 /// These fail without an `onAgentStatusChanged` hook, a server-level observer registry, a
 /// `state` on `PaneInfo`, or a `SLOPDESK_CTL` sentinel.
 final class AgentSupervisionIntegrationTests: XCTestCase {
+    /// A throwaway HOME for a spawned pane (`env` merges OVER the curated env, which otherwise
+    /// mirrors the developer's real HOME): a login `/bin/sh` still reads `$HOME/.profile`, and
+    /// the HUP-led teardown lets it write its history file — both must land in the sandbox,
+    /// never the developer's real files.
+    private func sandboxHomeEnv() throws -> [String: String] {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("slopdesk-agent-home-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        return ["HOME": dir.path]
+    }
+
     /// A report transition on a live pane invokes a registered cross-pane observer with the pane's
     /// id and the mapped supervision state.
     func testReportFansCrossPaneObserver() async throws {
-        let server = HostServer(port: 0)
+        // `shellPath: "/bin/sh"` + `sandboxHomeEnv()` (here and in every `cmd: nil` spawn below):
+        // the default is the developer's REAL login zsh, which sources their real rc files and —
+        // via the ShellIntegration shim — points HISTFILE at the real ~/.zsh_history. These tests
+        // drive agent-status plumbing, not shell behaviour, so a plain sh with a throwaway HOME
+        // touches none of the developer's rc or history files.
+        let server = HostServer(port: 0, shellPath: "/bin/sh")
         defer { Task { await server.stop() } }
 
         let paneId = try await server.spawnStandalonePane(
-            cmd: nil, cwd: nil, env: nil, rows: 24, cols: 80,
+            cmd: nil, cwd: nil, env: sandboxHomeEnv(), rows: 24, cols: 80,
         )
 
         // Register a cross-pane observer and capture the first transition for THIS pane.
@@ -63,11 +80,11 @@ final class AgentSupervisionIntegrationTests: XCTestCase {
 
     /// `listPanesForControl()` reflects a reported state on the matching pane.
     func testListPanesReflectsReportedState() async throws {
-        let server = HostServer(port: 0)
+        let server = HostServer(port: 0, shellPath: "/bin/sh") // history-safe (see above)
         defer { Task { await server.stop() } }
 
         let paneId = try await server.spawnStandalonePane(
-            cmd: nil, cwd: nil, env: nil, rows: 24, cols: 80,
+            cmd: nil, cwd: nil, env: sandboxHomeEnv(), rows: 24, cols: 80,
         )
         guard let session = server.lookupPaneForControl(paneId: paneId) else {
             XCTFail("pane not found")
@@ -134,11 +151,11 @@ final class AgentSupervisionIntegrationTests: XCTestCase {
     /// teardown paths) fan nothing: the working report would be the last event, so the set would
     /// keep the closed pane forever.
     func testTeardownOfWorkingPaneReleasesPreventSleepTracking() async throws {
-        let server = HostServer(port: 0)
+        let server = HostServer(port: 0, shellPath: "/bin/sh") // history-safe (see above)
         defer { Task { await server.stop() } }
 
         let paneId = try await server.spawnStandalonePane(
-            cmd: nil, cwd: nil, env: nil, rows: 24, cols: 80,
+            cmd: nil, cwd: nil, env: sandboxHomeEnv(), rows: 24, cols: 80,
         )
 
         // A faithful mirror of the daemon's PreventSleepDriver: insert on "working", remove on anything
@@ -193,10 +210,10 @@ final class AgentSupervisionIntegrationTests: XCTestCase {
     /// A freshly-spawned pane reports a state in the closed supervision set (a live pane with no
     /// claude → "idle"), never an enum case name or empty string.
     func testFreshPaneStateIsInClosedSet() async throws {
-        let server = HostServer(port: 0)
+        let server = HostServer(port: 0, shellPath: "/bin/sh") // history-safe (see above)
         defer { Task { await server.stop() } }
         let paneId = try await server.spawnStandalonePane(
-            cmd: nil, cwd: nil, env: nil, rows: 24, cols: 80,
+            cmd: nil, cwd: nil, env: sandboxHomeEnv(), rows: 24, cols: 80,
         )
         let panes = server.listPanesForControl()
         let mine = panes.first { $0.paneId == paneId }

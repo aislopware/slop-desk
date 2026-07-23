@@ -49,10 +49,32 @@ final class PTYProcessTests: XCTestCase {
         return sink.string()
     }
 
+    /// A throwaway HOME shared by this test instance's spawns; removed in `tearDown`.
+    private var sandboxHome: URL?
+
+    override func tearDown() {
+        if let sandboxHome { try? FileManager.default.removeItem(at: sandboxHome) }
+        sandboxHome = nil
+        super.tearDown()
+    }
+
     private func curatedEnv() -> [String: String] {
         // Force a deterministic TERM and locale for the tests.
         var env = HostEnvironment.curated()
         env["TERM"] = "xterm-256color"
+        // Sandbox HOME: several tests spawn INTERACTIVE shells (no-arg `/bin/sh`) and type real
+        // commands into them. With the inherited HOME, bash-as-sh reads AND — on a typed `exit`
+        // or the SIGHUP-led teardown — WRITES the developer's real `~/.bash_history` (bash's
+        // 500-line HISTFILESIZE rewrite can even truncate it). A throwaway HOME keeps every
+        // spawned shell's history file inside the test sandbox.
+        let home = sandboxHome ?? {
+            let dir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("slopdesk-pty-home-\(UUID().uuidString)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            sandboxHome = dir
+            return dir
+        }()
+        env["HOME"] = home.path
         return env
     }
 
@@ -270,6 +292,85 @@ final class PTYProcessTests: XCTestCase {
             colsOut.contains("SLOPDESK_COLS=132"),
             "zsh did NOT update $COLUMNS after TIOCSWINSZ — SIGWINCH was not delivered to the "
                 + "interactive shell (no controlling terminal / not foreground pgroup): \(colsOut)",
+        )
+    }
+
+    /// The destroy-path teardown must let an interactive zsh PERSIST ITS COMMAND HISTORY.
+    ///
+    /// zsh writes `$HISTFILE` only on a clean `exit` or on SIGHUP ("terminal closed" — what a
+    /// real emulator delivers when its window goes away); it IGNORES SIGTERM entirely, and
+    /// SIGKILL discards every command typed since launch. `MuxChannelSession.shutdown()` — the
+    /// ONE ladder behind pane close, daemon stop, and `DetachedSessionStore` eviction — must
+    /// therefore lead with `hangup()` before the SIGTERM→SIGKILL escalation, or every teardown
+    /// silently throws away the user's typed history (the "commands I just typed are missing
+    /// from autosuggestion and Ctrl-R" report). Exercises that exact ladder against a REAL
+    /// interactive zsh with an ISOLATED ZDOTDIR/HISTFILE (never the user's real files) and pins
+    /// that the typed marker survives into the history file.
+    func testDestroyPathTeardownPersistsInteractiveZshHistory() throws {
+        let zsh = "/bin/zsh"
+        guard FileManager.default.isExecutableFile(atPath: zsh) else {
+            throw XCTSkip("/bin/zsh not present")
+        }
+        let sandbox = FileManager.default.temporaryDirectory
+            .appendingPathComponent("slopdesk-hist-\(UUID().uuidString)", isDirectory: true)
+        let zdot = sandbox.appendingPathComponent("zdot", isDirectory: true)
+        try FileManager.default.createDirectory(at: zdot, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: sandbox) }
+        let histfile = sandbox.appendingPathComponent("history").path
+        // Minimal rc: history persistence on, a recognisable prompt, nothing else. ZDOTDIR
+        // isolation keeps the test independent of (and harmless to) the user's real zsh setup.
+        try """
+        HISTFILE=\(histfile)
+        SAVEHIST=1000
+        HISTSIZE=1000
+        PS1='hist-test%% '
+        """.write(to: zdot.appendingPathComponent(".zshrc"), atomically: true, encoding: .utf8)
+
+        var env = curatedEnv()
+        env["ZDOTDIR"] = zdot.path
+        env["HOME"] = sandbox.path // /etc/zshrc derives HISTFILE from ${ZDOTDIR:-$HOME} — sandbox both
+        env.removeValue(forKey: "HISTFILE")
+
+        let pty = PTYProcess()
+        // NO `-f`: the rc files must run so HISTFILE/SAVEHIST are live (that is the machinery
+        // under test). Login argv0 matches the real spawn path.
+        try pty.spawn(zsh, arguments: ["-i"], environment: env, argv0: "-zsh", cols: 80, rows: 24)
+        defer { // guaranteed non-hang teardown even on assert early-out (see the SIGWINCH test)
+            pty.forceTerminate()
+            pty.waitUntilExited(timeout: 1.0)
+            pty.closeMaster()
+        }
+
+        // Wait for the first prompt (ZLE up, history machinery live), then type a marker whose
+        // OUTPUT differs from its echoed input — seeing `slopdesk_hist_41001` proves the command
+        // RAN (was accepted into history), not merely that the terminal echoed the keystrokes.
+        _ = readUntil(fd: pty.masterFD, needle: "hist-test", timeout: 5.0)
+        let marker = "echo slopdesk_hist_$((41000+1))"
+        Self.write(pty.masterFD, marker + "\n")
+        let ran = readUntil(fd: pty.masterFD, needle: "slopdesk_hist_41001", timeout: 5.0)
+        XCTAssertTrue(ran.contains("slopdesk_hist_41001"), "zsh never ran the marker: \(ran)")
+
+        // THE destroy ladder from `MuxChannelSession.shutdown()` — including the master drain:
+        // without it, a zsh caught mid-prompt-redraw blocks in tcsetattr(TCSADRAIN) (nobody
+        // consumes its pending output once the read loop stops), never sees the SIGHUP, and
+        // dies unsaved to the SIGKILL escalation. This test fires the signals the instant the
+        // marker's output appears, which lands in that window reliably enough to flake without
+        // the drain.
+        pty.hangup()
+        pty.terminate()
+        let exitedOnHangup = pty.waitUntilExitedDrainingMaster(timeout: 0.25)
+        if !exitedOnHangup {
+            pty.forceTerminate()
+            pty.waitUntilExited(timeout: 0.25)
+        }
+
+        // zsh exits on the SIGHUP and appends this session's commands to $HISTFILE.
+        let saved = (try? String(contentsOfFile: histfile, encoding: .utf8)) ?? ""
+        XCTAssertTrue(
+            saved.contains(marker),
+            "interactive zsh died without persisting its history — the teardown ladder lost the "
+                + "SIGHUP (exitedOnHangup=\(exitedOnHangup)); histfile: "
+                + (saved.isEmpty ? "<empty/absent>" : saved),
         )
     }
 

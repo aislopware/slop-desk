@@ -148,6 +148,15 @@ public final class PTYProcess: @unchecked Sendable {
         let childPID = Self.rawFork()
         if childPID == 0 {
             // ===== CHILD: raw syscalls only, no Swift runtime. =====
+            // Reset inherited signal state BEFORE exec. A SIG_IGN disposition and a blocked
+            // signal mask both survive fork+execve — so a daemon launched under `nohup` (or a
+            // test runner) that ignores SIGHUP breeds shells that NEVER receive the destroy-path
+            // hangup (nohup semantics): zsh then skips its history save on pane teardown. A
+            // terminal emulator hands every child a clean slate; `sigprocmask`/`signal` are
+            // async-signal-safe raw syscalls. (SIGKILL/SIGSTOP reject SIG_DFL — harmless.)
+            var emptyMask = sigset_t(0)
+            sigprocmask(SIG_SETMASK, &emptyMask, nil)
+            for sig in Int32(1)...Int32(31) { signal(sig, SIG_DFL) }
             // login_tty(slave) atomically: setsid(); ioctl(slave, TIOCSCTTY, 0);
             // dup2(slave → 0,1,2); close(slave) if >2. This is what makes the slave the
             // controlling terminal (so SIGWINCH / job control reach the shell).
@@ -409,6 +418,18 @@ public final class PTYProcess: @unchecked Sendable {
 
     // MARK: Lifecycle
 
+    /// Sends `SIGHUP` to the child — the "terminal closed" signal a real emulator delivers
+    /// when its window goes away. An interactive shell treats it as a deliberate
+    /// end-of-session: zsh persists its in-memory command history to `$HISTFILE` before
+    /// exiting (it IGNORES `SIGTERM`, and `SIGKILL` discards everything typed since launch),
+    /// so the destroy-path ladder (``MuxChannelSession/shutdown()``) leads with this signal —
+    /// without it, every pane close / daemon stop / eviction silently throws away the user's
+    /// typed history. Pinned by `testDestroyPathTeardownPersistsInteractiveZshHistory`.
+    public func hangup() {
+        guard pid > 0 else { return }
+        kill(pid, SIGHUP)
+    }
+
     /// Sends `SIGTERM` to the child (it is a session leader, so this reaches the group
     /// via the controlling tty's hangup machinery once the master closes too).
     public func terminate() {
@@ -426,6 +447,47 @@ public final class PTYProcess: @unchecked Sendable {
     public func forceTerminate() {
         guard pid > 0 else { return }
         kill(pid, SIGKILL)
+    }
+
+    /// Waits (bounded) for the child to be reaped while DRAINING the master — the destroy-path
+    /// sibling of ``waitUntilExited(timeout:step:)``, used between `hangup()` and the `SIGKILL`
+    /// escalation. By that point the `PTYReadLoop` is already stopped, so NOBODY consumes the
+    /// child's pending output — and a zsh caught mid-prompt-redraw sits BLOCKED in
+    /// `tcsetattr(TCSADRAIN)` (zle's `zsetterm`, waiting for the output queue to empty), never
+    /// processes the `SIGHUP`, never persists its history, and rides the `SIGKILL` escalation.
+    /// Consuming (and discarding — the pane is being destroyed) master bytes until the exit
+    /// lands keeps that drain moving, so the shell's hangup save always completes. Same
+    /// `poll()`-gated non-hanging discipline as the read loop.
+    public func waitUntilExitedDrainingMaster(timeout: TimeInterval) -> Bool {
+        // Snapshot the master under `exitLock` (the file's close-TOCTOU discipline) and drain a
+        // private dup(): concurrent double-shutdown is designed-for (the teardown queue is
+        // concurrent and `shutdown()` is only idempotent, not exclusive), so a sibling teardown
+        // can `closeMaster()` mid-drain — the dup stays valid across that close and can never
+        // alias a recycled fd number, where a raw re-read of `masterFD` could steal bytes from
+        // an unrelated fresh pane.
+        exitLock.lock()
+        let fd = masterFD >= 0 ? dup(masterFD) : -1
+        exitLock.unlock()
+        guard fd >= 0 else { return waitUntilExited(timeout: timeout) }
+        defer { close(fd) }
+        // Destroy-only: make the description non-blocking so the drain read can never park.
+        // `poll()`'s POLLIN is ADVISORY here — the stopped-but-still-parked `PTYReadLoop` is a
+        // second reader on the same master and can win the race for the bytes, and a blocking
+        // read() after a stolen POLLIN would wedge this wait past its deadline (and past the
+        // SIGKILL escalation) for a child that survives SIGHUP+SIGTERM and goes quiet. The flag
+        // is shared with that read loop, but this is the destroy path: the loop is already
+        // stopping, and an EAGAIN return just ends it a beat early.
+        _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
+        let deadline = Date().addingTimeInterval(timeout)
+        var buf = [UInt8](repeating: 0, count: 4096)
+        while Date() < deadline {
+            if waitExitCode() != nil { return true }
+            var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            if poll(&pfd, 1, 5) > 0, pfd.revents & Int16(POLLIN) != 0 {
+                _ = buf.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) } // EAGAIN → loop
+            }
+        }
+        return waitExitCode() != nil
     }
 
     /// Blocks the CALLER until the child has been reaped (the detached reaper observed its
