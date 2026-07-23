@@ -906,3 +906,60 @@ peer: an unknown tag is dropped at the demux, an unknown control type at the dec
 
 A corrupt single datagram is dropped (the error is caught at the receive boundary), never fatal — UDP
 loss is the normal case PATH 2 is built to tolerate.
+
+# PATH 4 — drag-drop file transfer (TCP)
+
+> **STATUS: CURRENT.** A file dragged from Finder onto the remote **desktop window** uploads to the
+> host over a DEDICATED reliable TCP connection — the `SlopDeskFileTransfer` module: its own listener
+> (`FileTransferServer`), client (`FileTransferClient`), frame decoder, codec, and receive FSM. It is
+> **independent of PATH 1** (a bulk body must never share the terminal mux's data channel — it would
+> stall keystrokes/resizes) and of PATH 2 (lossy UDP + FEC recovers *frames*, not files). No
+> `WireMessage`, no `MuxFrame`, no `VideoControlMessage` — a genuinely separate path, per the
+> "three paths do not merge" rule (now four). **Not part of the golden corpus** (golden = the PATH-2
+> video control codec only).
+
+## 10. Path-4 overview
+
+- **Connection.** One TCP connection per drop, dialed at `host : terminalPort + 2` (mirrors the
+  inspector's `+ 1`; the client derives it as `ConnectionTarget.filePort = port &+ 2`, the daemon binds
+  `bound &+ 2`). `TCP_NODELAY` + keepalive, no app crypto (WireGuard encrypts). The host listener is
+  gated `SLOPDESK_FILE_TRANSFER` (default-ON) and is **non-fatal** on bind failure. Drop directory:
+  `SLOPDESK_FILE_DROP_DIR` or `~/Downloads`.
+- **Framing.** `[UInt32 BE payloadLength][UInt8 messageType][body]`, 16 MiB payload cap (a larger
+  prefix is rejected before allocation, poisoning the decoder — fail-stop, no resync). Multi-byte ints
+  big-endian; strings are `[UInt16 BE byteLength][UTF-8]`.
+- **Direction.** Client → host **upload** only (the "drop onto the remote desktop" gesture). Host →
+  client download is a future add.
+- **Version.** `1` only, no negotiation: the client opens with `hello(version:)`, the host answers
+  `helloAck(accepted:)`; a mismatch is rejected outright.
+
+### 10.1 Message table (`FileTransferMessage`)
+
+| Type | Name | Dir | Body | Meaning |
+|------|------|-----|------|---------|
+| 1 | `hello` | c→h | `version:u8` | Version pin (first frame). |
+| 2 | `offer` | c→h | `transferId:u32, fileSize:u64, name:str` | Announce a file. `name` is untrusted → sanitized host-side. |
+| 3 | `chunk` | c→h | `transferId:u32, bytes…` | A body chunk (256 KiB; TCP orders, so no sequence). |
+| 4 | `finish` | c→h | `transferId:u32` | Whole body sent. |
+| 5 | `cancel` | c→h | `transferId:u32` | Abandon the transfer. |
+| 6 | `helloAck` | h→c | `accepted:u8` | `0` = version mismatch. |
+| 7 | `accept` | h→c | `transferId:u32` | Destination opened, ready for chunks. |
+| 8 | `complete` | h→c | `transferId:u32` | Body written + moved into place. |
+| 9 | `failed` | h→c | `transferId:u32, reason:str` | Transfer failed (short reason, never a path). |
+
+### 10.2 Receive discipline (`FileReceiveLogic`, validate-then-drop)
+
+The host FSM rejects (a `failed` reply + abort of any partial write) on: a chunk before its offer, a
+body **overrun** past the offered size, an offer over the 20 GiB cap, a **duplicate** transferId, or a
+name that fails `FileNameSanitizer` (last-component-only; `..`/absolute/empty rejected — the
+path-traversal guard an upload endpoint invites). `finish` requires `receivedBytes == fileSize`. The
+disk sink streams to a hidden `.part` temp file, then atomically renames into a collision-avoiding
+final name (`report.pdf` → `report (1).pdf`); a dropped connection sweeps any partial temp.
+
+### 10.3 Errors
+
+| Case | Meaning |
+|------|---------|
+| `FileTransferCodec.DecodeError` | `empty` / `unknownType` / `truncated` / `badUTF8` — a malformed payload, dropped (poisons the connection decoder). |
+| `FileTransferFrameDecoderError.frameTooLarge` | A length prefix over the 16 MiB cap — rejected before allocating. |
+| `FileDropSinkError` | `notOpen` / `ioFailed` — a disk failure surfaces as a per-transfer `failed`, never a connection teardown. |

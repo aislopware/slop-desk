@@ -52,6 +52,11 @@ struct GuiLeafView: View {
     /// remount, like `showStats`.
     @State private var controlsExpanded = false
     #if os(macOS)
+    /// Whether a file drag is hovering a live desktop pane (drives the drop-target highlight). Set only
+    /// when the pane actually accepts uploads, so a window/dialog pane never flashes the border.
+    @State private var isDropTargeted = false
+    #endif
+    #if os(macOS)
     /// IMMERSIVE capture (system keys → host): the CGEventTap owner. Engaged while the toggle is ON —
     /// focus/app/window/read-only edges only SUSPEND swallowing (capture resumes by itself), so the
     /// toggle never silently flakes off. One controller per pane VIEW (the tap must die with its
@@ -176,6 +181,36 @@ struct GuiLeafView: View {
                 }
             }
             .animation(Slate.Anim.reveal, value: showStats)
+        #if os(macOS)
+            // DRAG-DROP FILE UPLOAD (desktop panes): a file dragged from Finder onto the remote
+            // desktop uploads over the DEDICATED PATH-4 connection (never the terminal/video paths).
+            // The drop is accepted only for a live desktop pane; a window/dialog pane rejects it (the
+            // existing `PaneDropReceiver` path-inject still covers terminal panes elsewhere).
+            .dropDestination(for: URL.self) { urls, _ in
+                handleFileDrop(urls)
+            } isTargeted: { targeted in
+                isDropTargeted = targeted && isDesktopUploadTarget
+            }
+            .overlay {
+                if isDropTargeted {
+                    FileDropHighlight()
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+            }
+            .animation(Slate.Anim.reveal, value: isDropTargeted)
+            // UPLOAD PROGRESS: a compact stack of in-flight/just-settled uploads, top-center (clear of
+            // the read-only pill top-trailing and the stats readout top-leading). Hit-testing off.
+            .overlay(alignment: .top) {
+                if !staticMirror, let model, !model.activeUploads.isEmpty {
+                    FileUploadOverlay(uploads: model.activeUploads)
+                        .allowsHitTesting(false)
+                        .padding(Slate.Metric.space2)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .animation(Slate.Anim.reveal, value: model?.activeUploads ?? [])
+        #endif
             // CAP ADMISSION: request a slot when ON-SCREEN, on appear AND whenever a sibling
             // frees one (`videoPromotionGeneration` bumps); `.task(id:)` cancels+restarts on either. Gated on
             // `isVisible` so a background-tab / zoom-hidden pane does NOT claim a `liveVideoCap` slot (else the
@@ -318,6 +353,22 @@ struct GuiLeafView: View {
               model?.canInjectSystemKeys == true,
               SystemKeyCaptureController.isTrusted else { return }
         engageImmersiveTap()
+    }
+    #endif
+
+    #if os(macOS)
+    /// Whether this is a LIVE desktop pane that accepts drag-drop uploads (the gesture is "drop onto
+    /// the remote desktop"; a window/dialog pane is not a drop target).
+    private var isDesktopUploadTarget: Bool {
+        !staticMirror && store.tree.spec(for: paneID)?.kind == .desktop && model?.active != nil
+    }
+
+    /// Routes dropped Finder file URLs to the dedicated PATH-4 uploader. Returns whether the drop was
+    /// accepted (false for a non-desktop / non-streaming pane, so the OS shows the reject cursor).
+    private func handleFileDrop(_ urls: [URL]) -> Bool {
+        guard isDesktopUploadTarget, let model, let endpoint = model.fileTransferTarget() else { return false }
+        FileUploadCoordinator.upload(files: urls, host: endpoint.host, port: endpoint.port, into: model)
+        return true
     }
     #endif
 
@@ -946,6 +997,83 @@ private struct PasteFeedbackBanner: View {
         }
         .buttonStyle(.plain)
         .slateHelp("Dismiss")
+    }
+}
+
+/// The drop-target highlight for a file dragged over a live desktop pane: an accent inset border so the
+/// user sees the remote desktop will accept the drop (an upload over the dedicated channel). No veil —
+/// the stream stays fully visible, only the frame lights.
+private struct FileDropHighlight: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: Slate.Metric.radiusControl)
+            .strokeBorder(Slate.State.accent, lineWidth: 2)
+            .padding(Slate.Metric.space2)
+    }
+}
+
+/// The upload-progress stack (top-center): one row per in-flight or just-settled drag-drop upload, with
+/// a name, a thin progress bar, and a trailing state glyph (↑ sending / ✓ done / ✗ failed). Instrument
+/// voice on the same dim-ground material as the stats readout; the app coordinator dismisses each row a
+/// moment after it settles.
+private struct FileUploadOverlay: View {
+    let uploads: [FileUploadProgress]
+
+    var body: some View {
+        VStack(spacing: Slate.Metric.space1) {
+            ForEach(uploads) { upload in
+                row(upload)
+            }
+        }
+        .padding(Slate.Metric.space2)
+        .background(
+            Slate.Surface.ground.opacity(0.9),
+            in: .rect(cornerRadius: Slate.Metric.radiusSmall),
+        )
+        .frame(maxWidth: 320)
+    }
+
+    private func row(_ upload: FileUploadProgress) -> some View {
+        HStack(spacing: Slate.Metric.space2) {
+            Image(systemSymbol: glyph(upload.phase))
+                .foregroundStyle(tint(upload.phase))
+                .font(.system(size: Slate.Typeface.small, weight: .semibold))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(upload.name)
+                    .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                    .foregroundStyle(Slate.Text.primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if upload.phase == .failed {
+                    Text(upload.reason ?? "failed")
+                        .font(.system(size: Slate.Typeface.small))
+                        .foregroundStyle(Slate.Text.secondary)
+                        .lineLimit(1)
+                } else {
+                    ProgressView(value: upload.fraction)
+                        .progressViewStyle(.linear)
+                        .tint(upload.phase == .completed ? Slate.State.accent : Slate.Text.icon)
+                }
+            }
+        }
+        .padding(.horizontal, Slate.Metric.space2)
+        .padding(.vertical, Slate.Metric.space1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func glyph(_ phase: FileUploadProgress.Phase) -> SFSymbol {
+        switch phase {
+        case .sending: .arrowUpCircle
+        case .completed: .checkmarkCircleFill
+        case .failed: .exclamationmarkTriangleFill
+        }
+    }
+
+    private func tint(_ phase: FileUploadProgress.Phase) -> Color {
+        switch phase {
+        case .sending: Slate.Text.icon
+        case .completed: Slate.State.accent
+        case .failed: Slate.State.accent
+        }
     }
 }
 #endif

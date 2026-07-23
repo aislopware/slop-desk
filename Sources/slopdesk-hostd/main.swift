@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskFileTransfer
 import SlopDeskHost
 import SlopDeskInspector
 import SlopDeskVideoProtocol
@@ -222,6 +223,10 @@ inspectorReplayLog.ingest(inspectorEngine.events)
 // and skips the (not-yet-started) inspector, which `Task.stop()` on `nil` already tolerates.
 var inspectorServer: InspectorServer?
 
+// PATH-4 drag-drop file-transfer listener (`terminalPort &+ 2`). Same nil-race tolerance as the
+// inspector: a signal racing construction skips the not-yet-started server.
+var fileTransferServer: FileTransferServer?
+
 // A one-shot latch so a SECOND SIGINT during the (potentially ~0.25s/pane) async shutdown does not
 // spawn a second teardown Task that calls `exit(0)` again — two concurrent libc `exit()` calls are UB
 // (atexit handlers / stdio flush run twice).
@@ -261,6 +266,7 @@ func makeShutdownSignalSource(_ sig: Int32, name: String) -> DispatchSourceSigna
                 agentHookListener?.stop()
                 agentControlListener?.stop()
                 inspectorServer?.stop()
+                fileTransferServer?.stop()
                 await server.stop()
                 exit(0)
             }
@@ -313,6 +319,39 @@ Task {
                 "inspector failed to bind on port \(inspector.inspectorPort) (\(error)) — continuing with terminal server only, no inspector",
             )
             inspectorServer = nil
+        }
+    }
+
+    // Bring up the PATH-4 file-transfer listener on `terminalPort &+ 2` (mirrors the inspector's
+    // `+1`), once the terminal server's REAL bound port is known. A drag-drop upload rides its OWN
+    // reliable TCP connection — never the terminal mux (a bulk body would stall keystrokes) nor the
+    // lossy UDP video path. Gated by `SLOPDESK_FILE_TRANSFER` (default-ON; `0` disables); the drop
+    // directory is `SLOPDESK_FILE_DROP_DIR` or `~/Downloads`. Like the inspector, a bind failure here
+    // is logged loudly and NON-fatal — it must not tear down the healthy terminal server.
+    let env = ProcessInfo.processInfo.environment
+    if env["SLOPDESK_FILE_TRANSFER"] != "0" {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let dropDir: URL = {
+            guard let custom = env["SLOPDESK_FILE_DROP_DIR"], !custom.isEmpty else {
+                return home.appendingPathComponent("Downloads", isDirectory: true)
+            }
+            // Expand a leading `~` / `~/` against the daemon user's home (avoid the bridged NSString).
+            if custom == "~" { return home }
+            if custom.hasPrefix("~/") {
+                return home.appendingPathComponent(String(custom.dropFirst(2)), isDirectory: true)
+            }
+            return URL(fileURLWithPath: custom, isDirectory: true)
+        }()
+        let ftPort = bound &+ 2
+        let server = FileTransferServer(port: ftPort, dropDirectory: dropDir)
+        server.onLog = log
+        fileTransferServer = server
+        do {
+            try await server.start()
+            log("file-transfer listening on 0.0.0.0:\(ftPort) (drop dir \(dropDir.path))")
+        } catch {
+            log("file-transfer failed to bind on port \(ftPort) (\(error)) — continuing without file transfer")
+            fileTransferServer = nil
         }
     }
 }

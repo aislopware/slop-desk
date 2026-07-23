@@ -251,6 +251,39 @@ public final class RemoteWindowModel {
         notifyModesChanged()
     }
 
+    // MARK: File transfer (drag-drop upload over the dedicated PATH-4 connection)
+
+    /// In-flight + just-settled drag-drop uploads for THIS desktop pane, driving the progress overlay.
+    /// The app-layer coordinator (which owns the reliable-channel client) upserts each one as it
+    /// advances and dismisses it a moment after it settles. Reset on ``close()`` — a re-bound window
+    /// starts with no stray progress rows.
+    public private(set) var activeUploads: [FileUploadProgress] = []
+
+    /// The host + dedicated file-transfer port a drop should dial, or `nil` when the pane is not
+    /// streaming (nothing to drop onto). Resolved from the app target — `filePort` is the terminal
+    /// port `&+ 2`, the daemon's PATH-4 listener. Only desktop panes accept uploads (the gesture is
+    /// "drop onto the remote desktop"); a window/dialog pane returns `nil`.
+    public func fileTransferTarget() -> (host: String, port: UInt16)? {
+        guard active != nil, desktopDisplayID != nil else { return nil }
+        let t = target()
+        return (t.host, t.filePort)
+    }
+
+    /// Inserts or updates an upload row (keyed by its stable id). The app coordinator calls this as the
+    /// transfer progresses; the view renders ``activeUploads``.
+    public func upsertUpload(_ progress: FileUploadProgress) {
+        if let index = activeUploads.firstIndex(where: { $0.id == progress.id }) {
+            activeUploads[index] = progress
+        } else {
+            activeUploads.append(progress)
+        }
+    }
+
+    /// Removes a settled upload row (the coordinator calls this a moment after it completes/fails).
+    public func dismissUpload(_ id: UUID) {
+        activeUploads.removeAll { $0.id == id }
+    }
+
     // MARK: Immersive wish (macOS system-key capture — the model-owned toggle state)
 
     /// IMMERSIVE (system keys → host): whether the user's immersive toggle is ON. The MODEL owns the
@@ -641,6 +674,7 @@ public final class RemoteWindowModel {
         isStreamStalled = false // a closed pane shows the picker, not a stale "Reconnecting…" scrim
         audioStreamEnabled = false // the next session mints with audio OFF — keep the speaker honest
         privacyEnabled = false // the next session mints un-blanked — keep the shield honest
+        activeUploads.removeAll() // a re-bound window starts with no stale drag-drop progress rows
         viewportLocked = false // ditto for the viewport lock — a freshly (re)bound window starts unlocked
         // Ditto for the stream overrides — without this a cap set on window A would re-assert itself
         // (via `streamSettingsInjector`'s didSet) onto an unrelated window B re-bound on the SAME model.

@@ -40,6 +40,8 @@ let package = Package(
         .library(name: "SlopDeskVideoProtocol", targets: ["SlopDeskVideoProtocol"]),
         .library(name: "SlopDeskVideoHost", targets: ["SlopDeskVideoHost"]),
         .library(name: "SlopDeskVideoClient", targets: ["SlopDeskVideoClient"]),
+        // PATH 4 (dedicated drag-drop file-transfer channel).
+        .library(name: "SlopDeskFileTransfer", targets: ["SlopDeskFileTransfer"]),
     ],
     // External UI deps — attach ONLY to `SlopDeskClientUI` so the headless core + wire/codec/controller
     // targets stay dependency-free (`swift test` / golden never fetch). Trades "clean checkout builds
@@ -210,6 +212,10 @@ let package = Package(
                 // `changeEffect` — MERIDIAN L3: status dots hard-cut, nothing glows at rest.)
                 .product(name: "SwiftUIIntrospect", package: "swiftui-introspect"),
                 .product(name: "SFSafeSymbols", package: "SFSafeSymbols"),
+                // PATH 4: the client-side file-transfer driver (`FileTransferClient`) the desktop
+                // pane's dragging destination fires on a real file drop. Foundation+Network leaf, no
+                // HW deps — does not widen the headless graph.
+                "SlopDeskFileTransfer",
                 // macOS-only: user-customizable global shortcuts + the recorder view.
                 .product(
                     name: "KeyboardShortcuts",
@@ -260,10 +266,23 @@ let package = Package(
         // synchronous) but per the hang-safety rule NO VTDecompressionSession is instantiated in tests.
         .target(name: "SlopDeskVideoClient", dependencies: ["SlopDeskVideoProtocol"]),
 
+        // MARK: PATH 4 — dedicated file-transfer channel
+
+        // Drag-and-drop file upload over its OWN reliable TCP connection — NOT the terminal mux (a
+        // bulk body would stall the PTY data channel) and NOT the lossy UDP video path. A 4th path
+        // that shares nothing with the other three (the "do not merge" rule): its own frame decoder,
+        // codec, receive FSM, name-sanitizer, disk sink, listener, and client. Foundation + Network
+        // leaf (no other SlopDesk module). The NWListener server + NWConnection client are COMPILED +
+        // reviewed; the pure core (codec/decoder/FSM/sanitizer/disk-sink) is exercised over a loopback
+        // channel + fake sink (hang-safety: no live socket / real disk in XCTest for the serve path).
+        .target(name: "SlopDeskFileTransfer"),
+
         // MARK: Executables
 
         // Headless host daemon (PTY + transport). Sources under Sources/slopdesk-hostd.
-        .executableTarget(name: "slopdesk-hostd", dependencies: ["SlopDeskHost"]),
+        // SlopDeskFileTransfer: the daemon stands up the PATH-4 file-transfer listener on
+        // `terminalPort &+ 2` after the terminal + inspector servers (non-fatal on bind failure).
+        .executableTarget(name: "slopdesk-hostd", dependencies: ["SlopDeskHost", "SlopDeskFileTransfer"]),
 
         // Pure, testable core for slopdesk-ctl: arg-parsing (GlobalArgs / parseGlobal) + NDJSON
         // request/response helpers (encodeRequestLine / decodeResponseLine / verb param builders).
@@ -546,5 +565,11 @@ let package = Package(
             name: "SlopDeskVideoClientTests",
             dependencies: ["SlopDeskVideoClient", "SlopDeskVideoProtocol"],
         ),
+        // PATH 4: the PURE file-transfer core — codec round-trip, streaming frame-decoder split/
+        // partial/oversize/poison, the receive FSM (offer→chunk→finish happy path + chunk-before
+        // -offer, byte overrun, over-cap, duplicate id, bad-name rejections), the path-traversal
+        // name sanitizer, the collision-avoiding disk sink (in a temp dir), and the full serve↔client
+        // upload over a LoopbackFileTransferChannel + fake sink. NO NWListener / live socket.
+        .testTarget(name: "SlopDeskFileTransferTests", dependencies: ["SlopDeskFileTransfer"]),
     ],
 )

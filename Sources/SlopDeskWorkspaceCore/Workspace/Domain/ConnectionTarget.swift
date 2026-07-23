@@ -21,6 +21,12 @@ public struct ConnectionTarget: Codable, Sendable, Equatable {
     /// UDP port carrying the cursor side-channel (video panes).
     public var cursorPort: UInt16
 
+    /// The dedicated PATH-4 file-transfer TCP port a drag-drop upload dials. Derived as `port &+ 2`
+    /// (the terminal port `+2`, one past the inspector's `+1`) so it tracks the terminal port with no
+    /// extra persisted/golden field — the daemon binds the same `bound &+ 2`. Computed, so it is never
+    /// encoded into the persisted target.
+    public var filePort: UInt16 { port &+ 2 }
+
     public init(
         host: String = "127.0.0.1",
         port: UInt16 = 7420,

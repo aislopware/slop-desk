@@ -1574,5 +1574,34 @@ substitution forced by the pure-native-Swift rule.
     would block the remote operator's injected input too). Desktop-pane footer shield toggle.
 - 📌 **Deliberately NOT done** (rejected, not deferred): match-window dynamic resolution — the
   research verdict stands that it is the WRONG default for a real physical host display (scale-to-fit
-  letterbox stays). **Still a future epic:** drag-and-drop file transfer into the desktop window
-  (Apple Screen Sharing precedent — needs a whole transfer channel, no existing plumbing).
+  letterbox stays).
+- ✅ **PATH 4 — drag-and-drop file transfer over a DEDICATED reliable channel (2026-07-23, "tạo 1
+  connection mới, đừng dùng chung vào terminal tránh gây lỗi"):** dropping a file onto the desktop
+  window uploads it to the host. Per the user's explicit constraint this rides its **own** TCP
+  listener — NOT the terminal mux (a bulk file body sharing the PTY's data channel would stall
+  keystrokes/resizes and risk framing errors), NOT the lossy UDP video path (FEC recovers *frames*,
+  not files). A genuinely 4th path, modeled on the **inspector** precedent (the simplest existing
+  self-contained TCP server), NOT the terminal's CONTROL/DATA mux dance.
+  - **New module `SlopDeskFileTransfer`** (Foundation + Network leaf, shares nothing with the other
+    three paths per the "do not merge" rule). Its own `[UInt32 BE length][UInt8 type][body]` frame
+    shape (16 MiB cap) with a dedicated `FileTransferFrameDecoder` (mirrors `MuxFrameDecoder`'s
+    streaming-splitter/lazy-compaction/poison-on-fault design — NOT a reuse of it). Version-pinned
+    `hello`/`helloAck` (v1, no negotiation). Message table → `docs/20-wire-protocol.md §10`. This
+    path is **outside** the golden corpus (golden = the PATH-2 video control codec only).
+  - **Pure, headless-tested core:** `FileReceiveLogic` (offer→open→chunk→finish FSM, validate-then
+    -drop: rejects a chunk-before-offer, a byte overrun past the offered size, an over-cap total, a
+    bad name) + `FileNameSanitizer` (**path-traversal guard** — last component only, rejects
+    `..`/absolute/empty, the untrusted-name attack an upload endpoint invites) + `FileTransferCodec`
+    round-trip + collision-avoiding `DiskFileDropSink` (`name (1).ext`). The `NWListener` server +
+    `NWConnection` client are compiled-not-tested (loopback `serve(channel:)` + fake-sink seam prove
+    the logic, per hang-safety — no live socket in XCTest).
+  - **Direction = client→host upload only** (the "into the desktop" gesture); host→client download is
+    a future add. **Drop dir default `~/Downloads`** (the received-files convention; env
+    `SLOPDESK_FILE_DROP_DIR`). Server gated `SLOPDESK_FILE_TRANSFER` (default-ON), stood up in
+    `slopdesk-hostd` after the terminal + inspector servers on `terminalPort &+ 2`, **non-fatal** on
+    bind failure. Client derives `ConnectionTarget.filePort = port &+ 2` (computed, mirrors the
+    inspector's `+1` — no new persisted/golden field).
+  - **UI:** the desktop pane registers an AppKit dragging destination for real file payloads (a file
+    *drop* uploads bytes; the existing `PaneDropReceiver` path-inject stays for terminal panes) with
+    a progress overlay + completion toast; `FileTransferModel` (pure `@Observable` in WorkspaceCore)
+    holds active-upload progress behind a `FileUploading` seam the app fills with the real client.
