@@ -1,7 +1,7 @@
 // RailRowReadoutTests — pins the row's line-2 precedence ladder (question > scent > working label >
-// final line > error line > strayed cwd > nothing), the per-source truncation (prose keeps its head,
-// a path keeps both ends), the error-line assembly, and the agent-session classification that holds
-// the tall row shell. Headless VALUE assertions over the pure resolvers.
+// final line > error line > running command > NOTHING — a settled row collapses to one line), the
+// title-echo gate on the command-shaped rungs, the error-line assembly, the header's act-now tally,
+// and the agent-session classification. Headless VALUE assertions over the pure resolvers.
 
 import SlopDeskAgentDetect
 import XCTest
@@ -15,117 +15,105 @@ final class RailRowReadoutTests: XCTestCase {
     func testQuestionWins() {
         let line = RailRowReadout.resolve(
             question: "Allow edit to Config.swift?", scent: "3/5 · Editing", workingLabel: "Wiring",
-            doneLine: "Done", errorLine: "make", strayedCwd: "packages/api",
+            doneLine: "Done", errorLine: "make",
         )
-        XCTAssertEqual(line, RailRowReadout.Line(text: "Allow edit to Config.swift?", truncation: .tail))
+        XCTAssertEqual(line, "Allow edit to Config.swift?")
     }
 
     /// The inspector scent outranks the wire-27 label fallback while working.
     func testScentBeatsWorkingLabel() {
         let line = RailRowReadout.resolve(
             question: nil, scent: "3/5 · Editing TokenRefresh.swift", workingLabel: "Wiring rotation",
-            doneLine: nil, errorLine: nil, strayedCwd: nil,
+            doneLine: nil, errorLine: nil,
         )
-        XCTAssertEqual(line?.text, "3/5 · Editing TokenRefresh.swift")
+        XCTAssertEqual(line, "3/5 · Editing TokenRefresh.swift")
     }
 
     /// Feed cold: the last assistant line carries the readout.
     func testWorkingLabelFallback() {
         let line = RailRowReadout.resolve(
             question: nil, scent: nil, workingLabel: "Wiring refresh-token rotation",
-            doneLine: nil, errorLine: nil, strayedCwd: "packages/api",
+            doneLine: nil, errorLine: nil,
         )
-        XCTAssertEqual(line, RailRowReadout.Line(text: "Wiring refresh-token rotation", truncation: .tail))
+        XCTAssertEqual(line, "Wiring refresh-token rotation")
     }
 
     /// Done-unseen: the agent's final line — read the result without focusing the tab.
-    func testDoneLineBeatsStructuralCwd() {
+    func testDoneLineBeatsErrorLine() {
         let line = RailRowReadout.resolve(
             question: nil, scent: nil, workingLabel: nil,
-            doneLine: "All 34 tests pass, pushed", errorLine: nil, strayedCwd: "packages/api",
+            doneLine: "All 34 tests pass, pushed", errorLine: "npm test",
         )
-        XCTAssertEqual(line?.text, "All 34 tests pass, pushed")
-        XCTAssertEqual(line?.truncation, .tail)
+        XCTAssertEqual(line, "All 34 tests pass, pushed")
     }
 
-    /// Error: the failing-command line (the badge's `!<code>` carries the number).
-    func testErrorLineBeatsStructuralCwd() {
+    /// Error: the failing-command line (the badge's `!<code>` carries the number), outranking the
+    /// running command.
+    func testErrorLineBeatsCommandLine() {
         let line = RailRowReadout.resolve(
-            question: nil, scent: nil, workingLabel: nil,
-            doneLine: nil, errorLine: "npm test", strayedCwd: "packages/api",
-        )
-        XCTAssertEqual(line?.text, "npm test")
-    }
-
-    /// The RUNNING command sits between the error line and the structural cwd: a busy shell's row
-    /// says what it is doing, but any lifecycle outcome (error) outranks it.
-    func testCommandLineBeatsStrayedCwdButNotError() {
-        let command = RailRowReadout.resolve(
-            question: nil, scent: nil, workingLabel: nil,
-            doneLine: nil, errorLine: nil, commandLine: "make check", strayedCwd: "packages/api",
-        )
-        XCTAssertEqual(command, RailRowReadout.Line(text: "make check", truncation: .tail))
-        let error = RailRowReadout.resolve(
             question: nil, scent: nil, workingLabel: nil,
             doneLine: nil, errorLine: "npm test", commandLine: "make check",
-            strayedCwd: nil,
         )
-        XCTAssertEqual(error?.text, "npm test")
+        XCTAssertEqual(line, "npm test")
     }
 
-    /// The structural strayed-cwd outranks the settled floor rungs, with the path-shaped `.middle`
-    /// truncation (the one non-prose source).
-    func testStrayedCwdBeatsSettledRungsAndMiddleTruncates() {
+    /// The RUNNING command is the floor — a busy shell's row says what it is doing.
+    func testCommandLineIsTheFloor() {
         let line = RailRowReadout.resolve(
             question: nil, scent: nil, workingLabel: nil,
-            doneLine: nil, errorLine: nil, strayedCwd: "packages/api",
-            lastCommandLine: "make check · 12s", shellLabel: "zsh", shortcutHint: "⌘3",
+            doneLine: nil, errorLine: nil, commandLine: "make check",
         )
-        XCTAssertEqual(line, RailRowReadout.Line(text: "packages/api", truncation: .middle))
+        XCTAssertEqual(line, "make check")
     }
 
-    /// The settled floor: last completed command > shell identity > the `⌘N` hint — so a resting
-    /// row's second line is ALWAYS filled with something useful, never a blank.
-    func testSettledFloorOrder() {
-        let lastCommand = RailRowReadout.resolve(
-            question: nil, scent: nil, workingLabel: nil,
-            doneLine: nil, errorLine: nil, strayedCwd: nil,
-            lastCommandLine: "make check · 12s", shellLabel: "zsh", shortcutHint: "⌘3",
-        )
-        XCTAssertEqual(lastCommand, RailRowReadout.Line(text: "make check · 12s", truncation: .tail))
-        let shell = RailRowReadout.resolve(
-            question: nil, scent: nil, workingLabel: nil,
-            doneLine: nil, errorLine: nil, strayedCwd: nil,
-            lastCommandLine: nil, shellLabel: "zsh", shortcutHint: "⌘3",
-        )
-        XCTAssertEqual(shell, RailRowReadout.Line(text: "zsh", truncation: .tail))
-        let hint = RailRowReadout.resolve(
-            question: nil, scent: nil, workingLabel: nil,
-            doneLine: nil, errorLine: nil, strayedCwd: nil,
-            lastCommandLine: nil, shellLabel: nil, shortcutHint: "⌘3",
-        )
-        XCTAssertEqual(hint, RailRowReadout.Line(text: "⌘3", truncation: .tail))
-    }
-
-    /// Nothing at all: `nil` — the reserved blank (a >⌘9 tab with no other rung), never a placeholder.
-    func testNothingIsNil() {
+    /// Nothing live: `nil` — the row renders SINGLE-LINE; there is no filler rung and no placeholder.
+    func testSettledRowResolvesNothing() {
         XCTAssertNil(RailRowReadout.resolve(
             question: nil, scent: nil, workingLabel: nil,
-            doneLine: nil, errorLine: nil, strayedCwd: nil,
+            doneLine: nil, errorLine: nil, commandLine: nil, title: "api",
         ))
     }
 
-    // MARK: - The shell-identity rung's display name
+    // MARK: - The title-echo gate
 
-    /// `shellDisplayName` cleans like the title fallback (basename, login-`-` stripped) but does NOT
-    /// suppress shells — "zsh" is the rung's whole point; the TITLE chain still suppresses it.
-    func testShellDisplayNameKeepsShells() {
-        XCTAssertEqual(RailRowsBuilder.shellDisplayName("zsh"), "zsh")
-        XCTAssertEqual(RailRowsBuilder.shellDisplayName("-zsh"), "zsh")
-        XCTAssertEqual(RailRowsBuilder.shellDisplayName("/bin/bash"), "bash")
-        XCTAssertEqual(RailRowsBuilder.shellDisplayName("claude"), "claude")
-        XCTAssertNil(RailRowsBuilder.shellDisplayName(nil))
-        XCTAssertNil(RailRowsBuilder.shellDisplayName("  "))
+    /// A command-shaped line that only repeats the title is dropped: equal, the command extending the
+    /// title word (`npm` → `npm test`), or the title extending the command — case-insensitive.
+    func testCommandEchoingTitleIsDropped() {
+        XCTAssertNil(RailRowReadout.resolve(
+            question: nil, scent: nil, workingLabel: nil,
+            doneLine: nil, errorLine: nil, commandLine: "make check", title: "make check",
+        ))
+        XCTAssertNil(RailRowReadout.resolve(
+            question: nil, scent: nil, workingLabel: nil,
+            doneLine: nil, errorLine: nil, commandLine: "npm test", title: "npm",
+        ))
+        XCTAssertNil(RailRowReadout.resolve(
+            question: nil, scent: nil, workingLabel: nil,
+            doneLine: nil, errorLine: "Make Check", commandLine: nil, title: "make check",
+        ))
+    }
+
+    /// A command that genuinely differs from the title (a folder-titled row running a build) shows.
+    func testCommandDifferingFromTitleShows() {
+        let line = RailRowReadout.resolve(
+            question: nil, scent: nil, workingLabel: nil,
+            doneLine: nil, errorLine: nil, commandLine: "npm test", title: "SlopDeskClientUI",
+        )
+        XCTAssertEqual(line, "npm test")
+    }
+
+    /// The echo gate is WORD-bounded (`api` never swallows `apitool run`) and never touches the
+    /// prose rungs — a question quoting the title is still news.
+    func testEchoGateIsWordBoundedAndProseExempt() {
+        XCTAssertFalse(RailRowReadout.echoesTitle("apitool run", title: "api"))
+        XCTAssertTrue(RailRowReadout.echoesTitle("npm test", title: "npm"))
+        XCTAssertTrue(RailRowReadout.echoesTitle("npm", title: "npm test"))
+        XCTAssertFalse(RailRowReadout.echoesTitle("", title: "npm"))
+        let question = RailRowReadout.resolve(
+            question: "make check", scent: nil, workingLabel: nil,
+            doneLine: nil, errorLine: nil, title: "make check",
+        )
+        XCTAssertEqual(question, "make check")
     }
 
     // MARK: - The ASCII spinner cadence
@@ -148,17 +136,6 @@ final class RailRowReadoutTests: XCTestCase {
             frames[0],
         )
         XCTAssertEqual(AsciiStatusBadge.frame(at: epoch, frames: [], beat: beat), "")
-    }
-
-    /// The attention blink alternates halves one per beat off the same wall-clock epoch — a pure
-    /// function of the date, so every blinking tally dips in unison and re-renders can't reset it.
-    func testBlinkAlternatesPerBeat() {
-        let beat = AsciiStatusBadge.blinkBeat
-        let epoch = Date(timeIntervalSinceReferenceDate: 0)
-        XCTAssertFalse(AsciiStatusBadge.blinkDimmed(at: epoch, beat: beat))
-        XCTAssertTrue(AsciiStatusBadge.blinkDimmed(at: epoch.addingTimeInterval(beat), beat: beat))
-        XCTAssertFalse(AsciiStatusBadge.blinkDimmed(at: epoch.addingTimeInterval(beat * 2), beat: beat))
-        XCTAssertFalse(AsciiStatusBadge.blinkDimmed(at: epoch, beat: 0), "a degenerate beat never dims")
     }
 
     // MARK: - The header's act-now tally
@@ -205,7 +182,7 @@ final class RailRowReadoutTests: XCTestCase {
 
     /// The error readout is the failing COMMAND alone — the exit code rides the badge's `!<code>`
     /// reading, so the pair never repeats a number. No failure evidence (nil code) or no command →
-    /// `nil` (the badge stands alone; lower rungs fill the line).
+    /// `nil` (the badge stands alone; the row stays single-line).
     func testErrorLineComposition() {
         XCTAssertEqual(RailRowReadout.errorLine(exitCode: 137, commandText: "npm test"), "npm test")
         XCTAssertEqual(RailRowReadout.errorLine(exitCode: 137, commandText: " npm test\n"), "npm test")
@@ -224,10 +201,10 @@ final class RailRowReadoutTests: XCTestCase {
         XCTAssertEqual(AsciiStatusBadge.errorReading(exitCode: 100_000), "!")
     }
 
-    // MARK: - Agent-session classification (the tall-shell rung)
+    // MARK: - Agent-session classification
 
     /// ANY agent-status verdict makes a session — `.idle` included: an agent resting at its prompt is
-    /// still a session, so the rung holds instead of breathing between turns.
+    /// still a session, so the classification holds instead of breathing between turns.
     func testAnyAgentStatusIsASession() {
         for status in [ClaudeStatus.idle, .working, .done, .needsPermission] {
             XCTAssertTrue(
@@ -245,7 +222,7 @@ final class RailRowReadoutTests: XCTestCase {
         XCTAssertTrue(RailRowsBuilder.isAgentSession(status: .none, processLabel: "Claude"))
     }
 
-    /// Plain shells and ordinary programs are NOT sessions — their rows keep the compact rung.
+    /// Plain shells and ordinary programs are NOT sessions.
     func testShellsAndCommandsAreNotSessions() {
         XCTAssertFalse(RailRowsBuilder.isAgentSession(status: .none, processLabel: nil))
         XCTAssertFalse(RailRowsBuilder.isAgentSession(status: .none, processLabel: "zsh"))

@@ -526,13 +526,11 @@ enum SidebarRowTooltip {
     }
 }
 
-/// The section header LEAF, a TWO-LINE block: line 1 is the project NAME (caps, instrument voice), a
-/// hairline RULE filling the remaining width (the lazygit-style section rule — structure drawn as a
-/// line, not a nerd-font bead), and the act-now tally in the row-badge dialect (`?N` waiting amber +
-/// `!N` failed red, blinking softly like a terminal cursor — attention data earns the one motion);
-/// line 2 is the project's git line (branch + dirt sigils) — or, for a non-repo project, WHERE it
-/// lives (the `~`-abbreviated parent path), so the second line always
-/// says something the name alone doesn't. Reads its git summary AND tally INSIDE its own body — the
+/// The section header LEAF, a TWO-LINE block: line 1 is the project NAME (caps, instrument voice)
+/// with the act-now tally right-aligned in the row-badge dialect (`?N` waiting amber + `!N` failed
+/// red — static text, no ornament between name and tally); line 2 is the project's git line (branch +
+/// dirt sigils) — or, for a non-repo project, WHERE it lives (the `~`-abbreviated parent path), so
+/// the second line always says something the name alone doesn't. Reads its git summary AND tally INSIDE its own body — the
 /// sidebar body never touches the volatile dicts, so a git/status tick re-renders only the (cheap)
 /// header leaves, mirroring how ``SidebarLiveRow`` isolates the volatile row chrome. Carries the
 /// header-scoped context menu (the project-wide "Refresh Git Status", moved up from the row menu).
@@ -550,8 +548,7 @@ struct SidebarSectionHeaderRow: View {
         // The act-now tally: how many panes in this project wait on YOU right now, split by WHY in
         // the rows' own glyph dialect — `?N` blocked questions, `!N` failures — the "which PROJECT
         // needs me" answer at a glance. Counts through the gated badge pipeline; absent at zero (no
-        // reserved slot — the rule runs to the edge, and the shift when a tally appears is a real
-        // event).
+        // reserved slot — the shift when a tally appears is a real event).
         let counts = Self.attentionCounts(rows.map { RailRowsBuilder.liveChrome(for: $0, store: store).badge })
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: Slate.Metric.space2) {
@@ -562,13 +559,7 @@ struct SidebarSectionHeaderRow: View {
                     .tracking(Slate.Typeface.instrumentTracking)
                     .foregroundStyle(Slate.State.header)
                     .lineLimit(1)
-                // The section RULE: a hairline filling the width between the name and the tally —
-                // the TUI section divider (lazygit's `── title ──` idiom), giving the header its
-                // structure without a glyph. Flexes to zero before the name ever truncates.
-                Rectangle()
-                    .fill(Slate.Line.subtle)
-                    .frame(height: Slate.Metric.hairline)
-                    .frame(maxWidth: .infinity)
+                Spacer(minLength: Slate.Metric.space2)
                 if counts.questions > 0 || counts.failures > 0 {
                     attentionTally(questions: counts.questions, failures: counts.failures)
                 }
@@ -597,33 +588,23 @@ struct SidebarSectionHeaderRow: View {
     }
 
     /// The act-now tally: `?N` (waiting on an answer, amber) + `!N` (failed, red) — the SAME glyphs
-    /// the rows themselves wear, so the header total and the row badges read as one vocabulary. The
-    /// cluster BLINKS like a terminal cursor (a soft opacity dip on the shared wall-clock epoch —
-    /// every project's tally dips together): attention data is the one place the header earns motion.
+    /// the rows themselves wear, so the header total and the row badges read as one vocabulary.
+    /// Static text: the colour against the header's grey is the whole signal, no motion.
     private func attentionTally(questions: Int, failures: Int) -> some View {
-        TimelineView(.periodic(
-            from: Date(timeIntervalSinceReferenceDate: 0),
-            by: AsciiStatusBadge.blinkBeat,
-        )) { timeline in
-            HStack(spacing: Slate.Metric.space1) {
-                if questions > 0 {
-                    Text("?\(questions)")
-                        .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
-                        .foregroundStyle(Slate.Status.warn)
-                }
-                if failures > 0 {
-                    Text("!\(failures)")
-                        .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
-                        .foregroundStyle(Slate.Status.err)
-                }
+        HStack(spacing: Slate.Metric.space1) {
+            if questions > 0 {
+                Text("?\(questions)")
+                    .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
+                    .foregroundStyle(Slate.Status.warn)
             }
-            .lineLimit(1)
-            .fixedSize()
-            .opacity(
-                AsciiStatusBadge.blinkDimmed(at: timeline.date, beat: AsciiStatusBadge.blinkBeat)
-                    ? 0.4 : 1,
-            )
+            if failures > 0 {
+                Text("!\(failures)")
+                    .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
+                    .foregroundStyle(Slate.Status.err)
+            }
         }
+        .lineLimit(1)
+        .fixedSize()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Self.attentionLabel(questions: questions, failures: failures))
     }
@@ -739,8 +720,8 @@ private struct SidebarLiveRow: View {
         .onChange(of: workingCandidate) { _, candidate in commitDwell(candidate) }
     }
 
-    /// The row body for one clock instant: resolves the readout line, the telemetry value and the
-    /// agent-shell rung, then mounts ``SlateTabRow``.
+    /// The row body for one clock instant: resolves the readout line and the telemetry value, then
+    /// mounts ``SlateTabRow``.
     @ViewBuilder
     private func rowBody(
         chrome: RailRowsBuilder.RailRowChrome, active: Bool, now: Date,
@@ -778,12 +759,10 @@ private struct SidebarLiveRow: View {
             }()
             : nil
         let shownTitle = row.title.isEmpty ? fallbackTitle : row.title
-        // The settled row's low rungs (the ALWAYS-FILLED second line): the last completed command,
-        // then the shell identity — suppressed when it would just repeat the title (an at-root agent
-        // row is already TITLED `claude`) — then the tab's `⌘N` shortcut as the floor.
+        // The last completed command feeds the TOOLTIP only — a settled row's second line is gone
+        // (the readout earns line 2; history and structure live under hover).
         let lastCommand = blocks.last(where: { $0.complete || $0.durationMS != nil })
             .flatMap(SidebarRowTooltip.commandLine)
-        let shell = RailRowsBuilder.shellDisplayName(chrome.processLabel)
         let readout = RailRowReadout.resolve(
             question: chrome.question,
             scent: scent,
@@ -793,10 +772,7 @@ private struct SidebarLiveRow: View {
                 exitCode: failedBlock?.exitCode, commandText: failedBlock?.commandText,
             ),
             commandLine: runningCommand,
-            strayedCwd: chrome.subtitle,
-            lastCommandLine: lastCommand,
-            shellLabel: shell?.lowercased() == shownTitle.lowercased() ? nil : shell,
-            shortcutHint: (1...9).contains(row.tabNumber) ? "⌘\(row.tabNumber)" : nil,
+            title: shownTitle,
         )
         let telemetry = RailRowTelemetry.value(
             badge: chrome.badge,
@@ -809,8 +785,7 @@ private struct SidebarLiveRow: View {
         SlateTabRow(
             title: shownTitle,
             active: active,
-            subtitle: readout?.text,
-            subtitleTruncation: readout?.truncation == .middle ? .middle : .tail,
+            subtitle: readout,
             badge: chrome.badge,
             errorExitCode: failedBlock?.exitCode,
             telemetry: telemetry,
@@ -819,8 +794,8 @@ private struct SidebarLiveRow: View {
             isEditing: chrome.isEditing,
             helpText: SidebarRowTooltip.text(
                 cwd: row.cwd,
-                // Overflow recovery: the untruncated PROSE readout (a path line already appears via cwd).
-                detail: readout?.truncation == .tail ? readout?.text : nil,
+                // Overflow recovery: the untruncated readout (a path line already appears via cwd).
+                detail: readout,
                 lastCommand: lastCommand,
             ),
             onSelect: onSelect,

@@ -32,9 +32,6 @@ struct AsciiStatusBadge: View {
     /// command, not a thinking agent).
     static let agentBeat: Double = 0.15
     static let commandBeat: Double = 0.1
-    /// The attention blink's half-period (the header tally's terminal-cursor blink — see
-    /// ``blinkDimmed(at:beat:)``): a slow soft dip, not a strobe.
-    static let blinkBeat: Double = 0.8
 
     /// The fixed glyph slot the SPINNERS render in — frame advance widths differ (`·` vs `✻`), so
     /// the slot pins the cluster's layout while frames swap many times a second. Static readings
@@ -106,15 +103,6 @@ struct AsciiStatusBadge: View {
         guard let exitCode else { return "!" }
         let code = "\(exitCode)"
         return code.count <= 4 ? "!\(code)" : "!"
-    }
-
-    /// Whether the attention blink is in its DIMMED half at `date` — the header tally's
-    /// terminal-cursor blink, phase-locked to the same fixed epoch as the spinners (pure function of
-    /// the wall clock: re-renders can't reset it, and every blinking token dips together).
-    static func blinkDimmed(at date: Date, beat: Double) -> Bool {
-        guard beat > 0 else { return false }
-        let half = Int((date.timeIntervalSinceReferenceDate / beat).rounded(.down))
-        return ((half % 2) + 2) % 2 == 1
     }
 }
 #endif

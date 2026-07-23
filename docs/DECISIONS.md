@@ -1835,3 +1835,23 @@ text and spends the freed contrast on ONE animation idiom:
 - **The header earns its structure from a RULE, not a bead**: a hairline fills the width between
   the caps name and the tally (the lazygit `── title ──` idiom) — the section reads as drawn
   TUI chrome, and the tally hangs off the rule's right end.
+
+### v3.2 — the readout earns line 2; the header goes still (2026-07-23)
+
+Hardware review of v3.1: the section rule read as ornament, the tally blink as irritation, and the
+row's "always-filled" second line as filler — a strayed-cwd echo of the title's own basename, a full
+command under a command title, `claude` under an agent row. The verdict: line 2 must carry
+information the row doesn't already state, or not exist.
+
+- **The second line is EARNED, not reserved**: `RailRowReadout` keeps only the live rungs —
+  question / todo scent / working label / final line / failing command / running command — and the
+  structural fillers (strayed cwd, last-command history, shell identity, `⌘N` hint) are gone; a
+  settled row COLLAPSES to the compact single-line shell (`SlateTabRow` no longer reserves the tall
+  shape). A second line now always means "something is happening here"; history and the full cwd
+  stay in the hover tooltip. Height changes only on real state edges.
+- **The title-echo gate**: command-shaped rungs are dropped when they would only repeat the title
+  (equal or word-bounded extension, `npm` ↔ `npm test`) — the case where a shell titles the pane by
+  its own command. Prose rungs are exempt (a question quoting the title is still news).
+- **Header: no rule, no blink.** The hairline between name and tally is deleted (the caps name +
+  right-aligned tally is the whole structure) and the `?N !N` tally is static — its colour against
+  the header grey is the signal; a permanent blink taxed attention instead of directing it.

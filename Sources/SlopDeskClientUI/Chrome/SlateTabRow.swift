@@ -4,14 +4,16 @@
 // is a flat plate, and a close `×` reveals on hover. No native list selection / vibrancy — this is a flat
 // silhouette by design.
 //
-// Every row is the same TWO-LINE shape, FLUSH-LEFT: line 1 is [title][trailing lock/sync +
-// status glyph + telemetry text], line 2 is the full-width readout. There is NO leading accessory
-// column — a reserved gutter indented every title off the section header's left edge, so status
-// moved into the line-1 trailing cluster as a TEXT glyph (``AsciiStatusBadge``: the AI-CLI pulse
-// spinner for a working agent, braille for a running command, static `? !137 ok # ∞` otherwise),
-// where `✻ 4m` reads like a CLI status line and a state edge swaps the reading. A RESTING
-// row (no status, not active) RECEDES — its title drops to the secondary tone — so the unlabeled
-// quiet state is dimness, and colour + full strength are earned by live state (the T3 recede).
+// Every row is FLUSH-LEFT and ADAPTIVE: line 1 is [title][trailing lock/sync + status glyph +
+// telemetry text]; line 2 exists ONLY when a live readout has something to say (question / scent /
+// agent line / failing command — resolved upstream), so a settled row is a single compact line and a
+// second line always means activity. There is NO leading accessory column — a reserved gutter
+// indented every title off the section header's left edge, so status moved into the line-1 trailing
+// cluster as a TEXT glyph (``AsciiStatusBadge``: the AI-CLI pulse spinner for a working agent,
+// braille for a running command, static `? !137 ok # ∞` otherwise), where `✻ 4m` reads like a CLI
+// status line and a state edge swaps the reading. A RESTING row (no status, not active) RECEDES —
+// its title drops to the secondary tone — so the unlabeled quiet state is dimness, and colour + full
+// strength are earned by live state (the T3 recede).
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -21,20 +23,15 @@ import SwiftUI
 /// One sidebar tab row. ACTIVE = the raised-card treatment; hover = flat plate + close `×`.
 ///
 /// Line 1 carries the title + the [lock][sync][status glyph][telemetry] trailing cluster; line 2 is the READOUT
-/// (question / todo scent / last assistant line / final line / error line / running command / strayed
-/// cwd — resolved upstream by ``RailRowReadout``). Every row holds the two-line shell
-/// (`reserveSubtitle`), so state edges swap text inside a fixed shape and the sidebar keeps one row
-/// rhythm — no height ladder, no session-scoped rung.
+/// (question / todo scent / last assistant line / final line / error line / running command —
+/// resolved upstream by ``RailRowReadout``) and renders ONLY when one resolves: no readout, no
+/// second line — the row collapses to the compact single-line shell.
 struct SlateTabRow: View {
     let title: String
     let active: Bool
     /// The row's second line — the resolved READOUT text (``RailRowReadout``). `nil`/empty ⇒ the
-    /// reserved blank line (absence, no placeholder).
+    /// row renders single-line (absence, no placeholder).
     var subtitle: String?
-    /// Line-2 truncation, forwarded to the ``SlateListRow`` shell. `.middle` (default) suits the
-    /// path-shaped strayed-cwd; every prose readout (question / scent / labels) passes `.tail` so the
-    /// sentence keeps its head.
-    var subtitleTruncation: Text.TruncationMode = .middle
     /// The single fused status glyph, rendered as an ``AsciiStatusBadge`` text reading in the line-1
     /// trailing cluster. `nil` ⇒ no glyph and the row recedes.
     var badge: TabBadgeKind?
@@ -89,8 +86,9 @@ struct SlateTabRow: View {
         SlateListRow(
             active: active,
             subtitle: subtitle,
-            subtitleTruncation: subtitleTruncation,
-            reserveSubtitle: true,
+            // Every readout source is PROSE — `.tail` keeps the sentence's head (the counter prefix,
+            // the command name) and truncates the end.
+            subtitleTruncation: .tail,
             // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the field.
             onTap: { if !isEditing { onSelect() } },
             title: {

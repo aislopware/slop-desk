@@ -111,11 +111,12 @@ final class SlateSnapshotRender: XCTestCase {
 
     // MARK: - Opt-in render of one By-Project sidebar section (header + two-line rows)
 
-    /// Renders the REAL ``SidebarSectionHeaderRow`` (the TWO-LINE header: caps title + section rule +
+    /// Renders the REAL ``SidebarSectionHeaderRow`` (the TWO-LINE header: caps title + right-aligned
     /// `?N !N` tally over the git line) over a seeded headless store, above representative flush-left
-    /// two-line ``SlateTabRow`` states at the true sidebar width — the visual lock for the header↔row
-    /// alignment and the trailing ASCII status glyphs (`✻` pulse / braille / `? !137 ok`). SAME opt-in
-    /// idiom; writes `sidebar-section.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
+    /// ``SlateTabRow`` states at the true sidebar width — live rows carry a readout second line,
+    /// settled rows COLLAPSE to one — the visual lock for the header↔row alignment and the trailing
+    /// ASCII status glyphs (`✻` pulse / braille / `? !137 ok`). SAME opt-in idiom; writes
+    /// `sidebar-section.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
     @MainActor
     func testRenderSidebarSection() throws {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
@@ -127,33 +128,38 @@ final class SlateSnapshotRender: XCTestCase {
             SidebarSectionHeaderRow(store: store, title: "slop-desk", projectKey: key, rows: rows)
             SlateTabRow(
                 title: "claude", active: false,
-                subtitle: "Wiring refresh-token rotation", subtitleTruncation: .tail,
+                subtitle: "Wiring refresh-token rotation",
                 badge: .running, telemetry: RailTelemetryValue(text: "4m", tone: .secondary),
                 onSelect: {}, onClose: {},
             )
             SlateTabRow(
                 title: "claude", active: true,
-                subtitle: "Allow edit to Config.swift?", subtitleTruncation: .tail,
+                subtitle: "Allow edit to Config.swift?",
                 badge: .awaitingInput, telemetry: RailTelemetryValue(text: "2m", tone: .amber),
                 onSelect: {}, onClose: {},
             )
             SlateTabRow(
                 title: "Terminal", active: false,
-                subtitle: "make check", subtitleTruncation: .tail,
+                subtitle: "make check",
                 badge: .commandRunning,
                 telemetry: RailTelemetryValue(text: "68%", tone: .secondary),
                 onSelect: {}, onClose: {},
             )
             SlateTabRow(
                 title: "api", active: false,
-                subtitle: "npm test", subtitleTruncation: .tail,
+                subtitle: "npm test",
                 badge: .error, errorExitCode: 137,
                 telemetry: RailTelemetryValue(text: "12m", tone: .secondary),
                 onSelect: {}, onClose: {},
             )
-            // The settled floor rungs: an idle shell reads its identity; a fresh pane its `⌘N`.
-            SlateTabRow(title: "Terminal", active: false, subtitle: "zsh", onSelect: {}, onClose: {})
-            SlateTabRow(title: "Terminal", active: false, subtitle: "⌘6", onSelect: {}, onClose: {})
+            // Settled rows: no readout, no second line — the SINGLE-LINE collapse, with and without
+            // a terminal badge.
+            SlateTabRow(
+                title: "Terminal", active: false,
+                badge: .finished, telemetry: RailTelemetryValue(text: "8m", tone: .secondary),
+                onSelect: {}, onClose: {},
+            )
+            SlateTabRow(title: "Terminal", active: false, onSelect: {}, onClose: {})
         }
         .padding(8) // the sidebar list's LazyVStack inset
         .frame(width: Slate.Metric.sidebarWidth)

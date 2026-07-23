@@ -352,19 +352,6 @@ enum RailRowsBuilder {
         return name
     }
 
-    /// The pane's foreground process as a LINE-2 identity — the always-filled readout's low rung.
-    /// Cleans like ``processDisplayName(_:)`` (basename, login-`-` stripped) but WITHOUT the shell
-    /// suppression: "zsh" is exactly what an idle shell's second line should say (the TITLE suppresses
-    /// shells because "zsh" adds nothing over "Terminal"; the readout wants the honest identity).
-    /// `nil` for `nil`/blank so the caller falls through. Pure + static so the rung is unit-pinned.
-    static func shellDisplayName(_ label: String?) -> String? {
-        guard let label else { return nil }
-        var name = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        if name.hasPrefix("-") { name.removeFirst() } // login-shell argv0 convention (`-zsh`)
-        name = name.split(separator: "/").last.map(String.init) ?? name
-        return name.isEmpty ? nil : name
-    }
-
     /// Bare interactive-shell basenames that must NOT title a pane — titling by the shell is no more
     /// informative than the generic default, so the row keeps the cwd/generic chain instead.
     private static let loginShellNames: Set<String> = [

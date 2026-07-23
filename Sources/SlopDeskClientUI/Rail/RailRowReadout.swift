@@ -1,43 +1,26 @@
 // RailRowReadout — the row's line-2 precedence: ONE source at a time, hard cut between them. The line
-// is the row's agent READOUT — the thing you'd focus the tab to find out — with structural rungs
-// below (strayed cwd, last completed command, shell identity, the `⌘N` hint) so the second line is
-// ALWAYS filled with something useful that never repeats the title or the section header. Pure +
-// static so the precedence is unit-pinned headlessly (no view, no store).
+// is the row's live READOUT — the thing you'd focus the tab to find out — and it EARNS the second
+// line: there are no structural filler rungs (cwd echoes, shell identity, shortcut hints — derivable
+// or decorative), so a settled row COLLAPSES to one line and a second line always means "something is
+// happening here". Command-shaped sources are additionally suppressed when they would only echo the
+// title (a shell that titles the pane after the command it runs). Pure + static so the precedence is
+// unit-pinned headlessly (no view, no store).
 
 import Foundation
 import SlopDeskWorkspaceCore
 
 enum RailRowReadout {
-    /// Line-2 truncation, kept SwiftUI-free so the resolver stays headless: prose keeps its head
-    /// (`.tail`), a path keeps both ends (`.middle`). The view maps this onto `Text.TruncationMode`.
-    enum Truncation: Equatable {
-        case tail
-        case middle
-    }
-
-    /// One resolved line-2: the text + how it truncates.
-    struct Line: Equatable {
-        let text: String
-        let truncation: Truncation
-    }
-
     /// Resolve the row's one line-2 source, by precedence:
     ///   1. the blocked QUESTION (the caller gates it on `.needsPermission` + a non-empty label);
     ///   2. working + a live inspector feed → the todo SCENT (`3/5 · Editing …` — the fixed counter
     ///      prefix leads, so `.tail` can never eat it);
     ///   3. working, feed cold → the host's last assistant line (wire-27 label);
-    ///   4. done-unseen → the agent's FINAL assistant line (the same label at `.done` — it crosses the
-    ///      wire today and was discarded; now you read the result without focusing the tab);
+    ///   4. done-unseen → the agent's FINAL assistant line (the same label at `.done` — you read the
+    ///      result without focusing the tab);
     ///   5. error → the FAILING command from the block model (the badge's `!<code>` carries the number);
-    ///   6. the RUNNING command (a busy non-agent shell — the command text is what the row is doing);
-    ///   7. the strayed relative cwd (structural — any live state displaces it, it returns when the
-    ///      row settles);
-    ///   8. the LAST COMPLETED command line (`make check · 12s · ✓` — what last happened here, the
-    ///      settled row's most useful fact);
-    ///   9. the shell identity (`zsh` — the caller suppresses it when it would repeat the title, e.g.
-    ///      an at-root agent row titled `claude`);
-    ///  10. the tab's `⌘N` shortcut hint — the floor: a brand-new pane still fills its second line
-    ///      with something actionable, so the two-line shape never shows a blank.
+    ///   6. the RUNNING command (a busy non-agent shell — the command text is what the row is doing).
+    /// The command-shaped rungs (5–6) are dropped when they only echo `title`. Nothing live → `nil`:
+    /// the row renders single-line — absence is the readout's resting state, never a placeholder.
     /// Every input is pre-gated by the caller (only handed over when its state holds), so the resolver
     /// is a pure precedence ladder.
     static func resolve(
@@ -47,28 +30,32 @@ enum RailRowReadout {
         doneLine: String?,
         errorLine: String?,
         commandLine: String? = nil,
-        strayedCwd: String?,
-        lastCommandLine: String? = nil,
-        shellLabel: String? = nil,
-        shortcutHint: String? = nil,
-    ) -> Line? {
-        if let question { return Line(text: question, truncation: .tail) }
-        if let scent { return Line(text: scent, truncation: .tail) }
-        if let workingLabel { return Line(text: workingLabel, truncation: .tail) }
-        if let doneLine { return Line(text: doneLine, truncation: .tail) }
-        if let errorLine { return Line(text: errorLine, truncation: .tail) }
-        if let commandLine { return Line(text: commandLine, truncation: .tail) }
-        if let strayedCwd { return Line(text: strayedCwd, truncation: .middle) }
-        if let lastCommandLine { return Line(text: lastCommandLine, truncation: .tail) }
-        if let shellLabel { return Line(text: shellLabel, truncation: .tail) }
-        if let shortcutHint { return Line(text: shortcutHint, truncation: .tail) }
+        title: String = "",
+    ) -> String? {
+        if let question { return question }
+        if let scent { return scent }
+        if let workingLabel { return workingLabel }
+        if let doneLine { return doneLine }
+        if let errorLine, !echoesTitle(errorLine, title: title) { return errorLine }
+        if let commandLine, !echoesTitle(commandLine, title: title) { return commandLine }
         return nil
+    }
+
+    /// Whether a command-shaped line would only REPEAT the title one line up: equal, or one is the
+    /// other's leading word(s) (`npm` over `npm test` — the shell titled the pane by the command).
+    /// Case-insensitive; word-bounded so `api` never swallows `apitool run`. Prose sources
+    /// (question / scent / labels) are never gated — a sentence quoting the title is still news.
+    static func echoesTitle(_ line: String, title: String) -> Bool {
+        let line = line.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !line.isEmpty, !title.isEmpty else { return false }
+        return line == title || line.hasPrefix(title + " ") || title.hasPrefix(line + " ")
     }
 
     /// The error readout: the FAILING command (`npm test`) — the culprit's name; the exit code
     /// already rides the badge's `!<code>` reading one line up, so the pair never repeats a number.
     /// `nil` without a code (no failure evidence — the caller may not attribute a stale block) and
-    /// `nil` for a blank command (the badge's reading stands alone; lower rungs fill the line).
+    /// `nil` for a blank command (the badge's reading stands alone; the row stays single-line).
     static func errorLine(exitCode: Int32?, commandText: String?) -> String? {
         guard exitCode != nil else { return nil }
         let command = commandText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
