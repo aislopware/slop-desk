@@ -14,8 +14,11 @@ struct RailRow: Identifiable, Equatable {
     let tabID: TabID
     let kind: PaneKind
     let title: String
-    /// The row's muted second line (``SlateTabRow`` subtitle). Kind-generic ``PaneSpec/railSubtitle``:
-    /// a terminal's cwd, or a video pane's host-app/window label; `nil` ⇒ a single-line row.
+    /// The row's muted second line (``SlateTabRow`` subtitle). A terminal shows its cwd RELATIVE to
+    /// its section's project key — and ONLY when it strayed from the project root (the git line moved
+    /// up to the section header, and repeating the section's own path on every row is noise); a video
+    /// pane keeps its kind-generic ``PaneSpec/railSubtitle`` (host-app/window label). `nil` ⇒ a
+    /// single-line row (the common at-root pane).
     let subtitle: String?
     let status: ClaudeStatus
     /// The 1-based tab shortcut number — the ⌘1…⌘9 target = tab index+1. Split-tab panes share
@@ -31,9 +34,9 @@ struct RailRow: Identifiable, Equatable {
     /// share one source of truth. Drives ``SlateTabRow``'s trailing lock glyph.
     let readOnly: Bool
     /// The pane's raw last-known working directory — a terminal pane's `lastKnownCwd`, `nil` for a
-    /// video pane. NOT rendered as chrome: it is the row's TOOLTIP (`.help`) text AND a hidden search key so a
-    /// git-repo row (whose visible subtitle is the git line, not the path) stays searchable BY PATH and two
-    /// same-named worktrees are told apart by their full cwd.
+    /// video pane. NOT rendered as chrome: it is the row's TOOLTIP (`.help`) text AND a hidden search key so
+    /// an at-root row (whose visible subtitle is absent) stays searchable BY PATH and two same-named
+    /// worktrees are told apart by their full cwd.
     let cwd: String?
     /// Whether this row is in inline-RENAME mode: the store's ``WorkspaceStore/pendingTabRename``
     /// names this row's tab AND this pane is that tab's representative (active) pane — so exactly one row per
@@ -41,12 +44,6 @@ struct RailRow: Identifiable, Equatable {
     let isEditing: Bool
     /// Selected = the row's tab is active AND this pane is the tab's active pane.
     let isSelected: Bool
-    /// The pane's folded git state (branch/ahead/behind/changed) when its cwd is a repo — carried as the pure
-    /// domain value (no view coupling, so tests still pin the mapping) so the VIEW renders the git line with
-    /// per-token STATUS colour, while `subtitle` keeps the plain single-colour string for height/search/
-    /// fallback. `nil` for a non-repo cwd or a video pane. Default keeps the direct-construction call sites
-    /// (the Equatable pins) source-compatible.
-    var gitSummary: PaneGitSummary?
     /// The pane's OWN By-Project key (``WorkspaceStore/paneProjectKey(_:)`` — the HOST-pushed
     /// ``PaneSpec/projectKey`` else cwd, plugin-dirs guarded out), carried per-ROW so
     /// ``RailRowsBuilder/sectionedByProject(_:tabOrder:query:)`` buckets each pane by ITS project, not its
@@ -75,7 +72,7 @@ struct RailRow: Identifiable, Equatable {
         Self(
             id: id, tabID: tabID, kind: kind, title: newTitle, subtitle: subtitle, status: status,
             tabNumber: tabNumber, badge: badge, processLabel: processLabel, readOnly: readOnly, cwd: cwd,
-            isEditing: isEditing, isSelected: isSelected, gitSummary: gitSummary, projectKey: projectKey,
+            isEditing: isEditing, isSelected: isSelected, projectKey: projectKey,
         )
     }
 }
@@ -137,7 +134,6 @@ enum RailRowsBuilder {
                     cwd: kind == .terminal ? spec?.lastKnownCwd : nil,
                     isEditing: chrome.isEditing,
                     isSelected: isSelected,
-                    gitSummary: chrome.gitSummary,
                     // The pane's OWN project key (guarded host-pushed key / cwd) drives per-pane
                     // By-Project sectioning; a video pane has no project (⇒ "Other").
                     projectKey: kind == .terminal ? store.paneProjectKey(paneID) : nil,
@@ -159,7 +155,6 @@ enum RailRowsBuilder {
         let status: ClaudeStatus
         let badge: TabBadgeKind?
         let processLabel: String?
-        let gitSummary: PaneGitSummary?
         let subtitle: String?
         let readOnly: Bool
         let isEditing: Bool
@@ -175,11 +170,12 @@ enum RailRowsBuilder {
     /// Resolve one pane's volatile chrome — the SINGLE resolution rule behind both ``rows(for:)`` (the full
     /// model build) and ``liveChrome(for:store:)`` (the per-row view's fresh read), so the two can't drift.
     ///
-    /// Line 2: a terminal shows its git line (branch ↑/↓ · N changed) when the store has a summary for a
-    /// repo cwd, else the kind-generic ``PaneSpec/railSubtitle`` — a terminal's plain cwd, or (for a
-    /// `.desktop`/`.systemDialog` video pane, which has no shell cwd) the host-side target's owning app
-    /// name (falling back to the window title). So a remote window reads as a labelled WINDOW rather than a
-    /// bare single line. (The coarse video-CONNECTION dot is deferred as a follow-up.)
+    /// Line 2 (``paneSubtitle(kind:spec:projectKey:)``): a terminal shows its cwd RELATIVE to its
+    /// section's project key, and only when it differs (the git line lives on the section header now —
+    /// the one per-pane fact left is "this pane strayed from the project root"); a
+    /// `.desktop`/`.systemDialog` video pane (no shell cwd) keeps the host-side target's owning app
+    /// name (falling back to the window title), so a remote window reads as a labelled WINDOW rather
+    /// than a bare single line.
     ///
     /// Badge: the SOURCE-AWARE gating masks the resolver inputs by source so
     /// the agent toggles (per-pane override beats the global default) and the command "TAB BADGE" toggles
@@ -199,8 +195,10 @@ enum RailRowsBuilder {
         // The host's coarse foreground-process name (wire type 26): the trailing row label, a
         // badge-resolver input, AND the pane-title fallback when the cwd is not known yet.
         let processLabel = store.paneForegroundProcess[paneID]
-        let gitSummary = kind == .terminal ? store.paneGitSummary[paneID] : nil
-        let subtitle = gitSummary?.compactLine ?? spec?.railSubtitle
+        let subtitle = Self.paneSubtitle(
+            kind: kind, spec: spec,
+            projectKey: kind == .terminal ? store.paneProjectKey(paneID) : nil,
+        )
         let status = store.paneAgentStatus[paneID] ?? .none
         let gatedBadge = TabBadgeGating.resolve(
             agent: status,
@@ -223,12 +221,31 @@ enum RailRowsBuilder {
             status: status,
             badge: (paneID == representativePane ? manualBadge : nil) ?? gatedBadge,
             processLabel: processLabel,
-            gitSummary: gitSummary,
             subtitle: subtitle,
             readOnly: store.isReadOnly(for: paneID),
             isEditing: store.pendingTabRename == tabID && paneID == representativePane,
             question: question,
         )
+    }
+
+    /// The row's LINE-2 resolution: a terminal pane's cwd RELATIVE to its section key —
+    /// `nil` when the pane sits AT the project root (the section header already names the place; a
+    /// subtitle repeating it on every row is noise, and the row collapses to single-line height), the
+    /// relative path (`packages/api`) when it strayed INTO the project's subtree, and the kind-generic
+    /// ``PaneSpec/railSubtitle`` (the full cwd) when the cwd is OUTSIDE the key's subtree — a stale
+    /// key across an un-re-pushed `cd`, where a relative path can't be formed and hiding the location
+    /// would lie. Non-terminal kinds always keep ``PaneSpec/railSubtitle`` (video host-app label).
+    /// Pure + static so the rule is unit-pinned without a view.
+    static func paneSubtitle(kind: PaneKind, spec: PaneSpec?, projectKey: String?) -> String? {
+        guard kind == .terminal, let spec else { return spec?.railSubtitle }
+        guard let key = TabOrderingEngine.normalizedProjectKey(projectKey),
+              var cwd = spec.lastKnownCwd?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !cwd.isEmpty
+        else { return spec.railSubtitle }
+        while cwd.count > 1, cwd.hasSuffix("/") { cwd.removeLast() }
+        if cwd == key { return nil }
+        if cwd.hasPrefix(key + "/") { return String(cwd.dropFirst(key.count + 1)) }
+        return spec.railSubtitle
     }
 
     /// The row VIEW's entry: resolve `row`'s CURRENT volatile chrome from the live store (the cached
@@ -380,15 +397,20 @@ enum RailRowsBuilder {
                     return lhs.offset < rhs.offset
                 }
                 .map(\.element)
-            return RailRowGroup(header: TabOrderingEngine.projectSectionHeader(for: key), rows: sorted)
+            return RailRowGroup(
+                header: TabOrderingEngine.projectSectionHeader(for: key), projectKey: key, rows: sorted,
+            )
         }
     }
 }
 
-/// One rendered sidebar section: an optional `header` (the group title) and the rows in render order. A
-/// pure value (`Equatable`) so ``RailRowsBuilder/sectionedByProject(_:tabOrder:query:)`` is pinnable
-/// headlessly; the navigator wraps it in an `Identifiable` row for `ForEach`.
+/// One rendered sidebar section: an optional `header` (the group title), the section's NORMALIZED
+/// By-Project key (`nil` ⇒ the "Other" bucket — the ``WorkspaceStore/projectGitSummary`` lookup key
+/// for the header's git line), and the rows in render order. A pure value (`Equatable`) so
+/// ``RailRowsBuilder/sectionedByProject(_:tabOrder:query:)`` is pinnable headlessly; the navigator
+/// wraps it in an `Identifiable` row for `ForEach`.
 struct RailRowGroup: Equatable {
     let header: String?
+    let projectKey: String?
     let rows: [RailRow]
 }

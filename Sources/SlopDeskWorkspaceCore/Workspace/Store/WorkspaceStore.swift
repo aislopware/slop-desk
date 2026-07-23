@@ -2339,6 +2339,7 @@ public final class WorkspaceStore {
         let inheritedCwd = SettingsKey.workingDirectoryNewSplit.resolve(activePaneCwd: activeCwd)
         var spec = PaneSpec(kind: kind, title: defaultTitle(for: kind))
         spec.lastKnownCwd = inheritedCwd
+        spec.projectKey = inheritableProjectKey(of: active, covering: inheritedCwd)
         // `splitPane` already makes the new leaf the active pane, so the split lands focused.
         let (next, _) = WorkspaceTreeOps.splitPane(active, axis: axis, newSpec: spec, before: leading, in: tree)
         tree = next
@@ -2539,10 +2540,12 @@ public final class WorkspaceStore {
         // Resolve the new tab's initial cwd from the NEW-TAB working-directory policy against the active
         // pane's last-known cwd (none when there is no active pane) and stamp it on the new spec. The host
         // starts the PTY in that cwd; no visible startup `cd` is sent.
-        let activeCwd = inheritableCwd(of: tree.activeSession?.activeTab?.activePane)
+        let activePane = tree.activeSession?.activeTab?.activePane
+        let activeCwd = inheritableCwd(of: activePane)
         let inheritedCwd = SettingsKey.workingDirectoryNewTab.resolve(activePaneCwd: activeCwd)
         var spec = PaneSpec(kind: kind, title: defaultTitle(for: kind))
         spec.lastKnownCwd = inheritedCwd
+        spec.projectKey = inheritableProjectKey(of: activePane, covering: inheritedCwd)
         let (next, _) = WorkspaceTreeOps.newTab(in: tree, spec: spec, at: SettingsKey.newTabPosition)
         tree = next
         reconcileTree()
@@ -2558,6 +2561,25 @@ public final class WorkspaceStore {
     private func inheritableCwd(of id: PaneID?) -> String? {
         id.flatMap { tree.spec(for: $0)?.lastKnownCwd }
             .flatMap { PaneSpec.looksLikeTransientPluginCwd($0) ? nil : $0 }
+    }
+
+    /// The parent pane's HOST-pushed ``PaneSpec/projectKey``, seeded onto a new split/tab/window
+    /// spec so the child sections under the parent's project on the FIRST frame — without it the
+    /// child sections by its raw inherited cwd (a repo SUBDIRECTORY tears off into its own
+    /// subdir-named section) until the host's type-34 for the child's own PTY round-trips.
+    /// Guarded by SUBTREE COVERAGE: the seed applies only when `inheritedCwd` sits inside the key's
+    /// subtree — a stale key across an un-re-pushed `cd`, or a working-directory policy that
+    /// resolves a fixed dir, would otherwise file the child under the wrong project. A cwd-fallback
+    /// parent (no host key yet) seeds nothing: the child's identical cwd fallback already sections
+    /// it beside the parent. The host's own push (seeded server-side at spawn) re-confirms or
+    /// corrects the seed either way.
+    private func inheritableProjectKey(of id: PaneID?, covering inheritedCwd: String?) -> String? {
+        guard let id, let key = tree.spec(for: id)?.projectKey,
+              !key.isEmpty, !PaneSpec.looksLikeTransientPluginCwd(key),
+              let cwd = inheritedCwd,
+              cwd == key || cwd.hasPrefix(key.hasSuffix("/") ? key : key + "/")
+        else { return nil }
+        return key
     }
 
     /// Closes tab `tabID` (dropping its panes) and cascades like ``closePaneTree(_:)``.
@@ -2620,10 +2642,12 @@ public final class WorkspaceStore {
         // Resolve the new window's initial cwd from the NEW-WINDOW policy against the active pane's
         // last-known cwd (none when there is no active pane), stamp it on the new spec, and let the host
         // spawn the PTY directly in that cwd. Mirrors `newTab` / `splitActivePane`.
-        let activeCwd = inheritableCwd(of: tree.activeSession?.activeTab?.activePane)
+        let activePane = tree.activeSession?.activeTab?.activePane
+        let activeCwd = inheritableCwd(of: activePane)
         let inheritedCwd = SettingsKey.workingDirectoryNewWindow.resolve(activePaneCwd: activeCwd)
         var spec = PaneSpec(kind: kind, title: defaultTitle(for: kind))
         spec.lastKnownCwd = inheritedCwd
+        spec.projectKey = inheritableProjectKey(of: activePane, covering: inheritedCwd)
         let previous = tree.activeSessionID
         let (next, _) = WorkspaceTreeOps.newSession(in: tree, name: name, spec: spec)
         tree = next
@@ -3017,22 +3041,33 @@ public final class WorkspaceStore {
     /// ``pruneTreeSidebarMirrors``, not the pane-keyed prune).
     public internal(set) var tabBadgeOverrides: [TabID: TabBadgeKind] = [:]
 
-    /// Per-pane compact git summary (branch / ahead / behind / changed count) — the sidebar tab row's
-    /// SECOND LINE (``PaneGitSummary/compactLine``; the row falls back to the plain cwd when a pane has
-    /// no entry / no repo). Refreshed via ``refreshGitSummary(for:from:)`` on command completion (OSC
-    /// 133;D), on a cwd change, and once on connect; PRUNED to the live leaf set alongside the other
-    /// per-pane mirrors. Runtime-only; never persisted.
-    public internal(set) var paneGitSummary: [PaneID: PaneGitSummary] = [:]
+    /// PROJECT-scoped compact git summary (branch / ahead / behind / breakdown counts) — keyed by the
+    /// NORMALIZED By-Project key (``TabOrderingEngine/normalizedProjectKey(_:)`` of a `gitStatus` reply's
+    /// `repoRoot`, else the probed pane's own section key) and rendered on the sidebar SECTION HEADER.
+    /// One repo = one section = one summary: every pane in the section shares the repo's state, so a
+    /// per-pane mirror was N copies of the same line. Refreshed via ``refreshGitSummary(for:from:)`` on
+    /// command completion (OSC 133;D), on a cwd change, on reconnect, and by the project-scoped
+    /// snapshot-cadence scheduler (``shouldRefreshGitOnSnapshot(_:now:)``); PRUNED to the live sections'
+    /// key set on reconcile. Runtime-only; never persisted.
+    public internal(set) var projectGitSummary: [String: PaneGitSummary] = [:]
 
-    /// Panes with an in-flight git-summary `gitStatus` fetch — de-dupes concurrent requests (a completion
-    /// burst must not fan out N identical RPCs). Cleared as each reply lands (or is dropped).
-    private var paneGitSummaryInFlight: Set<PaneID> = []
+    /// Projects with an in-flight `gitStatus` fetch — de-dupes concurrent requests ACROSS panes: a
+    /// reconnect burst / completion storm over N same-repo panes collapses to one RPC. Cleared as each
+    /// reply lands (or is dropped).
+    private var projectGitInFlight: Set<String> = []
 
-    /// When each pane's ``paneGitSummary`` entry was last fetched — the freshness clock the
-    /// ~3 s RTT-snapshot edge consults so a quiet ACTIVE pane re-fetches its stale git line at most once per
-    /// ``gitSummaryStaleWindow`` (bounded, never a poll). Stamped by ``applyGitSummary(_:toplevel:for:at:)``,
-    /// PRUNED to the live leaf set alongside ``paneGitSummary``. Runtime-only; never persisted.
-    public internal(set) var paneGitFetchedAt: [PaneID: Date] = [:]
+    /// When each project's ``projectGitSummary`` entry was last fetched — the freshness clock the
+    /// ~3 s RTT-snapshot edge consults so every VISIBLE project (not just the focused pane's) self-heals
+    /// its header line, at most once per staleness window per project (bounded, never a poll). Stamped by
+    /// ``applyGitSummary(_:toplevel:fallbackKey:at:)``; PRUNED with ``projectGitSummary``. Runtime-only.
+    public internal(set) var projectGitFetchedAt: [String: Date] = [:]
+
+    /// When a HOST PUSH (the event-driven wire type 35, fed through
+    /// ``applyPushedProjectGitSummary(_:repoRoot:at:)``) last landed per project. While one is fresh the
+    /// snapshot-cadence poll backs off to ``gitSummaryPushGraceWindow`` — the host's FSEvents watcher owns
+    /// freshness and polling would only duplicate it; an old host that never pushes leaves this empty and
+    /// the poll cadence stands. PRUNED with ``projectGitSummary``. Runtime-only.
+    var projectGitPushedAt: [String: Date] = [:]
 
     /// The COALESCING memory for the attention notification: the last status we fired an
     /// attention edge for, per pane. So a flap that re-enters the same attention state (`done → working →
@@ -3280,6 +3315,12 @@ public final class WorkspaceStore {
         // sidebar sections render from the host's truth (and a cold relaunch renders them from disk).
         connection?.onProjectKeyChanged = { [weak self] key in
             self?.setProjectKey(key, for: id)
+        }
+        // HOST-PUSHED project git summary (wire type 35): the FSEvents watcher's event-driven truth.
+        // Project-keyed and dirty-guarded at the sink, so N same-repo panes each receiving the push
+        // converge on one write.
+        connection?.onProjectGitStatusChanged = { [weak self] summary, repoRoot in
+            self?.applyPushedProjectGitSummary(summary, repoRoot: repoRoot)
         }
         // COMMAND-START STALE-BADGE CLEAR (progress-state.md): a new command beginning (OSC 133;C) clears this
         // pane's stale completion ✓/✗ so a busy background pane resolves to the running spinner, not the prior
@@ -3533,13 +3574,19 @@ public final class WorkspaceStore {
         if !paneForegroundProcess.isEmpty {
             paneForegroundProcess = paneForegroundProcess.filter { leafSet.contains($0.key) }
         }
-        // Git-summary mirror (the sidebar git line):
-        if !paneGitSummary.isEmpty {
-            paneGitSummary = paneGitSummary.filter { leafSet.contains($0.key) }
-        }
-        // Git-summary freshness clock:
-        if !paneGitFetchedAt.isEmpty {
-            paneGitFetchedAt = paneGitFetchedAt.filter { leafSet.contains($0.key) }
+        // Project git summary + clocks (the section-header git line) — PROJECT-keyed, so the live set
+        // is the union of the live panes' effective section keys, not the leaf set itself:
+        if !projectGitSummary.isEmpty || !projectGitFetchedAt.isEmpty || !projectGitPushedAt.isEmpty {
+            let liveKeys = Set(leafSet.compactMap { effectiveGitProjectKey($0) })
+            if !projectGitSummary.isEmpty {
+                projectGitSummary = projectGitSummary.filter { liveKeys.contains($0.key) }
+            }
+            if !projectGitFetchedAt.isEmpty {
+                projectGitFetchedAt = projectGitFetchedAt.filter { liveKeys.contains($0.key) }
+            }
+            if !projectGitPushedAt.isEmpty {
+                projectGitPushedAt = projectGitPushedAt.filter { liveKeys.contains($0.key) }
+            }
         }
         // OSC 9;4 progress mirror (else a stale spinner/bar survives in a Dock rollup):
         if !paneProgress.isEmpty {
@@ -4547,77 +4594,170 @@ public extension WorkspaceStore {
         }
     }
 
-    // MARK: - Sidebar git line (the per-pane compact summary)
+    // MARK: - Section git line (the PROJECT-scoped compact summary)
 
-    /// Refreshes pane `id`'s compact git summary (``paneGitSummary`` → the sidebar row's second line)
-    /// from the host `gitStatus` RPC on the pane's OWN metadata channel. Fired on command completion
-    /// (OSC 133;D, beside ``refreshCwd(for:from:)``), on a cwd CHANGE (``setLastKnownCwd(_:for:)`` — a
-    /// `cd` can enter/leave/switch repos), and once on connect (the resume-identity edge). The stale
-    /// value stays visible until the fresh reply lands (no flicker on a same-repo `cd`); a `nil`
-    /// connection / failed RPC is a silent no-op (validate-then-drop), and the in-flight set de-dupes a
-    /// completion burst. (The By-Project key itself is HOST-pushed — wire type 34 → ``setProjectKey(_:for:)``
-    /// — so the reply's `repoRoot` only scopes the same-repo fan-out below, never the sectioning.)
+    /// Pane `id`'s effective SECTION key for the git-summary store: the ``paneProjectKey(_:)``
+    /// precedence (host-pushed key, else the cwd fallback, plugin dirs guarded out) read
+    /// model-agnostically and NORMALIZED (``TabOrderingEngine/normalizedProjectKey(_:)``) so it equals
+    /// the sidebar's bucketing key exactly. `nil` ⇒ the pane has no section identity yet (no cwd) —
+    /// no git bookkeeping.
+    func effectiveGitProjectKey(_ id: PaneID) -> String? {
+        if let key = projectKey(for: id), !key.isEmpty, !PaneSpec.looksLikeTransientPluginCwd(key) {
+            return TabOrderingEngine.normalizedProjectKey(key)
+        }
+        guard let cwd = lastKnownCwd(for: id), !PaneSpec.looksLikeTransientPluginCwd(cwd) else { return nil }
+        return TabOrderingEngine.normalizedProjectKey(cwd)
+    }
+
+    /// Refreshes the git summary of pane `id`'s PROJECT (``projectGitSummary`` → the sidebar section
+    /// header) from the host `gitStatus` RPC on the pane's OWN metadata channel. Fired on command
+    /// completion (OSC 133;D, beside ``refreshCwd(for:from:)``), on a cwd CHANGE
+    /// (``setLastKnownCwd(_:for:)`` — a `cd` can enter/leave/switch repos), on reconnect, and by the
+    /// project-scoped snapshot scheduler. The stale value stays visible until the fresh reply lands (no
+    /// flicker); a `nil` connection / failed RPC is a silent no-op (validate-then-drop). The in-flight
+    /// set de-dupes BY PROJECT: N same-repo panes reconnecting / completing together collapse to one
+    /// RPC — `git status --porcelain` output is repo-root-relative, so any pane in the project answers
+    /// for all of them.
     func refreshGitSummary(for id: PaneID, from connection: ConnectionViewModel?) {
-        guard let connection, !paneGitSummaryInFlight.contains(id) else { return }
-        paneGitSummaryInFlight.insert(id)
+        guard let connection else { return }
+        let key = effectiveGitProjectKey(id)
+        // A keyless pane (no cwd landed yet) still de-dupes — per PANE, its only identity.
+        let inFlightKey = key ?? "pane:\(id.raw.uuidString)"
+        guard !projectGitInFlight.contains(inFlightKey) else { return }
+        projectGitInFlight.insert(inFlightKey)
+        // The alias/no-repo booking key must be the pane's CWD-ONLY fallback — never a host-pushed
+        // key. A host key can be STALE across an un-re-pushed cross-repo `cd` (nothing client-side
+        // invalidates it; the host re-pushes asynchronously), and booking the NEW repo's reply
+        // under the OLD repo's key would overwrite an unrelated section's genuinely-correct header.
+        let aliasKey = hostPushedProjectKey(id) == nil ? key : nil
         Task { @MainActor [weak self] in
             let payload = await connection.activeMetadataClient?.gitStatus()
             guard let self else { return }
-            paneGitSummaryInFlight.remove(id)
+            projectGitInFlight.remove(inFlightKey)
             guard let payload else { return }
-            applyGitSummary(PaneGitSummary(payload: payload), toplevel: payload.repoRoot, for: id)
+            applyGitSummary(
+                PaneGitSummary(payload: payload), toplevel: payload.repoRoot, fallbackKey: aliasKey,
+            )
         }
     }
 
-    /// The context-menu "Refresh Git Status" entry: re-probe pane `id`'s git line on demand
-    /// through its OWN live connection. A video / faked pane (no ``LivePaneSession``) is a silent
-    /// no-op via ``refreshGitSummary(for:from:)``'s `nil`-connection guard.
+    /// Pane `id`'s HOST-pushed key alone (guarded like ``paneProjectKey(_:)``'s first leg), `nil`
+    /// when the pane is on its cwd fallback — the alias-booking eligibility test above.
+    private func hostPushedProjectKey(_ id: PaneID) -> String? {
+        guard let key = projectKey(for: id), !key.isEmpty,
+              !PaneSpec.looksLikeTransientPluginCwd(key) else { return nil }
+        return key
+    }
+
+    /// Re-probe pane `id`'s project git line on demand through its OWN live connection. A video /
+    /// faked pane (no ``LivePaneSession``) is a silent no-op via ``refreshGitSummary(for:from:)``'s
+    /// `nil`-connection guard.
     func refreshGitSummary(for id: PaneID) {
         refreshGitSummary(for: id, from: (handle(for: id) as? LivePaneSession)?.connection)
     }
 
-    /// Applies a freshly-fetched git `summary` for pane `id`: a dirty-guarded write to
-    /// ``paneGitSummary`` and a ``paneGitFetchedAt`` freshness stamp — then FANS the same summary out to
-    /// every OTHER live pane whose By-Project key (``paneProjectKey(_:)`` — the host-pushed spec key, else
-    /// the cwd fallback) matches the reply's `toplevel` (a sibling in the SAME repo now knows a sibling-pane
-    /// commit landed without waiting for its own command edge), each with its own dirty guard so a quiet
-    /// sibling never churns the `@Observable` rail. An EMPTY toplevel is "no repo", not a shared key, so it
-    /// never fans out. `now` is injectable for a deterministic staleness test.
-    func applyGitSummary(_ summary: PaneGitSummary, toplevel: String, for id: PaneID, at now: Date = Date()) {
-        // Validate-then-drop a reading taken while the shell was transiently inside a plugin-cache dir (a
-        // zinit turbo `builtin cd` the `gitStatus` RPC raced): its `toplevel` is the PLUGIN's repo and its
-        // branch/changed counts are that plugin's, not the user's project. Discard the WHOLE reading (no
-        // summary write, no sibling fan-out) so the git line is never poisoned; the next completion edge
-        // re-probes at the settled cwd.
+    /// The section-header context-menu "Refresh Git Status" entry: re-probe `key`'s project through
+    /// the FIRST live pane sectioned under it. No live pane (a ghost section mid-teardown) ⇒ no-op.
+    func refreshGitSummary(forProject key: String) {
+        let normalized = TabOrderingEngine.normalizedProjectKey(key)
+        guard let pane = tree.allPaneIDs().first(where: { id in
+            effectiveGitProjectKey(id) == normalized
+                && (handle(for: id) as? LivePaneSession)?.connection != nil
+        }) else { return }
+        refreshGitSummary(for: pane)
+    }
+
+    /// Applies a freshly-fetched git `summary` under its PROJECT key: the reply's `toplevel`
+    /// (repo root) when the cwd is a repo, else `fallbackKey` (the probed pane's own section key — a
+    /// no-repo dir books its "clean, no repo" reading so the scheduler backs off for that section too).
+    /// When the probed pane is still sectioned by a cwd FALLBACK that differs from the toplevel (the
+    /// host's type-34 for it hasn't landed), the summary is MIRRORED under that alias too, so the
+    /// interim section's header is already correct; reconcile prunes the alias once the section
+    /// re-keys. Both writes are dirty-guarded (no `@Observable` churn on a quiet re-fetch); the
+    /// freshness stamp always lands. `now` is injectable for deterministic staleness tests.
+    func applyGitSummary(
+        _ summary: PaneGitSummary, toplevel: String, fallbackKey: String?, at now: Date = Date(),
+    ) {
+        // Validate-then-drop a reading taken while the shell was transiently inside a plugin-cache dir
+        // (a zinit turbo `builtin cd` the `gitStatus` RPC raced): its `toplevel` is the PLUGIN's repo
+        // and its branch/changed counts are that plugin's, not the user's project. Discard the WHOLE
+        // reading; the next completion edge re-probes at the settled cwd.
         guard !PaneSpec.looksLikeTransientPluginCwd(toplevel) else { return }
-        if paneGitSummary[id] != summary { paneGitSummary[id] = summary }
-        paneGitFetchedAt[id] = now
-        guard !toplevel.isEmpty else { return }
-        for pane in tree.allPaneIDs() where pane != id && paneProjectKey(pane) == toplevel {
-            if paneGitSummary[pane] != summary { paneGitSummary[pane] = summary }
-            paneGitFetchedAt[pane] = now
+        guard let key = TabOrderingEngine.normalizedProjectKey(toplevel) ?? fallbackKey else { return }
+        if projectGitSummary[key] != summary { projectGitSummary[key] = summary }
+        projectGitFetchedAt[key] = now
+        // The alias must sit INSIDE the toplevel's subtree (a cwd-fallback subdir of THIS repo) —
+        // any other relation means a stale/foreign key, and booking there would poison an unrelated
+        // section's header (the caller's cwd-only guard is the first line; this is the backstop).
+        if let fallbackKey, fallbackKey != key, fallbackKey.hasPrefix(key + "/") {
+            if projectGitSummary[fallbackKey] != summary { projectGitSummary[fallbackKey] = summary }
+            projectGitFetchedAt[fallbackKey] = now
         }
     }
 
-    /// How long a git line stays "fresh" on the ~3 s RTT-snapshot edge before a re-fetch is
-    /// allowed — long enough that the snapshot cadence is never a git-status poll, short enough that a quiet
-    /// pane's stale line self-heals within a minute.
+    /// Applies a HOST-PUSHED project git summary (wire type 35 — the FSEvents watcher's event-driven
+    /// truth, already folded by the connection layer). Books the push clock so the snapshot-cadence
+    /// poll backs off (``gitSummaryPushGraceWindow``) while pushes keep arriving.
+    func applyPushedProjectGitSummary(_ summary: PaneGitSummary, repoRoot: String, at now: Date = Date()) {
+        guard !PaneSpec.looksLikeTransientPluginCwd(repoRoot) else { return }
+        guard let key = TabOrderingEngine.normalizedProjectKey(repoRoot) else { return }
+        if projectGitSummary[key] != summary { projectGitSummary[key] = summary }
+        projectGitFetchedAt[key] = now
+        projectGitPushedAt[key] = now
+    }
+
+    /// How long a BACKGROUND project's header line stays "fresh" on the ~3 s RTT-snapshot edge before
+    /// a re-fetch is allowed — long enough that the snapshot cadence is never a git-status poll, short
+    /// enough that every visible section self-heals within a minute.
     static let gitSummaryStaleWindow: TimeInterval = 60
 
-    /// Whether the ~3 s RTT-snapshot edge should re-fetch pane `id`'s git line: ALWAYS when there
-    /// is no entry yet (initial populate), else ONLY when it is the ACTIVE pane AND its cached line is older
-    /// than ``gitSummaryStaleWindow``. A background pane is never re-fetched on this edge (a genuine reconnect
-    /// refreshes it via ``ConnectionViewModel/onReconnected``), so the snapshot cadence stays cheap + bounded.
+    /// The tighter window for the ACTIVE project (the section the focused pane sits in) — the header
+    /// the user is most likely acting on tracks external changes (editor saves, another terminal's
+    /// commit) within seconds, still only ~4 subprocess spawns per window host-side.
+    static let gitSummaryStaleWindowActiveProject: TimeInterval = 15
+
+    /// The poll back-off while HOST PUSHES (wire type 35) are fresh: the watcher already delivers
+    /// event-driven updates, so the poll degrades to a slow safety net (it re-arms itself the moment
+    /// pushes stop arriving for this long).
+    static let gitSummaryPushGraceWindow: TimeInterval = 300
+
+    /// Whether the ~3 s RTT-snapshot edge should re-fetch pane `id`'s PROJECT git line: ALWAYS when
+    /// the project has no entry yet (initial populate), else when its entry is older than the
+    /// project's staleness window — ``gitSummaryStaleWindowActiveProject`` for the focused pane's
+    /// project, ``gitSummaryStaleWindow`` for background ones, ``gitSummaryPushGraceWindow`` while
+    /// host pushes are fresh. Because the clock is PER PROJECT (stamped on every apply) and the
+    /// in-flight set de-dupes across panes, N panes ticking every ~3 s still cost at most one RPC per
+    /// project per window — background projects included, which is what keeps an inactive section's
+    /// header honest without a per-pane poll.
     func shouldRefreshGitOnSnapshot(_ id: PaneID, now: Date = Date()) -> Bool {
-        if paneGitSummary[id] == nil { return true }
-        guard isActivePane(id) else { return false }
-        guard let fetchedAt = paneGitFetchedAt[id] else { return true }
-        return now.timeIntervalSince(fetchedAt) > Self.gitSummaryStaleWindow
+        guard let key = effectiveGitProjectKey(id) else { return false }
+        guard !projectGitInFlight.contains(key) else { return false }
+        guard let fetchedAt = projectGitFetchedAt[key] else { return true }
+        let window: TimeInterval =
+            if let pushedAt = projectGitPushedAt[key],
+            now.timeIntervalSince(pushedAt) < Self.gitSummaryPushGraceWindow {
+                Self.gitSummaryPushGraceWindow
+            } else if isActiveProject(key) {
+                Self.gitSummaryStaleWindowActiveProject
+            } else {
+                Self.gitSummaryStaleWindow
+            }
+        return now.timeIntervalSince(fetchedAt) > window
+    }
+
+    /// Whether `key` is the FOCUSED pane's project — the tree's active tab's active pane, or the
+    /// canvas focus. Drives the tighter active-project staleness window.
+    func isActiveProject(_ key: String) -> Bool {
+        let focused: PaneID? =
+            switch liveModel {
+            case .tree: tree.activeSession?.activeTab?.activePane
+            case .canvas: workspace.focusedPane
+            }
+        return focused.flatMap { effectiveGitProjectKey($0) } == key
     }
 
     /// Whether pane `id` is the currently-focused pane in the live model — the tree's active tab's
-    /// active pane, or the canvas focus. Used to bound the snapshot-edge git re-fetch to the pane the user is
-    /// actually looking at.
+    /// active pane, or the canvas focus.
     func isActivePane(_ id: PaneID) -> Bool {
         switch liveModel {
         case .tree: tree.activeSession?.activeTab?.activePane == id

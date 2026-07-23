@@ -261,6 +261,56 @@ public enum WireMessage: Equatable, Sendable {
     /// the mux channel envelope, not this body.
     case projectKey(String)
 
+    /// One PROJECT's folded git status (type 35, host → client, CONTROL): the EVENT-DRIVEN sibling of
+    /// the pull-only `gitStatus` metadata RPC. The host's per-repo FSEvents watcher debounces a
+    /// filesystem change burst, re-probes `git status` ONCE for the repo, folds the porcelain file
+    /// list into counts HOST-side, and pushes this summary to every attached session sectioned under
+    /// the repo — so a background project's section header updates within ~a second of an external
+    /// edit (an editor save, another terminal's commit) with zero client polling. The client books it
+    /// per PROJECT (``repoRoot`` — the same identity as wire type 34) and backs its poll cadence off
+    /// while pushes stay fresh. The FILE LIST never rides this push (the RPC serves detail on
+    /// demand). Additive within wire version 1 (same rule as type 34): an old peer DROPS the frame
+    /// (`unknownMessageType`), never traps.
+    case projectGitStatus(ProjectGitStatus)
+
+    /// The type-35 body: the repo identity + branch strings (each `[UInt16 BE len][UTF-8]`) followed
+    /// by fixed BE counts. All counts are already folded (staged/modified/untracked count each file's
+    /// X/Y nibble INDEPENDENTLY — an `MM` file is both staged and modified — matching
+    /// ``MetadataCodec/GitStatusPayload/foldedCounts``).
+    public struct ProjectGitStatus: Equatable, Sendable {
+        /// The repo's absolute toplevel — the By-Project section key this summary books under.
+        public var repoRoot: String
+        /// The current branch name (empty = detached HEAD).
+        public var branch: String
+        /// Commits ahead of / behind the upstream (0 when no upstream).
+        public var ahead: Int32
+        public var behind: Int32
+        /// The repo's stash depth (`git stash list` count).
+        public var stashCount: Int32
+        /// The folded porcelain breakdown + the raw changed-file total.
+        public var staged: UInt32
+        public var modified: UInt32
+        public var untracked: UInt32
+        public var conflicted: UInt32
+        public var changedCount: UInt32
+
+        public init(
+            repoRoot: String, branch: String, ahead: Int32, behind: Int32, stashCount: Int32,
+            staged: UInt32, modified: UInt32, untracked: UInt32, conflicted: UInt32, changedCount: UInt32,
+        ) {
+            self.repoRoot = repoRoot
+            self.branch = branch
+            self.ahead = ahead
+            self.behind = behind
+            self.stashCount = stashCount
+            self.staged = staged
+            self.modified = modified
+            self.untracked = untracked
+            self.conflicted = conflicted
+            self.changedCount = changedCount
+        }
+    }
+
     /// The semantic state of the foreground command in a pane's shell (from OSC 133).
     public enum CommandStatus: Equatable, Sendable {
         /// OSC 133;C — a command began executing (preexec). The pane is RUNNING.
@@ -300,6 +350,7 @@ public enum WireMessage: Equatable, Sendable {
         case .progress: 32
         case .cwd: 33
         case .projectKey: 34
+        case .projectGitStatus: 35
         }
     }
 
@@ -331,7 +382,8 @@ public enum WireMessage: Equatable, Sendable {
              .inputEcho,
              .progress,
              .cwd,
-             .projectKey:
+             .projectKey,
+             .projectGitStatus:
             .control
         }
     }

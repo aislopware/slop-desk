@@ -410,6 +410,10 @@ Task {
                 // The host-computed By-Project sidebar key (wire type 34) backs the GUI sidebar
                 // sectioning. The raw-mode CLI has no sidebar — a no-op here (mirrors `.cwd`).
                 break
+            case .projectGitStatus:
+                // The host-pushed project git summary (wire type 35) backs the GUI sidebar's
+                // section-header git line. The raw-mode CLI has no sidebar — a no-op here.
+                break
             }
         }
     }

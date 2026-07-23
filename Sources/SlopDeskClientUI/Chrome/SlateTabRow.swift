@@ -19,16 +19,13 @@ import SwiftUI
 struct SlateTabRow: View {
     let title: String
     let active: Bool
-    /// The row's muted truncating-middle second line (a terminal's git line / cwd, a video pane's host
-    /// app). `nil`/empty ⇒ single-line.
+    /// The row's muted truncating-middle second line (a terminal's cwd relative to its project root,
+    /// a video pane's host app — the git line lives on the SECTION HEADER now,
+    /// ``ProjectGitStatusLine``). `nil`/empty ⇒ single-line.
     var subtitle: String?
-    /// The pane's folded git state — when its cwd is a repo, the row's second line renders the git line with
-    /// per-token STATUS colour (branch muted, `↑ahead` green, `↓behind` blue, `· N changed` amber) instead of
-    /// the flat ``subtitle``. `nil` ⇒ no repo (or a non-terminal row) → the plain ``subtitle`` renders.
-    var gitSummary: PaneGitSummary?
     /// Line-2 truncation, forwarded to the ``SlateListRow`` shell. `.middle` (default) suits the
     /// path-shaped subtitle; the blocked row passes `.tail` while its line 2 IS the question — prose
-    /// keeps its head, and the normal cwd/git path keeps `.middle` untouched.
+    /// keeps its head, and the normal relative-path subtitle keeps `.middle` untouched.
     var subtitleTruncation: Text.TruncationMode = .middle
     /// The host's coarse foreground-process label ("zsh"), shown trailing on the ACTIVE row only.
     var processLabel: String?
@@ -64,8 +61,9 @@ struct SlateTabRow: View {
     @State private var renameResolved = false
     @FocusState private var fieldFocused: Bool
 
-    /// Whether the row carries a second line (cwd / git line / host app). Mirrors ``SlateListRow``'s own test
-    /// so line-1 vs line-2 accessory placement stays in lock-step with where the shell actually draws line 2.
+    /// Whether the row carries a second line (relative cwd / host app / blocked question). Mirrors
+    /// ``SlateListRow``'s own test so line-1 vs line-2 accessory placement stays in lock-step with
+    /// where the shell actually draws line 2.
     private var hasSubtitle: Bool { !(subtitle ?? "").isEmpty }
 
     var body: some View {
@@ -76,7 +74,6 @@ struct SlateTabRow: View {
         SlateListRow(
             active: active,
             subtitle: subtitle,
-            subtitleColored: gitSummary.flatMap(Self.gitLine),
             subtitleTruncation: subtitleTruncation,
             // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the field.
             onTap: { if !isEditing { onSelect() } },
@@ -107,36 +104,6 @@ struct SlateTabRow: View {
             },
         )
         .help(helpText ?? "")
-    }
-
-    /// The instrument-voice git line with per-token STATUS colour (MERIDIAN "colour = state, not ornament"),
-    /// each state a SINGLE sigil + count (oh-my-zsh vocabulary). The branch stays MUTED (inherits the row's
-    /// secondary — structure, not a signal); the tokens colour by meaning:
-    ///   `↑`ahead / `+`staged → OK-green (outgoing / index work, ready to commit or push)
-    ///   `↓`behind / `!`modified → warn-amber (behind upstream / unstaged edits — needs attention)
-    ///   `?`untracked → info-blue (new files not yet tracked)
-    ///   `=`conflicts → err-red (unmerged — must resolve)
-    ///   `$`stash → muted secondary (parked work; the `$` sigil carries it, no alarm colour)
-    /// A CLEAN repo is just the muted branch — nothing to flag. `nil` for a non-repo cwd. The rendered text is
-    /// byte-identical to ``PaneGitSummary/compactLine`` so the plain fallback / search key / row height (all
-    /// keyed on ``subtitle``) never diverge from what the coloured line shows.
-    @MainActor
-    static func gitLine(_ g: PaneGitSummary) -> AttributedString? {
-        guard g.hasRepo else { return nil }
-        func token(_ text: String, _ colour: Color?) -> AttributedString {
-            var seg = AttributedString(text)
-            seg.foregroundColor = colour // nil ⇒ inherits the row's secondary
-            return seg
-        }
-        var line = AttributedString(g.branch.isEmpty ? "detached" : g.branch)
-        if g.ahead > 0 { line += token(" ↑\(g.ahead)", Slate.Status.ok) }
-        if g.behind > 0 { line += token(" ↓\(g.behind)", Slate.Status.warn) }
-        if g.staged > 0 { line += token(" +\(g.staged)", Slate.Status.ok) }
-        if g.modified > 0 { line += token(" !\(g.modified)", Slate.Status.warn) }
-        if g.untracked > 0 { line += token(" ?\(g.untracked)", Slate.Status.info) }
-        if g.conflicted > 0 { line += token(" =\(g.conflicted)", Slate.Status.err) }
-        if g.stash > 0 { line += token(" $\(g.stash)", nil) }
-        return line
     }
 
     /// The inline-rename `TextField`: seeded from the current title on open, auto-focused, commits

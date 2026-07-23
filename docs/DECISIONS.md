@@ -1605,3 +1605,35 @@ substitution forced by the pure-native-Swift rule.
     *drop* uploads bytes; the existing `PaneDropReceiver` path-inject stays for terminal panes) with
     a progress overlay + completion toast; `FileTransferModel` (pure `@Observable` in WorkspaceCore)
     holds active-upload progress behind a `FileUploading` seam the app fills with the real client.
+- ✅ **2026-07-23 — Git status is PROJECT-scoped, rendered on the sidebar SECTION HEADER; the grouping key is bullet-proofed; freshness is project-scheduled + event-driven (wire 35).** Three decisions in one re-scope (user-directed):
+  - **Grouping = git toplevel even from a subdir, ALWAYS.** The host resolver already walked up to the
+    toplevel; the fix closes the windows where the raw subdir cwd leaked through as the section key:
+    (a) new split/tab specs SEED the parent's host-pushed `projectKey` alongside the inherited cwd
+    (subtree-coverage-guarded — never seeds across a policy-resolved foreign dir or a stale key);
+    (b) the host seeds cwd+key truths AT SPAWN from the server-provided spawn cwd — a pane whose
+    shell never emits OSC-133/OSC-7 (raw command, shim off) still resolves; (c) the resolver walks
+    the `realpath`-canonicalized cwd, so logical OSC-7 paths and physical `proc_pidinfo` paths land
+    on ONE key (a symlinked checkout no longer splits into two sections — or resolves the SYMLINK
+    dir as its own bogus toplevel). Non-repo dirs keep grouping by plain cwd (unchanged, intended).
+  - **One repo = one section = ONE git line, on the header.** `projectGitSummary` (keyed by the
+    normalized section key — the `gitStatus` reply's `repoRoot`) replaces the per-pane mirror + the
+    sibling fan-out; the header renders branch + non-zero oh-my-zsh sigils in the INSTRUMENT voice
+    (`ProjectGitStatusLine` — branch recedes to the header gray, per-token status colours, branch
+    pre-truncates so counts never do, conflict `=N` escalates to the header's ONE background
+    treatment: a static err-tinted pill, hard cut per L3). The pane row's line 2 becomes the cwd
+    RELATIVE to the project root, shown ONLY when the pane strayed from it (at-root rows collapse to
+    single-line height); "Refresh Git Status" moved from the row menu to the header menu. iOS keeps
+    plain system section headers (macOS-first refinement).
+  - **Inactive projects stay fresh, cheaply.** The ~3s snapshot edge is re-scoped from
+    "active PANE only" to per-PROJECT windows (active project 15s, background 60s) with a
+    project-keyed in-flight de-dupe — N same-repo panes reconnecting/polling collapse to ONE RPC
+    (`git status --porcelain` output is root-relative, so any pane answers for the project), cost
+    bounded at O(projects)/window. On top, **wire type 35 `projectGitStatus`** (host → client,
+    control): a per-repo FSEvents watcher (`RepoStatusWatcher`, refcounted across panes via the
+    type-34 latch edges, 0.75s debounce, dirty-guarded, `SLOPDESK_GIT_WATCH` default-ON gate,
+    probe-skipped when no client is attached) pushes the HOST-folded summary (shared
+    `GitStatusPayload.foldedCounts` — the file list never rides the push) to every session
+    sectioned under the repo; the client backs its poll off to 300s while pushes stay fresh, so an
+    old host degrades gracefully to poll-only. The status probe gained `--no-optional-locks` (a
+    read-only cadence probe must never contend the user's own git on `index.lock`). → [20 §type 35],
+    `RepoStatusWatcher.swift`, `ProjectGitStatusLine.swift`, `WorkspaceStore.swift` (§Section git line)

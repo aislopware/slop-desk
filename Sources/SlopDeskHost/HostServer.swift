@@ -198,6 +198,17 @@ public final class HostServer: @unchecked Sendable {
     /// The store for detached sessions. `nil` when `detachEnabled == false`.
     private let detachedStore: DetachedSessionStore?
 
+    /// The event-driven git-status source (wire type 35): one FSEvents stream per repo with live
+    /// panes, fed by every session's ``MuxChannelSession/onProjectKeyResolved`` and drained by its
+    /// `onTeardown`. Gated by ``gitWatchEnabled``; its `push`/`shouldProbe` closures are wired at
+    /// the end of `init` (they capture `weak self`).
+    private let repoWatcher = RepoStatusWatcher()
+
+    /// `SLOPDESK_GIT_WATCH` (default-ON; only `"0"` disables): whether sessions feed the
+    /// ``RepoStatusWatcher``. The kill switch for the FSEvents + probe machinery — with it off the
+    /// wire never carries a type 35 and the client falls back to its poll cadence alone.
+    public let gitWatchEnabled: Bool
+
     /// Disk scrollback journals (history that survives the daemon — see ``ScrollbackJournalStore``).
     /// AND-ed with the detach gate: without detach the client never re-presents a session ID (so a
     /// journal could never be restored) and a link drop routes through the journal-DELETING
@@ -244,6 +255,7 @@ public final class HostServer: @unchecked Sendable {
         self.ctlBinaryPath = ctlBinaryPath
         self.blocksEnabled = blocksEnabled
         self.scrollbackSweepInterval = scrollbackSweepInterval
+        gitWatchEnabled = ProcessInfo.processInfo.environment["SLOPDESK_GIT_WATCH"] != "0"
         transport = HostTransport()
 
         // Resolve detach from env (default-ON: only "0" disables) unless overridden by the caller.
@@ -297,6 +309,25 @@ public final class HostServer: @unchecked Sendable {
                 sessionID: session.sessionID, instance: session.scrollbackJournal,
             )
             self?.unregisterHookSink(session: session)
+        }
+
+        // Repo-watch push wiring (the closures capture weak self, so they wire AFTER init's stored
+        // properties). A push fans to every live session sectioned under the repo — attached ones
+        // deliver, detached ones drop it in their wiped control-out (the reconnect pull catches up).
+        repoWatcher.push = { [weak self] status in
+            guard let self else { return }
+            lock.lock()
+            let sessions = Array(muxSessions.values) + Array(controlSessions.values)
+            lock.unlock()
+            for session in sessions { session.pushProjectGitStatusIfMatching(status) }
+        }
+        // No client connection ⇒ nobody to tell: skip the git subprocess entirely (a wall of
+        // detached agents churning a repo must not keep probing for an empty audience).
+        repoWatcher.shouldProbe = { [weak self] in
+            guard let self else { return false }
+            lock.lock()
+            defer { lock.unlock() }
+            return !muxConnections.isEmpty
         }
     }
 
@@ -387,6 +418,9 @@ public final class HostServer: @unchecked Sendable {
         }
         // Kill every detached session — shells that were kept alive across a client disconnect.
         detachedStore?.drainAll()
+        // Cancel every repo FSEvents stream (the per-session teardown signals already released the
+        // refcounts above; this is the belt-and-braces daemon-stop sweep).
+        repoWatcher.shutdown()
         // Close every accepted connection so its 2 receive loops + 2 NWConnections/sockets are torn
         // down (and its handler retain cycle broken). Without this, each Start→Stop cycle on the
         // long-lived menu-bar host abandons one live connection → accumulation toward EMFILE.
@@ -852,6 +886,7 @@ public final class HostServer: @unchecked Sendable {
         // connection's session (idempotent with the peer-close `setHostCloseHandler` path).
         session.onExit = { [weak self] _ in self?.removeMuxSession(key) }
         wireAgentStatusFanOut(session)
+        wireRepoWatch(session)
         lock.lock()
         if stopping {
             // stop() set `stopping` AFTER our early check but BEFORE this insert (it raced the fork).
@@ -869,11 +904,34 @@ public final class HostServer: @unchecked Sendable {
         lock.unlock()
         emitConnectionCount()
         session.startRelay()
+        // Seed the By-Project truths from the SPAWN cwd (server-provided, pre-shell): the sidebar
+        // sections are right from the first frame, including for shells that never emit
+        // OSC-133/OSC-7 — the warm-up gate would otherwise hold the key hostage to a prompt edge
+        // that may never come. After startRelay so the enqueued control rides the live sender.
+        if let initialCwd = open.initialCwd, !initialCwd.isEmpty {
+            session.seedProjectTruthAtSpawn(cwd: initialCwd)
+        }
         // Register this pane's hook sink so an installed Claude hook POSTing to the host
         // socket (with this pane's id) routes into THIS channel's per-pane status handler.
         registerHookSink(session: session, connectionID: connectionID, channelID: open.channelID)
         Task { await connection.sendOpenAck(open.channelID, accepted: true) }
         onLog?("mux channel \(open.channelID) (conn \(connectionID)): shell \(shellPath) (pid \(pty.pid)) attached")
+    }
+
+    /// Feeds this session's By-Project key edges into the ``RepoStatusWatcher`` refcounts (and
+    /// releases them on the session's one-shot teardown signal — every end-of-life funnels through
+    /// `MuxChannelSession.shutdown()`). Owner identity is the session OBJECT (a same-UUID ghost from
+    /// the detach-window race must never release the repo its live successor holds). A no-op wiring
+    /// when ``gitWatchEnabled`` is off — no callback, no stream, wire silence.
+    private func wireRepoWatch(_ session: MuxChannelSession) {
+        guard gitWatchEnabled else { return }
+        let owner = ObjectIdentifier(session)
+        session.onProjectKeyResolved = { [weak self] key in
+            self?.repoWatcher.noteProjectKey(key, owner: owner)
+        }
+        session.onTeardown = { [weak self] in
+            self?.repoWatcher.dropOwner(owner)
+        }
     }
 
     /// Registers the per-pane hook sink on the coordinator listener so a Claude hook POST
@@ -1383,6 +1441,7 @@ public final class HostServer: @unchecked Sendable {
         )
         session.onExit = { [weak self] _ in self?.removeControlSession(sessionID) }
         wireAgentStatusFanOut(session)
+        wireRepoWatch(session)
 
         // Synchronous helper: NSLock is unavailable from async context directly.
         guard insertControlSession(sessionID, session) else {
@@ -1391,6 +1450,9 @@ public final class HostServer: @unchecked Sendable {
         }
 
         session.startRelay()
+        // Same spawn-cwd seed as the mux path: a ctl-spawned pane (often a raw command with no
+        // shell integration at all) still gets a correct By-Project key for later reattach.
+        if let cwd, !cwd.isEmpty { session.seedProjectTruthAtSpawn(cwd: cwd) }
         return sessionID.uuidString
     }
 

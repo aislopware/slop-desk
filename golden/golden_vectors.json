@@ -3662,6 +3662,34 @@
       "hex": "00000016222f55736572732f6d652f70726f6a65637420646972",
       "kind": "project_key",
       "path": "/Users/me/project dir"
+    },
+    {
+      "ahead": 2,
+      "behind": 1,
+      "branch": "feature/tiếng-việt",
+      "changed": 15,
+      "conflicted": 7,
+      "hex": "000000502300152f55736572732f6d652f70726f6a656374206469720016666561747572652f7469e1babf6e672d7669e1bb8774000000020000000100000003000000040000000500000006000000070000000f",
+      "kind": "project_git_status",
+      "modified": 5,
+      "repoRoot": "/Users/me/project dir",
+      "staged": 4,
+      "stash": 3,
+      "untracked": 6
+    },
+    {
+      "ahead": 0,
+      "behind": 0,
+      "branch": "",
+      "changed": 0,
+      "conflicted": 0,
+      "hex": "000000272300022f7200000000000000000000000000000000000000000000000000000000000000000000",
+      "kind": "project_git_status",
+      "modified": 0,
+      "repoRoot": "/r",
+      "staged": 0,
+      "stash": 0,
+      "untracked": 0
     }
   ],
   "trendlineDrive": {

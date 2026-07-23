@@ -127,6 +127,10 @@ public actor SlopDeskClient {
         /// the pane's cwd, else the cwd itself. Emitted on change edges and re-asserted on reattach, so a
         /// reconnecting GUI renders the final sections without re-deriving anything (zero-flicker).
         case projectKey(String)
+        /// A HOST-PUSHED project git summary (wire type 35): the FSEvents watcher's event-driven
+        /// `git status` fold for one repo toplevel. The GUI books it per PROJECT (section header) and
+        /// backs its own poll cadence off while pushes stay fresh.
+        case projectGitStatus(WireMessage.ProjectGitStatus)
         /// The transport dropped (network loss / clean close). ``ReconnectManager``
         /// reacts to this; surfaced for diagnostics.
         case disconnected(reason: String)
@@ -634,6 +638,9 @@ public actor SlopDeskClient {
         case let .projectKey(path):
             // Host-computed By-Project key (type 34): surface verbatim; the GUI store validates + persists.
             eventBroadcaster.yield(.projectKey(path))
+        case let .projectGitStatus(status):
+            // Host-pushed project git summary (type 35): surface verbatim; the GUI store validates + books.
+            eventBroadcaster.yield(.projectGitStatus(status))
         case let .pong(timestampMS):
             recordPong(sentAtMS: timestampMS)
         default:

@@ -169,6 +169,19 @@ final class MuxChannelSession: @unchecked Sendable {
     /// `metadataQueue.async`.
     var projectKeyResolveExecutorOverride: ((_ resolve: @escaping @Sendable () -> Void) -> Void)?
 
+    /// Fired whenever a NEW By-Project key LATCHES for this pane (spawn seed / cwd-change resolve —
+    /// exactly the type-34 emission edges), on the resolve executor's thread, never the read loop.
+    /// ``HostServer`` wires it to the ``RepoStatusWatcher`` refcounts so precisely the repos with
+    /// live panes are FSEvents-watched. Set once at session wiring.
+    var onProjectKeyResolved: (@Sendable (String) -> Void)?
+
+    /// One-shot end-of-life signal (every teardown path funnels through ``shutdown()``), invoked
+    /// OUTSIDE the locks. ``HostServer`` wires it to release this pane's repo-watch refcount —
+    /// without it a closed pane would keep its repo's FSEvents stream (and probe subprocesses)
+    /// alive for the daemon's life.
+    var onTeardown: (@Sendable () -> Void)?
+    private var teardownSignaled = false
+
     /// Observer closures registered by the agent-control `wait` and `subscribe` verbs. Each is
     /// called with the raw PTY chunk immediately after the sniffer pass (non-destructive, never
     /// modifies the byte stream). Guarded by `observersLock`.
@@ -1306,6 +1319,13 @@ final class MuxChannelSession: @unchecked Sendable {
     /// exits, and `closeMaster()` is non-blocking.
     func shutdown() {
         taskLock.lock()
+        let signalTeardown = !teardownSignaled
+        teardownSignaled = true
+        taskLock.unlock()
+        // Outside the locks (an arbitrary server closure must never run under taskLock), exactly
+        // once across the shutdown/shutdownDetached double-entry.
+        if signalTeardown { onTeardown?() }
+        taskLock.lock()
         readLoop?.stop()
         // Wake continuations are owned by their queue locks (producers on other threads read
         // them under the same lock — see the property docs), NOT by taskLock.
@@ -2031,7 +2051,9 @@ final class MuxChannelSession: @unchecked Sendable {
         scheduleProjectKeyResolve(for: cwd)
     }
 
-    /// Runs the ``ProjectKeyResolver`` toplevel walk for `cwd` OFF the read-loop thread — on the
+    /// Runs the ``ProjectKeyResolver`` toplevel walk for the CANONICALIZED `cwd`
+    /// (``canonicalCwd(_:)`` — logical OSC-7 paths and physical probe paths must land on ONE key)
+    /// OFF the read-loop thread — on the
     /// serial `metadataQueue` (the file's home for ALL blocking FileManager/git/lsof work; serial,
     /// so resolves stay ordered), or the injected test executor. On completion, under
     /// `projectKeyLock`, the resolve is DROPPED if a later `cd` superseded it (`cwd` is no longer
@@ -2043,7 +2065,7 @@ final class MuxChannelSession: @unchecked Sendable {
     private func scheduleProjectKeyResolve(for cwd: String) {
         let resolve: @Sendable () -> Void = { [weak self] in
             guard let self else { return }
-            let key = ProjectKeyResolver.projectKey(forCwd: cwd)
+            let key = ProjectKeyResolver.projectKey(forCwd: Self.canonicalCwd(cwd))
             projectKeyLock.lock()
             guard cwd == lastCwdTruth, key != lastProjectKey else {
                 projectKeyLock.unlock()
@@ -2052,12 +2074,62 @@ final class MuxChannelSession: @unchecked Sendable {
             lastProjectKey = key
             projectKeyLock.unlock()
             enqueueControl([.projectKey(key)])
+            onProjectKeyResolved?(key)
         }
         if let projectKeyResolveExecutorOverride {
             projectKeyResolveExecutorOverride(resolve)
         } else {
             metadataQueue.async(execute: resolve)
         }
+    }
+
+    /// Seeds the pane's cwd + By-Project truths from the SPAWN directory — the server-provided
+    /// `channelOpen` initialCwd / ctl `--cwd`, NOT shell-controlled input, so it safely runs with no
+    /// warm-up (the OSC-7 gate exists to drop a plugin manager's pre-first-prompt `cd` noise and
+    /// stays latched for OSC-7). Called by ``HostServer`` right after `startRelay()`. Closes two
+    /// gaps in the derivation above: a pane whose shell never emits OSC-133/OSC-7 (raw command,
+    /// shim disabled) otherwise NEVER resolves a key — the client sections it by raw cwd forever —
+    /// and every fresh split/tab otherwise waits a full PTY warm-up + resolve round-trip while the
+    /// sidebar shows it under a subdirectory-named section. An already-latched truth wins: the seed
+    /// runs strictly before the first prompt in practice, but a lost race must not clobber a real
+    /// observation.
+    func seedProjectTruthAtSpawn(cwd: String) {
+        guard !cwd.isEmpty else { return }
+        projectKeyLock.lock()
+        guard lastCwdTruth == nil else {
+            projectKeyLock.unlock()
+            return
+        }
+        lastCwdTruth = cwd
+        projectKeyLock.unlock()
+        enqueueControl([.cwd(cwd)])
+        scheduleProjectKeyResolve(for: cwd)
+    }
+
+    /// ``HostServer``'s type-35 fan-in: enqueue a project git push on this pane's control sender iff
+    /// the pane is currently sectioned under the pushed repo (a cheap latch compare — the server
+    /// never reads the latch itself, so the lock discipline stays inside this file).
+    func pushProjectGitStatusIfMatching(_ status: WireMessage.ProjectGitStatus) {
+        projectKeyLock.lock()
+        let matches = lastProjectKey == status.repoRoot
+        projectKeyLock.unlock()
+        guard matches else { return }
+        enqueueControl([.projectGitStatus(status)])
+    }
+
+    /// `realpath(3)` of `cwd` for KEY RESOLUTION only — the type-33 cwd stays the path the shell
+    /// reported. OSC-7 carries the shell's LOGICAL `$PWD` (symlink components intact) while the
+    /// prompt-edge probe reports the kernel's PHYSICAL vnode path; the same directory would
+    /// otherwise resolve to two DIFFERENT key strings depending on which source spoke last, and the
+    /// client (which cannot stat host paths) would render one repo as two sidebar sections — or,
+    /// worse, walk a symlink ANCESTOR whose target has a `.git` and mint a third. Blocking (stats
+    /// every component) — callers are already off the read-loop thread, on `metadataQueue`. A
+    /// failed resolution (dir vanished, erroring mount) falls back to the raw path.
+    static func canonicalCwd(_ cwd: String) -> String {
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        guard realpath(cwd, &buffer) != nil else { return cwd }
+        let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+        return String(bytes: bytes, encoding: .utf8) ?? cwd
     }
 
     /// The prompt-edge cwd read: the test seam when set, else the real ``HostMetadataProbe``

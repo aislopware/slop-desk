@@ -104,12 +104,15 @@ struct NavigatorColumn: View {
 
     // MARK: - Sections (store-derived order × pane rows × search filter)
 
-    /// One rendered sidebar section: an optional `header` (the group title, `nil` ⇒ the ungrouped flat list)
-    /// and the rows in render order. A pure presentational value — identity is the group's stable key so the
-    /// `ForEach` does not churn when a sibling section's contents change.
+    /// One rendered sidebar section: an optional `header` (the group title, `nil` ⇒ the ungrouped flat list),
+    /// the section's normalized By-Project key (the ``WorkspaceStore/projectGitSummary`` lookup for the
+    /// header's git segment; `nil` ⇒ the "Other" bucket), and the rows in render order. A pure
+    /// presentational value — identity is the group's stable key so the `ForEach` does not churn when a
+    /// sibling section's contents change.
     private struct RowSection: Identifiable {
         let id: String
         let header: String?
+        let projectKey: String?
         let rows: [RailRow]
     }
 
@@ -122,7 +125,10 @@ struct NavigatorColumn: View {
         RailRowsBuilder.sectionedByProject(rows, tabOrder: store.flatOrderedTabIDs(), query: query)
             .enumerated()
             .map { index, group in
-                RowSection(id: "\(index)|\(group.header ?? "")", header: group.header, rows: group.rows)
+                RowSection(
+                    id: "\(index)|\(group.header ?? "")", header: group.header,
+                    projectKey: group.projectKey, rows: group.rows,
+                )
             }
     }
 
@@ -221,7 +227,9 @@ struct NavigatorColumn: View {
                     } else {
                         ForEach(sections) { section in
                             if let header = section.header {
-                                SlateSectionHeader(header)
+                                SidebarSectionHeaderRow(
+                                    store: store, title: header, projectKey: section.projectKey,
+                                )
                             }
                             ForEach(section.rows) { row in
                                 macRow(row)
@@ -410,11 +418,8 @@ struct NavigatorColumn: View {
     private func rowContextMenu(_ row: RailRow) -> some View {
         // A mouse-reachable "Rename" — sets the pending-rename for THIS row's tab so its inline
         // field opens (even on a background tab). Twin of the ⌘R / palette "Rename Pane" entry.
+        // ("Refresh Git Status" moved to the SECTION HEADER's menu — git is project-scoped now.)
         Button("Rename") { store.requestRenameTab(row.tabID) }
-        // An on-demand git-line re-probe for a terminal row (a video pane has no git surface).
-        if row.kind == .terminal {
-            Button("Refresh Git Status") { store.refreshGitSummary(for: row.id) }
-        }
         Divider()
         Button("Clear Badge") { store.clearAgentBadge(row.id) }
         Divider()
@@ -511,6 +516,28 @@ enum SidebarRowTooltip {
     }
 }
 
+/// The section header LEAF: reads its project's git summary INSIDE its own body — the sidebar body
+/// never touches the `projectGitSummary` dict, so a git tick re-renders only the (cheap) header
+/// leaves, mirroring how ``SidebarLiveRow`` isolates the volatile row chrome. Carries the
+/// header-scoped context menu (the project-wide "Refresh Git Status", moved up from the row menu).
+private struct SidebarSectionHeaderRow: View {
+    let store: WorkspaceStore
+    let title: String
+    let projectKey: String?
+
+    var body: some View {
+        let summary = projectKey.flatMap { store.projectGitSummary[$0] }
+        SlateSectionHeader(title) {
+            if let summary { ProjectGitStatusLine(summary: summary) }
+        }
+        .contextMenu {
+            if let projectKey {
+                Button("Refresh Git Status") { store.refreshGitSummary(forProject: projectKey) }
+            }
+        }
+    }
+}
+
 private struct SidebarLiveRow: View {
     let store: WorkspaceStore
     let row: RailRow
@@ -537,12 +564,11 @@ private struct SidebarLiveRow: View {
         // exactly the row leaves, never the sidebar body.
         let active = row.id == store.tree.activeSession?.activeTab?.activePane
         let chrome = RailRowsBuilder.liveChrome(for: row, store: store)
-        // Blocked rows show the question: while `chrome.question` is non-nil the line-2 slot
-        // swaps to it wholesale — the coloured git line is suppressed too, so line 2 never shows the plain
-        // question text next to a coloured git token. `chrome.subtitle`/`gitSummary` themselves are
-        // untouched (never overwritten), so the moment the block clears the row falls straight back to its
-        // normal git/cwd line. Truncation follows the content: the question is PROSE (`.tail` keeps the
-        // sentence's head), the normal path subtitle stays `.middle`.
+        // Blocked rows show the question: while `chrome.question` is non-nil the line-2 slot swaps to
+        // it wholesale. `chrome.subtitle` itself is untouched (never overwritten), so the moment the
+        // block clears the row falls straight back to its normal relative-cwd line. Truncation follows
+        // the content: the question is PROSE (`.tail` keeps the sentence's head), the normal path
+        // subtitle stays `.middle`.
         // The tooltip gains the todo-scent line only while the agent is WORKING with a live inspector feed
         // reporting an in-flight todo — every other row keeps today's cwd-only tooltip.
         let scent: String? = chrome.badge == .running
@@ -554,7 +580,6 @@ private struct SidebarLiveRow: View {
             title: row.title.isEmpty ? fallbackTitle : row.title,
             active: active,
             subtitle: chrome.question ?? chrome.subtitle,
-            gitSummary: chrome.question != nil ? nil : chrome.gitSummary,
             subtitleTruncation: chrome.question != nil ? .tail : .middle,
             processLabel: chrome.processLabel,
             badge: chrome.badge,

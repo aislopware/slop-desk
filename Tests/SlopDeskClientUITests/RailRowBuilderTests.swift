@@ -268,46 +268,50 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertFalse(after.first { $0.id == rows[1].id }?.readOnly ?? true, "its sibling row stays unlocked")
     }
 
-    // MARK: - cwd folder-name title + git-line/cwd subtitle + the reused title+subtitle filter
+    // MARK: - cwd folder-name title + relative-cwd subtitle + the reused title+subtitle filter
 
-    /// A terminal row with a known cwd titles itself by the cwd's FOLDER NAME (line 1) and keeps the
-    /// full cwd as the subtitle (line 2) while no git summary is cached; `filtered` narrows by BOTH.
-    /// Fails on the pre-fix builder (line 1 was the generic "Terminal").
+    /// A terminal row with a known cwd titles itself by the cwd's FOLDER NAME (line 1); a pane
+    /// sitting AT its section key (here the cwd fallback — key == cwd) carries NO subtitle (the
+    /// section header names the place; the row collapses to single-line). `filtered` still narrows
+    /// by title + the hidden cwd key. Fails on the pre-fix builder (line 1 was the generic "Terminal").
     func testSubtitleCwdAndFilter() {
         let store = makeStore()
         let pane = paneID(store, row: 0)
         store.setLastKnownCwd("/Users/me/project-alpha", for: pane)
         let rows = RailRowsBuilder.rows(for: store)
         XCTAssertEqual(rows[0].title, "project-alpha", "line 1 is the cwd folder name, not 'Terminal'")
-        XCTAssertEqual(rows[0].subtitle, "/Users/me/project-alpha")
+        XCTAssertNil(rows[0].subtitle, "at the section key (key == cwd) line 2 is absent")
         // The generic default no longer matches anything (the title IS the folder name now).
         XCTAssertTrue(RailRowsBuilder.filtered(rows, query: "term").isEmpty)
-        // Folder-name/title + cwd/subtitle match.
+        // Folder-name/title + hidden-cwd match.
         XCTAssertEqual(RailRowsBuilder.filtered(rows, query: "project-alpha").map(\.id), [pane])
         // No match anywhere.
         XCTAssertTrue(RailRowsBuilder.filtered(rows, query: "zzz-nope").isEmpty)
     }
 
-    /// A cached ``PaneGitSummary`` upgrades the terminal row's second line from the raw cwd to the
-    /// compact git line; a non-repo summary keeps the cwd fallback. Fails on the pre-fix builder
-    /// (subtitle was unconditionally `railSubtitle`).
-    func testGitSummaryUpgradesSubtitleToGitLine() {
+    /// The relative-cwd subtitle rule (``RailRowsBuilder/paneSubtitle(kind:spec:projectKey:)``): a
+    /// pane INSIDE its project's subtree shows the path RELATIVE to the key, a pane AT the key shows
+    /// nothing, and a pane whose cwd fell OUTSIDE the key's subtree (stale key across an
+    /// un-re-pushed `cd`) falls back to the full cwd — hiding the location would lie. Fails on the
+    /// pre-fix builder (subtitle was the git line / unconditional `railSubtitle`).
+    func testSubtitleIsCwdRelativeToProjectKey() {
         let store = makeStore()
         let pane = paneID(store, row: 0)
-        store.setLastKnownCwd("/Users/me/project-alpha", for: pane)
-        store.paneGitSummary[pane] = PaneGitSummary(
-            hasRepo: true, branch: "main", ahead: 1, behind: 0, changedCount: 3, modified: 3,
-        )
+        store.setProjectKey("/repo/root", for: pane)
+
+        store.setLastKnownCwd("/repo/root", for: pane)
+        XCTAssertNil(RailRowsBuilder.rows(for: store)[0].subtitle, "at the project root → no line 2")
+
+        store.setLastKnownCwd("/repo/root/packages/api", for: pane)
         XCTAssertEqual(
-            RailRowsBuilder.rows(for: store)[0].subtitle, "main ↑1 !3",
-            "line 2 is the compact git line when the cwd is a repo",
+            RailRowsBuilder.rows(for: store)[0].subtitle, "packages/api",
+            "inside the subtree → the path relative to the project root",
         )
-        store.paneGitSummary[pane] = PaneGitSummary(
-            hasRepo: false, branch: "", ahead: 0, behind: 0, changedCount: 0,
-        )
+
+        store.setLastKnownCwd("/elsewhere/scratch", for: pane)
         XCTAssertEqual(
-            RailRowsBuilder.rows(for: store)[0].subtitle, "/Users/me/project-alpha",
-            "a non-repo cwd falls back to the plain path subtitle",
+            RailRowsBuilder.rows(for: store)[0].subtitle, "/elsewhere/scratch",
+            "outside the key's subtree → the full cwd (never hide a location the header doesn't cover)",
         )
     }
 
@@ -320,7 +324,8 @@ final class RailRowBuilderTests: XCTestCase {
     func testChromeQuestionResolvesWhileBlockedWithoutTouchingSubtitle() {
         let store = makeStore()
         let pane = paneID(store, row: 0)
-        store.setLastKnownCwd("/Users/me/project-alpha", for: pane)
+        store.setProjectKey("/Users/me/project-alpha", for: pane)
+        store.setLastKnownCwd("/Users/me/project-alpha/sub", for: pane)
         store.setAgentStatus(.needsPermission, for: pane)
         store.setAgentLabel("Allow Bash(npm install)?", for: pane)
 
@@ -328,11 +333,11 @@ final class RailRowBuilderTests: XCTestCase {
         let chrome = RailRowsBuilder.liveChrome(for: row, store: store)
         XCTAssertEqual(chrome.question, "Allow Bash(npm install)?", "the blocking prompt surfaces as the question")
         XCTAssertEqual(
-            chrome.subtitle, "/Users/me/project-alpha",
-            "subtitle keeps resolving the plain cwd line — the question never overwrites it",
+            chrome.subtitle, "sub",
+            "subtitle keeps resolving the relative-cwd line — the question never overwrites it",
         )
         XCTAssertEqual(
-            row.subtitle, "/Users/me/project-alpha",
+            row.subtitle, "sub",
             "the memoized structural RailRow.subtitle never carries the question either",
         )
     }
@@ -379,7 +384,8 @@ final class RailRowBuilderTests: XCTestCase {
     func testChromeQuestionRevertsOnUnblock() {
         let store = makeStore()
         let pane = paneID(store, row: 0)
-        store.setLastKnownCwd("/srv/app", for: pane)
+        store.setProjectKey("/srv/app", for: pane)
+        store.setLastKnownCwd("/srv/app/web", for: pane)
         store.setAgentStatus(.needsPermission, for: pane)
         store.setAgentLabel("Allow Bash(rm -rf build)?", for: pane)
         let row = RailRowsBuilder.rows(for: store)[0]
@@ -388,7 +394,7 @@ final class RailRowBuilderTests: XCTestCase {
         store.setAgentStatus(.idle, for: pane)
         let chrome = RailRowsBuilder.liveChrome(for: row, store: store)
         XCTAssertNil(chrome.question, "unblocking reverts the question")
-        XCTAssertEqual(chrome.subtitle, "/srv/app", "subtitle was never touched by the block/unblock cycle")
+        XCTAssertEqual(chrome.subtitle, "web", "subtitle was never touched by the block/unblock cycle")
     }
 
     /// The question is kept OUT of the memoized, structural ``RailRow`` entirely (it lives only on the
@@ -685,18 +691,15 @@ final class RailRowBuilderTests: XCTestCase {
 
     // MARK: - Path-searchable row + collision disambiguation
 
-    /// A git-repo row's VISIBLE subtitle is the git line (not the path), yet the row stays searchable BY PATH
-    /// via the hidden `cwd` key. Fails on a builder whose filter only matches title + subtitle, so a path
-    /// query against a git row returns nothing.
-    func testFilterMatchesCwdEvenWhenSubtitleIsGitLine() {
+    /// An at-root row's VISIBLE subtitle is ABSENT (the section header names the place), yet the row
+    /// stays searchable BY PATH via the hidden `cwd` key. Fails on a builder whose filter only matches
+    /// title + subtitle, so a path query against an at-root row returns nothing.
+    func testFilterMatchesCwdEvenWhenSubtitleIsAbsent() {
         let store = makeStore()
         let pane = paneID(store, row: 0)
         store.setLastKnownCwd("/Users/me/worktrees/feature-x/myapp", for: pane)
-        store.paneGitSummary[pane] = PaneGitSummary(
-            hasRepo: true, branch: "main", ahead: 0, behind: 0, changedCount: 1, modified: 1,
-        )
         let rows = RailRowsBuilder.rows(for: store)
-        XCTAssertEqual(rows[0].subtitle, "main !1", "the visible subtitle is the git line, not the path")
+        XCTAssertNil(rows[0].subtitle, "at the section key (cwd fallback) the visible subtitle is absent")
         XCTAssertEqual(rows[0].cwd, "/Users/me/worktrees/feature-x/myapp", "the raw cwd rides as a hidden key")
         // The path segment is searchable even though it is nowhere in the visible chrome.
         XCTAssertEqual(RailRowsBuilder.filtered(rows, query: "feature-x").map(\.id), [pane])

@@ -154,8 +154,12 @@ struct HostMetadataProbe: MetadataQuerying {
         // `-c core.quotepath=false` disables git's default octal-escaping/quoting of non-ASCII paths
         // (`"b\303\241o..."`) so accented/CJK filenames flow through verbatim as UTF-8 — both for display
         // and as the `gitDiff` pathspec, which would otherwise match nothing against the quoted literal.
+        // `--no-optional-locks` keeps this read-only probe from taking `index.lock` (its opportunistic
+        // untracked-cache refresh) — the project-scoped scheduler probes on a cadence now, and a probe
+        // racing the user's own `git commit`/`git add` in the pane must never make THAT fail on a held lock.
         guard let output = Self.runProcessString(
-            Self.gitPath, ["-c", "core.quotepath=false", "-C", cwd, "status", "--porcelain", "-b"],
+            Self.gitPath,
+            ["--no-optional-locks", "-c", "core.quotepath=false", "-C", cwd, "status", "--porcelain", "-b"],
         ) else {
             return .noRepo
         }

@@ -217,6 +217,34 @@ extension WireMessage {
             }
             return .projectKey(path)
 
+        case 35: // projectGitStatus
+            // Two length-prefixed strings then the fixed BE trailer. Every read validates before
+            // consuming (`readBytes` throws `truncated` when the body is shorter than declared —
+            // never over-reads a hostile frame); invalid UTF-8 is malformed, not repaired. Trailing
+            // bytes are ignored, matching the file's forward-tolerant fixed-field decoders.
+            let rootLen = try Int(reader.readUInt16())
+            let rootBytes = try reader.readBytes(rootLen)
+            guard let repoRoot = String(data: rootBytes, encoding: .utf8) else {
+                throw SlopDeskError.malformedBody("projectGitStatus: invalid repoRoot UTF-8")
+            }
+            let branchLen = try Int(reader.readUInt16())
+            let branchBytes = try reader.readBytes(branchLen)
+            guard let branch = String(data: branchBytes, encoding: .utf8) else {
+                throw SlopDeskError.malformedBody("projectGitStatus: invalid branch UTF-8")
+            }
+            return try .projectGitStatus(ProjectGitStatus(
+                repoRoot: repoRoot,
+                branch: branch,
+                ahead: reader.readInt32(),
+                behind: reader.readInt32(),
+                stashCount: reader.readInt32(),
+                staged: reader.readUInt32(),
+                modified: reader.readUInt32(),
+                untracked: reader.readUInt32(),
+                conflicted: reader.readUInt32(),
+                changedCount: reader.readUInt32(),
+            ))
+
         default:
             throw SlopDeskError.unknownMessageType(type)
         }

@@ -134,6 +134,14 @@ public final class ConnectionViewModel {
     /// store's write sink instead (``WorkspaceStore/setProjectKey(_:for:)``).
     public var onProjectKeyChanged: ((_ key: String) -> Void)?
 
+    /// A HOST-PUSHED project git summary (wire type 35): the FSEvents watcher's event-driven
+    /// `git status` fold for one repo toplevel, already reduced to counts host-side. The store books
+    /// it per PROJECT (``WorkspaceStore/applyPushedProjectGitSummary(_:repoRoot:at:)``) — the section
+    /// header updates without any client RPC, and the poll cadence backs off while pushes stay
+    /// fresh. Applied ungated like `.projectKey`; the plugin-dir poison backstop lives at the store
+    /// sink.
+    public var onProjectGitStatusChanged: ((_ summary: PaneGitSummary, _ repoRoot: String) -> Void)?
+
     private var client: SlopDeskClient?
     /// The pane's typed metadata façade, created on connect bound to the live ``client``, torn down
     /// on disconnect. Drives the sidebar git line + Open-Quickly/path actions; this VM folds inbound
@@ -762,6 +770,12 @@ public final class ConnectionViewModel {
             // remove.
             guard !path.isEmpty else { break }
             onProjectKeyChanged?(path)
+        case let .projectGitStatus(status):
+            // Host-pushed project git summary (wire type 35): fold to the domain value here (the
+            // store stays wire-free) and forward with the repo identity. An empty root is meaningless
+            // (the watcher only watches resolved toplevels) — validate-then-drop.
+            guard !status.repoRoot.isEmpty else { break }
+            onProjectGitStatusChanged?(PaneGitSummary(pushed: status), status.repoRoot)
         case .bell:
             break
         }

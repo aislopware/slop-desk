@@ -955,6 +955,37 @@ root["terminalWireMessages"] = [
     // Host-computed By-Project sidebar key (terminal CONTROL, host → client).
     // type 34 projectKey: UTF-8 path body (git toplevel else cwd), same string shape as title/cwd.
     wmRecord("project_key", .projectKey("/Users/me/project dir"), ["path": "/Users/me/project dir"]),
+    // Host-pushed project git summary (terminal CONTROL, host → client).
+    // type 35 projectGitStatus: [UInt16 BE rootLen][root][UInt16 BE branchLen][branch]
+    //   [Int32 BE ahead][Int32 BE behind][Int32 BE stash]
+    //   [UInt32 BE staged][UInt32 BE modified][UInt32 BE untracked][UInt32 BE conflicted][UInt32 BE changed].
+    wmRecord(
+        "project_git_status",
+        .projectGitStatus(WireMessage.ProjectGitStatus(
+            repoRoot: "/Users/me/project dir", branch: "feature/tiếng-việt", ahead: 2, behind: 1,
+            stashCount: 3, staged: 4, modified: 5, untracked: 6, conflicted: 7, changedCount: 15,
+        )),
+        [
+            "repoRoot": "/Users/me/project dir",
+            "branch": "feature/tiếng-việt",
+            "ahead": Int(2), "behind": Int(1), "stash": Int(3),
+            "staged": Int(4), "modified": Int(5), "untracked": Int(6), "conflicted": Int(7),
+            "changed": Int(15),
+        ],
+    ),
+    wmRecord(
+        "project_git_status",
+        .projectGitStatus(WireMessage.ProjectGitStatus(
+            repoRoot: "/r", branch: "", ahead: 0, behind: 0, stashCount: 0,
+            staged: 0, modified: 0, untracked: 0, conflicted: 0, changedCount: 0,
+        )),
+        [
+            "repoRoot": "/r", "branch": "",
+            "ahead": Int(0), "behind": Int(0), "stash": Int(0),
+            "staged": Int(0), "modified": Int(0), "untracked": Int(0), "conflicted": Int(0),
+            "changed": Int(0),
+        ],
+    ),
 ]
 
 // Warp-style "Blocks" wire messages (terminal CONTROL).

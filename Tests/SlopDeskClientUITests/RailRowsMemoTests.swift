@@ -37,7 +37,7 @@ final class RailRowsMemoTests: XCTestCase {
         store.setLastKnownCwd("/Users/me/beta", for: rows[2].id)
         store.setAgentStatus(.working, for: rows[0].id)
         store.setForegroundProcess("caffeinate", for: rows[1].id)
-        store.paneGitSummary[rows[2].id] = PaneGitSummary(
+        store.projectGitSummary["/Users/me/beta"] = PaneGitSummary(
             hasRepo: true, branch: "main", ahead: 1, behind: 0, changedCount: 2, modified: 2,
         )
         return store
@@ -93,7 +93,7 @@ final class RailRowsMemoTests: XCTestCase {
 
         store.setAgentStatus(.needsPermission, for: pane)
         store.setCompletionBadge(.failure, for: pane)
-        store.paneGitSummary[pane] = PaneGitSummary(
+        store.projectGitSummary["/Users/me/beta"] = PaneGitSummary(
             hasRepo: true, branch: "dev", ahead: 0, behind: 3, changedCount: 1, modified: 1,
         )
         store.handleProgress(.determinate(percent: 40), for: pane)
@@ -169,7 +169,7 @@ final class RailRowsMemoTests: XCTestCase {
         // Volatile ticks with the query active: NO rebuild — the exact storm the old bypass re-created.
         store.setAgentStatus(.needsPermission, for: before[0].id)
         store.handleProgress(.determinate(percent: 40), for: before[0].id)
-        store.paneGitSummary[before[0].id] = PaneGitSummary(
+        store.projectGitSummary["/Users/me/beta"] = PaneGitSummary(
             hasRepo: true, branch: "dev", ahead: 2, behind: 0, changedCount: 1, modified: 1,
         )
         let afterTicks = RailRowsBuilder.filtered(memo.rows(for: store), query: query)
@@ -211,7 +211,9 @@ final class RailRowsMemoTests: XCTestCase {
     // MARK: - liveChrome (the row view's fresh read over the stale cached model)
 
     /// After a volatile tick the CACHED row is stale by design, but `liveChrome(for:store:)` — what the row
-    /// VIEW renders — reflects the store: badge, git-line subtitle, read-only lock, and rename mode.
+    /// VIEW renders — reflects the store: badge, read-only lock, and rename mode. (The git line is a
+    /// SECTION-header concern now — `projectGitSummary` never touches row chrome, pinned by the memo
+    /// cache-hit above staying a hit across the git write below.)
     func testLiveChromeReflectsVolatileTicksOverStaleCache() {
         let store = makeRichStore()
         let memo = RailRowsMemo()
@@ -220,7 +222,7 @@ final class RailRowsMemoTests: XCTestCase {
 
         store.setAgentStatus(.needsPermission, for: row.id)
         store.setPaneReadOnly(row.id, true)
-        store.paneGitSummary[row.id] = PaneGitSummary(
+        store.projectGitSummary["/Users/me/beta"] = PaneGitSummary(
             hasRepo: true, branch: "main", ahead: 0, behind: 0, changedCount: 5, modified: 5,
         )
         store.requestRenameTab(row.tabID)
@@ -232,7 +234,6 @@ final class RailRowsMemoTests: XCTestCase {
         let live = RailRowsBuilder.liveChrome(for: row, store: store)
         XCTAssertEqual(live.badge, .awaitingInput, "the row view's badge is fresh")
         XCTAssertTrue(live.readOnly, "the lock is fresh")
-        XCTAssertEqual(live.subtitle, "main !5", "the git-line subtitle is fresh")
         XCTAssertEqual(live.status, .needsPermission)
         XCTAssertTrue(live.isEditing, "the representative row opens its rename field live")
     }
@@ -247,7 +248,6 @@ final class RailRowsMemoTests: XCTestCase {
             XCTAssertEqual(live.status, row.status, "status parity for \(row.title)")
             XCTAssertEqual(live.badge, row.badge, "badge parity for \(row.title)")
             XCTAssertEqual(live.subtitle, row.subtitle, "subtitle parity for \(row.title)")
-            XCTAssertEqual(live.gitSummary, row.gitSummary, "git parity for \(row.title)")
             XCTAssertEqual(live.processLabel, row.processLabel, "process parity for \(row.title)")
             XCTAssertEqual(live.readOnly, row.readOnly, "lock parity for \(row.title)")
             XCTAssertEqual(live.isEditing, row.isEditing, "rename-mode parity for \(row.title)")

@@ -67,19 +67,32 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
         while session.takeControlBatchForTesting() != nil {}
     }
 
+    /// `realpath(3)` for building test paths/expectations: the resolver canonicalizes before its
+    /// walk, and `FileManager.temporaryDirectory` is itself behind a symlink (`/var` → `/private/var`),
+    /// so fixture paths must be physical or every key expectation would silently shift.
+    private func realPath(_ path: String) -> String {
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        guard realpath(path, &buffer) != nil else { return path }
+        let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+        return String(bytes: bytes, encoding: .utf8) ?? path
+    }
+
     /// A real on-disk repo shape: `<tmp>/repo/.git/` + `<tmp>/repo/sub/` — the resolver walks the
     /// actual filesystem in these tests (the walk itself is pinned pure in ProjectKeyResolverTests).
+    /// Returned paths are PHYSICAL (`realpath`), so feeding them as the cwd round-trips through the
+    /// resolver's canonicalization unchanged.
     private func makeTempRepo() throws -> (root: String, sub: String) {
-        let base = FileManager.default.temporaryDirectory
+        let rawBase = FileManager.default.temporaryDirectory
             .appendingPathComponent("slopdesk-pk-\(UUID().uuidString)")
-        let sub = base.appendingPathComponent("repo/sub")
-        try FileManager.default.createDirectory(at: sub, withIntermediateDirectories: true)
-        let root = base.appendingPathComponent("repo")
         try FileManager.default.createDirectory(
-            at: root.appendingPathComponent(".git"), withIntermediateDirectories: true,
+            at: rawBase.appendingPathComponent("repo/sub"), withIntermediateDirectories: true,
         )
-        addTeardownBlock { try? FileManager.default.removeItem(at: base) }
-        return (root.path, sub.path)
+        try FileManager.default.createDirectory(
+            at: rawBase.appendingPathComponent("repo/.git"), withIntermediateDirectories: true,
+        )
+        addTeardownBlock { try? FileManager.default.removeItem(at: rawBase) }
+        let base = realPath(rawBase.path)
+        return (base + "/repo", base + "/repo/sub")
     }
 
     /// Lock-guarded FIFO of deferred resolve closures (the slow-resolver executor stand-in).
@@ -172,15 +185,16 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
 
     func testNonRepoCwdFallsBackToCwdAsKey() throws {
         let session = makeSession()
-        let base = FileManager.default.temporaryDirectory
+        let rawBase = FileManager.default.temporaryDirectory
             .appendingPathComponent("slopdesk-pk-norepo-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        addTeardownBlock { try? FileManager.default.removeItem(at: base) }
+        try FileManager.default.createDirectory(at: rawBase, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: rawBase) }
+        let base = realPath(rawBase.path)
         warmUp(session)
-        session.deriveProjectKeyForTesting(from: [.cwd(base.path)])
+        session.deriveProjectKeyForTesting(from: [.cwd(base)])
         XCTAssertEqual(
             session.takeControlBatchForTesting(),
-            [.cwd(base.path), .projectKey(base.path)],
+            [.cwd(base), .projectKey(base)],
             "no repo anywhere above the cwd → the cwd itself is the (stable) key",
         )
     }
@@ -405,6 +419,152 @@ final class MuxChannelSessionProjectKeyTests: XCTestCase {
         XCTAssertNil(
             session.takeControlBatchForTesting(),
             "a session that never observed a cwd contributes nothing — no chatter on an ordinary reconnect",
+        )
+    }
+
+    // MARK: - spawn seed (the server-provided cwd, before any shell signal)
+
+    /// The spawn cwd is server-provided (channelOpen initialCwd / ctl --cwd), not shell-controlled —
+    /// it must derive cwd + key with NO command edge and NO OSC-7. Without the seed, a pane whose
+    /// shell never emits OSC-133/OSC-7 (raw command, shim disabled) NEVER resolves a key, and every
+    /// fresh split waits a full warm-up + resolve round-trip while the sidebar sections it by raw cwd.
+    func testSpawnSeedEmitsCwdAndKeyWithoutAnyShellSignal() throws {
+        let session = makeSession()
+        let (root, sub) = try makeTempRepo()
+        session.seedProjectTruthAtSpawn(cwd: sub)
+        XCTAssertEqual(
+            session.takeControlBatchForTesting(),
+            [.cwd(sub), .projectKey(root)],
+            "the seed derives the spawn dir's truths immediately — no prompt edge required",
+        )
+        session.reestablishActivityOnReattachForTesting()
+        XCTAssertEqual(
+            session.takeControlBatchForTesting(),
+            [.cwd(sub), .projectKey(root)],
+            "the seeded truths latch like observed ones — reattach re-asserts them",
+        )
+    }
+
+    /// The seed must NOT open the OSC-7 warm-up gate: a plugin manager's pre-first-prompt `cd`
+    /// noise is still dropped, and the seeded truth survives it.
+    func testSpawnSeedDoesNotOpenTheOSC7WarmUpGate() throws {
+        let session = makeSession()
+        let (root, sub) = try makeTempRepo()
+        session.seedProjectTruthAtSpawn(cwd: sub)
+        drainControlOut(session)
+        let (_, pluginCache) = try makeTempRepo() // the pre-prompt cd target — tempting but bogus
+        session.deriveProjectKeyForTesting(from: [.cwd(pluginCache)])
+        XCTAssertNil(
+            session.takeControlBatchForTesting(),
+            "pre-first-prompt OSC-7 is still gated after a spawn seed",
+        )
+        session.reestablishActivityOnReattachForTesting()
+        XCTAssertEqual(
+            session.takeControlBatchForTesting(),
+            [.cwd(sub), .projectKey(root)],
+            "the seeded truth stands — the gated noise never latched over it",
+        )
+    }
+
+    /// A seed that arrives AFTER a real observation (a lost race) must not clobber it.
+    func testSpawnSeedLosesToAnAlreadyObservedTruth() throws {
+        let session = makeSession()
+        let (rootA, subA) = try makeTempRepo()
+        let (_, subB) = try makeTempRepo()
+        warmUp(session)
+        session.deriveProjectKeyForTesting(from: [.cwd(subA)])
+        drainControlOut(session)
+        session.seedProjectTruthAtSpawn(cwd: subB)
+        XCTAssertNil(
+            session.takeControlBatchForTesting(),
+            "a late seed against an already-latched truth is a no-op",
+        )
+        session.reestablishActivityOnReattachForTesting()
+        XCTAssertEqual(
+            session.takeControlBatchForTesting(),
+            [.cwd(subA), .projectKey(rootA)],
+            "the observed truth stands",
+        )
+    }
+
+    /// The first prompt edge after a seed probes the SAME directory — both dedupe anchors must
+    /// swallow it (no re-emitted cwd, no re-emitted key).
+    func testSpawnSeededTruthDedupesTheFirstPromptProbe() throws {
+        let session = makeSession()
+        let (_, sub) = try makeTempRepo()
+        session.seedProjectTruthAtSpawn(cwd: sub)
+        drainControlOut(session)
+        session.cwdProbeOverride = { sub }
+        session.deriveProjectKeyForTesting(from: [.commandStatus(.idle(exitCode: 0, durationMS: 1))])
+        XCTAssertNil(
+            session.takeControlBatchForTesting(),
+            "the first prompt's probe equals the seed — nothing re-emits",
+        )
+    }
+
+    /// The type-34 latch edges also feed ``MuxChannelSession/onProjectKeyResolved`` — the
+    /// ``HostServer`` repo-watch refcount feed: it fires per NEW key (spawn seed included) and stays
+    /// silent on a deduped same-key resolve, exactly mirroring the wire emission.
+    func testProjectKeyResolvedCallbackFiresOnLatchEdgesOnly() throws {
+        final class Keys: @unchecked Sendable {
+            private let lock = NSLock()
+            private var _all: [String] = []
+            func append(_ key: String) {
+                lock.lock()
+                _all.append(key)
+                lock.unlock()
+            }
+
+            var all: [String] {
+                lock.lock()
+                defer { lock.unlock() }
+                return _all
+            }
+        }
+        let session = makeSession()
+        let keys = Keys()
+        session.onProjectKeyResolved = { keys.append($0) }
+        let (root, sub) = try makeTempRepo()
+        warmUp(session)
+        session.deriveProjectKeyForTesting(from: [.cwd(sub)])
+        XCTAssertEqual(keys.all, [root], "a fresh latch feeds the repo-watch refcounts")
+        session.deriveProjectKeyForTesting(from: [.cwd(root)]) // same-project cd → key deduped
+        XCTAssertEqual(keys.all, [root], "a deduped key does not re-fire")
+    }
+
+    // MARK: - symlink canonicalization (one repo, one key, whichever source spoke)
+
+    /// OSC-7 carries the shell's LOGICAL `$PWD` (symlink components intact) while the prompt-edge
+    /// probe reports the kernel's PHYSICAL vnode path — without canonicalization the SAME repo
+    /// resolves to two different key strings and the client renders two sidebar sections. The key
+    /// must be the physical toplevel; the type-33 cwd keeps the path the shell reported.
+    func testSymlinkedCwdResolvesToCanonicalKey() throws {
+        let session = makeSession()
+        let (root, _) = try makeTempRepo() // physical paths
+        let linkParent = FileManager.default.temporaryDirectory
+            .appendingPathComponent("slopdesk-pk-link-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: linkParent, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: linkParent) }
+        let link = linkParent.appendingPathComponent("alias").path
+        try FileManager.default.createSymbolicLink(atPath: link, withDestinationPath: root)
+        let linkedSub = link + "/sub"
+
+        warmUp(session)
+        session.deriveProjectKeyForTesting(from: [.cwd(linkedSub)])
+        XCTAssertEqual(
+            session.takeControlBatchForTesting(),
+            [.cwd(linkedSub), .projectKey(root)],
+            "the key is the PHYSICAL toplevel (symlinks resolved); the cwd stays as the shell said it",
+        )
+
+        // The probe later reports the physical path for the same directory: the cwd edge re-emits
+        // (a different string is a genuine type-33 change) but the key must dedupe — one section.
+        session.cwdProbeOverride = { root + "/sub" }
+        session.deriveProjectKeyForTesting(from: [.commandStatus(.idle(exitCode: 0, durationMS: 1))])
+        XCTAssertEqual(
+            session.takeControlBatchForTesting(),
+            [.cwd(root + "/sub")],
+            "logical → physical is a cwd-string change but the SAME canonical key — no type-34 re-emit",
         )
     }
 }

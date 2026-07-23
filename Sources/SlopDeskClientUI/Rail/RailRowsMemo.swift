@@ -2,7 +2,7 @@
 // structural fingerprint.
 //
 // PROBLEM: if `NavigatorColumn`'s body called `RailRowsBuilder.rows(for:)` directly, that walk would read
-// every volatile per-pane store dictionary (`paneAgentStatus`, `paneGitSummary`, `panePendingCompletion`,
+// every volatile per-pane store dictionary (`paneAgentStatus`, `panePendingCompletion`,
 // `paneForegroundProcess`, progress, gates, read-only, `completionFlashTick`, …). Observation tracks at
 // PROPERTY granularity — reading `dict[oneKey]` depends on the WHOLE dict — so ANY pane's status tick
 // would invalidate the whole sidebar body: a full O(panes) row rebuild + `disambiguated()` + sectioning +
@@ -36,8 +36,9 @@ import SlopDeskWorkspaceCore
 ///     rename). Read conditionally so the whole-dict Observation dependency on `paneForegroundProcess` is
 ///     registered only while such a pane exists — for cwd-titled panes a process tick stays a cache hit.
 /// Deliberately EXCLUDED (stale-safe, row views read them live): agent status, badges, completion,
-/// progress, git summaries, read-only, `pendingTabRename`, `activeTabIndex`/`activePane` (selection is
-/// derived in the navigator, not from the cached `isSelected`), and `completionFlashTick`.
+/// progress, the PROJECT git summaries (the section-header leaf reads `projectGitSummary` itself),
+/// read-only, `pendingTabRename`, `activeTabIndex`/`activePane` (selection is derived in the
+/// navigator, not from the cached `isSelected`), and `completionFlashTick`.
 struct RailStructureKey: Equatable {
     struct PaneKey: Equatable {
         let id: PaneID

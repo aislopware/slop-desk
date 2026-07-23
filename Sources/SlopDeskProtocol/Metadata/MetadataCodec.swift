@@ -154,6 +154,43 @@ public enum MetadataCodec {
             stashCount: 0,
             files: [],
         )
+
+        /// The porcelain breakdown folded from ``files``' packed `XY` status codes (high nibble = X /
+        /// index, low = Y / worktree; space=0 M=1 A=2 D=3 R=4 C=5 U=6 ?=7 !=8 T=9 — the host probe's
+        /// packing). Each file counts INDEPENDENTLY per axis — an `MM` file is BOTH staged and
+        /// modified; `??` is untracked; a `U` on either side (or `AA`/`DD`) is a conflict. The ONE
+        /// fold shared by the client's `PaneGitSummary` and the host's type-35 push, so the two
+        /// surfaces can never disagree on what "3 modified" means.
+        public struct FoldedCounts: Equatable, Sendable {
+            public var staged: Int
+            public var modified: Int
+            public var untracked: Int
+            public var conflicted: Int
+
+            public init(staged: Int = 0, modified: Int = 0, untracked: Int = 0, conflicted: Int = 0) {
+                self.staged = staged
+                self.modified = modified
+                self.untracked = untracked
+                self.conflicted = conflicted
+            }
+        }
+
+        /// See ``FoldedCounts``.
+        public var foldedCounts: FoldedCounts {
+            var counts = FoldedCounts()
+            for file in files {
+                let x = file.statusCode >> 4, y = file.statusCode & 0x0F
+                if x == 7, y == 7 {
+                    counts.untracked += 1 // ??
+                } else if x == 6 || y == 6 || (x == 2 && y == 2) || (x == 3 && y == 3) {
+                    counts.conflicted += 1 // unmerged: U on either side, or the AA / DD both-changed states
+                } else {
+                    if x != 0 { counts.staged += 1 } // index change (X not space)
+                    if y != 0 { counts.modified += 1 } // worktree change (Y not space)
+                }
+            }
+            return counts
+        }
     }
 
     /// One agent (Claude/codex/opencode) session file for a project

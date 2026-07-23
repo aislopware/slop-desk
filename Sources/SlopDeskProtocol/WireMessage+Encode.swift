@@ -77,6 +77,28 @@ extension WireMessage {
         case let .projectKey(path):
             frame.append(Data(path.utf8))
 
+        case let .projectGitStatus(status):
+            // [UInt16 BE rootLen][repoRoot UTF-8][UInt16 BE branchLen][branch UTF-8]
+            // [Int32 BE ahead][Int32 BE behind][Int32 BE stash]
+            // [UInt32 BE staged][UInt32 BE modified][UInt32 BE untracked][UInt32 BE conflicted]
+            // [UInt32 BE changed] — both strings length-prefixed (the branch is not the last field),
+            // clamped at a scalar boundary so a pathological >64KiB value can never wrap the length
+            // field and mis-split the fixed trailer.
+            let rootBytes = Data(Self.clampedU16Field(status.repoRoot).utf8)
+            frame.appendBE(UInt16(rootBytes.count))
+            frame.append(rootBytes)
+            let branchBytes = Data(Self.clampedU16Field(status.branch).utf8)
+            frame.appendBE(UInt16(branchBytes.count))
+            frame.append(branchBytes)
+            frame.appendBE(status.ahead)
+            frame.appendBE(status.behind)
+            frame.appendBE(status.stashCount)
+            frame.appendBE(status.staged)
+            frame.appendBE(status.modified)
+            frame.appendBE(status.untracked)
+            frame.appendBE(status.conflicted)
+            frame.appendBE(status.changedCount)
+
         case let .notification(title, body):
             // [UInt16 BE titleLen][title UTF-8][body UTF-8] — the title is length-prefixed so the
             // body (which may contain anything, incl. no delimiter) is the unambiguous remainder.
@@ -232,6 +254,24 @@ extension WireMessage {
         return String(clamped)
     }
 
+    /// A type-35 string field (repo root / branch) whose UTF-8 fits the wire's UInt16 length field
+    /// (≤ 65535 bytes), clamped at a Unicode SCALAR boundary so it stays valid UTF-8. Identity for
+    /// any sane value (paths are PATH_MAX-bounded, branch names far shorter); only an absurd >64KiB
+    /// value is shortened — preventing the length field from wrapping and mis-splitting the fixed
+    /// trailer. Shared by ``encode()`` and ``wireByteCount`` so the two stay consistent.
+    static func clampedU16Field(_ value: String) -> String {
+        guard value.utf8.count > Int(UInt16.max) else { return value }
+        var clamped = String.UnicodeScalarView()
+        var count = 0
+        for scalar in value.unicodeScalars {
+            let n = String(scalar).utf8.count
+            if count + n > Int(UInt16.max) { break }
+            clamped.append(scalar)
+            count += n
+        }
+        return String(clamped)
+    }
+
     /// A Block command line whose UTF-8 fits the wire's UInt16 length field (≤ 65535 bytes),
     /// clamped at a Unicode SCALAR boundary so it stays valid UTF-8. Identity for any sane command
     /// (the segmenter caps captured command text at 256 bytes); only an absurd >64KiB text is
@@ -286,6 +326,11 @@ public extension WireMessage {
             case let .title(string): string.utf8.count
             case let .cwd(path): path.utf8.count
             case let .projectKey(path): path.utf8.count
+            case let .projectGitStatus(status):
+                // 2×(UInt16 len + string) + 3×Int32 + 5×UInt32 (see encode()).
+                2 + Self.clampedU16Field(status.repoRoot).utf8.count
+                    + 2 + Self.clampedU16Field(status.branch).utf8.count
+                    + 12 + 20
             case let .notification(title, bodyText): 2 + Self.clampedNotificationTitle(title).utf8.count + bodyText.utf8
                 .count // UInt16 len + (clamped) title + body
             case let .foregroundProcess(name): name.utf8.count

@@ -189,4 +189,88 @@ final class ProjectKeyStoreTests: XCTestCase {
         store.setProjectKey("/Users/me/delta", for: pane) // the host's follow-up push
         XCTAssertEqual(store.paneProjectKey(pane), "/Users/me/delta")
     }
+
+    // MARK: - New split/tab/window panes inherit the parent's RESOLVED key with the cwd
+
+    /// A split from a pane whose cwd is a repo SUBDIRECTORY must land in the parent's section on the
+    /// FIRST frame: the new spec inherits the parent's host-pushed key alongside the cwd. Without the
+    /// seed the new pane sections by its raw subdir cwd until the host's own type-34 round-trip lands
+    /// — the "split tears off into a section named after the subdir" symptom.
+    func testSplitSeedsParentHostKeyWithInheritedCwd() throws {
+        let (store, _) = makeStore()
+        let parent = try activePane(store, tab: 0)
+        store.setProjectKey("/repo/root", for: parent)
+        store.setLastKnownCwd("/repo/root/packages/api", for: parent)
+
+        store.splitActivePane(axis: .horizontal, kind: .terminal)
+        let child = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane, "the split lands focused")
+        XCTAssertNotEqual(child, parent, "a new leaf exists and is active")
+        XCTAssertEqual(
+            store.tree.activeSession?.specs[child]?.lastKnownCwd, "/repo/root/packages/api",
+            "precondition: the split inherited the parent's cwd",
+        )
+        XCTAssertEqual(
+            store.paneProjectKey(child), "/repo/root",
+            "the child sections under the parent's resolved key immediately — no host round-trip flash",
+        )
+    }
+
+    /// Same seed on the new-tab path; the new-WINDOW path's default policy resolves `home` (not the
+    /// parent cwd — `docs/DECISIONS.md`), so its subtree guard correctly seeds nothing there.
+    func testNewTabSeedsParentHostKeyAndNewWindowPolicyDoesNot() throws {
+        let (store, _) = makeStore()
+        let parent = try activePane(store, tab: 0)
+        store.setProjectKey("/repo/root", for: parent)
+        store.setLastKnownCwd("/repo/root/sub", for: parent)
+
+        store.newTab(kind: .terminal)
+        let tabChild = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
+        XCTAssertEqual(store.paneProjectKey(tabChild), "/repo/root", "new tab seeds the parent key")
+
+        store.newSession(name: "Second", kind: .terminal)
+        let windowChild = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
+        XCTAssertNil(
+            store.tree.activeSession?.specs[windowChild]?.projectKey,
+            "the default new-window policy opens at HOME — outside the parent key's subtree, so the "
+                + "guard seeds nothing and the host resolves the child's own key",
+        )
+    }
+
+    /// The seed is guarded by SUBTREE COVERAGE: when the inherited cwd is NOT inside the parent
+    /// key's subtree (a stale key across an un-re-pushed `cd`, or a working-directory policy that
+    /// resolves a fixed dir), seeding would file the child under the WRONG project — leave the key
+    /// to the host.
+    func testSplitDoesNotSeedWhenInheritedCwdIsOutsideTheParentKey() throws {
+        let (store, _) = makeStore()
+        let parent = try activePane(store, tab: 0)
+        store.setProjectKey("/repo/root", for: parent)
+        store.setLastKnownCwd("/elsewhere/scratch", for: parent) // cd'd out; host re-push not landed yet
+
+        store.splitActivePane(axis: .horizontal, kind: .terminal)
+        let child = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
+        XCTAssertNil(
+            store.tree.activeSession?.specs[child]?.projectKey,
+            "an uncovered inherited cwd seeds nothing — the host resolves the child's key",
+        )
+        XCTAssertEqual(
+            store.paneProjectKey(child), "/elsewhere/scratch",
+            "the child falls back to its cwd (the same section its OWN resolve would start from)",
+        )
+    }
+
+    /// A parent still on the cwd FALLBACK (no host push yet) seeds nothing — the child's identical
+    /// cwd fallback already sections it beside the parent, and a guessed key could be wrong.
+    func testSplitFromCwdFallbackParentSeedsNothing() throws {
+        let (store, _) = makeStore()
+        let parent = try activePane(store, tab: 0)
+        XCTAssertNil(store.tree.activeSession?.specs[parent]?.projectKey, "precondition: no host key")
+
+        store.splitActivePane(axis: .horizontal, kind: .terminal)
+        let child = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
+        XCTAssertNil(store.tree.activeSession?.specs[child]?.projectKey, "nothing to inherit")
+        XCTAssertEqual(
+            store.paneProjectKey(child), "/Users/me/alpha",
+            "the child's own cwd fallback matches the parent's section anyway",
+        )
+    }
 }

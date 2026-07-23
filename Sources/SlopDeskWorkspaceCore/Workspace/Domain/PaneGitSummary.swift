@@ -55,33 +55,40 @@ public struct PaneGitSummary: Equatable, Sendable {
         self.stash = stash
     }
 
-    /// Folds the wire payload down to the rail's needs (drops the file list / remote / toplevel), deriving
-    /// the porcelain breakdown from each file's packed `XY` status code (high nibble = X / index, low = Y /
-    /// worktree; space=0 M=1 A=2 D=3 R=4 C=5 U=6 ?=7 !=8 T=9 — the ``HostMetadataProbe`` packing).
+    /// Folds the wire payload down to the rail's needs (drops the file list / remote / toplevel) via
+    /// the shared porcelain fold (``MetadataCodec/GitStatusPayload/foldedCounts`` — one rule for the
+    /// RPC pull and the host's type-35 push alike).
     public init(payload: MetadataCodec.GitStatusPayload) {
-        var staged = 0, modified = 0, untracked = 0, conflicted = 0
-        for file in payload.files {
-            let x = file.statusCode >> 4, y = file.statusCode & 0x0F
-            if x == 7, y == 7 {
-                untracked += 1 // ??
-            } else if x == 6 || y == 6 || (x == 2 && y == 2) || (x == 3 && y == 3) {
-                conflicted += 1 // unmerged: U in either side, or the AA / DD both-changed states
-            } else {
-                if x != 0 { staged += 1 } // index change (X not space)
-                if y != 0 { modified += 1 } // worktree change (Y not space)
-            }
-        }
+        let counts = payload.foldedCounts
         self.init(
             hasRepo: payload.hasRepo,
             branch: payload.branch,
             ahead: Int(payload.ahead),
             behind: Int(payload.behind),
             changedCount: payload.files.count,
-            staged: staged,
-            modified: modified,
-            untracked: untracked,
-            conflicted: conflicted,
+            staged: counts.staged,
+            modified: counts.modified,
+            untracked: counts.untracked,
+            conflicted: counts.conflicted,
             stash: Int(payload.stashCount),
+        )
+    }
+
+    /// Folds a HOST-PUSHED type-35 summary (wire ``WireMessage/ProjectGitStatus`` — counts already
+    /// folded host-side by the same shared rule). A push only ever describes a repo (`hasRepo` true
+    /// by construction: the watcher watches repo toplevels).
+    public init(pushed status: WireMessage.ProjectGitStatus) {
+        self.init(
+            hasRepo: true,
+            branch: status.branch,
+            ahead: Int(status.ahead),
+            behind: Int(status.behind),
+            changedCount: Int(status.changedCount),
+            staged: Int(status.staged),
+            modified: Int(status.modified),
+            untracked: Int(status.untracked),
+            conflicted: Int(status.conflicted),
+            stash: Int(status.stashCount),
         )
     }
 
