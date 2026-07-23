@@ -45,6 +45,23 @@ private actor EventLog {
     func add(_ event: FileUploadEvent) { events.append(event) }
 }
 
+/// Runs a server serve loop and a client upload against a wired loopback pair, returning the
+/// events the client emitted once both sides settle. Free-standing (captures no test case) so
+/// concurrent test tasks can each drive an independent upload.
+private func runUpload(files: [URL], sink: FakeSink) async -> [FileUploadEvent] {
+    let (serverChannel, clientChannel) = LoopbackFileTransferChannel.pair()
+    let server = FileTransferServer(port: 0, makeSink: { sink })
+    let log = EventLog()
+
+    async let serving: Void = server.serve(channel: serverChannel, sink: sink)
+    let client = FileTransferClient()
+    // Delivery is awaited per event, so the log holds the exact emission order and is complete
+    // the moment `run` returns — no drain sleep.
+    await client.run(files: files, over: clientChannel) { event in await log.add(event) }
+    await serving
+    return await log.events
+}
+
 final class FileTransferE2ETests: XCTestCase {
     private var dir: URL!
 
@@ -67,24 +84,6 @@ final class FileTransferE2ETests: XCTestCase {
         let data = Data((0..<bytes).map { UInt8($0 % 251) })
         try data.write(to: url)
         return url
-    }
-
-    /// Runs a server serve loop and a client upload against a wired loopback pair, returning the
-    /// events the client emitted once both sides settle.
-    private func runUpload(files: [URL], sink: FakeSink) async -> [FileUploadEvent] {
-        let (serverChannel, clientChannel) = LoopbackFileTransferChannel.pair()
-        let server = FileTransferServer(port: 0, makeSink: { sink })
-        let log = EventLog()
-
-        async let serving: Void = server.serve(channel: serverChannel, sink: sink)
-        let client = FileTransferClient()
-        await client.run(files: files, over: clientChannel) { event in
-            Task { await log.add(event) }
-        }
-        await serving
-        // Let the trailing event Tasks drain.
-        try? await Task.sleep(nanoseconds: 50_000_000)
-        return await log.events
     }
 
     func testSingleFileRoundTrip() async throws {
@@ -137,10 +136,39 @@ final class FileTransferE2ETests: XCTestCase {
             }
             return nil
         }
-        XCTAssertFalse(progresses.isEmpty)
-        XCTAssertEqual(progresses.last, total)
-        // Monotonic non-decreasing.
-        XCTAssertEqual(progresses, progresses.sorted())
+        // EXACTLY the chunk boundaries, in emission order — 2×256 KiB chunks + the 88 KiB tail.
+        XCTAssertEqual(progresses, [262_144, 524_288, 614_400])
+    }
+
+    /// Progress sequences stay in EXACT emission order even with many uploads contending for the
+    /// cooperative pool — event delivery is awaited per event, so a consumer's actor observes the
+    /// emitted sequence verbatim (a per-event fire-and-forget hop reorders under exactly this load).
+    func testProgressStaysOrderedAcrossConcurrentUploads() async throws {
+        let chunk = FileTransferProtocolConstants.chunkByteCount
+        let chunkCount = 12
+        let urls = try (0..<6).map { try makeFile("c\($0).bin", bytes: chunk * chunkCount) }
+        let expected = (1...chunkCount).map { UInt64($0 * chunk) }
+
+        let results = await withTaskGroup(of: (Int, [FileUploadEvent]).self) { group in
+            for (i, url) in urls.enumerated() {
+                group.addTask {
+                    let events = await runUpload(files: [url], sink: FakeSink())
+                    return (i, events)
+                }
+            }
+            var all: [(Int, [FileUploadEvent])] = []
+            for await result in group { all.append(result) }
+            return all
+        }
+
+        for (i, events) in results {
+            let progresses = events.compactMap { event -> UInt64? in
+                if case let .progress(_, sentBytes, _) = event { return sentBytes }
+                return nil
+            }
+            XCTAssertEqual(progresses, expected, "upload \(i): progress events arrived out of order")
+            XCTAssertTrue(events.contains(.completed(id: 0)), "upload \(i) completed")
+        }
     }
 
     func testFinalizeFailureSurfacesAsFailed() async throws {

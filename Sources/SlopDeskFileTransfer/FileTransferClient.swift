@@ -24,12 +24,17 @@ public struct FileTransferClient: Sendable {
 
     /// Dials `host:port` and uploads `files`. Emits events as each transfer progresses. Returns when
     /// every file has completed or failed and the connection is closed.
+    ///
+    /// `onEvent` is AWAITED per event, so events reach the consumer strictly in emission order — an
+    /// actor-isolated consumer observes the exact `started → progress… → completed/failed` sequence
+    /// (a fire-and-forget per-event hop reorders under pool contention: progress runs backwards, a
+    /// stale progress stomps a completed row). Every event is delivered before this returns.
     @preconcurrency
     public func upload(
         files: [URL],
         host: String,
         port: UInt16,
-        onEvent: @Sendable @escaping (FileUploadEvent) -> Void,
+        onEvent: @Sendable @escaping (FileUploadEvent) async -> Void,
     ) async {
         guard let nwPort = NWEndpoint.Port(rawValue: port) else { return }
         let connection = NWConnection(
@@ -48,7 +53,7 @@ public struct FileTransferClient: Sendable {
     public func run(
         files: [URL],
         over channel: FileTransferChannel,
-        onEvent: @Sendable @escaping (FileUploadEvent) -> Void,
+        onEvent: @Sendable @escaping (FileUploadEvent) async -> Void,
     ) async {
         var reader = FrameReader(channel: channel)
         defer { channel.close() }
@@ -58,7 +63,7 @@ public struct FileTransferClient: Sendable {
             try await send(.hello(version: fileTransferVersion), over: channel)
             guard case let .helloAck(accepted)? = try await reader.next(), accepted else {
                 for (index, url) in files.enumerated() {
-                    onEvent(.failed(
+                    await onEvent(.failed(
                         id: UInt32(index),
                         reason: "host rejected handshake — url \(url.lastPathComponent)",
                     ))
@@ -81,7 +86,7 @@ public struct FileTransferClient: Sendable {
         transferId: UInt32,
         over channel: FileTransferChannel,
         reader: inout FrameReader,
-        onEvent: @Sendable (FileUploadEvent) -> Void,
+        onEvent: @Sendable (FileUploadEvent) async -> Void,
     ) async {
         let name = url.lastPathComponent
         let handle: FileHandle
@@ -91,18 +96,18 @@ public struct FileTransferClient: Sendable {
             let fileSize = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
             size = UInt64(max(0, fileSize))
         } catch {
-            onEvent(.failed(id: transferId, reason: "cannot read \(name)"))
+            await onEvent(.failed(id: transferId, reason: "cannot read \(name)"))
             return
         }
         defer { try? handle.close() }
 
-        onEvent(.started(id: transferId, name: name, totalBytes: size))
+        await onEvent(.started(id: transferId, name: name, totalBytes: size))
 
         do {
             try await send(.offer(transferId: transferId, fileSize: size, name: name), over: channel)
             guard case .accept? = try await expect(transferId, reader: &reader) else {
                 // `expect` already emitted `.failed` for a `failed` reply; a nil/other ends it too.
-                onEvent(.failed(id: transferId, reason: "host did not accept \(name)"))
+                await onEvent(.failed(id: transferId, reason: "host did not accept \(name)"))
                 return
             }
 
@@ -112,21 +117,21 @@ public struct FileTransferClient: Sendable {
                 if chunk.isEmpty { break }
                 try await send(.chunk(transferId: transferId, data: chunk), over: channel)
                 sent += UInt64(chunk.count)
-                onEvent(.progress(id: transferId, sentBytes: sent, totalBytes: size))
+                await onEvent(.progress(id: transferId, sentBytes: sent, totalBytes: size))
             }
 
             try await send(.finish(transferId: transferId), over: channel)
             switch try await expect(transferId, reader: &reader) {
             case .complete:
-                onEvent(.completed(id: transferId))
+                await onEvent(.completed(id: transferId))
             case let .failed(reason):
-                onEvent(.failed(id: transferId, reason: reason))
+                await onEvent(.failed(id: transferId, reason: reason))
             default:
-                onEvent(.failed(id: transferId, reason: "no completion for \(name)"))
+                await onEvent(.failed(id: transferId, reason: "no completion for \(name)"))
             }
         } catch {
             try? await send(.cancel(transferId: transferId), over: channel)
-            onEvent(.failed(id: transferId, reason: "upload error for \(name)"))
+            await onEvent(.failed(id: transferId, reason: "upload error for \(name)"))
         }
     }
 

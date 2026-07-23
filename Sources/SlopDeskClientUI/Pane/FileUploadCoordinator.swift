@@ -28,15 +28,14 @@ enum FileUploadCoordinator {
         let ids = items.map(\.id)
         let names = items.map(\.url.lastPathComponent)
 
-        // The outer Task holds `model` for the upload's duration; each event hops to the main actor with
-        // a WEAK ref so a pane closed mid-transfer is not kept alive by trailing progress events.
+        // The Task holds `model` for the upload's duration (a pane closed mid-transfer still lands
+        // its file on the host). Each event is AWAITED onto the main actor, so rows apply strictly
+        // in emission order — progress never runs backwards and a stale progress can never stomp a
+        // completed row — and every event has been applied by the time the upload returns.
         Task {
             let client = FileTransferClient()
-            await client.upload(files: items.map(\.url), host: host, port: port) { event in
-                Task { @MainActor [weak model] in
-                    guard let model else { return }
-                    apply(event, ids: ids, names: names, into: model)
-                }
+            await client.upload(files: items.map(\.url), host: host, port: port) { @MainActor event in
+                apply(event, ids: ids, names: names, into: model)
             }
         }
     }
