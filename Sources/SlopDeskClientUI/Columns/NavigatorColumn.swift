@@ -143,7 +143,9 @@ struct NavigatorColumn: View {
                 .foregroundStyle(Slate.Text.icon)
             TextField("Search tabs", text: $query)
                 .textFieldStyle(.plain)
-                .font(.system(size: Slate.Typeface.body))
+                // The instrument mono face — the whole rail speaks the terminal's register, the
+                // query field included (what you type filters terminal rows).
+                .font(Slate.Typeface.instrument(Slate.Typeface.body))
                 .foregroundStyle(Slate.Text.primary)
                 .tint(Slate.State.accent) // the active caret is the accent colour
             if !query.isEmpty {
@@ -326,7 +328,7 @@ struct NavigatorColumn: View {
 
     private func emptyLabel(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: Slate.Typeface.body))
+            .font(Slate.Typeface.instrument(Slate.Typeface.body))
             .foregroundStyle(Slate.Text.secondary)
             .padding(.horizontal, 14)
             .padding(.vertical, 6)
@@ -726,7 +728,7 @@ private struct SidebarLiveRow: View {
     private func rowBody(
         chrome: RailRowsBuilder.RailRowChrome, active: Bool, now: Date,
     ) -> some View {
-        // The todo SCENT — promoted from the tooltip to the line-2 readout while the agent is WORKING
+        // The todo SCENT — promoted from the tooltip to the inline readout while the agent is WORKING
         // with a live inspector feed reporting an in-flight todo.
         let scent: String? = chrome.badge == .running
             ? (store.handle(for: row.id) as? LivePaneSession)?.inspector.flatMap { vm in
@@ -759,8 +761,8 @@ private struct SidebarLiveRow: View {
             }()
             : nil
         let shownTitle = row.title.isEmpty ? fallbackTitle : row.title
-        // The last completed command feeds the TOOLTIP only — a settled row's second line is gone
-        // (the readout earns line 2; history and structure live under hover).
+        // The last completed command feeds the TOOLTIP only — a settled row shows nothing beside
+        // its title (the readout is live state; history and structure live under hover).
         let lastCommand = blocks.last(where: { $0.complete || $0.durationMS != nil })
             .flatMap(SidebarRowTooltip.commandLine)
         let readout = RailRowReadout.resolve(
@@ -785,7 +787,7 @@ private struct SidebarLiveRow: View {
         SlateTabRow(
             title: shownTitle,
             active: active,
-            subtitle: readout,
+            readout: readout,
             badge: chrome.badge,
             errorExitCode: failedBlock?.exitCode,
             telemetry: telemetry,
@@ -926,7 +928,7 @@ private struct NewTabDropSlot: View {
                 Image(systemSymbol: .plusSquareOnSquare)
                     .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
                 Text("New Tab")
-                    .font(.system(size: Slate.Typeface.body, weight: .medium))
+                    .font(Slate.Typeface.instrument(Slate.Typeface.body, weight: .medium))
                 Spacer(minLength: 0)
             }
             .foregroundStyle(active ? Slate.Text.primary : Slate.Text.secondary)

@@ -30,6 +30,11 @@
 #if canImport(SwiftUI)
 import SlopDeskVideoProtocol
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 
 /// A full colour theme (every chrome role). Two instances ship: `.paper` (light, default) and `.dark`.
 struct SlateTheme: Equatable {
@@ -424,8 +429,6 @@ enum Slate {
         static let heightRow: CGFloat = 32
         /// Chrome strips: the titlebar / traffic-light band.
         static let heightStrip: CGFloat = 40
-        /// The two-line list row (title + subtitle) and chooser cards.
-        static let heightRowTall: CGFloat = 44
         /// The overlay search-input strip (palette / navigator / global search / open-quickly).
         static let heightInput: CGFloat = 48
 
@@ -457,8 +460,9 @@ enum Slate {
         static let monogram: CGFloat = 18
     }
 
-    /// Typography scale — one named role per size; UI = system, code = JetBrains Mono. A closed scale (no
-    /// raw `.font(.system(size:))` literals in view code — `scripts/check-ds-leaks.sh` enforces it).
+    /// Typography scale — one named role per size; UI = system, instrument/rail = JetBrains Mono (SF Mono
+    /// when absent). A closed scale (no raw `.font(.system(size:))` literals in view code —
+    /// `scripts/check-ds-leaks.sh` enforces it).
     enum Typeface {
         /// Large empty-state / placeholder glyph (build-status / empty pane).
         static let display: CGFloat = 40
@@ -470,14 +474,31 @@ enum Slate {
         static let footnote: CGFloat = 11
         /// Captions, kbd hints, tab subtext.
         static let small: CGFloat = 10
+        /// The instrument face: the same family libghostty embeds as the terminal's default, so the
+        /// chrome's mono voice IS the pane's voice.
         static let mono = "JetBrains Mono"
 
-        /// MERIDIAN L2 (typography is the only ornament) — the INSTRUMENT voice: every number, caps
-        /// micro-label, keycap and technical subtitle (cwd / git line / host-app / telemetry) renders in the
-        /// mono face, the "engraved on the tool" register that separates data from prose. Numbers stay
-        /// tabular by the face itself. Prose (titles, menus, sentences) keeps the system face.
+        /// Whether ``mono`` is actually resolvable on this machine — `Font.custom` with a missing
+        /// family falls back to the PROPORTIONAL system face silently (no mono at all), so the
+        /// instrument accessor degrades to SF Mono (`design: .monospaced`) instead. Checked once:
+        /// fonts don't appear mid-session.
+        private static let monoInstalled: Bool = {
+            #if canImport(AppKit)
+            NSFontManager.shared.availableFontFamilies.contains(mono)
+            #else
+            UIFont.familyNames.contains(mono)
+            #endif
+        }()
+
+        /// MERIDIAN L2 (typography is the only ornament) — the INSTRUMENT voice: the sidebar rail
+        /// (titles + readouts included), every number, caps micro-label, keycap and technical line
+        /// (cwd / git line / host-app / telemetry) renders in the mono face — the terminal's own
+        /// register, so the chrome reads like terminal text. Numbers stay tabular by the face itself.
+        /// Prose OUTSIDE the rail (menus, sentences, dialogs) keeps the system face.
         static func instrument(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
-            .custom(mono, size: size).weight(weight)
+            monoInstalled
+                ? .custom(mono, size: size).weight(weight)
+                : .system(size: size, weight: weight, design: .monospaced)
         }
 
         /// Tracking (pt) for caps micro-labels set in the instrument voice ("TABS", section headers,

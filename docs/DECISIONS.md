@@ -1855,3 +1855,22 @@ information the row doesn't already state, or not exist.
 - **Header: no rule, no blink.** The hairline between name and tally is deleted (the caps name +
   right-aligned tally is the whole structure) and the `?N !N` tally is static — its colour against
   the header grey is the signal; a permanent blink taxed attention instead of directing it.
+
+### v3.3 — one line, one face: the rail reads like terminal text (2026-07-23)
+
+Hardware review of v3.2: rows mixing one and two lines read as visual jitter, and the rail still
+didn't look terminal-native — it wanted the terminal pane's own monospace face.
+
+- **Every row is ONE fixed-height line.** `SlateListRow` loses the whole subtitle/reserve machinery
+  (`heightRowTall` deleted from the ladder); the READOUT moves INLINE after the title in the dimmed
+  secondary tone, truncating `.tail` before the title does (the tooltip keeps the whole line). State
+  changes swap text, never row geometry — the list's rhythm is a constant beat, tmux-dense.
+- **The rail speaks the instrument face end-to-end**: row titles, the inline readout, the rename
+  field, the search field, the empty label and the drop slot join the header/git/telemetry lines in
+  the mono voice — the sidebar reads like terminal text, in the same family libghostty embeds as the
+  terminal default (JetBrains Mono).
+- **The instrument voice can no longer silently fall back to proportional SF**: `Font.custom` with a
+  missing family degrades to the plain system face, which on a machine without JetBrains Mono
+  installed erased the entire mono register (the app does not bundle the font — the terminal's copy
+  is embedded inside libghostty, invisible to AppKit). `Slate.Typeface.instrument` now checks the
+  family once and falls back to SF Mono (`design: .monospaced`) — always a real mono.

@@ -71,7 +71,7 @@ final class SlateSnapshotRender: XCTestCase {
     // MARK: - Opt-in render of the sidebar tab-row badge states
 
     /// Renders `SlateTabRow` in each badge state (spinner / error / hand / check / accent dot) plus the active
-    /// white card with a subtitle + process label — the visual lock for the sidebar row. SAME
+    /// white card — the visual lock for the sidebar row. SAME
     /// `ImageRenderer` opt-in idiom as the showcase; inert (skipped) unless `SLOPDESK_TABROW_SNAPSHOT_DIR=<dir>`
     /// is set, where it writes `tab-row-badges.png`. NO video/Metal — a badge is pure SwiftUI.
     @MainActor
@@ -90,7 +90,6 @@ final class SlateSnapshotRender: XCTestCase {
             SlateTabRow(
                 title: "slopdesk",
                 active: true,
-                subtitle: "main · 3 changed",
                 onSelect: {},
                 onClose: {},
             )
@@ -98,7 +97,7 @@ final class SlateSnapshotRender: XCTestCase {
         .padding(8)
         .frame(width: 260)
         .background(Slate.Surface.ground)
-        try render(panel, size: CGSize(width: 260, height: 340), to: dir, named: "tab-row-badges.png")
+        try render(panel, size: CGSize(width: 260, height: 300), to: dir, named: "tab-row-badges.png")
     }
 
     /// A resting (non-active) tab row carrying one fused badge, for the badge-state showcase.
@@ -109,14 +108,14 @@ final class SlateSnapshotRender: XCTestCase {
         )
     }
 
-    // MARK: - Opt-in render of one By-Project sidebar section (header + two-line rows)
+    // MARK: - Opt-in render of one By-Project sidebar section (header + single-line rows)
 
     /// Renders the REAL ``SidebarSectionHeaderRow`` (the TWO-LINE header: caps title + right-aligned
     /// `?N !N` tally over the git line) over a seeded headless store, above representative flush-left
-    /// ``SlateTabRow`` states at the true sidebar width — live rows carry a readout second line,
-    /// settled rows COLLAPSE to one — the visual lock for the header↔row alignment and the trailing
-    /// ASCII status glyphs (`✻` pulse / braille / `? !137 ok`). SAME opt-in idiom; writes
-    /// `sidebar-section.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
+    /// ``SlateTabRow`` states at the true sidebar width — every row ONE line in the instrument mono
+    /// face, live rows carrying their readout INLINE after the title — the visual lock for the
+    /// header↔row alignment and the trailing ASCII status glyphs (`✻` pulse / braille / `? !137 ok`).
+    /// SAME opt-in idiom; writes `sidebar-section.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
     @MainActor
     func testRenderSidebarSection() throws {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
@@ -128,32 +127,31 @@ final class SlateSnapshotRender: XCTestCase {
             SidebarSectionHeaderRow(store: store, title: "slop-desk", projectKey: key, rows: rows)
             SlateTabRow(
                 title: "claude", active: false,
-                subtitle: "Wiring refresh-token rotation",
+                readout: "Wiring refresh-token rotation",
                 badge: .running, telemetry: RailTelemetryValue(text: "4m", tone: .secondary),
                 onSelect: {}, onClose: {},
             )
             SlateTabRow(
                 title: "claude", active: true,
-                subtitle: "Allow edit to Config.swift?",
+                readout: "Allow edit to Config.swift?",
                 badge: .awaitingInput, telemetry: RailTelemetryValue(text: "2m", tone: .amber),
                 onSelect: {}, onClose: {},
             )
             SlateTabRow(
                 title: "Terminal", active: false,
-                subtitle: "make check",
+                readout: "make check",
                 badge: .commandRunning,
                 telemetry: RailTelemetryValue(text: "68%", tone: .secondary),
                 onSelect: {}, onClose: {},
             )
             SlateTabRow(
                 title: "api", active: false,
-                subtitle: "npm test",
+                readout: "npm test",
                 badge: .error, errorExitCode: 137,
                 telemetry: RailTelemetryValue(text: "12m", tone: .secondary),
                 onSelect: {}, onClose: {},
             )
-            // Settled rows: no readout, no second line — the SINGLE-LINE collapse, with and without
-            // a terminal badge.
+            // Settled rows: no readout — the title stands alone, with and without a terminal badge.
             SlateTabRow(
                 title: "Terminal", active: false,
                 badge: .finished, telemetry: RailTelemetryValue(text: "8m", tone: .secondary),
@@ -165,7 +163,7 @@ final class SlateSnapshotRender: XCTestCase {
         .frame(width: Slate.Metric.sidebarWidth)
         .background(Slate.Surface.ground)
         try render(
-            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 350),
+            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 280),
             to: dir, named: "sidebar-section.png",
         )
     }
@@ -504,7 +502,7 @@ private struct SlateShowcase: View {
             active: active,
             title: {
                 Text(title)
-                    .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
+                    .font(Slate.Typeface.instrument(Slate.Typeface.body, weight: active ? .medium : .regular))
                     .foregroundStyle(Slate.Text.primary)
                     .lineLimit(1)
             },
@@ -515,7 +513,6 @@ private struct SlateShowcase: View {
                         .foregroundStyle(Slate.Text.secondary)
                 }
             },
-            subtitleTrailing: { _ in EmptyView() },
             trailingOverlay: { _ in EmptyView() },
         )
     }

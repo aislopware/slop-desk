@@ -1,16 +1,16 @@
-// RailRowReadout — the row's line-2 precedence: ONE source at a time, hard cut between them. The line
-// is the row's live READOUT — the thing you'd focus the tab to find out — and it EARNS the second
-// line: there are no structural filler rungs (cwd echoes, shell identity, shortcut hints — derivable
-// or decorative), so a settled row COLLAPSES to one line and a second line always means "something is
-// happening here". Command-shaped sources are additionally suppressed when they would only echo the
-// title (a shell that titles the pane after the command it runs). Pure + static so the precedence is
-// unit-pinned headlessly (no view, no store).
+// RailRowReadout — the row's readout precedence: ONE source at a time, hard cut between them. The
+// readout is the row's live line — the thing you'd focus the tab to find out — rendered INLINE after
+// the title, and it EARNS its place: there are no structural filler rungs (cwd echoes, shell
+// identity, shortcut hints — derivable or decorative), so a settled row is bare beside its title and
+// a readout always means "something is happening here". Command-shaped sources are additionally
+// suppressed when they would only echo the title (a shell that titles the pane after the command it
+// runs). Pure + static so the precedence is unit-pinned headlessly (no view, no store).
 
 import Foundation
 import SlopDeskWorkspaceCore
 
 enum RailRowReadout {
-    /// Resolve the row's one line-2 source, by precedence:
+    /// Resolve the row's one readout source, by precedence:
     ///   1. the blocked QUESTION (the caller gates it on `.needsPermission` + a non-empty label);
     ///   2. working + a live inspector feed → the todo SCENT (`3/5 · Editing …` — the fixed counter
     ///      prefix leads, so `.tail` can never eat it);
@@ -20,7 +20,7 @@ enum RailRowReadout {
     ///   5. error → the FAILING command from the block model (the badge's `!<code>` carries the number);
     ///   6. the RUNNING command (a busy non-agent shell — the command text is what the row is doing).
     /// The command-shaped rungs (5–6) are dropped when they only echo `title`. Nothing live → `nil`:
-    /// the row renders single-line — absence is the readout's resting state, never a placeholder.
+    /// the row shows its title alone — absence is the readout's resting state, never a placeholder.
     /// Every input is pre-gated by the caller (only handed over when its state holds), so the resolver
     /// is a pure precedence ladder.
     static func resolve(
@@ -55,7 +55,7 @@ enum RailRowReadout {
     /// The error readout: the FAILING command (`npm test`) — the culprit's name; the exit code
     /// already rides the badge's `!<code>` reading one line up, so the pair never repeats a number.
     /// `nil` without a code (no failure evidence — the caller may not attribute a stale block) and
-    /// `nil` for a blank command (the badge's reading stands alone; the row stays single-line).
+    /// `nil` for a blank command (the badge's reading stands alone).
     static func errorLine(exitCode: Int32?, commandText: String?) -> String? {
         guard exitCode != nil else { return nil }
         let command = commandText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

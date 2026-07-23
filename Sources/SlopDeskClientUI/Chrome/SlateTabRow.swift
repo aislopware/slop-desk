@@ -4,16 +4,18 @@
 // is a flat plate, and a close `×` reveals on hover. No native list selection / vibrancy — this is a flat
 // silhouette by design.
 //
-// Every row is FLUSH-LEFT and ADAPTIVE: line 1 is [title][trailing lock/sync + status glyph +
-// telemetry text]; line 2 exists ONLY when a live readout has something to say (question / scent /
-// agent line / failing command — resolved upstream), so a settled row is a single compact line and a
-// second line always means activity. There is NO leading accessory column — a reserved gutter
-// indented every title off the section header's left edge, so status moved into the line-1 trailing
-// cluster as a TEXT glyph (``AsciiStatusBadge``: the AI-CLI pulse spinner for a working agent,
-// braille for a running command, static `? !137 ok # ∞` otherwise), where `✻ 4m` reads like a CLI
-// status line and a state edge swaps the reading. A RESTING row (no status, not active) RECEDES —
-// its title drops to the secondary tone — so the unlabeled quiet state is dimness, and colour + full
-// strength are earned by live state (the T3 recede).
+// Every row is FLUSH-LEFT and ONE LINE, set entirely in the instrument mono face (the terminal's own
+// register — the whole rail reads like terminal text): [title][readout…][trailing lock/sync + status
+// glyph + telemetry text]. The READOUT (question / scent / agent line / failing command — resolved
+// upstream) rides INLINE after the title in the dimmed secondary tone, truncating first when the rail
+// is narrow (the tooltip keeps the whole line), so state changes swap text — never row geometry — and
+// the list's rhythm is a constant beat. There is NO leading accessory column — a reserved gutter
+// indented every title off the section header's left edge, so status moved into the trailing cluster
+// as a TEXT glyph (``AsciiStatusBadge``: the AI-CLI pulse spinner for a working agent, braille for a
+// running command, static `? !137 ok # ∞` otherwise), where `✻ 4m` reads like a CLI status line and a
+// state edge swaps the reading. A RESTING row (no status, not active) RECEDES — its title drops to
+// the secondary tone — so the unlabeled quiet state is dimness, and colour + full strength are earned
+// by live state (the T3 recede).
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -22,16 +24,16 @@ import SwiftUI
 
 /// One sidebar tab row. ACTIVE = the raised-card treatment; hover = flat plate + close `×`.
 ///
-/// Line 1 carries the title + the [lock][sync][status glyph][telemetry] trailing cluster; line 2 is the READOUT
-/// (question / todo scent / last assistant line / final line / error line / running command —
-/// resolved upstream by ``RailRowReadout``) and renders ONLY when one resolves: no readout, no
-/// second line — the row collapses to the compact single-line shell.
+/// The single line carries the title, the inline dimmed READOUT (question / todo scent / last
+/// assistant line / final line / error line / running command — resolved upstream by
+/// ``RailRowReadout``), then the [lock][sync][status glyph][telemetry] trailing cluster.
 struct SlateTabRow: View {
     let title: String
     let active: Bool
-    /// The row's second line — the resolved READOUT text (``RailRowReadout``). `nil`/empty ⇒ the
-    /// row renders single-line (absence, no placeholder).
-    var subtitle: String?
+    /// The resolved READOUT text (``RailRowReadout``) — rendered inline after the title in the
+    /// secondary tone, truncating before the title does. `nil`/empty ⇒ nothing renders (absence, no
+    /// placeholder).
+    var readout: String?
     /// The single fused status glyph, rendered as an ``AsciiStatusBadge`` text reading in the line-1
     /// trailing cluster. `nil` ⇒ no glyph and the row recedes.
     var badge: TabBadgeKind?
@@ -74,39 +76,45 @@ struct SlateTabRow: View {
     @State private var renameResolved = false
     @FocusState private var fieldFocused: Bool
 
-    /// The hover close `×`'s footprint — both lines end with this reserve so their text truncates
+    /// The hover close `×`'s footprint — the line ends with this reserve so its text truncates
     /// before the overlay instead of running under the revealed button.
     private static let closeReserve: CGFloat = 18
 
     var body: some View {
         // The row is the shared ``SlateListRow`` shell: the shell owns the height, padding, hover
         // plate and the active raised-card treatment; this view supplies the tab-specific slots — the
-        // title/rename field, the line-1 trailing cluster (status glyph + telemetry), and the hover
-        // close `×` overlay. NO leading accessory: the title sits flush on the sidebar's left edge.
+        // title/rename field + inline readout, the trailing cluster (status glyph + telemetry), and
+        // the hover close `×` overlay. NO leading accessory: the title sits flush on the sidebar's
+        // left edge.
         SlateListRow(
             active: active,
-            subtitle: subtitle,
-            // Every readout source is PROSE — `.tail` keeps the sentence's head (the counter prefix,
-            // the command name) and truncates the end.
-            subtitleTruncation: .tail,
             // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the field.
             onTap: { if !isEditing { onSelect() } },
             title: {
                 if isEditing {
                     renameField
                 } else {
+                    // The title holds its full width (`layoutPriority`); the readout takes what is
+                    // left and truncates `.tail` — every source is prose/command-shaped, so the head
+                    // (the counter prefix, the command name) survives a narrow rail.
                     Text(title)
-                        .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
+                        .font(Slate.Typeface.instrument(
+                            Slate.Typeface.body, weight: active ? .medium : .regular,
+                        ))
                         .foregroundStyle(recedes ? Slate.Text.secondary : Slate.Text.primary)
                         .lineLimit(1)
+                        .layoutPriority(1)
+                    if let readout, !readout.isEmpty {
+                        Text(readout)
+                            .font(Slate.Typeface.instrument(Slate.Typeface.body))
+                            .foregroundStyle(Slate.Text.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
                 }
             },
             titleTrailing: { hovering in
                 if !isEditing { lineOneTrailing(hovering: hovering) }
-            },
-            subtitleTrailing: { _ in
-                // Line 2 ends with the close reserve only — the readout truncates before the hover `×`.
-                if !isEditing { Color.clear.frame(width: Self.closeReserve, height: 1) }
             },
             trailingOverlay: { hovering in
                 if !isEditing {
@@ -132,7 +140,7 @@ struct SlateTabRow: View {
     private var renameField: some View {
         let field = TextField("Rename", text: $draft)
             .textFieldStyle(.plain)
-            .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
+            .font(Slate.Typeface.instrument(Slate.Typeface.body, weight: active ? .medium : .regular))
             .foregroundStyle(Slate.Text.primary)
             .tint(Slate.State.accent)
             .lineLimit(1)
@@ -163,8 +171,8 @@ struct SlateTabRow: View {
         #endif
     }
 
-    /// LINE 1 trailing (right of the title): the read-only lock, the sync-input glyph, the STATUS
-    /// text glyph (``AsciiStatusBadge`` — the spinner / `? !137 ok` reading), then the TELEMETRY value
+    /// The trailing cluster (right of the title + readout): the read-only lock, the sync-input glyph,
+    /// the STATUS text glyph (``AsciiStatusBadge`` — the spinner / `? !137 ok` reading), then the TELEMETRY value
     /// in the timestamp slot (blocked-age / turn-elapsed / percent / exit code — the T3 idiom: the
     /// row's one number lives where a timestamp would, so the pair reads `✻ 4m`). The cluster fades
     /// out under the hover `×` but KEEPS ITS WIDTH (opacity, not removal), so the fade never reflows

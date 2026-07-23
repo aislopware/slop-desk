@@ -1,5 +1,5 @@
-// RailRowReadoutTests — pins the row's line-2 precedence ladder (question > scent > working label >
-// final line > error line > running command > NOTHING — a settled row collapses to one line), the
+// RailRowReadoutTests — pins the row's readout precedence ladder (question > scent > working label >
+// final line > error line > running command > NOTHING — a settled row is its title alone), the
 // title-echo gate on the command-shaped rungs, the error-line assembly, the header's act-now tally,
 // and the agent-session classification. Headless VALUE assertions over the pure resolvers.
 
@@ -66,7 +66,7 @@ final class RailRowReadoutTests: XCTestCase {
         XCTAssertEqual(line, "make check")
     }
 
-    /// Nothing live: `nil` — the row renders SINGLE-LINE; there is no filler rung and no placeholder.
+    /// Nothing live: `nil` — the row shows its title alone; there is no filler rung and no placeholder.
     func testSettledRowResolvesNothing() {
         XCTAssertNil(RailRowReadout.resolve(
             question: nil, scent: nil, workingLabel: nil,
