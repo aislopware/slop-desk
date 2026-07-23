@@ -39,6 +39,11 @@ struct SlateListRow<
     /// tail both carry meaning); a caller whose line 2 is PROSE (the blocked row's question) passes
     /// `.tail` so the sentence keeps its head.
     var subtitleTruncation: Text.TruncationMode = .middle
+    /// RESERVE the two-line shell even without a subtitle: the row holds `heightRowTall` and renders a
+    /// blank (space-sentinel) line 2, so a transient line-2 source appearing/clearing swaps text inside
+    /// a FIXED shell instead of growing/shrinking the row. The tab rail passes this for the whole of an
+    /// agent session — the rung changes only at session boundaries, never on a status edge.
+    var reserveSubtitle = false
     /// Tap action for the whole row. `nil` ⇒ no-op (a presentation-only row).
     var onTap: (() -> Void)?
     @ViewBuilder let leading: () -> Leading
@@ -65,6 +70,9 @@ struct SlateListRow<
 
     private var hasSubtitle: Bool { !(subtitle ?? "").isEmpty }
 
+    /// Whether the row renders the two-line shell — a real subtitle OR the reserved blank line.
+    private var hasLineTwo: Bool { hasSubtitle || reserveSubtitle }
+
     var body: some View {
         HStack(spacing: Slate.Metric.space2) {
             leading()
@@ -74,11 +82,13 @@ struct SlateListRow<
                     Spacer(minLength: Slate.Metric.space2)
                     titleTrailing(isHovering)
                 }
-                if hasSubtitle {
+                if hasLineTwo {
                     HStack(spacing: Slate.Metric.space2) {
                         // The COLOURED git line (when supplied) renders in place of the plain string — same
-                        // instrument font, same secondary default, only per-run status colour differs.
-                        (subtitleColored.map(Text.init) ?? Text(subtitle ?? ""))
+                        // instrument font, same secondary default, only per-run status colour differs. A
+                        // reserved-blank line renders a single space so the line keeps its font metrics
+                        // (an empty Text can collapse) and the title never re-centres within the shell.
+                        (subtitleColored.map(Text.init) ?? Text(hasSubtitle ? (subtitle ?? "") : " "))
                             .font(Slate.Typeface.instrument(Slate.Typeface.small))
                             .foregroundStyle(Slate.Text.secondary)
                             .lineLimit(1)
@@ -90,7 +100,7 @@ struct SlateListRow<
             }
         }
         .padding(.horizontal, Slate.Metric.space3)
-        .frame(height: hasSubtitle ? Slate.Metric.heightRowTall : Slate.Metric.heightRow)
+        .frame(height: hasLineTwo ? Slate.Metric.heightRowTall : Slate.Metric.heightRow)
         // The close `×` (and any future full-height affordance) rides a CENTERED trailing overlay — pinned to
         // the same trailing inset as the content, vertically centered over BOTH lines so it never floats off a
         // single line's baseline (the per-line clusters above fade out under hover to clear the way for it).
@@ -126,6 +136,7 @@ extension SlateListRow where Leading == EmptyView {
         subtitle: String? = nil,
         subtitleColored: AttributedString? = nil,
         subtitleTruncation: Text.TruncationMode = .middle,
+        reserveSubtitle: Bool = false,
         onTap: (() -> Void)? = nil,
         @ViewBuilder title: @escaping () -> Title,
         @ViewBuilder titleTrailing: @escaping (_ hovering: Bool) -> TitleTrailing,
@@ -134,7 +145,7 @@ extension SlateListRow where Leading == EmptyView {
     ) {
         self.init(
             active: active, subtitle: subtitle, subtitleColored: subtitleColored,
-            subtitleTruncation: subtitleTruncation, onTap: onTap,
+            subtitleTruncation: subtitleTruncation, reserveSubtitle: reserveSubtitle, onTap: onTap,
             leading: { EmptyView() }, title: title, titleTrailing: titleTrailing,
             subtitleTrailing: subtitleTrailing, trailingOverlay: trailingOverlay,
         )

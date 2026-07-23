@@ -3,6 +3,11 @@
 // is the tab name on the sidebar ground; ACTIVE is the RAISED card (fill + 1px hairline, no shadow), hover
 // is a flat plate, and a close `×` reveals on hover. No native list selection / vibrancy — this is a flat
 // silhouette by design.
+//
+// Every row shares ONE grid, left→right: [2pt attention-tick gutter][content][4ch telemetry][16pt badge
+// rail]. The tick, telemetry column and badge rail are ALL unconditional reservations — the rail rides a
+// full-height trailing overlay at a constant x AND constant vertical anchor (never per-line), so no state
+// change moves a pixel and the badge column is one continuous scan line down the sidebar.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -11,26 +16,37 @@ import SwiftUI
 
 /// One sidebar tab row. ACTIVE = the raised-card treatment; hover = flat plate + close `×`.
 ///
-/// The trailing accessories are split PER LINE: the foreground-process label ("zsh", ACTIVE row only) rides
-/// LINE 1 beside the tab name, and the fused status `badge` sits ALONE on the compact LINE-2 subtitle
-/// (a single-line row with no subtitle keeps
-/// the badge on line 1). Heights ride the ladder via ``SlateListRow`` (`heightRow` name-only, `heightRowTall`
-/// with a subtitle — `docs/ui-shell/screenshots/tab-badge.png`). Both clusters fade under the hover `×`.
+/// Line 1 carries the title + the [lock][sync][command] cluster; line 2 is the agent READOUT
+/// (question / todo scent / last assistant line / final line / error line / strayed cwd — resolved
+/// upstream by ``RailRowReadout``). The telemetry value and the status badge live OUTSIDE the lines, on
+/// the full-height trailing rail. Heights ride the ladder via ``SlateListRow`` — `heightRow` name-only,
+/// `heightRowTall` with a line 2, and an AGENT row HOLDS the tall shell for its whole session
+/// (`isAgentSession` → `reserveSubtitle`), so a question/done/error edge swaps text inside a fixed
+/// shell instead of growing the row. All trailing meta fades under the hover `×`; the leading
+/// attention tick never fades.
 struct SlateTabRow: View {
     let title: String
     let active: Bool
-    /// The row's muted truncating-middle second line (a terminal's cwd relative to its project root,
-    /// a video pane's host app — the git line lives on the SECTION HEADER now,
-    /// ``ProjectGitStatusLine``). `nil`/empty ⇒ single-line.
+    /// The row's second line — the resolved READOUT text (``RailRowReadout``). `nil`/empty ⇒ no line 2
+    /// (a non-agent row collapses to single-line; an agent row keeps the reserved blank).
     var subtitle: String?
     /// Line-2 truncation, forwarded to the ``SlateListRow`` shell. `.middle` (default) suits the
-    /// path-shaped subtitle; the blocked row passes `.tail` while its line 2 IS the question — prose
-    /// keeps its head, and the normal relative-path subtitle keeps `.middle` untouched.
+    /// path-shaped strayed-cwd; every prose readout (question / scent / labels) passes `.tail` so the
+    /// sentence keeps its head.
     var subtitleTruncation: Text.TruncationMode = .middle
-    /// The host's coarse foreground-process label ("zsh"), shown trailing on the ACTIVE row only.
+    /// The host's coarse foreground-process label ("make") — rendered on COMMAND rows only: an
+    /// agent-session row suppresses it (the working ring already says agent; "claude" next to it is
+    /// noise), sharpening command ≠ agent.
     var processLabel: String?
-    /// The single fused status badge (spinner / check / dot / error / hand / coffee / shield). `nil` ⇒ none.
+    /// The single fused status badge, rendered as a ``StatusRing`` reading on the trailing rail.
+    /// `nil` ⇒ the rail's badge box stays reserved-empty.
     var badge: TabBadgeKind?
+    /// The row's right-aligned telemetry value (blocked-age / turn-elapsed / percent / exit code —
+    /// resolved upstream by ``RailRowTelemetry``). `nil` ⇒ the column stays reserved-empty.
+    var telemetry: RailTelemetryValue?
+    /// Whether this row is an AGENT session — holds the tall two-line shell for the whole session so
+    /// lifecycle edges never move layout (the rung changes only at session boundaries).
+    var isAgentSession = false
     /// Whether this pane's input gate is READ-ONLY — renders a small trailing lock glyph (the sidebar's
     /// read-only indicator, twin of the pane's `🔒 READ ONLY ×` pill). Default `false` keeps existing call
     /// sites source-compatible.
@@ -61,20 +77,21 @@ struct SlateTabRow: View {
     @State private var renameResolved = false
     @FocusState private var fieldFocused: Bool
 
-    /// Whether the row carries a second line (relative cwd / host app / blocked question). Mirrors
-    /// ``SlateListRow``'s own test so line-1 vs line-2 accessory placement stays in lock-step with
-    /// where the shell actually draws line 2.
-    private var hasSubtitle: Bool { !(subtitle ?? "").isEmpty }
+    /// The rail's total reserved width — the telemetry column + a breath + the badge box. Reserved on
+    /// BOTH lines (width-only spacers) so text can never run under the full-height rail overlay.
+    private static let railReserve: CGFloat =
+        Slate.Metric.telemetryCol + Slate.Metric.space1 + TabBadgeView.side
 
     var body: some View {
         // The row is the shared ``SlateListRow`` shell: the shell owns the height ladder,
-        // padding, hover plate and the active raised-card treatment; this view supplies only the
-        // tab-specific slots — the title/rename field and the per-line trailing clusters (running-process
-        // label pinned to line 1, the status badge alone on the compact line 2).
+        // padding, hover plate and the active raised-card treatment; this view supplies the tab-specific
+        // slots — the title/rename field, the line-1 meta cluster, and the full-height trailing RAIL
+        // (telemetry + badge) with the hover `×` over it.
         SlateListRow(
             active: active,
             subtitle: subtitle,
             subtitleTruncation: subtitleTruncation,
+            reserveSubtitle: isAgentSession,
             // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the field.
             onTap: { if !isEditing { onSelect() } },
             title: {
@@ -90,20 +107,83 @@ struct SlateTabRow: View {
             titleTrailing: { hovering in
                 if !isEditing { lineOneTrailing(hovering: hovering) }
             },
-            subtitleTrailing: { hovering in
-                if !isEditing { lineTwoTrailing(hovering: hovering) }
+            subtitleTrailing: { _ in
+                // Line 2 carries no accessory of its own anymore — only the rail gutter reserve, so the
+                // readout text stops short of the overlay rail.
+                if !isEditing { railGutterReserve }
             },
             trailingOverlay: { hovering in
-                // The close `×` — centered over the whole row, revealed only on hover (the line-1/line-2 meta
-                // fade out beneath it). Not shown while renaming.
+                // The full-height trailing RAIL — [telemetry][badge], vertically centered over the whole
+                // row at a constant x, faded out under the hover `×` (which reveals in its place).
                 if !isEditing {
-                    closeButton
-                        .opacity(hovering ? 1 : 0)
-                        .allowsHitTesting(hovering)
+                    ZStack(alignment: .trailing) {
+                        rail
+                            .opacity(hovering ? 0 : 1)
+                        closeButton
+                            .opacity(hovering ? 1 : 0)
+                            .allowsHitTesting(hovering)
+                    }
                 }
             },
         )
+        // The leading ATTENTION TICK — act-now states only (amber = a question waits, red = broken),
+        // a hard-cut motionless bar in the leading gutter, OUTSIDE the hover fade (it never hides).
+        .overlay(alignment: .leading) {
+            if let tickColor {
+                Capsule()
+                    .fill(tickColor)
+                    .frame(width: Slate.Metric.attentionTick)
+                    .padding(.vertical, 5)
+            }
+        }
         .help(helpText ?? "")
+    }
+
+    /// The act-now tick colour: amber while a question waits, red while broken; nothing otherwise.
+    private var tickColor: Color? {
+        switch badge {
+        case .awaitingInput: Slate.Status.warn
+        case .error: Slate.Status.err
+        default: nil
+        }
+    }
+
+    /// The full-height trailing rail: the right-aligned telemetry value in its fixed column, then the
+    /// badge box. Both slots are unconditional `Color.clear` reservations (an empty conditional + frame
+    /// does NOT reserve in SwiftUI) so a value/badge appearing changes pixels, never layout.
+    private var rail: some View {
+        HStack(spacing: Slate.Metric.space1) {
+            Color.clear
+                .frame(width: Slate.Metric.telemetryCol, height: TabBadgeView.side)
+                .overlay(alignment: .trailing) {
+                    if let telemetry {
+                        Text(telemetry.text)
+                            .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                            .foregroundStyle(telemetryTone(telemetry.tone))
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
+                }
+            Color.clear
+                .frame(width: TabBadgeView.side, height: TabBadgeView.side)
+                .overlay { if let badge { TabBadgeView(kind: badge) } }
+        }
+    }
+
+    /// The telemetry tone ladder: amber = the one coloured number (blocked-age), secondary = every
+    /// other value, primary = the ≥10-minute working escalation (one luminance step up).
+    private func telemetryTone(_ tone: RailTelemetryTone) -> Color {
+        switch tone {
+        case .amber: Slate.Status.warn
+        case .secondary: Slate.Text.secondary
+        case .primary: Slate.Text.primary
+        }
+    }
+
+    /// The rail gutter reserve — a width-only spacer both lines end with, so their text truncates
+    /// BEFORE the overlay rail instead of running under it.
+    private var railGutterReserve: some View {
+        Color.clear.frame(width: Self.railReserve, height: 1)
     }
 
     /// The inline-rename `TextField`: seeded from the current title on open, auto-focused, commits
@@ -143,72 +223,47 @@ struct SlateTabRow: View {
         #endif
     }
 
-    /// LINE 1 trailing (right of the title): the read-only lock (if locked) then the RUNNING-COMMAND label —
-    /// on EVERY row, active or not, because a background tab's running command is exactly what you scan the
-    /// sidebar for. A bare interactive shell (`zsh`/`bash`/`fish`/…) is suppressed via
-    /// ``RailRowsBuilder/processDisplayName(_:)`` — "zsh" is not a running command, it is the resting state —
-    /// which also basenames a path label (`/usr/bin/sudo` → `sudo`). A row with no second line (no cwd/git
-    /// subtitle) has nowhere else to put the status badge, so it also carries the fused `badge` here; a
-    /// two-line row moves the badge down to ``lineTwoTrailing`` instead. All muted, right-aligned; the whole
-    /// cluster fades out under the centered hover `×` (the row's ``trailingOverlay``).
-    /// No persistent `⌘N` switch-shortcut chip: the ⌘1…⌘9 chords still work, the row just doesn't advertise
-    /// them.
+    /// LINE 1 trailing (right of the title): the read-only lock, the sync-input glyph, then the
+    /// RUNNING-COMMAND label — on EVERY row, active or not, because a background tab's running command is
+    /// exactly what you scan the sidebar for. A bare interactive shell (`zsh`/`bash`/`fish`/…) is
+    /// suppressed via ``RailRowsBuilder/processDisplayName(_:)`` — "zsh" is not a running command, it is
+    /// the resting state — and an AGENT-session row suppresses the label entirely (the working ring
+    /// already says agent; the label is a commands-only voice). The status badge does NOT live here — it
+    /// rides the full-height rail. The cluster ends with the rail gutter reserve and fades out under the
+    /// centered hover `×`.
+    /// No persistent `⌘N` switch-shortcut chip: the ⌘1…⌘9 chords still work, the row just doesn't
+    /// advertise them.
     private func lineOneTrailing(hovering: Bool) -> some View {
         HStack(spacing: 6) {
-            if readOnly {
-                Image(systemSymbol: .lockFill)
-                    .font(.system(size: Slate.Typeface.small, weight: .semibold))
-                    .foregroundStyle(Slate.Text.secondary)
-                    .accessibilityLabel("Read only")
-                    .help("Read only")
-            }
-            if syncInput {
-                // The FIXED sync-amber (NOT the muted secondary tone the lock uses): sync input is a
-                // fan-out mode, and its rail indicator must be as unmissable as the pane pill.
-                Image(systemSymbol: .rectangle3Group)
-                    .font(.system(size: Slate.Typeface.small, weight: .semibold))
-                    .foregroundStyle(Slate.Status.syncInput)
-                    .accessibilityLabel("Sync input")
-                    .help("Sync input — keystrokes mirror to every pane in this tab")
-            }
-            if let command = RailRowsBuilder.processDisplayName(processLabel) {
-                Text(command)
-                    .font(Slate.Typeface.instrument(Slate.Typeface.small))
-                    .foregroundStyle(Slate.Text.secondary)
-                    .lineLimit(1)
-            }
-            // Single-line rows (no subtitle) host the status badge here — reserve its FIXED box (`Color.clear`
-            // reliably reserves; an empty conditional does not) so line 1 is the same height whether or not a
-            // badge is showing.
-            if !hasSubtitle {
-                Color.clear
-                    .frame(width: TabBadgeView.side, height: TabBadgeView.side)
-                    .overlay { if let badge { TabBadgeView(kind: badge) } }
-            }
-        }
-        // Fades out under the hover close `×` (the centered ``trailingOverlay``).
-        .opacity(hovering ? 0 : 1)
-    }
-
-    /// LINE 2 trailing (right of the compact subtitle): the fused status `badge` alone — this is the "area now
-    /// holds only status" the redesign asked for, keeping the second line minimal instead of a duplicate of
-    /// line 1's meta. Rendered only when the row HAS a subtitle (else the badge stays on line 1); fades under
-    /// the hover `×`.
-    ///
-    /// The badge box (`TabBadgeView.side`) is TALLER than the subtitle text, so a badge appearing (a command
-    /// starting) would otherwise grow line 2 and re-centre the row content — reading as the tab getting taller.
-    /// The badge's fixed box is RESERVED via a `Color.clear` slot that is ALWAYS present — an empty conditional
-    /// + `.frame` does NOT reserve space in SwiftUI, so the slot must exist unconditionally; the badge draws
-    /// into it via `.overlay` when present. So line 2 is the same height with or without a badge: zero shift.
-    private func lineTwoTrailing(hovering: Bool) -> some View {
-        Color.clear
-            .frame(width: TabBadgeView.side, height: TabBadgeView.side)
-            .overlay {
-                if hasSubtitle, let badge {
-                    TabBadgeView(kind: badge)
-                        .opacity(hovering ? 0 : 1)
+            HStack(spacing: 6) {
+                if readOnly {
+                    Image(systemSymbol: .lockFill)
+                        .font(.system(size: Slate.Typeface.small, weight: .semibold))
+                        .foregroundStyle(Slate.Text.secondary)
+                        .accessibilityLabel("Read only")
+                        .help("Read only")
+                }
+                if syncInput {
+                    // The FIXED sync-amber (NOT the muted secondary tone the lock uses): sync input is a
+                    // fan-out mode, and its rail indicator must be as unmissable as the pane pill.
+                    Image(systemSymbol: .rectangle3Group)
+                        .font(.system(size: Slate.Typeface.small, weight: .semibold))
+                        .foregroundStyle(Slate.Status.syncInput)
+                        .accessibilityLabel("Sync input")
+                        .help("Sync input — keystrokes mirror to every pane in this tab")
+                }
+                if !isAgentSession, let command = RailRowsBuilder.processDisplayName(processLabel) {
+                    Text(command)
+                        .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                        .foregroundStyle(Slate.Text.secondary)
+                        .lineLimit(1)
                 }
             }
+            // Fades out under the hover close `×` (the centered ``trailingOverlay``); the gutter
+            // reserve outside stays put so the fade never reflows the line.
+            .opacity(hovering ? 0 : 1)
+            railGutterReserve
+        }
     }
 
     private var closeButton: some View {

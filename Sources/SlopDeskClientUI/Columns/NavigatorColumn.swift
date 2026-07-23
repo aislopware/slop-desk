@@ -229,6 +229,7 @@ struct NavigatorColumn: View {
                             if let header = section.header {
                                 SidebarSectionHeaderRow(
                                     store: store, title: header, projectKey: section.projectKey,
+                                    rows: section.rows,
                                 )
                             }
                             ForEach(section.rows) { row in
@@ -501,34 +502,74 @@ struct NavigatorColumn: View {
     }
 }
 
-/// One LIVE sidebar row: the STRUCTURAL identity (pane id / title / cwd / kind) rides the
-/// memoized ``RailRow``, while every VOLATILE field — the fused badge, git-line subtitle, foreground-process
-/// label, read-only lock, inline-rename mode — is read fresh HERE via
-/// ``RailRowsBuilder/liveChrome(for:store:)``. Observation still invalidates each row body when ANY pane's
-/// status dict ticks (dict-granularity tracking), but that re-renders these cheap leaf bodies only — the
-/// sidebar body above no longer rebuilds its rows + `disambiguated()` + sections + list diff per tick.
-/// The sidebar row tooltip's pure text assembly, pulled out of ``SidebarLiveRow/body`` so it's headlessly
-/// testable — a raw `\(cwd)` interpolation of the `String?` field renders the literal `Optional(...)`
-/// wrapper, so `cwd` MUST be unwrapped before it lands in either branch.
+/// The sidebar row tooltip's pure text assembly, pulled out of ``SidebarLiveRow/body`` so it's
+/// headlessly testable: the full raw cwd, the row's untruncated prose readout (question / scent /
+/// label — overflow recovery for what line 2 clipped), and the last command's
+/// `make check · 1.3s · exit 0` line. Only non-empty parts render; a raw `\(cwd)` interpolation of the
+/// `String?` field would render the literal `Optional(...)` wrapper, so every part is unwrapped first.
 enum SidebarRowTooltip {
-    static func text(cwd: String?, scent: String?) -> String? {
-        scent.map { "\(cwd ?? "")\n\($0)" } ?? cwd
+    static func text(cwd: String?, detail: String?, lastCommand: String?) -> String? {
+        let parts = [cwd, detail, lastCommand].compactMap { part -> String? in
+            guard let part, !part.isEmpty else { return nil }
+            return part
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: "\n")
+    }
+
+    /// The tooltip's last-command line from a finished block: `command · duration · exit N` (parts
+    /// missing on the block are simply omitted). Pure so the assembly is unit-pinned.
+    static func commandLine(_ block: CommandBlock) -> String? {
+        let command = block.commandText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = [command.isEmpty ? nil : command, block.durationLabel, block.statusLabel]
+            .compactMap(\.self)
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }
 
-/// The section header LEAF: reads its project's git summary INSIDE its own body — the sidebar body
-/// never touches the `projectGitSummary` dict, so a git tick re-renders only the (cheap) header
-/// leaves, mirroring how ``SidebarLiveRow`` isolates the volatile row chrome. Carries the
-/// header-scoped context menu (the project-wide "Refresh Git Status", moved up from the row menu).
+/// The section header LEAF: reads its project's git summary AND its act-now tally INSIDE its own
+/// body — the sidebar body never touches the volatile dicts, so a git/status tick re-renders only the
+/// (cheap) header leaves, mirroring how ``SidebarLiveRow`` isolates the volatile row chrome. Carries
+/// the header-scoped context menu (the project-wide "Refresh Git Status", moved up from the row menu).
 private struct SidebarSectionHeaderRow: View {
     let store: WorkspaceStore
     let title: String
     let projectKey: String?
+    /// The section's structural rows — the tally resolves each row's live badge through the SAME gated
+    /// pipeline the rail renders, so the header count and the row badges can never disagree.
+    let rows: [RailRow]
+
+    /// The tally slot's reserved width — constant whether or not a count shows, so the git line to its
+    /// left never shifts when a project gains/loses an act-now pane.
+    private static let tallyWidth: CGFloat = 22
 
     var body: some View {
         let summary = projectKey.flatMap { store.projectGitSummary[$0] }
+        // The act-now tally: how many panes in this project wait on YOU right now (a blocked question
+        // or an error) — the "which PROJECT needs me" answer at a glance. Counts through the gated
+        // badge pipeline; absent at zero.
+        let actNow = rows.count { row in
+            switch RailRowsBuilder.liveChrome(for: row, store: store).badge {
+            case .awaitingInput,
+                 .error: true
+            default: false
+            }
+        }
         SlateSectionHeader(title) {
-            if let summary { ProjectGitStatusLine(summary: summary) }
+            HStack(spacing: Slate.Metric.space1) {
+                if let summary { ProjectGitStatusLine(summary: summary) }
+                Color.clear
+                    .frame(width: Self.tallyWidth, height: Slate.Metric.space3)
+                    .overlay(alignment: .trailing) {
+                        if actNow > 0 {
+                            Text("●\(actNow)")
+                                .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
+                                .foregroundStyle(Slate.Status.warn)
+                                .lineLimit(1)
+                                .fixedSize()
+                                .accessibilityLabel("\(actNow) panes need attention")
+                        }
+                    }
+            }
         }
         .contextMenu {
             if let projectKey {
@@ -538,6 +579,12 @@ private struct SidebarSectionHeaderRow: View {
     }
 }
 
+/// One LIVE sidebar row: the STRUCTURAL identity (pane id / title / cwd / kind) rides the
+/// memoized ``RailRow``, while every VOLATILE field — the fused badge, readout line, telemetry value,
+/// foreground-process label, read-only lock, inline-rename mode — is read fresh HERE via
+/// ``RailRowsBuilder/liveChrome(for:store:)`` + the store dicts. Observation still invalidates each row
+/// body when ANY pane's status dict ticks (dict-granularity tracking), but that re-renders these cheap
+/// leaf bodies only — the sidebar body above never rebuilds its rows + sections + list diff per tick.
 private struct SidebarLiveRow: View {
     let store: WorkspaceStore
     let row: RailRow
@@ -548,12 +595,32 @@ private struct SidebarLiveRow: View {
     let onRename: (String) -> Void
     let onCancelRename: () -> Void
 
+    /// How long the tall agent shell outlives the agent process — rapid agent restarts must not
+    /// breathe the row's height rung.
+    private static let shellDecay: TimeInterval = 10
+    /// The working-label minimum dwell — a mid-turn label churning faster than this holds the previous
+    /// line so the readout reads as a feed, not a flicker.
+    private static let labelDwell: TimeInterval = 2
+    /// The telemetry re-render cadence — ages tick at minute granularity, so a 10s clock keeps the
+    /// reveal boundary honest without per-second work; mounted ONLY while the row's badge can carry a
+    /// telemetry value.
+    private static let telemetryCadence: TimeInterval = 10
+
+    /// The STICKY agent-session shell: latched while the pane reads as an agent session, released
+    /// ``shellDecay`` after it stops. This is the ONLY remote-caused height change — a session
+    /// boundary, never a status edge.
+    @State private var stickyAgentShell = false
+    @State private var shellDecayTask: Task<Void, Never>?
+    /// The dwell-committed working label + its commit instant (see ``commitDwell(_:)``).
+    @State private var dwellLabel: String?
+    @State private var dwellCommittedAt = Date.distantPast
+    @State private var dwellTask: Task<Void, Never>?
+
     var body: some View {
         // Observes the flash-decay tick at ROW scope (not in the memoized rows build) so a quiet
-        // completed pane still decays its brief `.completed` checkmark to the `.finished` dot —
-        // `completionFreshness` reads the wall clock, not an `@Observable` dependency, so without this read
-        // nothing would re-render this row at the flash-window boundary. `let _` (not a bare `_ =`) is
-        // required — a `@ViewBuilder` rejects a bare Void discard statement.
+        // completed pane still re-renders at the flash-window boundary — `completionFreshness` reads the
+        // wall clock, not an `@Observable` dependency. `let _` (not a bare `_ =`) is required — a
+        // `@ViewBuilder` rejects a bare Void discard statement.
         // swiftlint:disable:next redundant_discardable_let
         let _ = store.completionFlashTick
         // SELECTION is volatile chrome and must be read HERE, not passed in from the sidebar body: inside
@@ -564,34 +631,171 @@ private struct SidebarLiveRow: View {
         // exactly the row leaves, never the sidebar body.
         let active = row.id == store.tree.activeSession?.activeTab?.activePane
         let chrome = RailRowsBuilder.liveChrome(for: row, store: store)
-        // Blocked rows show the question: while `chrome.question` is non-nil the line-2 slot swaps to
-        // it wholesale. `chrome.subtitle` itself is untouched (never overwritten), so the moment the
-        // block clears the row falls straight back to its normal relative-cwd line. Truncation follows
-        // the content: the question is PROSE (`.tail` keeps the sentence's head), the normal path
-        // subtitle stays `.middle`.
-        // The tooltip gains the todo-scent line only while the agent is WORKING with a live inspector feed
-        // reporting an in-flight todo — every other row keeps today's cwd-only tooltip.
+        let isAgent = RailRowsBuilder.isAgentSession(status: chrome.status, processLabel: chrome.processLabel)
+        let workingCandidate: String? = chrome.status == .working ? store.agentLabel(for: row.id) : nil
+        Group {
+            if Self.telemetryEligible(chrome.badge) {
+                // The per-row telemetry clock — a fixed epoch anchor so re-renders can't postpone the
+                // next tick; mounted only while a value can show (a resting row carries no timer).
+                TimelineView(.periodic(
+                    from: Date(timeIntervalSinceReferenceDate: 0),
+                    by: Self.telemetryCadence,
+                )) { context in
+                    rowBody(chrome: chrome, active: active, isAgent: isAgent, now: context.date)
+                }
+            } else {
+                rowBody(chrome: chrome, active: active, isAgent: isAgent, now: Date())
+            }
+        }
+        // A fresh mount seeds both machines raw — the leaf's `.id(row.leafIdentity)` re-keys on a
+        // structural change (title/cwd), which discards this @State. Accepted residual: a user-typed
+        // `cd` landing inside the 10s shell decay re-seeds `stickyAgentShell` and the row drops early —
+        // narrow, user-driven, and still a session boundary (mid-turn agent work never re-keys the
+        // leaf: the shell's OSC hooks don't fire while the agent owns the foreground).
+        .onAppear {
+            stickyAgentShell = isAgent
+            dwellLabel = workingCandidate
+            dwellCommittedAt = Date()
+        }
+        .onDisappear {
+            shellDecayTask?.cancel()
+            dwellTask?.cancel()
+        }
+        .onChange(of: isAgent) { _, nowAgent in noteAgentSession(nowAgent) }
+        .onChange(of: workingCandidate) { _, candidate in commitDwell(candidate) }
+    }
+
+    /// The row body for one clock instant: resolves the readout line, the telemetry value and the
+    /// agent-shell rung, then mounts ``SlateTabRow``.
+    @ViewBuilder
+    private func rowBody(
+        chrome: RailRowsBuilder.RailRowChrome, active: Bool, isAgent: Bool, now: Date,
+    ) -> some View {
+        // The todo SCENT — promoted from the tooltip to the line-2 readout while the agent is WORKING
+        // with a live inspector feed reporting an in-flight todo.
         let scent: String? = chrome.badge == .running
             ? (store.handle(for: row.id) as? LivePaneSession)?.inspector.flatMap { vm in
                 vm.feedState == .live ? PendingToolSummary.scent(todos: vm.todos) : nil
             }
             : nil
+        let blocks = store.commandBlocks(for: row.id)
+        // The failed-block attribution is gated on the badge's SOURCE: the `.error` tier is reachable
+        // from a finished `.failure` completion OR a LIVE OSC 9;4;2 progress error — and in the live
+        // case the alarming command's block is still open (never `.isFailed`), so the newest closed
+        // failure would be an OLDER, unrelated command. Only a `.failure` completion may explain the
+        // alarm with a block; a progress error keeps the readout/telemetry silent about exit codes.
+        let failedBlock = chrome.badge == .error && store.panePendingCompletion[row.id] == .failure
+            ? blocks.last(where: \.isFailed)
+            : nil
+        // Done-unseen surfaces the agent's FINAL assistant line (the wire-27 label at `.done` — it
+        // crosses the wire today and was discarded), gated on the agent verdict so a plain command's
+        // completion badge can never show a stale agent line.
+        let doneLine: String? = (chrome.badge == .completed || chrome.badge == .finished)
+            && chrome.status == .done ? store.agentLabel(for: row.id) : nil
+        let readout = RailRowReadout.resolve(
+            question: chrome.question,
+            scent: scent,
+            workingLabel: chrome.status == .working ? dwellLabel : nil,
+            doneLine: doneLine,
+            errorLine: RailRowReadout.errorLine(
+                exitCode: failedBlock?.exitCode, commandText: failedBlock?.commandText,
+            ),
+            strayedCwd: chrome.subtitle,
+        )
+        let telemetry = RailRowTelemetry.value(
+            badge: chrome.badge,
+            isAgentSession: isAgent,
+            attentionAt: store.paneAttentionAt[row.id],
+            completedAt: store.paneCompletedAt[row.id],
+            commandStartedAt: store.paneCommandStartedAt[row.id],
+            progressPercent: StatusPresentation.progressPercentLabel(store.progress(for: row.id)),
+            exitCode: failedBlock?.exitCode,
+            now: now,
+        )
+        let lastCommand = blocks.last(where: { $0.complete || $0.durationMS != nil })
+            .flatMap(SidebarRowTooltip.commandLine)
         SlateTabRow(
             title: row.title.isEmpty ? fallbackTitle : row.title,
             active: active,
-            subtitle: chrome.question ?? chrome.subtitle,
-            subtitleTruncation: chrome.question != nil ? .tail : .middle,
+            subtitle: readout?.text,
+            subtitleTruncation: readout?.truncation == .middle ? .middle : .tail,
             processLabel: chrome.processLabel,
             badge: chrome.badge,
+            telemetry: telemetry,
+            isAgentSession: isAgent || stickyAgentShell,
             readOnly: chrome.readOnly,
             syncInput: store.syncInputArmed(for: row.id),
             isEditing: chrome.isEditing,
-            helpText: SidebarRowTooltip.text(cwd: row.cwd, scent: scent),
+            helpText: SidebarRowTooltip.text(
+                cwd: row.cwd,
+                // Overflow recovery: the untruncated PROSE readout (a path line already appears via cwd).
+                detail: readout?.truncation == .tail ? readout?.text : nil,
+                lastCommand: lastCommand,
+            ),
             onSelect: onSelect,
             onClose: onClose,
             onRename: onRename,
             onCancelRename: onCancelRename,
         )
+    }
+
+    /// Whether the badge can carry a telemetry value at all — the per-row clock mounts only then.
+    private static func telemetryEligible(_ badge: TabBadgeKind?) -> Bool {
+        switch badge {
+        case .awaitingInput,
+             .error,
+             .running,
+             .commandRunning,
+             .commandBusy,
+             .completed,
+             .finished:
+            true
+        case .caffeinate,
+             .sudo,
+             nil:
+            false
+        }
+    }
+
+    /// Latches the tall agent shell on entry and schedules the decay on exit — the decay is
+    /// load-bearing: rapid agent restarts must not breathe the rung.
+    private func noteAgentSession(_ nowAgent: Bool) {
+        shellDecayTask?.cancel()
+        shellDecayTask = nil
+        if nowAgent {
+            stickyAgentShell = true
+        } else {
+            shellDecayTask = Task {
+                try? await Task.sleep(for: .seconds(Self.shellDecay))
+                guard !Task.isCancelled else { return }
+                stickyAgentShell = false
+            }
+        }
+    }
+
+    /// Commits a new working label through the minimum dwell: an update landing within
+    /// ``labelDwell`` of the last commit is deferred (the pending task commits it when the dwell
+    /// expires), so mid-turn label churn can't strobe the readout. A `nil` (turn over) clears
+    /// immediately — state changes are hard cuts.
+    private func commitDwell(_ candidate: String?) {
+        dwellTask?.cancel()
+        dwellTask = nil
+        guard let candidate else {
+            dwellLabel = nil
+            return
+        }
+        let sinceCommit = Date().timeIntervalSince(dwellCommittedAt)
+        if dwellLabel == nil || !sinceCommit.isLess(than: Self.labelDwell) {
+            dwellLabel = candidate
+            dwellCommittedAt = Date()
+        } else {
+            dwellTask = Task {
+                try? await Task.sleep(for: .seconds(Self.labelDwell - sinceCommit))
+                guard !Task.isCancelled else { return }
+                dwellLabel = candidate
+                dwellCommittedAt = Date()
+            }
+        }
     }
 }
 

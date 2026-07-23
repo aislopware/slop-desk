@@ -128,9 +128,9 @@ struct SlateTitlebar: View {
 /// The centred active-title button. Hover shows a `⋯` + plate; click opens the pane menu (working dir /
 /// split / move / find / close pane). Wired to the live store.
 ///
-/// The trailing dot is the unseen-attention indicator (``WorkspaceStore/hasUnseenAttention``): the SAME
-/// static status dot the sidebar tab rows wear (one vocabulary — the user reads red/blue identically in
-/// both places), tinted by the most-urgent waiting pane (``WorkspaceStore/unseenAttentionPanes``'s head).
+/// The trailing dot is the unseen-attention indicator (``WorkspaceStore/hasUnseenAttention``): a static
+/// pip on the SAME hue budget the sidebar rings speak (one vocabulary — amber/red/green read identically
+/// in both places), tinted by the most-urgent waiting pane (``WorkspaceStore/unseenAttentionPanes``'s head).
 /// Computed HERE, not by the parent ``SlateTitlebar``: `unseenAttentionPanes` is a
 /// full DFS over every session/tab/pane touching a wide net of volatile store dicts + a sort, and
 /// `SlateTitlebar` is an ALWAYS-MOUNTED overlay — reading the walk there would make its WHOLE body (plate
@@ -190,16 +190,16 @@ private struct TitleMenuButton: View {
     }
 
     /// The title pip's tint — the STATUS colour of the most-urgent waiting pane (the head of the
-    /// urgency-sorted ``WorkspaceStore/unseenAttentionPanes``), matching the sidebar badge dots: red for
-    /// a blocked agent / failed command, BLUE (the agent palette's done 🔵) for unread finishes, green
-    /// only during the brief clean-finish flash. Secondary when nothing waits (the pip is hidden then
-    /// anyway — this is just its resting value).
+    /// urgency-sorted ``WorkspaceStore/unseenAttentionPanes``), on the ring vocabulary's hue budget so
+    /// the pip and the sidebar/menu rings never disagree about one pane: amber = a question waits
+    /// (act-now), red = broken, green = an unread finish. Secondary when nothing waits (the pip is
+    /// hidden then anyway — this is just its resting value).
     private static func tint(for badge: TabBadgeKind?) -> Color {
         switch badge {
-        case .awaitingInput,
-             .error: Slate.Status.err
-        case .completed: Slate.Status.ok
-        case .finished: Slate.Status.info
+        case .awaitingInput: Slate.Status.warn
+        case .error: Slate.Status.err
+        case .completed,
+             .finished: Slate.Status.ok
         default: Slate.Text.secondary
         }
     }

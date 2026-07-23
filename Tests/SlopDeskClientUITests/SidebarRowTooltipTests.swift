@@ -1,31 +1,68 @@
-// SidebarRowTooltipTests — pins `SidebarRowTooltip.text(cwd:scent:)`, the sidebar row `.help()` text
-// builder. A raw `\(cwd)` interpolation of a `String?` renders the literal `Optional(...)` wrapper — this
-// pins the unwrapped form instead.
+// SidebarRowTooltipTests — pins `SidebarRowTooltip.text(cwd:detail:lastCommand:)`, the sidebar row
+// `.help()` text builder (full cwd + untruncated prose readout + last-command line, empty parts
+// omitted), and `commandLine(_:)`, the `command · duration · exit N` assembly. A raw `\(cwd)`
+// interpolation of a `String?` renders the literal `Optional(...)` wrapper — this pins the unwrapped
+// form instead.
 
+import SlopDeskWorkspaceCore
 import XCTest
 @testable import SlopDeskClientUI
 
 final class SidebarRowTooltipTests: XCTestCase {
-    /// The scent line present + a real cwd: two lines, cwd first, NEVER `Optional(...)`.
-    func testScentPresentUnwrapsCwd() {
-        let text = SidebarRowTooltip.text(cwd: "/Users/me/project", scent: "writing tests")
-        XCTAssertEqual(text, "/Users/me/project\nwriting tests")
+    /// All three parts present: three lines, cwd first, NEVER `Optional(...)`.
+    func testAllPartsJoinAsLines() {
+        let text = SidebarRowTooltip.text(
+            cwd: "/Users/me/project",
+            detail: "Allow edit to Config.swift?",
+            lastCommand: "make check · 1.3s · exit 0",
+        )
+        XCTAssertEqual(text, "/Users/me/project\nAllow edit to Config.swift?\nmake check · 1.3s · exit 0")
     }
 
-    /// A cwd-less pane with a live scent line: the cwd line is blank, not the literal "nil".
-    func testScentPresentWithNilCwdOmitsLiteralNil() {
-        let text = SidebarRowTooltip.text(cwd: nil, scent: "writing tests")
-        XCTAssertEqual(text, "\nwriting tests")
+    /// A cwd-less pane with a readout detail: just the detail — no blank line, no literal "nil".
+    func testNilCwdOmitsItsLineEntirely() {
+        let text = SidebarRowTooltip.text(cwd: nil, detail: "writing tests", lastCommand: nil)
+        XCTAssertEqual(text, "writing tests")
     }
 
-    /// No scent: the tooltip is the plain cwd, unchanged from today's cwd-only behaviour.
-    func testNoScentFallsBackToPlainCwd() {
-        let text = SidebarRowTooltip.text(cwd: "/Users/me/project", scent: nil)
+    /// No detail and no command line: the tooltip is the plain cwd.
+    func testCwdOnlyFallsBackToPlainCwd() {
+        let text = SidebarRowTooltip.text(cwd: "/Users/me/project", detail: nil, lastCommand: nil)
         XCTAssertEqual(text, "/Users/me/project")
     }
 
-    /// No scent and no cwd: `nil` (the caller's `.help(helpText ?? "")` renders no tooltip).
-    func testNoScentNoCwdIsNil() {
-        XCTAssertNil(SidebarRowTooltip.text(cwd: nil, scent: nil))
+    /// Nothing at all: `nil` (the caller's `.help(helpText ?? "")` renders no tooltip).
+    func testAllNilIsNil() {
+        XCTAssertNil(SidebarRowTooltip.text(cwd: nil, detail: nil, lastCommand: nil))
+    }
+
+    /// An empty-string part is treated as absent, same as `nil` — no stray blank lines.
+    func testEmptyPartsAreOmitted() {
+        let text = SidebarRowTooltip.text(cwd: "", detail: "answering", lastCommand: "")
+        XCTAssertEqual(text, "answering")
+    }
+
+    // MARK: - The last-command line
+
+    /// A finished block: `command · duration · exit N`.
+    func testCommandLineJoinsCommandDurationExit() {
+        let block = CommandBlock(
+            index: 3, commandText: "make check", exitCode: 0, durationMS: 1300, complete: true,
+        )
+        XCTAssertEqual(SidebarRowTooltip.commandLine(block), "make check · 1.3s · exit 0")
+    }
+
+    /// A failed block keeps its non-zero exit in the line.
+    func testCommandLineCarriesFailureExit() {
+        let block = CommandBlock(
+            index: 4, commandText: "npm test", exitCode: 137, durationMS: 250, complete: true,
+        )
+        XCTAssertEqual(SidebarRowTooltip.commandLine(block), "npm test · 250ms · exit 137")
+    }
+
+    /// A blank command (a bare-Enter cycle) omits the command part rather than leading with a dot.
+    func testCommandLineOmitsBlankCommand() {
+        let block = CommandBlock(index: 5, commandText: "  ", exitCode: 0, durationMS: 90, complete: true)
+        XCTAssertEqual(SidebarRowTooltip.commandLine(block), "90ms · exit 0")
     }
 }

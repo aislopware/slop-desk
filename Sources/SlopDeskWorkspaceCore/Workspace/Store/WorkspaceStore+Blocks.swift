@@ -162,6 +162,14 @@ enum BlockJump {
 /// ``WorkspaceStore/requestFindInActivePane()``: resolve the active pane's live terminal model (in
 /// whichever live model is active), then route to its block hooks.
 public extension WorkspaceStore {
+    /// The pane's client-side command blocks (oldest-first) — empty for a non-terminal / unmaterialized
+    /// pane. The sidebar rail reads the newest failed/finished block for its error readout + tooltip
+    /// command line; resolves through the same ``TerminalModelProviding`` seam as
+    /// ``peekContent(for:recentLimit:)``, so it stays headless.
+    func commandBlocks(for id: PaneID) -> [CommandBlock] {
+        (handle(for: id) as? TerminalModelProviding)?.terminalModel?.blocks.blocks ?? []
+    }
+
     /// The active pane's id in WHICHEVER live model is active — the tree's active pane on the IDE shell, the
     /// canvas focus on the retained-but-dead path. `nil` for an empty shell. Shared by the block ops that
     /// need the id (the jump-to-failed CURSOR is keyed by it).

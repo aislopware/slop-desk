@@ -338,6 +338,25 @@ enum RailRowsBuilder {
         "zsh", "bash", "sh", "fish", "tcsh", "csh", "ksh", "dash", "login",
     ]
 
+    /// Agent-CLI basenames — a pane fronted by one of these is an AGENT session even before any status
+    /// verdict lands. A small allow-set matched against the cleaned ``processDisplayName(_:)`` (basename,
+    /// login-`-` stripped), never `contains`.
+    static let agentProcessNames: Set<String> = [
+        "claude", "codex", "gemini", "opencode", "aider", "goose", "amp",
+    ]
+
+    /// Whether a row is an AGENT session — the classification that holds the row's TALL two-line shell
+    /// for the WHOLE session (the height rung changes only at session boundaries, never on a status
+    /// edge, so a question/done/error arriving can never move layout). True when the pane carries ANY
+    /// agent-status verdict (`.idle` included — an agent resting at its prompt is still a session) OR
+    /// its foreground process is a known agent CLI (covers the pre-verdict window). Pure + static so the
+    /// rung rule is unit-pinned.
+    static func isAgentSession(status: ClaudeStatus, processLabel: String?) -> Bool {
+        if status != .none { return true }
+        guard let name = processDisplayName(processLabel)?.lowercased() else { return false }
+        return agentProcessNames.contains(name)
+    }
+
     /// The display folder name of a cwd: its last path component (`/a/b/repo` → `repo`, trailing-slash
     /// tolerant), the root as `/`, a bare `~` kept as-is. `nil` for `nil`/blank so the caller falls back
     /// — never an empty title. Delegates to ``PaneSpec/cwdDisplayName(_:)`` (WorkspaceCore, the single

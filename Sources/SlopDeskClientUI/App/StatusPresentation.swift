@@ -46,14 +46,17 @@ enum StatusPresentation {
         }
     }
 
-    /// Tint for an agent status (docs/42 glyph palette: idle🟢 working🟡 done🔵 needs🔴).
+    /// Tint for an agent status — the SAME hue budget the tab-badge rings speak (``tabBadge(_:)``), so
+    /// the iOS toolbar glyph / Peek & Reply header can never disagree with the sidebar about one pane:
+    /// working = accent (in-motion), needs-permission = amber (act-now; red is reserved for broken),
+    /// done = green (unread finish), idle/none = muted (the resting state spends no colour).
     static func agentTint(_ status: ClaudeStatus) -> Color {
         switch status {
-        case .none: Slate.Text.secondary
-        case .idle: Slate.Status.ok
-        case .working: Slate.Status.warn
-        case .done: Slate.Status.info
-        case .needsPermission: Slate.Status.err
+        case .none,
+             .idle: Slate.Text.secondary
+        case .working: Slate.State.accent
+        case .done: Slate.Status.ok
+        case .needsPermission: Slate.Status.warn
         }
     }
 
@@ -64,34 +67,37 @@ enum StatusPresentation {
 
     // MARK: Tab badge
 
-    /// How a sidebar tab's fused ``TabBadgeKind`` renders — the glyph map, kept next to ``agentSymbol``
-    /// so the two status vocabularies can't drift (`terminal-features__progress-state.md` "The full badge
-    /// set"). `.spinner` (running) and `.dot` (the settled accent dot) are bespoke shapes; every other kind
-    /// is a tinted SF-symbol fill. The view layer (``TabBadgeView``) switches on this so the symbol + tint
-    /// have a single source.
+    /// How a sidebar tab's fused ``TabBadgeKind`` renders — the ONE-SHAPE ring vocabulary
+    /// (``StatusRing``): every lifecycle state is a READING of the same Ø12 ring (stroke style + hue +
+    /// centre content change, the silhouette never does), so a state edge reads as one instrument
+    /// changing its reading rather than an icon swap. The view layer (``TabBadgeView``) switches on this
+    /// so the reading + tint have a single source, reused verbatim by every surface that mounts a badge
+    /// (sidebar rail, title-menu attention rows, iOS rows) — one frozen vocabulary, never re-derived
+    /// per surface.
+    ///
+    /// The hue budget: colour is spent ONLY on act-now (amber), in-motion (accent), broken (red) and
+    /// unread-done (green); the command tiers and privilege markers stay muted, and the resting row has
+    /// no badge at all.
     static func tabBadge(_ kind: TabBadgeKind) -> TabBadgeStyle {
         switch kind {
-        // ONE dot language on the agent palette (docs/42: working🟡 done🔵 needs🔴 idle🟢) — the COLOUR
-        // carries the state, a spinner ring means "live right now", and no badge is ever a character glyph
-        // (a checkmark/triangle/hand SF-symbol would read as foreign next to the dots). Only the at-rest
-        // privilege markers stay symbols (a shield/cup IS their meaning).
-        //
-        // Agent WORKING — amber dot + spinner ring (live).
-        case .running: .working(tint: Slate.Status.warn)
-        // An OSC 9;4 progress load — the muted dot + spinner ring (live, but not the agent).
-        case .commandRunning: .commandBusy(tint: Slate.Text.secondary)
-        // A plain busy shell — the bare static muted dot, NO ring (the ring is earned by an explicit
-        // progress report / a working agent).
+        // Agent WORKING — the dashed ring ticking forward, in the ACCENT (in-motion) hue.
+        case .running: .ringWorking(tint: Slate.State.accent)
+        // An OSC 9;4 progress load — the muted ring + centre micro-dot, STATIC (a program that
+        // instruments its progress is still not the agent; its number rides the telemetry column).
+        case .commandRunning: .ringProgress(tint: Slate.Text.secondary)
+        // A plain busy shell — the bare static muted micro-dot, no ring (concentric with the ring
+        // family: an agent taking over reads as the dot growing a ring, not an icon swap).
         case .commandBusy: .dot(Slate.Text.secondary)
-        // Completed — the brief green flash of a clean finish (settles to the blue unread dot).
-        case .completed: .dot(Slate.Status.ok)
-        // Finished — the persistent BLUE "unread output" dot (done, not yet seen).
-        case .finished: .dot(Slate.Status.info)
-        // Error / blocked — the RED dot, static: it waits on YOU, nothing is spinning.
-        case .error: .dot(Slate.Status.err)
-        case .awaitingInput: .dot(Slate.Status.err)
-        case .caffeinate: .symbol(name: "cup.and.saucer.fill", tint: Slate.Text.secondary)
-        case .sudo: .symbol(name: "shield.lefthalf.filled", tint: Slate.Text.secondary)
+        // Completed flash + the unread finish — one reading: the green ring + check, held until seen.
+        case .completed: .ringDone(tint: Slate.Status.ok)
+        case .finished: .ringDone(tint: Slate.Status.ok)
+        // Error — the red ring + cross: broken, waits on you, nothing spins.
+        case .error: .ringError(tint: Slate.Status.err)
+        // Awaiting input — the amber (act-now) ring + centre dot with the stepped halo pulse. Amber is
+        // the "answer me" hue; red stays reserved for something actually broken.
+        case .awaitingInput: .ringAwaiting(tint: Slate.Status.warn)
+        case .caffeinate: .ringGlyph(name: "cup.and.saucer.fill", tint: Slate.Text.secondary)
+        case .sudo: .ringGlyph(name: "shield.lefthalf.filled", tint: Slate.Text.secondary)
         }
     }
 
@@ -148,21 +154,25 @@ enum ProgressPresentation: Equatable {
     case error
 }
 
-/// The rendering recipe for one tab badge (see ``StatusPresentation/tabBadge(_:)``). `.spinner` and `.dot`
-/// are bespoke shapes the view draws directly; `.symbol` is an SF-symbol name + its tint. A pure value (no
-/// view), so the badge map can be unit-tested without rendering.
+/// The rendering recipe for one tab badge (see ``StatusPresentation/tabBadge(_:)``) — the ring readings
+/// map 1:1 onto ``StatusRing/Reading``; `.dot` is the one sub-ring shape (the quiet busy-shell
+/// micro-dot, concentric with the ring family). A pure value (no view), so the badge map can be
+/// unit-tested without rendering.
 enum TabBadgeStyle {
-    /// The AGENT-working indicator — the amber dot with a spinner ring (``SlateOrbitDot``): live, the
-    /// agent palette's 🟡. A pure SwiftUI animation, never a video/capture session (hang-safety rule #6).
-    case working(tint: Color)
-    /// An OSC 9;4 progress load — the muted dot with a spinner ring (``SlateOrbitDot``). Distinct from
-    /// ``working`` by TINT (secondary, never a status colour) so the sidebar reads "a program reports
-    /// progress" apart from "the agent is thinking".
-    case commandBusy(tint: Color)
-    /// A small STATIC filled dot — the whole settled vocabulary: red = waits on you (blocked / failed),
-    /// blue = done unread, green = the brief clean-finish flash. No spinner: nothing is running.
+    /// A WORKING agent — the dashed ring, lead segment ticking forward (the only spinning-class motion).
+    case ringWorking(tint: Color)
+    /// A blocked agent / interactive prompt — the ring + centre dot with the stepped halo pulse.
+    case ringAwaiting(tint: Color)
+    /// Done (flash + unread) — the ring + inner check, held until the tab is viewed.
+    case ringDone(tint: Color)
+    /// A failed command / held progress error — the ring + inner cross. Static: it waits on you.
+    case ringError(tint: Color)
+    /// An OSC 9;4 progress load — the muted ring + centre micro-dot, static (not the agent).
+    case ringProgress(tint: Color)
+    /// An at-rest privilege marker (caffeinate / sudo) — a small SF-symbol inside the muted ring.
+    case ringGlyph(name: String, tint: Color)
+    /// A plain busy shell — the bare static muted micro-dot (no ring; the ring is earned by an agent or
+    /// an explicit progress report).
     case dot(Color)
-    /// A tinted SF-symbol fill (the at-rest privilege markers: caffeinate / sudo).
-    case symbol(name: String, tint: Color)
 }
 #endif

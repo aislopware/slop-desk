@@ -1671,3 +1671,52 @@ substitution forced by the pure-native-Swift rule.
   survives as the AUTOMATION seam only: `check-video.sh`'s window-targeted autoconnect now boots a
   DETACHED `.desktop` pane (window endpoint, `RemoteWindowModel` window binding) instead of an in-tree
   pane 0, so the E2E runtime gate is preserved without re-admitting video into the tree.
+- ✅ **2026-07-23 — Tab row = supervision instrument: ONE-SHAPE StatusRing + readout line + telemetry column + session-scoped height (user-directed).**
+  With project identity + git on the SECTION HEADER, the per-tab dir/git lines were redundant; the row
+  is redesigned around supervising many agents (research pass over Warp's agent tabs + T3 Code's
+  indicator system — the latter is open source, `pingdotgg/t3code`, and its two load-bearing recipes
+  are adopted: STEPPED motion (`steps(N)`-style discrete frames, never an eased breathing pulse) and
+  a hard colour budget (colour only for act-now / in-motion / broken / unread-done; the resting state
+  is the UNLABELED state)).
+  - **One shape, many readings (`StatusRing`).** The badge vocabulary previously swapped silhouettes
+    per state (dot+orbit ring / bare dots / SF-symbols) — a state edge read as an icon swap ("giống
+    layout shift" even though the 16pt box never moved). Now every lifecycle state is a READING of the
+    same Ø12 ring: working = dashed 8-segment ring, lead segment ticking one slot per 0.2s beat (a
+    mechanical escapement, agent-only motion); awaiting = amber ring + centre dot + ONE stepped halo
+    pulse per 2s (front-loaded, 8 discrete frames); done/unread = green ring + check (the `.completed`
+    flash and `.finished` unread marker render identically — the enum split survives for the freshness
+    machinery); error = red ring + cross; OSC 9;4 progress = muted ring + micro-dot, STATIC; sudo/
+    caffeinate = glyph inside the muted ring. Only the plain busy shell stays a sub-ring 6pt micro-dot
+    (concentric: an agent taking over reads as the dot growing a ring). Awaiting moved red→AMBER
+    (act-now); red is reserved for broken. `SlateOrbitDot`/`SlateCometArc`/`SlatePingDot` deleted.
+  - **The row grid: [2pt attention tick][content][4ch telemetry][16pt badge rail].** The tick
+    (amber = a question waits, red = broken; hard cut, motionless, never fades under hover) gives a
+    dedicated left-edge who-needs-me scan channel; the badge moved from its two per-line positions to
+    ONE full-height vertically-centred rail slot (constant x AND constant anchor — a continuous scan
+    column); the telemetry column (instrument small, right-aligned, `Slate.Metric.telemetryCol`) shows
+    at most ONE value by badge precedence: blocked-age (AMBER — the sole coloured number, an ignored
+    question must not look fresh), working turn-elapsed (from the `paneAttentionAt` `.working`-edge
+    stamp; ≥10m escalates one luminance step — the stuck-agent answer), unread-age, command elapsed /
+    determinate OSC 9;4 percent (`progressPercentLabel`'s first call site), or a non-agent error's
+    bare exit code. Ages reveal at 60s; the duration grammar is clamped ≤4ch (`42s/12m/1h04/>9h`,
+    `RailRowTelemetry`); the per-row clock is a `TimelineView` mounted ONLY while a value can show.
+  - **Line 2 = the agent READOUT, by precedence (`RailRowReadout`):** blocked question > inspector
+    todo scent (`3/5 · Editing …`, promoted from the tooltip; counter prefix leads so `.tail` can't
+    eat it) > wire-27 last assistant line while working (~2s min-dwell against mid-turn churn) > the
+    agent's FINAL line while done-unseen (the label already crossed the wire and was discarded) >
+    `exit N · command` from the block model on error > the strayed relative cwd (demoted to the
+    lowest rung, NOT deleted) > reserved blank. The process label became a COMMANDS-ONLY voice
+    (suppressed on agent rows — the ring already says agent). Tooltip = full cwd + untruncated prose
+    readout + `command · duration · exit N`.
+  - **Height changes only at SESSION boundaries.** An agent row (any `ClaudeStatus` verdict, or a
+    known agent CLI in the foreground — `RailRowsBuilder.isAgentSession`) HOLDS the 44pt two-line
+    shell for the whole session (blank line 2 reserved when idle), with a 10s sticky decay on exit —
+    so a question/done/error edge swaps text inside a fixed shell and NEVER moves layout (previously a
+    subtitle-less row grew 32→44 the moment a question arrived). Non-agent rows keep 32pt (strayed-cwd
+    rows keep their structural 44pt).
+  - **Section header gains the act-now tally** (`●N`, amber, reserved slot, absent at zero): how many
+    panes in the project are blocked/broken, counted through the SAME gated badge pipeline the rows
+    render — "which PROJECT needs me" at a glance.
+  Client-only; no wire change (every element binds to signals already crossing: wire 26/27/32, the
+  attention/completion/command stamps, `TerminalBlockModel`, `PendingToolSummary.scent`). iOS keeps
+  its system rows (ring badge inherited; readout/telemetry/tally deferred, macOS-first).

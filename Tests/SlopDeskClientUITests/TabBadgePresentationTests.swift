@@ -1,9 +1,11 @@
 // TabBadgePresentationTests — pins the pure view-side badge map. `StatusPresentation.tabBadge` resolves
-// each `TabBadgeKind` to the correct glyph (spinner / accent dot / tinted SF-symbol), and `tabBadgeLabel`
-// gives every kind a distinct non-empty AX/tooltip string. Headless VALUE assertions — no SwiftUI render, no
-// video/Metal/SCStream. Each test fails if the two helpers don't exist, so none is
-// tautological. (Tints are deliberately NOT asserted here — `Color` equality is provider-fragile; the symbol
-// NAME + glyph SHAPE are the load-bearing spec, locked by name, with the visual tint left to the snapshot.)
+// each `TabBadgeKind` to its ONE-SHAPE ring reading (working = dashed ring, awaiting = ring+halo,
+// done = ring+check, error = ring+cross, progress = muted ring, privilege = glyph-in-ring; the plain
+// busy shell keeps the sub-ring micro-dot), and `tabBadgeLabel` gives every kind a distinct non-empty
+// AX/tooltip string. Headless VALUE assertions — no SwiftUI render, no video/Metal/SCStream. Each test
+// fails if the two helpers don't exist, so none is tautological. (Tints are deliberately NOT asserted
+// here — `Color` equality is provider-fragile; the reading CLASS is the load-bearing spec, with the
+// visual tint left to the snapshot.)
 
 import SlopDeskWorkspaceCore
 import XCTest
@@ -11,70 +13,97 @@ import XCTest
 
 @MainActor
 final class TabBadgePresentationTests: XCTestCase {
-    /// The SF-symbol name a kind maps to, or `nil` when it renders a bespoke shape (spinner / accent dot).
-    private func symbolName(of kind: TabBadgeKind) -> String? {
-        if case let .symbol(name, _) = StatusPresentation.tabBadge(kind) { return name }
+    /// The SF-symbol name a kind carries inside its ring, or `nil` for the pure ring readings.
+    private func glyphName(of kind: TabBadgeKind) -> String? {
+        if case let .ringGlyph(name, _) = StatusPresentation.tabBadge(kind) { return name }
         return nil
     }
 
-    private func isWorking(_ kind: TabBadgeKind) -> Bool {
-        if case .working = StatusPresentation.tabBadge(kind) { return true }
+    private func isWorkingRing(_ kind: TabBadgeKind) -> Bool {
+        if case .ringWorking = StatusPresentation.tabBadge(kind) { return true }
         return false
     }
 
-    private func isCommandBusy(_ kind: TabBadgeKind) -> Bool {
-        if case .commandBusy = StatusPresentation.tabBadge(kind) { return true }
+    private func isAwaitingRing(_ kind: TabBadgeKind) -> Bool {
+        if case .ringAwaiting = StatusPresentation.tabBadge(kind) { return true }
         return false
     }
 
-    /// Whether the kind renders the STATIC dot (the settled vocabulary; no spinner, no symbol).
+    private func isDoneRing(_ kind: TabBadgeKind) -> Bool {
+        if case .ringDone = StatusPresentation.tabBadge(kind) { return true }
+        return false
+    }
+
+    private func isErrorRing(_ kind: TabBadgeKind) -> Bool {
+        if case .ringError = StatusPresentation.tabBadge(kind) { return true }
+        return false
+    }
+
+    private func isProgressRing(_ kind: TabBadgeKind) -> Bool {
+        if case .ringProgress = StatusPresentation.tabBadge(kind) { return true }
+        return false
+    }
+
+    /// Whether the kind renders the bare STATIC micro-dot (the quiet busy-shell tier; no ring).
     private func isStaticDot(_ kind: TabBadgeKind) -> Bool {
         if case .dot = StatusPresentation.tabBadge(kind) { return true }
         return false
     }
 
-    /// `.running` (a WORKING agent) ⇒ the live spinner-ring style, not an SF-symbol and not a static dot.
-    func testRunningIsLiveSpinner() {
-        XCTAssertTrue(isWorking(.running))
-        XCTAssertNil(symbolName(of: .running), "the orbit dot is a bespoke shape, not an SF-symbol")
+    /// `.running` (a WORKING agent) ⇒ the dashed working ring — the only spinning-class reading;
+    /// never a static dot, never a glyph.
+    func testRunningIsTheWorkingRing() {
+        XCTAssertTrue(isWorkingRing(.running))
+        XCTAssertNil(glyphName(of: .running), "the working ring is a bespoke reading, not an SF-symbol")
         XCTAssertFalse(isStaticDot(.running), "working is live — never the static dot")
     }
 
-    /// `.commandRunning` (an OSC 9;4 progress load) ⇒ the QUIET muted spinner-ring, distinct from the
-    /// agent's `.working` style — NOT a symbol, NOT a static dot.
-    func testCommandRunningIsMutedSpinner() {
-        XCTAssertTrue(isCommandBusy(.commandRunning))
-        XCTAssertFalse(isWorking(.commandRunning), "a program's progress must not use the agent style")
-        XCTAssertNil(symbolName(of: .commandRunning))
+    /// `.awaitingInput` ⇒ the awaiting ring (ring + centre dot + halo) — distinct from BOTH the
+    /// working ring (an ignored question must not read as progress) and the error ring (a question is
+    /// not a failure).
+    func testAwaitingIsItsOwnRing() {
+        XCTAssertTrue(isAwaitingRing(.awaitingInput))
+        XCTAssertFalse(isWorkingRing(.awaitingInput))
+        XCTAssertFalse(isErrorRing(.awaitingInput))
     }
 
-    /// `.commandBusy` (a plain busy shell) ⇒ the bare STATIC muted dot — no spinner (the ring is earned
-    /// by an explicit progress report / a working agent), no symbol.
+    /// `.commandRunning` (an OSC 9;4 progress load) ⇒ the muted progress ring — NOT the agent's
+    /// working ring (command ≠ agent), not a dot, not a glyph.
+    func testCommandRunningIsTheMutedProgressRing() {
+        XCTAssertTrue(isProgressRing(.commandRunning))
+        XCTAssertFalse(isWorkingRing(.commandRunning), "a program's progress must not use the agent reading")
+        XCTAssertNil(glyphName(of: .commandRunning))
+    }
+
+    /// `.commandBusy` (a plain busy shell) ⇒ the bare STATIC muted micro-dot — no ring (the ring is
+    /// earned by an agent or an explicit progress report).
     func testCommandBusyIsBareStaticDot() {
         XCTAssertTrue(isStaticDot(.commandBusy))
-        XCTAssertFalse(isCommandBusy(.commandBusy), "a plain busy shell never spins")
-        XCTAssertNil(symbolName(of: .commandBusy))
+        XCTAssertFalse(isProgressRing(.commandBusy), "a plain busy shell earns no ring")
+        XCTAssertNil(glyphName(of: .commandBusy))
     }
 
-    /// The settled vocabulary is ALL static dots (no character glyphs next to
-    /// dots): blocked/failed red, done-unread blue,
-    /// clean-finish flash green. Tints are left to the snapshot (Color equality is provider-fragile);
-    /// the SHAPE class is the load-bearing pin.
-    func testSettledKindsAreStaticDotsNotCharacterGlyphs() {
-        for kind in [TabBadgeKind.awaitingInput, .error, .finished, .completed] {
-            XCTAssertTrue(isStaticDot(kind), "\(kind): the settled vocabulary is a static dot")
-            XCTAssertNil(symbolName(of: kind), "\(kind): no character glyph in the dot vocabulary")
-        }
+    /// The done tier — the flash AND the unread marker — is ONE reading: the ring + check. The unread
+    /// state must never decay to an at-rest accent dot (colour = live data; a seen row shows nothing).
+    func testDoneTierIsTheCheckRing() {
+        XCTAssertTrue(isDoneRing(.completed))
+        XCTAssertTrue(isDoneRing(.finished))
     }
 
-    /// `.caffeinate` ⇒ the coffee cup (a sleep-blocking session at rest).
-    func testCaffeinateIsCoffeeSymbol() {
-        XCTAssertEqual(symbolName(of: .caffeinate), "cup.and.saucer.fill")
+    /// `.error` ⇒ the ring + cross — static (it waits on you), never the awaiting reading.
+    func testErrorIsTheCrossRing() {
+        XCTAssertTrue(isErrorRing(.error))
+        XCTAssertFalse(isAwaitingRing(.error))
     }
 
-    /// `.sudo` ⇒ the shield (a privileged session at rest).
-    func testSudoIsShieldSymbol() {
-        XCTAssertEqual(symbolName(of: .sudo), "shield.lefthalf.filled")
+    /// `.caffeinate` ⇒ the coffee cup inside the muted ring (a sleep-blocking session at rest).
+    func testCaffeinateIsCoffeeGlyphInRing() {
+        XCTAssertEqual(glyphName(of: .caffeinate), "cup.and.saucer.fill")
+    }
+
+    /// `.sudo` ⇒ the shield inside the muted ring (a privileged session at rest).
+    func testSudoIsShieldGlyphInRing() {
+        XCTAssertEqual(glyphName(of: .sudo), "shield.lefthalf.filled")
     }
 
     /// Every kind carries a non-empty, distinct AX/tooltip label so the icon-only badge is legible/testable.

@@ -11,39 +11,38 @@ import SlopDeskAgentDetect
 /// Each case maps to a badge described in `progress-state.md` → "The full badge set".
 public enum TabBadgeKind: Equatable, Sendable {
     /// **Running (agent)** — a WORKING code agent (`ClaudeStatus.working`). The "agent is thinking"
-    /// indicator (the amber dot + spinner ring in the view layer). Split from a program's
+    /// indicator (the dashed accent ring ticking forward in the view layer). Split from a program's
     /// ``commandRunning`` so the sidebar reads "the AGENT is working" distinctly from "a program reports
     /// progress" (herdr's `Working` vs `Unknown` distinction).
     case running
     /// **Running (command)** — an active `OSC 9;4;1`/`3` PROGRESS report with NO agent working: a program
-    /// explicitly says "I'm loading". The QUIET, muted marker WITH the spinner ring (secondary text
-    /// colour, no accent) — the ring is earned by the explicit progress report. Ranks just below
-    /// ``running`` and above ``commandBusy``.
+    /// explicitly says "I'm loading". The QUIET, muted ring reading (secondary text colour, static —
+    /// its number rides the telemetry column) — the ring is earned by the explicit progress report.
+    /// Ranks just below ``running`` and above ``commandBusy``.
     case commandRunning
     /// **Busy (command)** — a plain busy shell (`isBusy`, no OSC 9;4 report): a foreground command is
-    /// running, nothing more is known. The static muted dot, NO spinner — the ring is reserved for an
+    /// running, nothing more is known. The static muted micro-dot, NO ring — the ring is reserved for an
     /// explicit progress report or a working agent, not a bare busy bit. Ranks just below
     /// ``commandRunning`` and above the privilege badges.
     case commandBusy
-    /// **Completed** — the green checkmark. The brief success flash a command shows on a clean exit
-    /// (`OSC 133;D` exit 0) before it settles to ``finished``. This resolver emits ``completed`` for a
-    /// `.success` completion / an agent that just finished its turn ONLY while the caller reports the
-    /// completion is still ``CompletionFreshness/fresh``; once it ``CompletionFreshness/settled`` the
-    /// same inputs decay to the ``finished`` accent dot. Freshness is an INPUT (the store mirrors a
-    /// per-pane `completedAt` and compares it to "now"), so this resolver stays clock-free.
+    /// **Completed** — the fresh clean finish (`OSC 133;D` exit 0 / an agent that just finished its
+    /// turn), emitted ONLY while the caller reports the completion is still
+    /// ``CompletionFreshness/fresh``; once it ``CompletionFreshness/settled`` the same inputs decay to
+    /// ``finished``. Both render the SAME green ring + check in the view layer — the split survives for
+    /// the freshness machinery and the control backend's badge tokens. Freshness is an INPUT (the store
+    /// mirrors a per-pane `completedAt` and compares it to "now"), so this resolver stays clock-free.
     case completed
-    /// **Finished** — the small accent dot, the "unread output" marker for a command that exited 0 and
-    /// has settled past the ``completed`` flash (and for an agent that went idle/done and is still
-    /// unread). Reached when the caller reports ``CompletionFreshness/settled`` for a `.success` /
-    /// `.done` row — the persistent marker that holds until the tab is viewed (its badge is cleared on
-    /// focus). No timestamp lives here; the settle decision is the store's.
+    /// **Finished** — the "unread output" marker for a command that exited 0 and has settled past the
+    /// ``completed`` flash (and for an agent that went done and is still unread). The green ring + check
+    /// that holds until the tab is viewed (cleared on focus). No timestamp lives here; the settle
+    /// decision is the store's.
     case finished
-    /// **Error** — the static red dot. A command exited non-zero (`OSC 9;4;2` / a `.failure`
+    /// **Error** — the red ring + cross, static. A command exited non-zero (`OSC 9;4;2` / a `.failure`
     /// completion) or an agent reported an error.
     case error
-    /// **Awaiting input** — the static red dot. A code agent is blocked on approval/input
-    /// (`ClaudeStatus.needsPermission`) or a plain command is stopped at an interactive prompt. The
-    /// most-urgent state — it wins the precedence.
+    /// **Awaiting input** — the amber ring + centre dot with the stepped halo. A code agent is blocked
+    /// on approval/input (`ClaudeStatus.needsPermission`) or a plain command is stopped at an
+    /// interactive prompt. The most-urgent state — it wins the precedence.
     case awaitingInput
     /// **Caffeinate** — the coffee cup. A sleep-blocking session (`caffeinate` foreground). Surfaces
     /// only when the shell is otherwise at rest (below the active states).
