@@ -430,11 +430,15 @@ enum Slate {
         static let heightBar: CGFloat = 28
         /// The standard single-line list row (palette results, footers).
         static let heightRow: CGFloat = 32
-        /// The sidebar TAB row — the otty `TabsPanelRowView` measurement (34pt, off the 4pt ladder
-        /// on purpose: the replica measurement wins for this one row).
-        static let heightTabRow: CGFloat = 34
-        /// The tab row's own horizontal content inset (otty measurement: 14pt, not the shared `space3`).
-        static let tabRowInset: CGFloat = 14
+        /// The sidebar TAB row — measured off the live otty app (36pt active card, pixel-sampled at
+        /// 1×; off the 4pt ladder on purpose: the measurement wins for this one row).
+        static let heightTabRow: CGFloat = 36
+        /// The tab row's own horizontal content inset (live otty measurement: title ink starts 10pt
+        /// inside the card edge, not the shared `space3`).
+        static let tabRowInset: CGFloat = 10
+        /// The sidebar project-group header row (chevron + folder + path). 24pt + the list's 2pt row
+        /// spacing on both sides = otty's measured 28pt inter-group band; the air IS the separator.
+        static let heightSectionHeader: CGFloat = 24
         /// Chrome strips: the titlebar / traffic-light band.
         static let heightStrip: CGFloat = 40
         /// The overlay search-input strip (palette / navigator / global search / open-quickly).

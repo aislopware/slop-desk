@@ -1,12 +1,12 @@
-// NavigatorColumn — the left sidebar navigator, the otty `TabsPanelView` silhouette
-// (`docs/otty-clone/screenshots/{workspace-tabs,tab-badge,code-agents}.png`): a flat "TABS" panel on
-// the `Slate.Surface.ground` background (NOT native `.sidebar` vibrancy — the host split item is a
-// PLAIN item), the caps "TABS" label, and the active session's tabs as `SlateTabRow`s. No search
-// field, no hamburger — otty's sidebar is bare rows; jumping is ⌘⇧O's job. The ONE deliberate step
-// past otty: rows are ALWAYS grouped into By-Project sections under a caps project header
-// (``SidebarSectionHeaderRow``) in the same register as "TABS" (each pane's key is HOST-pushed — see
-// `WorkspaceStore.paneProjectKey`; sections and rows follow creation order). Top 40pt is reserved
-// for the traffic lights under the hidden titlebar.
+// NavigatorColumn — the left sidebar navigator, a 1:1 port of the live otty grouped sidebar
+// (pixel-sampled off the running app; historical refs in `docs/otty-clone/screenshots/`): a flat
+// "TABS" panel on the `Slate.Surface.ground` background (NOT native `.sidebar` vibrancy — the host
+// split item is a PLAIN item), the caps "TABS" label with otty's trailing panel-menu icon, and rows
+// ALWAYS grouped into By-Project sections under otty's chevron + folder + path group header
+// (``SidebarSectionHeaderRow``, collapsible; each pane's key is HOST-pushed — see
+// `WorkspaceStore.paneProjectKey`; sections and rows follow creation order). No search field —
+// otty's sidebar is bare rows; jumping is ⌘⇧O's job. Top 40pt is reserved for the traffic lights
+// under the hidden titlebar.
 //
 // iOS: a `List(selection:)` so NavigationSplitView pushes to the content column on a compact iPhone (a custom
 // button list does not drive column navigation). Themed to match macOS but keeps the system list's navigation
@@ -67,7 +67,16 @@ struct NavigatorColumn: View {
     #if os(macOS)
     /// Pointer-in-strip — the collapse toggle's hover-reveal gate.
     @State private var stripHover = false
+    /// The COLLAPSED project groups (header chevron toggled shut), keyed by ``collapseKey(_:)``.
+    /// Session-scoped presentation state — a fresh launch opens every group.
+    @State private var collapsedSections: Set<String> = []
     #endif
+
+    /// The collapse-set key for a section: its normalized project key, or the sentinel for the
+    /// keyless "Other" bucket (whose `projectKey` is `nil` but which still collapses).
+    static func collapseKey(_ projectKey: String?) -> String {
+        projectKey ?? "\u{2205}other"
+    }
 
     /// The rows the sidebar renders this eval — ALWAYS the memoized structural rows. The query filter
     /// (``RailRowsBuilder/filtered``) applies DOWNSTREAM over these same rows
@@ -175,8 +184,31 @@ struct NavigatorColumn: View {
                     .tracking(Slate.Typeface.capsTracking)
                     .foregroundStyle(Slate.State.header)
                 Spacer(minLength: 0)
+                // otty's trailing panel-menu icon. Theirs offers grouping/order modes; ours is
+                // always-grouped-by-project, so the menu carries only the honest actions.
+                Menu {
+                    Button("Collapse All Groups") {
+                        collapsedSections = Set(sections.map { Self.collapseKey($0.projectKey) })
+                    }
+                    Button("Expand All Groups") { collapsedSections.removeAll() }
+                    Divider()
+                    Button("Refresh Git Status") {
+                        for key in sections.compactMap(\.projectKey) {
+                            store.refreshGitSummary(forProject: key)
+                        }
+                    }
+                } label: {
+                    Image(systemSymbol: .line3HorizontalDecrease)
+                        .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                        .foregroundStyle(Slate.State.header)
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Tab groups")
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 20)
             .padding(.bottom, 6)
 
             ScrollView {
@@ -185,13 +217,22 @@ struct NavigatorColumn: View {
                         emptyLabel("No tabs open")
                     } else {
                         ForEach(sections) { section in
+                            let collapseKey = Self.collapseKey(section.projectKey)
+                            let collapsed = collapsedSections.contains(collapseKey)
                             if let header = section.header {
                                 SidebarSectionHeaderRow(
                                     store: store, title: header, projectKey: section.projectKey,
+                                    collapsed: collapsed,
+                                    onToggle: {
+                                        if collapsed { collapsedSections.remove(collapseKey) }
+                                        else { collapsedSections.insert(collapseKey) }
+                                    },
                                 )
                             }
-                            ForEach(section.rows) { row in
-                                macRow(row)
+                            if !collapsed {
+                                ForEach(section.rows) { row in
+                                    macRow(row)
+                                }
                             }
                         }
                     }
@@ -484,41 +525,91 @@ enum SidebarRowTooltip {
     }
 }
 
-/// The project section header — SlopDesk's one deliberate step past otty's sidebar, spoken entirely
-/// in otty's own header grammar: ONE caps line (system face, 11pt semibold, the measured
-/// `.tracking(0.6)` — the "TABS" register), no counts, no git line, no rule. The name reads one ink
-/// step DARKER than "TABS" (`Slate.Text.secondary` vs the header grey) so panel chrome and content
-/// taxonomy separate by luminance alone — exactly how otty ranks the Details panel's "STAGED" /
-/// "CHANGES" against its rows. Everything the old two-line header printed moved where otty keeps
-/// richness: the hover TOOLTIP (full project path + the git branch/dirt line) and the context menu
-/// ("Refresh Git Status"). Reads its git summary INSIDE its own body so a git tick re-renders only
-/// the (cheap) header leaves, mirroring ``SidebarLiveRow``. Internal (not private) so the opt-in
-/// snapshot render can mount the REAL header.
+/// The project section header — otty's grouped-sidebar header anatomy, pixel-sampled off the live
+/// app at 1×: a disclosure `chevron.down` (x≈10), a dim `folder.fill` (x≈27), then the project PATH
+/// in the plain system face (11pt, secondary ink, x≈46) — home-abbreviated, trailing `/`, middle-
+/// elided when long (``displayPath(_:)``). No caps, no counts, no git line, no rule: groups separate
+/// by the header band's own air (24pt + the list's 2pt gaps = the measured 28pt). Tapping toggles the
+/// group shut (chevron rotates to `.right`). The richness stays where otty keeps it: the hover
+/// TOOLTIP (full project path + the git branch/dirt line) and the context menu ("Refresh Git
+/// Status"). Reads its git summary INSIDE its own body so a git tick re-renders only the (cheap)
+/// header leaves, mirroring ``SidebarLiveRow``. Internal (not private) so the opt-in snapshot render
+/// can mount the REAL header.
 struct SidebarSectionHeaderRow: View {
     let store: WorkspaceStore
+    /// The group's short display name (basename header) — the keyless bucket's visible label and the
+    /// AX fallback; a keyed group renders ``displayPath(_:)`` of `projectKey` instead.
     let title: String
     let projectKey: String?
+    var collapsed: Bool = false
+    var onToggle: () -> Void = {}
 
     var body: some View {
         let summary = projectKey.flatMap { store.projectGitSummary[$0] }
-        Text(title.uppercased())
-            .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
-            .tracking(Slate.Typeface.capsTracking)
-            .foregroundStyle(Slate.Text.secondary)
-            .lineLimit(1)
-            .truncationMode(.middle)
-            // The list already insets 8; +8 lands the caps label on the panel's 16pt label column
-            // ("TABS"), a hair OUTDENTED from the row titles (8+14) — hierarchy by alignment.
-            .padding(.horizontal, Slate.Metric.space2)
-            // A generous top gap is the whole separator (otty separates groups with air, not rules).
-            .padding(.top, Slate.Metric.space4)
-            .padding(.bottom, Slate.Metric.space1)
-            .help(Self.tooltip(projectKey: projectKey, summary: summary) ?? "")
-            .contextMenu {
-                if let projectKey {
-                    Button("Refresh Git Status") { store.refreshGitSummary(forProject: projectKey) }
-                }
+        // The measured x-ladder (list inset 8 + leading 2 = chevron 10; +10 wide + 7 gap = folder 27;
+        // +12 wide + 7 gap = path 46) — the path indents PAST the row titles (x18), chevron before.
+        HStack(spacing: 7) {
+            Image(systemSymbol: collapsed ? .chevronRight : .chevronDown)
+                .font(.system(size: Slate.Typeface.small, weight: .semibold))
+                .foregroundStyle(Slate.State.header)
+                .frame(width: 10)
+            Image(systemSymbol: .folderFill)
+                .font(.system(size: Slate.Typeface.small))
+                .foregroundStyle(Slate.State.header.opacity(0.5))
+            Text(projectKey.map(Self.displayPath) ?? title)
+                .font(.system(size: Slate.Typeface.footnote))
+                .foregroundStyle(Slate.Text.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, 2)
+        .frame(height: Slate.Metric.heightSectionHeader)
+        .contentShape(.rect)
+        .onTapGesture(perform: onToggle)
+        .help(Self.tooltip(projectKey: projectKey, summary: summary) ?? "")
+        .contextMenu {
+            if let projectKey {
+                Button("Refresh Git Status") { store.refreshGitSummary(forProject: projectKey) }
             }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    /// The character budget past which the display path middle-elides (the live app passes a 29-char
+    /// path through verbatim and elides a 39-char one; the sidebar fits ~30 at 11pt).
+    private static let pathBudget = 32
+
+    /// The header's display path, in otty's dialect: `~`-abbreviated (any `/Users/<name>` prefix —
+    /// the key is a HOST path, so the literal client home can't be compared), a trailing `/`, and —
+    /// only when the result overruns ``pathBudget`` — the FIRST component kept, the middle elided to
+    /// `…`, and as many TRAILING components as fit (the last always kept, however long). Pure +
+    /// static so the dialect is unit-pinned.
+    static func displayPath(_ projectKey: String) -> String {
+        var path = projectKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
+        var comps = path.split(separator: "/").map(String.init)
+        if path.hasPrefix("/Users/"), comps.count >= 2 {
+            comps.replaceSubrange(0...1, with: ["~"])
+        }
+        guard let first = comps.first else { return "/" }
+        let isHome = first == "~"
+        func joined(_ parts: [String]) -> String {
+            (isHome ? "" : "/") + parts.joined(separator: "/") + "/"
+        }
+        let full = joined(comps)
+        guard full.count > pathBudget, comps.count > 2 else { return full }
+        // Keep the first component and grow the kept TAIL while the elided form still fits.
+        var tail = [comps.removeLast()]
+        while let candidate = comps.dropFirst().last,
+              joined([first, "…"] + [candidate] + tail).count <= pathBudget
+        {
+            comps.removeLast()
+            tail.insert(candidate, at: 0)
+        }
+        return joined([first, "…"] + tail)
     }
 
     /// The header's hover tooltip: the full project path, then the git line (branch + the `__git_ps1`
@@ -631,6 +722,10 @@ private struct SidebarLiveRow: View {
         SlateTabRow(
             title: shownTitle,
             active: active,
+            // The otty agent-integration look: an agent session's title wears the leading `✳`.
+            agentMarker: RailRowsBuilder.isAgentSession(
+                status: chrome.status, processLabel: chrome.processLabel,
+            ),
             badge: chrome.badge,
             processLabel: RailRowsBuilder.shellLabel(chrome.processLabel),
             readOnly: chrome.readOnly,

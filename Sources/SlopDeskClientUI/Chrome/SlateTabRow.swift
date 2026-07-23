@@ -1,11 +1,12 @@
-// SlateTabRow — the sidebar tab row, a 1:1 port of otty's `TabsPanelRowView` (measured in
-// `otty-reversed/Sources/UI/OttyReplica.swift` + `docs/otty-clone/screenshots/{workspace-tabs,
-// tab-badge,code-agents}.png`): a 34pt line, title in the SYSTEM face (13pt, medium when active),
-// one fixed trailing slot that carries the resting SHELL LABEL (`zsh` — muted 11pt) or the status
-// badge (``TabBadgeView``), swapping to the close `×` under hover. ACTIVE is the raised white card
-// (fill + 1px hairline + the measured 4% cast shadow); hover is the flat plate. Nothing else rides
-// the row: no subtitle, no readout, no telemetry — the richness lives in the hover tooltip and the
-// context menu, which is the otty way.
+// SlateTabRow — the sidebar tab row, a 1:1 port of otty's `TabsPanelRowView`, pixel-sampled off the
+// LIVE otty app (grouped-sidebar build) at 1×: a 36pt line, title in the SYSTEM face (13pt) that
+// rests on the SECONDARY ink and steps up to primary + medium only when active, an optional leading
+// `✳` agent marker IN the title run (otty's agent integration literally prefixes the title string),
+// and one fixed trailing slot that carries the resting SHELL LABEL (`zsh` — muted 11pt) or the
+// status badge (``TabBadgeView``), swapping to the close `×` under hover. ACTIVE is the raised card
+// (fill + 1px hairline + the 4% cast shadow); hover is the flat plate. Nothing else rides the row:
+// no subtitle, no readout, no telemetry — the richness lives in the hover tooltip and the context
+// menu, which is the otty way.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -16,6 +17,9 @@ import SwiftUI
 struct SlateTabRow: View {
     let title: String
     let active: Bool
+    /// Whether the title wears the leading `✳` AGENT marker (an agent session's row, the otty
+    /// integration's title prefix). Display-only — the rename field seeds from the bare `title`.
+    var agentMarker: Bool = false
     /// The fused status badge (``TabBadgeView``) — occupies the trailing slot when present.
     var badge: TabBadgeKind?
     /// The resting trailing label — the pane's foreground process (`zsh`, `vim`, `claude`), shown
@@ -59,9 +63,13 @@ struct SlateTabRow: View {
             if isEditing {
                 renameField
             } else {
-                Text(title)
+                // `\u{FE0E}` pins the ✳ to TEXT presentation — bare U+2733 renders as emoji on
+                // Apple platforms, which would break the ink-only title run.
+                Text(agentMarker ? "✳\u{FE0E} \(title)" : title)
                     .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
-                    .foregroundStyle(Slate.Text.primary)
+                    // The live-otty ink ladder: a resting title reads on the SECONDARY ink; only the
+                    // active card's title steps up to primary (with the weight bump).
+                    .foregroundStyle(active ? Slate.Text.primary : Slate.Text.secondary)
                     .lineLimit(1)
             }
             Spacer(minLength: 6)

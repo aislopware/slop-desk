@@ -150,6 +150,27 @@ final class RailRowReadoutTests: XCTestCase {
         XCTAssertNil(SidebarSectionHeaderRow.tooltip(projectKey: nil, summary: nil))
     }
 
+    /// The header's display path speaks the live-otty dialect: short paths verbatim with a trailing
+    /// slash, any `/Users/<name>` prefix abbreviated to `~`, and an over-budget path keeping the
+    /// FIRST component + `…` + as many TRAILING components as fit (the last always kept).
+    func testHeaderDisplayPathDialect() {
+        XCTAssertEqual(SidebarSectionHeaderRow.displayPath("/Users/abner"), "~/")
+        XCTAssertEqual(SidebarSectionHeaderRow.displayPath("/Users/abner/Workspace"), "~/Workspace/")
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.displayPath("/Volumes/Lacie/Workspace/oss"),
+            "/Volumes/Lacie/Workspace/oss/",
+        )
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.displayPath("/Volumes/Lacie/Workspace/oss/slop-desk"),
+            "/Volumes/…/oss/slop-desk/",
+        )
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.displayPath("/Users/abner/otx/alpha/beta/gamma/delta/epsilon-quite-long-name"),
+            "~/…/epsilon-quite-long-name/",
+        )
+        XCTAssertEqual(SidebarSectionHeaderRow.displayPath("/"), "/")
+    }
+
     /// The git line speaks the `__git_ps1` sigil dialect — branch first, only the NON-ZERO counts,
     /// fixed order; a non-repo summary yields nothing; a repo with no branch reads "detached".
     func testGitLineDialect() {

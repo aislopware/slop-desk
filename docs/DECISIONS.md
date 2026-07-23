@@ -1906,3 +1906,32 @@ ONE deliberate step past otty kept: always-on By-Project grouping.
   separated by AIR (16pt top), no rule, no counts. Hierarchy by luminance: "TABS" (panel chrome)
   keeps the lightest header grey; project names sit one ink step darker (`Text.secondary`) as
   content taxonomy — exactly how otty ranks the Details panel's "STAGED"/"CHANGES" against rows.
+
+### v4.1 — the LIVE otty port: measured off the running app (2026-07-24)
+
+The v4 reset was built from the historical replica + screenshots; the user then opened the CURRENT
+otty (which has grown native By-Project grouping) and asked for a 1:1 port of what is actually on
+screen. Every number below is pixel-sampled off the live window at 1× (`otty-cli tab new --cwd …`
+probe tabs at controlled depths nailed the header dialect; `tab list --json` exposed the semantics).
+
+- **The row re-measures**: height 34 → **36**, title inset 14 → **10** (title ink starts x18 against
+  the card at x8), and the resting title drops to the SECONDARY ink — only the active card's title
+  reads primary (+ medium). List inset 8, spacing 2, radius 7, card + hairline + shadow all held.
+- **The group header is otty's real anatomy, not a caps line**: `chevron.down` (x≈10, muted) +
+  dim `folder.fill` (x≈27) + the project PATH in the plain system face 11 at x≈46 — lowercase,
+  trailing `/`, `~`-abbreviated (any `/Users/<name>` prefix — the key is a HOST path), and
+  middle-elided past ~32 chars keeping FIRST + `…` + as many TRAILING components as fit
+  (`/Volumes/…/oss/slop-desk/`; the live app renders its own quirky component order — ours keeps
+  original order, same grammar). Header band = 24pt + the 2pt list gaps = the measured 28pt; the
+  air IS the group separator (no rule, no counts, no caps). Tapping collapses the group
+  (chevron.right; session-scoped `@State`). The v4 caps-line header is superseded.
+- **The `✳` agent marker is title text**: `tab list --json` showed otty's agent integration
+  literally prefixes the title string (`"✳ Claude Code"`). `SlateTabRow` grows `agentMarker:`
+  (rendered `✳\u{FE0E}` — VS15 pins text presentation) driven by `isAgentSession`; the rename field
+  still seeds from the bare title.
+- **The TABS row gets otty's trailing panel-menu icon** (`line.3.horizontal.decrease`, header ink):
+  theirs opens GROUP/ORDER/DIVIDER modes; ours is always-grouped-by-project, so the menu carries
+  only honest actions (Collapse/Expand All Groups, Refresh Git Status).
+- Badge COLOURS stay the v4 mapping (`tab-badge.png` — the live capture's grey hand is just the
+  inactive-window render). The trailing pane-count otty shows does not map: our rows are per-PANE,
+  not per-tab.
