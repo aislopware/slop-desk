@@ -526,10 +526,13 @@ enum SidebarRowTooltip {
     }
 }
 
-/// The section header LEAF: reads its project's git summary AND its act-now tally INSIDE its own
-/// body — the sidebar body never touches the volatile dicts, so a git/status tick re-renders only the
-/// (cheap) header leaves, mirroring how ``SidebarLiveRow`` isolates the volatile row chrome. Carries
-/// the header-scoped context menu (the project-wide "Refresh Git Status", moved up from the row menu).
+/// The section header LEAF, a TWO-LINE block: line 1 is the project NAME (caps, instrument voice) +
+/// the act-now `●N` tally; line 2 is the project's git line (branch + dirt sigils) — or, for a
+/// non-repo project, WHERE it lives (the `~`-abbreviated parent path), so the second line always
+/// says something the name alone doesn't. Reads its git summary AND tally INSIDE its own body — the
+/// sidebar body never touches the volatile dicts, so a git/status tick re-renders only the (cheap)
+/// header leaves, mirroring how ``SidebarLiveRow`` isolates the volatile row chrome. Carries the
+/// header-scoped context menu (the project-wide "Refresh Git Status", moved up from the row menu).
 /// Internal (not private) so the opt-in snapshot render can mount the REAL header.
 struct SidebarSectionHeaderRow: View {
     let store: WorkspaceStore
@@ -544,7 +547,7 @@ struct SidebarSectionHeaderRow: View {
         // The act-now tally: how many panes in this project wait on YOU right now (a blocked question
         // or an error) — the "which PROJECT needs me" answer at a glance. Counts through the gated
         // badge pipeline; absent at zero (no reserved slot — an empty reserve read as a ragged hole
-        // against the right edge, and the rare git-line shift when a tally appears is a real event).
+        // against the right edge, and the rare shift when a tally appears is a real event).
         let actNow = rows.count { row in
             switch RailRowsBuilder.liveChrome(for: row, store: store).badge {
             case .awaitingInput,
@@ -552,9 +555,16 @@ struct SidebarSectionHeaderRow: View {
             default: false
             }
         }
-        SlateSectionHeader(title) {
+        VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: Slate.Metric.space2) {
-                if let summary { ProjectGitStatusLine(summary: summary) }
+                // MERIDIAN L2: the caps micro-label speaks the INSTRUMENT voice — mono + wide
+                // tracking, the "engraved on the tool" register marking taxonomy against the rows.
+                Text(title.uppercased())
+                    .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
+                    .tracking(Slate.Typeface.instrumentTracking)
+                    .foregroundStyle(Slate.State.header)
+                    .lineLimit(1)
+                Spacer(minLength: Slate.Metric.space2)
                 if actNow > 0 {
                     Text("●\(actNow)")
                         .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
@@ -564,19 +574,42 @@ struct SidebarSectionHeaderRow: View {
                         .accessibilityLabel("\(actNow) panes need attention")
                 }
             }
+            if let summary, summary.hasRepo {
+                ProjectGitStatusLine(summary: summary)
+            } else if let place = Self.parentPlace(of: projectKey) {
+                Text(place)
+                    .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                    .foregroundStyle(Slate.State.header)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
         }
-        // The shared header carries the panel-level `space2` inset; this extra `space1` brings the
-        // header text to `space3` — the SAME content inset the row cards use — so the section title
-        // sits flush over the rows' glyph column instead of hanging into the gutter. The extra top
-        // padding separates a section from the previous section's last row (the header's own top
-        // inset is sized for the panel label above the FIRST section).
-        .padding(.horizontal, Slate.Metric.space1)
-        .padding(.top, Slate.Metric.space2)
+        // `space3` horizontal = the rows' OWN content inset (the shell's flush-left title padding),
+        // so both header lines align exactly over the row titles below. The top padding separates a
+        // section from the previous section's last row.
+        .padding(.horizontal, Slate.Metric.space3)
+        .padding(.top, Slate.Metric.space3)
+        .padding(.bottom, Slate.Metric.space1)
         .contextMenu {
             if let projectKey {
                 Button("Refresh Git Status") { store.refreshGitSummary(forProject: projectKey) }
             }
         }
+    }
+
+    /// Line 2's non-repo fallback: the project's PARENT path, `~`-abbreviated (`/Users/me/w/api` →
+    /// `~/w`) — where the project lives, which the basename title can't say. `nil` for the keyless
+    /// "Other" bucket, a relative key, or a root-level key (nothing above it worth printing). Pure +
+    /// static so the abbreviation is unit-pinned.
+    static func parentPlace(of key: String?) -> String? {
+        guard var path = key?.trimmingCharacters(in: .whitespacesAndNewlines), path.hasPrefix("/")
+        else { return nil }
+        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
+        guard let slash = path.lastIndex(of: "/"), slash != path.startIndex else { return nil }
+        let parent = String(path[..<slash])
+        let comps = parent.split(separator: "/").map(String.init)
+        guard comps.count >= 2, comps[0] == "Users" else { return parent }
+        return (["~"] + comps.dropFirst(2)).joined(separator: "/")
     }
 }
 
@@ -690,6 +723,13 @@ private struct SidebarLiveRow: View {
                 return RailRowsBuilder.processDisplayName(chrome.processLabel)
             }()
             : nil
+        let shownTitle = row.title.isEmpty ? fallbackTitle : row.title
+        // The settled row's low rungs (the ALWAYS-FILLED second line): the last completed command,
+        // then the shell identity — suppressed when it would just repeat the title (an at-root agent
+        // row is already TITLED `claude`) — then the tab's `⌘N` shortcut as the floor.
+        let lastCommand = blocks.last(where: { $0.complete || $0.durationMS != nil })
+            .flatMap(SidebarRowTooltip.commandLine)
+        let shell = RailRowsBuilder.shellDisplayName(chrome.processLabel)
         let readout = RailRowReadout.resolve(
             question: chrome.question,
             scent: scent,
@@ -700,6 +740,9 @@ private struct SidebarLiveRow: View {
             ),
             commandLine: runningCommand,
             strayedCwd: chrome.subtitle,
+            lastCommandLine: lastCommand,
+            shellLabel: shell?.lowercased() == shownTitle.lowercased() ? nil : shell,
+            shortcutHint: (1...9).contains(row.tabNumber) ? "⌘\(row.tabNumber)" : nil,
         )
         let telemetry = RailRowTelemetry.value(
             badge: chrome.badge,
@@ -711,21 +754,12 @@ private struct SidebarLiveRow: View {
             exitCode: failedBlock?.exitCode,
             now: now,
         )
-        let lastCommand = blocks.last(where: { $0.complete || $0.durationMS != nil })
-            .flatMap(SidebarRowTooltip.commandLine)
-        // The pane's live OSC 9;4 determinate fraction — swept as the glyph column's pie wedge.
-        let progressFraction: Double? = {
-            if case let .determinate(fraction, _) =
-                StatusPresentation.progressPresentation(store.progress(for: row.id)) { return fraction }
-            return nil
-        }()
         SlateTabRow(
-            title: row.title.isEmpty ? fallbackTitle : row.title,
+            title: shownTitle,
             active: active,
             subtitle: readout?.text,
             subtitleTruncation: readout?.truncation == .middle ? .middle : .tail,
             badge: chrome.badge,
-            progressFraction: progressFraction,
             telemetry: telemetry,
             readOnly: chrome.readOnly,
             syncInput: store.syncInputArmed(for: row.id),

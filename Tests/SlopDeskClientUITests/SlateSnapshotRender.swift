@@ -109,11 +109,11 @@ final class SlateSnapshotRender: XCTestCase {
 
     // MARK: - Opt-in render of one By-Project sidebar section (header + two-line rows)
 
-    /// Renders the REAL ``SidebarSectionHeaderRow`` (section title + git segment + act-now tally) over
-    /// a seeded headless store, above representative two-line ``SlateTabRow`` states at the true
-    /// sidebar width — the visual lock for the header↔row alignment (the header text flush over the
-    /// rows' glyph column) and the line-1-anchored status glyph. SAME opt-in idiom; writes
-    /// `sidebar-section.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
+    /// Renders the REAL ``SidebarSectionHeaderRow`` (the TWO-LINE header: caps title + tally over
+    /// the git line) over a seeded headless store, above representative flush-left two-line
+    /// ``SlateTabRow`` states at the true sidebar width — the visual lock for the header↔row
+    /// alignment and the trailing ASCII status glyphs (`✻` pulse / braille / `? ✗ ✓`). SAME opt-in
+    /// idiom; writes `sidebar-section.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
     @MainActor
     func testRenderSidebarSection() throws {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
@@ -138,7 +138,7 @@ final class SlateSnapshotRender: XCTestCase {
             SlateTabRow(
                 title: "Terminal", active: false,
                 subtitle: "make check", subtitleTruncation: .tail,
-                badge: .commandRunning, progressFraction: 0.68,
+                badge: .commandRunning,
                 telemetry: RailTelemetryValue(text: "68%", tone: .secondary),
                 onSelect: {}, onClose: {},
             )
@@ -148,13 +148,15 @@ final class SlateSnapshotRender: XCTestCase {
                 badge: .error, telemetry: RailTelemetryValue(text: "137", tone: .secondary),
                 onSelect: {}, onClose: {},
             )
-            SlateTabRow(title: "Terminal", active: false, onSelect: {}, onClose: {})
+            // The settled floor rungs: an idle shell reads its identity; a fresh pane its `⌘N`.
+            SlateTabRow(title: "Terminal", active: false, subtitle: "zsh", onSelect: {}, onClose: {})
+            SlateTabRow(title: "Terminal", active: false, subtitle: "⌘6", onSelect: {}, onClose: {})
         }
         .padding(8) // the sidebar list's LazyVStack inset
         .frame(width: Slate.Metric.sidebarWidth)
         .background(Slate.Surface.ground)
         try render(
-            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 290),
+            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 350),
             to: dir, named: "sidebar-section.png",
         )
     }

@@ -1,7 +1,8 @@
 // RailRowReadout — the row's line-2 precedence: ONE source at a time, hard cut between them. The line
-// used to be a cwd/git duplicate of what the section header already says; it is now the row's agent
-// READOUT — the thing you'd focus the tab to find out — with the structural strayed-cwd as the lowest
-// rung. Pure + static so the precedence is unit-pinned headlessly (no view, no store).
+// is the row's agent READOUT — the thing you'd focus the tab to find out — with structural rungs
+// below (strayed cwd, last completed command, shell identity, the `⌘N` hint) so the second line is
+// ALWAYS filled with something useful that never repeats the title or the section header. Pure +
+// static so the precedence is unit-pinned headlessly (no view, no store).
 
 import Foundation
 import SlopDeskWorkspaceCore
@@ -31,7 +32,12 @@ enum RailRowReadout {
     ///   6. the RUNNING command (a busy non-agent shell — the command text is what the row is doing);
     ///   7. the strayed relative cwd (structural — any live state displaces it, it returns when the
     ///      row settles);
-    ///   8. nothing (the reserved blank line — absence, no placeholder).
+    ///   8. the LAST COMPLETED command line (`make check · 12s · ✓` — what last happened here, the
+    ///      settled row's most useful fact);
+    ///   9. the shell identity (`zsh` — the caller suppresses it when it would repeat the title, e.g.
+    ///      an at-root agent row titled `claude`);
+    ///  10. the tab's `⌘N` shortcut hint — the floor: a brand-new pane still fills its second line
+    ///      with something actionable, so the two-line shape never shows a blank.
     /// Every input is pre-gated by the caller (only handed over when its state holds), so the resolver
     /// is a pure precedence ladder.
     static func resolve(
@@ -42,6 +48,9 @@ enum RailRowReadout {
         errorLine: String?,
         commandLine: String? = nil,
         strayedCwd: String?,
+        lastCommandLine: String? = nil,
+        shellLabel: String? = nil,
+        shortcutHint: String? = nil,
     ) -> Line? {
         if let question { return Line(text: question, truncation: .tail) }
         if let scent { return Line(text: scent, truncation: .tail) }
@@ -50,6 +59,9 @@ enum RailRowReadout {
         if let errorLine { return Line(text: errorLine, truncation: .tail) }
         if let commandLine { return Line(text: commandLine, truncation: .tail) }
         if let strayedCwd { return Line(text: strayedCwd, truncation: .middle) }
+        if let lastCommandLine { return Line(text: lastCommandLine, truncation: .tail) }
+        if let shellLabel { return Line(text: shellLabel, truncation: .tail) }
+        if let shortcutHint { return Line(text: shortcutHint, truncation: .tail) }
         return nil
     }
 

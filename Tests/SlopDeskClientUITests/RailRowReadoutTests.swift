@@ -73,22 +73,96 @@ final class RailRowReadoutTests: XCTestCase {
         XCTAssertEqual(error?.text, "exit 137 · npm test")
     }
 
-    /// The structural strayed-cwd is the LOWEST rung — it returns when the row settles, with the
-    /// path-shaped `.middle` truncation (the one non-prose source).
-    func testStrayedCwdIsLastAndMiddleTruncated() {
+    /// The structural strayed-cwd outranks the settled floor rungs, with the path-shaped `.middle`
+    /// truncation (the one non-prose source).
+    func testStrayedCwdBeatsSettledRungsAndMiddleTruncates() {
         let line = RailRowReadout.resolve(
             question: nil, scent: nil, workingLabel: nil,
             doneLine: nil, errorLine: nil, strayedCwd: "packages/api",
+            lastCommandLine: "make check · 12s", shellLabel: "zsh", shortcutHint: "⌘3",
         )
         XCTAssertEqual(line, RailRowReadout.Line(text: "packages/api", truncation: .middle))
     }
 
-    /// Nothing at all: `nil` — the agent row's reserved blank, never a placeholder.
+    /// The settled floor: last completed command > shell identity > the `⌘N` hint — so a resting
+    /// row's second line is ALWAYS filled with something useful, never a blank.
+    func testSettledFloorOrder() {
+        let lastCommand = RailRowReadout.resolve(
+            question: nil, scent: nil, workingLabel: nil,
+            doneLine: nil, errorLine: nil, strayedCwd: nil,
+            lastCommandLine: "make check · 12s", shellLabel: "zsh", shortcutHint: "⌘3",
+        )
+        XCTAssertEqual(lastCommand, RailRowReadout.Line(text: "make check · 12s", truncation: .tail))
+        let shell = RailRowReadout.resolve(
+            question: nil, scent: nil, workingLabel: nil,
+            doneLine: nil, errorLine: nil, strayedCwd: nil,
+            lastCommandLine: nil, shellLabel: "zsh", shortcutHint: "⌘3",
+        )
+        XCTAssertEqual(shell, RailRowReadout.Line(text: "zsh", truncation: .tail))
+        let hint = RailRowReadout.resolve(
+            question: nil, scent: nil, workingLabel: nil,
+            doneLine: nil, errorLine: nil, strayedCwd: nil,
+            lastCommandLine: nil, shellLabel: nil, shortcutHint: "⌘3",
+        )
+        XCTAssertEqual(hint, RailRowReadout.Line(text: "⌘3", truncation: .tail))
+    }
+
+    /// Nothing at all: `nil` — the reserved blank (a >⌘9 tab with no other rung), never a placeholder.
     func testNothingIsNil() {
         XCTAssertNil(RailRowReadout.resolve(
             question: nil, scent: nil, workingLabel: nil,
             doneLine: nil, errorLine: nil, strayedCwd: nil,
         ))
+    }
+
+    // MARK: - The shell-identity rung's display name
+
+    /// `shellDisplayName` cleans like the title fallback (basename, login-`-` stripped) but does NOT
+    /// suppress shells — "zsh" is the rung's whole point; the TITLE chain still suppresses it.
+    func testShellDisplayNameKeepsShells() {
+        XCTAssertEqual(RailRowsBuilder.shellDisplayName("zsh"), "zsh")
+        XCTAssertEqual(RailRowsBuilder.shellDisplayName("-zsh"), "zsh")
+        XCTAssertEqual(RailRowsBuilder.shellDisplayName("/bin/bash"), "bash")
+        XCTAssertEqual(RailRowsBuilder.shellDisplayName("claude"), "claude")
+        XCTAssertNil(RailRowsBuilder.shellDisplayName(nil))
+        XCTAssertNil(RailRowsBuilder.shellDisplayName("  "))
+    }
+
+    // MARK: - The ASCII spinner cadence
+
+    /// Frames advance one per beat off the wall clock and wrap — a pure function of the date, so a
+    /// re-render can never skip or reset a cycle, and every spinning row reads the same frame.
+    func testSpinnerFrameAdvancesPerBeatAndWraps() {
+        let frames = AsciiStatusBadge.agentFrames
+        let beat = AsciiStatusBadge.agentBeat
+        let epoch = Date(timeIntervalSinceReferenceDate: 0)
+        XCTAssertEqual(AsciiStatusBadge.frame(at: epoch, frames: frames, beat: beat), frames[0])
+        XCTAssertEqual(
+            AsciiStatusBadge.frame(at: epoch.addingTimeInterval(beat * 3), frames: frames, beat: beat),
+            frames[3],
+        )
+        XCTAssertEqual(
+            AsciiStatusBadge.frame(
+                at: epoch.addingTimeInterval(beat * Double(frames.count)), frames: frames, beat: beat,
+            ),
+            frames[0],
+        )
+        XCTAssertEqual(AsciiStatusBadge.frame(at: epoch, frames: [], beat: beat), "")
+    }
+
+    // MARK: - The two-line header's non-repo place line
+
+    /// The header's line-2 fallback: the project's `~`-abbreviated PARENT path — where it lives —
+    /// absent for keyless/root-level keys where there is nothing above the name worth printing.
+    func testHeaderParentPlace() {
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.parentPlace(of: "/Users/abner/Workplace/slop-desk"), "~/Workplace",
+        )
+        XCTAssertEqual(SidebarSectionHeaderRow.parentPlace(of: "/Users/abner/api"), "~")
+        XCTAssertEqual(SidebarSectionHeaderRow.parentPlace(of: "/opt/build/repo/"), "/opt/build")
+        XCTAssertNil(SidebarSectionHeaderRow.parentPlace(of: "/tmp"))
+        XCTAssertNil(SidebarSectionHeaderRow.parentPlace(of: nil))
+        XCTAssertNil(SidebarSectionHeaderRow.parentPlace(of: "relative/path"))
     }
 
     // MARK: - The error line

@@ -1785,3 +1785,29 @@ First hardware look at v2 surfaced three faults; all fixed the same day:
   the glyph column), the tally renders only when non-zero, and each section gains breathing room
   above its header. New opt-in snapshot render (`sidebar-section.png`) locks header↔row alignment
   visually.
+
+### v3 — flush-left rows, ASCII status glyphs, two-line header (2026-07-23)
+
+Second hardware review: the leading glyph column — even perfectly aligned — indents every title off
+the section header's left edge, and the drawn status rings still read as ornament. Direction: return
+to the pre-v2 flush-left row anatomy, keep the uniform two-line shape, and speak status as TEXT.
+
+- **The leading glyph column is GONE.** Rows are flush-left again (the old `SlateListRow` no-leading
+  shell); status moved into the line-1 TRAILING cluster next to the telemetry number, where `✻ 4m`
+  reads like an AI CLI's status line. `StatusRing`/`TabBadgeView` live on for the titlebar tab menu
+  and iOS rows; the sidebar speaks `AsciiStatusBadge`.
+- **Status is a text glyph in the instrument voice** (`AsciiStatusBadge`): agent working = the
+  AI-CLI pulse `· ✢ ✳ ✶ ✻ ✽` (frame-stepped on the wall clock from a fixed epoch — hard swaps, rows
+  in unison, re-render can't reset phase); command running/busy = the braille dot-walker, muted;
+  static `?` amber (blocked), `✗` red, `✓` green/muted, `#` (sudo — the root prompt's sigil), `∞`
+  (caffeinate). A fixed 13pt slot pins the cluster while frames/states swap. The determinate OSC
+  9;4 pie is retired — the telemetry slot already carries the exact percent.
+- **Line 2 is ALWAYS filled, never a duplicate.** New floor rungs under the readout ladder: the
+  strayed cwd, then the LAST COMPLETED command line (`make check · 12s · ✓`), then the shell
+  identity (`zsh` — suppressed when it would repeat the title, e.g. an at-root row titled
+  `claude`), then the tab's `⌘N` shortcut hint. A resting row now reads as two useful lines instead
+  of title + reserved blank.
+- **The section header is TWO lines**: the caps project name + act-now `●N` tally over the
+  project's git line (branch + dirt sigils); a non-repo project shows WHERE it lives instead (the
+  `~`-abbreviated parent path). Both lines sit at the rows' own content inset, so the header and
+  every title share one left edge — the misalignment complaint dies structurally.

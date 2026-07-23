@@ -4,13 +4,14 @@
 // is a flat plate, and a close `×` reveals on hover. No native list selection / vibrancy — this is a flat
 // silhouette by design.
 //
-// Every row is the same TWO-LINE shape, left→right: [16pt status-glyph column][title + readout][trailing
-// telemetry text]. The glyph column leads (a vertical scan line of `◌ ○ ◔ ◉ ●` readings down the
-// sidebar, terminal-style) and is an unconditional reservation, so a status appearing changes pixels,
-// never layout. There is no trailing rail: telemetry is right-aligned TEXT in the title line's
-// timestamp slot, and line 2 (the readout) runs the row's full width. A RESTING row (no status, not
-// active) RECEDES — its title drops to the secondary tone — so the unlabeled quiet state is dimness,
-// and colour + full strength are earned by live state (the T3 recede).
+// Every row is the same TWO-LINE shape, FLUSH-LEFT: line 1 is [title][trailing lock/sync +
+// status glyph + telemetry text], line 2 is the full-width readout. There is NO leading accessory
+// column — a reserved gutter indented every title off the section header's left edge, so status
+// moved into the line-1 trailing cluster as a TEXT glyph (``AsciiStatusBadge``: the AI-CLI pulse
+// spinner for a working agent, braille for a running command, static `? ✗ ✓ # ∞` otherwise), where
+// `✻ 4m` reads like a CLI status line and a state edge swaps pixels inside a fixed slot. A RESTING
+// row (no status, not active) RECEDES — its title drops to the secondary tone — so the unlabeled
+// quiet state is dimness, and colour + full strength are earned by live state (the T3 recede).
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -19,7 +20,7 @@ import SwiftUI
 
 /// One sidebar tab row. ACTIVE = the raised-card treatment; hover = flat plate + close `×`.
 ///
-/// Line 1 carries the title + the [lock][sync][telemetry] trailing cluster; line 2 is the READOUT
+/// Line 1 carries the title + the [lock][sync][status glyph][telemetry] trailing cluster; line 2 is the READOUT
 /// (question / todo scent / last assistant line / final line / error line / running command / strayed
 /// cwd — resolved upstream by ``RailRowReadout``). Every row holds the two-line shell
 /// (`reserveSubtitle`), so state edges swap text inside a fixed shape and the sidebar keeps one row
@@ -34,11 +35,9 @@ struct SlateTabRow: View {
     /// path-shaped strayed-cwd; every prose readout (question / scent / labels) passes `.tail` so the
     /// sentence keeps its head.
     var subtitleTruncation: Text.TruncationMode = .middle
-    /// The single fused status glyph, rendered as a ``StatusRing`` reading in the leading column.
-    /// `nil` ⇒ the column stays reserved-empty and the row recedes.
+    /// The single fused status glyph, rendered as an ``AsciiStatusBadge`` text reading in the line-1
+    /// trailing cluster. `nil` ⇒ no glyph and the row recedes.
     var badge: TabBadgeKind?
-    /// The pane's live OSC 9;4 determinate fraction (0…1) — swept as the `.commandRunning` pie wedge.
-    var progressFraction: Double?
     /// The row's right-aligned telemetry value (blocked-age / turn-elapsed / percent / exit code —
     /// resolved upstream by ``RailRowTelemetry``). `nil` ⇒ nothing renders in the slot.
     var telemetry: RailTelemetryValue?
@@ -82,8 +81,8 @@ struct SlateTabRow: View {
     var body: some View {
         // The row is the shared ``SlateListRow`` shell: the shell owns the height, padding, hover
         // plate and the active raised-card treatment; this view supplies the tab-specific slots — the
-        // leading status-glyph column, the title/rename field, the line-1 trailing cluster, and the
-        // hover close `×` overlay.
+        // title/rename field, the line-1 trailing cluster (status glyph + telemetry), and the hover
+        // close `×` overlay. NO leading accessory: the title sits flush on the sidebar's left edge.
         SlateListRow(
             active: active,
             subtitle: subtitle,
@@ -91,7 +90,6 @@ struct SlateTabRow: View {
             reserveSubtitle: true,
             // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the field.
             onTap: { if !isEditing { onSelect() } },
-            leading: { glyphColumn },
             title: {
                 if isEditing {
                     renameField
@@ -125,19 +123,6 @@ struct SlateTabRow: View {
     /// colour and no full-strength ink; a live badge, the active card or hover restores it.
     private var recedes: Bool {
         badge == nil && !active && !rowHover
-    }
-
-    /// The leading status-glyph column: a fixed 16pt reservation with the ``StatusRing`` reading (or
-    /// nothing at rest). The shell's `.slateLineOne` alignment centres it on the title line — no
-    /// offset here. Outside the hover fade — the status never hides.
-    private var glyphColumn: some View {
-        Color.clear
-            .frame(width: TabBadgeView.side, height: TabBadgeView.side)
-            .overlay {
-                if let badge {
-                    TabBadgeView(kind: badge, progressFraction: progressFraction)
-                }
-            }
     }
 
     /// The inline-rename `TextField`: seeded from the current title on open, auto-focused, commits
@@ -177,11 +162,12 @@ struct SlateTabRow: View {
         #endif
     }
 
-    /// LINE 1 trailing (right of the title): the read-only lock, the sync-input glyph, then the
-    /// TELEMETRY value in the timestamp slot (blocked-age / turn-elapsed / percent / exit code — the
-    /// T3 idiom: the row's one number lives where a timestamp would). The cluster fades out under the
-    /// hover `×` but KEEPS ITS WIDTH (opacity, not removal), so the fade never reflows the title; a
-    /// minimum close-reserve width guarantees the `×` a landing zone even on a bare row.
+    /// LINE 1 trailing (right of the title): the read-only lock, the sync-input glyph, the STATUS
+    /// text glyph (``AsciiStatusBadge`` — the spinner / `? ✗ ✓` reading), then the TELEMETRY value
+    /// in the timestamp slot (blocked-age / turn-elapsed / percent / exit code — the T3 idiom: the
+    /// row's one number lives where a timestamp would, so the pair reads `✻ 4m`). The cluster fades
+    /// out under the hover `×` but KEEPS ITS WIDTH (opacity, not removal), so the fade never reflows
+    /// the title; a minimum close-reserve width guarantees the `×` a landing zone even on a bare row.
     private func lineOneTrailing(hovering: Bool) -> some View {
         HStack(spacing: 6) {
             if readOnly {
@@ -199,6 +185,9 @@ struct SlateTabRow: View {
                     .foregroundStyle(Slate.Status.syncInput)
                     .accessibilityLabel("Sync input")
                     .help("Sync input — keystrokes mirror to every pane in this tab")
+            }
+            if let badge {
+                AsciiStatusBadge(kind: badge)
             }
             if let telemetry {
                 Text(telemetry.text)
