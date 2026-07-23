@@ -1,15 +1,15 @@
-// TabBadgeView — the single status glyph for one sidebar tab row (the LEADING glyph column). Maps a
-// pure ``TabBadgeKind`` to its reading via ``StatusPresentation/tabBadge(_:progressFraction:)``. ONE
-// SHAPE for every lifecycle state (``StatusRing``, the Linear fill-fraction vocabulary): the same Ø12
-// circle varies only how much of it is drawn/filled — working = dashed `◌` (stepped flicker),
-// awaiting = ring+dot `◉`, done = solid disc✓, error = solid disc✕, busy = hollow `○`, OSC 9;4 =
-// ring + pie wedge at the real fraction, caffeinate/sudo = glyph in the muted ring. One reading,
-// fixed 16pt box: state changes never move a pixel of layout AND never swap silhouettes.
+// TabBadgeView — the single status glyph for one sidebar tab row's trailing slot, the otty badge set
+// (`docs/otty-clone/screenshots/tab-badge.png`): a muted rays SPINNER for anything busy, the orange
+// raised hand for a blocked prompt, the red triangle for a failure, the green check for a completed
+// task, and the small green dot for an unseen finish. The privilege markers (`#` sudo, `∞`
+// caffeinate) stay small muted text in the shell's own dialect. One reading in a fixed 16pt box:
+// state changes never move a pixel of layout.
 //
 // Hang-safety (CLAUDE.md rule #6): a badge NEVER instantiates an `SCStream` / `VTCompressionSession` /
-// `VTDecompressionSession` / Metal device — the ring is plain SwiftUI drawing, nothing more.
+// `VTDecompressionSession` / Metal device — plain SwiftUI drawing, nothing more.
 
 #if canImport(SwiftUI)
+import SFSafeSymbols
 import SlopDeskWorkspaceCore
 import SwiftUI
 
@@ -17,13 +17,9 @@ import SwiftUI
 /// icon-only glyph is VoiceOver-legible (and snapshot/AX-testable).
 struct TabBadgeView: View {
     let kind: TabBadgeKind
-    /// The pane's live OSC 9;4 determinate fraction (0…1) — consumed by the `.commandRunning` pie
-    /// reading only; every other kind ignores it.
-    var progressFraction: Double?
 
-    /// The glyph column is 16pt; the reading centers in this fixed box so rows keep a stable leading
-    /// edge. Internal so the row can RESERVE this box unconditionally — without the reserve a badge
-    /// appearing would shift the title.
+    /// The glyph box is 16pt; the reading centers in this fixed box so rows keep a stable trailing
+    /// edge while states swap.
     static let side: CGFloat = 16
 
     var body: some View {
@@ -35,21 +31,27 @@ struct TabBadgeView: View {
     }
 
     @ViewBuilder private var glyph: some View {
-        switch StatusPresentation.tabBadge(kind, progressFraction: progressFraction) {
-        case let .ringWorking(tint):
-            StatusRing(reading: .working, tint: tint)
-        case let .ringAwaiting(tint):
-            StatusRing(reading: .awaiting, tint: tint)
-        case let .ringDone(tint):
-            StatusRing(reading: .done, tint: tint)
-        case let .ringError(tint):
-            StatusRing(reading: .error, tint: tint)
-        case let .ringHollow(tint):
-            StatusRing(reading: .hollow, tint: tint)
-        case let .ringPie(fraction, tint):
-            StatusRing(reading: .pie(fraction), tint: tint)
-        case let .ringGlyph(name, tint):
-            StatusRing(reading: .glyph(name), tint: tint)
+        switch StatusPresentation.tabBadge(kind) {
+        case let .spinner(tint):
+            // The otty gray spinner: the system rays glyph stepping its spokes (a discrete
+            // variable-colour walk, not a rotation).
+            Image(systemSymbol: .rays)
+                .font(.system(size: Slate.Typeface.base, weight: .medium))
+                .foregroundStyle(tint)
+                .symbolEffect(.variableColor.iterative)
+        case let .symbol(symbol, tint):
+            Image(systemSymbol: symbol)
+                .font(.system(size: Slate.Typeface.base, weight: .medium))
+                .foregroundStyle(tint)
+        case let .dot(tint):
+            // The unseen-finish dot — otty's small filled circle.
+            Circle()
+                .fill(tint)
+                .frame(width: 7, height: 7)
+        case let .glyph(text, tint):
+            Text(text)
+                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+                .foregroundStyle(tint)
         }
     }
 }

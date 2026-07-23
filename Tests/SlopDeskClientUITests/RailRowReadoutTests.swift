@@ -1,9 +1,11 @@
-// RailRowReadoutTests — pins the row's readout precedence ladder (question > scent > working label >
-// final line > error line > running command > NOTHING — a settled row is its title alone), the
-// title-echo gate on the command-shaped rungs, the error-line assembly, the header's act-now tally,
-// and the agent-session classification. Headless VALUE assertions over the pure resolvers.
+// RailRowReadoutTests — pins the row's tooltip-detail precedence ladder (question > scent > working
+// label > final line > error line > running command > NOTHING), the title-echo gate on the
+// command-shaped rungs, the error-line assembly, the trailing shell label, the project header's
+// tooltip dialect, and the agent-session classification. Headless VALUE assertions over the pure
+// resolvers.
 
 import SlopDeskAgentDetect
+import SlopDeskWorkspaceCore
 import XCTest
 @testable import SlopDeskClientUI
 
@@ -116,89 +118,68 @@ final class RailRowReadoutTests: XCTestCase {
         XCTAssertEqual(question, "make check")
     }
 
-    // MARK: - The ASCII spinner cadence
+    // MARK: - The trailing shell label
 
-    /// Frames advance one per beat off the wall clock and wrap — a pure function of the date, so a
-    /// re-render can never skip or reset a cycle, and every spinning row reads the same frame.
-    func testSpinnerFrameAdvancesPerBeatAndWraps() {
-        let frames = AsciiStatusBadge.agentFrames
-        let beat = AsciiStatusBadge.agentBeat
-        let epoch = Date(timeIntervalSinceReferenceDate: 0)
-        XCTAssertEqual(AsciiStatusBadge.frame(at: epoch, frames: frames, beat: beat), frames[0])
-        XCTAssertEqual(
-            AsciiStatusBadge.frame(at: epoch.addingTimeInterval(beat * 3), frames: frames, beat: beat),
-            frames[3],
-        )
-        XCTAssertEqual(
-            AsciiStatusBadge.frame(
-                at: epoch.addingTimeInterval(beat * Double(frames.count)), frames: frames, beat: beat,
-            ),
-            frames[0],
-        )
-        XCTAssertEqual(AsciiStatusBadge.frame(at: epoch, frames: [], beat: beat), "")
+    /// The row's resting trailing label keeps bare shells (`zsh` — the otty idle row wears its shell
+    /// name), basenames a path, and strips the login-shell `-` — unlike the TITLE fallback, which
+    /// suppresses shells.
+    func testShellLabelKeepsBareShells() {
+        XCTAssertEqual(RailRowsBuilder.shellLabel("zsh"), "zsh")
+        XCTAssertEqual(RailRowsBuilder.shellLabel("-zsh"), "zsh")
+        XCTAssertEqual(RailRowsBuilder.shellLabel("/usr/local/bin/claude"), "claude")
+        XCTAssertEqual(RailRowsBuilder.shellLabel(" vim \n"), "vim")
+        XCTAssertNil(RailRowsBuilder.shellLabel(nil))
+        XCTAssertNil(RailRowsBuilder.shellLabel("  "))
     }
 
-    // MARK: - The header's act-now tally
+    // MARK: - The project header's tooltip
 
-    /// The tally splits by WHY: `?` counts blocked questions, `!` counts failures; every other badge
-    /// (spinners, finishes, privilege markers, none) is not attention data.
-    func testAttentionCountsSplitByBadge() {
-        let counts = SidebarSectionHeaderRow.attentionCounts([
-            .awaitingInput, .error, .awaitingInput, .running, .commandBusy, .completed, .sudo, nil,
-        ])
-        XCTAssertEqual(counts.questions, 2)
-        XCTAssertEqual(counts.failures, 1)
-        let quiet = SidebarSectionHeaderRow.attentionCounts([.running, nil])
-        XCTAssertEqual(quiet.questions, 0)
-        XCTAssertEqual(quiet.failures, 0)
+    /// The header tooltip: full project path, then the git line — only the non-empty parts.
+    func testHeaderTooltipJoinsPathAndGitLine() {
+        let summary = PaneGitSummary(
+            hasRepo: true, branch: "main", ahead: 2, behind: 0, changedCount: 4, staged: 1, modified: 3,
+        )
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.tooltip(projectKey: "/Users/abner/w/api", summary: summary),
+            "/Users/abner/w/api\nmain >2 +1 !3",
+        )
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.tooltip(projectKey: "/Users/abner/w/api", summary: nil),
+            "/Users/abner/w/api",
+        )
+        XCTAssertNil(SidebarSectionHeaderRow.tooltip(projectKey: nil, summary: nil))
     }
 
-    /// The tally's VoiceOver reading spells out only the non-zero classes.
-    func testAttentionLabelSpellsNonZeroClasses() {
+    /// The git line speaks the `__git_ps1` sigil dialect — branch first, only the NON-ZERO counts,
+    /// fixed order; a non-repo summary yields nothing; a repo with no branch reads "detached".
+    func testGitLineDialect() {
         XCTAssertEqual(
-            SidebarSectionHeaderRow.attentionLabel(questions: 2, failures: 1),
-            "2 waiting for input, 1 failed",
+            SidebarSectionHeaderRow.gitLine(PaneGitSummary(
+                hasRepo: true, branch: "main", ahead: 1, behind: 2, changedCount: 0,
+            )),
+            "main >1 <2",
         )
-        XCTAssertEqual(SidebarSectionHeaderRow.attentionLabel(questions: 0, failures: 3), "3 failed")
-        XCTAssertEqual(SidebarSectionHeaderRow.attentionLabel(questions: 1, failures: 0), "1 waiting for input")
-    }
-
-    // MARK: - The two-line header's non-repo place line
-
-    /// The header's line-2 fallback: the project's `~`-abbreviated PARENT path — where it lives —
-    /// absent for keyless/root-level keys where there is nothing above the name worth printing.
-    func testHeaderParentPlace() {
         XCTAssertEqual(
-            SidebarSectionHeaderRow.parentPlace(of: "/Users/abner/Workplace/slop-desk"), "~/Workplace",
+            SidebarSectionHeaderRow.gitLine(PaneGitSummary(
+                hasRepo: true, branch: "", ahead: 0, behind: 0, changedCount: 0,
+            )),
+            "detached",
         )
-        XCTAssertEqual(SidebarSectionHeaderRow.parentPlace(of: "/Users/abner/api"), "~")
-        XCTAssertEqual(SidebarSectionHeaderRow.parentPlace(of: "/opt/build/repo/"), "/opt/build")
-        XCTAssertNil(SidebarSectionHeaderRow.parentPlace(of: "/tmp"))
-        XCTAssertNil(SidebarSectionHeaderRow.parentPlace(of: nil))
-        XCTAssertNil(SidebarSectionHeaderRow.parentPlace(of: "relative/path"))
+        XCTAssertNil(SidebarSectionHeaderRow.gitLine(PaneGitSummary(
+            hasRepo: false, branch: "", ahead: 0, behind: 0, changedCount: 0,
+        )))
     }
 
     // MARK: - The error line
 
-    /// The error readout is the failing COMMAND alone — the exit code rides the badge's `!<code>`
-    /// reading, so the pair never repeats a number. No failure evidence (nil code) or no command →
-    /// `nil` (the badge stands alone; the row stays single-line).
+    /// The error detail is the failing COMMAND alone, gated on real failure evidence. No exit code or
+    /// no command → `nil` (the badge stands alone; the tooltip stays quiet about exit codes).
     func testErrorLineComposition() {
         XCTAssertEqual(RailRowReadout.errorLine(exitCode: 137, commandText: "npm test"), "npm test")
         XCTAssertEqual(RailRowReadout.errorLine(exitCode: 137, commandText: " npm test\n"), "npm test")
         XCTAssertNil(RailRowReadout.errorLine(exitCode: 1, commandText: "  "))
         XCTAssertNil(RailRowReadout.errorLine(exitCode: 1, commandText: nil))
         XCTAssertNil(RailRowReadout.errorLine(exitCode: nil, commandText: "npm test"))
-    }
-
-    /// The badge's error reading: `!` fused with the exit code; bare `!` without one, and an
-    /// out-of-band code (>4 characters as text) degrades to the bare `!` rather than widening the row.
-    func testErrorReadingFusesBangAndCode() {
-        XCTAssertEqual(AsciiStatusBadge.errorReading(exitCode: 137), "!137")
-        XCTAssertEqual(AsciiStatusBadge.errorReading(exitCode: 1), "!1")
-        XCTAssertEqual(AsciiStatusBadge.errorReading(exitCode: -11), "!-11")
-        XCTAssertEqual(AsciiStatusBadge.errorReading(exitCode: nil), "!")
-        XCTAssertEqual(AsciiStatusBadge.errorReading(exitCode: 100_000), "!")
     }
 
     // MARK: - Agent-session classification

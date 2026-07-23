@@ -352,6 +352,18 @@ enum RailRowsBuilder {
         return name
     }
 
+    /// The row's resting TRAILING label — the foreground process basename verbatim, bare shells
+    /// INCLUDED (`zsh`): the otty idle row wears its shell name in the trailing slot
+    /// (`tab-badge.png`), unlike ``processDisplayName(_:)`` which suppresses shells because a TITLE
+    /// "zsh" says nothing. Pure + static so the cleanup is unit-pinned.
+    static func shellLabel(_ label: String?) -> String? {
+        guard let label else { return nil }
+        var name = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.hasPrefix("-") { name.removeFirst() } // login-shell argv0 convention (`-zsh`)
+        name = name.split(separator: "/").last.map(String.init) ?? name
+        return name.isEmpty ? nil : name
+    }
+
     /// Bare interactive-shell basenames that must NOT title a pane — titling by the shell is no more
     /// informative than the generic default, so the row keeps the cwd/generic chain instead.
     private static let loginShellNames: Set<String> = [

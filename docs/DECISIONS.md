@@ -1874,3 +1874,35 @@ didn't look terminal-native — it wanted the terminal pane's own monospace face
   installed erased the entire mono register (the app does not bundle the font — the terminal's copy
   is embedded inside libghostty, invisible to AppKit). `Slate.Typeface.instrument` now checks the
   family once and falls back to SF Mono (`design: .monospaced`) — always a real mono.
+
+### v4 — the otty reset: the sidebar returns to the source (2026-07-24)
+
+Verdict after the v2→v3.3 saga: every visual added to the rail (git line, telemetry column, act-now
+tally, inline readout, whole-rail mono) moved it FURTHER from the otty elegance the whole design
+system was reverse-engineered from. The sidebar resets to otty's `TabsPanelRowView` 1:1
+(`otty-reversed/Sources/UI/OttyReplica.swift` measurements + `docs/otty-clone/screenshots/`), with
+ONE deliberate step past otty kept: always-on By-Project grouping.
+
+- **The row is the otty row**: 34pt (`heightTabRow`, off the 4pt ladder — the replica measurement
+  wins), 14pt inset, radius 7, title in the SYSTEM face 13 (medium when active, primary ink always —
+  the T3 recede is gone), one trailing 28×18 slot carrying the resting SHELL LABEL (`zsh`, muted 11)
+  or the status badge, swapping to the close `×` under hover. Active = raised card + hairline + the
+  measured 4% cast shadow (returns with the reset; MERIDIAN L5's no-shadow rule yields to the
+  measurement). `SlateTabRow` no longer rides `SlateListRow` — it IS the otty row, standalone.
+- **Badges are the otty icon set** (`tab-badge.png`): ONE muted rays spinner for every busy tier
+  (otty does not colour-grade motion), orange raised hand = awaiting input, red triangle = error,
+  green check = task done, small green dot = unseen finish, `# ∞` stay small muted text.
+  `AsciiStatusBadge` (text-glyph dialect) and `StatusRing` (one-shape fill-fraction vocabulary) are
+  deleted; `TabBadgeView` is the one badge, shared by the sidebar, the title menu and iOS.
+- **Deleted from the rendered rail**: the inline readout, the telemetry column (`RailRowTelemetry`
+  gone), the header git line (`ProjectGitStatusLine` gone), the `?N !N` tally, the macOS search
+  field (otty's sidebar is bare rows — Open Quickly is the finder; iOS keeps system `.searchable`),
+  and the whole-rail mono register (the sidebar speaks the system face again; `instrument` remains
+  for genuinely technical text elsewhere). The RICHNESS did not die — it moved where otty keeps it:
+  the row tooltip (cwd + live agent line via `RailRowReadout` + last command) and the header tooltip
+  (full path + git line), plus the context menus.
+- **The project header speaks otty's own header grammar**: ONE caps line, system 11 semibold,
+  `tracking(0.6)` (`capsTracking` — the measured "TABS" register), on the panel's 16pt label column,
+  separated by AIR (16pt top), no rule, no counts. Hierarchy by luminance: "TABS" (panel chrome)
+  keeps the lightest header grey; project names sit one ink step darker (`Text.secondary`) as
+  content taxonomy — exactly how otty ranks the Details panel's "STAGED"/"CHANGES" against rows.

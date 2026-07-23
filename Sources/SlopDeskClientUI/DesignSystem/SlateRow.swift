@@ -9,7 +9,9 @@
 //   idle      → transparent;  hover → `Slate.State.hover` flat plate
 //   active    → a RAISED card: `Slate.Surface.raised` fill + 1px `Slate.Line.card` hairline.
 //               NO shadow — at-rest depth is the surface ladder, never a cast shadow (MERIDIAN L5).
-// `SlateTabRow` and future host/window rows build on this shell.
+// Generic list surfaces (keybindings editor, popover rows) build on this shell. The sidebar TAB row
+// (`SlateTabRow`) does NOT — it is the standalone otty `TabsPanelRowView` port with its own measured
+// height/inset/shadow.
 
 #if canImport(SwiftUI)
 import SwiftUI

@@ -1,19 +1,16 @@
-// NavigatorColumn — the left sidebar navigator. macOS renders a flat "TABS" panel on a warm
-// `Slate.Surface.ground` background (NOT native `.sidebar` vibrancy/inset-grouped selection — the host split
-// item is a PLAIN item), a "TABS" header, a flat search field, and the active session's tabs as
-// `SlateTabRow`s — ALWAYS grouped into By-Project `SlateSectionHeader` sections (no grouping/sort hamburger
-// or manual drag-reorder: sections and rows simply follow creation order, and each pane's key is
-// HOST-pushed — see `WorkspaceStore.paneProjectKey`). Top 40pt is reserved
+// NavigatorColumn — the left sidebar navigator, the otty `TabsPanelView` silhouette
+// (`docs/otty-clone/screenshots/{workspace-tabs,tab-badge,code-agents}.png`): a flat "TABS" panel on
+// the `Slate.Surface.ground` background (NOT native `.sidebar` vibrancy — the host split item is a
+// PLAIN item), the caps "TABS" label, and the active session's tabs as `SlateTabRow`s. No search
+// field, no hamburger — otty's sidebar is bare rows; jumping is ⌘⇧O's job. The ONE deliberate step
+// past otty: rows are ALWAYS grouped into By-Project sections under a caps project header
+// (``SidebarSectionHeaderRow``) in the same register as "TABS" (each pane's key is HOST-pushed — see
+// `WorkspaceStore.paneProjectKey`; sections and rows follow creation order). Top 40pt is reserved
 // for the traffic lights under the hidden titlebar.
-//
-//   • the flat search field filters via the pure ``RailRowsBuilder/filtered(_:query:)`` (reused, not rebuilt);
-//   • the rendered SECTIONS are the per-pane ``RailRowsBuilder/sectionedByProject(_:tabOrder:query:)``
-//     (a split tab's panes bucket into their OWN projects, so a header can't flicker with focus);
-//   • each row carries the ``RailRow`` chrome (subtitle / fused badge / process label).
 //
 // iOS: a `List(selection:)` so NavigationSplitView pushes to the content column on a compact iPhone (a custom
 // button list does not drive column navigation). Themed to match macOS but keeps the system list's navigation
-// wiring; gains the same search field, grouped `Section`s, and badge under `#if os(iOS)`.
+// wiring; keeps the system `.searchable` field, grouped `Section`s, and badge under `#if os(iOS)`.
 
 #if canImport(SwiftUI)
 import Defaults
@@ -54,9 +51,11 @@ struct NavigatorColumn: View {
     /// Tapping the cluster opens the Connect-to-Host editor (``OverlayCoordinator/openConnect()``).
     var onConnect: () -> Void = {}
 
-    /// The transient sidebar search query — narrows the rows via the pure ``RailRowsBuilder/filtered``.
-    /// View-local `@State`: it is a presentational filter, NOT row order (which lives on the store).
+    #if os(iOS)
+    /// The transient sidebar search query (iOS `.searchable` only — the macOS panel is bare rows,
+    /// the otty way) — narrows the rows via the pure ``RailRowsBuilder/filtered``.
     @State private var query = ""
+    #endif
 
     /// The memoized row model: the sidebar body reads its rows from HERE so a settled body
     /// registers NO Observation dependency on the store's volatile per-pane dicts — a status/git/progress
@@ -133,46 +132,12 @@ struct NavigatorColumn: View {
     }
 
     #if os(macOS)
-    /// The flat macOS search field: a filled, hairline-bordered plate with a leading magnifier and a
-    /// trailing clear `×` (only when non-empty). Binds the view-local `query`. (iOS uses the system
-    /// `.searchable` instead, so this custom field is macOS-only.)
-    private var searchField: some View {
-        HStack(spacing: 6) {
-            Image(systemSymbol: .magnifyingglass)
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.icon)
-            TextField("Search tabs", text: $query)
-                .textFieldStyle(.plain)
-                // The instrument mono face — the whole rail speaks the terminal's register, the
-                // query field included (what you type filters terminal rows).
-                .font(Slate.Typeface.instrument(Slate.Typeface.body))
-                .foregroundStyle(Slate.Text.primary)
-                .tint(Slate.State.accent) // the active caret is the accent colour
-            if !query.isEmpty {
-                Button { query = "" } label: {
-                    Image(systemSymbol: .xmarkCircleFill)
-                        .font(.system(size: Slate.Typeface.footnote))
-                        .foregroundStyle(Slate.Text.icon)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear search")
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(Slate.Surface.face, in: RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall))
-        .overlay(
-            RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall)
-                .strokeBorder(Slate.Line.subtle, lineWidth: Slate.Metric.hairline),
-        )
-    }
-
-    /// macOS: the flat "TABS" panel — name rows + white-card active, hamburger sort, search field, grouped
-    /// sections. Paints its own warm background (the host `NSSplitViewItem` is a plain item, so there is no
+    /// macOS: the flat "TABS" panel — name rows + white-card active, grouped By-Project sections.
+    /// Paints its own warm background (the host `NSSplitViewItem` is a plain item, so there is no
     /// native vibrancy/rounding).
     private var macSidebar: some View {
         let allRows = renderedRows
-        let sections = buildSections(allRows, query: query)
+        let sections = buildSections(allRows, query: "")
         return VStack(alignment: .leading, spacing: 0) {
             // Traffic-light strip: ONLY the sidebar-collapse toggle (top-trailing). Connection lives in the
             // footer below — the lights strip is too narrow for host + metrics and always looked jammed.
@@ -203,35 +168,26 @@ struct NavigatorColumn: View {
             .frame(height: Slate.Metric.titlebarHeight)
             .background(HoverSensor { stripHover = $0 })
             HStack(spacing: 0) {
-                // The panel label speaks the INSTRUMENT voice (mono + wide tracking) — same
-                // register as `SlateSectionHeader`, one size up for the panel-level label.
+                // The otty panel label: caps, SYSTEM face, the measured `.tracking(0.6)` — chrome's
+                // own register (the lightest ink in the panel; project headers sit one step darker).
                 Text("TABS")
-                    .font(Slate.Typeface.instrument(Slate.Typeface.footnote, weight: .semibold))
-                    .tracking(Slate.Typeface.instrumentTracking)
+                    .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+                    .tracking(Slate.Typeface.capsTracking)
                     .foregroundStyle(Slate.State.header)
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 6)
 
-            // The 8pt inset matches the tab list's `LazyVStack` inset below, so the search plate and the
-            // row cards share LEFT/RIGHT edges (they were 12 vs 8 — visibly misaligned).
-            searchField
-                .padding(.horizontal, 8)
-                .padding(.bottom, 6)
-
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
                     if allRows.isEmpty {
                         emptyLabel("No tabs open")
-                    } else if sections.isEmpty {
-                        emptyLabel("No matches")
                     } else {
                         ForEach(sections) { section in
                             if let header = section.header {
                                 SidebarSectionHeaderRow(
                                     store: store, title: header, projectKey: section.projectKey,
-                                    rows: section.rows,
                                 )
                             }
                             ForEach(section.rows) { row in
@@ -328,7 +284,7 @@ struct NavigatorColumn: View {
 
     private func emptyLabel(_ text: String) -> some View {
         Text(text)
-            .font(Slate.Typeface.instrument(Slate.Typeface.body))
+            .font(.system(size: Slate.Typeface.body))
             .foregroundStyle(Slate.Text.secondary)
             .padding(.horizontal, 14)
             .padding(.vertical, 6)
@@ -528,135 +484,80 @@ enum SidebarRowTooltip {
     }
 }
 
-/// The section header LEAF, a TWO-LINE block: line 1 is the project NAME (caps, instrument voice)
-/// with the act-now tally right-aligned in the row-badge dialect (`?N` waiting amber + `!N` failed
-/// red — static text, no ornament between name and tally); line 2 is the project's git line (branch +
-/// dirt sigils) — or, for a non-repo project, WHERE it lives (the `~`-abbreviated parent path), so
-/// the second line always says something the name alone doesn't. Reads its git summary AND tally INSIDE its own body — the
-/// sidebar body never touches the volatile dicts, so a git/status tick re-renders only the (cheap)
-/// header leaves, mirroring how ``SidebarLiveRow`` isolates the volatile row chrome. Carries the
-/// header-scoped context menu (the project-wide "Refresh Git Status", moved up from the row menu).
-/// Internal (not private) so the opt-in snapshot render can mount the REAL header.
+/// The project section header — SlopDesk's one deliberate step past otty's sidebar, spoken entirely
+/// in otty's own header grammar: ONE caps line (system face, 11pt semibold, the measured
+/// `.tracking(0.6)` — the "TABS" register), no counts, no git line, no rule. The name reads one ink
+/// step DARKER than "TABS" (`Slate.Text.secondary` vs the header grey) so panel chrome and content
+/// taxonomy separate by luminance alone — exactly how otty ranks the Details panel's "STAGED" /
+/// "CHANGES" against its rows. Everything the old two-line header printed moved where otty keeps
+/// richness: the hover TOOLTIP (full project path + the git branch/dirt line) and the context menu
+/// ("Refresh Git Status"). Reads its git summary INSIDE its own body so a git tick re-renders only
+/// the (cheap) header leaves, mirroring ``SidebarLiveRow``. Internal (not private) so the opt-in
+/// snapshot render can mount the REAL header.
 struct SidebarSectionHeaderRow: View {
     let store: WorkspaceStore
     let title: String
     let projectKey: String?
-    /// The section's structural rows — the tally resolves each row's live badge through the SAME gated
-    /// pipeline the rail renders, so the header count and the row badges can never disagree.
-    let rows: [RailRow]
 
     var body: some View {
         let summary = projectKey.flatMap { store.projectGitSummary[$0] }
-        // The act-now tally: how many panes in this project wait on YOU right now, split by WHY in
-        // the rows' own glyph dialect — `?N` blocked questions, `!N` failures — the "which PROJECT
-        // needs me" answer at a glance. Counts through the gated badge pipeline; absent at zero (no
-        // reserved slot — the shift when a tally appears is a real event).
-        let counts = Self.attentionCounts(rows.map { RailRowsBuilder.liveChrome(for: $0, store: store).badge })
-        VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: Slate.Metric.space2) {
-                // MERIDIAN L2: the caps micro-label speaks the INSTRUMENT voice — mono + wide
-                // tracking, the "engraved on the tool" register marking taxonomy against the rows.
-                Text(title.uppercased())
-                    .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
-                    .tracking(Slate.Typeface.instrumentTracking)
-                    .foregroundStyle(Slate.State.header)
-                    .lineLimit(1)
-                Spacer(minLength: Slate.Metric.space2)
-                if counts.questions > 0 || counts.failures > 0 {
-                    attentionTally(questions: counts.questions, failures: counts.failures)
+        Text(title.uppercased())
+            .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+            .tracking(Slate.Typeface.capsTracking)
+            .foregroundStyle(Slate.Text.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            // The list already insets 8; +8 lands the caps label on the panel's 16pt label column
+            // ("TABS"), a hair OUTDENTED from the row titles (8+14) — hierarchy by alignment.
+            .padding(.horizontal, Slate.Metric.space2)
+            // A generous top gap is the whole separator (otty separates groups with air, not rules).
+            .padding(.top, Slate.Metric.space4)
+            .padding(.bottom, Slate.Metric.space1)
+            .help(Self.tooltip(projectKey: projectKey, summary: summary) ?? "")
+            .contextMenu {
+                if let projectKey {
+                    Button("Refresh Git Status") { store.refreshGitSummary(forProject: projectKey) }
                 }
             }
-            if let summary, summary.hasRepo {
-                ProjectGitStatusLine(summary: summary)
-            } else if let place = Self.parentPlace(of: projectKey) {
-                Text(place)
-                    .font(Slate.Typeface.instrument(Slate.Typeface.small))
-                    .foregroundStyle(Slate.State.header)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-        }
-        // `space3` horizontal = the rows' OWN content inset (the shell's flush-left title padding),
-        // so both header lines align exactly over the row titles below. The top padding separates a
-        // section from the previous section's last row.
-        .padding(.horizontal, Slate.Metric.space3)
-        .padding(.top, Slate.Metric.space3)
-        .padding(.bottom, Slate.Metric.space1)
-        .contextMenu {
-            if let projectKey {
-                Button("Refresh Git Status") { store.refreshGitSummary(forProject: projectKey) }
-            }
-        }
     }
 
-    /// The act-now tally: `?N` (waiting on an answer, amber) + `!N` (failed, red) — the SAME glyphs
-    /// the rows themselves wear, so the header total and the row badges read as one vocabulary.
-    /// Static text: the colour against the header's grey is the whole signal, no motion.
-    private func attentionTally(questions: Int, failures: Int) -> some View {
-        HStack(spacing: Slate.Metric.space1) {
-            if questions > 0 {
-                Text("?\(questions)")
-                    .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
-                    .foregroundStyle(Slate.Status.warn)
-            }
-            if failures > 0 {
-                Text("!\(failures)")
-                    .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
-                    .foregroundStyle(Slate.Status.err)
-            }
+    /// The header's hover tooltip: the full project path, then the git line (branch + the `__git_ps1`
+    /// dirt sigils `> < + ! ? = $`, non-zero only) — the richness the caps line deliberately omits.
+    /// Pure + static so the assembly is unit-pinned.
+    static func tooltip(projectKey: String?, summary: PaneGitSummary?) -> String? {
+        let parts = [projectKey, summary.flatMap(Self.gitLine)].compactMap { part -> String? in
+            guard let part, !part.isEmpty else { return nil }
+            return part
         }
-        .lineLimit(1)
-        .fixedSize()
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Self.attentionLabel(questions: questions, failures: failures))
+        return parts.isEmpty ? nil : parts.joined(separator: "\n")
     }
 
-    /// The tally's one-per-badge counts: blocked questions (`.awaitingInput`) and failures
-    /// (`.error`); every other badge is the agent's/shell's own business. Pure + static so the split
-    /// is unit-pinned.
-    static func attentionCounts(_ badges: [TabBadgeKind?]) -> (questions: Int, failures: Int) {
-        var questions = 0
-        var failures = 0
-        for badge in badges {
-            switch badge {
-            case .awaitingInput: questions += 1
-            case .error: failures += 1
-            default: break
-            }
-        }
-        return (questions, failures)
-    }
-
-    /// The tally's VoiceOver reading — the counts spelled out, only the non-zero classes.
-    static func attentionLabel(questions: Int, failures: Int) -> String {
-        var parts: [String] = []
-        if questions > 0 { parts.append("\(questions) waiting for input") }
-        if failures > 0 { parts.append("\(failures) failed") }
-        return parts.joined(separator: ", ")
-    }
-
-    /// Line 2's non-repo fallback: the project's PARENT path, `~`-abbreviated (`/Users/me/w/api` →
-    /// `~/w`) — where the project lives, which the basename title can't say. `nil` for the keyless
-    /// "Other" bucket, a relative key, or a root-level key (nothing above it worth printing). Pure +
-    /// static so the abbreviation is unit-pinned.
-    static func parentPlace(of key: String?) -> String? {
-        guard var path = key?.trimmingCharacters(in: .whitespacesAndNewlines), path.hasPrefix("/")
-        else { return nil }
-        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
-        guard let slash = path.lastIndex(of: "/"), slash != path.startIndex else { return nil }
-        let parent = String(path[..<slash])
-        let comps = parent.split(separator: "/").map(String.init)
-        guard comps.count >= 2, comps[0] == "Users" else { return parent }
-        return (["~"] + comps.dropFirst(2)).joined(separator: "/")
+    /// The tooltip's git line: `main >2 <1 +3 !4 ?5 =1 $2` — branch first, then only the NON-ZERO
+    /// sigils in fixed order (ahead/behind/staged/modified/untracked/conflicted/stash). `nil` for a
+    /// non-repo summary (a plain directory has no git concept). Pure + static so the dialect is
+    /// unit-pinned.
+    static func gitLine(_ g: PaneGitSummary) -> String? {
+        guard g.hasRepo else { return nil }
+        var parts = [g.branch.isEmpty ? "detached" : g.branch]
+        if g.ahead > 0 { parts.append(">\(g.ahead)") }
+        if g.behind > 0 { parts.append("<\(g.behind)") }
+        if g.staged > 0 { parts.append("+\(g.staged)") }
+        if g.modified > 0 { parts.append("!\(g.modified)") }
+        if g.untracked > 0 { parts.append("?\(g.untracked)") }
+        if g.conflicted > 0 { parts.append("=\(g.conflicted)") }
+        if g.stash > 0 { parts.append("$\(g.stash)") }
+        return parts.joined(separator: " ")
     }
 }
 
 /// One LIVE sidebar row: the STRUCTURAL identity (pane id / title / cwd / kind) rides the
-/// memoized ``RailRow``, while every VOLATILE field — the fused badge, readout line, telemetry value,
-/// foreground-process label, read-only lock, inline-rename mode — is read fresh HERE via
+/// memoized ``RailRow``, while every VOLATILE field — the fused badge, foreground-process label,
+/// read-only lock, inline-rename mode — is read fresh HERE via
 /// ``RailRowsBuilder/liveChrome(for:store:)`` + the store dicts. Observation still invalidates each row
 /// body when ANY pane's status dict ticks (dict-granularity tracking), but that re-renders these cheap
 /// leaf bodies only — the sidebar body above never rebuilds its rows + sections + list diff per tick.
+/// The row itself is otty-bare (title + one trailing slot); the live DETAIL (question / todo scent /
+/// agent line / failing command) rides the hover tooltip via ``RailRowReadout``.
 private struct SidebarLiveRow: View {
     let store: WorkspaceStore
     let row: RailRow
@@ -666,19 +567,6 @@ private struct SidebarLiveRow: View {
     let onClose: () -> Void
     let onRename: (String) -> Void
     let onCancelRename: () -> Void
-
-    /// The working-label minimum dwell — a mid-turn label churning faster than this holds the previous
-    /// line so the readout reads as a feed, not a flicker.
-    private static let labelDwell: TimeInterval = 2
-    /// The telemetry re-render cadence — ages tick at minute granularity, so a 10s clock keeps the
-    /// reveal boundary honest without per-second work; mounted ONLY while the row's badge can carry a
-    /// telemetry value.
-    private static let telemetryCadence: TimeInterval = 10
-
-    /// The dwell-committed working label + its commit instant (see ``commitDwell(_:)``).
-    @State private var dwellLabel: String?
-    @State private var dwellCommittedAt = Date.distantPast
-    @State private var dwellTask: Task<Void, Never>?
 
     var body: some View {
         // Observes the flash-decay tick at ROW scope (not in the memoized rows build) so a quiet
@@ -695,41 +583,8 @@ private struct SidebarLiveRow: View {
         // exactly the row leaves, never the sidebar body.
         let active = row.id == store.tree.activeSession?.activeTab?.activePane
         let chrome = RailRowsBuilder.liveChrome(for: row, store: store)
-        let workingCandidate: String? = chrome.status == .working ? store.agentLabel(for: row.id) : nil
-        Group {
-            if Self.telemetryEligible(chrome.badge) {
-                // The per-row telemetry clock — a fixed epoch anchor so re-renders can't postpone the
-                // next tick; mounted only while a value can show (a resting row carries no timer).
-                TimelineView(.periodic(
-                    from: Date(timeIntervalSinceReferenceDate: 0),
-                    by: Self.telemetryCadence,
-                )) { context in
-                    rowBody(chrome: chrome, active: active, now: context.date)
-                }
-            } else {
-                rowBody(chrome: chrome, active: active, now: Date())
-            }
-        }
-        // A fresh mount seeds the dwell machine raw — the leaf's `.id(row.leafIdentity)` re-keys on a
-        // structural change (title/cwd), which discards this @State.
-        .onAppear {
-            dwellLabel = workingCandidate
-            dwellCommittedAt = Date()
-        }
-        .onDisappear {
-            dwellTask?.cancel()
-        }
-        .onChange(of: workingCandidate) { _, candidate in commitDwell(candidate) }
-    }
-
-    /// The row body for one clock instant: resolves the readout line and the telemetry value, then
-    /// mounts ``SlateTabRow``.
-    @ViewBuilder
-    private func rowBody(
-        chrome: RailRowsBuilder.RailRowChrome, active: Bool, now: Date,
-    ) -> some View {
-        // The todo SCENT — promoted from the tooltip to the inline readout while the agent is WORKING
-        // with a live inspector feed reporting an in-flight todo.
+        // The todo SCENT — the tooltip's live line while the agent is WORKING with a live inspector
+        // feed reporting an in-flight todo.
         let scent: String? = chrome.badge == .running
             ? (store.handle(for: row.id) as? LivePaneSession)?.inspector.flatMap { vm in
                 vm.feedState == .live ? PendingToolSummary.scent(todos: vm.todos) : nil
@@ -740,18 +595,16 @@ private struct SidebarLiveRow: View {
         // from a finished `.failure` completion OR a LIVE OSC 9;4;2 progress error — and in the live
         // case the alarming command's block is still open (never `.isFailed`), so the newest closed
         // failure would be an OLDER, unrelated command. Only a `.failure` completion may explain the
-        // alarm with a block; a progress error keeps the readout/telemetry silent about exit codes.
+        // alarm with a block; a progress error keeps the tooltip silent about exit codes.
         let failedBlock = chrome.badge == .error && store.panePendingCompletion[row.id] == .failure
             ? blocks.last(where: \.isFailed)
             : nil
-        // Done-unseen surfaces the agent's FINAL assistant line (the wire-27 label at `.done` — it
-        // crosses the wire today and was discarded), gated on the agent verdict so a plain command's
-        // completion badge can never show a stale agent line.
+        // Done-unseen surfaces the agent's FINAL assistant line (the wire-27 label at `.done`), gated
+        // on the agent verdict so a plain command's completion can never show a stale agent line.
         let doneLine: String? = (chrome.badge == .completed || chrome.badge == .finished)
             && chrome.status == .done ? store.agentLabel(for: row.id) : nil
-        // The RUNNING command readout (busy non-agent shells): the OPEN block's command text — what
-        // the row is doing right now — falling back to the coarse foreground-process label when the
-        // block model hasn't seen the command (e.g. a command launched before attach).
+        // The RUNNING command (busy non-agent shells): the OPEN block's command text, falling back to
+        // the coarse foreground-process label when the block model hasn't seen the command.
         let runningCommand: String? = (chrome.badge == .commandRunning || chrome.badge == .commandBusy)
             ? {
                 let open = blocks.last(where: { !$0.complete })?
@@ -761,14 +614,13 @@ private struct SidebarLiveRow: View {
             }()
             : nil
         let shownTitle = row.title.isEmpty ? fallbackTitle : row.title
-        // The last completed command feeds the TOOLTIP only — a settled row shows nothing beside
-        // its title (the readout is live state; history and structure live under hover).
         let lastCommand = blocks.last(where: { $0.complete || $0.durationMS != nil })
             .flatMap(SidebarRowTooltip.commandLine)
-        let readout = RailRowReadout.resolve(
+        // The row's live line — TOOLTIP-only (the rendered row stays otty-bare).
+        let detail = RailRowReadout.resolve(
             question: chrome.question,
             scent: scent,
-            workingLabel: chrome.status == .working ? dwellLabel : nil,
+            workingLabel: chrome.status == .working ? store.agentLabel(for: row.id) : nil,
             doneLine: doneLine,
             errorLine: RailRowReadout.errorLine(
                 exitCode: failedBlock?.exitCode, commandText: failedBlock?.commandText,
@@ -776,28 +628,17 @@ private struct SidebarLiveRow: View {
             commandLine: runningCommand,
             title: shownTitle,
         )
-        let telemetry = RailRowTelemetry.value(
-            badge: chrome.badge,
-            attentionAt: store.paneAttentionAt[row.id],
-            completedAt: store.paneCompletedAt[row.id],
-            commandStartedAt: store.paneCommandStartedAt[row.id],
-            progressPercent: StatusPresentation.progressPercentLabel(store.progress(for: row.id)),
-            now: now,
-        )
         SlateTabRow(
             title: shownTitle,
             active: active,
-            readout: readout,
             badge: chrome.badge,
-            errorExitCode: failedBlock?.exitCode,
-            telemetry: telemetry,
+            processLabel: RailRowsBuilder.shellLabel(chrome.processLabel),
             readOnly: chrome.readOnly,
             syncInput: store.syncInputArmed(for: row.id),
             isEditing: chrome.isEditing,
             helpText: SidebarRowTooltip.text(
                 cwd: row.cwd,
-                // Overflow recovery: the untruncated readout (a path line already appears via cwd).
-                detail: readout,
+                detail: detail,
                 lastCommand: lastCommand,
             ),
             onSelect: onSelect,
@@ -805,49 +646,6 @@ private struct SidebarLiveRow: View {
             onRename: onRename,
             onCancelRename: onCancelRename,
         )
-    }
-
-    /// Whether the badge can carry a telemetry value at all — the per-row clock mounts only then.
-    private static func telemetryEligible(_ badge: TabBadgeKind?) -> Bool {
-        switch badge {
-        case .awaitingInput,
-             .error,
-             .running,
-             .commandRunning,
-             .commandBusy,
-             .completed,
-             .finished:
-            true
-        case .caffeinate,
-             .sudo,
-             nil:
-            false
-        }
-    }
-
-    /// Commits a new working label through the minimum dwell: an update landing within
-    /// ``labelDwell`` of the last commit is deferred (the pending task commits it when the dwell
-    /// expires), so mid-turn label churn can't strobe the readout. A `nil` (turn over) clears
-    /// immediately — state changes are hard cuts.
-    private func commitDwell(_ candidate: String?) {
-        dwellTask?.cancel()
-        dwellTask = nil
-        guard let candidate else {
-            dwellLabel = nil
-            return
-        }
-        let sinceCommit = Date().timeIntervalSince(dwellCommittedAt)
-        if dwellLabel == nil || !sinceCommit.isLess(than: Self.labelDwell) {
-            dwellLabel = candidate
-            dwellCommittedAt = Date()
-        } else {
-            dwellTask = Task {
-                try? await Task.sleep(for: .seconds(Self.labelDwell - sinceCommit))
-                guard !Task.isCancelled else { return }
-                dwellLabel = candidate
-                dwellCommittedAt = Date()
-            }
-        }
     }
 }
 
@@ -928,7 +726,7 @@ private struct NewTabDropSlot: View {
                 Image(systemSymbol: .plusSquareOnSquare)
                     .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
                 Text("New Tab")
-                    .font(Slate.Typeface.instrument(Slate.Typeface.body, weight: .medium))
+                    .font(.system(size: Slate.Typeface.body, weight: .medium))
                 Spacer(minLength: 0)
             }
             .foregroundStyle(active ? Slate.Text.primary : Slate.Text.secondary)

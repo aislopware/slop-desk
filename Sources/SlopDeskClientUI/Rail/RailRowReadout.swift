@@ -1,10 +1,11 @@
-// RailRowReadout — the row's readout precedence: ONE source at a time, hard cut between them. The
-// readout is the row's live line — the thing you'd focus the tab to find out — rendered INLINE after
-// the title, and it EARNS its place: there are no structural filler rungs (cwd echoes, shell
-// identity, shortcut hints — derivable or decorative), so a settled row is bare beside its title and
-// a readout always means "something is happening here". Command-shaped sources are additionally
-// suppressed when they would only echo the title (a shell that titles the pane after the command it
-// runs). Pure + static so the precedence is unit-pinned headlessly (no view, no store).
+// RailRowReadout — the row's live-detail precedence: ONE source at a time, hard cut between them.
+// The resolved line is the thing you'd focus the tab to find out — since the otty reset it rides the
+// row's hover TOOLTIP (the rendered row is bare: title + one trailing slot), and it EARNS its place:
+// there are no structural filler rungs (cwd echoes, shell identity, shortcut hints — derivable or
+// decorative), so a settled row's tooltip is path + history alone and a detail line always means
+// "something is happening here". Command-shaped sources are additionally suppressed when they would
+// only echo the title (a shell that titles the pane after the command it runs). Pure + static so the
+// precedence is unit-pinned headlessly (no view, no store).
 
 import Foundation
 import SlopDeskWorkspaceCore
@@ -20,7 +21,7 @@ enum RailRowReadout {
     ///   5. error → the FAILING command from the block model (the badge's `!<code>` carries the number);
     ///   6. the RUNNING command (a busy non-agent shell — the command text is what the row is doing).
     /// The command-shaped rungs (5–6) are dropped when they only echo `title`. Nothing live → `nil`:
-    /// the row shows its title alone — absence is the readout's resting state, never a placeholder.
+    /// the tooltip carries no detail line — absence is the resting state, never a placeholder.
     /// Every input is pre-gated by the caller (only handed over when its state holds), so the resolver
     /// is a pure precedence ladder.
     static func resolve(

@@ -378,6 +378,9 @@ enum Slate {
         static var accentMuted: Color { Slate.theme.accentMuted }
         static var header: Color { Slate.theme.header }
         static var shadow: Color { Slate.theme.panelShadow }
+        /// The ACTIVE tab card's cast shadow — the otty measurement (`black 4%, r2, y1`) on a light
+        /// theme; a touch stronger on dark so the lift still reads against a dark ground.
+        static var cardShadow: Color { .black.opacity(Slate.theme.isLight ? 0.04 : 0.25) }
     }
 
     @MainActor
@@ -425,8 +428,13 @@ enum Slate {
         static let heightControl: CGFloat = 24
         /// Bars: the pane header, title-menu rows.
         static let heightBar: CGFloat = 28
-        /// The standard single-line list row (sidebar tabs, palette results, footers).
+        /// The standard single-line list row (palette results, footers).
         static let heightRow: CGFloat = 32
+        /// The sidebar TAB row — the otty `TabsPanelRowView` measurement (34pt, off the 4pt ladder
+        /// on purpose: the replica measurement wins for this one row).
+        static let heightTabRow: CGFloat = 34
+        /// The tab row's own horizontal content inset (otty measurement: 14pt, not the shared `space3`).
+        static let tabRowInset: CGFloat = 14
         /// Chrome strips: the titlebar / traffic-light band.
         static let heightStrip: CGFloat = 40
         /// The overlay search-input strip (palette / navigator / global search / open-quickly).
@@ -501,9 +509,12 @@ enum Slate {
                 : .system(size: size, weight: weight, design: .monospaced)
         }
 
-        /// Tracking (pt) for caps micro-labels set in the instrument voice ("TABS", section headers,
-        /// status captions) — wide enough to read as engraving, applied ONLY to all-caps labels.
+        /// Tracking (pt) for caps micro-labels set in the instrument voice — wide enough to read as
+        /// engraving, applied ONLY to all-caps labels.
         static let instrumentTracking: CGFloat = 1.2
+        /// Tracking (pt) for the SIDEBAR's caps labels ("TABS", project headers) — the otty
+        /// measurement (`.tracking(0.6)` on the system face), narrower than the instrument engraving.
+        static let capsTracking: CGFloat = 0.6
     }
 
     /// Animation timing — extracted verbatim from `ReplicaKit.Anim` (cubic-bezier, NO springs anywhere).

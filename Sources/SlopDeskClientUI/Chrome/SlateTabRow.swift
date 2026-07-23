@@ -1,60 +1,35 @@
-// SlateTabRow — the sidebar tab row (`TabsPanelRowView`) + the sort/group hamburger (`SortMenuButton`),
-// built on the shared `SlateListRow` shell and wired to the live store via the navigator. The resting row
-// is the tab name on the sidebar ground; ACTIVE is the RAISED card (fill + 1px hairline, no shadow), hover
-// is a flat plate, and a close `×` reveals on hover. No native list selection / vibrancy — this is a flat
-// silhouette by design.
-//
-// Every row is FLUSH-LEFT and ONE LINE, set entirely in the instrument mono face (the terminal's own
-// register — the whole rail reads like terminal text): [title][readout…][trailing lock/sync + status
-// glyph + telemetry text]. The READOUT (question / scent / agent line / failing command — resolved
-// upstream) rides INLINE after the title in the dimmed secondary tone, truncating first when the rail
-// is narrow (the tooltip keeps the whole line), so state changes swap text — never row geometry — and
-// the list's rhythm is a constant beat. There is NO leading accessory column — a reserved gutter
-// indented every title off the section header's left edge, so status moved into the trailing cluster
-// as a TEXT glyph (``AsciiStatusBadge``: the AI-CLI pulse spinner for a working agent, braille for a
-// running command, static `? !137 ok # ∞` otherwise), where `✻ 4m` reads like a CLI status line and a
-// state edge swaps the reading. A RESTING row (no status, not active) RECEDES — its title drops to
-// the secondary tone — so the unlabeled quiet state is dimness, and colour + full strength are earned
-// by live state (the T3 recede).
+// SlateTabRow — the sidebar tab row, a 1:1 port of otty's `TabsPanelRowView` (measured in
+// `otty-reversed/Sources/UI/OttyReplica.swift` + `docs/otty-clone/screenshots/{workspace-tabs,
+// tab-badge,code-agents}.png`): a 34pt line, title in the SYSTEM face (13pt, medium when active),
+// one fixed trailing slot that carries the resting SHELL LABEL (`zsh` — muted 11pt) or the status
+// badge (``TabBadgeView``), swapping to the close `×` under hover. ACTIVE is the raised white card
+// (fill + 1px hairline + the measured 4% cast shadow); hover is the flat plate. Nothing else rides
+// the row: no subtitle, no readout, no telemetry — the richness lives in the hover tooltip and the
+// context menu, which is the otty way.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
 import SlopDeskWorkspaceCore
 import SwiftUI
 
-/// One sidebar tab row. ACTIVE = the raised-card treatment; hover = flat plate + close `×`.
-///
-/// The single line carries the title, the inline dimmed READOUT (question / todo scent / last
-/// assistant line / final line / error line / running command — resolved upstream by
-/// ``RailRowReadout``), then the [lock][sync][status glyph][telemetry] trailing cluster.
+/// One sidebar tab row. ACTIVE = the raised card; hover = flat plate + close `×` in the trailing slot.
 struct SlateTabRow: View {
     let title: String
     let active: Bool
-    /// The resolved READOUT text (``RailRowReadout``) — rendered inline after the title in the
-    /// secondary tone, truncating before the title does. `nil`/empty ⇒ nothing renders (absence, no
-    /// placeholder).
-    var readout: String?
-    /// The single fused status glyph, rendered as an ``AsciiStatusBadge`` text reading in the line-1
-    /// trailing cluster. `nil` ⇒ no glyph and the row recedes.
+    /// The fused status badge (``TabBadgeView``) — occupies the trailing slot when present.
     var badge: TabBadgeKind?
-    /// The failed command's exit code, forwarded into the error badge's `!<code>` reading. Only read
-    /// when `badge == .error`; default `nil` keeps existing call sites source-compatible.
-    var errorExitCode: Int32?
-    /// The row's right-aligned telemetry value (blocked-age / turn-elapsed / percent / exit code —
-    /// resolved upstream by ``RailRowTelemetry``). `nil` ⇒ nothing renders in the slot.
-    var telemetry: RailTelemetryValue?
-    /// Whether this pane's input gate is READ-ONLY — renders a small trailing lock glyph (the sidebar's
-    /// read-only indicator, twin of the pane's `🔒 READ ONLY ×` pill). Default `false` keeps existing call
-    /// sites source-compatible.
+    /// The resting trailing label — the pane's foreground process (`zsh`, `vim`, `claude`), shown
+    /// only when no badge outranks it. `nil` ⇒ the slot rests empty.
+    var processLabel: String?
+    /// Whether this pane's input gate is READ-ONLY — a small trailing lock glyph (the sidebar's
+    /// read-only indicator, twin of the pane's `🔒 READ ONLY ×` pill).
     var readOnly: Bool = false
-    /// Whether this pane's TAB is armed for synchronized input (⌘⇧I) — renders a small trailing amber
-    /// grouped-panes glyph (the sidebar twin of the pane's `⚠ SYNC INPUT ×` pill), so an armed tab is
-    /// visible even from the rail. Default `false` keeps existing call sites source-compatible.
+    /// Whether this pane's TAB is armed for synchronized input (⌘⇧I) — the fixed sync-amber grouped-
+    /// panes glyph, so an armed tab is visible even from the rail.
     var syncInput: Bool = false
     /// Whether the row is in inline-RENAME mode — swaps the title `Text` for a committing `TextField`.
-    /// Default `false` keeps existing call sites source-compatible.
     var isEditing: Bool = false
-    /// The row's tooltip text (the full cwd) — shown on hover via `.help`. Empty/`nil` ⇒ no tooltip.
+    /// The row's tooltip text (full cwd / live agent line / last command) — shown on hover via `.help`.
     var helpText: String?
     var onSelect: () -> Void
     var onClose: () -> Void
@@ -63,10 +38,8 @@ struct SlateTabRow: View {
     /// Dismiss the inline rename without renaming (escape / focus loss). No-op default.
     var onCancelRename: () -> Void = {}
 
+    @State private var hovering = false
     @State private var closeHover = false
-    /// Row-level hover, tracked here (in addition to the shell's) to lift the RECEDE — a receded
-    /// title returns to full strength under the pointer, matching the shell's hover plate.
-    @State private var rowHover = false
     /// The inline-rename draft text — seeded from `title` when the field opens.
     @State private var draft = ""
     /// Whether the inline rename has already been RESOLVED by Return (commit) or Escape (cancel) — so the
@@ -76,62 +49,89 @@ struct SlateTabRow: View {
     @State private var renameResolved = false
     @FocusState private var fieldFocused: Bool
 
-    /// The hover close `×`'s footprint — the line ends with this reserve so its text truncates
-    /// before the overlay instead of running under the revealed button.
-    private static let closeReserve: CGFloat = 18
+    /// The trailing slot's minimum footprint (the otty 28×18 reserve) — the title truncates before
+    /// the slot, and the hover `×` always has a landing zone even on a bare row.
+    private static let slotMinWidth: CGFloat = 28
+    private static let slotHeight: CGFloat = 18
 
     var body: some View {
-        // The row is the shared ``SlateListRow`` shell: the shell owns the height, padding, hover
-        // plate and the active raised-card treatment; this view supplies the tab-specific slots — the
-        // title/rename field + inline readout, the trailing cluster (status glyph + telemetry), and
-        // the hover close `×` overlay. NO leading accessory: the title sits flush on the sidebar's
-        // left edge.
-        SlateListRow(
-            active: active,
-            // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the field.
-            onTap: { if !isEditing { onSelect() } },
-            title: {
-                if isEditing {
-                    renameField
-                } else {
-                    // The title holds its full width (`layoutPriority`); the readout takes what is
-                    // left and truncates `.tail` — every source is prose/command-shaped, so the head
-                    // (the counter prefix, the command name) survives a narrow rail.
-                    Text(title)
-                        .font(Slate.Typeface.instrument(
-                            Slate.Typeface.body, weight: active ? .medium : .regular,
-                        ))
-                        .foregroundStyle(recedes ? Slate.Text.secondary : Slate.Text.primary)
-                        .lineLimit(1)
-                        .layoutPriority(1)
-                    if let readout, !readout.isEmpty {
-                        Text(readout)
-                            .font(Slate.Typeface.instrument(Slate.Typeface.body))
-                            .foregroundStyle(Slate.Text.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                }
-            },
-            titleTrailing: { hovering in
-                if !isEditing { lineOneTrailing(hovering: hovering) }
-            },
-            trailingOverlay: { hovering in
-                if !isEditing {
-                    closeButton
-                        .opacity(hovering ? 1 : 0)
-                        .allowsHitTesting(hovering)
-                }
-            },
-        )
-        .onHover { rowHover = $0 }
+        HStack(spacing: 0) {
+            if isEditing {
+                renameField
+            } else {
+                Text(title)
+                    .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
+                    .foregroundStyle(Slate.Text.primary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            if !isEditing { trailing }
+        }
+        .padding(.horizontal, Slate.Metric.tabRowInset)
+        .frame(height: Slate.Metric.heightTabRow)
+        .background(rowBackground, in: .rect(cornerRadius: Slate.Metric.radiusTab))
+        .overlay { if active { RoundedRectangle(cornerRadius: Slate.Metric.radiusTab).strokeBorder(
+            Slate.Line.card,
+            lineWidth: Slate.Metric.cardBorderWidth,
+        ) } }
+        // The measured active-card lift: black 4% (light), radius 2, y 1 — hover/rest cast nothing.
+        .shadow(color: active ? Slate.State.cardShadow : .clear, radius: 2, y: 1)
+        .contentShape(.rect)
+        // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the field.
+        .onTapGesture { if !isEditing { onSelect() } }
+        .onHover { hovering = $0 }
+        .animation(Slate.Anim.smallFade, value: hovering)
+        .animation(Slate.Anim.smallFade, value: active)
         .help(helpText ?? "")
     }
 
-    /// Whether the row RECEDES — the resting state (no status, not active, no pointer) spends no
-    /// colour and no full-strength ink; a live badge, the active card or hover restores it.
-    private var recedes: Bool {
-        badge == nil && !active && !rowHover
+    private var rowBackground: Color {
+        if active { Slate.Surface.raised }
+        else if hovering { Slate.State.hover }
+        else { .clear }
+    }
+
+    /// The trailing cluster: the rare mode glyphs (lock / sync) ride OUTSIDE the swap slot so a mode
+    /// never vanishes under hover; the slot itself holds badge-or-shell-label at rest and the close
+    /// `×` under hover (an opacity swap in a fixed reserve — the fade never reflows the title).
+    private var trailing: some View {
+        HStack(spacing: 6) {
+            if readOnly {
+                Image(systemSymbol: .lockFill)
+                    .font(.system(size: Slate.Typeface.small, weight: .semibold))
+                    .foregroundStyle(Slate.Text.secondary)
+                    .accessibilityLabel("Read only")
+                    .help("Read only")
+            }
+            if syncInput {
+                // The FIXED sync-amber (NOT the muted secondary tone the lock uses): sync input is a
+                // fan-out mode, and its rail indicator must be as unmissable as the pane pill.
+                Image(systemSymbol: .rectangle3Group)
+                    .font(.system(size: Slate.Typeface.small, weight: .semibold))
+                    .foregroundStyle(Slate.Status.syncInput)
+                    .accessibilityLabel("Sync input")
+                    .help("Sync input — keystrokes mirror to every pane in this tab")
+            }
+            ZStack(alignment: .trailing) {
+                Group {
+                    if let badge {
+                        TabBadgeView(kind: badge)
+                    } else if let processLabel {
+                        Text(processLabel)
+                            .font(.system(size: Slate.Typeface.footnote))
+                            .foregroundStyle(Slate.Text.secondary)
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
+                }
+                .opacity(hovering ? 0 : 1)
+                closeButton
+                    .opacity(hovering ? 1 : 0)
+                    .allowsHitTesting(hovering)
+            }
+            .frame(minWidth: Self.slotMinWidth, alignment: .trailing)
+            .frame(height: Self.slotHeight)
+        }
     }
 
     /// The inline-rename `TextField`: seeded from the current title on open, auto-focused, commits
@@ -140,7 +140,7 @@ struct SlateTabRow: View {
     private var renameField: some View {
         let field = TextField("Rename", text: $draft)
             .textFieldStyle(.plain)
-            .font(Slate.Typeface.instrument(Slate.Typeface.body, weight: active ? .medium : .regular))
+            .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
             .foregroundStyle(Slate.Text.primary)
             .tint(Slate.State.accent)
             .lineLimit(1)
@@ -171,55 +171,6 @@ struct SlateTabRow: View {
         #endif
     }
 
-    /// The trailing cluster (right of the title + readout): the read-only lock, the sync-input glyph,
-    /// the STATUS text glyph (``AsciiStatusBadge`` — the spinner / `? !137 ok` reading), then the TELEMETRY value
-    /// in the timestamp slot (blocked-age / turn-elapsed / percent / exit code — the T3 idiom: the
-    /// row's one number lives where a timestamp would, so the pair reads `✻ 4m`). The cluster fades
-    /// out under the hover `×` but KEEPS ITS WIDTH (opacity, not removal), so the fade never reflows
-    /// the title; a minimum close-reserve width guarantees the `×` a landing zone even on a bare row.
-    private func lineOneTrailing(hovering: Bool) -> some View {
-        HStack(spacing: 6) {
-            if readOnly {
-                Image(systemSymbol: .lockFill)
-                    .font(.system(size: Slate.Typeface.small, weight: .semibold))
-                    .foregroundStyle(Slate.Text.secondary)
-                    .accessibilityLabel("Read only")
-                    .help("Read only")
-            }
-            if syncInput {
-                // The FIXED sync-amber (NOT the muted secondary tone the lock uses): sync input is a
-                // fan-out mode, and its rail indicator must be as unmissable as the pane pill.
-                Image(systemSymbol: .rectangle3Group)
-                    .font(.system(size: Slate.Typeface.small, weight: .semibold))
-                    .foregroundStyle(Slate.Status.syncInput)
-                    .accessibilityLabel("Sync input")
-                    .help("Sync input — keystrokes mirror to every pane in this tab")
-            }
-            if let badge {
-                AsciiStatusBadge(kind: badge, errorExitCode: errorExitCode)
-            }
-            if let telemetry {
-                Text(telemetry.text)
-                    .font(Slate.Typeface.instrument(Slate.Typeface.small))
-                    .foregroundStyle(telemetryTone(telemetry.tone))
-                    .lineLimit(1)
-                    .fixedSize()
-            }
-        }
-        .frame(minWidth: Self.closeReserve, alignment: .trailing)
-        .opacity(hovering ? 0 : 1)
-    }
-
-    /// The telemetry tone ladder: amber = the one coloured number (blocked-age), secondary = every
-    /// other value, primary = the ≥10-minute working escalation (one luminance step up).
-    private func telemetryTone(_ tone: RailTelemetryTone) -> Color {
-        switch tone {
-        case .amber: Slate.Status.warn
-        case .secondary: Slate.Text.secondary
-        case .primary: Slate.Text.primary
-        }
-    }
-
     private var closeButton: some View {
         Button(action: onClose) {
             Image(systemSymbol: .xmark)
@@ -236,5 +187,4 @@ struct SlateTabRow: View {
         .onHover { closeHover = $0 }
     }
 }
-
 #endif

@@ -70,10 +70,11 @@ final class SlateSnapshotRender: XCTestCase {
 
     // MARK: - Opt-in render of the sidebar tab-row badge states
 
-    /// Renders `SlateTabRow` in each badge state (spinner / error / hand / check / accent dot) plus the active
-    /// white card — the visual lock for the sidebar row. SAME
-    /// `ImageRenderer` opt-in idiom as the showcase; inert (skipped) unless `SLOPDESK_TABROW_SNAPSHOT_DIR=<dir>`
-    /// is set, where it writes `tab-row-badges.png`. NO video/Metal — a badge is pure SwiftUI.
+    /// Renders `SlateTabRow` in each otty badge state (spinner / triangle / hand / check / dot) plus
+    /// the resting shell-label slot and the active white card — the visual lock for the sidebar row
+    /// (`tab-badge.png`). SAME `ImageRenderer` opt-in idiom as the showcase; inert (skipped) unless
+    /// `SLOPDESK_TABROW_SNAPSHOT_DIR=<dir>` is set, where it writes `tab-row-badges.png`. NO
+    /// video/Metal — a badge is pure SwiftUI.
     @MainActor
     func testRenderTabRowBadges() throws {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
@@ -81,15 +82,14 @@ final class SlateSnapshotRender: XCTestCase {
         }
         let panel = VStack(alignment: .leading, spacing: 2) {
             badgeRow("full-release.sh", badge: .running)
-            badgeRow("brew upgrade", badge: .commandRunning)
-            badgeRow("make check", badge: .commandBusy)
-            badgeRow("running build task", badge: .error, exitCode: 137)
+            badgeRow("running build task", badge: .error)
             badgeRow("plan next move", badge: .awaitingInput)
             badgeRow("OpenCode", badge: .completed)
             badgeRow("abner@MacBook-AB:…", badge: .finished)
             SlateTabRow(
-                title: "slopdesk",
+                title: "abner@MacBook-AB:…",
                 active: true,
+                processLabel: "zsh",
                 onSelect: {},
                 onClose: {},
             )
@@ -97,24 +97,20 @@ final class SlateSnapshotRender: XCTestCase {
         .padding(8)
         .frame(width: 260)
         .background(Slate.Surface.ground)
-        try render(panel, size: CGSize(width: 260, height: 300), to: dir, named: "tab-row-badges.png")
+        try render(panel, size: CGSize(width: 260, height: 260), to: dir, named: "tab-row-badges.png")
     }
 
     /// A resting (non-active) tab row carrying one fused badge, for the badge-state showcase.
     @MainActor
-    private func badgeRow(_ title: String, badge: TabBadgeKind, exitCode: Int32? = nil) -> some View {
-        SlateTabRow(
-            title: title, active: false, badge: badge, errorExitCode: exitCode, onSelect: {}, onClose: {},
-        )
+    private func badgeRow(_ title: String, badge: TabBadgeKind) -> some View {
+        SlateTabRow(title: title, active: false, badge: badge, onSelect: {}, onClose: {})
     }
 
     // MARK: - Opt-in render of one By-Project sidebar section (header + single-line rows)
 
-    /// Renders the REAL ``SidebarSectionHeaderRow`` (the TWO-LINE header: caps title + right-aligned
-    /// `?N !N` tally over the git line) over a seeded headless store, above representative flush-left
-    /// ``SlateTabRow`` states at the true sidebar width — every row ONE line in the instrument mono
-    /// face, live rows carrying their readout INLINE after the title — the visual lock for the
-    /// header↔row alignment and the trailing ASCII status glyphs (`✻` pulse / braille / `? !137 ok`).
+    /// Renders the REAL ``SidebarSectionHeaderRow`` (the otty caps project header — ONE line, no
+    /// counts, no git) over a seeded headless store, above representative ``SlateTabRow`` states at
+    /// the true sidebar width — the otty row set: title + one trailing slot (shell label / badge).
     /// SAME opt-in idiom; writes `sidebar-section.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
     @MainActor
     func testRenderSidebarSection() throws {
@@ -122,58 +118,42 @@ final class SlateSnapshotRender: XCTestCase {
             throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the sidebar section")
         }
         let key = "/Users/abner/Workplace/slop-desk"
-        let (store, rows) = makeSectionStore(key: key)
+        let store = makeSectionStore(key: key)
         let panel = VStack(alignment: .leading, spacing: 2) {
-            SidebarSectionHeaderRow(store: store, title: "slop-desk", projectKey: key, rows: rows)
+            SidebarSectionHeaderRow(store: store, title: "slop-desk", projectKey: key)
             SlateTabRow(
-                title: "claude", active: false,
-                readout: "Wiring refresh-token rotation",
-                badge: .running, telemetry: RailTelemetryValue(text: "4m", tone: .secondary),
+                title: "claude", active: false, badge: .running,
                 onSelect: {}, onClose: {},
             )
             SlateTabRow(
-                title: "claude", active: true,
-                readout: "Allow edit to Config.swift?",
-                badge: .awaitingInput, telemetry: RailTelemetryValue(text: "2m", tone: .amber),
+                title: "claude", active: true, badge: .awaitingInput,
                 onSelect: {}, onClose: {},
             )
             SlateTabRow(
-                title: "Terminal", active: false,
-                readout: "make check",
-                badge: .commandRunning,
-                telemetry: RailTelemetryValue(text: "68%", tone: .secondary),
+                title: "api", active: false, badge: .error,
                 onSelect: {}, onClose: {},
             )
+            // Settled rows: the trailing slot carries the shell label — the otty resting look.
             SlateTabRow(
-                title: "api", active: false,
-                readout: "npm test",
-                badge: .error, errorExitCode: 137,
-                telemetry: RailTelemetryValue(text: "12m", tone: .secondary),
+                title: "Terminal", active: false, badge: .finished,
                 onSelect: {}, onClose: {},
             )
-            // Settled rows: no readout — the title stands alone, with and without a terminal badge.
-            SlateTabRow(
-                title: "Terminal", active: false,
-                badge: .finished, telemetry: RailTelemetryValue(text: "8m", tone: .secondary),
-                onSelect: {}, onClose: {},
-            )
-            SlateTabRow(title: "Terminal", active: false, onSelect: {}, onClose: {})
+            SlateTabRow(title: "Terminal", active: false, processLabel: "zsh", onSelect: {}, onClose: {})
         }
         .padding(8) // the sidebar list's LazyVStack inset
         .frame(width: Slate.Metric.sidebarWidth)
         .background(Slate.Surface.ground)
         try render(
-            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 280),
+            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 240),
             to: dir, named: "sidebar-section.png",
         )
     }
 
     /// A headless `.tree` store whose panes all live AT `key` (the project root), one blocked and one
-    /// failed — so the REAL builder yields the section's rows (program-titled, folder names suppressed
-    /// at root) and the header's tally lights BOTH classes (`?1 !1`). The project's git summary is
-    /// seeded directly (`internal(set)` via `@testable`).
+    /// failed. The project's git summary is seeded directly (`internal(set)` via `@testable`) so the
+    /// header's hover tooltip carries a real git line.
     @MainActor
-    private func makeSectionStore(key: String) -> (store: WorkspaceStore, rows: [RailRow]) {
+    private func makeSectionStore(key: String) -> WorkspaceStore {
         var tabs: [SlopDeskWorkspaceCore.Tab] = []
         var specs: [PaneID: PaneSpec] = [:]
         for _ in 0..<3 {
@@ -197,7 +177,7 @@ final class SlateSnapshotRender: XCTestCase {
         store.setForegroundProcess("claude", for: panes[0])
         store.setAgentStatus(.needsPermission, for: panes[1])
         store.setCompletionBadge(.failure, for: panes[2])
-        return (store, RailRowsBuilder.rows(for: store))
+        return store
     }
 
     // MARK: - Opt-in render of the grouped NavigatorColumn (search + By-Project sections)
@@ -481,40 +461,21 @@ private struct SlateShowcase: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 2) {
-            SlateSectionHeader("Tabs") {
-                Image(systemSymbol: .line3Horizontal)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Slate.Text.icon)
-            }
-            showcaseRow(title: "~/slopdesk", badge: "zsh", active: true)
-            showcaseRow(title: "build", badge: "zsh", active: false)
-            showcaseRow(title: "Remote window", badge: nil, active: false)
+            // The otty panel label — caps, system face, the measured 0.6 tracking.
+            Text("TABS")
+                .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
+                .tracking(Slate.Typeface.capsTracking)
+                .foregroundStyle(Slate.State.header)
+                .padding(.horizontal, Slate.Metric.space2)
+                .padding(.bottom, Slate.Metric.space1)
+            SlateTabRow(title: "~/slopdesk", active: true, processLabel: "zsh", onSelect: {}, onClose: {})
+            SlateTabRow(title: "build", active: false, processLabel: "zsh", onSelect: {}, onClose: {})
+            SlateTabRow(title: "Remote window", active: false, onSelect: {}, onClose: {})
             Spacer()
         }
         .padding(Slate.Metric.space2)
         .frame(width: Slate.Metric.sidebarWidth)
         .background(Slate.Surface.ground)
-    }
-
-    /// One showcase tab row on the shared ``SlateListRow`` shell (the same anatomy `SlateTabRow` rides).
-    private func showcaseRow(title: String, badge: String?, active: Bool) -> some View {
-        SlateListRow(
-            active: active,
-            title: {
-                Text(title)
-                    .font(Slate.Typeface.instrument(Slate.Typeface.body, weight: active ? .medium : .regular))
-                    .foregroundStyle(Slate.Text.primary)
-                    .lineLimit(1)
-            },
-            titleTrailing: { _ in
-                if let badge {
-                    Text(badge)
-                        .font(Slate.Typeface.instrument(Slate.Typeface.small))
-                        .foregroundStyle(Slate.Text.secondary)
-                }
-            },
-            trailingOverlay: { _ in EmptyView() },
-        )
     }
 
     private var content: some View {
