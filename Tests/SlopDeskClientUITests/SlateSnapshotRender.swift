@@ -108,11 +108,12 @@ final class SlateSnapshotRender: XCTestCase {
 
     // MARK: - Opt-in render of one By-Project sidebar section (header + single-line rows)
 
-    /// Renders the REAL ``SidebarSectionHeaderRow`` (the otty chevron + folder + path header — one
-    /// long-path group eliding to `…`, one home-abbreviated group, one collapsed) over a seeded
-    /// headless store, above representative ``SlateTabRow`` states at the true sidebar width — the
-    /// otty row set: title (with the `✳` agent marker where due) + one trailing slot (shell label /
-    /// badge). SAME opt-in idiom; writes `sidebar-section.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
+    /// Renders the REAL ``SidebarSectionHeaderRow`` (the otty chevron + folder + NAME header — one
+    /// git-lined group, one bare-named group, one collapsed showing its hidden-row count) over a
+    /// seeded headless store, above representative ``SlateTabRow`` states at the true sidebar width —
+    /// the otty row set: title (with the `✳` agent marker where due) + one trailing slot (shell
+    /// label / badge). SAME opt-in idiom; writes `sidebar-section.png` into
+    /// `SLOPDESK_TABROW_SNAPSHOT_DIR`.
     @MainActor
     func testRenderSidebarSection() throws {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
@@ -121,7 +122,7 @@ final class SlateSnapshotRender: XCTestCase {
         let key = "/Volumes/Lacie/Workspace/oss/slop-desk"
         let store = makeSectionStore(key: key)
         let panel = VStack(alignment: .leading, spacing: 2) {
-            SidebarSectionHeaderRow(store: store, title: "slop-desk", projectKey: key)
+            SidebarSectionHeaderRow(store: store, title: "slop-desk", projectKey: key, count: 3)
             SlateTabRow(
                 title: "Claude Code", active: false, agentMarker: true, badge: .running,
                 onSelect: {}, onClose: {},
@@ -135,7 +136,7 @@ final class SlateSnapshotRender: XCTestCase {
                 onSelect: {}, onClose: {},
             )
             SidebarSectionHeaderRow(
-                store: store, title: "Workspace", projectKey: "/Users/abner/Workspace",
+                store: store, title: "Workspace", projectKey: "/Users/abner/Workspace", count: 2,
             )
             // Settled rows: the trailing slot carries the shell label — the otty resting look.
             SlateTabRow(
@@ -144,7 +145,7 @@ final class SlateSnapshotRender: XCTestCase {
             )
             SlateTabRow(title: "Terminal", active: false, processLabel: "zsh", onSelect: {}, onClose: {})
             SidebarSectionHeaderRow(
-                store: store, title: "api", projectKey: "/Users/abner/w/api", collapsed: true,
+                store: store, title: "api", projectKey: "/Users/abner/w/api", collapsed: true, count: 2,
             )
         }
         .padding(8) // the sidebar list's LazyVStack inset

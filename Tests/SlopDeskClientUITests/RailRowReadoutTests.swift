@@ -1,8 +1,8 @@
 // RailRowReadoutTests — pins the row's tooltip-detail precedence ladder (question > scent > working
 // label > final line > error line > running command > NOTHING), the title-echo gate on the
 // command-shaped rungs, the error-line assembly, the trailing shell label, the project header's
-// tooltip dialect, and the agent-session classification. Headless VALUE assertions over the pure
-// resolvers.
+// tooltip dialect and trailing git-line/count swap, and the agent-session classification. Headless
+// VALUE assertions over the pure resolvers.
 
 import SlopDeskAgentDetect
 import SlopDeskWorkspaceCore
@@ -150,25 +150,27 @@ final class RailRowReadoutTests: XCTestCase {
         XCTAssertNil(SidebarSectionHeaderRow.tooltip(projectKey: nil, summary: nil))
     }
 
-    /// The header's display path speaks the live-otty dialect: short paths verbatim with a trailing
-    /// slash, any `/Users/<name>` prefix abbreviated to `~`, and an over-budget path keeping the
-    /// FIRST component + `…` + as many TRAILING components as fit (the last always kept).
-    func testHeaderDisplayPathDialect() {
-        XCTAssertEqual(SidebarSectionHeaderRow.displayPath("/Users/abner"), "~/")
-        XCTAssertEqual(SidebarSectionHeaderRow.displayPath("/Users/abner/Workspace"), "~/Workspace/")
-        XCTAssertEqual(
-            SidebarSectionHeaderRow.displayPath("/Volumes/Lacie/Workspace/oss"),
-            "/Volumes/Lacie/Workspace/oss/",
+    /// The header's muted trailing slot swaps by collapse state: open ⇒ the git line (or nothing for
+    /// a non-repo / unknown project), collapsed ⇒ the hidden-row count (git yields — the count is the
+    /// otty collapsed-header number), with the impossible zero-count guarded to nothing.
+    func testHeaderTrailingLabelSwap() {
+        let summary = PaneGitSummary(
+            hasRepo: true, branch: "main", ahead: 2, behind: 0, changedCount: 3, staged: 0, modified: 3,
         )
         XCTAssertEqual(
-            SidebarSectionHeaderRow.displayPath("/Volumes/Lacie/Workspace/oss/slop-desk"),
-            "/Volumes/…/oss/slop-desk/",
+            SidebarSectionHeaderRow.trailingLabel(collapsed: false, count: 3, summary: summary),
+            "main >2 !3",
+        )
+        XCTAssertNil(SidebarSectionHeaderRow.trailingLabel(collapsed: false, count: 3, summary: nil))
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.trailingLabel(collapsed: true, count: 3, summary: summary),
+            "3",
         )
         XCTAssertEqual(
-            SidebarSectionHeaderRow.displayPath("/Users/abner/otx/alpha/beta/gamma/delta/epsilon-quite-long-name"),
-            "~/…/epsilon-quite-long-name/",
+            SidebarSectionHeaderRow.trailingLabel(collapsed: true, count: 1, summary: nil),
+            "1",
         )
-        XCTAssertEqual(SidebarSectionHeaderRow.displayPath("/"), "/")
+        XCTAssertNil(SidebarSectionHeaderRow.trailingLabel(collapsed: true, count: 0, summary: summary))
     }
 
     /// The git line speaks the `__git_ps1` sigil dialect — branch first, only the NON-ZERO counts,

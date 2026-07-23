@@ -1935,3 +1935,27 @@ probe tabs at controlled depths nailed the header dialect; `tab list --json` exp
 - Badge COLOURS stay the v4 mapping (`tab-badge.png` — the live capture's grey hand is just the
   inactive-window render). The trailing pane-count otty shows does not map: our rows are per-PANE,
   not per-tab.
+
+### v4.2 — the daily-driver header: name + live git line, animated collapse (2026-07-24)
+
+Three adoptions after driving v4.1, one measured addition. The user's read: the full (elided) path
+in every group header is noise once you know your projects — and the collapse snap felt raw.
+
+- **The header names the FOLDER, not the path**: the title is `section.header` verbatim — the
+  basename `TabOrderingEngine.projectSectionHeader` already derives (worktree collisions already
+  parent-qualified by `headerDisambiguated`). `displayPath` and its elision dialect are deleted;
+  the full path lives where the richness lives, the hover tooltip.
+- **The git line moves INTO the header**: the muted trailing slot (right inset 10 — the rows'
+  trailing-label x) carries `gitLine` (`main >2 !3`, header ink, footnote) while the group is open.
+  Freshness is the existing project-scoped FSEvents push (wire 35). The name wins the truncation
+  fight (`layoutPriority`), a long branch tail-truncates.
+- **Collapsed shows the hidden-row COUNT** — measured off the live app: collapsing a group in otty
+  swaps its trailing slot to the muted tab count at the row-label x. `trailingLabel(collapsed:count:summary:)`
+  is the pinned pure swap (count while shut, git while open).
+- **Collapse ANIMATES — a deliberate otty deviation**: a 60fps recording of the live app
+  (background `screencapture -v` + a driven chevron click) proves otty snaps collapse in ONE frame.
+  The user called the snap crude, so ours glides: every `collapsedSections` mutation (header tap +
+  the TABS-menu Collapse/Expand All) wraps `Slate.Anim.standard`, and the disclosure is ONE
+  `chevron.right` rotating 0°↔90° (not a symbol swap) so the glyph turns with the rows.
+- The chevron drops semibold → **medium**: the live glyph is a 1px stroke; semibold at 10pt read a
+  step chunkier than the reference.
