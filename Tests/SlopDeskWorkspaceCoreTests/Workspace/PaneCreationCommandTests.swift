@@ -123,12 +123,6 @@ final class PaneCreationCommandTests: XCTestCase {
         XCTAssertNotNil(store.handle(for: id))
     }
 
-    func testEphemeralPaneDoesNotDuplicate() {
-        let store = makeStore()
-        let dialogID = store.addSystemDialogPane(windowID: 7, owner: "SecurityAgent", title: "auth", isSecure: true)
-        XCTAssertNil(store.duplicatePane(dialogID))
-    }
-
     func testApplyDuplicateActsOnFocusedPane() {
         let store = makeStore() // default workspace: one terminal, focused
         let before = store.workspace.canvas.items.count

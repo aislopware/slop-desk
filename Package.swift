@@ -148,7 +148,7 @@ let package = Package(
         // `@MainActor @Observable WorkspaceStore` + extensions, `AppConnection`/`ConnectionViewModel`,
         // the terminal block/search/context-menu engines, the video & remote-window LOGIC,
         // `InputBarModel`, the pure iOS input logic, `PreferencesStore`, and the injection SEAMS
-        // (`TerminalRendererFactory`, `VideoWindowFactory`, `RemoteWindowDiscovery`, `SystemDialogDiscovery`).
+        // (`TerminalRendererFactory`, `VideoWindowFactory`, `RemoteWindowDiscovery`).
         //
         // Imports NO view chrome / design-system tokens — every SwiftUI/AppKit/UIKit *presentation*
         // file was deleted (D1), SEAM placeholder `View` bodies split out (A2). The terminal pixels

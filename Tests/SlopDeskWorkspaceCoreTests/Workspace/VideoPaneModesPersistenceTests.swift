@@ -18,7 +18,7 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
 
     // MARK: - Target key (VideoEndpoint.modesKey)
 
-    /// Desktop keys by DISPLAY; a window-shaped endpoint (`.systemDialog`) keys by its owning APP
+    /// Desktop keys by DISPLAY; a window-shaped endpoint (the automation seam) keys by its owning APP
     /// (ids recycle, titles churn); a manual-id binding (no app) falls back to the raw window id.
     func testModesKeyDerivation() {
         XCTAssertEqual(VideoEndpoint(windowID: 0, title: "Desktop", displayID: 2).modesKey, "display:2")

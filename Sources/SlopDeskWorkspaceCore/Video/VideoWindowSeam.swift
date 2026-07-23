@@ -438,46 +438,6 @@ public final class RemoteDisplayDiscovery {
         -> [RemoteDisplaySummary])?
 }
 
-/// One host-side SYSTEM dialog/prompt the client's monitor surfaces in its own pane (the user's case: a
-/// SecurityAgent login/password prompt). The cross-platform mirror of the protocol's `SystemDialogSummary`
-/// (kept here so `SlopDeskClientUI` needn't depend on `SlopDeskVideoProtocol`).
-public struct SystemDialogInfo: Sendable, Equatable, Identifiable {
-    public var windowID: UInt32
-    public var owner: String
-    public var title: String
-    public var width: UInt16
-    public var height: UInt16
-    /// `true` ⇒ a Secure-Event-Input (password/auth) dialog: view + click work, typing is OS-blocked.
-    public var isSecure: Bool
-    public var id: UInt32 { windowID }
-
-    public init(windowID: UInt32, owner: String, title: String, width: UInt16, height: UInt16, isSecure: Bool) {
-        self.windowID = windowID
-        self.owner = owner
-        self.title = title
-        self.width = width
-        self.height = height
-        self.isSecure = isSecure
-    }
-
-    /// A pane label: "owner — title" (title omitted when empty).
-    public var displayLabel: String {
-        title.isEmpty ? owner : "\(owner) — \(title)"
-    }
-}
-
-/// The **system-dialog discovery seam** (the "show system popups in their own pane" feature): the GUI app
-/// injects a closure that polls the host for its open system dialogs (implemented in
-/// `SlopDeskVideoClient.VideoWindowDiscovery.discoverSystemDialogs`), so the cross-platform monitor can
-/// auto-spawn dialog panes WITHOUT importing the gated video module. `nil` → no monitor activity.
-@preconcurrency
-@MainActor
-public final class SystemDialogDiscovery {
-    /// App-registered system-dialog poll (set once at launch). `nil` → the monitor is inert.
-    public static var shared: (@MainActor (_ host: String, _ mediaPort: UInt16, _ cursorPort: UInt16) async
-        -> [SystemDialogInfo])?
-}
-
 // SEAM SPLIT: the headless `SlopDeskWorkspaceCore` carries no SwiftUI `RemoteWindowPlaceholderView` body —
 // `SlopDeskClientUI` provides the real placeholder body; the Xcode app target injects the production
 // `VideoWindowView` via `VideoWindowFactory`.

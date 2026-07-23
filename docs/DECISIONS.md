@@ -1653,3 +1653,21 @@ substitution forced by the pure-native-Swift rule.
   decisions are `BackgroundPointerPolicy` (headless-pinned; the video view itself is never
   instantiated in tests). Setting: "Background Interaction" (Window section,
   `satelliteWindow.backgroundPointer`, default ON). Client-only — no wire change, no host redeploy.
+- ✅ **2026-07-23 — System-dialog panes REMOVED; no video surface lives in the workspace window (user-directed).**
+  The auto-spawned `.systemDialog` pane (the "show system popups in their own pane" feature: client
+  polls `listSystemDialogs` → mints an ephemeral in-tree video pane per host SecurityAgent prompt) is
+  retired. It was the LAST video surface inside the workspace window; with it gone, the remote desktop
+  is fully separated: the ONLY video surface is the dedicated desktop OS window (detached `.desktop`
+  pane, ⌥⌘N), and nothing video-shaped can enter the tree — the `reattachPane` family already refuses
+  `.desktop` ("the desktop never joins a tab"), launch restore already drops every persisted `.desktop`
+  leaf, and the retained-but-dead canvas fallback no longer mints a desktop pane. `PaneKind.systemDialog`
+  is gone (persisted `"systemDialog"` decodes to `.terminal` via the legacy bridge, same discipline as
+  `"remoteGUI"`); `SystemDialogMonitor`, the `SystemDialogDiscovery` seam, the
+  `features.systemDialogPanes` setting, `SLOPDESK_SYSTEM_DIALOG_PANES`, the host's answer path and
+  `scripts/check-system-dialog.sh` are deleted. **Wire stays DORMANT, golden zero-diff** (the
+  remote-window precedent): `listSystemDialogs` (11) / `systemDialogList` (12) + `SystemDialogSummary`
+  keep their codec + vectors, and the pure `SystemDialogDetector` classifier stays (its classify/detect
+  golden vectors are pinned) — only the runtime plumbing is gone. The window-shaped `VideoEndpoint`
+  survives as the AUTOMATION seam only: `check-video.sh`'s window-targeted autoconnect now boots a
+  DETACHED `.desktop` pane (window endpoint, `RemoteWindowModel` window binding) instead of an in-tree
+  pane 0, so the E2E runtime gate is preserved without re-admitting video into the tree.

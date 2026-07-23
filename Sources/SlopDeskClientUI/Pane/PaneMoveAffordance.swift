@@ -165,7 +165,7 @@ struct PaneMoveHandle: View {
     /// this running first (or twice) never drops or reorders the commit.
     var onInterrupted: () -> Void = {}
 
-    /// Whether this leaf renders UNTHEMED content (a `.desktop`/`.systemDialog` video stream): the bare
+    /// Whether this leaf renders UNTHEMED content (a `.desktop` video stream): the bare
     /// tertiary pill tuned to the terminal palette disappears over an arbitrary — usually light —
     /// streamed desktop, so the pill gains a small `Surface.face` plate (the same chip voice as the
     /// rest of the over-video chrome). Terminal leaves keep the flat pill.

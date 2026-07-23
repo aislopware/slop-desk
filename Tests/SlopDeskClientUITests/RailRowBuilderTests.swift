@@ -510,19 +510,19 @@ final class RailRowBuilderTests: XCTestCase {
     }
 
     /// The ⌘K jump-to-pane palette enumerates TAB panes — the desktop (its own window) is not among
-    /// them; a `.systemDialog` video pane (tree-resident) still is.
-    func testJumpPaletteListsTreeVideoPanesButNotTheDesktopWindow() {
+    /// them; a tree terminal pane still is.
+    func testJumpPaletteListsTreePanesButNotTheDesktopWindow() throws {
         let store = makeStore()
         let desktop = store.openDesktopWindow()
-        let dialog = store.addSystemDialogPane(windowID: 9, owner: "SecurityAgent", title: "", isSecure: false)
         store.splitActivePane(axis: .horizontal, kind: .terminal, leading: false, launchGrace: .zero)
+        let terminal = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
 
         let paletteIDs = TabsPaletteSource.snapshot(store)
             .candidates(query: "")
             .map(\.id)
         XCTAssertTrue(
-            paletteIDs.contains("tab.\(dialog.raw.uuidString)"),
-            "a tree-resident video pane stays in the ⌘K jump-to-pane palette",
+            paletteIDs.contains("tab.\(terminal.raw.uuidString)"),
+            "a tree pane stays in the ⌘K jump-to-pane palette",
         )
         XCTAssertFalse(
             paletteIDs.contains("tab.\(desktop.raw.uuidString)"),

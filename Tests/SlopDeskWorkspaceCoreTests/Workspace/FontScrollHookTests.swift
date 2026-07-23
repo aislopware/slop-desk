@@ -133,9 +133,16 @@ final class FontScrollHookTests: XCTestCase {
     /// degradation; this is what makes the hooks safe to bind unconditionally.
     func testFontScrollAreNoOpOnNonTerminalActivePane() throws {
         let store = makeStore()
-        // Replace the active leaf's session with a non-terminal one by splitting in a `.desktop` pane and
-        // focusing it; the recorder of the ORIGINAL terminal pane must stay empty after we act on the GUI pane.
-        store.splitActivePane(axis: .horizontal, kind: .desktop)
+        // Video never enters the tree through the store's public surface (docs/DECISIONS.md
+        // 2026-07-23), so graft a `.desktop` leaf DIRECTLY into the tree value — pinning the
+        // defensive contract for a tree that somehow carries one; the recorder of the ORIGINAL
+        // terminal pane must stay empty after we act on the GUI pane.
+        let seed = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
+        let (next, _) = WorkspaceTreeOps.splitPane(
+            seed, axis: .horizontal, newSpec: PaneSpec(kind: .desktop, title: "Desktop"), in: store.tree,
+        )
+        store.tree = next
+        store.reconcileTree()
         let active = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
         let guiSession = try XCTUnwrap(store.handle(for: active) as? RecordingTerminalPaneSession)
         XCTAssertNil(guiSession.terminalModel, "the active pane is non-terminal (no model)")

@@ -2,7 +2,8 @@ import XCTest
 @testable import SlopDeskVideoProtocol
 
 /// Round-trip + hostile-decode for the system-dialog discovery control pair (the "show system popups in
-/// their own pane" feature): `listSystemDialogs` (type 11, client→host, zero body) and
+/// their own pane" feature — DORMANT since docs/DECISIONS.md 2026-07-23, wire kept):
+/// `listSystemDialogs` (type 11, client→host, zero body) and
 /// `systemDialogList([SystemDialogSummary])` (type 12, host→client). Mirrors the windowList codec's
 /// untrusted-count discipline — a truncated / oversized datagram DROPS (throws), never over-reads.
 final class SystemDialogCodecTests: XCTestCase {

@@ -2,7 +2,12 @@
 import CoreGraphics
 import Foundation
 
-/// Pure, unit-tested classifier behind the "show system popups/prompts in their own pane" feature.
+/// Pure, unit-tested classifier that recognises host SYSTEM dialogs among enumerated windows.
+///
+/// **DORMANT (docs/DECISIONS.md 2026-07-23):** the system-dialog-pane feature that consumed this is
+/// removed and no runtime caller remains. The classifier is kept because its `classify`/`detect`
+/// golden vectors are pinned (`golden/golden_vectors.json` — golden stays byte-identical), mirroring
+/// the dormant `listSystemDialogs`/`systemDialogList` wire pair.
 ///
 /// A SYSTEM dialog is a cross-process modal window that NO app-pane would ever capture — the prime
 /// case (the user's ask) being a `SecurityAgent` login/admin **password** prompt. The host enumerates

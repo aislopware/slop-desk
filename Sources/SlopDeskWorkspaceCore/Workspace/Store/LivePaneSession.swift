@@ -22,7 +22,7 @@ import SlopDeskVideoProtocol // EnvConfig — the behaviour-preserving config re
 ///   types 26/27 fold into ``claudeStatus``), and the inspector second channel opens/closes
 ///   DYNAMICALLY on that runtime status (≠ `.none` opens it). The terminal|inspector split is per-pane
 ///   VIEW state, NOT a tree node — one leaf.
-/// - video kinds (`.desktop` / `.systemDialog`) → a `remoteWindow` (`RemoteWindowModel`) instead of a
+/// - the video `.desktop` → a `remoteWindow` (`RemoteWindowModel`) instead of a
 ///   connection-backed terminal.
 ///
 /// ### Lazy connect (load-bearing, docs/22 §6 RESTORED-vs-RECONNECTED)
@@ -52,7 +52,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     public let inputBar: InputBarModel?
 
     /// The read-only structured inspector for a terminal pane (NWConnection #2). `nil` for non-terminal
-    /// kinds (`.desktop` / `.systemDialog`); present for EVERY `.terminal` pane (any terminal can
+    /// `.desktop`; present for EVERY `.terminal` pane (any terminal can
     /// become a Claude session), but the second channel is SUBSCRIBED only while ``claudeStatus`` `≠ .none`.
     /// The model is durable across pause/resume; the client is closed on pause, rebuilt on resume. `model`
     /// is `let` (upsert/dedup keeps a re-tail safe); `client` is `var` because resume swaps in a fresh one.
@@ -90,14 +90,14 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// scenePhase foreground fan-out). Tracked + cancellable, not awaited.
     private var inspectorTask: Task<Void, Never>?
 
-    /// The video model for a `.desktop` / `.systemDialog` pane. `nil` for a terminal.
+    /// The video model for a `.desktop` pane. `nil` for a terminal.
     public let remoteWindow: RemoteWindowModel?
 
     // MARK: Re-open glue for pause/resume
 
     /// The store's factory, retained so `resume()` can rebuild a fresh ``InspectorClient`` after `pause()`
     /// closed the previous one (iOS kills an app that strands a background socket — docs/22 DECISIONS).
-    /// Set for every `.terminal` pane; `nil` for the video kinds (`.desktop` / `.systemDialog`).
+    /// Set for every `.terminal` pane; `nil` for the video `.desktop`.
     private let makeInspector: (@MainActor (ConnectionTarget) -> InspectorClient?)?
     /// Resolves the CURRENT app target for the inspector build/rebuild (inspector rides the same host as
     /// the terminal, on terminal port + 1). Read fresh at subscribe-time to pick up a host change. Set
@@ -114,11 +114,6 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// re-opens exactly the set admitted before background. Cap-safe WITHOUT consulting the store: resume
     /// re-opens at most what already satisfied `liveVideoCap`, so it cannot exceed it.
     private var wasVideoActiveBeforePause = false
-
-    /// SYSTEM-DIALOG: `true` when this ``PaneKind/systemDialog`` pane streams a Secure-Event-Input
-    /// (password/auth) prompt — the pane shows a "view-only — type on the host" hint. A pure-live property
-    /// the store sets via ``markSystemDialog(isSecure:)`` (never persisted).
-    public private(set) var isSecureDialog = false
 
     // MARK: Automation seam (SLOPDESK_AUTOTYPE)
 
@@ -145,12 +140,12 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
 
     /// Whether an OSC 133 command is currently executing in this pane's shell — the
     /// ``PaneSessionHandle/isShellBusy`` close-guard signal and the pill's "running…" cue. `false`
-    /// for panes with no terminal (`.desktop` / `.systemDialog`).
+    /// for panes with no terminal (`.desktop`).
     public var isShellBusy: Bool { terminalModel?.shellActivity == .running }
 
     /// Broadcast / synchronized-input target primitive: types `text` into this pane's shell by routing
     /// to the per-pane ``InputBarModel`` (the same recorded-for-echo-dedup path a normal submit uses).
-    /// A no-op when there is no input bar (a `.desktop` / `.systemDialog` pane).
+    /// A no-op when there is no input bar (a `.desktop` pane).
     public func sendText(_ text: String) { inputBar?.sendText(text) }
 
     /// Snippet / send-keys primitive: feeds raw bytes (incl. control codes) into the shell via the input
@@ -191,7 +186,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
 
     /// Reflects the live connection: `.terminal`/Claude panes are ready only once the handshake completes
     /// (``ConnectionViewModel/status`` `== .connected`) — before that, `InputBarModel.sendSink` is wired but
-    /// `TerminalViewModel.inputSink` is not, so a send would silently drop. A `.desktop` / `.systemDialog`
+    /// `TerminalViewModel.inputSink` is not, so a send would silently drop. A `.desktop`
     /// pane has no `connection` and is always "ready" (no text funnel to gate).
     public var isReadyForInput: Bool { connection.map { $0.status == .connected } ?? true }
 
@@ -278,11 +273,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         switch spec.kind {
         case .terminal:
             makeTerminal(spec, makeClient: makeClient, makeInspector: makeInspector, target: target)
-        case .desktop,
-             .systemDialog:
-            // Both video kinds share ONE session shape: a `RemoteWindowModel` on the shared UDP flow.
-            // A system-dialog pane streams one host window by id; a desktop pane a whole display —
-            // the differences (auto-management, ephemerality) live in the store/monitor, not here.
+        case .desktop:
             makeVideo(spec, target: target)
         }
     }
@@ -363,22 +354,16 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         )
     }
 
-    /// Builds a VIDEO session (`.desktop` / `.systemDialog`): a `RemoteWindowModel` bound to the app
+    /// Builds a VIDEO session (`.desktop`): a `RemoteWindowModel` bound to the app
     /// target with the per-pane target pre-filled, NOT opened (UDP is user-initiated — docs/22 §6).
     private static func makeVideo(
         _ spec: PaneSpec,
         target: @escaping @MainActor () -> ConnectionTarget,
     ) -> LivePaneSession {
         let model =
-            if spec.kind == .desktop {
-                // FULL-DESKTOP pane: the model carries the display target (0 = main) — no window id.
-                // `setVideoActive` opens it like any configured video pane.
-                RemoteWindowModel(
-                    target: target,
-                    title: spec.video?.title ?? spec.title,
-                    desktopDisplayID: spec.video?.displayID ?? 0,
-                )
-            } else if let v = spec.video {
+            if let v = spec.video, v.displayID == nil, v.windowID != 0 {
+                // Window-shaped endpoint — the AUTOMATION seam only (`check-video.sh` serves one
+                // window; docs/DECISIONS.md 2026-07-23): the classic window `hello`.
                 RemoteWindowModel(
                     target: target,
                     windowID: String(v.windowID),
@@ -386,7 +371,13 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
                     appName: v.appName,
                 )
             } else {
-                RemoteWindowModel(target: target)
+                // FULL-DESKTOP pane: the model carries the display target (0 = main) — no window id.
+                // `setVideoActive` opens it like any configured video pane.
+                RemoteWindowModel(
+                    target: target,
+                    title: spec.video?.title ?? spec.title,
+                    desktopDisplayID: spec.video?.displayID ?? 0,
+                )
             }
         // LATCHED-MODE RESTORE is NOT seeded here: the modes are TARGET-keyed on the tree
         // (`TreeWorkspace.videoModesByTarget`), which this pure spec→session factory can't see — the
@@ -411,11 +402,6 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     func adopt(id: PaneID) {
         self.id = id
     }
-
-    /// SYSTEM-DIALOG: flag a just-spawned ``PaneKind/systemDialog`` session as a secure (password/auth)
-    /// prompt so the pane view shows the "view-only — type on the host" hint. Set by the store right after
-    /// materialization (the flag is pure-live, not carried in the persisted spec).
-    func markSystemDialog(isSecure: Bool) { isSecureDialog = isSecure }
 
     // MARK: - Inspector second channel
 

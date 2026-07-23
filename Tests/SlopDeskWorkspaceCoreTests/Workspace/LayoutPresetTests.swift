@@ -97,15 +97,6 @@ final class LayoutPresetTests: XCTestCase {
         XCTAssertEqual(Set(store.layoutPresetNames), Set(["a", "b"]), "presets survive a switch")
     }
 
-    func testEphemeralPanesAreStrippedFromSnapshot() throws {
-        let (ws, _, _) = twoPaneWorkspace()
-        let store = makeStore(restoring: ws)
-        store.addSystemDialogPane(windowID: 9, owner: "SecurityAgent", title: "sudo", isSecure: true)
-        store.saveLayoutPreset(name: "work")
-        let kinds = try XCTUnwrap(store.workspace.layoutPresets.first?.canvas.items.map(\.spec.kind))
-        XCTAssertFalse(kinds.contains(.systemDialog), "an auto-managed dialog pane must not be saved")
-    }
-
     func testDeleteAndUnknownSwitchAreSafe() {
         let (ws, _, _) = twoPaneWorkspace()
         let store = makeStore(restoring: ws)

@@ -306,8 +306,9 @@ public extension WorkspaceBindingRegistry {
              .splitUp,
              .newTab:
             apply(.newPaneDefault, to: store)
-        // Canvas analogue of the desktop tab: the same kind, minted as a flat canvas pane.
-        case .newDesktopTab: apply(.newPane(.desktop), to: store)
+        // The remote desktop is a tree-shell feature (a detached OS window — video never lives in
+        // the workspace); the dead canvas has no detached set, so the chord is a graceful no-op.
+        case .newDesktopTab: break
         case .closePane: apply(.closePane, to: store)
         // Reopen the last closed pane: the canvas has its own retained single-slot reopen (distinct from the
         // tree shell's LIFO stack) — route to it so the canvas path still responds.

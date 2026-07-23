@@ -28,7 +28,6 @@ final class SettingsKeyTests: XCTestCase {
             SettingsKey.tabBadgeOnCommandFinish,
             SettingsKey.tabBadgeOnCommandFail,
             SettingsKey.tabBadgeOnCommandAwaitInput,
-            SettingsKey.systemDialogPanes,
             SettingsKey.autoSwitchLayouts,
             SettingsKey.redactSecrets,
             SettingsKey.recordClipboardHistory,
@@ -89,14 +88,11 @@ final class SettingsKeyTests: XCTestCase {
     func testGatesDefaultOnWhenUnset() {
         XCTAssertTrue(SettingsKey.oscNotificationsEnabled)
         XCTAssertTrue(SettingsKey.longCommandNotificationsEnabled)
-        XCTAssertTrue(SettingsKey.systemDialogPanesEnabled)
     }
 
     func testGatesRespectAnExplicitFalse() {
         SettingsKey.store.set(false, forKey: SettingsKey.oscNotifications)
-        SettingsKey.store.set(false, forKey: SettingsKey.systemDialogPanes)
         XCTAssertFalse(SettingsKey.oscNotificationsEnabled)
-        XCTAssertFalse(SettingsKey.systemDialogPanesEnabled)
         XCTAssertTrue(SettingsKey.longCommandNotificationsEnabled, "an unset key stays default-ON")
     }
 

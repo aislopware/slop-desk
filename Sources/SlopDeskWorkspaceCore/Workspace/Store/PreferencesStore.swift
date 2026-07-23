@@ -411,8 +411,8 @@ public final class PreferencesStore {
         // Controls — link detection + hint patterns
         .linkDetection, .linkCmdClick, .linkCmdShiftClick, .autoDetectLinkSchemes, .customLinkSchemes,
         .hintPatterns, .hintPatternActions,
-        // Controls — system dialog + secure input
-        .systemDialogPanes, .autoSecureInput, .secureInputIndicator,
+        // Controls — secure input
+        .autoSecureInput, .secureInputIndicator,
         // Appearance
         .newTabPosition, .showBlockDividers, .autoHideTabsPanel,
         .dockIconAnimateProgress, .dockIconErrorBadge,

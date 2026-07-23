@@ -61,16 +61,6 @@ final class CloseUndoTests: XCTestCase {
         XCTAssertEqual(record?.group, gid)
     }
 
-    func testEphemeralDialogCloseIsNotRecorded() {
-        let (ws, _, _) = twoPaneWorkspace()
-        let store = makeStore(restoring: ws)
-        let dialogID = store.addSystemDialogPane(windowID: 42, owner: "SecurityAgent", title: "sudo", isSecure: true)
-
-        store.closePane(dialogID)
-
-        XCTAssertNil(store.recentlyClosed, "ephemeral system-dialog closes must not occupy the reopen slot")
-    }
-
     func testNewerCloseReplacesTheSlot() {
         let (ws, a, b) = twoPaneWorkspace()
         let store = makeStore(restoring: ws)

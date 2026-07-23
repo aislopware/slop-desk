@@ -223,7 +223,6 @@ public enum SettingsKey {
     /// `copy`). Default empty. **The behaviour lives elsewhere.**
     public static let hintPatternActions = "controls.hintPatternActions" // [String]
     // Features / advanced
-    public static let systemDialogPanes = "features.systemDialogPanes"
     public static let autoSwitchLayouts = "features.autoSwitchLayouts"
     public static let redactSecrets = "features.redactSecrets"
     public static let recordClipboardHistory = "features.recordClipboardHistory"
@@ -475,10 +474,6 @@ public enum SettingsKey {
             agentNotifyAwaitInput: agentNotifyAwaitInputEnabled,
         )
     }
-
-    /// Whether the system-dialog monitor should auto-spawn dialog panes (default ON). The
-    /// `SLOPDESK_SYSTEM_DIALOG_PANES` env var still overrides for tests (`0` off / `force` on).
-    public static var systemDialogPanesEnabled: Bool { Defaults[.systemDialogPanes] }
 
     /// Whether to mask likely secrets (access keys, bearer tokens, `PASSWORD=…`) out of window titles and
     /// notification bodies before they reach the sidebar/pill/Notification Center (default ON — security
@@ -876,7 +871,6 @@ public extension Defaults.Keys {
     static let tabBadgeOnCommandFail = Key<Bool>(slopDesk: SettingsKey.tabBadgeOnCommandFail, default: true)
     static let tabBadgeOnCommandAwaitInput = Key<Bool>(slopDesk: SettingsKey.tabBadgeOnCommandAwaitInput, default: true)
     static let tabBadgeBusyDelaySeconds = Key<Double>(slopDesk: SettingsKey.tabBadgeBusyDelaySeconds, default: 3)
-    static let systemDialogPanes = Key<Bool>(slopDesk: SettingsKey.systemDialogPanes, default: true)
     static let autoSwitchLayouts = Key<Bool>(slopDesk: SettingsKey.autoSwitchLayouts, default: true)
     static let redactSecrets = Key<Bool>(slopDesk: SettingsKey.redactSecrets, default: true)
     static let recordClipboardHistory = Key<Bool>(slopDesk: SettingsKey.recordClipboardHistory, default: true)

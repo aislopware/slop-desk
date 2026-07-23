@@ -9,8 +9,7 @@ import IOKit.pwr_mgt
 ///
 /// One process-wide refcount over every streaming display session: the first holder raises ONE
 /// `PreventUserIdleDisplaySleep` power assertion, the last release drops it. Window-target sessions
-/// never hold (a `.systemDialog` stream is ephemeral and its dialog survives display sleep — the
-/// desktop stream is the one a person is actively LOOKING at).
+/// never hold (the desktop stream is the one a person is actively LOOKING at).
 ///
 /// Thread-safe (`NSLock` — callers are per-session actors). The IOKit calls are seam-injected so
 /// the refcount/idempotence logic unit-tests with fakes (no real power assertion side effects in a

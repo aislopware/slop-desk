@@ -59,6 +59,41 @@ final class DesktopPaneStoreTests: XCTestCase {
         XCTAssertEqual(store.tree.activeSession?.detached.count, 2)
     }
 
+    /// The AUTOMATION seam's window-shaped desktop pane (`SLOPDESK_VIDEO_AUTOCONNECT_*` — endpoint
+    /// with `displayID` nil) is NOT a display match: ⌥⌘N on display 0 mints a real display stream
+    /// instead of revealing the automation pane (strict optional compare in `detachedDesktopPane`).
+    func testWindowShapedAutomationPaneDoesNotHijackDisplayDedupe() throws {
+        let store = makeStore()
+        store.bootstrapFromEnvironment([
+            "SLOPDESK_VIDEO_AUTOCONNECT_HOST": "127.0.0.1",
+            "SLOPDESK_VIDEO_AUTOCONNECT_MEDIA_PORT": "9000",
+            "SLOPDESK_VIDEO_AUTOCONNECT_CURSOR_PORT": "9001",
+            "SLOPDESK_VIDEO_AUTOCONNECT_WINDOW_ID": "42",
+        ])
+        let automation = try XCTUnwrap(
+            store.tree.activeSession?.detached.first?.pane,
+            "the video autoconnect boots a DETACHED window-targeted desktop pane",
+        )
+        XCTAssertEqual(store.tree.spec(for: automation)?.kind, .desktop)
+        XCTAssertNil(store.tree.spec(for: automation)?.video?.displayID, "window-shaped: no display target")
+        XCTAssertEqual(store.tree.spec(for: automation)?.video?.windowID, 42)
+        XCTAssertEqual(
+            store.tree.activeSession?.tabs.flatMap { $0.allPaneIDs() }.count, 1,
+            "one terminal tab — video never in the tree",
+        )
+
+        var revealed: [PaneID] = []
+        store.revealSatelliteWindow = { revealed.append($0)
+            return true
+        }
+        let main = store.openDesktopWindow(displayID: 0)
+
+        XCTAssertNotEqual(main, automation, "⌥⌘N mints a REAL display-0 stream, not the automation pane")
+        XCTAssertTrue(revealed.isEmpty, "no reveal — the window-shaped pane is not a display match")
+        XCTAssertEqual(store.tree.spec(for: main)?.video?.displayID, 0)
+        XCTAssertEqual(store.openDesktopWindow(displayID: 0), main, "…and the real one still dedupes")
+    }
+
     /// Closing the desktop window is a REAL close: the pane + spec + live handle all go.
     func testCloseDesktopWindowEndsTheSession() {
         let store = makeStore()
@@ -88,7 +123,7 @@ final class DesktopPaneStoreTests: XCTestCase {
         let terminal = try XCTUnwrap(session.allPaneIDs().first)
         let staged = PaneID()
         session.specs[staged] = PaneSpec(
-            kind: .systemDialog, title: "W",
+            kind: .desktop, title: "W",
             video: VideoEndpoint(windowID: 5, title: "W", appName: "App"),
         )
         var json = try XCTUnwrap(

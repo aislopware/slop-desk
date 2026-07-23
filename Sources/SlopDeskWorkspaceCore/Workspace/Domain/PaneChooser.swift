@@ -68,14 +68,6 @@ public enum PaneChooserRegistry {
                 mnemonic: "d",
                 isVideo: true,
             )
-        case .systemDialog:
-            PaneChooserOption(
-                kind: .systemDialog,
-                title: "System dialog",
-                symbol: "lock.shield",
-                mnemonic: "s",
-                isVideo: true,
-            )
         }
     }
 }

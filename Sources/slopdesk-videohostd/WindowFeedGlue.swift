@@ -254,9 +254,9 @@ func makeSessionlessDispatcher(
                 Task { await answerWindowList(channelID: channelID, mux: mux, answerGuard: listAnswerGuard) }
             }
         case .listSystemDialogs:
-            if listAnswerGuard.begin(channelID) {
-                Task { await answerSystemDialogList(channelID: channelID, mux: mux, answerGuard: listAnswerGuard) }
-            }
+            // DORMANT wire (docs/DECISIONS.md 2026-07-23): the system-dialog-pane feature is removed;
+            // no shipped client sends this. Swallow (consume the control datagram, answer nothing).
+            break
         case .listDisplays:
             // Full-desktop discovery: the online displays (mirrors listWindows — session-less).
             if listAnswerGuard.begin(channelID) {

@@ -244,12 +244,12 @@ public struct VideoClientStateMachine: Sendable {
              .streamSettings,
              .audioControl,
              .privacyMode:
-            // hello / resizeRequest / keepalive / listWindows / focusWindow / listSystemDialogs /
-            // windowFeedSubscribe / appIconRequest / streamSettings / audioControl / privacyMode are client→host.
-            // `windowList` + `systemDialogList` + `windowFeedSnapshot` + `windowFeedCurrent` +
-            // `blobChunk` ARE host→client but handled out-of-band by the discovery /
-            // system-dialog-monitor / window-feed / blob queries (their own lanes), NOT by a
-            // streaming session's FSM — defensive no-op here.
+            // hello / resizeRequest / keepalive / listWindows / focusWindow / windowFeedSubscribe /
+            // appIconRequest / streamSettings / audioControl / privacyMode are client→host.
+            // `windowList` + `windowFeedSnapshot` + `windowFeedCurrent` + `blobChunk` ARE host→client
+            // but handled out-of-band by the discovery / window-feed / blob queries (their own lanes),
+            // NOT by a streaming session's FSM. `listSystemDialogs`/`systemDialogList` are DORMANT wire
+            // (docs/DECISIONS.md 2026-07-23 — codec + golden kept, no live sender). Defensive no-op here.
             return []
         }
     }

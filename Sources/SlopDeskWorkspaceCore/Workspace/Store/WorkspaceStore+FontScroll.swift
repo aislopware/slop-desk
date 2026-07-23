@@ -59,7 +59,7 @@ public enum ScrollAction: Equatable, Sendable {
 /// resolve the active pane's live ``TerminalViewModel`` (``activeTerminalModel``), probe its `surface` for
 /// the ``TerminalSurfaceActions`` capability seam, and fire the matching libghostty named binding action.
 ///
-/// All four are a clean no-op for a non-terminal active pane (`.desktop` / `.systemDialog`), an empty
+/// All four are a clean no-op for a non-terminal active pane (`.desktop`), an empty
 /// shell, or a headless / placeholder surface that does not conform to ``TerminalSurfaceActions`` (no seam) —
 /// the same graceful degradation the block hooks use. None instantiate a renderer, so the whole surface is
 /// unit-testable against a recording ``TerminalSurfaceActions`` fake (the hang-safety rule: no real
@@ -88,7 +88,7 @@ public extension WorkspaceStore {
     }
 
     /// Fire `step` at the ``onFontSizeStep`` seam, but ONLY when the active pane is a TERMINAL — preserving the
-    /// no-op-off-terminal contract the surface-action hooks held (a `.desktop` / `.systemDialog` / empty /
+    /// no-op-off-terminal contract the surface-action hooks held (a `.desktop` / empty /
     /// headless pane has no `activeTerminalModel`, so ⌘± does nothing there, exactly as before).
     private func stepActivePaneFontSize(_ step: FontSizeStep) {
         guard activeTerminalModel != nil else { return }

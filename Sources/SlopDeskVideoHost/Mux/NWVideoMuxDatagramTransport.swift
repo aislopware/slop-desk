@@ -439,7 +439,7 @@ public final class NWVideoMuxDatagramTransport: @unchecked Sendable {
     }
 
     /// One-shot peek: does a control-channel payload decode as a session-LESS discovery request —
-    /// `listWindows` (docs/31 picker), `listSystemDialogs` (the system-popup-pane feature),
+    /// `listWindows` (docs/31 picker), `listSystemDialogs` (DORMANT — swallowed at the daemon),
     /// `windowFeedSubscribe` (the window feed behind Open Quickly), or `listDisplays` (the
     /// full-desktop pane's display discovery)? Like the hello peek, only the control channel can carry
     /// these. Lets such a request bootstrap its reply flow so the daemon can answer it without minting

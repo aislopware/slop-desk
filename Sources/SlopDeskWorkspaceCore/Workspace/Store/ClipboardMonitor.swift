@@ -8,7 +8,7 @@ import Foundation
 ///
 /// Polling (not a notification — AppKit has no pasteboard-change notification) keyed off
 /// `NSPasteboard.changeCount` is cheap: a single integer read per tick, and the string is fetched only
-/// when the count actually advances. Modeled on ``SystemDialogMonitor``: the app scene owns a
+/// when the count actually advances. The app scene owns a
 /// `.task { await monitor.run() }`; the loop ends when that task is cancelled.
 @preconcurrency
 @MainActor

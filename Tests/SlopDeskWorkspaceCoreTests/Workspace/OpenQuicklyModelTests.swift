@@ -615,17 +615,6 @@ final class OpenQuicklyModelTests: XCTestCase {
         }
     }
 
-    /// The auto `.systemDialog` video pane is differentiated too — the same display glyph, but a "Dialog"
-    /// badge (it streams a host SYSTEM prompt). With no app name threaded the subtitle is nil.
-    func testPaneItemSystemDialogReadsAsADialog() {
-        let pid = PaneID(raw: UUID())
-        let row = OpenQuicklyModel.paneItem(paneID: pid, title: "Authenticate", cwd: nil, paneKind: .systemDialog)
-        XCTAssertEqual(row.paneKind, .systemDialog)
-        XCTAssertEqual(row.badge, "Dialog", "a `.systemDialog` pane is badged a 'Dialog'")
-        XCTAssertEqual(row.symbol, "display", "a dialog window uses the display glyph")
-        XCTAssertNil(row.subtitle, "no app name + no cwd ⇒ single line, never an echo of the dialog title")
-    }
-
     /// A real cwd always wins over the host/window-title fallback (defensive — a video pane normally reports no
     /// cwd, but the subtitle must never silently drop a working directory if one is present).
     func testPaneItemVideoCwdWinsOverWindowSubtitle() {

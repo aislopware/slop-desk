@@ -131,7 +131,7 @@ final class WorkspaceStoreLiveTreeTests: XCTestCase {
     // MARK: - 2b. A dead-canvas mutation cannot tear down the LIVE tree's registry
 
     /// W5 SAFETY: with `liveModel == .tree` the canvas is retained-but-dead — a leftover canvas mutation
-    /// (e.g. the system-dialog monitor's `addSystemDialogPane`, deferred to a later item) calls the canvas
+    /// calls the canvas
     /// `reconcile()`, which diffs the SAME registry against the (default, dead) canvas leaf set. Without the
     /// guard that would orphan + tear down every tree-materialized handle. This pins that a canvas mutation
     /// on a tree store leaves the tree's registry untouched.

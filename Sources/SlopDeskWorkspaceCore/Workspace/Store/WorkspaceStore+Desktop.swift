@@ -34,7 +34,10 @@ public extension WorkspaceStore {
         guard let session = tree.activeSession else { return nil }
         return session.detached.map(\.pane).first { id in
             guard let spec = session.specs[id], spec.kind == .desktop else { return false }
-            return (spec.video?.displayID ?? 0) == displayID
+            // STRICT optional compare: a WINDOW-shaped endpoint (displayID nil — the automation
+            // seam) is never a display match, so ⌥⌘N on display 0 mints a real display stream
+            // instead of revealing the automation pane. Every ⌥⌘N mint sets displayID (desktopSpec).
+            return spec.video?.displayID == displayID
         }
     }
 

@@ -70,7 +70,6 @@ Grep `SLOPDESK_` for the full set. **Default idiom:** `!= "0"` → default-ON; `
 | `SLOPDESK_FEC_M` / `_FEC_K` | Set **identically** host + client |
 | `SLOPDESK_VIDEO_DEBUG` | Video stderr |
 | `SLOPDESK_DISPLAY_CAPTURE` | `window` / `display` / `include` |
-| `SLOPDESK_SYSTEM_DIALOG_PANES` | unset/on · `0` off · `force` for E2E |
 | `SLOPDESK_PACER` | default present-on-arrival; `=deadline` for smoothness pacer |
 | `SLOPDESK_AUDIO` | host app-audio stream gate (default-ON); `_CODEC=pcm` bypasses AAC-ELD |
 

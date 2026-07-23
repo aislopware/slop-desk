@@ -1,5 +1,5 @@
 // GuiLeafView — content of a video (PATH 2) pane leaf; the video parallel of
-// ``TerminalLeafView``. Mounts the ``VideoWindowFactory`` seam for a `.desktop` / `.systemDialog` pane,
+// ``TerminalLeafView``. Mounts the ``VideoWindowFactory`` seam for a `.desktop` pane,
 // drives the cap-enforced activation lifecycle, else shows the idle / gated placeholder.
 //
 // THREE display states, decided by the PURE ``RemoteGUIDisplay/resolve(admitted:configured:hasFreeSlot:)``
@@ -161,8 +161,8 @@ struct GuiLeafView: View {
                 }
             }
             .animation(Slate.Anim.reveal, value: model?.pasteFeedback)
-            // The `🔒 READ ONLY ×` pill (``ReadOnlyPill``) so a read-only `.desktop` /
-            // `.systemDialog` pane is a VISUAL peer of a read-only terminal leaf (same top-trailing overlay/reveal as
+            // The `🔒 READ ONLY ×` pill (``ReadOnlyPill``) so a read-only `.desktop`
+            // pane is a VISUAL peer of a read-only terminal leaf (same top-trailing overlay/reveal as
             // ``TerminalLeafView``). Without it a locked remote window silently swallows clicks/keys with ZERO
             // feedback and no exit affordance. A video pane has no ``TerminalViewModel`` (no `exitReadOnly()`), so
             // `×` releases the lock via ``WorkspaceStore/setPaneReadOnly(_:_:)`` — the SAME source of truth the input
@@ -537,7 +537,7 @@ struct GuiLeafView: View {
     /// idle mirror used on the static snapshot path.
     private func placeholder(_ state: RemoteGUIDisplay) -> some View {
         VStack(spacing: Slate.Metric.space3) {
-            Image(systemSymbol: live?.kind == .systemDialog ? .lockShield : .display)
+            Image(systemSymbol: .display)
                 .font(.system(size: Slate.Typeface.display, weight: .regular))
                 .foregroundStyle(Slate.Text.secondary)
             Text(placeholderLabel(state))
@@ -550,7 +550,7 @@ struct GuiLeafView: View {
 
     private func placeholderLabel(_ state: RemoteGUIDisplay) -> String {
         if state == .gated { return "Video paused — too many live streams" }
-        return live?.kind == .systemDialog ? "system dialog" : "desktop"
+        return "desktop"
     }
 }
 

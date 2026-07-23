@@ -696,67 +696,6 @@ final class LiveVideoCapTests: XCTestCase {
         XCTAssertEqual(RemoteGUIDisplay.resolve(admitted: false, configured: true, hasFreeSlot: false), .gated)
     }
 
-    /// A WINDOW-shaped video pane created with no video endpoint (a `.systemDialog` spec before its
-    /// window id lands) has an UNconfigured ``RemoteWindowModel`` (`canOpen == false`), so even when the cap is saturated its
-    /// display resolves to `.entryForm` — NOT `.gated`. This is the BUG-A invariant: an unconfigured pane
-    /// can always reach its host/port form (it was previously stuck forever on the cap placeholder). Once
-    /// it becomes configured the display depends on whether a slot is free (F1): free ⇒ still the form
-    /// (the retry admits it), saturated ⇒ the gated placeholder.
-    func testUnconfiguredRemoteGUIPaneIsNotCapGatedInDisplay() throws {
-        // Build a live (production) window-shaped video session with no video endpoint.
-        // The mux registry's factory is never invoked for a video pane (it has no terminal client).
-        let registry = ConnectionRegistry { _, _ in
-            throw SlopDeskTransportError.invalidState("a video pane never builds a terminal mux connection")
-        }
-        let session = WorkspaceStore.liveMakeSession(muxRegistry: registry)(PaneSpec(
-            kind: .systemDialog,
-            title: "Remote window",
-        ))
-        let live = try XCTUnwrap(session as? LivePaneSession)
-        XCTAssertNotNil(live.remoteWindow, "a video session always has a RemoteWindowModel")
-        XCTAssertFalse(
-            try XCTUnwrap(live.remoteWindow?.canOpen),
-            "a fresh unconfigured model cannot open (empty fields)",
-        )
-
-        // Even un-admitted with NO free slot (cap saturated), the display is the entry form because the
-        // model is not configured — never the cap placeholder.
-        XCTAssertEqual(
-            try RemoteGUIDisplay.resolve(
-                admitted: false,
-                configured: XCTUnwrap(live.remoteWindow?.canOpen),
-                hasFreeSlot: false,
-            ),
-            .entryForm,
-        )
-
-        // Dial in a valid window id (host/ports come from the app target now). The model becomes configured.
-        live.remoteWindow?.windowID = "42"
-        XCTAssertTrue(try XCTUnwrap(live.remoteWindow?.canOpen), "a valid window id ⇒ can open")
-
-        // Configured + a slot still FREE ⇒ the form stays (F1 — the reactive retry will admit it). The
-        // form does NOT vanish the instant the endpoint becomes valid.
-        XCTAssertEqual(
-            try RemoteGUIDisplay.resolve(
-                admitted: false,
-                configured: XCTUnwrap(live.remoteWindow?.canOpen),
-                hasFreeSlot: true,
-            ),
-            .entryForm,
-        )
-
-        // Configured + NO free slot ⇒ now correctly the cap placeholder (the cap is the real reason it
-        // cannot decode).
-        XCTAssertEqual(
-            try RemoteGUIDisplay.resolve(
-                admitted: false,
-                configured: XCTUnwrap(live.remoteWindow?.canOpen),
-                hasFreeSlot: false,
-            ),
-            .gated,
-        )
-    }
-
     // MARK: - F1: hasFreeVideoSlot mirrors the activateVideo guard (the cap-vs-config discriminator)
 
     /// ``WorkspaceStore/hasFreeVideoSlot(for:)`` is the pure READ the view feeds into the display

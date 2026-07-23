@@ -316,59 +316,56 @@ extension WorkspaceStoreReconcileTests {
 
     // MARK: - Finding 1: the tree path honors the SAME video-cap teardown accounting as the canvas path
 
-    /// Closing a `.desktop` leaf that holds a LIVE video slot through the TREE path
-    /// (``WorkspaceStore/closePaneTree(_:)``) drives the SAME ceiling-accounting the canvas
-    /// `LiveVideoCapTests` pin — proving the shared ``WorkspaceStore`` reconcile core (not a duplicated
-    /// branch) bites on the tree path too. Mirrors `LiveVideoCapTests.testClosingActiveVideoPaneFreesSlot`
-    /// / `testTeardownSettleHoldsSlotPastTeardownThenFrees`, driven by the tree:
+    /// Closing a DETACHED `.desktop` pane holding a LIVE video slot through the TREE path
+    /// (``WorkspaceStore/closePaneTree(_:)`` routes a detached id to `closeDetachedPane`) drives the
+    /// SAME ceiling-accounting the canvas `LiveVideoCapTests` pin — proving the shared
+    /// ``WorkspaceStore`` reconcile core (not a duplicated branch) bites on the tree path too. The
+    /// desktop is the ONLY video surface and it lives in the detached set (video never enters the
+    /// tree — docs/DECISIONS.md 2026-07-23), so the video panes here are detached desktop windows:
     ///  (a) at close time the orphan is recorded in `tearingDownVideo` (so a same-tick reopen is GATED);
     ///  (b) `videoPromotionGeneration` advanced (the close-time slot-freeing nudge);
     ///  (c) with a NON-ZERO `videoTeardownSettle` the slot stays HELD past `teardown()`'s return until
     ///      `quiesce()` drains the settle — only then does the gated reopen admit.
-    func testCloseTreeVideoPaneHonorsCapTeardownAccounting() async throws {
-        // A two-video-leaf tree (split the seed) under cap=2 + a non-zero settle, so a same-tick
-        // reopen has nowhere to go until the closing pane's stack actually releases. The RESTORED seed
-        // is `.systemDialog`-shaped (a `.desktop` leaf never survives the launch restore — the
-        // dedicated-window model); the split-in leaves exercise `.desktop`.
-        let videoSpec = PaneSpec(
-            kind: .systemDialog, title: "Dialog",
-            video: VideoEndpoint(windowID: 5, title: "Dialog", appName: "App"),
-        )
+    func testCloseDetachedVideoPaneHonorsCapTeardownAccounting() async throws {
         let store = makeTreeStore(
-            restoringTree: .singlePane(spec: videoSpec),
+            restoringTree: .defaultWorkspace(),
             liveVideoCap: 2,
             videoTeardownSettle: .milliseconds(80),
         )
         store.reconcileTree()
-        let a = store.tree.allPaneIDs()[0]
-        store.splitActivePane(axis: .horizontal, kind: .desktop)
-        let b = try XCTUnwrap(store.tree.allPaneIDs().first { $0 != a })
-        XCTAssertEqual(store.allSessions.count, 2, "two desktop leaves materialized")
+        // Two desktop windows on two displays (the per-display dedupe mints a sibling for display 1).
+        let a = store.openDesktopWindow(displayID: 0)
+        let b = store.openDesktopWindow(displayID: 1)
+        XCTAssertTrue(store.tree.isDetached(a) && store.tree.isDetached(b), "both live in the detached set")
 
-        // Mark BOTH leaves' handles video-active through the store's cap-checked admission (cap=2).
+        // Mark BOTH handles video-active through the store's cap-checked admission (cap=2).
         XCTAssertTrue(store.activateVideo(a))
-        XCTAssertTrue(store.activateVideo(b), "cap=2 saturated by two live video panes")
+        XCTAssertTrue(store.activateVideo(b), "cap=2 saturated by two live desktop windows")
         let bFake = try XCTUnwrap(treeFake(store, b))
 
         let genBefore = store.videoPromotionGeneration
 
-        // Close b through the TREE path. Its teardown returns immediately (no gate) but the settle holds
-        // its slot; b is gone from the registry synchronously.
+        // Close b through the TREE path (routes to the detached close). Its teardown returns immediately
+        // (no gate) but the settle holds its slot; b is gone from the registry synchronously.
         store.closePaneTree(b)
-        XCTAssertNil(store.handle(for: b), "closed leaf removed from the registry synchronously")
-        assertTreeInvariant(store, "after closePaneTree(b) of a live video leaf")
+        XCTAssertNil(store.handle(for: b), "closed detached pane removed from the registry synchronously")
+        XCTAssertEqual(
+            treeRegistryIDs(store),
+            Set(store.tree.allPaneIDs()).union(store.tree.detachedPaneIDs()),
+            "registry == tree leaves ∪ detached after the close",
+        )
 
         // (b) The close was a slot-freeing event for a LIVE video pane ⇒ exactly one close-time nudge.
         XCTAssertEqual(
             store.videoPromotionGeneration,
             genBefore + 1,
-            "closing a live video tree leaf is a slot-freeing event ⇒ one close-time promotion nudge",
+            "closing a live detached video pane is a slot-freeing event ⇒ one close-time promotion nudge",
         )
 
-        // (a) + (c) Same tick, split a third `.desktop` leaf in. While the closing pane's slot is still
+        // (a) + (c) Same tick, re-mint display 1's window. While the closing pane's slot is still
         // held by the settle (a live (1) + b settling (1) = cap of 2 occupied), the reopen is GATED.
-        store.splitActivePane(axis: .horizontal, kind: .desktop)
-        let reopened = try XCTUnwrap(store.tree.allPaneIDs().first { $0 != a })
+        let reopened = store.openDesktopWindow(displayID: 1)
+        XCTAssertNotEqual(reopened, b, "the close removed b, so the re-mint is a fresh pane")
         await Task.yield() // let teardown() return but leave the settle sleep in flight
         XCTAssertFalse(
             store.activateVideo(reopened),
@@ -377,10 +374,10 @@ extension WorkspaceStoreReconcileTests {
 
         // After quiesce() drains the teardown task INCLUDING its settle sleep, the slot frees.
         await store.quiesce()
-        XCTAssertEqual(bFake.teardownCount, 1, "the closed video leaf was torn down exactly once")
+        XCTAssertEqual(bFake.teardownCount, 1, "the closed video pane was torn down exactly once")
         XCTAssertTrue(
             store.activateVideo(reopened),
-            "once the settle elapsed and the stack released, the reopened tree leaf admits",
+            "once the settle elapsed and the stack released, the re-minted desktop window admits",
         )
         let activeIDs = Set(store.allSessions.filter(\.isVideoActive).map(\.id))
         XCTAssertEqual(activeIDs, Set([a, reopened]), "exactly cap=2 live; the ceiling was never exceeded")

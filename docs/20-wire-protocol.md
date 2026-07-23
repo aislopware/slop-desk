@@ -644,7 +644,9 @@ media flows. `[UInt8 type][body]`, big-endian:
   `AppLaunchMonitor`'s feed-fallback app detection. The reply enumerates ALL streamable windows —
   on-screen first, then titled minimized / other-Space ones (the mint path rescues those via AX
   un-minimize), so absence in the reply really does mean "gone from the host";
-  `listSystemDialogs` (11, zero body) → `systemDialogList` (12) powers the system-popup panes;
+  `listSystemDialogs` (11, zero body) → `systemDialogList` (12) — DORMANT (docs/DECISIONS.md
+  2026-07-23: the system-dialog-pane feature is removed; the codec + golden vectors survive, the
+  daemon swallows the request unanswered, no shipped client sends it);
   `listDisplays` (22, zero body) → `displayList` (23, `UInt16 count` + per record `UInt32
   displayID` + `UInt16 wPt` + `UInt16 hPt` + `UInt8 isMain`) enumerates the online displays for the
   full-desktop pane (the client defaults to the main display via `requestedDisplayID 0`, so this

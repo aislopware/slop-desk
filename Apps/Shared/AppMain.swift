@@ -1,8 +1,7 @@
 // This shell targets the `SlopDeskClientApp` scene (in the `SlopDeskClientUI` library, over
 // `SlopDeskWorkspaceCore` + `SlopDeskDesignSystem`). The SEAM types (`TerminalRendererFactory`,
-// `VideoWindowFactory`, `RemoteWindowDiscovery`,
-// `SystemDialogDiscovery`, `RemoteWindowSummary`, `SystemDialogInfo`) live in `SlopDeskWorkspaceCore`;
-// the five seam registrations below stay PRESERVED — only the production renderer/video/discovery
+// `VideoWindowFactory`, `RemoteWindowDiscovery`, `RemoteWindowSummary`) live in
+// `SlopDeskWorkspaceCore`; the seam registrations below stay PRESERVED — only the production renderer/video/discovery
 // closures are injected here (the GUI app target links libghostty/SlopDeskVideoClient; the
 // cross-platform UI library cannot). This file is part of the xcodegen Xcode app target (NOT
 // `swift build`).
@@ -192,28 +191,6 @@ struct ClientAppMain {
                             )
                         }))
                     }
-                }
-            }
-        }
-
-        // System-dialog poll seam (the "show system popups in their own pane" feature): inject the
-        // host system-dialog query so the cross-platform `SystemDialogMonitor` can auto-spawn dialog
-        // panes WITHOUT importing the gated video module. Maps the protocol's `SystemDialogSummary` →
-        // the UI's `SystemDialogInfo`. `nil` (no video module) ⇒ the monitor is inert.
-        MainActor.assumeIsolated {
-            SystemDialogDiscovery.shared = { host, mediaPort, cursorPort in
-                let dialogs = await VideoWindowDiscovery.discoverSystemDialogs(
-                    host: host, mediaPort: mediaPort, cursorPort: cursorPort,
-                )
-                return dialogs.map {
-                    SystemDialogInfo(
-                        windowID: $0.windowID,
-                        owner: $0.owner,
-                        title: $0.title,
-                        width: $0.width,
-                        height: $0.height,
-                        isSecure: $0.isSecure,
-                    )
                 }
             }
         }

@@ -17,7 +17,7 @@ SlopDeskDesignSystem    (headless theme model + tokens — value types only)
 Dependencies point **down only**. Nothing in `WorkspaceCore` or `DesignSystem` imports `ClientUI`; `DesignSystem` is leaf (imports SwiftUI only for thin `Color`/`KeyEquivalent` bridging, never an AppKit/UIKit view body). All three build headless.
 
 - **`SlopDeskDesignSystem`** — the Warp **seed + derive** theme model (`Theme`, `WarpTheme`, `PureBlackDark`), the resolved-color layer (`ResolvedColors`), the view-facing token bundle (`DesignTokens`, exposed via `@Environment(\.theme)`), the fixed token scales (`WarpType`/`WarpSize`/`WarpSpace`/`WarpRadius`/`WarpBorder`/`WarpShadow`/`WarpMotion`), and bundled fonts (`Fonts`, Hack mono + Roboto UI under `Resources/Fonts`).
-- **`SlopDeskWorkspaceCore`** — the domain: `Session → Tab → Pane` tree, `WorkspaceStore` (single mutation funnel), split-tree solver + render model, `InputBarModel`, `PreferencesStore`, `WorkspaceBindingRegistry` command catalog + routing, agent-detect rollups, and every seam (`TerminalRendererFactory`, `VideoWindowFactory`, `RemoteWindowDiscovery`, `SystemDialogDiscovery`, `TerminalSurface`). No SwiftUI view bodies → unit-testable with no window server.
+- **`SlopDeskWorkspaceCore`** — the domain: `Session → Tab → Pane` tree, `WorkspaceStore` (single mutation funnel), split-tree solver + render model, `InputBarModel`, `PreferencesStore`, `WorkspaceBindingRegistry` command catalog + routing, agent-detect rollups, and every seam (`TerminalRendererFactory`, `VideoWindowFactory`, `RemoteWindowDiscovery`, `TerminalSurface`). No SwiftUI view bodies → unit-testable with no window server.
 - **`SlopDeskClientUI`** — thin SwiftUI views. Every mutation routes through `WorkspaceStore`; views never write `tree` directly. Each leaf host view is keyed `.id(PaneID)` so a surface/connection is never reused across panes (the identity hazard).
 
 ## The Theme abstraction (and how to add a theme)
@@ -46,7 +46,7 @@ All views read `@Environment(\.theme)`; all mutations route through `WorkspaceSt
 
 ## Env seams honored
 
-The app scene preserves the automation/runtime seams (keep these names stable): `SLOPDESK_AUTOCONNECT_*` / `SLOPDESK_VIDEO_AUTOCONNECT_*` (auto-connect + front-on-autoconnect), `SLOPDESK_SYSTEM_DIALOG_PANES` (system-dialog pane spawn), `SLOPDESK_SKIP_AUTO_RECONNECT`. Notification delivery is gated by `SettingsKey.oscNotifications` (default-ON). See the top-level `CLAUDE.md` "Runtime env flags" table for the full set and the default idiom.
+The app scene preserves the automation/runtime seams (keep these names stable): `SLOPDESK_AUTOCONNECT_*` / `SLOPDESK_VIDEO_AUTOCONNECT_*` (auto-connect + front-on-autoconnect; the video variant boots the DETACHED desktop window), `SLOPDESK_SKIP_AUTO_RECONNECT`. Notification delivery is gated by `SettingsKey.oscNotifications` (default-ON). See the top-level `CLAUDE.md` "Runtime env flags" table for the full set and the default idiom.
 
 ## Headless ImageRenderer odiff harness
 

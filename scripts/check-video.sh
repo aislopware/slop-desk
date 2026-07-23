@@ -16,9 +16,10 @@
 #
 # WHAT IT PROVES on success:
 #   - slopdesk-videohostd captures a real on-screen window and HEVC-encodes it,
-#   - the client opens the live VideoWindowView (SLOPDESK_VIDEO_AUTOCONNECT seam), connects both UDP
-#     channels, and the host streams frames (asserted via host TX throughput),
-#   - the client window screenshot shows the decoded remote pixels (visual confirmation).
+#   - the client boots the DETACHED remote-desktop window (SLOPDESK_VIDEO_AUTOCONNECT seam mints a
+#     window-targeted detached .desktop pane — video never enters the workspace tree), connects both
+#     UDP channels, and the host streams frames,
+#   - the desktop-window screenshot shows the decoded remote pixels (visual confirmation).
 #
 # USAGE:
 #   bash scripts/check-video.sh [--window-title SUBSTR]   # default: first Finder window
@@ -183,8 +184,8 @@ echo "==> screenshot (full screen; client raised) saved: ${SHOT}"
 echo
 echo "================================================================================"
 echo " DONE. Now tell your agent: read  ${SHOT}"
-echo " PASS = the sheet shows the remote '${WTITLE}' window's live pixels."
-echo " FAIL = the sheet is white/black/placeholder (no frames decoded)."
+echo " PASS = the remote-desktop window shows the remote '${WTITLE}' window's live pixels."
+echo " FAIL = the window is white/black/placeholder (no frames decoded)."
 echo " host log:   ${HOSTLOG}"
 echo " client log: ${CLIENTLOG}"
 echo "================================================================================"

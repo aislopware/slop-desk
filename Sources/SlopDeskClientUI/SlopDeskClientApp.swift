@@ -37,7 +37,6 @@ public struct SlopDeskClientApp: App {
 
     @State private var store: WorkspaceStore
     @State private var connection: AppConnection
-    @State private var dialogMonitor: SystemDialogMonitor
     #if os(macOS)
     @State private var clipboardMonitor: ClipboardMonitor
     /// Bidirectional clipboard sync with the host (copy here → paste there, and back) over the
@@ -428,15 +427,7 @@ public struct SlopDeskClientApp: App {
             #endif
         }
 
-        // The system-dialog monitor + app-launch monitor: poll the host while connected.
-        let monitor = SystemDialogMonitor(
-            store: store,
-            isConnected: { [weak appConnection] in
-                if case .connected = appConnection?.status { return true }
-                return false
-            },
-            target: { [weak appConnection] in appConnection?.target ?? .default },
-        )
+        // The app-launch monitor: polls the host while connected.
         let launchMonitor = AppLaunchMonitor(
             store: store,
             isConnected: { [weak appConnection] in
@@ -470,7 +461,6 @@ public struct SlopDeskClientApp: App {
         _agentHooks = State(initialValue: agentHooks)
         _overlayCoordinator = State(initialValue: overlay)
         _folderFrecency = State(initialValue: folderFrecency)
-        _dialogMonitor = State(initialValue: monitor)
         _appLaunchMonitor = State(initialValue: launchMonitor)
         // The app owns the chrome flags (incl. window PIN) so the macOS scene's blessed
         // `.introspect(.window)` closure reads the SAME `chrome.pinned` the titlebar / menu flip.
@@ -658,19 +648,6 @@ public struct SlopDeskClientApp: App {
                 .tint(Slate.State.accent)
                 .preferredColorScheme(Slate.colorScheme)
                 .onChange(of: scenePhase) { _, phase in handleScenePhase(phase) }
-                // System-dialog monitor poll loop, scoped to the scene. Skipped under automation / when
-                // SLOPDESK_SYSTEM_DIALOG_PANES=0; inert anyway with no discovery seam registered.
-                .task {
-                    // Resolve through `EnvConfig` (ProcessInfo env → settings overlay → nil) so a
-                    // GUI toggle can drive it; an EMPTY overlay is byte-identical to the raw read. This is
-                    // the 3-state flag (unset / "0" / "force"), so route the lookup through `EnvConfig.string`
-                    // and keep the 3-state branch VERBATIM — no polarity helper collapses the "force" arm.
-                    let flag = EnvConfig.string("SLOPDESK_SYSTEM_DIALOG_PANES")
-                    guard flag != "0" else { return }
-                    if flag != "force", !SettingsKey.systemDialogPanesEnabled { return }
-                    guard !Self.hasAutomationEnvironment() || flag == "force" else { return }
-                    await dialogMonitor.run()
-                }
             #if os(macOS)
                 .task {
                     guard !Self.hasAutomationEnvironment() else { return }

@@ -478,15 +478,6 @@ public enum AllSettingsCatalog {
             bucket: .advancedOnly,
             keywords: "custom link scheme url codex ssh vscode additional detect",
         ),
-        SettingEntry(
-            key: SettingsKey.systemDialogPanes,
-            label: "System Dialog Panes",
-            description: "Auto-spawn a pane for system password / security dialogs.",
-            defaultText: "On",
-            bucket: .advancedOnly,
-            keywords: "system dialog password security pane spawn authorization",
-        ),
-
         // Auto Progress-Bar Commands (terminal-features__progress-state.md). Advanced list key;
         // the host enforces its own copy via the SLOPDESK_AUTO_PROGRESS_COMMANDS env bridge.
         SettingEntry(
@@ -714,9 +705,9 @@ public enum AllSettingsCatalog {
         SettingsKey.clickToMove, SettingsKey.rightClickActionKey, SettingsKey.scrollPastLastLineKey,
         SettingsKey.scrollPastFirstLineKey, SettingsKey.smoothScroll, SettingsKey.undoAtPrompt,
         SettingsKey.optionAsAltKey,
-        // Controls — links + system dialog
+        // Controls — links
         SettingsKey.linkDetection, SettingsKey.linkCmdClickKey, SettingsKey.linkCmdShiftClickKey,
-        SettingsKey.autoDetectLinkSchemesKey, SettingsKey.customLinkSchemes, SettingsKey.systemDialogPanes,
+        SettingsKey.autoDetectLinkSchemesKey, SettingsKey.customLinkSchemes,
         // Advanced — privilege gates + OSC-52 master + read/write + IPC + auto-progress
         SettingsKey.clipboardReadKey, SettingsKey.clipboardWriteKey, SettingsKey.titleShellControlled,
         SettingsKey.titleReport, SettingsKey.clipboardShellControlled, SettingsKey.ipcAllowSendKeys,

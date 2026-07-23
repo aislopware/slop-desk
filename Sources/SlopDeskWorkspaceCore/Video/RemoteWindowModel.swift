@@ -1,7 +1,7 @@
 import Foundation
 
 // Per-pane `@MainActor @Observable` LOGIC for one PATH-2 video stream (a whole display for a
-// `.desktop` pane, one host window for a `.systemDialog` pane): open/close, the latched pane modes,
+// `.desktop` pane; one host window on the automation seam): open/close, the latched pane modes,
 // and paste-as-keystrokes. No SwiftUI usage (a rebuilt view binds to it).
 @preconcurrency
 @MainActor
@@ -9,7 +9,7 @@ import Foundation
 public final class RemoteWindowModel {
     // MARK: Target fields
 
-    /// Which host-side window to stream (a `.systemDialog` pane's pre-bound id, as a string — the
+    /// Which host-side window to stream (the automation seam's pre-bound id, as a string — the
     /// historical entry-field shape). Host/ports come from the app target. Unused for a display target.
     public var windowID: String
     public var title: String

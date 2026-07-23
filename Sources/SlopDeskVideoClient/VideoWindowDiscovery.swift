@@ -105,56 +105,11 @@ public enum VideoWindowDiscovery {
         sender.cancel()
         return result ?? []
     }
-
-    /// Polls the host for the open SYSTEM dialogs (the "show system popups in their own pane" feature).
-    /// Same transient-lane request / retry / timeout discipline as ``discoverWindows`` but for the
-    /// ``VideoControlMessage/listSystemDialogs`` ↔ ``VideoControlMessage/systemDialogList`` pair. The
-    /// client's system-dialog monitor calls this on a slow cadence and diffs the result to spawn/close
-    /// ephemeral dialog panes. Returns `[]` on timeout / no registry / an old host (no support). Tighter
-    /// defaults than the picker (the monitor polls continuously, so a faster give-up keeps the cadence).
-    public static func discoverSystemDialogs(
-        host: String,
-        mediaPort: UInt16,
-        cursorPort: UInt16,
-        retryInterval: Duration = .milliseconds(400),
-        timeout: Duration = .milliseconds(1500),
-    ) async -> [SystemDialogSummary] {
-        guard let registry = VideoWindowPipeline.sharedRegistry else { return [] }
-        let acq = registry.acquire(host: host, mediaPort: mediaPort, cursorPort: cursorPort)
-        defer { registry.release(host: host, mediaPort: mediaPort, cursorPort: cursorPort, channelID: acq.channelID) }
-
-        let box = ReplyBox<SystemDialogSummary>()
-        acq.flow.registerLane(
-            channelID: acq.channelID,
-            onMedia: { channel, payload in
-                guard channel == .control,
-                      let msg = try? VideoControlMessage.decode(payload),
-                      case let .systemDialogList(dialogs) = msg else { return }
-                box.deliver(dialogs)
-            },
-            onCursor: { _ in },
-        )
-
-        let request = VideoControlMessage.listSystemDialogs.encode()
-        let flow = acq.flow
-        let channelID = acq.channelID
-        let sender = Task { @MainActor in
-            let deadline = ContinuousClock.now.advanced(by: timeout)
-            while ContinuousClock.now < deadline, !box.hasReply, !Task.isCancelled {
-                flow.send(request, on: .control, channelID: channelID)
-                try? await Task.sleep(for: retryInterval)
-            }
-            box.finish()
-        }
-        let result = await box.firstReply()
-        sender.cancel()
-        return result ?? []
-    }
 }
 
 /// Thread-safe one-shot box correlating a list reply (delivered off the flow's receive queue) with the
-/// awaiting discovery call. Generic over the record type so both the window picker (`WindowSummary`) and
-/// the system-dialog monitor (`SystemDialogSummary`) reuse it. The single waiter is resolved EXACTLY once
+/// awaiting discovery call. Generic over the record type so every list-shaped discovery
+/// (`WindowSummary`, `RemoteDisplaySummary`) reuses it. The single waiter is resolved EXACTLY once
 /// — by the first `deliver(_:)` or by `finish()` on timeout — so the `CheckedContinuation` never leaks.
 private final class ReplyBox<Element>: @unchecked Sendable {
     private let lock = NSLock()

@@ -51,7 +51,6 @@ struct AllSettingsListView: View {
     @Default(.focusFollowsMouse) private var focusFollowsMouse
     @Default(.scrollOnOutput) private var scrollOnOutput
     @Default(.scrollMultiplier) private var scrollMultiplier
-    @Default(.systemDialogPanes) private var systemDialogPanes
     @Default(.showBlockDividers) private var showBlockDividers
     @Default(.autoSwitchLayouts) private var autoSwitchLayouts
     @Default(.recordClipboardHistory) private var recordClipboardHistory
@@ -247,7 +246,6 @@ struct AllSettingsListView: View {
         case SettingsKey.undoAtPrompt: boolControl($undoAtPrompt)
         case SettingsKey.focusFollowsMouse: boolControl($focusFollowsMouse)
         case SettingsKey.scrollOnOutput: boolControl($scrollOnOutput)
-        case SettingsKey.systemDialogPanes: boolControl($systemDialogPanes)
         case SettingsKey.showBlockDividers: boolControl($showBlockDividers)
         case SettingsKey.autoSwitchLayouts: boolControl($autoSwitchLayouts)
         case SettingsKey.recordClipboardHistory: boolControl($recordClipboardHistory)

@@ -179,6 +179,8 @@ public struct DisplaySummary: Equatable, Sendable {
     }
 }
 
+/// DORMANT wire shape (docs/DECISIONS.md 2026-07-23 — the system-dialog-pane feature is removed;
+/// codec + golden vectors kept, no live sender/consumer).
 /// One host-side SYSTEM dialog/prompt in a ``VideoControlMessage/systemDialogList(_:)`` response —
 /// a cross-process modal NOT attached to any app the client streams (prime case: a `SecurityAgent`
 /// password/admin prompt; also save/open panels and system alerts). The client POLLS
@@ -278,13 +280,11 @@ public enum VideoControlMessage: Equatable, Sendable {
     /// client's application is idempotent). The client rebases its deadline-pacer content interval +
     /// adaptive-jitter seconds→frames conversion on it. Inert to an old peer (unknown type → dropped).
     case streamCadence(fps: UInt16)
-    /// Client → host: "what SYSTEM dialogs/prompts are open now?" — a session-LESS poll (host answers
-    /// with ``systemDialogList(_:)`` WITHOUT minting a session), mirroring ``listWindows``. The client
-    /// polls on a slow cadence and diffs the result to auto-spawn/close ephemeral dialog panes. Zero
-    /// body. An old host drops it (unknown type) → the feature is inert.
+    /// DORMANT (docs/DECISIONS.md 2026-07-23): the system-dialog-pane feature is removed; no shipped
+    /// peer sends this. Client → host session-LESS poll, zero body; kept for codec/golden stability.
     case listSystemDialogs
-    /// Host → client: the currently-open system dialogs, in response to ``listSystemDialogs``. The client
-    /// streams each by sending a normal `hello` for its `windowID`.
+    /// DORMANT (docs/DECISIONS.md 2026-07-23): the answer to ``listSystemDialogs``; kept for
+    /// codec/golden stability, never sent by the shipped host.
     case systemDialogList([SystemDialogSummary])
     /// Host → client: the per-frame content scroll offset (pixels) the host measured between captured
     /// frames — drives client-side scroll reprojection (warp the last frame on spare 120 Hz ticks so

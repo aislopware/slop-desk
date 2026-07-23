@@ -52,12 +52,6 @@ public enum PaneKind: String, Codable, Sendable, Equatable {
     /// side-channel. The hello is display-targeted (`helloDisplay`); the target never goes stale the
     /// way CGWindowIDs do.
     case desktop
-    /// An EPHEMERAL pane auto-spawned by the client's system-dialog monitor to stream a host SYSTEM
-    /// prompt (e.g. a SecurityAgent login/password dialog) in its own pane. Same video stack as
-    /// ``desktop``, but WINDOW-targeted (`VideoEndpoint.windowID`, the classic `hello`), auto-managed
-    /// (spawn/close follow the host poll), NOT persisted, and its windowID is always fresh from the
-    /// live poll (no stale-binding concern).
-    case systemDialog
 
     /// The retired-but-tolerated legacy raw value of the removed "Claude Code" pane kind. A
     /// `.claudeCode` pane is just a `.terminal`; an OLD persisted file may still carry this
@@ -83,17 +77,25 @@ public enum PaneKind: String, Codable, Sendable, Equatable {
     /// dropped (no-backcompat rule), the pane itself survives as a blank terminal.
     static let legacyRemoteGUIRawValue = "remoteGUI"
 
+    /// The retired-but-tolerated legacy raw value of the removed SYSTEM-DIALOG pane kind (the
+    /// no-video-in-the-workspace re-scope, docs/DECISIONS.md 2026-07-23: the dedicated desktop
+    /// window is the only video surface). A `.systemDialog` pane was ephemeral and never persisted,
+    /// so this bridge is pure belt-and-braces (the ``legacyChooserRawValue`` discipline).
+    static let legacySystemDialogRawValue = "systemDialog"
+
     /// **Forward/back-tolerant decode (validate-then-repair, CLAUDE.md untrusted-persisted-data
     /// contract).** A persisted `"claudeCode"` raw value (the removed kind), `"web"` raw value (the
-    /// removed local web pane), `"chooser"` raw value (the removed in-pane kind chooser), or
-    /// `"remoteGUI"` raw value (the removed remote-window pane) maps to `.terminal` so an old
-    /// workspace file never traps now the cases are gone. Any OTHER unknown raw value still throws
-    /// (it is genuine corruption the loader's reset path handles), preserving the strict behaviour
-    /// for everything except the intentionally-retired values.
+    /// removed local web pane), `"chooser"` raw value (the removed in-pane kind chooser),
+    /// `"remoteGUI"` raw value (the removed remote-window pane), or `"systemDialog"` raw value (the
+    /// removed system-dialog pane) maps to `.terminal` so an old workspace file never traps now the
+    /// cases are gone. Any OTHER unknown raw value still throws (it is genuine corruption the
+    /// loader's reset path handles), preserving the strict behaviour for everything except the
+    /// intentionally-retired values.
     public init(from decoder: any Decoder) throws {
         let raw = try decoder.singleValueContainer().decode(String.self)
         if raw == Self.legacyClaudeCodeRawValue || raw == Self.legacyWebRawValue
             || raw == Self.legacyChooserRawValue || raw == Self.legacyRemoteGUIRawValue
+            || raw == Self.legacySystemDialogRawValue
         {
             self = .terminal
             return
@@ -109,24 +111,24 @@ public enum PaneKind: String, Codable, Sendable, Equatable {
 
 public extension PaneKind {
     /// A video (PATH 2) pane — rides the shared UDP flow, counts against the live-video cap, renders the
-    /// remote-GUI view. The full-desktop ``desktop`` and the auto ``systemDialog`` are the video kinds.
-    var isVideo: Bool { self == .systemDialog || self == .desktop }
-    /// An auto-managed, never-persisted overlay pane (the system-dialog surface).
-    var isEphemeral: Bool { self == .systemDialog }
+    /// remote-GUI view. The full-desktop ``desktop`` is the only video kind, and it lives in a dedicated
+    /// OS window (the detached set), never in the workspace tree.
+    var isVideo: Bool { self == .desktop }
     /// Whether this pane has a shell input funnel that text can be typed into — the recipient set for
     /// broadcast/synchronized input (tmux `synchronize-panes`). Only the PTY-backed `.terminal` kind; the
-    /// video kinds (`desktop`/`systemDialog`) take input through the cursor/key side-channel, not a text bar.
+    /// video `.desktop` takes input through the cursor/key side-channel, not a text bar.
     var canReceiveText: Bool { self == .terminal }
 }
 
 /// Which remote target a video pane streams. The host + UDP ports are no longer here — they live ONCE
 /// on the app-global ``ConnectionTarget`` (docs/31). All video panes ride the one shared UDP flow at
-/// the app host; the per-pane target is either a whole display (`.desktop`, ``displayID``) or one
-/// host-side window (`.systemDialog`, ``windowID``). Persisted with the tree so a restored video pane
-/// remembers its target + title; the actual UDP is opened against the app target.
+/// the app host; the per-pane target is normally a whole display (``displayID``) — the window shape
+/// (``windowID``) survives ONLY as the automation/E2E seam (`check-video.sh` serves one window) and
+/// for decode of older files. Persisted with the tree so a restored video pane remembers its target +
+/// title; the actual UDP is opened against the app target.
 public struct VideoEndpoint: Codable, Sendable, Equatable {
-    /// The host-side window being mirrored (ScreenCaptureKit window id — a `.systemDialog` pane's
-    /// target). `0` for a display target.
+    /// The host-side window being mirrored (ScreenCaptureKit window id — the automation seam's
+    /// window-shaped target). `0` for a display target.
     public var windowID: UInt32
     /// Human-readable target title (shown in pane chrome before the stream is live).
     public var title: String
@@ -140,7 +142,7 @@ public struct VideoEndpoint: Codable, Sendable, Equatable {
     public var displayID: UInt32?
 
     /// The stable TARGET identity latched modes are keyed by (``TreeWorkspace/videoModesByTarget``):
-    /// a desktop pane keys by its DISPLAY; a window-shaped endpoint (`.systemDialog`) keys by its
+    /// a desktop pane keys by its DISPLAY; a window-shaped endpoint (the automation seam) keys by its
     /// owning APP (CGWindowIDs recycle across host restarts — the app is the stable identity), falling
     /// back to the raw window id when no app name is known.
     public var modesKey: String {
@@ -156,7 +158,7 @@ public struct VideoEndpoint: Codable, Sendable, Equatable {
     }
 }
 
-/// The user's LATCHED video-pane modes (a `.desktop` / `.systemDialog` pane): immersive system-key
+/// The user's LATCHED video-pane modes (a `.desktop` pane): immersive system-key
 /// capture, host audio, the viewport position lock, and the stream-quality overrides. Persisted with the
 /// tree keyed by the stream TARGET (``TreeWorkspace/videoModesByTarget`` / ``VideoEndpoint/modesKey``) —
 /// deliberately NOT per pane, so close-tab → reopen-the-same-target restores them (a reopened target
@@ -404,7 +406,7 @@ public extension PaneSpec {
     ///
     /// - A `.terminal` pane shows its last-known working directory (``lastKnownCwd``), or NOTHING when the cwd
     ///   is unknown — a single-line row, never a blank second line.
-    /// - A VIDEO pane (`.desktop`/`.systemDialog`) has no shell cwd, so the host-side target's owning APP
+    /// - A VIDEO pane (`.desktop`) has no shell cwd, so the host-side target's owning APP
     ///   name (``VideoEndpoint/appName``) stands in — falling back to the window ``VideoEndpoint/title`` when
     ///   the app name is empty (a manual-id binding). A remote-window row then reads as a *labelled window*
     ///   (its window title on line 1, the host app on line 2) rather than a bare single line.
@@ -419,8 +421,8 @@ public extension PaneSpec {
         if let cwd = Self.presentablePresence(lastKnownCwd) { return cwd }
         guard kind.isVideo, let video else { return nil }
         if let app = Self.presentablePresence(video.appName) {
-            // EMPTY HOST-TITLE PARITY: when the streamed window has NO title, the `newRemoteWindowTab` /
-            // `addSystemDialogPane` LABEL collapses to the app name — so the display title (line 1) AND the
+            // EMPTY HOST-TITLE PARITY: when the streamed window has NO title, the endpoint LABEL
+            // collapses to the app name — so the display title (line 1) AND the
             // streamed window title are BOTH just the app name. Printing the host app on line 2 then shows it
             // on both lines. Suppress to a single line ONLY in that all-collapsed case; a window WITH a real
             // title keeps line 1 distinct, so the host-app subtitle still shows (a labelled window).

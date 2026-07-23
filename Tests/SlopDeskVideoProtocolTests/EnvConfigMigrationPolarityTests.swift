@@ -12,7 +12,6 @@ import XCTest
 ///   • `SLOPDESK_DETACH_ENABLED`        (LivePaneSession)   `env[k] != "0"`  → `EnvConfig.boolDefaultOn`
 ///   • `SLOPDESK_ADAPTIVE_QP`           (WindowCapturer)    `env[k] == "1"`  → `EnvConfig.boolDefaultOff`
 ///   • `SLOPDESK_IDLE_SKIP`             (WindowCapturer)    `env[k] == "1"`  → `EnvConfig.boolDefaultOff`
-///   • `SLOPDESK_SYSTEM_DIALOG_PANES`   (SlopDeskClientApp) raw `String?` 3-state → `EnvConfig.string`
 ///   • `SLOPDESK_SCROLL_RESAMPLE_HZ`    (InputInjector)     `Int?`+clamp on `env[k]`→ `EnvConfig.string`
 ///
 /// `ProcessInfo` env is read-only at runtime, so the `{"0","1",garbage}` rows are driven through the
@@ -85,25 +84,6 @@ final class EnvConfigMigrationPolarityTests: XCTestCase {
             accessor: EnvConfig.boolDefaultOff,
             legacy: { $0 == "1" },
         )
-    }
-
-    // MARK: 3-state raw String? — SLOPDESK_SYSTEM_DIALOG_PANES
-
-    /// The 3-state flag is read as a raw `String?` (the `unset / "0" / "force"` branch lives at the call
-    /// site, NOT collapsed into a bool). `EnvConfig.string` must equal the legacy `env[k]` for every row,
-    /// and crucially the downstream branch (`flag != "0"`, `flag != "force"`) must match too — so a
-    /// `boolDefaultOn`/`Off` swap (which would erase the "force" arm) is provably wrong here.
-    func testSystemDialogPanesPreservesRawThreeStateString() {
-        let key = "SLOPDESK_SYSTEM_DIALOG_PANES"
-        for value in [nil, "0", "force", "1", "garbage"] as [String?] {
-            if let value { EnvConfig.overlay[key] = value } else { EnvConfig.overlay[key] = nil }
-            // The raw resolved string equals the legacy ProcessInfo-style read.
-            XCTAssertEqual(EnvConfig.string(key), value, "raw string for \(value ?? "unset")")
-            // The two call-site branches (verbatim from SlopDeskClientApp) over the resolved value.
-            let flag = EnvConfig.string(key)
-            XCTAssertEqual(flag != "0", value != "0", "the `!= \"0\"` guard for \(value ?? "unset")")
-            XCTAssertEqual(flag != "force", value != "force", "the `!= \"force\"` guard for \(value ?? "unset")")
-        }
     }
 
     // MARK: Int-parse + clamp — SLOPDESK_SCROLL_RESAMPLE_HZ

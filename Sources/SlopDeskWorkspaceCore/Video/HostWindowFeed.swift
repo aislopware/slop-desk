@@ -139,7 +139,7 @@ public struct HostWindowState: Equatable, Sendable {
 }
 
 /// The ONE host-windows feed store + renewal loop (docs/45 §6–7): `@Observable` for the rail +
-/// Open Quickly, lifecycle-gated by injected closures (the `SystemDialogMonitor` shape — the OWNER
+/// Open Quickly, lifecycle-gated by injected closures (the `ClipboardMonitor` shape — the OWNER
 /// spawns/cancels the `run()` task; gating is explicit, never `.task`-based, because SwiftUI
 /// teardown across an AppKit collapse is not a contract).
 @preconcurrency

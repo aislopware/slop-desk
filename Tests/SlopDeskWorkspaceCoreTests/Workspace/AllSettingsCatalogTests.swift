@@ -75,7 +75,7 @@ final class AllSettingsCatalogTests: XCTestCase {
             // Controls / copy / mouse / scroll
             SettingsKey.copyOnSelect, SettingsKey.trimTrailingSpacesOnCopy, SettingsKey.pasteProtection,
             SettingsKey.mouseHideWhileTyping, SettingsKey.focusFollowsMouse, SettingsKey.scrollOnOutput,
-            SettingsKey.scrollMultiplier, SettingsKey.systemDialogPanes,
+            SettingsKey.scrollMultiplier,
             // The remaining Controls / Mouse / Scroll knobs
             SettingsKey.clearSelectionOnTyping, SettingsKey.clearSelectionOnCopy,
             SettingsKey.backspaceDeletesSelection, SettingsKey.shiftArrowSelect, SettingsKey.pasteBracketedSafe,
@@ -118,7 +118,7 @@ final class AllSettingsCatalogTests: XCTestCase {
             AllSettingsCatalog.entries.first { $0.key == key }?.bucket
         }
         for key in [
-            SettingsKey.showBlockDividers, SettingsKey.systemDialogPanes,
+            SettingsKey.showBlockDividers,
             SettingsKey.autoSwitchLayouts, SettingsKey.recordClipboardHistory,
             SettingsKey.copyOnSelect, SettingsKey.scrollMultiplier,
         ] {

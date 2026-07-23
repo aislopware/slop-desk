@@ -173,7 +173,7 @@ enum RailRowsBuilder {
     /// Line 2 (``paneSubtitle(kind:spec:projectKey:)``): a terminal shows its cwd RELATIVE to its
     /// section's project key, and only when it differs (the git line lives on the section header now —
     /// the one per-pane fact left is "this pane strayed from the project root"); a
-    /// `.desktop`/`.systemDialog` video pane (no shell cwd) keeps the host-side target's owning app
+    /// `.desktop` video pane (no shell cwd) keeps the host-side target's owning app
     /// name (falling back to the window title), so a remote window reads as a labelled WINDOW rather
     /// than a bare single line.
     ///

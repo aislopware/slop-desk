@@ -148,9 +148,8 @@ final class FakePaneSession: @MainActor PaneSessionHandle, @MainActor Identifiab
     // MARK: PaneSessionHandle: video
 
     func setVideoActive(_ active: Bool) {
-        // Match LivePaneSession.setVideoActive, which gates on `kind.isVideo` — so EVERY video kind
-        // (`.remoteGUI` AND the auto `.systemDialog`, plus any future video kind) accounts against the
-        // cap faithfully. A no-op for non-video kinds.
+        // Match LivePaneSession.setVideoActive, which gates on `kind.isVideo` — so every video kind
+        // accounts against the cap faithfully. A no-op for non-video kinds.
         guard kind.isVideo else { return }
         isVideoActive = active
         events.append(.videoActive(active))

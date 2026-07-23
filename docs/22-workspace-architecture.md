@@ -83,9 +83,10 @@ public struct TabID:  Hashable, Codable, Sendable { public let raw: UUID; public
 public enum SplitAxis: String, Codable, Sendable { case horizontal, vertical } // h = side-by-side, v = stacked
 
 // ---- Leaf intent (what a pane IS and where it points — never a live object) ----
-// (Historical sketch — the live enum is `terminal` / `desktop` / `systemDialog`; see PaneSpec.swift.
-// `.desktop` panes live ONLY in `Session.detached` — the dedicated desktop window, never a tab.)
-public enum PaneKind: String, Codable, Sendable, Equatable { case terminal, desktop, systemDialog }
+// (Historical sketch — the live enum is `terminal` / `desktop`; see PaneSpec.swift.
+// `.desktop` panes live ONLY in `Session.detached` — the dedicated desktop window, never a tab;
+// video never enters the workspace tree, docs/DECISIONS.md 2026-07-23.)
+public enum PaneKind: String, Codable, Sendable, Equatable { case terminal, desktop }
 
 public struct Endpoint: Codable, Sendable, Equatable { public var host: String; public var port: UInt16 }
 public struct VideoEndpoint: Codable, Sendable, Equatable {

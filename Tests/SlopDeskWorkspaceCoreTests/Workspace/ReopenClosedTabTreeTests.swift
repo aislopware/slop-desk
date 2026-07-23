@@ -220,30 +220,12 @@ final class ReopenClosedTabTreeTests: XCTestCase {
         XCTAssertEqual(store.tree.activeSession?.tabs.count, 2, "no-op when the LIFO is empty")
     }
 
-    // MARK: - Ephemeral system-dialog tabs are never recorded
-
-    /// An auto-managed system-dialog tab (an all-ephemeral overlay) is NEVER stacked for reopen — the
-    /// monitor owns its lifecycle, so "reopening" it would resurrect a dead window stream (mirrors the
-    /// canvas `closePane(_:)` `!isEphemeral` reopen-slot guard). Reverting the ephemeral guard in
-    /// `recordClosedTab` makes this FAIL (the dialog tab would record).
-    func testEphemeralSystemDialogTabIsNotRecorded() {
-        let (ws, _, _) = tabbedWorkspace(["A"])
-        let store = makeTreeStore(restoringTree: ws)
-        // Spawns an ephemeral `.systemDialog` pane in its own transient tab on the tree shell.
-        let dialogID = store.addSystemDialogPane(windowID: 7, owner: "SecurityAgent", title: "sudo", isSecure: true)
-
-        store.closeSystemDialogPane(dialogID) // the monitor's auto-close (routes through closePaneTree)
-
-        XCTAssertTrue(store.recentlyClosedTabs.isEmpty, "an ephemeral system-dialog tab is never recorded for reopen")
-    }
-
     // MARK: - The tab-close-recorded hook (the "TAB CLOSED · ⇧⌘T REOPENS" cue's source)
 
     /// ``WorkspaceStore/onTabCloseRecorded`` fires exactly when a REOPENABLE tab lands on the LIFO —
     /// the app wires it to the transient undo-affordance chip, so the hook must track the record
     /// one-to-one: fire for a real close (the chip's promise is honest — ⇧⌘T will work), stay silent
-    /// for an all-ephemeral dialog tab (never promise an undo the LIFO can't deliver) and for a
-    /// pane close that leaves its tab alive (nothing was lost).
+    /// for a pane close that leaves its tab alive (nothing was lost).
     func testTabCloseRecordedHookTracksTheRecordExactly() {
         let (ws, tabIDs, paneIDs) = tabbedWorkspace(["A", "B"])
         let store = makeTreeStore(restoringTree: ws)
@@ -255,10 +237,6 @@ final class ReopenClosedTabTreeTests: XCTestCase {
 
         store.closePaneTree(paneIDs[1]) // sole leaf ⇒ the cascade removes the tab ⇒ records
         XCTAssertEqual(fired, 2, "a sole-leaf pane close cascades the tab away ⇒ the hook fires")
-
-        let dialogID = store.addSystemDialogPane(windowID: 7, owner: "SecurityAgent", title: "sudo", isSecure: true)
-        store.closeSystemDialogPane(dialogID)
-        XCTAssertEqual(fired, 2, "an ephemeral dialog tab never records ⇒ no cue (no false undo promise)")
     }
 
     /// A pane close that leaves its tab alive records nothing ⇒ the hook stays silent (the tab — and

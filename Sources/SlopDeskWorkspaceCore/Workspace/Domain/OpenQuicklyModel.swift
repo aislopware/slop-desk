@@ -182,26 +182,25 @@ public struct OpenQuicklyItem: Identifiable, Equatable, Hashable, Sendable {
     public let searchText: String
     public let act: Act
 
-    /// The WORKSPACE pane kind a `.pane` row is backed by. For a `.desktop`/`.systemDialog` VIDEO
+    /// The WORKSPACE pane kind a `.pane` row is backed by. For a `.desktop` VIDEO
     /// pane it differentiates ``symbol``/``badge`` so the row reads as its stream target (display glyph +
-    /// "Desktop"/"Dialog" badge) instead of a generic split "Pane", while ``act`` stays kind-generic
+    /// "Desktop" badge) instead of a generic split "Pane", while ``act`` stays kind-generic
     /// (`.focusPane` — `↩` focuses the pane exactly as a terminal row does). Defaults to `.terminal` (the
     /// non-differentiating value) for every NON-pane source (folders / agents / recent / current), where it is
     /// inert (those rows keep their ``OpenQuicklyKind`` chrome).
     public let paneKind: PaneKind
 
     /// The trailing type badge. A `.pane` row backed by a VIDEO pane reads as its stream target —
-    /// "Desktop" for `.desktop`, "Dialog" for the auto `.systemDialog` — differentiating it from a
-    /// generic terminal "Pane"; every other row delegates to its ``OpenQuicklyKind``.
+    /// "Desktop" — differentiating it from a generic terminal "Pane"; every other row delegates to
+    /// its ``OpenQuicklyKind``.
     public var badge: String {
         switch paneKind {
         case .desktop: "Desktop"
-        case .systemDialog: "Dialog"
         default: kind.badge
         }
     }
 
-    /// The leading icon symbol. A video pane (`.desktop`/`.systemDialog`) uses the display glyph;
+    /// The leading icon symbol. A video pane (`.desktop`) uses the display glyph;
     /// every other row delegates to its ``OpenQuicklyKind``.
     public var symbol: String {
         paneKind.isVideo ? "display" : kind.symbol
@@ -434,7 +433,7 @@ public enum OpenQuicklyModel {
     /// Build one **Opened** row for a live pane (the view enumerates `tree.sessions[].tabs[].root` panes).
     /// `↩` focuses the pane; title + cwd are both matchable.
     ///
-    /// `paneKind` differentiates a VIDEO pane (`.desktop`/`.systemDialog`) so the row reads as its
+    /// `paneKind` differentiates a VIDEO pane (`.desktop`) so the row reads as its
     /// stream target (glyph + badge + host subtitle) while ``Act`` stays the kind-generic
     /// `.focusPane`. Defaults to `.terminal`, so every existing caller and non-video pane keeps "Pane" chrome.
     public static func paneItem(
@@ -458,7 +457,7 @@ public enum OpenQuicklyModel {
     }
 
     /// The subtitle for an Opened pane row. A terminal pane shows its cwd (or nothing when unknown —
-    /// never a blank line). A VIDEO pane (`.desktop`/`.systemDialog`) has no shell cwd, so the host target's
+    /// never a blank line). A VIDEO pane (`.desktop`) has no shell cwd, so the host target's
     /// owning APP name (`appName`) stands in — mirroring the sidebar's ``PaneSpec/railSubtitle`` discipline
     /// (window title on line 1, host app on line 2) so the row never echoes its title on both lines. It falls
     /// back to the window ``title`` only when `appName` is empty (a manual-id binding), keeping the row a
@@ -506,7 +505,7 @@ public enum OpenQuicklyModel {
                         paneID: paneID,
                         title: paneDisplayTitle(spec),
                         cwd: nonEmpty(spec?.lastKnownCwd),
-                        // Thread the workspace pane kind so a `.desktop`/`.systemDialog` row reads as its
+                        // Thread the workspace pane kind so a `.desktop` row reads as its
                         // stream target (glyph + badge + host subtitle). Defaults to
                         // `.terminal` when the spec side-table is momentarily missing (the gap
                         // ``paneDisplayTitle`` also tolerates) — a spec-less pane stays a generic "Pane".

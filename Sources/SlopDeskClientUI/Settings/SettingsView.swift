@@ -823,7 +823,6 @@ private struct ControlsSettingsTab: View {
     // Keyboard / System.
     @Default(.undoAtPrompt) private var undoAtPrompt
     @Default(.optionAsAlt) private var optionAsAlt
-    @Default(.systemDialogPanes) private var systemDialogPanes
     // Links (Settings → Controls → Open With / Link Schemes). Client-side link interaction —
     // NOT libghostty config, so these bind DIRECTLY (no `refreshing(_:)` terminal-config rebuild).
     @Default(.linkDetection) private var linkDetection
@@ -935,11 +934,6 @@ private struct ControlsSettingsTab: View {
                 timingFooter(.live)
             }
             #endif
-
-            slateFormSection("System") {
-                Toggle("Auto-spawn panes for system password dialogs", isOn: $systemDialogPanes)
-                timingFooter(.live)
-            }
         }
         .formStyle(.grouped)
     }

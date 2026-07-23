@@ -522,10 +522,8 @@ public final class WorkspaceStore {
     public func closePane(_ id: PaneID) {
         guard workspace.canvas.contains(id) else { return }
         // Record the close for "Reopen Closed Pane" — spec + exact frame + group, but NOT the id (a
-        // reopen mints a fresh pane; the session is necessarily new). Ephemeral auto-managed panes
-        // (system dialogs) are skipped: the monitor owns their lifecycle, so "reopening" one would
-        // resurrect a dead window stream.
-        if let item = workspace.canvas.item(id), !item.spec.kind.isEphemeral {
+        // reopen mints a fresh pane; the session is necessarily new).
+        if let item = workspace.canvas.item(id) {
             recentlyClosed = RecentlyClosedPane(spec: item.spec, frame: item.frame, group: item.groupID)
         }
         if pendingClose == id { pendingClose = nil }
@@ -550,10 +548,10 @@ public final class WorkspaceStore {
     /// endpoint all come along, so duplicating a bound remote-window pane yields a second pane
     /// pre-bound to the same host window (admission still flows through ``liveVideoCap`` at
     /// activation) — cascaded beside the original at the SAME size, in the same group, focused.
-    /// Ephemeral (auto-managed) panes don't duplicate. Returns the new id.
+    /// Returns the new id.
     @discardableResult
     public func duplicatePane(_ id: PaneID) -> PaneID? {
-        guard let item = workspace.canvas.item(id), !item.spec.kind.isEphemeral else { return nil }
+        guard let item = workspace.canvas.item(id) else { return nil }
         let (canvas, newID) = workspace.canvas.adding(
             item.spec, near: id, viewport: lastViewport, size: item.frame.size,
         )
@@ -764,69 +762,6 @@ public final class WorkspaceStore {
         recenterIfOffscreen(id, viewport: lastViewport)
         reconcile()
         return id
-    }
-
-    // MARK: - System-dialog panes (ephemeral, auto-managed by the client monitor)
-
-    /// Spawns an EPHEMERAL ``PaneKind/systemDialog`` pane streaming host window `windowID` (a SecurityAgent
-    /// login/password prompt etc.) and returns its id so the monitor can ``closePane(_:)`` it when the
-    /// dialog goes away. Auto-streams (the spec carries the windowID, so no picker) and is NEVER persisted
-    /// (``persistableWorkspace()`` strips it). `isSecure` flags a password/auth dialog — the pane shows a
-    /// "view-only — type on the host" hint, the HW-proven truth (synthetic keystrokes are OS-dropped).
-    @discardableResult
-    public func addSystemDialogPane(windowID: UInt32, owner: String, title: String, isSecure: Bool) -> PaneID {
-        let label = title.isEmpty ? owner : "\(owner) — \(title)"
-        let spec = PaneSpec(
-            kind: .systemDialog,
-            title: label,
-            video: VideoEndpoint(windowID: windowID, title: label, appName: owner),
-        )
-        // On the LIVE tree shell the canvas is dead, so an ephemeral dialog pane inserts into the TREE — a
-        // NEW TAB of the active session (least-disruptive transient shape: the monitor closes it again when
-        // the dialog leaves, without resplitting the layout). `.canvas` inserts onto the canvas.
-        let id: PaneID
-        switch liveModel {
-        case .tree:
-            let (next, newID) = WorkspaceTreeOps.newTab(in: tree, spec: spec)
-            tree = next
-            id = newID
-            reconcileTree()
-        case .canvas:
-            let viewport = lastViewport
-            let (canvas, newID) = workspace.canvas.adding(spec, near: workspace.focusedPane, viewport: viewport)
-            workspace.canvas = canvas
-            workspace.focusedPane = newID
-            id = newID
-            // A surfacing prompt exits maximize and is panned into view (it demands attention).
-            if workspace.maximizedPane != nil { workspace.maximizedPane = nil }
-            recenterIfOffscreen(id, viewport: viewport)
-            reconcile()
-        }
-        // isSecure is a pure-live property (never persisted), so set it on the just-materialized session
-        // directly rather than threading it through the Codable spec.
-        (registry[id] as? LivePaneSession)?.markSystemDialog(isSecure: isSecure)
-        return id
-    }
-
-    /// Closes a pane the auto-managed monitor owns (a system-dialog overlay) in whichever live model is
-    /// current: under ``LiveModel/tree`` the leaf lives in the tree (its transient tab is dropped,
-    /// cascading), else the canvas close. The monitor calls this directly (it is not subject to
-    /// the busy-shell guard — a dialog leaving host-side must always dismiss its pane).
-    public func closeSystemDialogPane(_ id: PaneID) {
-        switch liveModel {
-        case .tree: closePaneTree(id)
-        case .canvas: closePane(id)
-        }
-    }
-
-    /// Whether `id` is a LIVE pane in whichever model is current — the tree under ``LiveModel/tree``,
-    /// else the canvas. The auto-managed monitor uses this to detect a manual close (a spawned pane
-    /// absent from the model) on EITHER shell.
-    public func isSystemDialogPaneLive(_ id: PaneID) -> Bool {
-        switch liveModel {
-        case .tree: tree.contains(id)
-        case .canvas: workspace.canvas.contains(id)
-        }
     }
 
     /// Focuses pane `id` (a pure focus change; leaf set unchanged). Maximize follows focus.
@@ -1827,9 +1762,7 @@ public final class WorkspaceStore {
         guard !trimmed.isEmpty else { return }
         let trigger = (triggerAppName?.trimmingCharacters(in: .whitespacesAndNewlines))
             .flatMap { $0.isEmpty ? nil : $0 }
-        // Strip ephemeral (auto-managed) panes from the snapshot — a saved layout must not resurrect a
-        // dead system-dialog windowID.
-        let snapshotCanvas = strippingEphemeral(workspace.canvas)
+        let snapshotCanvas = workspace.canvas
         let focus = snapshotCanvas.contains(workspace.focusedPane ?? PaneID()) ? workspace.focusedPane : snapshotCanvas
             .allIDs().first
         if let i = workspace.layoutPresets.firstIndex(where: { $0.name == trimmed }) {
@@ -1926,18 +1859,6 @@ public final class WorkspaceStore {
         guard workspace.layoutPresets.contains(where: { $0.name == name }) else { return }
         workspace.layoutPresets.removeAll { $0.name == name }
         reconcile()
-    }
-
-    /// A copy of `canvas` with every ephemeral (auto-managed) pane removed — the snapshot must not
-    /// carry a system-dialog windowID that would stream a dead window on restore.
-    private func strippingEphemeral(_ canvas: Canvas) -> Canvas {
-        let ephemeral = canvas.allIDs().filter { canvas.spec(for: $0)?.kind.isEphemeral == true }
-        guard !ephemeral.isEmpty else { return canvas }
-        var c = canvas
-        for id in ephemeral {
-            c = c.removing(id) ?? Canvas(items: [], camera: canvas.camera)
-        }
-        return c
     }
 
     // MARK: - Viewport bookmarks (⇧⌘1–9 save, ⌘1–9 recall)
@@ -2214,7 +2135,7 @@ public final class WorkspaceStore {
     /// - `SLOPDESK_AUTOCONNECT_HOST` + `SLOPDESK_AUTOCONNECT_PORT` ⇒ the app ``Workspace/connection`` target is
     ///   that host:port and pane 0 is a plain terminal (it rides the app connection).
     /// - `SLOPDESK_VIDEO_AUTOCONNECT_HOST` + media/cursor ports + window id ⇒ the app target is that host
-    ///   (+ video ports) and pane 0 is a window-targeted `.systemDialog` (video takes precedence). Title
+    ///   (+ video ports) and the remote desktop opens DETACHED, window-targeted (video takes precedence). Title
     ///   from `SLOPDESK_VIDEO_AUTOCONNECT_TITLE` if set.
     /// - neither set ⇒ the plain default single-terminal workspace.
     ///
@@ -2237,17 +2158,25 @@ public final class WorkspaceStore {
     }
 
     public func bootstrapFromEnvironment(_ env: [String: String] = WorkspaceStore.automationInputs()) {
-        // Resolve the single bootstrap pane spec + the app target from the autoconnect env (video first).
+        // The window-targeted video autoconnect (`check-video.sh` serves ONE host window) boots the
+        // remote desktop the way the user gets it: a DETACHED `.desktop` pane in its own OS window —
+        // video never enters the workspace tree (docs/DECISIONS.md 2026-07-23). The window-shaped
+        // endpoint (displayID nil) keeps the E2E stream on the classic window `hello`. Tree-shell
+        // only: the retained-but-dead canvas has no detached set.
+        if liveModel == .tree, let (target, video) = Self.videoTarget(from: env) {
+            var session = Session.singlePane(name: target.host, spec: PaneSpec(kind: .terminal, title: "Terminal"))
+            session.connection = target
+            let base = TreeWorkspace(sessions: [session], activeSessionID: session.id).normalized()
+            let (next, _) = WorkspaceTreeOps.mintDetachedPane(
+                spec: PaneSpec(kind: .desktop, title: video.title, video: video), in: base,
+            )
+            tree = next
+            reconcileTree()
+            return
+        }
+        // Resolve the single bootstrap pane spec + the app target from the terminal-autoconnect env.
         let bootstrap: (spec: PaneSpec, target: ConnectionTarget)? =
-            if let (target, video) = Self
-                .videoTarget(from: env)
-            {
-                // The window-targeted video autoconnect (check-video / check-system-dialog E2E) minted a
-                // `.remoteGUI` pane before that kind was removed; `.systemDialog` is the remaining
-                // window-shaped video kind and rides the identical stack. The dialog MONITOR never
-                // touches it (it only closes panes it spawned itself).
-                (PaneSpec(kind: .systemDialog, title: video.title, video: video), target)
-            } else if let target = Self.terminalTarget(from: env) {
+            if let target = Self.terminalTarget(from: env) {
                 (PaneSpec(kind: .terminal, title: "Terminal"), target)
             } else {
                 nil
@@ -2331,7 +2260,9 @@ public final class WorkspaceStore {
     /// with the paths that still schedule a deferred send, but this path types no startup `cd` — the
     /// inherited cwd rides `channelOpen` (host-side spawn), so the grace is unused here (`_`).
     func splitActivePane(axis: SplitAxis, kind: PaneKind, leading: Bool, launchGrace _: Duration) {
-        guard let active = tree.activeSession?.activeTab?.activePane else { return }
+        // Video never enters the workspace tree (docs/DECISIONS.md 2026-07-23) — the desktop lives in
+        // its own OS window; a video-kind split request is a no-op, not a video leaf.
+        guard !kind.isVideo, let active = tree.activeSession?.activeTab?.activePane else { return }
         // Resolve the new pane's initial cwd from the NEW-SPLIT working-directory policy against the active
         // pane's last-known cwd and stamp it on the new spec. The live session factory sends that cwd in the
         // mux `channelOpen`, so the host spawns the PTY there directly.
@@ -2347,7 +2278,9 @@ public final class WorkspaceStore {
     }
 
     /// Splits the specific pane `target` along `axis`, inserting a new leaf of `kind` (focused).
+    /// Video kinds no-op (video never enters the tree — docs/DECISIONS.md 2026-07-23).
     public func splitPaneTree(_ target: PaneID, axis: SplitAxis, kind: PaneKind) {
+        guard !kind.isVideo else { return }
         let spec = PaneSpec(kind: kind, title: defaultTitle(for: kind))
         let (next, _) = WorkspaceTreeOps.splitPane(target, axis: axis, newSpec: spec, in: tree)
         tree = next
@@ -2474,15 +2407,6 @@ public final class WorkspaceStore {
         for session in tree.sessions {
             guard let tab = session.tabs.first(where: { $0.id == tabID }) else { continue }
             let leaves = tab.allPaneIDs()
-            // Skip an all-EPHEMERAL tab (a system-dialog overlay tab — the monitor auto-manages its
-            // lifecycle, so "reopening" it would resurrect a dead window stream). Mirrors the canvas
-            // `closePane(_:)` `!isEphemeral` reopen-slot guard: only a tab holding ≥1 real (non-ephemeral)
-            // pane is worth reopening.
-            let hasReopenablePane = leaves.contains { id in
-                guard let spec = session.specs[id] else { return false }
-                return !spec.kind.isEphemeral
-            }
-            guard hasReopenablePane else { return }
             // Snapshot only the closing tab's specs (its leaf set), not the whole session's side table.
             var specs: [PaneID: PaneSpec] = [:]
             for id in leaves where session.specs[id] != nil {
@@ -3492,11 +3416,10 @@ public final class WorkspaceStore {
     /// explicit mode toggles under its TARGET key in ``TreeWorkspace/videoModesByTarget`` — keyed by
     /// target (display / owning app), not pane, so a close-tab → reopen-the-same-target restores them.
     /// Default-normalized to a removed entry + dirty-guarded (a redundant fire never churns a save).
-    /// An ephemeral system-dialog pane never persists (its target is a transient auth prompt), and a
-    /// still-unbound pane (no endpoint yet) has no key to file under.
+    /// A still-unbound pane (no endpoint yet) has no key to file under.
     private func persistVideoModes(_ modes: VideoPaneModes, for id: PaneID) {
         guard let spec = tree.spec(for: id) ?? spec(for: id),
-              !spec.kind.isEphemeral, let key = spec.video?.modesKey else { return }
+              let key = spec.video?.modesKey else { return }
         let normalized: VideoPaneModes? = modes.isDefault ? nil : modes
         guard tree.videoModesByTarget[key] != normalized else { return }
         tree.videoModesByTarget[key] = normalized
@@ -3827,35 +3750,20 @@ public final class WorkspaceStore {
 
     // MARK: - Persistence (debounced; cancel-safe)
 
-    /// The workspace as it should be PERSISTED: ephemeral (auto-managed) system-dialog panes are stripped so
-    /// they never survive a relaunch (the monitor re-spawns live ones on reconnect — a stale dialog windowID
-    /// would otherwise stream a dead window). Focus is re-normalized in case it pointed at a stripped pane.
-    /// Identity passthrough when there are none, so a normal save pays nothing.
-    private func persistableWorkspace() -> Workspace {
-        let ephemeral = workspace.canvas.allIDs().filter { workspace.canvas.spec(for: $0)?.kind.isEphemeral == true }
-        guard !ephemeral.isEmpty else { return workspace }
-        var w = workspace
-        for id in ephemeral {
-            w.canvas = w.canvas.removing(id) ?? Canvas(items: [], camera: w.canvas.camera)
-        }
-        return w.normalizingFocus()
-    }
-
     /// The value snapshot the debounced/immediate save writes — the v10 ``TreeWorkspace`` when
     /// ``liveModel`` is ``LiveModel/tree`` (the live app), else the retained-but-dead canvas
-    /// ``persistableWorkspace()``. Captured as an enum so the one off-main write path stays a single
+    /// ``workspace``. Captured as an enum so the one off-main write path stays a single
     /// `persistence.save(...)` (an overload resolves the type). Both are value types (Sendable).
     private enum SaveSnapshot {
         case canvas(Workspace)
         case tree(TreeWorkspace)
     }
 
-    /// The PERSISTABLE snapshot of the live model right now (ephemeral dialog panes are a canvas-only
-    /// concept, stripped there; the tree never holds ephemeral system-dialog leaves in the MVP).
+    /// The PERSISTABLE snapshot of the live model right now.
     private func persistableSnapshot() -> SaveSnapshot {
         switch liveModel {
         case .tree: .tree(tree)
-        case .canvas: .canvas(persistableWorkspace())
+        case .canvas: .canvas(workspace)
         }
     }
 
@@ -4075,7 +3983,7 @@ public extension WorkspaceStore {
     /// live-resizes the content column every cell-step; for a remote terminal each forward is a host PTY
     /// reflow + a re-streamed redraw. Holding them and flushing the final grid ONCE on release keeps the
     /// content from re-rendering per drag step (the same commit-on-release rule as the pane divider). The
-    /// non-terminal handles (`.desktop`/`.systemDialog`) have no `terminalModel`, so they are skipped.
+    /// non-terminal handles (`.desktop`) have no `terminalModel`, so they are skipped.
     func setTerminalResizeSuspended(_ suspended: Bool) {
         // The interactive-resize bracket for BOTH dividers (the SwiftUI pane divider's begin/end and the
         // AppKit sidebar divider's drag-active/settle). Drives the pane scrim's "drag in progress" hold so

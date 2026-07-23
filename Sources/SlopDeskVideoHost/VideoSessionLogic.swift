@@ -209,8 +209,9 @@ public struct VideoSessionStateMachine: Sendable {
              .windowPreviewRequest,
              .listDisplays,
              .displayList:
-            // Window-list, system-dialog-list, window-feed AND icon discovery are answered at the
-            // DAEMON level (session-less, no capture mint) and never reach a session's state machine.
+            // Window-list, window-feed AND icon discovery are answered at the DAEMON level
+            // (session-less, no capture mint) — the dormant system-dialog pair is swallowed there too —
+            // and never reach a session's state machine.
             // `windowList`/`systemDialogList`/`scrollOffset`/`contentMask`/`displayMax`/
             // `windowFeedSnapshot`/`windowFeedCurrent`/`blobChunk` are host→client and never arrive
             // at the host. No-op.

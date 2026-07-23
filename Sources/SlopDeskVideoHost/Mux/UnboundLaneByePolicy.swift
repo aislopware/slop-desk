@@ -21,7 +21,7 @@ import SlopDeskVideoProtocol
 /// - `.input` / `.recovery` datagrams — only ever sent by a client that believes it is streaming.
 /// - `.control` `keepalive` / `resizeRequest` / `focusWindow` — likewise in-session-only messages.
 /// - A `hello` NEVER reaches this decider (it bootstraps a mint), and `listWindows` /
-///   `listSystemDialogs` are session-LESS discovery (answered by the daemon) — no bye.
+///   `listSystemDialogs` are session-LESS discovery (daemon-consumed; the dialog one DORMANT) — no bye.
 /// - A stray `bye` gets no reply (nothing to end; replying could ping-pong with a confused peer).
 /// - Host→client-only channels/messages arriving inbound are corrupt/hostile — drop, no reply
 ///   (validate-then-drop; never reflect at garbage).
