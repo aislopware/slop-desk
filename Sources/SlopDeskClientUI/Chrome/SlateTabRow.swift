@@ -5,17 +5,19 @@
 // (``TabBadgeView`` — `#`/`∞`) plus the STATUS DOT at the right edge, swapping to the close `×`
 // under hover.
 //
-// Status speaks TWICE, in agreement (the T3 Code pairing — dot + tinted label): the title's own
-// ink and weight carry the words (``StatusPresentation/attentionInk(_:)`` — amber = a question
-// waits; red = failed; green = unread finish, cleared on visit — plus the `.medium` step the
-// active card uses), and the trailing ``StatusDotView`` repeats the SAME ink as one flat circle
-// in a fixed right-edge column, so the two can never disagree about one pane. A WORKING AGENT's
-// motion is the title's shimmer (``WorkingShimmer``) plus the dot's accent pulse; a running
-// COMMAND's title stands still while the dot pulses muted; an IDLE row mounts no dot at all. The
-// ink stays IN the title run and the dot — no row wash, no tinted fill: the rail is monochrome
-// except the marks that carry state. ACTIVE is the raised card (fill + 1px hairline; the cast
-// shadow is light-theme-only). Nothing else rides the row: no subtitle, no readout, no telemetry
-// — the richness lives in the hover tooltip and the context menu.
+// Status speaks TWICE, in agreement (the T3 Code SidebarV2 pairing — mark + tinted label): the
+// title's own ink and weight carry the words (``StatusPresentation/attentionInk(_:)`` — amber =
+// a question waits; red = failed; green = unread finish, cleared on visit — plus the `.medium`
+// step the active card uses), and the trailing ``StatusDotView`` repeats the SAME ink in a fixed
+// right-edge column, so the two can never disagree about one pane. The mark's SHAPE is the
+// grammar: a dashed RING (static — T3 Code's `CircleDashedIcon`) means in flight (accent for a
+// working agent, muted for a running command), a FILLED dot means settled-and-waiting, an IDLE
+// row mounts nothing. The only motion anywhere is the working title's shimmer
+// (``WorkingShimmer``). The ink stays IN the title run and the mark — no row wash, no tinted
+// fill: the rail is monochrome except the marks that carry state. ACTIVE is the raised card
+// (fill + 1px hairline; the cast shadow is light-theme-only). Nothing else rides the row: no
+// subtitle, no readout, no telemetry — the richness lives in the hover tooltip and the context
+// menu.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -30,9 +32,9 @@ struct SlateTabRow: View {
     /// integration's title prefix). Display-only — the rename field seeds from the bare `title`.
     var agentMarker: Bool = false
     /// The fused status kind for the row — the FULL resolver output, busy tiers included.
-    /// Attention kinds recolour the TITLE's ink (the ink dialect) and ink the trailing status
-    /// dot; the busy tiers feed the dot's muted pulse; only the privilege markers (`#`/`∞`)
-    /// occupy the slot as TEXT (``TabBadgeView``).
+    /// Attention kinds recolour the TITLE's ink (the ink dialect) and fill the trailing status
+    /// mark; the busy tiers mount its muted ring; only the privilege markers (`#`/`∞`) occupy
+    /// the slot as TEXT (``TabBadgeView``).
     var badge: TabBadgeKind?
     /// Non-`nil` ⇒ a WORKING AGENT row: the title wears the working shimmer (the stepped dark-band
     /// sweep — the title text IS the motion indicator; no glyph spins) on the primary ink. The
@@ -189,8 +191,8 @@ struct SlateTabRow: View {
                                 .fixedSize()
                         }
                     }
-                    // The status dot — RIGHTMOST, so state reads down one fixed column no matter
-                    // how wide the label beside it runs (the T3 Code pairing: dot + tinted text).
+                    // The status mark — RIGHTMOST, so state reads down one fixed column no matter
+                    // how wide the label beside it runs (the T3 Code pairing: mark + tinted text).
                     if let dot = StatusPresentation.statusDot(
                         working: workingLabel != nil, badge: badge,
                     ) {

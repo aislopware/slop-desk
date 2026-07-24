@@ -114,25 +114,26 @@ enum StatusPresentation {
         return nil
     }
 
-    /// The row's trailing STATUS DOT — the T3 Code thread-status port (`resolveThreadStatusPill`):
-    /// one flat circle at the slot's right edge whose ink names the state and whose pulse means
-    /// "running right now". The ladder, strongest first: a WORKING AGENT pulses on the accent
+    /// The row's trailing STATUS MARK — the T3 Code SidebarV2 port: the ink names the state, the
+    /// SHAPE carries the grammar (dashed RING = in flight, its `CircleDashedIcon`; filled DOT =
+    /// settled and waiting on a human), and nothing animates — running MOTION is the title
+    /// shimmer's job alone. The ladder, strongest first: a WORKING AGENT rings on the accent
     /// (keyed on the RAW `.working` status, same key as the shimmer — the gated badge must not
-    /// kill it); the attention states reuse their TITLE ink exactly (amber question / red failure /
-    /// green unread finish — the dot and the title can never disagree about one pane); a running
-    /// COMMAND pulses on the muted secondary ink (life without hue — colour stays reserved for
-    /// states that need a human); everything else mounts nothing (an idle row spends no dot —
-    /// T3 Code renders null, and the resting rail stays bare).
+    /// kill it); the attention states fill with their TITLE ink exactly (amber question / red
+    /// failure / green unread finish — the mark and the title can never disagree about one
+    /// pane); a running COMMAND rings on the muted secondary ink (in flight without hue —
+    /// colour stays reserved for states that need a human); everything else mounts nothing (an
+    /// idle row spends no mark — T3 Code renders null, and the resting rail stays bare).
     static func statusDot(working: Bool, badge: TabBadgeKind?) -> StatusDotStyle? {
-        if working { return StatusDotStyle(ink: Slate.State.accent, pulses: true) }
+        if working { return StatusDotStyle(ink: Slate.State.accent, shape: .ring) }
         guard let badge else { return nil }
-        if let ink = attentionInk(badge) { return StatusDotStyle(ink: ink, pulses: false) }
+        if let ink = attentionInk(badge) { return StatusDotStyle(ink: ink, shape: .fill) }
         switch badge {
         // The agent tier arriving through the badge route ("Badge while processing" ON) reads
         // identically to the raw-working route above.
-        case .running: return StatusDotStyle(ink: Slate.State.accent, pulses: true)
+        case .running: return StatusDotStyle(ink: Slate.State.accent, shape: .ring)
         case .commandBusy,
-             .commandRunning: return StatusDotStyle(ink: Slate.Text.secondary, pulses: true)
+             .commandRunning: return StatusDotStyle(ink: Slate.Text.secondary, shape: .ring)
         // Attention kinds already returned above; privilege modifiers are slot text, not lifecycle.
         case .awaitingInput,
              .caffeinate,
