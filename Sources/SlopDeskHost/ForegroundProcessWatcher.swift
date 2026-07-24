@@ -157,6 +157,35 @@ public struct ForegroundProcessDetector: Sendable {
         guard !name.isEmpty else { return "" }
         return name.split(separator: "/").last.map(String.init) ?? name
     }
+
+    /// The CANONICAL process name of an executable path: the basename — except a VERSION-named
+    /// executable, which resolves to the owning app directory. The Claude Code native installer
+    /// lays the binary out as `…/.local/share/claude/versions/2.1.218` (the executable file IS
+    /// the version string), so the raw basename defeats the exact-basename `claude` classifier
+    /// AND reads as a meaningless `2.1.218` in the sidebar's shell-label slot. A pure version
+    /// string names a release, not a program — walk up past it (and the layout components
+    /// `versions`/`bin`/`current`/`libexec`) to the first real name. A non-version basename is
+    /// returned untouched, so every other program keeps its exact-basename semantics.
+    static func canonicalName(of path: String) -> String {
+        let base = basename(of: path)
+        guard isVersionShaped(base) else { return base }
+        for component in path.split(separator: "/").dropLast().reversed() {
+            let name = String(component)
+            if isVersionShaped(name) { continue }
+            if ["versions", "bin", "current", "libexec"].contains(name.lowercased()) { continue }
+            return name
+        }
+        return base
+    }
+
+    /// True for a pure version string (`2.1.218`, `v1.0`) — digits and dots (an optional
+    /// leading `v`), at least one dot so plain numerals (`7z`-style names, bare `2`) stay names.
+    static func isVersionShaped(_ s: String) -> Bool {
+        var t = Substring(s)
+        if t.hasPrefix("v") || t.hasPrefix("V") { t = t.dropFirst() }
+        guard t.contains("."), !t.isEmpty else { return false }
+        return t.allSatisfy { $0.isNumber || $0 == "." }
+    }
 }
 
 /// W10 — the THIN OS shim that resolves a PTY's foreground-process basename and feeds the
@@ -188,6 +217,9 @@ public enum PTYForegroundProbe {
         let length = proc_pidpath(pgid, &buffer, UInt32(buffer.count))
         guard length > 0 else { return "" }
         let path = String(cString: buffer)
-        return ForegroundProcessDetector.basename(of: path)
+        // Canonical, not raw basename: the Claude Code native installer's executable is NAMED
+        // by its version (`…/claude/versions/2.1.218`) — the raw basename would defeat the
+        // claude classifier and label the pane "2.1.218".
+        return ForegroundProcessDetector.canonicalName(of: path)
     }
 }

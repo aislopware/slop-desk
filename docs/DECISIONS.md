@@ -2100,3 +2100,13 @@ ink (the brighter base lifts the row) and the dark band deepens (0.55 → 0.35) 
 verdict on v4.7 was "barely there". The header git line drops the ASCII-only constraint:
 `↑2 ↓1 +3 !4 ?5 ~1 $2` (the prompt-theme dialect — `~` replaces the misleading `=` for
 conflicts) behind an inline `arrow.trianglehead.branch` glyph.
+
+**Amendment (same day, field bug):** the Claude Code NATIVE installer names its executable by
+VERSION (`…/.local/share/claude/versions/2.1.218`) — the exact-basename `claude` classifier never
+matched, so presence never held, the 30 s post-hook grace lapsed between turns, the intent was
+wiped, and the slot read a meaningless `2.1.218`. `ForegroundProcessDetector.canonicalName(of:)`
+resolves a version-shaped basename up past the layout components (`versions`/`bin`/`current`/
+`libexec`) to the owning app directory; the probe and the detector fold both use it. Verified
+end-to-end on the rig with the real binary (row reads `✳ <latest prompt>` + slot `claude`).
+The git line's inline branch glyph was also dropped on review — symbols only where they carry
+meaning, and the sigil dialect already says "git".

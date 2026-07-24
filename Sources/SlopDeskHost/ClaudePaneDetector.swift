@@ -141,7 +141,7 @@ public struct ClaudePaneDetector: Sendable {
     /// drives the presence FLOOR; a non-claude/empty name forces `.none`. The richer hook status is NOT
     /// overridden by presence (presence only lifts `.none` → `.idle`; absence forces termination).
     public mutating func sample(name rawName: String, at now: TimeInterval) -> Emission {
-        let base = ForegroundProcessDetector.basename(of: rawName)
+        let base = ForegroundProcessDetector.canonicalName(of: rawName)
         var emission = Emission()
         if base != lastEmittedName {
             lastEmittedName = base

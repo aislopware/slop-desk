@@ -671,6 +671,37 @@ final class ClaudePaneDetectorTests: XCTestCase {
         XCTAssertEqual(d.status, .needsPermission, "a spinner title never clears a hook block either")
     }
 
+    /// The Claude Code NATIVE-INSTALL layout names the executable by its version
+    /// (`…/.local/share/claude/versions/2.1.218`) — the canonical-name resolution must classify
+    /// it as claude (presence floor lifts) and emit the type-26 display name `claude`, never the
+    /// meaningless raw version basename.
+    func testVersionNamedClaudeBinaryClassifiesAsClaude() {
+        var d = ClaudePaneDetector()
+        let e = d.sample(name: "/Users/abner/.local/share/claude/versions/2.1.218", at: 0)
+        XCTAssertEqual(e.foreground, .foregroundProcess(name: "claude"), "the display name is the program")
+        XCTAssertEqual(d.status, .idle, "presence classified — the floor lifts")
+    }
+
+    /// The pure canonical-name pins: a version-shaped basename walks up past the layout
+    /// components to the owning app directory; every ordinary name stays the exact basename.
+    func testCanonicalNameResolution() {
+        XCTAssertEqual(
+            ForegroundProcessDetector.canonicalName(of: "/Users/a/.local/share/claude/versions/2.1.218"),
+            "claude",
+        )
+        XCTAssertEqual(ForegroundProcessDetector.canonicalName(of: "/opt/foo/versions/v1.2/bin/3.0.1"), "foo")
+        XCTAssertEqual(ForegroundProcessDetector.canonicalName(of: "/usr/local/bin/claude"), "claude")
+        XCTAssertEqual(ForegroundProcessDetector.canonicalName(of: "zsh"), "zsh")
+        XCTAssertEqual(ForegroundProcessDetector.canonicalName(of: "2.1.218"), "2.1.218", "no parents to name it")
+        XCTAssertEqual(ForegroundProcessDetector.canonicalName(of: ""), "")
+        // Version-shape boundaries: at least one dot; digits+dots only (optional leading v).
+        XCTAssertTrue(ForegroundProcessDetector.isVersionShaped("2.1.218"))
+        XCTAssertTrue(ForegroundProcessDetector.isVersionShaped("v1.0"))
+        XCTAssertFalse(ForegroundProcessDetector.isVersionShaped("7z"))
+        XCTAssertFalse(ForegroundProcessDetector.isVersionShaped("2"))
+        XCTAssertFalse(ForegroundProcessDetector.isVersionShaped("python3.11"))
+    }
+
     /// The rest title does NOT demote `.done` — the unseen-completion signal keeps its decay window.
     func testRestTitleKeepsDone() {
         var d = ClaudePaneDetector(doneToIdleTimeout: 5)

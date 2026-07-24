@@ -584,10 +584,7 @@ struct SidebarSectionHeaderRow: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                 if let detail = Self.detailLine(collapsed: collapsed, summary: summary) {
-                    // The tiny branch glyph rides inline in the text run (it inherits the line's
-                    // font + ink), marking the second line as git at a glance — the string itself
-                    // stays plain for the tooltip twin.
-                    Text("\(Image(systemSymbol: .arrowTriangleheadBranch)) \(detail)")
+                    Text(detail)
                         .font(.system(size: Slate.Typeface.small))
                         .foregroundStyle(Slate.State.header)
                         .lineLimit(1)
