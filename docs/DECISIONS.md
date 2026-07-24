@@ -2025,3 +2025,23 @@ structural title → failed-command alarm → kind-generic**.
   sharing the context-menu / ⌘R pending-rename; the single-tap select rides `simultaneousGesture`
   so selection never waits out the double-click window. Rename stays the top of the chain and,
   once set, permanently beats the automatic titles (the tmux `rename-window` contract).
+
+### Row titles v4.6 — the failure alarm retires; the title is simply the last EXECUTED command (2026-07-24)
+
+The v4.5 fail-only title survived one day of hands-on: a red `✗` row reads as ugly alarm chrome,
+and the quieter cost was worse — while a command RUNS the row showed only the spinner, answering
+"something is happening" but never "what". User verdict: show the last executed command, and the
+running command counts as last-executed.
+
+- `lastCommandTitle` returns to exit-AGNOSTIC (the v4.4 rule), with the threshold LOWERED to 1 s
+  (user-directed): the newest ≥ 1 s finished block titles the idle row; sub-second chatter still
+  neither takes nor clears it. The title threshold now deliberately sits BELOW the busy-dot's 3 s
+  reveal — standing text is cheap, the dot is an attention signal. Exit status lives where it
+  always did — the badge and the tooltip's `cmd · duration · exit N` line. The `✗` glyph +
+  status-error ink leave `SlateTabRow`.
+- The chain gains a RUNNING rung above history: `liveRowTitle` = rename → agent intent →
+  structural → **running command** → last executed → generic. The running text is the open
+  block's command (foreground-process fallback), gated on the busy-badge reveal (`.commandRunning`
+  / `.commandBusy`) — it appears WITH the spinner (the busy reveal), so a fast `ls` never flashes
+  the title and the spinner is never anonymous again. The tooltip's running line drops as a title
+  echo (the existing restatement gate).

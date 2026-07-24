@@ -722,21 +722,23 @@ private struct SidebarLiveRow: View {
             }()
             : nil
         // The SHOWN title resolves in the live leaf (rename → agent-session intent → structural →
-        // failed-command alarm → generic) because intent + blocks are volatile — the memoized
-        // structural `row.title` stays put, so the search corpus never drifts.
+        // running command → last executed command → generic) because intent + blocks are volatile —
+        // the memoized structural `row.title` stays put, so the search corpus never drifts. The
+        // running rung reuses `runningCommand` (busy-badge-gated, so it appears with the spinner
+        // and a fast `ls` never flashes in) — the row answers "what is this pane running".
         let agent = RailRowsBuilder.isAgentSession(
             status: chrome.status, processLabel: chrome.processLabel,
         )
-        let liveTitle = RailRowsBuilder.liveRowTitle(
+        let shownTitle = RailRowsBuilder.liveRowTitle(
             structuralTitle: row.title,
             userRenamed: store.tree.activeSession?.specs[row.id]?.userRenamed == true,
             isAgent: agent,
             intent: store.paneAgentIntent[row.id],
+            runningCommand: runningCommand,
             blocks: blocks,
             kind: row.kind,
             fallback: fallbackTitle,
         )
-        let shownTitle = liveTitle.text
         let lastCommand = blocks.last(where: { $0.complete || $0.durationMS != nil })
             .flatMap(SidebarRowTooltip.commandLine)
         // The row's live line — TOOLTIP-only (the rendered row stays otty-bare).
@@ -756,7 +758,6 @@ private struct SidebarLiveRow: View {
             active: active,
             // The otty agent-integration look: an agent session's title wears the leading `✳`.
             agentMarker: agent,
-            titleFailed: liveTitle.failed,
             badge: chrome.badge,
             processLabel: RailRowsBuilder.shellLabel(chrome.processLabel),
             readOnly: chrome.readOnly,
@@ -794,20 +795,29 @@ private struct IOSSidebarLiveRow: View {
         // swiftlint:disable:next redundant_discardable_let
         let _ = store.completionFlashTick
         let chrome = RailRowsBuilder.liveChrome(for: row, store: store)
-        // Same live-title chain as the macOS ``SidebarLiveRow`` (one shared resolver).
-        let liveTitle = RailRowsBuilder.liveRowTitle(
+        // Same live-title chain as the macOS ``SidebarLiveRow`` (one shared resolver), including
+        // the busy-badge-gated RUNNING rung.
+        let blocks = store.commandBlocks(for: row.id)
+        let runningCommand: String? = (chrome.badge == .commandRunning || chrome.badge == .commandBusy)
+            ? {
+                let open = blocks.last(where: { !$0.complete })?
+                    .commandText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let open, !open.isEmpty { return open }
+                return RailRowsBuilder.processDisplayName(chrome.processLabel)
+            }()
+            : nil
+        let shownTitle = RailRowsBuilder.liveRowTitle(
             structuralTitle: row.title,
             userRenamed: store.tree.activeSession?.specs[row.id]?.userRenamed == true,
             isAgent: RailRowsBuilder.isAgentSession(
                 status: chrome.status, processLabel: chrome.processLabel,
             ),
             intent: store.paneAgentIntent[row.id],
-            blocks: store.commandBlocks(for: row.id),
+            runningCommand: runningCommand,
+            blocks: blocks,
             kind: row.kind,
             fallback: fallbackTitle,
         )
-        let shownTitle = liveTitle.text
-        let titleFailed = liveTitle.failed
         HStack(spacing: 8) {
             Label {
                 if chrome.isEditing {
@@ -818,12 +828,7 @@ private struct IOSSidebarLiveRow: View {
                         onCancel: onCancelRename,
                     )
                 } else {
-                    Text(titleFailed ? "✗\u{FE0E} \(shownTitle)" : shownTitle)
-                        // `.primary` is the Label default — only a FAILURE title leaves the ladder.
-                        .foregroundStyle(
-                            titleFailed
-                                ? AnyShapeStyle(Slate.Status.err) : AnyShapeStyle(.primary),
-                        )
+                    Text(shownTitle)
                         .lineLimit(1)
                 }
             } icon: {

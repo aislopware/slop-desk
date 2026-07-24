@@ -20,10 +20,6 @@ struct SlateTabRow: View {
     /// Whether the title wears the leading `✳` AGENT marker (an agent session's row, the otty
     /// integration's title prefix). Display-only — the rename field seeds from the bare `title`.
     var agentMarker: Bool = false
-    /// Whether the title is a FAILURE report (the idle row's failed-command title) — the run wears
-    /// the status-error ink with a leading text-presentation `✗`, so the alarm reads in shape as
-    /// well as colour. Display-only, same contract as `agentMarker`.
-    var titleFailed: Bool = false
     /// The fused status badge (``TabBadgeView``) — occupies the trailing slot when present.
     var badge: TabBadgeKind?
     /// The resting trailing label — the pane's foreground process (`zsh`, `vim`, `claude`), shown
@@ -70,14 +66,13 @@ struct SlateTabRow: View {
             if isEditing {
                 renameField
             } else {
-                // `\u{FE0E}` pins the ✳/✗ to TEXT presentation — the bare code points render as
-                // emoji on Apple platforms, which would break the ink-only title run.
-                Text(markedTitle)
+                // `\u{FE0E}` pins the ✳ to TEXT presentation — bare U+2733 renders as emoji on
+                // Apple platforms, which would break the ink-only title run.
+                Text(agentMarker ? "✳\u{FE0E} \(title)" : title)
                     .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
                     // The live-otty ink ladder: a resting title reads on the SECONDARY ink; only the
-                    // active card's title steps up to primary (with the weight bump) — and a
-                    // FAILURE title overrides the ladder with the status-error ink at every rung.
-                    .foregroundStyle(titleColor)
+                    // active card's title steps up to primary (with the weight bump).
+                    .foregroundStyle(active ? Slate.Text.primary : Slate.Text.secondary)
                     .lineLimit(1)
             }
             Spacer(minLength: 6)
@@ -109,20 +104,6 @@ struct SlateTabRow: View {
         if active { Slate.Surface.raised }
         else if hovering { Slate.State.hover }
         else { .clear }
-    }
-
-    /// The title with its leading marker glyph: the agent `✳` outranks the failure `✗` (an agent
-    /// session's identity beats a command post-mortem — in practice the two never combine, since a
-    /// failed-command title only fills an otherwise EMPTY title and agent rows title by name).
-    private var markedTitle: String {
-        if agentMarker { return "✳\u{FE0E} \(title)" }
-        if titleFailed { return "✗\u{FE0E} \(title)" }
-        return title
-    }
-
-    private var titleColor: Color {
-        if titleFailed { return Slate.Status.err }
-        return active ? Slate.Text.primary : Slate.Text.secondary
     }
 
     /// The trailing cluster: the rare mode glyphs (lock / sync) ride OUTSIDE the swap slot so a mode
