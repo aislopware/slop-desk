@@ -2,8 +2,8 @@
 // (pixel-sampled off the running app; historical refs in `docs/otty-clone/screenshots/`): a flat
 // "TABS" panel on the `Slate.Surface.ground` background (NOT native `.sidebar` vibrancy — the host
 // split item is a PLAIN item), the caps "TABS" label with otty's trailing panel-menu icon, and rows
-// ALWAYS grouped into By-Project sections under otty's chevron + folder + NAME group header with a
-// muted trailing git-line / collapsed-count slot
+// ALWAYS grouped into By-Project sections under otty's chevron + folder + NAME group header — the
+// live git line on a second line beneath the name, the hidden-row count trailing while collapsed
 // (``SidebarSectionHeaderRow``, collapsible with an animated glide; each pane's key is HOST-pushed — see
 // `WorkspaceStore.paneProjectKey`; sections and rows follow creation order). No search field —
 // otty's sidebar is bare rows; jumping is ⌘⇧O's job. Top 40pt is reserved for the traffic lights
@@ -539,10 +539,12 @@ enum SidebarRowTooltip {
 /// app at 1×: a disclosure chevron (x≈10, rotating `.right`↔`.down`), a dim `folder.fill` (x≈27),
 /// then the project's FOLDER NAME in the plain system face (11pt, secondary ink, x≈46) — the
 /// basename `section.header` already carries (worktree-collision-qualified), never the full path;
-/// the path lives in the hover tooltip. One muted trailing slot (right inset 10, the row-label x):
-/// the live git line (`main >2 !3`) while open, the hidden-row COUNT while collapsed (the otty
-/// collapsed-header count). No caps, no rule: groups separate by the header band's own air (24pt +
-/// the list's 2pt gaps = the measured 28pt). Tapping toggles the group shut. Reads its git summary
+/// the path lives in the hover tooltip. While open the live git line (`main >2 !3`) rides a SECOND
+/// line under the name — full-width, so name and git never fight for one row; while collapsed the
+/// header folds back to one line with the hidden-row COUNT in the muted trailing slot (right inset
+/// 10, the row-label x — the otty collapsed-header count). No caps, no rule: groups separate by the
+/// header band's own air (a bare header keeps the measured 24pt; a git-lined one grows to fit).
+/// Tapping toggles the group shut. Reads its git summary
 /// INSIDE its own body so a git tick re-renders only the (cheap) header leaves, mirroring
 /// ``SidebarLiveRow``. Internal (not private) so the opt-in snapshot render can mount the REAL
 /// header.
@@ -561,7 +563,8 @@ struct SidebarSectionHeaderRow: View {
         let summary = projectKey.flatMap { store.projectGitSummary[$0] }
         // The measured x-ladder (list inset 8 + leading 2 = chevron 10; +10 wide + 7 gap = folder 27;
         // +12 wide + 7 gap = name 46) — the name indents PAST the row titles (x18), chevron before.
-        HStack(spacing: 7) {
+        // Baseline-aligned: the chevron + folder sit on the NAME line; the git line hangs beneath.
+        HStack(alignment: .firstTextBaseline, spacing: 7) {
             // One glyph rotating 0°↔90° (not a `.chevronDown` swap) so the collapse toggle TURNS
             // with the group animation instead of teleporting between two symbols.
             Image(systemSymbol: .chevronRight)
@@ -574,24 +577,32 @@ struct SidebarSectionHeaderRow: View {
             Image(systemSymbol: .folderFill)
                 .font(.system(size: Slate.Typeface.small))
                 .foregroundStyle(Slate.State.header.opacity(0.5))
-            Text(title)
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .layoutPriority(1) // a long branch truncates before the name does
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if let detail = Self.detailLine(collapsed: collapsed, summary: summary) {
+                    Text(detail)
+                        .font(.system(size: Slate.Typeface.small))
+                        .foregroundStyle(Slate.State.header)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
             Spacer(minLength: 6)
-            if let trailing = Self.trailingLabel(collapsed: collapsed, count: count, summary: summary) {
+            if let trailing = Self.trailingCount(collapsed: collapsed, count: count) {
                 Text(trailing)
                     .font(.system(size: Slate.Typeface.footnote))
                     .foregroundStyle(Slate.State.header)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
             }
         }
         .padding(.leading, 2)
-        .padding(.trailing, 10) // lands the trailing label on the rows' trailing-slot x
-        .frame(height: Slate.Metric.heightSectionHeader)
+        .padding(.trailing, 10) // lands the trailing count on the rows' trailing-slot x
+        .padding(.vertical, 4)
+        // A bare header keeps the measured 24pt band; a git-lined one grows to fit its second line.
+        .frame(minHeight: Slate.Metric.heightSectionHeader)
         .contentShape(.rect)
         .onTapGesture(perform: onToggle)
         .help(Self.tooltip(projectKey: projectKey, summary: summary) ?? "")
@@ -605,12 +616,18 @@ struct SidebarSectionHeaderRow: View {
         .accessibilityAddTraits(.isButton)
     }
 
-    /// The header's muted trailing slot: while COLLAPSED, the hidden-row count (the otty
-    /// collapsed-header number — `nil` guards the impossible empty group); while open, the git line
-    /// — branch + dirt, live in the header per the daily-driver ask. Pure + static so the swap is
-    /// unit-pinned.
-    static func trailingLabel(collapsed: Bool, count: Int, summary: PaneGitSummary?) -> String? {
-        collapsed ? (count > 0 ? "\(count)" : nil) : summary.flatMap(gitLine)
+    /// The header's muted trailing slot: the hidden-row count while COLLAPSED (the otty
+    /// collapsed-header number — `nil` guards the impossible empty group). An open header keeps the
+    /// slot empty; its git line lives on the second line. Pure + static so the swap is unit-pinned.
+    static func trailingCount(collapsed: Bool, count: Int) -> String? {
+        collapsed && count > 0 ? "\(count)" : nil
+    }
+
+    /// The header's SECOND line: the live git line (branch + dirt) on a full-width line of its own
+    /// under the folder name, so neither fights the other for one row's width. A collapsed header
+    /// folds it away — the count speaks instead. Pure + static so the swap is unit-pinned.
+    static func detailLine(collapsed: Bool, summary: PaneGitSummary?) -> String? {
+        collapsed ? nil : summary.flatMap(gitLine)
     }
 
     /// The header's hover tooltip: the full project path (the name line deliberately shows only the
@@ -623,7 +640,7 @@ struct SidebarSectionHeaderRow: View {
         return parts.isEmpty ? nil : parts.joined(separator: "\n")
     }
 
-    /// The git line (the header's open trailing slot AND the tooltip's second line):
+    /// The git line (the open header's second line AND the tooltip's second line):
     /// `main >2 <1 +3 !4 ?5 =1 $2` — branch first, then only the NON-ZERO sigils in fixed order
     /// (ahead/behind/staged/modified/untracked/conflicted/stash). `nil` for a non-repo summary (a
     /// plain directory has no git concept). Pure + static so the dialect is unit-pinned.

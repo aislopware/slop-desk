@@ -1,7 +1,7 @@
 // RailRowReadoutTests — pins the row's tooltip-detail precedence ladder (question > scent > working
 // label > final line > error line > running command > NOTHING), the title-echo gate on the
 // command-shaped rungs, the error-line assembly, the trailing shell label, the project header's
-// tooltip dialect and trailing git-line/count swap, and the agent-session classification. Headless
+// tooltip dialect and second-line-git / collapsed-count swap, and the agent-session classification. Headless
 // VALUE assertions over the pure resolvers.
 
 import SlopDeskAgentDetect
@@ -150,27 +150,24 @@ final class RailRowReadoutTests: XCTestCase {
         XCTAssertNil(SidebarSectionHeaderRow.tooltip(projectKey: nil, summary: nil))
     }
 
-    /// The header's muted trailing slot swaps by collapse state: open ⇒ the git line (or nothing for
-    /// a non-repo / unknown project), collapsed ⇒ the hidden-row count (git yields — the count is the
-    /// otty collapsed-header number), with the impossible zero-count guarded to nothing.
-    func testHeaderTrailingLabelSwap() {
+    /// The header's two slots swap by collapse state: OPEN ⇒ the git line on the second line (or no
+    /// second line for a non-repo / unknown project) and an empty trailing slot; COLLAPSED ⇒ the
+    /// second line folds away and the trailing slot carries the hidden-row count (the otty
+    /// collapsed-header number), with the impossible zero-count guarded to nothing.
+    func testHeaderDetailAndCountSwap() {
         let summary = PaneGitSummary(
             hasRepo: true, branch: "main", ahead: 2, behind: 0, changedCount: 3, staged: 0, modified: 3,
         )
         XCTAssertEqual(
-            SidebarSectionHeaderRow.trailingLabel(collapsed: false, count: 3, summary: summary),
+            SidebarSectionHeaderRow.detailLine(collapsed: false, summary: summary),
             "main >2 !3",
         )
-        XCTAssertNil(SidebarSectionHeaderRow.trailingLabel(collapsed: false, count: 3, summary: nil))
-        XCTAssertEqual(
-            SidebarSectionHeaderRow.trailingLabel(collapsed: true, count: 3, summary: summary),
-            "3",
-        )
-        XCTAssertEqual(
-            SidebarSectionHeaderRow.trailingLabel(collapsed: true, count: 1, summary: nil),
-            "1",
-        )
-        XCTAssertNil(SidebarSectionHeaderRow.trailingLabel(collapsed: true, count: 0, summary: summary))
+        XCTAssertNil(SidebarSectionHeaderRow.detailLine(collapsed: false, summary: nil))
+        XCTAssertNil(SidebarSectionHeaderRow.detailLine(collapsed: true, summary: summary))
+        XCTAssertNil(SidebarSectionHeaderRow.trailingCount(collapsed: false, count: 3))
+        XCTAssertEqual(SidebarSectionHeaderRow.trailingCount(collapsed: true, count: 3), "3")
+        XCTAssertEqual(SidebarSectionHeaderRow.trailingCount(collapsed: true, count: 1), "1")
+        XCTAssertNil(SidebarSectionHeaderRow.trailingCount(collapsed: true, count: 0))
     }
 
     /// The git line speaks the `__git_ps1` sigil dialect — branch first, only the NON-ZERO counts,

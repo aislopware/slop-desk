@@ -1959,3 +1959,19 @@ in every group header is noise once you know your projects — and the collapse 
   `chevron.right` rotating 0°↔90° (not a symbol swap) so the glyph turns with the rows.
 - The chevron drops semibold → **medium**: the live glyph is a 1px stroke; semibold at 10pt read a
   step chunkier than the reference.
+
+### v4.3 — the header goes two-line (2026-07-24)
+
+Driving v4.2, the user found one line too little area: the folder name and the git line share a
+24pt row, so either can starve the other. The header becomes TWO lines while a git line exists:
+
+- **Line 1 = the name, line 2 = the git line** — the git line moves from the trailing slot to a
+  full-width small-face line under the name (header ink, indented to the name's x46), so branch +
+  dirt and the name each get a whole line. `trailingLabel` splits into the pinned pair
+  `detailLine(collapsed:summary:)` (second line while open) + `trailingCount(collapsed:count:)`
+  (trailing slot while collapsed).
+- **The band grows only when it must**: a bare (non-repo / unknown) header keeps the measured 24pt
+  otty band (`minHeight`); a git-lined one takes its natural two-line height. Collapsed headers
+  fold back to one line — count trailing, git folded away with the rows.
+- The header HStack aligns `.firstTextBaseline` so the chevron + folder glyphs sit on the NAME
+  line, not the two-line block's center.
