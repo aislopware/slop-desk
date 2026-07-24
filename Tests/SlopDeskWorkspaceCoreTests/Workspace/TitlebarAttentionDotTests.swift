@@ -40,8 +40,8 @@ final class TitlebarAttentionDotTests: XCTestCase {
         XCTAssertFalse(TabBadgeKind.caffeinate.needsAttention)
     }
 
-    /// Pins the BUSY-tier membership — the states the sidebar renders as the title's working shimmer
-    /// instead of a trailing glyph. Exactly the three motion tiers; disjoint from the attention class
+    /// Pins the BUSY-tier membership — the states the sidebar renders as the trailing mark's dashed
+    /// ring. Exactly the three in-flight tiers; disjoint from the attention class
     /// and the privilege markers (whose glyphs keep the slot).
     func testBusyTierMembership() {
         XCTAssertTrue(TabBadgeKind.running.isBusyTier)
@@ -53,8 +53,8 @@ final class TitlebarAttentionDotTests: XCTestCase {
         XCTAssertFalse(TabBadgeKind.finished.isBusyTier)
         XCTAssertFalse(TabBadgeKind.sudo.isBusyTier)
         XCTAssertFalse(TabBadgeKind.caffeinate.isBusyTier)
-        // Busy ∩ attention = ∅ — a row is either "in motion" (title shimmer) or "waiting on you"
-        // (glyph), never both readings at once.
+        // Busy ∩ attention = ∅ — a row is either "in flight" (the dashed ring) or "waiting on you"
+        // (the title ink), never both readings at once.
         for kind: TabBadgeKind in [
             .running, .commandRunning, .commandBusy, .completed, .finished, .error, .awaitingInput,
             .caffeinate, .sudo,

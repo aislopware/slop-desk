@@ -1,6 +1,6 @@
 // TabBadgeView — the trailing-slot marker for one sidebar tab row: ONLY the privilege modifiers
 // (`#` sudo, `∞` caffeinate), small muted text in the instrument (mono) face. The lifecycle states
-// never render here — motion is the title's working shimmer, attention is the title's ink
+// never render here — running is the trailing ring mark, attention is the title's ink
 // (`StatusPresentation.attentionInk`, the ink dialect) — so this view renders NOTHING for them and
 // the slot falls through to the shell label. One marker in a fixed 16pt box: state changes never
 // move a pixel of layout.

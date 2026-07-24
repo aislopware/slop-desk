@@ -5,16 +5,14 @@
 // (``TabBadgeView`` — `#`/`∞`) plus the STATUS DOT at the right edge, swapping to the close `×`
 // under hover.
 //
-// Status speaks TWICE, in agreement (the T3 Code SidebarV2 pairing — mark + tinted label): the
-// title's own ink and weight carry the words (``StatusPresentation/attentionInk(_:)`` — amber =
-// a question waits; red = failed; green = unread finish, cleared on visit — plus the `.medium`
-// step the active card uses), and the trailing ``StatusDotView`` repeats the SAME ink in a fixed
-// right-edge column, so the two can never disagree about one pane. The mark's SHAPE is the
-// grammar: a dashed RING (static — T3 Code's `CircleDashedIcon`) means in flight (accent for a
-// working agent, muted for a running command), a green SOLID ring means an unread finish (the
-// loop closed), a FILLED dot means a question or failure waiting, an IDLE row mounts nothing.
-// The only motion anywhere is the working title's shimmer
-// (``WorkingShimmer``). The ink stays IN the title run and the mark — no row wash, no tinted
+// Status splits by CLASS, the T3 Code SidebarV2 grammar, and NOTHING animates: RUNNING is the
+// trailing ``StatusDotView`` ring (dashed — accent for a working agent, muted for a running
+// command — closing into the green SOLID ring for an unread finish), while WAITING is the
+// title's own ink (``StatusPresentation/attentionInk(_:)`` — amber = a question waits; red =
+// failed; green rides the finish alongside its ring — plus the `.medium` weight step the active
+// card uses). T3 Code mounts no icon for its waiting states — the tinted label alone — and the
+// title here IS that label, so a waiting row carries no mark and an IDLE row mounts nothing at
+// all. The ink stays IN the title run and the mark — no row wash, no tinted
 // fill: the rail is monochrome except the marks that carry state. ACTIVE is the raised card
 // (fill + 1px hairline; the cast shadow is light-theme-only). Nothing else rides the row: no
 // subtitle, no readout, no telemetry — the richness lives in the hover tooltip and the context
@@ -33,19 +31,19 @@ struct SlateTabRow: View {
     /// integration's title prefix). Display-only — the rename field seeds from the bare `title`.
     var agentMarker: Bool = false
     /// The fused status kind for the row — the FULL resolver output, busy tiers included.
-    /// Attention kinds recolour the TITLE's ink (the ink dialect) and fill the trailing status
-    /// mark; the busy tiers mount its muted ring; only the privilege markers (`#`/`∞`) occupy
-    /// the slot as TEXT (``TabBadgeView``).
+    /// Attention kinds recolour the TITLE's ink (the ink dialect; the unread finish also closes
+    /// the trailing ring); the busy tiers mount the mark's muted ring; only the privilege
+    /// markers (`#`/`∞`) occupy the slot as TEXT (``TabBadgeView``).
     var badge: TabBadgeKind?
-    /// Non-`nil` ⇒ a WORKING AGENT row: the title wears the working shimmer (the stepped dark-band
-    /// sweep — the title text IS the motion indicator; no glyph spins) on the primary ink. The
-    /// string is the terse state reading ("Agent working"), carried as the title's accessibility
-    /// value so VoiceOver keeps the state the spinner glyph used to speak. A running COMMAND never
-    /// sets this — its title (the command text) stands still.
+    /// Non-`nil` ⇒ a WORKING AGENT row: the title steps up to the primary ink and the trailing
+    /// mark rings on the accent — keyed on the RAW working status, so the badge gate can't kill
+    /// the mark. The string is the terse state reading ("Agent working"), carried as the title's
+    /// accessibility value so VoiceOver keeps the state the ring speaks visually. A running
+    /// COMMAND never sets this — its ring is the muted tier.
     var workingLabel: String?
     /// The resting trailing label — the pane's foreground process (`zsh`, `vim`), shown only when
     /// no privilege marker outranks it. `nil` ⇒ the slot rests empty (an AGENT row always passes
-    /// `nil`: the `✳` marker and the shimmer already say everything a trailing label would repeat).
+    /// `nil`: the `✳` marker and the mark already say everything a trailing label would repeat).
     var processLabel: String?
     /// Whether this pane's input gate is READ-ONLY — a small trailing lock glyph (the sidebar's
     /// read-only indicator, twin of the pane's `🔒 READ ONLY ×` pill).
@@ -98,10 +96,10 @@ struct SlateTabRow: View {
                         size: Slate.Typeface.body,
                         weight: active || attentionLabel != nil ? .medium : .regular,
                     ))
-                    .workingShimmer(workingLabel != nil, ink: titleInk)
+                    .foregroundStyle(titleInk)
                     .lineLimit(1)
-                    // The state the title's ink/motion speaks visually, kept legible for VoiceOver
-                    // (the trailing slot carries no lifecycle glyph to label).
+                    // The state the ink and the AX-hidden trailing mark speak visually, kept
+                    // legible for VoiceOver.
                     .accessibilityValue(workingLabel ?? attentionLabel ?? "")
             }
             Spacer(minLength: 6)
@@ -139,8 +137,8 @@ struct SlateTabRow: View {
     /// The title's ink. An ATTENTION state recolours the whole title run (marker included) on the
     /// hue budget — the ink dialect's entire rendering. Otherwise the live-otty ladder: a resting
     /// title reads on the SECONDARY ink; the active card's title steps up to primary (with the
-    /// weight bump), and a THINKING agent's title also steps up — the brighter base gives the
-    /// shimmer's dark band its full contrast range.
+    /// weight bump), and a THINKING agent's title also steps up — the row that is doing something
+    /// reads a shade brighter than the ones that aren't.
     private var titleInk: Color {
         if let badge, let ink = StatusPresentation.attentionInk(badge) { return ink }
         return active || workingLabel != nil ? Slate.Text.primary : Slate.Text.secondary

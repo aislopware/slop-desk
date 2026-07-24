@@ -5,14 +5,14 @@ import SlopDeskAgentDetect
 /// `docs/ui-shell/spec/terminal-features__progress-state.md`, "Tab badges reflect the current progress state per tab").
 ///
 /// PURE value type, **no SwiftUI**: HOW each kind renders lives in the view layer
-/// (`SlopDeskClientUI` `StatusPresentation` — motion = the title's shimmer, attention = the title's
-/// ink, privilege = a trailing text marker) so this resolver unit-tests headless. There is
+/// (`SlopDeskClientUI` `StatusPresentation` — running = the trailing ring mark, attention = the
+/// title's ink, privilege = a trailing text marker) so this resolver unit-tests headless. There is
 /// deliberately **no `.none` case** — the absence of a state is `TabBadgeKind?` `nil`, not a sentinel.
 ///
 /// Each case maps to a state described in `progress-state.md` → "The full badge set".
 public enum TabBadgeKind: Equatable, Sendable {
     /// **Running (agent)** — a WORKING code agent (`ClaudeStatus.working`). The "agent is thinking"
-    /// state (the title's working shimmer in the view layer). Split from a program's
+    /// state (the accent ring mark in the view layer). Split from a program's
     /// ``commandRunning`` so the sidebar reads "the AGENT is working" distinctly from "a program reports
     /// progress" (herdr's `Working` vs `Unknown` distinction).
     case running
@@ -68,9 +68,9 @@ public enum TabBadgeKind: Equatable, Sendable {
         }
     }
 
-    /// Whether this badge is a BUSY tier — "something is in motion" (a working agent, an OSC 9;4
-    /// progress report, or a bare busy shell). The sidebar rows render busy through the TITLE's
-    /// working shimmer instead of a trailing glyph, so their slot keeps the shell label; the
+    /// Whether this badge is a BUSY tier — "something is in flight" (a working agent, an OSC 9;4
+    /// progress report, or a bare busy shell). The sidebar rows render busy as the trailing mark's
+    /// dashed ring, so their slot keeps the shell label; the
     /// attention kinds recolour the title's ink, and only the privilege markers occupy the slot.
     /// The disjoint complement of ``needsAttention`` plus the privilege markers.
     public var isBusyTier: Bool {

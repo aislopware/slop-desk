@@ -267,7 +267,7 @@ final class ClaudeStatusMachineTests: XCTestCase {
     }
 
     func testUserInputLeavesEveryOtherStatusAlone() {
-        // Typing while claude WORKS (a queued message) must not demote the shimmer; a keystroke
+        // Typing while claude WORKS (a queued message) must not demote the working state; a keystroke
         // must never conjure presence on an empty pane, wake an idle one, or cut the done decay.
         var m = ClaudeStatusMachine()
         XCTAssertEqual(m.reduce(.userInput, at: 0), .none, "no presence conjured")

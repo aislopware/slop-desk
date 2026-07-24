@@ -369,7 +369,7 @@ enum RailRowsBuilder {
     /// A PROGRAM-SET pane title cleaned for the sidebar row: one leading agent-activity glyph (any
     /// braille spinner frame U+2800–U+28FF, or one of `·✢✳✶✻✽`, an optional variation selector, then
     /// whitespace/end) is stripped — the glyph is claude's activity channel, already spoken by the
-    /// shimmer/badge — while any other leading symbol (`★ prod`) is user content and stays. Whitespace
+    /// ring mark/badge — while any other leading symbol (`★ prod`) is user content and stays. Whitespace
     /// trimmed; empty → `nil` so the caller's chain falls through. The herdr `stripped_terminal_title`
     /// rule. Pure + static so the cleanup is unit-pinned.
     static func strippedProgramTitle(_ title: String?) -> String? {

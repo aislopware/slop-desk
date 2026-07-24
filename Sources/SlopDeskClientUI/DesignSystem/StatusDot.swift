@@ -1,25 +1,22 @@
 // StatusDot — the sidebar row's trailing status mark, ported from T3 Code's SidebarV2 row: a
 // DASHED RING while something runs (lucide `circle-dashed`, mounted STATIC there — no spin, no
-// blink; the working MOTION lives in the text, which here is the title's shimmer), a SOLID RING
-// for the unread finish (the loop closed — same silhouette, whole stroke), and a flat FILLED dot
-// for the act-now states. The shape carries the grammar — broken outline = in flight, closed
-// outline = done, fill = a question/failure waiting on a human — so the states read apart at a
-// glance, in a fixed right-edge column that gives every stateful row weight on both ends.
-// NOTHING here animates: an idle row mounts nothing at all (T3 Code renders null — the resting
-// rail stays bare), and a running row's only motion is the title's own shimmer.
+// blink) and a SOLID RING for the unread finish (the loop closed — same silhouette, whole
+// stroke). Those are the ONLY marks: T3 Code's waiting states (approval / input / failed) mount
+// no icon at all — the tinted status label alone carries them, which here is the title's own
+// attention ink — and an idle row renders null, so the resting rail stays bare. The shape carries
+// the grammar — broken outline = in flight, closed outline = done — in a fixed right-edge column
+// that gives every running or freshly-finished row weight on both ends. NOTHING here animates,
+// and nothing anywhere else does either: the mark IS the running indicator (the title stands
+// still).
 
 #if canImport(SwiftUI)
 import SwiftUI
 
 /// The status mark's geometry — pure constants, unit-testable.
 enum StatusDot {
-    /// The mark's fixed footprint — one column width whichever shape mounts, so the right edge
-    /// never wavers between a ring row and a dot row.
+    /// The mark's fixed footprint — one column width, so the right edge never wavers between rows.
     static let footprint: CGFloat = 10
-    /// The filled dot's diameter — small enough to read as punctuation.
-    static let fillDiameter: CGFloat = 6
-    /// The dashed ring's diameter — a hair larger than the fill (an outline needs the extra size
-    /// to carry the same visual weight).
+    /// The ring's diameter within the footprint.
     static let ringDiameter: CGFloat = 8
     static let ringLineWidth: CGFloat = 1.5
     /// Dash segments around the ring — the lucide `circle-dashed` cut T3 Code mounts.
@@ -43,8 +40,6 @@ struct StatusDotStyle: Equatable {
         /// The solid ring — the run FINISHED, unread: the dashed loop closes into a whole
         /// stroke (same silhouette as the run it ends). Static.
         case solidRing
-        /// The flat filled dot — an act-now state (question / failure) waiting on a human. Static.
-        case fill
     }
 
     let ink: Color
@@ -64,17 +59,12 @@ struct StatusDotView: View {
                     .stroke(style.ink, style: StrokeStyle(
                         lineWidth: StatusDot.ringLineWidth, dash: StatusDot.ringDash,
                     ))
-                    .frame(width: StatusDot.ringDiameter, height: StatusDot.ringDiameter)
             case .solidRing:
                 Circle()
                     .stroke(style.ink, lineWidth: StatusDot.ringLineWidth)
-                    .frame(width: StatusDot.ringDiameter, height: StatusDot.ringDiameter)
-            case .fill:
-                Circle()
-                    .fill(style.ink)
-                    .frame(width: StatusDot.fillDiameter, height: StatusDot.fillDiameter)
             }
         }
+        .frame(width: StatusDot.ringDiameter, height: StatusDot.ringDiameter)
         .frame(width: StatusDot.footprint, height: StatusDot.footprint)
         .accessibilityHidden(true)
     }

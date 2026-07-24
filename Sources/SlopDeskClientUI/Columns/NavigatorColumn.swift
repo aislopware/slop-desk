@@ -717,7 +717,7 @@ private struct SidebarLiveRow: View {
         let active = row.id == store.tree.activeSession?.activeTab?.activePane
         let chrome = RailRowsBuilder.liveChrome(for: row, store: store)
         // The todo SCENT — the tooltip's live line while the agent is WORKING with a live inspector
-        // feed reporting an in-flight todo. Gated on the RAW status (like the shimmer below), not the
+        // feed reporting an in-flight todo. Gated on the RAW status (like the working reading below), not the
         // gated badge — the "Badge while processing" toggle silences the badge glyph, not the fact.
         let scent: String? = chrome.status == .working
             ? (store.handle(for: row.id) as? LivePaneSession)?.inspector.flatMap { vm in
@@ -752,8 +752,8 @@ private struct SidebarLiveRow: View {
         // The SHOWN title resolves in the live leaf (rename → agent-session intent → structural →
         // running command → last executed command → generic) because intent + blocks are volatile —
         // the memoized structural `row.title` stays put, so the search corpus never drifts. The
-        // running rung reuses `runningCommand` (busy-badge-gated, so it appears with the working
-        // shimmer's reveal and a fast `ls` never flashes in) — the row answers "what is this pane
+        // running rung reuses `runningCommand` (busy-badge-gated, so it appears with the busy
+        // ring's reveal and a fast `ls` never flashes in) — the row answers "what is this pane
         // running".
         let agent = RailRowsBuilder.isAgentSession(
             status: chrome.status, processLabel: chrome.processLabel,
@@ -787,13 +787,12 @@ private struct SidebarLiveRow: View {
             commandLine: runningCommand,
             title: shownTitle,
         )
-        // Only the AGENT tier animates the TITLE: a WORKING agent's title wears the working
-        // shimmer (also its AX value). Keyed on the RAW `.working` status, NOT the gated badge —
-        // "Badge while processing" (default OFF) masks `.working` out of the badge resolver, and
-        // reading the badge here silently killed the shimmer for every default-settings install
-        // (the thinking agent rendered exactly like an idle shell). The toggle governs the badge
-        // GLYPH; the shimmer is the title's own affordance. A running COMMAND's title stands
-        // still — its state reads from the trailing mark's muted ring instead.
+        // The WORKING-agent reading (the accent ring + primary title ink + AX value). Keyed on
+        // the RAW `.working` status, NOT the gated badge — "Badge while processing" (default OFF)
+        // masks `.working` out of the badge resolver, and reading the badge here would render a
+        // thinking agent exactly like an idle shell for every default-settings install. The
+        // toggle governs the badge GLYPH; the working reading is the row's own affordance. A
+        // running COMMAND reads from the trailing mark's muted ring instead.
         let busyLabel: String? = chrome.status == .working
             ? StatusPresentation.tabBadgeLabel(.running) : nil
         SlateTabRow(
@@ -810,7 +809,7 @@ private struct SidebarLiveRow: View {
             // shell (`zsh`): unlike the TITLE (where "zsh" says as little as "Terminal"), the
             // metadata slot answers "what is this pane running", and an idle shell row with an
             // empty slot reads as missing data. Only an AGENT row leaves it empty: the `✳` marker
-            // and the shimmer already say it, and any trailing text there just repeats them.
+            // and the mark already say it, and any trailing text there just repeats them.
             processLabel: agent ? nil : RailRowsBuilder.slotProcessName(chrome.processLabel),
             readOnly: chrome.readOnly,
             syncInput: store.syncInputArmed(for: row.id),
@@ -873,10 +872,10 @@ private struct IOSSidebarLiveRow: View {
             cwdTitle: RailRowsBuilder.cwdFolderName(row.cwd),
             fallback: fallbackTitle,
         )
-        // Same busy split as the macOS row: only the AGENT tier shimmers the TITLE (with the terse
-        // reading as its AX value), keyed on the RAW `.working` status — the badge gate must not
-        // kill the shimmer (see ``SidebarLiveRow``); a running command's title stands still — its
-        // state reads from the trailing mark's muted ring.
+        // Same busy split as the macOS row: only the AGENT tier gets the working reading (the
+        // terse label as the title's AX value, the accent ring as the mark), keyed on the RAW
+        // `.working` status — the badge gate must not kill it (see ``SidebarLiveRow``); a running
+        // command reads from the trailing mark's muted ring.
         let busyLabel: String? = chrome.status == .working
             ? StatusPresentation.tabBadgeLabel(.running) : nil
         HStack(spacing: 8) {
@@ -897,7 +896,7 @@ private struct IOSSidebarLiveRow: View {
                             ? StatusPresentation.tabBadgeLabel(badge) : nil
                     }
                     Text(shownTitle)
-                        .workingShimmer(busyLabel != nil, ink: attentionInk ?? Slate.Text.primary)
+                        .foregroundStyle(attentionInk ?? Slate.Text.primary)
                         .lineLimit(1)
                         .accessibilityValue(busyLabel ?? attentionLabel ?? "")
                 }

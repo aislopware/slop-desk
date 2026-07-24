@@ -1,6 +1,6 @@
 // TabBadgePresentationTests — pins the pure view-side status map: the INK DIALECT. A sidebar row
 // never mounts a lifecycle glyph — the attention states recolour the row's own TITLE ink
-// (`StatusPresentation.attentionInk`, all static hard cuts — motion belongs to the shimmer alone),
+// (`StatusPresentation.attentionInk`, all static hard cuts — running belongs to the ring mark),
 // and ONLY the privilege modifiers (`#`/`∞`) occupy the trailing slot
 // (`StatusPresentation.tabBadge`). `tabBadgeLabel` gives every kind a distinct non-empty AX/tooltip
 // string. Headless VALUE assertions — no SwiftUI render, no video/Metal/SCStream. (Ink colours are
@@ -19,8 +19,8 @@ final class TabBadgePresentationTests: XCTestCase {
     ]
 
     /// THE dialect contract: a kind carries attention ink EXACTLY when it is attention-class — the
-    /// states that wait on you recolour the title, and nothing else does (motion is the shimmer's
-    /// job, privilege is slot text, so the ink can never double-book a row).
+    /// states that wait on you recolour the title, and nothing else does (running is the ring
+    /// mark's job, privilege is slot text, so the ink can never double-book a row).
     func testAttentionInkCoversExactlyTheAttentionClass() {
         for kind in allKinds {
             if kind.needsAttention {
@@ -37,8 +37,8 @@ final class TabBadgePresentationTests: XCTestCase {
         }
     }
 
-    /// No lifecycle state mounts a trailing glyph — attention is ink, motion is shimmer, so the slot
-    /// stays free for the shell label / elapsed readout on every non-privilege row.
+    /// No lifecycle state mounts trailing slot TEXT — attention is ink, running is the ring mark,
+    /// so the slot stays free for the shell label on every non-privilege row.
     func testLifecycleStatesMountNoSlotGlyph() {
         let lifecycle: [TabBadgeKind] = [
             .running, .commandRunning, .commandBusy, .completed, .finished, .error, .awaitingInput,

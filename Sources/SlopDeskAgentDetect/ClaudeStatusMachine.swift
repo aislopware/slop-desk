@@ -175,7 +175,7 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
     /// screen scrape), so it corroborates liveness where hooks have gaps — conservatively:
     /// - the SPINNER promotes to `.working` only while claude is already detected (a title never
     ///   conjures presence) and never clears an authoritative HOOK block;
-    /// - the REST prefix demotes ONLY a live `.working` → `.idle` (the missed-Stop stuck shimmer);
+    /// - the REST prefix demotes ONLY a live `.working` → `.idle` (the missed-Stop stuck working state);
     ///   `.done` keeps its decay window and a block keeps waiting;
     /// - any other claude-naming title stays the presence floor it always was.
     private mutating func applyTitle(_ title: String) {

@@ -622,7 +622,7 @@ private struct ShellSettingsTab: View {
                 isOn: $tabBadgeOnCommandAwaitInput,
             )
             // The busy reveal delay (`WorkspaceStore.paneShowsBusyDot`): how long a command must run
-            // before the row shows it as busy (the title's working shimmer + running-command title) —
+            // before the row shows it as busy (the trailing ring + running-command title) —
             // a fast `ls` never flashes the rail. 0 = immediate.
             LabeledContent("Busy reveal delay") {
                 HStack(spacing: Slate.Metric.space2) {

@@ -125,8 +125,7 @@ final class SlateSnapshotRender: XCTestCase {
         let store = makeSectionStore(key: key)
         let panel = VStack(alignment: .leading, spacing: 2) {
             SidebarSectionHeaderRow(store: store, title: "slop-desk", projectKey: key, count: 3)
-            // A WORKING agent row: the title wears the shimmer (static in this one-frame render)
-            // and the trailing slot carries the accent dashed ring.
+            // A WORKING agent row: the trailing slot carries the accent dashed ring.
             SlateTabRow(
                 title: "Claude Code", active: false, agentMarker: true,
                 workingLabel: "Agent working",

@@ -31,9 +31,9 @@ struct SlateStatusDot: View {
 ///   • `awaiting` → `?` bold in the act-now amber (answer me);
 ///   • `done`     → `●` (the quiet unread-finish dot, as the character a CLI would print).
 /// Mounted where ONE pane's agent state gets a compact readout (the iOS toolbar, the Peek & Reply
-/// header). The sidebar rows speak the same states through their own text instead — shimmer for
-/// motion, attention ink for the rest (``StatusPresentation/attentionInk(_:)``) — so no glyph column
-/// rides the rail.
+/// header). The sidebar rows speak the same states through the trailing ring mark and the title's
+/// attention ink instead (``StatusPresentation/statusDot(working:badge:)`` /
+/// ``StatusPresentation/attentionInk(_:)``) — so no glyph column rides the rail.
 /// The spinner is FRAME-STEPPED: hard glyph swaps on the wall clock off a fixed epoch, so every
 /// spinning mount steps in unison and a re-render lands mid-cycle instead of restarting it.
 /// Pure SwiftUI text — no video/capture (hang-safety #6).

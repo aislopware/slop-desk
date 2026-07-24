@@ -243,7 +243,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
         XCTAssertEqual(d.status, .working)
         let typed = d.userInput(bytes: Data("more context\r".utf8), at: 1)
         XCTAssertNil(typed.status, "typing mid-turn emits nothing")
-        XCTAssertEqual(d.status, .working, "the shimmer is untouched")
+        XCTAssertEqual(d.status, .working, "the working state is untouched")
     }
 
     /// Self-report beats the foreground heuristic: with NO claude present (presence would force
@@ -711,7 +711,7 @@ final class ClaudePaneDetectorTests: XCTestCase {
     // MARK: - OSC-title corroboration (Claude Code's own busy/rest telltale)
 
     /// The Braille-spinner title promotes a DETECTED claude to working; the `✳` rest title demotes
-    /// a live working back to idle — the missed-Stop stuck-shimmer corrector.
+    /// a live working back to idle — the missed-Stop stuck-working corrector.
     func testTitleSpinnerAndRestCorroborateLiveness() {
         var d = ClaudePaneDetector()
         _ = d.sample(name: "claude", at: 0) // presence → idle
