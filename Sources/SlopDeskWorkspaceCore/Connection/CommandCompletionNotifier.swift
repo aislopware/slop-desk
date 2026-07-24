@@ -182,7 +182,7 @@ public final class CommandCompletionNotifier {
 
     /// Posts a "command finished" notification IFF the ``NotificationPolicy`` allows it (Notify on Finish
     /// for a clean exit / Notify on Error Exit for a non-zero exit, then the Notify-While-Foreground tri-state
-    /// with the store-supplied `appActive` + `sourcePaneFocused`). There is no long-running floor here —
+    /// with the store-supplied `appActive` + `sourcePaneVisible`). There is no long-running floor here —
     /// the per-command gate is applied UPSTREAM in ``WorkspaceStore/handleCommandCompleted`` (the same policy,
     /// per-command + any duration), so a SHORT failing command notifies. This poster re-applies the policy as the
     /// foreground-gate actuator (defence-in-depth, agreeing with the store). `paneIDKey` (the
@@ -194,7 +194,7 @@ public final class CommandCompletionNotifier {
         durationMS: UInt32,
         paneIDKey: String? = nil,
         appActive: Bool,
-        sourcePaneFocused: Bool,
+        sourcePaneVisible: Bool,
         settings: NotificationSettings,
     ) {
         // There is no ~10s long-running floor here — the per-command gate lives UPSTREAM in the
@@ -207,7 +207,7 @@ public final class CommandCompletionNotifier {
         // a non-zero exit is `notifyOnError` (default ON).
         guard NotificationPolicy.shouldDeliver(
             event: .commandFinish(exit: exitCode),
-            appActive: appActive, sourcePaneFocused: sourcePaneFocused, settings: settings,
+            appActive: appActive, sourcePaneVisible: sourcePaneVisible, settings: settings,
         ) else { return }
         bounceDockIfBackgrounded(appActive: appActive)
 
@@ -258,7 +258,7 @@ public final class CommandCompletionNotifier {
     /// Posts an EXPLICIT (OSC 9 / 777 / 99) child-requested notification — OR a Claude agent edge (the
     /// `event` distinguishes them) — carrying `paneIDKey` in `userInfo` so a click can focus the originating
     /// pane (see ``PaneNotificationRouter``). Gated by the ``NotificationPolicy`` (the per-event toggle
-    /// + the Notify-While-Foreground tri-state) with the store-supplied `appActive` + `sourcePaneFocused`,
+    /// + the Notify-While-Foreground tri-state) with the store-supplied `appActive` + `sourcePaneVisible`,
     /// then the anti-flood limiter. Lazy-auth + best-effort like the long-command path; resolves the title
     /// fallback via the pure ``ExplicitNotificationContent``.
     public func notifyExplicit(
@@ -268,14 +268,14 @@ public final class CommandCompletionNotifier {
         title: String,
         body: String,
         appActive: Bool,
-        sourcePaneFocused: Bool,
+        sourcePaneVisible: Bool,
         settings: NotificationSettings,
     ) {
         // The per-event toggle (explicit OSC rides "Allow App Notifications"; an agent edge rides its
         // own toggle) + the Notify-While-Foreground gate. Checked FIRST so a suppressed notification neither
         // consumes a rate-limit token nor triggers the auth prompt.
         guard NotificationPolicy.shouldDeliver(
-            event: event, appActive: appActive, sourcePaneFocused: sourcePaneFocused, settings: settings,
+            event: event, appActive: appActive, sourcePaneVisible: sourcePaneVisible, settings: settings,
         ) else { return }
         // Anti-flood: drop a notification that exceeds the burst/refill budget (a hostile process must
         // not be able to bury the user under alerts). Checked BEFORE auth so a flood can't even trigger

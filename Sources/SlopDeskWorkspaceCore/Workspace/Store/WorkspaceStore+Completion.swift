@@ -138,7 +138,7 @@ public extension WorkspaceStore {
         let perCommand = NotificationPolicy.shouldDeliver(
             event: .commandFinish(exit: exitCode),
             appActive: isAppActive,
-            sourcePaneFocused: focused,
+            sourcePaneVisible: isSourcePaneVisible(id),
             settings: SettingsKey.notificationSettings,
         )
         // slopdesk's own "Long-Command Completion" feature stays an ADDITIONAL/separate authority: a LONG
@@ -186,19 +186,37 @@ public extension WorkspaceStore {
         return isAppActive && id == tree.activeSession?.activeTab?.activePane
     }
 
-    /// Whether pane `id` is the focused leaf RIGHT NOW — the `sourcePaneFocused` input the macOS notifier's
-    /// ``NotificationPolicy`` gate reads (E14/K9). A public wrapper over the B3 focus gate
-    /// (``isPaneFocused(_:)``) so the app shell can supply the Notify-While-Foreground tri-state input
-    /// without reaching into the store's internals.
+    /// Whether pane `id` is the focused leaf RIGHT NOW. A public wrapper over the B3 focus gate
+    /// (``isPaneFocused(_:)``) so the app shell can suppress the in-app toast for the pane the user
+    /// is actively looking at without reaching into the store's internals.
     func isSourcePaneFocused(_ id: PaneID) -> Bool { isPaneFocused(id) }
 
     /// Whether the pane whose id string (`PaneID.raw.uuidString`) matches is the focused leaf — the
-    /// `sourcePaneFocused` input for the notification sinks that carry only the pane-id STRING
+    /// string-keyed twin for the sinks that carry only the pane-id STRING
     /// (``WorkspaceStore/onLongCommandNotify`` / ``WorkspaceStore/onAgentAttention``). `false` for an
     /// unparseable / unknown id (a closed pane).
     func isSourcePaneFocused(byIDString idString: String) -> Bool {
         guard let uuid = UUID(uuidString: idString) else { return false }
         return isPaneFocused(PaneID(raw: uuid))
+    }
+
+    /// Whether pane `id` is VISIBLE to the user right now — the `sourcePaneVisible` input the
+    /// ``NotificationPolicy`` foreground gate reads. Visibility is wider than leaf focus: any split
+    /// of the active session's ACTIVE tab is on screen while the app is active (a working agent you
+    /// can watch needs no banner even when your cursor sits in a sibling pane), and a DETACHED pane
+    /// counts when its satellite window is key. Everything else (another tab, another session, the
+    /// app backgrounded) is not visible.
+    func isSourcePaneVisible(_ id: PaneID) -> Bool {
+        if let keySatellitePaneID, id == keySatellitePaneID { return true }
+        guard isAppActive, let activeTab = tree.activeSession?.activeTab else { return false }
+        return activeTab.allPaneIDs().contains(id)
+    }
+
+    /// The string-keyed twin of ``isSourcePaneVisible(_:)`` for the sinks that carry only the
+    /// pane-id STRING. `false` for an unparseable / unknown id (a closed pane).
+    func isSourcePaneVisible(byIDString idString: String) -> Bool {
+        guard let uuid = UUID(uuidString: idString) else { return false }
+        return isSourcePaneVisible(PaneID(raw: uuid))
     }
 
     /// Clears the badge on whatever leaf is the active one (called when the app returns active via the

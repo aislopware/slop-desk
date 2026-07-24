@@ -402,4 +402,56 @@ final class BackgroundCompletionWiringTests: XCTestCase {
         store.handleCommandCompleted(id: paneID, exitCode: 2, durationMS: longMS, paneTitle: "build")
         XCTAssertEqual(count, 1, "both authorities agreeing still deliver ONE notification (no double-banner)")
     }
+
+    // MARK: - isSourcePaneVisible (the NotificationPolicy foreground-gate input)
+
+    /// Visibility is WIDER than leaf focus: any split of the active tab is on screen, so a sibling
+    /// pane of the focused leaf reads visible (no banner for an agent you can watch), while a pane in
+    /// another tab — and everything once the app deactivates — reads not-visible.
+    func testSourcePaneVisibleCoversActiveTabSplitsNotOtherTabs() throws {
+        let store = makeStore()
+        let first = try XCTUnwrap(store.tree.allPaneIDs().first)
+        store.splitActivePane(axis: .horizontal, kind: .terminal)
+        let sibling = try XCTUnwrap(store.tree.allPaneIDs().first { $0 != first })
+        store.focusPaneTree(first)
+
+        XCTAssertTrue(store.isSourcePaneVisible(first), "the focused leaf is visible")
+        XCTAssertTrue(store.isSourcePaneVisible(sibling), "an unfocused SPLIT of the active tab is still on screen")
+        XCTAssertFalse(store.isSourcePaneFocused(sibling), "…while leaf FOCUS stays with the sibling's neighbour")
+
+        store.newTab(kind: .terminal)
+        XCTAssertFalse(store.isSourcePaneVisible(first), "another tab is now active — the old tab's panes are hidden")
+        XCTAssertFalse(store.isSourcePaneVisible(sibling))
+
+        let fresh = try XCTUnwrap(store.tree.activeSession?.activeTab?.allPaneIDs().first)
+        XCTAssertTrue(store.isSourcePaneVisible(fresh))
+        store.isAppActive = false
+        XCTAssertFalse(store.isSourcePaneVisible(fresh), "a backgrounded app shows nothing — no pane is visible")
+    }
+
+    /// A DETACHED pane lives outside every tab's split tree; it reads visible exactly while its
+    /// satellite window is key (the same truth ``WorkspaceStore/isPaneFocused(_:)`` consults).
+    func testSourcePaneVisibleFollowsSatelliteKey() throws {
+        let store = makeStore()
+        let first = try XCTUnwrap(store.tree.allPaneIDs().first)
+        store.splitActivePane(axis: .horizontal, kind: .terminal)
+        let second = try XCTUnwrap(store.tree.allPaneIDs().first { $0 != first })
+        store.detachPaneToWindow(second)
+
+        XCTAssertFalse(store.isSourcePaneVisible(second), "detached + not key — outside the active tab")
+        store.noteSatelliteKey(paneID: second, isKey: true)
+        XCTAssertTrue(store.isSourcePaneVisible(second), "the key satellite is what the user is looking at")
+        store.noteSatelliteKey(paneID: second, isKey: false)
+        XCTAssertFalse(store.isSourcePaneVisible(second))
+    }
+
+    /// The string-keyed twin parses the pane id and rejects garbage (a closed/unknown pane never
+    /// reads visible).
+    func testSourcePaneVisibleByIDString() throws {
+        let store = makeStore()
+        let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
+        XCTAssertTrue(store.isSourcePaneVisible(byIDString: paneID.raw.uuidString))
+        XCTAssertFalse(store.isSourcePaneVisible(byIDString: "not-a-uuid"))
+        XCTAssertFalse(store.isSourcePaneVisible(byIDString: UUID().uuidString), "an unknown pane is not visible")
+    }
 }

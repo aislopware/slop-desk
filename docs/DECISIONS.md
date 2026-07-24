@@ -2144,3 +2144,37 @@ suppressed because it restates the section header; "zsh" suppressed as meaningle
 "Terminal" — which says even less than the folder. `liveRowTitle` gained a `cwdTitle` rung
 between the last-command history and the generic fallback: the basepath is still an identity,
 even when it repeats the header. "Terminal" now appears only while the pane has no cwd at all.
+
+## Notifications: one banner per agent event + visibility-honouring gates (2026-07-24)
+
+- **Decision (host, type-25 gate):** while a pane's agent status is HOOK-established
+  (`ClaudePaneDetector.suppressesChildNotifications` = the existing `hookAuthority`), the agent's
+  OWN terminal notification (OSC 9 / 777 / 99) is DROPPED at the sniff point
+  (`MuxChannelSession.ingestPTYChunk`'s FIFO filter — the same chokepoint that already strips the
+  raw OSC-7 `.cwd`). A hook-free pane keeps the OSC path untouched.
+- **Why:** Claude Code titles under `TERM=xterm-ghostty` resolve its notification channel to
+  `ghostty` and it posts its own OSC terminal notification for the very edges the hooks already
+  report (permission prompt, idle/waiting) — so a hooked pane raised TWO system banners per event:
+  the type-27 agent edge (`agentAwaitInput`/`agentTaskComplete`, rich, host-truth) plus the blind
+  OSC copy riding type 25 through the "Allow App Notifications" master. The OSC copy predates the
+  hooks (it was the only signal then) and is pure duplication once hook truth exists. Host-side
+  suppression (not client de-dupe) because the authority signal lives host-side and is
+  race-free: `hookAuthority` is set from the FIRST hook fold (SessionStart), long before any
+  mid-session OSC 9 arrives; a timing-window de-dupe on the client would have to guess. The gate
+  dies with the authority (SessionEnd / absence termination), so whatever runs in the pane next
+  gets its OSC notifications back.
+- **Decision (client, visibility gate):** the `NotificationPolicy` foreground-gate input is now
+  `sourcePaneVisible` — the user can SEE the source pane (any split of the active session's
+  ACTIVE tab while the app is active, or its satellite window is key) — computed by
+  `WorkspaceStore.isSourcePaneVisible`. `.tabUnfocused` therefore honours its own label ("Only
+  when source tab is unfocused"): previously it read LEAF focus, so a visible split you were
+  watching still bannered. The completion BADGE keeps the narrower leaf-focus gate (a badge on a
+  visible-but-unfocused split is signal, not noise).
+- **Decision (client, toast focus gate):** the in-app toasts (explicit OSC, agent attention,
+  long-command) are suppressed when the SOURCE pane is the focused leaf — the user is watching
+  the event happen in the pane itself; a toast on top of it is noise. Unfocused panes (other
+  splits, other tabs, backgrounded app) keep their toasts — on iOS the toast is the only
+  notification surface.
+- The OS-banner defaults are unchanged: app frontmost + `Notify While Foreground = Off` still
+  suppresses every banner; a backgrounded app still always delivers (that is what notifications
+  are for).

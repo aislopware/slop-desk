@@ -12,7 +12,8 @@ public enum NotifyWhileForeground: String, CaseIterable, Sendable, Equatable {
     case off
     /// Always show the banner, even when the app is frontmost.
     case always
-    /// Show the banner only when the notification's SOURCE tab is NOT the active one
+    /// Show the banner only when the notification's SOURCE pane is NOT visible — its tab is not
+    /// the active one (any split of the active tab is on screen, so it counts as visible)
     /// (`tab-unfocused`). The picker renders this as "Only when source tab is unfocused".
     case tabUnfocused = "tab-unfocused"
 
@@ -62,7 +63,7 @@ public enum NotificationEvent: Sendable, Equatable {
 }
 
 /// The resolved per-event notification toggles + the foreground policy — the headless inputs to
-/// ``NotificationPolicy/shouldDeliver(event:appActive:sourcePaneFocused:settings:)``. The default values are
+/// ``NotificationPolicy/shouldDeliver(event:appActive:sourcePaneVisible:settings:)``. The default values are
 /// the shipped notification defaults, so `NotificationSettings()` is the shipped baseline (and a
 /// test can pin those defaults). The live values are resolved from ``SettingsKey/notificationSettings``.
 public struct NotificationSettings: Sendable, Equatable {
@@ -104,22 +105,26 @@ public struct NotificationSettings: Sendable, Equatable {
 /// whole truth table is unit-tested without `UNUserNotificationCenter` (the macOS poster
 /// ``CommandCompletionNotifier`` is the thin actuator that calls this). Two stages, both must pass:
 ///  1. the per-event toggle (``eventEnabled(_:settings:)``) — each event has exactly one toggle;
-///  2. the Notify-While-Foreground gate (``foregroundGate(appActive:sourcePaneFocused:policy:)``) — only
+///  2. the Notify-While-Foreground gate (``foregroundGate(appActive:sourcePaneVisible:policy:)``) — only
 ///     relevant while the app is frontmost; when the app is backgrounded the OS shows the banner normally,
 ///     so the gate is a pass-through.
 ///
 /// The foreground gate must ACTUALLY gate — kept as a pure function so the invariant is directly testable.
 public enum NotificationPolicy {
     /// Whether `event` is delivered given the live focus/app-active state and the resolved `settings`.
+    /// `sourcePaneVisible` = the user can SEE the source pane right now — it sits in the active
+    /// session's ACTIVE tab (any split, not just the focused leaf) while the app is active, or its
+    /// satellite window is key. Visibility, not leaf focus, is the gate input: a split pane you are
+    /// watching work needs no banner even though your cursor is in its sibling.
     public static func shouldDeliver(
         event: NotificationEvent,
         appActive: Bool,
-        sourcePaneFocused: Bool,
+        sourcePaneVisible: Bool,
         settings: NotificationSettings,
     ) -> Bool {
         guard eventEnabled(event, settings: settings) else { return false }
         return foregroundGate(
-            appActive: appActive, sourcePaneFocused: sourcePaneFocused, policy: settings.notifyWhileForeground,
+            appActive: appActive, sourcePaneVisible: sourcePaneVisible, policy: settings.notifyWhileForeground,
         )
     }
 
@@ -145,15 +150,16 @@ public enum NotificationPolicy {
 
     /// Stage 2 — the Notify-While-Foreground gate. When the app is NOT active the OS shows the banner
     /// normally, so this is always a pass. While the app IS active the tri-state decides: `.off` suppresses,
-    /// `.always` shows, `.tabUnfocused` shows only when the source pane is not the focused one.
+    /// `.always` shows, `.tabUnfocused` shows only when the source pane is NOT visible (its tab is not
+    /// the active one — honouring the setting's "source tab" label; a visible split needs no banner).
     static func foregroundGate(
-        appActive: Bool, sourcePaneFocused: Bool, policy: NotifyWhileForeground,
+        appActive: Bool, sourcePaneVisible: Bool, policy: NotifyWhileForeground,
     ) -> Bool {
         guard appActive else { return true }
         switch policy {
         case .off: return false
         case .always: return true
-        case .tabUnfocused: return !sourcePaneFocused
+        case .tabUnfocused: return !sourcePaneVisible
         }
     }
 }

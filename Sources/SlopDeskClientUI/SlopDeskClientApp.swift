@@ -319,31 +319,34 @@ public struct SlopDeskClientApp: App {
         #endif
 
         // Surface the SAME background events as IN-APP toasts on BOTH platforms. A toast
-        // is in-app UI, INDEPENDENT of the OS-notification setting — push it unconditionally; the macOS
+        // is in-app UI, INDEPENDENT of the OS-notification setting — but it respects FOCUS: the pane the
+        // user is actively looking at gets no toast (they are watching the event happen). The macOS
         // `UNUserNotification` is gated by the pure ``NotificationPolicy`` (the per-event toggle +
         // the Notify-While-Foreground tri-state), applied inside the notifier with the store-supplied
-        // appActive + sourcePaneFocused. Each toast carries a stable `pane.<key>` id so a newer event for the
+        // appActive + sourcePaneVisible. Each toast carries a stable `pane.<key>` id so a newer event for the
         // same pane REPLACES the old one (the coordinator's de-dupe), and a flavour matching the event class.
         store.onPaneNotification = { [weak overlay, weak store] paneID, paneTitle, title, body in
             // An `slopdesk watch` finish carries the private WatchNotificationMarker sentinel in its
             // title — route it to `.watchFinish` (gated by Notify on Watch Finish) with the marker STRIPPED;
             // every other explicit notification stays `.explicitOSC` (the master switch).
             let (event, displayTitle) = NotificationEvent.classifyExplicit(title: title, body: body)
+            guard let store else { return }
             // SECURITY: the toast is in-app UI and — on iOS — the ONLY notification surface, so the secret
             // redaction the macOS banner (`CommandCompletionNotifier`) and the pane title
             // (`PanePresentation`) apply must ALSO run here, or an OSC 9/777 title/body carrying a token is
             // shown verbatim. Done once at the construction site (`Toast.explicitOSC`) so both platforms benefit.
-            overlay?.pushToast(Toast.explicitOSC(paneIDRaw: paneID.raw, title: displayTitle, body: body))
+            if !store.isSourcePaneFocused(paneID) {
+                overlay?.pushToast(Toast.explicitOSC(paneIDRaw: paneID.raw, title: displayTitle, body: body))
+            }
             #if os(macOS)
             // The OS banner goes through the pure NotificationPolicy (the per-event toggle resolved
-            // above + the Notify-While-Foreground tri-state) — the store supplies appActive + whether the SOURCE
-            // pane is the focused one. The in-app toast above stays unconditional.
-            guard let store else { return }
+            // above + the Notify-While-Foreground tri-state) — the store supplies appActive + whether the
+            // SOURCE pane is visible (its tab on screen / its satellite key).
             explicitNotifier.notifyExplicit(
                 event: event,
                 paneIDKey: paneID.raw.uuidString, paneTitle: paneTitle, title: displayTitle, body: body,
                 appActive: store.isAppActive,
-                sourcePaneFocused: store.isSourcePaneFocused(paneID),
+                sourcePaneVisible: store.isSourcePaneVisible(paneID),
                 settings: SettingsKey.notificationSettings,
             )
             #endif
@@ -378,14 +381,18 @@ public struct SlopDeskClientApp: App {
             )
         }
         store.onLongCommandNotify = { [weak overlay, weak store] paneIDKey, paneTitle, exitCode, durationMS in
-            // The store fires this ONLY for an unfocused, genuinely-long command (its own gate), so a toast
-            // here is the background "your build finished" cue. SECURITY: `paneTitle` is the live OSC 0/2 pane
+            // The background "your build finished" cue. FOCUS-gated like the other toasts: the per-command
+            // policy path can authorise the sink while the source pane is the focused one (e.g. Notify While
+            // Foreground = Always), and the user watching the command exit needs no toast over it.
+            // SECURITY: `paneTitle` is the live OSC 0/2 pane
             // title — remote/PTY-settable text (often the running command line such as `mysql -pSECRET`), and
             // the toast is the ONLY notification surface on iOS, so the title is masked at the single
             // construction site (`Toast.longCommand`) for parity with the macOS banner + the OSC toast.
-            overlay?.pushToast(Toast.longCommand(
-                paneIDKey: paneIDKey, paneTitle: paneTitle, exitCode: exitCode, durationMS: durationMS,
-            ))
+            if store?.isSourcePaneFocused(byIDString: paneIDKey) == false {
+                overlay?.pushToast(Toast.longCommand(
+                    paneIDKey: paneIDKey, paneTitle: paneTitle, exitCode: exitCode, durationMS: durationMS,
+                ))
+            }
             #if os(macOS)
             // Route the OS banner through NotificationPolicy — Notify on Finish (clean exit, default
             // OFF) / Notify on Error Exit (non-zero, default ON) + the Notify-While-Foreground gate.
@@ -393,7 +400,7 @@ public struct SlopDeskClientApp: App {
             explicitNotifier.notifyIfLong(
                 paneTitle: paneTitle, exitCode: exitCode, durationMS: durationMS, paneIDKey: paneIDKey,
                 appActive: store.isAppActive,
-                sourcePaneFocused: store.isSourcePaneFocused(byIDString: paneIDKey),
+                sourcePaneVisible: store.isSourcePaneVisible(byIDString: paneIDKey),
                 settings: SettingsKey.notificationSettings,
             )
             #endif
@@ -404,24 +411,28 @@ public struct SlopDeskClientApp: App {
                 guard let detail, !detail.isEmpty else { return headline }
                 return "\(headline) — \(detail)"
             }()
+            guard let store else { return }
             // Agent-needs-input is the highest-signal background event → `.attention`; a finish is `.success`.
+            // FOCUS-gated like the OSC toast: the agent pane the user is watching announces its own edge
+            // on screen (the blocked prompt / finished turn is right there) — no toast on top of it.
             // The agent `detail` is host-provided (Claude label); mask any secret in it (and the name) for
             // the same reason as the OSC toast above — the toast is the only iOS notification surface.
-            overlay?.pushToast(Toast(
-                id: "pane.\(paneIDKey)",
-                flavor: needsInput ? .attention : .success,
-                title: Toast.redactSecretsIfEnabled(name), body: Toast.redactSecretsIfEnabled(body),
-            ))
+            if !store.isSourcePaneFocused(byIDString: paneIDKey) {
+                overlay?.pushToast(Toast(
+                    id: "pane.\(paneIDKey)",
+                    flavor: needsInput ? .attention : .success,
+                    title: Toast.redactSecretsIfEnabled(name), body: Toast.redactSecretsIfEnabled(body),
+                ))
+            }
             #if os(macOS)
             // Agent edges (Claude-only, reusing AttentionSupervision) ride their OWN per-event
             // toggles — awaiting-input vs task-complete — NOT the shell-app master switch, then the
             // Notify-While-Foreground gate.
-            guard let store else { return }
             explicitNotifier.notifyExplicit(
                 event: needsInput ? .agentAwaitInput : .agentTaskComplete,
                 paneIDKey: paneIDKey, paneTitle: name, title: name, body: body,
                 appActive: store.isAppActive,
-                sourcePaneFocused: store.isSourcePaneFocused(byIDString: paneIDKey),
+                sourcePaneVisible: store.isSourcePaneVisible(byIDString: paneIDKey),
                 settings: SettingsKey.notificationSettings,
             )
             #endif

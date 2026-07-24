@@ -37,8 +37,8 @@ final class NotificationPolicyTests: XCTestCase {
     func testExplicitOSCRidesMasterSwitch() {
         let on = NotificationSettings(appNotificationsEnabled: true)
         let off = NotificationSettings(appNotificationsEnabled: false)
-        XCTAssertTrue(deliver(.explicitOSC, appActive: false, focused: false, settings: on))
-        XCTAssertFalse(deliver(.explicitOSC, appActive: false, focused: false, settings: off))
+        XCTAssertTrue(deliver(.explicitOSC, appActive: false, visible: false, settings: on))
+        XCTAssertFalse(deliver(.explicitOSC, appActive: false, visible: false, settings: off))
     }
 
     /// A clean exit (0 / nil) rides Notify-on-Finish; a non-zero exit rides Notify-on-Error — independent.
@@ -46,21 +46,21 @@ final class NotificationPolicyTests: XCTestCase {
         // Defaults: finish OFF, error ON.
         let d = NotificationSettings()
         XCTAssertFalse(
-            deliver(.commandFinish(exit: 0), appActive: false, focused: false, settings: d),
+            deliver(.commandFinish(exit: 0), appActive: false, visible: false, settings: d),
             "a clean exit does not notify by default (Notify on Finish OFF)",
         )
         XCTAssertFalse(
-            deliver(.commandFinish(exit: nil), appActive: false, focused: false, settings: d),
+            deliver(.commandFinish(exit: nil), appActive: false, visible: false, settings: d),
             "a nil exit is treated as a clean exit → Notify on Finish OFF",
         )
         XCTAssertTrue(
-            deliver(.commandFinish(exit: 1), appActive: false, focused: false, settings: d),
+            deliver(.commandFinish(exit: 1), appActive: false, visible: false, settings: d),
             "a non-zero exit notifies by default (Notify on Error ON)",
         )
         // Flip both toggles → the split inverts.
         let flipped = NotificationSettings(notifyOnFinish: true, notifyOnError: false)
-        XCTAssertTrue(deliver(.commandFinish(exit: 0), appActive: false, focused: false, settings: flipped))
-        XCTAssertFalse(deliver(.commandFinish(exit: 1), appActive: false, focused: false, settings: flipped))
+        XCTAssertTrue(deliver(.commandFinish(exit: 0), appActive: false, visible: false, settings: flipped))
+        XCTAssertFalse(deliver(.commandFinish(exit: 1), appActive: false, visible: false, settings: flipped))
     }
 
     /// Watch-finish and the two agent events each ride their own toggle.
@@ -68,19 +68,19 @@ final class NotificationPolicyTests: XCTestCase {
         let allOff = NotificationSettings(
             notifyOnWatchFinish: false, agentNotifyTaskComplete: false, agentNotifyAwaitInput: false,
         )
-        XCTAssertFalse(deliver(.watchFinish, appActive: false, focused: false, settings: allOff))
-        XCTAssertFalse(deliver(.agentTaskComplete, appActive: false, focused: false, settings: allOff))
-        XCTAssertFalse(deliver(.agentAwaitInput, appActive: false, focused: false, settings: allOff))
+        XCTAssertFalse(deliver(.watchFinish, appActive: false, visible: false, settings: allOff))
+        XCTAssertFalse(deliver(.agentTaskComplete, appActive: false, visible: false, settings: allOff))
+        XCTAssertFalse(deliver(.agentAwaitInput, appActive: false, visible: false, settings: allOff))
 
         let allOn = NotificationSettings() // watch + both agent toggles default ON
-        XCTAssertTrue(deliver(.watchFinish, appActive: false, focused: false, settings: allOn))
-        XCTAssertTrue(deliver(.agentTaskComplete, appActive: false, focused: false, settings: allOn))
-        XCTAssertTrue(deliver(.agentAwaitInput, appActive: false, focused: false, settings: allOn))
+        XCTAssertTrue(deliver(.watchFinish, appActive: false, visible: false, settings: allOn))
+        XCTAssertTrue(deliver(.agentTaskComplete, appActive: false, visible: false, settings: allOn))
+        XCTAssertTrue(deliver(.agentAwaitInput, appActive: false, visible: false, settings: allOn))
 
         // The two agent toggles are NOT coupled: await-input ON while task-complete OFF.
         let split = NotificationSettings(agentNotifyTaskComplete: false, agentNotifyAwaitInput: true)
-        XCTAssertFalse(deliver(.agentTaskComplete, appActive: false, focused: false, settings: split))
-        XCTAssertTrue(deliver(.agentAwaitInput, appActive: false, focused: false, settings: split))
+        XCTAssertFalse(deliver(.agentTaskComplete, appActive: false, visible: false, settings: split))
+        XCTAssertTrue(deliver(.agentAwaitInput, appActive: false, visible: false, settings: split))
     }
 
     // MARK: - Explicit-notification classification (watch-finish marker vs generic OSC)
@@ -99,7 +99,7 @@ final class NotificationPolicyTests: XCTestCase {
         XCTAssertEqual(event, .watchFinish)
         XCTAssertEqual(displayTitle, "", "the private marker is stripped from the shown title")
         XCTAssertFalse(
-            deliver(event, appActive: false, focused: false, settings: s),
+            deliver(event, appActive: false, visible: false, settings: s),
             "watch banner must NOT deliver when Notify on Watch Finish is OFF, even with the master switch ON",
         )
 
@@ -107,13 +107,13 @@ final class NotificationPolicyTests: XCTestCase {
         let (generic, genericTitle) = NotificationEvent.classifyExplicit(title: "CI", body: "green")
         XCTAssertEqual(generic, .explicitOSC)
         XCTAssertEqual(genericTitle, "CI")
-        XCTAssertTrue(deliver(generic, appActive: false, focused: false, settings: s))
+        XCTAssertTrue(deliver(generic, appActive: false, visible: false, settings: s))
 
         // Master OFF + watch ON: the watch banner STILL delivers — proving the two toggles are decoupled.
         let s2 = NotificationSettings(appNotificationsEnabled: false, notifyOnWatchFinish: true)
-        XCTAssertTrue(deliver(.watchFinish, appActive: false, focused: false, settings: s2))
+        XCTAssertTrue(deliver(.watchFinish, appActive: false, visible: false, settings: s2))
         XCTAssertFalse(
-            deliver(.explicitOSC, appActive: false, focused: false, settings: s2),
+            deliver(.explicitOSC, appActive: false, visible: false, settings: s2),
             "a generic OSC notification is gated OFF by the master switch independent of the watch toggle",
         )
     }
@@ -127,7 +127,7 @@ final class NotificationPolicyTests: XCTestCase {
             for focused in [true, false] {
                 let s = NotificationSettings(notifyWhileForeground: policy)
                 XCTAssertTrue(
-                    deliver(.explicitOSC, appActive: false, focused: focused, settings: s),
+                    deliver(.explicitOSC, appActive: false, visible: focused, settings: s),
                     "backgrounded app delivers under \(policy)/focused=\(focused)",
                 )
             }
@@ -137,27 +137,28 @@ final class NotificationPolicyTests: XCTestCase {
     /// `.off` while frontmost suppresses — focused or not (the default; the system suppresses banners).
     func testForegroundOffSuppresses() {
         let s = NotificationSettings(notifyWhileForeground: .off)
-        XCTAssertFalse(deliver(.explicitOSC, appActive: true, focused: true, settings: s))
-        XCTAssertFalse(deliver(.explicitOSC, appActive: true, focused: false, settings: s))
+        XCTAssertFalse(deliver(.explicitOSC, appActive: true, visible: true, settings: s))
+        XCTAssertFalse(deliver(.explicitOSC, appActive: true, visible: false, settings: s))
     }
 
     /// `.always` while frontmost delivers — focused or not.
     func testForegroundAlwaysDelivers() {
         let s = NotificationSettings(notifyWhileForeground: .always)
-        XCTAssertTrue(deliver(.explicitOSC, appActive: true, focused: true, settings: s))
-        XCTAssertTrue(deliver(.explicitOSC, appActive: true, focused: false, settings: s))
+        XCTAssertTrue(deliver(.explicitOSC, appActive: true, visible: true, settings: s))
+        XCTAssertTrue(deliver(.explicitOSC, appActive: true, visible: false, settings: s))
     }
 
-    /// `.tabUnfocused` while frontmost delivers ONLY when the source pane is not the focused one.
-    func testForegroundTabUnfocusedGatesOnSourceFocus() {
+    /// `.tabUnfocused` while frontmost delivers ONLY when the source pane is not VISIBLE — the gate
+    /// input is visibility (any split of the active tab counts), honouring the "source tab" label.
+    func testForegroundTabUnfocusedGatesOnSourceVisibility() {
         let s = NotificationSettings(notifyWhileForeground: .tabUnfocused)
         XCTAssertFalse(
-            deliver(.explicitOSC, appActive: true, focused: true, settings: s),
-            "the source tab IS focused → suppressed",
+            deliver(.explicitOSC, appActive: true, visible: true, settings: s),
+            "the source pane is visible (its tab is active) → suppressed",
         )
         XCTAssertTrue(
-            deliver(.explicitOSC, appActive: true, focused: false, settings: s),
-            "the source tab is unfocused → delivered",
+            deliver(.explicitOSC, appActive: true, visible: false, settings: s),
+            "the source pane is in another tab → delivered",
         )
     }
 
@@ -166,7 +167,7 @@ final class NotificationPolicyTests: XCTestCase {
     func testDisabledToggleSuppressesEvenWithAlways() {
         let s = NotificationSettings(notifyOnFinish: false, notifyWhileForeground: .always)
         XCTAssertFalse(
-            deliver(.commandFinish(exit: 0), appActive: true, focused: false, settings: s),
+            deliver(.commandFinish(exit: 0), appActive: true, visible: false, settings: s),
             "Notify on Finish OFF suppresses even when the foreground policy would allow",
         )
     }
@@ -174,10 +175,10 @@ final class NotificationPolicyTests: XCTestCase {
     // MARK: helper
 
     private func deliver(
-        _ event: NotificationEvent, appActive: Bool, focused: Bool, settings: NotificationSettings,
+        _ event: NotificationEvent, appActive: Bool, visible: Bool, settings: NotificationSettings,
     ) -> Bool {
         NotificationPolicy.shouldDeliver(
-            event: event, appActive: appActive, sourcePaneFocused: focused, settings: settings,
+            event: event, appActive: appActive, sourcePaneVisible: visible, settings: settings,
         )
     }
 }

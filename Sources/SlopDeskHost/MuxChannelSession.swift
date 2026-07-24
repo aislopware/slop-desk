@@ -1605,8 +1605,24 @@ final class MuxChannelSession: @unchecked Sendable {
         // this batch): the raw sniffed OSC-7 `.cwd` must not ALSO ride the FIFO — pre-warm-up plugin
         // noise would reach the client unfiltered, and a probe-beaten stale OSC-7 would arrive at
         // drain time AFTER (and client-side overwrite) the probed truth emitted above.
+        // Type-25 is likewise hook-gated: while the pane's agent status is hook-established, the
+        // agent's OWN terminal notification (OSC 9/777/99) duplicates the type-27 edge the client
+        // already banners — drop it here so one blocked prompt raises ONE notification. A hook-free
+        // pane keeps the OSC path (its only signal). The lock is taken only when a notification is
+        // actually in the batch, so the steady chunk stream never pays it.
+        let dropChildNotifications: Bool = {
+            let hasNotification = controlMsgs.contains { message in
+                if case .notification = message { return true }
+                return false
+            }
+            guard hasNotification else { return false }
+            agentDetectLock.lock()
+            defer { agentDetectLock.unlock() }
+            return agentDetector.suppressesChildNotifications
+        }()
         let fifoControl = controlMsgs.filter { message in
             if case .cwd = message { return false }
+            if case .notification = message, dropChildNotifications { return false }
             return true
         }
         // Append-then-yield (no lost wake): the pending bufferingNewest(1) wake always

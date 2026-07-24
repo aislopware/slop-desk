@@ -753,4 +753,32 @@ final class ClaudePaneDetectorTests: XCTestCase {
         _ = d.title("✳ Claude Code", at: 2)
         XCTAssertEqual(d.status, .done, "the rest title respects the done decay window")
     }
+
+    // MARK: - suppressesChildNotifications (the host's type-25 duplicate gate)
+
+    /// The OSC-notification suppression follows the HOOK authority exactly: false for a fresh /
+    /// presence-only / title-only detection (the blind OSC 9 is the pane's only signal there), true
+    /// from the first hook fold (the type-27 edge now owns notification duty), and false again once
+    /// a genuine absence terminates the session (whatever runs in the pane next keeps its OSC path).
+    func testChildNotificationSuppressionTracksHookAuthority() {
+        var d = ClaudePaneDetector()
+        XCTAssertFalse(d.suppressesChildNotifications, "fresh detector — nothing to suppress")
+
+        // Presence + busy title = the hook-FREE detection mix — the OSC notification must pass.
+        _ = d.sample(name: "claude", at: 0)
+        _ = d.title("⠋ thinking", at: 1)
+        XCTAssertFalse(
+            d.suppressesChildNotifications,
+            "screen-only detection keeps the OSC path — it is the only signal",
+        )
+
+        // First hook fold → the type-27 edge owns notifications; the blind OSC copy is redundant.
+        _ = d.hook(bytes: json(#"{"hook_event_name":"SessionStart"}"#), at: 2)
+        XCTAssertTrue(d.suppressesChildNotifications, "hook truth live — the OSC duplicate is suppressed")
+
+        // A genuine absence past the grace window terminates → the authority (and suppression) die with it.
+        _ = d.sample(name: "zsh", at: 2 + ClaudePaneDetector.reportGraceWindow + 1)
+        XCTAssertEqual(d.status, .none)
+        XCTAssertFalse(d.suppressesChildNotifications, "claude gone — a later child's OSC notification passes again")
+    }
 }

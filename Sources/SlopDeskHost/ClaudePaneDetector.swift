@@ -136,6 +136,14 @@ public struct ClaudePaneDetector: Sendable {
     /// pane is blocked without scraping scrollback.
     public var statusLabel: String? { machine.displayLabel }
 
+    /// TRUE while the pane's status is HOOK/REPORT-established (`hookAuthority`): the agent's own
+    /// terminal notification (OSC 9 / 777 / 99 → wire type 25) is then REDUNDANT — the type-27
+    /// agent edge already raises the client's agent banner, so forwarding the blind OSC copy would
+    /// double-bang every permission/idle prompt. A hook-free pane (presence/title detection only)
+    /// keeps `false` — the OSC notification is its only signal and must pass through. Cleared with
+    /// the authority itself (SessionEnd / genuine absence termination).
+    public var suppressesChildNotifications: Bool { hookAuthority }
+
     // MARK: - Inputs (all fold through the ONE machine)
 
     /// Fold one foreground-process sample at `now`. Emits type-26 on a basename edge (display hint) and
