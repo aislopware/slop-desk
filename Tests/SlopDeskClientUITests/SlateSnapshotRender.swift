@@ -163,6 +163,49 @@ final class SlateSnapshotRender: XCTestCase {
         )
     }
 
+    // MARK: - Opt-in render of the sidebar connection footer (every LED state)
+
+    /// Renders the REAL ``ConnectionRailFooter`` (the two-line instrument block: gutter LED +
+    /// hostname + mono detail) in every LED state — healthy ping, degraded, dialing, and the dimmed
+    /// offline lamp — at the true sidebar width, under the footer's hairline, so the lamp colours +
+    /// glow and the rail alignment can be eyeballed headlessly. SAME opt-in idiom; writes
+    /// `sidebar-footer.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
+    @MainActor
+    func testRenderSidebarFooter() throws {
+        guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
+            throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the sidebar footer")
+        }
+        let panel = VStack(alignment: .leading, spacing: 0) {
+            footerRow(host: "mac-studio", led: .good, detail: ("12 ms", true))
+            footerRow(host: "mac-studio", led: .slow, detail: ("141 ms", true))
+            footerRow(host: "mac-studio", led: .bad, detail: ("312 ms", true))
+            footerRow(host: "mac-studio", led: .dialing, detail: ("reconnecting 3/20", false))
+            footerRow(host: "mac-studio", led: .dim, detail: ("disconnected", false))
+        }
+        .frame(width: Slate.Metric.sidebarWidth)
+        .background(Slate.Surface.ground)
+        try render(
+            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 240),
+            to: dir, named: "sidebar-footer.png",
+        )
+    }
+
+    /// One footer block under its hairline, mounted the way the sidebar composes it.
+    @MainActor
+    private func footerRow(
+        host: String, led: ConnectionCluster.LedState, detail: (String, Bool),
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Rectangle().fill(Slate.Line.subtle)
+                .frame(maxWidth: .infinity)
+                .frame(height: Slate.Metric.hairline)
+            ConnectionRailFooter(displayHost: host, led: led, detail: detail)
+                .padding(.vertical, Slate.Metric.space1)
+                .padding(.horizontal, Slate.Metric.space2)
+                .padding(.vertical, Slate.Metric.space2)
+        }
+    }
+
     /// A headless `.tree` store whose panes all live AT `key` (the project root), one blocked and one
     /// failed. The project's git summary is seeded directly (`internal(set)` via `@testable`) so the
     /// header's hover tooltip carries a real git line.

@@ -48,6 +48,42 @@ final class ConnectionClusterTests: XCTestCase {
         XCTAssertEqual(ConnectionCluster.health(isConnected: true, pingMS: 180.1), .bad)
     }
 
+    func testFooterLedStateMapsStatusAndPing() {
+        // Connected rides the ping classifier: good / slow / bad share the health thresholds.
+        XCTAssertEqual(ConnectionCluster.ledState(status: .connected, pingMS: nil), .good)
+        XCTAssertEqual(ConnectionCluster.ledState(status: .connected, pingMS: 50), .good)
+        XCTAssertEqual(ConnectionCluster.ledState(status: .connected, pingMS: 120), .slow)
+        XCTAssertEqual(ConnectionCluster.ledState(status: .connected, pingMS: 300), .bad)
+        // A dial in flight (first connect or a supervised retry) is its own LED state — amber
+        // "working on it", neither dead nor healthy.
+        XCTAssertEqual(ConnectionCluster.ledState(status: .connecting, pingMS: nil), .dialing)
+        XCTAssertEqual(
+            ConnectionCluster.ledState(status: .reconnecting(attempt: 3, nextRetry: nil), pingMS: nil),
+            .dialing,
+        )
+        // The settled not-connected states dim the LED; a stale ping value must not resurrect it.
+        XCTAssertEqual(ConnectionCluster.ledState(status: .disconnected, pingMS: 12), .dim)
+        XCTAssertEqual(ConnectionCluster.ledState(status: .unreachable, pingMS: nil), .dim)
+        XCTAssertEqual(ConnectionCluster.ledState(status: .failed("refused"), pingMS: nil), .dim)
+    }
+
+    func testFooterDetailLinePingWhenConnectedElseStatusWord() {
+        // Connected with a sample: the mono ping metric.
+        let ping = ConnectionCluster.footerDetail(status: .connected, pingMS: 11.4)
+        XCTAssertEqual(ping?.text, "11 ms")
+        XCTAssertEqual(ping?.isMetric, true)
+        // Connected before the first sample: the status word, not a blank line.
+        let fresh = ConnectionCluster.footerDetail(status: .connected, pingMS: nil)
+        XCTAssertEqual(fresh?.text, "connected")
+        XCTAssertEqual(fresh?.isMetric, false)
+        // Not connected: the short status word (campaign progress included), never a stale ping.
+        let retry = ConnectionCluster.footerDetail(
+            status: .reconnecting(attempt: 3, nextRetry: nil), pingMS: 12,
+        )
+        XCTAssertEqual(retry?.text, "reconnecting 3/20")
+        XCTAssertEqual(retry?.isMetric, false)
+    }
+
     @MainActor
     func testNoteStreamKbpsKeepsZeroAndDropsNegative() {
         let model = RemoteWindowModel()

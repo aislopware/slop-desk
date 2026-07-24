@@ -38,10 +38,10 @@ struct NavigatorColumn: View {
     /// provides its own toggle) omits the button.
     var chrome: WorkspaceChromeState?
 
-    /// The app-global connection — resting home is the SIDEBAR FOOTER (full-width, leading monogram + host
-    /// + trailing metrics — room to breathe; never jammed into the traffic-light strip). While the sidebar
-    /// is COLLAPSED the titlebar hosts the trailing fallback (`SlateTitlebar`). Threaded in like
-    /// `preferences`; `nil` (previews / iOS) omits the cluster.
+    /// The app-global connection — resting home is the SIDEBAR FOOTER (the two-line rail block:
+    /// LED in the gutter, host + mono detail on the text rail; never jammed into the traffic-light
+    /// strip). While the sidebar is COLLAPSED the titlebar hosts the trailing fallback
+    /// (`SlateTitlebar`). Threaded in like `preferences`; `nil` (previews / iOS) omits the cluster.
     var connection: AppConnection?
     /// The cross-container pane-drag rendezvous — makes every sidebar row a DROP TARGET for a live pane
     /// drag (the pane moves BESIDE that row's pane, its tab revealed) and mounts the New-Tab drop slot
@@ -540,8 +540,9 @@ enum SidebarRowTooltip {
 /// The project section header — ONE left rail with the rows beneath it: the group's FOLDER NAME
 /// (11pt system, semibold — the parent stands a step firmer than its rows) and the live git line
 /// under it (the instrument mono — data, not identity) both start on the SAME x as every row
-/// title; the disclosure chevron hangs in the gutter BEFORE the rail (the outline idiom: text
-/// aligns, the toggle lives left of it). The name is the basename `section.header` already carries
+/// title; the gutter BEFORE the rail carries the project's tint SWATCH at rest (``ProjectTint`` —
+/// a launch-stable identity colour per project) and the disclosure chevron under the pointer (the
+/// outline idiom: text aligns, the toggle lives left of it). The name is the basename `section.header` already carries
 /// (worktree-collision-qualified), never the full path; the path lives in the hover tooltip. While
 /// open the git line (`main ↑2 !3`) rides a SECOND full-width line so name and git never fight for
 /// one row; while collapsed the header folds to one line with the hidden-row COUNT trailing — mono
@@ -568,21 +569,36 @@ struct SidebarSectionHeaderRow: View {
     var rows: [RailRow] = []
     var onToggle: () -> Void = {}
 
+    /// Pointer-in-header — swaps the gutter's identity swatch for the collapse chevron.
+    @State private var hovering = false
+
     var body: some View {
         let summary = projectKey.flatMap { store.projectGitSummary[$0] }
-        // The rail: list inset (`space2`) + the chevron's `tabRowInset`-wide gutter = the SAME x
-        // the row titles start on (the rows' own horizontal content inset). Baseline-aligned: the
-        // chevron sits on the NAME line; the git line hangs beneath, on the rail.
+        // The rail: list inset (`space2`) + the gutter's `tabRowInset` width = the SAME x the row
+        // titles start on (the rows' own horizontal content inset). Baseline-aligned: the gutter
+        // glyph sits on the NAME line; the git line hangs beneath, on the rail.
         HStack(alignment: .firstTextBaseline, spacing: 0) {
-            // One glyph rotating 0°↔90° (not a `.chevronDown` swap) so the collapse toggle TURNS
-            // with the group animation instead of teleporting between two symbols. Leading-aligned
-            // in its gutter so it hugs the list edge, clear of the text rail.
+            // The gutter carries the project's IDENTITY at rest — the tint swatch (``ProjectTint``,
+            // launch-stable per key) — and trades it for the collapse chevron under the pointer
+            // (the Notion outline idiom: identity resting, affordance on approach). One chevron
+            // glyph rotating 0°↔90° (not a `.chevronDown` swap) so the toggle TURNS with the group
+            // animation instead of teleporting between two symbols. Leading-aligned in the gutter,
+            // clear of the text rail.
             Image(systemSymbol: .chevronRight)
                 // `.medium`, not `.semibold` — a 1px-stroke glyph; semibold at this size reads a
                 // full step chunkier.
                 .font(.system(size: Slate.Typeface.small, weight: .medium))
                 .foregroundStyle(Slate.State.header)
                 .rotationEffect(.degrees(collapsed ? 0 : 90))
+                .opacity(hovering ? 1 : 0)
+                .overlay {
+                    // A rounded SQUARE, deliberately not a circle — the dot shape is the status
+                    // language (attention pip / connection LED); identity gets its own geometry.
+                    RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall / 2)
+                        .fill(ProjectTint.color(for: projectKey))
+                        .frame(width: 8, height: 8)
+                        .opacity(hovering ? 0 : 1)
+                }
                 .frame(width: Slate.Metric.tabRowInset, alignment: .leading)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
@@ -618,6 +634,8 @@ struct SidebarSectionHeaderRow: View {
         // A bare header keeps the measured 24pt band; a git-lined one grows to fit its second line.
         .frame(minHeight: Slate.Metric.heightSectionHeader)
         .contentShape(.rect)
+        .onHover { hovering = $0 }
+        .animation(Slate.Anim.smallFade, value: hovering)
         .onTapGesture(perform: onToggle)
         .help(Self.tooltip(projectKey: projectKey, summary: summary) ?? "")
         .contextMenu {
@@ -979,7 +997,7 @@ private struct SidebarConnectionFooter: View {
             fps: ConnectionTelemetry.fps(store),
             kbps: ConnectionTelemetry.kbps(store),
             onConnect: onConnect,
-            fillWidth: true,
+            railFooter: true,
         )
     }
 }

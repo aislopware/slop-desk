@@ -2504,3 +2504,42 @@ Deliberately NOT taken from the research: a fourth state hue (every good referen
 left-edge accent bars (state is the title's job), a second metadata line per row (richness stays in
 the tooltip), idle-age fading (Arc's move — deferred; needs per-pane last-activity state).
 Client-only; no wire change.
+
+### Round 6 — colour comes back on purpose: identity tints, ink washes, the footer lamp (2026-07-24)
+
+Round 5 fixed the skeleton; the review verdict on it was "correct but bare": deleting the folder
+icon left the headers anonymous, the states/selection read as text-only recolours, and the footer
+was two grey words. Round 6 reintroduces colour — but only where it MEANS something, so the
+minimal-indicator conclusion of rounds 4–5 stands.
+
+1. **Project identity tints** (`ProjectTint` + `SlateTheme.projectTints`). Each section header's
+   gutter carries an 8pt rounded-SQUARE swatch in a per-project colour (square deliberately — the
+   dot shape stays the status language: attention pip, footer lamp). The colour comes from the
+   THEME's own chromatic set (Monokai: cyan/purple/orange — the three that carry no status meaning;
+   amber/red/green are excluded so a project can never read as a state), keyed by FNV-1a over the
+   project key: launch-stable by construction (Swift's seeded `hashValue` would reshuffle per
+   process — pinned in `ProjectTintTests`). The collapse chevron still exists: it trades places
+   with the swatch under the pointer (Notion's outline idiom — identity at rest, affordance on
+   approach). The keyless "Other" bucket keeps a neutral swatch.
+2. **The attention wash** (`Slate.State.attentionWash`). An inactive row in an attention state lays
+   its title's ink under the WHOLE row at film opacity — the whole-row wash Warp users ask for —
+   while the title keeps carrying which state (ink + weight, unchanged). One source feeds both
+   (`SlateTabRow.attentionInk`), so wash and title can't disagree. Hover stacks on top.
+3. **The active card is accent-lit** (`Slate.State.activeWash`/`activeEdge`). Selection was one
+   luminance step (raised fill + neutral hairline) — correct and invisible. The card now adds a
+   low-opacity accent film and swaps its hairline to the accent: doctrine already reserves accent
+   for the ACTIVE state, and the focused-pane corner mark speaks the same colour, so the selected
+   row is the one accent-coloured object in the rail.
+4. **The footer becomes an instrument block** (`ConnectionRailFooter`). The sidebar footer drops
+   the compact host+ping line for a two-line block on the sidebar's own rail, rhyming with the
+   section headers: a 6pt health LAMP in the `tabRowInset` gutter (green good / amber slow or
+   dialing / red bad / dimmed offline, soft same-hue glow while lit — static, never blinking;
+   colour rides the needle curve), the hostname on the text rail, and the mono detail line beneath
+   (ping while connected, the short status word otherwise — `ledState`/`footerDetail`, pinned in
+   `ConnectionClusterTests`). The titlebar + iOS mounts keep the one-line cluster. This is the one
+   sanctioned dot besides the attention pip — the "no LED" note from the cluster's first pass is
+   superseded for the footer only.
+
+Hue budget after this round: three STATUS hues (amber/red/green — states), the ACCENT (active
+selection + focus, one voice), and three IDENTITY tints (projects — theme chromatics, non-status).
+Nothing blinks; no lifecycle glyph returned. Client-only; no wire change.
