@@ -303,7 +303,8 @@ enum RailRowsBuilder {
     /// foreground PROGRAM instead — the folder name would restate the section header verbatim, so the
     /// header says WHERE and line 1 says WHO (`claude` / `vim` / `make`, the tmux idiom), an idle shell
     /// yielding "" so the VIEW's fallback reads — the pane's last long-running command
-    /// (``lastCommandTitle(blocks:)``) before the kind-generic "Terminal" — rather than an OSC shell
+    /// (``lastCommandTitle(blocks:)``), then the cwd folder name (``liveRowTitle``'s `cwdTitle` rung —
+    /// the basepath still beats the meaningless kind-generic "Terminal") — rather than an OSC shell
     /// title restating the place; and a pane with no known cwd yet falls back to the host FOREGROUND-PROCESS name
     /// (`processLabel`, wire type 26 — a real program, a bare login shell suppressed) before the generic
     /// shell-title chain. Non-terminal kinds keep the `lastKnownTitle ?? title` chain unchanged. Pure +
@@ -401,13 +402,15 @@ enum RailRowsBuilder {
     /// place to the full RUNNING command line when one is known ("sleep" → "sleep 30 && make",
     /// the same fact with the arguments back; a FOLDER title is an identity and never yields); an
     /// EMPTY structural title (the at-root idle shell) reads the running command, then the last
-    /// executed command (``lastCommandTitle(blocks:)`` — exit-agnostic history); else the
-    /// kind-generic fallback. The caller gates `runningCommand` on the busy-badge reveal, so the
-    /// title upgrades with the spinner and a fast `ls` never flashes in. Pure + static so the
-    /// chain is unit-pinned without a view.
+    /// executed command (``lastCommandTitle(blocks:)`` — exit-agnostic history), then the pane's
+    /// cwd FOLDER NAME (`cwdTitle` — the basepath is still an identity, even when it restates the
+    /// section header); only a pane with NO cwd yet reads the kind-generic fallback. The caller
+    /// gates `runningCommand` on the busy-badge reveal, so the title upgrades with the spinner
+    /// and a fast `ls` never flashes in. Pure + static so the chain is unit-pinned without a view.
     static func liveRowTitle(
         structuralTitle: String, userRenamed: Bool, isAgent: Bool, intent: String?,
         runningCommand: String?, processTitle: String?, blocks: [CommandBlock], kind: PaneKind,
+        cwdTitle: String? = nil,
         fallback: String,
     ) -> String {
         // A "rename" that equals the kind-generic fallback carries no identity — it can only be an
@@ -429,7 +432,7 @@ enum RailRowsBuilder {
         }
         guard kind == .terminal else { return fallback }
         if let running, !running.isEmpty { return running }
-        return lastCommandTitle(blocks: blocks) ?? fallback
+        return lastCommandTitle(blocks: blocks) ?? cwdTitle ?? fallback
     }
 
     // swiftlint:enable function_parameter_count

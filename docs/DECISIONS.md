@@ -2137,3 +2137,10 @@ stripped, "Claude Code" rejected, detected-pane-only), superseding the prompt-de
 the prompt remains the fallback while no topic exists (short sessions, title generation off).
 This is exactly the tmux `set-titles-string "#T"` behaviour the pane titles came from — the
 pane shows what the program running in it says it is doing.
+
+Addendum (same day): the resting fallback of a bare pane is the cwd FOLDER NAME, not the
+kind-generic "Terminal". The at-root idle shell used to fall all the way through (folder name
+suppressed because it restates the section header; "zsh" suppressed as meaningless) and land on
+"Terminal" — which says even less than the folder. `liveRowTitle` gained a `cwdTitle` rung
+between the last-command history and the generic fallback: the basepath is still an identity,
+even when it repeats the header. "Terminal" now appears only while the pane has no cwd at all.

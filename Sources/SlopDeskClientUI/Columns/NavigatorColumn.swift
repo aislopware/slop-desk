@@ -741,6 +741,7 @@ private struct SidebarLiveRow: View {
             processTitle: RailRowsBuilder.processDisplayName(chrome.processLabel),
             blocks: blocks,
             kind: row.kind,
+            cwdTitle: RailRowsBuilder.cwdFolderName(row.cwd),
             fallback: fallbackTitle,
         )
         let lastCommand = blocks.last(where: { $0.complete || $0.durationMS != nil })
@@ -829,6 +830,7 @@ private struct IOSSidebarLiveRow: View {
             processTitle: RailRowsBuilder.processDisplayName(chrome.processLabel),
             blocks: blocks,
             kind: row.kind,
+            cwdTitle: RailRowsBuilder.cwdFolderName(row.cwd),
             fallback: fallbackTitle,
         )
         // Same busy split as the macOS row: only the AGENT tier shimmers the TITLE (with the terse

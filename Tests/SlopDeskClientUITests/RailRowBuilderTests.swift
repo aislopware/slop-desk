@@ -578,7 +578,7 @@ final class RailRowBuilderTests: XCTestCase {
 
     /// The live leaf's ONE title chain (shared by the macOS + iOS rows): rename → agent-session
     /// INTENT (wire 36) → structural title → RUNNING command → last executed command →
-    /// kind-generic fallback.
+    /// cwd folder name → kind-generic fallback.
     func testLiveRowTitlePrecedence() {
         let lint = CommandBlock(
             index: 0, commandText: "make lint", exitCode: 0, durationMS: 94000, complete: true,
@@ -670,11 +670,32 @@ final class RailRowBuilderTests: XCTestCase {
             ),
             "make lint",
         )
-        // A blank history keeps the kind-generic fallback.
+        // A blank history reads the cwd FOLDER NAME before the kind-generic fallback — the at-root
+        // idle shell titles by its basepath (an identity, even when it restates the section header)
+        // rather than the meaningless "Terminal".
         XCTAssertEqual(
             RailRowsBuilder.liveRowTitle(
                 structuralTitle: "", userRenamed: false, isAgent: false,
-                intent: nil, runningCommand: nil, processTitle: nil, blocks: [], kind: .terminal, fallback: "Terminal",
+                intent: nil, runningCommand: nil, processTitle: nil, blocks: [], kind: .terminal,
+                cwdTitle: "slop-desk", fallback: "Terminal",
+            ),
+            "slop-desk",
+        )
+        // The last executed command still beats the basepath — history says more than place.
+        XCTAssertEqual(
+            RailRowsBuilder.liveRowTitle(
+                structuralTitle: "", userRenamed: false, isAgent: false,
+                intent: nil, runningCommand: nil, processTitle: nil, blocks: [lint], kind: .terminal,
+                cwdTitle: "slop-desk", fallback: "Terminal",
+            ),
+            "make lint",
+        )
+        // Only a pane with NO cwd yet keeps the kind-generic fallback.
+        XCTAssertEqual(
+            RailRowsBuilder.liveRowTitle(
+                structuralTitle: "", userRenamed: false, isAgent: false,
+                intent: nil, runningCommand: nil, processTitle: nil, blocks: [], kind: .terminal,
+                cwdTitle: nil, fallback: "Terminal",
             ),
             "Terminal",
         )
