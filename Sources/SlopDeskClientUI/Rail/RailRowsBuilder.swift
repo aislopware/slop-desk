@@ -375,19 +375,6 @@ enum RailRowsBuilder {
         return text.isEmpty ? nil : text
     }
 
-    /// The trailing-slot elapsed readout for a WORKING agent row — how long the current turn has been
-    /// running, compact enough for the otty 28pt slot reserve: `42s` under a minute, `2m15s` under an
-    /// hour, `1h02m` beyond. A negative interval (clock skew between the stamp and "now") clamps to
-    /// `0s` rather than rendering garbage. Pure + static so the format is unit-pinned; the view feeds
-    /// it a 1 Hz `TimelineView` date.
-    static func workingElapsedLabel(from start: Date, now: Date) -> String {
-        let seconds = Int(Double.maximum(0, now.timeIntervalSince(start)))
-        if seconds < 60 { return "\(seconds)s" }
-        let minutes = seconds / 60
-        if minutes < 60 { return "\(minutes)m\(String(format: "%02d", seconds % 60))s" }
-        return "\(minutes / 60)h\(String(format: "%02d", minutes % 60))m"
-    }
-
     /// A finished command must have RUN at least this long (host-measured C→D wall clock) to title an
     /// idle pane — sub-second `ls`/`cd` chatter never takes the title, so the resting title doesn't
     /// churn with every trivial command. Mirrors the busy-dot reveal default (1 s,

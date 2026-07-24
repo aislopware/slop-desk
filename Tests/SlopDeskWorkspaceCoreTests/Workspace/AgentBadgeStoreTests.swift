@@ -206,7 +206,7 @@ final class AgentBadgeStoreTests: XCTestCase {
         XCTAssertFalse(store.paneUnseenDone.contains(backgroundPane), "a new turn replaces the unread finish")
     }
 
-    // MARK: The working-turn clock (`paneWorkingSince` — the trailing-slot elapsed readout)
+    // MARK: The working-turn clock (`paneWorkingSince` — the per-pane turn-start stamp)
 
     /// The elapsed anchor's lifecycle: the genuine entry into `.working` stamps the turn start; a
     /// re-push of the same status (the idempotency guard) cannot reset it, so mid-turn label churn

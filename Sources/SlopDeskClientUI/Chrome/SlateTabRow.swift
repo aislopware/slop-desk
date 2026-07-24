@@ -37,14 +37,10 @@ struct SlateTabRow: View {
     /// value so VoiceOver keeps the state the spinner glyph used to speak. A running COMMAND never
     /// sets this — its title (the command text) stands still.
     var workingLabel: String?
-    /// The resting trailing label — the pane's foreground process (`zsh`, `vim`, `claude`), shown
-    /// only when no badge outranks it. `nil` ⇒ the slot rests empty.
+    /// The resting trailing label — the pane's foreground process (`zsh`, `vim`), shown only when
+    /// no privilege marker outranks it. `nil` ⇒ the slot rests empty (an AGENT row always passes
+    /// `nil`: the `✳` marker and the shimmer already say everything a trailing label would repeat).
     var processLabel: String?
-    /// The WORKING turn's start instant — non-`nil` only while the agent works. The slot then shows a
-    /// live elapsed readout (`42s`, `2m15s`) instead of the process label: while the shimmer already
-    /// says "thinking", the process name repeats what the `✳` marker said, and the DURATION is the
-    /// one thing the eye actually wants from a busy agent row.
-    var workingSince: Date?
     /// Whether this pane's input gate is READ-ONLY — a small trailing lock glyph (the sidebar's
     /// read-only indicator, twin of the pane's `🔒 READ ONLY ×` pill).
     var readOnly: Bool = false
@@ -171,20 +167,6 @@ struct SlateTabRow: View {
                     // title's ink, so their rows keep the shell label here.
                     if let badge, StatusPresentation.tabBadge(badge) != nil {
                         TabBadgeView(kind: badge)
-                    } else if let workingSince {
-                        // The 1 Hz elapsed readout — `TimelineView` scopes the tick to THIS slot, so a
-                        // thinking row re-renders one small text leaf per second, never the sidebar.
-                        TimelineView(.periodic(from: workingSince, by: 1)) { context in
-                            Text(RailRowsBuilder.workingElapsedLabel(from: workingSince, now: context.date))
-                                .font(.system(size: Slate.Typeface.footnote))
-                                .monospacedDigit()
-                                .foregroundStyle(Slate.Text.secondary)
-                                .lineLimit(1)
-                                .fixedSize()
-                                .accessibilityLabel("Working for " + RailRowsBuilder.workingElapsedLabel(
-                                    from: workingSince, now: context.date,
-                                ))
-                        }
                     } else if let processLabel {
                         Text(processLabel)
                             .font(.system(size: Slate.Typeface.footnote))

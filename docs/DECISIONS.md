@@ -2456,3 +2456,11 @@ review. Every attention ink now holds STILL — one rule, aligned with MERIDIAN'
 (animation is reserved for the sustained live signal, i.e. the working shimmer; a waiting state is
 not motion). `CursorBlinkModifier` deleted with its mounts; `StatusGlyph`'s `?` is static bold.
 The titlebar pip remains the roll-up cue for "something waits".
+
+**Round 4.2 — the agent row's trailing text goes silent (2026-07-24).** An agent row's slot
+carried the live elapsed readout while working ("42s") and the process name ("claude") at rest —
+both redundant on review: the `✳` marker already names the agent and the shimmer already says
+"working". Agent rows now pass `processLabel: nil` and the elapsed readout is deleted
+(`workingElapsedLabel` + its pin); the slot on an agent row holds only a privilege marker or the
+hover `×`. The store's `paneWorkingSince` turn clock stays (core state, pinned) — only its
+rendering died. Duration, when wanted, belongs to the tooltip's richness, not the rail.

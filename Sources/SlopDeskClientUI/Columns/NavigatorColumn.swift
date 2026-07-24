@@ -784,10 +784,9 @@ private struct SidebarLiveRow: View {
             workingLabel: busyLabel,
             // A REAL foreground program labels the slot; a bare login shell shows nothing — "zsh"
             // on an idle row says as little as "Terminal" did (herdr never shows a shell name).
-            processLabel: RailRowsBuilder.processDisplayName(chrome.processLabel),
-            // While the agent WORKS the slot swaps the process label for the live elapsed readout —
-            // gated on the same RAW `.working` as the shimmer, so the two motions always co-occur.
-            workingSince: chrome.status == .working ? store.paneWorkingSince[row.id] : nil,
+            // An AGENT row shows nothing either: the `✳` marker and the shimmer already say it,
+            // and any trailing text on those rows just repeats them.
+            processLabel: agent ? nil : RailRowsBuilder.processDisplayName(chrome.processLabel),
             readOnly: chrome.readOnly,
             syncInput: store.syncInputArmed(for: row.id),
             isEditing: chrome.isEditing,
