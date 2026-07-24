@@ -273,6 +273,22 @@ public enum WireMessage: Equatable, Sendable {
     /// (`unknownMessageType`), never traps.
     case projectGitStatus(ProjectGitStatus)
 
+    /// The pane's AGENT-SESSION INTENT (type 36, host → client, CONTROL): a sticky one-line "why
+    /// this session exists" — the first real prompt of the pane's agent session, latched by the
+    /// host's hook detector and re-derived only when the SESSION changes (a new `claude` run,
+    /// `/clear`), never per turn — so the sidebar can title an agent row by its task ("fix the
+    /// flaky CI test") instead of the process name every agent row shares. The Claude-Code /
+    /// Conductor session-naming idiom, host-computed from the `UserPromptSubmit` hook's `prompt`
+    /// field (no transcript reads). EMPTY string = the session ended / no intent — the client
+    /// clears its mirror and the row falls back down the title chain.
+    ///
+    /// UTF-8 body, single trailing string (same shape as ``cwd``/``projectKey``), clamped by the
+    /// host at derivation. Additive within wire version 1 (host + client redeploy
+    /// together); an old peer DROPS the frame (`unknownMessageType`), never traps. Pane identity
+    /// rides the mux channel envelope, not this body. Change-edge deduped + re-asserted on
+    /// reattach (the type-23/26/27/32/33/34 sibling).
+    case agentSessionIntent(String)
+
     /// The type-35 body: the repo identity + branch strings (each `[UInt16 BE len][UTF-8]`) followed
     /// by fixed BE counts. All counts are already folded (staged/modified/untracked count each file's
     /// X/Y nibble INDEPENDENTLY — an `MM` file is both staged and modified — matching
@@ -351,6 +367,7 @@ public enum WireMessage: Equatable, Sendable {
         case .cwd: 33
         case .projectKey: 34
         case .projectGitStatus: 35
+        case .agentSessionIntent: 36
         }
     }
 
@@ -383,7 +400,8 @@ public enum WireMessage: Equatable, Sendable {
              .progress,
              .cwd,
              .projectKey,
-             .projectGitStatus:
+             .projectGitStatus,
+             .agentSessionIntent:
             .control
         }
     }

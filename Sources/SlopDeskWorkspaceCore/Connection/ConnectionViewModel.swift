@@ -142,6 +142,11 @@ public final class ConnectionViewModel {
     /// sink.
     public var onProjectGitStatusChanged: ((_ summary: PaneGitSummary, _ repoRoot: String) -> Void)?
 
+    /// A HOST-latched agent-session intent edge (wire type 36): the session's first titleable
+    /// prompt, sticky per session. The store mirrors it per pane (the sidebar's agent-row title).
+    /// Every edge forwards — empty is the CLEAR (session ended), which must reach the store.
+    public var onAgentIntentChanged: ((_ intent: String) -> Void)?
+
     private var client: SlopDeskClient?
     /// The pane's typed metadata façade, created on connect bound to the live ``client``, torn down
     /// on disconnect. Drives the sidebar git line + Open-Quickly/path actions; this VM folds inbound
@@ -776,6 +781,11 @@ public final class ConnectionViewModel {
             // (the watcher only watches resolved toplevels) — validate-then-drop.
             guard !status.repoRoot.isEmpty else { break }
             onProjectGitStatusChanged?(PaneGitSummary(pushed: status), status.repoRoot)
+        case let .agentSessionIntent(intent):
+            // Host-latched agent-session intent (wire type 36): forward EVERY edge — empty is the
+            // CLEAR frame (session ended / claude gone), which must reach the store or a dead
+            // session's task line would squat on the row title forever.
+            onAgentIntentChanged?(intent)
         case .bell:
             break
         }

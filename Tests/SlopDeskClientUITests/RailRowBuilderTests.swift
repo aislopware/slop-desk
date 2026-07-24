@@ -535,44 +535,120 @@ final class RailRowBuilderTests: XCTestCase {
         )
     }
 
-    /// The empty-title view fallback: the pane's most recent command that ran ≥ the busy-dot
-    /// threshold (3 s) titles the idle row. Sub-threshold blocks are SKIPPED, not title-clearing — a
-    /// quick `ls` after a long build leaves the build's title standing instead of flashing the row
-    /// back to the generic "Terminal"; a still-running block (no duration yet) never titles; a
-    /// history of only quick commands yields `nil` so the kind-generic fallback reads.
-    func testLastCommandTitlePicksLastLongRunningCommand() {
-        let build = CommandBlock(
+    /// The empty-title view fallback surfaces only a FAILURE: the pane's most recent long-running
+    /// (≥ the busy-dot threshold, 3 s) command decides the idle title — a non-zero exit titles the
+    /// row (the one fact worth reading on return: "the thing I ran here broke"), a clean exit keeps
+    /// the row quiet. Sub-threshold blocks are SKIPPED either way — a quick `ls` after a failed
+    /// build neither clears the alarm nor raises one of its own — and a still-running block (no
+    /// duration yet) never decides.
+    func testLastCommandTitleSurfacesOnlyFailures() {
+        let buildFail = CommandBlock(
+            index: 0, commandText: "make check", exitCode: 2, durationMS: 94000, complete: true,
+        )
+        let buildOK = CommandBlock(
             index: 0, commandText: "make check", exitCode: 0, durationMS: 94000, complete: true,
         )
         let quickLs = CommandBlock(index: 1, commandText: "ls", exitCode: 0, durationMS: 40, complete: true)
-        XCTAssertEqual(RailRowsBuilder.lastCommandTitle(blocks: [build, quickLs]), "make check")
 
-        let atThreshold = CommandBlock(
-            index: 2, commandText: "npm test", exitCode: 1, durationMS: 3000, complete: true,
+        XCTAssertNil(
+            RailRowsBuilder.lastCommandTitle(blocks: [buildOK, quickLs]),
+            "a clean long command keeps the row quiet — success is the badge's story, not the title's",
         )
         XCTAssertEqual(
-            RailRowsBuilder.lastCommandTitle(blocks: [build, quickLs, atThreshold]), "npm test",
-            "exactly the threshold qualifies — only a sub-3 s command is suppressed",
+            RailRowsBuilder.lastCommandTitle(blocks: [buildFail, quickLs]), "make check",
+            "a quick success after a long failure does not clear the alarm",
         )
 
-        let running = CommandBlock(index: 3, commandText: "sleep 99", complete: false)
+        let quickFail = CommandBlock(index: 2, commandText: "gti st", exitCode: 1, durationMS: 40, complete: true)
         XCTAssertEqual(
-            RailRowsBuilder.lastCommandTitle(blocks: [build, running]), "make check",
-            "a still-running block has no duration and never titles",
+            RailRowsBuilder.lastCommandTitle(blocks: [buildFail, quickFail]), "make check",
+            "a sub-threshold failure neither titles nor decides — the long failure stands",
+        )
+        XCTAssertNil(RailRowsBuilder.lastCommandTitle(blocks: [quickFail]))
+
+        let rerunOK = CommandBlock(
+            index: 3, commandText: "make check", exitCode: 0, durationMS: 3000, complete: true,
+        )
+        XCTAssertNil(
+            RailRowsBuilder.lastCommandTitle(blocks: [buildFail, rerunOK]),
+            "a later long clean run resolves the failure — exactly the threshold qualifies as decider",
         )
 
-        // A block INTERRUPTED by a nested prompt (complete == false, duration stamped) is finished.
-        let interrupted = CommandBlock(index: 4, commandText: "ssh box", durationMS: 8000, complete: false)
-        XCTAssertEqual(RailRowsBuilder.lastCommandTitle(blocks: [interrupted]), "ssh box")
-
-        let blank = CommandBlock(index: 5, commandText: "   ", exitCode: 0, durationMS: 9000, complete: true)
+        let running = CommandBlock(index: 4, commandText: "sleep 99", complete: false)
         XCTAssertEqual(
-            RailRowsBuilder.lastCommandTitle(blocks: [build, blank]), "make check",
-            "a blank command line is skipped, not title-clearing",
+            RailRowsBuilder.lastCommandTitle(blocks: [buildFail, running]), "make check",
+            "a still-running block has no duration and never decides",
         )
 
-        XCTAssertNil(RailRowsBuilder.lastCommandTitle(blocks: [quickLs]))
+        // A block INTERRUPTED by a nested prompt (complete == false, duration stamped, no exit code)
+        // is finished-but-unreported — never an alarm, but as the newest long block it decides quiet.
+        let interrupted = CommandBlock(index: 5, commandText: "ssh box", durationMS: 8000, complete: false)
+        XCTAssertNil(RailRowsBuilder.lastCommandTitle(blocks: [buildFail, interrupted]))
+
+        let blank = CommandBlock(index: 6, commandText: "   ", exitCode: 1, durationMS: 9000, complete: true)
+        XCTAssertEqual(
+            RailRowsBuilder.lastCommandTitle(blocks: [buildFail, blank]), "make check",
+            "a blank command line cannot title and is skipped, not deciding",
+        )
+
         XCTAssertNil(RailRowsBuilder.lastCommandTitle(blocks: []))
+    }
+
+    /// The live leaf's ONE title chain (shared by the macOS + iOS rows): rename → agent-session
+    /// INTENT (wire 36) → structural title → failed-command alarm → kind-generic fallback.
+    func testLiveRowTitlePrecedence() {
+        let fail = CommandBlock(
+            index: 0, commandText: "make check", exitCode: 2, durationMS: 94000, complete: true,
+        )
+
+        // An agent row titles by its session intent over the shared process name.
+        XCTAssertEqual(
+            RailRowsBuilder.liveRowTitle(
+                structuralTitle: "claude", userRenamed: false, isAgent: true,
+                intent: "fix the flaky CI test", blocks: [], kind: .terminal, fallback: "Terminal",
+            ),
+            RailRowsBuilder.LiveRowTitle(text: "fix the flaky CI test", failed: false),
+        )
+        // An explicit rename still beats the intent.
+        XCTAssertEqual(
+            RailRowsBuilder.liveRowTitle(
+                structuralTitle: "release box", userRenamed: true, isAgent: true,
+                intent: "fix the flaky CI test", blocks: [], kind: .terminal, fallback: "Terminal",
+            ).text,
+            "release box",
+        )
+        // A NON-agent row never reads an intent (a stale mirror can't title a plain shell).
+        XCTAssertEqual(
+            RailRowsBuilder.liveRowTitle(
+                structuralTitle: "", userRenamed: false, isAgent: false,
+                intent: "fix the flaky CI test", blocks: [], kind: .terminal, fallback: "Terminal",
+            ).text,
+            "Terminal",
+        )
+        // A blank/whitespace intent falls through to the structural title.
+        XCTAssertEqual(
+            RailRowsBuilder.liveRowTitle(
+                structuralTitle: "claude", userRenamed: false, isAgent: true,
+                intent: "   ", blocks: [], kind: .terminal, fallback: "Terminal",
+            ).text,
+            "claude",
+        )
+        // The at-root idle shell's failed-command alarm — and ONLY that path sets `failed`.
+        XCTAssertEqual(
+            RailRowsBuilder.liveRowTitle(
+                structuralTitle: "", userRenamed: false, isAgent: false,
+                intent: nil, blocks: [fail], kind: .terminal, fallback: "Terminal",
+            ),
+            RailRowsBuilder.LiveRowTitle(text: "make check", failed: true),
+        )
+        // A clean history keeps the kind-generic fallback.
+        XCTAssertEqual(
+            RailRowsBuilder.liveRowTitle(
+                structuralTitle: "", userRenamed: false, isAgent: false,
+                intent: nil, blocks: [], kind: .terminal, fallback: "Terminal",
+            ),
+            RailRowsBuilder.LiveRowTitle(text: "Terminal", failed: false),
+        )
     }
 
     /// The folder-name helper: leaf extraction, trailing-slash tolerance, root, blank → nil.

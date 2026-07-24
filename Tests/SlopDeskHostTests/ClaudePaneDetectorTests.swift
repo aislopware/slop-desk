@@ -436,4 +436,115 @@ final class ClaudePaneDetectorTests: XCTestCase {
             "the reattach re-tells the CURRENT (done) truth, not the stale working one",
         )
     }
+
+    // MARK: - Agent-session INTENT (the type-36 latch)
+
+    /// The session's FIRST titleable prompt latches as the intent and emits type 36; later prompts
+    /// of the SAME session never re-title (sticky — the sidebar row must not churn per turn).
+    func testIntentLatchesFirstPromptStickyPerSession() {
+        var d = ClaudePaneDetector()
+        let first = d.hook(
+            bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"refactor the parser"}"#),
+            at: 0,
+        )
+        XCTAssertEqual(first.intent, .agentSessionIntent("refactor the parser"))
+
+        let second = d.hook(
+            bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"now add tests"}"#),
+            at: 1,
+        )
+        XCTAssertNil(second.intent, "the intent is the session's FIRST prompt — no per-turn churn")
+    }
+
+    /// A slash-command / harness-XML first prompt has no titling value — the latch stays open so
+    /// the session's first REAL prompt still names it.
+    func testIntentSkipsSlashCommandThenLatchesRealPrompt() {
+        var d = ClaudePaneDetector()
+        let slash = d.hook(
+            bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"/compact"}"#),
+            at: 0,
+        )
+        XCTAssertNil(slash.intent)
+        let real = d.hook(
+            bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"fix the flaky CI test"}"#),
+            at: 1,
+        )
+        XCTAssertEqual(real.intent, .agentSessionIntent("fix the flaky CI test"))
+    }
+
+    /// A prompt from a NEW session id re-derives the intent from scratch (a fresh `claude` run /
+    /// `/clear` mints a new session) — the row re-titles to the new task.
+    func testIntentRederivesOnNewSession() {
+        var d = ClaudePaneDetector()
+        _ = d.hook(
+            bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"fix CI"}"#),
+            at: 0,
+        )
+        let next = d.hook(
+            bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s2","prompt":"write docs"}"#),
+            at: 1,
+        )
+        XCTAssertEqual(next.intent, .agentSessionIntent("write docs"))
+    }
+
+    /// SessionEnd clears the latched intent with an EMPTY type-36 push (the client drops its
+    /// mirror); a pane whose intent stream never spoke stays silent — no spurious clear frame.
+    func testSessionEndClearsIntentWithEmptyPush() {
+        var d = ClaudePaneDetector()
+        _ = d.hook(
+            bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"fix CI"}"#),
+            at: 0,
+        )
+        let end = d.hook(bytes: json(#"{"hook_event_name":"SessionEnd","session_id":"s1"}"#), at: 1)
+        XCTAssertEqual(end.intent, .agentSessionIntent(""))
+
+        var quiet = ClaudePaneDetector()
+        let quietEnd = quiet.hook(bytes: json(#"{"hook_event_name":"SessionEnd","session_id":"s1"}"#), at: 0)
+        XCTAssertNil(quietEnd.intent, "a never-intent pane never emits, not even the clear")
+    }
+
+    /// A presence termination (claude died without a SessionEnd — hooks are best-effort) clears the
+    /// intent too: a dead session's task line must not squat on whatever runs in the pane next.
+    func testPresenceAbsencePastGraceClearsIntent() {
+        var d = ClaudePaneDetector()
+        _ = d.sample(name: "claude", at: 0)
+        _ = d.hook(
+            bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"fix CI"}"#),
+            at: 0,
+        )
+        let gone = d.sample(name: "zsh", at: ClaudePaneDetector.reportGraceWindow + 1)
+        XCTAssertEqual(gone.intent, .agentSessionIntent(""))
+    }
+
+    /// The reattach re-assert re-tells the latched intent (the type-33/34 sibling rule): an intent
+    /// latched while detached would otherwise be lost forever (its emission wiped with control-out).
+    func testReestablishReassertsLatchedIntent() {
+        var d = ClaudePaneDetector()
+        _ = d.hook(
+            bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"fix CI"}"#),
+            at: 0,
+        )
+        XCTAssertEqual(d.reestablishOnReattach().intent, .agentSessionIntent("fix CI"))
+
+        var quiet = ClaudePaneDetector()
+        _ = quiet.sample(name: "claude", at: 0)
+        XCTAssertNil(quiet.reestablishOnReattach().intent, "a never-intent stream stays silent")
+    }
+
+    /// The pure intent-line derivation: first non-blank line, inner whitespace collapsed, clamped;
+    /// blank / slash-command / XML-block prompts yield nil (no titling value).
+    func testIntentLineDerivation() {
+        XCTAssertEqual(
+            ClaudePaneDetector.intentLine(from: "\n\n  fix   the\tCI  \nsecond line"),
+            "fix the CI",
+        )
+        XCTAssertEqual(
+            ClaudePaneDetector.intentLine(from: String(repeating: "a", count: 500))?.count,
+            ClaudePaneDetector.maxIntentChars,
+        )
+        XCTAssertNil(ClaudePaneDetector.intentLine(from: nil))
+        XCTAssertNil(ClaudePaneDetector.intentLine(from: "   \n  "))
+        XCTAssertNil(ClaudePaneDetector.intentLine(from: "/compact"))
+        XCTAssertNil(ClaudePaneDetector.intentLine(from: "<command-name>/clear</command-name>"))
+    }
 }

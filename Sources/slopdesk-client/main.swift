@@ -414,6 +414,10 @@ Task {
                 // The host-pushed project git summary (wire type 35) backs the GUI sidebar's
                 // section-header git line. The raw-mode CLI has no sidebar — a no-op here.
                 break
+            case .agentSessionIntent:
+                // The host-latched agent-session intent (wire type 36) backs the GUI sidebar's
+                // agent-row title. The raw-mode CLI has no sidebar — a no-op here.
+                break
             }
         }
     }

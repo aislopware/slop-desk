@@ -64,6 +64,17 @@ public extension WorkspaceStore {
         if let value { paneAgentLabel[id] = value } else { paneAgentLabel.removeValue(forKey: id) }
     }
 
+    /// Sets (or clears, on empty) the per-pane host-latched agent-session INTENT (wire type 36) —
+    /// the sticky "why this session exists" line the sidebar titles an agent row by. Idempotent;
+    /// the empty push (session ended) removes the key so the row title falls back down its chain.
+    /// Mirrors ``setAgentLabel``; pruned to the live leaf set on reconcile.
+    func setAgentIntent(_ intent: String?, for id: PaneID) {
+        let trimmed = intent?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = (trimmed?.isEmpty == false) ? trimmed : nil
+        guard paneAgentIntent[id] != value else { return }
+        if let value { paneAgentIntent[id] = value } else { paneAgentIntent.removeValue(forKey: id) }
+    }
+
     /// Sets (or clears, on empty / whitespace) the per-pane COARSE foreground-process name (wire type 26) —
     /// the trailing process label the sidebar rail shows and the input the ``TabBadgeResolver`` classifies
     /// into a `caffeinate`/`sudo` badge. Idempotent (a no-op when unchanged so it never churns the sidebar);

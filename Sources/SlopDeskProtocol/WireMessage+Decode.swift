@@ -245,6 +245,13 @@ extension WireMessage {
                 changedCount: reader.readUInt32(),
             ))
 
+        case 36: // agentSessionIntent
+            let bytes = reader.remaining()
+            guard let intent = String(data: bytes, encoding: .utf8) else {
+                throw SlopDeskError.malformedBody("agentSessionIntent: invalid UTF-8")
+            }
+            return .agentSessionIntent(intent)
+
         default:
             throw SlopDeskError.unknownMessageType(type)
         }

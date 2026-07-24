@@ -912,7 +912,7 @@ final class MuxChannelSession: @unchecked Sendable {
         if let message { enqueueControl([message]) }
     }
 
-    /// The type-23/26/27/32/33/34 sibling of ``reestablishEchoOnReattach(echoOn:)``: re-emits
+    /// The type-23/26/27/32/33/34/36 sibling of ``reestablishEchoOnReattach(echoOn:)``: re-emits
     /// the pane's CURRENT activity truths so a returning client — whose per-pane mirrors reset to
     /// idle/none on reconnect — is re-told what is still live (`sleep 300`'s busy dot + "sleep"
     /// label, a working/blocked agent's badge, a spanning OSC 9;4 spinner). Every source contributes

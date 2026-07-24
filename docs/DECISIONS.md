@@ -1996,3 +1996,32 @@ for ("the shell I ran `make check` in").
   A running block (no duration yet) never titles; an interrupted block with a stamped duration does.
 - The tooltip's title-echo gate already covers the new title: a running command equal to the shown
   last-command title is dropped as a restatement.
+
+### Row titles v4.5 — intent for agents, failure-only for shells, double-click rename (2026-07-24)
+
+The last-command title above shipped and immediately under-delivered: echoing WHAT ran is mechanical
+identity, and the research pass (tmux/WezTerm/kitty/iTerm2/Warp/VS Code/Ghostty + the agent-session
+managers) shows the only label that stays meaningful AND differentiating once a pane idles is
+SEMANTIC — why the pane exists, not what last executed in it. Three moves, one title chain
+(`RailRowsBuilder.liveRowTitle`, shared by the macOS + iOS leaves): **rename → agent intent →
+structural title → failed-command alarm → kind-generic**.
+
+- **Agent rows title by their session INTENT (wire type 36, `agentSessionIntent`)** — the session's
+  first titleable prompt, latched host-side by `ClaudePaneDetector` from the `UserPromptSubmit`
+  hook's `prompt` field (no transcript reads, no LLM). Sticky per hook `session_id` (a new session /
+  `/clear` re-derives; later turns never churn the row), cleared on `SessionEnd` AND on presence
+  termination (a dead claude must not squat its task line on the pane), change-edge deduped with a
+  silent-when-never-spoke anchor, re-asserted on reattach (the 33/34 sibling), pruned with the other
+  per-pane mirrors. Slash-commands / harness-XML first prompts have no titling value — the latch
+  stays open for the first REAL prompt. This is the Claude-Code/Conductor/VibeTunnel session-naming
+  idiom: four `claude` rows in one project stop reading identically.
+- **The idle shell's last-command title narrows to FAILURES only** — `lastCommandTitle` now lets the
+  newest long-running (≥ 3 s) block DECIDE: non-zero exit surfaces its command in the status-error
+  ink with a text-presentation `✗` (the `✳` precedent); a clean exit keeps the quiet generic row
+  (success is the badge's story — echoing every finished command churned without informing, which
+  is what sank v4.4). Sub-threshold blocks still neither title nor clear; an interrupted block
+  (duration stamped, no exit code) decides quiet.
+- **Double-click opens the inline rename** (`SlateTabRow`, the Finder idiom) — the third affordance
+  sharing the context-menu / ⌘R pending-rename; the single-tap select rides `simultaneousGesture`
+  so selection never waits out the double-click window. Rename stays the top of the chain and,
+  once set, permanently beats the automatic titles (the tmux `rename-window` contract).

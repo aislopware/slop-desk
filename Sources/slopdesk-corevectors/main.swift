@@ -986,6 +986,14 @@ root["terminalWireMessages"] = [
             "changed": Int(0),
         ],
     ),
+    // Host-latched agent-session intent (terminal CONTROL, host → client).
+    // type 36 agentSessionIntent: UTF-8 intent body, same string shape as title/cwd; "" = cleared.
+    wmRecord(
+        "agent_session_intent",
+        .agentSessionIntent("fix the flaky CI test — tiếng Việt"),
+        ["intent": "fix the flaky CI test — tiếng Việt"],
+    ),
+    wmRecord("agent_session_intent", .agentSessionIntent(""), ["intent": ""]),
 ]
 
 // Warp-style "Blocks" wire messages (terminal CONTROL).

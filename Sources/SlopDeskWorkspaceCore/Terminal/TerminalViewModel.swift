@@ -2332,10 +2332,11 @@ public final class TerminalViewModel {
             progress = PaneProgress(state: state, percent: percent)
         case .cwd,
              .projectKey,
-             .projectGitStatus:
-            // All three are pane/project-METADATA edges the connection layer routes to the store
-            // (`lastKnownCwd` / `PaneSpec.projectKey` / `projectGitSummary`); the terminal surface
-            // itself renders none of them.
+             .projectGitStatus,
+             .agentSessionIntent:
+            // All four are pane/project-METADATA edges the connection layer routes to the store
+            // (`lastKnownCwd` / `PaneSpec.projectKey` / `projectGitSummary` / `paneAgentIntent`);
+            // the terminal surface itself renders none of them.
             break
         }
     }

@@ -370,22 +370,59 @@ enum RailRowsBuilder {
     /// the title either, so the resting title doesn't churn with every trivial command.
     static let commandTitleMinDurationMS: UInt32 = 3000
 
-    /// The idle shell's LAST-COMMAND title: the most recent finished block whose command ran long
-    /// enough to matter (``commandTitleMinDurationMS``) — the pane's HISTORY identity ("the shell I
-    /// just ran `make check` in"), read when the title chain resolved empty (an at-root idle shell,
-    /// where the folder name would restate the section header and the bare shell says nothing).
-    /// Short/quick blocks are SKIPPED, not title-clearing — a `ls` after a long build leaves the
-    /// build's title standing rather than flashing the row back to the generic "Terminal". A running
-    /// block (no duration yet) never titles; `nil` when no block qualifies, so the caller keeps the
-    /// kind-generic fallback. Pure + static so the rule is unit-pinned.
+    /// The idle shell's FAILED-COMMAND title: the most recent finished block whose command ran long
+    /// enough to matter (``commandTitleMinDurationMS``) DECIDES the resting title — a non-zero exit
+    /// surfaces its command ("the thing I ran here broke", the one fact worth reading on return), a
+    /// clean exit keeps the row quiet on the kind-generic fallback (success is the badge's story;
+    /// echoing every finished command churned the title without informing). Short/quick blocks are
+    /// SKIPPED, never deciding — a fast `ls` after a failed build doesn't clear the alarm, and a
+    /// fast typo'd failure doesn't raise one. A running block (no duration yet) never decides;
+    /// `nil` when no block qualifies or the newest qualifying run came home clean. Pure + static so
+    /// the rule is unit-pinned.
     static func lastCommandTitle(blocks: [CommandBlock]) -> String? {
         for block in blocks.reversed() {
             guard let duration = block.durationMS, duration >= commandTitleMinDurationMS
             else { continue }
             let command = block.commandText.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !command.isEmpty { return command }
+            if command.isEmpty { continue }
+            return block.isFailed ? command : nil
         }
         return nil
+    }
+
+    /// The live leaf's resolved title + its failure flag (the row wears the error ink + `✗` only
+    /// for the failed-command alarm).
+    struct LiveRowTitle: Equatable {
+        let text: String
+        let failed: Bool
+    }
+
+    /// The live leaf's SHOWN title — ONE precedence rule shared by the macOS + iOS rows so the two
+    /// can't drift: an explicit user RENAME always wins; an AGENT session then titles by its
+    /// host-latched session INTENT (wire type 36 — the session's first prompt, the task identity)
+    /// over the structural folder/process title every agent row shares ("claude" ×4 says nothing);
+    /// a non-empty structural title reads next; an EMPTY structural title (the at-root idle shell)
+    /// surfaces the last long-running FAILED command (``lastCommandTitle(blocks:)``, the alarm);
+    /// else the kind-generic fallback. Pure + static so the chain is unit-pinned without a view.
+    static func liveRowTitle(
+        structuralTitle: String, userRenamed: Bool, isAgent: Bool, intent: String?,
+        blocks: [CommandBlock], kind: PaneKind, fallback: String,
+    ) -> LiveRowTitle {
+        if userRenamed, !structuralTitle.isEmpty {
+            return LiveRowTitle(text: structuralTitle, failed: false)
+        }
+        if isAgent, let intent = intent?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !intent.isEmpty
+        {
+            return LiveRowTitle(text: intent, failed: false)
+        }
+        if !structuralTitle.isEmpty {
+            return LiveRowTitle(text: structuralTitle, failed: false)
+        }
+        if kind == .terminal, let failedCommand = lastCommandTitle(blocks: blocks) {
+            return LiveRowTitle(text: failedCommand, failed: true)
+        }
+        return LiveRowTitle(text: fallback, failed: false)
     }
 
     /// Bare interactive-shell basenames that must NOT title a pane — titling by the shell is no more

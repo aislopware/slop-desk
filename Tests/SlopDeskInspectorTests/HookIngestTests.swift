@@ -143,11 +143,13 @@ final class HookIngestTests: XCTestCase {
 
     func testUserPromptSubmitHookParses() {
         let hook = HookParser.parse(Fixtures.data("hook-user-prompt-submit.json"))
-        guard case let .userPromptSubmit(info)? = hook else {
+        guard case let .userPromptSubmit(info, prompt)? = hook else {
             XCTFail("expected .userPromptSubmit, got \(String(describing: hook))")
             return
         }
         XCTAssertEqual(info.sessionID, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        // The raw `prompt` rides along — the host's agent-session INTENT source (wire type 36).
+        XCTAssertEqual(prompt, "refactor the parser")
     }
 
     func testPreToolUseHookParsesToolName() {

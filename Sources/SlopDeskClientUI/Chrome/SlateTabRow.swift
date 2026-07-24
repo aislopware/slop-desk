@@ -20,6 +20,10 @@ struct SlateTabRow: View {
     /// Whether the title wears the leading `✳` AGENT marker (an agent session's row, the otty
     /// integration's title prefix). Display-only — the rename field seeds from the bare `title`.
     var agentMarker: Bool = false
+    /// Whether the title is a FAILURE report (the idle row's failed-command title) — the run wears
+    /// the status-error ink with a leading text-presentation `✗`, so the alarm reads in shape as
+    /// well as colour. Display-only, same contract as `agentMarker`.
+    var titleFailed: Bool = false
     /// The fused status badge (``TabBadgeView``) — occupies the trailing slot when present.
     var badge: TabBadgeKind?
     /// The resting trailing label — the pane's foreground process (`zsh`, `vim`, `claude`), shown
@@ -41,6 +45,9 @@ struct SlateTabRow: View {
     var onRename: (String) -> Void = { _ in }
     /// Dismiss the inline rename without renaming (escape / focus loss). No-op default.
     var onCancelRename: () -> Void = {}
+    /// Open the inline rename field — the double-click affordance (the Finder idiom), twin of the
+    /// context-menu "Rename" / ⌘R. No-op default keeps call sites compatible.
+    var onBeginRename: () -> Void = {}
 
     @State private var hovering = false
     @State private var closeHover = false
@@ -63,13 +70,14 @@ struct SlateTabRow: View {
             if isEditing {
                 renameField
             } else {
-                // `\u{FE0E}` pins the ✳ to TEXT presentation — bare U+2733 renders as emoji on
-                // Apple platforms, which would break the ink-only title run.
-                Text(agentMarker ? "✳\u{FE0E} \(title)" : title)
+                // `\u{FE0E}` pins the ✳/✗ to TEXT presentation — the bare code points render as
+                // emoji on Apple platforms, which would break the ink-only title run.
+                Text(markedTitle)
                     .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
                     // The live-otty ink ladder: a resting title reads on the SECONDARY ink; only the
-                    // active card's title steps up to primary (with the weight bump).
-                    .foregroundStyle(active ? Slate.Text.primary : Slate.Text.secondary)
+                    // active card's title steps up to primary (with the weight bump) — and a
+                    // FAILURE title overrides the ladder with the status-error ink at every rung.
+                    .foregroundStyle(titleColor)
                     .lineLimit(1)
             }
             Spacer(minLength: 6)
@@ -85,8 +93,12 @@ struct SlateTabRow: View {
         // The measured active-card lift: black 4% (light), radius 2, y 1 — hover/rest cast nothing.
         .shadow(color: active ? Slate.State.cardShadow : .clear, radius: 2, y: 1)
         .contentShape(.rect)
-        // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the field.
-        .onTapGesture { if !isEditing { onSelect() } }
+        // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the
+        // field — and a DOUBLE-click opens the inline rename (the Finder idiom). The single-tap arm
+        // rides `simultaneousGesture` so selection fires on the FIRST click (never waiting out a
+        // double-click window); the second click then opens the field on the already-selected row.
+        .gesture(TapGesture(count: 2).onEnded { if !isEditing { onBeginRename() } })
+        .simultaneousGesture(TapGesture().onEnded { if !isEditing { onSelect() } })
         .onHover { hovering = $0 }
         .animation(Slate.Anim.smallFade, value: hovering)
         .animation(Slate.Anim.smallFade, value: active)
@@ -97,6 +109,20 @@ struct SlateTabRow: View {
         if active { Slate.Surface.raised }
         else if hovering { Slate.State.hover }
         else { .clear }
+    }
+
+    /// The title with its leading marker glyph: the agent `✳` outranks the failure `✗` (an agent
+    /// session's identity beats a command post-mortem — in practice the two never combine, since a
+    /// failed-command title only fills an otherwise EMPTY title and agent rows title by name).
+    private var markedTitle: String {
+        if agentMarker { return "✳\u{FE0E} \(title)" }
+        if titleFailed { return "✗\u{FE0E} \(title)" }
+        return title
+    }
+
+    private var titleColor: Color {
+        if titleFailed { return Slate.Status.err }
+        return active ? Slate.Text.primary : Slate.Text.secondary
     }
 
     /// The trailing cluster: the rare mode glyphs (lock / sync) ride OUTSIDE the swap slot so a mode

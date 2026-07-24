@@ -81,6 +81,22 @@ public struct ClaudePaneDetector: Sendable {
     /// `.needsPermission` clears it back to `0`.
     private var lastNotificationKind: UInt8 = 0
 
+    /// The hook session id the current ``sessionIntent`` belongs to — a `UserPromptSubmit` whose
+    /// session differs re-derives the intent from scratch (a fresh `claude` run / `/clear`).
+    private var intentSessionID: String?
+
+    /// The pane's sticky AGENT-SESSION INTENT (wire type 36): the session's first titleable prompt,
+    /// latched once per session — `nil` = no intent (cleared on SessionEnd / presence termination).
+    private var sessionIntent: String?
+
+    /// The last type-36 intent string emitted (`nil` before the first emit) — the dedupe anchor.
+    /// Compared with a `?? ""` collapse so a session that never had an intent stays SILENT (no
+    /// spurious empty clear frame on the first hook fold).
+    private var lastEmittedIntent: String?
+
+    /// Character cap on the derived intent line — a sidebar title, not a transcript.
+    static let maxIntentChars = 120
+
     public init(doneToIdleTimeout: TimeInterval = 8) {
         matcher = ClaudeManifestMatcher()
         machine = ClaudeStatusMachine(doneToIdleTimeout: doneToIdleTimeout)
@@ -95,15 +111,18 @@ public struct ClaudePaneDetector: Sendable {
         public var foreground: WireMessage?
         /// The type-27 `claudeStatus(...)` to send, or `nil` (status unchanged).
         public var status: WireMessage?
+        /// The type-36 `agentSessionIntent(...)` to send, or `nil` (intent unchanged).
+        public var intent: WireMessage?
 
-        public var isEmpty: Bool { foreground == nil && status == nil }
+        public var isEmpty: Bool { foreground == nil && status == nil && intent == nil }
 
         /// Flattened for the caller's `enqueueControl([WireMessage])` — foreground first (presence
-        /// floor), then the richer status, mirroring the machine's precedence.
+        /// floor), then the richer status, then the intent, mirroring the machine's precedence.
         public var messages: [WireMessage] {
             var out: [WireMessage] = []
             if let foreground { out.append(foreground) }
             if let status { out.append(status) }
+            if let intent { out.append(intent) }
             return out
         }
     }
@@ -167,13 +186,18 @@ public struct ClaudePaneDetector: Sendable {
             machine.reduce(.processPresent(present), at: now)
             // Presence absence terminates → not blocked anymore → forget the stale notification
             // kind AND the authoritative provenance (a later wrapper foreground preserves nothing).
+            // The session intent dies with the session too (a claude killed without a SessionEnd
+            // must not pin its task line onto whatever runs in the pane next).
             if !present {
                 lastNotificationKind = 0
                 hookAuthority = false
                 lastAuthoritativeAt = nil
+                intentSessionID = nil
+                sessionIntent = nil
             }
         }
         emission.status = statusEmissionIfChanged()
+        emission.intent = intentEmissionIfChanged()
         return emission
     }
 
@@ -184,6 +208,17 @@ public struct ClaudePaneDetector: Sendable {
     public mutating func hook(bytes: Data, at now: TimeInterval) -> Emission {
         var emission = Emission()
         guard let payload = HookParser.parse(bytes) else { return emission } // validate-then-drop
+        // The INTENT fold (wire type 36) reads the payload BEFORE the status mapping strips the
+        // prompt: the session's first titleable prompt latches, SessionEnd clears.
+        switch payload {
+        case let .userPromptSubmit(info, prompt):
+            foldIntent(sessionID: info.sessionID, prompt: prompt)
+        case .sessionEnd:
+            intentSessionID = nil
+            sessionIntent = nil
+        default:
+            break
+        }
         let (event, kindByte) = AgentHookHandler.mapToHookEvent(payload)
         // A REAL hook is the same precedence-2 authoritative signal as a ctl report, so it stamps
         // the SAME stickiness anchor — otherwise the ~1 Hz foreground poll terminates a hook-set
@@ -197,6 +232,7 @@ public struct ClaudePaneDetector: Sendable {
         // blocked state forgets it (so a later tick/presence type-27 reports kind 0, not a stale class).
         lastNotificationKind = (machine.status == .needsPermission) ? kindByte : 0
         emission.status = statusEmissionIfChanged()
+        emission.intent = intentEmissionIfChanged()
         return emission
     }
 
@@ -297,7 +333,54 @@ public struct ClaudePaneDetector: Sendable {
             lastEmittedStatus = triple
             emission.status = .claudeStatus(state: triple.state, kind: triple.kind, label: triple.label)
         }
+        // The intent stream re-asserts the same way: current truth, anchor re-pointed, and quiet
+        // for a pane whose intent stream never spoke (no spurious empty clear frame).
+        if lastEmittedIntent != nil {
+            let current = sessionIntent ?? ""
+            lastEmittedIntent = current
+            emission.intent = .agentSessionIntent(current)
+        }
         return emission
+    }
+
+    // MARK: - Session intent (the type-36 latch)
+
+    /// Folds one `UserPromptSubmit` into the intent latch: a prompt from a NEW session re-derives
+    /// from scratch; within a session only the FIRST titleable prompt latches (the Claude-Code /
+    /// Conductor session-naming idiom — the name is stable for the session's whole life, so the
+    /// sidebar row never churns per turn).
+    private mutating func foldIntent(sessionID: String?, prompt: String?) {
+        if sessionID != intentSessionID {
+            intentSessionID = sessionID
+            sessionIntent = nil
+        }
+        guard sessionIntent == nil, let line = Self.intentLine(from: prompt) else { return }
+        sessionIntent = line
+    }
+
+    /// Derives the one-line intent from a submitted prompt: the first non-blank line, inner
+    /// whitespace collapsed, clamped to ``maxIntentChars``. `nil` when the prompt has no titling
+    /// value — blank, a slash-command (`/compact`), or a harness-injected XML block — so a later
+    /// REAL prompt can still name the session. Pure + total (any string tolerated).
+    static func intentLine(from prompt: String?) -> String? {
+        guard let prompt else { return nil }
+        for rawLine in prompt.split(separator: "\n", omittingEmptySubsequences: true) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty { continue }
+            if line.hasPrefix("/") || line.hasPrefix("<") { return nil }
+            let collapsed = line.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+            return String(collapsed.prefix(Self.maxIntentChars))
+        }
+        return nil
+    }
+
+    /// Returns a type-36 `agentSessionIntent` message iff the latched intent changed since the last
+    /// emit (`nil`-anchor collapses to "" so a never-intent pane stays silent); empty = cleared.
+    private mutating func intentEmissionIfChanged() -> WireMessage? {
+        let current = sessionIntent ?? ""
+        guard current != (lastEmittedIntent ?? "") else { return nil }
+        lastEmittedIntent = current
+        return .agentSessionIntent(current)
     }
 
     // MARK: - Status dedupe (ONE anchor for the ONE type-27 stream)

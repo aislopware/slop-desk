@@ -23,9 +23,11 @@ public enum HookPayload: Sendable, Equatable {
     case subagentStop(SubagentNode)
 
     /// `UserPromptSubmit` → a user prompt was submitted (a turn began → *working*).
-    /// Carries only the session identity the detector needs; the prompt text itself is
-    /// not surfaced here. 1:1 → `ClaudeHookEvent.userPromptSubmit(sessionID:)` (W10).
-    case userPromptSubmit(SessionInfo)
+    /// Carries the session identity the detector needs plus the raw `prompt` text — the
+    /// host's agent-session INTENT source (the first prompt of a session names it, wire
+    /// type 36). 1:1 → `ClaudeHookEvent.userPromptSubmit(sessionID:)` (W10; the status
+    /// machine ignores the prompt — only the pane detector's intent latch reads it).
+    case userPromptSubmit(SessionInfo, prompt: String?)
 
     /// `PreToolUse` → a tool is about to run (→ *working*, clears a resolved permission
     /// block). Carries the `tool_name`/`tool_input` so a label can be derived; no result
@@ -167,7 +169,7 @@ public enum HookParser {
             return .subagentStop(node)
 
         case "UserPromptSubmit":
-            return .userPromptSubmit(sessionInfo(from: obj))
+            return .userPromptSubmit(sessionInfo(from: obj), prompt: obj["prompt"]?.stringValue)
 
         case "PreToolUse":
             // A tool is *about* to run — no result yet. Like PostToolUse we require a tool

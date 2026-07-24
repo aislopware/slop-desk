@@ -2917,6 +2917,14 @@ public final class WorkspaceStore {
     /// set alongside ``paneAgentStatus``. An empty / whitespace label is treated as absent (no key).
     public internal(set) var paneAgentLabel: [PaneID: String] = [:]
 
+    /// The per-pane host-latched agent-session INTENT (wire type 36): the session's first titleable
+    /// prompt, sticky for the session's whole life — the sidebar agent row's TITLE ("fix the flaky
+    /// CI test" instead of the `claude` every agent row shares). Host-computed from the
+    /// `UserPromptSubmit` hook, change-edge deduped, re-asserted on reattach; an empty push (the
+    /// session ended) removes the key. Written by ``setAgentIntent(_:for:)``. PRUNED to the live
+    /// leaf set alongside ``paneAgentStatus``.
+    public internal(set) var paneAgentIntent: [PaneID: String] = [:]
+
     /// The per-pane COARSE foreground-process name the host reports (wire type 26 — the display-only hint
     /// ``LivePaneSession/foregroundProcessName`` captures), mirrored onto the store so the sidebar rail
     /// can show the trailing process label ("zsh") and ``TabBadgeResolver`` can classify a `caffeinate`/`sudo`
@@ -3246,6 +3254,10 @@ public final class WorkspaceStore {
         connection?.onProjectGitStatusChanged = { [weak self] summary, repoRoot in
             self?.applyPushedProjectGitSummary(summary, repoRoot: repoRoot)
         }
+        // HOST-latched agent-session intent (wire type 36): the sticky agent-row title source.
+        connection?.onAgentIntentChanged = { [weak self] intent in
+            self?.setAgentIntent(intent, for: id)
+        }
         // COMMAND-START STALE-BADGE CLEAR (progress-state.md): a new command beginning (OSC 133;C) clears this
         // pane's stale completion ✓/✗ so a busy background pane resolves to the running spinner, not the prior
         // run's exit badge.
@@ -3474,6 +3486,10 @@ public final class WorkspaceStore {
         if !paneAgentLabel.isEmpty {
             paneAgentLabel = paneAgentLabel.filter { leafSet.contains($0.key) }
         }
+        // Agent-session intent (the type-36 title latch):
+        if !paneAgentIntent.isEmpty {
+            paneAgentIntent = paneAgentIntent.filter { leafSet.contains($0.key) }
+        }
         if !lastNotifiedStatus.isEmpty {
             lastNotifiedStatus = lastNotifiedStatus.filter { leafSet.contains($0.key) }
         }
@@ -3696,6 +3712,10 @@ public final class WorkspaceStore {
                 // HOST-computed By-Project key (canvas path): same guarded persist as wireMaterializedLeaf.
                 connection?.onProjectKeyChanged = { [weak self] key in
                     self?.setProjectKey(key, for: id)
+                }
+                // HOST-latched agent-session intent (canvas path): same mirror as wireMaterializedLeaf.
+                connection?.onAgentIntentChanged = { [weak self] intent in
+                    self?.setAgentIntent(intent, for: id)
                 }
                 // LIVE TITLE PERSISTENCE (canvas path): same lastKnownTitle wire as wireMaterializedLeaf.
                 connection?.onTitleChanged = { [weak self] title in

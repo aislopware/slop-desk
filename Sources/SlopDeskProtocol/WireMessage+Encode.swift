@@ -77,6 +77,11 @@ extension WireMessage {
         case let .projectKey(path):
             frame.append(Data(path.utf8))
 
+        case let .agentSessionIntent(intent):
+            // [remaining bytes = UTF-8 intent line] — a single trailing string, same shape as
+            // `cwd`/`projectKey` (the host clamps the line at derivation; empty = cleared).
+            frame.append(Data(intent.utf8))
+
         case let .projectGitStatus(status):
             // [UInt16 BE rootLen][repoRoot UTF-8][UInt16 BE branchLen][branch UTF-8]
             // [Int32 BE ahead][Int32 BE behind][Int32 BE stash]
@@ -326,6 +331,7 @@ public extension WireMessage {
             case let .title(string): string.utf8.count
             case let .cwd(path): path.utf8.count
             case let .projectKey(path): path.utf8.count
+            case let .agentSessionIntent(intent): intent.utf8.count
             case let .projectGitStatus(status):
                 // 2×(UInt16 len + string) + 3×Int32 + 5×UInt32 (see encode()).
                 2 + Self.clampedU16Field(status.repoRoot).utf8.count

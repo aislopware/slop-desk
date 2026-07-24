@@ -76,7 +76,7 @@ public struct AgentHookHandler: Sendable {
         case let .sessionStart(info):
             return (.sessionStart(sessionID: info.sessionID), 0)
 
-        case let .userPromptSubmit(info):
+        case let .userPromptSubmit(info, _):
             return (.userPromptSubmit(sessionID: info.sessionID), 0)
 
         case let .preToolUse(use):

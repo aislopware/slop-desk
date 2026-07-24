@@ -52,6 +52,8 @@ final class WireMessageWireByteCountTests: XCTestCase {
             .progress(state: 2, percent: 80),
             .progress(state: 3, percent: 0),
             .cwd("/Users/me/project dir"),
+            .agentSessionIntent("fix the flaky CI test"),
+            .agentSessionIntent(""),
         ]
         for message in messages {
             XCTAssertEqual(

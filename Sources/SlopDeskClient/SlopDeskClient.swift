@@ -131,6 +131,10 @@ public actor SlopDeskClient {
         /// `git status` fold for one repo toplevel. The GUI books it per PROJECT (section header) and
         /// backs its own poll cadence off while pushes stay fresh.
         case projectGitStatus(WireMessage.ProjectGitStatus)
+        /// The pane's sticky AGENT-SESSION INTENT (wire type 36): the agent session's first
+        /// titleable prompt, host-latched per session and re-asserted on reattach. Empty =
+        /// cleared (session ended) — the GUI drops its mirror and the row title falls back.
+        case agentSessionIntent(String)
         /// The transport dropped (network loss / clean close). ``ReconnectManager``
         /// reacts to this; surfaced for diagnostics.
         case disconnected(reason: String)
@@ -641,6 +645,9 @@ public actor SlopDeskClient {
         case let .projectGitStatus(status):
             // Host-pushed project git summary (type 35): surface verbatim; the GUI store validates + books.
             eventBroadcaster.yield(.projectGitStatus(status))
+        case let .agentSessionIntent(intent):
+            // Host-latched agent-session intent (type 36): surface verbatim; the GUI store mirrors it.
+            eventBroadcaster.yield(.agentSessionIntent(intent))
         case let .pong(timestampMS):
             recordPong(sentAtMS: timestampMS)
         default:
