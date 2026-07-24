@@ -361,7 +361,7 @@ public final class WorkspaceStore {
 
     /// Whether pane `id`'s plain BUSY DOT (``TabBadgeKind/commandBusy``) should render: the shell is
     /// busy AND the current command has been running at least the configured reveal delay
-    /// (``SettingsKey/tabBadgeBusyDelaySecondsValue``, default 3 s) — a fast `ls`/`cd` never flashes
+    /// (``SettingsKey/tabBadgeBusyDelaySecondsValue``, default 1 s) — a fast `ls`/`cd` never flashes
     /// the rail. The `isBusy` input BOTH badge-resolution call sites feed to ``TabBadgeGating/resolve``
     /// (the rail's `chrome(...)` and ``unseenAttentionPanes`` — they must agree). A busy shell with no
     /// start stamp shows immediately (fail-visible — the stamp and the busy bit ride the same OSC-133

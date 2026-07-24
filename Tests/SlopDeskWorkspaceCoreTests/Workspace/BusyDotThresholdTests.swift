@@ -4,7 +4,7 @@ import XCTest
 
 /// The busy-dot REVEAL THRESHOLD: the plain ``TabBadgeKind/commandBusy`` dot shows only
 /// once a foreground command has been running at least `SettingsKey.tabBadgeBusyDelaySecondsValue`
-/// (default 3 s, user-configurable, 0 = immediate) — a fast `ls`/`cd` must never flash the rail.
+/// (default 1 s, user-configurable, 0 = immediate) — a fast `ls`/`cd` must never flash the rail.
 ///
 /// ``WorkspaceStore/paneShowsBusyDot(_:now:)`` is the ONE thresholded `isBusy` input every badge
 /// resolution site feeds to `TabBadgeGating.resolve` (the rail's `chrome(...)`,
@@ -35,10 +35,10 @@ final class BusyDotThresholdTests: XCTestCase {
         try XCTUnwrap(store.handle(for: id) as? FakePaneSession)
     }
 
-    // MARK: - threshold gating (the default 3 s)
+    // MARK: - threshold gating (the default 1 s)
 
     /// A busy shell whose command just started must NOT show the dot; once the command outlives the
-    /// default 3 s delay it must. This is the user-visible contract: fast commands never flash.
+    /// default 1 s delay it must. This is the user-visible contract: fast commands never flash.
     func testBusyDotHiddenUntilDefaultThresholdElapses() throws {
         let store = makeTreeStore()
         let pane = try activePane(store)
@@ -52,11 +52,11 @@ final class BusyDotThresholdTests: XCTestCase {
             "a just-started command must not flash the busy dot",
         )
         XCTAssertFalse(
-            store.paneShowsBusyDot(pane, now: start.addingTimeInterval(2.9)),
-            "still inside the default 3 s reveal delay",
+            store.paneShowsBusyDot(pane, now: start.addingTimeInterval(0.9)),
+            "still inside the default 1 s reveal delay",
         )
         XCTAssertTrue(
-            store.paneShowsBusyDot(pane, now: start.addingTimeInterval(3.0)),
+            store.paneShowsBusyDot(pane, now: start.addingTimeInterval(1.0)),
             "at the boundary the dot reveals (>= threshold, the completedFlashWindow compare idiom)",
         )
         XCTAssertTrue(store.paneShowsBusyDot(pane, now: start.addingTimeInterval(30)))
@@ -100,7 +100,7 @@ final class BusyDotThresholdTests: XCTestCase {
         let secondStart = start.addingTimeInterval(10)
         store.handleCommandStarted(id: pane, at: secondStart)
         XCTAssertFalse(
-            store.paneShowsBusyDot(pane, now: secondStart.addingTimeInterval(1)),
+            store.paneShowsBusyDot(pane, now: secondStart.addingTimeInterval(0.5)),
             "the second command's reveal delay counts from ITS start edge",
         )
     }

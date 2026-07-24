@@ -588,7 +588,7 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertEqual(
             RailRowsBuilder.liveRowTitle(
                 structuralTitle: "claude", userRenamed: false, isAgent: true,
-                intent: "fix the flaky CI test", runningCommand: nil, blocks: [],
+                intent: "fix the flaky CI test", runningCommand: nil, processTitle: nil, blocks: [],
                 kind: .terminal, fallback: "Terminal",
             ),
             "fix the flaky CI test",
@@ -597,7 +597,7 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertEqual(
             RailRowsBuilder.liveRowTitle(
                 structuralTitle: "release box", userRenamed: true, isAgent: true,
-                intent: "fix the flaky CI test", runningCommand: nil, blocks: [],
+                intent: "fix the flaky CI test", runningCommand: nil, processTitle: nil, blocks: [],
                 kind: .terminal, fallback: "Terminal",
             ),
             "release box",
@@ -606,7 +606,7 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertEqual(
             RailRowsBuilder.liveRowTitle(
                 structuralTitle: "", userRenamed: false, isAgent: false,
-                intent: "fix the flaky CI test", runningCommand: nil, blocks: [],
+                intent: "fix the flaky CI test", runningCommand: nil, processTitle: nil, blocks: [],
                 kind: .terminal, fallback: "Terminal",
             ),
             "Terminal",
@@ -615,7 +615,8 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertEqual(
             RailRowsBuilder.liveRowTitle(
                 structuralTitle: "claude", userRenamed: false, isAgent: true,
-                intent: "   ", runningCommand: nil, blocks: [], kind: .terminal, fallback: "Terminal",
+                intent: "   ", runningCommand: nil, processTitle: nil, blocks: [], kind: .terminal,
+                fallback: "Terminal",
             ),
             "claude",
         )
@@ -623,16 +624,37 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertEqual(
             RailRowsBuilder.liveRowTitle(
                 structuralTitle: "", userRenamed: false, isAgent: false,
-                intent: nil, runningCommand: "make check", blocks: [lint],
+                intent: nil, runningCommand: "make check", processTitle: nil, blocks: [lint],
                 kind: .terminal, fallback: "Terminal",
             ),
             "make check",
+        )
+        // A bare foreground-PROGRAM structural title (the at-root running pane) upgrades in place
+        // to the full running command line — the same fact with its arguments back.
+        XCTAssertEqual(
+            RailRowsBuilder.liveRowTitle(
+                structuralTitle: "sleep", userRenamed: false, isAgent: false,
+                intent: nil, runningCommand: "sleep 30 && make", processTitle: "sleep",
+                blocks: [], kind: .terminal, fallback: "Terminal",
+            ),
+            "sleep 30 && make",
+        )
+        // A FOLDER structural title is an identity, not a program echo — it never yields to the
+        // running command (the subtitle carries the location; the running line rides the tooltip).
+        XCTAssertEqual(
+            RailRowsBuilder.liveRowTitle(
+                structuralTitle: "api", userRenamed: false, isAgent: false,
+                intent: nil, runningCommand: "make check", processTitle: "make",
+                blocks: [], kind: .terminal, fallback: "Terminal",
+            ),
+            "api",
         )
         // Idle: the last executed command titles the row, regardless of its exit.
         XCTAssertEqual(
             RailRowsBuilder.liveRowTitle(
                 structuralTitle: "", userRenamed: false, isAgent: false,
-                intent: nil, runningCommand: nil, blocks: [lint], kind: .terminal, fallback: "Terminal",
+                intent: nil, runningCommand: nil, processTitle: nil, blocks: [lint], kind: .terminal,
+                fallback: "Terminal",
             ),
             "make lint",
         )
@@ -640,7 +662,7 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertEqual(
             RailRowsBuilder.liveRowTitle(
                 structuralTitle: "", userRenamed: false, isAgent: false,
-                intent: nil, runningCommand: nil, blocks: [], kind: .terminal, fallback: "Terminal",
+                intent: nil, runningCommand: nil, processTitle: nil, blocks: [], kind: .terminal, fallback: "Terminal",
             ),
             "Terminal",
         )

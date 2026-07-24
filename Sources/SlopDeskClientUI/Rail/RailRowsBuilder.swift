@@ -208,7 +208,7 @@ enum RailRowsBuilder {
         let gatedBadge = TabBadgeGating.resolve(
             agent: status,
             completion: store.panePendingCompletion[paneID],
-            // Reveal-thresholded (default 3 s) so a fast `ls` never flashes the busy dot; must match
+            // Reveal-thresholded (default 1 s) so a fast `ls` never flashes the busy dot; must match
             // the `unseenAttentionPanes` input (the two resolution sites may never disagree).
             isBusy: store.paneShowsBusyDot(paneID),
             foregroundProcess: processLabel,
@@ -367,8 +367,8 @@ enum RailRowsBuilder {
 
     /// A finished command must have RUN at least this long (host-measured C→D wall clock) to title an
     /// idle pane — sub-second `ls`/`cd` chatter never takes the title, so the resting title doesn't
-    /// churn with every trivial command. Deliberately LOOSER than the busy-dot's 3 s reveal: the
-    /// title is cheap standing text, so a 1 s+ command earns it while only a 3 s+ one earns the dot.
+    /// churn with every trivial command. Mirrors the busy-dot reveal default (1 s,
+    /// ``SettingsKey/tabBadgeBusyDelaySeconds``): a command that earns the dot earns the title.
     static let commandTitleMinDurationMS: UInt32 = 1000
 
     /// The idle shell's LAST-COMMAND title: the most recent finished block whose command ran long
@@ -390,18 +390,25 @@ enum RailRowsBuilder {
         return nil
     }
 
+    // One flat rung list — a struct would only relabel the same nine inputs (the WindowSizeMath idiom).
+    // swiftlint:disable function_parameter_count
     /// The live leaf's SHOWN title — ONE precedence rule shared by the macOS + iOS rows so the two
     /// can't drift: an explicit user RENAME always wins; an AGENT session then titles by its
     /// host-latched session INTENT (wire type 36 — the session's first prompt, the task identity)
     /// over the structural folder/process title every agent row shares ("claude" ×4 says nothing);
-    /// a non-empty structural title reads next; an EMPTY structural title (the at-root idle shell)
-    /// reads the live RUNNING command (the caller gates it on the busy-badge reveal, so the title
-    /// answers "what is this pane doing" instead of a bare spinner and a fast `ls` never flashes
-    /// in), then the last executed command (``lastCommandTitle(blocks:)`` — exit-agnostic history);
-    /// else the kind-generic fallback. Pure + static so the chain is unit-pinned without a view.
+    /// a non-empty structural title reads next — EXCEPT that a bare foreground-PROGRAM title (the
+    /// at-root running pane, whose structural rung titles by `processDisplayName`) upgrades in
+    /// place to the full RUNNING command line when one is known ("sleep" → "sleep 30 && make",
+    /// the same fact with the arguments back; a FOLDER title is an identity and never yields); an
+    /// EMPTY structural title (the at-root idle shell) reads the running command, then the last
+    /// executed command (``lastCommandTitle(blocks:)`` — exit-agnostic history); else the
+    /// kind-generic fallback. The caller gates `runningCommand` on the busy-badge reveal, so the
+    /// title upgrades with the spinner and a fast `ls` never flashes in. Pure + static so the
+    /// chain is unit-pinned without a view.
     static func liveRowTitle(
         structuralTitle: String, userRenamed: Bool, isAgent: Bool, intent: String?,
-        runningCommand: String?, blocks: [CommandBlock], kind: PaneKind, fallback: String,
+        runningCommand: String?, processTitle: String?, blocks: [CommandBlock], kind: PaneKind,
+        fallback: String,
     ) -> String {
         if userRenamed, !structuralTitle.isEmpty { return structuralTitle }
         if isAgent, let intent = intent?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -409,15 +416,19 @@ enum RailRowsBuilder {
         {
             return intent
         }
-        if !structuralTitle.isEmpty { return structuralTitle }
-        guard kind == .terminal else { return fallback }
-        if let running = runningCommand?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !running.isEmpty
-        {
-            return running
+        let running = runningCommand?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !structuralTitle.isEmpty {
+            if kind == .terminal, let running, !running.isEmpty, structuralTitle == processTitle {
+                return running
+            }
+            return structuralTitle
         }
+        guard kind == .terminal else { return fallback }
+        if let running, !running.isEmpty { return running }
         return lastCommandTitle(blocks: blocks) ?? fallback
     }
+
+    // swiftlint:enable function_parameter_count
 
     /// Bare interactive-shell basenames that must NOT title a pane — titling by the shell is no more
     /// informative than the generic default, so the row keeps the cwd/generic chain instead.
