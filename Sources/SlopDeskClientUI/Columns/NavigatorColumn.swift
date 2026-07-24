@@ -888,15 +888,14 @@ private struct IOSSidebarLiveRow: View {
                         onCancel: onCancelRename,
                     )
                 } else {
-                    // The same ink dialect as the macOS row: an attention state recolours the
-                    // title; no lifecycle glyph mounts.
-                    let attentionInk = chrome.badge.flatMap { StatusPresentation.attentionInk($0) }
+                    // The same reading as the macOS row: the title stays neutral — state is the
+                    // trailing ring mark's hue; the AX value keeps it VoiceOver-legible.
                     let attentionLabel = chrome.badge.flatMap { badge in
                         StatusPresentation.attentionInk(badge) != nil
                             ? StatusPresentation.tabBadgeLabel(badge) : nil
                     }
                     Text(shownTitle)
-                        .foregroundStyle(attentionInk ?? Slate.Text.primary)
+                        .foregroundStyle(Slate.Text.primary)
                         .lineLimit(1)
                         .accessibilityValue(busyLabel ?? attentionLabel ?? "")
                 }
@@ -910,7 +909,7 @@ private struct IOSSidebarLiveRow: View {
                     .foregroundStyle(Slate.Text.secondary)
                     .accessibilityLabel("Read only")
             }
-            // Only a privilege marker mounts trailing TEXT — attention is the title's ink.
+            // Only a privilege marker mounts trailing TEXT — lifecycle is the ring mark's hue.
             if let badge = chrome.badge, StatusPresentation.tabBadge(badge) != nil {
                 TabBadgeView(kind: badge)
             }

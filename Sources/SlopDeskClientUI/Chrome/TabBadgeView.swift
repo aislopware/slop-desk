@@ -1,7 +1,7 @@
 // TabBadgeView — the trailing-slot marker for one sidebar tab row: ONLY the privilege modifiers
 // (`#` sudo, `∞` caffeinate), small muted text in the instrument (mono) face. The lifecycle states
-// never render here — running is the trailing ring mark, attention is the title's ink
-// (`StatusPresentation.attentionInk`, the ink dialect) — so this view renders NOTHING for them and
+// never render here — every lifecycle state is the trailing ring mark's hue
+// (`StatusPresentation.statusDot`) — so this view renders NOTHING for them and
 // the slot falls through to the shell label. One marker in a fixed 16pt box: state changes never
 // move a pixel of layout.
 //
@@ -13,7 +13,7 @@ import SlopDeskWorkspaceCore
 import SwiftUI
 
 /// The privilege marker for one sidebar tab row. Renders nothing for the lifecycle kinds (those speak
-/// through the title's ink); AX-labelled so the terse glyph is VoiceOver-legible.
+/// through the ring mark's hue); AX-labelled so the terse glyph is VoiceOver-legible.
 struct TabBadgeView: View {
     let kind: TabBadgeKind
 

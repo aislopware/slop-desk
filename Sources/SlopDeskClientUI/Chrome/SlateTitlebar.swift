@@ -191,7 +191,7 @@ private struct TitleMenuButton: View {
 
     /// The title pip's tint — the STATUS colour of the most-urgent waiting pane (the head of the
     /// urgency-sorted ``WorkspaceStore/unseenAttentionPanes``), the SAME attention ink the sidebar
-    /// row's title wears (``StatusPresentation/attentionInk(_:)``) so the pip and the rail never
+    /// row's ring mark wears (``StatusPresentation/attentionInk(_:)``) so the pip and the rail never
     /// disagree about one pane. Secondary when nothing waits (the pip is hidden then anyway — this
     /// is just its resting value).
     private static func tint(for badge: TabBadgeKind?) -> Color {
@@ -226,7 +226,7 @@ struct TitlePaneMenu: View {
             if !waiting.isEmpty {
                 SlatePopoverSection("NEEDS ATTENTION")
                 ForEach(waiting, id: \.pane) { entry in
-                    // The title wears the pane's ATTENTION INK — the same ink dialect the sidebar
+                    // The title wears the pane's ATTENTION INK — the same hue the sidebar
                     // row's title speaks, so rail ≡ menu with no glyph column. Line 2 = the host
                     // agent label (the actual blocking question / last assistant line) when the
                     // wire carried one, else the state's caption; trailing = how long it has been

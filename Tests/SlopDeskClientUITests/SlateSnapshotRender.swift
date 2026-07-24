@@ -70,9 +70,9 @@ final class SlateSnapshotRender: XCTestCase {
 
     // MARK: - Opt-in render of the sidebar tab-row badge states
 
-    /// Renders `SlateTabRow` in each fused badge state — the title's attention ink paired with
-    /// the trailing STATUS MARK column (accent dashed ring for the agent tier, muted ring for a
-    /// busy command, filled attention dots, nothing at rest) plus the resting shell-label slot
+    /// Renders `SlateTabRow` in each fused badge state — the neutral title beside the trailing
+    /// STATUS MARK column (one dashed ring: accent for the agent tier, muted for a busy command,
+    /// green/amber/red for the attention states, nothing at rest) plus the resting shell-label slot
     /// and the active white card — the visual lock for the sidebar row. SAME `ImageRenderer` opt-in idiom
     /// as the showcase; inert (skipped) unless `SLOPDESK_TABROW_SNAPSHOT_DIR=<dir>` is set, where
     /// it writes `tab-row-badges.png`. NO video/Metal — a badge is pure SwiftUI.

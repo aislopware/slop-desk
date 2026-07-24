@@ -1,25 +1,25 @@
-// StatusDotTests — pins the trailing status mark, the T3 Code SidebarV2 port. The resolver's
-// ladder is the spec: a working agent DASH-RINGS on the accent (the same raw-working key the
-// working reading uses); the unread finish is the SOLID ring in the title's own green; a running
-// command dash-rings muted; and the WAITING states (question / failure) mount NOTHING — T3 Code
-// renders no icon for approval/input/failed, the tinted label alone carries them, which here is
-// the title's attention ink. The shape grammar — broken outline = in flight, closed outline =
-// done — and the STATIC contract (nothing in the mark animates) are what these tests hold.
-// Headless VALUE assertions — no render. Ink identity is asserted SELF-consistently against the
-// presentation maps (never absolute colour values — `Color` equality is provider-fragile).
+// StatusDotTests — pins the trailing status mark, the T3 Code SidebarV2 port. ONE shape (the
+// static dashed ring) and the HUE is the whole grammar, the resolver's ladder being the spec: a
+// working agent rings on the accent (the same raw-working key liveness uses, outranking every
+// badge); a running command rings muted; the attention states ring on their attention ink — the
+// title never recolours, so the mark's hue is those states' entire rendering; idle and
+// privilege-only rows mount nothing. The STATIC contract (nothing in the mark animates) rides
+// the geometry pins. Headless VALUE assertions — no render. Ink identity is asserted
+// SELF-consistently against the presentation maps (never absolute colour values — `Color`
+// equality is provider-fragile).
 
 import SlopDeskWorkspaceCore
 import XCTest
 @testable import SlopDeskClientUI
 
 final class StatusDotTests: XCTestCase {
-    /// A WORKING AGENT's mark is the accent DASHED ring and outranks every badge underneath it —
-    /// keyed on the raw working status, so the badge gate can never kill the mark. The `.running`
+    /// A WORKING AGENT's mark is the accent ring and outranks every badge underneath it — keyed
+    /// on the raw working status, so the badge gate can never kill the mark. The `.running`
     /// badge route (gate ON) must read identically to the raw route.
     @MainActor
     func testWorkingAgentRingsAndOutranksEveryBadge() {
         let raw = StatusPresentation.statusDot(working: true, badge: nil)
-        XCTAssertEqual(raw?.shape, .dashedRing, "a thinking agent is IN FLIGHT — the broken outline")
+        XCTAssertNotNil(raw, "a thinking agent always mounts the mark")
         for badge: TabBadgeKind? in [.commandBusy, .error, .awaitingInput, .finished, .sudo] {
             XCTAssertEqual(
                 StatusPresentation.statusDot(working: true, badge: badge), raw,
@@ -32,51 +32,40 @@ final class StatusDotTests: XCTestCase {
         )
     }
 
-    /// The unread finish CLOSES the ring — solid, wearing EXACTLY the title's attention ink, so
-    /// the mark and the green title can never disagree about one pane.
+    /// Each attention kind's ring wears EXACTLY its attention ink — with a neutral title, the
+    /// mark's hue is the state's whole rendering, so it can never drift off the hue budget
+    /// (green unread finish, amber question, red failure).
     @MainActor
-    func testUnreadFinishClosesTheRingInTheTitleInk() {
-        for kind: TabBadgeKind in [.completed, .finished] {
+    func testAttentionKindsRingOnTheirAttentionInk() {
+        for kind: TabBadgeKind in [.awaitingInput, .error, .completed, .finished] {
             let dot = StatusPresentation.statusDot(working: false, badge: kind)
-            XCTAssertEqual(dot?.shape, .solidRing, "\(kind) is a closed loop — the solid ring")
+            XCTAssertNotNil(dot, "\(kind) must mount the mark — the neutral title can't say it")
             XCTAssertEqual(
                 dot?.ink, StatusPresentation.attentionInk(kind),
-                "\(kind)'s mark must wear the title's own attention ink",
+                "\(kind)'s ring must wear its own attention ink",
             )
         }
     }
 
-    /// A running command's mark is the muted RING — in flight, spending no hue — distinct from
-    /// the agent tier's accent ring, and never attention-class.
+    /// A running command's ring is muted — in flight, spending no hue — distinct from both the
+    /// agent tier's accent and the attention hues.
     @MainActor
-    func testCommandBusyRingsMutedDistinctFromTheAgentTier() {
+    func testCommandBusyRingsMutedDistinctFromEveryHuedTier() {
         let agent = StatusPresentation.statusDot(working: true, badge: nil)
         for kind: TabBadgeKind in [.commandBusy, .commandRunning] {
             let dot = StatusPresentation.statusDot(working: false, badge: kind)
-            XCTAssertEqual(dot?.shape, .dashedRing, "\(kind) is in flight — the broken outline")
+            XCTAssertNotNil(dot, "\(kind) is in flight — the ring mounts")
             XCTAssertNotEqual(dot?.ink, agent?.ink, "\(kind) must not borrow the agent accent")
             XCTAssertNil(
                 StatusPresentation.attentionInk(kind),
-                "busy is not attention-class — the title keeps the resting ink beside the ring",
+                "busy is not attention-class — its ring stays off the hue budget",
             )
         }
     }
 
-    /// The WAITING states mount NO mark — T3 Code renders no icon for approval/input/failed; the
-    /// tinted title (the attention ink, which must exist for them) is the whole rendering. Idle
-    /// and privilege-only rows also mount nothing: the resting rail is bare.
+    /// Idle and privilege-only rows mount NOTHING — T3 Code renders null; the resting rail is bare.
     @MainActor
-    func testWaitingIdleAndPrivilegeOnlyRowsMountNoMark() {
-        for kind: TabBadgeKind in [.awaitingInput, .error] {
-            XCTAssertNil(
-                StatusPresentation.statusDot(working: false, badge: kind),
-                "\(kind) is the title ink's job — no mark rides beside the tinted label",
-            )
-            XCTAssertNotNil(
-                StatusPresentation.attentionInk(kind),
-                "\(kind) must still recolour the title — dropping the mark can't mute the state",
-            )
-        }
+    func testIdleAndPrivilegeOnlyRowsMountNoMark() {
         XCTAssertNil(StatusPresentation.statusDot(working: false, badge: nil))
         XCTAssertNil(StatusPresentation.statusDot(working: false, badge: .sudo))
         XCTAssertNil(StatusPresentation.statusDot(working: false, badge: .caffeinate))

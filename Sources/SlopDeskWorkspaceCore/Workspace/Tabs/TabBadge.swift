@@ -5,8 +5,8 @@ import SlopDeskAgentDetect
 /// `docs/ui-shell/spec/terminal-features__progress-state.md`, "Tab badges reflect the current progress state per tab").
 ///
 /// PURE value type, **no SwiftUI**: HOW each kind renders lives in the view layer
-/// (`SlopDeskClientUI` `StatusPresentation` — running = the trailing ring mark, attention = the
-/// title's ink, privilege = a trailing text marker) so this resolver unit-tests headless. There is
+/// (`SlopDeskClientUI` `StatusPresentation` — lifecycle = the trailing ring mark's hue,
+/// privilege = a trailing text marker) so this resolver unit-tests headless. There is
 /// deliberately **no `.none` case** — the absence of a state is `TabBadgeKind?` `nil`, not a sentinel.
 ///
 /// Each case maps to a state described in `progress-state.md` → "The full badge set".
@@ -69,9 +69,9 @@ public enum TabBadgeKind: Equatable, Sendable {
     }
 
     /// Whether this badge is a BUSY tier — "something is in flight" (a working agent, an OSC 9;4
-    /// progress report, or a bare busy shell). The sidebar rows render busy as the trailing mark's
-    /// dashed ring, so their slot keeps the shell label; the
-    /// attention kinds recolour the title's ink, and only the privilege markers occupy the slot.
+    /// progress report, or a bare busy shell). The sidebar rows render busy as the trailing ring
+    /// mark on the accent/muted inks, the attention kinds as the same ring on the attention hues,
+    /// and only the privilege markers occupy the slot.
     /// The disjoint complement of ``needsAttention`` plus the privilege markers.
     public var isBusyTier: Bool {
         switch self {

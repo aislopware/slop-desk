@@ -1,6 +1,6 @@
-// TabBadgePresentationTests — pins the pure view-side status map: the INK DIALECT. A sidebar row
-// never mounts a lifecycle glyph — the attention states recolour the row's own TITLE ink
-// (`StatusPresentation.attentionInk`, all static hard cuts — running belongs to the ring mark),
+// TabBadgePresentationTests — pins the pure view-side status map. A sidebar row never mounts a
+// lifecycle glyph in the SLOT — lifecycle is the trailing ring mark's hue, the attention hues
+// coming from `StatusPresentation.attentionInk` (all static hard cuts) —
 // and ONLY the privilege modifiers (`#`/`∞`) occupy the trailing slot
 // (`StatusPresentation.tabBadge`). `tabBadgeLabel` gives every kind a distinct non-empty AX/tooltip
 // string. Headless VALUE assertions — no SwiftUI render, no video/Metal/SCStream. (Ink colours are
@@ -18,15 +18,15 @@ final class TabBadgePresentationTests: XCTestCase {
         .caffeinate, .sudo,
     ]
 
-    /// THE dialect contract: a kind carries attention ink EXACTLY when it is attention-class — the
-    /// states that wait on you recolour the title, and nothing else does (running is the ring
-    /// mark's job, privilege is slot text, so the ink can never double-book a row).
+    /// THE hue contract: a kind carries attention ink EXACTLY when it is attention-class — the
+    /// states that wait on you put a hue on the ring mark, and nothing else does (running rings
+    /// accent/muted, privilege is slot text, so the hue budget can never double-book a row).
     func testAttentionInkCoversExactlyTheAttentionClass() {
         for kind in allKinds {
             if kind.needsAttention {
                 XCTAssertNotNil(
                     StatusPresentation.attentionInk(kind),
-                    "\(kind) waits on the user — its title must wear the attention ink",
+                    "\(kind) waits on the user — its ring must wear the attention ink",
                 )
             } else {
                 XCTAssertNil(

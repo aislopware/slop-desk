@@ -54,8 +54,8 @@ struct SlatePopoverRow: View {
     var checked: Bool
     /// Muted title — a read-only info row (e.g. the working-directory path), not an action.
     var dim: Bool
-    /// A status-coloured title (the NEEDS-ATTENTION rows' ink dialect — the same attention ink the
-    /// sidebar row's title wears). Wins over the `dim`/primary ladder when set.
+    /// A status-coloured title (the NEEDS-ATTENTION rows — the same attention ink the sidebar
+    /// row's ring mark wears). Wins over the `dim`/primary ladder when set.
     var titleInk: Color?
     var action: () -> Void
 

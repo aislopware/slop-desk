@@ -69,15 +69,13 @@ enum StatusPresentation {
 
     // MARK: Tab badge
 
-    /// The row's ATTENTION INK — how a `needsAttention` state colours the row's own TITLE text, on
-    /// the hue budget: amber = act-now (a question waits), red = broken, green = unread-done. `nil`
-    /// for every non-attention kind (the title keeps the resting ink ladder).
-    ///
-    /// This is the INK DIALECT: the states that need the eye recolour the text that is already
-    /// there, so the rail stays a column of plain terminal text and status can never disagree with
-    /// its own indicator. For the WAITING states (question / failure) this ink is the whole
-    /// rendering — T3 Code mounts no icon for them, only the tinted label. Everything holds STILL
-    /// (MERIDIAN's hard-cut ethos: nothing in the rail animates).
+    /// A `needsAttention` state's HUE on the hue budget: amber = act-now (a question waits), red
+    /// = broken, green = unread-done. `nil` for every non-attention kind. The sidebar row's TITLE
+    /// never recolours — this ink is worn by the row's trailing ring mark
+    /// (``statusDot(working:badge:)``), the collapsed-group roll-up count
+    /// (``attentionRollupInk(_:)``) and the titlebar attention pip, so every surface names one
+    /// pane's state in the same hue. Everything holds STILL (MERIDIAN's hard-cut ethos: nothing
+    /// in the rail animates).
     static func attentionInk(_ kind: TabBadgeKind) -> Color? {
         switch kind {
         // Awaiting input — act-now amber; red stays reserved for broken.
@@ -114,41 +112,38 @@ enum StatusPresentation {
         return nil
     }
 
-    /// The row's trailing STATUS MARK — the T3 Code SidebarV2 port: RINGS ONLY, nothing animates.
-    /// The SHAPE carries the grammar: a dashed RING (its `CircleDashedIcon`) = in flight — the
-    /// accent for a WORKING AGENT (keyed on the RAW `.working` status, so the badge gate can't
-    /// kill it; the badge-routed `.running` tier reads identically) or the muted secondary ink
-    /// for a running COMMAND (in flight without hue); a green solid RING = the run finished,
-    /// unread — the loop closed, wearing the title's own ok ink. The WAITING states (question /
-    /// failure) mount NOTHING: T3 Code renders no icon for approval/input/failed — the tinted
-    /// status label alone carries them, and here that label is the title's attention ink
-    /// (``attentionInk(_:)``). Idle mounts nothing either — the resting rail stays bare.
+    /// The row's trailing STATUS MARK — the T3 Code SidebarV2 port: ONE shape (the static dashed
+    /// ring, its `CircleDashedIcon`) and the HUE names the state, T3 Code's own status-hue
+    /// convention. The ladder: a WORKING AGENT rings on the accent (keyed on the RAW `.working`
+    /// status, so the badge gate can't kill it; the badge-routed `.running` tier reads
+    /// identically); a running COMMAND rings on the muted secondary ink (in flight without hue);
+    /// the attention states ring on their attention ink (``attentionInk(_:)`` — green unread
+    /// finish, amber question, red failure), the mark's hue being that state's WHOLE rendering
+    /// now that the title stays neutral. Idle and privilege-only rows mount nothing — the
+    /// resting rail stays bare.
     static func statusDot(working: Bool, badge: TabBadgeKind?) -> StatusDotStyle? {
-        if working { return StatusDotStyle(ink: Slate.State.accent, shape: .dashedRing) }
+        if working { return StatusDotStyle(ink: Slate.State.accent) }
         guard let badge else { return nil }
         switch badge {
         // The agent tier arriving through the badge route ("Badge while processing" ON) reads
         // identically to the raw-working route above.
-        case .running: return StatusDotStyle(ink: Slate.State.accent, shape: .dashedRing)
+        case .running: return StatusDotStyle(ink: Slate.State.accent)
         case .commandBusy,
-             .commandRunning: return StatusDotStyle(ink: Slate.Text.secondary, shape: .dashedRing)
-        // The unread finish wears the SAME green the title does — mark and title can never
-        // disagree about one pane.
-        case .completed,
-             .finished: return attentionInk(badge).map { StatusDotStyle(ink: $0, shape: .solidRing) }
-        // Waiting states carry no mark (the amber/red title IS the T3 Code tinted label);
-        // privilege modifiers are slot text, not lifecycle.
+             .commandRunning: return StatusDotStyle(ink: Slate.Text.secondary)
         case .awaitingInput,
-             .caffeinate,
+             .completed,
              .error,
+             .finished: return attentionInk(badge).map(StatusDotStyle.init)
+        // Privilege modifiers are slot text, not lifecycle.
+        case .caffeinate,
              .sudo: return nil
         }
     }
 
     /// The trailing-slot marker for a ``TabBadgeKind`` — ONLY the privilege modifiers (`#` sudo,
     /// `∞` caffeinate), small muted text in the shell's own dialect. Every lifecycle state returns
-    /// `nil`: running lives in the trailing mark's ring (``statusDot(working:badge:)``), attention
-    /// lives in the title's ink (``attentionInk(_:)``), so the slot keeps the shell label.
+    /// `nil`: every lifecycle state lives in the trailing ring mark's hue
+    /// (``statusDot(working:badge:)``), so the slot keeps the shell label.
     static func tabBadge(_ kind: TabBadgeKind) -> TabBadgeStyle? {
         switch kind {
         case .caffeinate: TabBadgeStyle(text: "∞", tint: Slate.Text.secondary)

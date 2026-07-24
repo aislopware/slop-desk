@@ -5,14 +5,12 @@
 // (``TabBadgeView`` — `#`/`∞`) plus the STATUS DOT at the right edge, swapping to the close `×`
 // under hover.
 //
-// Status splits by CLASS, the T3 Code SidebarV2 grammar, and NOTHING animates: RUNNING is the
-// trailing ``StatusDotView`` ring (dashed — accent for a working agent, muted for a running
-// command — closing into the green SOLID ring for an unread finish), while WAITING is the
-// title's own ink (``StatusPresentation/attentionInk(_:)`` — amber = a question waits; red =
-// failed; green rides the finish alongside its ring — plus the `.medium` weight step the active
-// card uses). T3 Code mounts no icon for its waiting states — the tinted label alone — and the
-// title here IS that label, so a waiting row carries no mark and an IDLE row mounts nothing at
-// all. The ink stays IN the title run and the mark — no row wash, no tinted
+// Status is the trailing ``StatusDotView`` mark ALONE — one static dashed ring whose HUE names
+// the state (accent = working agent, muted = running command, green = unread finish, amber = a
+// question waits, red = failed; idle mounts nothing) — and NOTHING animates. The title NEVER
+// recolours: it keeps the neutral ink ladder, spending only the `.medium` weight step (the same
+// one the active card takes) on the states that wait on you, so an unread row reads "bold + a
+// coloured ring" the way a mail row reads unread. No row wash, no tinted
 // fill: the rail is monochrome except the marks that carry state. ACTIVE is the raised card
 // (fill + 1px hairline; the cast shadow is light-theme-only). Nothing else rides the row: no
 // subtitle, no readout, no telemetry — the richness lives in the hover tooltip and the context
@@ -30,10 +28,10 @@ struct SlateTabRow: View {
     /// Whether the title wears the leading `✳` AGENT marker (an agent session's row, the otty
     /// integration's title prefix). Display-only — the rename field seeds from the bare `title`.
     var agentMarker: Bool = false
-    /// The fused status kind for the row — the FULL resolver output, busy tiers included.
-    /// Attention kinds recolour the TITLE's ink (the ink dialect; the unread finish also closes
-    /// the trailing ring); the busy tiers mount the mark's muted ring; only the privilege
-    /// markers (`#`/`∞`) occupy the slot as TEXT (``TabBadgeView``).
+    /// The fused status kind for the row — the FULL resolver output, busy tiers included. Every
+    /// lifecycle kind renders as the trailing ring mark's hue (attention kinds also bump the
+    /// title's weight); only the privilege markers (`#`/`∞`) occupy the slot as TEXT
+    /// (``TabBadgeView``).
     var badge: TabBadgeKind?
     /// Non-`nil` ⇒ a WORKING AGENT row: the title steps up to the primary ink and the trailing
     /// mark rings on the accent — keyed on the RAW working status, so the badge gate can't kill
@@ -89,9 +87,9 @@ struct SlateTabRow: View {
                 // `\u{FE0E}` pins the ✳ to TEXT presentation — bare U+2733 renders as emoji on
                 // Apple platforms, which would break the ink-only title run.
                 Text(agentMarker ? "✳\u{FE0E} \(title)" : title)
-                    // Attention pairs WEIGHT with the ink (the Slack/tmux idiom: bold says
-                    // "something changed", the hue says what) — the same `.medium` step the
-                    // active card takes, so the two signals share one scale.
+                    // Attention pairs the title's WEIGHT with the mark's hue (the mail idiom:
+                    // bold says "something changed", the ring's hue says what) — the same
+                    // `.medium` step the active card takes, so the two signals share one scale.
                     .font(.system(
                         size: Slate.Typeface.body,
                         weight: active || attentionLabel != nil ? .medium : .regular,
@@ -134,18 +132,16 @@ struct SlateTabRow: View {
         else { .clear }
     }
 
-    /// The title's ink. An ATTENTION state recolours the whole title run (marker included) on the
-    /// hue budget — the ink dialect's entire rendering. Otherwise the live-otty ladder: a resting
-    /// title reads on the SECONDARY ink; the active card's title steps up to primary (with the
-    /// weight bump), and a THINKING agent's title also steps up — the row that is doing something
-    /// reads a shade brighter than the ones that aren't.
+    /// The title's ink — the NEUTRAL live-otty ladder only (state hue belongs to the trailing
+    /// mark): a resting title reads on the SECONDARY ink; the active card's title steps up to
+    /// primary (with the weight bump), and a THINKING agent's title also steps up — the row that
+    /// is doing something reads a shade brighter than the ones that aren't.
     private var titleInk: Color {
-        if let badge, let ink = StatusPresentation.attentionInk(badge) { return ink }
-        return active || workingLabel != nil ? Slate.Text.primary : Slate.Text.secondary
+        active || workingLabel != nil ? Slate.Text.primary : Slate.Text.secondary
     }
 
-    /// The AX value for an attention-inked title ("Awaiting input" / "Error" / "Finished"), so the
-    /// colour-spoken state stays VoiceOver-legible.
+    /// The AX value for an attention-marked row ("Awaiting input" / "Error" / "Finished"), so the
+    /// state the AX-hidden ring speaks in hue stays VoiceOver-legible.
     private var attentionLabel: String? {
         guard let badge, StatusPresentation.attentionInk(badge) != nil else { return nil }
         return StatusPresentation.tabBadgeLabel(badge)
@@ -175,8 +171,8 @@ struct SlateTabRow: View {
             ZStack(alignment: .trailing) {
                 HStack(spacing: 6) {
                     Group {
-                        // Only a PRIVILEGE marker occupies the slot as text — attention states
-                        // render as the title's ink, so their rows keep the shell label here.
+                        // Only a PRIVILEGE marker occupies the slot as text — lifecycle states
+                        // render as the ring mark, so their rows keep the shell label here.
                         if let badge, StatusPresentation.tabBadge(badge) != nil {
                             TabBadgeView(kind: badge)
                         } else if let processLabel {
