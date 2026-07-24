@@ -460,6 +460,20 @@ final class RailRowBuilderTests: XCTestCase {
         )
     }
 
+    /// The trailing-SLOT label keeps a bare shell's name — the slot answers "what is this pane
+    /// running", so an idle `zsh` row reads "zsh" there — while sharing the basename/argv0 cleanup
+    /// with the TITLE resolver (which still suppresses shells).
+    func testSlotProcessNameKeepsBareShells() {
+        XCTAssertEqual(RailRowsBuilder.slotProcessName("zsh"), "zsh")
+        XCTAssertEqual(RailRowsBuilder.slotProcessName("-zsh"), "zsh", "login-shell argv0 dash dropped")
+        XCTAssertEqual(RailRowsBuilder.slotProcessName("/bin/bash"), "bash", "basenamed")
+        XCTAssertEqual(RailRowsBuilder.slotProcessName("/usr/local/bin/npm"), "npm")
+        XCTAssertNil(RailRowsBuilder.slotProcessName(nil))
+        XCTAssertNil(RailRowsBuilder.slotProcessName("  "))
+        // The TITLE resolver keeps its suppression — the split is deliberate.
+        XCTAssertNil(RailRowsBuilder.processDisplayName("zsh"))
+    }
+
     /// A cwd-less pane running a real foreground program titles itself by that program (host wire type
     /// 26), while a bare login shell is suppressed (titling a pane "zsh" is no better than "Terminal").
     func testRowTitleFallsBackToForegroundProcessWhenNoCwd() {

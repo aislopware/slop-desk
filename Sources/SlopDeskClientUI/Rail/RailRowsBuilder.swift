@@ -342,17 +342,28 @@ enum RailRowsBuilder {
     }
 
     /// The host foreground-process name (wire type 26) as a pane-TITLE fallback, or `nil` to skip it.
-    /// Basenames the label and drops the leading `-` of a login-shell argv0, then SUPPRESSES a bare
-    /// interactive shell (`zsh`/`bash`/`fish`/…) — titling a pane "zsh" is no more useful than "Terminal",
-    /// so those fall through to the generic chain, while a real foreground program (`vim`, `npm`, `ssh`)
-    /// titles the pane. Pure + static so the fallback is unit-pinned.
+    /// Basenames the label and drops the leading `-` of a login-shell argv0
+    /// (``slotProcessName(_:)``), then SUPPRESSES a bare interactive shell (`zsh`/`bash`/`fish`/…) —
+    /// titling a pane "zsh" is no more useful than "Terminal", so those fall through to the generic
+    /// chain, while a real foreground program (`vim`, `npm`, `ssh`) titles the pane. Pure + static
+    /// so the fallback is unit-pinned.
     static func processDisplayName(_ label: String?) -> String? {
+        guard let name = slotProcessName(label), !loginShellNames.contains(name.lowercased())
+        else { return nil }
+        return name
+    }
+
+    /// The trailing-SLOT label for a row (`SlateTabRow/processLabel`): the same basename cleanup as
+    /// ``processDisplayName(_:)`` but a bare interactive shell KEEPS its name — "zsh" says nothing
+    /// as a pane TITLE, yet in the metadata slot it answers "what is this pane running" for an idle
+    /// shell row (an empty slot there reads as missing data, not quiet). Pure + static so the slot
+    /// mapping is unit-pinned.
+    static func slotProcessName(_ label: String?) -> String? {
         guard let label else { return nil }
         var name = label.trimmingCharacters(in: .whitespacesAndNewlines)
         if name.hasPrefix("-") { name.removeFirst() } // login-shell argv0 convention (`-zsh`)
         name = name.split(separator: "/").last.map(String.init) ?? name
-        guard !name.isEmpty, !loginShellNames.contains(name.lowercased()) else { return nil }
-        return name
+        return name.isEmpty ? nil : name
     }
 
     /// A PROGRAM-SET pane title cleaned for the sidebar row: one leading agent-activity glyph (any

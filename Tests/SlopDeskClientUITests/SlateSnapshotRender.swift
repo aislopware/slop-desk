@@ -166,7 +166,8 @@ final class SlateSnapshotRender: XCTestCase {
     // MARK: - Opt-in render of the sidebar connection footer (every ink state)
 
     /// Renders the REAL ``ConnectionRailFooter`` (the two-line text block: hostname + mono
-    /// detail) in every ink state — healthy ping, degraded, dialing, and dimmed offline — at the
+    /// detail, with the tertiary extras trail — uptime, stream numbers — riding the ping) in
+    /// every ink state — healthy ping (bare + full readout), degraded, dialing, dimmed offline — at the
     /// true sidebar width, under the footer's hairline, so the ink steps and the rail alignment
     /// can be eyeballed headlessly. SAME opt-in idiom; writes `sidebar-footer.png` into
     /// `SLOPDESK_TABROW_SNAPSHOT_DIR`.
@@ -176,8 +177,12 @@ final class SlateSnapshotRender: XCTestCase {
             throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the sidebar footer")
         }
         let panel = VStack(alignment: .leading, spacing: 0) {
-            footerRow(host: "mac-studio", led: .good, detail: ("12 ms", true))
-            footerRow(host: "mac-studio", led: .slow, detail: ("141 ms", true))
+            footerRow(host: "mac-studio", led: .good, detail: ("12 ms", true), extras: " · up 2h 14m")
+            footerRow(
+                host: "mac-studio", led: .good, detail: ("12 ms", true),
+                extras: " · 60 fps · 12.4 Mbps",
+            )
+            footerRow(host: "mac-studio", led: .slow, detail: ("141 ms", true), extras: " · up 5m")
             footerRow(host: "mac-studio", led: .bad, detail: ("312 ms", true))
             footerRow(host: "mac-studio", led: .dialing, detail: ("reconnecting 3/20", false))
             footerRow(host: "mac-studio", led: .dim, detail: ("disconnected", false))
@@ -185,7 +190,7 @@ final class SlateSnapshotRender: XCTestCase {
         .frame(width: Slate.Metric.sidebarWidth)
         .background(Slate.Surface.ground)
         try render(
-            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 240),
+            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 290),
             to: dir, named: "sidebar-footer.png",
         )
     }
@@ -193,13 +198,13 @@ final class SlateSnapshotRender: XCTestCase {
     /// One footer block under its hairline, mounted the way the sidebar composes it.
     @MainActor
     private func footerRow(
-        host: String, led: ConnectionCluster.LedState, detail: (String, Bool),
+        host: String, led: ConnectionCluster.LedState, detail: (String, Bool), extras: String? = nil,
     ) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Rectangle().fill(Slate.Line.subtle)
                 .frame(maxWidth: .infinity)
                 .frame(height: Slate.Metric.hairline)
-            ConnectionRailFooter(displayHost: host, led: led, detail: detail)
+            ConnectionRailFooter(displayHost: host, led: led, detail: detail, extras: extras)
                 .padding(.vertical, Slate.Metric.space1)
                 .padding(.horizontal, Slate.Metric.space2)
                 .padding(.vertical, Slate.Metric.space2)

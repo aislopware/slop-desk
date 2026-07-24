@@ -805,11 +805,12 @@ private struct SidebarLiveRow: View {
             agentMarker: agent,
             badge: chrome.badge.flatMap { $0.isBusyTier ? nil : $0 },
             workingLabel: busyLabel,
-            // A REAL foreground program labels the slot; a bare login shell shows nothing — "zsh"
-            // on an idle row says as little as "Terminal" did (herdr never shows a shell name).
-            // An AGENT row shows nothing either: the `✳` marker and the shimmer already say it,
-            // and any trailing text on those rows just repeats them.
-            processLabel: agent ? nil : RailRowsBuilder.processDisplayName(chrome.processLabel),
+            // The foreground process labels the slot — a real program (`vim`, `make`) AND a bare
+            // shell (`zsh`): unlike the TITLE (where "zsh" says as little as "Terminal"), the
+            // metadata slot answers "what is this pane running", and an idle shell row with an
+            // empty slot reads as missing data. Only an AGENT row leaves it empty: the `✳` marker
+            // and the shimmer already say it, and any trailing text there just repeats them.
+            processLabel: agent ? nil : RailRowsBuilder.slotProcessName(chrome.processLabel),
             readOnly: chrome.readOnly,
             syncInput: store.syncInputArmed(for: row.id),
             isEditing: chrome.isEditing,
@@ -974,8 +975,9 @@ private struct NewTabDropSlot: View {
 
 /// The sidebar's connection footer, split into its own leaf: the ``ConnectionTelemetry``
 /// reads tick at ~1 Hz off the live session models — read HERE so each tick re-renders this footer
-/// only, never the sidebar body (which would re-derive the whole rail every second). Only the ping
-/// renders in the row; fps/kbps ride the tooltip (`ConnectionCluster` header note).
+/// only, never the sidebar body (which would re-derive the whole rail every second). The detail
+/// line carries the full readout — ping, stream numbers while a video pane streams, link uptime
+/// (`ConnectionCluster` header note; the ping-alone rule is the COMPACT mounts').
 private struct SidebarConnectionFooter: View {
     let store: WorkspaceStore
     let connection: AppConnection

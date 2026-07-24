@@ -33,6 +33,12 @@ public final class AppConnection {
     /// The single app-wide status the gate + toolbar render.
     public private(set) var status: ConnectionStatus = .disconnected
 
+    /// When the CURRENT link was (re)established — reset on every transition INTO `.connected`, so
+    /// the sidebar footer's uptime readout answers "how long has THIS link been up" (a reconnect
+    /// starts the clock over). Meaningful only while `status == .connected`; the chrome never
+    /// reads it otherwise, so no clearing on the way down.
+    public private(set) var connectedSince: Date?
+
     /// The host's SHORT display name ("mac-studio") — the identity the titlebar monogram + label speak,
     /// never the raw IP the user happened to type. Seeded synchronously from a typed hostname
     /// (``HostDisplayName/shortLabel(_:)``); a typed IP literal resolves post-connect via the
@@ -66,6 +72,7 @@ public final class AppConnection {
         let wasConnected = status == .connected
         status = .connected
         if !wasConnected {
+            connectedSince = Date()
             onConnectionEstablished?()
             resolveHostDisplayNameIfNeeded()
         }
