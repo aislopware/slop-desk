@@ -63,6 +63,15 @@ public extension WorkspaceStore {
             // non-idle transition marks the pane seen).
             paneUnseenDone.remove(id)
         }
+        // The trailing-slot elapsed readout's anchor: a genuine entry into `.working` (the
+        // idempotency guard above already filtered repeats) starts the turn clock; leaving
+        // `.working` retires it. Label-only re-emissions never reach here (same status ⇒ early
+        // return), so mid-turn PreToolUse/PostToolUse churn cannot reset the clock.
+        if status == .working {
+            paneWorkingSince[id] = date
+        } else {
+            paneWorkingSince.removeValue(forKey: id)
+        }
     }
 
     /// Sets (or clears, on empty) the per-pane host agent label. Idempotent. The cheap activity summary

@@ -3072,6 +3072,13 @@ public final class WorkspaceStore {
     /// (a restored pane re-earns its title on the program's next push); PRUNED to the live leaf set.
     public internal(set) var paneTitleAt: [PaneID: Date] = [:]
 
+    /// RUNTIME-ONLY per-pane "when did the agent's current turn start" stamp — set on the genuine entry
+    /// into ``ClaudeStatus/working`` (``setAgentStatus(_:for:at:)``), cleared when the pane leaves
+    /// `.working`. The sidebar row's trailing slot renders a live elapsed readout off it while the
+    /// agent thinks (the slot's process label says "claude" the whole time — the DURATION is the
+    /// information). NOT persisted; PRUNED to the live leaf set.
+    public internal(set) var paneWorkingSince: [PaneID: Date] = [:]
+
     /// How long a clean completion shows its brief ``TabBadgeKind/completed`` checkmark flash before it
     /// settles to the persistent ``TabBadgeKind/finished`` accent dot. Short — the flash is meant to be a beat,
     /// not a dwell — but long enough to register. Compared against ``paneCompletedAt`` in
@@ -3537,6 +3544,10 @@ public final class WorkspaceStore {
         // OSC-title recency stamp (the program-title freshness clock):
         if !paneTitleAt.isEmpty {
             paneTitleAt = paneTitleAt.filter { leafSet.contains($0.key) }
+        }
+        // Working-turn start stamp (the trailing-slot elapsed readout):
+        if !paneWorkingSince.isEmpty {
+            paneWorkingSince = paneWorkingSince.filter { leafSet.contains($0.key) }
         }
         // Foreground-process mirror (process label / privilege badge):
         if !paneForegroundProcess.isEmpty {

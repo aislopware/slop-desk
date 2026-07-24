@@ -206,6 +206,33 @@ final class AgentBadgeStoreTests: XCTestCase {
         XCTAssertFalse(store.paneUnseenDone.contains(backgroundPane), "a new turn replaces the unread finish")
     }
 
+    // MARK: The working-turn clock (`paneWorkingSince` — the trailing-slot elapsed readout)
+
+    /// The elapsed anchor's lifecycle: the genuine entry into `.working` stamps the turn start; a
+    /// re-push of the same status (the idempotency guard) cannot reset it, so mid-turn label churn
+    /// keeps one clock; leaving `.working` (done / blocked / idle) retires the stamp.
+    func testWorkingSinceStampsOnTheWorkingEdgeOnly() throws {
+        let store = makeStore()
+        let id = try firstPane(store)
+        let start = Date(timeIntervalSinceReferenceDate: 100)
+
+        store.setAgentStatus(.working, for: id, at: start)
+        XCTAssertEqual(store.paneWorkingSince[id], start, "entering .working starts the turn clock")
+
+        store.setAgentStatus(.working, for: id, at: start.addingTimeInterval(30))
+        XCTAssertEqual(store.paneWorkingSince[id], start, "a same-status re-push never resets the clock")
+
+        store.setAgentStatus(.done, for: id, at: start.addingTimeInterval(60))
+        XCTAssertNil(store.paneWorkingSince[id], "leaving .working retires the stamp")
+
+        // A fresh turn re-stamps from its own edge.
+        let second = start.addingTimeInterval(90)
+        store.setAgentStatus(.working, for: id, at: second)
+        XCTAssertEqual(store.paneWorkingSince[id], second)
+        store.setAgentStatus(.needsPermission, for: id, at: second.addingTimeInterval(5))
+        XCTAssertNil(store.paneWorkingSince[id], "a blocked pane shows the hand, not a ticking clock")
+    }
+
     // MARK: Manual per-tab badge override (the `tab badge --kind` CLI seam)
 
     private func firstTab(_ store: WorkspaceStore) throws -> TabID {

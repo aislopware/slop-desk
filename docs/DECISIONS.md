@@ -2228,3 +2228,31 @@ both converge on the same model, now adopted:
 Client-only (no wire change, no hostd redeploy, golden untouched). NOT adopted, recorded for
 later: herdr's screen-region rule engine (blocked-form regex, transcript-viewer freeze rules) —
 our hook+OSC-title chain covers those edges today; revisit if hook drift appears.
+
+## Agent liveness round 2: elapsed turn clock, one quiet finish dot, the idle nudge is not a block (2026-07-24)
+
+Same-day follow-up on user feedback against the shipped round above.
+
+- **Decision (trailing slot): a WORKING agent row's slot shows the live ELAPSED turn time, not the
+  process name.** While the title shimmers, "claude" in the slot repeats what the `✳` marker + the
+  shimmer already say — the duration is the one thing the eye wants from a busy row. New
+  `WorkspaceStore.paneWorkingSince` (stamped on the genuine `.working` edge in `setAgentStatus`,
+  never reset by same-status re-pushes, retired on leaving `.working`, pruned on reconcile) feeds
+  `SlateTabRow.workingSince`; the slot mounts a 1 Hz `TimelineView` rendering
+  `RailRowsBuilder.workingElapsedLabel` (`42s` / `2m15s` / `1h02m`, monospaced digits, skew clamps
+  to `0s`). The tick invalidates one small text leaf per second — never the sidebar body.
+- **Decision (badge vocabulary): BOTH clean-finish tiers render the small green dot; the filled
+  `checkmark.circle.fill` is retired.** The 16pt filled check-circle sat visually heavier than
+  every other reading in the muted row (user: "lạc quẻ" — out of tune); "unread finish" needs a
+  marker, not a trophy. `StatusPresentation.tabBadge` maps `.completed` and `.finished` to the
+  same 7pt dot; the completed/finished SPLIT stays semantic (freshness machinery, control-backend
+  badge tokens, attention ranking) — only the glyph unified.
+- **Decision (host classify): Claude Code's `idle_prompt` Notification ("Claude is waiting for
+  your input", fired ~60 s after a turn ends with the agent resting at its prompt) classifies
+  `.other`, NEVER `.waitingForInput`.** It re-raised the act-now orange hand on every pane the
+  user had already read — minutes after the done marker cleared ("xem rồi thì thôi chứ"). Idle
+  is presence, not a block. The matcher/message-text idle promotions described exactly this nudge
+  and demote with it. Genuine blocks keep the hand through their own signals: `PermissionRequest`
+  / `permission_prompt` / permission message text, `AskUserQuestion` (W10 adapter),
+  `agent_needs_input`, `elicitation_dialog`. Wire vocabulary unchanged (kind byte 2 still exists;
+  hostd redeploy required for this one — the classifier is host-side).

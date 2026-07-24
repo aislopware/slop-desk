@@ -40,16 +40,30 @@ final class AgentHookListenerTests: XCTestCase {
         )
     }
 
-    func testNotificationWaitingEmitsKind2() {
+    /// The idle "waiting for your input" nudge is informational — it lifts presence (idle), never
+    /// blocks. The genuine blocking classes keep kind 2 (`agent_needs_input` / `AskUserQuestion`).
+    func testNotificationIdleWaitingIsPresenceNotBlocked() {
         var h = AgentHookHandler()
         let body = #"{"hook_event_name":"Notification","message":"Claude is waiting for your input"}"#
+        let msg = h.handle(bytes: json(body), at: 0)
+        XCTAssertEqual(h.status, .idle)
+        guard case let .claudeStatus(state, kind, _)? = msg else { XCTFail("expected claudeStatus")
+            return
+        }
+        XCTAssertEqual(state, 1, "presence floor, not blocked")
+        XCTAssertEqual(kind, 3, "informational class")
+    }
+
+    func testNotificationAgentNeedsInputEmitsKind2() {
+        var h = AgentHookHandler()
+        let body = #"{"hook_event_name":"Notification","notification_type":"agent_needs_input","message":"?"}"#
         let msg = h.handle(bytes: json(body), at: 0)
         XCTAssertEqual(h.status, .needsPermission)
         guard case let .claudeStatus(state, kind, _)? = msg else { XCTFail("expected claudeStatus")
             return
         }
         XCTAssertEqual(state, 4)
-        XCTAssertEqual(kind, 2, "waiting-for-input Notification maps to kind 2")
+        XCTAssertEqual(kind, 2, "a genuine input block maps to kind 2")
     }
 
     func testStopEmitsDoneWithLabel() {

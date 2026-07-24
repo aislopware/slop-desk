@@ -35,6 +35,11 @@ struct SlateTabRow: View {
     /// The resting trailing label — the pane's foreground process (`zsh`, `vim`, `claude`), shown
     /// only when no badge outranks it. `nil` ⇒ the slot rests empty.
     var processLabel: String?
+    /// The WORKING turn's start instant — non-`nil` only while the agent works. The slot then shows a
+    /// live elapsed readout (`42s`, `2m15s`) instead of the process label: while the shimmer already
+    /// says "thinking", the process name repeats what the `✳` marker said, and the DURATION is the
+    /// one thing the eye actually wants from a busy agent row.
+    var workingSince: Date?
     /// Whether this pane's input gate is READ-ONLY — a small trailing lock glyph (the sidebar's
     /// read-only indicator, twin of the pane's `🔒 READ ONLY ×` pill).
     var readOnly: Bool = false
@@ -148,6 +153,20 @@ struct SlateTabRow: View {
                 Group {
                     if let badge {
                         TabBadgeView(kind: badge)
+                    } else if let workingSince {
+                        // The 1 Hz elapsed readout — `TimelineView` scopes the tick to THIS slot, so a
+                        // thinking row re-renders one small text leaf per second, never the sidebar.
+                        TimelineView(.periodic(from: workingSince, by: 1)) { context in
+                            Text(RailRowsBuilder.workingElapsedLabel(from: workingSince, now: context.date))
+                                .font(.system(size: Slate.Typeface.footnote))
+                                .monospacedDigit()
+                                .foregroundStyle(Slate.Text.secondary)
+                                .lineLimit(1)
+                                .fixedSize()
+                                .accessibilityLabel("Working for " + RailRowsBuilder.workingElapsedLabel(
+                                    from: workingSince, now: context.date,
+                                ))
+                        }
                     } else if let processLabel {
                         Text(processLabel)
                             .font(.system(size: Slate.Typeface.footnote))

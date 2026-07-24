@@ -80,7 +80,7 @@ enum StatusPresentation {
     /// surface that does pass a busy kind.
     ///
     /// The hue budget: colour is spent ONLY on act-now (orange hand), broken (red triangle) and
-    /// unread-done (green check / dot); motion and the privilege markers stay muted, and the resting
+    /// unread-done (the small green dot); motion and the privilege markers stay muted, and the resting
     /// row has no badge at all — its slot shows the shell label instead.
     static func tabBadge(_ kind: TabBadgeKind) -> TabBadgeStyle {
         switch kind {
@@ -88,9 +88,11 @@ enum StatusPresentation {
         case .running,
              .commandRunning,
              .commandBusy: .spinner(tint: Slate.Text.secondary)
-        // Completed flash + task done — the green check, held until seen.
-        case .completed: .symbol(symbol: .checkmarkCircleFill, tint: Slate.Status.ok)
-        // The unseen finish on a plain shell — otty's small green dot (news, smaller than "done").
+        // The clean finish — fresh flash and settled unread alike render otty's small green dot.
+        // ONE quiet reading: the filled SF check-circle sat visually heavier than every other badge
+        // in the row's muted vocabulary, and "unread finish" needs a marker, not a trophy. The
+        // completed/finished split stays semantic (freshness machinery, control-backend tokens).
+        case .completed: .dot(tint: Slate.Status.ok)
         case .finished: .dot(tint: Slate.Status.ok)
         // Error — the red warning triangle: broken, waits on you, nothing moves.
         case .error: .symbol(symbol: .exclamationmarkTriangleFill, tint: Slate.Status.err)

@@ -1,6 +1,6 @@
 // TabBadgePresentationTests — pins the pure view-side badge map. `StatusPresentation.tabBadge`
 // resolves each `TabBadgeKind` to its otty reading (busy = the one muted spinner, awaiting = the
-// raised hand, error = the warning triangle, completed = the check, finished = the dot, privilege =
+// raised hand, error = the warning triangle, completed/finished = the quiet green dot, privilege =
 // small text glyphs), and `tabBadgeLabel` gives every kind a distinct non-empty AX/tooltip string.
 // Headless VALUE assertions — no SwiftUI render, no video/Metal/SCStream. (Tints are deliberately
 // NOT asserted — `Color` equality is provider-fragile; the reading CLASS is the load-bearing spec.)
@@ -55,12 +55,13 @@ final class TabBadgePresentationTests: XCTestCase {
         XCTAssertEqual(symbol(of: .error), .exclamationmarkTriangleFill)
     }
 
-    /// `.completed` (task done, unseen) ⇒ the check; `.finished` (an unseen shell finish) ⇒ the
-    /// smaller dot — two distinct weights of "news", per `tab-badge.png`.
-    func testDoneTierSplitsCheckAndDot() {
-        XCTAssertEqual(symbol(of: .completed), .checkmarkCircleFill)
+    /// Both clean-finish tiers ⇒ the ONE quiet green dot. The filled check-circle read heavier than
+    /// every other badge in the muted row vocabulary; the completed/finished split stays semantic
+    /// (freshness machinery, control-backend tokens) while the rail speaks one unread marker.
+    func testDoneTierIsTheQuietDot() {
+        XCTAssertTrue(isDot(.completed))
         XCTAssertTrue(isDot(.finished))
-        XCTAssertFalse(isDot(.completed))
+        XCTAssertNil(symbol(of: .completed), "no trophy check in the row vocabulary")
     }
 
     /// The privilege markers stay small text in the shell's dialect.

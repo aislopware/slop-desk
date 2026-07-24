@@ -70,7 +70,7 @@ final class SlateSnapshotRender: XCTestCase {
 
     // MARK: - Opt-in render of the sidebar tab-row badge states
 
-    /// Renders `SlateTabRow` in each otty badge state (spinner / triangle / hand / check / dot) plus
+    /// Renders `SlateTabRow` in each otty badge state (spinner / triangle / hand / dot) plus
     /// the resting shell-label slot and the active white card — the visual lock for the sidebar row
     /// (`tab-badge.png`). SAME `ImageRenderer` opt-in idiom as the showcase; inert (skipped) unless
     /// `SLOPDESK_TABROW_SNAPSHOT_DIR=<dir>` is set, where it writes `tab-row-badges.png`. NO

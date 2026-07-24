@@ -102,14 +102,33 @@ final class HookIngestTests: XCTestCase {
         XCTAssertEqual(info.sessionID, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
     }
 
-    func testNotificationWaitingHookClassifiesAsWaitingForInput() {
+    /// The idle "waiting for your input" nudge (fired ~60 s after a turn ends, with the agent simply
+    /// resting at its prompt) is INFORMATIONAL, not a blocking class — it must never re-raise the
+    /// act-now hand on a pane the user already read. Genuine blocks classify through their own
+    /// signals (`PermissionRequest`, `agent_needs_input`, `AskUserQuestion`).
+    func testIdleWaitingNudgeClassifiesAsOther() {
         let hook = HookParser.parse(Fixtures.data("hook-notification-waiting.json"))
         guard case let .notification(info)? = hook else {
             XCTFail("expected .notification, got \(String(describing: hook))")
             return
         }
-        XCTAssertEqual(info.kind, .waitingForInput)
+        XCTAssertEqual(info.kind, .other)
         XCTAssertEqual(info.message, "Claude is waiting for your input")
+    }
+
+    /// The structured types that mean "the agent is genuinely blocked on the human answering"
+    /// still classify as the blocking waiting-for-input kind.
+    func testAgentNeedsInputTypeClassifiesAsWaitingForInput() {
+        for type in ["agent_needs_input", "elicitation_dialog"] {
+            let hook = HookParser.parse(Data(
+                #"{"hook_event_name":"Notification","notification_type":"\#(type)","message":"?"}"#.utf8,
+            ))
+            guard case let .notification(info)? = hook else {
+                XCTFail("expected .notification for \(type), got \(String(describing: hook))")
+                return
+            }
+            XCTAssertEqual(info.kind, .waitingForInput, "\(type) is a genuine block")
+        }
     }
 
     func testNotificationOtherHookClassifiesAsOther() {
@@ -173,7 +192,7 @@ final class HookIngestTests: XCTestCase {
             XCTFail("expected .notification, got \(String(describing: idle))")
             return
         }
-        XCTAssertEqual(idleInfo.kind, .waitingForInput, "idle_prompt classifies structurally")
+        XCTAssertEqual(idleInfo.kind, .other, "idle_prompt is presence, never a block")
 
         let done = HookParser.parse(Data(
             (#"{"hook_event_name":"Notification","notification_type":"agent_completed","# +

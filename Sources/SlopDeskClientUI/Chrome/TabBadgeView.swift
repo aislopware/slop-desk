@@ -1,9 +1,9 @@
 // TabBadgeView — the single status glyph for one sidebar tab row's trailing slot, the otty badge set
 // (`docs/otty-clone/screenshots/tab-badge.png`): a muted rays SPINNER for anything busy, the orange
-// raised hand for a blocked prompt, the red triangle for a failure, the green check for a completed
-// task, and the small green dot for an unseen finish. The privilege markers (`#` sudo, `∞`
-// caffeinate) stay small muted text in the shell's own dialect. One reading in a fixed 16pt box:
-// state changes never move a pixel of layout.
+// raised hand for a blocked prompt, the red triangle for a failure, and the small green dot for a
+// clean finish (fresh and unread alike — one quiet marker, no trophy check). The privilege markers
+// (`#` sudo, `∞` caffeinate) stay small muted text in the shell's own dialect. One reading in a
+// fixed 16pt box: state changes never move a pixel of layout.
 //
 // Hang-safety (CLAUDE.md rule #6): a badge NEVER instantiates an `SCStream` / `VTCompressionSession` /
 // `VTDecompressionSession` / Metal device — plain SwiftUI drawing, nothing more.

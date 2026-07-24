@@ -623,19 +623,34 @@ final class ClaudePaneDetectorTests: XCTestCase {
     }
 
     /// The structured `notification_type` field decides the class even when the message text
-    /// matches no heuristic (the text rules are the fallback now, not the authority).
+    /// matches no heuristic (the text rules are the fallback now, not the authority). An
+    /// `idle_prompt` is PRESENCE, never a block: it lifts a fresh pane to idle (urgency 1) and
+    /// must not raise the act-now hand a done→visited pane already retired.
     func testNotificationTypeFieldClassifies() {
         var d = ClaudePaneDetector()
-        let e = d.hook(
+        let idle = d.hook(
             bytes: json(#"{"hook_event_name":"Notification","notification_type":"idle_prompt","message":"hm"}"#),
             at: 0,
         )
-        guard case let .claudeStatus(state, kind, _)? = e.status else {
+        guard case let .claudeStatus(idleState, idleKind, _)? = idle.status else {
             XCTFail("expected a type-27")
             return
         }
-        XCTAssertEqual(state, 4)
-        XCTAssertEqual(kind, 2, "idle_prompt → waiting-for-input")
+        XCTAssertEqual(idleState, 1, "idle_prompt = presence floor, not blocked")
+        XCTAssertEqual(idleKind, 0, "the detector zeroes the kind byte while not blocked")
+
+        let blocked = d.hook(
+            bytes: json(
+                #"{"hook_event_name":"Notification","notification_type":"agent_needs_input","message":"?"}"#,
+            ),
+            at: 1,
+        )
+        guard case let .claudeStatus(state, kind, _)? = blocked.status else {
+            XCTFail("expected a type-27")
+            return
+        }
+        XCTAssertEqual(state, 4, "agent_needs_input stays a genuine block")
+        XCTAssertEqual(kind, 2, "waiting-for-input class")
     }
 
     // MARK: - OSC-title corroboration (Claude Code's own busy/rest telltale)

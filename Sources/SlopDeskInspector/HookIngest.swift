@@ -71,9 +71,11 @@ public enum HookPayload: Sendable, Equatable {
 public enum NotificationKind: String, Sendable, Equatable, Codable {
     /// Claude needs explicit approval to proceed (`permission_prompt`). → blocked.
     case permission
-    /// Claude is idle-waiting on the human to type the next thing. → blocked.
+    /// Claude is genuinely BLOCKED on the human answering (`agent_needs_input` /
+    /// `elicitation_dialog`; the W10 adapter also routes `AskUserQuestion` here). → blocked.
+    /// The idle "waiting for your input" nudge is NOT this — it classifies `.other`.
     case waitingForInput
-    /// `auth_success` / `elicitation_complete` / anything else — informational only.
+    /// `idle_prompt` / `auth_success` / `elicitation_complete` / anything else — informational only.
     case other
 }
 
@@ -264,26 +266,34 @@ public enum HookParser {
     /// Priority order:
     /// 1. the structured `notification_type` field (current Claude Code sends one) decides
     ///    outright for the classes we know — `permission_prompt` → `.permission`;
-    ///    `idle_prompt` / `agent_needs_input` / `elicitation_dialog` → `.waitingForInput`;
-    ///    the known informational types → `.other`. An UNKNOWN type falls through (a future
+    ///    `agent_needs_input` / `elicitation_dialog` → `.waitingForInput`; `idle_prompt` and the
+    ///    known informational types → `.other`. An UNKNOWN type falls through (a future
     ///    blocking class must not be silently demoted to `.other` when its text still matches);
     /// 2. an explicit matcher token (`permission_prompt` → `.permission`) when present;
-    /// 3. else the message text: an approval/permission request → `.permission`; an
-    ///    idle "waiting for your input" prompt → `.waitingForInput`;
+    /// 3. else the message text: an approval/permission request → `.permission`;
     /// 4. else (anything unknown, or a missing message) → `.other`. Conservative: only a
     ///    positive match promotes to a blocking kind, mirroring the manifest matcher's
     ///    "blocked only on a known match" rule.
+    ///
+    /// `idle_prompt` — Claude Code's "waiting for your input" nudge, fired ~60 s after a turn
+    /// ends with the agent simply RESTING at its prompt — is deliberately NOT a blocking kind:
+    /// it re-raised the act-now hand on every pane the user had already read, minutes after the
+    /// done marker cleared. An agent genuinely blocked on the human still classifies blocked
+    /// through its own signals (`PermissionRequest`, `permission_prompt`, `AskUserQuestion` via
+    /// the W10 adapter, `agent_needs_input` / `elicitation_dialog`); an idle prompt is presence,
+    /// nothing more. The old idle/waiting matcher + message-text promotions described exactly this
+    /// nudge, so they demote with it.
     static func classifyNotification(
         message: String?, matcher: String?, notificationType: String? = nil,
     ) -> NotificationKind {
         switch notificationType?.lowercased() {
         case "permission_prompt":
             return .permission
-        case "idle_prompt",
-             "agent_needs_input",
+        case "agent_needs_input",
              "elicitation_dialog":
             return .waitingForInput
-        case "auth_success",
+        case "idle_prompt",
+             "auth_success",
              "elicitation_complete",
              "elicitation_response",
              "agent_completed":
@@ -293,7 +303,6 @@ public enum HookParser {
         }
         if let matcher = matcher?.lowercased() {
             if matcher.contains("permission") { return .permission }
-            if matcher.contains("idle") || matcher.contains("waiting") { return .waitingForInput }
         }
         guard let text = message?.lowercased() else { return .other }
         // Permission/approval request — the blocked-on-approval signal.
@@ -302,12 +311,6 @@ public enum HookParser {
             || text.contains("would like to")
         {
             return .permission
-        }
-        // Idle, waiting on the human to type the next thing.
-        if text.contains("waiting for your input") || text.contains("is waiting for")
-            || text.contains("waiting for input")
-        {
-            return .waitingForInput
         }
         return .other
     }
