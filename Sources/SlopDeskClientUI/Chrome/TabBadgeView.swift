@@ -1,7 +1,7 @@
 // TabBadgeView — the single status reading for one sidebar tab row's trailing slot: every lifecycle
-// state is the SAME Ø12 circle (`StatusRing`) differing only by hue + fill (ticking dashed = busy,
-// amber ring + halo = awaiting, red ring + cross = error, green filled = clean finish) — the user
-// separates states by colour, never by learning a different silhouette per state. The privilege
+// state is the SAME Ø12 circle (`StatusRing`) differing only by hue + fill (sweeping comet arc = busy,
+// amber ring + blinking cursor dot = awaiting, red broken ring = error, green filled = clean finish) —
+// the user separates states by colour, never by learning a different silhouette per state. The privilege
 // markers (`#` sudo, `∞` caffeinate) stay small muted text in the shell's own dialect. One reading
 // in a fixed 16pt box: state changes never move a pixel of layout.
 //

@@ -1,8 +1,8 @@
 // TabBadgePresentationTests — pins the pure view-side badge map. `StatusPresentation.tabBadge`
 // resolves each `TabBadgeKind` to a reading of the ONE-SHAPE circle (`StatusRing`): every lifecycle
-// state is the same Ø12 silhouette differing by hue + fill (busy = the ticking dashed ring, awaiting
-// = ring + halo, error = ring + cross, completed/finished = the filled circle), privilege = small
-// text glyphs. `tabBadgeLabel` gives every kind a distinct non-empty AX/tooltip string.
+// state is the same Ø12 silhouette differing by hue + fill (busy = the sweeping comet arc, awaiting
+// = ring + blinking cursor dot, error = the broken ring, completed/finished = the filled circle),
+// privilege = small text glyphs. `tabBadgeLabel` gives every kind a distinct non-empty AX/tooltip string.
 // Headless VALUE assertions — no SwiftUI render, no video/Metal/SCStream. (Tints are deliberately
 // NOT asserted — `Color` equality is provider-fragile; the reading CLASS is the load-bearing spec.)
 
@@ -35,7 +35,7 @@ final class TabBadgePresentationTests: XCTestCase {
     }
 
     /// Every busy tier — a working agent, an instrumented command, a plain busy shell — is the ONE
-    /// ticking `working` ring (hue, not shape, separates agent from command motion). The SIDEBAR
+    /// sweeping `working` comet (hue, not shape, separates agent from command motion). The SIDEBAR
     /// rows never mount these (split on `TabBadgeKind.isBusyTier`: the agent tier shimmers the
     /// title); the ring stays the vocabulary for any other badge mount.
     func testEveryBusyTierIsTheWorkingRing() {
@@ -45,7 +45,7 @@ final class TabBadgePresentationTests: XCTestCase {
     }
 
     /// `.awaitingInput` ⇒ the `awaiting` ring — distinct from motion (an ignored question must not
-    /// read as progress) and from the error cross (a question is not a failure).
+    /// read as progress) and from the broken error ring (a question is not a failure).
     func testAwaitingIsTheAwaitingRing() {
         XCTAssertEqual(ringReading(of: .awaitingInput), .awaiting)
     }

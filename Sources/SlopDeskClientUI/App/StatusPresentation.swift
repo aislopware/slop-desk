@@ -77,7 +77,7 @@ enum StatusPresentation {
     ///
     /// The SIDEBAR rows never mount the busy tiers here — busy renders as the title's working
     /// shimmer (``WorkingShimmer``; `TabBadgeKind.isBusyTier` is the split) so the trailing slot
-    /// keeps the shell label while a command runs. The ticking ring stays the vocabulary for any
+    /// keeps the shell label while a command runs. The sweeping comet stays the vocabulary for any
     /// surface that does pass a busy kind.
     ///
     /// The hue budget: accent = agent in motion, amber = act-now, red = broken, green = unread-done;
@@ -85,9 +85,9 @@ enum StatusPresentation {
     /// all — its slot shows the shell label instead.
     static func tabBadge(_ kind: TabBadgeKind) -> TabBadgeStyle {
         switch kind {
-        // The agent in motion — the ticking ring in accent (the in-motion hue).
+        // The agent in motion — the sweeping comet in accent (the in-motion hue).
         case .running: .ring(.working, tint: Slate.State.accent)
-        // Plain command motion — the same ticking ring, muted (a shell command is not an agent).
+        // Plain command motion — the same comet, muted (a shell command is not an agent).
         case .commandRunning,
              .commandBusy: .ring(.working, tint: Slate.Text.secondary)
         // The clean finish — fresh flash and settled unread alike render the quiet green filled
@@ -95,9 +95,9 @@ enum StatusPresentation {
         // completed/finished split stays semantic (freshness machinery, control-backend tokens).
         case .completed: .ring(.done, tint: Slate.Status.ok)
         case .finished: .ring(.done, tint: Slate.Status.ok)
-        // Error — the red ring with the inner cross: broken, waits on you, nothing moves.
+        // Error — the broken red ring: the circle itself snapped, waits on you, nothing moves.
         case .error: .ring(.error, tint: Slate.Status.err)
-        // Awaiting input — the amber ring + centre dot with the stepped halo: act-now; red stays
+        // Awaiting input — the amber ring with the blinking cursor dot: act-now; red stays
         // reserved for broken.
         case .awaitingInput: .ring(.awaiting, tint: Slate.Status.warn)
         // Privilege markers — small muted text in the shell's own dialect (modifiers, not states,

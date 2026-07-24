@@ -2372,3 +2372,30 @@ standard is now mechanical, not manual:
   Swift test suite → `--update-pin`. Manifest-only upstream changes sync hands-free; engine
   `.rs` changes are flagged for a manual port, and an unread or botched port cannot pass —
   the differential gates the result against the new binary itself.
+
+## One-shape status circle, round 2: signature readings (2026-07-24)
+
+The badge vocabulary consolidated onto ONE Ø12 circle (`0a6e8bd6`): every lifecycle state is a
+hue/fill reading of the same silhouette (the otty per-state symbol set — rays spinner, raised
+hand, warning triangle — is retired), and the iOS toolbar + Peek & Reply header mount the same
+`StatusRing` instead of their SF-symbol set. On review the individual readings still looked
+STOCK — a dashed 8-segment spinner is every loading indicator since Aqua, ring+halo is a
+recording dot, ring+✕ is a generic error glyph. Round 2 keeps the one-shape contract (the
+`Reading` enum, the mapping, and every pin are unchanged) and swaps the drawing of the three
+dynamic readings for shapes in the app's own dialect:
+
+- **working = the COMET arc**: one ~110° arc whose tail fades to nothing (angular gradient in
+  the shape's own space), sweeping the ring smoothly (1.4s/rev, wall-clock phase — remounts
+  land mid-revolution). Replaces the ticking dashed ring; motion reads as one object in
+  flight, not a segmented spinner.
+- **awaiting = the blinking cursor dot**: the solid ring holds steady while the 5pt centre dot
+  hard-blinks on the terminal cursor's cadence (0.53s phases, on/off cut — never a fade). An
+  awaiting pane IS a prompt with a parked cursor; the badge borrows exactly that signal. The
+  stepped halo (recording-dot cliché) is deleted.
+- **error = the BROKEN ring**: the circle itself with a ~50° gap bitten out (round caps, gap
+  at the top-right), static and red — "the loop broke". The inner ✕ is deleted; the failure
+  state is the only reading whose silhouette is damaged, which is the message.
+
+`resting` (thin muted ring) and `done` (the established green 7pt filled dot) are unchanged;
+`#`/`∞` stay text. Client-only, no wire change; pins untouched by design (they assert reading
+CLASSES, not pixels).

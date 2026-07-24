@@ -26,16 +26,17 @@ struct SlateStatusDot: View {
 /// The ONE-SHAPE status instrument: every lifecycle state renders as a READING of the SAME circle —
 /// Ø12, fixed centre in a 16pt box — so a state edge reads as one gauge changing its reading, never an
 /// icon swap (different silhouettes trading places in one box read as a jump even though the box never
-/// moves). Hue + fill + stroke style carry the state; the silhouette never changes:
+/// moves). Hue + fill + stroke style carry the state; the silhouette never changes. The readings speak
+/// the app's own dialect rather than stock indicator shapes (no dashed spinner, no recording-dot halo,
+/// no ✕ glyph):
 ///   • `resting`  → muted plain ring (at rest, no colour spent);
-///   • `working`  → the DASHED ring (8 segments) with one lead segment ticking forward in discrete
-///                  steps — a mechanical escapement, not a smooth spinner;
-///   • `awaiting` → solid ring + filled centre dot, plus ONE stepped halo pulse per cycle (act-now);
+///   • `working`  → the COMET arc — one luminous arc with a fading tail sweeping the ring;
+///   • `awaiting` → solid ring whose centre dot BLINKS on the terminal cursor's cadence — the pane is
+///                  a prompt waiting for input (a hard on/off cut, exactly like a block cursor);
 ///   • `done`     → the small FILLED circle (the quiet unread-finish dot — same family, full fill);
-///   • `error`    → solid ring + inner cross (broken, static — it waits on you).
-/// All motion rides the WALL CLOCK on stepped `TimelineView` schedules — a rail re-render can't reset
-/// the phase, and frames advance in discrete steps (never an eased "breathing" pulse). Pure SwiftUI;
-/// no video/capture (hang-safety #6).
+///   • `error`    → the ring itself BROKEN — a static gap bitten out of the circle.
+/// All motion rides the WALL CLOCK (phase derived from absolute time) so a rail re-render lands
+/// mid-cycle instead of restarting it. Pure SwiftUI; no video/capture (hang-safety #6).
 struct StatusRing: View {
     enum Reading: Equatable {
         case resting
@@ -55,11 +56,14 @@ struct StatusRing: View {
     private static let mutedStroke: CGFloat = 1.2
     /// The done fill — the quiet finish dot's established size.
     private static let doneDiameter: CGFloat = 7
-    /// Seconds per escapement step (8 segments ⇒ one full revolution every 1.6s).
-    private static let workingBeat: Double = 0.2
-    /// Seconds per awaiting halo cycle: the pulse spends the first half stepping outward, then holds
-    /// invisible — one front-loaded "pulse of life" per cycle, not a continuous halo.
-    private static let haloPeriod: Double = 2.0
+    /// The comet's arc span as a fraction of the circle (~110°).
+    private static let cometSpan: Double = 0.3
+    /// Seconds per comet revolution — brisk enough to read as live, slow enough to stay calm.
+    private static let cometPeriod: Double = 1.4
+    /// Seconds per awaiting blink phase — the classic terminal cursor cadence.
+    private static let blinkBeat: Double = 0.53
+    /// The error ring's missing fraction (~50° bitten out of the circle).
+    private static let breakGap: Double = 0.14
 
     var body: some View {
         ZStack {
@@ -71,8 +75,7 @@ struct StatusRing: View {
                 Circle().fill(tint)
                     .frame(width: Self.doneDiameter, height: Self.doneDiameter)
             case .error:
-                solidRing
-                crossMark
+                brokenRing
             }
         }
         .frame(width: Self.box, height: Self.box)
@@ -90,69 +93,53 @@ struct StatusRing: View {
             .frame(width: Self.diameter, height: Self.diameter)
     }
 
-    /// The dashed working ring: 8 fixed segments; the LEAD segment renders at full strength and advances
-    /// one slot per beat off the wall clock — motion by discrete step, no rotation tween, so the ring
-    /// reads as a ticking mechanism and a re-mount lands mid-cycle instead of restarting it.
+    /// The comet working reading: ONE arc whose tail fades to nothing, sweeping the ring continuously.
+    /// The tail's angular gradient lives in the shape's own space, so the whole comet — bright head,
+    /// vanishing tail — rotates as a unit. Phase comes off the wall clock, so a re-mount lands
+    /// mid-revolution instead of restarting it.
     private var workingRing: some View {
-        TimelineView(.periodic(from: .now, by: Self.workingBeat)) { timeline in
-            let lead = Int(timeline.date.timeIntervalSinceReferenceDate / Self.workingBeat) % 8
-            ZStack {
-                ForEach(0..<8, id: \.self) { index in
-                    segment(index)
-                        .stroke(
-                            tint.opacity(index == lead ? 1 : 0.35),
-                            style: StrokeStyle(lineWidth: Self.stroke, lineCap: .round),
-                        )
-                }
-            }
-            .frame(width: Self.diameter, height: Self.diameter)
-            .rotationEffect(.degrees(-90)) // segment 0 starts at 12 o'clock
-        }
-    }
-
-    /// One of the 8 dashed-ring segments — a trimmed circle slice with a small fixed gap on each side.
-    private func segment(_ index: Int) -> some Shape {
-        let slice = 1.0 / 8.0
-        let gap = 0.018
-        return Circle().trim(from: Double(index) * slice + gap, to: Double(index + 1) * slice - gap)
-    }
-
-    /// The awaiting reading: the solid ring + centre dot at rest, with one halo pulse per cycle that
-    /// expands in 8 DISCRETE steps across the first half of the cycle and holds invisible for the rest.
-    /// The halo peaks at the box edge, so it never bleeds into the neighbouring column.
-    private var awaitingRing: some View {
-        TimelineView(.periodic(from: .now, by: Self.haloPeriod / 16)) { timeline in
+        TimelineView(.animation) { timeline in
             let phase = timeline.date.timeIntervalSinceReferenceDate
-                .truncatingRemainder(dividingBy: Self.haloPeriod) / Self.haloPeriod
+                .truncatingRemainder(dividingBy: Self.cometPeriod) / Self.cometPeriod
+            Circle()
+                .trim(from: 0, to: Self.cometSpan)
+                .stroke(
+                    AngularGradient(
+                        gradient: Gradient(colors: [tint.opacity(0), tint]),
+                        center: .center,
+                        startAngle: .degrees(0),
+                        endAngle: .degrees(360 * Self.cometSpan),
+                    ),
+                    style: StrokeStyle(lineWidth: Self.stroke, lineCap: .round),
+                )
+                .frame(width: Self.diameter, height: Self.diameter)
+                .rotationEffect(.degrees(phase * 360 - 90))
+        }
+    }
+
+    /// The awaiting reading: the solid ring holds steady while the centre dot blinks — a hard on/off
+    /// cut on the terminal cursor's cadence. An awaiting pane IS a prompt with the cursor parked at it;
+    /// the badge borrows exactly that signal instead of a generic pulse.
+    private var awaitingRing: some View {
+        TimelineView(.periodic(from: .now, by: Self.blinkBeat)) { timeline in
+            let on = Int(timeline.date.timeIntervalSinceReferenceDate / Self.blinkBeat).isMultiple(of: 2)
             ZStack {
-                if phase < 0.5 {
-                    // Quantized 0…7/8 ramp — each frame is a hard step (no easing between them). The
-                    // 0.24 gain caps the peak at ×1.21: the halo's stroked outer edge (13.2pt × 1.21 ≈
-                    // 16pt) reaches exactly the box, never past it.
-                    let step = (phase * 16).rounded(.down) / 8
-                    Circle()
-                        .stroke(tint, lineWidth: Self.mutedStroke)
-                        .frame(width: Self.diameter, height: Self.diameter)
-                        .scaleEffect(1 + step * 0.24)
-                        .opacity(0.5 - 0.5 * step)
-                }
                 solidRing
-                Circle().fill(tint).frame(width: 5, height: 5)
+                if on {
+                    Circle().fill(tint).frame(width: 5, height: 5)
+                }
             }
         }
     }
 
-    /// The inner cross of the `error` reading — drawn in the ring's own 16pt space so its optical centre
-    /// matches every other reading's.
-    private var crossMark: some View {
-        Path { path in
-            path.move(to: CGPoint(x: 6.2, y: 6.2))
-            path.addLine(to: CGPoint(x: 9.8, y: 9.8))
-            path.move(to: CGPoint(x: 9.8, y: 6.2))
-            path.addLine(to: CGPoint(x: 6.2, y: 9.8))
-        }
-        .stroke(tint, style: StrokeStyle(lineWidth: Self.stroke, lineCap: .round))
-        .frame(width: Self.box, height: Self.box)
+    /// The error reading: the circle itself broken — a gap bitten out of the ring, held static (it
+    /// waits on you). Rotated so the gap sits at the top-right; round caps keep the broken ends crisp.
+    private var brokenRing: some View {
+        Circle()
+            .trim(from: Self.breakGap, to: 1)
+            .stroke(tint, style: StrokeStyle(lineWidth: Self.stroke, lineCap: .round))
+            .frame(width: Self.diameter, height: Self.diameter)
+            .rotationEffect(.degrees(-70))
     }
 }
 
