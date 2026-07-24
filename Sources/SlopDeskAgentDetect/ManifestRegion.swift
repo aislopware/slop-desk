@@ -109,7 +109,7 @@ public enum ManifestRegion: Sendable, Equatable {
         case .lastNonEmptyAbovePromptBox:
             let above = Self.abovePromptBox.resolveScreen(content)
             let aboveText = RegionText(above)
-            return aboveText.lines.last { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? ""
+            return aboveText.lines.last { !$0.isBlankRustTrim } ?? ""
         case .afterLastHorizontalRule:
             var lastRuleEnd = 0
             var offset = 0
@@ -127,7 +127,7 @@ public enum ManifestRegion: Sendable, Equatable {
             var startIndex: Int?
             var taken = 0
             for index in stride(from: text.lines.count - 1, through: 0, by: -1)
-                where !text.lines[index].trimmingCharacters(in: .whitespaces).isEmpty
+                where !text.lines[index].isBlankRustTrim
             {
                 startIndex = index
                 taken += 1
@@ -140,7 +140,7 @@ public enum ManifestRegion: Sendable, Equatable {
             var endIndex: Int?
             var taken = 0
             for (index, line) in text.lines.enumerated()
-                where !line.trimmingCharacters(in: .whitespaces).isEmpty
+                where !line.isBlankRustTrim
             {
                 endIndex = index
                 taken += 1
@@ -181,7 +181,7 @@ public enum ManifestRegion: Sendable, Equatable {
     /// A leading run of `─` (U+2500); the line is a rule when the suffix is empty or the run
     /// is ≥ 3 (permits trailing annotations like `── (bypass permissions on) ─`).
     static func isHorizontalRule(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         let ruleChars = trimmed.prefix(while: { $0 == "─" }).count
         guard ruleChars > 0 else { return false }
@@ -206,14 +206,25 @@ struct RegionText {
         lines = Self.rustLines(content)
     }
 
-    /// Rust `str::lines()` semantics.
+    /// Rust `str::lines()` semantics, byte-exact. Split at the BYTE level: Swift's
+    /// `Character`-based `split(separator: "\n")` treats `\r\n` as one grapheme and never
+    /// splits CRLF text. And Rust strips a trailing `\r` only on segments that ended with
+    /// `\n` — a final line without a newline keeps its `\r`.
     static func rustLines(_ content: String) -> [String] {
         guard !content.isEmpty else { return [] }
-        var segments = content.split(separator: "\n", omittingEmptySubsequences: false)
-        if content.hasSuffix("\n") { segments.removeLast() }
-        return segments.map { segment in
-            segment.hasSuffix("\r") ? String(segment.dropLast()) : String(segment)
+        let bytes = Array(content.utf8)
+        var lines: [String] = []
+        var start = 0
+        for (index, byte) in bytes.enumerated() where byte == 0x0A {
+            var end = index
+            if end > start, bytes[end - 1] == 0x0D { end -= 1 }
+            lines.append(String(bytes: bytes[start..<end], encoding: .utf8) ?? "")
+            start = index + 1
         }
+        if start < bytes.count {
+            lines.append(String(bytes: bytes[start...], encoding: .utf8) ?? "")
+        }
+        return lines
     }
 
     /// Byte offset of the start of `lines[index]` (index may equal `lines.count`), clamped.
@@ -241,5 +252,14 @@ struct RegionText {
         let lower = min(max(range.lowerBound, 0), byteCount)
         let upper = min(max(range.upperBound, lower), byteCount)
         return String(bytes: bytes[lower..<upper], encoding: .utf8) ?? ""
+    }
+}
+
+extension String {
+    /// Rust `line.trim().is_empty()`. Rust's `trim` strips Unicode White_Space, which
+    /// INCLUDES `\r`/`\n` — Foundation's plain `.whitespaces` does not, and a final
+    /// `\r`-only line must count as blank exactly like upstream.
+    var isBlankRustTrim: Bool {
+        trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }

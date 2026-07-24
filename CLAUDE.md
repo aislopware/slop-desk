@@ -27,6 +27,7 @@ Clean checkout builds with no prerequisite (no Rust/FFI). Headless `swift build`
 |-------|------|
 | `.build/release/slopdesk-loopback-validate` (`--smoke` / `--frames N`) | After FEC / packetizer / reassembler changes — real VT encode→decode, no GUI |
 | `bash scripts/check-ios.sh` | After `#if os(iOS)` / UIKit changes (`swift build` skips iOS) |
+| `bash scripts/herdr-sync.sh` | After `SlopDeskAgentDetect` engine/manifest changes, or to sync herdr upstream — builds the REAL herdr binary and diffs both engines on ~10k screens (`scripts/herdr-differential.py`); pin = `scripts/herdr.pin` |
 | `scripts/check-macos.sh`, `check-video.sh` | GUI proof; needs unlocked Aqua + Screen Recording TCC (not over SSH) |
 
 **CI:** lint jobs gate merges. Hosted runners lack Xcode 26.5 → `swift build`/`swift test`/golden are **not** enforced on CI — run `make check` locally.

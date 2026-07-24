@@ -2337,3 +2337,38 @@ the title carry an unblock edge for the cancel path.
   screen-manifest agents in a pane gets live status — presence generalizes from exact-`claude`
   to the ported agent alias table. Parity checklist = herdr's `detect/manifest/tests.rs` +
   `agent_detection.rs` test suites, ported to XCTest.
+
+## Herdr port addendum: parity proven by differential, not asserted (2026-07-24)
+
+The round-4 port claimed 100% parity on the strength of ~90 ported fixture tests. That
+standard is now mechanical, not manual:
+
+- **Decision: the parity contract is a differential harness against the REAL herdr binary.**
+  herdr ships its own offline oracle — `herdr agent explain --file … --agent … --json` runs
+  the actual rule engine on an arbitrary screen file and dumps the full evaluation trace
+  (winner, per-rule matched flags, per-rule region byte length + preview). A new dev-only
+  `slopdesk-detect-explain` executable mirrors that trace over `AgentManifestCatalog`, and
+  `scripts/herdr-differential.py` diffs the two field-by-field on a deterministic generated
+  corpus (~3.5k screens built from each manifest's own vocabulary — fragment mutations, CRLF/CR
+  endings, prompt boxes, codex markers, Unicode case-fold probes — × own agent + 2 others ≈
+  10.6k cases). Any divergence in a region resolver, gate, priority tie-break, or fallback
+  surfaces as a field mismatch. XDG dirs are sandboxed per run so the oracle can only load
+  bundled manifests.
+- **It caught two real bugs on its first run** (both invisible to the ported fixture suite,
+  both `\r`-class): Swift's grapheme-based `split(separator: "\n")` treats `\r\n` as ONE
+  `Character` and never splits CRLF text; and Rust's `str::lines()` strips a trailing `\r`
+  only after stripping `\n` — a final unterminated line keeps its `\r` (plus Rust `trim()`
+  counts `\r` as whitespace where Foundation's `.whitespaces` does not). `RegionText.rustLines`
+  is now byte-level and pinned by `ManifestRegionLineSemanticsTests` (fixtures verified against
+  the oracle). Dormant in production — VT grid rows never contain raw `\r` — but real for any
+  future direct-text feed, and exactly the class of drift the harness exists to catch.
+- **Decision: upstream sync is a script, not a ritual.** `scripts/herdr.pin` records the herdr
+  commit the port is PROVEN equivalent to (advanced only after a green differential run).
+  `scripts/herdr-sync.sh` = fetch → show `src/detect` delta since the pin → regenerate
+  `BundledAgentManifests.swift` verbatim via `scripts/gen-bundled-manifests.py` (which fails
+  loudly if the manifest SET changes, and byte-reproduces the checked-in file — proving the
+  bundled TOMLs match the pin) → rebuild the oracle (vendored libghostty-vt builds with the
+  repo's pinned Zig 0.15.2 + xcrun SDK shim from `ThirdParty/ghostty`) → differential →
+  Swift test suite → `--update-pin`. Manifest-only upstream changes sync hands-free; engine
+  `.rs` changes are flagged for a manual port, and an unread or botched port cannot pass —
+  the differential gates the result against the new binary itself.

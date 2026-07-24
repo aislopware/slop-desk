@@ -347,6 +347,14 @@ let package = Package(
             dependencies: ["SlopDeskVideoHost", "SlopDeskVideoProtocol"],
         ),
 
+        // Differential-parity oracle for the herdr-ported detect engine: mirrors
+        // `herdr agent explain --file --agent --json` over our AgentManifestCatalog so
+        // scripts/herdr-differential.py can diff both engines on arbitrary screen corpora.
+        .executableTarget(
+            name: "slopdesk-detect-explain",
+            dependencies: ["SlopDeskAgentDetect"],
+        ),
+
         // Headless closed-loop validation harness: synthetic CVPixelBuffer -> REAL HW
         // VideoEncoder -> VideoPacketizer (FEC tier + isLTR + hostSendTs) -> deterministic
         // fragment loss -> FrameReassembler (FEC recovery) -> REAL HW VideoDecoder, plus the

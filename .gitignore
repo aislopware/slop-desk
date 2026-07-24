@@ -53,3 +53,6 @@ ThirdParty/ghostty/*.xcframework*
 docs/ui-shell/screenshots/*.mp4
 docs/ui-shell/screenshots/*.mov
 docs/ui-shell/screenshots/*.webm
+
+# python bytecode from repo scripts
+__pycache__/
