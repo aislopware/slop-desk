@@ -92,6 +92,33 @@ final class TabBadgePresentationTests: XCTestCase {
         )
     }
 
+    /// The collapsed group's roll-up: the header count borrows the STRONGEST attention ink among
+    /// the hidden rows' fused badges — a waiting question outranks an error outranks an unread
+    /// finish (the resolver's own precedence) — and stays `nil` when nothing inside waits, so the
+    /// count keeps the muted metadata ink. Assertions are SELF-consistent against `attentionInk`
+    /// (never absolute colour values, per the header note).
+    func testAttentionRollupInkFollowsBadgePrecedence() {
+        XCTAssertNil(StatusPresentation.attentionRollupInk([]))
+        XCTAssertNil(
+            StatusPresentation.attentionRollupInk([nil, .running, .sudo, .commandBusy]),
+            "busy/privilege tiers roll up to no ink — only attention states colour the count",
+        )
+        XCTAssertEqual(
+            StatusPresentation.attentionRollupInk([nil, .finished]),
+            StatusPresentation.attentionInk(.finished),
+        )
+        XCTAssertEqual(
+            StatusPresentation.attentionRollupInk([.completed, .error, nil, .running]),
+            StatusPresentation.attentionInk(.error),
+            "an error outranks an unread finish",
+        )
+        XCTAssertEqual(
+            StatusPresentation.attentionRollupInk([.error, .awaitingInput, .finished]),
+            StatusPresentation.attentionInk(.awaitingInput),
+            "a waiting question outranks everything",
+        )
+    }
+
     /// Every kind carries a non-empty, distinct AX/tooltip label so the colour-spoken state stays
     /// legible and testable.
     func testEveryKindHasADistinctNonEmptyLabel() {

@@ -1,18 +1,18 @@
-// SlateTabRow — the sidebar tab row, a 1:1 port of otty's `TabsPanelRowView`, pixel-sampled off the
-// LIVE otty app (grouped-sidebar build) at 1×: a 36pt line, title in the SYSTEM face (13pt) that
-// rests on the SECONDARY ink and steps up to primary + medium only when active, an optional leading
-// `✳` agent marker IN the title run (otty's agent integration literally prefixes the title string),
-// and one fixed trailing slot that carries the resting SHELL LABEL (`zsh` — muted 11pt) or a
-// privilege marker (``TabBadgeView`` — `#`/`∞`), swapping to the close `×` under hover.
+// SlateTabRow — the sidebar tab row, descended from otty's `TabsPanelRowView` but on the house
+// ladder: one `heightTabRow` line, title in the SYSTEM face (13pt) resting on the SECONDARY ink,
+// an optional leading `✳` agent marker IN the title run, and one fixed trailing slot that carries
+// the resting SHELL LABEL (`zsh` — the mono metadata voice) or a privilege marker
+// (``TabBadgeView`` — `#`/`∞`), swapping to the close `×` under hover.
 //
 // STATUS IS THE TITLE'S OWN TEXT (the ink dialect) — the row never mounts a lifecycle glyph:
 // a WORKING AGENT's motion is the title's shimmer (``WorkingShimmer``), a running command's title
-// simply stands still, and the attention states recolour the title's ink on the hue budget
+// simply stands still, and the attention states restyle the title with INK + WEIGHT together
 // (``StatusPresentation/attentionInk(_:)`` — amber = a question waits; red = failed; green =
-// unread finish, cleared on visit; all STILL — hard cuts, no blink). ACTIVE is the raised card
-// (fill + 1px hairline + the 4% cast shadow); hover is the flat plate. Nothing else rides the row:
-// no subtitle, no readout, no telemetry — the richness lives in the hover tooltip and the context
-// menu, which is the otty way.
+// unread finish, cleared on visit — plus the `.medium` step the active card uses, so "something
+// changed" reads by weight even before the hue lands; all STILL — hard cuts, no blink). ACTIVE is
+// the raised card (fill + 1px hairline; the cast shadow is light-theme-only). Nothing else rides
+// the row: no subtitle, no readout, no telemetry — the richness lives in the hover tooltip and the
+// context menu.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -85,7 +85,13 @@ struct SlateTabRow: View {
                 // `\u{FE0E}` pins the ✳ to TEXT presentation — bare U+2733 renders as emoji on
                 // Apple platforms, which would break the ink-only title run.
                 Text(agentMarker ? "✳\u{FE0E} \(title)" : title)
-                    .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
+                    // Attention pairs WEIGHT with the ink (the Slack/tmux idiom: bold says
+                    // "something changed", the hue says what) — the same `.medium` step the
+                    // active card takes, so the two signals share one scale.
+                    .font(.system(
+                        size: Slate.Typeface.body,
+                        weight: active || attentionLabel != nil ? .medium : .regular,
+                    ))
                     .workingShimmer(workingLabel != nil, ink: titleInk)
                     .lineLimit(1)
                     // The state the title's ink/motion speaks visually, kept legible for VoiceOver
@@ -102,7 +108,8 @@ struct SlateTabRow: View {
             Slate.Line.card,
             lineWidth: Slate.Metric.cardBorderWidth,
         ) } }
-        // The measured active-card lift: black 4% (light), radius 2, y 1 — hover/rest cast nothing.
+        // The active-card lift: black 4%, radius 2, y 1 on a LIGHT theme; dark themes cast nothing
+        // (`cardShadow` resolves clear — fill + hairline carry the lift). Hover/rest cast nothing.
         .shadow(color: active ? Slate.State.cardShadow : .clear, radius: 2, y: 1)
         .contentShape(.rect)
         // The tap SELECTS — but only when NOT renaming, so a click inside the field lands in the
@@ -168,9 +175,12 @@ struct SlateTabRow: View {
                     if let badge, StatusPresentation.tabBadge(badge) != nil {
                         TabBadgeView(kind: badge)
                     } else if let processLabel {
+                        // The metadata voice (MERIDIAN L2): a process name is DATA, so it reads
+                        // in the instrument mono at the caption size on the tertiary ink — one
+                        // register with the git line, counts and telemetry.
                         Text(processLabel)
-                            .font(.system(size: Slate.Typeface.footnote))
-                            .foregroundStyle(Slate.Text.secondary)
+                            .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                            .foregroundStyle(Slate.Text.tertiary)
                             .lineLimit(1)
                             .fixedSize()
                     }

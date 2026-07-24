@@ -108,12 +108,12 @@ final class SlateSnapshotRender: XCTestCase {
 
     // MARK: - Opt-in render of one By-Project sidebar section (header + single-line rows)
 
-    /// Renders the REAL ``SidebarSectionHeaderRow`` (the otty chevron + folder + NAME header — one
-    /// git-lined group, one bare-named group, one collapsed showing its hidden-row count) over a
-    /// seeded headless store, above representative ``SlateTabRow`` states at the true sidebar width —
-    /// the otty row set: title (with the `✳` agent marker where due) + one trailing slot (shell
-    /// label / badge). SAME opt-in idiom; writes `sidebar-section.png` into
-    /// `SLOPDESK_TABROW_SNAPSHOT_DIR`.
+    /// Renders the REAL ``SidebarSectionHeaderRow`` (the gutter-chevron + NAME header on the rows'
+    /// shared left rail — one git-lined group, one bare-named group, one collapsed showing its
+    /// hidden-row count in the attention roll-up ink) over a seeded headless store, above
+    /// representative ``SlateTabRow`` states at the true sidebar width: title (with the `✳` agent
+    /// marker where due) + one trailing slot (shell label / badge). SAME opt-in idiom; writes
+    /// `sidebar-section.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
     @MainActor
     func testRenderSidebarSection() throws {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
@@ -123,11 +123,11 @@ final class SlateSnapshotRender: XCTestCase {
         let store = makeSectionStore(key: key)
         let panel = VStack(alignment: .leading, spacing: 2) {
             SidebarSectionHeaderRow(store: store, title: "slop-desk", projectKey: key, count: 3)
-            // A WORKING row: no trailing glyph — the title wears the shimmer (static in this
-            // one-frame render) and the slot keeps the shell label.
+            // A WORKING agent row: no trailing text at all — the title wears the shimmer (static
+            // in this one-frame render) and the marker already says "agent".
             SlateTabRow(
                 title: "Claude Code", active: false, agentMarker: true,
-                workingLabel: "Agent working", processLabel: "claude",
+                workingLabel: "Agent working",
                 onSelect: {}, onClose: {},
             )
             SlateTabRow(
@@ -147,8 +147,11 @@ final class SlateSnapshotRender: XCTestCase {
                 onSelect: {}, onClose: {},
             )
             SlateTabRow(title: "Terminal", active: false, processLabel: "zsh", onSelect: {}, onClose: {})
+            // Collapsed with the store's rows threaded in: one hides a needs-permission pane, so
+            // the count wears the amber roll-up ink.
             SidebarSectionHeaderRow(
                 store: store, title: "api", projectKey: "/Users/abner/w/api", collapsed: true, count: 2,
+                rows: RailRowsBuilder.rows(for: store),
             )
         }
         .padding(8) // the sidebar list's LazyVStack inset

@@ -99,6 +99,21 @@ enum StatusPresentation {
         }
     }
 
+    /// The COLLAPSED group's roll-up ink: the strongest attention ink among the hidden rows' fused
+    /// badges, in the resolver's own urgency order — a waiting question outranks an error outranks
+    /// an unread finish — so the header count wears exactly the ink the loudest hidden row would.
+    /// `nil` when nothing inside waits (the count keeps the muted metadata ink). Folding a group
+    /// shut therefore never hides an agent that needs the eye.
+    static func attentionRollupInk(_ badges: [TabBadgeKind?]) -> Color? {
+        let present = Set(badges.compactMap(\.self))
+        for kind in [TabBadgeKind.awaitingInput, .error, .completed, .finished]
+            where present.contains(kind)
+        {
+            return attentionInk(kind)
+        }
+        return nil
+    }
+
     /// The trailing-slot marker for a ``TabBadgeKind`` — ONLY the privilege modifiers (`#` sudo,
     /// `∞` caffeinate), small muted text in the shell's own dialect. Every lifecycle state returns
     /// `nil`: motion lives in the title's shimmer, attention lives in the title's ink

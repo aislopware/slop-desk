@@ -378,9 +378,10 @@ enum Slate {
         static var accentMuted: Color { Slate.theme.accentMuted }
         static var header: Color { Slate.theme.header }
         static var shadow: Color { Slate.theme.panelShadow }
-        /// The ACTIVE tab card's cast shadow — the otty measurement (`black 4%, r2, y1`) on a light
-        /// theme; a touch stronger on dark so the lift still reads against a dark ground.
-        static var cardShadow: Color { .black.opacity(Slate.theme.isLight ? 0.04 : 0.25) }
+        /// The ACTIVE tab card's cast shadow — `black 4%, r2, y1` on a LIGHT theme only. Dark
+        /// themes cast nothing: at-rest depth there is the surface ladder (fill + hairline), and a
+        /// dark-on-dark shadow reads as a smudged edge, not lift (MERIDIAN L5).
+        static var cardShadow: Color { Slate.theme.isLight ? .black.opacity(0.04) : .clear }
     }
 
     @MainActor
@@ -410,7 +411,7 @@ enum Slate {
     enum Metric {
         // Radii (from design-tokens.css)
         static let radiusCard: CGFloat = 8
-        static let radiusTab: CGFloat = 7 // the measured tab / sidebar-row card radius
+        static let radiusTab: CGFloat = 6 // tab / sidebar-row card — rides the control-radius family
         static let radiusControl: CGFloat = 6
         static let radiusItem: CGFloat = 6
         static let radiusSmall: CGFloat = 4 // small inner plate (e.g. tab close-button hover)
@@ -430,14 +431,15 @@ enum Slate {
         static let heightBar: CGFloat = 28
         /// The standard single-line list row (palette results, footers).
         static let heightRow: CGFloat = 32
-        /// The sidebar TAB row — measured off the live otty app (36pt active card, pixel-sampled at
-        /// 1×; off the 4pt ladder on purpose: the measurement wins for this one row).
-        static let heightTabRow: CGFloat = 36
-        /// The tab row's own horizontal content inset (live otty measurement: title ink starts 10pt
-        /// inside the card edge, not the shared `space3`).
-        static let tabRowInset: CGFloat = 10
-        /// The sidebar project-group header row (chevron + folder + path). 24pt + the list's 2pt row
-        /// spacing on both sides = otty's measured 28pt inter-group band; the air IS the separator.
+        /// The sidebar TAB row — the standard single-line row rung (`heightRow`), so the tab list
+        /// keeps the ladder's beat: denser than a lounge list, taller than a menu row.
+        static let heightTabRow: CGFloat = heightRow
+        /// The tab row's horizontal content inset — `space3`, which is ALSO the section header's
+        /// chevron-gutter width: with the list inset (`space2`) both land every text run (header
+        /// name, git line, row titles) on ONE left rail, chevron hanging in the gutter before it.
+        static let tabRowInset: CGFloat = space3
+        /// The sidebar project-group header row (gutter chevron + name). 24pt + the list's 2pt row
+        /// spacing on both sides = the 28pt inter-group band; the air IS the separator.
         static let heightSectionHeader: CGFloat = 24
         /// Chrome strips: the titlebar / traffic-light band.
         static let heightStrip: CGFloat = 40

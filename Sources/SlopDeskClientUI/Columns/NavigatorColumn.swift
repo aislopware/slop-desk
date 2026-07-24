@@ -1,13 +1,12 @@
-// NavigatorColumn — the left sidebar navigator, a 1:1 port of the live otty grouped sidebar
-// (pixel-sampled off the running app; historical refs in `docs/otty-clone/screenshots/`): a flat
-// "TABS" panel on the `Slate.Surface.ground` background (NOT native `.sidebar` vibrancy — the host
-// split item is a PLAIN item), the caps "TABS" label with otty's trailing panel-menu icon, and rows
-// ALWAYS grouped into By-Project sections under otty's chevron + folder + NAME group header — the
-// live git line on a second line beneath the name, the hidden-row count trailing while collapsed
-// (``SidebarSectionHeaderRow``, collapsible with an animated glide; each pane's key is HOST-pushed — see
-// `WorkspaceStore.paneProjectKey`; sections and rows follow creation order). No search field —
-// otty's sidebar is bare rows; jumping is ⌘⇧O's job. Top 40pt is reserved for the traffic lights
-// under the hidden titlebar.
+// NavigatorColumn — the left sidebar navigator: a flat "TABS" panel on the `Slate.Surface.ground`
+// background (NOT native `.sidebar` vibrancy — the host split item is a PLAIN item), the caps
+// "TABS" label with the trailing panel-menu icon, and rows ALWAYS grouped into By-Project sections
+// under a gutter-chevron + NAME group header that shares ONE left rail with its rows — the live
+// git line (mono metadata) on a second line beneath the name, the hidden-row count trailing while
+// collapsed (``SidebarSectionHeaderRow``, collapsible with an animated glide; each pane's key is
+// HOST-pushed — see `WorkspaceStore.paneProjectKey`; sections and rows follow creation order). No
+// search field — the sidebar is bare rows; jumping is ⌘⇧O's job. Top 40pt is reserved for the
+// traffic lights under the hidden titlebar.
 //
 // iOS: a `List(selection:)` so NavigationSplitView pushes to the content column on a compact iPhone (a custom
 // button list does not drive column navigation). Themed to match macOS but keeps the system list's navigation
@@ -213,7 +212,9 @@ struct NavigatorColumn: View {
                 .fixedSize()
                 .help("Tab groups")
             }
-            .padding(.horizontal, 20)
+            // list inset + row inset — the caps label sits on the same left rail as every text
+            // run below it (header names, git lines, row titles).
+            .padding(.horizontal, Slate.Metric.space2 + Slate.Metric.tabRowInset)
             .padding(.bottom, 6)
 
             ScrollView {
@@ -228,6 +229,7 @@ struct NavigatorColumn: View {
                                 SidebarSectionHeaderRow(
                                     store: store, title: header, projectKey: section.projectKey,
                                     collapsed: collapsed, count: section.rows.count,
+                                    rows: section.rows,
                                     onToggle: {
                                         // Animated (otty snaps its collapse in one frame; the glide is a
                                         // deliberate refinement) — the chevron turns, the rows fade, and
@@ -337,7 +339,7 @@ struct NavigatorColumn: View {
         Text(text)
             .font(.system(size: Slate.Typeface.body))
             .foregroundStyle(Slate.Text.secondary)
-            .padding(.horizontal, 14)
+            .padding(.horizontal, Slate.Metric.tabRowInset) // the rows' text rail
             .padding(.vertical, 6)
     }
     #else
@@ -535,19 +537,21 @@ enum SidebarRowTooltip {
     }
 }
 
-/// The project section header — otty's grouped-sidebar header anatomy, pixel-sampled off the live
-/// app at 1×: a disclosure chevron (x≈10, rotating `.right`↔`.down`), a dim `folder.fill` (x≈27),
-/// then the project's FOLDER NAME in the plain system face (11pt, secondary ink, x≈46) — the
-/// basename `section.header` already carries (worktree-collision-qualified), never the full path;
-/// the path lives in the hover tooltip. While open the live git line (`main >2 !3`) rides a SECOND
-/// line under the name — full-width, so name and git never fight for one row; while collapsed the
-/// header folds back to one line with the hidden-row COUNT in the muted trailing slot (right inset
-/// 10, the row-label x — the otty collapsed-header count). No caps, no rule: groups separate by the
-/// header band's own air (a bare header keeps the measured 24pt; a git-lined one grows to fit).
-/// Tapping toggles the group shut. Reads its git summary
-/// INSIDE its own body so a git tick re-renders only the (cheap) header leaves, mirroring
-/// ``SidebarLiveRow``. Internal (not private) so the opt-in snapshot render can mount the REAL
-/// header.
+/// The project section header — ONE left rail with the rows beneath it: the group's FOLDER NAME
+/// (11pt system, semibold — the parent stands a step firmer than its rows) and the live git line
+/// under it (the instrument mono — data, not identity) both start on the SAME x as every row
+/// title; the disclosure chevron hangs in the gutter BEFORE the rail (the outline idiom: text
+/// aligns, the toggle lives left of it). The name is the basename `section.header` already carries
+/// (worktree-collision-qualified), never the full path; the path lives in the hover tooltip. While
+/// open the git line (`main ↑2 !3`) rides a SECOND full-width line so name and git never fight for
+/// one row; while collapsed the header folds to one line with the hidden-row COUNT trailing — mono
+/// metadata that borrows the strongest ATTENTION ink of the rows it hides
+/// (``StatusPresentation/attentionRollupInk(_:)``), so folding a group never mutes a waiting
+/// agent. No caps, no rule: groups separate by the header band's own air (a bare header keeps the
+/// 24pt band; a git-lined one grows to fit). Tapping toggles the group shut. Reads its git summary
+/// + roll-up chrome INSIDE its own body so a git/status tick re-renders only the (cheap) header
+/// leaves, mirroring ``SidebarLiveRow``. Internal (not private) so the opt-in snapshot render can
+/// mount the REAL header.
 struct SidebarSectionHeaderRow: View {
     let store: WorkspaceStore
     /// The group's display name — the basename header (`section.header`), which is also the keyless
@@ -557,49 +561,59 @@ struct SidebarSectionHeaderRow: View {
     var collapsed: Bool = false
     /// The group's row count — the muted trailing number while collapsed (how many tabs are hidden).
     var count: Int = 0
+    /// The group's rows — read ONLY while collapsed, to fuse the hidden rows' badges into the
+    /// count's roll-up ink. Structural identity; the volatile badge reads happen in `body` so a
+    /// status tick re-renders this leaf, never the sidebar body. Default keeps the snapshot-render
+    /// mount unchanged.
+    var rows: [RailRow] = []
     var onToggle: () -> Void = {}
 
     var body: some View {
         let summary = projectKey.flatMap { store.projectGitSummary[$0] }
-        // The measured x-ladder (list inset 8 + leading 2 = chevron 10; +10 wide + 7 gap = folder 27;
-        // +12 wide + 7 gap = name 46) — the name indents PAST the row titles (x18), chevron before.
-        // Baseline-aligned: the chevron + folder sit on the NAME line; the git line hangs beneath.
-        HStack(alignment: .firstTextBaseline, spacing: 7) {
+        // The rail: list inset (`space2`) + the chevron's `tabRowInset`-wide gutter = the SAME x
+        // the row titles start on (the rows' own horizontal content inset). Baseline-aligned: the
+        // chevron sits on the NAME line; the git line hangs beneath, on the rail.
+        HStack(alignment: .firstTextBaseline, spacing: 0) {
             // One glyph rotating 0°↔90° (not a `.chevronDown` swap) so the collapse toggle TURNS
-            // with the group animation instead of teleporting between two symbols.
+            // with the group animation instead of teleporting between two symbols. Leading-aligned
+            // in its gutter so it hugs the list edge, clear of the text rail.
             Image(systemSymbol: .chevronRight)
-                // `.medium`, not `.semibold` — the live otty chevron is a 1px-stroke glyph;
-                // semibold at this size reads a full step chunkier than the reference.
+                // `.medium`, not `.semibold` — a 1px-stroke glyph; semibold at this size reads a
+                // full step chunkier.
                 .font(.system(size: Slate.Typeface.small, weight: .medium))
                 .foregroundStyle(Slate.State.header)
                 .rotationEffect(.degrees(collapsed ? 0 : 90))
-                .frame(width: 10)
-            Image(systemSymbol: .folderFill)
-                .font(.system(size: Slate.Typeface.small))
-                .foregroundStyle(Slate.State.header.opacity(0.5))
+                .frame(width: Slate.Metric.tabRowInset, alignment: .leading)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .font(.system(size: Slate.Typeface.footnote))
+                    .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
                     .foregroundStyle(Slate.Text.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                 if let detail = Self.detailLine(collapsed: collapsed, summary: summary) {
+                    // The git line is DATA — the instrument mono, tertiary: one metadata register
+                    // with the rows' process labels and the footer telemetry.
                     Text(detail)
-                        .font(.system(size: Slate.Typeface.small))
-                        .foregroundStyle(Slate.State.header)
+                        .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                        .foregroundStyle(Slate.Text.tertiary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
             }
             Spacer(minLength: 6)
             if let trailing = Self.trailingCount(collapsed: collapsed, count: count) {
+                // The hidden-row count — mono metadata that wears the strongest attention ink of
+                // the rows it hides (`nil` ⇒ the muted register): a collapsed group still says
+                // "something in here waits".
+                let rollup = StatusPresentation.attentionRollupInk(
+                    rows.map { RailRowsBuilder.liveChrome(for: $0, store: store).badge },
+                )
                 Text(trailing)
-                    .font(.system(size: Slate.Typeface.footnote))
-                    .foregroundStyle(Slate.State.header)
+                    .font(Slate.Typeface.instrument(Slate.Typeface.small, weight: .semibold))
+                    .foregroundStyle(rollup ?? Slate.Text.tertiary)
             }
         }
-        .padding(.leading, 2)
-        .padding(.trailing, 10) // lands the trailing count on the rows' trailing-slot x
+        .padding(.trailing, Slate.Metric.tabRowInset) // the rows' trailing-slot x
         .padding(.vertical, 4)
         // A bare header keeps the measured 24pt band; a git-lined one grows to fit its second line.
         .frame(minHeight: Slate.Metric.heightSectionHeader)

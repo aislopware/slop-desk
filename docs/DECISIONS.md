@@ -2464,3 +2464,43 @@ both redundant on review: the `✳` marker already names the agent and the shimm
 (`workingElapsedLabel` + its pin); the slot on an agent row holds only a privilege marker or the
 hover `×`. The store's `paneWorkingSince` turn clock stays (core state, pinned) — only its
 rendering died. Duration, when wanted, belongs to the tooltip's richness, not the rail.
+
+### Round 5 — the instrument rail: one alignment, one metadata voice, the ladder's beat (2026-07-24)
+
+The states were settled (rounds 4–4.2); what still read as unimpressive was the COLUMN's craft.
+Diagnosis (against the shipped layout, cross-checked with the strongest external references —
+Slack/tmux weight-plus-ink, Things 3 quiet numerals, Cursor's elapsed-as-metadata, Warp's own
+users asking for whole-row ink): three faults, none of them the vocabulary.
+
+1. **The rail was broken.** Three unrelated left edges — "TABS" at x20, row titles at x18, and the
+   section header's NAME at x46 (chevron + folder icon + gaps) — put the PARENT deeper than its
+   children, the inverse of every outline. Now there is ONE text rail: list inset (`space2`) + row
+   inset (`tabRowInset` = `space3`) lands the caps label, header name, git line, and every row
+   title on the same x; the disclosure chevron hangs in the `tabRowInset`-wide gutter BEFORE the
+   rail (the outline idiom), and the folder icon is deleted — the chevron already says "group".
+2. **Metadata had no typeface law.** The git line, shell label, and hidden-row count rendered in
+   the system face while the ping and privilege markers spoke mono. Now one rule (MERIDIAN L2):
+   DATA — git line, process label, count, telemetry — is the instrument mono at the caption size
+   on the tertiary ink; identity (titles, header names) keeps the system face. The header name
+   steps up to semibold so the parent stands firmer than its rows.
+3. **Off the ladder for no reason left.** `heightTabRow` drops 36 → `heightRow` (32, the ladder's
+   single-line rung), `radiusTab` 7 → 6 (the control-radius family), `tabRowInset` 10 → `space3`.
+   The otty measurements served the 1:1 port; the port is over. The active card's cast shadow is
+   now LIGHT-theme-only — on dark, depth is the surface ladder (fill + hairline), and a
+   dark-on-dark shadow read as a smudged edge.
+
+Two additions on top of the alignment work, both inside the existing vocabulary:
+
+- **Attention pairs weight with ink** (`SlateTabRow`): an amber/red/green title also takes the
+  `.medium` step the active card uses — the Slack/tmux idiom (bold says "something changed", the
+  hue says what), two signals on one scale, no new elements.
+- **The collapsed count wears the roll-up ink** (`StatusPresentation.attentionRollupInk`): a
+  folded group's hidden-row count borrows the strongest attention ink among the rows it hides
+  (question > error > unread finish — the resolver's own precedence), so collapsing a project can
+  never mute a waiting agent. No pill, no glyph — the number that was already there, in the hue
+  budget that already exists. Pinned headlessly (`testAttentionRollupInkFollowsBadgePrecedence`).
+
+Deliberately NOT taken from the research: a fourth state hue (every good reference caps at three),
+left-edge accent bars (state is the title's job), a second metadata line per row (richness stays in
+the tooltip), idle-age fading (Arc's move — deferred; needs per-pane last-activity state).
+Client-only; no wire change.
