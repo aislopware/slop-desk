@@ -76,8 +76,8 @@ enum StatusPresentation {
     /// This is the INK DIALECT: a sidebar row never mounts a lifecycle glyph. The states that need
     /// the eye recolour the text that is already there — the same move the working shimmer makes for
     /// motion — so the rail stays a column of plain terminal text and status can never disagree with
-    /// its own indicator. The one non-colour attention affordance is the awaiting BLINK
-    /// (``attentionBlinks(_:)``): the row waits the way a prompt waits, on the cursor's cadence.
+    /// its own indicator. Every attention ink holds STILL (MERIDIAN's hard-cut ethos: animation is
+    /// reserved for sustained live signals — the shimmer; a waiting state is not motion).
     static func attentionInk(_ kind: TabBadgeKind) -> Color? {
         switch kind {
         // Awaiting input — act-now amber; red stays reserved for broken.
@@ -97,13 +97,6 @@ enum StatusPresentation {
              .running,
              .sudo: nil
         }
-    }
-
-    /// Whether the attention state BLINKS the title (full ↔ dim ink on the terminal cursor's
-    /// cadence — ``cursorBlink(_:)``). Only the blocked-on-you state: a question is the one state
-    /// that behaves like a waiting prompt; error and unread-done hold still.
-    static func attentionBlinks(_ kind: TabBadgeKind) -> Bool {
-        kind == .awaitingInput
     }
 
     /// The trailing-slot marker for a ``TabBadgeKind`` — ONLY the privilege modifiers (`#` sudo,

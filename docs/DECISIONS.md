@@ -2450,3 +2450,9 @@ resting/working/awaiting/done — the braille walker and `✗` readings are dele
 mounts. AX: the state the ink speaks rides the title's `accessibilityValue`. Pins:
 `attentionInk ⇔ needsAttention` exhaustively, no-slot-glyph for every lifecycle kind, only-awaiting
 blinks. Client-only; no wire change.
+
+**Round 4.1 — the blink dies too (2026-07-24).** The awaiting blink read as tacky on hardware
+review. Every attention ink now holds STILL — one rule, aligned with MERIDIAN's hard-cut ethos
+(animation is reserved for the sustained live signal, i.e. the working shimmer; a waiting state is
+not motion). `CursorBlinkModifier` deleted with its mounts; `StatusGlyph`'s `?` is static bold.
+The titlebar pip remains the roll-up cue for "something waits".

@@ -1,7 +1,7 @@
 // TabBadgePresentationTests — pins the pure view-side status map: the INK DIALECT. A sidebar row
 // never mounts a lifecycle glyph — the attention states recolour the row's own TITLE ink
-// (`StatusPresentation.attentionInk`; the blocked state additionally blinks on the cursor's cadence),
-// motion is the title's shimmer, and ONLY the privilege modifiers (`#`/`∞`) occupy the trailing slot
+// (`StatusPresentation.attentionInk`, all static hard cuts — motion belongs to the shimmer alone),
+// and ONLY the privilege modifiers (`#`/`∞`) occupy the trailing slot
 // (`StatusPresentation.tabBadge`). `tabBadgeLabel` gives every kind a distinct non-empty AX/tooltip
 // string. Headless VALUE assertions — no SwiftUI render, no video/Metal/SCStream. (Ink colours are
 // deliberately NOT asserted against tokens — `Color` equality is provider-fragile; the ink/glyph/nil
@@ -47,18 +47,6 @@ final class TabBadgePresentationTests: XCTestCase {
             XCTAssertNil(
                 StatusPresentation.tabBadge(kind),
                 "\(kind) must not occupy the trailing slot — status speaks through the title",
-            )
-        }
-    }
-
-    /// Only the blocked-on-you state blinks (the cursor's cadence — a question waits the way a
-    /// prompt waits); error and the unread finishes hold still.
-    func testOnlyAwaitingBlinks() {
-        for kind in allKinds {
-            XCTAssertEqual(
-                StatusPresentation.attentionBlinks(kind),
-                kind == .awaitingInput,
-                "\(kind): only awaiting input blinks the title",
             )
         }
     }

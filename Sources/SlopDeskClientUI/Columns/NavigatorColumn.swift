@@ -866,7 +866,7 @@ private struct IOSSidebarLiveRow: View {
                     )
                 } else {
                     // The same ink dialect as the macOS row: an attention state recolours the
-                    // title (and the blocked state blinks it); no lifecycle glyph mounts.
+                    // title; no lifecycle glyph mounts.
                     let attentionInk = chrome.badge.flatMap { StatusPresentation.attentionInk($0) }
                     let attentionLabel = chrome.badge.flatMap { badge in
                         StatusPresentation.attentionInk(badge) != nil
@@ -874,7 +874,6 @@ private struct IOSSidebarLiveRow: View {
                     }
                     Text(shownTitle)
                         .workingShimmer(busyLabel != nil, ink: attentionInk ?? Slate.Text.primary)
-                        .cursorBlink(chrome.badge.map(StatusPresentation.attentionBlinks) ?? false)
                         .lineLimit(1)
                         .accessibilityValue(busyLabel ?? attentionLabel ?? "")
                 }

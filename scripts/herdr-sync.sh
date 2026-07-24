@@ -26,7 +26,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-HERDR_DIR="${HERDR_DIR:-$HOME/.cache/clio-repos/github.com--ogulcancelik--herdr}"
+HERDR_DIR="${HERDR_DIR:-${HOME}/.cache/clio-repos/github.com--ogulcancelik--herdr}"
 PIN_FILE="${REPO_ROOT}/scripts/herdr.pin"
 ZIG_PINNED="${REPO_ROOT}/ThirdParty/ghostty/.toolchain/zig-aarch64-macos-0.15.2/zig"
 XCRUN_SHIM_DIR="${REPO_ROOT}/ThirdParty/ghostty/.work/bin"
@@ -34,9 +34,9 @@ XCRUN_SHIM_DIR="${REPO_ROOT}/ThirdParty/ghostty/.work/bin"
 TARGET="origin/master"
 UPDATE_PIN=0
 for arg in "$@"; do
-  case "$arg" in
+  case "${arg}" in
     --update-pin) UPDATE_PIN=1 ;;
-    *) TARGET="$arg" ;;
+    *) TARGET="${arg}" ;;
   esac
 done
 
@@ -46,16 +46,16 @@ fail() {
   exit 1
 }
 
-[ -d "${HERDR_DIR}/src/detect" ] || fail "no herdr checkout at ${HERDR_DIR} (set HERDR_DIR or: git clone https://github.com/ogulcancelik/herdr.git)"
+[[ -d "${HERDR_DIR}/src/detect" ]] || fail "no herdr checkout at ${HERDR_DIR} (set HERDR_DIR or: git clone https://github.com/ogulcancelik/herdr.git)"
 PIN="$(cat "${PIN_FILE}" 2> /dev/null || echo '')"
-[ -n "${PIN}" ] || fail "missing ${PIN_FILE}"
+[[ -n "${PIN}" ]] || fail "missing ${PIN_FILE}"
 
 log "fetching upstream…"
 git -C "${HERDR_DIR}" fetch --quiet origin
 TARGET_SHA="$(git -C "${HERDR_DIR}" rev-parse "${TARGET}^{commit}")"
 
 log "pin ${PIN:0:12} → target ${TARGET_SHA:0:12}"
-if [ "${PIN}" = "${TARGET_SHA}" ]; then
+if [[ "${PIN}" = "${TARGET_SHA}" ]]; then
   log "already at the pinned commit — re-proving parity anyway"
 else
   log "src/detect changes since the pin:"
@@ -64,23 +64,23 @@ else
 fi
 
 DIRTY="$(git -C "${HERDR_DIR}" status --porcelain -- src)"
-[ -z "${DIRTY}" ] || fail "herdr checkout has local src changes — clean it first"
+[[ -z "${DIRTY}" ]] || fail "herdr checkout has local src changes — clean it first"
 git -C "${HERDR_DIR}" checkout --quiet "${TARGET_SHA}"
 
 log "regenerating BundledAgentManifests.swift from upstream TOMLs…"
 python3 "${REPO_ROOT}/scripts/gen-bundled-manifests.py" --herdr-dir "${HERDR_DIR}"
 
 RS_CHANGES="$(git -C "${HERDR_DIR}" diff --name-only "${PIN}" "${TARGET_SHA}" -- 'src/detect/*.rs' 'src/detect/manifest/*.rs' || true)"
-if [ -n "${RS_CHANGES}" ]; then
+if [[ -n "${RS_CHANGES}" ]]; then
   log "ENGINE CODE changed upstream — review + port by hand, the differential below gates the result:"
-  printf '    %s\n' ${RS_CHANGES}
+  printf '    %s\n' "${RS_CHANGES}"
   log "view with: git -C ${HERDR_DIR} diff ${PIN:0:12} ${TARGET_SHA:0:12} -- src/detect"
 fi
 
 log "building herdr oracle (cargo, vendored libghostty-vt via Zig)…"
 BUILD_ENV=()
-[ -x "${ZIG_PINNED}" ] && BUILD_ENV+=("ZIG=${ZIG_PINNED}")
-if [ -x "${XCRUN_SHIM_DIR}/xcrun" ]; then
+[[ -x "${ZIG_PINNED}" ]] && BUILD_ENV+=("ZIG=${ZIG_PINNED}")
+if [[ -x "${XCRUN_SHIM_DIR}/xcrun" ]]; then
   BUILD_ENV+=("PATH=${XCRUN_SHIM_DIR}:${PATH}")
 else
   log "warning: no xcrun SDK shim at ${XCRUN_SHIM_DIR} — if the zig step fails with"
@@ -97,7 +97,7 @@ python3 "${REPO_ROOT}/scripts/herdr-differential.py" --herdr-dir "${HERDR_DIR}"
 log "running the Swift parity test suite…"
 (cd "${REPO_ROOT}" && swift test --filter SlopDeskAgentDetectTests | tail -2)
 
-if [ "${UPDATE_PIN}" = 1 ]; then
+if [[ "${UPDATE_PIN}" = 1 ]]; then
   printf '%s\n' "${TARGET_SHA}" > "${PIN_FILE}"
   log "pin advanced to ${TARGET_SHA:0:12} — commit scripts/herdr.pin with the sync"
 else

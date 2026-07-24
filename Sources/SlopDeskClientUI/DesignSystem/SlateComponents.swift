@@ -28,7 +28,7 @@ struct SlateStatusDot: View {
 /// voice IS the pane's voice, exactly the glyphs a CLI would print:
 ///   • `resting`  → `·` muted (an idle prompt — no colour spent);
 ///   • `working`  → the AI-CLI pulse `· ✢ ✳ ✶ ✻ ✽` breathing out and back — the agent's own spinner;
-///   • `awaiting` → `?` blinking between full and dim ink on the cursor's cadence (answer me);
+///   • `awaiting` → `?` bold in the act-now amber (answer me);
 ///   • `done`     → `●` (the quiet unread-finish dot, as the character a CLI would print).
 /// Mounted where ONE pane's agent state gets a compact readout (the iOS toolbar, the Peek & Reply
 /// header). The sidebar rows speak the same states through their own text instead — shimmer for
@@ -67,7 +67,7 @@ struct StatusGlyph: View {
         switch reading {
         case .resting: glyph("·", weight: .regular)
         case .working: spinner(Self.agentFrames, beat: Self.agentBeat)
-        case .awaiting: glyph("?", weight: .bold).cursorBlink(true)
+        case .awaiting: glyph("?", weight: .bold)
         case .done: glyph("●", weight: .regular)
         }
     }
@@ -94,37 +94,6 @@ struct StatusGlyph: View {
         let phase = date.timeIntervalSinceReferenceDate / beat
         let index = Int(phase.rounded(.down)) % frames.count
         return frames[index < 0 ? index + frames.count : index]
-    }
-}
-
-/// The terminal-cursor blink — a hard two-plateau duty cycle between full and dim ink, never fully
-/// off (the text keeps its slot even mid-blink). THE "answer me" attention primitive: a blocked
-/// pane's title and the agent instrument's `?` both wait the way a prompt waits. Stepped on the wall
-/// clock off a fixed epoch, so every blinking mount blinks in unison and re-mounts land mid-cycle.
-struct CursorBlinkModifier: ViewModifier {
-    let active: Bool
-
-    /// Seconds per blink phase — the classic terminal cursor cadence.
-    static let beat: Double = 0.53
-    /// The dim plateau's opacity — low ink, never zero.
-    static let dim: Double = 0.35
-
-    func body(content: Content) -> some View {
-        if active {
-            TimelineView(.periodic(from: Date(timeIntervalSinceReferenceDate: 0), by: Self.beat)) { timeline in
-                let full = Int(timeline.date.timeIntervalSinceReferenceDate / Self.beat).isMultiple(of: 2)
-                content.opacity(full ? 1 : Self.dim)
-            }
-        } else {
-            content
-        }
-    }
-}
-
-extension View {
-    /// Blinks the view on the terminal cursor's cadence while `active` (see ``CursorBlinkModifier``).
-    func cursorBlink(_ active: Bool) -> some View {
-        modifier(CursorBlinkModifier(active: active))
     }
 }
 

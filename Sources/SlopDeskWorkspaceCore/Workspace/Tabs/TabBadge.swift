@@ -39,8 +39,8 @@ public enum TabBadgeKind: Equatable, Sendable {
     /// **Error** — the red title ink, static. A command exited non-zero (`OSC 9;4;2` / a `.failure`
     /// completion) or an agent reported an error.
     case error
-    /// **Awaiting input** — the amber title ink, blinking on the cursor's cadence. A code agent is
-    /// blocked on approval/input (`ClaudeStatus.needsPermission`) or a plain command is stopped at an
+    /// **Awaiting input** — the amber title ink, static. A code agent is blocked on
+    /// approval/input (`ClaudeStatus.needsPermission`) or a plain command is stopped at an
     /// interactive prompt. The most-urgent state — it wins the precedence.
     case awaitingInput
     /// **Caffeinate** — the `∞` trailing marker. A sleep-blocking session (`caffeinate` foreground).

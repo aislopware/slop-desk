@@ -8,8 +8,8 @@
 // STATUS IS THE TITLE'S OWN TEXT (the ink dialect) — the row never mounts a lifecycle glyph:
 // a WORKING AGENT's motion is the title's shimmer (``WorkingShimmer``), a running command's title
 // simply stands still, and the attention states recolour the title's ink on the hue budget
-// (``StatusPresentation/attentionInk(_:)`` — amber = a question waits, blinking on the cursor's
-// cadence; red = failed; green = unread finish, cleared on visit). ACTIVE is the raised card
+// (``StatusPresentation/attentionInk(_:)`` — amber = a question waits; red = failed; green =
+// unread finish, cleared on visit; all STILL — hard cuts, no blink). ACTIVE is the raised card
 // (fill + 1px hairline + the 4% cast shadow); hover is the flat plate. Nothing else rides the row:
 // no subtitle, no readout, no telemetry — the richness lives in the hover tooltip and the context
 // menu, which is the otty way.
@@ -91,9 +91,6 @@ struct SlateTabRow: View {
                 Text(agentMarker ? "✳\u{FE0E} \(title)" : title)
                     .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
                     .workingShimmer(workingLabel != nil, ink: titleInk)
-                    // A blocked row waits the way a prompt waits — the amber title blinks on the
-                    // cursor's cadence. The other attention states hold still.
-                    .cursorBlink(attentionBlinks)
                     .lineLimit(1)
                     // The state the title's ink/motion speaks visually, kept legible for VoiceOver
                     // (the trailing slot carries no lifecycle glyph to label).
@@ -138,11 +135,6 @@ struct SlateTabRow: View {
     private var titleInk: Color {
         if let badge, let ink = StatusPresentation.attentionInk(badge) { return ink }
         return active || workingLabel != nil ? Slate.Text.primary : Slate.Text.secondary
-    }
-
-    /// Whether the title blinks (awaiting input — see ``StatusPresentation/attentionBlinks(_:)``).
-    private var attentionBlinks: Bool {
-        badge.map(StatusPresentation.attentionBlinks) ?? false
     }
 
     /// The AX value for an attention-inked title ("Awaiting input" / "Error" / "Finished"), so the
