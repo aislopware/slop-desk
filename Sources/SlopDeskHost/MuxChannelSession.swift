@@ -721,7 +721,13 @@ final class MuxChannelSession: @unchecked Sendable {
                         // termios ECHO flips fastest around a password prompt — re-probe right
                         // after writing this keystroke so AUTO Secure Keyboard Entry engages with minimal
                         // lag. The detector dedupes, so the steady (echo-on) state emits nothing.
-                        if let self { sampleEcho(masterFD: pty.masterFD) }
+                        if let self {
+                            sampleEcho(masterFD: pty.masterFD)
+                            // A keystroke into a BLOCKED agent pane is the Esc-cancel/answer
+                            // unblock edge — fold it so the hand drops when the user handles the
+                            // dialog (a no-op in every other state; see the detector).
+                            foldUserInput(bytes)
+                        }
                     }
                     // Consumed (written to the PTY / processed): grant the window back.
                     await data.noteConsumed(message.wireByteCount)
@@ -871,6 +877,21 @@ final class MuxChannelSession: @unchecked Sendable {
     private func foldTitleSample(title: String, at now: TimeInterval) {
         agentDetectLock.lock()
         let emission = agentDetector.title(title, at: now)
+        let newStatus = emission.status != nil ? agentDetector.status : nil
+        agentDetectLock.unlock()
+        if !emission.isEmpty { enqueueControl(emission.messages) }
+        if let newStatus { notifyAgentStatusChanged(newStatus) }
+    }
+
+    /// Folds one client→PTY input chunk through the detector — the Esc-cancel unblock edge (a
+    /// keystroke into a blocked pane demotes `.needsPermission` to `.idle`; every other state, and
+    /// every automatic terminal reply, is a no-op inside the detector). Called after each relayed
+    /// `input` frame AND after each agent-control raw injection (the cockpit's routed answer).
+    /// Cheap on the steady path: the detector bails on the status check before touching the bytes.
+    private func foldUserInput(_ bytes: Data) {
+        guard agentDetectEnabled else { return }
+        agentDetectLock.lock()
+        let emission = agentDetector.userInput(bytes: bytes, at: ProcessInfo.processInfo.systemUptime)
         let newStatus = emission.status != nil ? agentDetector.status : nil
         agentDetectLock.unlock()
         if !emission.isEmpty { enqueueControl(emission.messages) }
@@ -1737,6 +1758,9 @@ final class MuxChannelSession: @unchecked Sendable {
     func writeRawForControl(_ bytes: Data) {
         guard !bytes.isEmpty else { return }
         enqueuePTYWrite(bytes)
+        // Injected keys are the human's proxy (the supervision cockpit routes dialog answers down
+        // this verb) — the same unblock edge as a directly-typed keystroke.
+        foldUserInput(bytes)
     }
 
     /// Resizes the PTY for the agent-control `resize` verb.

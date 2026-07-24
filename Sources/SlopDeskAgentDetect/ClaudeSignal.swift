@@ -57,4 +57,11 @@ public enum ClaudeSignal: Sendable, Equatable {
     case oscTitle(String)
     /// A clock tick — drives time-based decay (done→idle) via the injected `now`.
     case tick
+    /// A USER KEYSTROKE routed into the pane's PTY (the caller has already excluded the terminal
+    /// emulator's automatic replies via ``PaneInputClassifier``). Narrowly scoped: it demotes ONLY
+    /// a standing `.needsPermission` — a modal dialog being typed at is being HANDLED. Esc-cancel
+    /// fires no Stop hook and the ✳ rest title shows while the dialog is still up, so a keystroke
+    /// is the only host-visible unblock edge; an answered dialog re-promotes to `.working` via its
+    /// own PreToolUse a beat later.
+    case userInput
 }

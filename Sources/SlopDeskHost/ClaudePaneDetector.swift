@@ -345,6 +345,25 @@ public struct ClaudePaneDetector: Sendable {
         return emission
     }
 
+    /// Fold one client→PTY input chunk at `now` — the Esc-cancel unblock edge. Scoped hard: it
+    /// looks at the bytes ONLY while the machine sits at `.needsPermission`, and only a genuine
+    /// USER KEYSTROKE (``PaneInputClassifier`` — focus reports, device replies and mouse wheel are
+    /// excluded) demotes the block to `.idle`. A keystroke into an open modal is the user HANDLING
+    /// it: Esc-cancel fires no Stop hook and the ✳ rest title already shows while the dialog is
+    /// up, so this is the only host-visible unblock signal; an answered dialog re-promotes to
+    /// `.working` via its own PreToolUse a beat later. NOT an authoritative fold — it stamps no
+    /// stickiness anchor. Emits type-27 iff the status triple changed.
+    public mutating func userInput(bytes: Data, at now: TimeInterval) -> Emission {
+        var emission = Emission()
+        guard machine.status == .needsPermission,
+              PaneInputClassifier.containsUserKeystroke(bytes)
+        else { return emission }
+        machine.reduce(.userInput, at: now)
+        if machine.status != .needsPermission { lastNotificationKind = 0 }
+        emission.status = statusEmissionIfChanged()
+        return emission
+    }
+
     /// Reattach re-assert (the type-26/27 sibling of the echo re-anchor): the detector's
     /// CURRENT truth as fresh messages for a returning client whose per-pane mirrors reset to none on
     /// reconnect. Both streams are edge-triggered against the `lastEmitted*` anchors, so after

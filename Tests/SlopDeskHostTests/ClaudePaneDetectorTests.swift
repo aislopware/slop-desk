@@ -191,6 +191,61 @@ final class ClaudePaneDetectorTests: XCTestCase {
         XCTAssertEqual(stateByte(idle.status), 1, "idle → urgency 1")
     }
 
+    // MARK: - Pane keystrokes unblock (the Esc-cancel edge)
+
+    /// A user keystroke into a BLOCKED pane emits the type-27 idle demotion (state 1, kind 0):
+    /// Esc-cancel fires no Stop hook and the rest title already shows while the dialog is up, so
+    /// the keystroke is the only host-visible signal that the modal is being handled. An answered
+    /// dialog re-promotes via its own PreToolUse right after.
+    func testUserKeystrokeDemotesABlockedPane() {
+        var d = ClaudePaneDetector()
+        let blocked = d.hook(
+            bytes: json(
+                #"{"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Allow Bash?"}"#,
+            ),
+            at: 0,
+        )
+        XCTAssertEqual(stateByte(blocked.status), 4)
+
+        let demoted = d.userInput(bytes: Data([0x1B]), at: 1) // the Esc key (legacy encoding)
+        XCTAssertEqual(d.status, .idle, "Esc into the blocked pane → the block is being handled")
+        guard case let .claudeStatus(state, kind, label)? = demoted.status else {
+            XCTFail("expected a type-27 demotion, got \(String(describing: demoted.status))")
+            return
+        }
+        XCTAssertEqual(state, 1, "idle urgency")
+        XCTAssertEqual(kind, 0, "the stale notification kind dies with the block")
+        XCTAssertEqual(label, "", "the blocking question dies with the block")
+    }
+
+    /// Merely VISITING a blocked pane sends a focus-in report down the same input path — that is
+    /// reading, not answering, and must leave the hand up. Same for a mouse-wheel scroll.
+    func testFocusReportsAndScrollDoNotUnblock() {
+        var d = ClaudePaneDetector()
+        _ = d.hook(
+            bytes: json(
+                #"{"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Allow?"}"#,
+            ),
+            at: 0,
+        )
+        let focusIn = d.userInput(bytes: Data("\u{1B}[I".utf8), at: 1)
+        XCTAssertNil(focusIn.status, "focus-in is not a keystroke — no frame")
+        let wheel = d.userInput(bytes: Data("\u{1B}[<64;10;10M".utf8), at: 2)
+        XCTAssertNil(wheel.status, "scrolling the transcript is reading, not answering")
+        XCTAssertEqual(d.status, .needsPermission, "the block stands until a real key arrives")
+    }
+
+    /// Keystrokes while NOT blocked never touch the machine (typing a prompt, a queued message
+    /// mid-turn) — the unblock signal is scoped to exactly the modal-dialog state.
+    func testKeystrokesOutsideABlockAreIgnored() {
+        var d = ClaudePaneDetector()
+        _ = d.hook(bytes: json(#"{"hook_event_name":"UserPromptSubmit","prompt":"do the thing"}"#), at: 0)
+        XCTAssertEqual(d.status, .working)
+        let typed = d.userInput(bytes: Data("more context\r".utf8), at: 1)
+        XCTAssertNil(typed.status, "typing mid-turn emits nothing")
+        XCTAssertEqual(d.status, .working, "the shimmer is untouched")
+    }
+
     /// Self-report beats the foreground heuristic: with NO claude present (presence would force
     /// `.none`), a `working` report still lifts the status — the authoritative hook fold wins.
     func testReportBeatsForegroundFloor() {

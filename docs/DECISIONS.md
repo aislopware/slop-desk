@@ -2256,3 +2256,28 @@ Same-day follow-up on user feedback against the shipped round above.
   / `permission_prompt` / permission message text, `AskUserQuestion` (W10 adapter),
   `agent_needs_input`, `elicitation_dialog`. Wire vocabulary unchanged (kind byte 2 still exists;
   hostd redeploy required for this one — the classifier is host-side).
+
+## Agent liveness round 3: a keystroke into a blocked pane is the Esc-cancel unblock edge (2026-07-24)
+
+Same-day follow-up: with the idle nudge demoted (round 2), a REAL block that the user resolves by
+pressing Esc left the orange hand up forever — Claude Code fires NO Stop hook on a user interrupt,
+and (per herdr's claude manifest priorities: blocked-screen rules 840–980 sit ABOVE the ✳/9;4;0
+idle rules at 250) the ✳ rest title already shows WHILE the dialog is open, so neither hooks nor
+the title carry an unblock edge for the cancel path.
+
+- **Decision: the host folds client→PTY input into the ONE detector as the unblock signal.** New
+  `ClaudeSignal.userInput`: a user keystroke while the machine sits at `.needsPermission` demotes
+  to `.idle` — a modal being typed at is being HANDLED. The convergence is what makes it honest:
+  an ANSWERED dialog re-promotes to `.working` via its own PreToolUse a beat later; an Esc-cancel
+  leaves idle standing (the truth). Every other status ignores the signal (typing a prompt /
+  queued message never touches the shimmer; input never conjures presence or cuts the done decay).
+  Fed from both input paths — the data-channel relay and the agent-control raw injection (the
+  supervision cockpit's routed answer).
+- **Decision: only genuine KEYSTROKES count — `PaneInputClassifier` excludes the terminal's
+  automatic replies.** The same input frames carry focus-in/out (`CSI I`/`CSI O` — sent by merely
+  VISITING the pane), CPR/DA/DSR/DECRPM/kitty-flags reports, OSC/DCS string replies, and SGR
+  mouse-wheel events; none is a human handling the dialog, so none may drop the hand. A bare
+  trailing `ESC` is the Esc KEY (legacy encoding), not a truncated report; kitty-encoded keys
+  (`CSI 27 u` et al.) count. Truncated/malformed sequences classify conservatively as
+  not-a-keystroke. Accepted edge: navigating a dialog's options and leaving WITHOUT answering
+  also drops the hand — the user demonstrably saw the block (t3code's seen-semantics).

@@ -244,6 +244,55 @@ final class ClaudeStatusMachineTests: XCTestCase {
         XCTAssertEqual(m.status, .needsPermission)
     }
 
+    // MARK: Pane keystrokes (the Esc-cancel unblock)
+
+    func testUserInputDemotesAHookBlockToIdle() {
+        // The user types into the blocked pane (Esc-cancel / a dialog answer). The modal is being
+        // handled — the block demotes to idle. If the input actually answered the dialog, the next
+        // PreToolUse re-promotes to working; Esc-cancel leaves idle standing (Claude Code fires NO
+        // Stop hook on a user interrupt, and the ✳ rest title already shows WHILE the dialog is up,
+        // so keystrokes are the only host-visible unblock edge).
+        var m = ClaudeStatusMachine()
+        _ = m.reduce(.hook(.userPromptSubmit(sessionID: "s1")), at: 0)
+        _ = m.reduce(.hook(.notification(kind: .permission, label: "Allow Bash?")), at: 1)
+        XCTAssertEqual(m.reduce(.userInput, at: 2), .idle, "keystroke into a blocked pane → idle")
+        XCTAssertNil(m.label, "the blocking question dies with the block")
+    }
+
+    func testUserInputDemotesAManifestBlockToo() {
+        var m = ClaudeStatusMachine()
+        _ = m.reduce(.processPresent(true), at: 0)
+        _ = m.reduce(.manifestVerdict(.needsPermission), at: 1)
+        XCTAssertEqual(m.reduce(.userInput, at: 2), .idle)
+    }
+
+    func testUserInputLeavesEveryOtherStatusAlone() {
+        // Typing while claude WORKS (a queued message) must not demote the shimmer; a keystroke
+        // must never conjure presence on an empty pane, wake an idle one, or cut the done decay.
+        var m = ClaudeStatusMachine()
+        XCTAssertEqual(m.reduce(.userInput, at: 0), .none, "no presence conjured")
+        _ = m.reduce(.hook(.userPromptSubmit(sessionID: "s1")), at: 1)
+        XCTAssertEqual(m.reduce(.userInput, at: 2), .working, "working is untouched")
+        _ = m.reduce(.hook(.stop(sessionID: "s1")), at: 3)
+        XCTAssertEqual(m.reduce(.userInput, at: 4), .done, "done keeps its decay window")
+        XCTAssertEqual(m.reduce(.tick, at: 20), .idle, "…and still decays on schedule")
+        XCTAssertEqual(m.reduce(.userInput, at: 21), .idle, "idle stays idle")
+    }
+
+    func testAnswerAfterUserInputRepromotesWorking() {
+        var m = ClaudeStatusMachine()
+        _ = m.reduce(.hook(.notification(kind: .waitingForInput, label: "Pick one")), at: 0)
+        XCTAssertEqual(m.reduce(.userInput, at: 1), .idle)
+        XCTAssertEqual(m.reduce(.hook(.preToolUse(sessionID: "s1", tool: "Bash")), at: 2), .working)
+    }
+
+    func testFreshBlockAfterUserInputRaisesAgain() {
+        var m = ClaudeStatusMachine()
+        _ = m.reduce(.hook(.notification(kind: .permission, label: "Allow?")), at: 0)
+        _ = m.reduce(.userInput, at: 1)
+        XCTAssertEqual(m.reduce(.hook(.notification(kind: .permission, label: "Allow rm?")), at: 2), .needsPermission)
+    }
+
     func testOscTitleClaudeGivesPresenceFloor() {
         // An OSC title "Claude: foo" is weak corroboration → at least idle.
         var m = ClaudeStatusMachine()

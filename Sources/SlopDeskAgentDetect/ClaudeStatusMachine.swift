@@ -93,6 +93,14 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
 
         case .tick:
             break // pure time advance; decay handled below
+
+        case .userInput:
+            // A keystroke into a blocked pane = the modal is being HANDLED. Demote to idle: an
+            // answered dialog re-promotes via its own PreToolUse a beat later, and an Esc-cancel
+            // (which fires NO Stop hook) leaves idle as the truth. Every other status is
+            // untouched — a keystroke never conjures presence, never demotes a live turn, and
+            // never cuts the done decay.
+            if status == .needsPermission { enter(.idle, label: nil) }
         }
 
         decayIfDue(now: now)
