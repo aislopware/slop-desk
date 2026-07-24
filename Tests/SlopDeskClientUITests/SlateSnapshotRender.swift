@@ -163,13 +163,13 @@ final class SlateSnapshotRender: XCTestCase {
         )
     }
 
-    // MARK: - Opt-in render of the sidebar connection footer (every LED state)
+    // MARK: - Opt-in render of the sidebar connection footer (every ink state)
 
-    /// Renders the REAL ``ConnectionRailFooter`` (the two-line instrument block: gutter LED +
-    /// hostname + mono detail) in every LED state — healthy ping, degraded, dialing, and the dimmed
-    /// offline lamp — at the true sidebar width, under the footer's hairline, so the lamp's ink
-    /// steps and the rail alignment can be eyeballed headlessly. SAME opt-in idiom; writes
-    /// `sidebar-footer.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
+    /// Renders the REAL ``ConnectionRailFooter`` (the two-line text block: hostname + mono
+    /// detail) in every ink state — healthy ping, degraded, dialing, and dimmed offline — at the
+    /// true sidebar width, under the footer's hairline, so the ink steps and the rail alignment
+    /// can be eyeballed headlessly. SAME opt-in idiom; writes `sidebar-footer.png` into
+    /// `SLOPDESK_TABROW_SNAPSHOT_DIR`.
     @MainActor
     func testRenderSidebarFooter() throws {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {

@@ -39,7 +39,7 @@ struct NavigatorColumn: View {
     var chrome: WorkspaceChromeState?
 
     /// The app-global connection — resting home is the SIDEBAR FOOTER (the two-line rail block:
-    /// LED in the gutter, host + mono detail on the text rail; never jammed into the traffic-light
+    /// host + mono detail on the text rail, pure text; never jammed into the traffic-light
     /// strip). While the sidebar is COLLAPSED the titlebar hosts the trailing fallback
     /// (`SlateTitlebar`). Threaded in like `preferences`; `nil` (previews / iOS) omits the cluster.
     var connection: AppConnection?

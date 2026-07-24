@@ -2564,6 +2564,12 @@ monochrome ladder: connected = secondary ink, dialing/offline = tertiary (the de
 which), warn/err ONLY while a live link degrades — and the glow deleted. `LedState` and the
 `ledState`/`footerDetail` maps are unchanged (still pinned).
 
+Follow-up, same day: the muted lamp still read as clutter — a status dot beside a status word is
+the tell of template design, and the review called it exactly that. The dot is DELETED; the
+footer is pure text on the rail (hostname + mono detail, indented onto the shared text x, the
+gutter empty). `LedState` survives as the INK classifier only (hostname dims via `.dim`, digits
+take warn/err) — the "no LED" doctrine from the cluster's first pass is fully restored.
+
 Returned by request: the dim `folder.fill` in the header gutter (the pre-round-5 glyph), on the
 header ink — the one pictogram the monochrome rail keeps ("a group is a place"). First pass kept
 round 6's hover-swap (folder at rest, chevron on approach); the follow-up verdict was that a

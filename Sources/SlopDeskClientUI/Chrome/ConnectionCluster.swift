@@ -4,17 +4,14 @@
 // Two mounts, two layouts:
 //
 // SIDEBAR FOOTER (`railFooter`) — the two-line instrument block on the sidebar's own text rail,
-// rhyming with the section headers above it (gutter glyph + name line + mono detail line):
-//   ●  mac-studio
-//      12 ms
-//   ↑  ↑
-//   LED in the `tabRowInset` gutter; hostname on the rail (footnote medium), the mono detail line
-//   beneath (ping while connected, the short status word otherwise). The LED is a 6pt MONOCHROME
-//   health lamp (`LedState`): connected = the secondary ink, everything not-connected = tertiary
-//   (the detail word says which); the status hues appear ONLY when a live link degrades
-//   (slow = warn, bad = err) — the ink dialect's rule, colour means trouble. STATIC, never
-//   blinking, no glow; the connect handshake brightens it on the needle curve. This is the one
-//   place chrome wears a dot besides the attention pip.
+// pure TEXT (no dot, no glyph — a status lamp is exactly the ornament this chrome refuses):
+//   mac-studio
+//   12 ms
+//   Hostname on the rail (footnote medium), the mono detail line beneath (ping while connected,
+//   the short status word otherwise). State lives in the WORDS and their ink (`LedState` is the
+//   ink classifier): the hostname dims to tertiary while nothing is connected, and the status
+//   hues appear ONLY when a live link degrades (slow = warn, bad = err digits) — the ink
+//   dialect's rule, colour means trouble.
 //
 // TITLEBAR / iOS (compact) — the original one quiet row (host name + trailing ping), no LED, no
 // monogram: state lives in the text (digits carry the health colour, hostname dims when offline).
@@ -39,9 +36,9 @@ struct ConnectionCluster: View {
     var onConnect: () -> Void = {}
     /// Sidebar footer: stretch the hit/hover plate full width. Titlebar mount hugs content.
     var fillWidth = false
-    /// Sidebar footer LAYOUT: the two-line instrument block on the sidebar's text rail (LED in the
-    /// gutter, hostname + mono detail stacked — see the header note). The titlebar / iOS mounts
-    /// keep the compact one-line cluster.
+    /// Sidebar footer LAYOUT: the two-line instrument block on the sidebar's text rail (hostname
+    /// + mono detail stacked, pure text — see the header note). The titlebar / iOS mounts keep
+    /// the compact one-line cluster.
     var railFooter = false
 
     @State private var hover = false
@@ -85,10 +82,11 @@ struct ConnectionCluster: View {
         return .bad
     }
 
-    /// The footer LED's state — the health lamp the rail footer wears in its gutter. Connected
-    /// rides the ping classifier (good/slow/bad); a dial in flight (first connect OR a supervised
-    /// reconnect) is `dialing`; every settled not-connected state dims the lamp (a stale ping must
-    /// never resurrect it). Pure + pinned in `ConnectionClusterTests`.
+    /// The footer's fused ink state (the name is historical — the lamp itself is gone; this now
+    /// classifies the TEXT inks). Connected rides the ping classifier (good/slow/bad); a dial in
+    /// flight (first connect OR a supervised reconnect) is `dialing`; every settled not-connected
+    /// state is `dim` (a stale ping must never brighten it). Pure + pinned in
+    /// `ConnectionClusterTests`.
     enum LedState: Equatable {
         case dim
         case dialing
@@ -195,8 +193,8 @@ struct ConnectionCluster: View {
     }
 
     /// The sidebar footer's two-line instrument block. The presentational layout lives in
-    /// ``ConnectionRailFooter`` (pure values in, so the snapshot rig can mount every LED state);
-    /// this maps the live model onto it. The LED brightens on the needle curve — the same
+    /// ``ConnectionRailFooter`` (pure values in, so the snapshot rig can mount every ink state);
+    /// this maps the live model onto it. The inks brighten on the needle curve — the same
     /// orchestrated moment the handshake already owns.
     private var railBody: some View {
         let led = Self.ledState(status: status, pingMS: pingMS)
@@ -246,55 +244,34 @@ struct ConnectionCluster: View {
     }
 }
 
-/// The sidebar footer's PRESENTATIONAL layout — pure values in (host / LED state / detail line), no
-/// model, so the snapshot rig mounts every state directly. Rhymes with the section headers above
-/// it: a glyph in the `tabRowInset` gutter, the name line on the text rail, the mono detail line
-/// beneath. Internal (not private) for the rig.
+/// The sidebar footer's PRESENTATIONAL layout — pure values in (host / ink state / detail line),
+/// no model, so the snapshot rig mounts every state directly. Pure text on the sidebar's rail
+/// (indented onto the same x the section names and row titles share — the `tabRowInset` gutter
+/// stays EMPTY: no lamp, no glyph): the hostname line, the mono detail line beneath. Internal
+/// (not private) for the rig.
 struct ConnectionRailFooter: View {
     let displayHost: String
     let led: ConnectionCluster.LedState
     let detail: (text: String, isMetric: Bool)?
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 0) {
-            // The health lamp: 6pt, its bottom resting on the host line's baseline (visually
-            // centred on the x-height). Flat fill, no glow — the lamp reads by ink step, not shine.
-            Circle()
-                .fill(ledColor)
-                .frame(width: 6, height: 6)
-                .frame(width: Slate.Metric.tabRowInset, alignment: .leading)
-                .alignmentGuide(.firstTextBaseline) { $0[.bottom] }
-            VStack(alignment: .leading, spacing: 1) {
-                // The hostname — the same register as the project header names (footnote medium,
-                // secondary), dimming with the lamp when nothing is connected.
-                Text(displayHost)
-                    .font(.system(size: Slate.Typeface.footnote, weight: .medium))
-                    .foregroundStyle(led == .dim ? Slate.Text.tertiary : Slate.Text.secondary)
+        VStack(alignment: .leading, spacing: 1) {
+            // The hostname — the same register as the project header names (footnote medium,
+            // secondary), dimming to tertiary while nothing is connected.
+            Text(displayHost)
+                .font(.system(size: Slate.Typeface.footnote, weight: .medium))
+                .foregroundStyle(led == .dim ? Slate.Text.tertiary : Slate.Text.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            if let detail {
+                // The instrument line — one metadata voice with the git lines and shell labels.
+                Text(detail.text)
+                    .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                    .foregroundStyle(detailInk)
                     .lineLimit(1)
-                    .truncationMode(.tail)
-                if let detail {
-                    // The instrument line — one metadata voice with the git lines and shell labels.
-                    Text(detail.text)
-                        .font(Slate.Typeface.instrument(Slate.Typeface.small))
-                        .foregroundStyle(detailInk)
-                        .lineLimit(1)
-                }
             }
-            Spacer(minLength: 0)
         }
-    }
-
-    /// Monochrome at rest — the ink ladder carries "on" vs "off" (a healthy link must not add a
-    /// standing colour to the rail); the status hues light only while a LIVE link degrades. A dial
-    /// in flight stays tertiary: the detail word ("connecting…") already says so.
-    private var ledColor: Color {
-        switch led {
-        case .dim,
-             .dialing: Slate.Text.tertiary
-        case .good: Slate.Text.secondary
-        case .slow: Slate.Status.warn
-        case .bad: Slate.Status.err
-        }
+        .padding(.leading, Slate.Metric.tabRowInset)
     }
 
     /// Metric digits carry the health colour only while degrading; words stay muted.
