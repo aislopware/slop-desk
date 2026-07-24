@@ -57,6 +57,13 @@ public enum ClaudeSignal: Sendable, Equatable {
     case oscTitle(String)
     /// A clock tick — drives time-based decay (done→idle) via the injected `now`.
     case tick
+    /// A SCREEN-RULE verdict from the manifest engine (the herdr port): the live grid + OSC
+    /// title/progress evaluated against the agent's bundled rule ladder. Continuous ground
+    /// truth — richer than ``manifestVerdict`` (it carries the `visible*` chrome flags), and
+    /// the machine lets it clear even a HOOK-sourced block once the block is old enough to
+    /// have painted (a VISIBLE idle prompt box / live spinner proves the dialog is gone).
+    /// `skipStateUpdate` verdicts (transcript viewer / model picker) freeze the status.
+    case screen(AgentScreenDetection)
     /// A USER KEYSTROKE routed into the pane's PTY (the caller has already excluded the terminal
     /// emulator's automatic replies via ``PaneInputClassifier``). Narrowly scoped: it demotes ONLY
     /// a standing `.needsPermission` — a modal dialog being typed at is being HANDLED. Esc-cancel

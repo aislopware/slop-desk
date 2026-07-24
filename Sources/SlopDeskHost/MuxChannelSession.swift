@@ -102,6 +102,30 @@ final class MuxChannelSession: @unchecked Sendable {
     /// The foreground-watch poll task (cancel on shutdown).
     private var agentWatchTask: Task<Void, Never>?
 
+    /// Screen-rule engine feed (the herdr-port manifest engine, DECISIONS round 4). The
+    /// latency-critical read loop only APPENDS each chunk here (one bounded `Data` append —
+    /// the P6 objection to per-chunk scanning stays honoured); the 300 ms scan task drains it
+    /// into the resident grid and runs the regex ladder. Guarded by `screenScanLock`; the
+    /// scanner itself is scan-task-owned (single writer, never shared).
+    private let screenScanLock = NSLock()
+    private var screenPendingBytes = Data()
+    /// TRUE ⇒ the resident grid is stale (first scan / resize / pending overflow): the next
+    /// scan rebuilds it by replaying the scrollback ring (full-screen apps repaint, so a
+    /// mid-ring start converges — the same property the `screen` verb relies on).
+    private var screenModelDirty = true
+    /// Bumped per PTY chunk — the scanner's idle-scan skip (no new bytes ⇒ no regex work).
+    private var screenContentSeq: UInt64 = 0
+    /// Pending-bytes bound: a scan task this far behind falls back to a ring rebuild.
+    private static let screenPendingCap = 512 * 1024
+    private var screenScanner = PaneScreenScanner()
+    private var screenScanTask: Task<Void, Never>?
+    /// `agentDetectEnabled` AND not opted out via `SLOPDESK_AGENT_SCREEN=0` (default-ON idiom).
+    private let agentScreenDetectEnabled: Bool
+    /// Deep job-probe cache (wrapper basenames): positive hits stick 5 s (herdr's identified
+    /// recheck), misses 1 s — the 300 ms scan never pays a pgroup enumeration per tick.
+    private var jobProbeCachedAgent: AgentKind?
+    private var jobProbeCachedAt: TimeInterval = -.infinity
+
     /// The pure per-pane PTY-echo edge detector (the AUTO Secure-Keyboard-Entry signal).
     /// Driven by ``PTYEchoProbe`` from TWO contexts — the input task (opportunistically right after a
     /// client keystroke is written to the PTY, where `ECHO` flips fastest around a password prompt) and
@@ -609,6 +633,8 @@ final class MuxChannelSession: @unchecked Sendable {
         coldBacklogTransform = replay.scrollbackDistiller
         self.shimDir = shimDir
         self.agentDetectEnabled = agentDetectEnabled
+        agentScreenDetectEnabled = agentDetectEnabled
+            && ProcessInfo.processInfo.environment["SLOPDESK_AGENT_SCREEN"] != "0"
         self.agentPollInterval = agentPollInterval
         self.agentHookListenerActive = agentHookListenerActive
         self.blocksEnabled = blocksEnabled
@@ -829,6 +855,95 @@ final class MuxChannelSession: @unchecked Sendable {
                 }
             }
         }
+
+        // Screen-rule scan loop (the herdr port's detection cadence): 300 ms steady, tightening
+        // to 100 ms while a working→idle hold is pending. All grid feeding + regex work happens
+        // HERE, never on the read loop; a quiescent idle pane skips the scan entirely.
+        if agentScreenDetectEnabled {
+            screenScanTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    guard let self else { return }
+                    let interval = scanScreenOnce(masterFD: masterFD)
+                    do { try await Task.sleep(for: .seconds(interval)) } catch { return }
+                }
+            }
+        }
+    }
+
+    /// One screen-detection scan: drain the pending PTY bytes into the resident grid (or
+    /// rebuild it from the scrollback ring when dirty), resolve the foreground agent, run the
+    /// manifest engine + temporal layer, and fold a publish-worthy verdict into the ONE
+    /// detector. Returns the next scan interval. Runs only on the scan task.
+    private func scanScreenOnce(masterFD: Int32) -> TimeInterval {
+        let now = ProcessInfo.processInfo.systemUptime
+        let size = pty.currentWindowSize()
+        let rows = Int(size?.rows ?? 24)
+        let cols = Int(size?.cols ?? 80)
+        screenScanLock.lock()
+        let pending = screenPendingBytes
+        screenPendingBytes.removeAll(keepingCapacity: true)
+        let needsRebuild = screenModelDirty
+        screenModelDirty = false
+        let seq = screenContentSeq
+        screenScanLock.unlock()
+        // The ring snapshot is taken OUTSIDE the scan lock (the ring has its own locking). A
+        // chunk landing between the flag flip and this snapshot is fed twice — tolerated: the
+        // grid converges on the next repaint, the same property a mid-ring start relies on.
+        let replay: Data? = needsRebuild ? scrollbackRawForControl() : nil
+        let output = screenScanner.scan(PaneScreenScanner.Input(
+            pending: pending,
+            rebuildReplay: replay,
+            rows: rows,
+            cols: cols,
+            agent: screenAgent(masterFD: masterFD, now: now),
+            contentSeq: seq,
+            now: now,
+        ))
+        if let detection = output.publish { foldScreenDetection(detection, at: now) }
+        return output.nextInterval
+    }
+
+    /// The foreground agent for the screen engine: the cheap basename probe through the ported
+    /// alias table first; a generic runtime/shell basename (the npm-wrapped `claude` case) falls
+    /// back to the DEEP job probe (pgroup + argv unwrap) behind a small cache — positive hits
+    /// stick 5 s, misses 1 s — so the 300 ms cadence never pays a pgroup enumeration per tick.
+    private func screenAgent(masterFD: Int32, now: TimeInterval) -> AgentKind? {
+        let base = PTYForegroundProbe.foregroundName(masterFD: masterFD)
+        guard base.isEmpty == false else { return nil }
+        if let direct = AgentKind.identify(processName: base) {
+            jobProbeCachedAgent = nil
+            jobProbeCachedAt = -.infinity
+            return direct
+        }
+        guard AgentKind.isGenericRuntimeOrShell(base) else { return nil }
+        let cacheAge = now - jobProbeCachedAt
+        if let cached = jobProbeCachedAgent, cacheAge < 5 { return cached }
+        if jobProbeCachedAgent == nil, cacheAge < 1 { return nil }
+        jobProbeCachedAt = now
+        jobProbeCachedAgent = ForegroundJobProbe.job(masterFD: masterFD)
+            .flatMap { AgentJobIdentifier.identify(job: $0)?.agent }
+        return jobProbeCachedAgent
+    }
+
+    /// Folds one published screen detection through the detector and enqueues the resulting
+    /// type-27 (the detector dedupes). Split so tests drive the pure fold with an injected clock.
+    private func foldScreenDetection(_ detection: AgentScreenDetection, at now: TimeInterval) {
+        agentDetectLock.lock()
+        let emission = agentDetector.screenDetection(detection, at: now)
+        let newStatus = emission.status != nil ? agentDetector.status : nil
+        agentDetectLock.unlock()
+        if !emission.isEmpty { enqueueControl(emission.messages) }
+        if let newStatus { notifyAgentStatusChanged(newStatus) }
+    }
+
+    /// Marks the resident screen grid stale (resize / any geometry change): the pending buffer
+    /// is dropped and the next scan rebuilds from the scrollback ring at the new size.
+    private func markScreenModelDirty() {
+        guard agentScreenDetectEnabled else { return }
+        screenScanLock.lock()
+        screenPendingBytes.removeAll(keepingCapacity: false)
+        screenModelDirty = true
+        screenScanLock.unlock()
     }
 
     /// Resolves the PTY's foreground basename via the OS probe, folds it (plus a clock TICK) through the
@@ -1378,6 +1493,8 @@ final class MuxChannelSession: @unchecked Sendable {
         controlTask?.cancel()
         exitTask?.cancel()
         agentWatchTask?.cancel() // stop the foreground-process poll
+        screenScanTask?.cancel() // stop the screen-rule scan loop
+        screenScanTask = nil
         agentWatchTask = nil
         // `outputTask.cancel()` GENUINELY unblocks a drain parked on an exhausted DATA credit
         // window: `MuxSubChannel.awaitChunkCredit`'s park is cancellation-aware, so a cancelled sender
@@ -1517,6 +1634,9 @@ final class MuxChannelSession: @unchecked Sendable {
         pendingResize = nil
         resizeLock.unlock()
         pty.setWindowSize(cols: r.cols, rows: r.rows, pxWidth: r.px, pxHeight: r.py)
+        // The resident screen grid is fixed-size — a geometry change rebuilds it from the ring
+        // on the next scan (full-screen apps repaint at the new size anyway).
+        markScreenModelDirty()
         scheduleRedrawNudge()
     }
 
@@ -1618,6 +1738,21 @@ final class MuxChannelSession: @unchecked Sendable {
         // is off, so the pipeline stays byte-identical. Kept OFF the data drain (its own
         // CONTROL FIFO) so block metadata never stalls data sends.
         feedBlocks(chunk)
+        // Screen-rule engine tap: APPEND-only on this thread (the scan task owns the grid and
+        // all regex work). On overflow the buffer is dropped and the grid marked dirty — the
+        // next scan rebuilds from the ring instead of replaying an unbounded backlog here.
+        if agentScreenDetectEnabled {
+            screenScanLock.lock()
+            screenContentSeq &+= 1
+            if !screenModelDirty {
+                screenPendingBytes.append(chunk)
+                if screenPendingBytes.count > Self.screenPendingCap {
+                    screenPendingBytes.removeAll(keepingCapacity: false)
+                    screenModelDirty = true
+                }
+            }
+            screenScanLock.unlock()
+        }
         // Account the chunk in the bounded queue BEFORE enqueueing; if it pushes the FIFO
         // to/over the bound, PAUSE the read loop so the kernel PTY buffer fills and
         // backpressures the shell (the real flood fix).
@@ -1775,6 +1910,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// is never contended from this path (it guards PTY-fd lifetime, not application state).
     func resizeForControl(rows: UInt16, cols: UInt16) {
         pty.setWindowSize(cols: cols, rows: rows)
+        markScreenModelDirty()
     }
 
     /// Returns a plain-text snapshot of the ReplayBuffer scrollback (all acked + live tail).
@@ -2529,6 +2665,12 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Drives the REAL PTY chunk handler (disk-journal hook + sniffer + FIFO append) without a
     /// PTY or read loop — the production `onChunk` closure is exactly this call.
     func ingestPTYChunkForTesting(_ chunk: Data) { ingestPTYChunk(chunk) }
+
+    /// Drives ``foldScreenDetection(_:at:)`` — the screen-rule verdict fold — with an injected
+    /// clock, mirroring the production scan-task call site.
+    func foldScreenDetectionForTesting(_ detection: AgentScreenDetection, at now: TimeInterval) {
+        foldScreenDetection(detection, at: now)
+    }
 
     /// Drives the REAL fresh-spawn restore enqueue (the exact call ``startRelay()`` makes)
     /// without needing a spawned PTY's master fd.

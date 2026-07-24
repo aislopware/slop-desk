@@ -2281,3 +2281,59 @@ the title carry an unblock edge for the cancel path.
   (`CSI 27 u` et al.) count. Truncated/malformed sequences classify conservatively as
   not-a-keystroke. Accepted edge: navigating a dialog's options and leaving WITHOUT answering
   also drops the hand — the user demonstrably saw the block (t3code's seen-semantics).
+
+## Agent liveness round 4: port herdr's manifest screen-rule engine (2026-07-24)
+
+> The user's directive: herdr's detection is complete and battle-tested — study it thoroughly and
+> port it to Swift at 100% parity or better. herdr is Apache-2.0 (`ogulcancelik/herdr`); the port
+> is a reimplementation from its `src/detect/` + `src/pane/agent_detection.rs` semantics, and the
+> 19 agent manifests are carried verbatim.
+
+- **Decision: the detect engine is a pure manifest-driven rule engine in `SlopDeskAgentDetect`.**
+  TOML manifests (herdr's exact files, embedded as raw-string literals — no SwiftPM resource
+  bundle, so the headless daemon and every app target load them with zero deployment surface)
+  are parsed by a minimal TOML-subset parser, validated with herdr's exact limits (≤128 rules,
+  gate depth ≤8, ≤512 gates, ≤32 matchers/gate, ≤1024 matchers, ≤512 chars/matcher,
+  `skip_state_update` ⇒ `state="unknown"` + no visible flags), compiled to NSRegularExpression
+  (case-sensitive unless the pattern opts in via `(?i)`, `contains` always case-folded), and
+  evaluated with herdr's exact reduction: every rule evaluated, highest priority wins,
+  first-declared wins ties, known-agent fallback = plain `idle`. All 13 region resolvers are
+  ported byte-faithfully, including the `\n`-only line/offset math. Deferred (documented deltas,
+  not parity gaps we hide): remote manifest auto-update and local override files — bundled
+  manifests only.
+- **RE-SCOPE of "screen verb = on-demand, NOT a persistent grid": the grid becomes RESIDENT per
+  pane — but never on the hot path.** P6's original objection (scanning per chunk on the
+  latency-critical read-loop thread) still stands, so the read loop only APPENDS the chunk to a
+  bounded pending buffer (one Data append, same cost class as the journal/sniffer taps it sits
+  beside). A dedicated scan task — herdr's exact cadence: 300 ms, tightening to 100 ms while a
+  working→idle hold is pending — owns the `TerminalScreenModel`, drains the buffer, feeds the
+  grid + a ported OSC title/progress tracker, extracts herdr's detection text (visible rows from
+  the bottom, per-row trailing trim, trailing blank rows dropped, `\n`-joined), and runs the
+  engine. Pane resize or buffer overflow marks the model dirty; the scan task rebuilds it by
+  replaying the scrollback ring (the same repaint property the `screen` verb relies on). The
+  idle-scan skip (idle + no new bytes ⇒ no regex work) is ported as-is.
+- **Decision: hooks stay — screen verdicts join the ladder as continuous ground truth.** herdr
+  runs Claude with NO state hooks (screen+OSC is its sole authority); we keep our richer
+  hook edges (instant working on UserPromptSubmit, `.done` on Stop) — that is the "better" half
+  of parity-or-better. Reconciliation in the ONE machine: a screen `blocked` raises
+  `.needsPermission` (manifest-sourced); screen `working`/visible-`idle` may clear even a
+  HOOK-sourced block once the block is ≥1 s old (younger blocks win — covers the ≤300 ms
+  stale-snapshot race right after a hook fires, before the dialog paints); a plain (non-visible)
+  idle never clears a hook block; `.done` keeps its decay (screen has no done concept);
+  `skip_state_update` (transcript viewer / model picker) freezes the previous status, exactly
+  herdr. The working→idle hold (3 consecutive confirmations at 100 ms, 700 ms hard cap,
+  bypassed when the idle is VISIBLE chrome) is ported into the fold.
+- **Decision: process identity gains herdr's job-scan — but only when the cheap probe is blind.**
+  The 1 Hz `tcgetpgrp`+basename probe stays primary. When it returns a generic runtime/shell
+  (`node`, `python3`, `sh`, … — the npm-wrapped `claude` case), the host deep-scans the
+  foreground process GROUP (proc_listpids + KERN_PROCARGS2 argv), unwraps runtime argv with
+  herdr's exact rules (bail on `-c`/`-e`/`-m` eval flags — never trust positional args after
+  them; basename → known-package sniff → symlink resolution), and scores candidates
+  (unwrapped 3 > literal agent 2 > other 1, first wins ties). This closes the documented
+  wrapper-staleness hole from the round-`461` fix. The pure identification/unwrap logic lives in
+  `SlopDeskAgentDetect` (injected filesystem resolver); only the pgroup/argv probe is host OS
+  code, compiled-only per the hang-safety rule.
+- All 19 manifests ship (claude, codex, gemini, opencode, cursor, …), so any of herdr's
+  screen-manifest agents in a pane gets live status — presence generalizes from exact-`claude`
+  to the ported agent alias table. Parity checklist = herdr's `detect/manifest/tests.rs` +
+  `agent_detection.rs` test suites, ported to XCTest.

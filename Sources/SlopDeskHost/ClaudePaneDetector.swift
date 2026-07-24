@@ -156,7 +156,12 @@ public struct ClaudePaneDetector: Sendable {
             lastEmittedName = base
             emission.foreground = .foregroundProcess(name: base)
         }
+        // Presence = ANY known agent, not just claude: the ported alias table (herdr's 21
+        // agents) means a codex/gemini/opencode pane lights the same status machinery its
+        // screen-manifest verdicts drive. The exact-basename discipline is preserved —
+        // `AgentKind.identify` matches whole canonical names/aliases, never substrings.
         let present = matcher.isClaudeRunning(processName: base)
+            || AgentKind.identify(processName: base) != nil
         // Stickiness: a recent authoritative fold (ctl self-report OR hook event) must not be wiped
         // by a foreground-presence ABSENCE — the common supervised agent (a custom orchestrator,
         // node-wrapped CLI, any non-`claude` basename) sets `working`/`blocked` authoritatively, and
@@ -299,20 +304,30 @@ public struct ClaudePaneDetector: Sendable {
     /// `.none` is ignored; richer verdicts apply only while a genuine HOOK block is not in effect (the
     /// machine enforces the precedence). Emits type-27 iff the status triple changed.
     ///
-    /// **P6 — available but not yet live-fed (documented deferral).** This seam folds a
-    /// ``ClaudeManifestMatcher`` verdict into the ONE machine, so the no-hooks screen-text/title fallback
-    /// is wired and unit-tested end-to-end. It is NOT driven by the live host yet: the host streams raw
-    /// PTY bytes and keeps only a tiny OSC sniffer — it does NOT maintain a screen buffer, so running
-    /// `ClaudeManifestMatcher.coarseStatus(screen:)` would require buffering a recent-output ring and
-    /// scanning it per chunk on the latency-critical read-loop thread (NOT cheap/clean — it would tax
-    /// input-to-photon). The cheap signal the host DOES sniff — the OSC 2 title — IS live-fed, via
-    /// ``title(_:at:)`` (Claude Code's own spinner/`✳` busy-rest telltale, the herdr-proven liveness
-    /// corroborator); this seam remains for a richer screen-text source (e.g. a host-side libghostty
-    /// surface). See docs/DECISIONS.md "Coding-workspace redesign → Claude Code auto-detection (P6)".
+    /// The P6 "screen-text source" deferral is CLOSED by the herdr-port screen engine (round 4):
+    /// the live feed drives ``screenDetection(_:at:)`` with the full manifest verdict off the
+    /// resident grid. This coarse seam stays for the ctl surface and its pinned tests.
     public mutating func manifestVerdict(_ verdict: ClaudeStatus, at now: TimeInterval) -> Emission {
         machine.reduce(.manifestVerdict(verdict), at: now)
         if machine.status != .needsPermission { lastNotificationKind = 0 }
         var emission = Emission()
+        emission.status = statusEmissionIfChanged()
+        return emission
+    }
+
+    /// Fold one SCREEN-RULE verdict at `now` — the herdr-port manifest engine's published
+    /// detection (the scan task has already applied the startup grace, idle-scan skip and the
+    /// working→idle hold). The machine reconciles it against the hook edges (a visible idle /
+    /// live spinner may clear even a hook block once it is past the paint grace — the screen is
+    /// ground truth; a plain fallback idle never clears a hook block). NOT an authoritative
+    /// fold — it stamps no stickiness anchor. Emits type-27 iff the status triple changed.
+    public mutating func screenDetection(_ detection: AgentScreenDetection, at now: TimeInterval) -> Emission {
+        machine.reduce(.screen(detection), at: now)
+        if machine.status != .needsPermission { lastNotificationKind = 0 }
+        var emission = Emission()
+        // Like `title`: never OPEN the type-27 stream while still `.none` (an unknown-state
+        // verdict on an undetected pane must not announce a churn frame).
+        guard machine.status != .none || lastEmittedStatus != nil else { return emission }
         emission.status = statusEmissionIfChanged()
         return emission
     }

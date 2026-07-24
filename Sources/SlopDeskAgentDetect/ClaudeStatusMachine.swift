@@ -46,6 +46,18 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
     /// done/terminal transition (`enter`/`terminate`).
     private var blockSource: BlockSource
 
+    /// Absolute time the machine entered the current `.needsPermission` (nil when not blocked).
+    /// Gates the SCREEN engine's hook-block override: a screen verdict may clear a hook block
+    /// only once the block is at least ``hookBlockScreenOverrideGrace`` old — younger blocks win,
+    /// covering the stale-snapshot race right after a hook fires, before the dialog paints.
+    private var blockedSince: TimeInterval?
+
+    /// Seconds a HOOK-sourced block outranks a contradicting screen verdict. The scan cadence is
+    /// 300 ms and a dialog paints within a frame, so 1 s comfortably covers the race while the
+    /// Esc-cancel liberation (a visible idle prompt box after the dialog closes) stays sub-second
+    /// after the grace.
+    static let hookBlockScreenOverrideGrace: TimeInterval = 1.0
+
     /// The provenance of an active `.needsPermission` block — what gates whether a conservative
     /// manifest verdict is allowed to clear it (review #5).
     private enum BlockSource: Equatable {
@@ -69,6 +81,7 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
         label = nil
         doneSince = nil
         blockSource = .none
+        blockedSince = nil
     }
 
     /// Fold one signal at absolute time `now`, returning the new status.
@@ -87,6 +100,9 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
 
         case let .manifestVerdict(verdict):
             applyManifest(verdict, at: now)
+
+        case let .screen(detection):
+            applyScreen(detection, at: now)
 
         case let .oscTitle(title):
             applyTitle(title)
@@ -133,7 +149,7 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
             case .permission,
                  .waitingForInput:
                 // An authoritative HOOK block — a conservative manifest verdict must NOT clear it.
-                enterBlocked(label: label, source: .hook)
+                enterBlocked(label: label, source: .hook, at: now)
             case .other:
                 // Informational (auth_success / elicitation_complete) — no status change,
                 // but it does corroborate presence (lift the floor off `.none`).
@@ -197,7 +213,7 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
             // Only the manifest's strongest, conservative signal (a known approval UI). Tagged as a
             // MANIFEST block (NOT hook) so a later manifest verdict can clear it (review #5: the old
             // shared `hookBlocked` flag made a manifest-set block permanent).
-            enterBlocked(label: label, source: .manifest)
+            enterBlocked(label: label, source: .manifest, at: now)
         case .working:
             // A coarse "working" guess must NOT clear an authoritative HOOK block, but MAY clear a
             // manifest-sourced one (the manifest is the only authority then).
@@ -212,6 +228,47 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
         }
     }
 
+    // MARK: - Screen-rule verdict (the herdr manifest engine)
+
+    /// The screen engine is continuous ground truth over the live grid. Reconciliation with the
+    /// hook edges (docs/DECISIONS round 4):
+    /// - `blocked` raises a MANIFEST block (an existing hook block keeps its provenance);
+    /// - `working` / a VISIBLE `idle` may clear even a HOOK block once it is ≥ the override
+    ///   grace old (the dialog demonstrably left the screen — the Esc-cancel liberation);
+    /// - a PLAIN idle (the no-rule fallback) is the weakest evidence: it clears manifest state
+    ///   but never a hook block, and never cuts the `.done` decay (screen has no done concept);
+    /// - `unknown` / `skipStateUpdate` change nothing (freeze — transcript viewer, model picker).
+    /// The working→idle hold has already run UPSTREAM (the scan layer publishes post-hold).
+    private mutating func applyScreen(_ detection: AgentScreenDetection, at now: TimeInterval) {
+        guard !detection.skipStateUpdate else { return }
+        switch detection.state {
+        case .unknown:
+            break
+        case .blocked:
+            if status == .needsPermission { break } // agreement — keep the richer provenance
+            enterBlocked(label: nil, source: .manifest, at: now)
+        case .working:
+            if blockSource == .hook, !hookBlockOverridable(at: now) { break }
+            enter(.working, label: nil)
+        case .idle:
+            if status == .done { break } // the done decay outlives a merely-idle screen
+            if blockSource == .hook {
+                guard detection.visibleIdle, hookBlockOverridable(at: now) else { break }
+                enter(.idle, label: nil)
+            } else if status != .idle {
+                enter(.idle, label: nil)
+            }
+        }
+    }
+
+    /// True once the current block is old enough for the screen to have painted its dialog —
+    /// a contradicting screen verdict is then believed. Ordered comparison (NaN-faithful).
+    private func hookBlockOverridable(at now: TimeInterval) -> Bool {
+        guard let since = blockedSince else { return true }
+        let elapsed = now - since
+        return elapsed >= Self.hookBlockScreenOverrideGrace
+    }
+
     // MARK: - State entry helpers
 
     /// Presence floor — lift `.none` to `.idle`; never downgrade a richer status.
@@ -219,7 +276,10 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
         if status == .none { enter(.idle, label: nil) }
     }
 
-    private mutating func enterBlocked(label: String?, source: BlockSource) {
+    private mutating func enterBlocked(label: String?, source: BlockSource, at now: TimeInterval) {
+        // A re-assertion of a standing block keeps the ORIGINAL entry time — the override grace
+        // measures how long the dialog has been up, not how recently a hook repeated itself.
+        if status != .needsPermission { blockedSince = now }
         blockSource = source
         doneSince = nil
         status = .needsPermission
@@ -229,6 +289,7 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
     /// Enter a non-blocked status. `at` non-nil marks the done-decay anchor.
     private mutating func enter(_ next: ClaudeStatus, label newLabel: String?, at now: TimeInterval? = nil) {
         blockSource = .none
+        blockedSince = nil
         status = next
         label = newLabel.map(Self.clampLabel)
         if next == .done {
@@ -243,6 +304,7 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
         label = nil
         doneSince = nil
         blockSource = .none
+        blockedSince = nil
     }
 
     // MARK: - Time-based decay (injected clock)

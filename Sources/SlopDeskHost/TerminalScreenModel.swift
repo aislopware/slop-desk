@@ -910,3 +910,16 @@ public struct TerminalScreenModel {
         }
     }
 }
+
+public extension TerminalScreenModel.Snapshot {
+    /// The screen text the agent-detection engine scans (herdr's `detection_text`, exact):
+    /// every visible row (each already trailing-trimmed by ``TerminalScreenModel/snapshot()``,
+    /// wide-char continuation cells contributing nothing), trailing blank rows dropped,
+    /// `\n`-joined with one trailing `\n` — or `""` for an all-blank screen.
+    var detectionText: String {
+        var rows = lines
+        while let last = rows.last, last.isEmpty { rows.removeLast() }
+        guard !rows.isEmpty else { return "" }
+        return rows.joined(separator: "\n") + "\n"
+    }
+}
