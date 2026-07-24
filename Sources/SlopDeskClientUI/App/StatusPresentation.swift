@@ -115,25 +115,30 @@ enum StatusPresentation {
     }
 
     /// The row's trailing STATUS MARK — the T3 Code SidebarV2 port: the ink names the state, the
-    /// SHAPE carries the grammar (dashed RING = in flight, its `CircleDashedIcon`; filled DOT =
-    /// settled and waiting on a human), and nothing animates — running MOTION is the title
-    /// shimmer's job alone. The ladder, strongest first: a WORKING AGENT rings on the accent
-    /// (keyed on the RAW `.working` status, same key as the shimmer — the gated badge must not
-    /// kill it); the attention states fill with their TITLE ink exactly (amber question / red
-    /// failure / green unread finish — the mark and the title can never disagree about one
-    /// pane); a running COMMAND rings on the muted secondary ink (in flight without hue —
-    /// colour stays reserved for states that need a human); everything else mounts nothing (an
-    /// idle row spends no mark — T3 Code renders null, and the resting rail stays bare).
+    /// SHAPE carries the grammar (dashed RING = in flight, its `CircleDashedIcon`; solid RING =
+    /// the run finished, unread — the loop closed; filled DOT = a question/failure waiting on a
+    /// human), and nothing animates — running MOTION is the title shimmer's job alone. The
+    /// ladder, strongest first: a WORKING AGENT dash-rings on the accent (keyed on the RAW
+    /// `.working` status, same key as the shimmer — the gated badge must not kill it); the
+    /// attention states wear their TITLE ink exactly (the mark and the title can never disagree
+    /// about one pane) — the unread finish as the green solid ring, amber question / red failure
+    /// as the filled dot; a running COMMAND dash-rings on the muted secondary ink (in flight
+    /// without hue — colour stays reserved for states that need a human); everything else mounts
+    /// nothing (an idle row spends no mark — T3 Code renders null, and the resting rail stays
+    /// bare).
     static func statusDot(working: Bool, badge: TabBadgeKind?) -> StatusDotStyle? {
-        if working { return StatusDotStyle(ink: Slate.State.accent, shape: .ring) }
+        if working { return StatusDotStyle(ink: Slate.State.accent, shape: .dashedRing) }
         guard let badge else { return nil }
-        if let ink = attentionInk(badge) { return StatusDotStyle(ink: ink, shape: .fill) }
+        if let ink = attentionInk(badge) {
+            let finished = badge == .completed || badge == .finished
+            return StatusDotStyle(ink: ink, shape: finished ? .solidRing : .fill)
+        }
         switch badge {
         // The agent tier arriving through the badge route ("Badge while processing" ON) reads
         // identically to the raw-working route above.
-        case .running: return StatusDotStyle(ink: Slate.State.accent, shape: .ring)
+        case .running: return StatusDotStyle(ink: Slate.State.accent, shape: .dashedRing)
         case .commandBusy,
-             .commandRunning: return StatusDotStyle(ink: Slate.Text.secondary, shape: .ring)
+             .commandRunning: return StatusDotStyle(ink: Slate.Text.secondary, shape: .dashedRing)
         // Attention kinds already returned above; privilege modifiers are slot text, not lifecycle.
         case .awaitingInput,
              .caffeinate,

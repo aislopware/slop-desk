@@ -11,8 +11,9 @@
 // step the active card uses), and the trailing ``StatusDotView`` repeats the SAME ink in a fixed
 // right-edge column, so the two can never disagree about one pane. The mark's SHAPE is the
 // grammar: a dashed RING (static — T3 Code's `CircleDashedIcon`) means in flight (accent for a
-// working agent, muted for a running command), a FILLED dot means settled-and-waiting, an IDLE
-// row mounts nothing. The only motion anywhere is the working title's shimmer
+// working agent, muted for a running command), a green SOLID ring means an unread finish (the
+// loop closed), a FILLED dot means a question or failure waiting, an IDLE row mounts nothing.
+// The only motion anywhere is the working title's shimmer
 // (``WorkingShimmer``). The ink stays IN the title run and the mark — no row wash, no tinted
 // fill: the rail is monochrome except the marks that carry state. ACTIVE is the raised card
 // (fill + 1px hairline; the cast shadow is light-theme-only). Nothing else rides the row: no

@@ -1,11 +1,12 @@
 // StatusDot — the sidebar row's trailing status mark, ported from T3 Code's SidebarV2 row: a
 // DASHED RING while something runs (lucide `circle-dashed`, mounted STATIC there — no spin, no
-// blink; the working MOTION lives in the text, which here is the title's shimmer) and a flat
-// FILLED dot for the settled attention states. The shape carries the grammar — OUTLINE = in
-// flight, FILL = a settled state that needs a human — so the two read apart at a glance, in a
-// fixed right-edge column that gives every stateful row weight on both ends. NOTHING here
-// animates: an idle row mounts nothing at all (T3 Code renders null — the resting rail stays
-// bare), and a running row's only motion is the title's own shimmer.
+// blink; the working MOTION lives in the text, which here is the title's shimmer), a SOLID RING
+// for the unread finish (the loop closed — same silhouette, whole stroke), and a flat FILLED dot
+// for the act-now states. The shape carries the grammar — broken outline = in flight, closed
+// outline = done, fill = a question/failure waiting on a human — so the states read apart at a
+// glance, in a fixed right-edge column that gives every stateful row weight on both ends.
+// NOTHING here animates: an idle row mounts nothing at all (T3 Code renders null — the resting
+// rail stays bare), and a running row's only motion is the title's own shimmer.
 
 #if canImport(SwiftUI)
 import SwiftUI
@@ -38,8 +39,11 @@ enum StatusDot {
 struct StatusDotStyle: Equatable {
     enum Shape {
         /// The dashed ring — something is RUNNING (T3 Code's `CircleDashedIcon`). Static.
-        case ring
-        /// The flat filled dot — a settled attention state waiting on a human. Static.
+        case dashedRing
+        /// The solid ring — the run FINISHED, unread: the dashed loop closes into a whole
+        /// stroke (same silhouette as the run it ends). Static.
+        case solidRing
+        /// The flat filled dot — an act-now state (question / failure) waiting on a human. Static.
         case fill
     }
 
@@ -55,11 +59,15 @@ struct StatusDotView: View {
     var body: some View {
         Group {
             switch style.shape {
-            case .ring:
+            case .dashedRing:
                 Circle()
                     .stroke(style.ink, style: StrokeStyle(
                         lineWidth: StatusDot.ringLineWidth, dash: StatusDot.ringDash,
                     ))
+                    .frame(width: StatusDot.ringDiameter, height: StatusDot.ringDiameter)
+            case .solidRing:
+                Circle()
+                    .stroke(style.ink, lineWidth: StatusDot.ringLineWidth)
                     .frame(width: StatusDot.ringDiameter, height: StatusDot.ringDiameter)
             case .fill:
                 Circle()

@@ -1,8 +1,9 @@
 // StatusDotTests — pins the trailing status mark, the T3 Code SidebarV2 port. The resolver's
-// ladder is the spec: a working agent RINGS on the accent and outranks every badge (the same
-// raw-working key the shimmer uses); the attention states FILL with the title's own ink exactly;
-// a running command rings muted; idle and privilege-only rows mount nothing. The shape grammar —
-// dashed ring = in flight, filled dot = settled-and-waiting — and the STATIC contract (nothing
+// ladder is the spec: a working agent DASH-RINGS on the accent and outranks every badge (the
+// same raw-working key the shimmer uses); the unread finish is the SOLID ring; the act-now
+// states FILL — all wearing the title's own attention ink exactly; a running command dash-rings
+// muted; idle and privilege-only rows mount nothing. The shape grammar — broken outline = in
+// flight, closed outline = done, fill = waiting on a human — and the STATIC contract (nothing
 // in the mark animates) are what these tests hold. Headless VALUE assertions — no render. Ink
 // identity is asserted SELF-consistently against the presentation maps (never absolute colour
 // values — `Color` equality is provider-fragile).
@@ -12,13 +13,13 @@ import XCTest
 @testable import SlopDeskClientUI
 
 final class StatusDotTests: XCTestCase {
-    /// A WORKING AGENT's mark is the accent RING and outranks every badge underneath it — the
-    /// same raw-working key the shimmer uses, so the badge gate can never kill the mark either.
-    /// The `.running` badge route (gate ON) must read identically to the raw route.
+    /// A WORKING AGENT's mark is the accent DASHED ring and outranks every badge underneath it —
+    /// the same raw-working key the shimmer uses, so the badge gate can never kill the mark
+    /// either. The `.running` badge route (gate ON) must read identically to the raw route.
     @MainActor
     func testWorkingAgentRingsAndOutranksEveryBadge() {
         let raw = StatusPresentation.statusDot(working: true, badge: nil)
-        XCTAssertEqual(raw?.shape, .ring, "a thinking agent is IN FLIGHT — the outline shape")
+        XCTAssertEqual(raw?.shape, .dashedRing, "a thinking agent is IN FLIGHT — the broken outline")
         for badge: TabBadgeKind? in [.commandBusy, .error, .awaitingInput, .finished, .sudo] {
             XCTAssertEqual(
                 StatusPresentation.statusDot(working: true, badge: badge), raw,
@@ -31,13 +32,20 @@ final class StatusDotTests: XCTestCase {
         )
     }
 
-    /// Each attention kind's mark is the FILLED dot wearing EXACTLY the title's attention ink —
-    /// the mark and the title can never disagree about one pane.
+    /// Each attention kind's mark wears EXACTLY the title's attention ink — the mark and the
+    /// title can never disagree about one pane — and the shape splits the class: the unread
+    /// finish CLOSES the ring (solid), the act-now states (question / failure) FILL.
     @MainActor
-    func testAttentionMarksFillWithTheTitleInk() {
+    func testAttentionMarksWearTheTitleInkAndSplitByShape() {
         for kind: TabBadgeKind in [.awaitingInput, .error, .completed, .finished] {
             let dot = StatusPresentation.statusDot(working: false, badge: kind)
-            XCTAssertEqual(dot?.shape, .fill, "\(kind) is settled — the filled shape")
+            let finished = kind == .completed || kind == .finished
+            XCTAssertEqual(
+                dot?.shape, finished ? .solidRing : .fill,
+                finished
+                    ? "\(kind) is a closed loop — the solid ring"
+                    : "\(kind) waits on a human — the filled dot",
+            )
             XCTAssertEqual(
                 dot?.ink, StatusPresentation.attentionInk(kind),
                 "\(kind)'s mark must wear the title's own attention ink",
@@ -52,7 +60,7 @@ final class StatusDotTests: XCTestCase {
         let agent = StatusPresentation.statusDot(working: true, badge: nil)
         for kind: TabBadgeKind in [.commandBusy, .commandRunning] {
             let dot = StatusPresentation.statusDot(working: false, badge: kind)
-            XCTAssertEqual(dot?.shape, .ring, "\(kind) is in flight — the outline shape")
+            XCTAssertEqual(dot?.shape, .dashedRing, "\(kind) is in flight — the broken outline")
             XCTAssertNotEqual(dot?.ink, agent?.ink, "\(kind) must not borrow the agent accent")
             XCTAssertNil(
                 StatusPresentation.attentionInk(kind),
