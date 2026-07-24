@@ -68,12 +68,16 @@ enum StatusPresentation {
 
     // MARK: Tab badge
 
-    /// How a sidebar tab's fused ``TabBadgeKind`` renders — the otty badge vocabulary
+    /// How a fused ``TabBadgeKind`` renders as a GLYPH — the otty badge vocabulary
     /// (`docs/otty-clone/screenshots/tab-badge.png`): ONE muted spinner for every busy tier (otty
-    /// does not colour-grade motion — a working agent and a running command both just spin), then a
-    /// distinct static icon per terminal state. The view layer (``TabBadgeView``) switches on this so
-    /// the reading + tint have a single source, reused verbatim by every surface that mounts a badge
-    /// (sidebar trailing slot, title-menu attention rows, iOS rows).
+    /// does not colour-grade motion), then a distinct static icon per terminal state. The view layer
+    /// (``TabBadgeView``) switches on this so the reading + tint have a single source, reused
+    /// verbatim by every surface that mounts a badge (title-menu attention rows, iOS rows).
+    ///
+    /// The SIDEBAR rows never mount the busy tiers here — busy renders as the title's working
+    /// shimmer (``WorkingShimmer``; `TabBadgeKind.isBusyTier` is the split) so the trailing slot
+    /// keeps the shell label while a command runs. The spinner mapping stays the vocabulary for any
+    /// surface that does pass a busy kind.
     ///
     /// The hue budget: colour is spent ONLY on act-now (orange hand), broken (red triangle) and
     /// unread-done (green check / dot); motion and the privilege markers stay muted, and the resting

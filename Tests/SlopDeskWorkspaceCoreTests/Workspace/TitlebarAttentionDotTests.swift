@@ -40,6 +40,29 @@ final class TitlebarAttentionDotTests: XCTestCase {
         XCTAssertFalse(TabBadgeKind.caffeinate.needsAttention)
     }
 
+    /// Pins the BUSY-tier membership — the states the sidebar renders as the title's working shimmer
+    /// instead of a trailing glyph. Exactly the three motion tiers; disjoint from the attention class
+    /// and the privilege markers (whose glyphs keep the slot).
+    func testBusyTierMembership() {
+        XCTAssertTrue(TabBadgeKind.running.isBusyTier)
+        XCTAssertTrue(TabBadgeKind.commandRunning.isBusyTier)
+        XCTAssertTrue(TabBadgeKind.commandBusy.isBusyTier)
+        XCTAssertFalse(TabBadgeKind.awaitingInput.isBusyTier)
+        XCTAssertFalse(TabBadgeKind.error.isBusyTier)
+        XCTAssertFalse(TabBadgeKind.completed.isBusyTier)
+        XCTAssertFalse(TabBadgeKind.finished.isBusyTier)
+        XCTAssertFalse(TabBadgeKind.sudo.isBusyTier)
+        XCTAssertFalse(TabBadgeKind.caffeinate.isBusyTier)
+        // Busy ∩ attention = ∅ — a row is either "in motion" (title shimmer) or "waiting on you"
+        // (glyph), never both readings at once.
+        for kind: TabBadgeKind in [
+            .running, .commandRunning, .commandBusy, .completed, .finished, .error, .awaitingInput,
+            .caffeinate, .sudo,
+        ] {
+            XCTAssertFalse(kind.isBusyTier && kind.needsAttention, "\(kind) claims both readings")
+        }
+    }
+
     // MARK: - the store derivation
 
     func testFreshStoreShowsNoDot() {

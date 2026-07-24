@@ -68,6 +68,25 @@ public enum TabBadgeKind: Equatable, Sendable {
              .sudo: false
         }
     }
+
+    /// Whether this badge is a BUSY tier — "something is in motion" (a working agent, an OSC 9;4
+    /// progress report, or a bare busy shell). The sidebar rows render busy through the TITLE's
+    /// working shimmer instead of a trailing glyph, so their slot keeps the shell label; every
+    /// other kind stays an icon. The disjoint complement of ``needsAttention`` plus the privilege
+    /// markers.
+    public var isBusyTier: Bool {
+        switch self {
+        case .commandBusy,
+             .commandRunning,
+             .running: true
+        case .awaitingInput,
+             .caffeinate,
+             .completed,
+             .error,
+             .finished,
+             .sudo: false
+        }
+    }
 }
 
 /// The PURE fusion policy that collapses the four per-pane badge signals into the single

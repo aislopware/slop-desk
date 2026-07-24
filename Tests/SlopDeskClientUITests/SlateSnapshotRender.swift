@@ -123,8 +123,11 @@ final class SlateSnapshotRender: XCTestCase {
         let store = makeSectionStore(key: key)
         let panel = VStack(alignment: .leading, spacing: 2) {
             SidebarSectionHeaderRow(store: store, title: "slop-desk", projectKey: key, count: 3)
+            // A WORKING row: no trailing glyph — the title wears the shimmer (static in this
+            // one-frame render) and the slot keeps the shell label.
             SlateTabRow(
-                title: "Claude Code", active: false, agentMarker: true, badge: .running,
+                title: "Claude Code", active: false, agentMarker: true,
+                workingLabel: "Agent working", processLabel: "claude",
                 onSelect: {}, onClose: {},
             )
             SlateTabRow(

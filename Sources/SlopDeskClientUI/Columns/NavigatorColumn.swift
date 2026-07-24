@@ -724,8 +724,9 @@ private struct SidebarLiveRow: View {
         // The SHOWN title resolves in the live leaf (rename → agent-session intent → structural →
         // running command → last executed command → generic) because intent + blocks are volatile —
         // the memoized structural `row.title` stays put, so the search corpus never drifts. The
-        // running rung reuses `runningCommand` (busy-badge-gated, so it appears with the spinner
-        // and a fast `ls` never flashes in) — the row answers "what is this pane running".
+        // running rung reuses `runningCommand` (busy-badge-gated, so it appears with the working
+        // shimmer's reveal and a fast `ls` never flashes in) — the row answers "what is this pane
+        // running".
         let agent = RailRowsBuilder.isAgentSession(
             status: chrome.status, processLabel: chrome.processLabel,
         )
@@ -754,12 +755,18 @@ private struct SidebarLiveRow: View {
             commandLine: runningCommand,
             title: shownTitle,
         )
+        // The BUSY tiers never reach the trailing slot: they become the title's working shimmer
+        // (`workingLabel` — also its AX value), and the slot keeps the shell label while running.
+        let busyLabel: String? = chrome.badge.flatMap {
+            $0.isBusyTier ? StatusPresentation.tabBadgeLabel($0) : nil
+        }
         SlateTabRow(
             title: shownTitle,
             active: active,
             // The otty agent-integration look: an agent session's title wears the leading `✳`.
             agentMarker: agent,
-            badge: chrome.badge,
+            badge: busyLabel == nil ? chrome.badge : nil,
+            workingLabel: busyLabel,
             processLabel: RailRowsBuilder.shellLabel(chrome.processLabel),
             readOnly: chrome.readOnly,
             syncInput: store.syncInputArmed(for: row.id),
@@ -820,6 +827,11 @@ private struct IOSSidebarLiveRow: View {
             kind: row.kind,
             fallback: fallbackTitle,
         )
+        // Same busy split as the macOS row: busy tiers shimmer the TITLE (with the terse reading as
+        // its AX value) and never mount a trailing glyph.
+        let busyLabel: String? = chrome.badge.flatMap {
+            $0.isBusyTier ? StatusPresentation.tabBadgeLabel($0) : nil
+        }
         HStack(spacing: 8) {
             Label {
                 if chrome.isEditing {
@@ -831,7 +843,9 @@ private struct IOSSidebarLiveRow: View {
                     )
                 } else {
                     Text(shownTitle)
+                        .workingShimmer(busyLabel != nil, ink: Slate.Text.primary)
                         .lineLimit(1)
+                        .accessibilityValue(busyLabel ?? "")
                 }
             } icon: {
                 Image(systemSymbol: symbol)
@@ -843,7 +857,7 @@ private struct IOSSidebarLiveRow: View {
                     .foregroundStyle(Slate.Text.secondary)
                     .accessibilityLabel("Read only")
             }
-            if let badge = chrome.badge {
+            if let badge = chrome.badge, busyLabel == nil {
                 TabBadgeView(kind: badge)
             }
         }

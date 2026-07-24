@@ -140,7 +140,8 @@ final class MuxDecodeFaultTests: XCTestCase {
         let (cd, hd) = InMemoryMuxLink.pair()
         let host = MuxNWConnection(role: .host, controlLink: hc, dataLink: hd)
         let reaped = IDList()
-        await host.setHostOpenHandler { _ in }
+        let opened = Flag()
+        await host.setHostOpenHandler { _ in opened.set() }
         await host.setHostCloseHandler { id in reaped.add(id) }
         await host.start()
 
@@ -148,6 +149,11 @@ final class MuxDecodeFaultTests: XCTestCase {
         cd.sendPipelined(MuxEnvelopeCodec.encode(.channelOpen(
             channelID: channelID, sessionID: UUID(), lastReceivedSeq: 0, channelClass: 0, initialCwd: nil,
         )))
+        // The open rides the DATA link while the corrupt frames ride the CONTROL link — two
+        // independent in-memory queues with NO cross-link ordering. This test specifies "fault an
+        // OPEN session", so wait for the host to observe the open before poisoning the control
+        // sub-channel; without the barrier the fault can land first and there is nothing to reap.
+        try await pollUntil { opened.isSet }
         cc.sendPipelined(corruptChannelData(channelID: channelID))
         cc.sendPipelined(corruptChannelData(channelID: channelID))
 

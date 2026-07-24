@@ -2045,3 +2045,20 @@ running command counts as last-executed.
   / `.commandBusy`) — it appears WITH the spinner (the busy reveal), so a fast `ls` never flashes
   the title and the spinner is never anonymous again. The tooltip's running line drops as a title
   echo (the existing restatement gate).
+
+### Row status v4.7 — the busy spinner retires; "working" is the TITLE's stepped shimmer (2026-07-24)
+
+The rays spinner spent the trailing slot on motion and said nothing the title didn't already say
+(the running rung has carried the full command since v4.6) — and it hid the shell label while a
+command ran. New reading: any BUSY tier (`TabBadgeKind.isBusyTier` — working agent / OSC 9;4
+progress / plain busy shell) renders as a working shimmer on the row TITLE itself (`WorkingShimmer`:
+a low-contrast DARK band sweeping the title's own ink, quantized to 24 discrete steps over 1.4 s
+with a 1.0 s rest beat — the coder/mux sidebar recipe, `steps()`-mechanical like T3 Code, never a
+bright ChatGPT-gloss loop). The trailing slot keeps the shell label while running, so busy costs no
+information. Glyphs are now reserved for the states that WAIT on the user (hand / triangle / check /
+dot) plus the privilege markers (`#` / `∞`); the spinner mapping stays in `TabBadgeView` as the
+vocabulary for non-sidebar mounts. The busy reveal threshold (1 s, `tabBadgeBusyDelaySeconds`) now
+gates the shimmer + running title together; the terse busy reading ("Agent working" / "Running")
+moves to the title's accessibility value. Both sidebars (macOS + iOS) split on `isBusyTier` at the
+row leaf; phase math is pure wall-clock against a fixed epoch, so every working row ticks in unison
+and re-renders can't reset a sweep.
