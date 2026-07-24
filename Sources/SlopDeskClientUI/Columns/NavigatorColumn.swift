@@ -787,15 +787,13 @@ private struct SidebarLiveRow: View {
             commandLine: runningCommand,
             title: shownTitle,
         )
-        // The BUSY tiers never reach the trailing slot — the title carries the state. Only the
-        // AGENT tier animates: a WORKING agent's title wears the working shimmer (also its AX
-        // value). Keyed on the RAW `.working` status, NOT the gated badge — "Badge while
-        // processing" (default OFF) masks `.working` out of the badge resolver, and reading the
-        // badge here silently killed the shimmer for every default-settings install (the thinking
-        // agent rendered exactly like an idle shell). The toggle governs the badge GLYPH; the
-        // shimmer is the title's own affordance. A running COMMAND's title stands still — the
-        // command text itself already reads as "running", so motion is reserved for the agent's
-        // own thinking.
+        // Only the AGENT tier animates the TITLE: a WORKING agent's title wears the working
+        // shimmer (also its AX value). Keyed on the RAW `.working` status, NOT the gated badge —
+        // "Badge while processing" (default OFF) masks `.working` out of the badge resolver, and
+        // reading the badge here silently killed the shimmer for every default-settings install
+        // (the thinking agent rendered exactly like an idle shell). The toggle governs the badge
+        // GLYPH; the shimmer is the title's own affordance. A running COMMAND's title stands
+        // still — its state reads from the trailing dot's muted pulse instead.
         let busyLabel: String? = chrome.status == .working
             ? StatusPresentation.tabBadgeLabel(.running) : nil
         SlateTabRow(
@@ -803,7 +801,10 @@ private struct SidebarLiveRow: View {
             active: active,
             // The otty agent-integration look: an agent session's title wears the leading `✳`.
             agentMarker: agent,
-            badge: chrome.badge.flatMap { $0.isBusyTier ? nil : $0 },
+            // The FULL fused badge, busy tiers included — the row's trailing status dot needs
+            // them (a running command pulses muted); the row's own maps keep busy kinds out of
+            // the title ink and the slot text.
+            badge: chrome.badge,
             workingLabel: busyLabel,
             // The foreground process labels the slot — a real program (`vim`, `make`) AND a bare
             // shell (`zsh`): unlike the TITLE (where "zsh" says as little as "Terminal"), the
@@ -874,8 +875,8 @@ private struct IOSSidebarLiveRow: View {
         )
         // Same busy split as the macOS row: only the AGENT tier shimmers the TITLE (with the terse
         // reading as its AX value), keyed on the RAW `.working` status — the badge gate must not
-        // kill the shimmer (see ``SidebarLiveRow``); a running command's title stands still, and
-        // no busy tier mounts a trailing glyph.
+        // kill the shimmer (see ``SidebarLiveRow``); a running command's title stands still — its
+        // state reads from the trailing dot's muted pulse.
         let busyLabel: String? = chrome.status == .working
             ? StatusPresentation.tabBadgeLabel(.running) : nil
         HStack(spacing: 8) {
@@ -910,9 +911,16 @@ private struct IOSSidebarLiveRow: View {
                     .foregroundStyle(Slate.Text.secondary)
                     .accessibilityLabel("Read only")
             }
-            // Only a privilege marker mounts trailing — attention is the title's ink.
+            // Only a privilege marker mounts trailing TEXT — attention is the title's ink.
             if let badge = chrome.badge, StatusPresentation.tabBadge(badge) != nil {
                 TabBadgeView(kind: badge)
+            }
+            // The same trailing status dot as the macOS row (the T3 Code port) — rightmost, so
+            // state reads down one fixed column on iOS too.
+            if let dot = StatusPresentation.statusDot(
+                working: busyLabel != nil, badge: chrome.badge,
+            ) {
+                StatusDotView(style: dot)
             }
         }
     }

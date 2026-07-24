@@ -2,18 +2,20 @@
 // ladder: one `heightTabRow` line, title in the SYSTEM face (13pt) resting on the SECONDARY ink,
 // an optional leading `✳` agent marker IN the title run, and one fixed trailing slot that carries
 // the resting SHELL LABEL (`zsh` — the mono metadata voice) or a privilege marker
-// (``TabBadgeView`` — `#`/`∞`), swapping to the close `×` under hover.
+// (``TabBadgeView`` — `#`/`∞`) plus the STATUS DOT at the right edge, swapping to the close `×`
+// under hover.
 //
-// STATUS IS THE TITLE'S OWN TEXT (the ink dialect) — the row never mounts a lifecycle glyph:
-// a WORKING AGENT's motion is the title's shimmer (``WorkingShimmer``), a running command's title
-// simply stands still, and the attention states restyle the title with INK + WEIGHT together
-// (``StatusPresentation/attentionInk(_:)`` — amber = a question waits; red = failed; green =
-// unread finish, cleared on visit — plus the `.medium` step the active card uses, so "something
-// changed" reads by weight even before the hue lands; all STILL — hard cuts, no blink). The ink
-// stays IN the title run — no row wash, no tinted fill: the rail is monochrome except the words
-// that carry state. ACTIVE is the raised card (fill + 1px hairline; the cast shadow is
-// light-theme-only). Nothing else rides the row: no subtitle, no readout, no telemetry — the
-// richness lives in the hover tooltip and the context menu.
+// Status speaks TWICE, in agreement (the T3 Code pairing — dot + tinted label): the title's own
+// ink and weight carry the words (``StatusPresentation/attentionInk(_:)`` — amber = a question
+// waits; red = failed; green = unread finish, cleared on visit — plus the `.medium` step the
+// active card uses), and the trailing ``StatusDotView`` repeats the SAME ink as one flat circle
+// in a fixed right-edge column, so the two can never disagree about one pane. A WORKING AGENT's
+// motion is the title's shimmer (``WorkingShimmer``) plus the dot's accent pulse; a running
+// COMMAND's title stands still while the dot pulses muted; an IDLE row mounts no dot at all. The
+// ink stays IN the title run and the dot — no row wash, no tinted fill: the rail is monochrome
+// except the marks that carry state. ACTIVE is the raised card (fill + 1px hairline; the cast
+// shadow is light-theme-only). Nothing else rides the row: no subtitle, no readout, no telemetry
+// — the richness lives in the hover tooltip and the context menu.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -27,10 +29,10 @@ struct SlateTabRow: View {
     /// Whether the title wears the leading `✳` AGENT marker (an agent session's row, the otty
     /// integration's title prefix). Display-only — the rename field seeds from the bare `title`.
     var agentMarker: Bool = false
-    /// The fused status kind for the row. Attention kinds recolour the TITLE's ink (the ink
-    /// dialect — no glyph mounts); only the privilege markers (`#`/`∞`) occupy the trailing slot
-    /// (``TabBadgeView``). Busy tiers never land here: the caller passes them as ``workingLabel``
-    /// instead, so the slot keeps the shell label while a command runs.
+    /// The fused status kind for the row — the FULL resolver output, busy tiers included.
+    /// Attention kinds recolour the TITLE's ink (the ink dialect) and ink the trailing status
+    /// dot; the busy tiers feed the dot's muted pulse; only the privilege markers (`#`/`∞`)
+    /// occupy the slot as TEXT (``TabBadgeView``).
     var badge: TabBadgeKind?
     /// Non-`nil` ⇒ a WORKING AGENT row: the title wears the working shimmer (the stepped dark-band
     /// sweep — the title text IS the motion indicator; no glyph spins) on the primary ink. The
@@ -170,20 +172,29 @@ struct SlateTabRow: View {
                     .help("Sync input — keystrokes mirror to every pane in this tab")
             }
             ZStack(alignment: .trailing) {
-                Group {
-                    // Only a PRIVILEGE marker occupies the slot — attention states render as the
-                    // title's ink, so their rows keep the shell label here.
-                    if let badge, StatusPresentation.tabBadge(badge) != nil {
-                        TabBadgeView(kind: badge)
-                    } else if let processLabel {
-                        // The metadata voice (MERIDIAN L2): a process name is DATA, so it reads
-                        // in the instrument mono at the caption size on the tertiary ink — one
-                        // register with the git line, counts and telemetry.
-                        Text(processLabel)
-                            .font(Slate.Typeface.instrument(Slate.Typeface.small))
-                            .foregroundStyle(Slate.Text.tertiary)
-                            .lineLimit(1)
-                            .fixedSize()
+                HStack(spacing: 6) {
+                    Group {
+                        // Only a PRIVILEGE marker occupies the slot as text — attention states
+                        // render as the title's ink, so their rows keep the shell label here.
+                        if let badge, StatusPresentation.tabBadge(badge) != nil {
+                            TabBadgeView(kind: badge)
+                        } else if let processLabel {
+                            // The metadata voice (MERIDIAN L2): a process name is DATA, so it reads
+                            // in the instrument mono at the caption size on the tertiary ink — one
+                            // register with the git line, counts and telemetry.
+                            Text(processLabel)
+                                .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                                .foregroundStyle(Slate.Text.tertiary)
+                                .lineLimit(1)
+                                .fixedSize()
+                        }
+                    }
+                    // The status dot — RIGHTMOST, so state reads down one fixed column no matter
+                    // how wide the label beside it runs (the T3 Code pairing: dot + tinted text).
+                    if let dot = StatusPresentation.statusDot(
+                        working: workingLabel != nil, badge: badge,
+                    ) {
+                        StatusDotView(style: dot)
                     }
                 }
                 .opacity(hovering ? 0 : 1)

@@ -70,11 +70,12 @@ final class SlateSnapshotRender: XCTestCase {
 
     // MARK: - Opt-in render of the sidebar tab-row badge states
 
-    /// Renders `SlateTabRow` in each otty badge state (spinner / triangle / hand / dot) plus
-    /// the resting shell-label slot and the active white card — the visual lock for the sidebar row
-    /// (`tab-badge.png`). SAME `ImageRenderer` opt-in idiom as the showcase; inert (skipped) unless
-    /// `SLOPDESK_TABROW_SNAPSHOT_DIR=<dir>` is set, where it writes `tab-row-badges.png`. NO
-    /// video/Metal — a badge is pure SwiftUI.
+    /// Renders `SlateTabRow` in each fused badge state — the title's attention ink paired with
+    /// the trailing STATUS DOT column (accent pulse for the agent tier, muted pulse for a busy
+    /// command, still attention inks, nothing at rest) plus the resting shell-label slot and the
+    /// active white card — the visual lock for the sidebar row. SAME `ImageRenderer` opt-in idiom
+    /// as the showcase; inert (skipped) unless `SLOPDESK_TABROW_SNAPSHOT_DIR=<dir>` is set, where
+    /// it writes `tab-row-badges.png`. NO video/Metal — a badge is pure SwiftUI.
     @MainActor
     func testRenderTabRowBadges() throws {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
@@ -86,6 +87,7 @@ final class SlateSnapshotRender: XCTestCase {
             badgeRow("plan next move", badge: .awaitingInput)
             badgeRow("OpenCode", badge: .completed)
             badgeRow("abner@MacBook-AB:…", badge: .finished)
+            badgeRow("swift build", badge: .commandBusy)
             SlateTabRow(
                 title: "abner@MacBook-AB:…",
                 active: true,
@@ -123,8 +125,9 @@ final class SlateSnapshotRender: XCTestCase {
         let store = makeSectionStore(key: key)
         let panel = VStack(alignment: .leading, spacing: 2) {
             SidebarSectionHeaderRow(store: store, title: "slop-desk", projectKey: key, count: 3)
-            // A WORKING agent row: no trailing text at all — the title wears the shimmer (static
-            // in this one-frame render) and the marker already says "agent".
+            // A WORKING agent row: the title wears the shimmer (static in this one-frame render)
+            // and the trailing slot carries the accent status dot (whatever pulse phase the
+            // render clock lands on).
             SlateTabRow(
                 title: "Claude Code", active: false, agentMarker: true,
                 workingLabel: "Agent working",
@@ -141,9 +144,15 @@ final class SlateSnapshotRender: XCTestCase {
             SidebarSectionHeaderRow(
                 store: store, title: "Workspace", projectKey: "/Users/abner/Workspace", count: 2,
             )
-            // Settled rows: the trailing slot carries the shell label — the otty resting look.
+            // Settled rows: the trailing slot carries the shell label — the otty resting look —
+            // and only the states that say something mount the dot beside it.
             SlateTabRow(
                 title: "Terminal", active: false, badge: .finished,
+                onSelect: {}, onClose: {},
+            )
+            // A busy SHELL row: the command title stands still while the muted dot pulses.
+            SlateTabRow(
+                title: "swift build", active: false, badge: .commandBusy, processLabel: "swift",
                 onSelect: {}, onClose: {},
             )
             SlateTabRow(title: "Terminal", active: false, processLabel: "zsh", onSelect: {}, onClose: {})
@@ -158,7 +167,7 @@ final class SlateSnapshotRender: XCTestCase {
         .frame(width: Slate.Metric.sidebarWidth)
         .background(Slate.Surface.ground)
         try render(
-            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 320),
+            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 360),
             to: dir, named: "sidebar-section.png",
         )
     }

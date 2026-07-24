@@ -114,6 +114,35 @@ enum StatusPresentation {
         return nil
     }
 
+    /// The row's trailing STATUS DOT — the T3 Code thread-status port (`resolveThreadStatusPill`):
+    /// one flat circle at the slot's right edge whose ink names the state and whose pulse means
+    /// "running right now". The ladder, strongest first: a WORKING AGENT pulses on the accent
+    /// (keyed on the RAW `.working` status, same key as the shimmer — the gated badge must not
+    /// kill it); the attention states reuse their TITLE ink exactly (amber question / red failure /
+    /// green unread finish — the dot and the title can never disagree about one pane); a running
+    /// COMMAND pulses on the muted secondary ink (life without hue — colour stays reserved for
+    /// states that need a human); everything else mounts nothing (an idle row spends no dot —
+    /// T3 Code renders null, and the resting rail stays bare).
+    static func statusDot(working: Bool, badge: TabBadgeKind?) -> StatusDotStyle? {
+        if working { return StatusDotStyle(ink: Slate.State.accent, pulses: true) }
+        guard let badge else { return nil }
+        if let ink = attentionInk(badge) { return StatusDotStyle(ink: ink, pulses: false) }
+        switch badge {
+        // The agent tier arriving through the badge route ("Badge while processing" ON) reads
+        // identically to the raw-working route above.
+        case .running: return StatusDotStyle(ink: Slate.State.accent, pulses: true)
+        case .commandBusy,
+             .commandRunning: return StatusDotStyle(ink: Slate.Text.secondary, pulses: true)
+        // Attention kinds already returned above; privilege modifiers are slot text, not lifecycle.
+        case .awaitingInput,
+             .caffeinate,
+             .completed,
+             .error,
+             .finished,
+             .sudo: return nil
+        }
+    }
+
     /// The trailing-slot marker for a ``TabBadgeKind`` — ONLY the privilege modifiers (`#` sudo,
     /// `∞` caffeinate), small muted text in the shell's own dialect. Every lifecycle state returns
     /// `nil`: motion lives in the title's shimmer, attention lives in the title's ink
