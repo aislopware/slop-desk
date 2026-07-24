@@ -1,54 +1,53 @@
 import Foundation
 import SlopDeskAgentDetect
 
-/// The single status badge a sidebar tab row carries — one icon, right-aligned (see
+/// The single fused status state a sidebar tab row carries (see
 /// `docs/ui-shell/spec/terminal-features__progress-state.md`, "Tab badges reflect the current progress state per tab").
 ///
-/// PURE value type, **no SwiftUI**: the SF-symbol + tint mapping lives in the view layer
-/// (`SlopDeskClientUI` `TabBadgeView`) so this resolver unit-tests headless. There is
-/// deliberately **no `.none` case** — the absence of a badge is `TabBadgeKind?` `nil`, not a sentinel.
+/// PURE value type, **no SwiftUI**: HOW each kind renders lives in the view layer
+/// (`SlopDeskClientUI` `StatusPresentation` — motion = the title's shimmer, attention = the title's
+/// ink, privilege = a trailing text marker) so this resolver unit-tests headless. There is
+/// deliberately **no `.none` case** — the absence of a state is `TabBadgeKind?` `nil`, not a sentinel.
 ///
-/// Each case maps to a badge described in `progress-state.md` → "The full badge set".
+/// Each case maps to a state described in `progress-state.md` → "The full badge set".
 public enum TabBadgeKind: Equatable, Sendable {
     /// **Running (agent)** — a WORKING code agent (`ClaudeStatus.working`). The "agent is thinking"
-    /// indicator (the dashed accent ring ticking forward in the view layer). Split from a program's
+    /// state (the title's working shimmer in the view layer). Split from a program's
     /// ``commandRunning`` so the sidebar reads "the AGENT is working" distinctly from "a program reports
     /// progress" (herdr's `Working` vs `Unknown` distinction).
     case running
     /// **Running (command)** — an active `OSC 9;4;1`/`3` PROGRESS report with NO agent working: a program
-    /// explicitly says "I'm loading". The QUIET, muted ring reading (secondary text colour, static —
-    /// its number rides the telemetry column) — the ring is earned by the explicit progress report.
-    /// Ranks just below ``running`` and above ``commandBusy``.
+    /// explicitly says "I'm loading". Renders nothing of its own — the running command's text titles
+    /// the row. Ranks just below ``running`` and above ``commandBusy``.
     case commandRunning
     /// **Busy (command)** — a plain busy shell (`isBusy`, no OSC 9;4 report): a foreground command is
-    /// running, nothing more is known. The static muted micro-dot, NO ring — the ring is reserved for an
-    /// explicit progress report or a working agent, not a bare busy bit. Ranks just below
+    /// running, nothing more is known. Renders nothing of its own. Ranks just below
     /// ``commandRunning`` and above the privilege badges.
     case commandBusy
     /// **Completed** — the fresh clean finish (`OSC 133;D` exit 0 / an agent that just finished its
     /// turn), emitted ONLY while the caller reports the completion is still
     /// ``CompletionFreshness/fresh``; once it ``CompletionFreshness/settled`` the same inputs decay to
-    /// ``finished``. Both render the SAME green ring + check in the view layer — the split survives for
+    /// ``finished``. Both wear the SAME green title ink in the view layer — the split survives for
     /// the freshness machinery and the control backend's badge tokens. Freshness is an INPUT (the store
     /// mirrors a per-pane `completedAt` and compares it to "now"), so this resolver stays clock-free.
     case completed
     /// **Finished** — the "unread output" marker for a command that exited 0 and has settled past the
-    /// ``completed`` flash (and for an agent that went done and is still unread). The green ring + check
+    /// ``completed`` flash (and for an agent that went done and is still unread). The green title ink
     /// that holds until the tab is viewed (cleared on focus). No timestamp lives here; the settle
     /// decision is the store's.
     case finished
-    /// **Error** — the red ring + cross, static. A command exited non-zero (`OSC 9;4;2` / a `.failure`
+    /// **Error** — the red title ink, static. A command exited non-zero (`OSC 9;4;2` / a `.failure`
     /// completion) or an agent reported an error.
     case error
-    /// **Awaiting input** — the amber ring + centre dot with the stepped halo. A code agent is blocked
-    /// on approval/input (`ClaudeStatus.needsPermission`) or a plain command is stopped at an
+    /// **Awaiting input** — the amber title ink, blinking on the cursor's cadence. A code agent is
+    /// blocked on approval/input (`ClaudeStatus.needsPermission`) or a plain command is stopped at an
     /// interactive prompt. The most-urgent state — it wins the precedence.
     case awaitingInput
-    /// **Caffeinate** — the coffee cup. A sleep-blocking session (`caffeinate` foreground). Surfaces
-    /// only when the shell is otherwise at rest (below the active states).
+    /// **Caffeinate** — the `∞` trailing marker. A sleep-blocking session (`caffeinate` foreground).
+    /// Surfaces only when the shell is otherwise at rest (below the active states).
     case caffeinate
-    /// **Sudo** — the shield. A privileged session (`sudo`/`su` foreground). Surfaces only when the
-    /// shell is otherwise at rest (below the active states, above ``caffeinate``).
+    /// **Sudo** — the `#` trailing marker. A privileged session (`sudo`/`su` foreground). Surfaces
+    /// only when the shell is otherwise at rest (below the active states, above ``caffeinate``).
     case sudo
 
     /// Whether this badge is ATTENTION-class — "finished or waiting on you", the states the titlebar's
@@ -71,9 +70,9 @@ public enum TabBadgeKind: Equatable, Sendable {
 
     /// Whether this badge is a BUSY tier — "something is in motion" (a working agent, an OSC 9;4
     /// progress report, or a bare busy shell). The sidebar rows render busy through the TITLE's
-    /// working shimmer instead of a trailing glyph, so their slot keeps the shell label; every
-    /// other kind stays an icon. The disjoint complement of ``needsAttention`` plus the privilege
-    /// markers.
+    /// working shimmer instead of a trailing glyph, so their slot keeps the shell label; the
+    /// attention kinds recolour the title's ink, and only the privilege markers occupy the slot.
+    /// The disjoint complement of ``needsAttention`` plus the privilege markers.
     public var isBusyTier: Bool {
         switch self {
         case .commandBusy,
@@ -116,10 +115,10 @@ public enum TabBadgeResolver {
     /// switches the completed/finished branch on — the caller (the store) decides it by comparing an
     /// EPHEMERAL per-pane `completedAt` mirror against "now", so this resolver never reads a clock.
     public enum CompletionFreshness: Sendable, Equatable {
-        /// Just completed — render the brief ``TabBadgeKind/completed`` checkmark flash.
+        /// Just completed — render the brief ``TabBadgeKind/completed`` flash.
         case fresh
-        /// Settled past the flash — render the persistent ``TabBadgeKind/finished`` accent dot (held
-        /// until the tab is viewed). Also the default for a completion with no recorded stamp.
+        /// Settled past the flash — render the persistent ``TabBadgeKind/finished`` unread marker
+        /// (held until the tab is viewed). Also the default for a completion with no recorded stamp.
         case settled
     }
 
@@ -141,13 +140,13 @@ public enum TabBadgeResolver {
     ///     possibly a bare name or a full path; UNTRUSTED. Classified by lowercased basename into
     ///     `sudo`/`caffeinate`, else ignored.
     ///   - completionFreshness: whether a clean completion (`.success` / agent `.done`) is still a
-    ///     ``CompletionFreshness/fresh`` checkmark FLASH or has ``CompletionFreshness/settled`` into the
-    ///     accent dot. Supplied by the store (an ephemeral `completedAt` vs "now"); defaults to
+    ///     ``CompletionFreshness/fresh`` FLASH or has ``CompletionFreshness/settled`` into the
+    ///     persistent unread marker. Supplied by the store (an ephemeral `completedAt` vs "now"); defaults to
     ///     ``CompletionFreshness/settled`` so an un-stamped completion shows the persistent marker.
     ///   - progress: the live OSC 9;4 ``PaneProgress`` (wire type 32), or `nil` when there is no
     ///     active indicator. ``PaneProgress/error`` resolves to the ``error`` alert (a held-red `9;4;2`,
     ///     ranked with a failed exit); an active ``PaneProgress/indeterminate``/``PaneProgress/determinate``
-    ///     resolves to the ``running`` spinner — reusing the EXISTING tiers, no new badge kind. Outranks a
+    ///     resolves to the ``running`` tier — reusing the EXISTING tiers, no new badge kind. Outranks a
     ///     stale completion dot (progress-error sits at the error tier, above completed/finished).
     ///   - unseenAgentDone: the client's UNREAD agent-finish latch (``WorkspaceStore/paneUnseenDone``) —
     ///     true from an agent `.done` edge the user was not watching until the pane is visited. Keeps the
@@ -172,10 +171,10 @@ public enum TabBadgeResolver {
         if completion == .failure { return .error }
         if let progress, case .error = progress { return .error }
 
-        // 3. Activity — a WORKING agent gets the loud agent badge (``running``); an active OSC 9;4;1/3
-        // progress gets the QUIET spinner marker (``commandRunning``); a merely-busy shell gets the bare
-        // static busy dot (``commandBusy`` — a spinner is earned only by an explicit progress report or
-        // a working agent, never by the bare busy bit alone). Most-informative wins. (A progress `.error`
+        // 3. Activity — a WORKING agent gets the agent tier (``running``); an active OSC 9;4;1/3
+        // progress gets the quiet ``commandRunning`` tier; a merely-busy shell gets the bare
+        // ``commandBusy`` tier (the busy split is informational — the view layer renders all three
+        // through the title, never a trailing glyph). Most-informative wins. (A progress `.error`
         // already returned at the error tier above, so `isRunning` here is exactly the "still going" states.)
         if agent == .working { return .running }
 
@@ -183,7 +182,7 @@ public enum TabBadgeResolver {
         // or the client's unread latch outliving the host's done→idle decay). Deliberately ABOVE the
         // busy tiers: the `claude` process keeps the shell's OSC-133 block open for its whole
         // interactive lifetime, so `isBusy` stays true for hours — checked later, a finished turn
-        // would be shadowed by the busy dot forever and the green check could never show. An agent
+        // would be shadowed by the busy tier forever and the finish could never show. An agent
         // turn ending IS the completion signal; the agent process staying alive at its prompt is not
         // "busy" in any sense the user cares about. (A plain COMMAND's `.success` stays below
         // `isBusy` — there a newly-running command genuinely supersedes the previous exit.)
@@ -201,9 +200,8 @@ public enum TabBadgeResolver {
         if let privilege = privilegeBadge(forProcess: foregroundProcess) { return privilege }
 
         // 6. Completed/finished — a plain command's clean exit. While the completion is FRESH it shows
-        // the brief `.completed` checkmark flash; once the caller reports it SETTLED it decays to the
-        // persistent `.finished` accent dot (the "unread output" marker, held until the tab is
-        // viewed). Freshness is an input — no clock here.
+        // the brief `.completed` flash; once the caller reports it SETTLED it decays to the
+        // persistent `.finished` unread marker (held until the tab is viewed). Freshness is an input — no clock here.
         if completion == .success {
             switch completionFreshness {
             case .fresh: return .completed

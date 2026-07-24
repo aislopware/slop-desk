@@ -865,10 +865,18 @@ private struct IOSSidebarLiveRow: View {
                         onCancel: onCancelRename,
                     )
                 } else {
+                    // The same ink dialect as the macOS row: an attention state recolours the
+                    // title (and the blocked state blinks it); no lifecycle glyph mounts.
+                    let attentionInk = chrome.badge.flatMap { StatusPresentation.attentionInk($0) }
+                    let attentionLabel = chrome.badge.flatMap { badge in
+                        StatusPresentation.attentionInk(badge) != nil
+                            ? StatusPresentation.tabBadgeLabel(badge) : nil
+                    }
                     Text(shownTitle)
-                        .workingShimmer(busyLabel != nil, ink: Slate.Text.primary)
+                        .workingShimmer(busyLabel != nil, ink: attentionInk ?? Slate.Text.primary)
+                        .cursorBlink(chrome.badge.map(StatusPresentation.attentionBlinks) ?? false)
                         .lineLimit(1)
-                        .accessibilityValue(busyLabel ?? "")
+                        .accessibilityValue(busyLabel ?? attentionLabel ?? "")
                 }
             } icon: {
                 Image(systemSymbol: symbol)
@@ -880,7 +888,8 @@ private struct IOSSidebarLiveRow: View {
                     .foregroundStyle(Slate.Text.secondary)
                     .accessibilityLabel("Read only")
             }
-            if let badge = chrome.badge, !badge.isBusyTier {
+            // Only a privilege marker mounts trailing — attention is the title's ink.
+            if let badge = chrome.badge, StatusPresentation.tabBadge(badge) != nil {
                 TabBadgeView(kind: badge)
             }
         }

@@ -2,10 +2,14 @@
 // LIVE otty app (grouped-sidebar build) at 1×: a 36pt line, title in the SYSTEM face (13pt) that
 // rests on the SECONDARY ink and steps up to primary + medium only when active, an optional leading
 // `✳` agent marker IN the title run (otty's agent integration literally prefixes the title string),
-// and one fixed trailing slot that carries the resting SHELL LABEL (`zsh` — muted 11pt) or an
-// attention-class badge (``TabBadgeView``), swapping to the close `×` under hover. BUSY rows keep
-// the slot for the shell label — a WORKING AGENT's motion lives in the TITLE's shimmer
-// (``WorkingShimmer``), a running command's title simply stands still. ACTIVE is the raised card
+// and one fixed trailing slot that carries the resting SHELL LABEL (`zsh` — muted 11pt) or a
+// privilege marker (``TabBadgeView`` — `#`/`∞`), swapping to the close `×` under hover.
+//
+// STATUS IS THE TITLE'S OWN TEXT (the ink dialect) — the row never mounts a lifecycle glyph:
+// a WORKING AGENT's motion is the title's shimmer (``WorkingShimmer``), a running command's title
+// simply stands still, and the attention states recolour the title's ink on the hue budget
+// (``StatusPresentation/attentionInk(_:)`` — amber = a question waits, blinking on the cursor's
+// cadence; red = failed; green = unread finish, cleared on visit). ACTIVE is the raised card
 // (fill + 1px hairline + the 4% cast shadow); hover is the flat plate. Nothing else rides the row:
 // no subtitle, no readout, no telemetry — the richness lives in the hover tooltip and the context
 // menu, which is the otty way.
@@ -22,9 +26,10 @@ struct SlateTabRow: View {
     /// Whether the title wears the leading `✳` AGENT marker (an agent session's row, the otty
     /// integration's title prefix). Display-only — the rename field seeds from the bare `title`.
     var agentMarker: Bool = false
-    /// The fused status badge (``TabBadgeView``) — occupies the trailing slot when present. Busy
-    /// tiers never land here: the caller passes them as ``workingLabel`` instead, so the slot keeps
-    /// the shell label while a command runs.
+    /// The fused status kind for the row. Attention kinds recolour the TITLE's ink (the ink
+    /// dialect — no glyph mounts); only the privilege markers (`#`/`∞`) occupy the trailing slot
+    /// (``TabBadgeView``). Busy tiers never land here: the caller passes them as ``workingLabel``
+    /// instead, so the slot keeps the shell label while a command runs.
     var badge: TabBadgeKind?
     /// Non-`nil` ⇒ a WORKING AGENT row: the title wears the working shimmer (the stepped dark-band
     /// sweep — the title text IS the motion indicator; no glyph spins) on the primary ink. The
@@ -85,17 +90,14 @@ struct SlateTabRow: View {
                 // Apple platforms, which would break the ink-only title run.
                 Text(agentMarker ? "✳\u{FE0E} \(title)" : title)
                     .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
-                    // The live-otty ink ladder: a resting title reads on the SECONDARY ink; only the
-                    // active card's title steps up to primary (with the weight bump). A THINKING
-                    // agent's title also steps up to primary — the brighter base lifts the row and
-                    // gives the shimmer's dark band its full contrast range — and the stepped band
-                    // sweeping it is the whole "in motion" reading.
-                    .workingShimmer(
-                        workingLabel != nil,
-                        ink: active || workingLabel != nil ? Slate.Text.primary : Slate.Text.secondary,
-                    )
+                    .workingShimmer(workingLabel != nil, ink: titleInk)
+                    // A blocked row waits the way a prompt waits — the amber title blinks on the
+                    // cursor's cadence. The other attention states hold still.
+                    .cursorBlink(attentionBlinks)
                     .lineLimit(1)
-                    .accessibilityValue(workingLabel ?? "")
+                    // The state the title's ink/motion speaks visually, kept legible for VoiceOver
+                    // (the trailing slot carries no lifecycle glyph to label).
+                    .accessibilityValue(workingLabel ?? attentionLabel ?? "")
             }
             Spacer(minLength: 6)
             if !isEditing { trailing }
@@ -128,6 +130,28 @@ struct SlateTabRow: View {
         else { .clear }
     }
 
+    /// The title's ink. An ATTENTION state recolours the whole title run (marker included) on the
+    /// hue budget — the ink dialect's entire rendering. Otherwise the live-otty ladder: a resting
+    /// title reads on the SECONDARY ink; the active card's title steps up to primary (with the
+    /// weight bump), and a THINKING agent's title also steps up — the brighter base gives the
+    /// shimmer's dark band its full contrast range.
+    private var titleInk: Color {
+        if let badge, let ink = StatusPresentation.attentionInk(badge) { return ink }
+        return active || workingLabel != nil ? Slate.Text.primary : Slate.Text.secondary
+    }
+
+    /// Whether the title blinks (awaiting input — see ``StatusPresentation/attentionBlinks(_:)``).
+    private var attentionBlinks: Bool {
+        badge.map(StatusPresentation.attentionBlinks) ?? false
+    }
+
+    /// The AX value for an attention-inked title ("Awaiting input" / "Error" / "Finished"), so the
+    /// colour-spoken state stays VoiceOver-legible.
+    private var attentionLabel: String? {
+        guard let badge, StatusPresentation.attentionInk(badge) != nil else { return nil }
+        return StatusPresentation.tabBadgeLabel(badge)
+    }
+
     /// The trailing cluster: the rare mode glyphs (lock / sync) ride OUTSIDE the swap slot so a mode
     /// never vanishes under hover; the slot itself holds badge-or-shell-label at rest and the close
     /// `×` under hover (an opacity swap in a fixed reserve — the fade never reflows the title).
@@ -151,7 +175,9 @@ struct SlateTabRow: View {
             }
             ZStack(alignment: .trailing) {
                 Group {
-                    if let badge {
+                    // Only a PRIVILEGE marker occupies the slot — attention states render as the
+                    // title's ink, so their rows keep the shell label here.
+                    if let badge, StatusPresentation.tabBadge(badge) != nil {
                         TabBadgeView(kind: badge)
                     } else if let workingSince {
                         // The 1 Hz elapsed readout — `TimelineView` scopes the tick to THIS slot, so a

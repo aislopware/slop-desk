@@ -2422,3 +2422,31 @@ All glyphs render in the instrument (mono) face inside the same fixed 16pt box; 
 frame-stepped off a fixed wall-clock epoch (all spinning rows step in unison, re-mounts land
 mid-cycle), and the frame function is pure + static, pinned headlessly
 (`testSpinnerFrameCadenceAdvancesOnePerBeatAndWraps`). Client-only; no wire change.
+
+### Round 4 — the glyph column dissolves: status becomes the title's INK (2026-07-24)
+
+Round 3's text glyphs were the right register but the wrong anatomy: `?` / `✗` / `●` are three
+unrelated characters sharing one slot, and the review verdict was that the rows that show NOTHING
+(working = title shimmer, running command = still title, idle = bare) are the ones that look right.
+Round 4 follows that conclusion to its end — the **ink dialect**: a sidebar row never mounts a
+lifecycle glyph. The states that need the eye recolour the text that is already there, the same
+move the working shimmer makes for motion:
+
+- **awaiting input** — the title turns amber and BLINKS full↔dim on the terminal cursor's cadence
+  (`cursorBlink`, 0.53s hard duty cycle, never fully off): the row waits the way a prompt waits.
+- **error** — the title turns red, static (red text is what a terminal already means by red text).
+- **completed/finished** — the title turns green until the pane is visited (the unread-mail move,
+  spoken in the hue budget's unread-finish green).
+- **motion/idle** — unchanged: shimmer for a thinking agent, still text for a running command,
+  secondary ink at rest. The trailing slot now belongs ONLY to the shell label / elapsed readout /
+  privilege markers (`#`/`∞`, the sole remaining `TabBadgeView` renderings) / hover `×`.
+
+One mechanism everywhere the status shows: the sidebar row, the iOS row, and the title-menu
+NEEDS-ATTENTION rows (which drop their leading badge for a tinted title via `SlatePopoverRow`
+`titleInk`) all speak `StatusPresentation.attentionInk`, and the titlebar pip reuses the same map —
+the ink can never disagree with itself. `StatusGlyph` survives only where a compact single-pane
+agent readout has no title to tint (iOS toolbar, Peek & Reply header), shrunk to
+resting/working/awaiting/done — the braille walker and `✗` readings are deleted with their last
+mounts. AX: the state the ink speaks rides the title's `accessibilityValue`. Pins:
+`attentionInk ⇔ needsAttention` exhaustively, no-slot-glyph for every lifecycle kind, only-awaiting
+blinks. Client-only; no wire change.

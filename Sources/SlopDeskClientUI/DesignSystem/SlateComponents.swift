@@ -23,49 +23,40 @@ struct SlateStatusDot: View {
     }
 }
 
-/// The status instrument, spoken as TEXT in the terminal's own dialect: every lifecycle state is a
+/// The AGENT status instrument, spoken as TEXT in the terminal's own dialect: each reading is a
 /// single character in the instrument (mono) face, centred in a fixed 16pt box — the chrome's status
 /// voice IS the pane's voice, exactly the glyphs a CLI would print:
 ///   • `resting`  → `·` muted (an idle prompt — no colour spent);
 ///   • `working`  → the AI-CLI pulse `· ✢ ✳ ✶ ✻ ✽` breathing out and back — the agent's own spinner;
-///   • `busy`     → the classic braille dot-walker `⠋⠙⠹…` — the shell's spinner, for plain commands;
-///   • `awaiting` → `?` blinking between full and dim ink on the terminal cursor's cadence (answer me);
-///   • `done`     → `●` (the quiet unread-finish dot, as the character a CLI would print);
-///   • `error`    → `✗` static (broken — it waits on you).
-/// Both spinners are FRAME-STEPPED: hard glyph swaps on the wall clock off a fixed epoch, so every
-/// spinning row steps in unison and a rail re-render lands mid-cycle instead of restarting it.
+///   • `awaiting` → `?` blinking between full and dim ink on the cursor's cadence (answer me);
+///   • `done`     → `●` (the quiet unread-finish dot, as the character a CLI would print).
+/// Mounted where ONE pane's agent state gets a compact readout (the iOS toolbar, the Peek & Reply
+/// header). The sidebar rows speak the same states through their own text instead — shimmer for
+/// motion, attention ink for the rest (``StatusPresentation/attentionInk(_:)``) — so no glyph column
+/// rides the rail.
+/// The spinner is FRAME-STEPPED: hard glyph swaps on the wall clock off a fixed epoch, so every
+/// spinning mount steps in unison and a re-render lands mid-cycle instead of restarting it.
 /// Pure SwiftUI text — no video/capture (hang-safety #6).
 struct StatusGlyph: View {
     enum Reading: Equatable {
         case resting
         case working
-        case busy
         case awaiting
         case done
-        case error
     }
 
     let reading: Reading
     let tint: Color
 
-    /// The fixed glyph box — star / braille / dot advance widths differ, so the frame pins layout
-    /// while frames (or states) swap.
+    /// The fixed glyph box — star / dot advance widths differ, so the frame pins layout while
+    /// frames (or states) swap.
     static let box: CGFloat = 16
 
     /// The agent spinner's frames — a dot budding into an asterisk and back (the AI-CLI loading
     /// pulse). Cycled as hard swaps; the palindrome makes the loop breathe without easing.
     static let agentFrames = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"]
-    /// The command spinner's frames — the braille dot-walker every terminal tool spins.
-    static let commandFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-    /// Seconds per frame: the agent pulse breathes; the braille walk is brisker (a mechanical
-    /// command, not a thinking agent).
+    /// Seconds per frame — the pulse breathes rather than spins.
     static let agentBeat: Double = 0.15
-    static let commandBeat: Double = 0.1
-    /// Seconds per awaiting blink phase — the classic terminal cursor cadence.
-    static let blinkBeat: Double = 0.53
-    /// The awaiting blink's dim plateau — a duty cycle between full and low ink, never off: the
-    /// question keeps its slot even mid-blink.
-    private static let blinkDim: Double = 0.35
 
     var body: some View {
         content
@@ -76,10 +67,8 @@ struct StatusGlyph: View {
         switch reading {
         case .resting: glyph("·", weight: .regular)
         case .working: spinner(Self.agentFrames, beat: Self.agentBeat)
-        case .busy: spinner(Self.commandFrames, beat: Self.commandBeat)
-        case .awaiting: blinkingGlyph("?", weight: .bold)
+        case .awaiting: glyph("?", weight: .bold).cursorBlink(true)
         case .done: glyph("●", weight: .regular)
-        case .error: glyph("✗", weight: .semibold)
         }
     }
 
@@ -98,16 +87,6 @@ struct StatusGlyph: View {
         }
     }
 
-    /// The awaiting blink — a hard two-plateau duty cycle (full ↔ dim ink), the cursor's cadence
-    /// without the cursor's disappearance.
-    private func blinkingGlyph(_ text: String, weight: Font.Weight) -> some View {
-        TimelineView(.periodic(from: Date(timeIntervalSinceReferenceDate: 0), by: Self.blinkBeat)) { timeline in
-            let full = Int(timeline.date.timeIntervalSinceReferenceDate / Self.blinkBeat).isMultiple(of: 2)
-            glyph(text, weight: weight)
-                .opacity(full ? 1 : Self.blinkDim)
-        }
-    }
-
     /// The spinner frame for one wall-clock instant — pure + static so the cadence is unit-pinned
     /// headlessly (frames advance one per beat, wrap at the end, never skip on a re-render).
     static func frame(at date: Date, frames: [String], beat: Double) -> String {
@@ -115,6 +94,37 @@ struct StatusGlyph: View {
         let phase = date.timeIntervalSinceReferenceDate / beat
         let index = Int(phase.rounded(.down)) % frames.count
         return frames[index < 0 ? index + frames.count : index]
+    }
+}
+
+/// The terminal-cursor blink — a hard two-plateau duty cycle between full and dim ink, never fully
+/// off (the text keeps its slot even mid-blink). THE "answer me" attention primitive: a blocked
+/// pane's title and the agent instrument's `?` both wait the way a prompt waits. Stepped on the wall
+/// clock off a fixed epoch, so every blinking mount blinks in unison and re-mounts land mid-cycle.
+struct CursorBlinkModifier: ViewModifier {
+    let active: Bool
+
+    /// Seconds per blink phase — the classic terminal cursor cadence.
+    static let beat: Double = 0.53
+    /// The dim plateau's opacity — low ink, never zero.
+    static let dim: Double = 0.35
+
+    func body(content: Content) -> some View {
+        if active {
+            TimelineView(.periodic(from: Date(timeIntervalSinceReferenceDate: 0), by: Self.beat)) { timeline in
+                let full = Int(timeline.date.timeIntervalSinceReferenceDate / Self.beat).isMultiple(of: 2)
+                content.opacity(full ? 1 : Self.dim)
+            }
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    /// Blinks the view on the terminal cursor's cadence while `active` (see ``CursorBlinkModifier``).
+    func cursorBlink(_ active: Bool) -> some View {
+        modifier(CursorBlinkModifier(active: active))
     }
 }
 

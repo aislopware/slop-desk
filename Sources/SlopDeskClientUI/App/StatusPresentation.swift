@@ -48,7 +48,7 @@ enum StatusPresentation {
         }
     }
 
-    /// Tint for an agent status — the SAME hue budget the tab badges speak (``tabBadge(_:)``), so
+    /// Tint for an agent status — the SAME hue budget the tab rows speak (``attentionInk(_:)``), so
     /// the iOS toolbar glyph / Peek & Reply header can never disagree with the sidebar about one pane:
     /// working = accent (in-motion), needs-permission = amber (act-now; red is reserved for broken),
     /// done = green (unread finish), idle/none = muted (the resting state spends no colour).
@@ -69,42 +69,58 @@ enum StatusPresentation {
 
     // MARK: Tab badge
 
-    /// How a fused ``TabBadgeKind`` renders — the TERMINAL-DIALECT vocabulary: every lifecycle state
-    /// is a single mono character (``StatusGlyph``), exactly what a CLI would print for that state,
-    /// so the badge column reads like terminal output rather than drawn iconography. The view layer
-    /// (``TabBadgeView``) switches on this so the reading + tint have a single source, reused
-    /// verbatim by every surface that mounts a badge (title-menu attention rows, iOS rows).
+    /// The row's ATTENTION INK — how a `needsAttention` state colours the row's own TITLE text, on
+    /// the hue budget: amber = act-now (a question waits), red = broken, green = unread-done. `nil`
+    /// for every non-attention kind (the title keeps the resting ink ladder).
     ///
-    /// The SIDEBAR rows never mount the busy tiers here — busy renders as the title's working
-    /// shimmer (``WorkingShimmer``; `TabBadgeKind.isBusyTier` is the split) so the trailing slot
-    /// keeps the shell label while a command runs. The spinners stay the vocabulary for any
-    /// surface that does pass a busy kind.
-    ///
-    /// The hue budget: accent = agent in motion, amber = act-now, red = broken, green = unread-done;
-    /// plain command motion and the privilege markers stay muted, and the resting row has no badge at
-    /// all — its slot shows the shell label instead.
-    static func tabBadge(_ kind: TabBadgeKind) -> TabBadgeStyle {
+    /// This is the INK DIALECT: a sidebar row never mounts a lifecycle glyph. The states that need
+    /// the eye recolour the text that is already there — the same move the working shimmer makes for
+    /// motion — so the rail stays a column of plain terminal text and status can never disagree with
+    /// its own indicator. The one non-colour attention affordance is the awaiting BLINK
+    /// (``attentionBlinks(_:)``): the row waits the way a prompt waits, on the cursor's cadence.
+    static func attentionInk(_ kind: TabBadgeKind) -> Color? {
         switch kind {
-        // The agent in motion — the AI-CLI asterisk pulse, in accent (the in-motion hue).
-        case .running: .reading(.working, tint: Slate.State.accent)
-        // Plain command motion — the braille dot-walker, muted (the shell's own spinner; a
-        // command is not an agent, and its glyph says so before its hue does).
-        case .commandRunning,
-             .commandBusy: .reading(.busy, tint: Slate.Text.secondary)
-        // The clean finish — fresh flash and settled unread alike print the quiet green `●`.
-        // "Unread finish" needs a marker, not a trophy. The completed/finished split stays
-        // semantic (freshness machinery, control-backend tokens).
-        case .completed: .reading(.done, tint: Slate.Status.ok)
-        case .finished: .reading(.done, tint: Slate.Status.ok)
-        // Error — the red `✗` every CLI prints for a failure: static, waits on you.
-        case .error: .reading(.error, tint: Slate.Status.err)
-        // Awaiting input — the amber `?`, blinking on the cursor's cadence: act-now; red stays
-        // reserved for broken.
-        case .awaitingInput: .reading(.awaiting, tint: Slate.Status.warn)
-        // Privilege markers — small muted text in the shell's own dialect (modifiers, not states,
-        // so they stay outside the lifecycle vocabulary).
-        case .caffeinate: .glyph(text: "∞", tint: Slate.Text.secondary)
-        case .sudo: .glyph(text: "#", tint: Slate.Text.secondary)
+        // Awaiting input — act-now amber; red stays reserved for broken.
+        case .awaitingInput: Slate.Status.warn
+        // Error — the red every terminal already means by red text.
+        case .error: Slate.Status.err
+        // The clean finish — fresh flash and settled unread alike hold the green until the pane is
+        // visited. The completed/finished split stays semantic (freshness machinery, control-backend
+        // badge tokens).
+        case .completed,
+             .finished: Slate.Status.ok
+        // Motion and privilege never recolour the title: busy is the shimmer's job, and the
+        // privilege markers are slot text (``tabBadge(_:)``).
+        case .caffeinate,
+             .commandBusy,
+             .commandRunning,
+             .running,
+             .sudo: nil
+        }
+    }
+
+    /// Whether the attention state BLINKS the title (full ↔ dim ink on the terminal cursor's
+    /// cadence — ``cursorBlink(_:)``). Only the blocked-on-you state: a question is the one state
+    /// that behaves like a waiting prompt; error and unread-done hold still.
+    static func attentionBlinks(_ kind: TabBadgeKind) -> Bool {
+        kind == .awaitingInput
+    }
+
+    /// The trailing-slot marker for a ``TabBadgeKind`` — ONLY the privilege modifiers (`#` sudo,
+    /// `∞` caffeinate), small muted text in the shell's own dialect. Every lifecycle state returns
+    /// `nil`: motion lives in the title's shimmer, attention lives in the title's ink
+    /// (``attentionInk(_:)``), so the slot keeps the shell label / elapsed readout.
+    static func tabBadge(_ kind: TabBadgeKind) -> TabBadgeStyle? {
+        switch kind {
+        case .caffeinate: TabBadgeStyle(text: "∞", tint: Slate.Text.secondary)
+        case .sudo: TabBadgeStyle(text: "#", tint: Slate.Text.secondary)
+        case .awaitingInput,
+             .commandBusy,
+             .commandRunning,
+             .completed,
+             .error,
+             .finished,
+             .running: nil
         }
     }
 
@@ -125,12 +141,11 @@ enum StatusPresentation {
     }
 }
 
-/// The rendering recipe for one tab badge (see ``StatusPresentation/tabBadge(_:)``) — the terminal
-/// text dialect. A pure value (no view), so the badge map can be unit-tested without rendering.
-enum TabBadgeStyle: Equatable {
-    /// A ``StatusGlyph`` lifecycle reading — the character a CLI would print for that state.
-    case reading(StatusGlyph.Reading, tint: Color)
-    /// A small static text marker in the shell's dialect (`#` sudo, `∞` caffeinate).
-    case glyph(text: String, tint: Color)
+/// The trailing-slot marker for one tab badge (see ``StatusPresentation/tabBadge(_:)``) — a small
+/// static text glyph in the shell's dialect (`#` sudo, `∞` caffeinate). A pure value (no view), so
+/// the badge map can be unit-tested without rendering.
+struct TabBadgeStyle: Equatable {
+    let text: String
+    let tint: Color
 }
 #endif

@@ -190,18 +190,12 @@ private struct TitleMenuButton: View {
     }
 
     /// The title pip's tint — the STATUS colour of the most-urgent waiting pane (the head of the
-    /// urgency-sorted ``WorkspaceStore/unseenAttentionPanes``), on the ring vocabulary's hue budget so
-    /// the pip and the sidebar/menu rings never disagree about one pane: amber = a question waits
-    /// (act-now), red = broken, green = an unread finish. Secondary when nothing waits (the pip is
-    /// hidden then anyway — this is just its resting value).
+    /// urgency-sorted ``WorkspaceStore/unseenAttentionPanes``), the SAME attention ink the sidebar
+    /// row's title wears (``StatusPresentation/attentionInk(_:)``) so the pip and the rail never
+    /// disagree about one pane. Secondary when nothing waits (the pip is hidden then anyway — this
+    /// is just its resting value).
     private static func tint(for badge: TabBadgeKind?) -> Color {
-        switch badge {
-        case .awaitingInput: Slate.Status.warn
-        case .error: Slate.Status.err
-        case .completed,
-             .finished: Slate.Status.ok
-        default: Slate.Text.secondary
-        }
+        badge.flatMap { StatusPresentation.attentionInk($0) } ?? Slate.Text.secondary
     }
 }
 
@@ -232,16 +226,17 @@ struct TitlePaneMenu: View {
             if !waiting.isEmpty {
                 SlatePopoverSection("NEEDS ATTENTION")
                 ForEach(waiting, id: \.pane) { entry in
-                    // The leading glyph IS the sidebar's badge view — one status vocabulary, rail ≡ menu.
-                    // Line 2 = the host agent label (the actual blocking question / last assistant line)
-                    // when the wire carried one, else the badge's caption; trailing = how long it has
-                    // been waiting (the shortcut slot doubles as the age readout — one trailing
+                    // The title wears the pane's ATTENTION INK — the same ink dialect the sidebar
+                    // row's title speaks, so rail ≡ menu with no glyph column. Line 2 = the host
+                    // agent label (the actual blocking question / last assistant line) when the
+                    // wire carried one, else the state's caption; trailing = how long it has been
+                    // waiting (the shortcut slot doubles as the age readout — one trailing
                     // complication, same anatomy).
                     SlatePopoverRow(
                         waitingTitle(entry.pane),
-                        leading: TabBadgeView(kind: entry.badge),
                         subtitle: entry.label ?? Self.waitingCaption(entry.badge),
                         shortcut: Self.relativeAge(of: entry.since),
+                        titleInk: StatusPresentation.attentionInk(entry.badge),
                     ) {
                         jump(to: entry.pane)
                     }
