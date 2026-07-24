@@ -540,8 +540,8 @@ enum SidebarRowTooltip {
 /// The project section header — ONE left rail with the rows beneath it: the group's FOLDER NAME
 /// (11pt system, semibold — the parent stands a step firmer than its rows) and the live git line
 /// under it (the instrument mono — data, not identity) both start on the SAME x as every row
-/// title; the gutter BEFORE the rail carries the project's tint SWATCH at rest (``ProjectTint`` —
-/// a launch-stable identity colour per project) and the disclosure chevron under the pointer (the
+/// title; the gutter BEFORE the rail carries the dim FOLDER glyph at rest (the group is a place —
+/// the one pictogram the monochrome rail keeps) and the disclosure chevron under the pointer (the
 /// outline idiom: text aligns, the toggle lives left of it). The name is the basename `section.header` already carries
 /// (worktree-collision-qualified), never the full path; the path lives in the hover tooltip. While
 /// open the git line (`main ↑2 !3`) rides a SECOND full-width line so name and git never fight for
@@ -569,7 +569,7 @@ struct SidebarSectionHeaderRow: View {
     var rows: [RailRow] = []
     var onToggle: () -> Void = {}
 
-    /// Pointer-in-header — swaps the gutter's identity swatch for the collapse chevron.
+    /// Pointer-in-header — swaps the gutter's folder glyph for the collapse chevron.
     @State private var hovering = false
 
     var body: some View {
@@ -578,8 +578,8 @@ struct SidebarSectionHeaderRow: View {
         // titles start on (the rows' own horizontal content inset). Baseline-aligned: the gutter
         // glyph sits on the NAME line; the git line hangs beneath, on the rail.
         HStack(alignment: .firstTextBaseline, spacing: 0) {
-            // The gutter carries the project's IDENTITY at rest — the tint swatch (``ProjectTint``,
-            // launch-stable per key) — and trades it for the collapse chevron under the pointer
+            // The gutter carries the FOLDER glyph at rest — the group is a place, spoken in the
+            // header's own muted ink — and trades it for the collapse chevron under the pointer
             // (the Notion outline idiom: identity resting, affordance on approach). One chevron
             // glyph rotating 0°↔90° (not a `.chevronDown` swap) so the toggle TURNS with the group
             // animation instead of teleporting between two symbols. Leading-aligned in the gutter,
@@ -592,11 +592,9 @@ struct SidebarSectionHeaderRow: View {
                 .rotationEffect(.degrees(collapsed ? 0 : 90))
                 .opacity(hovering ? 1 : 0)
                 .overlay {
-                    // A rounded SQUARE, deliberately not a circle — the dot shape is the status
-                    // language (attention pip / connection LED); identity gets its own geometry.
-                    RoundedRectangle(cornerRadius: Slate.Metric.radiusSmall / 2)
-                        .fill(ProjectTint.color(for: projectKey))
-                        .frame(width: 8, height: 8)
+                    Image(systemSymbol: .folderFill)
+                        .font(.system(size: Slate.Typeface.small))
+                        .foregroundStyle(Slate.State.header)
                         .opacity(hovering ? 0 : 1)
                 }
                 .frame(width: Slate.Metric.tabRowInset, alignment: .leading)

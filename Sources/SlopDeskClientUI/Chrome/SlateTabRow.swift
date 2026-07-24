@@ -8,13 +8,12 @@
 // a WORKING AGENT's motion is the title's shimmer (``WorkingShimmer``), a running command's title
 // simply stands still, and the attention states restyle the title with INK + WEIGHT together
 // (``StatusPresentation/attentionInk(_:)`` — amber = a question waits; red = failed; green =
-// unread finish, cleared on visit — plus the `.medium` step the active card uses) AND lay the same
-// ink under the whole row as a film-opacity WASH (``Slate/State/attentionWash(_:)``), so a waiting
-// tab reads at a glance while the text still says which state; all STILL — hard cuts, no blink.
-// ACTIVE is the accent-lit card: raised fill + accent wash + accent hairline (the cast shadow is
-// light-theme-only) — accent is the active-state colour by doctrine, so the selected row is the
-// one accent-coloured card in the rail. Nothing else rides the row: no subtitle, no readout, no
-// telemetry — the richness lives in the hover tooltip and the context menu.
+// unread finish, cleared on visit — plus the `.medium` step the active card uses, so "something
+// changed" reads by weight even before the hue lands; all STILL — hard cuts, no blink). The ink
+// stays IN the title run — no row wash, no tinted fill: the rail is monochrome except the words
+// that carry state. ACTIVE is the raised card (fill + 1px hairline; the cast shadow is
+// light-theme-only). Nothing else rides the row: no subtitle, no readout, no telemetry — the
+// richness lives in the hover tooltip and the context menu.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -105,9 +104,9 @@ struct SlateTabRow: View {
         }
         .padding(.horizontal, Slate.Metric.tabRowInset)
         .frame(height: Slate.Metric.heightTabRow)
-        .background { rowBackground }
+        .background(rowBackground, in: .rect(cornerRadius: Slate.Metric.radiusTab))
         .overlay { if active { RoundedRectangle(cornerRadius: Slate.Metric.radiusTab).strokeBorder(
-            Slate.State.activeEdge,
+            Slate.Line.card,
             lineWidth: Slate.Metric.cardBorderWidth,
         ) } }
         // The active-card lift: black 4%, radius 2, y 1 on a LIGHT theme; dark themes cast nothing
@@ -126,30 +125,10 @@ struct SlateTabRow: View {
         .help(helpText ?? "")
     }
 
-    /// The row's layered fill. ACTIVE = the raised card under the accent WASH (one luminance step
-    /// up AND unmistakably accent-lit — with the accent edge above, selection reads from across the
-    /// room). An inactive ATTENTION row lays its title's ink under the whole row at film opacity
-    /// (``Slate/State/attentionWash(_:)``) — the whole-row wash, with the hover plate stacking on
-    /// top so the row still answers the pointer.
-    private var rowBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: Slate.Metric.radiusTab)
-        return ZStack {
-            if active {
-                shape.fill(Slate.Surface.raised)
-                shape.fill(Slate.State.activeWash)
-            } else {
-                if let ink = attentionInk {
-                    shape.fill(Slate.State.attentionWash(ink))
-                }
-                if hovering { shape.fill(Slate.State.hover) }
-            }
-        }
-    }
-
-    /// The badge's attention ink, when this row is in an attention state (`nil` otherwise) — feeds
-    /// both the title recolour and the row wash, so the two can never disagree.
-    private var attentionInk: Color? {
-        badge.flatMap { StatusPresentation.attentionInk($0) }
+    private var rowBackground: Color {
+        if active { Slate.Surface.raised }
+        else if hovering { Slate.State.hover }
+        else { .clear }
     }
 
     /// The title's ink. An ATTENTION state recolours the whole title run (marker included) on the
@@ -158,7 +137,7 @@ struct SlateTabRow: View {
     /// weight bump), and a THINKING agent's title also steps up — the brighter base gives the
     /// shimmer's dark band its full contrast range.
     private var titleInk: Color {
-        if let attentionInk { return attentionInk }
+        if let badge, let ink = StatusPresentation.attentionInk(badge) { return ink }
         return active || workingLabel != nil ? Slate.Text.primary : Slate.Text.secondary
     }
 

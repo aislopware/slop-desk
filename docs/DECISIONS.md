@@ -2543,3 +2543,28 @@ minimal-indicator conclusion of rounds 4–5 stands.
 Hue budget after this round: three STATUS hues (amber/red/green — states), the ACCENT (active
 selection + focus, one voice), and three IDENTITY tints (projects — theme chromatics, non-status).
 Nothing blinks; no lifecycle glyph returned. Client-only; no wire change.
+
+### Round 7 — monochrome restored, the folder returns (2026-07-24)
+
+The round-6 verdict: WORSE — the standing colour (identity swatches always lit, an accent-washed
+card always lit, a green lamp always lit) made the rail gaudy, and the missing folder was the real
+round-5 complaint all along. Round 7 re-establishes the rule the ink dialect had implied: **the
+rail is monochrome at rest; colour appears only when something needs a human** (amber waits,
+red failed, green unread-finish, warn/err ping digits). Reverted wholesale: `ProjectTint` +
+`SlateTheme.projectTints` (identity swatches — GONE, including the pinning tests),
+`Slate.State.attentionWash` (whole-row washes — state went back to being the title's ink alone),
+`Slate.State.activeWash`/`activeEdge` (the active card is again the raised fill + neutral hairline
+— one luminance step IS the selection language). Identity-by-colour is a dead end here: three
+tints across many projects collide, and a coloured square per header is decoration the moment you
+stop reading it.
+
+Kept from round 6, but muted: the footer's two-line rail block (`ConnectionRailFooter` — the
+LAYOUT answered "the footer is two grey words" and stays), with the lamp recoloured to the
+monochrome ladder: connected = secondary ink, dialing/offline = tertiary (the detail word says
+which), warn/err ONLY while a live link degrades — and the glow deleted. `LedState` and the
+`ledState`/`footerDetail` maps are unchanged (still pinned).
+
+Returned by request: the dim `folder.fill` in the header gutter (the pre-round-5 glyph), on the
+header ink — the one pictogram the monochrome rail keeps ("a group is a place"). It sits where the
+round-6 swatch sat and keeps that round's one good mechanism: it trades places with the collapse
+chevron under the pointer. Client-only; no wire change.

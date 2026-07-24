@@ -9,10 +9,12 @@
 //      12 ms
 //   ↑  ↑
 //   LED in the `tabRowInset` gutter; hostname on the rail (footnote medium), the mono detail line
-//   beneath (ping while connected, the short status word otherwise). The LED is a 6pt health lamp
-//   (`LedState`): green good / amber slow or dialing / red bad / dimmed offline, with a soft
-//   same-hue glow while lit — STATIC, never blinking; the connect handshake colours it in on the
-//   needle curve. This is the one place chrome wears a dot besides the attention pip.
+//   beneath (ping while connected, the short status word otherwise). The LED is a 6pt MONOCHROME
+//   health lamp (`LedState`): connected = the secondary ink, everything not-connected = tertiary
+//   (the detail word says which); the status hues appear ONLY when a live link degrades
+//   (slow = warn, bad = err) — the ink dialect's rule, colour means trouble. STATIC, never
+//   blinking, no glow; the connect handshake brightens it on the needle curve. This is the one
+//   place chrome wears a dot besides the attention pip.
 //
 // TITLEBAR / iOS (compact) — the original one quiet row (host name + trailing ping), no LED, no
 // monogram: state lives in the text (digits carry the health colour, hostname dims when offline).
@@ -85,8 +87,8 @@ struct ConnectionCluster: View {
 
     /// The footer LED's state — the health lamp the rail footer wears in its gutter. Connected
     /// rides the ping classifier (good/slow/bad); a dial in flight (first connect OR a supervised
-    /// reconnect) is `dialing` — amber "working on it"; every settled not-connected state dims the
-    /// lamp (a stale ping must never resurrect it). Pure + pinned in `ConnectionClusterTests`.
+    /// reconnect) is `dialing`; every settled not-connected state dims the lamp (a stale ping must
+    /// never resurrect it). Pure + pinned in `ConnectionClusterTests`.
     enum LedState: Equatable {
         case dim
         case dialing
@@ -194,7 +196,7 @@ struct ConnectionCluster: View {
 
     /// The sidebar footer's two-line instrument block. The presentational layout lives in
     /// ``ConnectionRailFooter`` (pure values in, so the snapshot rig can mount every LED state);
-    /// this maps the live model onto it. The LED colours in on the needle curve — the same
+    /// this maps the live model onto it. The LED brightens on the needle curve — the same
     /// orchestrated moment the handshake already owns.
     private var railBody: some View {
         let led = Self.ledState(status: status, pingMS: pingMS)
@@ -256,12 +258,10 @@ struct ConnectionRailFooter: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
             // The health lamp: 6pt, its bottom resting on the host line's baseline (visually
-            // centred on the x-height), with a soft same-hue glow while lit — a LAMP, not a blink;
-            // the dim state casts nothing.
+            // centred on the x-height). Flat fill, no glow — the lamp reads by ink step, not shine.
             Circle()
                 .fill(ledColor)
                 .frame(width: 6, height: 6)
-                .shadow(color: led == .dim ? .clear : ledColor.opacity(0.55), radius: 2.5)
                 .frame(width: Slate.Metric.tabRowInset, alignment: .leading)
                 .alignmentGuide(.firstTextBaseline) { $0[.bottom] }
             VStack(alignment: .leading, spacing: 1) {
@@ -284,12 +284,15 @@ struct ConnectionRailFooter: View {
         }
     }
 
+    /// Monochrome at rest — the ink ladder carries "on" vs "off" (a healthy link must not add a
+    /// standing colour to the rail); the status hues light only while a LIVE link degrades. A dial
+    /// in flight stays tertiary: the detail word ("connecting…") already says so.
     private var ledColor: Color {
         switch led {
-        case .dim: Slate.Text.tertiary
-        case .dialing,
-             .slow: Slate.Status.warn
-        case .good: Slate.Status.ok
+        case .dim,
+             .dialing: Slate.Text.tertiary
+        case .good: Slate.Text.secondary
+        case .slow: Slate.Status.warn
         case .bad: Slate.Status.err
         }
     }

@@ -167,8 +167,8 @@ final class SlateSnapshotRender: XCTestCase {
 
     /// Renders the REAL ``ConnectionRailFooter`` (the two-line instrument block: gutter LED +
     /// hostname + mono detail) in every LED state — healthy ping, degraded, dialing, and the dimmed
-    /// offline lamp — at the true sidebar width, under the footer's hairline, so the lamp colours +
-    /// glow and the rail alignment can be eyeballed headlessly. SAME opt-in idiom; writes
+    /// offline lamp — at the true sidebar width, under the footer's hairline, so the lamp's ink
+    /// steps and the rail alignment can be eyeballed headlessly. SAME opt-in idiom; writes
     /// `sidebar-footer.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
     @MainActor
     func testRenderSidebarFooter() throws {

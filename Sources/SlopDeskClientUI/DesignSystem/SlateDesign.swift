@@ -78,13 +78,6 @@ struct SlateTheme: Equatable {
     let statusErr: Color
     let statusInfo: Color
 
-    /// The PROJECT-IDENTITY tints — the sidebar section swatches' palette, drawn from the theme's own
-    /// chromatic set so a project colour always speaks the active filter's dialect. Deliberately
-    /// EXCLUDES the status hues the ink dialect owns (warn-amber = waiting, err-red = broken,
-    /// ok-green = done): a project swatch must never read as a state. Keyed by a launch-stable hash
-    /// (``ProjectTint``), so a given project wears the same tint across relaunches.
-    let projectTints: [Color]
-
     /// Stable identity for change-detection — distinguishes a real theme switch from an idempotent re-apply
     /// so a SAME-LIGHTNESS variant change (e.g. Monokai Classic → Spectrum) still posts the cross-boundary
     /// repaint. Pure discriminator, never a colour.
@@ -136,10 +129,6 @@ struct SlateTheme: Equatable {
         statusWarn: Color(slateHex: 0xB87A1E),
         statusErr: Color(slateHex: 0xC0392B),
         statusInfo: Color(slateHex: 0x007AFF),
-        // Paper's ANSI blue / purple / orange — the non-status chromatics of its own terminal set.
-        projectTints: [
-            Color(slateHex: 0x3D7A99), Color(slateHex: 0x3C2E66), Color(slateHex: 0xC2731A),
-        ],
         id: "paper",
         terminalBackgroundHex: "FCFBF9",
         terminalForegroundHex: "37352F",
@@ -184,10 +173,6 @@ struct SlateTheme: Equatable {
         statusWarn: Color(slateHex: 0xE5C07B),
         statusErr: Color(slateHex: 0xE06C75),
         statusInfo: Color(slateHex: 0x007AFF),
-        // The dark set's ANSI blue / magenta / cyan — clear of the amber/red/green status hues.
-        projectTints: [
-            Color(slateHex: 0x61AFEF), Color(slateHex: 0xC678DD), Color(slateHex: 0x56B6C2),
-        ],
         id: "dark",
         terminalBackgroundHex: "161616",
         terminalForegroundHex: "EEEEEE",
@@ -263,11 +248,6 @@ struct SlateTheme: Equatable {
             statusWarn: Color(slateHex: s.warn),
             statusErr: Color(slateHex: s.err),
             statusInfo: Color(slateHex: s.info),
-            // The filter's cyan / purple / orange — its three chromatics that carry no status
-            // meaning in the ink dialect, so every Monokai variant colours projects in its own key.
-            projectTints: [
-                Color(slateHex: s.accent), Color(slateHex: s.purple), Color(slateHex: s.orange),
-            ],
             id: "monokai-\(s.name)",
             terminalBackgroundHex: hex6(s.background),
             terminalForegroundHex: hex6(s.foreground),
@@ -402,19 +382,6 @@ enum Slate {
         /// themes cast nothing: at-rest depth there is the surface ladder (fill + hairline), and a
         /// dark-on-dark shadow reads as a smudged edge, not lift (MERIDIAN L5).
         static var cardShadow: Color { Slate.theme.isLight ? .black.opacity(0.04) : .clear }
-        /// The ACTIVE card's accent WASH — a low-opacity accent film over the raised fill, so the
-        /// selected row is unmistakably *the* active one (accent is the active-state colour by
-        /// doctrine), not just one luminance step up. Dark surfaces need the stronger film.
-        static var activeWash: Color { Slate.theme.accent.opacity(Slate.theme.isLight ? 0.07 : 0.10) }
-        /// The ACTIVE card's edge — the hairline in the accent (replacing the neutral card border on
-        /// the selected row only), one voice with ``activeWash`` and the focused-pane corner mark.
-        static var activeEdge: Color { Slate.theme.accent.opacity(Slate.theme.isLight ? 0.30 : 0.35) }
-        /// An ATTENTION row's ink wash — the title's attention ink laid under the whole row at film
-        /// opacity, so a waiting/failed/finished-unread tab reads across the room (the whole-row
-        /// wash users ask terminals for), while the TEXT keeps carrying which state it is.
-        static func attentionWash(_ ink: Color) -> Color {
-            ink.opacity(Slate.theme.isLight ? 0.09 : 0.13)
-        }
     }
 
     @MainActor
