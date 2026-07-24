@@ -1975,3 +1975,24 @@ Driving v4.2, the user found one line too little area: the folder name and the g
   fold back to one line — count trailing, git folded away with the rows.
 - The header HStack aligns `.firstTextBaseline` so the chevron + folder glyphs sit on the NAME
   line, not the two-line block's center.
+
+### The idle row's "Terminal" becomes the last long-running command (2026-07-24)
+
+The user: the kind-generic "Terminal" — what every at-root idle shell resolves to under By-Project
+grouping (folder name suppressed by the header, bare shell suppressed as no better) — carries no
+information; every resting pane in a section reads as identical twins. An idle shell has no CURRENT
+identity, but it has a HISTORY one: the command it last ran is exactly what you scan the sidebar
+for ("the shell I ran `make check` in").
+
+- **Empty-title fallback = the pane's last long-running command** —
+  `RailRowsBuilder.lastCommandTitle(blocks:)`, resolved in the LIVE row leaf (`SidebarLiveRow` +
+  the iOS twin) since blocks are volatile; the memoized structural `RailRow.title` stays "" (search
+  keys unchanged). "Terminal" now survives only for a genuinely blank shell that has run nothing —
+  where it truthfully means "empty pane".
+- **A sub-3 s command never takes (or clears) the title** — user-directed filter so quick commands
+  don't churn the row: the resolver scans BACKWARDS for the newest block
+  with `durationMS ≥ 3000` (`commandTitleMinDurationMS`, mirroring the busy-dot reveal default), so
+  a quick `ls` after a long build leaves the build's title standing instead of flashing the row.
+  A running block (no duration yet) never titles; an interrupted block with a stamped duration does.
+- The tooltip's title-echo gate already covers the new title: a running command equal to the shown
+  last-command title is dropped as a restatement.

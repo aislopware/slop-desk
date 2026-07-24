@@ -535,6 +535,46 @@ final class RailRowBuilderTests: XCTestCase {
         )
     }
 
+    /// The empty-title view fallback: the pane's most recent command that ran ≥ the busy-dot
+    /// threshold (3 s) titles the idle row. Sub-threshold blocks are SKIPPED, not title-clearing — a
+    /// quick `ls` after a long build leaves the build's title standing instead of flashing the row
+    /// back to the generic "Terminal"; a still-running block (no duration yet) never titles; a
+    /// history of only quick commands yields `nil` so the kind-generic fallback reads.
+    func testLastCommandTitlePicksLastLongRunningCommand() {
+        let build = CommandBlock(
+            index: 0, commandText: "make check", exitCode: 0, durationMS: 94000, complete: true,
+        )
+        let quickLs = CommandBlock(index: 1, commandText: "ls", exitCode: 0, durationMS: 40, complete: true)
+        XCTAssertEqual(RailRowsBuilder.lastCommandTitle(blocks: [build, quickLs]), "make check")
+
+        let atThreshold = CommandBlock(
+            index: 2, commandText: "npm test", exitCode: 1, durationMS: 3000, complete: true,
+        )
+        XCTAssertEqual(
+            RailRowsBuilder.lastCommandTitle(blocks: [build, quickLs, atThreshold]), "npm test",
+            "exactly the threshold qualifies — only a sub-3 s command is suppressed",
+        )
+
+        let running = CommandBlock(index: 3, commandText: "sleep 99", complete: false)
+        XCTAssertEqual(
+            RailRowsBuilder.lastCommandTitle(blocks: [build, running]), "make check",
+            "a still-running block has no duration and never titles",
+        )
+
+        // A block INTERRUPTED by a nested prompt (complete == false, duration stamped) is finished.
+        let interrupted = CommandBlock(index: 4, commandText: "ssh box", durationMS: 8000, complete: false)
+        XCTAssertEqual(RailRowsBuilder.lastCommandTitle(blocks: [interrupted]), "ssh box")
+
+        let blank = CommandBlock(index: 5, commandText: "   ", exitCode: 0, durationMS: 9000, complete: true)
+        XCTAssertEqual(
+            RailRowsBuilder.lastCommandTitle(blocks: [build, blank]), "make check",
+            "a blank command line is skipped, not title-clearing",
+        )
+
+        XCTAssertNil(RailRowsBuilder.lastCommandTitle(blocks: [quickLs]))
+        XCTAssertNil(RailRowsBuilder.lastCommandTitle(blocks: []))
+    }
+
     /// The folder-name helper: leaf extraction, trailing-slash tolerance, root, blank → nil.
     func testCwdFolderName() {
         XCTAssertEqual(RailRowsBuilder.cwdFolderName("/Users/dev/slop-desk"), "slop-desk")

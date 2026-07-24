@@ -302,8 +302,9 @@ enum RailRowsBuilder {
     /// sitting AT its project root (under By-Project grouping, via `projectKey`) titles by its
     /// foreground PROGRAM instead — the folder name would restate the section header verbatim, so the
     /// header says WHERE and line 1 says WHO (`claude` / `vim` / `make`, the tmux idiom), an idle shell
-    /// yielding "" so the view's kind-generic "Terminal" reads rather than an OSC shell title restating
-    /// the place; and a pane with no known cwd yet falls back to the host FOREGROUND-PROCESS name
+    /// yielding "" so the VIEW's fallback reads — the pane's last long-running command
+    /// (``lastCommandTitle(blocks:)``) before the kind-generic "Terminal" — rather than an OSC shell
+    /// title restating the place; and a pane with no known cwd yet falls back to the host FOREGROUND-PROCESS name
     /// (`processLabel`, wire type 26 — a real program, a bare login shell suppressed) before the generic
     /// shell-title chain. Non-terminal kinds keep the `lastKnownTitle ?? title` chain unchanged. Pure +
     /// static so the mapping is unit-pinned without a view.
@@ -362,6 +363,29 @@ enum RailRowsBuilder {
         if name.hasPrefix("-") { name.removeFirst() } // login-shell argv0 convention (`-zsh`)
         name = name.split(separator: "/").last.map(String.init) ?? name
         return name.isEmpty ? nil : name
+    }
+
+    /// A finished command must have RUN at least this long (host-measured C→D wall clock) to title an
+    /// idle pane — the busy-dot reveal default: a fast `ls`/`cd` that never earned the dot never takes
+    /// the title either, so the resting title doesn't churn with every trivial command.
+    static let commandTitleMinDurationMS: UInt32 = 3000
+
+    /// The idle shell's LAST-COMMAND title: the most recent finished block whose command ran long
+    /// enough to matter (``commandTitleMinDurationMS``) — the pane's HISTORY identity ("the shell I
+    /// just ran `make check` in"), read when the title chain resolved empty (an at-root idle shell,
+    /// where the folder name would restate the section header and the bare shell says nothing).
+    /// Short/quick blocks are SKIPPED, not title-clearing — a `ls` after a long build leaves the
+    /// build's title standing rather than flashing the row back to the generic "Terminal". A running
+    /// block (no duration yet) never titles; `nil` when no block qualifies, so the caller keeps the
+    /// kind-generic fallback. Pure + static so the rule is unit-pinned.
+    static func lastCommandTitle(blocks: [CommandBlock]) -> String? {
+        for block in blocks.reversed() {
+            guard let duration = block.durationMS, duration >= commandTitleMinDurationMS
+            else { continue }
+            let command = block.commandText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !command.isEmpty { return command }
+        }
+        return nil
     }
 
     /// Bare interactive-shell basenames that must NOT title a pane — titling by the shell is no more

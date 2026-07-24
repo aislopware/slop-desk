@@ -721,7 +721,12 @@ private struct SidebarLiveRow: View {
                 return RailRowsBuilder.processDisplayName(chrome.processLabel)
             }()
             : nil
-        let shownTitle = row.title.isEmpty ? fallbackTitle : row.title
+        // An empty title (the at-root idle shell) falls back to the pane's LAST long-running command
+        // before the kind-generic "Terminal" — the shell's history identity, volatile like the blocks
+        // it reads, so it resolves here in the live leaf rather than in the memoized structural row.
+        let commandTitle = row.kind == .terminal
+            ? RailRowsBuilder.lastCommandTitle(blocks: blocks) : nil
+        let shownTitle = row.title.isEmpty ? (commandTitle ?? fallbackTitle) : row.title
         let lastCommand = blocks.last(where: { $0.complete || $0.durationMS != nil })
             .flatMap(SidebarRowTooltip.commandLine)
         // The row's live line — TOOLTIP-only (the rendered row stays otty-bare).
@@ -777,17 +782,21 @@ private struct IOSSidebarLiveRow: View {
         // swiftlint:disable:next redundant_discardable_let
         let _ = store.completionFlashTick
         let chrome = RailRowsBuilder.liveChrome(for: row, store: store)
+        // Same empty-title → last-long-command fallback as the macOS ``SidebarLiveRow``.
+        let commandTitle = row.kind == .terminal
+            ? RailRowsBuilder.lastCommandTitle(blocks: store.commandBlocks(for: row.id)) : nil
+        let shownTitle = row.title.isEmpty ? (commandTitle ?? fallbackTitle) : row.title
         HStack(spacing: 8) {
             Label {
                 if chrome.isEditing {
                     // The iOS inline-rename field — commits on submit/blur (escape is macOS-only).
                     InlineRenameField(
-                        seed: row.title.isEmpty ? fallbackTitle : row.title,
+                        seed: shownTitle,
                         onCommit: onRename,
                         onCancel: onCancelRename,
                     )
                 } else {
-                    Text(row.title.isEmpty ? fallbackTitle : row.title)
+                    Text(shownTitle)
                         .lineLimit(1)
                 }
             } icon: {
