@@ -540,9 +540,9 @@ enum SidebarRowTooltip {
 /// The project section header — ONE left rail with the rows beneath it: the group's FOLDER NAME
 /// (11pt system, semibold — the parent stands a step firmer than its rows) and the live git line
 /// under it (the instrument mono — data, not identity) both start on the SAME x as every row
-/// title; the gutter BEFORE the rail carries the dim FOLDER glyph at rest (the group is a place —
-/// the one pictogram the monochrome rail keeps) and the disclosure chevron under the pointer (the
-/// outline idiom: text aligns, the toggle lives left of it). The name is the basename `section.header` already carries
+/// title is x-anchored by the disclosure chevron's `tabRowInset` gutter; the FOLDER glyph stands
+/// between chevron and name (both always visible — the otty header anatomy: chevron, folder,
+/// name), so the parent's label indents PAST its rows'. The name is the basename `section.header` already carries
 /// (worktree-collision-qualified), never the full path; the path lives in the hover tooltip. While
 /// open the git line (`main ↑2 !3`) rides a SECOND full-width line so name and git never fight for
 /// one row; while collapsed the header folds to one line with the hidden-row COUNT trailing — mono
@@ -569,35 +569,30 @@ struct SidebarSectionHeaderRow: View {
     var rows: [RailRow] = []
     var onToggle: () -> Void = {}
 
-    /// Pointer-in-header — swaps the gutter's folder glyph for the collapse chevron.
-    @State private var hovering = false
-
     var body: some View {
         let summary = projectKey.flatMap { store.projectGitSummary[$0] }
-        // The rail: list inset (`space2`) + the gutter's `tabRowInset` width = the SAME x the row
-        // titles start on (the rows' own horizontal content inset). Baseline-aligned: the gutter
-        // glyph sits on the NAME line; the git line hangs beneath, on the rail.
+        // The header's leading anatomy (the otty grouped-header trio, both glyphs ALWAYS visible):
+        // the collapse chevron in the `tabRowInset` gutter, the dim folder beside it, then the
+        // name — which therefore indents PAST the row titles, the parent standing left-and-above
+        // its children. Baseline-aligned: the glyphs sit on the NAME line; the git line hangs
+        // beneath.
         HStack(alignment: .firstTextBaseline, spacing: 0) {
-            // The gutter carries the FOLDER glyph at rest — the group is a place, spoken in the
-            // header's own muted ink — and trades it for the collapse chevron under the pointer
-            // (the Notion outline idiom: identity resting, affordance on approach). One chevron
-            // glyph rotating 0°↔90° (not a `.chevronDown` swap) so the toggle TURNS with the group
-            // animation instead of teleporting between two symbols. Leading-aligned in the gutter,
-            // clear of the text rail.
+            // One chevron glyph rotating 0°↔90° (not a `.chevronDown` swap) so the toggle TURNS
+            // with the group animation instead of teleporting between two symbols. Leading-aligned
+            // in its gutter, clear of the folder.
             Image(systemSymbol: .chevronRight)
                 // `.medium`, not `.semibold` — a 1px-stroke glyph; semibold at this size reads a
                 // full step chunkier.
                 .font(.system(size: Slate.Typeface.small, weight: .medium))
                 .foregroundStyle(Slate.State.header)
                 .rotationEffect(.degrees(collapsed ? 0 : 90))
-                .opacity(hovering ? 1 : 0)
-                .overlay {
-                    Image(systemSymbol: .folderFill)
-                        .font(.system(size: Slate.Typeface.small))
-                        .foregroundStyle(Slate.State.header)
-                        .opacity(hovering ? 0 : 1)
-                }
                 .frame(width: Slate.Metric.tabRowInset, alignment: .leading)
+            // The folder — the group is a place, spoken in the header's own muted ink; the one
+            // pictogram the monochrome rail keeps.
+            Image(systemSymbol: .folderFill)
+                .font(.system(size: Slate.Typeface.small))
+                .foregroundStyle(Slate.State.header)
+                .padding(.trailing, 6)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
                     .font(.system(size: Slate.Typeface.footnote, weight: .semibold))
@@ -632,8 +627,6 @@ struct SidebarSectionHeaderRow: View {
         // A bare header keeps the measured 24pt band; a git-lined one grows to fit its second line.
         .frame(minHeight: Slate.Metric.heightSectionHeader)
         .contentShape(.rect)
-        .onHover { hovering = $0 }
-        .animation(Slate.Anim.smallFade, value: hovering)
         .onTapGesture(perform: onToggle)
         .help(Self.tooltip(projectKey: projectKey, summary: summary) ?? "")
         .contextMenu {

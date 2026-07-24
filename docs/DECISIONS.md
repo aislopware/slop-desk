@@ -2565,6 +2565,8 @@ which), warn/err ONLY while a live link degrades — and the glow deleted. `LedS
 `ledState`/`footerDetail` maps are unchanged (still pinned).
 
 Returned by request: the dim `folder.fill` in the header gutter (the pre-round-5 glyph), on the
-header ink — the one pictogram the monochrome rail keeps ("a group is a place"). It sits where the
-round-6 swatch sat and keeps that round's one good mechanism: it trades places with the collapse
-chevron under the pointer. Client-only; no wire change.
+header ink — the one pictogram the monochrome rail keeps ("a group is a place"). First pass kept
+round 6's hover-swap (folder at rest, chevron on approach); the follow-up verdict was that a
+lone folder still reads bare — so the header now wears the full otty trio, chevron AND folder
+always visible before the name (the name indents past its rows again; the hover-swap died with
+its `hovering` state). Client-only; no wire change.
