@@ -1,8 +1,8 @@
 // SlateComponents — the reusable chrome component kit on the token layer.
 //
 // Small, composable pieces factored out of the chrome so every surface stays consistent and new views are
-// quick to assemble: a status dot, the one-shape `StatusRing` instrument, a key/value row, a pill/badge,
-// and an `.slateCard()` surface modifier.
+// quick to assemble: a status dot, the terminal-dialect `StatusGlyph` instrument, a key/value row, a
+// pill/badge, and an `.slateCard()` surface modifier.
 // All built on `Slate.*` tokens + `SlateTheme`. See also SlateControls (`SlatePlateButton`), SlateRow
 // (`SlateListRow` / `SlateSectionHeader`) and SlateMonogram (the host-identity plate).
 
@@ -23,24 +23,23 @@ struct SlateStatusDot: View {
     }
 }
 
-/// The ONE-SHAPE status instrument: every lifecycle state renders as a READING of the SAME circle —
-/// Ø12, fixed centre in a 16pt box — so a state edge reads as one gauge changing its reading, never an
-/// icon swap (different silhouettes trading places in one box read as a jump even though the box never
-/// moves). Hue + fill + stroke style carry the state; the silhouette never changes. The readings speak
-/// the app's own dialect rather than stock indicator shapes (no dashed spinner, no recording-dot halo,
-/// no ✕ glyph):
-///   • `resting`  → muted plain ring (at rest, no colour spent);
-///   • `working`  → the COMET arc — one luminous arc with a fading tail sweeping the ring;
-///   • `awaiting` → solid ring whose centre dot BLINKS on the terminal cursor's cadence — the pane is
-///                  a prompt waiting for input (a hard on/off cut, exactly like a block cursor);
-///   • `done`     → the small FILLED circle (the quiet unread-finish dot — same family, full fill);
-///   • `error`    → the ring itself BROKEN — a static gap bitten out of the circle.
-/// All motion rides the WALL CLOCK (phase derived from absolute time) so a rail re-render lands
-/// mid-cycle instead of restarting it. Pure SwiftUI; no video/capture (hang-safety #6).
-struct StatusRing: View {
+/// The status instrument, spoken as TEXT in the terminal's own dialect: every lifecycle state is a
+/// single character in the instrument (mono) face, centred in a fixed 16pt box — the chrome's status
+/// voice IS the pane's voice, exactly the glyphs a CLI would print:
+///   • `resting`  → `·` muted (an idle prompt — no colour spent);
+///   • `working`  → the AI-CLI pulse `· ✢ ✳ ✶ ✻ ✽` breathing out and back — the agent's own spinner;
+///   • `busy`     → the classic braille dot-walker `⠋⠙⠹…` — the shell's spinner, for plain commands;
+///   • `awaiting` → `?` blinking between full and dim ink on the terminal cursor's cadence (answer me);
+///   • `done`     → `●` (the quiet unread-finish dot, as the character a CLI would print);
+///   • `error`    → `✗` static (broken — it waits on you).
+/// Both spinners are FRAME-STEPPED: hard glyph swaps on the wall clock off a fixed epoch, so every
+/// spinning row steps in unison and a rail re-render lands mid-cycle instead of restarting it.
+/// Pure SwiftUI text — no video/capture (hang-safety #6).
+struct StatusGlyph: View {
     enum Reading: Equatable {
         case resting
         case working
+        case busy
         case awaiting
         case done
         case error
@@ -49,97 +48,73 @@ struct StatusRing: View {
     let reading: Reading
     let tint: Color
 
-    /// The shared geometry — one registration for every reading, so transitions can't jump.
-    private static let box: CGFloat = 16
-    private static let diameter: CGFloat = 12
-    private static let stroke: CGFloat = 1.5
-    private static let mutedStroke: CGFloat = 1.2
-    /// The done fill — the quiet finish dot's established size.
-    private static let doneDiameter: CGFloat = 7
-    /// The comet's arc span as a fraction of the circle (~110°).
-    private static let cometSpan: Double = 0.3
-    /// Seconds per comet revolution — brisk enough to read as live, slow enough to stay calm.
-    private static let cometPeriod: Double = 1.4
+    /// The fixed glyph box — star / braille / dot advance widths differ, so the frame pins layout
+    /// while frames (or states) swap.
+    static let box: CGFloat = 16
+
+    /// The agent spinner's frames — a dot budding into an asterisk and back (the AI-CLI loading
+    /// pulse). Cycled as hard swaps; the palindrome makes the loop breathe without easing.
+    static let agentFrames = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"]
+    /// The command spinner's frames — the braille dot-walker every terminal tool spins.
+    static let commandFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    /// Seconds per frame: the agent pulse breathes; the braille walk is brisker (a mechanical
+    /// command, not a thinking agent).
+    static let agentBeat: Double = 0.15
+    static let commandBeat: Double = 0.1
     /// Seconds per awaiting blink phase — the classic terminal cursor cadence.
-    private static let blinkBeat: Double = 0.53
-    /// The error ring's missing fraction (~50° bitten out of the circle).
-    private static let breakGap: Double = 0.14
+    static let blinkBeat: Double = 0.53
+    /// The awaiting blink's dim plateau — a duty cycle between full and low ink, never off: the
+    /// question keeps its slot even mid-blink.
+    private static let blinkDim: Double = 0.35
 
     var body: some View {
-        ZStack {
-            switch reading {
-            case .resting: mutedRing
-            case .working: workingRing
-            case .awaiting: awaitingRing
-            case .done:
-                Circle().fill(tint)
-                    .frame(width: Self.doneDiameter, height: Self.doneDiameter)
-            case .error:
-                brokenRing
-            }
-        }
-        .frame(width: Self.box, height: Self.box)
+        content
+            .frame(width: Self.box, height: Self.box)
     }
 
-    private var solidRing: some View {
-        Circle()
-            .stroke(tint, lineWidth: Self.stroke)
-            .frame(width: Self.diameter, height: Self.diameter)
-    }
-
-    private var mutedRing: some View {
-        Circle()
-            .stroke(tint, lineWidth: Self.mutedStroke)
-            .frame(width: Self.diameter, height: Self.diameter)
-    }
-
-    /// The comet working reading: ONE arc whose tail fades to nothing, sweeping the ring continuously.
-    /// The tail's angular gradient lives in the shape's own space, so the whole comet — bright head,
-    /// vanishing tail — rotates as a unit. Phase comes off the wall clock, so a re-mount lands
-    /// mid-revolution instead of restarting it.
-    private var workingRing: some View {
-        TimelineView(.animation) { timeline in
-            let phase = timeline.date.timeIntervalSinceReferenceDate
-                .truncatingRemainder(dividingBy: Self.cometPeriod) / Self.cometPeriod
-            Circle()
-                .trim(from: 0, to: Self.cometSpan)
-                .stroke(
-                    AngularGradient(
-                        gradient: Gradient(colors: [tint.opacity(0), tint]),
-                        center: .center,
-                        startAngle: .degrees(0),
-                        endAngle: .degrees(360 * Self.cometSpan),
-                    ),
-                    style: StrokeStyle(lineWidth: Self.stroke, lineCap: .round),
-                )
-                .frame(width: Self.diameter, height: Self.diameter)
-                .rotationEffect(.degrees(phase * 360 - 90))
+    @ViewBuilder private var content: some View {
+        switch reading {
+        case .resting: glyph("·", weight: .regular)
+        case .working: spinner(Self.agentFrames, beat: Self.agentBeat)
+        case .busy: spinner(Self.commandFrames, beat: Self.commandBeat)
+        case .awaiting: blinkingGlyph("?", weight: .bold)
+        case .done: glyph("●", weight: .regular)
+        case .error: glyph("✗", weight: .semibold)
         }
     }
 
-    /// The awaiting reading: the solid ring holds steady while the centre dot blinks — a hard on/off
-    /// cut on the terminal cursor's cadence. An awaiting pane IS a prompt with the cursor parked at it;
-    /// the badge borrows exactly that signal instead of a generic pulse.
-    private var awaitingRing: some View {
-        TimelineView(.periodic(from: .now, by: Self.blinkBeat)) { timeline in
-            let on = Int(timeline.date.timeIntervalSinceReferenceDate / Self.blinkBeat).isMultiple(of: 2)
-            ZStack {
-                solidRing
-                if on {
-                    Circle().fill(tint).frame(width: 5, height: 5)
-                }
-            }
+    private func glyph(_ text: String, weight: Font.Weight) -> some View {
+        Text(text)
+            .font(Slate.Typeface.instrument(Slate.Typeface.body, weight: weight))
+            .foregroundStyle(tint)
+            .fixedSize()
+    }
+
+    /// A frame-stepped spinner on the wall clock: `TimelineView` re-renders once per beat and the
+    /// frame is a pure function of the date, so phase survives re-mounts and rows stay in unison.
+    private func spinner(_ frames: [String], beat: Double) -> some View {
+        TimelineView(.periodic(from: Date(timeIntervalSinceReferenceDate: 0), by: beat)) { timeline in
+            glyph(Self.frame(at: timeline.date, frames: frames, beat: beat), weight: .semibold)
         }
     }
 
-    /// The error reading: the circle itself broken — a gap bitten out of the ring, held static (it
-    /// waits on you). Rotated so the gap sits at the top-right; round caps keep the broken ends crisp.
-    private var brokenRing: some View {
-        Circle()
-            .trim(from: Self.breakGap, to: 1)
-            .stroke(tint, style: StrokeStyle(lineWidth: Self.stroke, lineCap: .round))
-            .frame(width: Self.diameter, height: Self.diameter)
-            .rotationEffect(.degrees(-70))
+    /// The awaiting blink — a hard two-plateau duty cycle (full ↔ dim ink), the cursor's cadence
+    /// without the cursor's disappearance.
+    private func blinkingGlyph(_ text: String, weight: Font.Weight) -> some View {
+        TimelineView(.periodic(from: Date(timeIntervalSinceReferenceDate: 0), by: Self.blinkBeat)) { timeline in
+            let full = Int(timeline.date.timeIntervalSinceReferenceDate / Self.blinkBeat).isMultiple(of: 2)
+            glyph(text, weight: weight)
+                .opacity(full ? 1 : Self.blinkDim)
+        }
+    }
+
+    /// The spinner frame for one wall-clock instant — pure + static so the cadence is unit-pinned
+    /// headlessly (frames advance one per beat, wrap at the end, never skip on a re-render).
+    static func frame(at date: Date, frames: [String], beat: Double) -> String {
+        guard !frames.isEmpty, beat > 0 else { return "" }
+        let phase = date.timeIntervalSinceReferenceDate / beat
+        let index = Int(phase.rounded(.down)) % frames.count
+        return frames[index < 0 ? index + frames.count : index]
     }
 }
 

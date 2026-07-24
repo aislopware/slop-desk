@@ -374,7 +374,7 @@ public struct WorkspaceRootView: View {
         }
         ToolbarItem(placement: .primaryAction) {
             if let reading = StatusPresentation.agentReading(activeAgentStatus) {
-                StatusRing(reading: reading, tint: StatusPresentation.agentTint(activeAgentStatus))
+                StatusGlyph(reading: reading, tint: StatusPresentation.agentTint(activeAgentStatus))
                     .accessibilityLabel("Agent \(StatusPresentation.agentLabel(activeAgentStatus))")
             }
         }

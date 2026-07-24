@@ -97,7 +97,7 @@ struct PeekReplyOverlay: View {
         let caption = scent.map { "\(label) · \($0)" } ?? label
         return HStack(spacing: 8) {
             if let reading = StatusPresentation.agentReading(status) {
-                StatusRing(reading: reading, tint: StatusPresentation.agentTint(status))
+                StatusGlyph(reading: reading, tint: StatusPresentation.agentTint(status))
             }
             VStack(alignment: .leading, spacing: 1) {
                 Text(content.title)

@@ -2399,3 +2399,26 @@ dynamic readings for shapes in the app's own dialect:
 `resting` (thin muted ring) and `done` (the established green 7pt filled dot) are unchanged;
 `#`/`∞` stay text. Client-only, no wire change; pins untouched by design (they assert reading
 CLASSES, not pixels).
+
+### Round 3 — the circle yields to the terminal dialect: `AsciiStatusBadge` returns as `StatusGlyph` (2026-07-24)
+
+Round 2's drawn readings (comet arc, cursor-dot ring, broken ring) still read as generic drawn
+iconography on hardware review; the requested register is the TERMINAL's — status spoken as the
+text a CLI would print. The v3 `AsciiStatusBadge` dialect (deleted by the otty reset) returns as
+`StatusGlyph`, replacing `StatusRing` outright while keeping its surface contract (the `Reading`
+enum + `TabBadgeStyle` mapping + the same three mount surfaces):
+
+- **working = the AI-CLI asterisk pulse** `· ✢ ✳ ✶ ✻ ✽` breathing out and back (0.15s/frame,
+  accent) — the agent's own spinner vocabulary.
+- **busy = the braille dot-walker** `⠋⠙⠹…` (0.1s/frame, muted) — the shell's spinner. The busy
+  tiers now split by VOICE, not just hue: `.running` speaks agent, `.commandRunning`/`.commandBusy`
+  speak shell (new `Reading.busy`; the pins split accordingly).
+- **awaiting = `?`** amber bold, blinking full↔dim ink on the cursor cadence (0.53s hard duty
+  cycle, never fully off — the question keeps its slot).
+- **error = `✗`** red static; **done = `●`** green (the established quiet dot, now as the printed
+  character — the ✓ stays retired); **resting = `·`** muted; `#`/`∞` unchanged.
+
+All glyphs render in the instrument (mono) face inside the same fixed 16pt box; both spinners are
+frame-stepped off a fixed wall-clock epoch (all spinning rows step in unison, re-mounts land
+mid-cycle), and the frame function is pure + static, pinned headlessly
+(`testSpinnerFrameCadenceAdvancesOnePerBeatAndWraps`). Client-only; no wire change.
