@@ -10,19 +10,6 @@
 import SFSafeSymbols
 import SwiftUI
 
-/// A small status dot. State changes are a HARD CUT by design (MERIDIAN L3: a dot never glows, pops or
-/// pulses on a state flip — animation is reserved for sustained "live" signals, of which there are none
-/// at rest). Don't reach for a Pow `changeEffect` here — none exist in the design system and a state
-/// flip must stay a hard cut.
-struct SlateStatusDot: View {
-    let color: Color
-    var size: CGFloat = 7
-
-    var body: some View {
-        Circle().fill(color).frame(width: size, height: size)
-    }
-}
-
 /// The AGENT status instrument, spoken as TEXT in the terminal's own dialect: each reading is a
 /// single character in the instrument (mono) face, centred in a fixed 16pt box — the chrome's status
 /// voice IS the pane's voice, exactly the glyphs a CLI would print:

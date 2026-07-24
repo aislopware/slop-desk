@@ -50,10 +50,10 @@ public enum TabBadgeKind: Equatable, Sendable {
     /// only when the shell is otherwise at rest (below the active states, above ``caffeinate``).
     case sudo
 
-    /// Whether this badge is ATTENTION-class — "finished or waiting on you", the states the titlebar's
-    /// bell-style dot (``WorkspaceStore/hasUnseenAttention``) rolls up. The live activity markers
-    /// (``running``/``commandRunning``) and the at-rest privilege badges (``sudo``/``caffeinate``) are
-    /// NOT attention: the dot means unread, not busy.
+    /// Whether this badge is ATTENTION-class — "finished or waiting on you", the states the
+    /// unseen-attention queue (``WorkspaceStore/unseenAttentionPanes``) rolls up. The live activity
+    /// markers (``running``/``commandRunning``) and the at-rest privilege badges (``sudo``/``caffeinate``)
+    /// are NOT attention: attention means unread, not busy.
     public var needsAttention: Bool {
         switch self {
         case .awaitingInput,

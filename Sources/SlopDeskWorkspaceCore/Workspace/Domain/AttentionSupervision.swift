@@ -89,10 +89,9 @@ public enum AttentionJump {
 // MARK: - AttentionWalk (the pure "step the queue, then pop home" decision — ⌘⇧U's walk)
 
 /// The PURE per-press decision for the ⌘⇧U WALK: given the current queue (the caller passes
-/// ``WorkspaceStore/unseenAttentionPanes``'s pane order — rank-then-since, the SAME list the title menu
-/// renders, so this and the menu never disagree about "what's next"), the set of panes this walk has
-/// already visited, and the pane the walk should return to on exhaustion, decide whether to step forward
-/// or pop home.
+/// ``WorkspaceStore/unseenAttentionPanes``'s pane order — rank-then-since), the set of panes this walk
+/// has already visited, and the pane the walk should return to on exhaustion, decide whether to step
+/// forward or pop home.
 ///
 /// Deliberately NOT built on ``AttentionJump`` — a visited-set walk needs an exclusion `AttentionJump`'s
 /// `ClaudeStatus`-only signature cannot express, and the queue itself already carries the badge-gated,

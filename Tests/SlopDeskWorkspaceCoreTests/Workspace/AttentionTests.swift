@@ -371,7 +371,7 @@ final class AttentionTests: XCTestCase {
         let finished = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
         store.focusPaneTree(origin)
         store.setAgentStatus(.done, for: finished)
-        XCTAssertTrue(store.hasUnseenAttention, "precondition: the unread finish lights the dot")
+        XCTAssertTrue(store.hasUnseenAttention, "precondition: the unread finish enters the queue")
 
         store.jumpToOldestAttentionPane()
         XCTAssertEqual(store.tree.activeSession?.activeTab?.activePane, finished)

@@ -12,7 +12,7 @@ import SlopDeskAgentDetect
 ///  - the attention-EDGE fire (`fireAgentAttention`, called from `setAgentStatus`'s coalesced edge);
 ///  - the host-label capture + the sidebar activity summary / liveness;
 ///  - the ⌘⇧U jump-to-oldest-attention WALK (``AttentionWalk`` drives the per-press step-vs-pop-home
-///    decision over ``unseenAttentionPanes`` — the same queue the title menu renders).
+///    decision over ``unseenAttentionPanes``).
 public extension WorkspaceStore {
     // MARK: Per-pane status / label reads
 
@@ -43,12 +43,12 @@ public extension WorkspaceStore {
         // stamps the pane — a BLOCKED `needsPermission` agent never stamps `paneCompletedAt`, so this is
         // where its menu-row age comes from.
         paneAttentionAt[id] = date
-        // Drive the checkmark→accent-dot decay for an agent turn: a genuine entry into `.done` stamps
+        // Drive the completion-flash decay for an agent turn: a genuine entry into `.done` stamps
         // the ephemeral `completedAt` (brief `.completed` flash, settling to `.finished`). Only the
         // positive edge stamps — a stale stamp is harmless (the resolver reads it ONLY in the
         // completed/finished branch, it is refreshed on the next `.done`/`.success`, and pruned on
         // reconcile), so this never clobbers a coexisting completion-badge stamp. Arms the one-shot
-        // that decays the flash so a quiet `.done` row settles to the dot without a further mutation.
+        // that decays the flash so a quiet `.done` row settles to `.finished` without a further mutation.
         if status == .done {
             paneCompletedAt[id] = date
             armCompletionFlashDecay()
@@ -184,20 +184,19 @@ public extension WorkspaceStore {
         return .none
     }
 
-    // MARK: The titlebar attention dot (bell-style "something needs you" rollup)
+    // MARK: The unseen-attention queue ("something needs you" rollup)
 
-    /// Whether ANY pane other than the focused leaf currently carries an ATTENTION-class badge — the
-    /// bell-style dot next to the titlebar's centre title. Derived from ``unseenAttentionPanes`` so the
-    /// dot and the title menu's NEEDS-ATTENTION section agree by construction.
+    /// Whether ANY pane other than the focused leaf currently carries an ATTENTION-class badge —
+    /// derived from ``unseenAttentionPanes``.
     var hasUnseenAttention: Bool { !unseenAttentionPanes.isEmpty }
 
     /// Every pane other than the focused leaf that currently carries an ATTENTION-class badge
-    /// (``TabBadgeKind/needsAttention``: agent blocked / unread finish / failed command) — the titlebar
-    /// dot's per-pane breakdown, listed in the title menu. Spans ALL sessions (the dot is global; the
+    /// (``TabBadgeKind/needsAttention``: agent blocked / unread finish / failed command) — the
+    /// unseen-attention QUEUE. Spans ALL sessions (the queue is global; the
     /// rail only shows the active one) and resolves each pane through the SAME gated pipeline the rail
     /// renders (``TabBadgeGating/resolve(...)`` + the manual ``tabBadgeOverride(for:)`` on the tab's
     /// representative pane), so this and the sidebar can never disagree — a badge the user silenced never
-    /// lights the dot or lists here. The focused leaf is excluded via ``isPaneFocused(_:)``:
+    /// lists here. The focused leaf is excluded via ``isPaneFocused(_:)``:
     /// while the app is inactive nothing is focused, so even the active leaf counts until the user
     /// returns. Freshness is pinned ``TabBadgeResolver/CompletionFreshness/settled`` — `.completed` and
     /// `.finished` are BOTH attention-class, so the flash clock cannot change the verdict (no `Date()`
@@ -206,8 +205,7 @@ public extension WorkspaceStore {
     /// Order: BLOCKED-FIRST — awaitingInput, then error, then the unread finishes — and, WITHIN a rank,
     /// `since`-ASCENDING (the longer-waiting entry is topmost; a `since == nil` manual-override entry
     /// carries no age evidence, so it sorts after every dated entry of the same rank), traversal-stable as
-    /// the final tie. This is the queue ⌘⇧U's walk steps through (``jumpToOldestAttentionPane()``) — the
-    /// ONE shared source, so the menu's row 1 and the chord's next target are the same pane by construction.
+    /// the final tie. This is the queue ⌘⇧U's walk steps through (``jumpToOldestAttentionPane()``).
     var unseenAttentionPanes: [UnseenAttentionEntry] {
         var found: [UnseenAttentionEntry] = []
         for session in tree.sessions {
@@ -245,7 +243,7 @@ public extension WorkspaceStore {
             }
             // DETACHED (satellite-window) panes live outside every tab's split tree, so the loop above
             // never sees them — without this, a blocked/failed satellite pane is invisible to the
-            // titlebar dot / ⌘⇧U jump queue while it sits unfocused in the background (no tab pill of
+            // attention queue / ⌘⇧U jump while it sits unfocused in the background (no tab pill of
             // its own, so no manual override to consult).
             for entry in session.detached where !isPaneFocused(entry.pane) {
                 let paneID = entry.pane
@@ -313,8 +311,8 @@ public extension WorkspaceStore {
 
     // MARK: Jump-to-unread (⌘⇧U walks the queue)
 
-    /// Jump-to-unread (⌘⇧U): WALKS the NEEDS-ATTENTION queue (``unseenAttentionPanes`` — the ONE shared
-    /// source with the title menu, so row 1 is the target BY CONSTRUCTION) one pane per press, remembering
+    /// Jump-to-unread (⌘⇧U): WALKS the unseen-attention queue (``unseenAttentionPanes``)
+    /// one pane per press, remembering
     /// every pane it has already stepped onto (``AttentionWalk``) so a re-press advances instead of
     /// bouncing back to a still-blocked pane the instant focus leaves it. Exhausting the queue (every
     /// currently-listed pane visited) pops focus back to the pane the walk started from; the press after
@@ -473,12 +471,11 @@ final class AttentionWalkBox {
     }
 }
 
-// MARK: - The titlebar dot's per-pane breakdown
+// MARK: - The unseen-attention queue's entries
 
-/// One pane currently WAITING on the user — an item of ``WorkspaceStore/unseenAttentionPanes`` (the
-/// titlebar dot's breakdown, listed in the title menu's NEEDS-ATTENTION section). Carries the RESOLVED
-/// gated badge so the menu row shows the same glyph vocabulary as the sidebar rail, plus the cheap
-/// context the row's second line + trailing age speak.
+/// One pane currently WAITING on the user — an item of ``WorkspaceStore/unseenAttentionPanes``.
+/// Carries the RESOLVED gated badge (the same vocabulary the sidebar rail renders), plus the cheap
+/// context a consumer can speak (the host agent label and the waiting-since instant).
 public struct UnseenAttentionEntry: Equatable, Sendable {
     public let pane: PaneID
     public let badge: TabBadgeKind

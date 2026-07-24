@@ -47,16 +47,13 @@ struct SlatePopoverRow: View {
     /// Type-erased so the row stays non-generic (menu rows, never a hot path).
     var leading: AnyView?
     let title: String
-    /// A muted second line under the title (the NEEDS-ATTENTION rows' agent label / caption). The row
-    /// grows to two lines when present; single-line rows keep the `heightBar` metric exactly.
+    /// A muted second line under the title. The row grows to two lines when present; single-line
+    /// rows keep the `heightBar` metric exactly.
     var subtitle: String?
     var shortcut: String?
     var checked: Bool
     /// Muted title — a read-only info row (e.g. the working-directory path), not an action.
     var dim: Bool
-    /// A status-coloured title (the NEEDS-ATTENTION rows — the same attention ink the sidebar
-    /// row's ring mark wears). Wins over the `dim`/primary ladder when set.
-    var titleInk: Color?
     var action: () -> Void
 
     init(
@@ -66,7 +63,6 @@ struct SlatePopoverRow: View {
         shortcut: String? = nil,
         checked: Bool = false,
         dim: Bool = false,
-        titleInk: Color? = nil,
         action: @escaping () -> Void,
     ) {
         self.title = title
@@ -76,7 +72,6 @@ struct SlatePopoverRow: View {
         self.shortcut = shortcut
         self.checked = checked
         self.dim = dim
-        self.titleInk = titleInk
         self.action = action
     }
 
@@ -88,7 +83,6 @@ struct SlatePopoverRow: View {
         shortcut: String? = nil,
         checked: Bool = false,
         dim: Bool = false,
-        titleInk: Color? = nil,
         action: @escaping () -> Void,
     ) {
         self.title = title
@@ -98,7 +92,6 @@ struct SlatePopoverRow: View {
         self.shortcut = shortcut
         self.checked = checked
         self.dim = dim
-        self.titleInk = titleInk
         self.action = action
     }
 
@@ -118,7 +111,7 @@ struct SlatePopoverRow: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title)
                         .font(.system(size: Slate.Typeface.base))
-                        .foregroundStyle(titleInk ?? (dim ? Slate.Text.secondary : Slate.Text.primary))
+                        .foregroundStyle(dim ? Slate.Text.secondary : Slate.Text.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                     if let subtitle {

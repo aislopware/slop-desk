@@ -2,14 +2,14 @@ import XCTest
 @testable import SlopDeskClient
 @testable import SlopDeskWorkspaceCore
 
-/// The titlebar attention dot — the bell-style "something needs you" indicator next to the centre title
-/// (``WorkspaceStore/hasUnseenAttention``). Visible iff ANY pane other than the focused leaf currently
+/// The unseen-attention QUEUE (``WorkspaceStore/unseenAttentionPanes`` / ``hasUnseenAttention`` — the
+/// source ⌘⇧U walks). Non-empty iff ANY pane other than the focused leaf currently
 /// resolves to an attention-class badge (agent blocked / unread finish / failed command) through the SAME
-/// gated pipeline the sidebar rail renders (``TabBadgeGating`` + the manual tab override) — so the dot and
-/// the rail can never disagree, and a badge the user silenced never lights the dot. Entirely headless
+/// gated pipeline the sidebar rail renders (``TabBadgeGating`` + the manual tab override) — so the queue
+/// and the rail can never disagree, and a badge the user silenced never lists. Entirely headless
 /// (`FakePaneSession`, no SwiftUI).
 @MainActor
-final class TitlebarAttentionDotTests: XCTestCase {
+final class UnseenAttentionQueueTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
         WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0) })
     }
@@ -26,8 +26,8 @@ final class TitlebarAttentionDotTests: XCTestCase {
 
     // MARK: - the attention-class membership pin (pure)
 
-    /// Pins WHICH badge kinds light the dot: the "finished or waiting on you" states — never the live
-    /// activity / privilege markers (a running agent is not a notification; the dot means unread, not busy).
+    /// Pins WHICH badge kinds enter the queue: the "finished or waiting on you" states — never the live
+    /// activity / privilege markers (a running agent is not a notification; attention means unread, not busy).
     func testAttentionClassMembership() {
         XCTAssertTrue(TabBadgeKind.awaitingInput.needsAttention)
         XCTAssertTrue(TabBadgeKind.error.needsAttention)
@@ -65,35 +65,35 @@ final class TitlebarAttentionDotTests: XCTestCase {
 
     // MARK: - the store derivation
 
-    func testFreshStoreShowsNoDot() {
-        XCTAssertFalse(makeStore().hasUnseenAttention, "an all-clear workspace keeps the titlebar bare")
+    func testFreshStoreHasEmptyQueue() {
+        XCTAssertFalse(makeStore().hasUnseenAttention, "an all-clear workspace keeps the queue empty")
     }
 
-    func testBlockedBackgroundAgentShowsDot() throws {
+    func testBlockedBackgroundAgentLists() throws {
         let (store, _, background) = try makeStoreWithBackgroundPane()
         store.setAgentStatus(.needsPermission, for: background)
-        XCTAssertTrue(store.hasUnseenAttention, "a blocked background agent lights the dot")
+        XCTAssertTrue(store.hasUnseenAttention, "a blocked background agent enters the queue")
     }
 
-    func testDoneBackgroundAgentShowsDot() throws {
+    func testDoneBackgroundAgentLists() throws {
         let (store, _, background) = try makeStoreWithBackgroundPane()
         store.setAgentStatus(.done, for: background)
-        XCTAssertTrue(store.hasUnseenAttention, "an unread agent finish lights the dot")
+        XCTAssertTrue(store.hasUnseenAttention, "an unread agent finish enters the queue")
     }
 
-    func testBackgroundCompletionBadgeShowsDot() throws {
+    func testBackgroundCompletionBadgeLists() throws {
         let (store, _, background) = try makeStoreWithBackgroundPane()
         store.setCompletionBadge(.failure, for: background)
-        XCTAssertTrue(store.hasUnseenAttention, "a failed background command lights the dot")
+        XCTAssertTrue(store.hasUnseenAttention, "a failed background command enters the queue")
         store.setCompletionBadge(.success, for: background)
-        XCTAssertTrue(store.hasUnseenAttention, "an unread clean finish lights the dot too")
+        XCTAssertTrue(store.hasUnseenAttention, "an unread clean finish enters the queue too")
         store.setCompletionBadge(nil, for: background)
-        XCTAssertFalse(store.hasUnseenAttention, "clearing the badge clears the dot")
+        XCTAssertFalse(store.hasUnseenAttention, "clearing the badge empties the queue")
     }
 
     /// Live-activity states are NOT notifications: a working agent / an active OSC 9;4 progress spinner on a
-    /// background pane keeps the dot off (the dot means "waiting on you", not "something is happening").
-    func testActivityStatesShowNoDot() throws {
+    /// background pane stays out of the queue (attention means "waiting on you", not "something is happening").
+    func testActivityStatesNeverList() throws {
         let (store, _, background) = try makeStoreWithBackgroundPane()
         store.setAgentStatus(.working, for: background)
         XCTAssertFalse(store.hasUnseenAttention, "a working agent is activity, not attention")
@@ -103,26 +103,26 @@ final class TitlebarAttentionDotTests: XCTestCase {
     }
 
     /// A held-red OSC 9;4;2 progress ERROR resolves to the error tier — that IS attention.
-    func testProgressErrorShowsDot() throws {
+    func testProgressErrorLists() throws {
         let (store, _, background) = try makeStoreWithBackgroundPane()
         store.handleProgress(PaneProgress.error(percent: 40), for: background)
-        XCTAssertTrue(store.hasUnseenAttention, "a held progress error lights the dot")
+        XCTAssertTrue(store.hasUnseenAttention, "a held progress error enters the queue")
     }
 
-    /// The focused leaf never lights the dot (you are looking at it); focusing AWAY from a still-blocked
+    /// The focused leaf never enters the queue (you are looking at it); focusing AWAY from a still-blocked
     /// pane lights it, focusing BACK clears it — with no store mutation in between.
     func testFocusedPaneIsExcluded() throws {
         let (store, focused, background) = try makeStoreWithBackgroundPane()
         store.setAgentStatus(.needsPermission, for: focused)
-        XCTAssertFalse(store.hasUnseenAttention, "a blocked agent on the pane you're watching needs no dot")
+        XCTAssertFalse(store.hasUnseenAttention, "a blocked agent on the pane you're watching never lists")
         store.focusPaneTree(background)
-        XCTAssertTrue(store.hasUnseenAttention, "focusing away, the same blocked pane now lights the dot")
+        XCTAssertTrue(store.hasUnseenAttention, "focusing away, the same blocked pane now enters the queue")
         store.focusPaneTree(focused)
         XCTAssertFalse(store.hasUnseenAttention, "focusing back clears it again")
     }
 
     /// While the app is INACTIVE nothing counts as focused (mirrors the B3 badge gate), so even the active
-    /// leaf's attention lights the dot; returning active re-excludes it.
+    /// leaf's attention enters the queue; returning active re-excludes it.
     func testAppInactiveCountsActiveLeaf() throws {
         let store = makeStore()
         let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
@@ -133,13 +133,13 @@ final class TitlebarAttentionDotTests: XCTestCase {
         XCTAssertFalse(store.hasUnseenAttention, "returning active re-excludes the focused leaf")
     }
 
-    /// The dot honours the SAME per-pane agent-badge gates as the rail: a pane whose "when complete" badge
-    /// is toggled off never lights the dot for a `.done`, while awaiting-input (its own gate still on) does.
-    func testAgentBadgeGatesSilenceTheDot() throws {
+    /// The queue honours the SAME per-pane agent-badge gates as the rail: a pane whose "when complete" badge
+    /// is toggled off never enters the queue for a `.done`, while awaiting-input (its own gate still on) does.
+    func testAgentBadgeGatesSilenceTheQueue() throws {
         let (store, _, background) = try makeStoreWithBackgroundPane()
         store.setAgentBadgeOverride(AgentBadgeGates.allOn.toggling(.whenComplete), for: background)
         store.setAgentStatus(.done, for: background)
-        XCTAssertFalse(store.hasUnseenAttention, "a gated-off done badge never lights the dot")
+        XCTAssertFalse(store.hasUnseenAttention, "a gated-off done badge never enters the queue")
         store.setAgentStatus(.needsPermission, for: background)
         XCTAssertTrue(store.hasUnseenAttention, "the awaiting-input gate is independent and still on")
     }
@@ -209,7 +209,7 @@ final class TitlebarAttentionDotTests: XCTestCase {
     }
 
     /// A DETACHED (satellite-window) pane lives outside every tab's split tree, so the tab-walk alone
-    /// would never see it — a blocked/failed satellite must still surface in the titlebar dot / jump
+    /// would never see it — a blocked/failed satellite must still surface in the queue / jump
     /// queue while its window is not the key one (i.e. not looked at).
     func testDetachedPaneAppearsInRollupWhenNotKey() throws {
         let store = makeStore()
@@ -219,7 +219,7 @@ final class TitlebarAttentionDotTests: XCTestCase {
 
         store.setAgentStatus(.needsPermission, for: paneID)
 
-        XCTAssertTrue(store.hasUnseenAttention, "a blocked detached pane lights the titlebar dot")
+        XCTAssertTrue(store.hasUnseenAttention, "a blocked detached pane enters the queue")
         XCTAssertEqual(store.unseenAttentionPanes.map(\.pane), [paneID])
     }
 
@@ -275,7 +275,7 @@ final class TitlebarAttentionDotTests: XCTestCase {
         )
     }
 
-    /// The list and the dot agree by construction: the focused leaf never appears in the list.
+    /// The focused leaf never appears in the list.
     func testUnseenAttentionPanesExcludesFocusedLeaf() throws {
         let (store, focused, background) = try makeStoreWithBackgroundPane()
         store.setAgentStatus(.needsPermission, for: focused)
@@ -283,15 +283,15 @@ final class TitlebarAttentionDotTests: XCTestCase {
         XCTAssertEqual(store.unseenAttentionPanes.map(\.pane), [background], "only the unfocused pane lists")
     }
 
-    /// A manual `tab badge --kind` override on a BACKGROUND tab drives the dot exactly like the rail: an
+    /// A manual `tab badge --kind` override on a BACKGROUND tab drives the queue exactly like the rail: an
     /// attention-class override lights it, an activity-class override does not.
-    func testManualTabBadgeOverrideDrivesDot() throws {
+    func testManualTabBadgeOverrideDrivesQueue() throws {
         let store = makeStore()
         let firstTab = try XCTUnwrap(store.tree.activeSession?.tabs.first?.id)
         store.newTab(kind: .terminal) // the new tab becomes active → the first tab is now background
         XCTAssertNotEqual(store.tree.activeSession?.activeTab?.id, firstTab, "precondition: first tab unfocused")
         store.setTabBadgeOverride(.error, for: firstTab)
-        XCTAssertTrue(store.hasUnseenAttention, "an explicit error override lights the dot")
+        XCTAssertTrue(store.hasUnseenAttention, "an explicit error override enters the queue")
         store.setTabBadgeOverride(.running, for: firstTab)
         XCTAssertFalse(store.hasUnseenAttention, "an explicit activity override does not")
         store.setTabBadgeOverride(nil, for: firstTab)
