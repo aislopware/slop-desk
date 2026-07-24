@@ -33,9 +33,10 @@ final class TabBadgePresentationTests: XCTestCase {
     }
 
     /// Every busy tier — a working agent, an instrumented command, a plain busy shell — is the ONE
-    /// muted spinner (otty does not colour-grade motion). The SIDEBAR rows never mount these (busy
-    /// renders as the title's working shimmer, split on `TabBadgeKind.isBusyTier`); the spinner
-    /// stays the glyph vocabulary for any other badge mount.
+    /// muted spinner (otty does not colour-grade motion). The SIDEBAR rows never mount these
+    /// (split on `TabBadgeKind.isBusyTier`: the agent tier shimmers the title, command tiers show
+    /// the running command standing still); the spinner stays the glyph vocabulary for any other
+    /// badge mount.
     func testEveryBusyTierIsTheSpinner() {
         XCTAssertTrue(isSpinner(.running))
         XCTAssertTrue(isSpinner(.commandRunning))

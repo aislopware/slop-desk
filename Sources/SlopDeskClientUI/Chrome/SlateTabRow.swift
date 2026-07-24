@@ -4,8 +4,8 @@
 // `✳` agent marker IN the title run (otty's agent integration literally prefixes the title string),
 // and one fixed trailing slot that carries the resting SHELL LABEL (`zsh` — muted 11pt) or an
 // attention-class badge (``TabBadgeView``), swapping to the close `×` under hover. BUSY rows keep
-// the slot for the shell label — motion lives in the TITLE's working shimmer (``WorkingShimmer``),
-// never a spinning glyph. ACTIVE is the raised card
+// the slot for the shell label — a WORKING AGENT's motion lives in the TITLE's shimmer
+// (``WorkingShimmer``), a running command's title simply stands still. ACTIVE is the raised card
 // (fill + 1px hairline + the 4% cast shadow); hover is the flat plate. Nothing else rides the row:
 // no subtitle, no readout, no telemetry — the richness lives in the hover tooltip and the context
 // menu, which is the otty way.
@@ -26,10 +26,11 @@ struct SlateTabRow: View {
     /// tiers never land here: the caller passes them as ``workingLabel`` instead, so the slot keeps
     /// the shell label while a command runs.
     var badge: TabBadgeKind?
-    /// Non-`nil` ⇒ the row is in a BUSY tier and the title wears the working shimmer (the stepped
-    /// dark-band sweep — the title text IS the motion indicator; no glyph spins). The string is the
-    /// terse state reading ("Agent working" / "Running"), carried as the title's accessibility value
-    /// so VoiceOver keeps the state the spinner glyph used to speak.
+    /// Non-`nil` ⇒ a WORKING AGENT row: the title wears the working shimmer (the stepped dark-band
+    /// sweep — the title text IS the motion indicator; no glyph spins) on the primary ink. The
+    /// string is the terse state reading ("Agent working"), carried as the title's accessibility
+    /// value so VoiceOver keeps the state the spinner glyph used to speak. A running COMMAND never
+    /// sets this — its title (the command text) stands still.
     var workingLabel: String?
     /// The resting trailing label — the pane's foreground process (`zsh`, `vim`, `claude`), shown
     /// only when no badge outranks it. `nil` ⇒ the slot rests empty.
@@ -80,12 +81,13 @@ struct SlateTabRow: View {
                 Text(agentMarker ? "✳\u{FE0E} \(title)" : title)
                     .font(.system(size: Slate.Typeface.body, weight: active ? .medium : .regular))
                     // The live-otty ink ladder: a resting title reads on the SECONDARY ink; only the
-                    // active card's title steps up to primary (with the weight bump). A busy row
-                    // shimmers the same ink — the stepped dark band sweeping the title is the whole
-                    // "in motion" reading.
+                    // active card's title steps up to primary (with the weight bump). A THINKING
+                    // agent's title also steps up to primary — the brighter base lifts the row and
+                    // gives the shimmer's dark band its full contrast range — and the stepped band
+                    // sweeping it is the whole "in motion" reading.
                     .workingShimmer(
                         workingLabel != nil,
-                        ink: active ? Slate.Text.primary : Slate.Text.secondary,
+                        ink: active || workingLabel != nil ? Slate.Text.primary : Slate.Text.secondary,
                     )
                     .lineLimit(1)
                     .accessibilityValue(workingLabel ?? "")

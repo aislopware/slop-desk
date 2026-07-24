@@ -13,7 +13,10 @@ import Foundation
 /// 2. Authoritative HOOK events set the status directly (UserPrompt/PreTool → working;
 ///    Notification(permission|waiting) → needsPermission; Stop → done; SessionStart → idle).
 /// 3. `processPresent(true)` / OSC `Claude:` title → presence FLOOR `.idle` (only lifts
-///    `.none`; never downgrades a richer hook status).
+///    `.none`; never downgrades a richer hook status). The title's spinner/`✳` PREFIXES
+///    (Claude Code's own busy/rest telltale) additionally corroborate working/idle — see
+///    `applyTitle` for the conservative rules (never past a hook block, rest only demotes
+///    a live working).
 /// 4. `manifestVerdict` (the no-hooks fallback) is CONSERVATIVE: a `.none` verdict is
 ///    ignored; `.working`/`.needsPermission` apply ONLY when an authoritative hook block
 ///    is not already in effect.
@@ -86,7 +89,7 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
             applyManifest(verdict, at: now)
 
         case let .oscTitle(title):
-            if Self.titleNamesClaude(title) { liftPresenceFloor() }
+            applyTitle(title)
 
         case .tick:
             break // pure time advance; decay handled below
@@ -139,6 +142,40 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
         case .sessionEnd:
             terminate()
         }
+    }
+
+    // MARK: - OSC title (Claude Code's own busy/rest telltale)
+
+    /// Claude Code writes its state into the terminal title: a Braille-spinner glyph prefix while
+    /// a turn runs, a `✳ ` prefix at rest. That is the agent's own emission (not a heuristic
+    /// screen scrape), so it corroborates liveness where hooks have gaps — conservatively:
+    /// - the SPINNER promotes to `.working` only while claude is already detected (a title never
+    ///   conjures presence) and never clears an authoritative HOOK block;
+    /// - the REST prefix demotes ONLY a live `.working` → `.idle` (the missed-Stop stuck shimmer);
+    ///   `.done` keeps its decay window and a block keeps waiting;
+    /// - any other claude-naming title stays the presence floor it always was.
+    private mutating func applyTitle(_ title: String) {
+        if Self.titleShowsSpinner(title) {
+            if status != .none, blockSource != .hook { enter(.working, label: nil) }
+            return
+        }
+        if Self.titleShowsRest(title) {
+            if status == .working { enter(.idle, label: nil) }
+            return
+        }
+        if Self.titleNamesClaude(title) { liftPresenceFloor() }
+    }
+
+    /// True when the title carries Claude Code's WORKING telltale — a leading Braille-pattern
+    /// spinner glyph (U+2800–U+28FF).
+    static func titleShowsSpinner(_ title: String) -> Bool {
+        guard let first = title.unicodeScalars.first else { return false }
+        return (0x2800...0x28FF).contains(first.value)
+    }
+
+    /// True when the title carries Claude Code's AT-REST telltale — the leading `✳` (U+2733).
+    static func titleShowsRest(_ title: String) -> Bool {
+        title.unicodeScalars.first?.value == 0x2733
     }
 
     // MARK: - Manifest verdict (conservative fallback)

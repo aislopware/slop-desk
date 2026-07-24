@@ -254,4 +254,16 @@ final class ClaudeStatusMachineTests: XCTestCase {
         var m = ClaudeStatusMachine()
         XCTAssertEqual(m.reduce(.oscTitle("zsh — ~/code"), at: 0), .none)
     }
+
+    /// The title-telltale pins: a LEADING Braille scalar (U+2800–U+28FF) is the spinner, a leading
+    /// `✳` (U+2733) is rest; anything else (or empty) is neither.
+    func testTitleTelltaleParsing() {
+        XCTAssertTrue(ClaudeStatusMachine.titleShowsSpinner("⠋ thinking"))
+        XCTAssertTrue(ClaudeStatusMachine.titleShowsSpinner("⣿"))
+        XCTAssertFalse(ClaudeStatusMachine.titleShowsSpinner("x ⠋"))
+        XCTAssertFalse(ClaudeStatusMachine.titleShowsSpinner(""))
+        XCTAssertTrue(ClaudeStatusMachine.titleShowsRest("✳ Claude Code"))
+        XCTAssertFalse(ClaudeStatusMachine.titleShowsRest("Claude ✳"))
+        XCTAssertFalse(ClaudeStatusMachine.titleShowsRest(""))
+    }
 }

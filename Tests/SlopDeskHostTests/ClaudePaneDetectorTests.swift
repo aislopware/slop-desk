@@ -439,9 +439,11 @@ final class ClaudePaneDetectorTests: XCTestCase {
 
     // MARK: - Agent-session INTENT (the type-36 latch)
 
-    /// The session's FIRST titleable prompt latches as the intent and emits type 36; later prompts
-    /// of the SAME session never re-title (sticky — the sidebar row must not churn per turn).
-    func testIntentLatchesFirstPromptStickyPerSession() {
+    /// The intent FOLLOWS the session's latest titleable prompt (the row answers "what is the
+    /// agent doing NOW", not "what was it hired for"): each real prompt re-titles and emits type
+    /// 36; an unchanged prompt emits nothing (dedupe); a slash-command leaves the standing intent
+    /// untouched (no churn, no wipe).
+    func testIntentFollowsLatestTitleablePrompt() {
         var d = ClaudePaneDetector()
         let first = d.hook(
             bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"refactor the parser"}"#),
@@ -453,7 +455,22 @@ final class ClaudePaneDetectorTests: XCTestCase {
             bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"now add tests"}"#),
             at: 1,
         )
-        XCTAssertNil(second.intent, "the intent is the session's FIRST prompt — no per-turn churn")
+        XCTAssertEqual(
+            second.intent, .agentSessionIntent("now add tests"),
+            "a later prompt re-titles — the row follows the work",
+        )
+
+        let repeated = d.hook(
+            bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"now add tests"}"#),
+            at: 2,
+        )
+        XCTAssertNil(repeated.intent, "an unchanged intent emits nothing (dedupe)")
+
+        let slash = d.hook(
+            bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"/compact"}"#),
+            at: 3,
+        )
+        XCTAssertNil(slash.intent, "a slash-command neither re-titles nor wipes the standing intent")
     }
 
     /// A slash-command / harness-XML first prompt has no titling value — the latch stays open so
@@ -546,5 +563,121 @@ final class ClaudePaneDetectorTests: XCTestCase {
         XCTAssertNil(ClaudePaneDetector.intentLine(from: "   \n  "))
         XCTAssertNil(ClaudePaneDetector.intentLine(from: "/compact"))
         XCTAssertNil(ClaudePaneDetector.intentLine(from: "<command-name>/clear</command-name>"))
+    }
+
+    // MARK: - Structured block/failure events (PermissionRequest / AskUserQuestion / StopFailure)
+
+    /// `PermissionRequest` is the STRUCTURED blocked signal: urgency 4 + kind 1 (permission), the
+    /// gated tool naming the label — it cannot be missed by message-text heuristics.
+    func testPermissionRequestBlocksWithToolLabel() {
+        var d = ClaudePaneDetector()
+        let e = d.hook(
+            bytes: json(#"{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{}}"#),
+            at: 0,
+        )
+        guard case let .claudeStatus(state, kind, label)? = e.status else {
+            XCTFail("expected a type-27")
+            return
+        }
+        XCTAssertEqual(state, 4, "blocked (urgency 4)")
+        XCTAssertEqual(kind, 1, "permission class")
+        XCTAssertEqual(label, "Permission needed: Bash")
+        XCTAssertEqual(d.status, .needsPermission)
+    }
+
+    /// `PreToolUse` of `AskUserQuestion` is Claude ASKING — waiting-for-input (kind 2) with the
+    /// question text as the label, never `.working`; the answered question resolves via the tool's
+    /// own `PostToolUse` (→ working) like any answered prompt.
+    func testAskUserQuestionPreToolUseIsWaitingForInput() {
+        var d = ClaudePaneDetector()
+        let ask = #"{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","# +
+            #""tool_input":{"questions":[{"question":"Which DB should we use?"}]}}"#
+        let e = d.hook(bytes: json(ask), at: 0)
+        guard case let .claudeStatus(state, kind, label)? = e.status else {
+            XCTFail("expected a type-27")
+            return
+        }
+        XCTAssertEqual(state, 4, "asking = blocked on the human (urgency 4)")
+        XCTAssertEqual(kind, 2, "waiting-for-input class")
+        XCTAssertEqual(label, "Which DB should we use?")
+
+        _ = d.hook(bytes: json(#"{"hook_event_name":"PostToolUse","tool_name":"AskUserQuestion"}"#), at: 1)
+        XCTAssertEqual(d.status, .working, "the answer resolves the block")
+    }
+
+    /// `StopFailure` (an API-error termination) ends the turn like a Stop — done with the error
+    /// text as the label — instead of leaving the pane stuck `working` until absence wins.
+    func testStopFailureEndsTheTurnAsDone() {
+        var d = ClaudePaneDetector()
+        _ = d.hook(
+            bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"fix CI"}"#),
+            at: 0,
+        )
+        XCTAssertEqual(d.status, .working)
+        let e = d.hook(
+            bytes: json(#"{"hook_event_name":"StopFailure","error_message":"API connection error"}"#),
+            at: 1,
+        )
+        XCTAssertEqual(stateByte(e.status), 2, "done (urgency 2)")
+        XCTAssertEqual(d.statusLabel, "API connection error")
+    }
+
+    /// The structured `notification_type` field decides the class even when the message text
+    /// matches no heuristic (the text rules are the fallback now, not the authority).
+    func testNotificationTypeFieldClassifies() {
+        var d = ClaudePaneDetector()
+        let e = d.hook(
+            bytes: json(#"{"hook_event_name":"Notification","notification_type":"idle_prompt","message":"hm"}"#),
+            at: 0,
+        )
+        guard case let .claudeStatus(state, kind, _)? = e.status else {
+            XCTFail("expected a type-27")
+            return
+        }
+        XCTAssertEqual(state, 4)
+        XCTAssertEqual(kind, 2, "idle_prompt → waiting-for-input")
+    }
+
+    // MARK: - OSC-title corroboration (Claude Code's own busy/rest telltale)
+
+    /// The Braille-spinner title promotes a DETECTED claude to working; the `✳` rest title demotes
+    /// a live working back to idle — the missed-Stop stuck-shimmer corrector.
+    func testTitleSpinnerAndRestCorroborateLiveness() {
+        var d = ClaudePaneDetector()
+        _ = d.sample(name: "claude", at: 0) // presence → idle
+        let spin = d.title("⠧ tests running", at: 1)
+        XCTAssertEqual(stateByte(spin.status), 3, "spinner title → working")
+        let rest = d.title("✳ Claude Code", at: 2)
+        XCTAssertEqual(stateByte(rest.status), 1, "rest title demotes the stuck working → idle")
+    }
+
+    /// A title never conjures presence (`.none` stays `.none`) and never clears a hook block —
+    /// in either direction (rest OR spinner).
+    func testTitleNeverConjuresPresenceNorClearsHookBlock() {
+        var d = ClaudePaneDetector()
+        let ghost = d.title("⠧ busy", at: 0)
+        XCTAssertNil(ghost.status)
+        XCTAssertEqual(d.status, .none, "a spinner title cannot conjure presence")
+
+        _ = d.sample(name: "claude", at: 1)
+        _ = d.hook(
+            bytes: json(#"{"hook_event_name":"Notification","notification_type":"permission_prompt"}"#),
+            at: 2,
+        )
+        XCTAssertEqual(d.status, .needsPermission)
+        _ = d.title("✳ Claude Code", at: 3)
+        XCTAssertEqual(d.status, .needsPermission, "a rest title never clears a hook block")
+        _ = d.title("⠧ busy", at: 4)
+        XCTAssertEqual(d.status, .needsPermission, "a spinner title never clears a hook block either")
+    }
+
+    /// The rest title does NOT demote `.done` — the unseen-completion signal keeps its decay window.
+    func testRestTitleKeepsDone() {
+        var d = ClaudePaneDetector(doneToIdleTimeout: 5)
+        _ = d.sample(name: "claude", at: 0)
+        _ = d.hook(bytes: json(#"{"hook_event_name":"Stop","last_assistant_message":"done"}"#), at: 1)
+        XCTAssertEqual(d.status, .done)
+        _ = d.title("✳ Claude Code", at: 2)
+        XCTAssertEqual(d.status, .done, "the rest title respects the done decay window")
     }
 }

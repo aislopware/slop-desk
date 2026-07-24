@@ -85,8 +85,8 @@ public struct ClaudePaneDetector: Sendable {
     /// session differs re-derives the intent from scratch (a fresh `claude` run / `/clear`).
     private var intentSessionID: String?
 
-    /// The pane's sticky AGENT-SESSION INTENT (wire type 36): the session's first titleable prompt,
-    /// latched once per session — `nil` = no intent (cleared on SessionEnd / presence termination).
+    /// The pane's AGENT-SESSION INTENT (wire type 36): the session's LATEST titleable prompt —
+    /// `nil` = no intent (cleared on SessionEnd / presence termination).
     private var sessionIntent: String?
 
     /// The last type-36 intent string emitted (`nil` before the first emit) — the dedupe anchor.
@@ -209,7 +209,7 @@ public struct ClaudePaneDetector: Sendable {
         var emission = Emission()
         guard let payload = HookParser.parse(bytes) else { return emission } // validate-then-drop
         // The INTENT fold (wire type 36) reads the payload BEFORE the status mapping strips the
-        // prompt: the session's first titleable prompt latches, SessionEnd clears.
+        // prompt: each titleable prompt re-titles the session, SessionEnd clears.
         switch payload {
         case let .userPromptSubmit(info, prompt):
             foldIntent(sessionID: info.sessionID, prompt: prompt)
@@ -296,16 +296,31 @@ public struct ClaudePaneDetector: Sendable {
     /// PTY bytes and keeps only a tiny OSC sniffer — it does NOT maintain a screen buffer, so running
     /// `ClaudeManifestMatcher.coarseStatus(screen:)` would require buffering a recent-output ring and
     /// scanning it per chunk on the latency-critical read-loop thread (NOT cheap/clean — it would tax
-    /// input-to-photon). The cheap signal the host DOES sniff (the OSC 2 title) only yields PRESENCE, and
-    /// the foreground-process watch already supplies presence with an EXACT-basename classification
-    /// (strictly better than a substring title match) — so feeding the title here would add churn for no
-    /// gain. P1 is correct without it (presence + hooks detect a `claude`); when a cheap screen-text
-    /// source lands (e.g. a host-side libghostty surface), drive this seam from `MuxChannelSession`. See
-    /// docs/DECISIONS.md "Coding-workspace redesign → Claude Code auto-detection (P6)".
+    /// input-to-photon). The cheap signal the host DOES sniff — the OSC 2 title — IS live-fed, via
+    /// ``title(_:at:)`` (Claude Code's own spinner/`✳` busy-rest telltale, the herdr-proven liveness
+    /// corroborator); this seam remains for a richer screen-text source (e.g. a host-side libghostty
+    /// surface). See docs/DECISIONS.md "Coding-workspace redesign → Claude Code auto-detection (P6)".
     public mutating func manifestVerdict(_ verdict: ClaudeStatus, at now: TimeInterval) -> Emission {
         machine.reduce(.manifestVerdict(verdict), at: now)
         if machine.status != .needsPermission { lastNotificationKind = 0 }
         var emission = Emission()
+        emission.status = statusEmissionIfChanged()
+        return emission
+    }
+
+    /// Fold one sniffed OSC 0/2 title at `now`. Claude Code writes its own busy/rest telltale
+    /// into the title (Braille spinner ⇒ working, `✳ ` ⇒ at rest), so the title corroborates
+    /// where hooks have gaps — most importantly, a missed Stop's stuck `.working` demotes to
+    /// `.idle` on the rest title. The machine applies the conservative precedence (a title never
+    /// clears a hook block, never conjures presence, never touches `.done`). NOT an authoritative
+    /// fold — it stamps no stickiness anchor. Emits type-27 iff the status triple changed.
+    public mutating func title(_ title: String, at now: TimeInterval) -> Emission {
+        machine.reduce(.oscTitle(title), at: now)
+        if machine.status != .needsPermission { lastNotificationKind = 0 }
+        var emission = Emission()
+        // EVERY shell titles its tab — a title folded on an undetected pane (still `.none`) must
+        // not OPEN the type-27 stream with a churn frame announcing the client's own default.
+        guard machine.status != .none || lastEmittedStatus != nil else { return emission }
         emission.status = statusEmissionIfChanged()
         return emission
     }
@@ -345,16 +360,17 @@ public struct ClaudePaneDetector: Sendable {
 
     // MARK: - Session intent (the type-36 latch)
 
-    /// Folds one `UserPromptSubmit` into the intent latch: a prompt from a NEW session re-derives
-    /// from scratch; within a session only the FIRST titleable prompt latches (the Claude-Code /
-    /// Conductor session-naming idiom — the name is stable for the session's whole life, so the
-    /// sidebar row never churns per turn).
+    /// Folds one `UserPromptSubmit` into the intent: a prompt from a NEW session re-derives from
+    /// scratch; within a session every TITLEABLE prompt re-titles (the row answers "what is the
+    /// agent doing NOW", not "what was it hired for" — a multi-turn session's title follows the
+    /// work). A non-titleable prompt (slash-command / harness XML / blank) leaves the standing
+    /// intent untouched — a `/compact` must not wipe the task line.
     private mutating func foldIntent(sessionID: String?, prompt: String?) {
         if sessionID != intentSessionID {
             intentSessionID = sessionID
             sessionIntent = nil
         }
-        guard sessionIntent == nil, let line = Self.intentLine(from: prompt) else { return }
+        guard let line = Self.intentLine(from: prompt) else { return }
         sessionIntent = line
     }
 

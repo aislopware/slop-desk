@@ -80,7 +80,30 @@ public struct AgentHookHandler: Sendable {
             return (.userPromptSubmit(sessionID: info.sessionID), 0)
 
         case let .preToolUse(use):
+            // `AskUserQuestion` is Claude ASKING, not working: the tool call blocks on the human
+            // answering, so it maps to the waiting-for-input block with the question as the label
+            // (the t3code/herdr special case). The answer resolves it via the tool's PostToolUse
+            // (→ working), like any answered prompt.
+            if use.name == "AskUserQuestion" {
+                return (
+                    .notification(kind: .waitingForInput, label: questionLabel(use)),
+                    notificationKindByte(.waitingForInput),
+                )
+            }
             return (.preToolUse(sessionID: nil, tool: use.name), 0)
+
+        case let .permissionRequest(use):
+            // The structured permission dialog — the same authoritative block as a
+            // Notification(permission_prompt); the gated tool names the label.
+            return (
+                .notification(kind: .permission, label: "Permission needed: \(use.name)"),
+                notificationKindByte(.permission),
+            )
+
+        case let .stopFailure(info):
+            // An API-error termination ends the turn like a Stop, with the error text as the
+            // label — without it the pane sits `working` until presence absence finally wins.
+            return (.stop(sessionID: info.sessionID, label: info.lastAssistantMessage), 0)
 
         case let .postToolUse(use, _):
             return (.postToolUse(sessionID: nil, tool: use.name), 0)
@@ -108,6 +131,18 @@ public struct AgentHookHandler: Sendable {
         case .waitingForInput: .waitingForInput
         case .other: .other
         }
+    }
+
+    /// The first question text inside an `AskUserQuestion` tool input (`questions[0].question`),
+    /// `nil` when the shape is unexpected (validate-then-drop on a hostile/foreign input — the
+    /// waiting block then stands without a label).
+    static func questionLabel(_ use: ToolUseBlock) -> String? {
+        guard case let .array(questions)? = use.input["questions"],
+              case let .object(first)? = questions.first,
+              let text = first["question"]?.stringValue,
+              !text.isEmpty
+        else { return nil }
+        return text
     }
 
     /// The wire `kind` byte for a notification class (`1 permission / 2 waitingForInput / 3 other`).

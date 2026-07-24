@@ -162,6 +162,67 @@ final class HookIngestTests: XCTestCase {
         XCTAssertEqual(use.input["command"]?.stringValue, "swift build")
     }
 
+    /// The structured `notification_type` decides the class: a known informational type wins even
+    /// over alarming message text ("wants to" would text-classify as permission), while an UNKNOWN
+    /// type falls through to the text heuristics (a future blocking class is not silently demoted).
+    func testNotificationTypeFieldOutranksTextHeuristics() {
+        let idle = HookParser.parse(Data(
+            #"{"hook_event_name":"Notification","notification_type":"idle_prompt","message":"hm"}"#.utf8,
+        ))
+        guard case let .notification(idleInfo)? = idle else {
+            XCTFail("expected .notification, got \(String(describing: idle))")
+            return
+        }
+        XCTAssertEqual(idleInfo.kind, .waitingForInput, "idle_prompt classifies structurally")
+
+        let done = HookParser.parse(Data(
+            (#"{"hook_event_name":"Notification","notification_type":"agent_completed","# +
+                #""message":"Claude wants to share results"}"#).utf8,
+        ))
+        guard case let .notification(doneInfo)? = done else {
+            XCTFail("expected .notification, got \(String(describing: done))")
+            return
+        }
+        XCTAssertEqual(doneInfo.kind, .other, "a known informational type beats the text rules")
+
+        let future = HookParser.parse(Data(
+            (#"{"hook_event_name":"Notification","notification_type":"permission_prompt_v2","# +
+                #""message":"Claude needs your permission to use Bash"}"#).utf8,
+        ))
+        guard case let .notification(futureInfo)? = future else {
+            XCTFail("expected .notification, got \(String(describing: future))")
+            return
+        }
+        XCTAssertEqual(futureInfo.kind, .permission, "an unknown type falls through to the text rules")
+    }
+
+    func testPermissionRequestHookParsesToolName() {
+        let hook = HookParser.parse(Data(
+            #"{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm -rf build"}}"#.utf8,
+        ))
+        guard case let .permissionRequest(use)? = hook else {
+            XCTFail("expected .permissionRequest, got \(String(describing: hook))")
+            return
+        }
+        XCTAssertEqual(use.name, "Bash")
+        XCTAssertEqual(use.input["command"]?.stringValue, "rm -rf build")
+        // Malformed (no tool name) → dropped, never traps (the parallel Notification still blocks).
+        XCTAssertNil(HookParser.parse(Data(#"{"hook_event_name":"PermissionRequest"}"#.utf8)))
+    }
+
+    func testStopFailureHookParsesErrorMessage() {
+        let hook = HookParser.parse(Data(
+            (#"{"hook_event_name":"StopFailure","session_id":"s1","error_type":"api_error","# +
+                #""error_message":"API connection error"}"#).utf8,
+        ))
+        guard case let .stopFailure(info)? = hook else {
+            XCTFail("expected .stopFailure, got \(String(describing: hook))")
+            return
+        }
+        XCTAssertEqual(info.sessionID, "s1")
+        XCTAssertEqual(info.lastAssistantMessage, "API connection error")
+    }
+
     func testMalformedHookIsDroppedNotTrapped() {
         // validate-then-drop: garbage JSON body returns nil, never traps.
         XCTAssertNil(HookParser.parse(Fixtures.data("hook-malformed.json")))

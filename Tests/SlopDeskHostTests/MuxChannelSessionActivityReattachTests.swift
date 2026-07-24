@@ -127,6 +127,31 @@ final class MuxChannelSessionActivityReattachTests: XCTestCase {
         )
     }
 
+    // MARK: - type-27: the OSC-title busy/rest telltale fold (the sniffer-loop edge)
+
+    /// The sniffed title EDGE corroborates agent liveness through the session's fold: with claude
+    /// present, a Braille-spinner title emits a type-27 working, and the `✳` rest title emits the
+    /// idle demotion — the missed-Stop stuck-working corrector, end-to-end on control-out.
+    func testTitleFoldEmitsWorkingThenIdle() {
+        let session = makeSession()
+        session.foldForegroundSampleForTesting(name: "claude", at: 0)
+        drainControlOut(session)
+
+        session.foldTitleSampleForTesting(title: "⠧ tests running", at: 1)
+        XCTAssertEqual(
+            session.takeControlBatchForTesting(),
+            [.claudeStatus(state: 3, kind: 0, label: "")],
+            "the spinner title promotes the detected claude to working",
+        )
+
+        session.foldTitleSampleForTesting(title: "✳ Claude Code", at: 2)
+        XCTAssertEqual(
+            session.takeControlBatchForTesting(),
+            [.claudeStatus(state: 1, kind: 0, label: "")],
+            "the rest title demotes the stuck working back to idle",
+        )
+    }
+
     // MARK: - the common case: an ordinary idle reconnect adds no control chatter
 
     func testReattachQuietOnFreshIdleSession() {

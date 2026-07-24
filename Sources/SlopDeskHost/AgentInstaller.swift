@@ -29,14 +29,19 @@ public enum AgentInstaller {
 
     /// The Claude Code hook events we install (docs/41 §2.6). Each drives a ``ClaudeStatus``
     /// transition through the status machine: SessionStart→idle, UserPromptSubmit/PreToolUse/
-    /// PostToolUse→working, Notification→blocked, Stop→done, SessionEnd→none.
+    /// PostToolUse→working (PreToolUse of `AskUserQuestion`→blocked), PermissionRequest/
+    /// Notification→blocked, Stop/StopFailure→done, SessionEnd→none. Deliberately NOT installed:
+    /// SubagentStart/SubagentStop (a subagent completing after the main turn stopped must never
+    /// revive an idle pane — the herdr bug class) and PreCompact (no status meaning).
     public static let installedEvents = [
         "SessionStart",
         "UserPromptSubmit",
         "PreToolUse",
         "PostToolUse",
+        "PermissionRequest",
         "Notification",
         "Stop",
+        "StopFailure",
         "SessionEnd",
     ]
 

@@ -2062,3 +2062,41 @@ gates the shimmer + running title together; the terse busy reading ("Agent worki
 moves to the title's accessibility value. Both sidebars (macOS + iOS) split on `isBusyTier` at the
 row leaf; phase math is pure wall-clock against a fixed epoch, so every working row ticks in unison
 and re-renders can't reset a sweep.
+
+### Row status v4.8 — hooks tell the truth: live intent, structured blocks, title-corroborated liveness; shimmer is the AGENT's alone (2026-07-24)
+
+Three fidelity gaps closed after studying how the reference products supervise Claude Code
+(t3code drives the Agent SDK's in-process `canUseTool` gate; herdr keeps ONE identity hook and
+reads liveness off Claude Code's own OSC title — both refuse to let subagent events revive an
+idle pane):
+
+1. **The intent (wire 36) follows the session's LATEST titleable prompt.** The v4.5 latch kept
+   the FIRST prompt for the session's whole life, so a multi-turn session's title never followed
+   the work. `foldIntent` now re-derives on every real prompt; slash-commands / harness XML
+   neither re-title nor wipe. The wire shape is unchanged (change-edge dedupe already handled
+   re-pushes).
+2. **Blocked/failed states arrive structurally.** The installer adds `PermissionRequest` (the
+   structured permission dialog — kind 1, the gated tool names the label) and `StopFailure`
+   (API-error termination → done with the error text, instead of a pane stuck `working`);
+   `Notification` classification reads the structured `notification_type` field first
+   (`permission_prompt`, `idle_prompt`, `agent_needs_input`, `elicitation_dialog` block;
+   known informational types never false-block; unknown types still fall to the text
+   heuristics). `PreToolUse` of `AskUserQuestion` maps to waiting-for-input with the question
+   as the label — Claude ASKING is not Claude working (the t3code/herdr special case).
+   SubagentStart/SubagentStop stay deliberately uninstalled (the herdr bug class: a subagent
+   completing after the main turn stopped must never revive an idle pane).
+3. **Claude Code's own OSC title corroborates liveness.** The title the CLI writes (a Braille
+   spinner glyph while a turn runs, `✳ ` at rest) folds into the ONE detector on every sniffed
+   title edge: the spinner promotes a DETECTED claude to working, the rest prefix demotes ONLY
+   a live `.working` back to `.idle` — the missed-Stop stuck-shimmer corrector. A title never
+   conjures presence, never clears a hook block, never touches `.done`'s decay window, and
+   never opens the type-27 stream on an undetected pane.
+
+Sidebar reading refined with the states now trustworthy: the working shimmer is reserved for
+the AGENT tier (`.running`) — a running COMMAND's title (the command text, standing still) is
+signal enough, so `commandRunning`/`commandBusy` mount neither shimmer nor glyph and the slot
+keeps the shell label. The shimmer itself steps up: a thinking agent's title wears the PRIMARY
+ink (the brighter base lifts the row) and the dark band deepens (0.55 → 0.35) — the field
+verdict on v4.7 was "barely there". The header git line drops the ASCII-only constraint:
+`↑2 ↓1 +3 !4 ?5 ~1 $2` (the prompt-theme dialect — `~` replaces the misleading `=` for
+conflicts) behind an inline `arrow.trianglehead.branch` glyph.

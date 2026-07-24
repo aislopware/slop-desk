@@ -584,7 +584,10 @@ struct SidebarSectionHeaderRow: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                 if let detail = Self.detailLine(collapsed: collapsed, summary: summary) {
-                    Text(detail)
+                    // The tiny branch glyph rides inline in the text run (it inherits the line's
+                    // font + ink), marking the second line as git at a glance — the string itself
+                    // stays plain for the tooltip twin.
+                    Text("\(Image(systemSymbol: .arrowTriangleheadBranch)) \(detail)")
                         .font(.system(size: Slate.Typeface.small))
                         .foregroundStyle(Slate.State.header)
                         .lineLimit(1)
@@ -641,18 +644,20 @@ struct SidebarSectionHeaderRow: View {
     }
 
     /// The git line (the open header's second line AND the tooltip's second line):
-    /// `main >2 <1 +3 !4 ?5 =1 $2` — branch first, then only the NON-ZERO sigils in fixed order
-    /// (ahead/behind/staged/modified/untracked/conflicted/stash). `nil` for a non-repo summary (a
+    /// `main ↑2 ↓1 +3 !4 ?5 ~1 $2` — branch first, then only the NON-ZERO sigils in fixed order
+    /// (ahead/behind/staged/modified/untracked/conflicted/stash). The sigils speak the prompt-theme
+    /// dialect every git prompt already taught the eye: `↑`/`↓` divergence, `+` staged, `!`
+    /// modified, `?` untracked, `~` merge conflicts, `$` stash. `nil` for a non-repo summary (a
     /// plain directory has no git concept). Pure + static so the dialect is unit-pinned.
     static func gitLine(_ g: PaneGitSummary) -> String? {
         guard g.hasRepo else { return nil }
         var parts = [g.branch.isEmpty ? "detached" : g.branch]
-        if g.ahead > 0 { parts.append(">\(g.ahead)") }
-        if g.behind > 0 { parts.append("<\(g.behind)") }
+        if g.ahead > 0 { parts.append("↑\(g.ahead)") }
+        if g.behind > 0 { parts.append("↓\(g.behind)") }
         if g.staged > 0 { parts.append("+\(g.staged)") }
         if g.modified > 0 { parts.append("!\(g.modified)") }
         if g.untracked > 0 { parts.append("?\(g.untracked)") }
-        if g.conflicted > 0 { parts.append("=\(g.conflicted)") }
+        if g.conflicted > 0 { parts.append("~\(g.conflicted)") }
         if g.stash > 0 { parts.append("$\(g.stash)") }
         return parts.joined(separator: " ")
     }
@@ -755,17 +760,19 @@ private struct SidebarLiveRow: View {
             commandLine: runningCommand,
             title: shownTitle,
         )
-        // The BUSY tiers never reach the trailing slot: they become the title's working shimmer
-        // (`workingLabel` — also its AX value), and the slot keeps the shell label while running.
-        let busyLabel: String? = chrome.badge.flatMap {
-            $0.isBusyTier ? StatusPresentation.tabBadgeLabel($0) : nil
-        }
+        // The BUSY tiers never reach the trailing slot — the title carries the state. Only the
+        // AGENT tier (`.running`) animates: its title wears the working shimmer (also its AX
+        // value). A running COMMAND's title stands still — the command text itself already reads
+        // as "running", so motion is reserved for the agent's own thinking. Either way the slot
+        // keeps the shell label.
+        let busyLabel: String? = chrome.badge == .running
+            ? StatusPresentation.tabBadgeLabel(.running) : nil
         SlateTabRow(
             title: shownTitle,
             active: active,
             // The otty agent-integration look: an agent session's title wears the leading `✳`.
             agentMarker: agent,
-            badge: busyLabel == nil ? chrome.badge : nil,
+            badge: chrome.badge.flatMap { $0.isBusyTier ? nil : $0 },
             workingLabel: busyLabel,
             processLabel: RailRowsBuilder.shellLabel(chrome.processLabel),
             readOnly: chrome.readOnly,
@@ -827,11 +834,11 @@ private struct IOSSidebarLiveRow: View {
             kind: row.kind,
             fallback: fallbackTitle,
         )
-        // Same busy split as the macOS row: busy tiers shimmer the TITLE (with the terse reading as
-        // its AX value) and never mount a trailing glyph.
-        let busyLabel: String? = chrome.badge.flatMap {
-            $0.isBusyTier ? StatusPresentation.tabBadgeLabel($0) : nil
-        }
+        // Same busy split as the macOS row: only the AGENT tier shimmers the TITLE (with the terse
+        // reading as its AX value); a running command's title stands still, and no busy tier
+        // mounts a trailing glyph.
+        let busyLabel: String? = chrome.badge == .running
+            ? StatusPresentation.tabBadgeLabel(.running) : nil
         HStack(spacing: 8) {
             Label {
                 if chrome.isEditing {
@@ -857,7 +864,7 @@ private struct IOSSidebarLiveRow: View {
                     .foregroundStyle(Slate.Text.secondary)
                     .accessibilityLabel("Read only")
             }
-            if let badge = chrome.badge, busyLabel == nil {
+            if let badge = chrome.badge, !badge.isBusyTier {
                 TabBadgeView(kind: badge)
             }
         }

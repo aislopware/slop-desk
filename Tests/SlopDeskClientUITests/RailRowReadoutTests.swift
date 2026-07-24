@@ -141,7 +141,7 @@ final class RailRowReadoutTests: XCTestCase {
         )
         XCTAssertEqual(
             SidebarSectionHeaderRow.tooltip(projectKey: "/Users/abner/w/api", summary: summary),
-            "/Users/abner/w/api\nmain >2 +1 !3",
+            "/Users/abner/w/api\nmain ↑2 +1 !3",
         )
         XCTAssertEqual(
             SidebarSectionHeaderRow.tooltip(projectKey: "/Users/abner/w/api", summary: nil),
@@ -160,7 +160,7 @@ final class RailRowReadoutTests: XCTestCase {
         )
         XCTAssertEqual(
             SidebarSectionHeaderRow.detailLine(collapsed: false, summary: summary),
-            "main >2 !3",
+            "main ↑2 !3",
         )
         XCTAssertNil(SidebarSectionHeaderRow.detailLine(collapsed: false, summary: nil))
         XCTAssertNil(SidebarSectionHeaderRow.detailLine(collapsed: true, summary: summary))
@@ -170,14 +170,15 @@ final class RailRowReadoutTests: XCTestCase {
         XCTAssertNil(SidebarSectionHeaderRow.trailingCount(collapsed: true, count: 0))
     }
 
-    /// The git line speaks the `__git_ps1` sigil dialect — branch first, only the NON-ZERO counts,
-    /// fixed order; a non-repo summary yields nothing; a repo with no branch reads "detached".
+    /// The git line speaks the prompt-theme sigil dialect (`↑↓ + ! ? ~ $`) — branch first, only the
+    /// NON-ZERO counts, fixed order; a non-repo summary yields nothing; a repo with no branch reads
+    /// "detached".
     func testGitLineDialect() {
         XCTAssertEqual(
             SidebarSectionHeaderRow.gitLine(PaneGitSummary(
                 hasRepo: true, branch: "main", ahead: 1, behind: 2, changedCount: 0,
             )),
-            "main >1 <2",
+            "main ↑1 ↓2",
         )
         XCTAssertEqual(
             SidebarSectionHeaderRow.gitLine(PaneGitSummary(

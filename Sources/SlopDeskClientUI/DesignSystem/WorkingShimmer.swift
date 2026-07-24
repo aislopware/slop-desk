@@ -1,7 +1,8 @@
-// WorkingShimmer — the sidebar's "in motion" reading: a low-contrast DARK band sweeping across the
-// row title's own ink, quantized into discrete steps so the sweep ticks mechanically instead of
-// gliding, with a rest beat between sweeps. The title text IS the indicator — a busy row spends no
-// trailing glyph on motion, so its slot keeps the shell label.
+// WorkingShimmer — the sidebar's "agent thinking" reading: a DARK band sweeping across the row
+// title's own ink, quantized into discrete steps so the sweep ticks mechanically instead of
+// gliding, with a rest beat between sweeps. The title text IS the indicator — a working row spends
+// no trailing glyph on motion, so its slot keeps the shell label. Reserved for the AGENT tier: a
+// plain running command's title stands still (the command text is signal enough).
 //
 // The recipe follows the production convention of coder/mux's sidebar (`.shimmer-text`: a darkened
 // band on the muted foreground, `steps(42)` sweep) and T3 Code's duty-cycled stepped pulses: the
@@ -27,8 +28,9 @@ enum WorkingShimmer {
     /// Half the band's width in unit text-widths — a wide, soft band reads calmer than a streak.
     static let bandHalfWidth = 0.18
     /// The band's ink multiplier — the band DARKENS the title toward the background; the resting
-    /// ink is the bright state, so the sweep reads as a shadow passing, not a shine.
-    static let dimOpacity = 0.55
+    /// ink is the bright state, so the sweep reads as a shadow passing, not a shine. Deep enough
+    /// to register at a glance (a fainter band read as "barely there" in the field).
+    static let dimOpacity = 0.35
 
     /// The `TimelineView` cadence — one tick per band step while a row is working.
     static var tick: TimeInterval { sweepDuration / Double(sweepSteps) }

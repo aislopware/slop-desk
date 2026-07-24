@@ -140,8 +140,10 @@ public struct EventBuilder {
 
         case .userPromptSubmit,
              .preToolUse,
+             .permissionRequest,
              .notification,
              .stop,
+             .stopFailure,
              .sessionEnd:
             // W8 detection-only signals. These drive the `SlopDeskAgentDetect` coarse
             // state machine (working / blocked / done / none) via the W10 adapter, which

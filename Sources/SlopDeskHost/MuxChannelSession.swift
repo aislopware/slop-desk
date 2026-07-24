@@ -863,6 +863,20 @@ final class MuxChannelSession: @unchecked Sendable {
         if let newStatus { notifyAgentStatusChanged(newStatus) }
     }
 
+    /// Folds one sniffed OSC 0/2 title through the detector and enqueues the resulting type-27
+    /// (the detector dedupes — an unchanged status triple emits nothing). The title is Claude
+    /// Code's own busy/rest telltale; the machine's conservative precedence decides what (if
+    /// anything) it changes. Split from the sniffer loop so tests drive the pure fold with an
+    /// injected clock.
+    private func foldTitleSample(title: String, at now: TimeInterval) {
+        agentDetectLock.lock()
+        let emission = agentDetector.title(title, at: now)
+        let newStatus = emission.status != nil ? agentDetector.status : nil
+        agentDetectLock.unlock()
+        if !emission.isEmpty { enqueueControl(emission.messages) }
+        if let newStatus { notifyAgentStatusChanged(newStatus) }
+    }
+
     /// Probes the PTY master's termios `ECHO` flag via the thin ``PTYEchoProbe`` shim,
     /// folds it through the pure ``EchoModeDetector``, and enqueues a type-31 ``WireMessage/inputEcho``
     /// on the CONTROL sender on an edge (the detector dedupes — an unchanged echo state emits nothing).
@@ -1544,6 +1558,13 @@ final class MuxChannelSession: @unchecked Sendable {
                 titleLock.lock()
                 _currentTitle = t
                 titleLock.unlock()
+                // Agent-detection: the title carries Claude Code's own busy/rest telltale (the
+                // Braille spinner / `✳` prefix) — fold the EDGE into the ONE detector (the sniffer
+                // dedupes titles, so this fires only on a real change; the fold is a lock + a pure
+                // reduce, cheap enough for the read loop). Gated like every other detection input.
+                if agentDetectEnabled {
+                    foldTitleSample(title: t, at: ProcessInfo.processInfo.systemUptime)
+                }
             }
             // Agent-control: latch the freshest `133;D;<code>` exit so `list-panes` can answer
             // `lastExitCode` even with blocks tracking off. A code-less `D` keeps the prior latch
@@ -2524,6 +2545,12 @@ final class MuxChannelSession: @unchecked Sendable {
     /// is provable headlessly via ``takeControlBatchForTesting()``.
     func foldForegroundSampleForTesting(name: String, at now: TimeInterval) {
         foldForegroundSample(name: name, at: now)
+    }
+
+    /// Drives the OSC-title detection fold (the exact code the sniffer loop runs on a title edge)
+    /// with an injected title/clock, so the title-corroboration truth is provable headlessly.
+    func foldTitleSampleForTesting(title: String, at now: TimeInterval) {
+        foldTitleSample(title: title, at: now)
     }
 
     func reestablishActivityOnReattachForTesting() { reestablishActivityOnReattach() }
