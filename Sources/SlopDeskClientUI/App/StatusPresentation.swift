@@ -72,8 +72,8 @@ enum StatusPresentation {
     /// A `needsAttention` state's HUE on the hue budget: amber = act-now (a question waits), red
     /// = broken, green = unread-done. `nil` for every non-attention kind. The sidebar row's TITLE
     /// never recolours — this ink is worn by the row's trailing ring mark
-    /// (``statusDot(working:badge:)``), the collapsed-group roll-up count
-    /// (``attentionRollupInk(_:)``) and the titlebar attention pip, so every surface names one
+    /// (``statusDot(working:badge:)``) and the collapsed-group roll-up count
+    /// (``attentionRollupInk(_:)``), so every surface names one
     /// pane's state in the same hue. Everything holds STILL (MERIDIAN's hard-cut ethos: nothing
     /// in the rail animates).
     static func attentionInk(_ kind: TabBadgeKind) -> Color? {

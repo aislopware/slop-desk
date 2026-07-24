@@ -2576,3 +2576,43 @@ round 6's hover-swap (folder at rest, chevron on approach); the follow-up verdic
 lone folder still reads bare — so the header now wears the full otty trio, chevron AND folder
 always visible before the name (the name indents past its rows again; the hover-swap died with
 its `hovering` state). Client-only; no wire change.
+
+### Round 8 — the mark returns: T3 Code's dashed ring, static (2026-07-24)
+
+Round 4's "no indicator" verdict is reversed by request: with the trailing slot holding only
+text, the rail read lopsided — the rows wanted a small fixed-width mark back at the right edge,
+and the reference this time was T3 Code's sidebar. The first pass ported the WRONG generation:
+Sidebar V1's pulsing dot (`animate-status-pulse`), rejected on sight — a blinking dot is exactly
+the template tell the footer round already named. The CURRENT `SidebarV2` renders a STATIC dashed
+circle (lucide `CircleDashedIcon`) for in-flight work, so the shipped mark is that: an 8-dash
+ring whose dash period divides the circumference exactly (no seam), a 10pt fixed footprint at the
+row's trailing edge, nothing animated. Working agent = accent (keyed on the RAW `.working`
+status, the same route as the `.running` badge tier); running command = muted secondary. The
+V1-vs-V2 confusion is the round's lesson: port the source's CURRENT surface, verified against the
+clone, not a remembered screenshot.
+
+### Rounds 9–10 — one shape, hue is the grammar; the title goes neutral (2026-07-24)
+
+Round 9 killed the two survivors of the V1 misread: the solid "act-now" dot (SidebarV2's own
+status ladder renders `icon: null` for approval/input/failed — the colored label is the whole
+signal there) and the title's `WorkingShimmer` (with a mark present, motion on the text was doing
+the same job twice — the component and its tests are deleted; nothing in the rail animates).
+Round 10 then took the last step: the INK DIALECT on titles (round 4's core idea) retires. Every
+state renders as the SAME dashed ring and only the HUE names it — accent working, muted busy,
+green unread-finish, amber question, red failure — and the title never recolours (the neutral
+ladder; attention keeps only the `.medium` weight bump, the mail-unread idiom). The solid
+done-ring lost to consistency on review, so done rings dashed too — one shape everywhere.
+`StatusDotStyle` collapses to an ink; `attentionInk` survives as the hue map the mark and the
+collapsed-group rollup count share.
+
+### Round 11 — attention leaves the titlebar (2026-07-24)
+
+The titlebar's amber pip (and the NEEDS ATTENTION section inside its `⋯` menu) predate the ring
+marks; with the sidebar now naming every waiting pane in place, a second attention surface on the
+content side was duplication. Both are deleted — the centred title is bare at rest, and the menu
+opens straight at WORKING DIRECTORY. The unseen-attention QUEUE underneath
+(`WorkspaceStore.unseenAttentionPanes`) is untouched: ⌘⇧U's visited-set walk still rides it (its
+tests renamed to `UnseenAttentionQueueTests`, every behavior pin kept). Cascade deletions with
+the last consumer gone: `SlateStatusDot`, `SlatePopoverRow`'s title-ink override, the titlebar
+snapshot fixture — and, in the follow-up audit sweep, the entry's host-label field (read only by
+the deleted menu row) leaves `UnseenAttentionEntry`; `since` stays, it orders the queue.

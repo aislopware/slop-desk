@@ -1,7 +1,7 @@
 // SlateComponents — the reusable chrome component kit on the token layer.
 //
 // Small, composable pieces factored out of the chrome so every surface stays consistent and new views are
-// quick to assemble: a status dot, the terminal-dialect `StatusGlyph` instrument, a key/value row, a
+// quick to assemble: the terminal-dialect `StatusGlyph` instrument, a key/value row, a
 // pill/badge, and an `.slateCard()` surface modifier.
 // All built on `Slate.*` tokens + `SlateTheme`. See also SlateControls (`SlatePlateButton`), SlateRow
 // (`SlateListRow` / `SlateSectionHeader`) and SlateMonogram (the host-identity plate).

@@ -3038,7 +3038,7 @@ public final class WorkspaceStore {
     public internal(set) var paneCompletedAt: [PaneID: Date] = [:]
 
     /// RUNTIME-ONLY per-pane "when did this pane last see an attention-relevant edge" mirror — the `since`
-    /// FALLBACK for the titlebar dot's NEEDS-ATTENTION breakdown (``UnseenAttentionEntry/since``) when no
+    /// FALLBACK for the unseen-attention queue's age ordering (``UnseenAttentionEntry/since``) when no
     /// clean-completion stamp exists (a BLOCKED `needsPermission` agent / a `.failure` badge never stamps
     /// ``paneCompletedAt``). Stamped by the ``setAgentStatus(_:for:at:)`` chokepoint (genuine transitions
     /// only) and the ``setCompletionBadge(_:for:at:)`` set-edge. Per-PANE (not per-tab), so a tab-level

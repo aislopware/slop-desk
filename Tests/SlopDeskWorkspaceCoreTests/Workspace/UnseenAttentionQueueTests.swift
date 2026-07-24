@@ -144,11 +144,11 @@ final class UnseenAttentionQueueTests: XCTestCase {
         XCTAssertTrue(store.hasUnseenAttention, "the awaiting-input gate is independent and still on")
     }
 
-    // MARK: - the per-pane breakdown (the title menu's NEEDS-ATTENTION section)
+    // MARK: - the per-pane breakdown (the queue's entry order)
 
     /// ``WorkspaceStore/unseenAttentionPanes`` lists the waiting panes BLOCKED-FIRST (awaitingInput, then
     /// error, then the unread finishes), traversal-stable within each class — the ``AttentionJump``
-    /// philosophy — and carries each pane's resolved badge so the menu row can show the right glyph.
+    /// philosophy — and carries each pane's resolved badge, so ⌘⇧U's walk steps in urgency order.
     func testUnseenAttentionPanesRanksBlockedFirst() throws {
         let (store, focused, second) = try makeStoreWithBackgroundPane()
         store.splitActivePane(axis: .horizontal, kind: .terminal)
@@ -176,17 +176,15 @@ final class UnseenAttentionQueueTests: XCTestCase {
         XCTAssertEqual(store.unseenAttentionPanes.map(\.badge), [.error, .finished])
     }
 
-    /// Each entry carries the pane's host agent LABEL (the type-27 blocking prompt) and the instant it
-    /// entered attention — the completion stamp for a done/success, else the pane's attention-edge stamp
-    /// (`paneAttentionAt`, written by the same status edge) — so the menu row can show WHAT it wants and
-    /// for HOW long. Injectable dates; no wall clock in the assertions.
-    func testEntriesCarryLabelAndSince() throws {
+    /// Each entry carries the instant the pane entered attention — the completion stamp for a
+    /// done/success, else the pane's attention-edge stamp (`paneAttentionAt`, written by the same status
+    /// edge) — the age evidence the queue's within-rank ordering sorts by. Injectable dates; no wall
+    /// clock in the assertions.
+    func testEntriesCarrySince() throws {
         let (store, _, background) = try makeStoreWithBackgroundPane()
         let blockedAt = Date(timeIntervalSinceReferenceDate: 7000)
-        store.setAgentLabel("Allow Bash(npm install)?", for: background)
         store.setAgentStatus(.needsPermission, for: background, at: blockedAt)
         let blocked = try XCTUnwrap(store.unseenAttentionPanes.first)
-        XCTAssertEqual(blocked.label, "Allow Bash(npm install)?", "the host label rides the entry")
         XCTAssertEqual(blocked.since, blockedAt, "a blocked agent's since = the status-edge attention stamp")
 
         // An agent DONE stamps `paneCompletedAt` — that exact instant wins over the attention stamp.
@@ -196,15 +194,14 @@ final class UnseenAttentionQueueTests: XCTestCase {
         XCTAssertEqual(done.since, doneAt, "a finish's since = the completion stamp")
     }
 
-    /// A pane with no label and no stamps (a manual CLI override) lists with nil label/since — the view
-    /// falls back to its per-badge caption and shows no age.
-    func testManualOverrideEntryHasNoLabelOrSince() throws {
+    /// A pane with no stamps (a manual CLI override) lists with a nil since — no age evidence, so it
+    /// sorts after every dated entry of the same rank.
+    func testManualOverrideEntryHasNoSince() throws {
         let store = makeStore()
         let firstTab = try XCTUnwrap(store.tree.activeSession?.tabs.first?.id)
         store.newTab(kind: .terminal)
         store.setTabBadgeOverride(.error, for: firstTab)
         let entry = try XCTUnwrap(store.unseenAttentionPanes.first)
-        XCTAssertNil(entry.label)
         XCTAssertNil(entry.since)
     }
 

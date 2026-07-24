@@ -279,7 +279,7 @@ final class AttentionTests: XCTestCase {
         XCTAssertEqual(store.tree.activeSession?.activeTab?.activePane, active, "no jump — focus unchanged")
     }
 
-    /// ⌘⇧U now reads ``WorkspaceStore/unseenAttentionPanes`` — the SAME list the title menu renders — as its
+    /// ⌘⇧U reads ``WorkspaceStore/unseenAttentionPanes`` — the badge-gated unseen-attention queue — as its
     /// ONE shared source, not the ``ClaudeStatus``-only ``AttentionJump``. A failed-command `.error` badge
     /// (``WorkspaceStore/panePendingCompletion``, whose `agentStatus` stays `.none`) is reachable as a
     /// result, where the old `AttentionJump`-only selector could never see it.

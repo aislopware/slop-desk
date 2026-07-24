@@ -235,7 +235,6 @@ public extension WorkspaceStore {
                         found.append(UnseenAttentionEntry(
                             pane: paneID,
                             badge: badge,
-                            label: agentLabel(for: paneID),
                             since: paneCompletedAt[paneID] ?? paneAttentionAt[paneID],
                         ))
                     }
@@ -262,7 +261,6 @@ public extension WorkspaceStore {
                     found.append(UnseenAttentionEntry(
                         pane: paneID,
                         badge: badge,
-                        label: agentLabel(for: paneID),
                         since: paneCompletedAt[paneID] ?? paneAttentionAt[paneID],
                     ))
                 }
@@ -479,27 +477,24 @@ final class AttentionWalkBox {
 public struct UnseenAttentionEntry: Equatable, Sendable {
     public let pane: PaneID
     public let badge: TabBadgeKind
-    /// The host-provided agent label (the type-27 blocking prompt / last assistant line), when present —
-    /// the row's second line ("Allow Bash(npm install)?"). `nil` ⇒ the view shows a per-badge caption.
-    public let label: String?
     /// The best-known instant the pane ENTERED attention — the completion stamp
     /// (``WorkspaceStore/paneCompletedAt``) when one exists, else the pane's attention-edge stamp
     /// (``WorkspaceStore/paneAttentionAt``, stamped by the same agent-status/completion edges). `nil`
-    /// when neither is known (e.g. a manual CLI badge override) — the view then shows no age.
+    /// when neither is known (e.g. a manual CLI badge override) — a dated entry then outranks it
+    /// within the same urgency rank.
     public let since: Date?
 
-    public init(pane: PaneID, badge: TabBadgeKind, label: String? = nil, since: Date? = nil) {
+    public init(pane: PaneID, badge: TabBadgeKind, since: Date? = nil) {
         self.pane = pane
         self.badge = badge
-        self.label = label
         self.since = since
     }
 }
 
 private extension TabBadgeKind {
-    /// The urgency rank for the NEEDS-ATTENTION list: blocked (answer it) before a failure (read it)
+    /// The urgency rank for the unseen-attention queue: blocked (answer it) before a failure (read it)
     /// before an unread finish (skim it) — the ``AttentionJump`` ordering philosophy. Non-attention kinds
-    /// never reach the list; their rank is the total-switch tail.
+    /// never reach the queue; their rank is the total-switch tail.
     var attentionRank: Int {
         switch self {
         case .awaitingInput: 0
