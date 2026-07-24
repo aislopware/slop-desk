@@ -373,9 +373,8 @@ public struct WorkspaceRootView: View {
             )
         }
         ToolbarItem(placement: .primaryAction) {
-            if let symbol = StatusPresentation.agentSymbol(activeAgentStatus) {
-                Image(systemName: symbol)
-                    .foregroundStyle(StatusPresentation.agentTint(activeAgentStatus))
+            if let reading = StatusPresentation.agentReading(activeAgentStatus) {
+                StatusRing(reading: reading, tint: StatusPresentation.agentTint(activeAgentStatus))
                     .accessibilityLabel("Agent \(StatusPresentation.agentLabel(activeAgentStatus))")
             }
         }
