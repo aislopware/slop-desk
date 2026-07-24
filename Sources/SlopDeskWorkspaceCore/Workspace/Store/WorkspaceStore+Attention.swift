@@ -52,6 +52,16 @@ public extension WorkspaceStore {
         if status == .done {
             paneCompletedAt[id] = date
             armCompletionFlashDecay()
+            // UNREAD latch: a turn finishing while the user is NOT watching stays marked until the
+            // pane is visited — the host's own done→idle decay (seconds) must not take the badge
+            // with it. A finish the user watched happen (any split of the active tab / key
+            // satellite) is pre-seen: it still gets the brief `.completed` flash via the live
+            // `.done` status, but no sticky unread marker (t3code/herdr both pin this rule).
+            if !isSourcePaneVisible(id) { paneUnseenDone.insert(id) }
+        } else if status == .working || status == .needsPermission {
+            // The agent moved on — new activity supersedes the unread finish (herdr: any
+            // non-idle transition marks the pane seen).
+            paneUnseenDone.remove(id)
         }
     }
 
@@ -141,6 +151,7 @@ public extension WorkspaceStore {
     /// acknowledges unread output, it never fakes-away a still-active signal (and NEVER an approval gate).
     func clearAgentBadge(_ id: PaneID) {
         setCompletionBadge(nil, for: id)
+        paneUnseenDone.remove(id)
         if agentStatus(for: id) == .done { setAgentStatus(.idle, for: id) }
     }
 
@@ -208,6 +219,7 @@ public extension WorkspaceStore {
                                 foregroundProcess: paneForegroundProcess[paneID],
                                 completionFreshness: .settled,
                                 progress: progress(for: paneID),
+                                unseenAgentDone: paneUnseenDone.contains(paneID),
                                 agentGates: agentBadgeGates(for: paneID),
                                 commandGates: commandBadgeGates,
                             )
@@ -235,6 +247,7 @@ public extension WorkspaceStore {
                     foregroundProcess: paneForegroundProcess[paneID],
                     completionFreshness: .settled,
                     progress: progress(for: paneID),
+                    unseenAgentDone: paneUnseenDone.contains(paneID),
                     agentGates: agentBadgeGates(for: paneID),
                     commandGates: commandBadgeGates,
                 )

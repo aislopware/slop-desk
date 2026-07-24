@@ -55,6 +55,32 @@ final class BackgroundCompletionWiringTests: XCTestCase {
         XCTAssertEqual(store.pendingCompletion(for: second), .success, "a long background success badges")
     }
 
+    // MARK: - programTitle: the freshness gate (title stamped at-or-after the command start)
+
+    /// `programTitle(for:)` yields the pane's OSC title ONLY when the running program asserted it —
+    /// the title stamp is at-or-after the command-start stamp. A title left behind by an earlier
+    /// program (stamp predates the current command) never resurfaces; missing stamps yield nil.
+    func testProgramTitleRequiresFreshStamp() throws {
+        let store = makeStore()
+        let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
+        store.tree = WorkspaceTreeOps.updatingSpec(paneID, in: store.tree) { spec in
+            spec.lastKnownTitle = "main.swift - NVIM"
+        }
+
+        XCTAssertNil(store.programTitle(for: paneID), "no stamps → no program title")
+
+        let commandStart = Date()
+        store.paneCommandStartedAt[paneID] = commandStart
+        store.paneTitleAt[paneID] = commandStart.addingTimeInterval(-5)
+        XCTAssertNil(store.programTitle(for: paneID), "a title predating the command is a leftover")
+
+        store.paneTitleAt[paneID] = commandStart.addingTimeInterval(1)
+        XCTAssertEqual(
+            store.programTitle(for: paneID), "main.swift - NVIM",
+            "a title the running program asserted is fresh",
+        )
+    }
+
     // MARK: - rollup: failure dominates success
 
     func testRollupFailureDominatesSuccess() throws {

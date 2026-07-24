@@ -2178,3 +2178,53 @@ even when it repeats the header. "Terminal" now appears only while the pane has 
 - The OS-banner defaults are unchanged: app frontmost + `Notify While Foreground = Off` still
   suppresses every banner; a backgrounded app still always delivers (that is what notifications
   are for).
+
+## Agent liveness in the sidebar: shimmer keys on RAW status, done is CLIENT-owned unreadness, titles trust the program (2026-07-24)
+
+Field report against a live claude session: no shimmer while the agent thinks, no done marker
+after the turn ends (despite the OS notification firing), an idle shell wearing a meaningless
+"zsh" trailing label, and `vi .` out-titling nvim's own title. Root-caused against the actual
+sources of herdr (`ogulcancelik/herdr`) and t3code (`pingdotgg/t3code`) rather than guessed —
+both converge on the same model, now adopted:
+
+- **Decision (resolver): the AGENT finish outranks the busy tiers.** `TabBadgeResolver` checks
+  `agent == .done` (and the new `unseenAgentDone` latch) BEFORE `progress`/`isBusy`. The `claude`
+  process holds the shell's OSC-133 block open for its entire interactive lifetime, so `isBusy`
+  is true for hours; with the old order the completed/finished branch was unreachable on a live
+  agent pane — the green check could literally never show. A plain COMMAND's `.success` stays
+  BELOW the busy tiers (there a newly-running command genuinely supersedes the previous exit).
+  Consequence deliberately accepted: an agent finish now also outranks the passive privilege
+  badges (cup/shield) — attention over rest.
+- **Decision (store): "done" is UNREAD-COMPLETION, owned by the client.** The host's status
+  machine decays `done → idle` after seconds — correct for "what is claude doing", useless for
+  "has the user seen it". New `WorkspaceStore.paneUnseenDone` latches at the `.done` edge when
+  the pane is NOT visible (`isSourcePaneVisible` — the same tab-level visibility the
+  notification gate uses; a finish you watched happen is pre-seen and only flashes), survives
+  the host's idle push, and clears ONLY on visiting (the existing `selectTab`/`clearAgentBadge`
+  acknowledge paths) or on new agent activity (`.working`/`.needsPermission`). This is t3code's
+  `hasUnseenCompletion` (`completedAt > lastVisitedAt`, cleared by opening the thread, Done shows
+  indefinitely) and herdr's `Idle && !seen` (seen set by viewing the tab, no timers) — "done" is
+  a bit ORTHOGONAL to status, not a fifth state to keep alive host-side.
+- **Decision (render): the working shimmer keys on the RAW `.working` status,** not the gated
+  badge. "Badge while processing" (default OFF) masks `.working` out of the badge resolver; the
+  V4.8 shimmer gate read that gated badge, so every default-settings install rendered a thinking
+  agent exactly like an idle shell — the report "no shimmer while claude thinks". The toggle
+  governs the badge GLYPH; the shimmer is the title's own affordance (t3code ships working-state
+  motion unconditionally). Bonus: the shimmer now starts the moment `UserPromptSubmit` folds
+  (t3code flips to working on submit), with no busy-reveal delay.
+- **Decision (trailing slot): bare login shells show NOTHING.** The slot now shares the title's
+  `processDisplayName` suppression (`shellLabel` deleted) — an idle row labelled "zsh" says as
+  little as "Terminal" did; herdr never shows a shell name anywhere. A real foreground program
+  (`claude`, `vim`, `ping`) still labels the slot.
+- **Decision (title): a FRESH program-set OSC title beats the raw command line.** New
+  `liveRowTitle` input `programTitle`: the pane's OSC title, surfaced only where the RUNNING rung
+  would title the row, and only when the title was stamped AT-OR-AFTER the current command's
+  start (`paneTitleAt` vs `paneCommandStartedAt` — a title left behind by an exited program
+  never resurfaces on the next command). One leading agent-activity glyph (braille frame /
+  `·✢✳✶✻✽`, herdr's `stripped_terminal_title` rule) is stripped. A FOLDER structural title still
+  never yields. nvim ships `notitle` by default — the host-side nvim config now sets
+  `title`+`titlestring`, so `vi .` rows read "file (dir) - nvim".
+
+Client-only (no wire change, no hostd redeploy, golden untouched). NOT adopted, recorded for
+later: herdr's screen-region rule engine (blocked-form regex, transcript-viewer freeze rules) —
+our hook+OSC-title chain covers those edges today; revisit if hook drift appears.

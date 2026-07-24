@@ -701,6 +701,49 @@ final class RailRowBuilderTests: XCTestCase {
         )
     }
 
+    /// A FRESH program-set OSC title out-ranks the raw command line wherever the RUNNING rung would
+    /// title the row — nvim's "main.swift - NVIM" says more than `vi .` — while a program that sets
+    /// no title keeps the command line, and a FOLDER structural title still never yields.
+    func testLiveRowTitleProgramTitleBeatsRunningCommand() {
+        // Bare-running rung (empty structural title): the program's title wins.
+        XCTAssertEqual(
+            RailRowsBuilder.liveRowTitle(
+                structuralTitle: "", userRenamed: false, isAgent: false,
+                intent: nil, runningCommand: "vi .", programTitle: "main.swift - NVIM",
+                processTitle: nil, blocks: [], kind: .terminal, fallback: "Terminal",
+            ),
+            "main.swift - NVIM",
+        )
+        // The at-root upgrade branch (structural == program name): same precedence.
+        XCTAssertEqual(
+            RailRowsBuilder.liveRowTitle(
+                structuralTitle: "nvim", userRenamed: false, isAgent: false,
+                intent: nil, runningCommand: "vi .", programTitle: "main.swift - NVIM",
+                processTitle: "nvim", blocks: [], kind: .terminal, fallback: "Terminal",
+            ),
+            "main.swift - NVIM",
+        )
+        // No program title → the running command line titles as before.
+        XCTAssertEqual(
+            RailRowsBuilder.liveRowTitle(
+                structuralTitle: "", userRenamed: false, isAgent: false,
+                intent: nil, runningCommand: "vi .", programTitle: nil,
+                processTitle: nil, blocks: [], kind: .terminal, fallback: "Terminal",
+            ),
+            "vi .",
+        )
+        // A FOLDER structural title is an identity — it yields to neither the running command nor
+        // the program's title.
+        XCTAssertEqual(
+            RailRowsBuilder.liveRowTitle(
+                structuralTitle: "api", userRenamed: false, isAgent: false,
+                intent: nil, runningCommand: "vi .", programTitle: "main.swift - NVIM",
+                processTitle: "nvim", blocks: [], kind: .terminal, fallback: "Terminal",
+            ),
+            "api",
+        )
+    }
+
     /// The folder-name helper: leaf extraction, trailing-slash tolerance, root, blank → nil.
     func testCwdFolderName() {
         XCTAssertEqual(RailRowsBuilder.cwdFolderName("/Users/dev/slop-desk"), "slop-desk")

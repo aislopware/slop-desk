@@ -149,6 +149,63 @@ final class AgentBadgeStoreTests: XCTestCase {
         )
     }
 
+    // MARK: The unread agent-finish latch (`paneUnseenDone`)
+
+    /// The latch lifecycle: a `.done` edge on a pane the user is NOT watching latches; the host's own
+    /// done→idle decay does NOT clear it (the badge survives — the whole point); visiting the pane's
+    /// tab clears it. Revert-to-confirm-fail: without the latch, the `.idle` push would drop the badge
+    /// 8 s after every agent finish.
+    func testUnseenDoneLatchSurvivesDecayUntilVisited() throws {
+        let store = makeStore()
+        let backgroundPane = try firstPane(store)
+        store.newTab(kind: .terminal, launchGrace: .zero) // selects the NEW tab → pane 1 is background
+
+        store.setAgentStatus(.done, for: backgroundPane)
+        XCTAssertTrue(store.paneUnseenDone.contains(backgroundPane), "an unwatched finish latches")
+
+        // The host machine decays done → idle seconds later; the latch must survive the push.
+        store.setAgentStatus(.idle, for: backgroundPane)
+        XCTAssertTrue(store.paneUnseenDone.contains(backgroundPane), "the host decay never clears unreadness")
+        XCTAssertEqual(
+            TabBadgeGating.resolve(
+                agent: store.agentStatus(for: backgroundPane), completion: nil, isBusy: true,
+                foregroundProcess: nil,
+                unseenAgentDone: store.paneUnseenDone.contains(backgroundPane),
+                agentGates: .allOn, commandGates: .allOn,
+            ),
+            .finished,
+            "the rail still resolves the finished dot over the busy claude shell",
+        )
+
+        // Visiting the tab acknowledges every pane in it (the selectTab badge auto-clear).
+        store.selectTab(0)
+        XCTAssertFalse(store.paneUnseenDone.contains(backgroundPane), "visiting the tab clears the latch")
+    }
+
+    /// A finish the user WATCHED happen (the pane is visible — active tab, app active) never latches:
+    /// it still gets the brief `.completed` flash via the live `.done` status, but no sticky unread
+    /// marker (the t3code/herdr "watching = seen" rule).
+    func testDoneWhileVisibleDoesNotLatch() throws {
+        let store = makeStore()
+        let id = try firstPane(store) // the active tab's pane; isAppActive defaults true
+        store.setAgentStatus(.done, for: id)
+        XCTAssertFalse(store.paneUnseenDone.contains(id), "a watched finish is pre-seen")
+        XCTAssertEqual(store.agentStatus(for: id), .done, "the live status still flashes the checkmark")
+    }
+
+    /// New agent activity supersedes an unread finish: a latched pane entering `.working` (a fresh
+    /// prompt) drops the latch — the unread marker never lies about a turn the agent already moved past.
+    func testNewActivityClearsUnseenDoneLatch() throws {
+        let store = makeStore()
+        let backgroundPane = try firstPane(store)
+        store.newTab(kind: .terminal, launchGrace: .zero)
+
+        store.setAgentStatus(.done, for: backgroundPane)
+        XCTAssertTrue(store.paneUnseenDone.contains(backgroundPane))
+        store.setAgentStatus(.working, for: backgroundPane)
+        XCTAssertFalse(store.paneUnseenDone.contains(backgroundPane), "a new turn replaces the unread finish")
+    }
+
     // MARK: Manual per-tab badge override (the `tab badge --kind` CLI seam)
 
     private func firstTab(_ store: WorkspaceStore) throws -> TabID {

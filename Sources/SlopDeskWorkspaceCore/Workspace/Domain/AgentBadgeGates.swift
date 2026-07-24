@@ -125,6 +125,7 @@ public enum TabBadgeGating {
         foregroundProcess: String?,
         completionFreshness: TabBadgeResolver.CompletionFreshness = .settled,
         progress: PaneProgress? = nil,
+        unseenAgentDone: Bool = false,
         agentGates: AgentBadgeGates,
         commandGates: CommandBadgeGates,
     ) -> TabBadgeKind? {
@@ -152,6 +153,9 @@ public enum TabBadgeGating {
             foregroundProcess: foregroundProcess,
             completionFreshness: completionFreshness,
             progress: progress,
+            // The unread agent-finish latch is the same AGENT-completion family as `.done`, so the
+            // same "Badge when complete" toggle silences it.
+            unseenAgentDone: unseenAgentDone && agentGates.badgeWhenComplete,
         )
     }
 }

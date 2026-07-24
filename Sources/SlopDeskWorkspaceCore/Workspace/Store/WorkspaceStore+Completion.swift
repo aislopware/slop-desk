@@ -219,6 +219,20 @@ public extension WorkspaceStore {
         return isSourcePaneVisible(PaneID(raw: uuid))
     }
 
+    /// The pane's PROGRAM-SET title, but only while it is FRESH for the current foreground command:
+    /// the shell pushed an OSC title (wire 21, ``WorkspaceStore/paneTitleAt``) at-or-after the command
+    /// started (``WorkspaceStore/paneCommandStartedAt``) — i.e. the running program (nvim, claude, ssh)
+    /// asserted it, not a leftover from an earlier program. `nil` when no title, no stamps, or the title
+    /// predates the command — the sidebar's title chain then keeps the raw command line. The caller
+    /// strips agent glyph prefixes (``RailRowsBuilder`` `strippedProgramTitle`).
+    func programTitle(for id: PaneID) -> String? {
+        guard let stamped = paneTitleAt[id], let started = paneCommandStartedAt[id],
+              stamped >= started else { return nil }
+        let title = tree.spec(for: id)?.lastKnownTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let title, !title.isEmpty else { return nil }
+        return title
+    }
+
     /// Clears the badge on whatever leaf is the active one (called when the app returns active via the
     /// `isAppActive` didSet, and after a focus change in `reconcileTree`). A no-op when there is no active
     /// leaf or it carries no badge.

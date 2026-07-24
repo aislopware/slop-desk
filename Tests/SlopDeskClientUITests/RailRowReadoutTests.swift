@@ -118,18 +118,38 @@ final class RailRowReadoutTests: XCTestCase {
         XCTAssertEqual(question, "make check")
     }
 
-    // MARK: - The trailing shell label
+    // MARK: - The trailing slot suppresses bare shells
 
-    /// The row's resting trailing label keeps bare shells (`zsh` — the otty idle row wears its shell
-    /// name), basenames a path, and strips the login-shell `-` — unlike the TITLE fallback, which
-    /// suppresses shells.
-    func testShellLabelKeepsBareShells() {
-        XCTAssertEqual(RailRowsBuilder.shellLabel("zsh"), "zsh")
-        XCTAssertEqual(RailRowsBuilder.shellLabel("-zsh"), "zsh")
-        XCTAssertEqual(RailRowsBuilder.shellLabel("/usr/local/bin/claude"), "claude")
-        XCTAssertEqual(RailRowsBuilder.shellLabel(" vim \n"), "vim")
-        XCTAssertNil(RailRowsBuilder.shellLabel(nil))
-        XCTAssertNil(RailRowsBuilder.shellLabel("  "))
+    /// The trailing slot shares the TITLE's `processDisplayName` cleanup: a bare login shell shows
+    /// NOTHING (an idle row labelled "zsh" says as little as "Terminal" — herdr never shows a shell
+    /// name), while a real foreground program labels the slot.
+    func testTrailingSlotSuppressesBareShells() {
+        XCTAssertNil(RailRowsBuilder.processDisplayName("zsh"))
+        XCTAssertNil(RailRowsBuilder.processDisplayName("-zsh"))
+        XCTAssertEqual(RailRowsBuilder.processDisplayName("/usr/local/bin/claude"), "claude")
+        XCTAssertEqual(RailRowsBuilder.processDisplayName(" vim \n"), "vim")
+        XCTAssertNil(RailRowsBuilder.processDisplayName(nil))
+        XCTAssertNil(RailRowsBuilder.processDisplayName("  "))
+    }
+
+    // MARK: - The program-set title cleanup
+
+    /// `strippedProgramTitle` drops exactly ONE leading agent-activity glyph (braille spinner frame /
+    /// `·✢✳✶✻✽`, variation selector tolerated) when followed by whitespace/end — any other leading
+    /// symbol is user content and stays; whitespace-only / empty collapse to `nil`.
+    func testStrippedProgramTitleDropsOneAgentGlyph() {
+        XCTAssertEqual(RailRowsBuilder.strippedProgramTitle("⠙ Explain FEC recovery"), "Explain FEC recovery")
+        XCTAssertEqual(RailRowsBuilder.strippedProgramTitle("✳ topic"), "topic")
+        XCTAssertEqual(RailRowsBuilder.strippedProgramTitle("✳\u{FE0E} topic"), "topic")
+        XCTAssertEqual(RailRowsBuilder.strippedProgramTitle("main.swift - NVIM"), "main.swift - NVIM")
+        XCTAssertEqual(RailRowsBuilder.strippedProgramTitle("★ production"), "★ production")
+        XCTAssertEqual(
+            RailRowsBuilder.strippedProgramTitle("task ⠋ detail"), "task ⠋ detail",
+            "a glyph past the first character is content, not an activity prefix",
+        )
+        XCTAssertNil(RailRowsBuilder.strippedProgramTitle("✳"), "a bare glyph carries no title")
+        XCTAssertNil(RailRowsBuilder.strippedProgramTitle(nil))
+        XCTAssertNil(RailRowsBuilder.strippedProgramTitle("   "))
     }
 
     // MARK: - The project header's tooltip

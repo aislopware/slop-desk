@@ -95,13 +95,16 @@ public enum TabBadgeKind: Equatable, Sendable {
 /// **Fixed precedence** (distilled from `progress-state.md` + `parallel-tasks.md`):
 ///
 /// ```
-/// awaitingInput  >  error  >  running(agent)  >  commandRunning  >  commandBusy  >  sudo  >  caffeinate  >  completed/finished  >  nil
+/// awaitingInput  >  error  >  running(agent)  >  AGENT completed/finished  >  commandRunning  >
+///   commandBusy  >  sudo  >  caffeinate  >  COMMAND completed/finished  >  nil
 /// ```
 ///
 /// A working AGENT (``running``) outranks a program's progress report (``commandRunning``), which
 /// outranks the plain busy dot (``commandBusy``) — if a pane is somehow several, the most-informative
 /// signal wins. The activity tiers sit above the privilege badges (a running `sudo …` shows activity, not
-/// the shield).
+/// the shield). The AGENT finish sits ABOVE the busy tiers (the agent process itself keeps the shell
+/// busy for its whole lifetime — a finished turn must not be shadowed); a COMMAND's clean exit sits
+/// BELOW them (a newly-running command supersedes the previous exit).
 ///
 /// Headless + deterministic: no SwiftUI, no clock, no I/O. The only inputs are the agent verdict, the
 /// stored completion badge, the busy bit, and the (untrusted) foreground-process string — which is
@@ -146,6 +149,10 @@ public enum TabBadgeResolver {
     ///     ranked with a failed exit); an active ``PaneProgress/indeterminate``/``PaneProgress/determinate``
     ///     resolves to the ``running`` spinner — reusing the EXISTING tiers, no new badge kind. Outranks a
     ///     stale completion dot (progress-error sits at the error tier, above completed/finished).
+    ///   - unseenAgentDone: the client's UNREAD agent-finish latch (``WorkspaceStore/paneUnseenDone``) —
+    ///     true from an agent `.done` edge the user was not watching until the pane is visited. Keeps the
+    ///     finished marker alive across the host's own done→idle decay (the host forgets, the client
+    ///     remembers until seen — the t3code/herdr unread-completion model).
     /// - Returns: the badge to render, or `nil` when the row is all-clear.
     public static func badge(
         agent: ClaudeStatus,
@@ -154,6 +161,7 @@ public enum TabBadgeResolver {
         foregroundProcess: String?,
         completionFreshness: CompletionFreshness = .settled,
         progress: PaneProgress? = nil,
+        unseenAgentDone: Bool = false,
     ) -> TabBadgeKind? {
         // 1. Awaiting input — a blocked agent demands a human; highest urgency.
         if agent == .needsPermission { return .awaitingInput }
@@ -170,17 +178,33 @@ public enum TabBadgeResolver {
         // a working agent, never by the bare busy bit alone). Most-informative wins. (A progress `.error`
         // already returned at the error tier above, so `isRunning` here is exactly the "still going" states.)
         if agent == .working { return .running }
+
+        // 3a. Agent finish — the completed/finished marker for a FINISHED AGENT TURN (a live `.done`,
+        // or the client's unread latch outliving the host's done→idle decay). Deliberately ABOVE the
+        // busy tiers: the `claude` process keeps the shell's OSC-133 block open for its whole
+        // interactive lifetime, so `isBusy` stays true for hours — checked later, a finished turn
+        // would be shadowed by the busy dot forever and the green check could never show. An agent
+        // turn ending IS the completion signal; the agent process staying alive at its prompt is not
+        // "busy" in any sense the user cares about. (A plain COMMAND's `.success` stays below
+        // `isBusy` — there a newly-running command genuinely supersedes the previous exit.)
+        if agent == .done || unseenAgentDone {
+            switch completionFreshness {
+            case .fresh: return .completed
+            case .settled: return .finished
+            }
+        }
+
         if let progress, progress.isRunning { return .commandRunning }
         if isBusy { return .commandBusy }
 
         // 4 + 5. Privilege badges, only when the shell is at rest: sudo (shield) > caffeinate (coffee).
         if let privilege = privilegeBadge(forProcess: foregroundProcess) { return privilege }
 
-        // 6. Completed/finished — a clean exit, or an agent that just finished its turn. While the
-        // completion is FRESH it shows the brief `.completed` checkmark flash; once the caller reports
-        // it SETTLED it decays to the persistent `.finished` accent dot (the "unread output" marker,
-        // held until the tab is viewed). Freshness is an input — no clock here.
-        if completion == .success || agent == .done {
+        // 6. Completed/finished — a plain command's clean exit. While the completion is FRESH it shows
+        // the brief `.completed` checkmark flash; once the caller reports it SETTLED it decays to the
+        // persistent `.finished` accent dot (the "unread output" marker, held until the tab is
+        // viewed). Freshness is an input — no clock here.
+        if completion == .success {
             switch completionFreshness {
             case .fresh: return .completed
             case .settled: return .finished

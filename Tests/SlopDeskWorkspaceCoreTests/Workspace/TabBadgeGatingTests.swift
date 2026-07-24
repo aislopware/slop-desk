@@ -125,6 +125,31 @@ final class TabBadgeGatingTests: XCTestCase {
         )
     }
 
+    /// The UNREAD agent-finish latch is the same agent-completion family as `.done`: the agent
+    /// "when complete" gate silences it too, while the gate ON lets it fill a busy row (the
+    /// claude-process-keeps-the-shell-busy case).
+    func testUnseenDoneLatchFollowsAgentCompleteGate() {
+        let agentCompleteOff = AgentBadgeGates(
+            badgeWhileProcessing: false, badgeWhenComplete: false, badgeWhenAwaitingInput: true,
+        )
+        XCTAssertEqual(
+            TabBadgeGating.resolve(
+                agent: .idle, completion: nil, isBusy: true, foregroundProcess: nil,
+                unseenAgentDone: true, agentGates: .allOn, commandGates: .allOn,
+            ),
+            .finished,
+            "gate ON: the latch shows the settled dot over the busy shell",
+        )
+        XCTAssertEqual(
+            TabBadgeGating.resolve(
+                agent: .idle, completion: nil, isBusy: true, foregroundProcess: nil,
+                unseenAgentDone: true, agentGates: agentCompleteOff, commandGates: .allOn,
+            ),
+            .commandBusy,
+            "gate OFF: the latch is masked and the busy dot resumes",
+        )
+    }
+
     /// All gates ON is an identity pass-through for every signal source (no badge is wrongly dropped).
     func testAllGatesOnPassThrough() {
         XCTAssertEqual(

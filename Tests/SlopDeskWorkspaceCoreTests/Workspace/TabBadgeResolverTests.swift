@@ -7,7 +7,8 @@ import XCTest
 /// **fixed precedence** (most-urgent wins, distilled from `progress-state.md` + `parallel-tasks.md`):
 ///
 /// ```
-/// awaitingInput  >  error  >  running  >  sudo  >  caffeinate  >  completed/finished  >  nil
+/// awaitingInput  >  error  >  running  >  AGENT completed/finished  >  commandRunning  >
+///   commandBusy  >  sudo  >  caffeinate  >  COMMAND completed/finished  >  nil
 /// ```
 ///
 /// Headless: no SwiftUI, no clock, no socket — `badge(...)` is a pure static over plain values.
@@ -20,6 +21,7 @@ final class TabBadgeResolverTests: XCTestCase {
         foregroundProcess: String? = nil,
         completionFreshness: TabBadgeResolver.CompletionFreshness = .settled,
         progress: PaneProgress? = nil,
+        unseenAgentDone: Bool = false,
     ) -> TabBadgeKind? {
         TabBadgeResolver.badge(
             agent: agent,
@@ -28,6 +30,7 @@ final class TabBadgeResolverTests: XCTestCase {
             foregroundProcess: foregroundProcess,
             completionFreshness: completionFreshness,
             progress: progress,
+            unseenAgentDone: unseenAgentDone,
         )
     }
 
@@ -201,10 +204,44 @@ final class TabBadgeResolverTests: XCTestCase {
         XCTAssertEqual(badge(completion: .success, foregroundProcess: "sudo"), .sudo)
     }
 
-    /// Caffeinate beats completed when the shell is at rest.
-    func testCaffeinateWinsOverCompletedAtRest() {
+    /// Caffeinate beats a COMMAND's completed marker when the shell is at rest — but an AGENT
+    /// turn-finish is attention-class and outranks the passive cup.
+    func testCaffeinateWinsOverCommandCompletedAtRest() {
         XCTAssertEqual(badge(completion: .success, foregroundProcess: "caffeinate"), .caffeinate)
-        XCTAssertEqual(badge(agent: .done, foregroundProcess: "caffeinate"), .caffeinate)
+        XCTAssertEqual(badge(agent: .done, foregroundProcess: "caffeinate"), .finished)
+    }
+
+    // MARK: - The agent finish vs the busy shell (the claude-process-keeps-the-shell-busy case)
+
+    /// The load-bearing fix: `claude` itself holds the shell's OSC-133 block open for its whole
+    /// interactive lifetime, so `isBusy` is true for hours after a turn finishes. The AGENT finish
+    /// must outrank the busy tiers or the green check could never show on a live claude pane.
+    func testAgentDoneBeatsBusyShell() {
+        XCTAssertEqual(badge(agent: .done, isBusy: true), .finished)
+        XCTAssertEqual(badge(agent: .done, isBusy: true, completionFreshness: .fresh), .completed)
+        XCTAssertEqual(
+            badge(agent: .done, isBusy: true, progress: .indeterminate), .finished,
+            "the finish also beats an OSC 9;4 progress spinner — attention over motion",
+        )
+    }
+
+    /// The client's UNREAD latch keeps the finished marker after the host's own done→idle decay:
+    /// agent `.idle` + `unseenAgentDone` still resolves the accent dot, busy shell or not.
+    func testUnseenDoneLatchSurvivesHostDecay() {
+        XCTAssertEqual(badge(agent: .idle, unseenAgentDone: true), .finished)
+        XCTAssertEqual(badge(agent: .idle, isBusy: true, unseenAgentDone: true), .finished)
+        XCTAssertEqual(
+            badge(agent: .idle, isBusy: true, completionFreshness: .fresh, unseenAgentDone: true),
+            .completed,
+        )
+    }
+
+    /// The latch never outranks live activity or attention: a working agent shows `.running`, a
+    /// blocked one the hand, a failure the alert — the unread finish only fills the quiet states.
+    func testUnseenDoneLatchLosesToLiveStates() {
+        XCTAssertEqual(badge(agent: .working, unseenAgentDone: true), .running)
+        XCTAssertEqual(badge(agent: .needsPermission, unseenAgentDone: true), .awaitingInput)
+        XCTAssertEqual(badge(completion: .failure, unseenAgentDone: true), .error)
     }
 
     /// The privilege badges sit BELOW every activity tier: a busy shell with a `caffeinate`/`sudo`

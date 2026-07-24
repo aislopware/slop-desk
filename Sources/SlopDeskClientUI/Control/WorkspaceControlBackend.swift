@@ -520,6 +520,7 @@ final class WorkspaceControlBackend: ClientControlBackend {
             foregroundProcess: store.paneForegroundProcess[paneID],
             completionFreshness: store.completionFreshness(forPane: paneID),
             progress: store.progress(for: paneID),
+            unseenAgentDone: store.paneUnseenDone.contains(paneID),
             agentGates: store.agentBadgeGates(for: paneID),
             commandGates: store.commandBadgeGates,
         )

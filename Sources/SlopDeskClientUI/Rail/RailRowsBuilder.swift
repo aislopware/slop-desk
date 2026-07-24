@@ -214,6 +214,7 @@ enum RailRowsBuilder {
             foregroundProcess: processLabel,
             completionFreshness: store.completionFreshness(forPane: paneID),
             progress: store.progress(for: paneID),
+            unseenAgentDone: store.paneUnseenDone.contains(paneID),
             agentGates: store.agentBadgeGates(for: paneID),
             commandGates: store.commandBadgeGates,
         )
@@ -354,16 +355,24 @@ enum RailRowsBuilder {
         return name
     }
 
-    /// The row's resting TRAILING label — the foreground process basename verbatim, bare shells
-    /// INCLUDED (`zsh`): the otty idle row wears its shell name in the trailing slot
-    /// (`tab-badge.png`), unlike ``processDisplayName(_:)`` which suppresses shells because a TITLE
-    /// "zsh" says nothing. Pure + static so the cleanup is unit-pinned.
-    static func shellLabel(_ label: String?) -> String? {
-        guard let label else { return nil }
-        var name = label.trimmingCharacters(in: .whitespacesAndNewlines)
-        if name.hasPrefix("-") { name.removeFirst() } // login-shell argv0 convention (`-zsh`)
-        name = name.split(separator: "/").last.map(String.init) ?? name
-        return name.isEmpty ? nil : name
+    /// A PROGRAM-SET pane title cleaned for the sidebar row: one leading agent-activity glyph (any
+    /// braille spinner frame U+2800–U+28FF, or one of `·✢✳✶✻✽`, an optional variation selector, then
+    /// whitespace/end) is stripped — the glyph is claude's activity channel, already spoken by the
+    /// shimmer/badge — while any other leading symbol (`★ prod`) is user content and stays. Whitespace
+    /// trimmed; empty → `nil` so the caller's chain falls through. The herdr `stripped_terminal_title`
+    /// rule. Pure + static so the cleanup is unit-pinned.
+    static func strippedProgramTitle(_ title: String?) -> String? {
+        guard let title else { return nil }
+        var text = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let first = text.first, let scalar = first.unicodeScalars.first,
+           (0x2800...0x28FF).contains(scalar.value) || "·✢✳✶✻✽".unicodeScalars.contains(scalar)
+        {
+            let rest = text.dropFirst()
+            if rest.isEmpty || rest.first?.isWhitespace == true {
+                text = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return text.isEmpty ? nil : text
     }
 
     /// A finished command must have RUN at least this long (host-measured C→D wall clock) to title an
@@ -406,10 +415,16 @@ enum RailRowsBuilder {
     /// cwd FOLDER NAME (`cwdTitle` — the basepath is still an identity, even when it restates the
     /// section header); only a pane with NO cwd yet reads the kind-generic fallback. The caller
     /// gates `runningCommand` on the busy-badge reveal, so the title upgrades with the spinner
-    /// and a fast `ls` never flashes in. Pure + static so the chain is unit-pinned without a view.
+    /// and a fast `ls` never flashes in. Wherever the RUNNING command would title the row, a FRESH
+    /// `programTitle` (an OSC title the running program itself asserted —
+    /// ``WorkspaceStore/programTitle(for:)`` + `strippedProgramTitle`) out-ranks it: nvim's
+    /// "main.swift - NVIM" says more than `vi .` (a program that sets no title keeps the command
+    /// line; a FOLDER structural title is an identity and never yields). Pure + static so the
+    /// chain is unit-pinned without a view.
     static func liveRowTitle(
         structuralTitle: String, userRenamed: Bool, isAgent: Bool, intent: String?,
-        runningCommand: String?, processTitle: String?, blocks: [CommandBlock], kind: PaneKind,
+        runningCommand: String?, programTitle: String? = nil, processTitle: String?,
+        blocks: [CommandBlock], kind: PaneKind,
         cwdTitle: String? = nil,
         fallback: String,
     ) -> String {
@@ -426,12 +441,12 @@ enum RailRowsBuilder {
         let running = runningCommand?.trimmingCharacters(in: .whitespacesAndNewlines)
         if !structuralTitle.isEmpty {
             if kind == .terminal, let running, !running.isEmpty, structuralTitle == processTitle {
-                return running
+                return programTitle ?? running
             }
             return structuralTitle
         }
         guard kind == .terminal else { return fallback }
-        if let running, !running.isEmpty { return running }
+        if let running, !running.isEmpty { return programTitle ?? running }
         return lastCommandTitle(blocks: blocks) ?? cwdTitle ?? fallback
     }
 
