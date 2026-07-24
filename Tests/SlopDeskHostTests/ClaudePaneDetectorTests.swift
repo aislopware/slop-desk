@@ -651,6 +651,48 @@ final class ClaudePaneDetectorTests: XCTestCase {
         XCTAssertEqual(stateByte(rest.status), 1, "rest title demotes the stuck working → idle")
     }
 
+    /// Claude's own OSC-title TOPIC (the background-model summary / a `/rename`d name) supersedes
+    /// the prompt-derived intent on the wire-36 latch; the static startup "Claude Code" names the
+    /// program, not the work, and never re-titles.
+    func testTitleTopicSupersedesPromptIntent() {
+        var d = ClaudePaneDetector()
+        _ = d.sample(name: "claude", at: 0)
+        let prompt = d.hook(
+            bytes: json(#"{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"hello"}"#),
+            at: 1,
+        )
+        XCTAssertEqual(prompt.intent, .agentSessionIntent("hello"))
+        // The startup title carries no topic — the prompt intent stands.
+        let rest = d.title("✳ Claude Code", at: 2)
+        XCTAssertNil(rest.intent)
+        // A generated topic re-titles (spinner variant; glyph + whitespace stripped; emitted once).
+        let topic = d.title("⠧ Fixing the auth bug", at: 3)
+        XCTAssertEqual(topic.intent, .agentSessionIntent("Fixing the auth bug"))
+        XCTAssertNil(d.title("⠴ Fixing the auth bug", at: 4).intent, "unchanged topic dedupes")
+        // The rest-star variant re-titles too — the latch follows claude's newest self-title.
+        XCTAssertEqual(d.title("✳ Auth bug fixed", at: 5).intent, .agentSessionIntent("Auth bug fixed"))
+    }
+
+    /// A title folded on an undetected pane can corroborate nothing — and must not conjure an
+    /// intent either (every shell titles its tab; only a DETECTED claude's title is a topic).
+    func testTitleTopicNeverConjuresIntentOnUndetectedPane() {
+        var d = ClaudePaneDetector()
+        XCTAssertNil(d.title("✳ Some topic", at: 0).intent)
+        XCTAssertNil(d.title("plain shell title", at: 1).intent)
+    }
+
+    /// The pure topic-extraction pins: telltale glyphs + variation selectors + whitespace strip,
+    /// inner whitespace collapses, the program-name title and empties reject.
+    func testTopicLineExtraction() {
+        XCTAssertEqual(ClaudePaneDetector.topicLine(fromTitle: "✳ Fix the bug"), "Fix the bug")
+        XCTAssertEqual(ClaudePaneDetector.topicLine(fromTitle: "⠧ tests   running"), "tests running")
+        XCTAssertEqual(ClaudePaneDetector.topicLine(fromTitle: "✳\u{FE0E} renamed session"), "renamed session")
+        XCTAssertEqual(ClaudePaneDetector.topicLine(fromTitle: "my custom title"), "my custom title")
+        XCTAssertNil(ClaudePaneDetector.topicLine(fromTitle: "✳ Claude Code"))
+        XCTAssertNil(ClaudePaneDetector.topicLine(fromTitle: "⠧ "))
+        XCTAssertNil(ClaudePaneDetector.topicLine(fromTitle: ""))
+    }
+
     /// A title never conjures presence (`.none` stays `.none`) and never clears a hook block —
     /// in either direction (rest OR spinner).
     func testTitleNeverConjuresPresenceNorClearsHookBlock() {

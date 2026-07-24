@@ -972,10 +972,14 @@ private struct InlineRenameField: View {
             }
             .onSubmit {
                 resolved = true
-                onCommit(draft)
+                // An untouched draft is a CANCEL, not a rename — committing the seed verbatim would
+                // freeze the row's LIVE title (intent / running command / generic) as a sticky
+                // `userRenamed` identity. Same guard as ``SlateTabRow``'s macOS field.
+                if draft == seed { onCancel() } else { onCommit(draft) }
             }
             .onChange(of: focused) { _, isFocused in
-                if !isFocused, !resolved { onCommit(draft) }
+                guard !isFocused, !resolved else { return }
+                if draft == seed { onCancel() } else { onCommit(draft) }
             }
         #if os(macOS)
         return field.onExitCommand {

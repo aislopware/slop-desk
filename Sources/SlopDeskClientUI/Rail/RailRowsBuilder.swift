@@ -410,7 +410,11 @@ enum RailRowsBuilder {
         runningCommand: String?, processTitle: String?, blocks: [CommandBlock], kind: PaneKind,
         fallback: String,
     ) -> String {
-        if userRenamed, !structuralTitle.isEmpty { return structuralTitle }
+        // A "rename" that equals the kind-generic fallback carries no identity — it can only be an
+        // accidentally committed seed (the pre-guard inline field committed its unedited draft on
+        // blur, freezing "Terminal" as a sticky rename in persisted specs). Yielding here heals
+        // those panes without a migration; a rename to any REAL name still wins unconditionally.
+        if userRenamed, !structuralTitle.isEmpty, structuralTitle != fallback { return structuralTitle }
         if isAgent, let intent = intent?.trimmingCharacters(in: .whitespacesAndNewlines),
            !intent.isEmpty
         {

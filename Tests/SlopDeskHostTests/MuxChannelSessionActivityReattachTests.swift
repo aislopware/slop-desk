@@ -140,8 +140,12 @@ final class MuxChannelSessionActivityReattachTests: XCTestCase {
         session.foldTitleSampleForTesting(title: "⠧ tests running", at: 1)
         XCTAssertEqual(
             session.takeControlBatchForTesting(),
-            [.claudeStatus(state: 3, kind: 0, label: "")],
-            "the spinner title promotes the detected claude to working",
+            [
+                .claudeStatus(state: 3, kind: 0, label: ""),
+                .agentSessionIntent("tests running"),
+            ],
+            "the spinner title promotes the detected claude to working, and its text — claude's own "
+                + "self-title — rides out as the wire-36 intent",
         )
 
         session.foldTitleSampleForTesting(title: "✳ Claude Code", at: 2)

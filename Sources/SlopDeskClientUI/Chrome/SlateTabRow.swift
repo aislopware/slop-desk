@@ -169,6 +169,11 @@ struct SlateTabRow: View {
     /// The inline-rename `TextField`: seeded from the current title on open, auto-focused, commits
     /// on Return (`onSubmit` → `onRename`) and cancels on Escape (`onExitCommand` → `onCancelRename`). A blank
     /// commit is a no-op rename (the store keeps the folder-name title), so the field never blanks the row.
+    ///
+    /// An UNTOUCHED draft (still exactly the seed title) resolves as a CANCEL, not a commit: the seed
+    /// is the row's LIVE title (intent / running command / generic fallback), and committing it verbatim
+    /// would freeze that snapshot as a sticky `userRenamed` identity — a double-click followed by a
+    /// click-away must leave the live title chain in charge. Only an edit expresses a rename.
     private var renameField: some View {
         let field = TextField("Rename", text: $draft)
             .textFieldStyle(.plain)
@@ -184,13 +189,14 @@ struct SlateTabRow: View {
             }
             .onSubmit {
                 renameResolved = true
-                onRename(draft)
+                if draft == title { onCancelRename() } else { onRename(draft) }
             }
             // Focus loss (click elsewhere) commits the draft — matches a Finder rename field — UNLESS the
             // rename was already resolved by Return/Escape (the field's teardown flips focus off, and re-firing
             // here would make Escape rename to the draft / Return commit twice).
             .onChange(of: fieldFocused) { _, focused in
-                if !focused, !renameResolved { onRename(draft) }
+                guard !focused, !renameResolved else { return }
+                if draft == title { onCancelRename() } else { onRename(draft) }
             }
         // Escape cancels the rename — `onExitCommand` is macOS/tvOS-only, so guard it off iOS.
         #if os(macOS)

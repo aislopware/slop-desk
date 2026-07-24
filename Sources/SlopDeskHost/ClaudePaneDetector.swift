@@ -85,7 +85,8 @@ public struct ClaudePaneDetector: Sendable {
     /// session differs re-derives the intent from scratch (a fresh `claude` run / `/clear`).
     private var intentSessionID: String?
 
-    /// The pane's AGENT-SESSION INTENT (wire type 36): the session's LATEST titleable prompt —
+    /// The pane's AGENT-SESSION INTENT (wire type 36): claude's OWN session title when the OSC
+    /// title carries one (``topicLine(fromTitle:)``), else the session's LATEST titleable prompt —
     /// `nil` = no intent (cleared on SessionEnd / presence termination).
     private var sessionIntent: String?
 
@@ -314,14 +315,25 @@ public struct ClaudePaneDetector: Sendable {
     /// `.idle` on the rest title. The machine applies the conservative precedence (a title never
     /// clears a hook block, never conjures presence, never touches `.done`). NOT an authoritative
     /// fold — it stamps no stickiness anchor. Emits type-27 iff the status triple changed.
+    ///
+    /// The title's TEXT is also claude's OWN session title: behind the telltale glyph rides a
+    /// background-model-generated topic summary (and a `/rename`d session's custom name) — the
+    /// canonical "what is this session about", the same string a tmux tab shows for the pane.
+    /// A real topic SUPERSEDES the prompt-derived intent (wire 36); the static startup
+    /// "Claude Code" names the program, not the work, and never re-titles. Folded only while
+    /// claude is DETECTED — a plain shell's title must not conjure an agent intent.
     public mutating func title(_ title: String, at now: TimeInterval) -> Emission {
         machine.reduce(.oscTitle(title), at: now)
         if machine.status != .needsPermission { lastNotificationKind = 0 }
+        if machine.status != .none, let topic = Self.topicLine(fromTitle: title) {
+            sessionIntent = topic
+        }
         var emission = Emission()
         // EVERY shell titles its tab — a title folded on an undetected pane (still `.none`) must
         // not OPEN the type-27 stream with a churn frame announcing the client's own default.
         guard machine.status != .none || lastEmittedStatus != nil else { return emission }
         emission.status = statusEmissionIfChanged()
+        emission.intent = intentEmissionIfChanged()
         return emission
     }
 
@@ -388,6 +400,27 @@ public struct ClaudePaneDetector: Sendable {
             return String(collapsed.prefix(Self.maxIntentChars))
         }
         return nil
+    }
+
+    /// Claude's own session title out of a sniffed OSC title, or `nil` when the title carries no
+    /// topic. Strips the leading busy/rest telltale (Braille spinner / `✳` + variation selectors)
+    /// and whitespace; rejects an empty remainder and the static startup "Claude Code" (which
+    /// names the program, not the work). Whitespace-collapsed and clamped like ``intentLine(from:)``
+    /// — the two feed the same wire-36 latch. Pure + total (any string tolerated).
+    static func topicLine(fromTitle title: String) -> String? {
+        var scalars = title.unicodeScalars[...]
+        while let first = scalars.first,
+              (0x2800...0x28FF).contains(first.value) // Braille spinner frames
+              || first.value == 0x2733 // ✳ rest star
+              || first.value == 0xFE0E || first.value == 0xFE0F // variation selectors
+              || first.properties.isWhitespace
+        {
+            scalars.removeFirst()
+        }
+        let text = String(String.UnicodeScalarView(scalars))
+        let collapsed = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard !collapsed.isEmpty, collapsed != "Claude Code" else { return nil }
+        return String(collapsed.prefix(Self.maxIntentChars))
     }
 
     /// Returns a type-36 `agentSessionIntent` message iff the latched intent changed since the last

@@ -2110,3 +2110,30 @@ resolves a version-shaped basename up past the layout components (`versions`/`bi
 end-to-end on the rig with the real binary (row reads `✳ <latest prompt>` + slot `claude`).
 The git line's inline branch glyph was also dropped on review — symbols only where they carry
 meaning, and the sigil dialect already says "git".
+
+### Row title v4.9 — the row title is claude's OWN title; an untouched rename commit is a cancel (2026-07-24)
+
+Field bug behind "title vẫn là Terminal" after v4.8.1: the pane's persisted spec carried
+`userRenamed: true, title: "Terminal"` — the inline-rename field (double-click, new in v4.8.1)
+committed its UNEDITED seed on blur, freezing the resting generic title as a sticky rename that
+outranks every live rung forever. The host latched the intent correctly the whole time; the rig
+never reproduced because a rig pane has no accidental rename. Two guards:
+
+1. **An untouched draft resolves as CANCEL** in both inline-rename fields (macOS row + shared
+   `InlineRenameField`): only an actual edit expresses a rename — double-click then click-away
+   leaves the live title chain in charge.
+2. **A "rename" equal to the kind-generic fallback never wins** in `liveRowTitle`: renaming a
+   pane "Terminal" carries no identity, so the rung yields to the live chain — which heals the
+   already-persisted accidental pins without a migration.
+
+And the round's ask — "lấy title CHUẨN của claude code" (research: herdr corpus, happy/happier,
+opcode/crystal/claude-squad/vibetunnel, official docs): Claude Code already titles its own
+session — the OSC title's text behind the telltale glyph IS a background-model topic summary
+(and `/rename` writes a custom name there); "✳ Claude Code" is only the startup static. The
+transcript's `type:"summary"` record (what happy/happier read) is resume-time-stale and an
+internal format — the OSC title is the LIVE self-title and the sniffer already latches it. So
+wire 36 now carries: claude's own topic when the title has one (`topicLine` — telltale/VS/space
+stripped, "Claude Code" rejected, detected-pane-only), superseding the prompt-derived intent;
+the prompt remains the fallback while no topic exists (short sessions, title generation off).
+This is exactly the tmux `set-titles-string "#T"` behaviour the pane titles came from — the
+pane shows what the program running in it says it is doing.

@@ -611,6 +611,18 @@ final class RailRowBuilderTests: XCTestCase {
             ),
             "Terminal",
         )
+        // A "rename" equal to the kind-generic fallback carries no identity and NEVER wins — it is
+        // the accidentally committed seed of the pre-guard inline-rename field (blur froze the
+        // resting "Terminal" as a sticky rename in persisted specs); the live chain stays in charge
+        // so the agent intent can title the row again.
+        XCTAssertEqual(
+            RailRowsBuilder.liveRowTitle(
+                structuralTitle: "Terminal", userRenamed: true, isAgent: true,
+                intent: "fix the flaky CI test", runningCommand: nil, processTitle: nil, blocks: [],
+                kind: .terminal, fallback: "Terminal",
+            ),
+            "fix the flaky CI test",
+        )
         // A blank/whitespace intent falls through to the structural title.
         XCTAssertEqual(
             RailRowsBuilder.liveRowTitle(
