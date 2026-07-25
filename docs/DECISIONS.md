@@ -2713,3 +2713,14 @@ rather than the read-only system snapshot at `/`. Three consequences worth stati
   rendered at two significant figures (`820M`, `6.4G`, `240G`), and a number that only names round
   values cannot twitch. Adding a threshold on top would have made the slowest metric also the
   laggiest.
+
+**Round 13.3 — the three readings run fastest-moving to slowest.** Free disk went in at the middle
+rail on the argument that the least-consulted metric belongs where neither rail is. Ordering by how
+often a reading is *consulted* turned out to be the wrong axis; ordering by how fast it *moves* is
+the one the eye already uses. So the line reads `cpu · mem · disk`: cpu changes second to second,
+memory over minutes, free disk over days, and a glance travels from "right now" toward "next week"
+instead of stepping over the slow reading to get to the fast one. It also keeps the two PERCENTS
+adjacent — they are the pair a glance actually compares, and the odd reading out (the only one in
+BYTES) now sits at the end where its different shape stops interrupting them. The tooltip and the
+accessibility label speak the same order, so neither is a re-shuffle of the row. Nothing else moves:
+the thresholds, the inks, the absent-not-blanked rule and the wire are all unchanged.
