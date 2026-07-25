@@ -792,7 +792,7 @@ private struct SidebarLiveRow: View {
         // masks `.working` out of the badge resolver, and reading the badge here would render a
         // thinking agent exactly like an idle shell for every default-settings install. The
         // toggle governs the badge GLYPH; the working reading is the row's own affordance. A
-        // running COMMAND reads from the trailing mark's muted ring instead.
+        // running COMMAND mounts no mark at all — the trailing ring is the agent's column.
         let busyLabel: String? = chrome.status == .working
             ? StatusPresentation.tabBadgeLabel(.running) : nil
         SlateTabRow(
@@ -800,11 +800,15 @@ private struct SidebarLiveRow: View {
             active: active,
             // The otty agent-integration look: an agent session's title wears the leading `✳`.
             agentMarker: agent,
-            // The FULL fused badge, busy tiers included — the row's trailing status mark needs
-            // them (a running command mounts the muted ring); the row's own maps keep busy kinds
-            // out of the title ink and the slot text.
+            // The FULL fused badge, busy tiers included — the row's own maps keep the busy kinds
+            // out of the title ink, the slot text AND (since the mark became the agent's column)
+            // the trailing ring.
             badge: chrome.badge,
             workingLabel: busyLabel,
+            // A code agent PRESENT and at rest — the muted ring's only source. The `.idle`
+            // verdict is the detection's own "claude is here, waiting for a prompt"; a plain
+            // shell (agent `.none`) never reaches it, however busy it is.
+            agentIdle: chrome.status == .idle,
             // The foreground process labels the slot — a real program (`vim`, `make`) AND a bare
             // shell (`zsh`): unlike the TITLE (where "zsh" says as little as "Terminal"), the
             // metadata slot answers "what is this pane running", and an idle shell row with an
@@ -875,7 +879,7 @@ private struct IOSSidebarLiveRow: View {
         // Same busy split as the macOS row: only the AGENT tier gets the working reading (the
         // terse label as the title's AX value, the accent ring as the mark), keyed on the RAW
         // `.working` status — the badge gate must not kill it (see ``SidebarLiveRow``); a running
-        // command reads from the trailing mark's muted ring.
+        // command mounts no mark at all.
         let busyLabel: String? = chrome.status == .working
             ? StatusPresentation.tabBadgeLabel(.running) : nil
         HStack(spacing: 8) {
@@ -917,6 +921,7 @@ private struct IOSSidebarLiveRow: View {
             // state reads down one fixed column on iOS too.
             if let dot = StatusPresentation.statusDot(
                 working: busyLabel != nil, badge: chrome.badge,
+                agentIdle: chrome.status == .idle,
             ) {
                 StatusDotView(style: dot)
             }

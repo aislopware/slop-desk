@@ -1,12 +1,12 @@
 // StatusDotTests — pins the trailing status mark, the T3 Code SidebarV2 port. ONE shape (the
 // static dashed ring) and the HUE is the whole grammar, the resolver's ladder being the spec: a
 // working agent rings on the accent (the same raw-working key liveness uses, outranking every
-// badge); a running command rings muted; the attention states ring on their attention ink — the
-// title never recolours, so the mark's hue is those states' entire rendering; idle and
-// privilege-only rows mount nothing. The STATIC contract (nothing in the mark animates) rides
-// the geometry pins. Headless VALUE assertions — no render. Ink identity is asserted
-// SELF-consistently against the presentation maps (never absolute colour values — `Color`
-// equality is provider-fragile).
+// badge); a RESTING CODE AGENT rings muted; the attention states ring on their attention ink — the
+// title never recolours, so the mark's hue is those states' entire rendering; a plain running
+// command, a bare idle shell and privilege-only rows mount nothing. The STATIC contract (nothing
+// in the mark animates) rides the geometry pins. Headless VALUE assertions — no render. Ink
+// identity is asserted SELF-consistently against the presentation maps (never absolute colour
+// values — `Color` equality is provider-fragile).
 
 import SlopDeskWorkspaceCore
 import XCTest
@@ -47,18 +47,44 @@ final class StatusDotTests: XCTestCase {
         }
     }
 
-    /// A running command's ring is muted — in flight, spending no hue — distinct from both the
-    /// agent tier's accent and the attention hues.
+    /// A RESTING CODE AGENT's ring is muted — present, spending no hue — distinct from both the
+    /// agent tier's accent and the attention hues. The muted ring is the agent's alone.
     @MainActor
-    func testCommandBusyRingsMutedDistinctFromEveryHuedTier() {
-        let agent = StatusPresentation.statusDot(working: true, badge: nil)
+    func testRestingAgentRingsMutedDistinctFromEveryHuedTier() {
+        let working = StatusPresentation.statusDot(working: true, badge: nil)
+        // The claude pane at its prompt keeps the shell busy for its whole lifetime, so it
+        // arrives with either no badge or the `.commandBusy` tier — both read the same.
+        for badge: TabBadgeKind? in [nil, .commandBusy] {
+            let dot = StatusPresentation.statusDot(
+                working: false, badge: badge, agentIdle: true,
+            )
+            XCTAssertNotNil(dot, "a resting agent mounts the muted ring")
+            XCTAssertNotEqual(dot?.ink, working?.ink, "resting must not borrow the working accent")
+            XCTAssertEqual(dot?.ink, Slate.Text.secondary, "resting spends no hue")
+        }
+    }
+
+    /// A plain running COMMAND — no code agent in the pane — mounts NOTHING: the muted ring is
+    /// reserved for a resting agent, so `npm run dev` no longer decorates the rail.
+    @MainActor
+    func testPlainRunningCommandMountsNoMark() {
         for kind: TabBadgeKind in [.commandBusy, .commandRunning] {
-            let dot = StatusPresentation.statusDot(working: false, badge: kind)
-            XCTAssertNotNil(dot, "\(kind) is in flight — the ring mounts")
-            XCTAssertNotEqual(dot?.ink, agent?.ink, "\(kind) must not borrow the agent accent")
             XCTAssertNil(
+                StatusPresentation.statusDot(working: false, badge: kind),
+                "\(kind) without an agent must leave the rail bare",
+            )
+        }
+    }
+
+    /// An attention state OUTRANKS the resting-agent ring: a finished/blocked/failed agent keeps
+    /// its attention ink even though the same pane is also a resting agent.
+    @MainActor
+    func testAttentionOutranksTheRestingAgentRing() {
+        for kind: TabBadgeKind in [.awaitingInput, .error, .completed, .finished] {
+            XCTAssertEqual(
+                StatusPresentation.statusDot(working: false, badge: kind, agentIdle: true)?.ink,
                 StatusPresentation.attentionInk(kind),
-                "busy is not attention-class — its ring stays off the hue budget",
+                "\(kind) keeps its attention ink over the muted resting ring",
             )
         }
     }

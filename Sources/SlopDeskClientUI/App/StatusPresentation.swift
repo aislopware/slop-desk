@@ -116,27 +116,41 @@ enum StatusPresentation {
     /// ring, its `CircleDashedIcon`) and the HUE names the state, T3 Code's own status-hue
     /// convention. The ladder: a WORKING AGENT rings on the accent (keyed on the RAW `.working`
     /// status, so the badge gate can't kill it; the badge-routed `.running` tier reads
-    /// identically); a running COMMAND rings on the muted secondary ink (in flight without hue);
-    /// the attention states ring on their attention ink (``attentionInk(_:)`` — green unread
+    /// identically); a RESTING CODE AGENT rings on the muted secondary ink (present, spending no
+    /// hue); the attention states ring on their attention ink (``attentionInk(_:)`` — green unread
     /// finish, amber question, red failure), the mark's hue being that state's WHOLE rendering
-    /// now that the title stays neutral. Idle and privilege-only rows mount nothing — the
-    /// resting rail stays bare.
-    static func statusDot(working: Bool, badge: TabBadgeKind?) -> StatusDotStyle? {
+    /// now that the title stays neutral. A plain running COMMAND rings NOTHING — the mark is the
+    /// AGENT's column, and a muted ring on every `npm run dev` row spent it on the one thing the
+    /// row's own running title already says. Bare shells and privilege-only rows mount nothing
+    /// either — the resting rail stays bare.
+    ///
+    /// - Parameter agentIdle: whether a code agent is present in the pane and AT REST
+    ///   (`ClaudeStatus.idle`) — the muted ring's ONLY source. The `claude` process holds the
+    ///   shell's OSC-133 block open for its whole lifetime, so a resting agent's row arrives here
+    ///   as a bare ``TabBadgeKind/commandBusy`` (or no badge at all): without this input it is
+    ///   indistinguishable from a plain long-running command.
+    static func statusDot(
+        working: Bool, badge: TabBadgeKind?, agentIdle: Bool = false,
+    ) -> StatusDotStyle? {
         if working { return StatusDotStyle(ink: Slate.State.accent) }
-        guard let badge else { return nil }
+        // The resting-agent ring — the floor every non-attention branch below falls back to.
+        let resting = agentIdle ? StatusDotStyle(ink: Slate.Text.secondary) : nil
+        guard let badge else { return resting }
         switch badge {
         // The agent tier arriving through the badge route ("Badge while processing" ON) reads
         // identically to the raw-working route above.
         case .running: return StatusDotStyle(ink: Slate.State.accent)
-        case .commandBusy,
-             .commandRunning: return StatusDotStyle(ink: Slate.Text.secondary)
         case .awaitingInput,
              .completed,
              .error,
              .finished: return attentionInk(badge).map(StatusDotStyle.init)
-        // Privilege modifiers are slot text, not lifecycle.
+        // A busy shell says nothing of its own (the row's title already names the command) and the
+        // privilege modifiers are slot text, not lifecycle — both fall through to whether a code
+        // agent is resting in this pane.
         case .caffeinate,
-             .sudo: return nil
+             .commandBusy,
+             .commandRunning,
+             .sudo: return resting
         }
     }
 

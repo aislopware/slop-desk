@@ -6,8 +6,9 @@
 // under hover.
 //
 // Status is the trailing ``StatusDotView`` mark ALONE — one static dashed ring whose HUE names
-// the state (accent = working agent, muted = running command, green = unread finish, amber = a
-// question waits, red = failed; idle mounts nothing) — and NOTHING animates. The title NEVER
+// the state (accent = working agent, muted = a code agent at rest, green = unread finish, amber =
+// a question waits, red = failed; a plain shell — busy or not — mounts nothing, the mark being
+// the AGENT's column) — and NOTHING animates. The title NEVER
 // recolours: it keeps the neutral ink ladder, spending only the `.medium` weight step (the same
 // one the active card takes) on the states that wait on you, so an unread row reads "bold + a
 // coloured ring" the way a mail row reads unread. No row wash, no tinted
@@ -37,8 +38,12 @@ struct SlateTabRow: View {
     /// mark rings on the accent — keyed on the RAW working status, so the badge gate can't kill
     /// the mark. The string is the terse state reading ("Agent working"), carried as the title's
     /// accessibility value so VoiceOver keeps the state the ring speaks visually. A running
-    /// COMMAND never sets this — its ring is the muted tier.
+    /// COMMAND never sets this — and mounts no mark of its own.
     var workingLabel: String?
+    /// Whether a CODE AGENT is present in this pane and AT REST (`ClaudeStatus.idle`) — the only
+    /// source of the trailing mark's muted ring. A plain busy shell never sets it: the ring is
+    /// the agent's column, not a generic "something is running" lamp.
+    var agentIdle: Bool = false
     /// The resting trailing label — the pane's foreground process (`zsh`, `vim`), shown only when
     /// no privilege marker outranks it. `nil` ⇒ the slot rests empty (an AGENT row always passes
     /// `nil`: the `✳` marker and the mark already say everything a trailing label would repeat).
@@ -189,7 +194,7 @@ struct SlateTabRow: View {
                     // The status mark — RIGHTMOST, so state reads down one fixed column no matter
                     // how wide the label beside it runs (the T3 Code pairing: mark + tinted text).
                     if let dot = StatusPresentation.statusDot(
-                        working: workingLabel != nil, badge: badge,
+                        working: workingLabel != nil, badge: badge, agentIdle: agentIdle,
                     ) {
                         StatusDotView(style: dot)
                     }

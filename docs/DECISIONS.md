@@ -2724,3 +2724,28 @@ adjacent — they are the pair a glance actually compares, and the odd reading o
 BYTES) now sits at the end where its different shape stops interrupting them. The tooltip and the
 accessibility label speak the same order, so neither is a re-shuffle of the row. Nothing else moves:
 the thresholds, the inks, the absent-not-blanked rule and the wire are all unchanged.
+
+### Round 14 — the muted ring belongs to the agent, not to every busy shell (2026-07-25)
+
+Round 8 gave the muted secondary ink to "running command", and in daily use that turned out to be
+almost every row: any pane with something in the foreground — a dev server, a `tail -f`, a long
+build — wore a mark. The ring stopped meaning anything, and the states that DO need the eye had to
+compete with a rail full of quiet decoration.
+
+The mark is now the AGENT's column. `StatusPresentation.statusDot` takes an `agentIdle` input (the
+raw `ClaudeStatus.idle` verdict — a code agent PRESENT and at rest) and the muted ring is that
+state's rendering and nothing else's; `.commandBusy` / `.commandRunning` mount nothing. Two things
+this is not:
+
+- **Not a resolver change.** `TabBadgeResolver` still fuses the busy tiers exactly as before — the
+  control backend's badge tokens, the tooltip vocabulary and the title chain (which titles a busy
+  row with its running command) all read them unchanged. Only the view-layer hue map narrowed.
+- **Not a new signal for agent rows.** A resting `claude` pane already wore the muted ring, because
+  the agent process holds the shell's OSC-133 block open for its whole lifetime and arrived here as
+  a bare `.commandBusy`. That row looks identical; what changed is that a pane which is busy WITHOUT
+  an agent no longer borrows the reading. The busy tiers keep falling through the same branch, so
+  an agent at rest still rings whether or not it also carries a privilege marker.
+
+A running command is already named by the row's own title, which is the more informative surface —
+spending the mark on it too was the duplication round 9 removed from the title's shimmer, in the
+other direction. Client-only; no wire change.
