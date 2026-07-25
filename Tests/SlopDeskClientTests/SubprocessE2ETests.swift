@@ -229,6 +229,103 @@ final class SubprocessE2ETests: XCTestCase {
         )
     }
 
+    /// The state-transfer reattach through the SHIPPED binaries: churn + a DECSCUSR into a
+    /// live session, kill the client (link drop → detach → PATH A), return COLD with the same
+    /// session ID, and assert the replay is a rendered snapshot (reset preamble first) that
+    /// still carries the scrollback marker AND re-emits the cursor shape — the two regressions
+    /// of the first hardware night (empty pane for seconds; bar cursor reset to block).
+    func testColdReattachSnapshotKeepsScrollbackAndCursorShape() throws {
+        guard let hostdURL = builtProductURL("slopdesk-hostd"),
+              let clientURL = builtProductURL("slopdesk-client")
+        else {
+            throw XCTSkip("built slopdesk-hostd / slopdesk-client not found next to test bundle")
+        }
+
+        let sandboxHome = try makeSandboxHome()
+        defer { try? FileManager.default.removeItem(at: sandboxHome) }
+        let hostd = Process()
+        hostd.executableURL = hostdURL
+        hostd.arguments = ["--port", "0", "--shell", "/bin/sh"]
+        var hostEnv = ProcessInfo.processInfo.environment
+        hostEnv["HOME"] = sandboxHome.path
+        hostd.environment = hostEnv
+        let hostdErr = Pipe()
+        hostd.standardError = hostdErr
+        hostd.standardOutput = Pipe()
+        do { try hostd.run() } catch { throw XCTSkip("could not launch hostd: \(error)") }
+        defer { if hostd.isRunning { hostd.terminate() } }
+        guard let bound = awaitBoundPort(from: hostdErr.fileHandleForReading, timeout: 10),
+              bound.port > 0, bound.banner.contains("shell=/bin/sh")
+        else { throw XCTSkip("hostd did not report a bound port in time") }
+
+        let sessionID = UUID()
+        let marker = "SNAPSHOT_SURVIVOR_\(UInt32.random(in: 0..<1_000_000))"
+
+        func runClient(script: String?, until: String, timeout: TimeInterval) throws -> (Process, OutputBox) {
+            let client = Process()
+            client.executableURL = clientURL
+            client.arguments = [
+                "--host", "127.0.0.1", "--port", String(bound.port), "--no-raw",
+                "--session-id", sessionID.uuidString,
+            ]
+            let stdinPipe = Pipe()
+            let stdoutPipe = Pipe()
+            client.standardInput = stdinPipe
+            client.standardOutput = stdoutPipe
+            client.standardError = Pipe()
+            let collected = OutputBox()
+            stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if data.isEmpty { handle.readabilityHandler = nil } else { collected.append(data) }
+            }
+            try client.run()
+            if let script { stdinPipe.fileHandleForWriting.write(Data(script.utf8)) }
+            let deadline = Date().addingTimeInterval(timeout)
+            while Date() < deadline, !collected.string.contains(until) {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            return (client, collected)
+        }
+
+        // --- Life 1: churn, the marker, then a bar cursor (the zsh integration's prompt shape). ---
+        let script = """
+        i=0; while [ $i -lt 500 ]; do echo "CHURN LINE $i ================================"; i=$((i+1)); done
+        echo \(marker)
+        printf '\\033[5 q'
+
+        """
+        let (client1, out1) = try runClient(script: script, until: marker, timeout: 20)
+        defer { if client1.isRunning { client1.terminate() } }
+        guard out1.string.contains(marker) else {
+            throw XCTSkip("client #1 never saw its own echo (sandboxed PTY?): \(out1.string.prefix(300))")
+        }
+        Thread.sleep(forTimeInterval: 0.5) // let acks land so the churn reaches the ring
+        client1.terminate() // link drop — host detaches the session (PATH A material)
+        _ = waitForExit(client1, timeout: 5)
+
+        // --- Life 2: COLD return to the SAME daemon. ---
+        let (client2, out2) = try runClient(script: nil, until: marker, timeout: 20)
+        defer { if client2.isRunning { client2.terminate() } }
+
+        XCTAssertTrue(
+            out2.string.contains(marker),
+            "reattach must replay the scrollback marker; got: \(out2.string.prefix(600))",
+        )
+        XCTAssertTrue(
+            out2.string.contains("\u{1B}[?1049l"),
+            "cold reattach must be a rendered snapshot (reset preamble), not raw history",
+        )
+        // The DECSCUSR the session ended on must survive the state transfer.
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline, !out2.string.contains("\u{1B}[5 q") {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        XCTAssertTrue(
+            out2.string.contains("\u{1B}[5 q"),
+            "the reattached pane must re-emit the bar cursor shape",
+        )
+    }
+
     // MARK: - Helpers
 
     /// A throwaway HOME for a hostd subprocess. The daemon spawns a REAL interactive login

@@ -733,7 +733,9 @@ public final class HostServer: @unchecked Sendable {
         // does not interleave with the replay (the rebind starts the live drain). The client
         // sent `lastReceivedSeq` so we can skip already-received messages. A `true` return
         // means the replay was a RENDERED snapshot (state-transfer) — see the jiggle gate below.
+        let replayStart = ContinuousClock.now
         let snapshotComposed = await session.replayTail(after: open.lastReceivedSeq, on: open.data)
+        let replayElapsed = ContinuousClock.now - replayStart
         // Rebind the relay: swap sub-channels, clear stale queues, restart relay tasks.
         // onExit is threaded INTO rebindRelay so it is assigned under taskLock, atomically with
         // the exitTask (re)start — closing the race where a shell that exits between rebindRelay
@@ -768,7 +770,13 @@ public final class HostServer: @unchecked Sendable {
         // Refresh the hook sink under the session's ORIGINAL (env-baked) pane id — never
         // the new connection's key (see `refreshHookSinkOnReattach`).
         refreshHookSinkOnReattach(session: session)
-        onLog?("mux channel \(open.channelID) (conn \(connectionID)): reattached session \(open.sessionID)")
+        // The replay duration IS the "empty pane" window the user stares at — log it so a
+        // slow reattach is diagnosable from the daemon log alone.
+        let replayMillis = Int64(replayElapsed / .milliseconds(1))
+        onLog?(
+            "mux channel \(open.channelID) (conn \(connectionID)): reattached session \(open.sessionID) "
+                + "(\(snapshotComposed ? "snapshot" : "raw") replay in \(replayMillis) ms)",
+        )
         // Nudge the PTY foreground process to repaint after reattach — the client terminal is
         // fresh (no buffered output) so without this the pane is blank until the user presses
         // a key. A brief delay lets the client's first `.resize` land and wires the sub-channels

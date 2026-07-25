@@ -766,4 +766,69 @@ final class ReplayBufferTests: XCTestCase {
         )
         XCTAssertEqual(buf.scrollbackRingBytesForTesting, 12)
     }
+
+    // MARK: History canonicalization (detach-time fold + snapshot adoption)
+
+    /// A fold computed against a since-mutated ring is stale and must be dropped whole; a
+    /// fresh capture splices, and the folded bytes become the cold-compose history.
+    func testAdoptFoldedRingGenerationGuard() {
+        var buf = ReplayBuffer()
+        buf.append(bytes: Data("one\n".utf8))
+        buf.append(bytes: Data("two\n".utf8))
+        buf.ack(upTo: 2)
+        guard let stale = buf.ringFoldSource() else {
+            XCTFail("ring should be non-empty")
+            return
+        }
+        buf.append(bytes: Data("three\n".utf8))
+        buf.ack(upTo: 3) // ring mutated after the capture
+        XCTAssertFalse(buf.adoptFoldedRing(Data("folded".utf8), from: stale))
+        XCTAssertEqual(buf.snapshotSource(after: 0).history, Data("one\ntwo\nthree\n".utf8))
+
+        guard let fresh = buf.ringFoldSource() else {
+            XCTFail("ring should be non-empty")
+            return
+        }
+        XCTAssertTrue(buf.adoptFoldedRing(Data("folded".utf8), from: fresh))
+        XCTAssertEqual(buf.snapshotSource(after: 0).history, Data("folded".utf8))
+        XCTAssertEqual(buf.scrollbackRingBytesForTesting, 6)
+    }
+
+    /// Adoption replaces ring + tail with the delivered chunks split at `ackedSeq`; a warm
+    /// re-reconnect mid-delivery resumes the rendered stream byte-exact.
+    func testAdoptSnapshotReplaySplitsAtAckedSeq() {
+        var buf = ReplayBuffer()
+        buf.append(bytes: Data("raw-a".utf8)) // seq 1
+        buf.append(bytes: Data("raw-b".utf8)) // seq 2
+        buf.ack(upTo: 1)
+        buf.adoptSnapshotReplay([
+            .output(seq: 1, bytes: Data("R".utf8)),
+            .output(seq: 2, bytes: Data("T".utf8)),
+        ])
+        XCTAssertEqual(buf.retainedBytes, 1, "tail = the adopted un-acked chunk")
+        XCTAssertEqual(buf.snapshotSource(after: 0).history, Data("RT".utf8))
+        let warm = buf.replay(after: 1)
+        XCTAssertEqual(warm.count, 1)
+        guard case let .output(seq, bytes) = warm[0] else {
+            XCTFail("expected output")
+            return
+        }
+        XCTAssertEqual(seq, 2)
+        XCTAssertEqual(bytes, Data("T".utf8))
+    }
+
+    /// With the ring disabled the acked prefix of an adopted snapshot is discarded — exactly
+    /// what `ack(upTo:)` would have done to the raw entries it replaces.
+    func testAdoptSnapshotReplayRespectsDisabledRing() {
+        var buf = ReplayBuffer(scrollbackBytes: 0)
+        buf.append(bytes: Data("raw-a".utf8)) // seq 1
+        buf.append(bytes: Data("raw-b".utf8)) // seq 2
+        buf.ack(upTo: 1)
+        buf.adoptSnapshotReplay([
+            .output(seq: 1, bytes: Data("R".utf8)),
+            .output(seq: 2, bytes: Data("T".utf8)),
+        ])
+        XCTAssertEqual(buf.scrollbackRingCountForTesting, 0)
+        XCTAssertEqual(buf.snapshotSource(after: 0).history, Data("T".utf8))
+    }
 }

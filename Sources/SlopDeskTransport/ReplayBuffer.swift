@@ -231,6 +231,9 @@ public struct ReplayBuffer: Sendable {
             }
         }
         guard dropCount > 0 else { return }
+        // The acked prefix is about to move into the ring (or be discarded) — any in-flight
+        // detach-time fold rendered a ring that no longer matches.
+        ringGeneration += 1
         if scrollbackBytesCap > 0 {
             // Move the acked prefix into the ring (retain for cold replay).
             let ringWasEmpty = scrollbackRing.isEmpty
@@ -384,6 +387,96 @@ public struct ReplayBuffer: Sendable {
     /// releases every retained entry, exactly like the cold distilled replay.
     public static func rechunkSnapshot(_ data: Data, across seqs: [Int64]) -> [WireMessage] {
         rechunk(data, across: seqs, mustCoverLastSeq: true)
+    }
+
+    // MARK: History canonicalization (docs/DECISIONS.md 2026-07-25 state-transfer, follow-up)
+
+    /// Monotonic mutation counter over the RING (acked history). A fold computed OUTSIDE the
+    /// session's replay lock (the render is too expensive to hold it) only splices back in if
+    /// the ring it rendered is still exactly the ring in the buffer — a stale fold is dropped,
+    /// never merged. The un-acked tail is deliberately NOT covered: a fold never touches it.
+    public private(set) var ringGeneration: Int = 0
+
+    /// The frozen material for a detach-time ring fold: the acked ring's raw bytes, the seqs
+    /// its canonical replacement may ride (the ORIGINAL ring seqs — labels stay within the
+    /// acked range so the seq order invariant holds), and the generation guarding the splice.
+    public struct RingFoldSource: Sendable {
+        public let bytes: Data
+        public let seqs: [Int64]
+        public let generation: Int
+    }
+
+    /// Captures the ring for a detach-time fold, or `nil` when the ring is empty.
+    public func ringFoldSource() -> RingFoldSource? {
+        guard !scrollbackRing.isEmpty else { return nil }
+        var bytes = Data()
+        bytes.reserveCapacity(scrollbackBytes)
+        for entry in scrollbackRing { bytes.append(entry.bytes) }
+        return RingFoldSource(
+            bytes: bytes,
+            seqs: scrollbackRing.map(\.seq),
+            generation: ringGeneration,
+        )
+    }
+
+    /// Replaces the acked ring with `rendered` (the canonical state-transfer render of the
+    /// ring bytes) re-chunked across the original ring seqs — the detach-time fold that turns
+    /// the NEXT cold compose from O(raw history) into O(rendered + delta), and collapses the
+    /// ring's memory to the rendered size. Round-trip feed-equivalence (the renderer's pinned
+    /// differential) is what makes the un-acked tail parse identically on top of the fold.
+    ///
+    /// Returns `false` without touching anything when the buffer has mutated since `source`
+    /// was captured (a reattach adopted a snapshot, new acks moved entries in, eviction ran).
+    @discardableResult
+    public mutating func adoptFoldedRing(_ rendered: Data, from source: RingFoldSource) -> Bool {
+        guard source.generation == ringGeneration else { return false }
+        ringGeneration += 1
+        scrollbackRing = Self.rechunk(rendered, across: source.seqs, mustCoverLastSeq: true)
+            .compactMap { message in
+                guard case let .output(seq, bytes) = message else { return nil }
+                return Entry(seq: seq, bytes: bytes)
+            }
+        scrollbackBytes = rendered.count
+        // The canonical stream is self-contained (it opens with the full preamble wipe) — any
+        // carried alt-segment repair belongs to the raw bytes it just replaced.
+        pendingAltReopen = nil
+        return true
+    }
+
+    /// Replaces the ENTIRE retained history (ring + un-acked tail) with the rendered snapshot
+    /// stream EXACTLY as it was sent — "as if the host had emitted the rendered bytes all
+    /// along". Chunks at/below ``ackedSeq`` become the ring; the rest become the un-acked
+    /// tail, released by the client's acks exactly like the raw entries they replaced (a warm
+    /// re-reconnect mid-delivery resumes the rendered stream byte-exact).
+    ///
+    /// Called right after a successful snapshot compose. Two loads it carries:
+    /// - the consumed detached-window backlog got NO seqs of its own, so without this it
+    ///   would exist only in the delivered bytes and VANISH from every later cold replay;
+    /// - the next compose parses the (small) rendered history instead of re-walking the
+    ///   full raw ring.
+    public mutating func adoptSnapshotReplay(_ messages: [WireMessage]) {
+        ringGeneration += 1
+        var ring: [Entry] = []
+        var tail: [Entry] = []
+        var ringBytes = 0
+        var tailBytes = 0
+        for message in messages {
+            guard case let .output(seq, bytes) = message else { continue }
+            if seq <= ackedSeq, scrollbackBytesCap > 0 {
+                // With the ring disabled the acked prefix is discarded, exactly as ack() would.
+                ring.append(Entry(seq: seq, bytes: bytes))
+                ringBytes += bytes.count
+            } else if seq > ackedSeq {
+                tail.append(Entry(seq: seq, bytes: bytes))
+                tailBytes += bytes.count
+            }
+        }
+        scrollbackRing = ring
+        scrollbackBytes = ringBytes
+        entries = tail
+        retainedBytes = tailBytes
+        pendingAltReopen = nil
+        evictScrollbackToFit()
     }
 
     // MARK: Compatibility API (used by SlopDeskHost stub + transport)

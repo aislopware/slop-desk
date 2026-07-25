@@ -416,6 +416,12 @@ let package = Package(
         // Micro-benchmark for the Swift-level hot paths (frame hash, GF region multiply, RS FEC).
         .executableTarget(name: "slopdesk-bench", dependencies: ["SlopDeskVideoProtocol"]),
 
+        // Snapshot-replay composer benchmark: times `TerminalReplaySnapshot.compose` (the cold
+        // reattach state-transfer render) over synthetic build/test churn at realistic history
+        // sizes — the instrument for "how long does a reattach stall on the compose".
+        // `swift run -c release slopdesk-replay-bench [mib...]`.
+        .executableTarget(name: "slopdesk-replay-bench", dependencies: ["SlopDeskHost"]),
+
         // Fuzzy-match benchmark + parity validator: drives the vendored `FuzzyMatcher` (the in-tree fzf
         // FuzzyMatchV2 port behind the command palette) against the REAL `fzf --filter` binary and a
         // Bitap (Fuse-style) baseline on a shared corpus — reports ranking parity (match-set + top-K

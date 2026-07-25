@@ -66,6 +66,7 @@ final class TerminalSnapshotRendererTests: XCTestCase {
         XCTAssertEqual(sa.g1Graphics, sb.g1Graphics, file: file, line: line)
         XCTAssertEqual(sa.usingG1, sb.usingG1, file: file, line: line)
         XCTAssertEqual(sa.applicationKeypad, sb.applicationKeypad, file: file, line: line)
+        XCTAssertEqual(sa.cursorShape, sb.cursorShape, "DECSCUSR shape", file: file, line: line)
         XCTAssertEqual(sa.style, sb.style, "live SGR", file: file, line: line)
         // Canonicalization: rendering the round-tripped model reproduces the SAME bytes.
         let renderedB = TerminalSnapshotRenderer.render(sb)
@@ -168,6 +169,33 @@ final class TerminalSnapshotRendererTests: XCTestCase {
 
     func testApplicationKeypadRoundTrip() {
         assertRoundTrip("\(ESC)=app keypad")
+    }
+
+    func testCursorShapeSurvivesSnapshot() {
+        // The zsh integration's bar-at-prompt (`ESC[5 q` from precmd) must survive a
+        // state-transfer reattach — the raw history carried it, so the snapshot must too.
+        assertRoundTrip("$ ls\r\n\(ESC)[5 q$ ")
+        let model = makeModel(Data("\(ESC)[5 qprompt".utf8))
+        XCTAssertEqual(model.replaySnapshot().cursorShape, 5)
+        let rendered = TerminalSnapshotRenderer.render(model.replaySnapshot())
+        let text = String(bytes: rendered, encoding: .utf8) ?? ""
+        XCTAssertTrue(text.contains("\(ESC)[5 q"), "rendered snapshot must re-emit DECSCUSR")
+    }
+
+    func testCursorShapeResetAndRISDropToDefault() {
+        // `0 q` (the preexec reset) and RIS both return to the terminal default — nothing
+        // re-emitted beyond the preamble's own `0 q` wipe.
+        let reset = makeModel(Data("\(ESC)[5 qx\(ESC)[0 q".utf8))
+        XCTAssertEqual(reset.replaySnapshot().cursorShape, 0)
+        let ris = makeModel(Data("\(ESC)[5 qx\(ESC)c".utf8))
+        XCTAssertEqual(ris.replaySnapshot().cursorShape, 0)
+    }
+
+    func testComposePreservesPromptCursorShape() {
+        let raw = Data("churn\r\n\(ESC)[5 q❯ ".utf8)
+        let out = TerminalReplaySnapshot.compose(raw: raw, rows: 6, cols: 12)
+        let text = String(bytes: out, encoding: .utf8) ?? ""
+        XCTAssertTrue(text.contains("\(ESC)[5 q"), "compose must carry the prompt cursor shape")
     }
 
     func testProgressOverprintCollapsesToFinalRevision() {
@@ -282,6 +310,7 @@ final class TerminalSnapshotRendererTests: XCTestCase {
             "\(ESC)[?7l", "\(ESC)[?7h", "\(ESC)7", "\(ESC)8", "\(ESC)(0", "\(ESC)(B",
             "\(ESC)[2L", "\(ESC)[1M", "\(ESC)[3P", "\(ESC)[2@", "\(ESC)[2X", "\(ESC)[1S", "\(ESC)[1T",
             "0123456789AB", "=", "\(ESC)=", "\(ESC)>",
+            "\(ESC)[5 q", "\(ESC)[2 q", "\(ESC)[0 q", "\(ESC)c",
         ]
         for seed in 0..<300 {
             var input = ""

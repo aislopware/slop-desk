@@ -3032,3 +3032,38 @@ app follows the OS onto Monokai Pro Classic / Classic Light. Nothing to write, n
   snapshot boundary repeats nothing (no real emitter splits a REP from its glyph); the saved-cursor
   slot restores position but not its saved SGR/charset; scrollback capture follows xterm (full-screen
   scroll region only, `ED 3` clears it, capped lines oldest-out).
+
+## Snapshot replay follow-up: the compose walk gets fast, and the history gets CANONICAL (2026-07-25)
+
+First real-hardware night exposed two defects in the state-transfer replay and one latent data-loss
+hole; all three land together because the fix for the stall IS the canonicalization that fixes the
+hole.
+
+- ✅ **The model walk was ~1.2 MiB/s — a 64 MiB ring composed for ~55 s.** Every grid mutator
+  copied the active grid out (`var grid = usingAlt ? alt : main`), which left TWO references on the
+  row buffers, so the first cell write CoW-copied a whole row (plus the outer array) PER PRINTED
+  CHARACTER. `takeActiveGrid()` now parks the stored slot on empty arrays so the local copy holds
+  the ONLY reference and mutations run in place. With the scrollback cap eviction de-O(n²)'d (dead
+  prefix index + amortized compaction instead of `removeFirst` per scrolled line), a contiguous
+  feed walk, and an ASCII fast path (prebuilt single-scalar strings; width lookup short-circuits
+  below U+0300), the walk measures ~21 MiB/s (`swift run -c release slopdesk-replay-bench`) —
+  rendered output byte-identical before/after.
+- ✅ **The retained history is ADOPTED after every successful compose** (`ReplayBuffer/
+  adoptSnapshotReplay`): ring + un-acked tail are replaced by the rendered chunks exactly as sent,
+  "as if the host had emitted the rendered stream all along". Two loads: (1) the consumed
+  detached-window backlog got no seqs of its own — before this it existed ONLY in the delivered
+  bytes, so the NEXT cold reattach replayed a history the backlog had vanished from (real data
+  loss, e.g. an agent's overnight output missing from scrollback on the second reconnect); (2) the
+  next compose walks the small canonical history instead of the raw ring. Warm re-reconnect
+  mid-delivery resumes the rendered stream byte-exact because adopted == sent.
+- ✅ **Detach folds the ring in the background** (`scheduleDetachedRingFold`, floor 128 KiB): the
+  moment the client leaves is the one moment a multi-second render is free, so the acked ring is
+  rendered once and spliced back (generation-guarded against concurrent ring mutations — a stale
+  fold is dropped whole, never merged). The eventual reattach compose — the moment the user IS
+  staring at an empty pane — walks O(canonical + delta). Memory falls out: an idle detached
+  session's ring collapses from up-to-64 MiB of churn to the rendered size.
+- ✅ **DECSCUSR joins the modeled state.** The zsh integration sets a bar cursor per prompt
+  (`precmd` → `ESC[5 q`); the model consumed all intermediate-family CSIs unmodeled, so the
+  snapshot silently reset every reattached pane to a block cursor. The model now tracks the
+  last-wins shape (RIS resets it), the renderer re-emits it after keypad state, and the preamble
+  wipes with `ESC[0 q` so a warm-overflow re-render can't inherit a stale shape.

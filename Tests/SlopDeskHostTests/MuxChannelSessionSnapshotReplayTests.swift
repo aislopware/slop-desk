@@ -192,6 +192,109 @@ final class MuxChannelSessionSnapshotReplayTests: XCTestCase {
         session.shutdown()
     }
 
+    /// Records every input the composer is fed — the adopted-history observability seam.
+    private final class ComposeSpy: @unchecked Sendable {
+        private let lock = NSLock()
+        private var recorded: [Data] = []
+
+        func compose(_ raw: Data, rows: Int, cols: Int) -> Data {
+            lock.lock()
+            recorded.append(raw)
+            lock.unlock()
+            return TerminalReplaySnapshot.compose(raw: raw, rows: rows, cols: cols)
+        }
+
+        var inputs: [Data] {
+            lock.lock()
+            defer { lock.unlock() }
+            return recorded
+        }
+    }
+
+    private func makeSpySession(_ spy: ComposeSpy) -> MuxChannelSession {
+        MuxChannelSession(
+            channelID: 1,
+            pty: PTYProcess(),
+            data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
+            control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
+            snapshotReplay: MuxChannelSession.SnapshotReplayPolicy(
+                compose: { raw, rows, cols in spy.compose(raw, rows: rows, cols: cols) },
+                warmThresholdBytes: 4 * 1024 * 1024,
+            ),
+        )
+    }
+
+    // MARK: History canonicalization (adopt + detach-time fold)
+
+    /// The backlog-hole pin: the consumed detached-window backlog got no seqs of its own, so
+    /// unless the compose ADOPTS the rendered stream as the retained history, a SECOND cold
+    /// reattach (the first client died before acking) replays a history the backlog has
+    /// vanished from.
+    func testDetachedBacklogSurvivesIntoSecondColdSnapshot() async {
+        let spy = ComposeSpy()
+        let session = makeSpySession(spy)
+        session.installGateForTesting(PausableQueueGate(capacity: 1_000_000) { _ in })
+        session.appendForTesting(Data("hello\r\n".utf8)) // seq 1
+        session.detach(onDetachedExit: { _ in })
+        session.enqueueChunkForTesting(bytes: Data("away-output".utf8))
+
+        let first = SendRecorder()
+        let firstComposed = await session.replayTail(after: 0, on: recordingChannel(first))
+        XCTAssertTrue(firstComposed)
+
+        let second = SendRecorder()
+        let secondComposed = await session.replayTail(after: 0, on: recordingChannel(second))
+        XCTAssertTrue(secondComposed)
+        var terminal = TerminalScreenModel(rows: 24, cols: 80)
+        terminal.feed(second.outputBytes)
+        let snap = terminal.snapshot()
+        XCTAssertEqual(snap.lines[0], "hello")
+        XCTAssertEqual(snap.lines[1], "away-output", "the consumed backlog must survive adoption")
+
+        // And the second compose walked the ADOPTED canonical history, not the raw one —
+        // its input is exactly the stream the first compose delivered.
+        XCTAssertEqual(spy.inputs.count, 2)
+        XCTAssertEqual(spy.inputs[1], first.outputBytes, "compose #2 input = adopted stream")
+    }
+
+    /// Detaching folds the acked ring in the background: the eventual reattach compose walks
+    /// the small canonical render instead of the raw churn (the "reattach stalls for seconds
+    /// re-parsing 64 MiB of build output" fix).
+    func testDetachFoldsRingSoReattachComposeIsSmall() async {
+        let spy = ComposeSpy()
+        let session = makeSpySession(spy)
+        session.installGateForTesting(PausableQueueGate(capacity: 100 * 1024 * 1024) { _ in })
+        // ~240 KiB of CR-overprint churn (over the 128 KiB fold floor), fully acked → ring.
+        var seq: Int64 = 0
+        for tick in 0..<20000 {
+            session.appendForTesting(Data("\rtick \(tick)".utf8))
+            seq += 1
+        }
+        session.ackForTesting(upTo: seq)
+        let rawRingBytes = session.scrollbackRingBytesForTesting()
+        session.detach(onDetachedExit: { _ in })
+
+        // The fold splices asynchronously — wait for the ring to actually SHRINK (the spy
+        // recording its input only proves the render started).
+        await waitUntil { session.scrollbackRingBytesForTesting() < rawRingBytes }
+        XCTAssertLessThan(session.scrollbackRingBytesForTesting(), rawRingBytes, "fold must land")
+
+        let recorder = SendRecorder()
+        let composed = await session.replayTail(after: 0, on: recordingChannel(recorder))
+        XCTAssertTrue(composed)
+        guard let reattachInput = spy.inputs.last else {
+            XCTFail("no reattach compose")
+            return
+        }
+        XCTAssertLessThan(
+            reattachInput.count, 64 * 1024,
+            "reattach compose must walk the folded canonical ring, not ~240 KiB of raw churn",
+        )
+        var terminal = TerminalScreenModel(rows: 24, cols: 80)
+        terminal.feed(recorder.outputBytes)
+        XCTAssertEqual(terminal.snapshot().lines[0], "tick 19999", "folded state stays correct")
+    }
+
     // MARK: Warm reconnect
 
     /// A warm reconnect BELOW the threshold replays the raw tail byte-exact — the live grid's

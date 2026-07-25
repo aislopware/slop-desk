@@ -1193,6 +1193,9 @@ final class MuxChannelSession: @unchecked Sendable {
         // (``MuxFlowControl/detachedHostQueueCapacityBytes``, default 64 MiB); rebindRelay
         // restores the attached sizing.
         outputGate?.setCapacity(MuxFlowControl.detachedHostQueueCapacityBytes)
+        // With the client gone this is the one moment a multi-second render is FREE — fold the
+        // ring now so the eventual reattach compose is O(canonical + delta), not O(raw churn).
+        scheduleDetachedRingFold()
     }
 
     /// Rebinds the relay to a fresh pair of sub-channels from a returning client.
@@ -1540,7 +1543,51 @@ final class MuxChannelSession: @unchecked Sendable {
         guard rendered.count <= source.replaySeqs.count * MuxFlowControl.maxOutputFramePayloadBytes
         else { return nil }
         consumeDetachedBacklog(backlog)
-        return ReplayBuffer.rechunkSnapshot(rendered, across: source.replaySeqs)
+        let messages = ReplayBuffer.rechunkSnapshot(rendered, across: source.replaySeqs)
+        // Adopt the rendered stream AS the retained history ("as if the host had emitted it
+        // all along"): the consumed backlog got no seqs of its own — without this it would
+        // exist only in the delivered bytes and vanish from every later cold replay — and the
+        // next compose parses the small canonical history instead of re-walking the raw ring.
+        replayLock.lock()
+        replay.adoptSnapshotReplay(messages)
+        replayLock.unlock()
+        return messages
+    }
+
+    /// Below this many ring bytes a detach-time fold isn't worth a render (the next compose
+    /// walks a ring this small in well under a frame's time).
+    private static let ringFoldFloorBytes = 128 * 1024
+
+    /// Detach-time ring canonicalization: render the acked ring ONCE while nobody is waiting
+    /// (the client just left) and splice the rendered bytes back in as the ring's content.
+    /// The next cold compose — the moment the user is staring at an empty pane — then parses
+    /// O(rendered + delta) instead of the raw history (up to 64 MiB of build/test churn:
+    /// seconds of stall at the measured ~20 MiB/s model walk). The splice is
+    /// generation-guarded; any concurrent ring mutation drops the fold harmlessly.
+    private func scheduleDetachedRingFold() {
+        guard let policy = snapshotReplay else { return }
+        replayLock.lock()
+        let source = replay.ringFoldSource()
+        replayLock.unlock()
+        guard let source, source.bytes.count >= Self.ringFoldFloorBytes else { return }
+        let size = pty.currentWindowSize()
+        let rows = Int(size?.rows ?? 24)
+        let cols = Int(size?.cols ?? 80)
+        Task.detached(priority: .utility) { [weak self] in
+            let rendered = policy.compose(source.bytes, rows, cols)
+            // A render that GREW the ring would be pathological (the floor above makes it
+            // implausible) — keeping the raw bytes is strictly better then.
+            guard rendered.count < source.bytes.count else { return }
+            self?.spliceFoldedRing(rendered, from: source)
+        }
+    }
+
+    /// The sync half of ``scheduleDetachedRingFold()`` — NSLock is unavailable from async
+    /// contexts (the `snapshotReplayTailForSend` discipline).
+    private func spliceFoldedRing(_ rendered: Data, from source: ReplayBuffer.RingFoldSource) {
+        replayLock.lock()
+        replay.adoptFoldedRing(rendered, from: source)
+        replayLock.unlock()
     }
 
     /// A non-destructive read of the detached-window chunk backlog (the
@@ -2826,6 +2873,14 @@ final class MuxChannelSession: @unchecked Sendable {
     func ackForTesting(upTo seq: Int64) { acknowledge(upTo: seq) }
     /// Drives the real ``setClientOnline(_:)`` glue (offline-gate side).
     func setClientOnlineForTesting(_ online: Bool) { setClientOnline(online) }
+
+    /// The ring's current byte total — the detach-time fold's observability seam (the splice
+    /// lands asynchronously; tests wait for the ring to shrink instead of sleeping).
+    func scrollbackRingBytesForTesting() -> Int {
+        replayLock.lock()
+        defer { replayLock.unlock() }
+        return replay.scrollbackRingBytesForTesting
+    }
 
     /// Whether an exit-waiter task exists (regression seam): only ``startRelay()`` may ever create
     /// one — `rebindRelay` must NOT cancel+recreate it, because `PTYProcess.waitForExit()` parks a

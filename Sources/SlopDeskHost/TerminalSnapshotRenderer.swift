@@ -20,7 +20,8 @@ import Foundation
 ///    alt grid with ABSOLUTE per-row positioning (no scroll risk, blank rows skipped).
 /// 5. State re-establishment: DECSTBM, DECOM, DECAWM, DECTCEM, charsets (G0/G1 + SO), the live
 ///    SGR, the cursor (re-arming DECAWM deferred wrap by re-printing the last column when the
-///    model ended wrap-pending), keypad, then the caller's input-mode reassert bytes.
+///    model ended wrap-pending), keypad, DECSCUSR cursor shape, then the caller's input-mode
+///    reassert bytes.
 ///
 /// ## What this guarantees
 /// Feeding the output to a FRESH ``TerminalScreenModel`` reproduces the source model's visible
@@ -106,6 +107,11 @@ enum TerminalSnapshotRenderer {
             out.append(0x1B)
             out.append(UInt8(ascii: "="))
         }
+        if snapshot.cursorShape != 0 {
+            // DECSCUSR — the shell integration's bar-at-prompt cursor (or a TUI's own shape)
+            // survives the state transfer; the preamble already reset the shape to default.
+            out.append(contentsOf: Array("\u{1B}[\(snapshot.cursorShape) q".utf8))
+        }
 
         // Cursor + deferred wrap — the LAST cursor-affecting emission. Coordinates are
         // ORIGIN-relative when DECOM is on (the CUP is interpreted inside the region above).
@@ -149,10 +155,10 @@ enum TerminalSnapshotRenderer {
 
     private enum Preamble {
         /// `?1049l` main screen · `SGR 0` · `?25h` visible · `r` full region · `?6l` origin
-        /// off · `?7h` wrap on · G0/G1 ASCII + SI · `ESC >` keypad normal · `3J` erase saved
-        /// lines · `2J` erase screen · `H` home.
+        /// off · `?7h` wrap on · G0/G1 ASCII + SI · `ESC >` keypad normal · `0 SP q` cursor
+        /// shape default · `3J` erase saved lines · `2J` erase screen · `H` home.
         static let bytes: [UInt8] = Array(
-            "\u{1B}[?1049l\u{1B}[0m\u{1B}[?25h\u{1B}[r\u{1B}[?6l\u{1B}[?7h\u{1B}(B\u{1B})B\u{0F}\u{1B}>\u{1B}[3J\u{1B}[2J\u{1B}[H"
+            "\u{1B}[?1049l\u{1B}[0m\u{1B}[?25h\u{1B}[r\u{1B}[?6l\u{1B}[?7h\u{1B}(B\u{1B})B\u{0F}\u{1B}>\u{1B}[0 q\u{1B}[3J\u{1B}[2J\u{1B}[H"
                 .utf8,
         )
     }
@@ -247,12 +253,12 @@ enum TerminalSnapshotRenderer {
 /// after the snapshot (the ``ScrollbackReplayTransform`` discipline): the live tail that
 /// follows the replay begins with its continuation bytes, and anything inserted between the
 /// halves would corrupt both.
-enum TerminalReplaySnapshot {
+public enum TerminalReplaySnapshot {
     /// Scrollback lines the composer's model captures (the client's own scrollback cap is the
     /// real bound; this bounds host memory during composition).
     static let scrollbackLineBudget = 10000
 
-    static func compose(raw: Data, rows: Int, cols: Int) -> Data {
+    public static func compose(raw: Data, rows: Int, cols: Int) -> Data {
         let escSplit = ScrollbackReplayTransform.splitTrailingIncompleteEscape(raw)
         let utf8Split = escSplit.dangling.isEmpty
             ? splitTrailingIncompleteUTF8(escSplit.head)
