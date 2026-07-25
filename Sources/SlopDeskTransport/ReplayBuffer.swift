@@ -341,6 +341,51 @@ public struct ReplayBuffer: Sendable {
         return result
     }
 
+    // MARK: Snapshot-replay source (state-transfer cold reattach)
+
+    /// The raw material for a RENDERED-snapshot replay (docs/DECISIONS.md 2026-07-25
+    /// state-transfer): the COMPLETE retained history (full ring + full un-acked tail,
+    /// chronological — the screen-model composer needs every byte to reconstruct state, even
+    /// the portion a warm client already acked) plus the seq budget the rendered stream may
+    /// ride (`seq > lastReceivedSeq`, ascending — the same seqs `replay(after:)` would use).
+    public struct SnapshotSource: Sendable {
+        /// Ring + un-acked tail concatenated, oldest-first — the composer's model input.
+        public let history: Data
+        /// Seqs available to carry the rendered stream (strictly above `lastReceivedSeq`).
+        public let replaySeqs: [Int64]
+        /// Total bytes of the entries behind `replaySeqs` — the caller's "how much would a
+        /// raw replay cost" threshold input.
+        public let replayBytes: Int
+    }
+
+    public func snapshotSource(after lastReceivedSeq: Int64) -> SnapshotSource {
+        var history = Data()
+        var seqs: [Int64] = []
+        var replayBytes = 0
+        for entry in scrollbackRing {
+            history.append(entry.bytes)
+            if entry.seq > lastReceivedSeq {
+                seqs.append(entry.seq)
+                replayBytes += entry.bytes.count
+            }
+        }
+        for entry in entries {
+            history.append(entry.bytes)
+            if entry.seq > lastReceivedSeq {
+                seqs.append(entry.seq)
+                replayBytes += entry.bytes.count
+            }
+        }
+        return SnapshotSource(history: history, replaySeqs: seqs, replayBytes: replayBytes)
+    }
+
+    /// Re-chunks a RENDERED snapshot stream across `seqs` (ascending, from
+    /// ``snapshotSource(after:)``) — always covering the last seq so the ack it provokes
+    /// releases every retained entry, exactly like the cold distilled replay.
+    public static func rechunkSnapshot(_ data: Data, across seqs: [Int64]) -> [WireMessage] {
+        rechunk(data, across: seqs, mustCoverLastSeq: true)
+    }
+
     // MARK: Compatibility API (used by SlopDeskHost stub + transport)
 
     /// Assigns the next seq, retains the payload, and reports the resulting ``DrainState`` — the

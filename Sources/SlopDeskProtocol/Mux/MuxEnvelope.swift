@@ -10,7 +10,11 @@ public enum MuxFrameType: UInt8, Sendable, Equatable, CaseIterable {
     /// Initiator asks to open a new logical channel. Body =
     /// `[16-byte sessionUUID][Int64 BE lastReceivedSeq][UInt8 channelClass][optional UInt16 cwdLen][cwd UTF-8]`.
     case channelOpen = 1
-    /// Responder accepts (or refuses) a channel open. Body = `[UInt8 accepted]`.
+    /// Responder accepts (or refuses) a channel open. Body =
+    /// `[UInt8 accepted][Int64 BE resumeFromSeq]` — `resumeFromSeq` is the HOST-authoritative
+    /// resume verdict (0 = fresh shell / nothing resumed; > 0 = the SAME live session was
+    /// reattached and the replay starts after this seq). Decode tolerates the field's absence
+    /// (pre-resume encoders) as 0.
     case channelOpenAck = 2
     /// Opaque application payload for an open channel. Body is a passed-through
     /// ``WireMessage`` frame — the mux layer does **not** parse it.
@@ -43,8 +47,9 @@ public enum MuxFrame: Equatable, Sendable {
         channelClass: UInt8,
         initialCwd: String?,
     )
-    /// `channelOpenAck`: `accepted` true if the responder will service the channel.
-    case channelOpenAck(channelID: UInt32, accepted: Bool)
+    /// `channelOpenAck`: `accepted` true if the responder will service the channel;
+    /// `resumeFromSeq` is the host-authoritative resume verdict (see ``MuxFrameType/channelOpenAck``).
+    case channelOpenAck(channelID: UInt32, accepted: Bool, resumeFromSeq: Int64)
     /// `channelData`: OPAQUE inner ``WireMessage`` frame bytes for `channelID`.
     case channelData(channelID: UInt32, payload: Data)
     /// `channelClose`: this side will send no more frames on `channelID`.
@@ -56,7 +61,7 @@ public enum MuxFrame: Equatable, Sendable {
     public var channelID: UInt32 {
         switch self {
         case let .channelOpen(channelID, _, _, _, _): channelID
-        case let .channelOpenAck(channelID, _): channelID
+        case let .channelOpenAck(channelID, _, _): channelID
         case let .channelData(channelID, _): channelID
         case let .channelClose(channelID): channelID
         case let .windowAdjust(channelID, _): channelID
@@ -120,8 +125,9 @@ public enum MuxEnvelopeCodec {
                 out.append(contentsOf: cwdBytes)
             }
 
-        case let .channelOpenAck(_, accepted):
+        case let .channelOpenAck(_, accepted, resumeFromSeq):
             out.append(accepted ? 1 : 0)
+            out.appendBE(resumeFromSeq)
 
         case let .channelData(_, payload):
             out.append(payload) // opaque — carried verbatim
@@ -194,7 +200,22 @@ public enum MuxEnvelopeCodec {
 
         case .channelOpenAck:
             let acceptedByte = try reader.readUInt8()
-            return .channelOpenAck(channelID: channelID, accepted: acceptedByte != 0)
+            // `resumeFromSeq` is decode-optional (the `channelOpen` cwd discipline): absent
+            // (a pre-resume encoder / old golden vector) reads as 0 — "nothing resumed".
+            let resumeFromSeq: Int64
+            if reader.bytesRemaining == 0 {
+                resumeFromSeq = 0
+            } else {
+                resumeFromSeq = try reader.readInt64()
+                guard reader.bytesRemaining == 0 else {
+                    throw SlopDeskError.malformedBody("channelOpenAck: trailing bytes")
+                }
+            }
+            return .channelOpenAck(
+                channelID: channelID,
+                accepted: acceptedByte != 0,
+                resumeFromSeq: resumeFromSeq,
+            )
 
         case .channelData:
             // Body is an opaque WireMessage frame — consume the rest verbatim.

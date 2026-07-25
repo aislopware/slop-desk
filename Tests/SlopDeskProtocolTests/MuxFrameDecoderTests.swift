@@ -18,7 +18,7 @@ final class MuxFrameDecoderTests: XCTestCase {
     func testTwoFramesInOneChunkBothDrain() throws {
         // Two frames coalesced into one append must both drain in order.
         let two: [MuxFrame] = [
-            .channelOpenAck(channelID: 3, accepted: true),
+            .channelOpenAck(channelID: 3, accepted: true, resumeFromSeq: 0),
             .windowAdjust(channelID: 3, bytesToAdd: 1024),
         ]
         var decoder = MuxFrameDecoder()

@@ -16,7 +16,8 @@ import SlopDeskProtocol
 /// The mux `channelOpen` carries the resume `sessionID` + `lastReceivedSeq` directly, so the
 /// channel IS the session — there is no separate hello/helloAck handshake on the shared link. The
 /// presented `sessionID` is authoritative (a fresh UUID for a new pane, the preserved id on
-/// reconnect); per-channel returning-client replay over mux is a later stage.
+/// reconnect); the host's `channelOpenAck` answers with the authoritative `resumeFromSeq`
+/// verdict (docs/20 §8.3.1), which `connect` awaits before adopting the channel.
 ///
 /// All mutable state lives inside this `actor`. The shared connection is acquired/released through
 /// the (`@MainActor`) ``ConnectionRegistry``, hopped to from `connect`/`close`.
@@ -92,7 +93,7 @@ public actor MuxClientTransport: ClientTransporting, InitialCwdConfigurableTrans
         port: UInt16,
         resume: UUID,
         lastReceivedSeq: Int64,
-        handshakeTimeout _: Duration,
+        handshakeTimeout: Duration,
     ) async throws {
         let id = resume == WireMessage.newSessionID ? UUID() : resume
         // Send the cwd hint on EVERY (re)connect. The host ignores it on a reattach (PATH A — the live
@@ -101,16 +102,26 @@ public actor MuxClientTransport: ClientTransporting, InitialCwdConfigurableTrans
         // cwd-derived title collapses to "Terminal"). See `SlopDeskClient.connect`.
         let cwdHint = initialCwd
         let acquisition = try await acquire(host, port, id, lastReceivedSeq, cwdHint)
+        // The `channelOpenAck` carries the HOST-AUTHORITATIVE `resumeFromSeq` (docs/20 §8.2):
+        // 0 = fresh shell (PATH B/C — the client must reset its seq marks), > 0 = the SAME
+        // live session reattached (PATH A — the marks are already correct and the replay
+        // starts after this seq). The host acks BEFORE the replay on the same DATA link, so
+        // this wait costs one verdict round-trip, not the replay. A refusal tears the
+        // acquisition down and throws (`ReconnectManager` retries); a timeout (dead host
+        // mid-open) does the same. Test doubles without an ack path keep the old behavior.
+        if let awaitAck = acquisition.awaitOpenAck {
+            let verdict = await Self.race(awaitAck, timeout: handshakeTimeout)
+            guard let verdict, verdict.accepted else {
+                await release(host, port, acquisition.channelID)
+                throw SlopDeskTransportError.notConnected(
+                    verdict == nil ? "mux: channelOpenAck timeout" : "mux: channel refused by host",
+                )
+            }
+            resumeFromSeq = verdict.resumeFromSeq
+        } else {
+            resumeFromSeq = 0
+        }
         sessionID = id
-        // S1/mux: `channelOpenAck` carries only `accepted: Bool` — no host-authoritative
-        // `resumeFromSeq` reply. The host either reattaches an existing session (PATH A,
-        // SLOPDESK_DETACH_ENABLED) or spawns a fresh shell (PATH B/C). Without a wire
-        // field to distinguish them, we leave `resumeFromSeq = 0` so `SlopDeskClient`
-        // always resets its dedup/ack high-water on (re)connect (the correct S1 behavior —
-        // the fresh shell restarts at seq 1, and PATH A would also reset if detach is not
-        // wired end-to-end yet). When PATH A wires a host-authoritative `resumeFromSeq`
-        // through the openAck, set it here to `lastReceivedSeq` on true resume.
-        resumeFromSeq = 0
         returningClient = (resume != WireMessage.newSessionID)
         dataChannel = acquisition.data
         controlChannel = acquisition.control
@@ -118,6 +129,27 @@ public actor MuxClientTransport: ClientTransporting, InitialCwdConfigurableTrans
         connectedHost = host
         connectedPort = port
         startForwarding(data: acquisition.data, control: acquisition.control)
+    }
+
+    /// Races `operation` against `timeout`. The loser is cancelled — `awaitOpenAck` resumes a
+    /// cancelled waiter immediately, so no continuation is stranded.
+    private static func race(
+        _ operation: @escaping @Sendable () async -> (accepted: Bool, resumeFromSeq: Int64),
+        timeout: Duration,
+    ) async -> (accepted: Bool, resumeFromSeq: Int64)? {
+        await withTaskGroup(of: (accepted: Bool, resumeFromSeq: Int64)?.self) { group in
+            group.addTask { await operation() }
+            group.addTask {
+                try? await Task.sleep(for: timeout)
+                return nil
+            }
+            guard let first = await group.next() else {
+                group.cancelAll()
+                return nil
+            }
+            group.cancelAll()
+            return first
+        }
     }
 
     public func sendInput(_ bytes: Data) async throws {
@@ -237,9 +269,21 @@ public struct MuxAcquisition: Sendable {
     public let channelID: UInt32
     public let data: MuxSubChannel
     public let control: MuxSubChannel
-    public init(channelID: UInt32, data: MuxSubChannel, control: MuxSubChannel) {
+    /// Awaits the host's `channelOpenAck` verdict for this channel (accepted + the
+    /// host-authoritative `resumeFromSeq`). `nil` (test doubles that never ack) makes
+    /// `connect` skip the wait and behave as before (`resumeFromSeq = 0`).
+    public let awaitOpenAck: (@Sendable () async -> (accepted: Bool, resumeFromSeq: Int64))?
+
+    @preconcurrency
+    public init(
+        channelID: UInt32,
+        data: MuxSubChannel,
+        control: MuxSubChannel,
+        awaitOpenAck: (@Sendable () async -> (accepted: Bool, resumeFromSeq: Int64))? = nil,
+    ) {
         self.channelID = channelID
         self.data = data
         self.control = control
+        self.awaitOpenAck = awaitOpenAck
     }
 }

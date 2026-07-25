@@ -2037,14 +2037,23 @@
     {
       "accepted": true,
       "channelId": 3,
-      "hex": "00000006000000030201",
-      "kind": "channelOpenAck"
+      "hex": "0000000e0000000302010000000000000000",
+      "kind": "channelOpenAck",
+      "resumeFromSeq": 0
     },
     {
       "accepted": false,
       "channelId": 5,
-      "hex": "00000006000000050200",
-      "kind": "channelOpenAck"
+      "hex": "0000000e0000000502000000000000000000",
+      "kind": "channelOpenAck",
+      "resumeFromSeq": 0
+    },
+    {
+      "accepted": true,
+      "channelId": 7,
+      "hex": "0000000e000000070201000000000000002a",
+      "kind": "channelOpenAck",
+      "resumeFromSeq": 42
     },
     {
       "channelId": 9,

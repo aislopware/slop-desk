@@ -121,7 +121,7 @@ final class MuxRouterTests: XCTestCase {
         // Client allocated id 1 and is awaiting the host's ack.
         let id = router.allocateChannel()
         XCTAssertEqual(id, 1)
-        let decision = router.route(.channelOpenAck(channelID: id, accepted: true))
+        let decision = router.route(.channelOpenAck(channelID: id, accepted: true, resumeFromSeq: 0))
         guard case .lifecycle(1, .open) = decision else {
             XCTFail("openAck should mark the channel open, got \(decision)")
             return
@@ -134,7 +134,7 @@ final class MuxRouterTests: XCTestCase {
         // Client allocated id 1 and is awaiting the host's ack; the host REFUSES it.
         let id = router.allocateChannel()
         XCTAssertEqual(id, 1)
-        let decision = router.route(.channelOpenAck(channelID: id, accepted: false))
+        let decision = router.route(.channelOpenAck(channelID: id, accepted: false, resumeFromSeq: 0))
         // A refusal must mark the channel dead (.closed), NOT open it (the bug).
         guard case .lifecycle(1, .closed) = decision else {
             XCTFail("a refused openAck must close the channel, got \(decision)")
@@ -157,7 +157,7 @@ final class MuxRouterTests: XCTestCase {
     /// lands on an id the client recorded `.open` at openChannel time, so an unknown-id ack is rejected.
     func testOpenAckForUnknownIdCreatesNoPhantomChannel() {
         var router = MuxRouter()
-        let decision = router.route(.channelOpenAck(channelID: 99, accepted: true))
+        let decision = router.route(.channelOpenAck(channelID: 99, accepted: true, resumeFromSeq: 0))
         guard case .lifecycle(99, .closed) = decision else {
             XCTFail("an ack for an unknown id reports .closed (no entry created), got \(decision)")
             return
@@ -171,7 +171,9 @@ final class MuxRouterTests: XCTestCase {
         }
         // The legit path is unaffected: an ack for an ALLOCATED id still opens it.
         let id = router.allocateChannel()
-        guard case .lifecycle(_, .open) = router.route(.channelOpenAck(channelID: id, accepted: true)) else {
+        guard case .lifecycle(_, .open) = router
+            .route(.channelOpenAck(channelID: id, accepted: true, resumeFromSeq: 0))
+        else {
             XCTFail("a legit ack still opens an allocated channel")
             return
         }

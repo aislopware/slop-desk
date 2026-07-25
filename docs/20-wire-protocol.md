@@ -484,6 +484,33 @@ the merged `inbound` and surfaces a `.disconnected`, which drives the `Reconnect
 mid-session clean half-close the host intends, so a clean finish is always a disconnect that
 reconnects (never a silent stall).
 
+### 8.3.1 Mux path: `channelOpenAck.resumeFromSeq` + snapshot replay (2026-07-25)
+
+On the TCP-mux path (the shipped terminal transport) the §8.2 handshake rides the channel
+lifecycle instead of `hello`/`helloAck`: `channelOpen` carries `[sessionID][lastReceivedSeq]
+[channelClass][cwd]` and the host's `channelOpenAck` body is now
+
+```
+[ UInt8 accepted ][ Int64 BE resumeFromSeq ]
+```
+
+`resumeFromSeq` is the §8.2 host-authoritative resume verdict, previously designed-but-unwired
+here: `0` = fresh shell (PATH B/C — the client resets its seq marks), `> 0` = the SAME live
+session reattached (PATH A) and replay starts after this seq (the client keeps its marks). The
+decoder tolerates the field's absence (a 1-byte legacy body) as `0`. The host sends the ack on
+the DATA link **before** the replay, so the verdict arrives FIFO-ahead of the first replayed
+byte; `MuxClientTransport.connect` awaits it (bounded by `handshakeTimeout`) and a refusal or
+timeout throws instead of leaving a silently-dead channel.
+
+**Snapshot replay (state-transfer):** with `SLOPDESK_SCROLLBACK_SNAPSHOT` ON (default), a cold
+reattach (`lastReceivedSeq == 0`) — and a warm one whose pending replay exceeds
+`SLOPDESK_SNAPSHOT_WARM_BYTES` (default 4 MiB) — no longer replays the (distilled) byte
+history. The host renders its `TerminalScreenModel` (ring + un-acked tail + detached
+out-FIFO backlog) once and sends the equivalent minimal stream instead. The wire contract is
+unchanged: the rendered bytes ride the SAME ascending replay seqs (re-chunked, last seq always
+covered so the client's ack releases every retained entry), and the client needs no new
+capability — it is `output` frames like any other replay. See docs/DECISIONS.md 2026-07-25.
+
 ### 8.4 `SlopDeskTransport` public API (WF-2)
 
 - `enum TransportParameters` — `static func makeTCP() -> NWParameters` (the single canonical params:

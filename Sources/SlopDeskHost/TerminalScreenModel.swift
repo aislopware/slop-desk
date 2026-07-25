@@ -10,30 +10,72 @@ import Foundation
 /// claude) READABLE to an agent — `read` returns the raw byte soup a full-screen app emits,
 /// `screen` returns what a human actually sees.
 ///
-/// Scope: text placement only. Implements the cursor/erase/scroll/alt-screen state machine
-/// (CUP/CUU..CUB/CHA/VPA/ED/EL/ICH/DCH/ECH/IL/DL/SU/SD/REP, DECSTBM, DECOM, DECAWM with
+/// Scope: text placement + per-cell SGR. Implements the cursor/erase/scroll/alt-screen state
+/// machine (CUP/CUU..CUB/CHA/VPA/ED/EL/ICH/DCH/ECH/IL/DL/SU/SD/REP, DECSTBM, DECOM, DECAWM with
 /// deferred wrap, DECSC/DECRC, IND/RI/NEL/RIS/DECALN, alt screen 47/1047/1049, SO/SI + DEC
-/// special-graphics G0/G1, UTF-8 with wide/combining width). SGR colors/attributes are parsed
-/// and DISCARDED — the dump is plain text. Unknown sequences are consumed and ignored
-/// (validate-then-drop: PTY bytes are semi-trusted; the model never traps, never allocates
-/// beyond the fixed grid).
+/// special-graphics G0/G1, UTF-8 with wide/combining width). SGR colors/attributes are tracked
+/// per cell (16/256/truecolor + the flag set, BCE on erase/scroll fill) for the replay-snapshot
+/// renderer; the ``snapshot()`` dump stays plain text (herdr-parity `detection_text` is
+/// byte-identical to the pre-SGR model). With `scrollbackLimit > 0` the model also captures
+/// lines scrolled off the top of the full-screen main region (xterm semantics: partial scroll
+/// regions and the alt screen never accrue scrollback; `ED 3` clears it; oldest-out over the
+/// cap). Unknown sequences are consumed and ignored (validate-then-drop: PTY bytes are
+/// semi-trusted; the model never traps, never allocates beyond the fixed grid + scrollback cap).
 ///
 /// Starting mid-stream is expected (the ring truncates oldest-first) — full-screen apps repaint,
 /// so the grid converges to truth after one redraw cycle regardless of the entry point.
 public struct TerminalScreenModel {
     // MARK: Cell / grid
 
+    /// One SGR color: the terminal default, an indexed palette entry, or 24-bit RGB.
+    enum SGRColor: Equatable, Sendable {
+        case `default`
+        case indexed(UInt8)
+        case rgb(UInt8, UInt8, UInt8)
+    }
+
+    /// The SGR attribute state a cell was printed with (and the parser's live state between
+    /// prints). Value-semantic and small — a cell stores one by copy.
+    struct CellStyle: Equatable, Sendable {
+        var fg: SGRColor = .default
+        var bg: SGRColor = .default
+        var bold = false
+        var dim = false
+        var italic = false
+        var underline = false
+        var blink = false
+        var inverse = false
+        var hidden = false
+        var strikethrough = false
+
+        static let plain = Self()
+
+        /// The BCE fill style: erase/scroll fill takes the CURRENT BACKGROUND only (xterm
+        /// background-color-erase) — never the foreground/flag attributes.
+        var eraseFill: Self {
+            var style = Self()
+            style.bg = bg
+            return style
+        }
+    }
+
     /// One grid cell. A wide (2-column) character occupies its lead cell plus a CONTINUATION
     /// cell that renders as nothing; overwriting either half blanks the partner.
-    private struct Cell {
+    struct Cell: Equatable, Sendable {
         var text: String = " "
         var isContinuation = false
+        var style: CellStyle = .plain
     }
 
     private struct Grid {
         var cells: [[Cell]]
-        init(rows: Int, cols: Int) {
-            cells = Array(repeating: Array(repeating: Cell(), count: cols), count: rows)
+        /// Per-row soft-wrap flag: `wrapped[r]` means row `r` overflowed INTO row `r+1` via
+        /// DECAWM autowrap (the two are one logical line). Shifted with the rows by every
+        /// scroll/insert/delete; a freshly-filled (blank) row is never wrapped.
+        var wrapped: [Bool]
+        init(rows: Int, cols: Int, fill: Cell = Cell()) {
+            cells = Array(repeating: Array(repeating: fill, count: cols), count: rows)
+            wrapped = Array(repeating: false, count: rows)
         }
     }
 
@@ -45,6 +87,17 @@ public struct TerminalScreenModel {
         var g0Graphics = false
         var g1Graphics = false
         var usingG1 = false
+        var style = CellStyle.plain
+    }
+
+    /// One line captured off the top of the full-screen main region.
+    struct ScrollbackLine: Equatable, Sendable {
+        var cells: [Cell]
+        /// The line continues into its successor (autowrap) — the snapshot renderer re-joins
+        /// the pair so the client re-wraps at its own width. Only trusted when the line is
+        /// full to the last column (a stale flag on a since-rewritten short row must not
+        /// merge unrelated lines).
+        var softWrapped: Bool
     }
 
     // MARK: Public snapshot
@@ -88,6 +141,18 @@ public struct TerminalScreenModel {
     private var g1Graphics = false
     private var usingG1 = false
 
+    /// The live SGR state — stamped onto every printed cell; BCE fill derives from its bg.
+    private var style = CellStyle.plain
+
+    /// DECKPAM/DECKPNM (`ESC =` / `ESC >`): application keypad mode, re-asserted by the
+    /// snapshot renderer so a live TUI keeps its keypad across a reattach.
+    private var applicationKeypad = false
+
+    /// Captured scrollback (oldest-first), bounded by ``scrollbackLimit`` (0 = capture off —
+    /// the default, so the resident detection grid / `screen` verb pay nothing).
+    private(set) var scrollback: [ScrollbackLine] = []
+    let scrollbackLimit: Int
+
     /// The last printed grapheme (REP repeats it; combining marks attach to its cell).
     private var lastGraphic: (text: String, width: Int)?
     private var lastCellRow = -1
@@ -109,7 +174,12 @@ public struct TerminalScreenModel {
     // CSI accumulation (bounded: params capped in count + magnitude — validate-then-drop)
     private var csiPrivate: UInt8 = 0
     private var csiParams: [Int] = []
+    /// Parallel to `csiParams`: `true` when the param was introduced by a COLON separator
+    /// (an SGR sub-parameter, e.g. the `3` in `4:3`) — SGR must not read it as a top-level
+    /// code, where `4:0` (underline-off) would misparse as underline + reset-all.
+    private var csiColonFlags: [Bool] = []
     private var csiCurrent: Int?
+    private var csiNextParamColon = false
     private var csiIntermediate: UInt8 = 0
 
     // UTF-8 accumulation
@@ -119,9 +189,16 @@ public struct TerminalScreenModel {
     // MARK: Init / feed
 
     public init(rows: Int, cols: Int) {
+        self.init(rows: rows, cols: cols, scrollbackLimit: 0)
+    }
+
+    /// - Parameter scrollbackLimit: max captured scrollback LINES (0 = capture disabled).
+    ///   The replay-snapshot composer passes a real budget; the detection grid keeps 0.
+    init(rows: Int, cols: Int, scrollbackLimit: Int) {
         // Clamp to a sane grid — the callers validate, but the model itself never traps.
         self.rows = min(max(rows, 1), 512)
         self.cols = min(max(cols, 1), 1024)
+        self.scrollbackLimit = min(max(scrollbackLimit, 0), 100_000)
         main = Grid(rows: self.rows, cols: self.cols)
         alt = Grid(rows: self.rows, cols: self.cols)
         scrollBottom = self.rows - 1
@@ -153,6 +230,71 @@ public struct TerminalScreenModel {
             cursorVisible: cursorVisible,
             altScreen: usingAlt,
             lines: lines,
+        )
+    }
+
+    // MARK: Replay snapshot (full-state dump for the snapshot renderer)
+
+    /// Everything the replay-snapshot renderer needs to reproduce this model's visible state
+    /// on a fresh terminal: attributed grids + scrollback, cursor, deferred wrap, scroll
+    /// region, modes, charsets, keypad, live SGR, and the active screen's saved cursor.
+    struct ReplaySnapshot: Equatable, Sendable {
+        var rows: Int
+        var cols: Int
+        var scrollback: [ScrollbackLine]
+        var mainCells: [[Cell]]
+        var mainWrapped: [Bool]
+        var altCells: [[Cell]]
+        var usingAlt: Bool
+        var cursorRow: Int
+        var cursorCol: Int
+        var cursorVisible: Bool
+        var wrapPending: Bool
+        var autowrap: Bool
+        var originMode: Bool
+        var scrollTop: Int
+        var scrollBottom: Int
+        var g0Graphics: Bool
+        var g1Graphics: Bool
+        var usingG1: Bool
+        var applicationKeypad: Bool
+        var style: CellStyle
+        var savedCursorRow: Int
+        var savedCursorCol: Int
+        /// The MAIN screen's saved-cursor position (the slot `?1049h` will overwrite on
+        /// entry) — only meaningful when `usingAlt` (then `savedCursorRow/Col` above are the
+        /// ALT slot).
+        var savedMainRow: Int
+        var savedMainCol: Int
+    }
+
+    func replaySnapshot() -> ReplaySnapshot {
+        let active = usingAlt ? savedAlt : savedMain
+        return ReplaySnapshot(
+            rows: rows,
+            cols: cols,
+            scrollback: scrollback,
+            mainCells: main.cells,
+            mainWrapped: main.wrapped,
+            altCells: alt.cells,
+            usingAlt: usingAlt,
+            cursorRow: cursorRow,
+            cursorCol: cursorCol,
+            cursorVisible: cursorVisible,
+            wrapPending: wrapPending,
+            autowrap: autowrap,
+            originMode: originMode,
+            scrollTop: scrollTop,
+            scrollBottom: scrollBottom,
+            g0Graphics: g0Graphics,
+            g1Graphics: g1Graphics,
+            usingG1: usingG1,
+            applicationKeypad: applicationKeypad,
+            style: style,
+            savedCursorRow: active.row,
+            savedCursorCol: active.col,
+            savedMainRow: savedMain.row,
+            savedMainCol: savedMain.col,
         )
     }
 
@@ -238,7 +380,9 @@ public struct TerminalScreenModel {
             state = .csi
             csiPrivate = 0
             csiParams.removeAll(keepingCapacity: true)
+            csiColonFlags.removeAll(keepingCapacity: true)
             csiCurrent = nil
+            csiNextParamColon = false
             csiIntermediate = 0
         case UInt8(ascii: "]"): // OSC
             state = .stringBody(belTerminates: true, sawESC: false)
@@ -260,6 +404,12 @@ public struct TerminalScreenModel {
         case UInt8(ascii: "8"): // DECRC
             state = .ground
             restoreCursor()
+        case UInt8(ascii: "="): // DECKPAM
+            state = .ground
+            applicationKeypad = true
+        case UInt8(ascii: ">"): // DECKPNM
+            state = .ground
+            applicationKeypad = false
         case UInt8(ascii: "D"): // IND
             state = .ground
             lineFeed()
@@ -301,8 +451,12 @@ public struct TerminalScreenModel {
             csiCurrent = min((csiCurrent ?? 0) * 10 + digit, 9999)
         case UInt8(ascii: ";"),
              UInt8(ascii: ":"):
-            if csiParams.count < 32 { csiParams.append(csiCurrent ?? 0) }
+            if csiParams.count < 32 {
+                csiParams.append(csiCurrent ?? 0)
+                csiColonFlags.append(csiNextParamColon)
+            }
             csiCurrent = nil
+            csiNextParamColon = byte == UInt8(ascii: ":")
         case UInt8(ascii: "?"),
              UInt8(ascii: ">"),
              UInt8(ascii: "<"),
@@ -311,7 +465,10 @@ public struct TerminalScreenModel {
         case 0x20...0x2F: // intermediates (e.g. the space in `CSI Ps SP q`)
             csiIntermediate = byte
         case 0x40...0x7E: // final
-            if let current = csiCurrent, csiParams.count < 32 { csiParams.append(current) }
+            if let current = csiCurrent, csiParams.count < 32 {
+                csiParams.append(current)
+                csiColonFlags.append(csiNextParamColon)
+            }
             state = .ground
             // An intermediate marks a sequence family we don't model (DECSCUSR etc.) — consumed.
             if csiIntermediate == 0 { csiDispatch(final: byte) }
@@ -427,15 +584,128 @@ public struct TerminalScreenModel {
             if csiPrivate == 0 { saveCursor() }
         case UInt8(ascii: "u"): // ANSI restore cursor
             if csiPrivate == 0 { restoreCursor() }
-        case UInt8(ascii: "m"),
-             UInt8(ascii: "n"),
+        case UInt8(ascii: "m"):
+            // SGR — tracked for the replay snapshot. `CSI > m` / `CSI ? m` (modifyOtherKeys
+            // etc.) are different sequences and NOT SGR.
+            if csiPrivate == 0 { applySGR() }
+        case UInt8(ascii: "n"),
              UInt8(ascii: "c"),
              UInt8(ascii: "t"),
              UInt8(ascii: "g"),
              UInt8(ascii: "q"):
-            break // SGR / DSR / DA / window ops / TBC / DECLL — text placement unaffected
+            break // DSR / DA / window ops / TBC / DECLL — text placement unaffected
         default:
             break // unknown final — consumed
+        }
+    }
+
+    // MARK: SGR
+
+    /// Applies an SGR parameter run to the live ``style``. Colon-flagged params are SUB-params
+    /// (e.g. underline style `4:3`) and never read as top-level codes; `38`/`48`/`58` consume
+    /// their color arguments regardless of separator form. Unknown codes are ignored.
+    private mutating func applySGR() {
+        if csiParams.isEmpty {
+            style = .plain // bare `CSI m` == `CSI 0 m`
+            return
+        }
+        var i = 0
+        while i < csiParams.count {
+            if csiColonFlags[i] {
+                i += 1 // orphan sub-param of a code we don't model (4:x, 58:…)
+                continue
+            }
+            let code = csiParams[i]
+            switch code {
+            case 0: style = .plain
+            case 1: style.bold = true
+            case 2: style.dim = true
+            case 3: style.italic = true
+            case 4: style.underline = true
+            case 5,
+                 6: style.blink = true
+            case 7: style.inverse = true
+            case 8: style.hidden = true
+            case 9: style.strikethrough = true
+            case 21: style.underline = true // xterm: doubly-underlined — render as underline
+            case 22: style.bold = false
+                style.dim = false
+            case 23: style.italic = false
+            case 24: style.underline = false
+            case 25: style.blink = false
+            case 27: style.inverse = false
+            case 28: style.hidden = false
+            case 29: style.strikethrough = false
+            case 30...37: style.fg = .indexed(UInt8(code - 30))
+            case 39: style.fg = .default
+            case 40...47: style.bg = .indexed(UInt8(code - 40))
+            case 49: style.bg = .default
+            case 90...97: style.fg = .indexed(UInt8(code - 90 + 8))
+            case 100...107: style.bg = .indexed(UInt8(code - 100 + 8))
+            case 38,
+                 48:
+                let parsed = parseSGRColor(at: i)
+                if let color = parsed.color {
+                    if code == 38 { style.fg = color } else { style.bg = color }
+                }
+                i = parsed.next
+                continue
+            case 58: // underline color (unmodeled) — still consume its arguments
+                i = parseSGRColor(at: i).next
+                continue
+            default:
+                break
+            }
+            i += 1
+        }
+    }
+
+    /// Parses the extended-color arguments after a `38`/`48`/`58` at `index`.
+    /// Returns the decoded color (nil for malformed/unknown subtype) and the index of the
+    /// first param NOT consumed. Both wild forms decode: semicolon (`38;2;r;g;b`, strict
+    /// shape) and colon (`38:2:r:g:b` / `38:2::r:g:b` with a colorspace-id — the color is
+    /// the LAST three args of the colon run).
+    private func parseSGRColor(at index: Int) -> (color: SGRColor?, next: Int) {
+        // A colon run is self-delimiting: consume it whole regardless of validity.
+        var runEnd = index + 1
+        while runEnd < csiParams.count, csiColonFlags[runEnd] { runEnd += 1 }
+        if runEnd > index + 1 {
+            let args = Array(csiParams[(index + 1)..<runEnd])
+            switch args[0] {
+            case 5 where args.count >= 2 && (0...255).contains(args[1]):
+                return (.indexed(UInt8(args[1])), runEnd)
+            case 2 where args.count >= 4:
+                let r = args[args.count - 3]
+                let g = args[args.count - 2]
+                let b = args[args.count - 1]
+                guard (0...255).contains(r), (0...255).contains(g), (0...255).contains(b) else {
+                    return (nil, runEnd)
+                }
+                return (.rgb(UInt8(r), UInt8(g), UInt8(b)), runEnd)
+            default:
+                return (nil, runEnd)
+            }
+        }
+        // Semicolon form — consume exactly the strict shape.
+        let subtype = index + 1
+        guard subtype < csiParams.count else { return (nil, subtype) }
+        switch csiParams[subtype] {
+        case 5:
+            guard subtype + 1 < csiParams.count else { return (nil, subtype + 1) }
+            let value = csiParams[subtype + 1]
+            guard (0...255).contains(value) else { return (nil, subtype + 2) }
+            return (.indexed(UInt8(value)), subtype + 2)
+        case 2:
+            guard subtype + 3 < csiParams.count else { return (nil, csiParams.count) }
+            let r = csiParams[subtype + 1]
+            let g = csiParams[subtype + 2]
+            let b = csiParams[subtype + 3]
+            guard (0...255).contains(r), (0...255).contains(g), (0...255).contains(b) else {
+                return (nil, subtype + 4)
+            }
+            return (.rgb(UInt8(r), UInt8(g), UInt8(b)), subtype + 4)
+        default:
+            return (nil, subtype + 1)
         }
     }
 
@@ -469,7 +739,7 @@ public struct TerminalScreenModel {
         if toAlt {
             if saveRestoreCursor { saveCursor() }
             usingAlt = true
-            if clearAltOnEnter { alt = Grid(rows: rows, cols: cols) }
+            if clearAltOnEnter { alt = Grid(rows: rows, cols: cols, fill: blankFill()) }
             if saveRestoreCursor { setCursorPosition(row: 0, col: 0) }
         } else {
             usingAlt = false
@@ -496,6 +766,21 @@ public struct TerminalScreenModel {
         savedMain = SavedCursor()
         savedAlt = SavedCursor()
         lastGraphic = nil
+        style = .plain
+        applicationKeypad = false
+        // Scrollback survives RIS (xterm: only `ED 3` erases saved lines).
+    }
+
+    // MARK: BCE fill helpers
+
+    /// A blank cell in the CURRENT erase style (xterm background-color-erase: fills take the
+    /// live background, never the other attributes).
+    private func blankFill() -> Cell {
+        Cell(text: " ", style: style.eraseFill)
+    }
+
+    private func blankRowCells() -> [Cell] {
+        Array(repeating: blankFill(), count: cols)
     }
 
     private mutating func decAlignmentTest() {
@@ -518,6 +803,7 @@ public struct TerminalScreenModel {
         let saved = SavedCursor(
             row: cursorRow, col: cursorCol, originMode: originMode,
             g0Graphics: g0Graphics, g1Graphics: g1Graphics, usingG1: usingG1,
+            style: style,
         )
         if usingAlt { savedAlt = saved } else { savedMain = saved }
     }
@@ -530,6 +816,7 @@ public struct TerminalScreenModel {
         g0Graphics = saved.g0Graphics
         g1Graphics = saved.g1Graphics
         usingG1 = saved.usingG1
+        style = saved.style
         wrapPending = false
     }
 
@@ -588,13 +875,39 @@ public struct TerminalScreenModel {
     private mutating func scrollUp(_ n: Int) {
         let count = min(max(n, 1), scrollBottom - scrollTop + 1)
         var grid = usingAlt ? alt : main
+        // Scrollback capture (xterm): only the MAIN screen with a FULL-SCREEN scroll region
+        // accrues history — a DECSTBM sub-region discards, and the alt screen never captures.
+        if !usingAlt, scrollTop == 0, scrollBottom == rows - 1, scrollbackLimit > 0 {
+            for r in 0..<count {
+                scrollback.append(ScrollbackLine(
+                    cells: grid.cells[r],
+                    // The join guard: a wrap flag is only trusted on a line still FULL to its
+                    // last column (a since-rewritten short row must not merge with its old
+                    // continuation).
+                    softWrapped: grid.wrapped[r] && rowReachesLastColumn(grid.cells[r]),
+                ))
+            }
+            if scrollback.count > scrollbackLimit {
+                scrollback.removeFirst(scrollback.count - scrollbackLimit)
+            }
+        }
         for r in scrollTop...scrollBottom {
             let source = r + count
-            grid.cells[r] = source <= scrollBottom
-                ? grid.cells[source]
-                : Array(repeating: Cell(), count: cols)
+            if source <= scrollBottom {
+                grid.cells[r] = grid.cells[source]
+                grid.wrapped[r] = grid.wrapped[source]
+            } else {
+                grid.cells[r] = blankRowCells()
+                grid.wrapped[r] = false
+            }
         }
         setGrid(grid)
+    }
+
+    /// Whether a row's LAST column carries content — the soft-wrap join guard.
+    private func rowReachesLastColumn(_ cells: [Cell]) -> Bool {
+        guard let last = cells.last else { return false }
+        return last != Cell()
     }
 
     private mutating func scrollDown(_ n: Int) {
@@ -602,9 +915,13 @@ public struct TerminalScreenModel {
         var grid = usingAlt ? alt : main
         for r in stride(from: scrollBottom, through: scrollTop, by: -1) {
             let source = r - count
-            grid.cells[r] = source >= scrollTop
-                ? grid.cells[source]
-                : Array(repeating: Cell(), count: cols)
+            if source >= scrollTop {
+                grid.cells[r] = grid.cells[source]
+                grid.wrapped[r] = grid.wrapped[source]
+            } else {
+                grid.cells[r] = blankRowCells()
+                grid.wrapped[r] = false
+            }
         }
         setGrid(grid)
     }
@@ -617,16 +934,21 @@ public struct TerminalScreenModel {
         case 0:
             eraseCells(&grid, row: cursorRow, columns: cursorCol..<cols)
             for r in (cursorRow + 1)..<rows {
-                grid.cells[r] = Array(repeating: Cell(), count: cols)
+                grid.cells[r] = blankRowCells()
+                grid.wrapped[r] = false
             }
         case 1:
             for r in 0..<cursorRow {
-                grid.cells[r] = Array(repeating: Cell(), count: cols)
+                grid.cells[r] = blankRowCells()
+                grid.wrapped[r] = false
             }
             eraseCells(&grid, row: cursorRow, columns: 0..<(cursorCol + 1))
         case 2,
              3:
-            grid = Grid(rows: rows, cols: cols)
+            grid = Grid(rows: rows, cols: cols, fill: blankFill())
+            // ED 3 = xterm "Erase Saved Lines". (The screen-clearing side keeps the model's
+            // long-standing 2≡3 behaviour — herdr-parity pins it.)
+            if mode == 3 { scrollback.removeAll() }
         default:
             break
         }
@@ -642,7 +964,7 @@ public struct TerminalScreenModel {
         case 1:
             eraseCells(&grid, row: cursorRow, columns: 0..<(cursorCol + 1))
         case 2:
-            grid.cells[cursorRow] = Array(repeating: Cell(), count: cols)
+            grid.cells[cursorRow] = blankRowCells()
         default:
             break
         }
@@ -656,9 +978,13 @@ public struct TerminalScreenModel {
         var grid = usingAlt ? alt : main
         for r in stride(from: scrollBottom, through: cursorRow, by: -1) {
             let source = r - count
-            grid.cells[r] = source >= cursorRow
-                ? grid.cells[source]
-                : Array(repeating: Cell(), count: cols)
+            if source >= cursorRow {
+                grid.cells[r] = grid.cells[source]
+                grid.wrapped[r] = grid.wrapped[source]
+            } else {
+                grid.cells[r] = blankRowCells()
+                grid.wrapped[r] = false
+            }
         }
         setGrid(grid)
         cursorCol = 0
@@ -671,9 +997,13 @@ public struct TerminalScreenModel {
         var grid = usingAlt ? alt : main
         for r in cursorRow...scrollBottom {
             let source = r + count
-            grid.cells[r] = source <= scrollBottom
-                ? grid.cells[source]
-                : Array(repeating: Cell(), count: cols)
+            if source <= scrollBottom {
+                grid.cells[r] = grid.cells[source]
+                grid.wrapped[r] = grid.wrapped[source]
+            } else {
+                grid.cells[r] = blankRowCells()
+                grid.wrapped[r] = false
+            }
         }
         setGrid(grid)
         cursorCol = 0
@@ -695,7 +1025,7 @@ public struct TerminalScreenModel {
             row[cols - count - 1] = Cell()
         }
         row.removeSubrange((cols - count)..<cols)
-        row.insert(contentsOf: Array(repeating: Cell(), count: count), at: cursorCol)
+        row.insert(contentsOf: Array(repeating: blankFill(), count: count), at: cursorCol)
         grid.cells[cursorRow] = row
         setGrid(grid)
         wrapPending = false
@@ -714,7 +1044,7 @@ public struct TerminalScreenModel {
             row[cursorCol + count] = Cell()
         }
         row.removeSubrange(cursorCol..<(cursorCol + count))
-        row.append(contentsOf: Array(repeating: Cell(), count: count))
+        row.append(contentsOf: Array(repeating: blankFill(), count: count))
         grid.cells[cursorRow] = row
         setGrid(grid)
         wrapPending = false
@@ -761,6 +1091,8 @@ public struct TerminalScreenModel {
     private mutating func put(text: String, width: Int) {
         if wrapPending, autowrap {
             wrapPending = false
+            // The row being left continues into its successor — one logical line.
+            markWrapped(row: cursorRow)
             cursorCol = 0
             lineFeed()
         }
@@ -768,6 +1100,7 @@ public struct TerminalScreenModel {
         if width == 2, cursorCol >= cols - 1 {
             if autowrap {
                 blankCell(row: cursorRow, col: cursorCol)
+                markWrapped(row: cursorRow)
                 cursorCol = 0
                 lineFeed()
             } else {
@@ -777,12 +1110,12 @@ public struct TerminalScreenModel {
 
         var grid = usingAlt ? alt : main
         clearWidePartner(&grid, row: cursorRow, col: cursorCol)
-        grid.cells[cursorRow][cursorCol] = Cell(text: text)
+        grid.cells[cursorRow][cursorCol] = Cell(text: text, style: style)
         lastCellRow = cursorRow
         lastCellCol = cursorCol
         if width == 2, cursorCol + 1 < cols {
             clearWidePartner(&grid, row: cursorRow, col: cursorCol + 1)
-            grid.cells[cursorRow][cursorCol + 1] = Cell(text: "", isContinuation: true)
+            grid.cells[cursorRow][cursorCol + 1] = Cell(text: "", isContinuation: true, style: style)
         }
         setGrid(grid)
 
@@ -802,8 +1135,14 @@ public struct TerminalScreenModel {
     private mutating func blankCell(row: Int, col: Int) {
         var grid = usingAlt ? alt : main
         clearWidePartner(&grid, row: row, col: col)
-        grid.cells[row][col] = Cell()
+        grid.cells[row][col] = blankFill()
         setGrid(grid)
+    }
+
+    /// Marks `row` as soft-wrapping into its successor on the ACTIVE grid.
+    private mutating func markWrapped(row: Int) {
+        guard row >= 0, row < rows else { return }
+        if usingAlt { alt.wrapped[row] = true } else { main.wrapped[row] = true }
     }
 
     /// Erases `columns` on `row`. An erase that splits a wide pair blanks the half OUTSIDE the
@@ -814,8 +1153,9 @@ public struct TerminalScreenModel {
         guard !columns.isEmpty else { return }
         clearWidePartner(&grid, row: row, col: columns.lowerBound)
         clearWidePartner(&grid, row: row, col: columns.upperBound - 1)
+        let fill = blankFill()
         for col in columns {
-            grid.cells[row][col] = Cell()
+            grid.cells[row][col] = fill
         }
     }
 

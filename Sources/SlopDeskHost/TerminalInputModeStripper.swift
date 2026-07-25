@@ -109,6 +109,46 @@ enum TerminalInputModeStripper {
         return (out, state)
     }
 
+    /// State-only variant of ``strip(_:)`` — the same net-state simulation over the same
+    /// sequence walk, without building the stripped output. The snapshot composer needs only
+    /// ``InputModeFinalState/reassertSequence`` and must not pay a stream-sized output copy
+    /// for it.
+    static func finalState(_ data: Data) -> InputModeFinalState {
+        let bytes = [UInt8](data)
+        var state = InputModeFinalState()
+        var i = 0
+        let n = bytes.count
+        while i < n {
+            guard bytes[i] == esc, i + 1 < n else {
+                i += 1
+                continue
+            }
+            switch bytes[i + 1] {
+            case UInt8(ascii: "["):
+                guard let seq = parseCSI(bytes, at: i) else {
+                    i = n // truncated trailing CSI — nothing left to simulate
+                    continue
+                }
+                _ = process(seq, state: &state)
+                i = seq.end
+            case UInt8(ascii: "]"),
+                 UInt8(ascii: "P"),
+                 UInt8(ascii: "X"),
+                 UInt8(ascii: "^"),
+                 UInt8(ascii: "_"):
+                let belTerminates = bytes[i + 1] == UInt8(ascii: "]")
+                guard let end = stringSequenceEnd(bytes, bodyStart: i + 2, belTerminates: belTerminates) else {
+                    i = n
+                    continue
+                }
+                i = end
+            default:
+                i += 2
+            }
+        }
+        return state
+    }
+
     // MARK: CSI
 
     private struct CSISequence {

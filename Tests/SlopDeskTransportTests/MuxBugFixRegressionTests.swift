@@ -296,7 +296,11 @@ final class MuxBugFixRegressionTests: XCTestCase {
         }
 
         // The host refuses the open (e.g. it was stopping, or the reattach key raced).
-        try await peerData.send(MuxEnvelopeCodec.encode(.channelOpenAck(channelID: 1, accepted: false)))
+        try await peerData.send(MuxEnvelopeCodec.encode(.channelOpenAck(
+            channelID: 1,
+            accepted: false,
+            resumeFromSeq: 0,
+        )))
 
         try await Self.waitUntil(timeout: 5) { finished.value == 1 }
         XCTAssertEqual(

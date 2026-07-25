@@ -40,7 +40,7 @@ enum MuxRoutingCore {
             let state = table.state(of: id) ?? .open
             return .lifecycle(channelID: id, newState: state)
 
-        case let .channelOpenAck(_, accepted):
+        case let .channelOpenAck(_, accepted, _):
             // The responder ACCEPTED or REFUSED the open we initiated. ONLY an accept
             // advances the channel to .open; a refusal marks it dead via reject() — never
             // route data to a refused channel (the original bug routed data to a channel

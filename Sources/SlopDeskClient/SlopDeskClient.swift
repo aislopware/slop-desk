@@ -27,16 +27,16 @@ import SlopDeskTransport
 /// already-delivered tail (or a re-presented stale seq) splices into ``output`` gap-free and
 /// dup-free.
 ///
-/// IMPORTANT — what reconnect does TODAY: the mux transport (the sole terminal connectivity)
-/// has **no per-channel server-side resume**. A real drop kills the host shell; reconnect spawns
-/// a BRAND-NEW one whose `output` restarts at seq 1 — no replay (see `MuxChannelSession` "S1 has
-/// no per-channel reconnect/resume", `HostServer.spawnMuxChannel`). So reconnect is the **ssh
-/// model (fresh shell)**, NOT a byte-exact resume, and ``connect(...)`` RESETS the dedup/ack
-/// high-water marks on every (re)connect so the fresh shell renders from seq 1. Client-side
-/// scrollback survives a SwiftUI surface rebuild (tab switch) via the view model's replay ring,
-/// but NOT a transport drop. Host-side survival + true `seq > lastReceivedSeq` replay
-/// (`docs/20` §8.3) is designed-but-unimplemented; if it lands, the unconditional reset in
-/// ``connect(...)`` must become conditional on a host-authoritative returning flag.
+/// What reconnect does TODAY: the mux transport HAS per-channel server-side resume
+/// (`SLOPDESK_DETACH_ENABLED`, default-ON). A link drop parks the live shell in the host's
+/// `DetachedSessionStore`; reconnect presents the same `sessionID` + `lastReceivedSeq` and the
+/// host either reattaches it (PATH A — replays `seq > lastReceivedSeq`, byte-exact or as a
+/// rendered snapshot, docs/20 §8.3.1) or spawns fresh (PATH B/C). The `channelOpenAck`
+/// carries the HOST-AUTHORITATIVE `resumeFromSeq`, awaited by the transport's `connect`, so
+/// the reset of the dedup/ack high-water marks in ``connect(...)`` is CONDITIONAL on it:
+/// `resumeFromSeq == 0` (fresh shell / cold client) resets; `> 0` (true resume) keeps the
+/// seeded marks. Client-side scrollback additionally survives a SwiftUI surface rebuild (tab
+/// switch) via the view model's replay ring.
 ///
 /// ### iOS lifecycle seam ([17] §2.5, [18] §H)
 /// ``pause()`` / ``resume()`` are the hooks wired to UIKit `didEnterBackground` /
@@ -143,8 +143,9 @@ public actor SlopDeskClient {
     }
 
     /// What the CURRENT connection turned out to be, derived from the first `output` seq it
-    /// delivers — the only reliable fresh-shell-vs-reattach signal on the mux path, where the
-    /// `channelOpenAck` carries no host-authoritative `resumeFromSeq` (the transport hardcodes 0).
+    /// delivers. The `channelOpenAck` now carries the host-authoritative `resumeFromSeq`
+    /// (docs/20 §8.3.1) — the seq-derived verdict remains as the belt-and-braces fallback
+    /// (it needs no wire field and still covers a transport double without an ack path).
     ///
     /// The host's per-channel seq stream is monotonic across a PATH-A reattach (the ReplayBuffer
     /// survives with the shell, and `replay(after: lastReceivedSeq)` only ever emits
@@ -482,11 +483,11 @@ public actor SlopDeskClient {
         // true on reconnect — a `!returning` gate would skip the reset exactly when it is most
         // needed; the dedup-regression test pins this).
         //
-        //   • resumeFromSeq == 0  →  the mux path's constant answer (the openAck carries only
-        //     `accepted: Bool`) — the host may have spawned a FRESH shell OR genuinely
-        //     reattached (PATH A); the client cannot tell. The seq marks MUST be reset so a
-        //     fresh shell's seq-1 output isn't dropped as a "duplicate" (a reattached shell's
-        //     next seqs just re-baseline via the gap-tolerant `deliverOutput`).
+        //   • resumeFromSeq == 0  →  the host spawned a FRESH shell (PATH B/C), or a PATH-A
+        //     reattach for a COLD client (`lastReceivedSeq == 0` — nothing rendered, nothing
+        //     to keep). The seq marks MUST be reset so a fresh shell's seq-1 output isn't
+        //     dropped as a "duplicate" (a reattached shell's next seqs just re-baseline via
+        //     the gap-tolerant `deliverOutput`).
         //
         //   • resumeFromSeq > 0  →  HOST honored a real RETURNING_CLIENT resume (SLOPDESK_DETACH_ENABLED
         //     path): it replays the tail from `resumeFromSeq` onward. The client's marks were seeded
@@ -514,8 +515,9 @@ public actor SlopDeskClient {
 
         if returning, let learnedID {
             // Surface the reconnect so the UI flips `.reconnecting` → `.connected`
-            // (ConnectionViewModel folds this event). NOTE: despite the name, this is NOT a byte-exact
-            // resume on the mux path — the shell is fresh; the event only conveys "the link came back".
+            // (ConnectionViewModel folds this event). `resumeFromSeq` is the host-authoritative
+            // verdict: > 0 = the SAME shell resumed byte-exact (PATH A); 0 = a fresh shell or a
+            // cold-surface reattach.
             eventBroadcaster.yield(.reconnected(sessionID: learnedID, resumeFromSeq: resumeFromSeq))
         }
 

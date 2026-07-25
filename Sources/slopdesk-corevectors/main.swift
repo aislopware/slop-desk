@@ -1293,13 +1293,18 @@ root["muxEnvelopes"] = [
     ),
     muxRecord(
         "channelOpenAck",
-        .channelOpenAck(channelID: 3, accepted: true),
-        ["channelId": UInt32(3), "accepted": true],
+        .channelOpenAck(channelID: 3, accepted: true, resumeFromSeq: 0),
+        ["channelId": UInt32(3), "accepted": true, "resumeFromSeq": Int64(0)],
     ),
     muxRecord(
         "channelOpenAck",
-        .channelOpenAck(channelID: 5, accepted: false),
-        ["channelId": UInt32(5), "accepted": false],
+        .channelOpenAck(channelID: 5, accepted: false, resumeFromSeq: 0),
+        ["channelId": UInt32(5), "accepted": false, "resumeFromSeq": Int64(0)],
+    ),
+    muxRecord(
+        "channelOpenAck",
+        .channelOpenAck(channelID: 7, accepted: true, resumeFromSeq: 42),
+        ["channelId": UInt32(7), "accepted": true, "resumeFromSeq": Int64(42)],
     ),
     muxRecord(
         "channelData",

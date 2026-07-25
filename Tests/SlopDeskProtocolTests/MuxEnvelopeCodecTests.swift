@@ -55,8 +55,8 @@ final class MuxEnvelopeCodecTests: XCTestCase {
 
     func testChannelOpenAckRoundTrip() throws {
         let cases: [MuxFrame] = [
-            .channelOpenAck(channelID: 1, accepted: true),
-            .channelOpenAck(channelID: 5, accepted: false),
+            .channelOpenAck(channelID: 1, accepted: true, resumeFromSeq: 0),
+            .channelOpenAck(channelID: 5, accepted: false, resumeFromSeq: 0),
         ]
         for frame in cases {
             XCTAssertEqual(try roundTrip(frame), frame)

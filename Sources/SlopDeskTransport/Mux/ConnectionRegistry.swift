@@ -151,7 +151,13 @@ public final class ConnectionRegistry {
         }
         entries[key]?.pendingAcquires -= 1
         entries[key]?.channelIDs.insert(pair.data.channelID)
-        return MuxAcquisition(channelID: pair.data.channelID, data: pair.data, control: pair.control)
+        let channelID = pair.data.channelID
+        return MuxAcquisition(
+            channelID: channelID,
+            data: pair.data,
+            control: pair.control,
+            awaitOpenAck: { await connection.awaitOpenAck(for: channelID) },
+        )
     }
 
     /// Returns the shared connection for `key`, building it on the first acquisition and reusing it

@@ -19,9 +19,11 @@ import SlopDeskProtocol
 /// ### Lifecycle
 /// - `openChannel()` (client/initiator) allocates an odd `channelID`, registers the per-link
 ///   sub-channels, sends `channelOpen` on the DATA link, and returns the pair WITHOUT waiting for
-///   an ack — the host opens lazily on first `channelOpen` (the ack is advisory; a refusal closes
-///   the channel via the router, dropping its data, so an unacked-but-refused channel never
-///   delivers).
+///   an ack — the host opens lazily on first `channelOpen`. The ack's verdict (accepted + the
+///   host-authoritative `resumeFromSeq`, docs/20 §8.3.1) is observed separately via
+///   ``awaitOpenAck(for:)`` (`MuxClientTransport.connect` awaits it); a refusal additionally
+///   closes the channel via the router, dropping its data, so an unacked-but-refused channel
+///   never delivers.
 /// - `acceptChannel(_:)` (host/responder) registers a peer-initiated `channelID`.
 /// - `closeChannel(_:)` sends `channelClose` on both links and finishes the sub-channels' inbound.
 ///
@@ -117,7 +119,8 @@ public actor MuxNWConnection {
     ///
     /// `openChannel` does NOT block on `channelOpenAck`: the host opens on first `channelOpen`, and a
     /// refusal (`accepted: false`) closes the channel in the router so its data is dropped — an
-    /// unacked channel never silently delivers to a refused session.
+    /// unacked channel never silently delivers to a refused session. The caller that needs the
+    /// verdict (accepted + host-authoritative `resumeFromSeq`) awaits ``awaitOpenAck(for:)``.
     public func openChannel(
         sessionID: UUID,
         lastReceivedSeq: Int64,
@@ -174,6 +177,14 @@ public actor MuxNWConnection {
     /// Closes `channelID`: sends `channelClose` on both links and finishes its sub-channels'
     /// inbound streams. Other channels on the shared connection are untouched.
     public func closeChannel(_ id: UInt32) async {
+        // A close while an openAck is still outstanding (connect raced a teardown): resolve
+        // the waiter as refused and drop any recorded verdict — nothing may park forever.
+        openAckResults.removeValue(forKey: id)
+        if let waiters = openAckWaiters.removeValue(forKey: id) {
+            for waiter in waiters {
+                waiter.continuation.resume(returning: (false, 0))
+            }
+        }
         let close = MuxEnvelopeCodec.encode(.channelClose(channelID: id))
         // Best-effort + pipelined: NWConnection FIFO guarantees the close follows any prior
         // data; a failed write means the shared link is already gone, so the failure is left to
@@ -352,7 +363,7 @@ public actor MuxNWConnection {
         {
             // Pipelined: emitted from the receive loop — must never suspend it (same
             // rationale as the windowAdjust grant below).
-            let refusal = MuxEnvelopeCodec.encode(.channelOpenAck(channelID: id, accepted: false))
+            let refusal = MuxEnvelopeCodec.encode(.channelOpenAck(channelID: id, accepted: false, resumeFromSeq: 0))
             dataLink.sendPipelined(refusal)
             return
         }
@@ -379,9 +390,18 @@ public actor MuxNWConnection {
         if role == .host, link == .data, case let .channelOpen(id, _, _, _, _) = frame,
            let priorState = dataTable.state(of: id), priorState == .closed || priorState == .halfClosed
         {
-            let refusal = MuxEnvelopeCodec.encode(.channelOpenAck(channelID: id, accepted: false))
+            let refusal = MuxEnvelopeCodec.encode(.channelOpenAck(channelID: id, accepted: false, resumeFromSeq: 0))
             dataLink.sendPipelined(refusal)
             return
+        }
+
+        // Surface the host's openAck verdict to the client BEFORE the routing decision can
+        // finish a refused channel — `awaitOpenAck(for:)` callers get the verdict (and its
+        // host-authoritative `resumeFromSeq`) ahead of any subsequent DATA-link frame, which
+        // is exactly the ordering the reattach path relies on (ack rides FIFO-ahead of the
+        // replay `output` frames on the same link).
+        if role == .client, case let .channelOpenAck(id, accepted, resumeFromSeq) = frame {
+            noteOpenAck(id: id, accepted: accepted, resumeFromSeq: resumeFromSeq)
         }
 
         let decision: MuxRoutingDecision =
@@ -620,9 +640,85 @@ public actor MuxNWConnection {
     }
 
     /// Sends a `channelOpenAck` for `id` on the DATA link (host → client). Host-only.
-    public func sendOpenAck(_ id: UInt32, accepted: Bool) {
-        let frame = MuxEnvelopeCodec.encode(.channelOpenAck(channelID: id, accepted: accepted))
+    /// `resumeFromSeq` is the host-authoritative resume verdict (0 = fresh/refused; > 0 =
+    /// PATH-A reattach, replay starts after this seq). Riding the DATA link FIFO-ahead of the
+    /// replay `output` frames is what lets the client learn the verdict BEFORE the first byte.
+    public func sendOpenAck(_ id: UInt32, accepted: Bool, resumeFromSeq: Int64 = 0) {
+        let frame = MuxEnvelopeCodec.encode(
+            .channelOpenAck(channelID: id, accepted: accepted, resumeFromSeq: resumeFromSeq),
+        )
         dataLink.sendPipelined(frame)
+    }
+
+    // MARK: - Client-side openAck observation (host-authoritative resume verdict)
+
+    /// The ack verdicts recorded for channels THIS side opened, keyed by channelID —
+    /// consumed (removed) by ``awaitOpenAck(for:)``. Bounded: only ids present in
+    /// `dataChannels` are recorded (the router's phantom-id discipline), and entries are
+    /// cleared on ``closeChannel(_:)`` / link death.
+    private var openAckResults: [UInt32: (accepted: Bool, resumeFromSeq: Int64)] = [:]
+    private var openAckWaiters: [UInt32: [(id: UInt64, continuation: CheckedContinuation<
+        (accepted: Bool, resumeFromSeq: Int64), Never,
+    >)]] = [:]
+    private var nextOpenAckWaiterID: UInt64 = 0
+
+    /// Suspends until the host's `channelOpenAck` for `id` arrives (or the channel/link dies
+    /// — then `(false, 0)`). Cancellation-safe: a cancelled waiter resumes `(false, 0)`
+    /// immediately, so a timeout race never strands a continuation.
+    public func awaitOpenAck(for id: UInt32) async -> (accepted: Bool, resumeFromSeq: Int64) {
+        if let result = openAckResults.removeValue(forKey: id) { return result }
+        let waiterID = nextOpenAckWaiterID
+        nextOpenAckWaiterID &+= 1
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                if let result = openAckResults.removeValue(forKey: id) {
+                    continuation.resume(returning: result)
+                    return
+                }
+                // The channel may already be dead (refusal routed before we got here, link
+                // down): a waiter on a non-registered id would never be resumed by route().
+                guard dataChannels[id] != nil else {
+                    continuation.resume(returning: (false, 0))
+                    return
+                }
+                openAckWaiters[id, default: []].append((waiterID, continuation))
+            }
+        } onCancel: {
+            Task { await self.cancelOpenAckWaiter(channelID: id, waiterID: waiterID) }
+        }
+    }
+
+    private func cancelOpenAckWaiter(channelID: UInt32, waiterID: UInt64) {
+        guard var waiters = openAckWaiters[channelID] else { return }
+        guard let index = waiters.firstIndex(where: { $0.id == waiterID }) else { return }
+        let waiter = waiters.remove(at: index)
+        openAckWaiters[channelID] = waiters.isEmpty ? nil : waiters
+        waiter.continuation.resume(returning: (false, 0))
+    }
+
+    /// Records an inbound ack verdict and resumes any waiters. Ids we never opened are
+    /// ignored (phantom-entry discipline).
+    private func noteOpenAck(id: UInt32, accepted: Bool, resumeFromSeq: Int64) {
+        guard dataChannels[id] != nil else { return }
+        if let waiters = openAckWaiters.removeValue(forKey: id) {
+            for waiter in waiters {
+                waiter.continuation.resume(returning: (accepted, resumeFromSeq))
+            }
+        } else {
+            openAckResults[id] = (accepted, resumeFromSeq)
+        }
+    }
+
+    /// Fails every parked/recorded openAck for a dead link/channel set so no waiter hangs.
+    private func flushOpenAckWaiters() {
+        let waiters = openAckWaiters
+        openAckWaiters.removeAll()
+        openAckResults.removeAll()
+        for (_, list) in waiters {
+            for waiter in list {
+                waiter.continuation.resume(returning: (false, 0))
+            }
+        }
     }
 
     /// Test seam: emits a `windowAdjust` for `channelID` on the CONTROL link — matching the
@@ -641,6 +737,9 @@ public actor MuxNWConnection {
         // so a reconnecting pane never re-acquires this corpse from the pool (`ConnectionRegistry`
         // evicts a `isDead` entry; `openChannel` rejects reuse). See `linkFailed` / `isDead`.
         if error != nil { linkFailed = true }
+        // No openAck can arrive on a dead link — fail every parked waiter so a client
+        // `connect` awaiting its verdict never hangs on a corpse.
+        if role == .client { flushOpenAckWaiters() }
         let channels = (link == .control) ? controlChannels : dataChannels
         for ch in channels.values {
             // Await inline so the link's FIN/error finishes each sub-channel AFTER its last

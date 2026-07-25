@@ -2982,3 +2982,53 @@ app follows the OS onto Monokai Pro Classic / Classic Light. Nothing to write, n
   Cursor-up marks the line unmodelled, so those replay verbatim as today. Modelling them needs a
   real grid, i.e. rendering the ring through `TerminalScreenModel` and replaying the DUMP — which
   loses colour and every scrolled-off row, and is a different design, not a bigger heuristic.
+
+## Cold reattach becomes STATE-TRANSFER: render the screen model once, stop replaying history (2026-07-25)
+
+- ✅ **Problem:** every reconnect with a fresh surface still replays SECONDS of byte history. The five
+  churn passes (alt-screen, sync-frame, overprint, distiller, query/EOL strippers) minimize the BYTES,
+  but the client still re-parses whatever survives, under real libghostty feed backpressure
+  (`TerminalViewModel.ingestBatch` awaits `feedBackpressure()` per 256 KiB pass), and the documented
+  accepted gaps (inline churn outside `?2026` frames, open command spans, multi-line cursor-up
+  redraws) pass through raw. The cost is O(byte history); the client only needs the FINAL state.
+- ✅ **Decision: cold PATH-A replay is composed by RENDERING, not by filtering.** The host feeds the
+  ring + un-acked tail + detached-window out-FIFO backlog through `TerminalScreenModel` (extended
+  with SGR cell attributes + scrollback capture) at the live PTY size, and sends the RENDERED
+  equivalent stream: each scrollback line printed once (soft-wrapped lines re-joined so the client
+  re-wraps at its own width), the screen grid painted once, cursor/scroll-region/charset/keypad/SGR
+  state re-established, input modes re-asserted via the existing `TerminalInputModeStripper` net
+  state. "Clean scrollback" becomes a construction guarantee instead of a heuristic outcome, and
+  client re-parse cost drops to O(final state). The stream rides the SAME replay seqs
+  (`ReplayBuffer.rechunk`, `mustCoverLastSeq` — ack-release semantics unchanged); the wire format is
+  untouched on the output path. Gate: `SLOPDESK_SCROLLBACK_SNAPSHOT` (default-ON, `!= "0"`).
+- ✅ **The detached out-FIFO backlog is consumed INTO the snapshot** (peek → compose → splice-out,
+  the `compactDetachedBacklogForColdClient` discipline: sniffed control preserved on an empty
+  replacement chunk, queue-gate accounting rebalanced). Without this the overnight-agent case —
+  up to the 64 MiB detached budget of repaint churn, the bulk of the pain — would still replay
+  after a clean snapshot. Post-snapshot PTY output drains normally with fresh seqs on top.
+- ✅ **Warm reconnect stays byte-exact BELOW a threshold, snapshots ABOVE it.** A warm grid mid-TUI
+  needs byte-exact continuation, so small tails replay raw exactly as before. When pending replay
+  (tail + FIFO backlog) exceeds `SLOPDESK_SNAPSHOT_WARM_BYTES` (default 4 MiB — the "this will
+  visibly take seconds" line), the snapshot preamble (`DECSTR`, `?1049l`, `ED 3`, `ED 2`, home)
+  wipes and re-renders the client's world instead; on a fresh surface the same preamble is a no-op.
+  A warm overflow with an EMPTY un-acked tail has no seqs to ride and falls back to raw (rare).
+- ✅ **Fallbacks keep the old pipeline alive:** the distiller composition remains injected for the
+  journal-restore path (PATH B/C — no authoritative grid size survives a daemon restart), for the
+  seq-budget guard (rendered bytes must fit `replaySeqs × maxOutputFramePayloadBytes` — a
+  pathological tiny-session expansion falls back to raw+distill), and for `SLOPDESK_SCROLLBACK_SNAPSHOT=0`.
+- ✅ **Proof is differential + idempotent:** feeding `render(model)` into a FRESH model must
+  reproduce the model's visible state (grids, styles, scrollback, cursor, modes), and rendering is
+  a canonicalization — `render(feed(render(A))) == render(A)` byte-equal, fuzzed over the VT
+  vocabulary corpus. The 400 ms redraw-jiggle stays only on the non-snapshot cold path: a snapshot
+  paints every row the app believes is painted, so the differential-renderer blank-row hazard it
+  worked around no longer exists.
+- ✅ **`channelOpenAck` grows the designed-but-never-wired host-authoritative `resumeFromSeq`**
+  (docs/20 §8.2), appended `Int64` BE, decode-tolerant when absent; the host acks BEFORE the replay
+  on the same FIFO data link, so the client learns resume-vs-fresh authoritatively ahead of the
+  first byte instead of inferring it from the first delivered seq (the inference stays as fallback).
+- ⚠️ **Accepted gaps (documented, all strictly no worse than the stripper pipeline's):** OSC 8
+  hyperlinks and app-set palette colors (OSC 4/10/11/12) are not modeled and drop out of the
+  snapshot (the query stripper already dropped stale color state); `REP` immediately across the
+  snapshot boundary repeats nothing (no real emitter splits a REP from its glyph); the saved-cursor
+  slot restores position but not its saved SGR/charset; scrollback capture follows xterm (full-screen
+  scroll region only, `ED 3` clears it, capped lines oldest-out).

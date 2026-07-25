@@ -722,10 +722,18 @@ public final class HostServer: @unchecked Sendable {
         connectionID: UUID,
     ) async {
         let key = MuxSessionKey(connectionID: connectionID, channelID: open.channelID)
+        // Ack FIRST — synchronously, before the replay: the host-authoritative resume verdict
+        // (`resumeFromSeq = lastReceivedSeq`, docs/20 §8.2) rides the DATA link FIFO-ahead of
+        // the replayed `output` frames, so the awaiting client learns "same session resumed"
+        // before the first byte. If the rebind below then fails, the `accepted: false` refusal
+        // supersedes this ack (the router rejects the channel; the client reconnects) — the
+        // same outcome a mid-replay link death always had.
+        await connection.sendOpenAck(open.channelID, accepted: true, resumeFromSeq: open.lastReceivedSeq)
         // Replay the buffered tail to the NEW data sub-channel BEFORE rebinding so live output
         // does not interleave with the replay (the rebind starts the live drain). The client
-        // sent `lastReceivedSeq` so we can skip already-received messages.
-        await session.replayTail(after: open.lastReceivedSeq, on: open.data)
+        // sent `lastReceivedSeq` so we can skip already-received messages. A `true` return
+        // means the replay was a RENDERED snapshot (state-transfer) — see the jiggle gate below.
+        let snapshotComposed = await session.replayTail(after: open.lastReceivedSeq, on: open.data)
         // Rebind the relay: swap sub-channels, clear stale queues, restart relay tasks.
         // onExit is threaded INTO rebindRelay so it is assigned under taskLock, atomically with
         // the exitTask (re)start — closing the race where a shell that exits between rebindRelay
@@ -760,25 +768,26 @@ public final class HostServer: @unchecked Sendable {
         // Refresh the hook sink under the session's ORIGINAL (env-baked) pane id — never
         // the new connection's key (see `refreshHookSinkOnReattach`).
         refreshHookSinkOnReattach(session: session)
-        Task { await connection.sendOpenAck(open.channelID, accepted: true) }
         onLog?("mux channel \(open.channelID) (conn \(connectionID)): reattached session \(open.sessionID)")
         // Nudge the PTY foreground process to repaint after reattach — the client terminal is
         // fresh (no buffered output) so without this the pane is blank until the user presses
         // a key. A brief delay lets the client's first `.resize` land and wires the sub-channels
         // before the nudge fires, so zsh/bash redraw with the correct terminal dimensions.
         //
-        // COLD client (fresh surface): the replayed transcript is transform-collapsed, so a
-        // full-screen TUI's live frame arrives incomplete — and a differential renderer (Claude
-        // Code) ignores a same-size SIGWINCH for the rows it believes are already painted, leaving
-        // the collapsed rows (input dividers, status line) blank forever. Only a REAL size change
-        // forces the full re-layout: shrink one row, hold long enough for the app's event loop to
-        // observe the intermediate size (too short and both SIGWINCHes coalesce into "unchanged"),
-        // then restore. A warm client still holds its rendered grid — the plain nudge suffices.
+        // COLD client (fresh surface) on the TRANSFORM-COLLAPSED replay: a full-screen TUI's
+        // live frame arrives incomplete — and a differential renderer (Claude Code) ignores a
+        // same-size SIGWINCH for the rows it believes are already painted, leaving the
+        // collapsed rows (input dividers, status line) blank forever. Only a REAL size change
+        // forces the full re-layout: shrink one row, hold long enough for the app's event loop
+        // to observe the intermediate size (too short and both SIGWINCHes coalesce into
+        // "unchanged"), then restore. A RENDERED-snapshot replay needs none of this — every
+        // row the app believes painted IS painted — so it takes the plain nudge, like a warm
+        // client whose grid survived.
         let nudgePTY = session.pty
         let coldClient = open.lastReceivedSeq == 0
         Task.detached {
             try? await Task.sleep(for: .milliseconds(200))
-            if coldClient, let jiggle = nudgePTY.beginRedrawJiggle() {
+            if coldClient, !snapshotComposed, let jiggle = nudgePTY.beginRedrawJiggle() {
                 try? await Task.sleep(for: .milliseconds(200))
                 nudgePTY.endRedrawJiggle(jiggle)
             } else {
@@ -883,6 +892,7 @@ public final class HostServer: @unchecked Sendable {
             blocksEnabled: blocksEnabled,
             scrollbackJournal: journal,
             restoredScrollback: restoredScrollback,
+            snapshotReplay: MuxChannelSession.makeSnapshotReplayPolicy(),
         )
         // The shell-exit reaper closes over the SAME composite key so it only removes THIS
         // connection's session (idempotent with the peer-close `setHostCloseHandler` path).

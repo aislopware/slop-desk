@@ -297,6 +297,22 @@ final class MuxChannelSession: @unchecked Sendable {
     /// the SAME pipeline over the out-FIFO's detached-window backlog without touching `replay`
     /// under a lock (the field is immutable; the pre-concurrency init read is race-free).
     private let coldBacklogTransform: (@Sendable (Data) -> Data)?
+
+    /// State-transfer replay (docs/DECISIONS.md 2026-07-25): compose the reattach replay by
+    /// RENDERING the screen model once instead of replaying (however distilled) byte history.
+    struct SnapshotReplayPolicy: Sendable {
+        /// `(raw chronological history, rows, cols) -> rendered snapshot stream`
+        /// (``TerminalReplaySnapshot/compose(raw:rows:cols:)`` in production).
+        let compose: @Sendable (Data, Int, Int) -> Data
+        /// A WARM reconnect whose pending raw replay (un-acked tail + detached FIFO backlog)
+        /// meets this many bytes is snapshotted (the rendered preamble wipes the live grid);
+        /// below it the tail replays raw, byte-exact. Cold clients always snapshot.
+        let warmThresholdBytes: Int
+    }
+
+    /// The injected snapshot policy (nil = replay exactly as before). `HostServer` injects the
+    /// env-derived policy; tests inject their own or none.
+    private let snapshotReplay: SnapshotReplayPolicy?
     /// Serializes ``updateReplayBackpressure()``'s [recompute → gate apply] pair across the
     /// independent caller tasks (output drain / ack path / detach) — see that method's docs.
     private let backpressureApplyLock = NSLock()
@@ -629,6 +645,7 @@ final class MuxChannelSession: @unchecked Sendable {
         blocksEnabled: Bool = true,
         scrollbackJournal: ScrollbackJournal? = nil,
         restoredScrollback: Data? = nil,
+        snapshotReplay: SnapshotReplayPolicy? = nil,
     ) {
         self.channelID = channelID
         self.pty = pty
@@ -637,6 +654,7 @@ final class MuxChannelSession: @unchecked Sendable {
         self.sessionID = sessionID
         self.resizeDebounce = resizeDebounce
         self.replay = replay
+        self.snapshotReplay = snapshotReplay
         coldBacklogTransform = replay.scrollbackDistiller
         self.shimDir = shimDir
         self.agentDetectEnabled = agentDetectEnabled
@@ -1443,19 +1461,139 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Called BEFORE ``rebindRelay`` starts the live drain so the tail is delivered in order
     /// without interleaving live output. Non-blocking: iterates the already-retained entries
     /// (O(N) over the retained tail) without any timer or suspension point between frames.
-    func replayTail(after lastReceivedSeq: Int64, on channel: MuxSubChannel) async {
-        let messages = snapshotReplayTail(after: lastReceivedSeq)
+    ///
+    /// - Returns: `true` when the replay was a RENDERED snapshot (state-transfer) — the
+    ///   caller's redraw-jiggle workaround is unnecessary then: every row the app believes
+    ///   painted IS painted.
+    @discardableResult
+    func replayTail(after lastReceivedSeq: Int64, on channel: MuxSubChannel) async -> Bool {
+        let (messages, snapshotComposed) = snapshotReplayTailForSend(after: lastReceivedSeq)
         for message in messages {
             try? await channel.send(message)
         }
+        return snapshotComposed
     }
 
     /// Synchronously snapshots the ReplayBuffer tail under `replayLock` (NSLock is unavailable
     /// from the async ``replayTail(after:on:)`` directly — same discipline as ``rebindRelay``).
-    private func snapshotReplayTail(after lastReceivedSeq: Int64) -> [WireMessage] {
+    ///
+    /// With a ``SnapshotReplayPolicy`` injected, the replay is COMPOSED BY RENDERING first
+    /// (``composeSnapshotReplay(after:policy:)``); every ineligible/fallback case (no seqs to
+    /// ride, warm tail under the threshold, seq budget too small for the rendered bytes)
+    /// falls through to the raw/distilled path unchanged.
+    private func snapshotReplayTailForSend(after lastReceivedSeq: Int64) -> ([WireMessage], Bool) {
+        if let policy = snapshotReplay,
+           let rendered = composeSnapshotReplay(after: lastReceivedSeq, policy: policy)
+        {
+            return (rendered, true)
+        }
         replayLock.lock()
         defer { replayLock.unlock() }
-        return replay.replay(after: lastReceivedSeq)
+        return (replay.replay(after: lastReceivedSeq), false)
+    }
+
+    /// Builds the RENDERED-snapshot replay: ring + un-acked tail + the detached-window
+    /// out-FIFO backlog fed through the screen model at the live PTY size, rendered once, and
+    /// re-chunked across the replay seqs. On success the FIFO backlog is CONSUMED (spliced
+    /// out with its sniffed control preserved and its queue-gate accounting released) — its
+    /// bytes are inside the snapshot, so the restarted drain must not ship them again.
+    ///
+    /// Returns `nil` (compose nothing, caller falls back) when:
+    /// - there are no replay seqs to carry the stream (nothing retained above
+    ///   `lastReceivedSeq` — e.g. an idle warm reconnect, or a backlog-only session);
+    /// - the client is WARM and the pending raw replay is under the policy threshold
+    ///   (byte-exact continuation is worth more than a wipe+re-render);
+    /// - the rendered bytes exceed the seq budget's frame-cap ceiling (pathological tiny-
+    ///   session expansion — the raw path is cheap there anyway).
+    private func composeSnapshotReplay(
+        after lastReceivedSeq: Int64,
+        policy: SnapshotReplayPolicy,
+    ) -> [WireMessage]? {
+        // Cheap eligibility first — the warm-below-threshold case is EVERY ordinary
+        // reconnect, and must not pay the backlog/history copies just to say "no".
+        let cold = lastReceivedSeq == 0
+        if !cold {
+            replayLock.lock()
+            let tailBytes = replay.retainedBytes
+            replayLock.unlock()
+            guard tailBytes + pendingDetachedBacklogBytes() >= policy.warmThresholdBytes else {
+                return nil
+            }
+        }
+        replayLock.lock()
+        let source = replay.snapshotSource(after: lastReceivedSeq)
+        replayLock.unlock()
+        guard !source.replaySeqs.isEmpty else { return nil }
+        let backlog = peekDetachedBacklog()
+        guard cold || source.replayBytes + backlog.bytes.count >= policy.warmThresholdBytes else {
+            return nil
+        }
+        var input = source.history
+        input.append(backlog.bytes)
+        guard !input.isEmpty else { return nil }
+        let size = pty.currentWindowSize()
+        let rows = Int(size?.rows ?? 24)
+        let cols = Int(size?.cols ?? 80)
+        let rendered = policy.compose(input, rows, cols)
+        // Credit-progress invariant: rechunk caps per-frame payloads, so the rendered bytes
+        // must fit the seq budget or the LAST chunk would exceed the cap.
+        guard rendered.count <= source.replaySeqs.count * MuxFlowControl.maxOutputFramePayloadBytes
+        else { return nil }
+        consumeDetachedBacklog(backlog)
+        return ReplayBuffer.rechunkSnapshot(rendered, across: source.replaySeqs)
+    }
+
+    /// A non-destructive read of the detached-window chunk backlog (the
+    /// ``compactDetachedBacklogForColdClient()`` snapshot discipline: the drain is not
+    /// running, producers only append PAST the recorded range, so the range stays valid
+    /// until ``consumeDetachedBacklog(_:)`` splices under the lock).
+    private struct DetachedBacklogPeek {
+        let bytes: Data
+        let control: [WireMessage]
+        let range: Range<Int>
+    }
+
+    /// Byte count of the detached-window chunk backlog WITHOUT copying it (the warm-threshold
+    /// pre-check).
+    private func pendingDetachedBacklogBytes() -> Int {
+        fifoLock.lock()
+        defer { fifoLock.unlock() }
+        var total = 0
+        var index = fifoHead
+        while index < outFIFO.count, case let .chunk(bytes, _) = outFIFO[index] {
+            total += bytes.count
+            index += 1
+        }
+        return total
+    }
+
+    private func peekDetachedBacklog() -> DetachedBacklogPeek {
+        fifoLock.lock()
+        defer { fifoLock.unlock() }
+        var end = fifoHead
+        var raw = Data()
+        var control: [WireMessage] = []
+        while end < outFIFO.count, case let .chunk(bytes, chunkControl) = outFIFO[end] {
+            raw.append(bytes)
+            control.append(contentsOf: chunkControl)
+            end += 1
+        }
+        return DetachedBacklogPeek(bytes: raw, control: control, range: fifoHead..<end)
+    }
+
+    /// Splices the peeked backlog out of the FIFO. Sniffed control still ships (an empty
+    /// replacement chunk carries it, the compactor's all-churn idiom) and the queue-gate
+    /// accounting is released for every consumed byte — a leaked positive residue would
+    /// wedge the read loop paused.
+    private func consumeDetachedBacklog(_ peek: DetachedBacklogPeek) {
+        guard !peek.range.isEmpty else { return }
+        fifoLock.lock()
+        let replacement: [OutputItem] = peek.control.isEmpty
+            ? []
+            : [.chunk(bytes: Data(), control: peek.control)]
+        outFIFO.replaceSubrange(peek.range, with: replacement)
+        fifoLock.unlock()
+        if !peek.bytes.isEmpty { outputGate?.dequeue(peek.bytes.count) }
     }
 
     /// Non-blocking check: returns `true` if the child shell has already exited (been reaped
@@ -2631,6 +2769,27 @@ final class MuxChannelSession: @unchecked Sendable {
     /// - `SLOPDESK_SCROLLBACK_STRIP_EOL_MARKS` — default-ON (`env != "0"`). When ON, a
     ///   ``PromptEOLMarkStripper`` pass normalizes zsh's width-dependent PROMPT_SP mark+fill
     ///   clusters so replay at a different grid width doesn't grow stray `%` lines per prompt.
+    /// The env-derived ``SnapshotReplayPolicy`` — `SLOPDESK_SCROLLBACK_SNAPSHOT` default-ON
+    /// (`!= "0"`), warm threshold `SLOPDESK_SNAPSHOT_WARM_BYTES` (default 4 MiB). `nil`
+    /// (disabled) restores the raw/distilled replay exactly as before.
+    static func makeSnapshotReplayPolicy(
+        environment env: [String: String] = ProcessInfo.processInfo.environment,
+    ) -> SnapshotReplayPolicy? {
+        guard env["SLOPDESK_SCROLLBACK_SNAPSHOT"] != "0" else { return nil }
+        let threshold: Int =
+            if let raw = env["SLOPDESK_SNAPSHOT_WARM_BYTES"], let parsed = Int(raw), parsed >= 0 {
+                parsed
+            } else {
+                4 * 1024 * 1024
+            }
+        return SnapshotReplayPolicy(
+            compose: { raw, rows, cols in
+                TerminalReplaySnapshot.compose(raw: raw, rows: rows, cols: cols)
+            },
+            warmThresholdBytes: threshold,
+        )
+    }
+
     static func makeReplayBuffer() -> ReplayBuffer {
         let env = ProcessInfo.processInfo.environment
         let persist = env["SLOPDESK_SCROLLBACK_PERSIST"] != "0"
