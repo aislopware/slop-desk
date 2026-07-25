@@ -22,7 +22,7 @@ final class ThemeCatalogTests: XCTestCase {
             ThemeCatalog.builtinThemes.map(\.id),
             [
                 "monokai-classic", "monokai-classic-light", "monokai-octagon", "monokai-machine",
-                "monokai-ristretto", "monokai-spectrum", "paper", "dark",
+                "monokai-ristretto", "monokai-spectrum",
             ],
         )
     }

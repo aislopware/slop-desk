@@ -181,10 +181,8 @@ private struct FirstLaunchThemeStep: View {
 
     /// The built-ins offered in the first-launch grid (light-then-dark ordering, curated).
     private let choices: [(ThemeChoice, String)] = [
-        (.paper, "Paper"),
         (.monokaiProClassicLight, "Monokai Light"),
         (.monokaiProClassic, "Monokai Classic"),
-        (.dark, "Dark"),
         (.monokaiProOctagon, "Octagon"),
         (.monokaiProMachine, "Machine"),
         (.monokaiProRistretto, "Ristretto"),

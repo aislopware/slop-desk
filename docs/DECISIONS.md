@@ -2749,3 +2749,173 @@ this is not:
 A running command is already named by the row's own title, which is the more informative surface —
 spending the mark on it too was the duplication round 9 removed from the title's shimmer, in the
 other direction. Client-only; no wire change.
+
+### Round 15 — the agent teardown edge: an announced exit must not be undone by a lagging one (2026-07-25)
+
+`/exit` inside a pane left the row wearing Claude Code's title (`✳ <topic>`) and the agent's muted
+ring for ~31 s. Measured on the wire with a mux-aware tee over six real exits, the tail was two
+independent defects that happened to fire together.
+
+**The grace paradox.** `SessionEnd` fires while `claude` is still the PTY foreground — captured at
+1.0–1.5 s of overlap before the shell reclaims it. Across that gap every weak liveness signal still
+sees an agent: the ~1 Hz foreground poll, the 300 ms screen scan, the OSC title still on the grid.
+Any one of them lifted the presence floor straight back off `.none`, and the resurrection landed
+34–440 ms after the pane went dark (4 of 6 exits; the other 2 were clean, which is what made it feel
+intermittent). Worse, `ClaudePaneDetector.hook` stamped `lastAuthoritativeAt` on EVERY parsed
+record, `SessionEnd` included — arming the 30 s window in which a foreground ABSENCE is suppressed.
+So the one signal announcing the end was also what kept the dead state alive for the full window.
+
+Two changes, in the two places that own the two halves. `SessionEnd` now CLEARS the stickiness
+anchor instead of stamping it: the anchor exists to protect a live state from a poll that cannot see
+a wrapper-launched agent, and a session that just ended has no live state to protect — the absence
+about to arrive is the SessionEnd's own corroboration, not something to defend against. And
+`ClaudeStatusMachine` gained a POST-EXIT FLOOR LOCKOUT: a hook `sessionEnd` arms
+`postExitFloorLockout` (3 s, clearing the widest measured overlap), during which no weak signal —
+presence, title, screen, manifest, an informational Notification — may lift `.none`. Only an
+authoritative hook clears it, so `claude` relaunched immediately is never held dark. Presence
+ABSENCE arms nothing: `processPresent(false)` is the end already observed, not an announcement of
+one. This is herdr's process-exit primacy and t3code's `context.stopped` idempotence, expressed in
+the reducer where both belong; the deliberate difference from t3code is that our terminating signal
+is racy, so the veto has to be time-bounded rather than a plain flag.
+
+**The orphaned title.** Claude Code DOES emit its own exit-time title clear — captured as
+`OSC 0;` with an empty body — but `HostOutputSniffer` drops empty titles on purpose (zsh/p10k emit
+them mid prompt-redraw), and the client dropped them a second time. A plain zsh prompt never
+re-titles afterwards, so the agent's title had no way home. The fix is OWNERSHIP, not
+guard-loosening: `ClaudePaneDetector` records that a DETECTED agent wrote the pane's title (the
+spinner / `✳` / claude-naming shapes the machine already believes) and, on the agent-gone edge,
+emits an explicit empty type-21 — a one-shot, scoped to titles the agent demonstrably owned, so a
+shell's own `nvim — README.md` stays put. The host sniffer keeps dropping empty OSC bodies, which is
+what makes an empty type-21 on the wire unambiguous; the client's duplicate guard is retired and it
+now applies the retirement. The retirement also forgets the sniffer's coalescing anchor, since the
+next `claude` in the same pane opens on the byte-identical `✳ Claude Code` and would otherwise be
+deduped into silence. Titles that are OWNED and never decay is the one t3code idea that transferred
+directly (`canReplaceThreadTitle`) — the difference is that t3code's titles are its own, so it never
+needed the giving-back half.
+
+Three adjacent gaps closed in the same pass:
+
+- **A ctl-spawned pane had no agent detection at all.** `spawnStandalonePane` constructed its
+  session without `agentDetectEnabled` and never threaded `SLOPDESK_SOCKET_PATH` / the pane id, so
+  the one place an ORCHESTRATOR runs its agents was the one place they ran unobserved — no detector
+  to fold into, and no hook route in. Both now match the mux path; `registerHookSink` gained a
+  paneID-keyed form (a ctl pane's identity is its session uuid — there is no channel pair), and the
+  key is retired on every teardown so a spawn no longer leaks a sink per pane.
+- **The ctl `events` stream could not report the agent-gone edge.** `.none` and `.idle` collapse to
+  the same supervision word by design, and the subscriber dedupes consecutive identical states — so
+  a pane whose agent left emitted an `"idle"` byte-identical to the one it was already at, and the
+  transition vanished. `AgentControlState.presence(from:)` carries that one bit alongside the state:
+  it joins the dedupe key and rides the event as `agentPresent`. The four-state vocabulary the
+  `report` verb validates against is untouched.
+- **`Stop` carries `background_tasks`.** Undocumented in the hooks reference but present in the
+  shipped payload (verified against the CLI binary), already filtered producer-side to
+  running/pending backgrounded tasks. Parsed tolerantly onto `StopInfo.backgroundTaskCount` and used
+  as the done-chip label ONLY when the turn ended without an assistant message — "3 background tasks
+  running" beats an empty chip. Deliberately NOT a status change: the rest-title demote would undo a
+  `.working` within a second, and no hook fires when a background task finishes, so any richer state
+  this set would have no way home.
+
+Rejected: a herdr-style DEFERRED clear (hold the teardown briefly in case the agent respawns, to
+avoid flicker). The veto already prevents the flicker it targets — nothing resurrects, so nothing
+flickers — and a settle delay works directly against the reported complaint, which was that the pane
+took too long to go quiet.
+
+### Round 16 — a finish you have READ is not unread (2026-07-25)
+
+The unread agent-finish latch (`paneUnseenDone`, round 7.3) has exactly one clear path:
+`clearAgentBadge`, which runs on a SELECTION change — a tab switch, a rail click, a ⌘⇧U step.
+Returning to the app selects nothing. So the common shape — a turn finishes while you are in a
+browser, you come back to the pane you already had focused — left the finished marker sitting on the
+one pane you were staring at, and the only way to dismiss it was to click to another tab and back.
+"Unread" had drifted from *you have not seen this* to *you have not re-selected this*.
+
+The fix is a DWELL, not a clear-on-contact: a pane that is focused, in an active app, and carrying a
+finished-turn marker (a live `.done` or the latch) starts a watch clock; after
+`focusedDoneSettleWindow` (30 s) the client acknowledges it for you. Contact alone changes nothing —
+the marker's whole job is to tell you a turn ended, and it still gets to.
+
+Scope is deliberately narrow, and is the part worth protecting:
+
+- **Only a focused pane in an active app.** An unfocused pane keeps the original contract exactly —
+  unread until visited, however long that takes. Nothing can expire behind the user's back.
+- **The window measures an UNBROKEN watch.** Focus leaving, or the app backgrounding, abandons the
+  clock; a later return starts a fresh one. Two one-second glances never add up to an acknowledge.
+- **Only a FINISHED turn.** `.working` and `.needsPermission` are live signals, never unread output,
+  so neither starts a clock — the settle can therefore never silence a waiting approval gate.
+
+The driver is the same one-shot idiom as the completion flash (`doneSettleScheduler`, armed when a
+watch starts), because a finished agent stops mutating the store and nothing else would look again.
+It gets its own property rather than sharing `flashDecayScheduler` so the two boundaries stay
+independently injectable. The three edges that can change the answer — an agent-status transition, a
+focus change, and the `isAppActive` edge — all call the same refresh, which both starts and retires
+clocks; the acknowledge feeds back through `setAgentStatus`, by which point the pane is no longer a
+candidate, so the recursion terminates on its own.
+
+Host-side nothing changed: the status machine's own `done → idle` decay stays at 8 s. That decay
+answers "what is the agent doing"; this window answers "has the user seen it" — the same split the
+latch was introduced to make.
+
+### Round 17 — the git line gets its states back (2026-07-25)
+
+The project header's second line (`main ↑2 ↓1 +1 !3 ?5 ~2 $1`) was painted in one flat
+`Slate.Text.tertiary` — the metadata register it shares with the rows' process labels and the footer
+telemetry. That register is right for text that is *there if you look*; it is wrong for a line where
+a merge conflict and a branch name rendered identically. The whole line sank.
+
+Each run now carries its own ink, on two registers: a state that wants a HUMAN wears a status hue
+(conflict red, dirty amber, staged green, divergence/stash info), everything else wears the readable
+body ink. Nothing on the line resolves to tertiary any more — the flatness *was* the bug.
+
+The dialect is unchanged (same sigils, same fixed order, non-zero only). `gitSegments` is now the
+single source of truth and `gitLine` joins it, so the painted line, the hover tooltip and the
+accessibility label cannot drift. The runs are concatenated into ONE `Text` via an `AttributedString`
+rather than laid out in an `HStack`, so the line still truncates by tail — an `HStack` would clip a
+whole run instead, and the run it would drop is the rightmost, which is where `~conflicts` sits.
+
+Roles, not colours, in the pure layer (`GitInk`): the palette resolution lives in the one `@MainActor`
+`ink(_:)`, so the dialect stays headlessly pinnable and a theme swap repoints every run at once.
+
+Colour turned out not to be the whole answer, and measuring said why. Against the sidebar ground on the
+default theme the runs rank `!modified` 11.9 : `↑↓`/`$` 10.3 : `+staged` 10.2 : `~conflicted` 5.7 :
+branch 5.3 — the one state that genuinely needs a human pulls the eye LEAST of the coloured runs.
+Monokai's yellow is bright and its red is a mid pink; no re-assignment of hues fixes that without lying
+about what the states mean, and `statusErr` is theme-owned. So the line also carries a WEIGHT ladder,
+which costs no palette and holds on every theme: the branch stays regular (identity, not a status),
+every COUNT is semibold (at 10 pt mono a regular weight leaves the readout thin enough that colour does
+all the work), and `~conflicted` is bold. The step also buys a third cue under the one CVD collapse the
+measurement found — under protanopia `+staged` and `~conflicted` land ~3 ΔE apart, indistinguishable by
+hue; the sigils already carried the meaning, the weight now backs them.
+
+Measured but NOT acted on: both LIGHT themes fail AA on this line (`paper` branch 1.86:1,
+`monokaiProClassicLight` every run 2.80–3.32:1). That is a theme-token defect, not a git-line one —
+`paper.textSecondary` on `paper.ground` is 1.86:1 for every secondary label in the app, the folder name
+directly above this line included. Fixing it repaints the whole chrome and is its own decision.
+
+### Round 18 — Monokai Pro only, and the git line gets a ramp (2026-07-25)
+
+The theme list shipped six Monokai Pro filters plus two one-off palettes (`paper`, `dark`) built by hand
+rather than from a `MonokaiSeed`. Those two are gone. The cull is not tidying: it is what makes a
+guarantee possible. Every shipped theme is now seed-built, so every theme has the SAME six chromatics —
+which means chrome can reach past the status quartet and know that every filter can supply the ink.
+
+`SlateTheme` therefore surfaces `chromaOrange` / `chromaPurple` (`Slate.Chroma`). Each Monokai filter
+ships six chromatics; the status quartet spends four (green / yellow / red / cyan) and these are the
+other two. They previously reached only the terminal's ANSI palette. They are deliberately NOT statuses:
+no urgency attaches to them, the consumer assigns the meaning.
+
+Which lets the git line stop sharing inks. The four WORKTREE states are a RAMP, not a set of labels:
+`+staged` → `!modified` → `?untracked` → `~conflicted` is *how far this work is from being committed* —
+in the index, in the worktree, git has never seen it, it is broken. The filter's chromatics sweep that
+distance exactly: measured on the default theme the hue angles run 126.9° → 89.2° → 51.5° → 9.8°,
+green→yellow→orange→red, monotone, in the SAME left-to-right order the sigils already appear. `?` is
+orange not because a sixth colour was available but because it is the rung between "you changed it" and
+"it is broken". `↑↓` divergence and `$` stash sit OFF the ramp on cool hues — neither is a worktree
+state — and the branch keeps the body ink. No two runs now share an ink, which a test pins.
+
+Measured across the six survivors: every run clears WCAG AA on all five DARK filters (min 4.89:1).
+`monokaiProClassicLight` still does not (2.80–4.65:1) — unchanged and still upstream of this line, since
+its own `textSecondary` and status colours are too light for its own sidebar ground.
+
+No migration, per the standing rule: a persisted `"paper"` / `"dark"` no longer decodes as a
+`ThemeChoice`, so the whole `AppearancePreferences` blob decode-fails to its all-`nil` default and the
+app follows the OS onto Monokai Pro Classic / Classic Light. Nothing to write, nothing to version.

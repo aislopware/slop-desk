@@ -450,8 +450,6 @@ struct AllSettingsListView: View {
         case .monokaiProMachine: "Monokai Pro Machine"
         case .monokaiProRistretto: "Monokai Pro Ristretto"
         case .monokaiProSpectrum: "Monokai Pro Spectrum"
-        case .paper: "Paper (Light)"
-        case .dark: "Dark"
         }
     }
 }

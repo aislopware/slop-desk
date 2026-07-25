@@ -947,7 +947,7 @@ public struct SlopDeskClientApp: App {
     private static func nextBuiltinTheme(after current: ThemeChoice?) -> ThemeChoice {
         let order: [ThemeChoice] = [
             .monokaiProClassic, .monokaiProClassicLight, .monokaiProOctagon, .monokaiProMachine,
-            .monokaiProRistretto, .monokaiProSpectrum, .paper, .dark,
+            .monokaiProRistretto, .monokaiProSpectrum,
         ]
         let resolved = current.flatMap { order.contains($0) ? $0 : nil } ?? .monokaiProClassic
         let idx = order.firstIndex(of: resolved) ?? 0

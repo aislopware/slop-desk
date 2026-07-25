@@ -599,14 +599,18 @@ struct SidebarSectionHeaderRow: View {
                     .foregroundStyle(Slate.Text.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                if let detail = Self.detailLine(collapsed: collapsed, summary: summary) {
-                    // The git line is DATA — the instrument mono, tertiary: one metadata register
-                    // with the rows' process labels and the footer telemetry.
-                    Text(detail)
+                let segments = Self.detailSegments(collapsed: collapsed, summary: summary)
+                if !segments.isEmpty {
+                    // The git line is DATA — the instrument mono, one register with the rows' process
+                    // labels. But it is data with STATES, and rendering all of them in one flat grey
+                    // made the counts that matter (a conflict, unpushed work) read exactly like the
+                    // ones that don't. Each run wears its own ink instead; the mono grid keeps the
+                    // line from turning into confetti.
+                    Self.gitDetailText(segments)
                         .font(Slate.Typeface.instrument(Slate.Typeface.small))
-                        .foregroundStyle(Slate.Text.tertiary)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .accessibilityLabel(segments.map(\.text).joined(separator: " "))
                 }
             }
             Spacer(minLength: 6)
@@ -653,6 +657,13 @@ struct SidebarSectionHeaderRow: View {
         collapsed ? nil : summary.flatMap(gitLine)
     }
 
+    /// ``detailLine(collapsed:summary:)`` in its RENDERED form — the per-run segments the header paints,
+    /// empty when the line is folded away or there is no repo. Same swap, same dialect, one ink per run.
+    static func detailSegments(collapsed: Bool, summary: PaneGitSummary?) -> [GitSegment] {
+        guard !collapsed, let summary else { return [] }
+        return gitSegments(summary)
+    }
+
     /// The header's hover tooltip: the full project path (the name line deliberately shows only the
     /// basename), then the git line. Pure + static so the assembly is unit-pinned.
     static func tooltip(projectKey: String?, summary: PaneGitSummary?) -> String? {
@@ -670,16 +681,119 @@ struct SidebarSectionHeaderRow: View {
     /// modified, `?` untracked, `~` merge conflicts, `$` stash. `nil` for a non-repo summary (a
     /// plain directory has no git concept). Pure + static so the dialect is unit-pinned.
     static func gitLine(_ g: PaneGitSummary) -> String? {
-        guard g.hasRepo else { return nil }
-        var parts = [g.branch.isEmpty ? "detached" : g.branch]
-        if g.ahead > 0 { parts.append("↑\(g.ahead)") }
-        if g.behind > 0 { parts.append("↓\(g.behind)") }
-        if g.staged > 0 { parts.append("+\(g.staged)") }
-        if g.modified > 0 { parts.append("!\(g.modified)") }
-        if g.untracked > 0 { parts.append("?\(g.untracked)") }
-        if g.conflicted > 0 { parts.append("~\(g.conflicted)") }
-        if g.stash > 0 { parts.append("$\(g.stash)") }
-        return parts.joined(separator: " ")
+        let segments = gitSegments(g)
+        guard !segments.isEmpty else { return nil }
+        return segments.map(\.text).joined(separator: " ")
+    }
+
+    /// What one run of the git line MEANS — the axis its ink is chosen on. Roles, not colours: the
+    /// palette resolution lives in ``ink(_:)`` so the dialect stays pure and headlessly pinnable.
+    enum GitInk: CaseIterable, Sendable {
+        /// The branch name — identity, not a count.
+        case branch
+        /// `↑`/`↓` — where this branch sits against its upstream.
+        case divergence
+        /// `+` — staged and ready to commit.
+        case staged
+        /// `!` — unstaged worktree changes.
+        case modified
+        /// `?` — files git does not know about yet.
+        case untracked
+        /// `~` — an unmerged state. The one run that genuinely needs a human.
+        case conflicted
+        /// `$` — parked work.
+        case stash
+    }
+
+    /// One run of the git line: the text exactly as ``gitLine(_:)`` spells it, plus its ink role.
+    struct GitSegment: Equatable, Sendable {
+        let text: String
+        let ink: GitInk
+    }
+
+    /// The git line SPLIT into its runs — the dialect above, one segment per sigil. Empty for a
+    /// non-repo summary (a plain directory has no git concept). Pure + static so the dialect is
+    /// unit-pinned in one place: ``gitLine(_:)`` joins these, so the painted line and the tooltip /
+    /// accessibility line can never drift.
+    static func gitSegments(_ g: PaneGitSummary) -> [GitSegment] {
+        guard g.hasRepo else { return [] }
+        var parts = [GitSegment(text: g.branch.isEmpty ? "detached" : g.branch, ink: .branch)]
+        if g.ahead > 0 { parts.append(GitSegment(text: "↑\(g.ahead)", ink: .divergence)) }
+        if g.behind > 0 { parts.append(GitSegment(text: "↓\(g.behind)", ink: .divergence)) }
+        if g.staged > 0 { parts.append(GitSegment(text: "+\(g.staged)", ink: .staged)) }
+        if g.modified > 0 { parts.append(GitSegment(text: "!\(g.modified)", ink: .modified)) }
+        if g.untracked > 0 { parts.append(GitSegment(text: "?\(g.untracked)", ink: .untracked)) }
+        if g.conflicted > 0 { parts.append(GitSegment(text: "~\(g.conflicted)", ink: .conflicted)) }
+        if g.stash > 0 { parts.append(GitSegment(text: "$\(g.stash)", ink: .stash)) }
+        return parts
+    }
+
+    /// The ink for one run — every role its own, no two alike.
+    ///
+    /// The four WORKTREE states are a RAMP, not a set of labels: `+staged` → `!modified` → `?untracked` →
+    /// `~conflicted` is "how far this work is from being committed" (in the index → in the worktree → git
+    /// has never seen it → it is broken), and the filter's chromatics happen to sweep that distance
+    /// exactly. Measured on the default theme the hue angles run 126.9° → 89.2° → 51.5° → 9.8° —
+    /// green→yellow→orange→red, monotone, in the SAME left-to-right order the sigils already appear. The
+    /// ramp is the reason `?` is orange rather than one more grey: it is not a sixth arbitrary colour,
+    /// it is the rung between "you changed it" and "it is broken".
+    ///
+    /// Off the ramp: `↑↓` divergence is where the branch sits against its upstream and `$` stash is work
+    /// parked to one side — neither is a worktree state, so both take a cool hue and stay out of the
+    /// warm sweep. The BRANCH keeps the body ink: it is the line's identity, not a count.
+    ///
+    /// Nothing here resolves to the tertiary metadata grey — painting the whole line in it is what made a
+    /// conflict count read exactly like a branch name.
+    static func ink(_ role: GitInk) -> Color {
+        switch role {
+        case .branch: Slate.Text.secondary
+        case .divergence: Slate.Status.info
+        case .staged: Slate.Status.ok
+        case .modified: Slate.Status.warn
+        case .untracked: Slate.Chroma.orange
+        case .conflicted: Slate.Status.err
+        case .stash: Slate.Chroma.purple
+        }
+    }
+
+    /// The weight for one run — a second channel the palette cannot supply, on three rungs.
+    ///
+    /// Every COUNT is set heavy: the sigil runs are the readout, and at 10 pt mono a regular weight
+    /// leaves them thin enough that the colour is doing all the work. The BRANCH stays regular — it is
+    /// the line's identity, not a status, and keeping it light is what lets the counts read as a group.
+    ///
+    /// `~conflicted` goes one rung further still, to fix a ranking the palette gets backwards. Measured
+    /// on the default theme the runs rank by contrast against the sidebar as `!modified` 11.9 : `↑↓`/`$`
+    /// 10.3 : `+staged` 10.2 : `~conflicted` 5.7 : branch 5.3 — the ONE state that genuinely needs a
+    /// human pulls the eye LEAST of the coloured runs. That inversion is baked into the palette
+    /// (Monokai's yellow is bright, its red is a mid pink) and cannot be fixed by re-assigning hues
+    /// without lying about what the states mean. Weight is free of the palette, so this holds on every
+    /// theme — and it survives the one CVD collapse the measurement found (under protanopia `+staged`
+    /// and `~conflicted` land ~3 ΔE apart, indistinguishable by hue alone; the sigils already carry the
+    /// meaning, and the weight step adds a second non-colour cue).
+    static func weight(_ role: GitInk) -> Font.Weight {
+        switch role {
+        case .branch: .regular
+        case .conflicted: .bold
+        case .divergence,
+             .modified,
+             .staged,
+             .stash,
+             .untracked: .semibold
+        }
+    }
+
+    /// The painted line: one `Text` run per segment, space-joined, so the whole thing still truncates
+    /// as a single line (an `HStack` of runs would clip a whole run instead of the tail).
+    static func gitDetailText(_ segments: [GitSegment]) -> Text {
+        var line = AttributedString()
+        for (index, segment) in segments.enumerated() {
+            var run = AttributedString(index == 0 ? segment.text : " " + segment.text)
+            run.foregroundColor = ink(segment.ink)
+            run.font = Slate.Typeface.instrument(Slate.Typeface.small, weight: weight(segment.ink))
+            line.append(run)
+        }
+        return Text(line)
     }
 }
 

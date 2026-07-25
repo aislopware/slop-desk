@@ -2,7 +2,7 @@
 //
 // A THIN, headless token layer: no separate SPM target (`SlopDeskDesignSystem` stays deleted) — just
 // `Color`/`CGFloat`/`Animation` constants compiled into `SlopDeskClientUI`. Source of truth for the tokens:
-// the theme structs below, `.paper`'s hand-tuned light palette, and `Slate.Anim`'s timing curves (no
+// the theme structs below, the Monokai Pro filter seeds, and `Slate.Anim`'s timing curves (no
 // springs anywhere).
 //
 // Design DNA — "clean / modern / minimalist", FLAT, relit by MERIDIAN L5:
@@ -17,8 +17,8 @@
 //   - 8pt grid; ultra-thin structure: borders ~6% opacity, hover ~4–5% — low contrast = minimalist.
 //   - Minimal palette: three text levels + an accent used ONLY for active state.
 //
-// MULTI-THEME: `SlateTheme` ships the six Monokai Pro filters (`.monokaiProClassic` — the DEFAULT — plus
-// Light / Octagon / Machine / Ristretto / Spectrum) plus the legacy `.paper` / `.dark`. `Slate.*` accessors
+// MULTI-THEME: `SlateTheme` ships the six Monokai Pro filters and NOTHING ELSE (`.monokaiProClassic` — the
+// DEFAULT — plus Light / Octagon / Machine / Ristretto / Spectrum). `Slate.*` accessors
 // read `Slate.theme`, which (D3) indirects through `ThemeStore.shared.active` (default `.monokaiProClassic`)
 // so runtime switching repoints every token live. Each theme carries the
 // `terminalBackgroundHex`/`terminalForegroundHex` that pin the libghostty cells to the same flat palette.
@@ -36,7 +36,9 @@ import AppKit
 import UIKit
 #endif
 
-/// A full colour theme (every chrome role). Two instances ship: `.paper` (light, default) and `.dark`.
+/// A full colour theme (every chrome role). Every shipped instance is a Monokai Pro filter, built from a
+/// ``MonokaiSeed`` — so every theme has the SAME six chromatics available, which is what lets chrome reach
+/// past the status quartet (see ``Slate/Chroma``) without inventing a colour some theme cannot supply.
 struct SlateTheme: Equatable {
     // Surfaces — the 3-rung ladder (MERIDIAN C1). Exactly three names, each REAL in every theme (a rung
     // that collapses to another gets DELETED, not kept as aspirational vocabulary):
@@ -78,6 +80,14 @@ struct SlateTheme: Equatable {
     let statusErr: Color
     let statusInfo: Color
 
+    // The two remaining filter chromatics. Every Monokai Pro filter ships six chromatics; the status
+    // quartet spends four (green / yellow / red / cyan) and these are the other two. They reached only
+    // the terminal's ANSI palette before — surfaced here so chrome that needs a fifth or sixth
+    // DISTINGUISHABLE hue (the sidebar's git readout) can take one from the filter instead of inventing
+    // a colour outside it. Not statuses: no urgency attaches to them, the consumer assigns the meaning.
+    let chromaOrange: Color
+    let chromaPurple: Color
+
     /// Stable identity for change-detection — distinguishes a real theme switch from an idempotent re-apply
     /// so a SAME-LIGHTNESS variant change (e.g. Monokai Classic → Spectrum) still posts the cross-boundary
     /// repaint. Pure discriminator, never a colour.
@@ -101,91 +111,6 @@ struct SlateTheme: Equatable {
     let cursorHex: String?
     /// Glyph-under-cursor colour (`cursor-text`), 6-hex no `#`; `nil` ⇒ follow the background.
     let cursorTextHex: String?
-
-    /// "Paper" — the original warm off-white + green light palette; a selectable theme (default is now
-    /// Monokai Pro Classic).
-    static let paper = Self(
-        // MERIDIAN L5: chrome recedes onto the `ground` tone; the pane keeps the brighter paper (`face`).
-        ground: Color(slateHex: 0xF5F4F0),
-        face: Color(slateHex: 0xFCFBF9), // terminal surface = warm paper — flush, borderless panel (flat: no card look)
-        raised: .white, // active-tab card / popover / inset controls = pure white on paper (RC.card)
-        textPrimary: Color(slateHex: 0x37352F),
-        textSecondary: Color(slateHex: 0xB8B5AE),
-        textTertiary: Color(slateHex: 0xC9C6BE),
-        icon: Color(slateHex: 0x9A978F),
-        divider: Color(slateHex: 0xE0DFD5),
-        cardBorder: Color(slateHex: 0xEAE8E2),
-        border: .black.opacity(0.05),
-        borderActive: .black.opacity(0.15),
-        hover: Color(slateHex: 0xECEAE4),
-        selected: Color(slateHex: 0xE7E5DF),
-        header: Color(slateHex: 0xC9C6BE),
-        accent: Color(slateHex: 0x2B5A38), // green (ui-accent, measured)
-        accentHex: "2B5A38",
-        accentMuted: .black.opacity(0.06),
-        panelShadow: .black.opacity(0.12),
-        isLight: true,
-        statusOK: Color(slateHex: 0x2B5A38),
-        statusWarn: Color(slateHex: 0xB87A1E),
-        statusErr: Color(slateHex: 0xC0392B),
-        statusInfo: Color(slateHex: 0x007AFF),
-        id: "paper",
-        terminalBackgroundHex: "FCFBF9",
-        terminalForegroundHex: "37352F",
-        // Warm light-terminal ANSI set (matches the two-row swatch grid in `dark-mode-theme.png`'s Paper
-        // preview): normal 0–7 then the lighter bright 8–15.
-        ansiPalette: [
-            "37352F", "B23B3B", "2E6B3E", "C2731A", "3D7A99", "3C2E66", "2E7D6E", "C9C6BE",
-            "8A8780", "C57A7A", "7FAE84", "D6A35C", "8AAAC2", "9387B5", "7FC4B5", "E8E6DE",
-        ],
-        // Solid warm grey fill; glyph colours kept via selection-foreground=cell-foreground.
-        selectionBackgroundHex: "E7E5DF",
-        cursorHex: "37352F",
-        cursorTextHex: nil,
-    )
-
-    /// Dark — neutral grays + system-blue accent, opacity-based structure.
-    static let dark = Self(
-        // MERIDIAN L5: chrome DARKER than the pane surface (0x161616) — a sidebar-lighter-than-window
-        // layout would read as the wrong face lit, so the pane stays the brighter one.
-        ground: Color(slateHex: 0x111111),
-        face: Color(slateHex: 0x161616),
-        raised: Color(slateHex: 0x2A2A2A), // active-tab card / popover / inset controls, one step lifted
-        textPrimary: Color(slateHex: 0xEEEEEE),
-        textSecondary: Color(slateHex: 0x888888),
-        textTertiary: Color(slateHex: 0x8A8A8A),
-        icon: Color(slateHex: 0x8A8A8A),
-        // Derive the structure hairlines from the theme's own text tone (0xEEEEEE) rather than a flat
-        // `Color.white`, so the dark divider matches the palette instead of reading as a white outlier.
-        divider: Color(slateHex: 0xEEEEEE).opacity(0.06),
-        cardBorder: Color(slateHex: 0xEEEEEE).opacity(0.06),
-        border: .white.opacity(0.06),
-        borderActive: .white.opacity(0.15),
-        hover: .white.opacity(0.05),
-        selected: .white.opacity(0.08),
-        header: Color(slateHex: 0x8A8A8A),
-        accent: Color(slateHex: 0x007AFF), // system blue
-        accentHex: "007AFF",
-        accentMuted: .white.opacity(0.08),
-        panelShadow: .black.opacity(0.40),
-        isLight: false,
-        statusOK: Color(slateHex: 0x34C759),
-        statusWarn: Color(slateHex: 0xE5C07B),
-        statusErr: Color(slateHex: 0xE06C75),
-        statusInfo: Color(slateHex: 0x007AFF),
-        id: "dark",
-        terminalBackgroundHex: "161616",
-        terminalForegroundHex: "EEEEEE",
-        // Neutral dark-terminal ANSI set (One-Dark-style) matching the grey chrome + system-blue accent.
-        ansiPalette: [
-            "2A2A2A", "E06C75", "98C379", "E5C07B", "61AFEF", "C678DD", "56B6C2", "ABB2BF",
-            "5C6370", "E06C75", "98C379", "E5C07B", "61AFEF", "C678DD", "56B6C2", "FFFFFF",
-        ],
-        // One step above face (0x161616) — readable with light ANSI text kept via cell-foreground.
-        selectionBackgroundHex: "3A3A3A",
-        cursorHex: "EEEEEE",
-        cursorTextHex: nil,
-    )
 
     // MARK: - Monokai Pro filters (palette from monokai.pro/contribute; cross-verified across 4 ports)
 
@@ -248,6 +173,8 @@ struct SlateTheme: Equatable {
             statusWarn: Color(slateHex: s.warn),
             statusErr: Color(slateHex: s.err),
             statusInfo: Color(slateHex: s.info),
+            chromaOrange: Color(slateHex: s.orange),
+            chromaPurple: Color(slateHex: s.purple),
             id: "monokai-\(s.name)",
             terminalBackgroundHex: hex6(s.background),
             terminalForegroundHex: hex6(s.foreground),
@@ -382,6 +309,16 @@ enum Slate {
         /// themes cast nothing: at-rest depth there is the surface ladder (fill + hairline), and a
         /// dark-on-dark shadow reads as a smudged edge, not lift (MERIDIAN L5).
         static var cardShadow: Color { Slate.theme.isLight ? .black.opacity(0.04) : .clear }
+    }
+
+    /// The two filter chromatics outside the status quartet — a fifth and sixth hue for chrome that needs
+    /// more DISTINGUISHABLE inks than `ok`/`warn`/`err`/`info` provide, taken from the active filter so a
+    /// theme swap repoints them like every other token. Carries no urgency of its own: unlike ``Status``,
+    /// the meaning lives entirely at the call site.
+    @MainActor
+    enum Chroma {
+        static var orange: Color { Slate.theme.chromaOrange }
+        static var purple: Color { Slate.theme.chromaPurple }
     }
 
     @MainActor

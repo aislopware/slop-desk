@@ -249,7 +249,8 @@ final class SlateSnapshotRender: XCTestCase {
             persistence: nil,
         )
         store.projectGitSummary[key] = PaneGitSummary(
-            hasRepo: true, branch: "main", ahead: 2, behind: 0, changedCount: 4, staged: 1, modified: 3,
+            hasRepo: true, branch: "main", ahead: 2, behind: 1, changedCount: 4, staged: 1, modified: 3,
+            untracked: 5, conflicted: 2, stash: 1,
         )
         let panes = tabs.compactMap(\.activePane)
         store.setForegroundProcess("claude", for: panes[0])

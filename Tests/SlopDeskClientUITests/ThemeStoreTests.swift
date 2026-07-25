@@ -27,15 +27,14 @@ final class ThemeStoreTests: XCTestCase {
         XCTAssertTrue(store.active.isLight, "Monokai Pro Light is light")
         store.apply(.monokaiProSpectrum)
         XCTAssertEqual(store.active.id, "monokai-spectrum")
-        // The legacy palettes still resolve.
-        store.apply(.dark)
-        XCTAssertFalse(store.active.isLight, ".dark maps to the dark theme")
-        store.apply(.paper)
-        XCTAssertTrue(store.active.isLight, ".paper maps to the light theme")
+        store.apply(.monokaiProClassic)
+        XCTAssertFalse(store.active.isLight, "Monokai Pro Classic maps to the dark theme")
+        store.apply(.monokaiProClassicLight)
+        XCTAssertTrue(store.active.isLight, "Monokai Pro Light maps to the light theme")
         // nil (appearance reset/unset) now FOLLOWS the OS — the picker presents an unset slot as "System": dark
         // OS → the dark default, light OS → the light default. The probe is stubbed for determinism.
         store.osIsDark = { true }
-        store.active = .paper
+        store.active = .monokaiProClassicLight
         store.apply(nil)
         XCTAssertEqual(store.active.id, "monokai-classic", "nil in dark mode → the dark default")
         store.osIsDark = { false }
@@ -85,15 +84,15 @@ final class ThemeStoreTests: XCTestCase {
         var dark = false
         store.osIsDark = { dark }
         store.apply(appearance: AppearancePreferences(
-            theme: .paper, themeDark: .dark, useSeparateDarkTheme: true,
+            theme: .monokaiProClassicLight, themeDark: .monokaiProSpectrum, useSeparateDarkTheme: true,
         ))
-        XCTAssertEqual(store.active.id, "paper", "OS light → the primary/light slot")
+        XCTAssertEqual(store.active.id, "monokai-classic-light", "OS light → the primary/light slot")
         dark = true
         store.reresolveForOSAppearance()
-        XCTAssertEqual(store.active.id, "dark", "OS dark → the dark slot, live")
+        XCTAssertEqual(store.active.id, "monokai-spectrum", "OS dark → the dark slot, live")
         dark = false
         store.reresolveForOSAppearance()
-        XCTAssertEqual(store.active.id, "paper", "flip back to light, live")
+        XCTAssertEqual(store.active.id, "monokai-classic-light", "flip back to light, live")
     }
 
     /// An OS flip posts the cross-boundary repaint EXACTLY when the resolved theme actually changes (a
@@ -103,7 +102,7 @@ final class ThemeStoreTests: XCTestCase {
         var dark = false
         store.osIsDark = { dark }
         store.apply(appearance: AppearancePreferences(
-            theme: .paper, themeDark: .dark, useSeparateDarkTheme: true,
+            theme: .monokaiProClassicLight, themeDark: .monokaiProSpectrum, useSeparateDarkTheme: true,
         ))
         var posts = 0
         let token = NotificationCenter.default.addObserver(

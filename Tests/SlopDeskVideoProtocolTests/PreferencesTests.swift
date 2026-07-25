@@ -89,7 +89,7 @@ final class PreferencesTests: XCTestCase {
         // The default Monokai Pro Classic choice persists explicitly.
         XCTAssertEqual(try roundTrip(AppearancePreferences(theme: .monokaiProClassic)).theme, .monokaiProClassic)
         // A partially-set model round-trips too (density unset).
-        let partial = AppearancePreferences(theme: .dark)
+        let partial = AppearancePreferences(theme: .monokaiProSpectrum)
         XCTAssertEqual(try roundTrip(partial), partial)
         XCTAssertNil(try roundTrip(partial).density)
     }

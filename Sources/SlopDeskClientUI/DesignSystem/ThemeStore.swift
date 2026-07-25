@@ -118,8 +118,6 @@ final class ThemeStore {
         case "monokai-machine": .monokaiProMachine
         case "monokai-ristretto": .monokaiProRistretto
         case "monokai-spectrum": .monokaiProSpectrum
-        case "paper": .paper
-        case "dark": .dark
         default: nil
         }
     }

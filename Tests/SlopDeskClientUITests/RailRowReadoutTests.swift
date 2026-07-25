@@ -211,6 +211,93 @@ final class RailRowReadoutTests: XCTestCase {
         )))
     }
 
+    // MARK: - The git line's ink roles
+
+    /// Every run of the git line carries its OWN ink role, so the counts read at a glance instead of
+    /// dissolving into one flat metadata grey. The dialect (order, sigils, non-zero-only) is unchanged —
+    /// `gitLine` is derived from these segments, so the two can never drift apart.
+    func testGitSegmentsCarryPerSigilInkRoles() {
+        let busy = PaneGitSummary(
+            hasRepo: true, branch: "main", ahead: 1, behind: 2, changedCount: 9,
+            staged: 3, modified: 4, untracked: 5, conflicted: 6, stash: 7,
+        )
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.gitSegments(busy).map(\.ink),
+            [.branch, .divergence, .divergence, .staged, .modified, .untracked, .conflicted, .stash],
+            "one role per run, in the dialect's fixed order",
+        )
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.gitSegments(busy).map(\.text).joined(separator: " "),
+            SidebarSectionHeaderRow.gitLine(busy),
+            "the plain line (tooltip / a11y) is the segments joined — one source of truth",
+        )
+    }
+
+    /// A quiet repo is JUST the branch run, and a non-repo has no segments at all (so the header shows
+    /// no second line rather than an empty coloured one).
+    func testGitSegmentsQuietAndNonRepo() {
+        XCTAssertEqual(
+            SidebarSectionHeaderRow.gitSegments(PaneGitSummary(
+                hasRepo: true, branch: "main", ahead: 0, behind: 0, changedCount: 0,
+            )),
+            [.init(text: "main", ink: .branch)],
+            "a clean tracking branch is one run",
+        )
+        XCTAssertTrue(
+            SidebarSectionHeaderRow.gitSegments(PaneGitSummary(
+                hasRepo: false, branch: "", ahead: 0, behind: 0, changedCount: 0,
+            )).isEmpty,
+            "no repo ⇒ no runs",
+        )
+    }
+
+    /// The four WORKTREE states form a RAMP — `+staged` → `!modified` → `?untracked` → `~conflicted` is
+    /// "how far this work is from being committed", and the filter's chromatics sweep it monotonically
+    /// (green→yellow→orange→red, hue 126.9°→89.2°→51.5°→9.8° on the default theme) in the SAME order the
+    /// sigils appear. Divergence and stash sit OFF the ramp on cool hues (neither is a worktree state),
+    /// and the branch keeps the body ink.
+    @MainActor
+    func testGitInkRampAndOffRampRoles() {
+        XCTAssertEqual(SidebarSectionHeaderRow.ink(.staged), Slate.Status.ok)
+        XCTAssertEqual(SidebarSectionHeaderRow.ink(.modified), Slate.Status.warn)
+        XCTAssertEqual(SidebarSectionHeaderRow.ink(.untracked), Slate.Chroma.orange)
+        XCTAssertEqual(SidebarSectionHeaderRow.ink(.conflicted), Slate.Status.err)
+        XCTAssertEqual(SidebarSectionHeaderRow.ink(.divergence), Slate.Status.info)
+        XCTAssertEqual(SidebarSectionHeaderRow.ink(.stash), Slate.Chroma.purple)
+        XCTAssertEqual(SidebarSectionHeaderRow.ink(.branch), Slate.Text.secondary)
+    }
+
+    /// No two runs share an ink, and none falls back to the tertiary metadata grey — the flat grey was
+    /// the original bug, and a duplicate would silently re-merge two states the sigils keep apart.
+    @MainActor
+    func testEveryGitRunHasItsOwnInkAndNoneIsTheMetadataGrey() {
+        let inks = SidebarSectionHeaderRow.GitInk.allCases.map { SidebarSectionHeaderRow.ink($0) }
+        for (role, colour) in zip(SidebarSectionHeaderRow.GitInk.allCases, inks) {
+            XCTAssertNotEqual(colour, Slate.Text.tertiary, "\(role) must not sink into the flat grey")
+            XCTAssertEqual(
+                inks.filter { $0 == colour }.count, 1, "\(role) shares its ink with another run",
+            )
+        }
+    }
+
+    /// The weight ladder has three rungs: every COUNT is heavy (at 10 pt mono a regular weight leaves the
+    /// readout thin enough that colour does all the work), the BRANCH stays regular so the counts read as
+    /// a group beside it, and `~conflicted` steps one further — the palette ranks it FOURTH by contrast
+    /// (5.7:1) behind `!modified` (11.9:1), so the state that needs a human pulls least. Re-assigning hues
+    /// cannot fix that without lying about what the states mean; weight is the channel outside the
+    /// palette, so it holds on every theme and under the protanopia collapse that puts `+staged` and
+    /// `~conflicted` ~3 ΔE apart.
+    func testWeightLadderRanksCountsAboveBranchAndConflictAboveAll() {
+        XCTAssertEqual(SidebarSectionHeaderRow.weight(.branch), .regular, "the branch is identity, not a count")
+        XCTAssertEqual(SidebarSectionHeaderRow.weight(.conflicted), .bold, "the one state that needs a human")
+        for role in SidebarSectionHeaderRow.GitInk.allCases where role != .branch && role != .conflicted {
+            XCTAssertEqual(
+                SidebarSectionHeaderRow.weight(role), .semibold,
+                "\(role) is a count — heavy enough to read without colour carrying it alone",
+            )
+        }
+    }
+
     // MARK: - The error line
 
     /// The error detail is the failing COMMAND alone, gated on real failure evidence. No exit code or

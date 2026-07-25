@@ -74,13 +74,17 @@ final class WorkspaceControlBackendConfigTests: XCTestCase {
         XCTAssertEqual(ThemeStore.shared.active.id, "monokai-classic")
 
         // A built-in id (as listed by `theme list`) switches the ACTIVE theme + round-trips via `config get`.
-        XCTAssertTrue(h.backend.configSet(key: "theme", value: "paper", transient: false))
-        XCTAssertEqual(ThemeStore.shared.active.id, "paper", "config set theme retints the running app")
-        XCTAssertEqual(h.backend.configGet(key: "theme"), "paper", "config get theme reflects the live theme")
-        XCTAssertEqual(h.preferences.appearance.theme, .paper, "the selection is persisted to the typed model")
+        let lightID = "monokai-classic-light"
+        XCTAssertTrue(h.backend.configSet(key: "theme", value: lightID, transient: false))
+        XCTAssertEqual(ThemeStore.shared.active.id, lightID, "config set theme retints the running app")
+        XCTAssertEqual(h.backend.configGet(key: "theme"), lightID, "config get theme reflects the live theme")
+        XCTAssertEqual(
+            h.preferences.appearance.theme, .monokaiProClassicLight,
+            "the selection is persisted to the typed model",
+        )
 
-        XCTAssertTrue(h.backend.configSet(key: "theme", value: "dark", transient: false))
-        XCTAssertEqual(ThemeStore.shared.active.id, "dark")
+        XCTAssertTrue(h.backend.configSet(key: "theme", value: "monokai-spectrum", transient: false))
+        XCTAssertEqual(ThemeStore.shared.active.id, "monokai-spectrum")
     }
 
     func testConfigSetThemeAcceptsAChoiceRawValueAndRejectsUnknown() {
@@ -96,8 +100,8 @@ final class WorkspaceControlBackendConfigTests: XCTestCase {
 
     func testConfigUnsetThemeRestoresDefault() {
         let h = makeHarness(#function)
-        XCTAssertTrue(h.backend.configSet(key: "theme", value: "paper", transient: false))
-        XCTAssertEqual(ThemeStore.shared.active.id, "paper")
+        XCTAssertTrue(h.backend.configSet(key: "theme", value: "monokai-spectrum", transient: false))
+        XCTAssertEqual(ThemeStore.shared.active.id, "monokai-spectrum")
 
         XCTAssertTrue(h.backend.configUnset(key: "theme", transient: false))
         XCTAssertEqual(ThemeStore.shared.active.id, "monokai-classic", "unset restores the default theme")
@@ -121,11 +125,14 @@ final class WorkspaceControlBackendConfigTests: XCTestCase {
 
     func testConfigShowReportsLiveValues() {
         let h = makeHarness(#function)
-        XCTAssertTrue(h.backend.configSet(key: "theme", value: "dark", transient: false))
+        XCTAssertTrue(h.backend.configSet(key: "theme", value: "monokai-spectrum", transient: false))
         XCTAssertTrue(h.backend.configSet(key: "font-size", value: "15", transient: false))
 
         let shown = h.backend.configShow()
-        XCTAssertEqual(shown.first { $0.key == "theme" }?.value, "dark", "config show reflects the live theme")
+        XCTAssertEqual(
+            shown.first { $0.key == "theme" }?.value, "monokai-spectrum",
+            "config show reflects the live theme",
+        )
         XCTAssertEqual(shown.first { $0.key == "font-size" }?.value, "15", "config show reflects the live size")
     }
 

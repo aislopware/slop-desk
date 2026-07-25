@@ -22,8 +22,6 @@ enum ThemeCatalog {
         .monokaiProMachine,
         .monokaiProRistretto,
         .monokaiProSpectrum,
-        .paper,
-        .dark,
     ]
 
     /// The shipped `SlateTheme` for a stable built-in id, or `nil` for an unknown id. Delegates to

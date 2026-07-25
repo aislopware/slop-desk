@@ -30,8 +30,9 @@ final class FontScopeResolverTests: XCTestCase {
     func testDarkScopeFontWinsWhileGlobalAtDefaultUnderDarkAppearance() {
         let globalDefault = "JetBrains Mono"
         let appearance = AppearancePreferences(
-            theme: .paper, themeDark: .dark, useSeparateDarkTheme: true,
-            themeFonts: [FontScopeResolver.darkSlotSlug(AppearancePreferences(themeDark: .dark)): "Fira Code"],
+            theme: .monokaiProClassicLight, themeDark: .monokaiProSpectrum, useSeparateDarkTheme: true,
+            themeFonts: [FontScopeResolver
+                .darkSlotSlug(AppearancePreferences(themeDark: .monokaiProSpectrum)): "Fira Code"],
         )
         let resolved = FontScopeResolver.resolvedFamily(
             global: globalDefault,
@@ -46,8 +47,8 @@ final class FontScopeResolverTests: XCTestCase {
     func testPerThemeAppliesWhenGlobalUnset() {
         let resolved = FontScopeResolver.resolvedFamily(
             global: nil,
-            themeFonts: ["paper": "IBM Plex Mono", "dark": "Menlo"],
-            slug: "dark",
+            themeFonts: ["monokai-classic-light": "IBM Plex Mono", "monokai-spectrum": "Menlo"],
+            slug: "monokai-spectrum",
             fallback: fallback,
         )
         XCTAssertEqual(resolved, "Menlo", "the active slot's per-theme font wins when Global is unset")
@@ -56,13 +57,18 @@ final class FontScopeResolverTests: XCTestCase {
     /// With neither Global nor a per-theme entry for the active slug, the bundled default is used.
     func testFallbackWhenNeitherScopeProvidesAValue() {
         XCTAssertEqual(
-            FontScopeResolver.resolvedFamily(global: nil, themeFonts: nil, slug: "paper", fallback: fallback),
+            FontScopeResolver.resolvedFamily(
+                global: nil,
+                themeFonts: nil,
+                slug: "monokai-classic-light",
+                fallback: fallback,
+            ),
             fallback,
         )
         // A themeFonts dict that lacks the ACTIVE slug also falls through to the default.
         XCTAssertEqual(
             FontScopeResolver.resolvedFamily(
-                global: nil, themeFonts: ["other": "Menlo"], slug: "paper", fallback: fallback,
+                global: nil, themeFonts: ["other": "Menlo"], slug: "monokai-classic-light", fallback: fallback,
             ),
             fallback, "a per-theme entry for a DIFFERENT slug does not apply",
         )
@@ -73,14 +79,14 @@ final class FontScopeResolverTests: XCTestCase {
         // An empty Global falls through to the per-theme font.
         XCTAssertEqual(
             FontScopeResolver.resolvedFamily(
-                global: "   ", themeFonts: ["dark": "Menlo"], slug: "dark", fallback: fallback,
+                global: "   ", themeFonts: ["monokai-spectrum": "Menlo"], slug: "monokai-spectrum", fallback: fallback,
             ),
             "Menlo", "a whitespace-only Global is unset → per-theme applies",
         )
         // An empty per-theme entry falls through to the default.
         XCTAssertEqual(
             FontScopeResolver.resolvedFamily(
-                global: nil, themeFonts: ["dark": ""], slug: "dark", fallback: fallback,
+                global: nil, themeFonts: ["monokai-spectrum": ""], slug: "monokai-spectrum", fallback: fallback,
             ),
             fallback, "an empty per-theme value is unset → default applies",
         )
@@ -90,13 +96,13 @@ final class FontScopeResolverTests: XCTestCase {
     func testNilSlugSkipsPerThemeLookup() {
         XCTAssertEqual(
             FontScopeResolver.resolvedFamily(
-                global: nil, themeFonts: ["dark": "Menlo"], slug: nil, fallback: fallback,
+                global: nil, themeFonts: ["monokai-spectrum": "Menlo"], slug: nil, fallback: fallback,
             ),
             fallback, "no active slug ⇒ no per-theme override",
         )
         XCTAssertEqual(
             FontScopeResolver.resolvedFamily(
-                global: "Fira Code", themeFonts: ["dark": "Menlo"], slug: nil, fallback: fallback,
+                global: "Fira Code", themeFonts: ["monokai-spectrum": "Menlo"], slug: nil, fallback: fallback,
             ),
             "Fira Code", "Global still wins with a nil slug",
         )
@@ -120,8 +126,8 @@ final class FontScopeResolverTests: XCTestCase {
             "monokai-classic-light", "the light slot resolves .system to the OS-light default",
         )
         XCTAssertEqual(
-            FontScopeResolver.lightSlotSlug(AppearancePreferences(theme: .paper)),
-            "paper", "a concrete light choice maps to its fixed id",
+            FontScopeResolver.lightSlotSlug(AppearancePreferences(theme: .monokaiProClassicLight)),
+            "monokai-classic-light", "a concrete light choice maps to its fixed id",
         )
         XCTAssertEqual(
             FontScopeResolver.lightSlotSlug(AppearancePreferences()),
@@ -131,10 +137,10 @@ final class FontScopeResolverTests: XCTestCase {
 
     /// The Dark Theme tab always targets the DARK slot's own theme — independent of the separate-dark toggle.
     func testDarkSlotSlugIsIndependentOfSeparateDarkToggle() {
-        let off = AppearancePreferences(themeDark: .dark, useSeparateDarkTheme: false)
-        XCTAssertEqual(FontScopeResolver.darkSlotSlug(off), "dark", "off ⇒ still the dark slot's theme")
-        let on = AppearancePreferences(themeDark: .dark, useSeparateDarkTheme: true)
-        XCTAssertEqual(FontScopeResolver.darkSlotSlug(on), "dark", "on ⇒ the dark slot's theme")
+        let off = AppearancePreferences(themeDark: .monokaiProSpectrum, useSeparateDarkTheme: false)
+        XCTAssertEqual(FontScopeResolver.darkSlotSlug(off), "monokai-spectrum", "off ⇒ still the dark slot's theme")
+        let on = AppearancePreferences(themeDark: .monokaiProSpectrum, useSeparateDarkTheme: true)
+        XCTAssertEqual(FontScopeResolver.darkSlotSlug(on), "monokai-spectrum", "on ⇒ the dark slot's theme")
         XCTAssertEqual(
             FontScopeResolver.darkSlotSlug(AppearancePreferences()),
             "monokai-classic", "an unset dark slot ⇒ the compile-time default",
@@ -144,20 +150,32 @@ final class FontScopeResolverTests: XCTestCase {
     /// The Computed tab follows the OS appearance ONLY when separate-dark is on; otherwise the single primary
     /// slot is active for every OS appearance.
     func testActiveSlotSlugFollowsOSOnlyWhenSeparateDarkOn() {
-        let single = AppearancePreferences(theme: .paper, themeDark: .dark)
-        XCTAssertEqual(FontScopeResolver.activeSlotSlug(single, osIsDark: true), "paper")
-        XCTAssertEqual(FontScopeResolver.activeSlotSlug(single, osIsDark: false), "paper")
-        let dual = AppearancePreferences(theme: .paper, themeDark: .dark, useSeparateDarkTheme: true)
-        XCTAssertEqual(FontScopeResolver.activeSlotSlug(dual, osIsDark: false), "paper", "OS-light ⇒ light slot")
-        XCTAssertEqual(FontScopeResolver.activeSlotSlug(dual, osIsDark: true), "dark", "OS-dark ⇒ dark slot")
+        let single = AppearancePreferences(theme: .monokaiProClassicLight, themeDark: .monokaiProSpectrum)
+        XCTAssertEqual(FontScopeResolver.activeSlotSlug(single, osIsDark: true), "monokai-classic-light")
+        XCTAssertEqual(FontScopeResolver.activeSlotSlug(single, osIsDark: false), "monokai-classic-light")
+        let dual = AppearancePreferences(
+            theme: .monokaiProClassicLight,
+            themeDark: .monokaiProSpectrum,
+            useSeparateDarkTheme: true,
+        )
+        XCTAssertEqual(
+            FontScopeResolver.activeSlotSlug(dual, osIsDark: false),
+            "monokai-classic-light",
+            "OS-light ⇒ light slot",
+        )
+        XCTAssertEqual(
+            FontScopeResolver.activeSlotSlug(dual, osIsDark: true),
+            "monokai-spectrum",
+            "OS-dark ⇒ dark slot",
+        )
     }
 
     /// Computed end-to-end: with Global unset, the ACTIVE slot's per-theme font is the effective family, and
     /// the active slot follows the OS only under separate-dark (light slot's font in light mode, dark in dark).
     func testComputedFamilyUsesActiveSlotPerThemeWhenGlobalUnset() {
         let dual = AppearancePreferences(
-            theme: .paper, themeDark: .dark, useSeparateDarkTheme: true,
-            themeFonts: ["paper": "IBM Plex Mono", "dark": "JetBrains Mono"],
+            theme: .monokaiProClassicLight, themeDark: .monokaiProSpectrum, useSeparateDarkTheme: true,
+            themeFonts: ["monokai-classic-light": "IBM Plex Mono", "monokai-spectrum": "JetBrains Mono"],
         )
         XCTAssertEqual(
             FontScopeResolver.resolvedFamily(

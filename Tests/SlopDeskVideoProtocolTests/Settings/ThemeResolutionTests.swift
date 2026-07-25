@@ -26,9 +26,13 @@ final class ThemeResolutionTests: XCTestCase {
     /// the OS. Revert-to-confirm: a `"dark"`-only resolver that ignored the toggle would still pass,
     /// so the dual-slot tests below carry the real follow-OS proof.
     func testSingleSlotConcreteChoiceIgnoresOS() {
-        let prefs = AppearancePreferences(theme: .paper)
-        XCTAssertEqual(ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: false), "paper")
-        XCTAssertEqual(ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: true), "paper")
+        let prefs = AppearancePreferences(theme: .monokaiProRistretto)
+        XCTAssertEqual(
+            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: false), "monokai-ristretto",
+        )
+        XCTAssertEqual(
+            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: true), "monokai-ristretto",
+        )
     }
 
     /// The legacy `.system` single choice STILL follows the OS by construction (dark → Classic, light → Light)
@@ -48,13 +52,15 @@ final class ThemeResolutionTests: XCTestCase {
     /// With separate-dark ON the OS appearance SELECTS the slot: light → primary `theme`, dark → `themeDark`.
     /// This is the load-bearing follow-OS proof (the single-slot tests above would pass without it).
     func testSeparateDarkSelectsSlotByOS() {
-        let prefs = AppearancePreferences(theme: .paper, themeDark: .dark, useSeparateDarkTheme: true)
+        let prefs = AppearancePreferences(
+            theme: .monokaiProClassicLight, themeDark: .monokaiProSpectrum, useSeparateDarkTheme: true,
+        )
         XCTAssertEqual(
-            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: false), "paper",
+            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: false), "monokai-classic-light",
             "OS light → the primary/light slot",
         )
         XCTAssertEqual(
-            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: true), "dark",
+            ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: true), "monokai-spectrum",
             "OS dark → the dark slot",
         )
     }
@@ -62,7 +68,7 @@ final class ThemeResolutionTests: XCTestCase {
     /// Separate-dark ON with an UNSET dark slot (no `themeDark`) falls back to the
     /// compile-time default Monokai Pro Classic in dark mode.
     func testSeparateDarkWithUnsetDarkSlotUsesDefault() {
-        let prefs = AppearancePreferences(theme: .paper, useSeparateDarkTheme: true)
+        let prefs = AppearancePreferences(theme: .monokaiProClassicLight, useSeparateDarkTheme: true)
         XCTAssertEqual(
             ThemeResolution.activeBuiltinID(appearance: prefs, osIsDark: true), "monokai-classic",
         )
@@ -77,8 +83,8 @@ final class ThemeResolutionTests: XCTestCase {
         XCTAssertEqual(ThemeResolution.builtinID(for: .system, osIsDark: true), "monokai-classic")
         XCTAssertEqual(ThemeResolution.builtinID(for: .system, osIsDark: false), "monokai-classic-light")
         XCTAssertEqual(ThemeResolution.builtinID(for: .monokaiProSpectrum, osIsDark: true), "monokai-spectrum")
-        XCTAssertEqual(ThemeResolution.builtinID(for: .paper, osIsDark: true), "paper")
-        XCTAssertEqual(ThemeResolution.builtinID(for: .dark, osIsDark: false), "dark")
+        XCTAssertEqual(ThemeResolution.builtinID(for: .monokaiProOctagon, osIsDark: true), "monokai-octagon")
+        XCTAssertEqual(ThemeResolution.builtinID(for: .monokaiProMachine, osIsDark: false), "monokai-machine")
     }
 
     /// Every concrete (non-`.system`) ``ThemeChoice`` exposes a stable `builtinID`; only `.system` is `nil`

@@ -54,7 +54,7 @@ public struct AppearancePreferences: Codable, Sendable, Equatable {
 }
 
 /// The user-selectable theme. `.system` follows the OS appearance (→ Monokai Pro Classic dark /
-/// Monokai Pro Light); the Monokai Pro filters and the legacy `.paper` / `.dark` pin a fixed theme. A
+/// Monokai Pro Light); every other case pins one Monokai Pro filter. A
 /// `String`-raw `Codable` enum so a stale / unknown persisted value decode-fails the whole
 /// ``AppearancePreferences`` blob to its all-`nil` default (validate-then-default, no migration). A `nil`
 /// stored theme (fresh install / reset) resolves to the compile-time default Monokai Pro Classic.
@@ -67,9 +67,6 @@ public enum ThemeChoice: String, Codable, Sendable, Equatable, CaseIterable {
     case monokaiProMachine
     case monokaiProRistretto
     case monokaiProSpectrum
-    // Legacy palettes — still selectable.
-    case paper
-    case dark
 }
 
 public extension ThemeChoice {
@@ -87,8 +84,6 @@ public extension ThemeChoice {
         case .monokaiProMachine: "monokai-machine"
         case .monokaiProRistretto: "monokai-ristretto"
         case .monokaiProSpectrum: "monokai-spectrum"
-        case .paper: "paper"
-        case .dark: "dark"
         }
     }
 }

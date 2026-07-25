@@ -43,8 +43,6 @@ enum SettingsThemeGallery {
         SettingsOption(.monokaiProMachine, "Machine", caption: "Monokai Pro"),
         SettingsOption(.monokaiProRistretto, "Ristretto", caption: "Monokai Pro"),
         SettingsOption(.monokaiProSpectrum, "Spectrum", caption: "Monokai Pro"),
-        SettingsOption(.paper, "Paper", caption: "Light"),
-        SettingsOption(.dark, "Dark", caption: "Neutral"),
     ]
 }
 
