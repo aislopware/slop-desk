@@ -552,6 +552,81 @@ public enum MetadataCodec {
         return (changeCount, ClipboardClip(kindByte: kindByte, bytes: bytes))
     }
 
+    // MARK: - Host vitals  (hostVitals = 17)
+
+    /// The host machine's pulse (``MetadataVerb/hostVitals``): how hard the Mac on the other end is
+    /// working right now. Three aggregate bytes — nothing about WHAT it runs, only how much of it.
+    ///
+    /// Percentages are pre-rounded by the HOST (it owns the sampling window; the client renders what
+    /// it is told and never re-derives a rate from two readings). Both are clamped to `0...100` on
+    /// encode AND decode, so a wrong/hostile byte can never render "197%".
+    public struct HostVitals: Equatable, Sendable {
+        /// All-core CPU busy percent (`0...100`) across the sampler's window — `100 - idle`, so a
+        /// 10-core Mac pegged on one core reads ~10, not 100 (the Activity Monitor "% CPU LOAD"
+        /// reading, not its per-process column, which sums past 100).
+        public var cpuPercent: UInt8
+        /// Physical memory in use percent (`0...100`): wired + app-internal (minus purgeable) +
+        /// compressed over the installed RAM — the Activity Monitor "Memory Used" reading, with the
+        /// file cache excluded (macOS parks the whole free pool in cache; counting it would pin
+        /// every Mac at 99% and say nothing).
+        public var memoryPercent: UInt8
+        /// The kernel's memory-pressure level as a RAW byte (forward-tolerant carry, like
+        /// ``PortInfo/proto``); see ``MemoryPressure`` / ``memoryPressure``.
+        public var pressureByte: UInt8
+
+        public init(cpuPercent: UInt8, memoryPercent: UInt8, pressureByte: UInt8) {
+            self.cpuPercent = cpuPercent
+            self.memoryPercent = memoryPercent
+            self.pressureByte = pressureByte
+        }
+
+        public init(cpuPercent: UInt8, memoryPercent: UInt8, pressure: MemoryPressure) {
+            self.init(
+                cpuPercent: cpuPercent, memoryPercent: memoryPercent, pressureByte: pressure.rawValue,
+            )
+        }
+
+        /// The typed pressure level. An unknown future byte reads ``MemoryPressure/normal`` — a level
+        /// this build cannot interpret must never light an alarm ink it cannot justify.
+        public var memoryPressure: MemoryPressure {
+            MemoryPressure(rawValue: pressureByte) ?? .normal
+        }
+    }
+
+    /// The meaning of ``HostVitals/pressureByte`` — the kernel's own memory-pressure verdict, which
+    /// is the reading that actually predicts a miserable session (a high memory PERCENT is normal on
+    /// a healthy Mac; pressure is what says the machine is thrashing).
+    public enum MemoryPressure: UInt8, Sendable, Equatable, CaseIterable {
+        case normal = 0
+        case warn = 1
+        case critical = 2
+    }
+
+    /// Encodes a ``MetadataVerb/hostVitals`` response payload: `[UInt8 cpu%][UInt8 mem%][UInt8
+    /// pressure]`. Both percents are clamped to `0...100` at the SOURCE.
+    public static func encodeHostVitals(_ vitals: HostVitals) -> Data {
+        Data([
+            min(vitals.cpuPercent, 100),
+            min(vitals.memoryPercent, 100),
+            vitals.pressureByte,
+        ])
+    }
+
+    /// Decodes a ``MetadataVerb/hostVitals`` response payload (validate-then-drop): a body shorter
+    /// than 3 bytes throws ``SlopDeskError/truncated``; an out-of-range percent is CLAMPED (not
+    /// thrown — the reading is still usable and a status row must not vanish over one wild byte); a
+    /// longer body is tolerated, its trailer ignored, so a future field can be appended without
+    /// breaking this reader.
+    public static func decodeHostVitals(_ data: Data) throws -> HostVitals {
+        var reader = BigEndianReader(data)
+        let cpu = try reader.readUInt8()
+        let mem = try reader.readUInt8()
+        let pressure = try reader.readUInt8()
+        return HostVitals(
+            cpuPercent: min(cpu, 100), memoryPercent: min(mem, 100), pressureByte: pressure,
+        )
+    }
+
     // MARK: - Shared encode/decode helpers
 
     /// A list count clamped to the `[0, 65535]` the `UInt16` count field can hold, so a >65535-entry

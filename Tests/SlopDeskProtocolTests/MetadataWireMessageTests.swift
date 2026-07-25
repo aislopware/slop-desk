@@ -267,9 +267,12 @@ final class MetadataWireMessageTests: XCTestCase {
         // The two clipboard-sync verbs (15 side-effecting push, 16 the pull read — docs/20).
         XCTAssertEqual(MetadataVerb.setClipboard.rawValue, 15)
         XCTAssertEqual(MetadataVerb.readClipboard.rawValue, 16)
-        // Unknown verb bytes map to nil (caller answers unsupportedVerb) — never a trap.
+        // The host-pulse pure read (3-byte [cpu%][mem%][pressure] payload, docs/20).
+        XCTAssertEqual(MetadataVerb.hostVitals.rawValue, 17)
+        // Unknown verb bytes map to nil (caller answers unsupportedVerb) — never a trap. The probe
+        // moves up with each verb added (it was 17 before hostVitals).
         XCTAssertNil(MetadataVerb(rawValue: 0))
-        XCTAssertNil(MetadataVerb(rawValue: 17))
+        XCTAssertNil(MetadataVerb(rawValue: 18))
         XCTAssertNil(MetadataVerb(rawValue: 200))
     }
 

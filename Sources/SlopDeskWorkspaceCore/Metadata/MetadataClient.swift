@@ -199,6 +199,16 @@ public final class MetadataClient {
         return name
     }
 
+    /// The host machine's pulse (``MetadataVerb/hostVitals``: CPU / memory / pressure) — the sidebar
+    /// footer's second line. `nil` on any non-answer: an old host (`.unsupportedVerb`), a dropped
+    /// reply, or the host's own "no reading yet" `.error` while its CPU baseline primes. The caller
+    /// KEEPS its previous reading on `nil` — a poll that misses must not blank a working instrument.
+    public func hostVitals() async -> MetadataCodec.HostVitals? {
+        let (status, payload) = await request(.hostVitals)
+        guard status == .ok else { return nil }
+        return try? MetadataCodec.decodeHostVitals(payload)
+    }
+
     /// Pushes the client's clipboard clip onto the HOST's general pasteboard
     /// (``MetadataVerb/setClipboard``; the push half of clipboard sync). Host-global like the
     /// agent-hooks verbs — routed through whichever pane carries a live channel. Returns `true` only

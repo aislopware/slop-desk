@@ -361,6 +361,13 @@ struct HostMetadataProbe: MetadataQuerying {
         ProcessInfo.processInfo.hostName
     }
 
+    func hostVitals() -> MetadataCodec.HostVitals? {
+        // The machine's pulse — the `hostVitals` verb's answer. Pane-agnostic, so it reads the
+        // PROCESS-WIDE sampler rather than any state of this per-request probe: the CPU percent is a
+        // delta between polls and would never exist if the baseline died with the probe.
+        HostVitalsSampler.shared.sample()
+    }
+
     func readAgentSession(id: String) -> Data? {
         // Defense in depth (the builder already rejected `..`): confine the resolved file to the known
         // session roots so an absolute id outside them can't exfiltrate an arbitrary host file.

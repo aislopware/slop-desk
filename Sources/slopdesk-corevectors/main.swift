@@ -1237,6 +1237,17 @@ root["metadataCodecPayloads"] = [
         ])),
         "claude + codex sessions",
     ),
+    // HostVitals ([UInt8 cpu%][UInt8 mem%][UInt8 pressure]) — fixed 3 bytes, no count prefix.
+    mcRecord(
+        "hostVitals",
+        hex(MetadataCodec.encodeHostVitals(.init(cpuPercent: 34, memoryPercent: 61, pressure: .normal))),
+        "cpu/mem percents, pressure normal",
+    ),
+    mcRecord(
+        "hostVitals",
+        hex(MetadataCodec.encodeHostVitals(.init(cpuPercent: 250, memoryPercent: 100, pressure: .critical))),
+        "percent clamped at the source; pressure critical",
+    ),
 ]
 
 // MARK: SlopDeskProtocol — MuxEnvelopeCodec.encode (byte parity)

@@ -124,6 +124,59 @@ final class AppConnectionTests: XCTestCase {
         XCTAssertEqual(fired, 2, "reconnecting after a disconnect re-fires the establish hook")
     }
 
+    // MARK: - Host pulse (the sidebar footer's second line)
+
+    /// The pulse is GATED on a live link — a drop hides it rather than leaving the footer quoting the
+    /// vitals of a machine we are no longer talking to — but it is not FORGOTTEN, so a recovered blip
+    /// restores the row instantly instead of waiting out the host's baseline prime. A fresh dial does
+    /// forget it (the next host is a different machine).
+    func testHostPulseIsGatedOnALiveLinkKeptAcrossABlipAndDroppedOnARedial() async {
+        let c = AppConnection(registry: failingRegistry())
+        c.hostVitalsFetcher = { .init(cpuPercent: 34, memoryPercent: 61, pressure: .warn) }
+
+        XCTAssertNil(c.hostPulse, "nothing has reported yet")
+        c.markConnectedForAutomation()
+        c.refreshHostPulse()
+        await waitUntil { c.hostPulse != nil }
+        XCTAssertEqual(c.hostPulse, HostPulse(cpuPercent: 34, memoryPercent: 61, memoryPressure: .warn))
+
+        await c.disconnect()
+        XCTAssertNil(c.hostPulse, "no link, no pulse")
+        c.markConnectedForAutomation()
+        XCTAssertEqual(c.hostPulse?.cpuPercent, 34, "a recovered link shows the last reading immediately")
+
+        c.host = "10.0.0.9"
+        c.port = "7420"
+        await c.connect() // the failing registry lands in .failed; the point is the pre-dial reset
+        c.markConnectedForAutomation()
+        XCTAssertNil(c.hostPulse, "a dial at a DIFFERENT machine must not flash the previous host's pulse")
+    }
+
+    /// A poll that answers nothing (no channel yet / an old host / the host's baseline still priming)
+    /// leaves the last reading standing — blanking a working instrument on one dropped answer reads
+    /// as breakage.
+    func testAMissedPollKeepsTheLastReading() async {
+        let c = AppConnection(registry: failingRegistry())
+        c.hostVitalsFetcher = { .init(cpuPercent: 12, memoryPercent: 50, pressure: .normal) }
+        c.markConnectedForAutomation()
+        c.refreshHostPulse()
+        await waitUntil { c.hostPulse != nil }
+
+        c.hostVitalsFetcher = { nil }
+        c.refreshHostPulse()
+        await waitUntil { !c.isPulseFetchInFlightForTesting }
+        XCTAssertEqual(c.hostPulse?.cpuPercent, 12)
+    }
+
+    private func waitUntil(_ condition: () -> Bool) async {
+        for _ in 0..<200 {
+            if condition() { return }
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        XCTFail("condition never became true")
+    }
+
     /// The seed target prefills the editable form fields (the connect-gate shows the last-used host).
     func testSeedPrefillsFormFields() {
         let seed = ConnectionTarget(host: "studio.local", port: 7421, mediaPort: 9100, cursorPort: 9101)

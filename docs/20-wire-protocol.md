@@ -186,10 +186,12 @@ never offers or falls back to another version.
     `8` readAgentSession — all **read-only** — plus the two **side-effecting** verbs `9` openPath and
     `10` revealPath (E10), the **agent-hooks** verbs `11` installAgentHooks / `12` uninstallAgentHooks
     (side-effecting) / `13` agentHookStatus (a pure read returning a 2-byte flag payload) (E13),
-    `14` hostInfo (a **pure read** returning the host machine's own hostname), and the **clipboard-sync**
-    verbs `15` setClipboard (side-effecting) / `16` readClipboard (a pure read). `payload` is the
+    `14` hostInfo (a **pure read** returning the host machine's own hostname), the **clipboard-sync**
+    verbs `15` setClipboard (side-effecting) / `16` readClipboard (a pure read), and `17` hostVitals
+    (a **pure read** returning the host machine's CPU/memory pulse). `payload` is the
     verb's length-prefixed argument — empty for the pane-scoped verbs (`processes`/`ports`/`cwd`/`gitStatus`)
-    AND for the host-global verbs (`installAgentHooks`/`uninstallAgentHooks`/`agentHookStatus`/`hostInfo`),
+    AND for the host-global verbs
+    (`installAgentHooks`/`uninstallAgentHooks`/`agentHookStatus`/`hostInfo`/`hostVitals`),
     a UTF-8 path/id for the parameterized ones
     (`gitDiff`/`listDirectory`/`listAgentSessions`/`readAgentSession`), a raw UTF-8 **absolute host
     path** for `openPath`/`revealPath`, and the `MetadataCodec` clipboard encodings for
@@ -252,6 +254,24 @@ never offers or falls back to another version.
     read verb's trust model). The host routes 15/16 to `HostClipboardPerformer` BEFORE the read-only
     responder; the client's `ClipboardSyncEngine` polls both directions at 1 Hz and skips concealed
     (`org.nspasteboard.ConcealedType` password-manager) clips on push.
+  - **`hostVitals` (17) is a pane-agnostic pure read** (2026-07-25, the sidebar footer's host-pulse
+    line): the host answers status `ok` + a fixed **3-byte** payload
+    `[UInt8 cpuPercent][UInt8 memoryPercent][UInt8 pressure]` — all-core CPU busy percent
+    (`100 - idle` across the sampling window), physical memory in use percent (wired + app-internal
+    minus purgeable + compressed over installed RAM — the file cache is EXCLUDED, since macOS parks
+    every free page there), and the kernel's memory-pressure level (`0` normal, `1` warn, `2`
+    critical, mapped from `kern.memorystatus_vm_pressure_level`'s sparse 1/2/4 ladder). Percents are
+    clamped to `0…100` on encode AND decode; the pressure byte is carried raw and an unknown future
+    level reads `normal` client-side (never an alarm the build cannot justify); trailing bytes are
+    tolerated so a future field can be appended. Empty request payload, **no cwd confinement** — three
+    aggregate numbers about the machine, never a byte of its content. Status `error` means **"no
+    reading yet"**, not a failure: the CPU percent is a delta between two tick snapshots, so the first
+    request only primes the host's baseline (and a baseline older than 30 s is discarded rather than
+    smeared across a gap the client spent away) — the client keeps its previous reading and asks again
+    next poll. Polled by `AppConnection` on its ~2 s liveness clock at half rate (~4 s), through
+    whichever pane carries a live channel; an old host answers `unsupportedVerb` and the footer simply
+    stays one line. Served by the read-only responder (`MetadataResponseBuilder` →
+    `HostMetadataProbe.hostVitals()` → the process-wide `HostVitalsSampler`).
   - **`metadataResponse`** body = `[UInt32 BE requestID][UInt8 status][UInt32 BE payloadLen][payload]`.
     The host **always replies** (so the client's pending-request registry never hangs — `status =
     error`/empty on any failure). `status` is the raw `UInt8` of `MetadataStatus`: `0` ok, `1`

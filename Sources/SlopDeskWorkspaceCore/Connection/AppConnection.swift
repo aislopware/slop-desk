@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskProtocol
 import SlopDeskTransport
 
 /// The ONE app-global connection (docs/31): the single host the whole app talks to, fronted by the
@@ -47,6 +48,48 @@ public final class AppConnection {
     /// the app shell after construction (the store owns the pane channels; same pattern as
     /// ``onTargetCommitted``).
     public var hostInfoFetcher: (@MainActor () async -> String?)?
+
+    /// The host machine's pulse for the sidebar footer's second line — CPU / memory / pressure,
+    /// deadbanded by ``HostPulse`` so the rail redraws for movement, not jitter. `nil` unless a live
+    /// link has actually reported: the value is gated on ``status`` so a drop can never leave the
+    /// footer quoting the pulse of a machine we are no longer talking to (one rule, instead of a
+    /// clear at every status write site).
+    public var hostPulse: HostPulse? {
+        guard case .connected = status else { return nil }
+        return sampledPulse
+    }
+
+    /// The last reported pulse, ungated (see ``hostPulse``). Kept across a reconnect blip so a
+    /// recovered link restores the row instantly instead of waiting out the host's baseline prime.
+    private var sampledPulse: HostPulse?
+
+    /// App-shell seam: fetches the host's vitals over the metadata RPC (verb 17, through whichever
+    /// pane carries a live channel — the ``hostInfoFetcher`` pattern). `nil` ⇒ no channel yet, an old
+    /// host, or the host's CPU baseline still priming; the poller then KEEPS the previous reading.
+    public var hostVitalsFetcher: (@MainActor () async -> MetadataCodec.HostVitals?)?
+
+    /// True while a vitals request is in flight, so a slow host cannot stack polls.
+    private var pulseFetchInFlight = false
+
+    /// Test seam: whether a poll is still outstanding (the tests await a poll landing without a socket).
+    var isPulseFetchInFlightForTesting: Bool { pulseFetchInFlight }
+
+    /// Polls the host pulse, fire-and-forget: it must never sit in the supervisor's own await chain,
+    /// where a slow metadata reply would delay the liveness poll that detects a drop. Internal (not
+    /// private) so the tests can drive one poll without a live socket.
+    func refreshHostPulse() {
+        guard let hostVitalsFetcher, !pulseFetchInFlight else { return }
+        pulseFetchInFlight = true
+        Task { @MainActor [weak self] in
+            let sample = await hostVitalsFetcher()
+            guard let self else { return }
+            pulseFetchInFlight = false
+            // A missed poll (no channel / old host / baseline priming) leaves the last reading
+            // standing — blanking a working instrument on one dropped answer reads as breakage.
+            guard let sample else { return }
+            sampledPulse = HostPulse.settled(previous: sampledPulse, sample: sample)
+        }
+    }
 
     /// Invoked when a target is committed (a successful connect) so the store can persist it into
     /// ``Workspace/connection``. Set by the store after construction (avoids an init cycle).
@@ -255,6 +298,9 @@ public final class AppConnection {
         }
         status = .connecting
         deliberatelyClosed = false
+        // A fresh dial knows nothing about the machine it is dialling — drop the previous host's
+        // pulse rather than let it flash for a beat when the gate opens on a DIFFERENT Mac.
+        sampledPulse = nil
         target = t
         seedHostDisplayName(for: t.host)
         onTargetCommitted?(t)
@@ -345,6 +391,7 @@ public final class AppConnection {
         superviseTask = Task { @MainActor [weak self] in
             guard let self else { return }
             var attempt = 0
+            var healthyTicks = 0
             while !Task.isCancelled {
                 guard gen == connectGeneration, !deliberatelyClosed else { return }
                 let alive = await registry.isConnectionAlive(host: t.host, port: t.port)
@@ -354,6 +401,12 @@ public final class AppConnection {
                     // Re-affirm connected (a poll that finds the link back after a blip recovers here). Route
                     // through `markConnected` so a genuine drop→recover transition re-dials stranded panes.
                     if status != .connected { markConnected() }
+                    // The host pulse rides this same clock at HALF rate (~4 s) — one timer for the
+                    // link, no second one for the readout. Fire-and-forget (see `refreshHostPulse`):
+                    // the liveness poll below must never wait on a metadata reply. The first shot
+                    // only primes the host's CPU baseline, so the row appears one tick later.
+                    if healthyTicks.isMultiple(of: 2) { refreshHostPulse() }
+                    healthyTicks &+= 1
                     try? await Task.sleep(for: Self.healthyPoll)
                     continue
                 }

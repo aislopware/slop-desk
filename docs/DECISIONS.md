@@ -2646,3 +2646,39 @@ insets and in the rail's willingness to say "connected" in the beat before the f
 Deliberately NOT taken: a `+` New-Tab affordance in the freed space (the footer is status, not a
 control strip), and a host-load readout (genuinely useful, but it needs a new host→client control
 message — a separate scope, not a polish round). Client-only; no wire change.
+
+### Round 13 — the second line comes back, this time about the MACHINE (2026-07-25)
+
+Round 12's freed line is spent, on the one readout it explicitly deferred: the host's pulse.
+The footer is two lines again, and the difference from the version round 12 killed is what the
+second line is ABOUT. `12 ms · up 2h 14m` was more link: a metric nobody acts on, stacked under a
+metric they do. `cpu 34% … mem 61%` is the other end of the wire — the machine you are typing into,
+which you cannot see and cannot otherwise ask.
+
+1. **New host verb: `hostVitals` (metadata verb 17, PATH 1).** A pure read, host-global and
+   pane-agnostic like `hostInfo`, answering 3 bytes: `[cpu%][mem%][pressure]`. It rides the existing
+   metadata RPC rather than a new push message — the client already owns a poll clock and a
+   "through whichever pane has a live channel" resolver, so a push type would have bought nothing
+   but a new wire surface. `AppConnection` polls it on the supervisor's own liveness clock at half
+   rate (~4 s), fire-and-forget so a slow metadata reply can never delay the drop detection.
+2. **CPU is a delta, so the host may answer "not yet".** Mach hands out cumulative counters;
+   `HostVitalsSampler` banks a baseline, discards one older than 30 s (a window spanning a
+   disconnect describes a machine that no longer exists) and repeats its cache for a call that
+   arrives inside 1 s. `error` therefore means "ask again next poll", never a fabricated `0%` — and
+   a missed poll leaves the last reading standing rather than blanking a working instrument.
+3. **The rail still doesn't twitch.** A percent polled every 4 s jitters ±2 on an idle machine, and
+   this rail has no animation by design. `HostPulse` deadbands each metric at 3 points: below that
+   the row holds still, at or above it snaps to the sample EXACTLY (never a smoothed midpoint — the
+   number shown is always one the host really reported). Pressure is exempt; a state change is not
+   noise.
+4. **Colour where it is earned.** The MEM run takes warn/err from the kernel's memory-pressure
+   level, not from the percent (a high memory percent is ordinary — macOS fills the RAM it has;
+   pressure is what predicts a machine about to crawl). CPU is never coloured at all: a build
+   pegging the host is what the host is FOR, and a readout that goes amber every compile teaches the
+   eye to ignore it. Exact numbers + the pressure word ride the tooltip, with the ping's fps/kbps.
+5. **Absent, not blanked.** No reading ⇒ no second line — an instrument showing `cpu —` advertises
+   breakage, while a footer that grows a line on connect just reports. Both lines share round 12's
+   two rails, so the pulse sits in the same columns as the host name and the ping.
+
+Wire change (a new verb + payload codec, golden-pinned); the daemon and the client both ship it,
+and an old host answering `unsupportedVerb` simply stays one line.

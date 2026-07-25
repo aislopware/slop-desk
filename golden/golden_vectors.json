@@ -1926,6 +1926,16 @@
       "hex": "000200000439663363001246697820746865207769726520636f64656300112f55736572732f6d652f70726f6a65637400000197623f397b010003633432000000062f746d702f78ffffffffffffffff",
       "kind": "agentSessionList",
       "note": "claude + codex sessions"
+    },
+    {
+      "hex": "223d00",
+      "kind": "hostVitals",
+      "note": "cpu/mem percents, pressure normal"
+    },
+    {
+      "hex": "646402",
+      "kind": "hostVitals",
+      "note": "percent clamped at the source; pressure critical"
     }
   ],
   "metadataWireMessages": [

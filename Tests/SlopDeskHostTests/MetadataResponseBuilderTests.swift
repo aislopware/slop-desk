@@ -59,6 +59,11 @@ final class MetadataResponseBuilderTests: XCTestCase {
 
         var hostNameValue: String? = "mac-studio.local"
         func hostName() -> String? { hostNameValue }
+
+        var hostVitalsValue: MetadataCodec.HostVitals? = .init(
+            cpuPercent: 34, memoryPercent: 61, pressure: .normal,
+        )
+        func hostVitals() -> MetadataCodec.HostVitals? { hostVitalsValue }
     }
 
     // MARK: - Helpers
@@ -125,6 +130,23 @@ final class MetadataResponseBuilderTests: XCTestCase {
             XCTAssertEqual(r.status, MetadataStatus.error.rawValue)
             XCTAssertTrue(r.payload.isEmpty)
         }
+    }
+
+    func testHostVitalsEncodesTheThreeBytesAndIsPaneAgnostic() throws {
+        let fake = FakeQuery()
+        fake.cwd = nil // pane-agnostic like hostInfo: no cwd, no confinement, still answers
+        fake.hostVitalsValue = .init(cpuPercent: 34, memoryPercent: 61, pressure: .warn)
+        let r = response(MetadataResponseBuilder(query: fake), .hostVitals)
+        XCTAssertEqual(r.status, MetadataStatus.ok.rawValue)
+        XCTAssertEqual(try MetadataCodec.decodeHostVitals(r.payload), fake.hostVitalsValue)
+    }
+
+    func testHostVitalsWithoutAReadingIsErrorNotAFabricatedZero() {
+        let fake = FakeQuery()
+        fake.hostVitalsValue = nil // the sampler's baseline is still priming
+        let r = response(MetadataResponseBuilder(query: fake), .hostVitals)
+        XCTAssertEqual(r.status, MetadataStatus.error.rawValue, "ask again next poll — never a fake 0%")
+        XCTAssertTrue(r.payload.isEmpty)
     }
 
     func testCwdOkAndErrorWhenUnresolved() {

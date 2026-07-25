@@ -113,6 +113,18 @@ public enum MetadataVerb: UInt8, Sendable, Equatable, CaseIterable {
     /// client — deliberately unconfined like the mesh-trusted read verbs (both ends are the same
     /// user's machines; security = WireGuard, docs/DECISIONS).
     case readClipboard = 16
+    /// **Pure read.** The host machine's own PULSE — all-core CPU busy percent, memory-in-use
+    /// percent, and the kernel's memory-pressure level. Host-global and pane-agnostic like
+    /// ``hostInfo`` (any connected pane's channel carries it); no path argument, no confinement —
+    /// three aggregate numbers about the machine, never a byte of its content. Request payload:
+    /// empty. Response: status `.ok` + ``MetadataCodec/encodeHostVitals`` (3 bytes).
+    ///
+    /// `.error` means "no reading yet", NOT a failure: the CPU percent is the delta between two tick
+    /// snapshots, so the first request only primes the baseline (and a baseline older than the
+    /// sampler's staleness window is discarded rather than smeared across a poll gap the client
+    /// spent disconnected). The client simply keeps the previous reading — or nothing — until the
+    /// next poll answers. An OLD host answers `.unsupportedVerb` and the footer stays one line.
+    case hostVitals = 17
 }
 
 /// The outcome of a ``WireMessage/metadataResponse(requestID:status:payload:)``. The host ALWAYS

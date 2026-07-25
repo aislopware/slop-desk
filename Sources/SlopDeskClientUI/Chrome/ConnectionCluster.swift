@@ -1,29 +1,37 @@
 // ConnectionCluster — connection status for the SIDEBAR FOOTER (resting home) and the titlebar TRAILING
 // edge while the sidebar is collapsed. Never jammed into the traffic-light strip.
 //
-// Two mounts, one shape — a single quiet row, host leading and metric trailing:
+// Two mounts, one shape — a quiet row of pure TEXT (no dot, no glyph — a status lamp is exactly the
+// ornament this chrome refuses), host leading and metric trailing:
 //
-// SIDEBAR FOOTER (`railFooter`) — the status line under the tab list, pure TEXT (no dot, no glyph —
-// a status lamp is exactly the ornament this chrome refuses), laid on the sidebar's OWN rails:
-//   mac-studio               12 ms
-//   The hostname starts on the same x as every row title and the ping lands in the rows' trailing
-//   column, so the footer reads as the last line of the list rather than a separate widget.
+// SIDEBAR FOOTER (`railFooter`) — two lines under the tab list, laid on the sidebar's OWN rails:
+//   mac-studio               12 ms      ← the LINK: who, and how far away
+//   cpu 34%                 mem 61%     ← the MACHINE: how hard it is working
+//   Both lines share the two rails: the leading edge is the x every row title starts on, the
+//   trailing edge is the column the rows' status marks stand in. So the footer reads as the last
+//   lines of the list rather than a widget bolted underneath, and the right rail becomes the one
+//   place a number can turn amber.
 //   State lives in the WORDS and their ink (`LedState` is the ink classifier): the hostname dims
-//   to tertiary while nothing is connected, and the status hues appear ONLY when a live link
-//   degrades (slow = warn, bad = err on the PING digits) — the ink dialect's rule, colour means
-//   trouble.
+//   to tertiary while nothing is connected, and the status hues appear ONLY when something has
+//   gone wrong (a degrading link colours the PING digits; kernel memory pressure colours the MEM
+//   digits) — the ink dialect's rule, colour means trouble.
+//   The pulse line is absent, not blanked, until a reading exists: an instrument showing "cpu —"
+//   advertises breakage, while a footer that grows a second line on connect just reports.
+//   CPU is deliberately NEVER coloured — a build pegging the host is what the machine is FOR, and a
+//   readout that goes amber every compile teaches the eye to ignore it.
 //
-// TITLEBAR / iOS (compact) — the same row hugging its content instead of the rails, and silent
-// (rather than saying "connected") in the beat before the first ping sample lands.
+// TITLEBAR / iOS (compact) — the link line alone, hugging its content instead of the rails, and
+// silent (rather than saying "connected") in the beat before the first ping sample lands. The
+// machine's pulse belongs to the sidebar's instrument column, not to a window's top edge.
 //
-// The visible metric is the ping ALONE, on both mounts. Appending fps/kbps made the trailing text
-// long enough to truncate the hostname out of its own row — the identity lost to telemetry — and a
-// second line spent on stream numbers or link uptime was footer real estate paid for readings
-// nobody acts on. Both live in the TOOLTIP with the raw target. Tap → Connect editor; give-up →
-// Retry.
+// The visible LINK metric is the ping alone, on both mounts. Appending fps/kbps made the trailing
+// text long enough to truncate the hostname out of its own row — the identity lost to telemetry.
+// Those (and the exact pulse numbers) live in the TOOLTIP with the raw target. Tap → Connect
+// editor; give-up → Retry.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
+import SlopDeskProtocol
 import SlopDeskWorkspaceCore
 import SwiftUI
 
@@ -36,9 +44,9 @@ struct ConnectionCluster: View {
     var onConnect: () -> Void = {}
     /// Sidebar footer: stretch the hit/hover plate full width. Titlebar mount hugs content.
     var fillWidth = false
-    /// Sidebar footer LAYOUT: the two-line instrument block on the sidebar's text rail (hostname
-    /// + mono detail stacked, pure text — see the header note). The titlebar / iOS mounts keep
-    /// the compact one-line cluster.
+    /// Sidebar footer LAYOUT: the instrument block on the sidebar's two rails (the link line, plus
+    /// the host-pulse line once the machine has reported — see the header note). The titlebar / iOS
+    /// mounts keep the compact one-line cluster.
     var railFooter = false
 
     @State private var hover = false
@@ -121,6 +129,27 @@ struct ConnectionCluster: View {
         return (StatusPresentation.connectionLabel(status), false)
     }
 
+    /// The footer's SECOND line: the host machine's pulse as its two rail-aligned runs. `nil` until a
+    /// reading exists — the line is then absent entirely, never a row of dashes (see the header
+    /// note). Pure + static so the copy is pinned headlessly.
+    static func pulseLabels(_ pulse: HostPulse?) -> (cpu: String, memory: String)? {
+        guard let pulse else { return nil }
+        return ("cpu \(pulse.cpuPercent)%", "mem \(pulse.memoryPercent)%")
+    }
+
+    /// The pulse as TOOLTIP prose — the exact numbers plus the pressure verdict the visible line
+    /// only hints at through ink. Empty when there is no reading.
+    static func pulseTooltip(_ pulse: HostPulse?) -> String {
+        guard let labels = pulseLabels(pulse), let pulse else { return "" }
+        let pressure =
+            switch pulse.memoryPressure {
+            case .normal: ""
+            case .warn: " (memory pressure)"
+            case .critical: " (memory pressure critical)"
+            }
+        return " · \(labels.cpu) · \(labels.memory)\(pressure)"
+    }
+
     /// Metric digits: tertiary when healthy, warn/err only when degrading.
     private var metricColor: Color {
         switch Self.health(isConnected: isConnected, pingMS: pingMS) {
@@ -144,6 +173,7 @@ struct ConnectionCluster: View {
     private var helpText: String {
         StatusPresentation.connectionHelp(host: host, status: status)
             + (isConnected ? Self.tooltipDetail(fps: fps, kbps: kbps) : "")
+            + Self.pulseTooltip(connection.hostPulse)
     }
 
     var body: some View {
@@ -204,6 +234,7 @@ struct ConnectionCluster: View {
             displayHost: displayHost,
             led: led,
             detail: Self.footerDetail(status: status, pingMS: pingMS),
+            pulse: connection.hostPulse,
         )
         .frame(maxWidth: .infinity, alignment: .leading)
         .animation(Slate.Anim.needle, value: led)
@@ -245,17 +276,34 @@ struct ConnectionCluster: View {
     }
 }
 
-/// The sidebar footer's PRESENTATIONAL layout — pure values in (host / ink state / detail), no
-/// model, so the snapshot rig mounts every state directly. ONE line of pure text spanning the
-/// sidebar's two rails: the hostname on the same x the section names and row titles share (the
-/// `tabRowInset` gutter stays EMPTY — no lamp, no glyph) and the metric in the rows' trailing
-/// column, where the status marks stand. Internal (not private) for the rig.
+/// The sidebar footer's PRESENTATIONAL layout — pure values in (host / ink state / detail / pulse),
+/// no model, so the snapshot rig mounts every state directly. Two lines of pure text spanning the
+/// sidebar's two rails: the leading rail is the x the section names and row titles share (the
+/// `tabRowInset` gutter stays EMPTY — no lamp, no glyph), the trailing rail is the rows' status-mark
+/// column. Line one is the LINK (host + ping), line two the MACHINE (cpu + mem), and it exists only
+/// once the host has reported. Internal (not private) for the rig.
 struct ConnectionRailFooter: View {
     let displayHost: String
     let led: ConnectionCluster.LedState
     let detail: (text: String, isMetric: Bool)?
+    /// The host machine's pulse; `nil` ⇒ no second line at all (see the header note).
+    var pulse: HostPulse?
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            linkLine
+            if let labels = ConnectionCluster.pulseLabels(pulse) {
+                pulseLine(labels)
+            }
+        }
+        .padding(.horizontal, Slate.Metric.tabRowInset)
+    }
+
+    /// Line one — who we are talking to, and how far away it feels. On the CONTROL band, not the
+    /// list's 32pt row band: the two lines are one block and have to read as a pair, and a row band
+    /// under a row band put ~17pt of air between two lines that belong together. The air the footer
+    /// needs is ABOVE it (the mount's `space3` gap), not inside it.
+    private var linkLine: some View {
         HStack(alignment: .firstTextBaseline, spacing: Slate.Metric.space2) {
             // The hostname — the same register as the project header names (footnote medium,
             // secondary), dimming to tertiary while nothing is connected. The row's designated
@@ -282,8 +330,23 @@ struct ConnectionRailFooter: View {
                     .fixedSize(horizontal: true, vertical: false)
             }
         }
-        .padding(.horizontal, Slate.Metric.tabRowInset)
-        .frame(height: Slate.Metric.heightRow)
+        .frame(height: Slate.Metric.heightControl)
+    }
+
+    /// Line two — the machine's own pulse, both runs INSTRUMENT mono (they are readings, not prose)
+    /// on the subordinate band the section headers use, so the pair reads as one quiet instrument
+    /// under the identity rather than a second row competing with it.
+    private func pulseLine(_ labels: (cpu: String, memory: String)) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Slate.Metric.space2) {
+            Text(labels.cpu)
+                .foregroundStyle(Slate.Text.tertiary)
+            Spacer(minLength: Slate.Metric.space1)
+            Text(labels.memory)
+                .foregroundStyle(memoryInk)
+        }
+        .font(Slate.Typeface.instrument(Slate.Typeface.small))
+        .lineLimit(1)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     /// Metric digits carry the health colour only while degrading; words stay muted.
@@ -293,6 +356,17 @@ struct ConnectionRailFooter: View {
         case .slow: return Slate.Status.warn
         case .bad: return Slate.Status.err
         default: return Slate.Text.tertiary
+        }
+    }
+
+    /// The memory metric takes the KERNEL's pressure verdict, not the percent: a high memory percent
+    /// is ordinary on a healthy Mac (macOS fills the RAM it has), while pressure is the reading that
+    /// actually predicts a machine about to crawl. CPU has no such ink by design.
+    private var memoryInk: Color {
+        switch pulse?.memoryPressure {
+        case .warn: Slate.Status.warn
+        case .critical: Slate.Status.err
+        default: Slate.Text.tertiary
         }
     }
 }

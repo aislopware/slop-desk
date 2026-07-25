@@ -266,15 +266,16 @@ struct NavigatorColumn: View {
                 NewTabDropSlot(coordinator: paneDrag)
             }
 
-            // Connection footer — one full-width status row under the tab list (ScrollView
-            // maxHeight: .infinity pins it to the bottom). NO rule above it: the panel separates its
-            // bands by AIR (the section headers' own dialect), and a hairline here drew a seam across
-            // a sidebar that has none anywhere else. The `space3` gap is the separator — the same
-            // inter-group band the groups use. Full-width so hover/hit read as one sidebar item.
+            // Connection footer — the full-width status block under the tab list (ScrollView
+            // maxHeight: .infinity pins it to the bottom): the link line, plus the host-pulse line
+            // once the machine reports. NO rule above it: the panel separates its bands by AIR (the
+            // section headers' own dialect), and a hairline here drew a seam across a sidebar that
+            // has none anywhere else. The `space3` gap is the separator — the same inter-group band
+            // the groups use. Full-width so hover/hit read as one sidebar item.
             if let connection {
-                // The telemetry (~1 Hz; ping visible, fps/kbps tooltip-only) is read inside
-                // `SidebarConnectionFooter` so its per-second ticks re-render that leaf, never this
-                // sidebar body.
+                // The telemetry (~1 Hz; ping visible, fps/kbps tooltip-only) and the ~4 s host pulse
+                // are read inside `SidebarConnectionFooter` so their ticks re-render that leaf,
+                // never this sidebar body.
                 SidebarConnectionFooter(store: store, connection: connection, onConnect: onConnect)
                     .padding(.horizontal, Slate.Metric.space2)
                     .padding(.top, Slate.Metric.space3)

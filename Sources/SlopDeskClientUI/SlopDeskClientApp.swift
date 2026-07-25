@@ -246,6 +246,13 @@ public struct SlopDeskClientApp: App {
             guard let store, let client = Self.firstConnectedMetadataClient(store) else { return nil }
             return await client.hostInfo()
         }
+        // Host pulse: the footer's second line (cpu/mem) reads the machine on the other end over the
+        // same metadata RPC (verb 17), resolved at call time through whichever pane has a live
+        // channel. The connection polls it on its own liveness clock.
+        appConnection.hostVitalsFetcher = { [weak store] in
+            guard let store, let client = Self.firstConnectedMetadataClient(store) else { return nil }
+            return await client.hostVitals()
+        }
         // Gate the scene-level "Reconnect Pane" command on the app being connected.
         store.isAppConnected = { [weak appConnection] in
             if case .connected = appConnection?.status { return true }

@@ -35,6 +35,11 @@ protocol MetadataQuerying {
     /// The host machine's own hostname (`hostInfo` verb; e.g. "mac-studio.local") — the client chrome's
     /// durable host identity. `nil`/empty when unresolvable (the verb replies `.error`).
     func hostName() -> String?
+    /// The host machine's pulse (`hostVitals` verb: CPU / memory / pressure). `nil` = NO READING YET
+    /// (the CPU percent needs two tick snapshots, so the first call only primes the baseline) or the
+    /// sampling syscall failed — either way the verb replies `.error` and the client keeps whatever
+    /// it last had.
+    func hostVitals() -> MetadataCodec.HostVitals?
 }
 
 /// The PURE host responder for the metadata RPC. Maps a request `(verb, payload)` to a
@@ -158,6 +163,13 @@ struct MetadataResponseBuilder {
                 return reply(requestID, .error, Data())
             }
             return reply(requestID, .ok, Data(name.utf8))
+
+        case .hostVitals:
+            // Pane-agnostic pure read like `hostInfo`: three aggregate numbers about the machine, no
+            // path argument to confine. A `nil` reading (baseline still priming / syscall refused)
+            // is `.error`, NOT `.notFound` — the client treats it as "ask again next poll".
+            guard let vitals = query.hostVitals() else { return reply(requestID, .error, Data()) }
+            return reply(requestID, .ok, MetadataCodec.encodeHostVitals(vitals))
 
         case .openPath,
              .revealPath:

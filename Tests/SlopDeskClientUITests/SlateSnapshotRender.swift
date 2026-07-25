@@ -172,39 +172,50 @@ final class SlateSnapshotRender: XCTestCase {
 
     // MARK: - Opt-in render of the sidebar connection footer (every ink state)
 
-    /// Renders the REAL ``ConnectionRailFooter`` (the one-line status row: hostname leading, metric
-    /// trailing) in every ink state — healthy, degraded, bad, dialing, dimmed offline, plus a long
-    /// hostname proving the host is the row's truncator — at the true sidebar width, so the ink steps
-    /// and BOTH rail alignments can be eyeballed headlessly. SAME opt-in idiom; writes
-    /// `sidebar-footer.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
+    /// Renders the REAL ``ConnectionRailFooter`` (link line: hostname leading, metric trailing —
+    /// plus the host-pulse line when the machine has reported) in every ink state — healthy,
+    /// degraded, bad, dialing, dimmed offline, memory pressure, plus a long hostname proving the host
+    /// is the row's truncator — at the true sidebar width, so the ink steps and BOTH rail alignments
+    /// can be eyeballed headlessly. SAME opt-in idiom; writes `sidebar-footer.png` into
+    /// `SLOPDESK_TABROW_SNAPSHOT_DIR`.
     @MainActor
     func testRenderSidebarFooter() throws {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
             throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the sidebar footer")
         }
+        let idle = HostPulse(cpuPercent: 6, memoryPercent: 43, memoryPressure: .normal)
+        let busy = HostPulse(cpuPercent: 97, memoryPercent: 74, memoryPressure: .normal)
+        let squeezed = HostPulse(cpuPercent: 64, memoryPercent: 92, memoryPressure: .warn)
+        let thrashing = HostPulse(cpuPercent: 100, memoryPercent: 98, memoryPressure: .critical)
         let panel = VStack(alignment: .leading, spacing: 0) {
-            footerRow(host: "mac-studio", led: .good, detail: ("12 ms", true))
-            footerRow(host: "congs-macbook-pro-16-inch", led: .good, detail: ("12 ms", true))
-            footerRow(host: "mac-studio", led: .slow, detail: ("141 ms", true))
-            footerRow(host: "mac-studio", led: .bad, detail: ("312 ms", true))
-            footerRow(host: "mac-studio", led: .dialing, detail: ("reconnecting 3/20", false))
-            footerRow(host: "mac-studio", led: .dim, detail: ("disconnected", false))
+            // Connected, healthy link — the pulse line rides beneath on the same two rails.
+            footerRow(host: "mac-studio", led: .good, detail: ("12 ms", true), pulse: idle)
+            footerRow(host: "mac-studio", led: .good, detail: ("12 ms", true), pulse: busy)
+            // The host's memory is under pressure: the MEM run alone takes the hue — cpu never does.
+            footerRow(host: "mac-studio", led: .good, detail: ("12 ms", true), pulse: squeezed)
+            footerRow(host: "mac-studio", led: .slow, detail: ("141 ms", true), pulse: thrashing)
+            // A long hostname still truncates before the ping does.
+            footerRow(host: "congs-macbook-pro-16-inch", led: .good, detail: ("12 ms", true), pulse: idle)
+            // Connected but the host has not reported yet → ONE line, no dashes.
+            footerRow(host: "mac-studio", led: .bad, detail: ("312 ms", true), pulse: nil)
+            footerRow(host: "mac-studio", led: .dialing, detail: ("reconnecting 3/20", false), pulse: nil)
+            footerRow(host: "mac-studio", led: .dim, detail: ("disconnected", false), pulse: nil)
         }
         .frame(width: Slate.Metric.sidebarWidth)
         .background(Slate.Surface.ground)
         try render(
-            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 290),
+            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 520),
             to: dir, named: "sidebar-footer.png",
         )
     }
 
-    /// One footer row, mounted the way the sidebar composes it (no rule above it — the sidebar
+    /// One footer mount, composed the way the sidebar does it (no rule above it — the sidebar
     /// separates its bands by air).
     @MainActor
     private func footerRow(
-        host: String, led: ConnectionCluster.LedState, detail: (String, Bool),
+        host: String, led: ConnectionCluster.LedState, detail: (String, Bool), pulse: HostPulse?,
     ) -> some View {
-        ConnectionRailFooter(displayHost: host, led: led, detail: detail)
+        ConnectionRailFooter(displayHost: host, led: led, detail: detail, pulse: pulse)
             .padding(.horizontal, Slate.Metric.space2)
             .padding(.top, Slate.Metric.space3)
             .padding(.bottom, Slate.Metric.space2)

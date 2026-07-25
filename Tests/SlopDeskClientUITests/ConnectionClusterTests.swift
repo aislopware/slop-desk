@@ -1,9 +1,9 @@
 // ConnectionClusterTests — pins the connection cluster's visible-metric contract (BOTH mounts show
 // the ping ALONE — fps/kbps are tooltip detail, since appending them truncated the hostname; the
-// rail footer differs only in speaking the status word while connected-but-unsampled, where the
-// compact row stays silent), the bitrate formatting, the network-health classifier behind the metric
-// colour, and the model's kbps dirty-guard semantics (a ZERO is a real idle reading, kept — unlike
-// fps, where zero is spurious and dropped).
+// rail footer differs in speaking the status word while connected-but-unsampled, where the compact
+// row stays silent, and in carrying the host-pulse SECOND line), the bitrate formatting, the
+// network-health classifier behind the metric colour, and the model's kbps dirty-guard semantics (a
+// ZERO is a real idle reading, kept — unlike fps, where zero is spurious and dropped).
 
 import XCTest
 @testable import SlopDeskClientUI
@@ -83,6 +83,30 @@ final class ConnectionClusterTests: XCTestCase {
         )
         XCTAssertEqual(retry?.text, "reconnecting 3/20")
         XCTAssertEqual(retry?.isMetric, false)
+    }
+
+    func testPulseLineIsAbsentUntilTheHostHasReported() {
+        // No reading ⇒ NO second line (never "cpu —": an instrument showing dashes advertises breakage).
+        XCTAssertNil(ConnectionCluster.pulseLabels(nil))
+        XCTAssertEqual(ConnectionCluster.pulseTooltip(nil), "", "no reading, no tooltip trail either")
+    }
+
+    func testPulseLabelsAreTheTwoRailAlignedRuns() {
+        let pulse = HostPulse(cpuPercent: 34, memoryPercent: 61, memoryPressure: .normal)
+        let labels = ConnectionCluster.pulseLabels(pulse)
+        XCTAssertEqual(labels?.cpu, "cpu 34%", "leading rail: the machine's own load")
+        XCTAssertEqual(labels?.memory, "mem 61%", "trailing rail: the column a number may turn amber in")
+    }
+
+    func testPulseTooltipCarriesThePressureVerdictTheLineOnlyHintsAt() {
+        let normal = HostPulse(cpuPercent: 34, memoryPercent: 61, memoryPressure: .normal)
+        XCTAssertEqual(ConnectionCluster.pulseTooltip(normal), " · cpu 34% · mem 61%")
+        let warn = HostPulse(cpuPercent: 34, memoryPercent: 88, memoryPressure: .warn)
+        XCTAssertEqual(ConnectionCluster.pulseTooltip(warn), " · cpu 34% · mem 88% (memory pressure)")
+        let critical = HostPulse(cpuPercent: 99, memoryPercent: 97, memoryPressure: .critical)
+        XCTAssertEqual(
+            ConnectionCluster.pulseTooltip(critical), " · cpu 99% · mem 97% (memory pressure critical)",
+        )
     }
 
     @MainActor
