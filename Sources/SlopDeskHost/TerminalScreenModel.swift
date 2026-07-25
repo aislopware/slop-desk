@@ -615,7 +615,7 @@ public struct TerminalScreenModel {
         var grid = usingAlt ? alt : main
         switch mode {
         case 0:
-            for c in cursorCol..<cols { grid.cells[cursorRow][c] = Cell() }
+            eraseCells(&grid, row: cursorRow, columns: cursorCol..<cols)
             for r in (cursorRow + 1)..<rows {
                 grid.cells[r] = Array(repeating: Cell(), count: cols)
             }
@@ -623,7 +623,7 @@ public struct TerminalScreenModel {
             for r in 0..<cursorRow {
                 grid.cells[r] = Array(repeating: Cell(), count: cols)
             }
-            for c in 0...cursorCol { grid.cells[cursorRow][c] = Cell() }
+            eraseCells(&grid, row: cursorRow, columns: 0..<(cursorCol + 1))
         case 2,
              3:
             grid = Grid(rows: rows, cols: cols)
@@ -638,9 +638,9 @@ public struct TerminalScreenModel {
         var grid = usingAlt ? alt : main
         switch mode {
         case 0:
-            for c in cursorCol..<cols { grid.cells[cursorRow][c] = Cell() }
+            eraseCells(&grid, row: cursorRow, columns: cursorCol..<cols)
         case 1:
-            for c in 0...cursorCol { grid.cells[cursorRow][c] = Cell() }
+            eraseCells(&grid, row: cursorRow, columns: 0..<(cursorCol + 1))
         case 2:
             grid.cells[cursorRow] = Array(repeating: Cell(), count: cols)
         default:
@@ -684,6 +684,16 @@ public struct TerminalScreenModel {
         let count = min(max(n, 1), cols - cursorCol)
         var grid = usingAlt ? alt : main
         var row = grid.cells[cursorRow]
+        // The shift splits a wide pair at two seams — the insertion point (a blank lands between
+        // the halves) and the right edge (the continuation is pushed off, the lead is not). A
+        // split half blanks whole, as with erasing and overwriting.
+        if row[cursorCol].isContinuation {
+            if cursorCol > 0 { row[cursorCol - 1] = Cell() }
+            row[cursorCol] = Cell()
+        }
+        if row[cols - count].isContinuation, cols - count > 0 {
+            row[cols - count - 1] = Cell()
+        }
         row.removeSubrange((cols - count)..<cols)
         row.insert(contentsOf: Array(repeating: Cell(), count: count), at: cursorCol)
         grid.cells[cursorRow] = row
@@ -695,6 +705,14 @@ public struct TerminalScreenModel {
         let count = min(max(n, 1), cols - cursorCol)
         var grid = usingAlt ? alt : main
         var row = grid.cells[cursorRow]
+        // The deleted range can split a wide pair at either end: a lead left behind at the start,
+        // or a continuation shifted onto the cursor from past the end. Both halves blank.
+        if row[cursorCol].isContinuation, cursorCol > 0 {
+            row[cursorCol - 1] = Cell()
+        }
+        if cursorCol + count < cols, row[cursorCol + count].isContinuation {
+            row[cursorCol + count] = Cell()
+        }
         row.removeSubrange(cursorCol..<(cursorCol + count))
         row.append(contentsOf: Array(repeating: Cell(), count: count))
         grid.cells[cursorRow] = row
@@ -705,7 +723,7 @@ public struct TerminalScreenModel {
     private mutating func eraseChars(_ n: Int) {
         let count = min(max(n, 1), cols - cursorCol)
         var grid = usingAlt ? alt : main
-        for c in cursorCol..<(cursorCol + count) { grid.cells[cursorRow][c] = Cell() }
+        eraseCells(&grid, row: cursorRow, columns: cursorCol..<(cursorCol + count))
         setGrid(grid)
         wrapPending = false
     }
@@ -786,6 +804,19 @@ public struct TerminalScreenModel {
         clearWidePartner(&grid, row: row, col: col)
         grid.cells[row][col] = Cell()
         setGrid(grid)
+    }
+
+    /// Erases `columns` on `row`. An erase that splits a wide pair blanks the half OUTSIDE the
+    /// range too — a lone lead cell would still render two columns wide, and a lone continuation
+    /// cell would render as nothing, either way disagreeing with what a terminal shows. Only the
+    /// range's two edges can split a pair; interior partners are inside the range and erased anyway.
+    private func eraseCells(_ grid: inout Grid, row: Int, columns: Range<Int>) {
+        guard !columns.isEmpty else { return }
+        clearWidePartner(&grid, row: row, col: columns.lowerBound)
+        clearWidePartner(&grid, row: row, col: columns.upperBound - 1)
+        for col in columns {
+            grid.cells[row][col] = Cell()
+        }
     }
 
     /// Overwriting half a wide pair blanks the other half (no orphan continuation cells).

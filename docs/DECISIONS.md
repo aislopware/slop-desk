@@ -2919,3 +2919,66 @@ its own `textSecondary` and status colours are too light for its own sidebar gro
 No migration, per the standing rule: a persisted `"paper"` / `"dark"` no longer decodes as a
 `ThemeChoice`, so the whole `AppearancePreferences` blob decode-fails to its all-`nil` default and the
 app follows the OS onto Monokai Pro Classic / Classic Light. Nothing to write, nothing to version.
+
+## Cold reattach: the third churn pass is the progress bar that never entered a frame (2026-07-25)
+
+- ✅ **Problem (field report):** a session where `git push` / `swift build` ran replays "cực nhiều
+  dòng" on reconnect although the visible result is two or three lines. Measured on a synthetic
+  `git push` (101 percentage ticks + the done line, 9,753 bytes): the whole existing pipeline —
+  alt-screen strip, sync-frame collapse, distiller, query strip, EOL marks — returned 9,712 bytes,
+  a 0.4% saving that is only the OSC marks. Progress reporters repaint ONE line with `CR` (or
+  `CSI 2 K` + `CR`), never enter the alt screen (`AltScreenSegmentStripper` blind), never open a
+  synchronized-output frame (`SyncUpdateFrameCollapser` blind), and live in the command OUTPUT span
+  (`133;C`→`D`) that `ScrollbackDistiller` passes verbatim BY CONTRACT. Nothing owned this domain.
+- ✅ **Fix — `LineOverprintCollapser`** (`SLOPDESK_SCROLLBACK_COLLAPSE_OVERPRINT`, default-ON; runs
+  after the sync collapse, before the distiller). A line is split at each cursor-to-column-0 motion
+  (`CR`, `CSI G`/`CSI 1 G`) into REVISIONS. Droppability rests on ONE quantity: the columns a
+  revision TOUCHES — paints a glyph into or blanks with an erase. A revision is redundant exactly
+  when later revisions touch every column it did, because the last writer of each of those columns
+  is then a later revision either way. Synthetic `git push`: 9,753 → 255 bytes. Real captured
+  `swift build` PTY transcript: 56,233 → 34,142 with a byte-identical rendered screen.
+- ⚠️ **Two model errors the tests caught, both worth keeping written down.** (1) "What a revision
+  still SHOWS" is the WRONG quantity: a revision that only erases shows nothing yet still decides
+  those columns, and dropping it resurrects what it wiped. Only "what it touches" is sound — the
+  cost is that a repaint loop's FINAL `CSI 2 K` survives, one revision instead of thousands.
+  (2) A line's opening revision does NOT start at column 0: a bare `LF` moves down keeping the
+  column (the PTY's `ONLCR` is what normally makes it `CRLF`), so its span can reach past anything
+  a successor covers. The column is carried across flushes and, when unknown — the ring opens
+  mid-stream, or the previous line was unmodelled — that revision is never dropped. A line ending
+  in `CRLF` re-anchors column 0, so the conservative state never cascades in practice.
+- ✅ **Proof is differential, not assertional** (the herdr-parity habit): every case, plus seeded-fuzz
+  streams over the full vocabulary (text, wide scalars, all three erases, carried SGR and
+  `?25`/`?7`, and sequences that must force the verbatim fallback), is rendered through
+  `TerminalScreenModel` before and after collapsing and the grids must match. The suite pins 2,000
+  streams per run (~2 s); the 120,000-stream sweep that shook the design out was a one-time
+  development run, not the enforced gate. The fuzz found both model errors above AND a real bug in
+  `TerminalScreenModel` itself: `EL`/`ED`/`ECH` wrote `Cell()` directly, so erasing half a wide
+  pair orphaned the other half — they now go through the same `clearWidePartner` path printing
+  already used.
+- ✅ **Review-hardening batch (same day, adversarial code review):** six holes closed. (1) The
+  compaction backstop ran on UNSAFE lines — coverage is garbage there — and permanently forfeited
+  the verbatim fallback; compaction is now safe-lines-only and an unsafe line stops splitting
+  revisions instead (bounded memory either way, and unsafe-after-compaction emits the buffered
+  survivors verbatim, which is screen-neutral because those drops happened while modelled). (2) A
+  revision OPENING with a zero-width scalar attaches it to a predecessor's cell, so it marks the
+  line unsafe. (3) `decodeScalar` accepted overlong UTF-8 and credited it width a terminal never
+  paints — now rejected like surrogates. (4) The carry cap discarded one-shot `?25`/`?7` toggles
+  wholesale; the carry is now STATE (last toggle per mode outside the cap, SGR sequences
+  reset-aware and oldest-out) rather than a byte stream. (5) The unknown-start "never dropped"
+  promise was encoded as `covers = Int.max`, which a full-coverage successor TIES (strict `>`
+  dropped it); the keep rule — now ONE `keepMask` shared by flush and compaction — keeps
+  `startKnown == false` explicitly. (6) `ICH`/`DCH` still orphaned wide-pair halves at their
+  splice seams, the exact class the `EL`/`ED`/`ECH` fix above closed — both now blank split halves
+  at their two seams (and `eraseCells` checks only its two edges, where a split can happen).
+- ⚠️ **Accepted gaps (the first identical in kind to the sync collapser's):** a revision WIDER
+  than the recording-time grid wrapped onto extra rows and its `CR` returned only to the last
+  visual row, so dropping it loses the earlier rows. The pass has no grid width — the ring spans
+  resizes and the client re-wraps at its own width, so that layout was never faithfully replayable
+  — and width-aware progress reporters, which are what emit this churn, never exceed the grid.
+  Second: a LINE whose first scalar is a combining mark attaches it across the line boundary into
+  the already-emitted previous line; the target only moves if that line ended in an erase-only
+  revision with drops before it, which no real reporter produces.
+- ❌ **Not done: multi-line redraws** (`docker pull`, `cargo`: print N lines, `CSI N A`, repaint).
+  Cursor-up marks the line unmodelled, so those replay verbatim as today. Modelling them needs a
+  real grid, i.e. rendering the ring through `TerminalScreenModel` and replaying the DUMP — which
+  loses colour and every scrolled-off row, and is a different design, not a bigger heuristic.

@@ -214,6 +214,34 @@ final class TerminalScreenModelTests: XCTestCase {
         XCTAssertEqual(snap.lines[0], "Z")
     }
 
+    /// An ERASE that lands on half a wide pair must blank the other half too, exactly as
+    /// overwriting it does — a surviving lone half renders at the wrong width.
+    func testErasingHalfAWidePairBlanksPartner() {
+        // EL 1 (start → cursor) over the LEAD cell of 字 at cols 0–1.
+        XCTAssertEqual(render("字x\(ESC)[1;1H\(ESC)[1K", rows: 2, cols: 10).lines[0], "  x")
+        // EL 0 (cursor → end) starting on the CONTINUATION cell.
+        XCTAssertEqual(render("字x\(ESC)[1;2H\(ESC)[0K", rows: 2, cols: 10).lines[0], "")
+        // ECH over the lead cell.
+        XCTAssertEqual(render("字x\(ESC)[1;1H\(ESC)[1X", rows: 2, cols: 10).lines[0], "  x")
+    }
+
+    /// ICH's shift can split a wide pair at either seam — the insertion point and the right edge
+    /// where cells are pushed off. Both halves blank, exactly as erasing and overwriting do.
+    func testInsertCharsSplittingAWidePairBlanksBothHalves() {
+        // Cursor on the CONTINUATION cell of 字 → the inserted blank lands between the halves.
+        XCTAssertEqual(render("字x\(ESC)[1;2H\(ESC)[1@", rows: 2, cols: 10).lines[0], "   x")
+        // The right-edge seam: the pair pushed off the end must not leave its lead behind.
+        XCTAssertEqual(render("ab字\(ESC)[1;1H\(ESC)[1@", rows: 2, cols: 4).lines[0], " ab")
+    }
+
+    /// DCH's shift can split a wide pair at either seam — the deleted range's start and its end.
+    func testDeleteCharsSplittingAWidePairBlanksBothHalves() {
+        // Cursor on the CONTINUATION cell → deleting it leaves the lead half, which must blank.
+        XCTAssertEqual(render("字x\(ESC)[1;2H\(ESC)[1P", rows: 2, cols: 10).lines[0], " x")
+        // Cursor on the LEAD cell → the continuation shifts left as an orphan, which must blank.
+        XCTAssertEqual(render("字x\(ESC)[1;1H\(ESC)[1P", rows: 2, cols: 10).lines[0], " x")
+    }
+
     func testCombiningMarkAttachesToPreviousCell() {
         let snap = render("e\u{0301}x", rows: 2, cols: 10)
         XCTAssertEqual(snap.lines[0], "éx")

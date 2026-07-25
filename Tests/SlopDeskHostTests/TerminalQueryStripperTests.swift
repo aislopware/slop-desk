@@ -235,7 +235,7 @@ final class TerminalQueryStripperTests: XCTestCase {
         XCTAssertEqual(TerminalQueryStripper.strip(Data(input.utf8)), Data(expected.utf8))
     }
 
-    /// Env gates: `STRIP_QUERIES=0` disables only the stripper; ALL SIX off → nil transform.
+    /// Env gates: `STRIP_QUERIES=0` disables only the stripper; ALL SEVEN off → nil transform.
     func testTransformEnvGates() throws {
         let stripOff = ScrollbackReplayTransform.make(
             environment: ["SLOPDESK_SCROLLBACK_STRIP_QUERIES": "0"],
@@ -251,6 +251,7 @@ final class TerminalQueryStripperTests: XCTestCase {
             "SLOPDESK_SCROLLBACK_STRIP_INPUT_MODES": "0",
             "SLOPDESK_SCROLLBACK_STRIP_ALT_SCREEN": "0",
             "SLOPDESK_SCROLLBACK_COLLAPSE_SYNC": "0",
+            "SLOPDESK_SCROLLBACK_COLLAPSE_OVERPRINT": "0",
             "SLOPDESK_SCROLLBACK_STRIP_EOL_MARKS": "0",
         ]))
         XCTAssertNotNil(
