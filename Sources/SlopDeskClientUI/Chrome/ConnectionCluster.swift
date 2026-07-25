@@ -6,12 +6,16 @@
 //
 // SIDEBAR FOOTER (`railFooter`) — two lines under the tab list, laid on the sidebar's OWN rails:
 //   mac-studio               12 ms      ← the LINK: who, and how far away
-//   ▣ 34%                    ▤ 61%      ← the MACHINE: how hard it is working
-//   Line two names its two metrics with SYMBOLS rather than the words "cpu"/"mem": a readout is a
-//   number and its unit, and spelling the unit out in a run of lowercase prose gave the line the
-//   texture of a sentence set adrift under the identity. The chip glyphs anchor each end, so the
-//   pair reads as two instruments instead of a half-empty row of text. The words survive where
-//   there is room for prose — the tooltip and the accessibility label.
+//   ▣ 34%       ▨ 240G       ▤ 61%      ← the MACHINE: how hard it is working
+//   Line two names its metrics with SYMBOLS rather than the words "cpu"/"mem": a readout is a
+//   number and the thing it measures, and spelling that out in a run of lowercase prose gave the
+//   line the texture of a sentence set adrift under the identity. The words survive where there is
+//   room for prose — the tooltip and the accessibility label.
+//   THREE readings, not two: the three ways a host stops being useful are busy, full and out of
+//   room, and the first two were already there. Free disk takes the middle rail — the metric
+//   consulted least often and changing slowest belongs where neither rail is — and is the one
+//   reading given as BYTES, since a disk percent lies in both directions (2% of 4 TB still builds;
+//   8% of 128 GB does not). Its ink comes from an absolute threshold for the same reason.
 //   Both lines share the two rails: the leading edge is the x every row title starts on, the
 //   trailing edge is the column the rows' status marks stand in. So the footer reads as the last
 //   lines of the list rather than a widget bolted underneath, and the right rail becomes the one
@@ -143,17 +147,40 @@ struct ConnectionCluster: View {
         return ("cpu \(pulse.cpuPercent)%", "mem \(pulse.memoryPercent)%")
     }
 
-    /// The same reading as it is DRAWN: the bare percents, each named by ``cpuSymbol`` /
-    /// ``memorySymbol`` beside it rather than by a repeated word.
-    static func pulseReadings(_ pulse: HostPulse?) -> (cpu: String, memory: String)? {
+    /// The same reading as it is DRAWN: bare runs, each named by its mark rather than by a repeated
+    /// word. Disk is `nil` on its own when the host could not read the volume — one missing metric
+    /// closes its gap, it does not blank the line.
+    static func pulseReadings(_ pulse: HostPulse?) -> (cpu: String, disk: String?, memory: String)? {
         guard let pulse else { return nil }
-        return ("\(pulse.cpuPercent)%", "\(pulse.memoryPercent)%")
+        return ("\(pulse.cpuPercent)%", diskLabel(freeMiB: pulse.diskFreeMiB), "\(pulse.memoryPercent)%")
     }
 
-    /// The two metric marks. The processor die and the memory module are the pair Activity Monitor
-    /// itself uses, and they differ in SILHOUETTE (a square with pins on four edges vs a wide module
-    /// with pins on one) — which is the only difference that survives at the footer's size.
+    /// Free disk as at most four characters, coarsening with scale (`820M`, `6.4G`, `42G`, `240G`,
+    /// `2.1T`) — the middle rail has room for a reading, not for a figure. The coarseness is
+    /// deliberate: two significant figures is all a "can I still work here" answer needs, and a
+    /// number that only names round values cannot twitch between polls.
+    static func diskLabel(freeMiB: UInt32?) -> String? {
+        guard let freeMiB else { return nil }
+        let gib = Double(freeMiB) / 1024
+        if freeMiB < 1024 { return "\(freeMiB)M" }
+        if gib < 10 { return String(format: "%.1fG", gib) }
+        if gib < 1024 { return "\(Int(gib.rounded()))G" }
+        return String(format: "%.1fT", gib / 1024)
+    }
+
+    /// Free space below this is worth an amber run: the machine still works, but the next container
+    /// pull or clean build is the one that fails.
+    static let diskWarnMiB: UInt32 = 15 * 1024
+    /// Below this the host is effectively out of disk — a build will fail, and so will the editor's
+    /// next save.
+    static let diskCriticalMiB: UInt32 = 5 * 1024
+
+    /// The three metric marks. Processor die, drive, memory module — Activity Monitor's own
+    /// vocabulary, chosen so the three differ in SILHOUETTE (a square pinned on four edges, a slab
+    /// with a spindle dot, a wide module pinned on one edge), which is the only difference that
+    /// survives at the footer's size.
     static let cpuSymbol: SFSymbol = .cpu
+    static let diskSymbol: SFSymbol = .internaldrive
     static let memorySymbol: SFSymbol = .memorychip
 
     /// The pulse as TOOLTIP prose — the exact numbers plus the pressure verdict the visible line
@@ -166,7 +193,8 @@ struct ConnectionCluster: View {
             case .warn: " (memory pressure)"
             case .critical: " (memory pressure critical)"
             }
-        return " · \(labels.cpu) · \(labels.memory)\(pressure)"
+        let disk = diskLabel(freeMiB: pulse.diskFreeMiB).map { " · \($0) free" } ?? ""
+        return " · \(labels.cpu)\(disk) · \(labels.memory)\(pressure)"
     }
 
     /// Metric digits: tertiary when healthy, warn/err only when degrading.
@@ -356,10 +384,16 @@ struct ConnectionRailFooter: View {
     /// INSTRUMENT mono (they are readings, not prose), so the pair reads as one quiet instrument
     /// under the identity rather than a second row competing with it. The line speaks its full prose
     /// to VoiceOver, which cannot see a silhouette.
-    private func pulseLine(_ readings: (cpu: String, memory: String)) -> some View {
+    private func pulseLine(_ readings: (cpu: String, disk: String?, memory: String)) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: Slate.Metric.space2) {
             reading(ConnectionCluster.cpuSymbol, readings.cpu, ink: Slate.Text.tertiary)
             Spacer(minLength: Slate.Metric.space1)
+            if let disk = readings.disk {
+                // The middle rail: the metric that has no rail of its own, because it is the one the
+                // eye consults least often and the one that changes slowest.
+                reading(ConnectionCluster.diskSymbol, disk, ink: diskInk)
+                Spacer(minLength: Slate.Metric.space1)
+            }
             reading(ConnectionCluster.memorySymbol, readings.memory, ink: memoryInk)
         }
         .lineLimit(1)
@@ -386,7 +420,8 @@ struct ConnectionRailFooter: View {
     /// The pulse as words, for the readers that get no glyph.
     private var pulseSpoken: String {
         guard let labels = ConnectionCluster.pulseLabels(pulse) else { return "" }
-        return "\(labels.cpu), \(labels.memory)"
+        let disk = ConnectionCluster.diskLabel(freeMiB: pulse?.diskFreeMiB).map { ", \($0) free" } ?? ""
+        return "\(labels.cpu)\(disk), \(labels.memory)"
     }
 
     /// Metric digits carry the health colour only while degrading; words stay muted.
@@ -408,6 +443,17 @@ struct ConnectionRailFooter: View {
         case .critical: Slate.Status.err
         default: Slate.Text.tertiary
         }
+    }
+
+    /// Disk is the one metric with an ABSOLUTE threshold rather than a verdict from the kernel:
+    /// there is no such thing as "disk pressure", and a percent lies in both directions (2% of a
+    /// 4 TB disk is plenty; 8% of a 128 GB disk is nothing). Bytes left is the only reading that
+    /// answers the question, so bytes left is what colours.
+    private var diskInk: Color {
+        guard let free = pulse?.diskFreeMiB else { return Slate.Text.tertiary }
+        if free < ConnectionCluster.diskCriticalMiB { return Slate.Status.err }
+        if free < ConnectionCluster.diskWarnMiB { return Slate.Status.warn }
+        return Slate.Text.tertiary
     }
 }
 

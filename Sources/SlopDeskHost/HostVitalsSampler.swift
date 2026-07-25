@@ -83,6 +83,17 @@ final class HostVitalsSampler: @unchecked Sendable {
         return UInt8(min(percent, 100))
     }
 
+    /// Free space in MiB from a `statfs` pair, saturating at ``MetadataCodec/diskFreeUnknown`` − 1 so
+    /// a colossal (or garbage) reading can never land ON the unknown sentinel and blank the metric.
+    /// `nil` for a nonsense block size, which would otherwise multiply out to a meaningless figure.
+    static func freeMiB(blocksAvailable: UInt64, blockSize: UInt64) -> UInt32? {
+        guard blockSize > 0 else { return nil }
+        // Checked multiply: a torn/garbage `statfs` pair must saturate, not trap on overflow.
+        let (bytes, overflowed) = blocksAvailable.multipliedReportingOverflow(by: blockSize)
+        let mib = overflowed ? UInt64.max : bytes / (1024 * 1024)
+        return UInt32(min(mib, UInt64(MetadataCodec.diskFreeUnknown) - 1))
+    }
+
     /// Maps the kernel's `kern.memorystatus_vm_pressure_level` (a SPARSE bitmask-flavoured ladder:
     /// 1 normal, 2 warn, 4 critical) onto ``MetadataCodec/MemoryPressure``. Anything else — an
     /// unreadable sysctl, a future level — reads `.normal`: an alarm this build cannot justify is
@@ -103,6 +114,7 @@ final class HostVitalsSampler: @unchecked Sendable {
         cpuTicks: CPUTicks,
         memoryPercent: UInt8,
         pressure: MetadataCodec.MemoryPressure,
+        diskFreeMiB: UInt32?,
         now: ContinuousClock.Instant,
     ) -> MetadataCodec.HostVitals? {
         lock.lock()
@@ -120,13 +132,14 @@ final class HostVitalsSampler: @unchecked Sendable {
             return nil
         }
         if age < Self.minWindow {
-            // Too soon to re-measure. The memory half IS instantaneous, so refresh it on the cached
-            // CPU percent rather than handing back a wholly frozen row.
+            // Too soon to re-measure. The memory and disk halves ARE instantaneous, so refresh them
+            // on the cached CPU percent rather than handing back a wholly frozen row.
             guard let cached else { return nil }
             let refreshed = MetadataCodec.HostVitals(
                 cpuPercent: cached.cpuPercent,
                 memoryPercent: memoryPercent,
                 pressure: pressure,
+                diskFreeMiB: diskFreeMiB,
             )
             self.cached = refreshed
             return refreshed
@@ -139,6 +152,7 @@ final class HostVitalsSampler: @unchecked Sendable {
         baseline = Baseline(ticks: cpuTicks, taken: now)
         let vitals = MetadataCodec.HostVitals(
             cpuPercent: cpu, memoryPercent: memoryPercent, pressure: pressure,
+            diskFreeMiB: diskFreeMiB,
         )
         cached = vitals
         return vitals
@@ -163,6 +177,7 @@ final class HostVitalsSampler: @unchecked Sendable {
             cpuTicks: ticks,
             memoryPercent: Self.readMemoryPercent(),
             pressure: Self.readPressure(),
+            diskFreeMiB: Self.readDiskFreeMiB(),
             now: ContinuousClock.now,
         )
         #else
@@ -225,6 +240,17 @@ final class HostVitalsSampler: @unchecked Sendable {
             usedBytes: pages * pageSize,
             totalBytes: Foundation.ProcessInfo.processInfo.physicalMemory,
         )
+    }
+
+    /// `statfs` on the HOME directory's volume — the disk the user's repos, build products and
+    /// container images actually consume, which on a modern Mac is the Data volume rather than `/`
+    /// (a read-only system snapshot whose free space is a different, useless number). Uses
+    /// `f_bavail` (blocks free to a non-root process), not `f_bfree`, since the daemon is not root.
+    /// `nil` on a refused syscall → the client simply omits the metric.
+    private static func readDiskFreeMiB() -> UInt32? {
+        var stats = statfs()
+        guard statfs(Foundation.NSHomeDirectory(), &stats) == 0 else { return nil }
+        return freeMiB(blocksAvailable: stats.f_bavail, blockSize: UInt64(stats.f_bsize))
     }
 
     /// `kern.memorystatus_vm_pressure_level` — the kernel's own verdict. Unreadable → `.normal`.

@@ -20,13 +20,15 @@ final class MetadataClientHostVitalsTests: XCTestCase {
         responder.replies[MetadataVerb.hostVitals.rawValue] = (
             status: MetadataStatus.ok.rawValue,
             payload: MetadataCodec.encodeHostVitals(
-                .init(cpuPercent: 34, memoryPercent: 61, pressure: .warn),
+                .init(cpuPercent: 34, memoryPercent: 61, pressure: .warn, diskFreeMiB: 245_760),
             ),
         )
 
         let vitals = await client.hostVitals()
 
-        XCTAssertEqual(vitals, .init(cpuPercent: 34, memoryPercent: 61, pressure: .warn))
+        XCTAssertEqual(
+            vitals, .init(cpuPercent: 34, memoryPercent: 61, pressure: .warn, diskFreeMiB: 245_760),
+        )
         XCTAssertEqual(responder.captured.map(\.verb), [MetadataVerb.hostVitals.rawValue])
         XCTAssertEqual(responder.captured.first?.payload, Data(), "the request is host-global — no argument")
     }

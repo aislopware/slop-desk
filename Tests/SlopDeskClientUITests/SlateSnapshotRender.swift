@@ -183,17 +183,23 @@ final class SlateSnapshotRender: XCTestCase {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
             throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the sidebar footer")
         }
-        let idle = HostPulse(cpuPercent: 6, memoryPercent: 43, memoryPressure: .normal)
-        let busy = HostPulse(cpuPercent: 97, memoryPercent: 74, memoryPressure: .normal)
-        let squeezed = HostPulse(cpuPercent: 64, memoryPercent: 92, memoryPressure: .warn)
-        let thrashing = HostPulse(cpuPercent: 100, memoryPercent: 98, memoryPressure: .critical)
+        let idle = HostPulse(cpuPercent: 6, memoryPercent: 43, memoryPressure: .normal, diskFreeMiB: 245_760)
+        let busy = HostPulse(cpuPercent: 97, memoryPercent: 74, memoryPressure: .normal, diskFreeMiB: 43008)
+        // Disk running out: an amber middle run, with the two rails still calm.
+        let filling = HostPulse(cpuPercent: 21, memoryPercent: 51, memoryPressure: .normal, diskFreeMiB: 9012)
+        let squeezed = HostPulse(cpuPercent: 64, memoryPercent: 92, memoryPressure: .warn, diskFreeMiB: 2048)
+        let thrashing = HostPulse(cpuPercent: 100, memoryPercent: 98, memoryPressure: .critical, diskFreeMiB: 820)
+        // The volume could not be read: the middle run is absent, the line still reports.
+        let blindDisk = HostPulse(cpuPercent: 12, memoryPercent: 49, memoryPressure: .normal)
         let panel = VStack(alignment: .leading, spacing: 0) {
             // Connected, healthy link — the pulse line rides beneath on the same two rails.
             footerRow(host: "mac-studio", led: .good, detail: ("12 ms", true), pulse: idle)
             footerRow(host: "mac-studio", led: .good, detail: ("12 ms", true), pulse: busy)
+            footerRow(host: "mac-studio", led: .good, detail: ("12 ms", true), pulse: filling)
             // The host's memory is under pressure: the MEM run alone takes the hue — cpu never does.
             footerRow(host: "mac-studio", led: .good, detail: ("12 ms", true), pulse: squeezed)
             footerRow(host: "mac-studio", led: .slow, detail: ("141 ms", true), pulse: thrashing)
+            footerRow(host: "mac-studio", led: .good, detail: ("12 ms", true), pulse: blindDisk)
             // A long hostname still truncates before the ping does.
             footerRow(host: "congs-macbook-pro-16-inch", led: .good, detail: ("12 ms", true), pulse: idle)
             // Connected but the host has not reported yet → ONE line, no dashes.
@@ -204,7 +210,7 @@ final class SlateSnapshotRender: XCTestCase {
         .frame(width: Slate.Metric.sidebarWidth)
         .background(Slate.Surface.ground)
         try render(
-            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 520),
+            panel, size: CGSize(width: Slate.Metric.sidebarWidth, height: 650),
             to: dir, named: "sidebar-footer.png",
         )
     }

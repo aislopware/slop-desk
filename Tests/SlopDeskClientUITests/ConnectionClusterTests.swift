@@ -96,14 +96,54 @@ final class ConnectionClusterTests: XCTestCase {
         // What line two actually draws: the mark names the metric, so the run is the number alone —
         // no "cpu"/"mem" word repeated beside a glyph that already says it.
         let readings = ConnectionCluster.pulseReadings(
-            HostPulse(cpuPercent: 34, memoryPercent: 61, memoryPressure: .normal),
+            HostPulse(cpuPercent: 34, memoryPercent: 61, memoryPressure: .normal, diskFreeMiB: 245_760),
         )
         XCTAssertEqual(readings?.cpu, "34%", "leading rail: the machine's own load")
+        XCTAssertEqual(readings?.disk, "240G", "middle rail: the room left to work in")
         XCTAssertEqual(readings?.memory, "61%", "trailing rail: the column a number may turn amber in")
-        XCTAssertNotEqual(
-            ConnectionCluster.cpuSymbol, ConnectionCluster.memorySymbol,
-            "two metrics, two silhouettes — the same mark twice would name neither",
+        XCTAssertEqual(
+            Set([ConnectionCluster.cpuSymbol, ConnectionCluster.diskSymbol, ConnectionCluster.memorySymbol]).count,
+            3, "three metrics, three silhouettes — a repeated mark would name neither of its two",
         )
+    }
+
+    func testUnreadableDiskDropsItsOwnRunNotTheLine() {
+        // The host could not stat the volume: the middle run disappears and the two rails keep
+        // reporting. A metric that cannot be read must not take the working ones down with it.
+        let readings = ConnectionCluster.pulseReadings(
+            HostPulse(cpuPercent: 34, memoryPercent: 61, memoryPressure: .normal, diskFreeMiB: nil),
+        )
+        XCTAssertNotNil(readings, "the line survives")
+        XCTAssertNil(readings?.disk)
+        XCTAssertEqual(ConnectionCluster.pulseTooltip(
+            HostPulse(cpuPercent: 34, memoryPercent: 61, memoryPressure: .normal),
+        ), " · cpu 34% · mem 61%", "and the tooltip simply omits it")
+    }
+
+    func testDiskLabelCoarsensWithScaleAndStaysFourCharacters() {
+        // Two significant figures is the whole answer to "can I still work here", and a number that
+        // only names round values cannot twitch between polls.
+        XCTAssertNil(ConnectionCluster.diskLabel(freeMiB: nil))
+        XCTAssertEqual(ConnectionCluster.diskLabel(freeMiB: 0), "0M", "a genuinely full disk still reports")
+        XCTAssertEqual(ConnectionCluster.diskLabel(freeMiB: 820), "820M")
+        XCTAssertEqual(ConnectionCluster.diskLabel(freeMiB: 1024), "1.0G")
+        XCTAssertEqual(ConnectionCluster.diskLabel(freeMiB: 6554), "6.4G")
+        XCTAssertEqual(ConnectionCluster.diskLabel(freeMiB: 43008), "42G")
+        XCTAssertEqual(ConnectionCluster.diskLabel(freeMiB: 245_760), "240G")
+        XCTAssertEqual(ConnectionCluster.diskLabel(freeMiB: 2_202_010), "2.1T")
+        for mib in [UInt32(0), 820, 1024, 6554, 43008, 245_760, 2_202_010] {
+            XCTAssertLessThanOrEqual(
+                ConnectionCluster.diskLabel(freeMiB: mib)?.count ?? 0, 4, "the middle rail has no room to grow",
+            )
+        }
+    }
+
+    func testDiskThresholdsAreAbsoluteBytesNotAPercent() {
+        // There is no kernel verdict for disk, and a percent lies in both directions — so the ladder
+        // is in bytes left, the only figure that answers the question.
+        XCTAssertLessThan(ConnectionCluster.diskCriticalMiB, ConnectionCluster.diskWarnMiB)
+        XCTAssertEqual(ConnectionCluster.diskWarnMiB, 15 * 1024, "a clean build's worth of room")
+        XCTAssertEqual(ConnectionCluster.diskCriticalMiB, 5 * 1024, "below this the next save fails")
     }
 
     func testPulseLabelsKeepTheWordsForProseSurfaces() {
@@ -117,8 +157,10 @@ final class ConnectionClusterTests: XCTestCase {
     }
 
     func testPulseTooltipCarriesThePressureVerdictTheLineOnlyHintsAt() {
-        let normal = HostPulse(cpuPercent: 34, memoryPercent: 61, memoryPressure: .normal)
-        XCTAssertEqual(ConnectionCluster.pulseTooltip(normal), " · cpu 34% · mem 61%")
+        let normal = HostPulse(
+            cpuPercent: 34, memoryPercent: 61, memoryPressure: .normal, diskFreeMiB: 245_760,
+        )
+        XCTAssertEqual(ConnectionCluster.pulseTooltip(normal), " · cpu 34% · 240G free · mem 61%")
         let warn = HostPulse(cpuPercent: 34, memoryPercent: 88, memoryPressure: .warn)
         XCTAssertEqual(ConnectionCluster.pulseTooltip(warn), " · cpu 34% · mem 88% (memory pressure)")
         let critical = HostPulse(cpuPercent: 99, memoryPercent: 97, memoryPressure: .critical)

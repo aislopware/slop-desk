@@ -188,7 +188,7 @@ never offers or falls back to another version.
     (side-effecting) / `13` agentHookStatus (a pure read returning a 2-byte flag payload) (E13),
     `14` hostInfo (a **pure read** returning the host machine's own hostname), the **clipboard-sync**
     verbs `15` setClipboard (side-effecting) / `16` readClipboard (a pure read), and `17` hostVitals
-    (a **pure read** returning the host machine's CPU/memory pulse). `payload` is the
+    (a **pure read** returning the host machine's CPU/memory/disk pulse). `payload` is the
     verb's length-prefixed argument — empty for the pane-scoped verbs (`processes`/`ports`/`cwd`/`gitStatus`)
     AND for the host-global verbs
     (`installAgentHooks`/`uninstallAgentHooks`/`agentHookStatus`/`hostInfo`/`hostVitals`),
@@ -255,15 +255,21 @@ never offers or falls back to another version.
     responder; the client's `ClipboardSyncEngine` polls both directions at 1 Hz and skips concealed
     (`org.nspasteboard.ConcealedType` password-manager) clips on push.
   - **`hostVitals` (17) is a pane-agnostic pure read** (2026-07-25, the sidebar footer's host-pulse
-    line): the host answers status `ok` + a fixed **3-byte** payload
-    `[UInt8 cpuPercent][UInt8 memoryPercent][UInt8 pressure]` — all-core CPU busy percent
+    line): the host answers status `ok` + a fixed **7-byte** payload
+    `[UInt8 cpuPercent][UInt8 memoryPercent][UInt8 pressure][UInt32 BE diskFreeMiB]` — all-core CPU
+    busy percent
     (`100 - idle` across the sampling window), physical memory in use percent (wired + app-internal
     minus purgeable + compressed over installed RAM — the file cache is EXCLUDED, since macOS parks
-    every free page there), and the kernel's memory-pressure level (`0` normal, `1` warn, `2`
-    critical, mapped from `kern.memorystatus_vm_pressure_level`'s sparse 1/2/4 ladder). Percents are
+    every free page there), the kernel's memory-pressure level (`0` normal, `1` warn, `2`
+    critical, mapped from `kern.memorystatus_vm_pressure_level`'s sparse 1/2/4 ladder), and free
+    space in MiB on the HOME directory's volume (`statfs`, `f_bavail` — the Data volume the user's
+    work actually consumes, not the read-only system snapshot at `/`). `UInt32.max` in the disk field
+    is the **"could not read it"** sentinel and decodes to `nil`: a full volume genuinely reads `0`,
+    so unreadable cannot borrow zero without drawing a full-disk alarm for a refused syscall (the
+    host saturates a garbage reading at `max - 1` so it can never land on the sentinel). Percents are
     clamped to `0…100` on encode AND decode; the pressure byte is carried raw and an unknown future
     level reads `normal` client-side (never an alarm the build cannot justify); trailing bytes are
-    tolerated so a future field can be appended. Empty request payload, **no cwd confinement** — three
+    tolerated so a future field can be appended. Empty request payload, **no cwd confinement** — four
     aggregate numbers about the machine, never a byte of its content. Status `error` means **"no
     reading yet"**, not a failure: the CPU percent is a delta between two tick snapshots, so the first
     request only primes the host's baseline (and a baseline older than 30 s is discarded rather than

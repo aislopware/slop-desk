@@ -573,16 +573,28 @@ public enum MetadataCodec {
         /// The kernel's memory-pressure level as a RAW byte (forward-tolerant carry, like
         /// ``PortInfo/proto``); see ``MemoryPressure`` / ``memoryPressure``.
         public var pressureByte: UInt8
+        /// Free space in MiB on the volume the user's work lives on (the home directory's), or `nil`
+        /// when the host could not read it. An ABSOLUTE figure, not a percent: a 4 TB disk at 2%
+        /// free still builds, a 128 GB disk at 8% does not — only the bytes left answer "can I
+        /// still work here". MiB granularity keeps the field 4 bytes and still spans 4 PiB.
+        public var diskFreeMiB: UInt32?
 
-        public init(cpuPercent: UInt8, memoryPercent: UInt8, pressureByte: UInt8) {
+        public init(
+            cpuPercent: UInt8, memoryPercent: UInt8, pressureByte: UInt8, diskFreeMiB: UInt32? = nil,
+        ) {
             self.cpuPercent = cpuPercent
             self.memoryPercent = memoryPercent
             self.pressureByte = pressureByte
+            self.diskFreeMiB = diskFreeMiB
         }
 
-        public init(cpuPercent: UInt8, memoryPercent: UInt8, pressure: MemoryPressure) {
+        public init(
+            cpuPercent: UInt8, memoryPercent: UInt8, pressure: MemoryPressure,
+            diskFreeMiB: UInt32? = nil,
+        ) {
             self.init(
-                cpuPercent: cpuPercent, memoryPercent: memoryPercent, pressureByte: pressure.rawValue,
+                cpuPercent: cpuPercent, memoryPercent: memoryPercent,
+                pressureByte: pressure.rawValue, diskFreeMiB: diskFreeMiB,
             )
         }
 
@@ -602,18 +614,27 @@ public enum MetadataCodec {
         case critical = 2
     }
 
+    /// The wire value for "the host could not read the disk". Free space is a real `0` when a volume
+    /// is genuinely full, so the unreadable case needs its own value rather than borrowing zero —
+    /// the client hides the metric on ``diskFreeUnknown`` and would otherwise draw a full-disk alarm
+    /// for a failed syscall.
+    public static let diskFreeUnknown = UInt32.max
+
     /// Encodes a ``MetadataVerb/hostVitals`` response payload: `[UInt8 cpu%][UInt8 mem%][UInt8
-    /// pressure]`. Both percents are clamped to `0...100` at the SOURCE.
+    /// pressure][UInt32 disk free MiB]`. Both percents are clamped to `0...100` at the SOURCE; a nil
+    /// disk reading goes out as ``diskFreeUnknown``.
     public static func encodeHostVitals(_ vitals: HostVitals) -> Data {
-        Data([
+        var data = Data([
             min(vitals.cpuPercent, 100),
             min(vitals.memoryPercent, 100),
             vitals.pressureByte,
         ])
+        data.appendBE(vitals.diskFreeMiB ?? diskFreeUnknown)
+        return data
     }
 
     /// Decodes a ``MetadataVerb/hostVitals`` response payload (validate-then-drop): a body shorter
-    /// than 3 bytes throws ``SlopDeskError/truncated``; an out-of-range percent is CLAMPED (not
+    /// than 7 bytes throws ``SlopDeskError/truncated``; an out-of-range percent is CLAMPED (not
     /// thrown — the reading is still usable and a status row must not vanish over one wild byte); a
     /// longer body is tolerated, its trailer ignored, so a future field can be appended without
     /// breaking this reader.
@@ -622,8 +643,10 @@ public enum MetadataCodec {
         let cpu = try reader.readUInt8()
         let mem = try reader.readUInt8()
         let pressure = try reader.readUInt8()
+        let disk = try reader.readUInt32()
         return HostVitals(
             cpuPercent: min(cpu, 100), memoryPercent: min(mem, 100), pressureByte: pressure,
+            diskFreeMiB: disk == diskFreeUnknown ? nil : disk,
         )
     }
 

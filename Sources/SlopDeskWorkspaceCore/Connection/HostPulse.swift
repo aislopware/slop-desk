@@ -19,11 +19,20 @@ public struct HostPulse: Equatable, Sendable {
     public var memoryPercent: Int
     /// The kernel's memory-pressure verdict — the ink classifier for the memory metric.
     public var memoryPressure: MetadataCodec.MemoryPressure
+    /// Free space in MiB on the host's work volume; `nil` ⇒ the host could not read it and the
+    /// metric is omitted rather than guessed. No deadband: the metric is rendered COARSELY (two
+    /// significant figures at most), and a format that only names round numbers is its own
+    /// deadband — a build churning a few hundred MiB never changes the run.
+    public var diskFreeMiB: UInt32?
 
-    public init(cpuPercent: Int, memoryPercent: Int, memoryPressure: MetadataCodec.MemoryPressure) {
+    public init(
+        cpuPercent: Int, memoryPercent: Int, memoryPressure: MetadataCodec.MemoryPressure,
+        diskFreeMiB: UInt32? = nil,
+    ) {
         self.cpuPercent = cpuPercent
         self.memoryPercent = memoryPercent
         self.memoryPressure = memoryPressure
+        self.diskFreeMiB = diskFreeMiB
     }
 
     /// The points a metric must move before the row redraws. Three is the smallest step that clears
@@ -40,12 +49,14 @@ public struct HostPulse: Equatable, Sendable {
         guard let previous else {
             return Self(
                 cpuPercent: cpu, memoryPercent: memory, memoryPressure: sample.memoryPressure,
+                diskFreeMiB: sample.diskFreeMiB,
             )
         }
         return Self(
             cpuPercent: held(shown: previous.cpuPercent, sample: cpu),
             memoryPercent: held(shown: previous.memoryPercent, sample: memory),
             memoryPressure: sample.memoryPressure,
+            diskFreeMiB: sample.diskFreeMiB,
         )
     }
 

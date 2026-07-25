@@ -73,6 +73,24 @@ final class HostVitalsSamplerTests: XCTestCase {
         XCTAssertEqual(HostVitalsSampler.pressure(sysctlLevel: 8), .normal)
     }
 
+    // MARK: - Disk
+
+    func testFreeMiBConvertsBlocksAndRefusesANonsenseBlockSize() {
+        // APFS reports 4 KiB blocks: 256 blocks = 1 MiB.
+        XCTAssertEqual(HostVitalsSampler.freeMiB(blocksAvailable: 256, blockSize: 4096), 1)
+        XCTAssertEqual(HostVitalsSampler.freeMiB(blocksAvailable: 62_914_560, blockSize: 4096), 245_760)
+        XCTAssertEqual(HostVitalsSampler.freeMiB(blocksAvailable: 255, blockSize: 4096), 0, "a full disk is 0, not nil")
+        XCTAssertNil(HostVitalsSampler.freeMiB(blocksAvailable: 100, blockSize: 0), "no divide by a zero block")
+    }
+
+    func testFreeMiBSaturatesBelowTheUnknownSentinel() {
+        // An overflowing (torn/garbage) pair must saturate rather than trap — and must never land ON
+        // the sentinel, which would silently blank the metric instead of showing an absurd number.
+        let huge = HostVitalsSampler.freeMiB(blocksAvailable: .max, blockSize: 4096)
+        XCTAssertEqual(huge, MetadataCodec.diskFreeUnknown - 1)
+        XCTAssertNotEqual(huge, MetadataCodec.diskFreeUnknown)
+    }
+
     // MARK: - Baseline / staleness / cache
 
     func testFirstCallPrimesTheBaselineAndAnswersNothing() {
@@ -81,13 +99,13 @@ final class HostVitalsSamplerTests: XCTestCase {
         XCTAssertNil(
             sampler.vitals(
                 cpuTicks: Ticks(user: 100, system: 0, idle: 900, nice: 0),
-                memoryPercent: 61, pressure: .normal, now: start,
+                memoryPercent: 61, pressure: .normal, diskFreeMiB: nil, now: start,
             ),
             "one snapshot is not a rate — the verb answers .error and the client asks again",
         )
         let second = sampler.vitals(
             cpuTicks: Ticks(user: 300, system: 0, idle: 1700, nice: 0),
-            memoryPercent: 61, pressure: .normal, now: start.advanced(by: .seconds(4)),
+            memoryPercent: 61, pressure: .normal, diskFreeMiB: nil, now: start.advanced(by: .seconds(4)),
         )
         XCTAssertEqual(second, MetadataCodec.HostVitals(cpuPercent: 20, memoryPercent: 61, pressure: .normal))
     }
@@ -99,12 +117,14 @@ final class HostVitalsSamplerTests: XCTestCase {
             cpuTicks: Ticks(user: 0, system: 0, idle: 0, nice: 0),
             memoryPercent: 50,
             pressure: .normal,
+            diskFreeMiB: nil,
             now: start,
         )
         _ = sampler.vitals(
             cpuTicks: Ticks(user: 100, system: 0, idle: 900, nice: 0),
             memoryPercent: 50,
             pressure: .normal,
+            diskFreeMiB: nil,
             now: start.advanced(by: .seconds(4)),
         )
         // …the client goes away for a while (asleep / disconnected) and comes back.
@@ -114,6 +134,7 @@ final class HostVitalsSamplerTests: XCTestCase {
                 cpuTicks: Ticks(user: 9000, system: 0, idle: 1000, nice: 0),
                 memoryPercent: 50,
                 pressure: .normal,
+                diskFreeMiB: nil,
                 now: afterGap,
             ),
             "a window that spans the gap describes a machine that no longer exists — rebank, stay silent",
@@ -121,7 +142,7 @@ final class HostVitalsSamplerTests: XCTestCase {
         // The very next normal poll measures the fresh window only.
         let fresh = sampler.vitals(
             cpuTicks: Ticks(user: 9100, system: 0, idle: 1900, nice: 0),
-            memoryPercent: 50, pressure: .normal, now: afterGap.advanced(by: .seconds(4)),
+            memoryPercent: 50, pressure: .normal, diskFreeMiB: nil, now: afterGap.advanced(by: .seconds(4)),
         )
         XCTAssertEqual(fresh?.cpuPercent, 10)
     }
@@ -133,28 +154,55 @@ final class HostVitalsSamplerTests: XCTestCase {
             cpuTicks: Ticks(user: 0, system: 0, idle: 0, nice: 0),
             memoryPercent: 40,
             pressure: .normal,
+            diskFreeMiB: nil,
             now: start,
         )
         _ = sampler.vitals(
             cpuTicks: Ticks(user: 500, system: 0, idle: 500, nice: 0),
             memoryPercent: 40,
             pressure: .normal,
+            diskFreeMiB: nil,
             now: start.advanced(by: .seconds(4)),
         )
         // A second caller arrives right behind the first: too soon to re-measure CPU, but memory IS
         // instantaneous, so the row refreshes the half that can be trusted.
         let immediate = sampler.vitals(
             cpuTicks: Ticks(user: 501, system: 0, idle: 501, nice: 0),
-            memoryPercent: 44, pressure: .warn, now: start.advanced(by: .milliseconds(4200)),
+            memoryPercent: 44, pressure: .warn, diskFreeMiB: nil, now: start.advanced(by: .milliseconds(4200)),
         )
         XCTAssertEqual(immediate, MetadataCodec.HostVitals(cpuPercent: 50, memoryPercent: 44, pressure: .warn))
         // The baseline did NOT move to the too-fresh snapshot: the next real poll still measures a
         // full window from t=4s (1000 busy of 2000 → 50), not from t=4.2s.
         let next = sampler.vitals(
             cpuTicks: Ticks(user: 1500, system: 0, idle: 1500, nice: 0),
-            memoryPercent: 44, pressure: .normal, now: start.advanced(by: .seconds(8)),
+            memoryPercent: 44, pressure: .normal, diskFreeMiB: nil, now: start.advanced(by: .seconds(8)),
         )
         XCTAssertEqual(next?.cpuPercent, 50)
+    }
+
+    func testDiskRidesEveryAnswerIncludingTheTooFreshRepeat() {
+        // Free space needs no window either, so both the measured answer and the cached-CPU repeat
+        // must carry the CURRENT figure — a stale disk reading is exactly the one that would still
+        // say "plenty of room" while a build fills the volume.
+        let sampler = HostVitalsSampler()
+        let start = ContinuousClock.now
+        _ = sampler.vitals(
+            cpuTicks: Ticks(user: 0, system: 0, idle: 0, nice: 0),
+            memoryPercent: 40, pressure: .normal, diskFreeMiB: 245_760, now: start,
+        )
+        let measured = sampler.vitals(
+            cpuTicks: Ticks(user: 500, system: 0, idle: 500, nice: 0),
+            memoryPercent: 40, pressure: .normal, diskFreeMiB: 200_000,
+            now: start.advanced(by: .seconds(4)),
+        )
+        XCTAssertEqual(measured?.diskFreeMiB, 200_000)
+        let repeated = sampler.vitals(
+            cpuTicks: Ticks(user: 501, system: 0, idle: 501, nice: 0),
+            memoryPercent: 40, pressure: .normal, diskFreeMiB: 199_000,
+            now: start.advanced(by: .milliseconds(4200)),
+        )
+        XCTAssertEqual(repeated?.diskFreeMiB, 199_000, "instantaneous halves refresh even on a repeat")
+        XCTAssertEqual(repeated?.cpuPercent, 50, "…while the CPU half stays the cached measurement")
     }
 
     func testResetDropsBaselineAndCache() {
@@ -164,6 +212,7 @@ final class HostVitalsSamplerTests: XCTestCase {
             cpuTicks: Ticks(user: 0, system: 0, idle: 0, nice: 0),
             memoryPercent: 10,
             pressure: .normal,
+            diskFreeMiB: nil,
             now: start,
         )
         sampler.reset()
@@ -172,6 +221,7 @@ final class HostVitalsSamplerTests: XCTestCase {
                 cpuTicks: Ticks(user: 100, system: 0, idle: 900, nice: 0),
                 memoryPercent: 10,
                 pressure: .normal,
+                diskFreeMiB: nil,
                 now: start.advanced(by: .seconds(4)),
             ),
             "after a reset the next call is a first call again",

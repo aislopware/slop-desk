@@ -1928,14 +1928,14 @@
       "note": "claude + codex sessions"
     },
     {
-      "hex": "223d00",
+      "hex": "223d000003c000",
       "kind": "hostVitals",
-      "note": "cpu/mem percents, pressure normal"
+      "note": "cpu/mem percents, pressure normal, 240 GiB free"
     },
     {
-      "hex": "646402",
+      "hex": "646402ffffffff",
       "kind": "hostVitals",
-      "note": "percent clamped at the source; pressure critical"
+      "note": "percent clamped at the source; pressure critical; disk unreadable sentinel"
     }
   ],
   "metadataWireMessages": [

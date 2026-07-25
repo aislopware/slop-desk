@@ -12,10 +12,11 @@ import XCTest
 /// - smooth/average instead of snapping → the climb test shows a number the host never reported;
 /// - deadband the pressure level too → the pressure test swallows a state change.
 final class HostPulseTests: XCTestCase {
-    private func sample(cpu: UInt8, mem: UInt8, pressure: MetadataCodec.MemoryPressure = .normal)
-        -> MetadataCodec.HostVitals
-    {
-        .init(cpuPercent: cpu, memoryPercent: mem, pressure: pressure)
+    private func sample(
+        cpu: UInt8, mem: UInt8, pressure: MetadataCodec.MemoryPressure = .normal,
+        disk: UInt32? = nil,
+    ) -> MetadataCodec.HostVitals {
+        .init(cpuPercent: cpu, memoryPercent: mem, pressure: pressure, diskFreeMiB: disk)
     }
 
     func testFirstSampleIsShownExactly() {
@@ -50,6 +51,18 @@ final class HostPulseTests: XCTestCase {
             pulse = HostPulse.settled(previous: pulse, sample: sample(cpu: cpu, mem: 50))
         }
         XCTAssertEqual(pulse.cpuPercent, 40, "the deadband delays a redraw, it never loses the trend")
+    }
+
+    func testDiskTakesEverySampleBecauseItsFormatIsItsOwnDeadband() {
+        // Free space is rendered coarsely (two significant figures), so the shown run only changes
+        // when the answer really has — no deadband needed, and none applied: a metric that reports
+        // in whole gigabytes must not ALSO lag behind by a threshold.
+        let shown = HostPulse(cpuPercent: 30, memoryPercent: 60, memoryPressure: .normal, diskFreeMiB: 245_760)
+        let dropped = HostPulse.settled(previous: shown, sample: sample(cpu: 31, mem: 61, disk: 245_759))
+        XCTAssertEqual(dropped.diskFreeMiB, 245_759, "the raw figure always tracks")
+        XCTAssertEqual(dropped.cpuPercent, 30, "…while the deadbanded metrics hold")
+        let lost = HostPulse.settled(previous: shown, sample: sample(cpu: 31, mem: 61, disk: nil))
+        XCTAssertNil(lost.diskFreeMiB, "an unreadable volume clears the run rather than freezing a stale figure")
     }
 
     func testPressureIsNeverDeadbandedBecauseAStateChangeIsNotNoise() {

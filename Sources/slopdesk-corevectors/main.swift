@@ -1237,16 +1237,21 @@ root["metadataCodecPayloads"] = [
         ])),
         "claude + codex sessions",
     ),
-    // HostVitals ([UInt8 cpu%][UInt8 mem%][UInt8 pressure]) — fixed 3 bytes, no count prefix.
+    // HostVitals ([UInt8 cpu%][UInt8 mem%][UInt8 pressure][UInt32 disk free MiB]) — fixed 7 bytes,
+    // no count prefix. `UInt32.max` in the disk field is the "host could not read it" sentinel.
     mcRecord(
         "hostVitals",
-        hex(MetadataCodec.encodeHostVitals(.init(cpuPercent: 34, memoryPercent: 61, pressure: .normal))),
-        "cpu/mem percents, pressure normal",
+        hex(MetadataCodec.encodeHostVitals(
+            .init(cpuPercent: 34, memoryPercent: 61, pressure: .normal, diskFreeMiB: 245_760),
+        )),
+        "cpu/mem percents, pressure normal, 240 GiB free",
     ),
     mcRecord(
         "hostVitals",
-        hex(MetadataCodec.encodeHostVitals(.init(cpuPercent: 250, memoryPercent: 100, pressure: .critical))),
-        "percent clamped at the source; pressure critical",
+        hex(MetadataCodec.encodeHostVitals(
+            .init(cpuPercent: 250, memoryPercent: 100, pressure: .critical, diskFreeMiB: nil),
+        )),
+        "percent clamped at the source; pressure critical; disk unreadable sentinel",
     ),
 ]
 

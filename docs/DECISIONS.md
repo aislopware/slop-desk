@@ -2693,3 +2693,23 @@ the only distinction that survives at 11pt. Mark and digits carry ONE ink — wh
 the memory reading the glyph turns with it, since a half-tinted readout reads as a rendering bug
 rather than a warning. The words are not lost, they move to the surfaces that have room for prose:
 the tooltip and the accessibility label, which cannot see a silhouette at all.
+
+**Round 13.2 — free disk takes the middle rail.** Two runs on a 220pt line left a hole in the
+middle, and the hole was worth a third reading rather than wider tracking: a host stops being useful
+in exactly three ways — busy, full, out of room — and only the first two were reported. So
+`hostVitals` grew a `[UInt32 disk free MiB]` field (7-byte payload; golden hand-merged) read from
+`statfs` on the HOME volume, which on a modern Mac is the Data volume the work actually consumes
+rather than the read-only system snapshot at `/`. Three consequences worth stating:
+
+- **It is the one metric given in BYTES.** A disk percent lies in both directions — 2% of a 4 TB
+  disk still builds, 8% of a 128 GB disk does not — so both the reading and its ink threshold are
+  absolute (amber under 15 GiB, red under 5 GiB). There is no kernel "disk pressure" verdict to
+  defer to the way the memory run defers to one.
+- **Unreadable is not zero.** A full volume genuinely reports 0 MiB, so the failed-syscall case gets
+  its own wire value (`UInt32.max`) and the run simply disappears — the two rails keep reporting. A
+  metric that cannot be read must not take the working ones down with it, nor draw a full-disk alarm
+  for a refused syscall.
+- **The format is the deadband.** CPU and memory need one because a percent twitches; free space is
+  rendered at two significant figures (`820M`, `6.4G`, `240G`), and a number that only names round
+  values cannot twitch. Adding a threshold on top would have made the slowest metric also the
+  laggiest.

@@ -132,10 +132,12 @@ final class MetadataResponseBuilderTests: XCTestCase {
         }
     }
 
-    func testHostVitalsEncodesTheThreeBytesAndIsPaneAgnostic() throws {
+    func testHostVitalsEncodesEveryFieldAndIsPaneAgnostic() throws {
         let fake = FakeQuery()
         fake.cwd = nil // pane-agnostic like hostInfo: no cwd, no confinement, still answers
-        fake.hostVitalsValue = .init(cpuPercent: 34, memoryPercent: 61, pressure: .warn)
+        fake.hostVitalsValue = .init(
+            cpuPercent: 34, memoryPercent: 61, pressure: .warn, diskFreeMiB: 245_760,
+        )
         let r = response(MetadataResponseBuilder(query: fake), .hostVitals)
         XCTAssertEqual(r.status, MetadataStatus.ok.rawValue)
         XCTAssertEqual(try MetadataCodec.decodeHostVitals(r.payload), fake.hostVitalsValue)
