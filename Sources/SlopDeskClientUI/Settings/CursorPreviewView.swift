@@ -119,10 +119,14 @@ struct CursorPreviewView: View {
                 }
             }
 
-            Picker("Cursor Style", selection: $store.terminal.cursorStyle) {
-                ForEach(TerminalPreferences.CursorStyle.allCases, id: \.self) { style in
-                    Text(style.displayName).tag(style)
-                }
+            // Style CARDS, each drawing the caret it selects with the SAME `CursorCaret` the preview above
+            // uses — so a card and the live prompt can never disagree about what "Hollow" looks like.
+            SettingsOptionCards(
+                "Cursor Style",
+                options: SettingsOptionCatalog.cursorStyles,
+                selection: $store.terminal.cursorStyle,
+            ) { option in
+                SettingsCaretArt(style: option.value, color: cursorPreviewColor)
             }
 
             LabeledContent {
@@ -201,29 +205,17 @@ struct CursorPreviewView: View {
             .onChange(of: store.terminal.cursorBlink) { _, _ in restartBlink() }
     }
 
-    @ViewBuilder private var cursorShape: some View {
-        let cell = previewCellSize
-        switch store.terminal.cursorStyle {
-        case .block:
-            Rectangle().fill(cursorPreviewColor).frame(width: cell.width, height: cell.height)
-        case .blockHollow:
-            Rectangle()
-                .strokeBorder(cursorPreviewColor, lineWidth: 1)
-                .frame(width: cell.width, height: cell.height)
-        case .bar:
-            Rectangle().fill(cursorPreviewColor).frame(width: 2, height: cell.height)
-                .frame(width: cell.width, height: cell.height, alignment: .leading)
-        case .underline:
-            Rectangle().fill(cursorPreviewColor).frame(width: cell.width, height: 2)
-                .frame(width: cell.width, height: cell.height, alignment: .bottom)
-        }
+    /// The caret, via the SHARED ``CursorCaret`` — the one place the four caret silhouettes are drawn, so this
+    /// preview and the style cards beneath it can't drift apart.
+    private var cursorShape: some View {
+        CursorCaret(style: store.terminal.cursorStyle, color: cursorPreviewColor, cell: previewCellSize)
     }
 
     /// The approximate monospace cell for the preview font (advance ≈ 0.62 em, line height ≈ 1.3 em). A
     /// preview-only estimate — the real surface metrics come from libghostty.
-    private var previewCellSize: (width: CGFloat, height: CGFloat) {
+    private var previewCellSize: CGSize {
         let em = Slate.Typeface.body
-        return (width: em * 0.62, height: em * 1.3)
+        return CGSize(width: em * 0.62, height: em * 1.3)
     }
 
     /// The effective caret colour: the pinned `cursorColor`, else the foreground ("Default").

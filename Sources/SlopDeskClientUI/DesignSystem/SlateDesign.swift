@@ -472,6 +472,18 @@ enum Slate {
         static let iconSize: CGFloat = 13
         /// The host-identity monogram plate (``SlateMonogram``) — sized to sit inside a control-height row.
         static let monogram: CGFloat = 18
+
+        // Settings option CARDS (`SettingsOptionCards`) — the illustrated radio group that replaces a
+        // flat dropdown where the choice has a shape (cursor caret, tab position, key layout, theme).
+        /// The illustration band inside one option card: the drawing area above the label. Two control
+        /// rungs (2 × `heightControl`) — enough for a legible mini-diagram, still a card not a panel.
+        static let settingsCardArt: CGFloat = heightControl * 2
+        /// One option card's minimum width — the adaptive grid fits as many as the content column allows,
+        /// so a 2-option row reads as a pair and a 9-theme gallery wraps.
+        static let settingsCardWidth: CGFloat = 96
+        /// The theme-gallery card's preview band — taller than `settingsCardArt` because it shows a
+        /// miniature terminal (title bar + three code lines), not a single glyph.
+        static let settingsSwatchArt: CGFloat = heightStrip + heightControl
     }
 
     /// Typography scale — one named role per size; UI = system, instrument/rail = JetBrains Mono (SF Mono

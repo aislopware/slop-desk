@@ -235,6 +235,10 @@ struct SettingsView: View {
             // Pin the Settings NSWindow to the theme appearance (macOS only — iOS has no NSWindow; its settings
             // surface is `SettingsSheet`, which adopts `.preferredColorScheme` directly).
             .background { SettingsWindowAppearancePinner(isLight: Slate.theme.isLight) }
+            // Esc closes the window. A stock `Settings` scene has NO Esc behaviour of its own, so ⌘, otherwise
+            // opened a window the keyboard could not dismiss; the monitor is window-scoped and defers to a
+            // field editor (see `SettingsEscapeDismiss`).
+            .background { SettingsEscapeDismisser() }
         #endif
     }
 
@@ -354,21 +358,41 @@ private struct GeneralSettingsTab: View {
     var body: some View {
         Form {
             slateFormSection(GeneralSettingsLayout.general) {
-                Picker("On Launch", selection: $onLaunch) {
-                    Text("Restore Last Session").tag(OnLaunchBehavior.restoreLastSession)
-                    Text("New Window").tag(OnLaunchBehavior.newWindow)
-                }
+                SettingsOptionCards(
+                    "On Launch",
+                    subtitle: "What a cold start opens.",
+                    options: SettingsOptionCatalog.onLaunch,
+                    selection: $onLaunch,
+                )
                 timingFooter(.live)
             }
 
+            // Both rows read the ONE `closeConfirmation` list, so a tab and a window can never be offered
+            // different policies.
             slateFormSection(GeneralSettingsLayout.closeConfirmation) {
-                Picker("Closing Tab", selection: $closeConfirmTab) { closeConfirmOptions }
-                Picker("Closing Window", selection: $closeConfirmWindow) { closeConfirmOptions }
+                SettingsOptionCards(
+                    "Closing a tab",
+                    subtitle: "When to ask before a tab goes away.",
+                    options: SettingsOptionCatalog.closeConfirmation,
+                    selection: $closeConfirmTab,
+                )
+                Divider()
+                SettingsOptionCards(
+                    "Closing a window",
+                    subtitle: "When to ask before a window goes away.",
+                    options: SettingsOptionCatalog.closeConfirmation,
+                    selection: $closeConfirmWindow,
+                )
                 timingFooter(.live)
             }
 
             slateFormSection(GeneralSettingsLayout.privacyAndNewPanes) {
-                Toggle("Redact likely secrets from titles", isOn: $redactSecrets)
+                SettingsGlyphToggleRow(
+                    .eyeSlash,
+                    "Redact likely secrets from titles",
+                    "Mask token- and key-shaped runs in tab titles so a screen share can't leak them.",
+                    isOn: $redactSecrets,
+                )
                 timingFooter(.live)
             }
 
@@ -379,12 +403,6 @@ private struct GeneralSettingsTab: View {
             #endif
         }
         .formStyle(.grouped)
-    }
-
-    @ViewBuilder private var closeConfirmOptions: some View {
-        Text("Running Process").tag(CloseConfirmationPolicy.process)
-        Text("Always").tag(CloseConfirmationPolicy.always)
-        Text("Multiple Tabs").tag(CloseConfirmationPolicy.multipleTabs)
     }
 
     // MARK: - OS Integration (macOS-only, reachable post-first-launch)
@@ -552,26 +570,32 @@ private struct ShellSettingsTab: View {
     private var notificationSection: some View {
         slateFormSection("Notification") {
             NotificationPermissionRow()
-            toggleRow(
+            glyphToggle(
+                .bell,
                 "Allow App Notifications",
                 "Allow shell apps to send system notifications (OSC 9 / 777 / 99).",
                 isOn: $oscNotifications,
             )
-            toggleRow(
+            glyphToggle(
+                .checkmarkCircle,
                 "Notify on Command Finish",
                 "Notify when a background command finishes (exit 0).",
                 isOn: $notifyOnFinish,
             )
-            toggleRow(
+            glyphToggle(
+                .xmarkOctagon,
                 "Notify on Error Exit",
                 "Notify when a command fails (exits non-zero).",
                 isOn: $notifyOnError,
             )
-            toggleRow(
+            glyphToggle(
+                .eye,
                 "Notify on Watch Finish",
                 "Notify when an `slopdesk watch`-wrapped command finishes.",
                 isOn: $notifyOnWatchFinish,
             )
+            // Stays a menu (its longest label is a whole sentence — "Only when source tab is unfocused" — which
+            // no card can carry), but takes the group's leading glyph so the icon rail runs unbroken through it.
             LabeledContent {
                 Picker("", selection: $notifyWhileForeground) {
                     ForEach(NotifyWhileForeground.allCases, id: \.self) { policy in
@@ -582,15 +606,20 @@ private struct ShellSettingsTab: View {
                 .pickerStyle(.menu)
                 .fixedSize()
             } label: {
-                rowLabel("Notify While Foreground", "Banner behavior while slopdesk is the foreground app.")
+                glyphLabel(
+                    .appBadge, "Notify While Foreground",
+                    "Banner behavior while slopdesk is the foreground app.",
+                )
             }
-            toggleRow(
+            glyphToggle(
+                .hourglass,
                 "Long-Command Completion",
                 "Also notify when a slow command finishes in an unfocused pane.",
                 isOn: $longCommandNotifications,
             )
             #if os(macOS)
-            toggleRow(
+            glyphToggle(
+                .arrowUpDoc,
                 "Bounce Dock Icon",
                 "Bounce the Dock icon when a notification arrives and slopdesk isn't focused.",
                 isOn: $bounceDockIcon,
@@ -606,32 +635,38 @@ private struct ShellSettingsTab: View {
     /// host detector that drives it is a deferred ceiling (DECISIONS.md).
     private var tabBadgeSection: some View {
         slateFormSection("Tab Badge") {
-            toggleRow(
+            glyphToggle(
+                .checkmarkCircle,
                 "When Command Finishes",
                 "Badge the tab when a command exits successfully.",
                 isOn: $tabBadgeOnCommandFinish,
             )
-            toggleRow(
+            glyphToggle(
+                .xmarkOctagon,
                 "When Command Fails",
                 "Badge the tab when a command exits non-zero.",
                 isOn: $tabBadgeOnCommandFail,
             )
-            toggleRow(
+            glyphToggle(
+                .questionmarkCircle,
                 "When Command Awaits Input",
                 "Badge the tab when a command stops at an interactive prompt.",
                 isOn: $tabBadgeOnCommandAwaitInput,
             )
             // The busy reveal delay (`WorkspaceStore.paneShowsBusyDot`): how long a command must run
             // before the row shows it as busy (the trailing ring + running-command title) —
-            // a fast `ls` never flashes the rail. 0 = immediate.
-            LabeledContent("Busy reveal delay") {
-                HStack(spacing: Slate.Metric.space2) {
-                    Slider(value: $tabBadgeBusyDelaySeconds, in: 0...10, step: 0.5)
-                    Text(String(format: "%.1fs", tabBadgeBusyDelaySeconds))
-                        .foregroundStyle(Slate.Text.secondary)
-                        .monospacedDigit()
-                }
-            }
+            // a fast `ls` never flashes the rail. The stops are the three real intentions; `Instant`
+            // (0s) names the behaviour rather than showing a delay that happens to be short.
+            SettingsSliderRow(
+                "Busy reveal delay",
+                subtitle: "How long a command must run before its row shows as busy — a fast `ls` never "
+                    + "flashes the rail.",
+                value: $tabBadgeBusyDelaySeconds,
+                range: SettingsBusyDelayLadder.range,
+                step: SettingsBusyDelayLadder.step,
+                presets: SettingsBusyDelayLadder.presets,
+                readout: SettingsBusyDelayLadder.readout,
+            )
             timingFooter(.live)
         }
     }
@@ -639,12 +674,14 @@ private struct ShellSettingsTab: View {
     /// The SOUND group (Shell): the BEL → system-beep gate + the error-exit beep.
     private var soundSection: some View {
         slateFormSection("Sound") {
-            toggleRow(
+            glyphToggle(
+                .speakerWave2,
                 "Sound — Shell Controlled",
                 "Let shell apps ring the terminal bell (BEL) as the system alert sound.",
                 isOn: $soundShellControlled,
             )
-            toggleRow(
+            glyphToggle(
+                .speakerWave3,
                 "Sound on Error Exit",
                 "Beep when a command exits non-zero (requires shell integration).",
                 isOn: $soundOnErrorExit,
@@ -656,12 +693,14 @@ private struct ShellSettingsTab: View {
     /// The CODE AGENT group (Claude-only). IPC-driven, no shell integration needed.
     private var codeAgentSection: some View {
         slateFormSection("Code Agent") {
-            toggleRow(
+            glyphToggle(
+                .sparkles,
                 "Notify When Task Completes",
                 "Notify when a coding agent finishes a task and goes idle.",
                 isOn: $agentNotifyTaskComplete,
             )
-            toggleRow(
+            glyphToggle(
+                .handRaised,
                 "Notify When Awaiting Input",
                 "Notify when a coding agent needs approval or input.",
                 isOn: $agentNotifyAwaitInput,
@@ -670,9 +709,12 @@ private struct ShellSettingsTab: View {
         }
     }
 
-    /// A toggle row with a bold-label-over-gray-subtext layout (the switch trailing).
-    private func toggleRow(_ title: String, _ subtitle: String? = nil, isOn binding: Binding<Bool>) -> some View {
-        Toggle(isOn: binding) { rowLabel(title, subtitle) }
+    /// A toggle row with a leading glyph over the bold-label / gray-subtext layout. The Shell page is ~15
+    /// consecutive switches with sentence subtitles; the icon column is what makes it scannable.
+    private func glyphToggle(
+        _ symbol: SFSymbol, _ title: String, _ subtitle: String? = nil, isOn binding: Binding<Bool>,
+    ) -> some View {
+        SettingsGlyphToggleRow(symbol, title, subtitle, isOn: binding)
     }
 
     /// The row label layout: a bold title with an optional gray subtext beneath.
@@ -685,6 +727,19 @@ private struct ShellSettingsTab: View {
                     .foregroundStyle(Slate.Text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+
+    /// ``rowLabel`` with the group's leading glyph — for a NON-toggle row sitting inside a glyph-rail group, so
+    /// the icon column runs unbroken past it. Always inert ink (a picker row has no on/off to tint).
+    private func glyphLabel(_ symbol: SFSymbol, _ title: String, _ subtitle: String?) -> some View {
+        HStack(alignment: .top, spacing: Slate.Metric.space2) {
+            Image(systemSymbol: symbol)
+                .font(.system(size: Slate.Typeface.base))
+                .foregroundStyle(Slate.Text.icon)
+                .frame(width: Slate.Metric.iconSize)
+                .padding(.top, Slate.Metric.space1 / 2)
+            rowLabel(title, subtitle)
         }
     }
 
@@ -844,23 +899,23 @@ private struct ControlsSettingsTab: View {
                 toggleRow(
                     "Shift+Arrow Select",
                     "Use Shift+arrows to drive a native selection instead of forwarding the arrow escapes.",
-                    isOn: $shiftArrowSelect,
+                    symbol: .textCursor, isOn: $shiftArrowSelect,
                 )
                 toggleRow(
                     "Clear Selection on Typing",
                     "Drop the selection the moment any key is sent to the program.",
-                    isOn: $clearSelectionOnTyping,
+                    symbol: .keyboard, isOn: $clearSelectionOnTyping,
                 )
                 toggleRow(
                     "Clear Selection on Copy",
                     "Drop the highlight after an explicit copy (does not apply when Copy on Select fires).",
-                    isOn: $clearSelectionOnCopy,
+                    symbol: .docOnDoc, isOn: $clearSelectionOnCopy,
                 )
                 toggleRow(
                     "Backspace Deletes Selection",
                     "Not yet functional — the terminal renderer exposes no selection-geometry API, so "
                         + "Backspace deletes a single character whether this is on or off. Off by default.",
-                    isOn: $backspaceDeletesSelection,
+                    symbol: .deleteLeft, isOn: $backspaceDeletesSelection,
                 )
                 timingFooter(.live)
             }
@@ -869,22 +924,22 @@ private struct ControlsSettingsTab: View {
                 toggleRow(
                     "Copy on Select",
                     "Copy the selection to the pasteboard as soon as it is made.",
-                    isOn: $copyOnSelect,
+                    symbol: .docOnDoc, isOn: $copyOnSelect,
                 )
                 toggleRow(
                     "Trim Trailing Spaces on Copy",
                     "Strip trailing whitespace from each copied line.",
-                    isOn: $trimTrailingSpacesOnCopy,
+                    symbol: .scissors, isOn: $trimTrailingSpacesOnCopy,
                 )
                 toggleRow(
                     "Paste Protection",
                     "Warn before pasting multi-line, trailing-newline, sudo/su, or control-character text.",
-                    isOn: $pasteProtection,
+                    symbol: .shield, isOn: $pasteProtection,
                 )
                 toggleRow(
                     "Paste Bracketed Safe",
                     "Skip the paste warning when the receiving program advertises bracketed-paste support.",
-                    isOn: $pasteBracketedSafe,
+                    symbol: .shieldLefthalfFilled, isOn: $pasteBracketedSafe,
                 )
                 timingFooter(.live)
             }
@@ -901,18 +956,19 @@ private struct ControlsSettingsTab: View {
                 toggleRow(
                     "Undo at Prompt",
                     "Press Cmd-Z at the shell prompt to emit the readline undo sequence.",
-                    isOn: $undoAtPrompt,
+                    symbol: .arrowUturnBackward, isOn: $undoAtPrompt,
                 )
-                pickerRow(
+                // Four labels that read almost identically as prose become four distinct key-row
+                // silhouettes — the lit ⌥ caps ARE the setting.
+                SettingsOptionCards(
                     "Option as Alt",
-                    "Treat the macOS Option key as Alt/Meta so terminal apps see Esc-prefixed sequences "
-                        + "(Emacs, Vim word-jumps, readline). Off keeps Option free for accented characters.",
-                    selection: $optionAsAlt,
-                ) {
-                    Text("Off").tag(OptionAsAlt.off)
-                    Text("Both Option Keys").tag(OptionAsAlt.both)
-                    Text("Left Option Only").tag(OptionAsAlt.left)
-                    Text("Right Option Only").tag(OptionAsAlt.right)
+                    subtitle: "Treat the macOS Option key as Alt/Meta so terminal apps see Esc-prefixed "
+                        + "sequences (Emacs, Vim word-jumps, readline). Off keeps Option free for accented "
+                        + "characters.",
+                    options: SettingsOptionCatalog.optionAsAlt,
+                    selection: refreshing($optionAsAlt),
+                ) { option in
+                    SettingsOptionKeyArt(mode: option.value)
                 }
                 timingFooter(.live)
             }
@@ -925,12 +981,12 @@ private struct ControlsSettingsTab: View {
                     "Auto Secure Input",
                     "Automatically engage macOS Secure Keyboard Entry when the remote shell shows a hidden "
                         + "password prompt (sudo, ssh, read -s), so no other app can read your keystrokes.",
-                    isOn: $autoSecureInput,
+                    symbol: .lockShield, isOn: $autoSecureInput,
                 )
                 toggleRow(
                     "Show Secure Input Indicator",
                     "Show the SECURE INPUT pill in the pane while secure keyboard entry is active.",
-                    isOn: $secureInputIndicator,
+                    symbol: .eyeTrianglebadgeExclamationmark, isOn: $secureInputIndicator,
                 )
                 timingFooter(.live)
             }
@@ -945,7 +1001,7 @@ private struct ControlsSettingsTab: View {
             toggleRow(
                 "Scroll to Bottom on Output",
                 "Snap the viewport to the bottom when new output arrives.",
-                isOn: $scrollOnOutput,
+                symbol: .arrowDownToLine, isOn: $scrollOnOutput,
             )
             pickerRow(
                 "Scroll Past Last Line",
@@ -973,19 +1029,29 @@ private struct ControlsSettingsTab: View {
                 "Smooth Scroll",
                 "Scrolling already runs at pixel granularity. The whole-row snap when this is off is not "
                     + "yet active (the renderer exposes no row-snap hook — deferred).",
-                isOn: $smoothScroll,
+                symbol: .arrowUpArrowDown, isOn: $smoothScroll,
             )
-            LabeledContent("Scroll multiplier") {
-                HStack(spacing: Slate.Metric.space2) {
-                    Slider(value: refreshing($scrollMultiplier), in: 0.25...5, step: 0.25)
-                    Text(String(format: "%.2f×", scrollMultiplier))
-                        .foregroundStyle(Slate.Text.secondary)
-                        .monospacedDigit()
-                }
-            }
-            Stepper(
-                "Scrollback: \(store.terminal.scrollbackLines) lines",
-                value: $store.terminal.scrollbackLines, in: 1000...100_000, step: 1000,
+            // The stops name the values that MEAN something (half speed, the 1× identity, double, triple), so
+            // "put it back to normal" is one tap rather than a drag hunt for exactly 1.00.
+            SettingsSliderRow(
+                "Scroll multiplier",
+                subtitle: "Scales every scroll gesture's distance.",
+                value: refreshing($scrollMultiplier),
+                range: SettingsScrollMultiplierLadder.range,
+                step: SettingsScrollMultiplierLadder.step,
+                presets: SettingsScrollMultiplierLadder.presets,
+                readout: SettingsScrollMultiplierLadder.readout,
+            )
+            // Was a `Stepper` at 1 000 lines a click: crossing its own 1 000…100 000 range took 99 clicks, so
+            // the deep end was effectively unreachable. The magnitude stops make every useful depth one tap.
+            SettingsSliderRow(
+                "Scrollback",
+                subtitle: "How much history each pane keeps. Deeper buffers cost host memory per pane.",
+                value: scrollbackBinding,
+                range: SettingsScrollbackLadder.range,
+                step: SettingsScrollbackLadder.step,
+                presets: SettingsScrollbackLadder.presets,
+                readout: SettingsScrollbackLadder.readout,
             )
             timingFooter(.live)
         }
@@ -997,23 +1063,21 @@ private struct ControlsSettingsTab: View {
             toggleRow(
                 "Mouse Over to Focus",
                 "Focus the pane under the mouse cursor automatically.",
-                isOn: $focusFollowsMouse,
+                symbol: .cursorarrowRays, isOn: $focusFollowsMouse,
             )
-            pickerRow(
+            // Symbol cards, not a diagram: five actions with no shared geometry to draw (see
+            // `SettingsSymbolArt`'s note on when a glyph is the honest choice).
+            SettingsOptionCards(
                 "Right-Click Action",
-                "What right-click does in the terminal viewport (Ctrl+right-click always opens the menu).",
-                selection: $rightClickAction,
-            ) {
-                Text("Context Menu").tag(RightClickAction.contextMenu)
-                Text("Copy").tag(RightClickAction.copy)
-                Text("Paste").tag(RightClickAction.paste)
-                Text("Copy or Paste").tag(RightClickAction.copyOrPaste)
-                Text("Ignore").tag(RightClickAction.ignore)
-            }
+                subtitle: "What right-click does in the terminal viewport (Ctrl+right-click always opens the "
+                    + "menu).",
+                options: SettingsOptionCatalog.rightClickActions,
+                selection: refreshing($rightClickAction),
+            )
             toggleRow(
                 "Hide Mouse When Typing",
                 "Hide the mouse cursor while the keyboard is in use.",
-                isOn: $mouseHideWhileTyping,
+                symbol: .cursorarrowSlash, isOn: $mouseHideWhileTyping,
             )
             // Surfaces as a simple ON/OFF switch (`spec/cursor-and-mouse`), not a 4-way picker: ON ⇒ ⇧ extends
             // the selection (`MouseShiftCapture.enabled`, default), OFF ⇒ ⇧ forwarded to the program
@@ -1023,7 +1087,7 @@ private struct ControlsSettingsTab: View {
             toggleRow(
                 "Allow Shift with Mouse Click",
                 "Hold Shift to select text even when the running app captures the mouse.",
-                isOn: Binding(
+                symbol: .cursorarrowClick, isOn: Binding(
                     get: { allowShiftClick.extendsSelection },
                     set: { allowShiftClick = $0 ? .enabled : .disabled },
                 ),
@@ -1031,12 +1095,12 @@ private struct ControlsSettingsTab: View {
             toggleRow(
                 "Cursor Click-to-Move",
                 "Click in the prompt to move the shell cursor — sends arrow keys across soft-wrapped rows.",
-                isOn: $clickToMove,
+                symbol: .cursorarrowMotionlines, isOn: $clickToMove,
             )
             toggleRow(
                 "Allow Mouse Capture",
                 "Allow shell apps to capture mouse events (e.g. vim, tmux).",
-                isOn: $allowMouseCapture,
+                symbol: .rectangleAndHandPointUpLeft, isOn: $allowMouseCapture,
             )
             timingFooter(.live)
         }
@@ -1149,6 +1213,17 @@ private struct ControlsSettingsTab: View {
 
     // MARK: - Row helpers
 
+    /// Bridge the `scrollbackLines` Int model field to the slider's `Double`. Rounded (never truncated) so a
+    /// float-stepped drag can't land one line BELOW the stop it visually snapped to — and written straight to
+    /// `store.terminal`, whose `didSet` rebuilds the libghostty config (no `refreshing(_:)` hop: this is a typed
+    /// render pref, not a fire-time `Defaults` toggle).
+    private var scrollbackBinding: Binding<Double> {
+        Binding(
+            get: { Double(store.terminal.scrollbackLines) },
+            set: { store.terminal.scrollbackLines = Int($0.rounded()) },
+        )
+    }
+
     /// Wrap a fire-time `Defaults` control binding so a change ALSO re-applies the live terminal config (the
     /// Controls passthrough). `PreferencesStore` is isolated on its injected `UserDefaults`; the global
     /// Controls toggles live in `Defaults.standard`, so `refreshTerminalControls()` is the explicit re-read
@@ -1163,9 +1238,14 @@ private struct ControlsSettingsTab: View {
         )
     }
 
-    /// A toggle row with a bold-label-over-gray-subtext layout (the switch trailing).
-    private func toggleRow(_ title: String, _ subtitle: String? = nil, isOn binding: Binding<Bool>) -> some View {
-        Toggle(isOn: refreshing(binding)) { rowLabel(title, subtitle) }
+    /// A toggle row with a leading glyph, wrapped in the `refreshing(_:)` seam so the change also re-applies the
+    /// live terminal config. `symbol` defaults to a neutral slider glyph for the rows whose meaning no icon
+    /// improves — every row still lands on the icon RAIL, so a 20-switch page stays scannable.
+    private func toggleRow(
+        _ title: String, _ subtitle: String? = nil, symbol: SFSymbol = .sliderHorizontal3,
+        isOn binding: Binding<Bool>,
+    ) -> some View {
+        SettingsGlyphToggleRow(symbol, title, subtitle, isOn: refreshing(binding))
     }
 
     /// A dropdown row (label + subtext leading, a `.menu` picker trailing) for the multi-state Controls enums.
@@ -1209,17 +1289,28 @@ private struct EditorSettingsTab: View {
     var body: some View {
         Form {
             slateFormSection("Editor") {
-                LabeledContent("File editor") {
-                    Text("Not available")
+                // A RESERVED page states its own emptiness in the empty-state voice (MERIDIAN C3: muted
+                // symbol, short title, one-line cause) rather than as a "File editor — Not available" row,
+                // which read like a broken control. Local to this page, NOT a new `SlateEmptyState.Cause`:
+                // that enum's typed causes are the pane area's connection states, with pinned copy per case.
+                VStack(spacing: Slate.Metric.space2) {
+                    Image(systemSymbol: .docText)
+                        .font(.system(size: Slate.Typeface.display))
                         .foregroundStyle(Slate.Text.tertiary)
+                    Text("No File Editor Yet")
+                        .font(.system(size: Slate.Typeface.body, weight: .semibold))
+                    Text(
+                        "Soft Wrap, Line Numbers, and Tab Size configure a built-in file editor slopdesk "
+                            + "does not have. Terminal font and cursor live under Appearance; scrollback "
+                            + "under Controls.",
+                    )
+                    .font(.system(size: Slate.Typeface.footnote))
+                    .foregroundStyle(Slate.Text.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
                 }
-                Text(
-                    "Editor settings (Soft Wrap, Line Numbers, Tab Size, …) configure a built-in file editor, "
-                        + "which slopdesk does not have yet. Terminal font, cursor, and scrollback live under "
-                        + "Appearance and Controls.",
-                )
-                .font(.system(size: Slate.Typeface.footnote))
-                .foregroundStyle(Slate.Text.secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, Slate.Metric.space4)
             }
         }
         .formStyle(.grouped)
@@ -1269,10 +1360,15 @@ private struct AppearanceSettingsTab: View {
             // BACKED — Auto Hide drives `SidebarAutoHidePolicy`, Window Size + steppers
             // feed `WindowSizeMath` via the macOS `NSWindow` glue. Not dead UI.
             slateFormSection("Tabs") {
-                Picker("New tab position", selection: $newTabPosition) {
-                    Text("Automatic").tag(NewTabPosition.auto)
-                    Text("End").tag(NewTabPosition.end)
-                    Text("After Current Tab").tag(NewTabPosition.afterCurrent)
+                // The diagram is the vertical tab COLUMN slopdesk actually has, with the incoming row drawn in
+                // the accent at the slot the policy inserts it.
+                SettingsOptionCards(
+                    "New tab position",
+                    subtitle: "Where a new tab lands in the sidebar.",
+                    options: SettingsOptionCatalog.newTabPositions,
+                    selection: $newTabPosition,
+                ) { option in
+                    SettingsTabPositionArt(position: option.value)
                 }
                 // AUTO HIDE TABS PANEL (`auto-hide-tabs-panel`, `tab-setting.png`): `.auto` collapses
                 // the sidebar when the active session has one tab (reads `SidebarAutoHidePolicy`);
@@ -1295,20 +1391,24 @@ private struct AppearanceSettingsTab: View {
             windowSection
             #endif
 
-            // THEME: the picker lists every built-in theme; picking one writes `theme`/`themeDark`.
-            // With "Use separated theme for dark mode" ON the OS appearance selects the slot, so a Dark Theme
-            // picker appears below the toggle (`dark-mode-theme.png`).
+            // THEME: a GALLERY, not a dropdown — each card is a miniature of that theme's own terminal
+            // (`ThemeGalleryView`). Picking one writes `theme`/`themeDark`. With "Use separated theme for dark
+            // mode" ON the OS appearance selects the slot, so a Dark Theme gallery appears below the toggle
+            // (`dark-mode-theme.png`).
             slateFormSection("Theme") {
-                Picker("Theme", selection: themeSelectionBinding(forDarkSlot: false)) {
-                    themeOptions
-                }
-                LabeledContent("Density") {
-                    Picker("Density", selection: densityBinding) {
-                        Text("Comfortable").tag("comfortable")
-                        Text("Compact").tag("compact")
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
+                ThemeGalleryView(
+                    title: "Theme",
+                    subtitle: "Repaints the chrome AND the terminal cells — one flat palette, applied live.",
+                    selection: themeSelectionBinding(forDarkSlot: false),
+                )
+                Divider()
+                SettingsOptionCards(
+                    "Density",
+                    subtitle: "How much air each sidebar row gets.",
+                    options: SettingsOptionCatalog.densities,
+                    selection: densityBinding,
+                ) { option in
+                    SettingsDensityArt(compact: option.value == SettingsOptionCatalog.densityCompact)
                 }
             }
 
@@ -1328,9 +1428,11 @@ private struct AppearanceSettingsTab: View {
 
             if store.appearance.useSeparateDarkTheme ?? false {
                 slateFormSection("Dark Theme") {
-                    Picker("Dark Theme", selection: themeSelectionBinding(forDarkSlot: true)) {
-                        themeOptions
-                    }
+                    ThemeGalleryView(
+                        title: "Dark Theme",
+                        subtitle: "Used while the system is in dark mode.",
+                        selection: themeSelectionBinding(forDarkSlot: true),
+                    )
                 }
             }
 
@@ -1348,10 +1450,14 @@ private struct AppearanceSettingsTab: View {
             CursorPreviewView(store: store)
             #else
             slateFormSection("Cursor") {
-                Picker("Style", selection: $store.terminal.cursorStyle) {
-                    ForEach(TerminalPreferences.CursorStyle.allCases, id: \.self) { style in
-                        Text(style.displayName).tag(style)
-                    }
+                // The SAME caret cards macOS shows (`SettingsCaretArt` is cross-platform) — only the colour
+                // wells + live prompt preview are macOS-only.
+                SettingsOptionCards(
+                    "Style",
+                    options: SettingsOptionCatalog.cursorStyles,
+                    selection: $store.terminal.cursorStyle,
+                ) { option in
+                    SettingsCaretArt(style: option.value, color: Slate.Text.primary)
                 }
                 Picker("Blink", selection: $store.terminal.cursorBlink) {
                     Text("Default").tag(TerminalPreferences.CursorBlink.default)
@@ -1362,7 +1468,12 @@ private struct AppearanceSettingsTab: View {
             #endif
 
             slateFormSection("Chrome") {
-                Toggle("Show command dividers", isOn: $showBlockDividers)
+                SettingsGlyphToggleRow(
+                    .textAlignleft,
+                    "Show command dividers",
+                    "Rule off each command's output block in the terminal.",
+                    isOn: $showBlockDividers,
+                )
             }
 
             // DOCK ICON: under **Appearance** (terminal-features__progress-state.md).
@@ -1371,30 +1482,24 @@ private struct AppearanceSettingsTab: View {
             // `WorkspaceStore.dockTileModel`) — not dead UI.
             #if os(macOS)
             slateFormSection("Dock Icon") {
-                Toggle("Animate Icon on Progress", isOn: $dockIconAnimateProgress)
-                Toggle("Red Icon on Error", isOn: $dockIconErrorBadge)
+                SettingsGlyphToggleRow(
+                    .chartBarFill,
+                    "Animate Icon on Progress",
+                    "Fill the Dock tile as a running command progresses.",
+                    isOn: $dockIconAnimateProgress,
+                )
+                SettingsGlyphToggleRow(
+                    .exclamationmarkOctagon,
+                    "Red Icon on Error",
+                    "Tint the Dock tile when a command exits non-zero.",
+                    isOn: $dockIconErrorBadge,
+                )
             }
             #endif
 
             Section { timingFooter(.live) }
         }
         .formStyle(.grouped)
-    }
-
-    /// The shared picker options — the fixed built-in list (each tagged with its ``ThemeChoice`` so the SAME
-    /// body serves both the light/primary slot and the dark slot).
-    @ViewBuilder private var themeOptions: some View {
-        Text("System").tag(ThemeChoice.system)
-        Divider()
-        Text("Monokai Pro (Classic)").tag(ThemeChoice.monokaiProClassic)
-        Text("Monokai Pro Light").tag(ThemeChoice.monokaiProClassicLight)
-        Text("Monokai Pro Octagon").tag(ThemeChoice.monokaiProOctagon)
-        Text("Monokai Pro Machine").tag(ThemeChoice.monokaiProMachine)
-        Text("Monokai Pro Ristretto").tag(ThemeChoice.monokaiProRistretto)
-        Text("Monokai Pro Spectrum").tag(ThemeChoice.monokaiProSpectrum)
-        Divider()
-        Text("Paper (Light)").tag(ThemeChoice.paper)
-        Text("Dark").tag(ThemeChoice.dark)
     }
 
     /// Bridge the picker selection to one theme SLOT's model field (`theme` for the light/primary slot,
@@ -1444,14 +1549,15 @@ private struct AppearanceSettingsTab: View {
     #if os(macOS)
     private var windowSection: some View {
         slateFormSection("Window") {
-            pickerRow(
+            // Each card draws the unit the mode MEASURES IN: a dashed ghost of the remembered frame, actual
+            // cells for the grid, the two pixel rules for the frame.
+            SettingsOptionCards(
                 "Window Size",
-                "How new windows decide their initial dimensions.",
+                subtitle: "How new windows decide their initial dimensions.",
+                options: SettingsOptionCatalog.windowSizes,
                 selection: $windowSize,
-            ) {
-                Text("Remember last size").tag(WindowSizeMode.remember)
-                Text("Grid (cols × rows)").tag(WindowSizeMode.grid)
-                Text("Frame (pixels)").tag(WindowSizeMode.frame)
+            ) { option in
+                windowSizeArt(option.value)
             }
             switch windowSize {
             case .remember:
@@ -1472,15 +1578,14 @@ private struct AppearanceSettingsTab: View {
             // Parallels model — a bare touch at the top reaches the REMOTE menu bar). Read once per
             // desktop-window open by the satellite coordinator; both fullscreen flavours auto-arm
             // immersive system-key capture while they last.
-            pickerRow(
+            SettingsOptionCards(
                 "Remote Desktop Opens",
-                "Fullscreen captures system shortcuts (⌘Tab) for the host while it lasts. "
+                subtitle: "Fullscreen captures system shortcuts (⌘Tab) for the host while it lasts. "
                     + "Borderless keeps the local menu bar away until the pointer dwells at the top edge.",
+                options: SettingsOptionCatalog.desktopPresentations,
                 selection: $desktopWindowPresentation,
-            ) {
-                Text("In a window").tag(DesktopWindowPresentation.window)
-                Text("Fullscreen").tag(DesktopWindowPresentation.fullscreen)
-                Text("Borderless fullscreen").tag(DesktopWindowPresentation.borderless)
+            ) { option in
+                desktopPresentationArt(option.value)
             }
             // BACKGROUND INTERACTION (`satellite-window`): pointer interaction with a remote-desktop /
             // pop-out window that is NOT key — hover, scroll and click forward to the host and a click
@@ -1495,6 +1600,25 @@ private struct AppearanceSettingsTab: View {
         }
     }
     #endif
+
+    /// The card art per window-size mode: the UNIT each mode measures in.
+    private func windowSizeArt(_ mode: WindowSizeMode) -> some View {
+        SettingsWindowArt(fills: false, titled: true) {
+            switch mode {
+            case .remember: SettingsRememberArt()
+            case .grid: SettingsGridArt()
+            case .frame: SettingsPixelArt()
+            }
+        }
+    }
+
+    /// The card art per desktop presentation. `fills` shows the window's relationship to the screen bezel;
+    /// `titled` is the one mark that separates native fullscreen from a borderless cover.
+    private func desktopPresentationArt(_ kind: DesktopWindowPresentation) -> some View {
+        SettingsWindowArt(fills: kind != .window, titled: kind != .borderless) {
+            EmptyView()
+        }
+    }
 
     // MARK: - Row helpers
 
@@ -1590,11 +1714,24 @@ private struct AgentsSettingsTab: View {
     /// ``AgentBadgeGates`` default the sidebar applies (a per-pane override lives on the tab context-menu).
     private var agentBehaviorSection: some View {
         slateFormSection("Agent Behaviour") {
-            Toggle("Badge While Processing", isOn: $agentBadgeWhileProcessing)
-            Toggle("Badge When Task Completes", isOn: $agentBadgeWhenComplete)
-            Toggle("Badge When Awaiting Input", isOn: $agentBadgeWhenAwaitingInput)
-            Toggle("Notify When Task Completes", isOn: $agentNotifyTaskComplete)
-            Toggle("Notify When Awaiting Input", isOn: $agentNotifyAwaitInput)
+            SettingsGlyphToggleRow(
+                .circleDashed, "Badge While Processing",
+                "Ring the tab while the agent is working.", isOn: $agentBadgeWhileProcessing,
+            )
+            SettingsGlyphToggleRow(
+                .checkmarkCircle, "Badge When Task Completes",
+                "Mark the tab when the agent goes idle.", isOn: $agentBadgeWhenComplete,
+            )
+            SettingsGlyphToggleRow(
+                .handRaised, "Badge When Awaiting Input",
+                "Mark the tab when the agent needs approval.", isOn: $agentBadgeWhenAwaitingInput,
+            )
+            SettingsGlyphToggleRow(
+                .bell, "Notify When Task Completes", isOn: $agentNotifyTaskComplete,
+            )
+            SettingsGlyphToggleRow(
+                .bellBadge, "Notify When Awaiting Input", isOn: $agentNotifyAwaitInput,
+            )
             if !behaviorEnabled {
                 Text("Install an integration above to configure agent behaviour.")
                     .font(.system(size: Slate.Typeface.footnote))
