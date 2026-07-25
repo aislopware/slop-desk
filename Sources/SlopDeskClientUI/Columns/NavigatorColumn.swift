@@ -38,8 +38,8 @@ struct NavigatorColumn: View {
     /// provides its own toggle) omits the button.
     var chrome: WorkspaceChromeState?
 
-    /// The app-global connection — resting home is the SIDEBAR FOOTER (the two-line rail block:
-    /// host + mono detail on the text rail, pure text; never jammed into the traffic-light
+    /// The app-global connection — resting home is the SIDEBAR FOOTER (one status line on the
+    /// sidebar's rails: host leading, ping trailing, pure text; never jammed into the traffic-light
     /// strip). While the sidebar is COLLAPSED the titlebar hosts the trailing fallback
     /// (`SlateTitlebar`). Threaded in like `preferences`; `nil` (previews / iOS) omits the cluster.
     var connection: AppConnection?
@@ -266,20 +266,19 @@ struct NavigatorColumn: View {
                 NewTabDropSlot(coordinator: paneDrag)
             }
 
-            // Connection footer — full-width status row under the tab list (ScrollView maxHeight: .infinity
-            // pins this to the bottom). Hairline separates list from chrome; fillWidth so hover/hit read as
-            // one sidebar item. Leading-aligned fixed column keeps ticking telemetry from shifting the host.
+            // Connection footer — one full-width status row under the tab list (ScrollView
+            // maxHeight: .infinity pins it to the bottom). NO rule above it: the panel separates its
+            // bands by AIR (the section headers' own dialect), and a hairline here drew a seam across
+            // a sidebar that has none anywhere else. The `space3` gap is the separator — the same
+            // inter-group band the groups use. Full-width so hover/hit read as one sidebar item.
             if let connection {
-                Rectangle()
-                    .fill(Slate.Line.subtle)
-                    .frame(maxWidth: .infinity)
-                    .frame(height: Slate.Metric.hairline)
                 // The telemetry (~1 Hz; ping visible, fps/kbps tooltip-only) is read inside
                 // `SidebarConnectionFooter` so its per-second ticks re-render that leaf, never this
                 // sidebar body.
                 SidebarConnectionFooter(store: store, connection: connection, onConnect: onConnect)
                     .padding(.horizontal, Slate.Metric.space2)
-                    .padding(.vertical, Slate.Metric.space2)
+                    .padding(.top, Slate.Metric.space3)
+                    .padding(.bottom, Slate.Metric.space2)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -981,9 +980,8 @@ private struct NewTabDropSlot: View {
 
 /// The sidebar's connection footer, split into its own leaf: the ``ConnectionTelemetry``
 /// reads tick at ~1 Hz off the live session models — read HERE so each tick re-renders this footer
-/// only, never the sidebar body (which would re-derive the whole rail every second). The detail
-/// line carries the full readout — ping, stream numbers while a video pane streams, link uptime
-/// (`ConnectionCluster` header note; the ping-alone rule is the COMPACT mounts').
+/// only, never the sidebar body (which would re-derive the whole rail every second). The visible
+/// readout is the PING alone; the stream numbers ride the tooltip (`ConnectionCluster` header note).
 private struct SidebarConnectionFooter: View {
     let store: WorkspaceStore
     let connection: AppConnection

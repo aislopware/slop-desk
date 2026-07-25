@@ -2616,3 +2616,33 @@ tests renamed to `UnseenAttentionQueueTests`, every behavior pin kept). Cascade 
 the last consumer gone: `SlateStatusDot`, `SlatePopoverRow`'s title-ink override, the titlebar
 snapshot fixture — and, in the follow-up audit sweep, the entry's host-label field (read only by
 the deleted menu row) leaves `UnseenAttentionEntry`; `since` stays, it orders the queue.
+
+### Round 12 — the footer stops being a dashboard: one status line, no rule (2026-07-25)
+
+With the row list settled, the sidebar's last unexamined band was its footer: a hairline, then a
+two-line instrument block (hostname over `12 ms · up 2h 14m`). The verdict on both halves —
+the rule read cheap, and the second line was paying footer real estate for readings nobody acts on.
+
+1. **The hairline is deleted.** The panel's own dialect already says how bands separate: the
+   section headers carry "no caps, no rule — groups separate by the header band's own air". A
+   `Slate.Line.subtle` rule at the bottom was the one seam in a sidebar that draws none anywhere
+   else. The separator is now the `space3` gap above the row — the same inter-group band the
+   groups use.
+2. **The footer collapses to ONE line** (`ConnectionRailFooter`): hostname leading on the rows'
+   text rail, metric trailing in the rows' status-mark column, so the footer reads as the list's
+   last line rather than a widget bolted under it. The ink rules are unchanged — `LedState` still
+   dims the host while nothing is connected and puts warn/err on the ping digits alone; a status
+   WORD ("reconnecting 3/20") now takes the system face while a METRIC keeps the instrument mono,
+   matching the compact mount's trailing slot.
+3. **Link uptime is retired outright** — `footerExtras`, `uptimeLabel` and `AppConnection`'s
+   `connectedSince` stamp all go with it (the readout was their only reader). "How long has this
+   link been up" is a number you read once and never act on. The stream numbers do not move into
+   the freed slot either: appending them is what truncated the hostname in the first place
+   (`2850f842`), so fps/kbps stay tooltip detail on BOTH mounts.
+
+The two mounts are now the same shape — host leading, metric trailing — differing only in their
+insets and in the rail's willingness to say "connected" in the beat before the first ping sample
+(the compact row stays silent there; a connected footer with an empty right edge reads as broken).
+Deliberately NOT taken: a `+` New-Tab affordance in the freed space (the footer is status, not a
+control strip), and a host-load readout (genuinely useful, but it needs a new host→client control
+message — a separate scope, not a polish round). Client-only; no wire change.

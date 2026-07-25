@@ -172,24 +172,20 @@ final class SlateSnapshotRender: XCTestCase {
 
     // MARK: - Opt-in render of the sidebar connection footer (every ink state)
 
-    /// Renders the REAL ``ConnectionRailFooter`` (the two-line text block: hostname + mono
-    /// detail, with the tertiary extras trail — uptime, stream numbers — riding the ping) in
-    /// every ink state — healthy ping (bare + full readout), degraded, dialing, dimmed offline — at the
-    /// true sidebar width, under the footer's hairline, so the ink steps and the rail alignment
-    /// can be eyeballed headlessly. SAME opt-in idiom; writes `sidebar-footer.png` into
-    /// `SLOPDESK_TABROW_SNAPSHOT_DIR`.
+    /// Renders the REAL ``ConnectionRailFooter`` (the one-line status row: hostname leading, metric
+    /// trailing) in every ink state — healthy, degraded, bad, dialing, dimmed offline, plus a long
+    /// hostname proving the host is the row's truncator — at the true sidebar width, so the ink steps
+    /// and BOTH rail alignments can be eyeballed headlessly. SAME opt-in idiom; writes
+    /// `sidebar-footer.png` into `SLOPDESK_TABROW_SNAPSHOT_DIR`.
     @MainActor
     func testRenderSidebarFooter() throws {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
             throw XCTSkip("set SLOPDESK_TABROW_SNAPSHOT_DIR=<dir> to render the sidebar footer")
         }
         let panel = VStack(alignment: .leading, spacing: 0) {
-            footerRow(host: "mac-studio", led: .good, detail: ("12 ms", true), extras: " · up 2h 14m")
-            footerRow(
-                host: "mac-studio", led: .good, detail: ("12 ms", true),
-                extras: " · 60 fps · 12.4 Mbps",
-            )
-            footerRow(host: "mac-studio", led: .slow, detail: ("141 ms", true), extras: " · up 5m")
+            footerRow(host: "mac-studio", led: .good, detail: ("12 ms", true))
+            footerRow(host: "congs-macbook-pro-16-inch", led: .good, detail: ("12 ms", true))
+            footerRow(host: "mac-studio", led: .slow, detail: ("141 ms", true))
             footerRow(host: "mac-studio", led: .bad, detail: ("312 ms", true))
             footerRow(host: "mac-studio", led: .dialing, detail: ("reconnecting 3/20", false))
             footerRow(host: "mac-studio", led: .dim, detail: ("disconnected", false))
@@ -202,20 +198,16 @@ final class SlateSnapshotRender: XCTestCase {
         )
     }
 
-    /// One footer block under its hairline, mounted the way the sidebar composes it.
+    /// One footer row, mounted the way the sidebar composes it (no rule above it — the sidebar
+    /// separates its bands by air).
     @MainActor
     private func footerRow(
-        host: String, led: ConnectionCluster.LedState, detail: (String, Bool), extras: String? = nil,
+        host: String, led: ConnectionCluster.LedState, detail: (String, Bool),
     ) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Rectangle().fill(Slate.Line.subtle)
-                .frame(maxWidth: .infinity)
-                .frame(height: Slate.Metric.hairline)
-            ConnectionRailFooter(displayHost: host, led: led, detail: detail, extras: extras)
-                .padding(.vertical, Slate.Metric.space1)
-                .padding(.horizontal, Slate.Metric.space2)
-                .padding(.vertical, Slate.Metric.space2)
-        }
+        ConnectionRailFooter(displayHost: host, led: led, detail: detail)
+            .padding(.horizontal, Slate.Metric.space2)
+            .padding(.top, Slate.Metric.space3)
+            .padding(.bottom, Slate.Metric.space2)
     }
 
     /// A headless `.tree` store whose panes all live AT `key` (the project root), one blocked and one

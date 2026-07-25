@@ -1,29 +1,26 @@
 // ConnectionCluster — connection status for the SIDEBAR FOOTER (resting home) and the titlebar TRAILING
 // edge while the sidebar is collapsed. Never jammed into the traffic-light strip.
 //
-// Two mounts, two layouts:
+// Two mounts, one shape — a single quiet row, host leading and metric trailing:
 //
-// SIDEBAR FOOTER (`railFooter`) — the two-line instrument block on the sidebar's own text rail,
-// pure TEXT (no dot, no glyph — a status lamp is exactly the ornament this chrome refuses):
-//   mac-studio
-//   12 ms
-//   Hostname on the rail (footnote medium), the mono detail line beneath (the instrument readout
-//   while connected — the ping, then the stream numbers while a video pane streams OR the link
-//   uptime otherwise: "12 ms · 60 fps · 12.4 Mbps" / "12 ms · up 2h 14m" — or the short status
-//   word when nothing is up).
+// SIDEBAR FOOTER (`railFooter`) — the status line under the tab list, pure TEXT (no dot, no glyph —
+// a status lamp is exactly the ornament this chrome refuses), laid on the sidebar's OWN rails:
+//   mac-studio               12 ms
+//   The hostname starts on the same x as every row title and the ping lands in the rows' trailing
+//   column, so the footer reads as the last line of the list rather than a separate widget.
 //   State lives in the WORDS and their ink (`LedState` is the ink classifier): the hostname dims
 //   to tertiary while nothing is connected, and the status hues appear ONLY when a live link
-//   degrades (slow = warn, bad = err on the PING digits alone — the continuation stays tertiary) —
-//   the ink dialect's rule, colour means trouble.
+//   degrades (slow = warn, bad = err on the PING digits) — the ink dialect's rule, colour means
+//   trouble.
 //
-// TITLEBAR / iOS (compact) — the original one quiet row (host name + trailing ping), no LED, no
-// monogram: state lives in the text (digits carry the health colour, hostname dims when offline).
+// TITLEBAR / iOS (compact) — the same row hugging its content instead of the rails, and silent
+// (rather than saying "connected") in the beat before the first ping sample lands.
 //
-// The COMPACT row's visible metric is the ping ALONE. Appending fps/kbps there made the trailing
-// text long enough to truncate the hostname out of its own row — the identity lost to telemetry —
-// so the one-line mounts keep the stream numbers in the TOOLTIP with the raw target. The RAIL
-// footer's detail line is a whole line of its own (the hostname owns line one), so it carries the
-// full readout. Tap → Connect editor; give-up → Retry.
+// The visible metric is the ping ALONE, on both mounts. Appending fps/kbps made the trailing text
+// long enough to truncate the hostname out of its own row — the identity lost to telemetry — and a
+// second line spent on stream numbers or link uptime was footer real estate paid for readings
+// nobody acts on. Both live in the TOOLTIP with the raw target. Tap → Connect editor; give-up →
+// Retry.
 
 #if canImport(SwiftUI)
 import SFSafeSymbols
@@ -114,43 +111,14 @@ struct ConnectionCluster: View {
         }
     }
 
-    /// The rail footer's SECOND line: the mono ping metric while connected (falling back to the
-    /// status word before the first sample), else the short status word (campaign progress
-    /// included) — never a stale ping. Pure + pinned in `ConnectionClusterTests`.
+    /// The rail footer's TRAILING slot: the mono ping metric while connected (falling back to the
+    /// status word before the first sample — a connected footer with an empty right edge reads as
+    /// broken, which is why this mount speaks where the compact one stays silent), else the short
+    /// status word (campaign progress included) — never a stale ping. Pure + pinned in
+    /// `ConnectionClusterTests`.
     static func footerDetail(status: ConnectionStatus, pingMS: Double?) -> (text: String, isMetric: Bool)? {
         if case .connected = status, let label = pingLabel(pingMS) { return (label, true) }
         return (StatusPresentation.connectionLabel(status), false)
-    }
-
-    /// The rail detail line's CONTINUATION — the stream numbers while a video pane streams
-    /// (" · 60 fps · 12.4 Mbps"), else the link uptime (" · up 2h 14m"). Never both: the line is
-    /// one sidebar-width instrument, and together they truncate the tail into "· u…" — while a
-    /// stream is live it IS the story, and the uptime returns the moment it stops. Connected-only
-    /// (a dead link has no telemetry) and always on the tertiary ink: the health colour belongs to
-    /// the ping digits (``footerDetail``), never to this trail. `nil` when nothing rides. Pure +
-    /// pinned in `ConnectionClusterTests`.
-    static func footerExtras(status: ConnectionStatus, fps: Int?, kbps: Int?, uptime: String?) -> String? {
-        guard case .connected = status else { return nil }
-        var parts: [String] = []
-        if let fps { parts.append("\(fps) fps") }
-        if let kbps { parts.append(bitrateLabel(kbps: kbps)) }
-        if parts.isEmpty, let uptime { parts.append(uptime) }
-        guard !parts.isEmpty else { return nil }
-        return parts.map { " · \($0)" }.joined()
-    }
-
-    /// The link-uptime readout ("up 2h 14m") for the rail's detail line. Hidden for the first
-    /// minute — a seconds counter would tick every render, motion the resting footer refuses —
-    /// then minute-granular: hours carry minutes, days carry hours. Pure + pinned in
-    /// `ConnectionClusterTests`.
-    static func uptimeLabel(since: Date?, now: Date) -> String? {
-        guard let since else { return nil }
-        let minutes = Int(now.timeIntervalSince(since)) / 60
-        guard minutes >= 1 else { return nil }
-        if minutes < 60 { return "up \(minutes)m" }
-        let hours = minutes / 60
-        if hours < 24 { return "up \(hours)h \(minutes % 60)m" }
-        return "up \(hours / 24)d \(hours % 24)h"
     }
 
     /// Metric digits: tertiary when healthy, warn/err only when degrading.
@@ -226,7 +194,7 @@ struct ConnectionCluster: View {
         .frame(maxWidth: fillWidth ? .infinity : nil, alignment: .leading)
     }
 
-    /// The sidebar footer's two-line instrument block. The presentational layout lives in
+    /// The sidebar footer's status line. The presentational layout lives in
     /// ``ConnectionRailFooter`` (pure values in, so the snapshot rig can mount every ink state);
     /// this maps the live model onto it. The inks brighten on the needle curve — the same
     /// orchestrated moment the handshake already owns.
@@ -236,12 +204,7 @@ struct ConnectionCluster: View {
             displayHost: displayHost,
             led: led,
             detail: Self.footerDetail(status: status, pingMS: pingMS),
-            extras: Self.footerExtras(
-                status: status, fps: fps, kbps: kbps,
-                uptime: Self.uptimeLabel(since: connection.connectedSince, now: Date()),
-            ),
         )
-        .padding(.vertical, Slate.Metric.space1)
         .frame(maxWidth: .infinity, alignment: .leading)
         .animation(Slate.Anim.needle, value: led)
     }
@@ -282,51 +245,45 @@ struct ConnectionCluster: View {
     }
 }
 
-/// The sidebar footer's PRESENTATIONAL layout — pure values in (host / ink state / detail line),
-/// no model, so the snapshot rig mounts every state directly. Pure text on the sidebar's rail
-/// (indented onto the same x the section names and row titles share — the `tabRowInset` gutter
-/// stays EMPTY: no lamp, no glyph): the hostname line, the mono detail line beneath. Internal
-/// (not private) for the rig.
+/// The sidebar footer's PRESENTATIONAL layout — pure values in (host / ink state / detail), no
+/// model, so the snapshot rig mounts every state directly. ONE line of pure text spanning the
+/// sidebar's two rails: the hostname on the same x the section names and row titles share (the
+/// `tabRowInset` gutter stays EMPTY — no lamp, no glyph) and the metric in the rows' trailing
+/// column, where the status marks stand. Internal (not private) for the rig.
 struct ConnectionRailFooter: View {
     let displayHost: String
     let led: ConnectionCluster.LedState
     let detail: (text: String, isMetric: Bool)?
-    /// The tertiary continuation after the ping (``ConnectionCluster/footerExtras``) — stream
-    /// numbers + uptime, `nil` when nothing rides.
-    var extras: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
+        HStack(alignment: .firstTextBaseline, spacing: Slate.Metric.space2) {
             // The hostname — the same register as the project header names (footnote medium,
-            // secondary), dimming to tertiary while nothing is connected.
+            // secondary), dimming to tertiary while nothing is connected. The row's designated
+            // truncator: a long host gives way, the short metric never does.
             Text(displayHost)
                 .font(.system(size: Slate.Typeface.footnote, weight: .medium))
                 .foregroundStyle(led == .dim ? Slate.Text.tertiary : Slate.Text.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
-            if let line = detailLine {
-                // The instrument line — one metadata voice with the git lines and shell labels.
-                line
-                    .font(Slate.Typeface.instrument(Slate.Typeface.small))
+                .layoutPriority(1)
+            Spacer(minLength: Slate.Metric.space1)
+            if let detail {
+                // A metric is INSTRUMENT mono — one metadata voice with the git lines and shell
+                // labels; a status WORD is prose and keeps the system face, like the compact
+                // mount's trailing slot.
+                Text(detail.text)
+                    .font(
+                        detail.isMetric
+                            ? Slate.Typeface.instrument(Slate.Typeface.small)
+                            : .system(size: Slate.Typeface.small),
+                    )
+                    .foregroundStyle(detailInk)
                     .lineLimit(1)
-                    .truncationMode(.tail)
+                    .fixedSize(horizontal: true, vertical: false)
             }
         }
-        .padding(.leading, Slate.Metric.tabRowInset)
-    }
-
-    /// The detail line as ONE text run (so the pair truncates as a single tail, never each half
-    /// independently): the ping/status segment on its health ink, the extras trail always
-    /// tertiary — the hue stays on the digits that mean trouble.
-    private var detailLine: Text? {
-        let metric = detail.map { Text($0.text).foregroundStyle(detailInk) }
-        let trail = extras.map { Text($0).foregroundStyle(Slate.Text.tertiary) }
-        switch (metric, trail) {
-        case (nil, nil): return nil
-        case let (line?, nil),
-             let (nil, line?): return line
-        case let (metric?, trail?): return Text("\(metric)\(trail)")
-        }
+        .padding(.horizontal, Slate.Metric.tabRowInset)
+        .frame(height: Slate.Metric.heightRow)
     }
 
     /// Metric digits carry the health colour only while degrading; words stay muted.
