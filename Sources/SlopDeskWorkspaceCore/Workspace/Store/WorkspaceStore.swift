@@ -3064,6 +3064,23 @@ public final class WorkspaceStore {
     /// ``TabBadgeGating/resolve(...)`` `unseenAgentDone`. NOT persisted; PRUNED to the live leaf set.
     public internal(set) var paneUnseenDone: Set<PaneID> = []
 
+    /// RUNTIME-ONLY per-pane "how long has the user been LOOKING at this finished pane" clock — the dwell
+    /// anchor behind ``refreshFocusedDoneSettle(at:)``. Stamped when a pane becomes focused (app active)
+    /// while carrying a finished-turn marker (a live ``ClaudeStatus/done`` or the ``paneUnseenDone``
+    /// latch); dropped the moment it stops being either, so the window measures an UNBROKEN watch.
+    /// Only ever holds FOCUSED panes — an unfocused pane's marker keeps waiting for a visit, unchanged.
+    /// NOT persisted; PRUNED to the live leaf set alongside ``paneCompletedAt``.
+    public internal(set) var paneDoneDwellSince: [PaneID: Date] = [:]
+
+    /// How long a FOCUSED pane keeps its finished-turn marker before the client acknowledges it for you.
+    ///
+    /// The marker's clear path is ``clearAgentBadge(_:)``, which runs on a SELECTION change (tab switch,
+    /// rail click, ⌘⇧U). Returning to the app selects nothing, so a turn that finished while you were away
+    /// held its marker on the pane you were already staring at until you clicked away and back. Long enough
+    /// that the marker still does its job — you see that a turn ended — and short enough that a pane you
+    /// are actually reading stops shouting about it.
+    public static let focusedDoneSettleWindow: TimeInterval = 30
+
     /// RUNTIME-ONLY per-pane "when did the shell last push an OSC title" stamp (wire type 21 —
     /// `spec.lastKnownTitle` holds the text; this holds its recency). ``programTitle(for:)`` compares it
     /// against ``paneCommandStartedAt`` so a title set BY the currently-running program (nvim's
@@ -3105,6 +3122,15 @@ public final class WorkspaceStore {
     @ObservationIgnored
     public var flashDecayScheduler = WorkspaceStore.mainRunLoopFlashDecay
 
+    /// The injectable one-shot that re-evaluates the focused-pane finish settle at the dwell boundary —
+    /// armed by ``refreshFocusedDoneSettle(at:)`` when a watch STARTS. A finished agent stops mutating the
+    /// store, so without this nothing would ever look again and the settle would only land as a side effect
+    /// of unrelated traffic. Its own property (not ``flashDecayScheduler``) so the two boundaries stay
+    /// independently injectable — a test capturing one must not swallow the other's arm. Same default
+    /// (a main-run-loop one-shot, not a global timer). `@ObservationIgnored`: wiring, not view state.
+    @ObservationIgnored
+    public var doneSettleScheduler = WorkspaceStore.mainRunLoopFlashDecay
+
     /// Whether the app is foregrounded/active — fed from the SwiftUI `scenePhase` by the app shell
     /// (`.active → true`, else `false`). Defaults `true` so a headless store (tests) treats the active
     /// leaf as focused. Combined with the active-leaf identity it forms the "is this pane focused" gate
@@ -3113,6 +3139,10 @@ public final class WorkspaceStore {
         didSet {
             // Returning to active means you are now looking at the focused leaf — clear its pending badge.
             if isAppActive, !oldValue { clearActiveLeafCompletionBadge() }
+            // Either edge moves the focused-finish watch: returning STARTS it on the pane already under the
+            // user's eyes (the case no selection change ever covers), leaving ABANDONS it (a marker must
+            // never expire while nobody is there to read it).
+            if isAppActive != oldValue { refreshFocusedDoneSettle() }
         }
     }
 
@@ -3194,6 +3224,9 @@ public final class WorkspaceStore {
         // A pane that just gained focus (selectTab / selectSession / focusPaneTree all route here) is being
         // watched — clear its pending command-completion badge.
         clearActiveLeafCompletionBadge()
+        // …and re-point the focused-finish watch at whatever is focused NOW (the pane that just lost focus
+        // abandons its clock; a newly focused pane still carrying a marker starts one).
+        refreshFocusedDoneSettle()
         // Prune the tree-keyed sidebar mirrors (the manual tab badges) to the live tree. Keyed by
         // TabID, so pruned here against the tree rather than in the pane-keyed `reconcileRegistry`
         // cache-prune. The helper lives in WorkspaceStore+TabOrdering.
@@ -3540,6 +3573,10 @@ public final class WorkspaceStore {
         // Unread agent-finish latch (Set-prune idiom, like `paneReadOnly` below):
         if !paneUnseenDone.isEmpty, !paneUnseenDone.isSubset(of: leafSet) {
             paneUnseenDone.formIntersection(leafSet)
+        }
+        // Focused-finish watch clock (the dwell behind the focused-pane settle):
+        if !paneDoneDwellSince.isEmpty {
+            paneDoneDwellSince = paneDoneDwellSince.filter { leafSet.contains($0.key) }
         }
         // OSC-title recency stamp (the program-title freshness clock):
         if !paneTitleAt.isEmpty {

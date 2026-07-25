@@ -72,6 +72,9 @@ public extension WorkspaceStore {
         } else {
             paneWorkingSince.removeValue(forKey: id)
         }
+        // Re-evaluate the focused-pane finish watch: this transition either starts one (a finish on the
+        // pane under the user's eyes) or retires a pending one (the agent moved on).
+        refreshFocusedDoneSettle(at: date)
     }
 
     /// Sets (or clears, on empty) the per-pane host agent label. Idempotent. The cheap activity summary
@@ -161,7 +164,81 @@ public extension WorkspaceStore {
     func clearAgentBadge(_ id: PaneID) {
         setCompletionBadge(nil, for: id)
         paneUnseenDone.remove(id)
+        // The acknowledge already happened — a watch still ticking on this pane has nothing left to settle.
+        paneDoneDwellSince.removeValue(forKey: id)
         if agentStatus(for: id) == .done { setAgentStatus(.idle, for: id) }
+    }
+
+    // MARK: The focused-pane finish settle (a marker you have READ stops being unread)
+
+    /// Advances the focused-pane finish WATCH at `now`: starts a dwell clock on every pane that is focused
+    /// (in an active app) while carrying a finished-turn marker, drops the clock for every pane that stopped
+    /// being either, and ACKNOWLEDGES — ``clearAgentBadge(_:)`` — the ones that have been watched for a full
+    /// ``WorkspaceStore/focusedDoneSettleWindow``.
+    ///
+    /// **Why.** The marker's only clear path is a SELECTION change (tab switch / rail click / ⌘⇧U). Coming
+    /// back to the app selects nothing, so a turn that finished while you were away kept its marker on the
+    /// very pane you were already looking at, until you clicked away and back. Reading it is seeing it.
+    ///
+    /// **Scope, deliberately narrow.** Only a FOCUSED pane in an ACTIVE app ever gets a clock. An unfocused
+    /// pane keeps the original contract exactly — unread until visited, however long that takes — so nothing
+    /// can expire behind the user's back. The window measures an UNBROKEN watch: focus leaving (or the app
+    /// backgrounding) abandons the clock, and a later return starts a fresh one.
+    ///
+    /// Driven by the three edges that can change the answer — an agent-status transition, a focus change
+    /// (`reconcileTree`), and the `isAppActive` edge — plus a one-shot armed at the boundary
+    /// (``WorkspaceStore/doneSettleScheduler``), because a finished agent stops mutating the store and
+    /// nothing else would look again. Re-entrant-safe: the acknowledge feeds back through
+    /// ``setAgentStatus(_:for:at:)``, and by then the pane is no longer a candidate, so the recursion ends.
+    internal func refreshFocusedDoneSettle(at now: Date = Date()) {
+        if !paneDoneDwellSince.isEmpty {
+            for id in paneDoneDwellSince.keys where !isFinishSettleCandidate(id) {
+                paneDoneDwellSince.removeValue(forKey: id)
+            }
+        }
+        var due: [PaneID] = []
+        var startedAWatch = false
+        for id in focusedFinishSettleCandidates() {
+            guard let since = paneDoneDwellSince[id] else {
+                paneDoneDwellSince[id] = now
+                startedAWatch = true
+                continue
+            }
+            // Ordered compare (no bare `<`, per the repo's NaN-faithful convention): settle once the
+            // watch REACHES the window.
+            let watched = now.timeIntervalSince(since)
+            if !watched.isLess(than: Self.focusedDoneSettleWindow) { due.append(id) }
+        }
+        for id in due { clearAgentBadge(id) }
+        if startedAWatch {
+            doneSettleScheduler(Self.focusedDoneSettleWindow) { [weak self] in
+                self?.refreshFocusedDoneSettle()
+            }
+        }
+    }
+
+    /// The panes a watch may run on right now: the focused leaf and, when a satellite window holds key, its
+    /// detached pane — each only while it still carries a finished-turn marker.
+    private func focusedFinishSettleCandidates() -> [PaneID] {
+        guard isAppActive else { return [] }
+        var out: [PaneID] = []
+        if let active = tree.activeSession?.activeTab?.activePane, isFinishSettleCandidate(active) {
+            out.append(active)
+        }
+        if let satellite = keySatellitePaneID, !out.contains(satellite), isFinishSettleCandidate(satellite) {
+            out.append(satellite)
+        }
+        return out
+    }
+
+    /// Whether pane `id` is one a watch applies to: focused in an ACTIVE app (a key satellite counts as
+    /// focused, but only while the app itself is frontmost — nobody is reading a background window) and
+    /// carrying a finished-turn marker (a live ``ClaudeStatus/done`` or the unread latch). A live
+    /// `.working`/`.needsPermission` is never unread OUTPUT, so it never starts a clock — the settle can
+    /// therefore never silence a waiting approval gate.
+    private func isFinishSettleCandidate(_ id: PaneID) -> Bool {
+        guard isAppActive, isPaneFocused(id) else { return false }
+        return agentStatus(for: id) == .done || paneUnseenDone.contains(id)
     }
 
     // MARK: Rollups (the sidebar/tab/chrome dot derivations)
