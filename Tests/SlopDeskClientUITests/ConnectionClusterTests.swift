@@ -87,15 +87,33 @@ final class ConnectionClusterTests: XCTestCase {
 
     func testPulseLineIsAbsentUntilTheHostHasReported() {
         // No reading ⇒ NO second line (never "cpu —": an instrument showing dashes advertises breakage).
+        XCTAssertNil(ConnectionCluster.pulseReadings(nil))
         XCTAssertNil(ConnectionCluster.pulseLabels(nil))
         XCTAssertEqual(ConnectionCluster.pulseTooltip(nil), "", "no reading, no tooltip trail either")
     }
 
-    func testPulseLabelsAreTheTwoRailAlignedRuns() {
-        let pulse = HostPulse(cpuPercent: 34, memoryPercent: 61, memoryPressure: .normal)
-        let labels = ConnectionCluster.pulseLabels(pulse)
-        XCTAssertEqual(labels?.cpu, "cpu 34%", "leading rail: the machine's own load")
-        XCTAssertEqual(labels?.memory, "mem 61%", "trailing rail: the column a number may turn amber in")
+    func testDrawnReadingsAreBareNumbers_theSymbolCarriesTheName() {
+        // What line two actually draws: the mark names the metric, so the run is the number alone —
+        // no "cpu"/"mem" word repeated beside a glyph that already says it.
+        let readings = ConnectionCluster.pulseReadings(
+            HostPulse(cpuPercent: 34, memoryPercent: 61, memoryPressure: .normal),
+        )
+        XCTAssertEqual(readings?.cpu, "34%", "leading rail: the machine's own load")
+        XCTAssertEqual(readings?.memory, "61%", "trailing rail: the column a number may turn amber in")
+        XCTAssertNotEqual(
+            ConnectionCluster.cpuSymbol, ConnectionCluster.memorySymbol,
+            "two metrics, two silhouettes — the same mark twice would name neither",
+        )
+    }
+
+    func testPulseLabelsKeepTheWordsForProseSurfaces() {
+        // The tooltip and the accessibility label still spell the metrics out — a silhouette is
+        // unreadable to VoiceOver and unlearned on first sight.
+        let labels = ConnectionCluster.pulseLabels(
+            HostPulse(cpuPercent: 34, memoryPercent: 61, memoryPressure: .normal),
+        )
+        XCTAssertEqual(labels?.cpu, "cpu 34%")
+        XCTAssertEqual(labels?.memory, "mem 61%")
     }
 
     func testPulseTooltipCarriesThePressureVerdictTheLineOnlyHintsAt() {

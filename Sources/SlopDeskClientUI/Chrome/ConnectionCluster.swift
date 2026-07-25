@@ -6,7 +6,12 @@
 //
 // SIDEBAR FOOTER (`railFooter`) — two lines under the tab list, laid on the sidebar's OWN rails:
 //   mac-studio               12 ms      ← the LINK: who, and how far away
-//   cpu 34%                 mem 61%     ← the MACHINE: how hard it is working
+//   ▣ 34%                    ▤ 61%      ← the MACHINE: how hard it is working
+//   Line two names its two metrics with SYMBOLS rather than the words "cpu"/"mem": a readout is a
+//   number and its unit, and spelling the unit out in a run of lowercase prose gave the line the
+//   texture of a sentence set adrift under the identity. The chip glyphs anchor each end, so the
+//   pair reads as two instruments instead of a half-empty row of text. The words survive where
+//   there is room for prose — the tooltip and the accessibility label.
 //   Both lines share the two rails: the leading edge is the x every row title starts on, the
 //   trailing edge is the column the rows' status marks stand in. So the footer reads as the last
 //   lines of the list rather than a widget bolted underneath, and the right rail becomes the one
@@ -129,13 +134,27 @@ struct ConnectionCluster: View {
         return (StatusPresentation.connectionLabel(status), false)
     }
 
-    /// The footer's SECOND line: the host machine's pulse as its two rail-aligned runs. `nil` until a
-    /// reading exists — the line is then absent entirely, never a row of dashes (see the header
-    /// note). Pure + static so the copy is pinned headlessly.
+    /// The footer's SECOND line spoken as PROSE — the tooltip's and the accessibility label's copy,
+    /// where the metric names are words because there is room for words. `nil` until a reading
+    /// exists — the line is then absent entirely, never a row of dashes (see the header note).
+    /// Pure + static so the copy is pinned headlessly.
     static func pulseLabels(_ pulse: HostPulse?) -> (cpu: String, memory: String)? {
         guard let pulse else { return nil }
         return ("cpu \(pulse.cpuPercent)%", "mem \(pulse.memoryPercent)%")
     }
+
+    /// The same reading as it is DRAWN: the bare percents, each named by ``cpuSymbol`` /
+    /// ``memorySymbol`` beside it rather than by a repeated word.
+    static func pulseReadings(_ pulse: HostPulse?) -> (cpu: String, memory: String)? {
+        guard let pulse else { return nil }
+        return ("\(pulse.cpuPercent)%", "\(pulse.memoryPercent)%")
+    }
+
+    /// The two metric marks. The processor die and the memory module are the pair Activity Monitor
+    /// itself uses, and they differ in SILHOUETTE (a square with pins on four edges vs a wide module
+    /// with pins on one) — which is the only difference that survives at the footer's size.
+    static let cpuSymbol: SFSymbol = .cpu
+    static let memorySymbol: SFSymbol = .memorychip
 
     /// The pulse as TOOLTIP prose — the exact numbers plus the pressure verdict the visible line
     /// only hints at through ink. Empty when there is no reading.
@@ -292,8 +311,8 @@ struct ConnectionRailFooter: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             linkLine
-            if let labels = ConnectionCluster.pulseLabels(pulse) {
-                pulseLine(labels)
+            if let readings = ConnectionCluster.pulseReadings(pulse) {
+                pulseLine(readings)
             }
         }
         .padding(.horizontal, Slate.Metric.tabRowInset)
@@ -333,20 +352,41 @@ struct ConnectionRailFooter: View {
         .frame(height: Slate.Metric.heightControl)
     }
 
-    /// Line two — the machine's own pulse, both runs INSTRUMENT mono (they are readings, not prose)
-    /// on the subordinate band the section headers use, so the pair reads as one quiet instrument
-    /// under the identity rather than a second row competing with it.
-    private func pulseLine(_ labels: (cpu: String, memory: String)) -> some View {
+    /// Line two — the machine's own pulse: a mark and a number at each rail. The digits are
+    /// INSTRUMENT mono (they are readings, not prose), so the pair reads as one quiet instrument
+    /// under the identity rather than a second row competing with it. The line speaks its full prose
+    /// to VoiceOver, which cannot see a silhouette.
+    private func pulseLine(_ readings: (cpu: String, memory: String)) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: Slate.Metric.space2) {
-            Text(labels.cpu)
-                .foregroundStyle(Slate.Text.tertiary)
+            reading(ConnectionCluster.cpuSymbol, readings.cpu, ink: Slate.Text.tertiary)
             Spacer(minLength: Slate.Metric.space1)
-            Text(labels.memory)
-                .foregroundStyle(memoryInk)
+            reading(ConnectionCluster.memorySymbol, readings.memory, ink: memoryInk)
         }
-        .font(Slate.Typeface.instrument(Slate.Typeface.small))
         .lineLimit(1)
         .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(pulseSpoken)
+    }
+
+    /// One reading: its mark, then its number, in ONE ink — when memory pressure colours the metric
+    /// the glyph turns with the digits, because a half-tinted readout reads as a rendering bug
+    /// rather than a warning. The mark sits a step above the digits (`footnote`) so a drawing built
+    /// from strokes holds its silhouette next to type built from stems.
+    private func reading(_ symbol: SFSymbol, _ value: String, ink: Color) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: Slate.Metric.space1) {
+            Image(systemSymbol: symbol)
+                .font(.system(size: Slate.Typeface.footnote))
+                .symbolRenderingMode(.monochrome)
+            Text(value)
+                .font(Slate.Typeface.instrument(Slate.Typeface.small))
+        }
+        .foregroundStyle(ink)
+    }
+
+    /// The pulse as words, for the readers that get no glyph.
+    private var pulseSpoken: String {
+        guard let labels = ConnectionCluster.pulseLabels(pulse) else { return "" }
+        return "\(labels.cpu), \(labels.memory)"
     }
 
     /// Metric digits carry the health colour only while degrading; words stay muted.

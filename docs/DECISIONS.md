@@ -2682,3 +2682,14 @@ which you cannot see and cannot otherwise ask.
 
 Wire change (a new verb + payload codec, golden-pinned); the daemon and the client both ship it,
 and an old host answering `unsupportedVerb` simply stays one line.
+
+**Round 13.1 — the metrics are named by their marks.** `cpu 34% … mem 61%` set the whole line in
+lowercase prose, and read as a sentence adrift under the identity rather than as instruments. The
+words are replaced by their symbols (`cpu`, `memorychip` — Activity Monitor's own pair), leaving
+`▣ 34% … ▤ 61%`: a readout is a number and the thing it measures, and the thing it measures is the
+one part that never changes, so it should be the part that is drawn rather than spelled. The two
+marks differ in SILHOUETTE (square, pinned on four edges vs a wide module pinned on one), which is
+the only distinction that survives at 11pt. Mark and digits carry ONE ink — when pressure colours
+the memory reading the glyph turns with it, since a half-tinted readout reads as a rendering bug
+rather than a warning. The words are not lost, they move to the surfaces that have room for prose:
+the tooltip and the accessibility label, which cannot see a silhouette at all.
