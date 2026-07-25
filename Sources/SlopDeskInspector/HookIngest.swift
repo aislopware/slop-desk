@@ -96,14 +96,29 @@ public struct NotificationInfo: Sendable, Equatable, Codable {
 }
 
 /// The payload of a `Stop` hook: the session identity + the last assistant message
-/// (the turn's human-readable result, used as the W10 `label`).
+/// (the turn's human-readable result, used as the W10 `label`) + how much of the turn's work
+/// OUTLIVES it.
 public struct StopInfo: Sendable, Equatable, Codable {
     public var sessionID: String?
     public var lastAssistantMessage: String?
 
-    public init(sessionID: String? = nil, lastAssistantMessage: String? = nil) {
+    /// How many BACKGROUND tasks were still live when the turn ended (`0` when the field is absent).
+    ///
+    /// Claude Code ships a `background_tasks` array on `Stop`, already filtered producer-side to
+    /// tasks that are `running`/`pending` AND backgrounded — so a non-zero count means the turn is
+    /// over but its work is not. Undocumented in the hooks reference; read straight off the shipped
+    /// payload shape (`{ id, type, status, description, … }`) and parsed tolerantly, so a producer
+    /// that drops or renames it simply reports `0`.
+    public var backgroundTaskCount: Int
+
+    public init(
+        sessionID: String? = nil,
+        lastAssistantMessage: String? = nil,
+        backgroundTaskCount: Int = 0,
+    ) {
         self.sessionID = sessionID
         self.lastAssistantMessage = lastAssistantMessage
+        self.backgroundTaskCount = backgroundTaskCount
     }
 }
 
@@ -217,6 +232,7 @@ public enum HookParser {
                 sessionID: obj["session_id"]?.stringValue ?? obj["sessionId"]?.stringValue,
                 lastAssistantMessage: obj["last_assistant_message"]?.stringValue
                     ?? obj["lastAssistantMessage"]?.stringValue,
+                backgroundTaskCount: liveTaskCount(obj["background_tasks"] ?? obj["backgroundTasks"]),
             ))
 
         case "StopFailure":
@@ -248,6 +264,14 @@ public enum HookParser {
             ?? UUID().uuidString
         let input = obj["tool_input"] ?? obj["toolInput"] ?? .object([:])
         return ToolUseBlock(id: id, name: name, input: input)
+    }
+
+    /// Counts the entries of a `background_tasks`-shaped value. Anything that is not an array —
+    /// absent, null, an object, a hostile scalar — counts `0`: this is a nice-to-have field on an
+    /// undocumented seam, so it never decides anything by failing.
+    private static func liveTaskCount(_ value: JSONValue?) -> Int {
+        guard case let .array(items)? = value else { return 0 }
+        return items.count
     }
 
     /// Builds a ``SessionInfo`` from the common `{ session_id, model, cwd, transcript_path }`

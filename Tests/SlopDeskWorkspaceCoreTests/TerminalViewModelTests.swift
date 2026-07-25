@@ -53,21 +53,21 @@ final class TerminalViewModelTests: XCTestCase {
         XCTAssertEqual(model.title, "~/proj — zsh")
     }
 
-    /// An empty .title("") must not store "" — PanePresentation.displayTitle discards an empty
-    /// string, which would silently clobber the last real title. An empty title message collapses
-    /// to nil so the previous non-empty title is preserved.
-    func testEmptyTitleDoesNotClobberPriorRealTitle() {
+    /// An empty `.title("")` on the wire is the HOST's deliberate retirement of a title an exiting
+    /// agent owned, and the client applies it.
+    ///
+    /// This used to assert the opposite. The invariant it protected — prompt-redraw noise must not
+    /// clobber a real title — has not gone away; it MOVED to where the noise actually is. zsh/p10k
+    /// emit their empty OSC 0/2 into the PTY, and `HostOutputSniffer` drops them there
+    /// (`AgentGoneEdgeTests.testEmptyOSCTitleIsStillDropped`), so an empty type-21 can only reach
+    /// this method because the host meant it. Keeping the guard on BOTH sides made the retirement
+    /// unsendable and left a dead agent's `✳ <topic>` on the row for the pane's whole life.
+    func testEmptyTitleAppliesTheHostsExplicitRetirement() {
         let model = TerminalViewModel()
-        // Establish a real title first.
-        model.handle(.title("~/proj — zsh"))
-        XCTAssertEqual(model.title, "~/proj — zsh", "precondition: real title stored")
-        // A subsequent empty-title message must NOT overwrite it.
+        model.handle(.title("✳ Say hi in one word"))
+        XCTAssertEqual(model.title, "✳ Say hi in one word", "precondition: the agent's title is stored")
         model.handle(.title(""))
-        XCTAssertEqual(
-            model.title,
-            "~/proj — zsh",
-            "empty .title(\"\") must not shadow the previous real title",
-        )
+        XCTAssertEqual(model.title, "", "the row falls through to its next rung (last command / cwd)")
     }
 
     /// "Title — Shell Controlled" (default ON): when the toggle is OFF, an OSC 0/2 `.title` event is

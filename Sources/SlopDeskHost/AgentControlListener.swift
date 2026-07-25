@@ -563,7 +563,7 @@ public struct AgentControlHandler: Sendable {
         }
         let state = StateWait()
         let observerID = UUID()
-        server.registerAgentStatusObserver(id: observerID) { pane, stateStr, _, _ in
+        server.registerAgentStatusObserver(id: observerID) { pane, stateStr, _, _, _ in
             guard pane == paneId, targets.contains(stateStr) else { return }
             state.condition.lock()
             if state.matched == nil {
@@ -1291,7 +1291,7 @@ public final class AgentControlAcceptor: @unchecked Sendable {
     /// status transition across ALL panes until the client disconnects. No initial handshake.
     ///
     /// Event shape (one UTF-8 NDJSON line, newline-terminated):
-    ///   `{"type":"agent_status_changed","paneId":"<uuid>","state":"<idle|working|done|blocked>","title":"<osc title>","ts":<unix-seconds>}`
+    ///   `{"type":"agent_status_changed","paneId":"<uuid>","state":"<idle|working|done|blocked>","agentPresent":<bool>,"title":"<osc title>","ts":<unix-seconds>}`
     ///
     /// Reuses the SAME ``SubscribeState``/`NSCondition`/`writeAll` pattern as ``serveSubscribe``.
     /// A server-level observer (``HostServer/registerAgentStatusObserver(id:_:)``) pushes lines
@@ -1315,29 +1315,34 @@ public final class AgentControlAcceptor: @unchecked Sendable {
         final class AllState: @unchecked Sendable {
             let condition = NSCondition()
             var lines: [Data] = []
-            var lastByPane: [String: String] = [:] // paneId → last emitted state (dedupe)
+            var lastByPane: [String: String] = [:] // paneId → last emitted (state, presence) (dedupe)
             var closed = false // set by the reader thread on client disconnect
         }
         let state = AllState()
         let observerID = UUID()
 
-        server.registerAgentStatusObserver(id: observerID) { paneId, stateStr, title, ts in
+        server.registerAgentStatusObserver(id: observerID) { paneId, stateStr, agentPresent, title, ts in
             state.condition.lock()
             // Drop late events once the client is gone (the reader already woke the pump).
             if state.closed {
                 state.condition.unlock()
                 return
             }
-            // Dedupe consecutive identical (paneId, state) — a redundant transition is dropped.
-            if state.lastByPane[paneId] == stateStr {
+            // Dedupe consecutive identical (paneId, state, agentPresent) — a redundant transition
+            // is dropped. Presence is part of the key because the agent-GONE edge lands on the same
+            // `"idle"` string the pane already reported (`.none` and `.idle` collapse together), so
+            // a state-only key would swallow the one transition a supervisor most needs to see.
+            let dedupeKey = "\(stateStr)|\(agentPresent)"
+            if state.lastByPane[paneId] == dedupeKey {
                 state.condition.unlock()
                 return
             }
-            state.lastByPane[paneId] = stateStr
+            state.lastByPane[paneId] = dedupeKey
             let eventObj: [String: Any] = [
                 "type": "agent_status_changed",
                 "paneId": paneId,
                 "state": stateStr,
+                "agentPresent": agentPresent,
                 "title": title,
                 "ts": ts,
             ]

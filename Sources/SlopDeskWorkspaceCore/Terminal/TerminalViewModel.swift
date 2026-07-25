@@ -2228,12 +2228,14 @@ public final class TerminalViewModel {
     public func handle(_ event: SlopDeskClient.Event) {
         switch event {
         case let .title(text):
-            // Empty-body OSC title messages (e.g. zsh/p10k prompt redraws) are silently dropped; only a
-            // non-empty string updates the stored title, preserving the previous real title across command
-            // boundaries.
+            // An EMPTY type-21 is the host's explicit RETIREMENT of a title an exiting agent owned,
+            // never prompt-redraw noise: the host sniffer drops empty OSC 0/2 bodies (zsh/p10k emit
+            // them mid-redraw), so the only way an empty title reaches this wire is because the host
+            // meant it. Applying it drops the row back to its next rung (last command / cwd) instead
+            // of showing a dead agent's `✳ <topic>` for the rest of the pane's life.
             // "Title — Shell Controlled" (default ON): when OFF, the client DROPS the OSC 0/2 title
             // update so a remote program cannot rewrite the tab/window title (the privilege gate).
-            if SettingsKey.titleShellControlledEnabled, !text.isEmpty { title = text }
+            if SettingsKey.titleShellControlledEnabled { title = text }
         case .bell:
             bellPending = true
             // "Sound — Shell Controlled": a BEL rings the system beep (audio-only — no visual bell is

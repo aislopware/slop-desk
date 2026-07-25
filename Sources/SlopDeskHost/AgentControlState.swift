@@ -17,6 +17,12 @@ import SlopDeskAgentDetect
 /// blocking and nothing running. We deliberately collapse `.none → "idle"` (rather than inventing
 /// an `"unknown"` token) so the closed set the `report` verb validates against stays exactly the
 /// four supervision states. Pinned by ``AgentControlStateTests``.
+///
+/// The collapse costs the stream one distinction, though: `.none` and `.idle` are the SAME string,
+/// so a pane whose agent EXITED emits `"idle"` — byte-identical to the `"idle"` it was already
+/// sitting at — and the subscriber's consecutive-duplicate dedupe swallows it. An orchestrator
+/// watching `events` could therefore never see an agent leave. ``presence(from:)`` carries that one
+/// bit alongside the state instead of widening the vocabulary.
 public enum AgentControlState {
     /// The four supervision state strings, in increasing urgency. The closed set the `report`
     /// verb validates against (anything else is dropped).
@@ -36,6 +42,12 @@ public enum AgentControlState {
         case .needsPermission:
             "blocked"
         }
+    }
+
+    /// Whether an agent is PRESENT in the pane at all — the bit ``string(from:)`` collapses away.
+    /// `false` only for ``ClaudeStatus/none``; every other status implies a detected agent.
+    public static func presence(from status: ClaudeStatus) -> Bool {
+        status != .none
     }
 
     /// Whether `s` is one of the four known supervision states. Used by the `report` verb to

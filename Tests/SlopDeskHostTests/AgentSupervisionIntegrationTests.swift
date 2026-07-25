@@ -43,14 +43,14 @@ final class AgentSupervisionIntegrationTests: XCTestCase {
         // Register a cross-pane observer and capture the first transition for THIS pane.
         final class Box: @unchecked Sendable {
             private let lock = NSLock()
-            private var _hit: (paneId: String, state: String)?
-            func set(_ pid: String, _ state: String) {
+            private var _hit: (paneId: String, state: String, present: Bool)?
+            func set(_ pid: String, _ state: String, _ present: Bool) {
                 lock.lock()
                 defer { lock.unlock() }
-                if _hit == nil { _hit = (pid, state) }
+                if _hit == nil { _hit = (pid, state, present) }
             }
 
-            var hit: (paneId: String, state: String)? {
+            var hit: (paneId: String, state: String, present: Bool)? {
                 lock.lock()
                 defer { lock.unlock() }
                 return _hit
@@ -58,7 +58,7 @@ final class AgentSupervisionIntegrationTests: XCTestCase {
         }
         let box = Box()
         let obsID = UUID()
-        server.registerAgentStatusObserver(id: obsID) { pid, state, _, _ in box.set(pid, state) }
+        server.registerAgentStatusObserver(id: obsID) { pid, state, present, _, _ in box.set(pid, state, present) }
         defer { server.removeAgentStatusObserver(id: obsID) }
 
         guard let session = server.lookupPaneForControl(paneId: paneId) else {
@@ -76,6 +76,7 @@ final class AgentSupervisionIntegrationTests: XCTestCase {
         let hit = box.hit
         XCTAssertEqual(hit?.paneId, paneId, "the fan-out carries the reporting pane's id")
         XCTAssertEqual(hit?.state, "working", "none → working transition fanned as 'working'")
+        XCTAssertEqual(hit?.present, true, "a working agent is a PRESENT agent")
     }
 
     /// `listPanesForControl()` reflects a reported state on the matching pane.
@@ -183,7 +184,7 @@ final class AgentSupervisionIntegrationTests: XCTestCase {
         }
         let set = WorkingSet()
         let obsID = UUID()
-        server.registerAgentStatusObserver(id: obsID) { pid, state, _, _ in set.note(pid, state) }
+        server.registerAgentStatusObserver(id: obsID) { pid, state, _, _, _ in set.note(pid, state) }
         defer { server.removeAgentStatusObserver(id: obsID) }
 
         guard let session = server.lookupPaneForControl(paneId: paneId) else {

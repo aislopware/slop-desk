@@ -95,6 +95,18 @@ public struct ClaudePaneDetector: Sendable {
     /// spurious empty clear frame on the first hook fold).
     private var lastEmittedIntent: String?
 
+    /// TRUE while the pane's OSC title is one the DETECTED agent wrote (a Braille-spinner / `✳`
+    /// telltale, or a claude-naming title) — i.e. the agent, not the shell, owns what the row shows.
+    ///
+    /// This is the ownership record the title retirement needs. Claude Code does emit its own
+    /// exit-time clear, but as an EMPTY `OSC 0` that ``HostOutputSniffer`` drops on purpose
+    /// (zsh/p10k/starship emit empty titles mid prompt-redraw), and a plain zsh prompt never
+    /// re-titles afterwards — so the agent's `✳ <topic>` outlived the agent forever. Rather than
+    /// loosen a guard that exists for a good reason, the detector that watched the agent TAKE the
+    /// title gives it back on the agent-gone edge. Consumed (and cleared) by
+    /// ``titleEmissionIfAgentGone()``.
+    private var agentOwnsTitle = false
+
     /// Character cap on the derived intent line — a sidebar title, not a transcript.
     static let maxIntentChars = 120
 
@@ -114,16 +126,22 @@ public struct ClaudePaneDetector: Sendable {
         public var status: WireMessage?
         /// The type-36 `agentSessionIntent(...)` to send, or `nil` (intent unchanged).
         public var intent: WireMessage?
+        /// The type-21 `title("")` RETIREMENT to send on the agent-gone edge, or `nil`. Only ever
+        /// the empty string: the host sniffer drops empty OSC titles, so an empty type-21 on the
+        /// wire is unambiguously this deliberate clear and nothing else.
+        public var title: WireMessage?
 
-        public var isEmpty: Bool { foreground == nil && status == nil && intent == nil }
+        public var isEmpty: Bool { foreground == nil && status == nil && intent == nil && title == nil }
 
         /// Flattened for the caller's `enqueueControl([WireMessage])` — foreground first (presence
-        /// floor), then the richer status, then the intent, mirroring the machine's precedence.
+        /// floor), then the richer status, then the intent, mirroring the machine's precedence, and
+        /// the title retirement last (a display consequence of the status having dropped).
         public var messages: [WireMessage] {
             var out: [WireMessage] = []
             if let foreground { out.append(foreground) }
             if let status { out.append(status) }
             if let intent { out.append(intent) }
+            if let title { out.append(title) }
             return out
         }
     }
@@ -212,6 +230,7 @@ public struct ClaudePaneDetector: Sendable {
         }
         emission.status = statusEmissionIfChanged()
         emission.intent = intentEmissionIfChanged()
+        emission.title = titleEmissionIfAgentGone()
         return emission
     }
 
@@ -239,7 +258,18 @@ public struct ClaudePaneDetector: Sendable {
         // status within a second whenever claude runs under a wrapper (node/npx/mise) whose basename
         // never classifies as `claude`. Stamped on every parsed record (Pre/PostToolUse traffic
         // keeps a long turn's window fresh).
-        lastAuthoritativeAt = now
+        //
+        // EXCEPT `SessionEnd`. The anchor's whole job is to protect a LIVE state from a presence
+        // poll that cannot see the agent; a session that just ended has no live state to protect,
+        // and the absence the poll is about to report is the SessionEnd's own corroboration. Stamping
+        // here inverted the mechanism — the one signal announcing the end became what kept the dead
+        // state alive, for the full grace window. Clear the anchor instead, so the next absence
+        // terminates on contact.
+        if case .sessionEnd = payload {
+            lastAuthoritativeAt = nil
+        } else {
+            lastAuthoritativeAt = now
+        }
         machine.reduce(.hook(event), at: now)
         hookAuthority = machine.status != .none // SessionEnd terminates → authority is gone with it
         // Track the live block class: a Notification carries its kind; any transition that leaves the
@@ -247,6 +277,7 @@ public struct ClaudePaneDetector: Sendable {
         lastNotificationKind = (machine.status == .needsPermission) ? kindByte : 0
         emission.status = statusEmissionIfChanged()
         emission.intent = intentEmissionIfChanged()
+        emission.title = titleEmissionIfAgentGone()
         return emission
     }
 
@@ -287,6 +318,7 @@ public struct ClaudePaneDetector: Sendable {
         hookAuthority = machine.status != .none
         lastNotificationKind = (machine.status == .needsPermission) ? 1 : 0
         emission.status = statusEmissionIfChanged()
+        emission.title = titleEmissionIfAgentGone()
         return emission
     }
 
@@ -297,6 +329,7 @@ public struct ClaudePaneDetector: Sendable {
         if machine.status != .needsPermission { lastNotificationKind = 0 }
         var emission = Emission()
         emission.status = statusEmissionIfChanged()
+        emission.title = titleEmissionIfAgentGone()
         return emission
     }
 
@@ -312,6 +345,7 @@ public struct ClaudePaneDetector: Sendable {
         if machine.status != .needsPermission { lastNotificationKind = 0 }
         var emission = Emission()
         emission.status = statusEmissionIfChanged()
+        emission.title = titleEmissionIfAgentGone()
         return emission
     }
 
@@ -329,6 +363,7 @@ public struct ClaudePaneDetector: Sendable {
         // verdict on an undetected pane must not announce a churn frame).
         guard machine.status != .none || lastEmittedStatus != nil else { return emission }
         emission.status = statusEmissionIfChanged()
+        emission.title = titleEmissionIfAgentGone()
         return emission
     }
 
@@ -351,12 +386,16 @@ public struct ClaudePaneDetector: Sendable {
         if machine.status != .none, let topic = Self.topicLine(fromTitle: title) {
             sessionIntent = topic
         }
+        // Ownership: a title the DETECTED agent wrote is the agent's to give back when it goes.
+        // A shell's own title (`nvim — README.md`, a long `make`) is not — it stays put.
+        if machine.status != .none, ClaudeStatusMachine.titleIsAgentWritten(title) { agentOwnsTitle = true }
         var emission = Emission()
         // EVERY shell titles its tab — a title folded on an undetected pane (still `.none`) must
         // not OPEN the type-27 stream with a churn frame announcing the client's own default.
         guard machine.status != .none || lastEmittedStatus != nil else { return emission }
         emission.status = statusEmissionIfChanged()
         emission.intent = intentEmissionIfChanged()
+        emission.title = titleEmissionIfAgentGone()
         return emission
     }
 
@@ -463,6 +502,21 @@ public struct ClaudePaneDetector: Sendable {
         let collapsed = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         guard !collapsed.isEmpty, collapsed != "Claude Code" else { return nil }
         return String(collapsed.prefix(Self.maxIntentChars))
+    }
+
+    // MARK: - Title retirement (the type-21 agent-gone edge)
+
+    /// Returns the type-21 title RETIREMENT — an explicit empty title — on the edge where the agent
+    /// that owned the pane's title has gone (`.none`), else `nil`.
+    ///
+    /// A ONE-SHOT edge: the ownership flag is consumed here, so a pane already handed back keeps
+    /// whatever the shell (or a later agent) titles it next. Empty is deliberate and unambiguous —
+    /// ``HostOutputSniffer`` drops empty OSC 0/2 bodies, so the client can read an empty type-21 as
+    /// "the host means it" rather than as prompt-redraw noise.
+    private mutating func titleEmissionIfAgentGone() -> WireMessage? {
+        guard agentOwnsTitle, machine.status == .none else { return nil }
+        agentOwnsTitle = false
+        return .title("")
     }
 
     /// Returns a type-36 `agentSessionIntent` message iff the latched intent changed since the last

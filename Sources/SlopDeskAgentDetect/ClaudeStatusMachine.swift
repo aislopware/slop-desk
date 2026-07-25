@@ -21,6 +21,13 @@ import Foundation
 ///    ignored; `.working`/`.needsPermission` apply ONLY when an authoritative hook block
 ///    is not already in effect.
 ///
+/// **Post-exit lockout.** Precedence alone is not enough for teardown, because the terminating
+/// signal ARRIVES EARLY: `sessionEnd` is posted while claude is still the PTY foreground, so for
+/// a second or so every rung-3/4 signal still describes a live agent and lifts the floor straight
+/// back off `.none`. A `sessionEnd` therefore arms ``postExitFloorLockout``, during which no weak
+/// signal may lift `.none`; only an authoritative hook clears it. Presence ABSENCE arms nothing —
+/// it is the end already observed, not an announcement of one.
+///
 /// `mutating func reduce(_:at:)` returns the new `ClaudeStatus`. Idempotent on duplicate
 /// signals; out-of-order / unknown signals never trap (validate-then-drop).
 public struct ClaudeStatusMachine: Sendable, Equatable {
@@ -58,6 +65,24 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
     /// after the grace.
     static let hookBlockScreenOverrideGrace: TimeInterval = 1.0
 
+    /// Absolute time the POST-EXIT floor lockout lapses, or `nil` when no session has announced its
+    /// end. Armed by a `sessionEnd` hook (only that path — see ``terminate(at:armLockout:)``).
+    private var exitLockoutUntil: TimeInterval?
+
+    /// Seconds a hook-announced session end vetoes every WEAK liveness signal.
+    ///
+    /// `SessionEnd` fires while the `claude` process is still alive: the PTY foreground was measured
+    /// coming back to the shell 1.0–1.5 s later across six captured `/exit` runs. Across that gap
+    /// the ~1 Hz foreground poll, the 300 ms screen scan and the still-painted OSC title all keep
+    /// reporting a live agent, and any one of them lifting the presence floor resurrects the pane
+    /// milliseconds after it went dark. 3 s clears the widest measured overlap with margin.
+    ///
+    /// Deliberately NOT a mute: an authoritative hook — a genuinely new session — clears it at once
+    /// (see ``clearExitLockout()``), so `claude` relaunched immediately is never held dark; and the
+    /// window is short enough that a hook-free pane's presence-only detection resumes on its next
+    /// poll or two. The absence path arms nothing: `processPresent(false)` is already ground truth.
+    public static let postExitFloorLockout: TimeInterval = 3.0
+
     /// The provenance of an active `.needsPermission` block — what gates whether a conservative
     /// manifest verdict is allowed to clear it (review #5).
     private enum BlockSource: Equatable {
@@ -82,6 +107,7 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
         doneSince = nil
         blockSource = .none
         blockedSince = nil
+        exitLockoutUntil = nil
     }
 
     /// Fold one signal at absolute time `now`, returning the new status.
@@ -90,9 +116,11 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
         switch signal {
         case let .processPresent(present):
             if present {
-                liftPresenceFloor()
+                liftPresenceFloor(at: now)
             } else {
-                terminate()
+                // Ground truth, not an announcement: the agent is demonstrably off the PTY
+                // foreground. Nothing to defend against, so this path arms no lockout.
+                terminate(armLockout: false, at: now)
             }
 
         case let .hook(event):
@@ -105,7 +133,7 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
             applyScreen(detection, at: now)
 
         case let .oscTitle(title):
-            applyTitle(title)
+            applyTitle(title, at: now)
 
         case .tick:
             break // pure time advance; decay handled below
@@ -152,8 +180,9 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
                 enterBlocked(label: label, source: .hook, at: now)
             case .other:
                 // Informational (auth_success / elicitation_complete) — no status change,
-                // but it does corroborate presence (lift the floor off `.none`).
-                liftPresenceFloor()
+                // but it does corroborate presence (lift the floor off `.none`). Corroboration
+                // is WEAK evidence, so it obeys the post-exit lockout like any other floor lift.
+                liftPresenceFloor(at: now)
             }
 
         case let .stop(_, label):
@@ -164,7 +193,10 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
             break
 
         case .sessionEnd:
-            terminate()
+            // The one signal that ARRIVES EARLY: claude posts it and then keeps running for
+            // another second while it tears down. Arm the veto so nothing weak walks the pane
+            // back out of `.none` across that gap.
+            terminate(armLockout: true, at: now)
         }
     }
 
@@ -178,7 +210,7 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
     /// - the REST prefix demotes ONLY a live `.working` → `.idle` (the missed-Stop stuck working state);
     ///   `.done` keeps its decay window and a block keeps waiting;
     /// - any other claude-naming title stays the presence floor it always was.
-    private mutating func applyTitle(_ title: String) {
+    private mutating func applyTitle(_ title: String, at now: TimeInterval) {
         if Self.titleShowsSpinner(title) {
             if status != .none, blockSource != .hook { enter(.working, label: nil) }
             return
@@ -187,7 +219,7 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
             if status == .working { enter(.idle, label: nil) }
             return
         }
-        if Self.titleNamesClaude(title) { liftPresenceFloor() }
+        if Self.titleNamesClaude(title) { liftPresenceFloor(at: now) }
     }
 
     /// True when the title carries Claude Code's WORKING telltale — a leading Braille-pattern
@@ -202,9 +234,20 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
         title.unicodeScalars.first?.value == 0x2733
     }
 
+    /// True when `title` is one Claude Code wrote ABOUT ITSELF: its busy or at-rest telltale, or a
+    /// title naming the program. Exactly the three shapes this machine already believes as agent
+    /// evidence — published so the host can decide the title belongs to the agent (and is the
+    /// agent's to hand back when it exits) without re-deriving the vocabulary.
+    public static func titleIsAgentWritten(_ title: String) -> Bool {
+        titleShowsSpinner(title) || titleShowsRest(title) || titleNamesClaude(title)
+    }
+
     // MARK: - Manifest verdict (conservative fallback)
 
     private mutating func applyManifest(_ verdict: ClaudeStatus, at now: TimeInterval) {
+        // A coarse fallback verdict is the weakest evidence there is — it must never walk a pane
+        // back out of an announced session end.
+        if floorLocked(at: now) { return }
         switch verdict {
         case .none:
             // Unsure → never downgrade; presence is the floor.
@@ -241,6 +284,9 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
     /// The working→idle hold has already run UPSTREAM (the scan layer publishes post-hold).
     private mutating func applyScreen(_ detection: AgentScreenDetection, at now: TimeInterval) {
         guard !detection.skipStateUpdate else { return }
+        // The scan runs every 300 ms off a grid claude has not finished vacating — inside the
+        // post-exit lockout its verdicts describe an agent that already said goodbye.
+        if floorLocked(at: now) { return }
         switch detection.state {
         case .unknown:
             break
@@ -271,12 +317,28 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
 
     // MARK: - State entry helpers
 
-    /// Presence floor — lift `.none` to `.idle`; never downgrade a richer status.
-    private mutating func liftPresenceFloor() {
+    /// Presence floor — lift `.none` to `.idle`; never downgrade a richer status. Vetoed while the
+    /// post-exit lockout stands: presence is exactly the signal that lags an announced session end.
+    private mutating func liftPresenceFloor(at now: TimeInterval) {
+        if floorLocked(at: now) { return }
         if status == .none { enter(.idle, label: nil) }
     }
 
+    /// TRUE while a hook-announced session end still vetoes weak liveness evidence. Ordered
+    /// comparison (NaN-faithful) — never a bare `<` ternary.
+    private func floorLocked(at now: TimeInterval) -> Bool {
+        guard let until = exitLockoutUntil else { return false }
+        return Double.minimum(now, until) < until
+    }
+
+    /// Drops the veto — an AUTHORITATIVE signal (a real hook naming a live session) is proof the
+    /// pane has an agent again, and outranks the exit it may still be racing.
+    private mutating func clearExitLockout() {
+        exitLockoutUntil = nil
+    }
+
     private mutating func enterBlocked(label: String?, source: BlockSource, at now: TimeInterval) {
+        clearExitLockout()
         // A re-assertion of a standing block keeps the ORIGINAL entry time — the override grace
         // measures how long the dialog has been up, not how recently a hook repeated itself.
         if status != .needsPermission { blockedSince = now }
@@ -288,6 +350,7 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
 
     /// Enter a non-blocked status. `at` non-nil marks the done-decay anchor.
     private mutating func enter(_ next: ClaudeStatus, label newLabel: String?, at now: TimeInterval? = nil) {
+        clearExitLockout()
         blockSource = .none
         blockedSince = nil
         status = next
@@ -299,12 +362,16 @@ public struct ClaudeStatusMachine: Sendable, Equatable {
         }
     }
 
-    private mutating func terminate() {
+    /// Drop to `.none`. `armLockout` distinguishes the two ways a session dies: a hook `sessionEnd`
+    /// ANNOUNCES the end while the process still runs (arm the veto), whereas process absence IS
+    /// the end already observed (nothing to defend).
+    private mutating func terminate(armLockout: Bool, at now: TimeInterval) {
         status = .none
         label = nil
         doneSince = nil
         blockSource = .none
         blockedSince = nil
+        if armLockout { exitLockoutUntil = now + Self.postExitFloorLockout }
     }
 
     // MARK: - Time-based decay (injected clock)

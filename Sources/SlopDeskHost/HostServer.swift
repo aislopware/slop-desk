@@ -74,13 +74,15 @@ public final class HostServer: @unchecked Sendable {
     /// per-subscription `UUID`, guarded by `agentStatusObserversLock`. Each ``MuxChannelSession``
     /// (mux OR control) is wired with an `onAgentStatusChanged` closure that calls
     /// ``fanAgentStatusChanged(paneId:title:status:)``, which snapshots this map and invokes every
-    /// observer with `(paneId, state, title, ts)`. A top-level `subscribe` (no paneId) registers
-    /// one here and deregisters on disconnect. Separate lock from `lock` so a status fan-out never
-    /// contends with the session maps (the closure may run on the foreground-poll task thread).
+    /// observer with `(paneId, state, agentPresent, title, ts)`. A top-level `subscribe` (no paneId)
+    /// registers one here and deregisters on disconnect. Separate lock from `lock` so a status
+    /// fan-out never contends with the session maps (the closure may run on the foreground-poll
+    /// task thread).
     private let agentStatusObserversLock = NSLock()
     private var agentStatusObservers: [UUID: @Sendable (
         _ paneId: String,
         _ state: String,
+        _ agentPresent: Bool,
         _ title: String,
         _ ts: Double,
     ) -> Void] = [:]
@@ -943,8 +945,15 @@ public final class HostServer: @unchecked Sendable {
     /// routing key: reattach refreshes it (``refreshHookSinkOnReattach(session:)``), never
     /// re-keys, and every end of life unregisters it (``unregisterHookSink(sessionID:)``).
     private func registerHookSink(session: MuxChannelSession, connectionID: UUID, channelID: UInt32) {
+        registerHookSink(session: session, paneID: Self.paneID(connectionID: connectionID, channelID: channelID))
+    }
+
+    /// Registers `paneID` as `session`'s ONE hook routing key. The mux path derives it from
+    /// `(connectionID, channelID)`; a ctl-spawned pane has no channel pair and uses its session
+    /// uuid. Both bake the SAME string into the child env as `SLOPDESK_PANE_ID`, so the key is
+    /// immutable for the shell's life either way.
+    private func registerHookSink(session: MuxChannelSession, paneID: String) {
         guard let agentHookListener else { return }
-        let paneID = Self.paneID(connectionID: connectionID, channelID: channelID)
         lock.lock()
         hookPaneIDsBySession[session.sessionID] =
             HookSinkRegistration(paneID: paneID, owner: ObjectIdentifier(session))
@@ -1214,10 +1223,14 @@ public final class HostServer: @unchecked Sendable {
 
     /// Registers a cross-pane `agent_status_changed` observer and returns its dedupe key. Called
     /// by the top-level (no-paneId) `subscribe` handler. The observer is invoked with
-    /// `(paneId, state, title, ts)` on EVERY pane's status transition until ``removeAgentStatusObserver(id:)``.
+    /// `(paneId, state, agentPresent, title, ts)` on EVERY pane's status transition until
+    /// ``removeAgentStatusObserver(id:)``. `agentPresent` is the bit the four-state supervision
+    /// vocabulary cannot carry — see ``AgentControlState``.
     func registerAgentStatusObserver(
         id: UUID,
-        _ observer: @escaping @Sendable (_ paneId: String, _ state: String, _ title: String, _ ts: Double) -> Void,
+        _ observer: @escaping @Sendable (
+            _ paneId: String, _ state: String, _ agentPresent: Bool, _ title: String, _ ts: Double,
+        ) -> Void,
     ) {
         agentStatusObserversLock.lock()
         agentStatusObservers[id] = observer
@@ -1240,7 +1253,7 @@ public final class HostServer: @unchecked Sendable {
     public func observeAgentStatusForPreventSleep(
         _ observer: @escaping @Sendable (_ paneId: String, _ state: String) -> Void,
     ) {
-        registerAgentStatusObserver(id: UUID()) { paneId, state, _, _ in observer(paneId, state) }
+        registerAgentStatusObserver(id: UUID()) { paneId, state, _, _, _ in observer(paneId, state) }
     }
 
     /// Fans one pane's status transition to every registered cross-pane observer. Snapshots the
@@ -1253,8 +1266,9 @@ public final class HostServer: @unchecked Sendable {
         agentStatusObserversLock.unlock()
         guard !observers.isEmpty else { return }
         let state = AgentControlState.string(from: status)
+        let present = AgentControlState.presence(from: status)
         let ts = Date().timeIntervalSince1970
-        for observer in observers { observer(paneId, state, title, ts) }
+        for observer in observers { observer(paneId, state, present, title, ts) }
     }
 
     /// Wires a freshly-created session's `onAgentStatusChanged` to the server fan-out. Called from
@@ -1320,6 +1334,9 @@ public final class HostServer: @unchecked Sendable {
         for (id, session) in controlSessions where id.uuidString == paneId {
             controlSessions.removeValue(forKey: id)
             lock.unlock()
+            // The exit callback will not find this session in the map any more, so its hook key is
+            // retired here (identity-guarded + idempotent) rather than leaking one sink per kill.
+            unregisterHookSink(session: session)
             // Prevent-sleep strict balance: clear a working pane killed mid-turn by ctl.
             fanAgentTeardown(session)
             session.shutdownDetached()
@@ -1358,8 +1375,13 @@ public final class HostServer: @unchecked Sendable {
         let sessionID = UUID()
 
         // Build the environment. Thread the control socket path so a spawned agent can reach the
-        // ctl socket (curated sets SLOPDESK_CONTROL_SOCKET when non-empty).
+        // ctl socket (curated sets SLOPDESK_CONTROL_SOCKET when non-empty), and — exactly like the
+        // mux path — the HOOK socket + this pane's id, so an installed Claude hook can POST its
+        // status here. Without them a ctl-spawned pane was the one place an agent ran completely
+        // unobserved: no hook route in, and (below) no detector to fold anything into.
         var environ = HostEnvironment.curated(
+            agentSocketPath: agentHookListener != nil ? agentHookSocketPath : nil,
+            paneID: agentHookListener != nil ? sessionID.uuidString : nil,
             controlSocketPath: agentControlSocketPath.isEmpty ? nil : agentControlSocketPath,
         )
         // Interactive login-shell spawn (`cmd == nil`) layers the SAME shell-integration shim the
@@ -1432,6 +1454,11 @@ public final class HostServer: @unchecked Sendable {
             control: nullControl,
             sessionID: sessionID,
             shimDir: shimDir,
+            // Agent detection follows the server flag, same as a mux pane. A ctl-spawned pane is
+            // where an ORCHESTRATOR runs its agents, so it is the last place that should be blind
+            // to them: without this the detector never polls, `list-panes` reports every such pane
+            // idle forever, and the hook records routed above have nothing to fold into.
+            agentDetectEnabled: agentDetectEnabled,
             agentHookListenerActive: { [weak listener = agentHookListener] in listener?.isListening ?? false },
             // Blocks tracking follows the server flag even with no GUI client: the ctl socket
             // itself consumes the segmentation (`last-output` reads the block ring, `run --wait`
@@ -1448,6 +1475,11 @@ public final class HostServer: @unchecked Sendable {
             session.shutdown()
             throw ControlError.serverStopping
         }
+        // Route this pane's hook POSTs to it. The env above advertises `SLOPDESK_PANE_ID` as the
+        // session uuid (a ctl pane's only identity — there is no `(connection, channel)` pair), so
+        // the sink is keyed by exactly that string. Registered AFTER the insert succeeds: a refused
+        // insert throws without any teardown path to retire the key.
+        registerHookSink(session: session, paneID: sessionID.uuidString)
 
         session.startRelay()
         // Same spawn-cwd seed as the mux path: a ctl-spawned pane (often a raw command with no
@@ -1473,6 +1505,9 @@ public final class HostServer: @unchecked Sendable {
         lock.lock()
         let session = controlSessions.removeValue(forKey: id)
         lock.unlock()
+        // Retire the pane's hook routing key with the pane — the mux path does this from every end
+        // of life, and a ctl pane must not leak one key + closure per spawn for the daemon's life.
+        if let session { unregisterHookSink(session: session) }
         // Prevent-sleep strict balance: a standalone pane whose child exits mid-turn never
         // delivers a non-working transition — fan a final `.none` so a `.working` observer clears it.
         if let session { fanAgentTeardown(session) }

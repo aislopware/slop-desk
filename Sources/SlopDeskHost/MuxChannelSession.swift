@@ -151,6 +151,13 @@ final class MuxChannelSession: @unchecked Sendable {
     private let titleLock = NSLock()
     private var _currentTitle: String = ""
 
+    /// Set when the detector retired an exiting agent's title (see ``ClaudePaneDetector/Emission``)
+    /// and consumed by the PTY read loop before its next sniffer pass. The retirement can be folded
+    /// from ANY of the detector's feeds — the foreground poll, the scan task, the hook socket — but
+    /// the sniffer's coalescing anchor belongs to the read-loop thread, so the request crosses over
+    /// as a flag under `titleLock` rather than as a direct call.
+    private var pendingTitleCoalescingReset = false
+
     /// Reattach truth — the last NON-CLEAR OSC 9;4 progress message emitted for this pane
     /// (`nil` when cleared / never reported). Latched at BOTH emit points — the sniffer's chunk pass
     /// and the Blocks segmenter's auto-progress — so a reattaching client (which reset its progress
@@ -932,7 +939,7 @@ final class MuxChannelSession: @unchecked Sendable {
         let emission = agentDetector.screenDetection(detection, at: now)
         let newStatus = emission.status != nil ? agentDetector.status : nil
         agentDetectLock.unlock()
-        if !emission.isEmpty { enqueueControl(emission.messages) }
+        publishAgentEmission(emission)
         if let newStatus { notifyAgentStatusChanged(newStatus) }
     }
 
@@ -979,9 +986,24 @@ final class MuxChannelSession: @unchecked Sendable {
         let statusChanged = (tickEmission.status != nil || sampleEmission.status != nil)
         let newStatus = statusChanged ? agentDetector.status : nil
         agentDetectLock.unlock()
-        if !tickEmission.isEmpty { enqueueControl(tickEmission.messages) }
-        if !sampleEmission.isEmpty { enqueueControl(sampleEmission.messages) }
+        publishAgentEmission(tickEmission)
+        publishAgentEmission(sampleEmission)
         if let newStatus { notifyAgentStatusChanged(newStatus) }
+    }
+
+    /// Ships one detector emission: enqueues its control messages and, when it carries a TITLE
+    /// RETIREMENT, drops the pane's cached title and asks the read loop to forget its coalescing
+    /// anchor. Every fold site goes through here so the retirement can never ship down one path and
+    /// be missed on another.
+    private func publishAgentEmission(_ emission: ClaudePaneDetector.Emission) {
+        guard !emission.isEmpty else { return }
+        if emission.title != nil {
+            titleLock.lock()
+            _currentTitle = ""
+            pendingTitleCoalescingReset = true
+            titleLock.unlock()
+        }
+        enqueueControl(emission.messages)
     }
 
     /// Folds one sniffed OSC 0/2 title through the detector and enqueues the resulting type-27
@@ -994,7 +1016,7 @@ final class MuxChannelSession: @unchecked Sendable {
         let emission = agentDetector.title(title, at: now)
         let newStatus = emission.status != nil ? agentDetector.status : nil
         agentDetectLock.unlock()
-        if !emission.isEmpty { enqueueControl(emission.messages) }
+        publishAgentEmission(emission)
         if let newStatus { notifyAgentStatusChanged(newStatus) }
     }
 
@@ -1009,7 +1031,7 @@ final class MuxChannelSession: @unchecked Sendable {
         let emission = agentDetector.userInput(bytes: bytes, at: ProcessInfo.processInfo.systemUptime)
         let newStatus = emission.status != nil ? agentDetector.status : nil
         agentDetectLock.unlock()
-        if !emission.isEmpty { enqueueControl(emission.messages) }
+        publishAgentEmission(emission)
         if let newStatus { notifyAgentStatusChanged(newStatus) }
     }
 
@@ -1684,6 +1706,15 @@ final class MuxChannelSession: @unchecked Sendable {
         // this hot thread). Only genuine PTY output lands here, so the restored preamble (which
         // enters via ``enqueueRestoredScrollback()``) is never re-journaled.
         scrollbackJournal?.append(chunk)
+        // A title RETIREMENT folded on another thread since the last chunk (a detected agent
+        // exited) also retires the sniffer's coalescing anchor — otherwise the NEXT agent's
+        // opening title, which is very often byte-identical to the one just retired
+        // (`✳ Claude Code`), would be deduped away and the pane would stay untitled.
+        titleLock.lock()
+        let forgetTitle = pendingTitleCoalescingReset
+        pendingTitleCoalescingReset = false
+        titleLock.unlock()
+        if forgetTitle { sniffer.forgetTitleCoalescing() }
         // ONE fused non-destructive sniffer pass over the chunk (title/bell + OSC 133
         // command status — one pass, not two per-byte machines scanning this hot thread
         // twice). It only OBSERVES; the bytes are forwarded unchanged below. Emission
@@ -1859,7 +1890,7 @@ final class MuxChannelSession: @unchecked Sendable {
         let emission = agentDetector.hook(bytes: bytes, at: ProcessInfo.processInfo.systemUptime)
         let changed = emission.status != nil ? agentDetector.status : nil
         agentDetectLock.unlock()
-        if !emission.isEmpty { enqueueControl(emission.messages) }
+        publishAgentEmission(emission)
         if let changed { notifyAgentStatusChanged(changed) }
     }
 
@@ -1875,7 +1906,7 @@ final class MuxChannelSession: @unchecked Sendable {
         )
         let changed = emission.status != nil ? agentDetector.status : nil
         agentDetectLock.unlock()
-        if !emission.isEmpty { enqueueControl(emission.messages) }
+        publishAgentEmission(emission)
         if let changed { notifyAgentStatusChanged(changed) }
     }
 

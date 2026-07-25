@@ -113,7 +113,7 @@ public struct AgentHookHandler: Sendable {
             return (.notification(kind: kind, label: info.message), notificationKindByte(kind))
 
         case let .stop(info):
-            return (.stop(sessionID: info.sessionID, label: info.lastAssistantMessage), 0)
+            return (.stop(sessionID: info.sessionID, label: stopLabel(info)), 0)
 
         case let .subagentStop(node):
             return (.subagentStop(agentID: node.id), 0)
@@ -121,6 +121,23 @@ public struct AgentHookHandler: Sendable {
         case let .sessionEnd(info):
             return (.sessionEnd(sessionID: info.sessionID), 0)
         }
+    }
+
+    /// The done-chip text for a finished turn: the last assistant message, or — when the turn ended
+    /// without one — what it left RUNNING. A `Stop` carrying live `background_tasks` is a turn whose
+    /// work outlives it, and "3 background tasks running" is a truer thing for the row to say than
+    /// nothing at all. Deliberately only the FALLBACK: a turn that spoke keeps its own words, and
+    /// the coarse status stays `.done` either way (there is no hook when a background task finishes,
+    /// so any richer state this set would have no way back).
+    static func stopLabel(_ info: StopInfo) -> String? {
+        if let message = info.lastAssistantMessage,
+           !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            return message
+        }
+        guard info.backgroundTaskCount > 0 else { return nil }
+        let noun = info.backgroundTaskCount == 1 ? "background task" : "background tasks"
+        return "\(info.backgroundTaskCount) \(noun) running"
     }
 
     /// `SlopDeskInspector.NotificationKind` → `SlopDeskAgentDetect.ClaudeHookEvent.NotificationKind`

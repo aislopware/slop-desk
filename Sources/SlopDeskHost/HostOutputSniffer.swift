@@ -119,6 +119,16 @@ public final class HostOutputSniffer: @unchecked Sendable {
     /// The last title we emitted, for trivial coalescing (don't spam identical titles).
     private var lastTitle: String?
 
+    /// Forgets the title coalescing anchor, so the very next OSC 0/2 is emitted even if it repeats
+    /// the previous one. The host pushes an explicit title RETIREMENT when a detected agent exits
+    /// (``ClaudePaneDetector``); without this the anchor would still hold that agent's last title
+    /// and silently swallow an identical one from the next `claude` run in the same pane — the
+    /// common case, since a fresh session opens on the static `✳ Claude Code`. Called on the
+    /// read-loop thread (the only mutator of this state).
+    func forgetTitleCoalescing() {
+        lastTitle = nil
+    }
+
     /// IN-FLIGHT kitty (OSC 99) notifications keyed by their `i=<id>` group (or `""` when the chunk
     /// omits `i`), accumulated across `d=0` continuation chunks and FINALIZED + emitted at the `d=1`
     /// (default) chunk. Bounded by ``kittyAssemblyMax`` entries / ``kittyAssemblyCap`` chars; an OSC-99
