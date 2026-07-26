@@ -2033,6 +2033,14 @@
       "sessionIdHex": "112233445566778899aabbccddeeff00"
     },
     {
+      "channelClass": 1,
+      "channelId": 9,
+      "hex": "0000001e0000000901112233445566778899aabbccddeeff00000000000000000001",
+      "kind": "channelOpen",
+      "lastReceivedSeq": 0,
+      "sessionIdHex": "112233445566778899aabbccddeeff00"
+    },
+    {
       "accepted": true,
       "channelId": 3,
       "hex": "0000000e0000000302010000000000000000",
@@ -4601,6 +4609,58 @@
     "weightFixed240": "01406e000000000000",
     "weightFlexThird": "003fd5555555555555"
   },
+  "workspaceWireMessages": [
+    {
+      "hex": "0000000a11000000000000000000",
+      "name": "requestEmpty",
+      "wireByteCount": 14
+    },
+    {
+      "hex": "0000000c11ffffffff03000000020102",
+      "name": "requestMaxSeq",
+      "wireByteCount": 16
+    },
+    {
+      "hex": "0000000a1100000007fa00000000",
+      "name": "requestUnknownVerb",
+      "wireByteCount": 14
+    },
+    {
+      "hex": "0000002a2500777777777777777777777777777777770000000000000000000000000000002a00000004736e6170",
+      "name": "eventSnapshot",
+      "wireByteCount": 46
+    },
+    {
+      "hex": "0000002a2501777777777777777777777777777777770000000000000029000000000000002a0000000464696666",
+      "name": "eventDiff",
+      "wireByteCount": 46
+    },
+    {
+      "hex": "0000002825027777777777777777777777777777777700000000000000000000000000000000000000020000",
+      "name": "eventPresence",
+      "wireByteCount": 44
+    },
+    {
+      "hex": "000000272503777777777777777777777777777777770000000000000000000000000000002a00000001aa",
+      "name": "eventIntentResult",
+      "wireByteCount": 43
+    },
+    {
+      "hex": "000000262504777777777777777777777777777777770000000000000000000000000000000000000000",
+      "name": "eventReset",
+      "wireByteCount": 42
+    },
+    {
+      "hex": "0000002625017777777777777777777777777777777780000000000000007fffffffffffffff00000000",
+      "name": "eventExtremeStateNums",
+      "wireByteCount": 42
+    },
+    {
+      "hex": "0000002625fa777777777777777777777777777777770000000000000000000000000000000000000000",
+      "name": "eventUnknownKind",
+      "wireByteCount": 42
+    }
+  ],
   "ycbcr": [
     {
       "cbToB": 1072530509,

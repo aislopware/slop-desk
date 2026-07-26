@@ -160,8 +160,10 @@ final class ClaudeWireCodecTests: XCTestCase {
     func testUnknownTypeByteDropsNotTraps() throws {
         // An older peer that does not know 26/27 (or any future tag) DROPS the frame via
         // unknownMessageType — validate-then-drop, never a trap. (16/28/29/30/31 are now assigned
-        // metadata/block/inputEcho tags, so use a still-unassigned tag.)
-        for unknown: UInt8 in [17, 99, 0, 255] {
+        // metadata/block/inputEcho tags, so use a still-unassigned tag. 17 dropped out when docs/45
+        // assigned it to `workspaceRequest` — verify against `WireMessage`'s type-byte switch, not
+        // this comment, when minting the next verb.)
+        for unknown: UInt8 in [18, 99, 0, 255] {
             XCTAssertThrowsError(try decodePayload([unknown, 0xAB, 0xCD])) { error in
                 XCTAssertEqual(error as? SlopDeskError, .unknownMessageType(unknown))
             }

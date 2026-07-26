@@ -68,6 +68,30 @@ extension WireMessage {
             let payload = try reader.readBytes(payloadLen)
             return .metadataRequest(requestID: requestID, verb: verb, payload: payload)
 
+        case 17: // workspaceRequest (docs/45 §5.2)
+            let requestSeq = try reader.readUInt32()
+            let verb = try reader.readUInt8()
+            // Validate the declared length BEFORE allocating/reading — never over-read a hostile
+            // body. The payload is opaque here; WorkspaceStateCodec validates the bytes.
+            let payloadLen = try Int(reader.readUInt32())
+            let payload = try reader.readBytes(payloadLen)
+            return .workspaceRequest(requestSeq: requestSeq, verb: verb, payload: payload)
+
+        case 37: // workspaceEvent (docs/45 §5.2)
+            let kind = try reader.readUInt8()
+            let epochBytes = try reader.readBytes(sessionIDByteCount)
+            guard let epoch = UUID(dataBytes: epochBytes) else {
+                throw SlopDeskError.malformedBody("workspaceEvent: invalid epoch bytes")
+            }
+            let baseStateNum = try reader.readInt64()
+            let newStateNum = try reader.readInt64()
+            let payloadLen = try Int(reader.readUInt32())
+            let payload = try reader.readBytes(payloadLen)
+            return .workspaceEvent(
+                kind: kind, epoch: epoch,
+                baseStateNum: baseStateNum, newStateNum: newStateNum, payload: payload,
+            )
+
         case 20: // helloAck
             let idBytes = try reader.readBytes(sessionIDByteCount)
             let resumeFromSeq = try reader.readInt64()

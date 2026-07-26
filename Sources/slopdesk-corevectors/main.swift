@@ -1292,6 +1292,19 @@ root["muxEnvelopes"] = [
             "channelClass": Int(255),
         ],
     ),
+    // channelClass 1 = the WORKSPACE-DOCUMENT channel (docs/45 §5.1). The field was already encoded,
+    // decoded and pinned at 0 and 255; this record pins the value the workspace channel actually
+    // uses. Coverage only — the codec is unchanged.
+    muxRecord(
+        "channelOpen",
+        .channelOpen(channelID: 9, sessionID: sidA, lastReceivedSeq: 0, channelClass: 1, initialCwd: nil),
+        [
+            "channelId": UInt32(9),
+            "sessionIdHex": hex(uuidBytes(sidA)),
+            "lastReceivedSeq": Int64(0),
+            "channelClass": Int(1),
+        ],
+    ),
     muxRecord(
         "channelOpenAck",
         .channelOpenAck(channelID: 3, accepted: true, resumeFromSeq: 0),
@@ -1742,6 +1755,46 @@ root["workspaceStateCodec"] = [
     // Weights ride as a raw `bitPattern` — never a re-parsed decimal (the bit-exact float rule).
     "weightFlexThird": wsHex(WorkspaceStateCodec.encodeWeight(.flex(1.0 / 3.0))),
     "weightFixed240": wsHex(WorkspaceStateCodec.encodeWeight(.fixed(240))),
+]
+
+// MARK: workspaceWireMessages (docs/45 §5.2 — types 17 / 37)
+
+// The ENVELOPE only. `SlopDeskProtocol` never parses workspace state, so these vectors pin framing:
+// the hoisted 33-byte header, the length-prefix discipline, and the extreme state numbers that share
+// the `output.seq` idiom.
+let wsEpoch = wsUUID(0x77)
+
+func wsWireRecord(_ name: String, _ message: WireMessage) -> [String: Any] {
+    ["name": name, "hex": wsHex(message.encode()), "wireByteCount": message.wireByteCount]
+}
+
+root["workspaceWireMessages"] = [
+    wsWireRecord("requestEmpty", .workspaceRequest(requestSeq: 0, verb: 0, payload: Data())),
+    wsWireRecord("requestMaxSeq", .workspaceRequest(requestSeq: UInt32.max, verb: 3, payload: Data([0x01, 0x02]))),
+    wsWireRecord("requestUnknownVerb", .workspaceRequest(requestSeq: 7, verb: 250, payload: Data())),
+    wsWireRecord("eventSnapshot", .workspaceEvent(
+        kind: 0, epoch: wsEpoch, baseStateNum: 0, newStateNum: 42, payload: Data("snap".utf8),
+    )),
+    wsWireRecord("eventDiff", .workspaceEvent(
+        kind: 1, epoch: wsEpoch, baseStateNum: 41, newStateNum: 42, payload: Data("diff".utf8),
+    )),
+    wsWireRecord("eventPresence", .workspaceEvent(
+        kind: 2, epoch: wsEpoch, baseStateNum: 0, newStateNum: 0, payload: Data([0x00, 0x00]),
+    )),
+    wsWireRecord("eventIntentResult", .workspaceEvent(
+        kind: 3, epoch: wsEpoch, baseStateNum: 0, newStateNum: 42, payload: Data([0xAA]),
+    )),
+    wsWireRecord("eventReset", .workspaceEvent(
+        kind: 4, epoch: wsEpoch, baseStateNum: 0, newStateNum: 0, payload: Data(),
+    )),
+    // Int64 extremes: `stateNum` shares the seq idiom, and a sign error here surfaces only after
+    // months of uptime.
+    wsWireRecord("eventExtremeStateNums", .workspaceEvent(
+        kind: 1, epoch: wsEpoch, baseStateNum: Int64.min, newStateNum: Int64.max, payload: Data(),
+    )),
+    wsWireRecord("eventUnknownKind", .workspaceEvent(
+        kind: 250, epoch: wsEpoch, baseStateNum: 0, newStateNum: 0, payload: Data(),
+    )),
 ]
 
 // MARK: emit

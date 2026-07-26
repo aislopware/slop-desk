@@ -205,6 +205,41 @@ public enum WireMessage: Equatable, Sendable {
     /// (`unknownMessageType`), never traps. Rides CONTROL like the other inline signals.
     case metadataResponse(requestID: UInt32, status: UInt8, payload: Data)
 
+    /// A WORKSPACE-DOCUMENT request (type 17, client → host, CONTROL) — docs/45 §5.2.
+    ///
+    /// Verb-multiplexed exactly like ``metadataRequest(requestID:verb:payload:)``, and for the same
+    /// reason: **every future workspace verb costs zero type numbers** and never shifts the
+    /// unknown-type probe again. Verbs are `0 subscribe · 1 ack · 2 presence · 3 intent`.
+    ///
+    /// - `requestSeq`: the client's monotone request counter (correlation only; the host echoes
+    ///   nothing for fire-and-forget verbs).
+    /// - `verb`: unknown values are a `malformedBody` DROP, never a trap.
+    /// - `payload`: verb-specific, length-prefixed and OPAQUE to this envelope. `SlopDeskProtocol`
+    ///   never parses workspace state — `WorkspaceStateCodec` in `SlopDeskWorkspaceModel` does,
+    ///   exactly as this target never parses a `metadataRequest` body.
+    ///
+    /// Rides the workspace mux channel (`channelClass == 1`), whose CONTROL sub-channel is unwindowed.
+    case workspaceRequest(requestSeq: UInt32, verb: UInt8, payload: Data)
+
+    /// A WORKSPACE-DOCUMENT event (type 37, host → client, CONTROL) — docs/45 §5.2.
+    ///
+    /// The epoch and BOTH state numbers are hoisted into the envelope so a client can drop a
+    /// mis-based frame after a fixed-size header read, without parsing the payload at all. That is
+    /// load-bearing: a delta computed against a different document applies CLEANLY and corrupts
+    /// silently (pinned by `WorkspaceStateAlgebraTests.testDiffAgainstAForeignBaseSilentlyDiverges`),
+    /// so cheap rejection is the whole defence.
+    ///
+    /// - `kind`: `0 snapshot · 1 diff · 2 presence · 3 intentResult · 4 reset`. Only kinds 0 and 1
+    ///   may advance a client's `stateNum` or trigger an ack — a kind-2/3 frame that advanced it
+    ///   would make the host retire, via its `assumedAcked` base, a diff it never sent.
+    /// - `epoch`: minted at every hostd start. A foreign epoch means reset-then-snapshot, which is
+    ///   the same code path as a missed frame and as a four-hour reconnect.
+    /// - `baseStateNum` / `newStateNum`: `Int64`, matching `output.seq` / `ack.seq` /
+    ///   `resumeFromSeq` — one seq idiom in the codebase.
+    case workspaceEvent(
+        kind: UInt8, epoch: UUID, baseStateNum: Int64, newStateNum: Int64, payload: Data,
+    )
+
     /// The PTY's canonical-echo state (E17/I22, type 31, host → client, CONTROL). The host watches the
     /// PTY master's termios `ECHO` line-discipline flag (`tcgetattr`, cleared by `sudo`/`ssh`/`login`/
     /// `read -s`/`getpass`) and emits this on a state EDGE — `enabled: true` is canonical echo (default),
@@ -368,6 +403,8 @@ public enum WireMessage: Equatable, Sendable {
         case .projectKey: 34
         case .projectGitStatus: 35
         case .agentSessionIntent: 36
+        case .workspaceRequest: 17
+        case .workspaceEvent: 37
         }
     }
 
@@ -401,6 +438,8 @@ public enum WireMessage: Equatable, Sendable {
              .cwd,
              .projectKey,
              .projectGitStatus,
+             .workspaceRequest,
+             .workspaceEvent,
              .agentSessionIntent:
             .control
         }

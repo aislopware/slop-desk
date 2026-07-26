@@ -217,10 +217,14 @@ final class MetadataWireMessageTests: XCTestCase {
     // MARK: unknown-type drop (older-peer forward-compat)
 
     func testUnknownTypeDropsNotTraps() throws {
-        // A peer that does not know 16/30 DROPS the frame via unknownMessageType, never traps. (17 and 37
-        // are still-unassigned "next free" bytes — 31 is inputEcho, 32 is progress, 33 is cwd (OSC 7),
-        // 34 is projectKey, 35 is projectGitStatus, 36 is agentSessionIntent; 99 is arbitrary.)
-        for unknown: UInt8 in [17, 37, 99] {
+        // A peer that does not know 16/30 DROPS the frame via unknownMessageType, never traps.
+        //
+        // The probe values MOVED 17/37 -> 18/38 when docs/45 took 17 (`workspaceRequest`) and 37
+        // (`workspaceEvent`). 18 and 38 are the new next-free bytes — 31 is inputEcho, 32 is
+        // progress, 33 is cwd (OSC 7), 34 is projectKey, 35 is projectGitStatus, 36 is
+        // agentSessionIntent; 99 is arbitrary. Verify against `WireMessage`'s type-byte switch, not
+        // this comment, when minting the next verb.
+        for unknown: UInt8 in [18, 38, 99] {
             XCTAssertThrowsError(try decodePayload([unknown, 0xAB, 0xCD])) { error in
                 XCTAssertEqual(error as? SlopDeskError, .unknownMessageType(unknown))
             }

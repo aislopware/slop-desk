@@ -170,6 +170,26 @@ extension WireMessage {
             frame.appendBE(UInt32(truncatingIfNeeded: payload.count))
             frame.append(payload)
 
+        case let .workspaceRequest(requestSeq, verb, payload):
+            // [UInt32 BE requestSeq][UInt8 verb][UInt32 BE payloadLen][payload bytes] — the
+            // metadataRequest shape, so a new workspace verb never costs a type byte.
+            frame.appendBE(requestSeq)
+            frame.append(verb)
+            frame.appendBE(UInt32(truncatingIfNeeded: payload.count))
+            frame.append(payload)
+
+        case let .workspaceEvent(kind, epoch, baseStateNum, newStateNum, payload):
+            // [UInt8 kind][16B epoch][Int64 BE base][Int64 BE new][UInt32 BE payloadLen][payload].
+            // The epoch and both state numbers are HOISTED ahead of the payload so a client can
+            // reject a mis-based frame after a fixed 33-byte header read, without parsing state it
+            // is about to discard.
+            frame.append(kind)
+            frame.append(epoch.dataBytes)
+            frame.appendBE(baseStateNum)
+            frame.appendBE(newStateNum)
+            frame.appendBE(UInt32(truncatingIfNeeded: payload.count))
+            frame.append(payload)
+
         case let .metadataResponse(requestID, status, payload):
             // [UInt32 BE requestID][UInt8 status][UInt32 BE payloadLen][payload bytes]. Same shape as
             // metadataRequest with a status byte in place of the verb; the payload is length-prefixed
@@ -325,6 +345,10 @@ public extension WireMessage {
                 .count // requestID + verb + UInt32 len + payload
             case let .metadataResponse(_, _, payload): 4 + 1 + 4 + payload
                 .count // requestID + status + UInt32 len + payload
+            case let .workspaceRequest(_, _, payload): 4 + 1 + 4 + payload
+                .count // requestSeq + verb + UInt32 len + payload
+            case let .workspaceEvent(_, _, _, _, payload): 1 + 16 + 8 + 8 + 4 + payload
+                .count // kind + epoch + base + new + UInt32 len + payload
             case .inputEcho: 1 // enabled UInt8
             case .progress: 2 // state UInt8 + percent UInt8
             case .helloAck: Self.sessionIDByteCount + 8 + 1 // UUID + Int64 + Bool

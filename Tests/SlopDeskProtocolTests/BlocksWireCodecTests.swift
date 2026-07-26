@@ -263,8 +263,10 @@ final class BlocksWireCodecTests: XCTestCase {
 
     func testUnknownTypeDropsNotTraps() throws {
         // A peer that does not know 15/28/29 DROPS the frame via unknownMessageType, never traps.
-        // (16/30 are metadataRequest/metadataResponse and 31 is inputEcho since E17, so use unassigned tags.)
-        for unknown: UInt8 in [17, 18, 19, 200] {
+        // (16/30 are metadataRequest/metadataResponse and 31 is inputEcho since E17, so use unassigned
+        // tags. 17 dropped out of this list when docs/45 assigned it to `workspaceRequest` — verify
+        // against `WireMessage`'s type-byte switch, not this comment, when minting the next verb.)
+        for unknown: UInt8 in [18, 19, 200] {
             XCTAssertThrowsError(try decodePayload([unknown, 0xAB, 0xCD])) { error in
                 XCTAssertEqual(error as? SlopDeskError, .unknownMessageType(unknown))
             }

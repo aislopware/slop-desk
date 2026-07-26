@@ -99,6 +99,7 @@ UUIDs (`sessionID`) are sent as their **16 raw bytes** in canonical order (not a
 | 27 | `claudeStatus` | host → client | control | `UInt8 state` + `UInt8 kind` + `UInt16 labelLen` (BE) + `label` UTF-8 (rich Claude-Code hook status) |
 | 28 | `commandBlock` | host → client | control | `UInt32 index` + `UInt8 hasExit` + `Int32 exitCode` (BE, 0 if absent) + `UInt8 hasDuration` + `UInt32 durationMS` (BE, 0 if absent) + `UInt8 complete` + `UInt32 outputLen` (BE) + `UInt32 promptOrdinal` (BE; 1-based count of OSC-133 `A` prompt cycles at the block's start — counts EVERY cycle incl. blockless empty-Enter/Ctrl-C ones, matching libghostty's `.prompt` rows for `jump_to_prompt`; `0` = unknown) + `UInt16 cmdLen` (BE) + `commandText` UTF-8 (Warp-style Block metadata) |
 | 29 | `blockOutput` | host → client | control | `UInt32 index` + `UInt32 outputLen` (BE) + `output` bytes (RAW VT, not UTF-8) — reply to `requestBlockOutput` |
+| 17 | `workspaceRequest` | client → host | control | `UInt32 requestSeq` + `UInt8 verb` + `UInt32 payloadLen` (BE) + `payload` bytes (opaque) — the WORKSPACE-DOCUMENT request (docs/45 §5.2). Verb-multiplexed like type 16, so every future workspace verb costs ZERO type numbers: `0 subscribe · 1 ack · 2 presence · 3 intent`. An unknown verb is a `malformedBody` drop, never a trap. `SlopDeskProtocol` does not parse the payload — `WorkspaceStateCodec` (SlopDeskWorkspaceModel) does. Rides the `channelClass == 1` channel's CONTROL sub-channel |
 | 30 | `metadataResponse` | host → client | control | `UInt32 requestID` (BE) + `UInt8 status` + `UInt32 payloadLen` (BE) + `payload` bytes (opaque) — reply to `metadataRequest` (E4) |
 | 31 | `inputEcho` | host → client | control | `UInt8 enabled` (`1` = canonical echo on, `0` = no-echo password prompt) — PTY termios `ECHO` edge; drives AUTO Secure Keyboard Entry (E17/I22) |
 | 32 | `progress` | host → client | control | `UInt8 state` (`0` clear / `1` in-progress / `2` error / `3` indeterminate) + `UInt8 percent` (`0`–`100`; meaningful for state `1`/`2`) — OSC 9;4 taskbar progress (E14/K1) |
@@ -106,6 +107,7 @@ UUIDs (`sessionID`) are sent as their **16 raw bytes** in canonical order (not a
 | 34 | `projectKey` | host → client | control | `path` UTF-8 (absolute; rest-of-frame, no length prefix — same shape as `title`/`cwd`) — HOST-computed By-Project sidebar key: the git worktree toplevel containing the pane's cwd (pure filesystem walk-up over the `realpath`-canonicalized cwd — logical OSC-7 paths and physical probe paths land on ONE key; no `git` subprocess), else the cwd itself. Seeded at SPAWN from the server-provided cwd (covers shells that never emit OSC-133/OSC-7), then emitted on change edges only (host dedupe anchors: cwd truth from the OSC-7 sniff or the 133;B/D prompt-edge `proc_pidinfo` probe); re-asserted on reattach alongside 21/23/26/27/31/32 (and a latched 33) so a reconnecting client renders the final sidebar sections immediately with zero client-side derivation |
 | 35 | `projectGitStatus` | host → client | control | `[u16 rootLen][repoRoot UTF-8][u16 branchLen][branch UTF-8][i32 ahead][i32 behind][i32 stash][u32 staged][u32 modified][u32 untracked][u32 conflicted][u32 changed]` (all BE; both strings clamped ≤ 65535 UTF-8 bytes at a scalar boundary) — the EVENT-DRIVEN project git summary: the host's per-repo FSEvents watcher (`RepoStatusWatcher`, one debounced stream per repo toplevel with live panes, `SLOPDESK_GIT_WATCH` gate) re-probes `git status` once per change burst, folds the porcelain file list to counts HOST-side (the fold shared with the `gitStatus` metadata RPC — `GitStatusPayload.foldedCounts`), dirty-guards against the last push, and fans to every session sectioned under `repoRoot`. The client books it per PROJECT (the section-header git line) and backs its poll cadence off while pushes stay fresh; the file list never rides this push (the RPC serves detail on demand) |
 | 36 | `agentSessionIntent` | host → client | control | `intent` UTF-8 (rest-of-frame, no length prefix — same shape as `title`/`cwd`/`projectKey`; empty = CLEARED) — the pane's AGENT-SESSION INTENT: claude's OWN session title when the sniffed OSC title carries one (`ClaudePaneDetector.topicLine` — the text behind the Braille-spinner/`✳` telltale glyph, i.e. Claude Code's background-model topic summary or a `/rename`d name; the static startup "Claude Code" is NOT a topic), else the session's LATEST titleable prompt (first non-blank line, whitespace collapsed, ≤ 120 chars host-side; slash-commands and harness XML blocks neither title nor wipe) from the `UserPromptSubmit` hook's `prompt` field (no transcript reads) — each real prompt re-titles and each fresh topic supersedes it, so the row answers "what is the agent doing NOW"; a new hook `session_id` (a fresh `claude` run / `/clear`) re-derives from scratch. A topic folds only on a DETECTED claude pane (a plain shell's title never conjures an intent). The client mirrors it per pane (`WorkspaceStore.paneAgentIntent`) and titles an AGENT row by it (rename still wins), so four idle `claude` rows stop reading identically. Cleared (empty push) on `SessionEnd` and on presence termination; change-edge deduped (a never-intent pane emits nothing, not even the clear); re-asserted on reattach alongside 21/23/26/27/31/32/33/34 |
+| 37 | `workspaceEvent` | host → client | control | `UInt8 kind` + `16B epoch` + `Int64 baseStateNum` (BE) + `Int64 newStateNum` (BE) + `UInt32 payloadLen` (BE) + `payload` bytes (opaque) — the WORKSPACE-DOCUMENT event (docs/45 §5.2). `kind`: `0 snapshot · 1 diff · 2 presence · 3 intentResult · 4 reset`. The epoch and BOTH state numbers are HOISTED ahead of the payload so a client rejects a mis-based frame after a fixed 33-byte header read — load-bearing, because a diff computed against a different document applies cleanly and corrupts silently. **Only kinds 0 and 1 may advance a client's `stateNum` or trigger an ack**; a kind-2/3 frame that did would make the host retire, via its `assumedAcked` base, a diff it never sent. `epoch` is minted at every hostd start — a foreign epoch means reset-then-snapshot |
 
 `protocolVersion` is currently **1** (`SlopDesk.protocolVersion`). There is **no version
 negotiation**: the host accepts **only** `protocolVersion == 1`. Any `hello` with a differing
@@ -349,8 +351,8 @@ never offers or falls back to another version.
     version negotiation). Rides the head-of-line-independent CONTROL channel like the other inline
     signals; pane identity rides the mux channel envelope, not the body. Not sequenced/replayed.
 
-The next free **client → host** CONTROL type byte is **17** (10–16 used). The next free
-**host → client** CONTROL type byte is **37** (20–36 used). (Byte 28 was once reserved for a W14 OSC-8
+The next free **client → host** CONTROL type byte is **18** (10–17 used). The next free
+**host → client** CONTROL type byte is **38** (20–37 used). (Byte 28 was once reserved for a W14 OSC-8
 hyperlink type, but W14 ships OSC-8 click-to-open via **libghostty's own hit-testing** —
 `GHOSTTY_ACTION_OPEN_URL` / `GHOSTTY_ACTION_MOUSE_OVER_LINK` — so no wire change was needed; 28 was
 later taken by the Warp-style `commandBlock`. See DECISIONS.md "W14 terminal parity".)
@@ -1030,3 +1032,115 @@ final name (`report.pdf` → `report (1).pdf`); a dropped connection sweeps any 
 | `FileTransferCodec.DecodeError` | `empty` / `unknownType` / `truncated` / `badUTF8` — a malformed payload, dropped (poisons the connection decoder). |
 | `FileTransferFrameDecoderError.frameTooLarge` | A length prefix over the 16 MiB cap — rejected before allocating. |
 | `FileDropSinkError` | `notOpen` / `ioFailed` — a disk failure surfaces as a per-transfer `failed`, never a connection teardown. |
+
+---
+
+## 10. Workspace-document channel (`channelClass == 1`)
+
+Design: [45 — Multi-client state sync](45-multi-client-state-sync.md). Types **17**
+(`workspaceRequest`) and **37** (`workspaceEvent`) on a dedicated mux channel.
+
+### 10.1 Channel classes
+
+`MuxChannelOpen.channelClass` was already encoded, decoded and golden-pinned at 0 and 255 while being
+read nowhere in the host. It now carries meaning:
+
+| value | class | notes |
+|-------|-------|-------|
+| 0 | `.pane` | today's PTY channel — unchanged |
+| 1 | `.workspace` | the workspace document. Exactly ONE per mux connection; a second is `accepted: false`. Only the CONTROL sub-channel is used (unwindowed); the DATA sub-channel `openChannel` also creates stays idle |
+| 2 | `.paneObserver` | read-only PTY subscriber. `input` frames are DROPPED host-side |
+
+Workspace routing happens in `spawnMuxChannel` **before** the `attachedElsewhere` critical section,
+so the PTY one-attachment-per-sessionID invariant is untouched.
+
+### 10.2 The entry grammar
+
+```
+key   := [u8 kindTag][16B objectID][u8 field]           — 18 bytes, fixed, no length prefix
+entry := key ++ [u32 BE valueLen][value…]
+```
+
+Entries are emitted in ascending `(kindTag, objectID bytes, field)`. Deterministic bytes are what
+make the golden vector stable and keep a diff from churning on dictionary iteration order.
+
+`kindTag`: `0 root · 1 session · 2 tab · 3 pane · 4 splitNode · 5 project`.
+
+**A delete removes an OBJECT** (every field under one objectID), never a single field. A field is
+RETIRED by setting it to a **zero-length value**, and zero-length is a first-class value the
+projection honours — `""` is already meaningful on this wire (an empty type-21 is the agent
+title-ownership retirement), so "missing key" and "empty value" must stay distinct.
+
+An entry whose `kindTag`/`field` this build does not recognise is **kept verbatim**, not skipped:
+length-prefixing makes forward tolerance free, and keeping means an older client's state stays
+byte-equal to the host's so its ack means what it says.
+
+### 10.3 Snapshot, diff, and the acked base
+
+The host keeps, per subscriber, the state that subscriber last **acked**, and every send computes
+`diff(from: assumedAcked, to: current)` — **from the acked base, not the last-sent base** (mosh SSP).
+
+Consequences, and they are the whole correctness argument:
+
+- A diff is a set of independent property assignments, so `apply(d, apply(d, s)) == apply(d, s)`
+  holds **by construction**: duplicates and reorders are no-ops with zero extra machinery.
+- A lost frame **self-heals on the next tick**. There is **no retransmit path on either side.**
+- A client four hours offline acks the same old `stateNum` and gets exactly one diff, or a snapshot.
+  Reconnect and steady state are literally the same code. Cost is O(tree), never O(elapsed) — no
+  retention window, no compaction.
+
+Client apply rules:
+
+```
+kind 0 snapshot     → adopt epoch, replace entries wholesale, clear fastPath, stateNum = new, ACK
+kind 4 reset        → clear everything, adopt epoch, resubscribe from 0. No stateNum write, no ack.
+kind 1 diff:
+   epoch != self.epoch      → DROP, resubscribe from 0
+   newStateNum <= stateNum  → DROP (already have it)
+   baseStateNum != stateNum → DROP, resubscribe from stateNum
+   otherwise                → apply sets then deletes, erase fastPath for every touched key,
+                              stateNum = new, ACK
+kind 2 presence     → replace roster.  No stateNum write, no ack.
+kind 3 intentResult → record the watermark.  No stateNum write, no ack.
+```
+
+A snapshot is self-contained and therefore epoch-INDEPENDENT: the epoch check precedes kind 1 only,
+so a post-restart client converges in one frame rather than two.
+
+**The `epoch: UUID` is non-optional.** Without it a restarted hostd counts `stateNum` back up and a
+returning client one behind accepts a delta computed against a completely different document —
+divergence that is permanent, silent, and has no detector. (Pinned as a hazard by
+`WorkspaceStateAlgebraTests.testDiffAgainstAForeignBaseSilentlyDiverges`.) The epoch is the
+no-migration directive expressed on the wire.
+
+### 10.4 Transport rules
+
+- The workspace channel **must never** use `enqueueControl`. That queue sheds NEW messages past
+  `maxControlOutQueued = 1024`, so a shed snapshot would leave a client pinned at `stateNum 0` with
+  **no retry trigger** — a silent, permanently blank workspace.
+- It owns its own send task with **depth-1 coalescing**: a pending diff is discarded and recomputed,
+  never queued. Host memory is O(clients × state) regardless of how slow a client is; a sleeping
+  iPhone is free.
+
+### 10.5 Decode contract
+
+Every count is checked against the bytes **actually remaining** before any `reserveCapacity`; no
+field of attacker input is force-unwrapped; C-style bools are `byte != 0`; strings are strict UTF-8,
+never lossy, clamped ≤ 65535 at a scalar boundary. `entryCount > 65536` is `malformedBody`.
+`layoutStructure` nesting is capped at `SplitNode.maxDepth` (12) checked **before** descending —
+in a hand-rolled binary decoder over network input, that cap **is** the stack-safety mechanism, where
+`SplitNode+Codable` can lean on `JSONDecoder`'s own nesting limit. `childCount` is a `u8`, so
+fan-out is bounded at 255 by the format itself.
+
+### 10.6 State plane vs byte plane
+
+A client can receive `pane/liveness = dead`, or a pane delete, on the workspace channel while
+`output` / `exit` frames for that pane are still in flight on an **independent** mux channel.
+
+> **Rule: data arriving on a pane channel the state plane has already retired is DROPPED — not
+> applied, not an error. A pane surface is torn down only after its own `channelClose`, never on a
+> state-plane edge alone; the state-plane edge marks it dead in the UI and stops new input.**
+
+This is the untrusted-input idiom applied to our own host. `closePane` therefore reaps
+unconditionally and `channelClose`s **every** subscriber — only `detach` is refcounted — so the
+`channelClose` this rule waits for is always sent.
