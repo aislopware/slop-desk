@@ -116,6 +116,32 @@ final class PTYProcessTests: XCTestCase {
         XCTAssertTrue(output.contains(dir.path), "expected child cwd \(dir.path), got: \(output)")
     }
 
+    /// A pane that requests NO cwd (the `home` working-directory policy, and the very first pane of a fresh
+    /// workspace) must start in HOME — not in whatever directory the daemon happens to have been launched
+    /// from. Skipping the `chdir` handed every such pane the launcher's project as its cwd.
+    func testPTYSpawnWithoutRequestedCwdStartsInHome() throws {
+        var env = curatedEnv()
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("slopdesk-pty-home-cwd-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        env["HOME"] = home.path
+        // Prove the child MOVED: the test process's own cwd stands in for the daemon's, and the child must
+        // not report it. `pwd -P` so a symlinked temp dir compares against the resolved HOME below.
+        let resolvedHome = home.resolvingSymlinksInPath().path
+        XCTAssertNotEqual(resolvedHome, FileManager.default.currentDirectoryPath)
+
+        let pty = PTYProcess()
+        try pty.spawn("/bin/sh", arguments: ["-c", "pwd -P"], environment: env, cwd: nil)
+
+        let output = readUntil(fd: pty.masterFD, needle: resolvedHome)
+        XCTAssertTrue(output.contains(resolvedHome), "expected child cwd \(resolvedHome), got: \(output)")
+        XCTAssertFalse(
+            output.contains(FileManager.default.currentDirectoryPath),
+            "the child must not inherit the daemon's cwd",
+        )
+    }
+
     /// An inherited cwd that no longer exists (deleted dir, foreign ssh path, `~`-style preset)
     /// must NOT kill the freshly-spawned shell (`chdir`-fail `_exit 127` = dead pane). The host validates
     /// the requested cwd and falls back to HOME, so the pane comes up live.
@@ -134,8 +160,12 @@ final class PTYProcessTests: XCTestCase {
         XCTAssertEqual(PTYProcess.resolveCwd(home.path, home: home.path), home.path)
         // A tilde path is expanded against HOME.
         XCTAssertEqual(PTYProcess.resolveCwd("~", home: home.path), home.path)
-        // A nil request stays nil (child inherits the daemon cwd — unchanged behaviour).
-        XCTAssertNil(PTYProcess.resolveCwd(nil, home: home.path))
+        // No request at all resolves to HOME — never the daemon cwd, which is whatever directory `hostd`
+        // was launched from (the `home` working-directory policy means "the login shell's directory").
+        XCTAssertEqual(PTYProcess.resolveCwd(nil, home: home.path), home.path)
+        XCTAssertEqual(PTYProcess.resolveCwd("", home: home.path), home.path)
+        // No request AND no usable HOME still resolves to nil (no chdir, live shell — never a dead pane).
+        XCTAssertNil(PTYProcess.resolveCwd(nil, home: nil))
         // An invalid request with no usable HOME resolves to nil (no chdir, live shell — never a dead pane).
         XCTAssertNil(PTYProcess.resolveCwd("/nonexistent-slopdesk", home: nil))
     }

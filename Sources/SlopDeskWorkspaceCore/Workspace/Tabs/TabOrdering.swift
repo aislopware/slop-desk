@@ -34,4 +34,81 @@ public enum TabOrderingEngine {
         }
         return String(last)
     }
+
+    // MARK: - Close → next selection
+
+    /// The tab ids in the order the sidebar DRAWS them: bucketed by ``normalizedProjectKey``, sections and
+    /// rows both in first-appearance order — the tab-level mirror of
+    /// ``RailRowsBuilder/sectionedByProject(_:tabOrder:query:)`` (which buckets per PANE, for split tabs).
+    ///
+    /// This exists because `session.tabs` is CREATION order while the rail is PROJECT order, and the two
+    /// disagree the moment a new tab for an already-open project appends past a different project's tab.
+    /// Any rule phrased as "the adjacent tab" has to mean adjacent *on screen*, so it reads this — not the
+    /// array. Pure; `projectKey` supplies each tab's raw (un-normalized) key.
+    public static func projectGroupedTabOrder(
+        _ tabs: [TabID],
+        projectKey: (TabID) -> String?,
+    ) -> [TabID] {
+        // Sections as (key, ids) PAIRS keyed on `String?`, not a dictionary behind a stand-in string for the
+        // keyless case: a sentinel here would be a second literal that merely LOOKS coupled to the rail's
+        // "Other" collapse key, and the two answer different questions. `nil` is its own section, natively.
+        // Linear lookup is right at tab counts (tens), and it keeps first-appearance order without a
+        // side table.
+        var sections: [(key: String?, ids: [TabID])] = []
+        for tab in tabs {
+            let bucket = normalizedProjectKey(projectKey(tab))
+            if let index = sections.firstIndex(where: { $0.key == bucket }) {
+                sections[index].ids.append(tab)
+            } else {
+                sections.append((bucket, [tab]))
+            }
+        }
+        return sections.flatMap(\.ids)
+    }
+
+    /// The tab to focus once `closing` is gone, in preference order:
+    ///
+    /// 1. **Most-recently-focused survivor** (`focusHistory`, most-recent FIRST) — closing a scratch tab
+    ///    returns you to the tab you opened it from, which is where you were actually working.
+    /// 2. **Its neighbour inside its own project section** — next, else previous. A fresh launch has no
+    ///    history, and rule 1 must not be the only thing keeping focus in the project you are reading.
+    /// 3. **Its neighbour in the full display order** — reached only when `closing` was its project's last
+    ///    tab, so there is no section left to stay inside.
+    ///
+    /// "Next, else previous" throughout: the survivor that takes the closed tab's slot, matching the
+    /// long-standing `min(removedIndex, count - 1)` feel — the change is WHICH order that index walks.
+    ///
+    /// `displayOrder` is ``projectGroupedTabOrder(_:projectKey:)`` and still CONTAINS `closing`. Returns
+    /// `nil` when `closing` is absent from `displayOrder` or is the only tab.
+    public static func successorAfterClose(
+        closing: TabID,
+        displayOrder: [TabID],
+        projectKey: (TabID) -> String?,
+        focusHistory: [TabID],
+    ) -> TabID? {
+        guard let closingIndex = displayOrder.firstIndex(of: closing) else { return nil }
+        let survivors = displayOrder.filter { $0 != closing }
+        guard !survivors.isEmpty else { return nil }
+
+        // 1. Most-recently-focused survivor. The history's newest entry is usually `closing` itself (it was
+        //    active when the user hit ⌘W), so identity + liveness are both filtered here.
+        let live = Set(survivors)
+        if let recent = focusHistory.first(where: { $0 != closing && live.contains($0) }) { return recent }
+
+        // 2. Neighbour inside the closing tab's own project section.
+        let section = normalizedProjectKey(projectKey(closing))
+        let siblings = displayOrder.filter { normalizedProjectKey(projectKey($0)) == section }
+        if let sibling = neighbour(of: closing, in: siblings) { return sibling }
+
+        // 3. Neighbour in the full display order (the section died with its last tab).
+        return neighbour(of: closing, in: displayOrder) ?? survivors[min(closingIndex, survivors.count - 1)]
+    }
+
+    /// The element after `target` in `list`, else the one before it — `nil` when `target` is absent or alone.
+    private static func neighbour(of target: TabID, in list: [TabID]) -> TabID? {
+        guard let index = list.firstIndex(of: target) else { return nil }
+        if index + 1 < list.count { return list[index + 1] }
+        if index > 0 { return list[index - 1] }
+        return nil
+    }
 }

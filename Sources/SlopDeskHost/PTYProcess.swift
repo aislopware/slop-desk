@@ -248,7 +248,10 @@ public final class PTYProcess: @unchecked Sendable {
         // Fallback candidate: the user's HOME, only when it is a usable dir.
         let homeFallback: String? = home.flatMap { !$0.isEmpty && usableDir($0) ? $0 : nil }
 
-        guard let requested, !requested.isEmpty else { return nil }
+        // No cwd requested ⇒ HOME, not the daemon's cwd. `chdir` is the ONLY thing standing between the
+        // child and whatever directory `hostd` happens to have been launched from — inheriting that would
+        // open every fresh pane inside the launcher's project (a login terminal opens at HOME).
+        guard let requested, !requested.isEmpty else { return homeFallback }
         guard let expanded = expandTilde(requested), usableDir(expanded) else { return homeFallback }
         return expanded
     }

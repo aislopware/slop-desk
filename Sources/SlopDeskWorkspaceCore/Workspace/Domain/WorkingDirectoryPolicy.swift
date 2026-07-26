@@ -8,9 +8,11 @@ import Foundation
 ///
 /// - ``inherit``: start in the **active pane's** last-known cwd ("Same as Current Tab"). The source cwd
 ///   is the shell-reported OSC 7 cwd, with the host `cwd` RPC as a command-completion fallback.
-/// - ``home``: start in the shell's login directory. Resolves to a **`nil`** cwd: a fresh login shell already
-///   starts at `$HOME`, so emitting a literal `cd $HOME` would be redundant (and would fight a shell that is
-///   configured to open elsewhere). No `cd` is sent — see ``resolve(activePaneCwd:)``.
+/// - ``home``: start in the shell's login directory. Resolves to a **`nil`** cwd — "this pane names no
+///   directory", NOT "leave the child wherever it lands". The host turns that into `$HOME`
+///   (`PTYProcess.resolveCwd`); it must, because the child is `fork`/`execve`d rather than logged in, so
+///   without an explicit `chdir` it would silently inherit the DAEMON's cwd — whatever directory `hostd`
+///   happened to be launched from. Still no visible `cd` is typed — see ``resolve(activePaneCwd:)``.
 /// - ``path``: start in a fixed absolute path the user configured.
 ///
 /// PURE — no filesystem I/O, never traps. ``init(rawConfig:)`` is validate-then-repair: an empty / unknown

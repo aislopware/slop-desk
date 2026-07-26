@@ -51,7 +51,14 @@ public enum WorkspaceTreeOps {
     /// - the workspace's **last** pane closing re-seeds a fresh default pane (never empty).
     /// A dangling zoom on the closed pane is cleared; focus moves to a geometric neighbour via
     /// ``FocusResolver`` (else the surviving first leaf). No-op if `target` is absent. Preserves the invariant.
-    public static func closePane(_ target: PaneID, in ws: TreeWorkspace) -> TreeWorkspace {
+    ///
+    /// `tabSuccessor` is consulted only on the cascade — when `target` was its tab's LAST pane, so the tab
+    /// itself closes and a tab must be selected. It is ignored while the tab survives.
+    public static func closePane(
+        _ target: PaneID,
+        tabSuccessor: TabID? = nil,
+        in ws: TreeWorkspace,
+    ) -> TreeWorkspace {
         guard let (sIdx, tIdx) = locate(target, in: ws) else { return ws }
         var copy = ws
         var session = copy.sessions[sIdx]
@@ -67,7 +74,12 @@ public enum WorkspaceTreeOps {
             // The tab emptied → close the tab and cascade.
             session.tabs.remove(at: tIdx)
             copy.sessions[sIdx] = session
-            return cascadeAfterTabRemoval(sessionIndex: sIdx, removedTabIndex: tIdx, in: copy).normalized()
+            return cascadeAfterTabRemoval(
+                sessionIndex: sIdx,
+                removedTabIndex: tIdx,
+                successor: tabSuccessor,
+                in: copy,
+            ).normalized()
         }
 
         tab.root = newRoot
@@ -80,11 +92,16 @@ public enum WorkspaceTreeOps {
     }
 
     /// Cascade housekeeping after a tab was removed from `sessionIndex`: if the session has no tabs left,
-    /// remove the session too; if that was the last session, re-seed a default. Otherwise just clamp the
-    /// session's active tab index. Pure.
+    /// remove the session too; if that was the last session, re-seed a default. Otherwise select `successor`
+    /// — or, when it is `nil`/already gone, clamp the session's active tab index. Pure.
+    ///
+    /// `successor` is the caller's considered choice (``TabOrderingEngine/successorAfterClose(closing:displayOrder:projectKey:focusHistory:)``),
+    /// which needs the project keys the tree does not carry. The index clamp survives as the fallback so a
+    /// caller that has no opinion still gets the old behaviour.
     private static func cascadeAfterTabRemoval(
         sessionIndex: Int,
         removedTabIndex: Int,
+        successor: TabID? = nil,
         in ws: TreeWorkspace,
     ) -> TreeWorkspace {
         var copy = ws
@@ -108,10 +125,14 @@ public enum WorkspaceTreeOps {
             }
             return copy
         }
-        // Session survives → select an adjacent tab.
+        // Session survives → select the caller's successor, else fall back to the adjacent index.
         var session = copy.sessions[sessionIndex]
-        let newIndex = Int(Double.minimum(Double(removedTabIndex), Double(session.tabs.count - 1)))
-        session.activeTabIndex = Int(Double.maximum(Double(newIndex), 0))
+        if let successor, let index = session.tabs.firstIndex(where: { $0.id == successor }) {
+            session.activeTabIndex = index
+        } else {
+            let newIndex = Int(Double.minimum(Double(removedTabIndex), Double(session.tabs.count - 1)))
+            session.activeTabIndex = Int(Double.maximum(Double(newIndex), 0))
+        }
         copy.sessions[sessionIndex] = session
         return copy
     }
@@ -793,15 +814,21 @@ public enum WorkspaceTreeOps {
     }
 
     /// Closes tab `tabID` (in whichever session owns it), dropping every pane's spec, and cascades to the
-    /// session/default exactly like ``closePane(_:in:)``. Selects an adjacent tab. No-op if absent.
-    public static func closeTab(_ tabID: TabID, in ws: TreeWorkspace) -> TreeWorkspace {
+    /// session/default exactly like ``closePane(_:in:)``. Selects `successor` when it survives the close,
+    /// else an adjacent tab. No-op if absent.
+    public static func closeTab(_ tabID: TabID, successor: TabID? = nil, in ws: TreeWorkspace) -> TreeWorkspace {
         guard let (sIdx, tIdx) = locateTab(tabID, in: ws) else { return ws }
         var copy = ws
         // Drop the closing tab's specs.
         let closing = copy.sessions[sIdx].tabs[tIdx]
         for id in closing.allPaneIDs() { copy.sessions[sIdx].specs.removeValue(forKey: id) }
         copy.sessions[sIdx].tabs.remove(at: tIdx)
-        return cascadeAfterTabRemoval(sessionIndex: sIdx, removedTabIndex: tIdx, in: copy).normalized()
+        return cascadeAfterTabRemoval(
+            sessionIndex: sIdx,
+            removedTabIndex: tIdx,
+            successor: successor,
+            in: copy,
+        ).normalized()
     }
 
     /// Selects tab at `index` in the active session (clamped). No-op if out of range / no active session.

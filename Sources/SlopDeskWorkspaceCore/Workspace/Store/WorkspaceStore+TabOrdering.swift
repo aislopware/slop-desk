@@ -31,15 +31,90 @@ public extension WorkspaceStore {
     /// backstop so grouping stays clean even if one slips through. A guarded-out source falls through to
     /// the next (host key → cwd → `nil`/"Other") — self-healing once the shell settles.
     func paneProjectKey(_ id: PaneID) -> String? {
-        if let key = tree.activeSession?.specs[id]?.projectKey,
+        guard let session = tree.activeSession else { return nil }
+        return Self.paneProjectKey(id, in: session)
+    }
+
+    /// ``paneProjectKey(_:)`` against an EXPLICIT session — the close path resolves keys for whichever
+    /// session owns the closing tab, which is not necessarily the active one. Static + session-parameterized
+    /// so both callers share ONE copy of the host-key → cwd → `nil` precedence and its plugin-cwd guards;
+    /// a second transcription of those rules would be free to drift out of agreement with the sidebar.
+    static func paneProjectKey(_ id: PaneID, in session: Session) -> String? {
+        if let key = session.specs[id]?.projectKey,
            !key.isEmpty, !PaneSpec.looksLikeTransientPluginCwd(key)
         {
             return key
         }
-        guard let cwd = tree.activeSession?.specs[id]?.lastKnownCwd,
+        guard let cwd = session.specs[id]?.lastKnownCwd,
               !PaneSpec.looksLikeTransientPluginCwd(cwd)
         else { return nil }
         return cwd
+    }
+
+    // MARK: Close → next selection
+
+    /// Records the active tab at the head of ``WorkspaceStore/tabFocusHistory`` (most-recent first), pruned
+    /// to the live tab set and capped. Called from every ``reconcileTree()``, which is the one funnel every
+    /// tab switch passes through — recording at the individual gestures instead would miss whichever one
+    /// gets added next.
+    ///
+    /// A repeat of the current head is dropped, so a burst of reconciles for the SAME tab (a spec update, a
+    /// badge clear) cannot flood the ring and evict the genuinely-previous tab this exists to remember.
+    func recordTabFocus() {
+        let liveTabs = Set(tree.sessions.flatMap { session in session.tabs.map(\.id) })
+        guard let active = tree.activeSession?.activeTab?.id else {
+            tabFocusHistory = tabFocusHistory.filter { liveTabs.contains($0) }
+            return
+        }
+        guard tabFocusHistory.first != active else {
+            // Still prune: a tab closed elsewhere must not linger as a successor candidate.
+            tabFocusHistory = tabFocusHistory.filter { liveTabs.contains($0) }
+            return
+        }
+        var updated = tabFocusHistory.filter { $0 != active && liveTabs.contains($0) }
+        updated.insert(active, at: 0)
+        tabFocusHistory = Array(updated.prefix(Self.tabFocusHistoryCap))
+    }
+
+    /// The tab to focus after `closing` is dropped — MRU survivor, else its neighbour inside its own project
+    /// section, else its neighbour in the display order
+    /// (``TabOrderingEngine/successorAfterClose(closing:displayOrder:projectKey:focusHistory:)``).
+    ///
+    /// Closing a BACKGROUND tab returns the ACTIVE tab: the user dismissed something they were not looking
+    /// at, and focus has no business moving. (The old index clamp moved it anyway — closing tab 0 while on
+    /// tab 2 re-pointed the selection at index 0.)
+    ///
+    /// Resolved against whichever session OWNS `closing`, not the active one: a tab can be closed in a
+    /// background session (another window), and reading the active session's tabs there would compare the
+    /// closing tab against a list it is not in and give up.
+    ///
+    /// `nil` when no session owns `closing`; the caller then leaves the tree ops on their index-clamp
+    /// fallback.
+    func plannedTabSuccessor(closing: TabID) -> TabID? {
+        guard let session = tree.sessions.first(where: { $0.tabs.contains { $0.id == closing } }) else {
+            return nil
+        }
+        if let active = session.activeTab?.id, active != closing { return active }
+        return TabOrderingEngine.successorAfterClose(
+            closing: closing,
+            displayOrder: TabOrderingEngine.projectGroupedTabOrder(
+                session.tabs.map(\.id),
+                projectKey: { Self.tabProjectKey($0, in: session) },
+            ),
+            projectKey: { Self.tabProjectKey($0, in: session) },
+            focusHistory: tabFocusHistory,
+        )
+    }
+
+    /// A TAB's By-Project key for close-selection purposes: its ACTIVE pane's key, else its first pane's.
+    ///
+    /// A tab is one row per PANE in the sidebar, so a split tab straddling two projects genuinely has no
+    /// single section — it draws in both. The pane the user is focused on is the honest answer to "which
+    /// section did this tab live in", and it is the one the close gesture was aimed at.
+    static func tabProjectKey(_ id: TabID, in session: Session) -> String? {
+        guard let tab = session.tabs.first(where: { $0.id == id }) else { return nil }
+        if let active = tab.activePane, let key = paneProjectKey(active, in: session) { return key }
+        return tab.allPaneIDs().lazy.compactMap { paneProjectKey($0, in: session) }.first
     }
 
     /// Prunes the TREE-keyed sidebar mirror to the live tree on every ``reconcileTree()``: the E20 manual

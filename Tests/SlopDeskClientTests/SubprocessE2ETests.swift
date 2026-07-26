@@ -115,6 +115,107 @@ final class SubprocessE2ETests: XCTestCase {
         )
     }
 
+    // MARK: - A pane that requests no cwd opens at HOME, not the daemon's cwd
+
+    /// THE user scenario on the SHIPPED binaries: `slopdesk-hostd` is launched FROM a project
+    /// directory (a daemon started out of a checkout — the normal case), and a client that names no
+    /// working directory connects. The spawned shell must come up in `$HOME`.
+    ///
+    /// Before the fix the host translated "no cwd requested" into "issue no `chdir`", so the shell
+    /// silently inherited the daemon's cwd and every such pane opened inside whatever project the
+    /// daemon happened to be launched from.
+    func testPaneWithoutRequestedCwdOpensInHomeNotDaemonCwd() throws {
+        guard let hostdURL = builtProductURL("slopdesk-hostd"),
+              let clientURL = builtProductURL("slopdesk-client")
+        else {
+            throw XCTSkip("built slopdesk-hostd / slopdesk-client not found next to test bundle")
+        }
+
+        let sandboxHome = try makeSandboxHome()
+        defer { try? FileManager.default.removeItem(at: sandboxHome) }
+        // The stand-in for "the checkout the daemon was started from".
+        let daemonCwd = FileManager.default.temporaryDirectory
+            .appendingPathComponent("e2e-daemon-cwd-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: daemonCwd, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: daemonCwd) }
+
+        // `pwd -P` resolves symlinks, so compare against resolved paths (/var → /private/var).
+        let resolvedHome = sandboxHome.resolvingSymlinksInPath().path
+        let resolvedDaemonCwd = daemonCwd.resolvingSymlinksInPath().path
+        XCTAssertNotEqual(resolvedHome, resolvedDaemonCwd)
+
+        let hostd = Process()
+        hostd.executableURL = hostdURL
+        hostd.arguments = ["--port", "0", "--shell", "/bin/sh"]
+        hostd.currentDirectoryURL = daemonCwd // the daemon runs from the "project"
+        var hostEnv = ProcessInfo.processInfo.environment
+        hostEnv["HOME"] = sandboxHome.path
+        hostd.environment = hostEnv
+        let hostdErr = Pipe()
+        hostd.standardError = hostdErr
+        hostd.standardOutput = Pipe()
+
+        do {
+            try hostd.run()
+        } catch {
+            throw XCTSkip("could not launch slopdesk-hostd subprocess: \(error)")
+        }
+        defer {
+            if hostd.isRunning { hostd.terminate() }
+        }
+
+        guard let bound = awaitBoundPort(from: hostdErr.fileHandleForReading, timeout: 10) else {
+            throw XCTSkip("hostd did not report a bound port in time")
+        }
+
+        // `slopdesk-client` names no working directory — the `channelOpen` carries no cwd at all.
+        let client = Process()
+        client.executableURL = clientURL
+        client.arguments = ["--host", "127.0.0.1", "--port", String(bound.port), "--no-raw"]
+        let stdinPipe = Pipe()
+        let stdoutPipe = Pipe()
+        client.standardInput = stdinPipe
+        client.standardOutput = stdoutPipe
+        client.standardError = Pipe()
+
+        let collected = OutputBox()
+        let stdoutHandle = stdoutPipe.fileHandleForReading
+        stdoutHandle.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+            } else {
+                collected.append(data)
+            }
+        }
+
+        do {
+            try client.run()
+        } catch {
+            throw XCTSkip("could not launch slopdesk-client subprocess: \(error)")
+        }
+        defer {
+            if client.isRunning { client.terminate() }
+        }
+
+        stdinPipe.fileHandleForWriting.write(Data("pwd -P\nexit\n".utf8))
+        try? stdinPipe.fileHandleForWriting.close()
+
+        let exited = waitForExit(client, timeout: 15)
+        stdoutHandle.readabilityHandler = nil
+        XCTAssertTrue(exited, "client did not exit within the timeout")
+
+        let out = collected.string
+        XCTAssertTrue(
+            out.contains(resolvedHome),
+            "expected the pane to open in HOME (\(resolvedHome)); got: \(out.prefix(600))",
+        )
+        XCTAssertFalse(
+            out.contains(resolvedDaemonCwd),
+            "the pane must not inherit the daemon's cwd (\(resolvedDaemonCwd)); got: \(out.prefix(600))",
+        )
+    }
+
     // MARK: - Disk-scrollback restore across a hostd RESTART (the scrollback-lost-on-reconnect case)
 
     /// THE user scenario, end-to-end on the SHIPPED binaries: hostd #1 journals a marker to the

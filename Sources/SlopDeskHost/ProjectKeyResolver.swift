@@ -38,6 +38,13 @@ enum ProjectKeyResolver {
         }
         // Reached "/" (or started there): "/" as a repo root is nonsensical for grouping — fall
         // back to the normalized cwd so such a pane still gets a stable, honest key.
+        //
+        // `$HOME` lands here (unless the user versions their dotfiles, in which case it IS a repo root
+        // and grouping under it is simply correct), so a pane opened by the `home` working-directory
+        // policy gets a section titled after the home folder rather than the "Other" bucket. That is
+        // DELIBERATE: "Other" means "no key yet", and a pane parked there jumps out to its own section
+        // the moment a key resolves — churn. A home pane's key is already final, and the header matches
+        // what Finder calls that folder. Do not special-case it back to "Other".
         return path
     }
 }

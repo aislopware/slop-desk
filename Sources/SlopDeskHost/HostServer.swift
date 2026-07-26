@@ -842,6 +842,10 @@ public final class HostServer: @unchecked Sendable {
         // The per-session ZDOTDIR shim dir (if the zsh shim is installed) — captured so the session can
         // delete it when the child exits, instead of leaking one temp dir per pane forever.
         var shimDir: URL?
+        // The directory the child ACTUALLY lands in, which is not the requested one: `resolveCwd`
+        // repairs an absent/stale/unusable request to HOME. Captured so the By-Project seed below
+        // describes the pane's real cwd rather than skipping a pane that requested nothing.
+        var spawnCwd: String?
         do {
             let argv0 = HostEnvironment.loginArgv0(forShell: shellPath)
             switch launchMode {
@@ -865,7 +869,11 @@ public final class HostServer: @unchecked Sendable {
                     paneID: agentHookListener != nil ? paneID : nil,
                     controlSocketPath: agentControlSocketPath.isEmpty ? nil : agentControlSocketPath,
                 )
-                if let initialCwd = open.initialCwd { env["PWD"] = initialCwd }
+                // Resolve ONCE and let `PWD`, the spawn and the By-Project seed all quote the same
+                // answer. `PWD` must name where the child lands, not what it asked for: a shell that
+                // trusts an inherited `PWD` would print a prompt for a directory it is not in.
+                spawnCwd = PTYProcess.resolveCwd(open.initialCwd, home: env["HOME"])
+                if let spawnCwd { env["PWD"] = spawnCwd }
                 if let overrides = ShellIntegration.makeEnvironmentOverrides(
                     parent: ProcessInfo.processInfo.environment,
                     shellPath: shellPath,
@@ -876,7 +884,7 @@ public final class HostServer: @unchecked Sendable {
                     // session deletes it on the child's exit.
                     shimDir = overrides["ZDOTDIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
                 }
-                try pty.spawn(shellPath, environment: env, argv0: argv0, cwd: open.initialCwd)
+                try pty.spawn(shellPath, environment: env, argv0: argv0, cwd: spawnCwd)
             }
         } catch {
             onLog?("mux channel \(open.channelID) (conn \(connectionID)): shell spawn failed: \(error)")
@@ -932,12 +940,17 @@ public final class HostServer: @unchecked Sendable {
         lock.unlock()
         emitConnectionCount()
         session.startRelay()
-        // Seed the By-Project truths from the SPAWN cwd (server-provided, pre-shell): the sidebar
+        // Seed the By-Project truths from the RESOLVED spawn cwd (server-side, pre-shell): the sidebar
         // sections are right from the first frame, including for shells that never emit
         // OSC-133/OSC-7 — the warm-up gate would otherwise hold the key hostage to a prompt edge
         // that may never come. After startRelay so the enqueued control rides the live sender.
-        if let initialCwd = open.initialCwd, !initialCwd.isEmpty {
-            session.seedProjectTruthAtSpawn(cwd: initialCwd)
+        //
+        // The RESOLVED cwd, not `open.initialCwd`: a pane that requested nothing (the `home`
+        // working-directory policy, and the very first pane of a fresh workspace) still lands in a
+        // real directory, and skipping its seed left it stranded outside every project section until
+        // an OSC-7 edge that an unshimmed shell never sends.
+        if let spawnCwd, !spawnCwd.isEmpty {
+            session.seedProjectTruthAtSpawn(cwd: spawnCwd)
         }
         // Register this pane's hook sink so an installed Claude hook POSTing to the host
         // socket (with this pane's id) routes into THIS channel's per-pane status handler.

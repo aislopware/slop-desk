@@ -598,6 +598,22 @@ public final class WorkspaceStore {
     /// mutated only by the store's close paths + the `WorkspaceStore+PaneCycle` reopen extension.
     public internal(set) var recentlyClosedTabs: [RecentlyClosedTab] = []
 
+    /// Which tabs were focused, most-recent FIRST — the "where was I" the close path returns to
+    /// (``TabOrderingEngine/successorAfterClose(closing:displayOrder:projectKey:focusHistory:)`` rule 1).
+    /// Recorded by ``recordTabFocus()`` on every ``reconcileTree()``, so it follows a tab switch no matter
+    /// which gesture caused it (⌘1–⌘9, ⌘T, the rail, a pane focus that crosses tabs).
+    ///
+    /// In-memory only and capped, exactly like ``recentlyClosedTabs``: a relaunch restores the layout but
+    /// deliberately not the history, so a cold launch falls through to the section-adjacency rule rather
+    /// than resurrecting a stale focus order that no longer describes anything the user did.
+    /// Internal (not private) so the recorder + successor helpers can live in `WorkspaceStore+TabOrdering`,
+    /// beside the rest of the sidebar-ordering surface, keeping this class body under `type_body_length`.
+    var tabFocusHistory: [TabID] = []
+
+    /// The ``tabFocusHistory`` cap — a handful of switches back is all the close path can meaningfully use,
+    /// and the bound keeps a long session from growing the ring without limit.
+    static let tabFocusHistoryCap = 16
+
     /// The pane awaiting close CONFIRMATION because its shell reported a running command (⌘W on a
     /// busy shell — killing the session would kill the command). The view observes this and shows a
     /// confirmation dialog; ``confirmPendingClose()`` / ``cancelPendingClose()`` resolve it. `internal(set)`
@@ -2306,8 +2322,11 @@ public final class WorkspaceStore {
         // tab for ⇧⌘T reopen BEFORE the op mutates the tree (the cascade can also drop the session, so the
         // pre-mutation snapshot is the only source). A pane that is one of several leaves leaves its tab
         // alive, so nothing is recorded.
-        if let removedTab = tabRemovedByClosing(target) { recordClosedTab(removedTab) }
-        tree = WorkspaceTreeOps.closePane(target, in: tree)
+        // …and pick the tab to land on for that same cascade, while the closing tab is still sectioned.
+        let removedTab = tabRemovedByClosing(target)
+        if let removedTab { recordClosedTab(removedTab) }
+        let successor = removedTab.flatMap { plannedTabSuccessor(closing: $0) }
+        tree = WorkspaceTreeOps.closePane(target, tabSuccessor: successor, in: tree)
         reconcileTree()
     }
 
@@ -2509,7 +2528,10 @@ public final class WorkspaceStore {
     /// Closes tab `tabID` (dropping its panes) and cascades like ``closePaneTree(_:)``.
     public func closeTab(_ tabID: TabID) {
         recordClosedTab(tabID) // capture BEFORE the op drops the tab (⇧⌘T reopen)
-        tree = WorkspaceTreeOps.closeTab(tabID, in: tree)
+        // Likewise pre-mutation: the successor is chosen against the project sections + focus history as
+        // they stand WITH the closing tab still in them.
+        let successor = plannedTabSuccessor(closing: tabID)
+        tree = WorkspaceTreeOps.closeTab(tabID, successor: successor, in: tree)
         reconcileTree()
     }
 
@@ -3231,6 +3253,9 @@ public final class WorkspaceStore {
         // TabID, so pruned here against the tree rather than in the pane-keyed `reconcileRegistry`
         // cache-prune. The helper lives in WorkspaceStore+TabOrdering.
         pruneTreeSidebarMirrors()
+        // Remember which tab is focused NOW, so the next close can return here. Recorded after the prune
+        // so a tab that just went away cannot re-enter the ring as its own successor candidate.
+        recordTabFocus()
         scheduleSave()
     }
 
