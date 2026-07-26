@@ -133,7 +133,7 @@ final class TerminalInputModeStripperTests: XCTestCase {
         store.journal(for: sessionID).synchronize()
 
         XCTAssertEqual(
-            store.restoredScrollback(for: sessionID),
+            store.restoredScrollback(for: sessionID)?.bytes,
             Data("$ viEDIT".utf8) + ScrollbackJournalStore.sanitizeSuffix,
         )
     }

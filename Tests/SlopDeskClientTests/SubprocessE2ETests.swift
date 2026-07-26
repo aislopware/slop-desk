@@ -140,7 +140,7 @@ final class SubprocessE2ETests: XCTestCase {
         let sessionID = UUID()
         let marker = "RESTART_SURVIVOR_\(UInt32.random(in: 0..<1_000_000))"
 
-        func launchHostd() -> (Process, UInt16)? {
+        func launchHostd() -> (Process, UInt16, OutputBox)? {
             let hostd = Process()
             hostd.executableURL = hostdURL
             hostd.arguments = ["--port", "0", "--shell", "/bin/sh"]
@@ -156,7 +156,15 @@ final class SubprocessE2ETests: XCTestCase {
                 if hostd.isRunning { hostd.terminate() }
                 return nil
             }
-            return (hostd, bound.port)
+            // Keep collecting stderr past the banner — the restore-path log line
+            // ("restored … (snapshot|distilled) replay") is the observable this test pins.
+            let log = OutputBox()
+            log.append(Data(bound.banner.utf8))
+            err.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if data.isEmpty { handle.readabilityHandler = nil } else { log.append(data) }
+            }
+            return (hostd, bound.port, log)
         }
 
         // Runs the shipped client against `port` with the pinned session ID; returns its
@@ -195,7 +203,7 @@ final class SubprocessE2ETests: XCTestCase {
         }
 
         // --- Life 1: journal the marker, then die without ceremony. ---
-        guard let (hostd1, port1) = launchHostd() else {
+        guard let (hostd1, port1, _) = launchHostd() else {
             throw XCTSkip("could not launch hostd #1")
         }
         defer { if hostd1.isRunning { hostd1.terminate() } }
@@ -215,7 +223,7 @@ final class SubprocessE2ETests: XCTestCase {
         _ = waitForExit(hostd1, timeout: 5)
 
         // --- Life 2: a brand-new daemon; a COLD client returns with the same session ID. ---
-        guard let (hostd2, port2) = launchHostd() else {
+        guard let (hostd2, port2, hostd2Log) = launchHostd() else {
             throw XCTSkip("could not launch hostd #2")
         }
         defer { if hostd2.isRunning { hostd2.terminate() } }
@@ -226,6 +234,22 @@ final class SubprocessE2ETests: XCTestCase {
             out2.string.contains(marker),
             "hostd #2 must restore the disk-journaled transcript to the returning cold client; got: "
                 + String(out2.string.prefix(600)),
+        )
+        // PATH B is state-transfer now: life 1's spawn seeded the size sidecar, so life 2
+        // must COMPOSE the transcript (the log line is the observable), and the transcript
+        // needs no sanitize suffix — its mode-free construction replaces the reset barrage.
+        let logDeadline = Date().addingTimeInterval(5)
+        while Date() < logDeadline, !hostd2Log.string.contains("(snapshot replay)") {
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        XCTAssertTrue(
+            hostd2Log.string.contains("(snapshot replay)"),
+            "the journal restore must ride the snapshot composer (size sidecar present); hostd #2 log: "
+                + String(hostd2Log.string.suffix(400)),
+        )
+        XCTAssertFalse(
+            out2.string.contains("\u{1B}[?1005l"),
+            "a composed transcript must not carry the raw-replay sanitize suffix",
         )
     }
 

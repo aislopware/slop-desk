@@ -826,9 +826,17 @@ public final class HostServer: @unchecked Sendable {
         // == 0` — a brand-new terminal surface). A WARM client (non-zero seq: transport dropped
         // but the app kept running) still holds its rendered grid; replaying the transcript there
         // would double-print it. The read (≤ ring cap) + distill run once per fresh spawn.
-        let restoredScrollback: Data? = (hasResumableID && open.lastReceivedSeq == 0)
-            ? scrollbackJournals?.restoredScrollback(for: open.sessionID)
-            : nil
+        let restored: ScrollbackJournalStore.RestoredScrollback? =
+            (hasResumableID && open.lastReceivedSeq == 0)
+                ? scrollbackJournals?.restoredScrollback(for: open.sessionID)
+                : nil
+        if let restored {
+            onLog?(
+                "mux channel \(open.channelID) (conn \(connectionID)): restored "
+                    + "\(restored.bytes.count) journaled bytes "
+                    + "(\(restored.snapshotComposed ? "snapshot" : "distilled") replay)",
+            )
+        }
 
         let pty = PTYProcess()
         // The per-session ZDOTDIR shim dir (if the zsh shim is installed) — captured so the session can
@@ -899,7 +907,7 @@ public final class HostServer: @unchecked Sendable {
             agentHookListenerActive: { [weak listener = agentHookListener] in listener?.isListening ?? false },
             blocksEnabled: blocksEnabled,
             scrollbackJournal: journal,
-            restoredScrollback: restoredScrollback,
+            restoredScrollback: restored?.bytes,
             snapshotReplay: MuxChannelSession.makeSnapshotReplayPolicy(),
         )
         // The shell-exit reaper closes over the SAME composite key so it only removes THIS

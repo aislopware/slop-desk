@@ -29,8 +29,12 @@ final class ScrollbackJournalTests: XCTestCase {
     private func makeStore(
         byteCap: Int = ReplayBuffer.defaultScrollbackBytes,
         distiller: (@Sendable (Data) -> Data)? = nil,
+        snapshotComposer: (@Sendable (Data, Int, Int) -> Data)? = nil,
     ) -> ScrollbackJournalStore {
-        ScrollbackJournalStore(directory: tempDir, byteCap: byteCap, distiller: distiller)
+        ScrollbackJournalStore(
+            directory: tempDir, byteCap: byteCap, distiller: distiller,
+            snapshotComposer: snapshotComposer,
+        )
     }
 
     // MARK: - The loss case: transcript survives a daemon restart
@@ -49,7 +53,7 @@ final class ScrollbackJournalTests: XCTestCase {
         let life2 = makeStore() // fresh process: no shared state with life1 but the directory
         let restored = life2.restoredScrollback(for: sessionID)
         XCTAssertEqual(
-            restored, transcript + ScrollbackJournalStore.sanitizeSuffix,
+            restored?.bytes, transcript + ScrollbackJournalStore.sanitizeSuffix,
             "a returning session ID must get its prior life's transcript (+ the mode-sanitize reset) back",
         )
     }
@@ -73,7 +77,7 @@ final class ScrollbackJournalTests: XCTestCase {
 
         let life3 = makeStore()
         XCTAssertEqual(
-            life3.restoredScrollback(for: sessionID),
+            life3.restoredScrollback(for: sessionID)?.bytes,
             old + new + ScrollbackJournalStore.sanitizeSuffix,
             "each restart must see the transcript exactly once (no re-journaled preamble doubling)",
         )
@@ -92,7 +96,7 @@ final class ScrollbackJournalTests: XCTestCase {
         store.journal(for: sessionID).synchronize()
 
         XCTAssertEqual(
-            store.restoredScrollback(for: sessionID),
+            store.restoredScrollback(for: sessionID)?.bytes,
             Data("D[x]".utf8) + ScrollbackJournalStore.sanitizeSuffix,
         )
     }
@@ -111,7 +115,7 @@ final class ScrollbackJournalTests: XCTestCase {
         store.journal(for: sessionID).append(Data(cycle.utf8))
         store.journal(for: sessionID).synchronize()
 
-        let restored = try XCTUnwrap(store.restoredScrollback(for: sessionID))
+        let restored = try XCTUnwrap(store.restoredScrollback(for: sessionID)).bytes
         let text = try XCTUnwrap(String(bytes: restored, encoding: .utf8))
         XCTAssertFalse(text.contains("\u{1B}[7m%"), "the standout mark must not reach the preamble")
         XCTAssertFalse(text.contains(String(repeating: " ", count: 40)), "nor the COLUMNS-wide fill")
@@ -328,7 +332,7 @@ final class ScrollbackJournalTests: XCTestCase {
         journal.append(Data("b".utf8))
         journal.append(Data("c\n".utf8))
         XCTAssertEqual(
-            store.restoredScrollback(for: sessionID),
+            store.restoredScrollback(for: sessionID)?.bytes,
             Data("abc\n".utf8) + ScrollbackJournalStore.sanitizeSuffix,
             "restore must observe every append enqueued before it — buffered bytes included",
         )
@@ -488,7 +492,7 @@ final class ScrollbackJournalTests: XCTestCase {
 
         store.journal(for: sessionID).append(new) // transparently reopened
         XCTAssertEqual(
-            store.restoredScrollback(for: sessionID),
+            store.restoredScrollback(for: sessionID)?.bytes,
             old + new + ScrollbackJournalStore.sanitizeSuffix,
             "a post-release journal(for:) must append after the released bytes, corrupting nothing",
         )
@@ -527,7 +531,7 @@ final class ScrollbackJournalTests: XCTestCase {
         fresh.append(Data("new-life\n".utf8))
         fresh.synchronize()
         XCTAssertEqual(
-            store.restoredScrollback(for: sessionID),
+            store.restoredScrollback(for: sessionID)?.bytes,
             Data("old-life\nnew-life\n".utf8) + ScrollbackJournalStore.sanitizeSuffix,
             "the ghost's flushed tail + the successor's output, in order — no interleave, no loss",
         )
@@ -571,6 +575,183 @@ final class ScrollbackJournalTests: XCTestCase {
 
         store.delete(sessionID: sessionID, instance: fresh) // the real owner still deletes
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    // MARK: - Snapshot restore (PATH B state transfer: size sidecar + transcript composer)
+
+    private func sidecarURL(for sessionID: UUID) -> URL {
+        tempDir.appendingPathComponent("\(sessionID.uuidString).scrollback.size", isDirectory: false)
+    }
+
+    /// With the composer injected AND the prior life's size recorded, restore renders the
+    /// transcript at THAT geometry — no distiller, no sanitize suffix (the transcript is
+    /// mode-free by construction).
+    func testRestoreUsesSnapshotComposerAtRecordedSize() {
+        let sessionID = UUID()
+        let store = makeStore(
+            distiller: { _ in Data("DISTILLED".utf8) },
+            snapshotComposer: { raw, rows, cols in Data("S[\(rows)x\(cols)]".utf8) + raw },
+        )
+        let journal = store.journal(for: sessionID)
+        journal.append(Data("churn\n".utf8))
+        journal.recordWindowSize(rows: 45, cols: 170)
+        journal.synchronize()
+
+        let restored = store.restoredScrollback(for: sessionID)
+        XCTAssertEqual(restored?.bytes, Data("S[45x170]churn\n".utf8))
+        XCTAssertEqual(restored?.snapshotComposed, true)
+        XCTAssertEqual(
+            try? String(contentsOf: sidecarURL(for: sessionID), encoding: .utf8), "45 170\n",
+            "the sidecar holds the recorded size verbatim",
+        )
+    }
+
+    /// No sidecar (an old journal, or a pane that never resized) → the distiller path,
+    /// unchanged: no-backcompat means decode-fail falls back, never migrates.
+    func testRestoreWithoutSidecarFallsBackToDistiller() {
+        let sessionID = UUID()
+        let store = makeStore(snapshotComposer: { _, _, _ in Data("NEVER".utf8) })
+        store.journal(for: sessionID).append(Data("x".utf8))
+        store.journal(for: sessionID).synchronize()
+
+        let restored = store.restoredScrollback(for: sessionID)
+        XCTAssertEqual(restored?.bytes, Data("x".utf8) + ScrollbackJournalStore.sanitizeSuffix)
+        XCTAssertEqual(restored?.snapshotComposed, false)
+    }
+
+    /// A garbled sidecar decode-fails to the distiller path (same rule as any stale data).
+    func testRestoreWithCorruptSidecarFallsBackToDistiller() throws {
+        let sessionID = UUID()
+        let store = makeStore(snapshotComposer: { _, _, _ in Data("NEVER".utf8) })
+        store.journal(for: sessionID).append(Data("x".utf8))
+        store.journal(for: sessionID).synchronize()
+        for garbage in ["", "abc def", "0 80", "24", "24 80 99", "-3 80"] {
+            try Data(garbage.utf8).write(to: sidecarURL(for: sessionID))
+            XCTAssertEqual(
+                store.restoredScrollback(for: sessionID)?.snapshotComposed, false,
+                "sidecar \(garbage.debugDescription) must decode-fail to the distiller path",
+            )
+        }
+    }
+
+    /// An all-blank journal composes to an EMPTY transcript — nothing to restore (`nil`),
+    /// instead of a preamble of pure line feeds.
+    func testRestoreNilWhenTranscriptComposesEmpty() {
+        let sessionID = UUID()
+        let store = makeStore(snapshotComposer: { _, _, _ in Data() })
+        let journal = store.journal(for: sessionID)
+        journal.append(Data("\n\n\n".utf8))
+        journal.recordWindowSize(rows: 24, cols: 80)
+        journal.synchronize()
+        XCTAssertNil(store.restoredScrollback(for: sessionID))
+    }
+
+    /// `recordWindowSize` is last-wins (the restore parses at the geometry the LAST bytes
+    /// were emitted for) and rejects degenerate sizes.
+    func testRecordWindowSizeLastWinsAndRejectsDegenerate() {
+        let sessionID = UUID()
+        let store = makeStore()
+        let journal = store.journal(for: sessionID)
+        journal.recordWindowSize(rows: 24, cols: 80)
+        journal.recordWindowSize(rows: 0, cols: 80) // degenerate — ignored
+        journal.recordWindowSize(rows: 45, cols: 170)
+        journal.synchronize()
+        XCTAssertEqual(try? String(contentsOf: sidecarURL(for: sessionID), encoding: .utf8), "45 170\n")
+    }
+
+    /// Deliberate delete removes the sidecar with the journal — with AND without a live
+    /// writer in this process.
+    func testDeleteRemovesSizeSidecar() {
+        let fm = FileManager.default
+        let withWriter = UUID()
+        let store = makeStore()
+        let journal = store.journal(for: withWriter)
+        journal.append(Data("x".utf8))
+        journal.recordWindowSize(rows: 24, cols: 80)
+        journal.synchronize()
+        store.delete(sessionID: withWriter)
+        XCTAssertFalse(fm.fileExists(atPath: sidecarURL(for: withWriter).path))
+
+        let writerless = UUID()
+        let life1 = makeStore()
+        life1.journal(for: writerless).append(Data("x".utf8))
+        life1.journal(for: writerless).recordWindowSize(rows: 24, cols: 80)
+        life1.journal(for: writerless).synchronize()
+        let life2 = makeStore() // never vends a writer for this id
+        life2.delete(sessionID: writerless)
+        XCTAssertFalse(fm.fileExists(atPath: sidecarURL(for: writerless).path))
+    }
+
+    /// Sweep removes the sidecar alongside an aged-out journal, and reaps a fully orphaned
+    /// sidecar (its journal already gone) — no `.size` litter accumulates.
+    func testSweepRemovesSidecarsWithJournalsAndOrphans() throws {
+        let fm = FileManager.default
+        let aged = UUID()
+        let priorLife = makeStore()
+        priorLife.journal(for: aged).append(Data("x".utf8))
+        priorLife.journal(for: aged).recordWindowSize(rows: 24, cols: 80)
+        priorLife.journal(for: aged).synchronize()
+        let agedJournalURL = tempDir.appendingPathComponent("\(aged.uuidString).scrollback")
+        try fm.setAttributes(
+            [.modificationDate: Date(timeIntervalSinceNow: -30 * 24 * 3600)],
+            ofItemAtPath: agedJournalURL.path,
+        )
+        let orphan = UUID()
+        try Data("24 80\n".utf8).write(to: sidecarURL(for: orphan)) // journal never existed
+
+        let store = makeStore()
+        store.sweep(maxAge: 14 * 24 * 3600, keepNewest: 256)
+        XCTAssertFalse(fm.fileExists(atPath: agedJournalURL.path))
+        XCTAssertFalse(
+            fm.fileExists(atPath: sidecarURL(for: aged).path),
+            "the aged journal's sidecar must be swept with it",
+        )
+        XCTAssertFalse(
+            fm.fileExists(atPath: sidecarURL(for: orphan).path),
+            "a sidecar with no journal is unreadable litter — swept",
+        )
+    }
+
+    /// The PRODUCTION wiring end to end: `makeFromEnvironment` composes a REAL transcript
+    /// (mode-free, query-free, overprint-collapsed, no sanitize suffix) at the recorded size;
+    /// `SLOPDESK_SCROLLBACK_SNAPSHOT=0` keeps the distilled path.
+    func testProductionRestoreComposesTranscript() throws {
+        let sessionID = UUID()
+        let store = try XCTUnwrap(ScrollbackJournalStore.makeFromEnvironment(
+            environment: ["SLOPDESK_SCROLLBACK_DIR": tempDir.path],
+        ))
+        var churn = "\u{1B}[?1000h\u{1B}[cbuild output\r\n"
+        for pct in 0...50 {
+            churn += "tick \(pct)\r"
+        }
+        churn += "\r\n$ "
+        let journal = store.journal(for: sessionID)
+        journal.append(Data(churn.utf8))
+        journal.recordWindowSize(rows: 24, cols: 80)
+        journal.synchronize()
+
+        let restored = try XCTUnwrap(store.restoredScrollback(for: sessionID))
+        XCTAssertTrue(restored.snapshotComposed)
+        let text = try XCTUnwrap(String(bytes: restored.bytes, encoding: .utf8))
+        XCTAssertTrue(text.contains("build output"))
+        XCTAssertEqual(text.components(separatedBy: "tick").count - 1, 1, "overprint collapses")
+        XCTAssertFalse(text.contains("?1000"), "no input modes in a fresh-spawn transcript")
+        XCTAssertFalse(
+            restored.bytes.suffix(ScrollbackJournalStore.sanitizeSuffix.count)
+                .elementsEqual(ScrollbackJournalStore.sanitizeSuffix),
+            "the transcript needs no sanitize suffix — it is mode-free by construction",
+        )
+
+        let disabled = try XCTUnwrap(ScrollbackJournalStore.makeFromEnvironment(
+            environment: [
+                "SLOPDESK_SCROLLBACK_DIR": tempDir.path,
+                "SLOPDESK_SCROLLBACK_SNAPSHOT": "0",
+            ],
+        ))
+        XCTAssertEqual(
+            disabled.restoredScrollback(for: sessionID)?.snapshotComposed, false,
+            "the snapshot env kill switch must keep the distilled path",
+        )
     }
 
     // MARK: - Environment gates
@@ -669,7 +850,7 @@ final class MuxChannelSessionScrollbackJournalTests: XCTestCase {
         store.journal(for: sessionID).synchronize()
 
         XCTAssertEqual(
-            store.restoredScrollback(for: sessionID),
+            store.restoredScrollback(for: sessionID)?.bytes,
             Data("hello world\n".utf8) + ScrollbackJournalStore.sanitizeSuffix,
             "every PTY output chunk must be journaled in order",
         )
@@ -706,7 +887,7 @@ final class MuxChannelSessionScrollbackJournalTests: XCTestCase {
 
         store.journal(for: sessionID).synchronize()
         XCTAssertEqual(
-            store.restoredScrollback(for: sessionID),
+            store.restoredScrollback(for: sessionID)?.bytes,
             live + ScrollbackJournalStore.sanitizeSuffix,
             "the preamble must NOT be re-journaled — journaling it would double the transcript every restart",
         )

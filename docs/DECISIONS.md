@@ -3067,3 +3067,41 @@ hole.
   snapshot silently reset every reattached pane to a block cursor. The model now tracks the
   last-wins shape (RIS resets it), the renderer re-emits it after keypad state, and the preamble
   wipes with `ESC[0 q` so a warm-overflow re-render can't inherit a stale shape.
+
+## PATH B joins the state transfer: journal restore renders a TRANSCRIPT (2026-07-26)
+
+The last replay path still on the distiller was the fresh-spawn journal restore (hostd restart /
+TTL eviction / shell death → `spawnFreshShell`): the blocker was that after the daemon dies there
+is no authoritative grid size to parse the journal at. Decision: the parse-correct size is the one
+the bytes were EMITTED for — persist it beside the journal and render the restore like PATH A.
+
+- ✅ **Size sidecar** (`<uuid>.scrollback.size`, "rows cols"): every APPLIED winsize is recorded —
+  `startRelay()` seeds the spawn-time size (a headless CLI pane may never send `.resize`), each
+  flushed client resize overwrites it (last-wins, deduped, atomic, on the journal queue). The
+  journal file itself stays raw/headerless; a missing or garbled sidecar decode-fails to the
+  distiller path (no-backcompat: no migration, old journals just take the old path once). Delete/
+  sweep reap the sidecar with its journal, plus fully-orphaned sidecars.
+- ✅ **`TerminalReplaySnapshot.composeTranscript` + `renderTranscript`** — the fresh-spawn variant
+  of the snapshot render. The restored bytes front a NEW shell, so the transcript is CONTENT-ONLY:
+  scrollback and main grid form one uniform run of rows (a soft-wrapped logical line straddling
+  the scrollback↔grid boundary re-joins — splitting there also broke the fixed point, because the
+  re-feed's scroll phase moves the boundary), blank edge rows are trimmed (interior blank lines
+  kept), SGR styled per cell and reset before every line feed, ending on a fresh line for the new
+  prompt. No preamble (the restore gate guarantees a cold surface), no alt screen (the dead TUI
+  cannot resume; the main screen beneath it is what the raw path's `?1049l` revealed too), no
+  private modes, no cursor/DECSCUSR state, no input-mode reassert, no sanitize suffix (mode-free
+  by construction). A dead stream's trailing incomplete escape/UTF-8 fragment is DROPPED, not
+  held back — nothing will ever continue it.
+- ✅ **Proof:** transcript-of-transcript is a byte-exact FIXED POINT — pinned on curated churn and
+  on the existing 300-seed fuzz vocabulary (this is what keeps repeated daemon restarts at zero
+  render growth). Store-level tests pin the sidecar lifecycle (record/last-wins/degenerate-reject,
+  delete/sweep, corrupt-sidecar fallback, composer-vs-distiller selection, the
+  `SLOPDESK_SCROLLBACK_SNAPSHOT=0` kill switch — one env gate governs BOTH replay paths); a real
+  PTY test pins both sidecar writers; the hostd-restart E2E now asserts the "(snapshot replay)"
+  restore log line on the shipped binaries and the absence of the sanitize suffix.
+- ✅ **Observability:** `spawnFreshShell` logs "restored N journaled bytes (snapshot|distilled
+  replay)" — the PATH-B sibling of the reattach "replay in N ms" line.
+- Accepted: the compose still runs synchronously on the channel-open path (a full 64 MiB journal
+  ≈ 3 s at the measured ~21 MiB/s — once per pane per daemon restart, replacing a much longer
+  client-side parse; the distilled path was synchronous there too). Restores at a size the client
+  immediately changes re-wrap client-side like any transcript line.

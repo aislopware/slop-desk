@@ -755,6 +755,13 @@ final class MuxChannelSession: @unchecked Sendable {
         // Fresh-spawn history restore MUST land between the gate build (so its bytes are
         // accounted) and the read-loop start (so it precedes every live shell byte).
         enqueueRestoredScrollback()
+        // Seed the journal's size sidecar with the spawn-time winsize: a pane whose client
+        // never sends a `.resize` (headless CLI, scripts) still restores via snapshot in the
+        // next daemon life. Overwriting the PRIOR life's sidecar is safe — the restore read
+        // it back in `spawnFreshShell`, before this session existed.
+        if let size = pty.currentWindowSize() {
+            scrollbackJournal?.recordWindowSize(rows: Int(size.rows), cols: Int(size.cols))
+        }
         readLoop.start()
 
         // INPUT: the DATA sub-channel carries `input`. The blocking `write(2)` runs on the
@@ -1841,6 +1848,9 @@ final class MuxChannelSession: @unchecked Sendable {
         pendingResize = nil
         resizeLock.unlock()
         pty.setWindowSize(cols: r.cols, rows: r.rows, pxWidth: r.px, pxHeight: r.py)
+        // Persist the applied size next to the disk journal: a later daemon life's snapshot
+        // restore parses the journaled bytes at the geometry they were emitted for.
+        scrollbackJournal?.recordWindowSize(rows: Int(r.rows), cols: Int(r.cols))
         // The resident screen grid is fixed-size — a geometry change rebuilds it from the ring
         // on the next scan (full-screen apps repaint at the new size anyway).
         markScreenModelDirty()

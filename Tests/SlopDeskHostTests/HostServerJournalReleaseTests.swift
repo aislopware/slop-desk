@@ -223,7 +223,7 @@ final class HostServerJournalReleaseTests: XCTestCase {
         let new = Data("after-respawn\n".utf8)
         store.journal(for: id).append(new) // a fresh spawn for the returning id re-vends
         XCTAssertEqual(
-            store.restoredScrollback(for: id),
+            store.restoredScrollback(for: id)?.bytes,
             old + new + ScrollbackJournalStore.sanitizeSuffix,
             "a released journal must reopen append-at-end — no corruption, no lost head",
         )

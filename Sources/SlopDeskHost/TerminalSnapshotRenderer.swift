@@ -149,6 +149,55 @@ enum TerminalSnapshotRenderer {
         return out
     }
 
+    /// Renders `snapshot` as a plain TRANSCRIPT — the fresh-spawn journal restore (PATH B):
+    /// the restored history fronts a NEW shell, so nothing about the dead life's terminal
+    /// STATE may survive into the pane. Emits only content: scrollback logical lines, then
+    /// the main grid's rows (soft-wrapped rows re-joined, trailing blank rows dropped), each
+    /// line SGR-styled and reset before its line feed, ending on a fresh line for the new
+    /// shell's first prompt. No preamble (the receiving surface is cold by the restore gate),
+    /// no alt screen (a TUI that died with the daemon cannot resume — the main screen beneath
+    /// it is what the raw-replay path's `?1049l` sanitize revealed too), no modes, no cursor
+    /// or cursor-shape restoration.
+    static func renderTranscript(_ snapshot: TerminalScreenModel.ReplaySnapshot) -> Data {
+        // Scrollback and grid form ONE uniform run of rows so a soft-wrapped logical line
+        // that STRADDLES the boundary (first half scrolled into history, second half still
+        // on screen) re-joins like any other. Splitting at the boundary would also break the
+        // fixed point (transcript-of-transcript): the re-feed's scroll phase shifts the
+        // boundary, so the split would land in a different place each pass. Grid rows apply
+        // the same full-to-the-last-column join guard the scrollback capture bakes into
+        // ``TerminalScreenModel/ScrollbackLine/softWrapped``; trailing blank grid rows are
+        // dropped so the new shell's prompt lands right under the content.
+        var rows: [(cells: [TerminalScreenModel.Cell], continuesNext: Bool)] =
+            snapshot.scrollback.map { ($0.cells, $0.softWrapped) }
+        for r in 0..<snapshot.mainCells.count {
+            let row = snapshot.mainCells[r]
+            rows.append((row, snapshot.mainWrapped[r] && rowReachesLastColumn(row)))
+        }
+        // Blank EDGES are noise, not content: trailing blanks are the empty region under the
+        // dead prompt, and leading blanks are scroll artifacts with nothing above them (a
+        // content-free `ESC[S` capture). Both would also break the fixed point — a re-feed
+        // reproduces interior blank lines exactly, but grows/loses edge blanks with the
+        // scroll phase. Interior blank lines (paragraph separators) are kept verbatim.
+        while let last = rows.last, isBlankRow(last.cells) { rows.removeLast() }
+        while let first = rows.first, isBlankRow(first.cells) { rows.removeFirst() }
+
+        var out = Data()
+        var sgr = SGRTracker()
+        var i = 0
+        while i < rows.count {
+            var logical = rows[i].cells
+            while rows[i].continuesNext, i + 1 < rows.count {
+                i += 1
+                logical.append(contentsOf: rows[i].cells)
+            }
+            i += 1
+            appendCells(logical, trimmed: true, to: &out, sgr: &sgr)
+            sgr.reset(into: &out) // the BCE discipline from ``render`` — see the note there
+            out.append(contentsOf: crlf)
+        }
+        return out
+    }
+
     // MARK: Pieces
 
     private static let crlf: [UInt8] = [0x0D, 0x0A]
@@ -170,6 +219,13 @@ enum TerminalSnapshotRenderer {
 
     private static func isBlankRow(_ row: [TerminalScreenModel.Cell]) -> Bool {
         row.allSatisfy { $0 == TerminalScreenModel.Cell() }
+    }
+
+    /// The transcript join guard — mirrors ``TerminalScreenModel``'s scrollback-capture rule:
+    /// a wrap flag is only trusted on a row still FULL to its last column.
+    private static func rowReachesLastColumn(_ row: [TerminalScreenModel.Cell]) -> Bool {
+        guard let last = row.last else { return false }
+        return last != TerminalScreenModel.Cell()
     }
 
     /// Appends a run of cells (continuation cells contribute nothing — the wide lead prints
@@ -275,6 +331,23 @@ public enum TerminalReplaySnapshot {
         )
         out.append(dangling)
         return out
+    }
+
+    /// The fresh-spawn (PATH B) variant: renders the DEAD prior life's journal as a plain
+    /// transcript (``TerminalSnapshotRenderer/renderTranscript(_:)``). Unlike ``compose``,
+    /// a trailing incomplete escape/UTF-8 tail is DROPPED, not held back — the stream ended
+    /// with the daemon, so no continuation bytes will ever follow — and no input modes are
+    /// re-asserted (the restored bytes front a NEW shell that must start with every TUI mode
+    /// off). `rows`/`cols` are the prior life's LAST PTY size (the journal sidecar): the size
+    /// the bytes were emitted for is the size that parses them faithfully.
+    public static func composeTranscript(raw: Data, rows: Int, cols: Int) -> Data {
+        let escSplit = ScrollbackReplayTransform.splitTrailingIncompleteEscape(raw)
+        let head = escSplit.dangling.isEmpty
+            ? splitTrailingIncompleteUTF8(escSplit.head).head
+            : escSplit.head
+        var model = TerminalScreenModel(rows: rows, cols: cols, scrollbackLimit: scrollbackLineBudget)
+        model.feed(head)
+        return TerminalSnapshotRenderer.renderTranscript(model.replaySnapshot())
     }
 
     /// Splits a trailing INCOMPLETE UTF-8 scalar off `data` (a lead byte whose continuations

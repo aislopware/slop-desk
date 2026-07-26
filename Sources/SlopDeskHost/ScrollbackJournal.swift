@@ -17,8 +17,10 @@ import SlopDeskTransport
 ///   read-loop chunk path (`MuxChannelSession.ingestPTYChunk`) so ONLY genuine PTY output is
 ///   journaled — a restored preamble (which enters via the out-FIFO, not the chunk path) is never
 ///   re-journaled, so transcripts don't double across restarts.
-/// - `restoredScrollback(for:)` loads + distills (``ScrollbackDistiller``) + suffixes a
-///   mode-sanitize reset, producing the preamble `spawnFreshShell` hands to the new session.
+/// - `restoredScrollback(for:)` produces the preamble `spawnFreshShell` hands to the new session:
+///   a rendered TRANSCRIPT (``TerminalReplaySnapshot/composeTranscript``, when the snapshot
+///   composer and the `.size` sidecar's prior-life geometry are both available), else the
+///   distilled raw bytes + a mode-sanitize reset suffix.
 /// - `delete(sessionID:)` on deliberate end (peer `channelClose` / attached child exit);
 ///   everything else (link-drop detach, TTL eviction, daemon stop) KEEPS the file — that is the
 ///   feature. Orphans are bounded by ``sweep()``.
@@ -38,6 +40,13 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
     /// Applied to the raw journal bytes at RESTORE time (never at write time, so a distiller
     /// change retroactively benefits existing journals). Injected for testability.
     private let distiller: (@Sendable (Data) -> Data)?
+
+    /// The snapshot state-transfer composer (``TerminalReplaySnapshot/composeTranscript``),
+    /// `(raw, rows, cols) → transcript`. When set AND the prior life's PTY size survives in
+    /// the journal's size sidecar, restore renders the transcript ONCE instead of shipping
+    /// the distilled byte history — the PATH-B sibling of the reattach snapshot replay. `nil`
+    /// (env-disabled / tests) keeps the distiller path exactly as before.
+    private let snapshotComposer: (@Sendable (Data, Int, Int) -> Data)?
 
     private let lock = NSLock()
     private var journals: [UUID: ScrollbackJournal] = [:]
@@ -70,10 +79,12 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
         directory: URL,
         byteCap: Int = ReplayBuffer.defaultScrollbackBytes,
         distiller: (@Sendable (Data) -> Data)? = nil,
+        snapshotComposer: (@Sendable (Data, Int, Int) -> Data)? = nil,
     ) {
         self.directory = directory
         self.byteCap = max(0, byteCap)
         self.distiller = distiller
+        self.snapshotComposer = snapshotComposer
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
 
@@ -117,9 +128,19 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
         // Same distill + strip pipeline as the in-memory ring's cold replay — but NO input-mode
         // re-assert: a journal restore fronts a FRESH shell, so the prior life's TUI modes must
         // stay off (the sanitize suffix enforces the same for env-disabled raw replay).
+        // The snapshot composer rides the same env gate as the reattach snapshot replay
+        // (`SLOPDESK_SCROLLBACK_SNAPSHOT`, default-ON) — one switch governs state-transfer
+        // on every replay path.
+        var snapshotComposer: (@Sendable (Data, Int, Int) -> Data)?
+        if env["SLOPDESK_SCROLLBACK_SNAPSHOT"] != "0" {
+            snapshotComposer = { raw, rows, cols in
+                TerminalReplaySnapshot.composeTranscript(raw: raw, rows: rows, cols: cols)
+            }
+        }
         return ScrollbackJournalStore(
             directory: dir, byteCap: cap,
             distiller: ScrollbackReplayTransform.make(environment: env),
+            snapshotComposer: snapshotComposer,
         )
     }
 
@@ -156,9 +177,22 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
         return journal
     }
 
-    /// Loads the persisted transcript for a returning session: raw bytes → distill → sanitize
-    /// suffix. `nil` when no journal exists or it is empty (nothing to restore).
-    func restoredScrollback(for sessionID: UUID) -> Data? {
+    /// One restored transcript: the preamble bytes plus HOW they were produced (the caller's
+    /// log line — the reattach path's "snapshot|raw replay in N ms" observability sibling).
+    struct RestoredScrollback {
+        let bytes: Data
+        /// TRUE when the bytes are a rendered state-transfer transcript (snapshot composer +
+        /// size sidecar); FALSE for the distilled raw-history path.
+        let snapshotComposed: Bool
+    }
+
+    /// Loads the persisted transcript for a returning session. With the snapshot composer and
+    /// the prior life's PTY size (the `.size` sidecar) both available, the raw bytes are
+    /// rendered ONCE into a plain transcript — O(final state) for the client to paint, mode-
+    /// free by construction. Otherwise (env-disabled, or an old journal with no sidecar):
+    /// raw bytes → distill → sanitize suffix, exactly as before. `nil` when no journal exists
+    /// or nothing survives the transform (nothing to restore).
+    func restoredScrollback(for sessionID: UUID) -> RestoredScrollback? {
         // Flush any writer this PROCESS still holds (restore normally happens in a fresh process,
         // but a TTL-evicted session restored by the same daemon must see its own tail).
         lock.lock()
@@ -166,9 +200,30 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
         lock.unlock()
         writer?.synchronize()
         guard let raw = try? Data(contentsOf: fileURL(for: sessionID)), !raw.isEmpty else { return nil }
+        if let snapshotComposer, let size = recordedWindowSize(for: sessionID) {
+            let transcript = snapshotComposer(raw, size.rows, size.cols)
+            guard !transcript.isEmpty else { return nil }
+            return RestoredScrollback(bytes: transcript, snapshotComposed: true)
+        }
         var restored = distiller.map { $0(raw) } ?? raw
         restored.append(Self.sanitizeSuffix)
-        return restored
+        return RestoredScrollback(bytes: restored, snapshotComposed: false)
+    }
+
+    /// Reads the size sidecar (`<uuid>.scrollback.size`, "rows cols") — the LAST PTY size the
+    /// prior life applied, recorded by ``ScrollbackJournal/recordWindowSize(rows:cols:)``.
+    /// Any decode failure is `nil` (no-backcompat: a missing/garbled sidecar just falls back
+    /// to the distiller path).
+    private func recordedWindowSize(for sessionID: UUID) -> (rows: Int, cols: Int)? {
+        let url = ScrollbackJournal.sizeSidecarURL(for: fileURL(for: sessionID))
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let parts = text.split(separator: " ", omittingEmptySubsequences: true)
+        guard parts.count == 2,
+              let rows = Int(parts[0].trimmingCharacters(in: .whitespacesAndNewlines)),
+              let cols = Int(parts[1].trimmingCharacters(in: .whitespacesAndNewlines)),
+              rows > 0, cols > 0, rows <= 1000, cols <= 4000
+        else { return nil }
+        return (rows, cols)
     }
 
     /// Releases the writer for a NON-deliberate end of life — TTL eviction, overflow eviction,
@@ -218,9 +273,11 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
         let writer = journals.removeValue(forKey: sessionID)
         writer?.closeAndDelete()
         // No writer in THIS process (e.g. a pane closed right after a daemon restart): remove
-        // the file directly.
+        // the file (and its size sidecar) directly.
         if writer == nil {
-            try? FileManager.default.removeItem(at: fileURL(for: sessionID))
+            let journalURL = fileURL(for: sessionID)
+            try? FileManager.default.removeItem(at: journalURL)
+            try? FileManager.default.removeItem(at: ScrollbackJournal.sizeSidecarURL(for: journalURL))
         }
     }
 
@@ -258,14 +315,24 @@ public final class ScrollbackJournalStore: @unchecked Sendable {
                 .contentModificationDate ?? .distantPast
             if now.timeIntervalSince(mtime) > maxAge {
                 try? fm.removeItem(at: url)
+                try? fm.removeItem(at: ScrollbackJournal.sizeSidecarURL(for: url))
             } else {
                 dated.append((url, mtime))
+            }
+        }
+        // Size sidecars whose journal is gone (a crash between the pair of unlinks, or a
+        // journal swept by an older daemon) are pure orphans — no restore can ever read them.
+        for url in urls where url.pathExtension == "size" {
+            let journalURL = url.deletingPathExtension()
+            if journalURL.pathExtension == "scrollback", !fm.fileExists(atPath: journalURL.path) {
+                try? fm.removeItem(at: url)
             }
         }
         guard dated.count > keepNewest else { return }
         dated.sort { $0.mtime > $1.mtime }
         for stale in dated.dropFirst(keepNewest) {
             try? fm.removeItem(at: stale.url)
+            try? fm.removeItem(at: ScrollbackJournal.sizeSidecarURL(for: stale.url))
         }
     }
 
@@ -346,10 +413,35 @@ final class ScrollbackJournal: @unchecked Sendable {
     /// the file has grown another `byteCap`.
     private var compactRetryFloor = 0
 
+    /// The last size written to the sidecar by THIS instance (dedup — resizes repeat the same
+    /// size far more often than they change it). On `queue`.
+    private var lastRecordedSize: (rows: Int, cols: Int)?
+
     init(fileURL: URL, byteCap: Int) {
         self.fileURL = fileURL
         self.byteCap = byteCap
         queue = DispatchQueue(label: "slopdesk.scrollback-journal", qos: .utility)
+    }
+
+    /// The `<journal>.size` sidecar path — where ``recordWindowSize(rows:cols:)`` persists the
+    /// last applied PTY size and ``ScrollbackJournalStore/restoredScrollback(for:)`` reads it.
+    static func sizeSidecarURL(for journalURL: URL) -> URL {
+        journalURL.appendingPathExtension("size")
+    }
+
+    /// Persists the PTY size that was just APPLIED (`TIOCSWINSZ` / the spawn-time initial
+    /// winsize) to the size sidecar — the parse-correct geometry for a later daemon life's
+    /// snapshot restore of this journal's bytes. Non-blocking (journal queue), deduped, and
+    /// atomic on disk; a garbled/half-written sidecar decode-fails to the distiller path.
+    func recordWindowSize(rows: Int, cols: Int) {
+        guard rows > 0, cols > 0 else { return }
+        queue.async { [self] in
+            guard !closed else { return }
+            if let last = lastRecordedSize, last == (rows, cols) { return }
+            lastRecordedSize = (rows, cols)
+            try? Data("\(rows) \(cols)\n".utf8)
+                .write(to: Self.sizeSidecarURL(for: fileURL), options: .atomic)
+        }
     }
 
     /// Appends one PTY output chunk. Non-blocking for the caller (read-loop thread): the bytes
@@ -389,6 +481,7 @@ final class ScrollbackJournal: @unchecked Sendable {
             try? handle?.close()
             handle = nil
             try? FileManager.default.removeItem(at: fileURL)
+            try? FileManager.default.removeItem(at: Self.sizeSidecarURL(for: fileURL))
         }
     }
 

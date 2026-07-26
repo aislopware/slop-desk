@@ -496,6 +496,54 @@ final class PTYProcessTests: XCTestCase {
         drainExitAndShutdown(session, pty: pty)
     }
 
+    /// Every APPLIED winsize lands in the disk journal's size sidecar — the geometry a later
+    /// daemon life's snapshot restore parses the journaled bytes at. Two writers pin both
+    /// record points: `startRelay()` seeds the spawn-time size (a headless CLI client may
+    /// never send a `.resize`), and a flushed client resize overwrites it (last-wins).
+    func testAppliedResizeRecordsJournalSizeSidecar() throws {
+        let journalDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("resize-sidecar-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: journalDir) }
+        let store = ScrollbackJournalStore(directory: journalDir)
+        let sessionID = UUID()
+
+        let pty = PTYProcess()
+        try pty.spawn("/bin/sh", environment: curatedEnv(), cols: 80, rows: 24)
+        let data = MuxSubChannel(channelID: 1, channel: .data) { _, _ in }
+        let control = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
+        let session = MuxChannelSession(
+            channelID: 1, pty: pty, data: data, control: control, resizeDebounce: .zero,
+            scrollbackJournal: store.journal(for: sessionID),
+        )
+        session.startRelay()
+
+        let sidecar = journalDir.appendingPathComponent("\(sessionID.uuidString).scrollback.size")
+        func pollSidecar(until expected: String) -> String? {
+            let deadline = Date().addingTimeInterval(5)
+            var last: String?
+            while Date() < deadline {
+                last = try? String(contentsOf: sidecar, encoding: .utf8)
+                if last == expected { return last }
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+            return last
+        }
+        XCTAssertEqual(pollSidecar(until: "24 80\n"), "24 80\n", "startRelay seeds the spawn-time size")
+
+        let exp = expectation(description: "resize-delivered")
+        Task {
+            await control.deliver(payload: WireMessage.resize(
+                cols: 132, rows: 50, pxWidth: 0, pxHeight: 0,
+            ).encode())
+            // The `.ack` flush applies the pending size synchronously (the debounce-test idiom).
+            await control.deliver(payload: WireMessage.ack(seq: 0).encode())
+            exp.fulfill()
+        }
+        wait(for: [exp], timeout: 5)
+        XCTAssertEqual(pollSidecar(until: "50 132\n"), "50 132\n", "an applied resize overwrites the sidecar")
+        drainExitAndShutdown(session, pty: pty)
+    }
+
     func testExitCode() throws {
         let pty = PTYProcess()
         try pty.spawn("/bin/sh", arguments: ["-c", "exit 7"], environment: curatedEnv())

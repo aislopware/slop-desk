@@ -160,10 +160,12 @@ final class TerminalQueryStripperTests: XCTestCase {
         store.journal(for: sessionID).append(Data("$ cc\u{1B}[c\u{1B}[>0q\u{1B}[?2026$pdone\n".utf8))
         store.journal(for: sessionID).synchronize()
 
+        let restored = store.restoredScrollback(for: sessionID)
         XCTAssertEqual(
-            store.restoredScrollback(for: sessionID),
+            restored?.bytes,
             Data("$ ccdone\n".utf8) + ScrollbackJournalStore.sanitizeSuffix,
         )
+        XCTAssertEqual(restored?.snapshotComposed, false, "no composer injected → distilled path")
     }
 
     // MARK: - Nasty-corpus exact-byte pin (allocation-refactor guard)

@@ -340,6 +340,102 @@ final class TerminalSnapshotRendererTests: XCTestCase {
             XCTAssertEqual(sa.cursorRow, sb.cursorRow, "seed \(seed) cursorRow \(input.debugDescription)")
             XCTAssertEqual(sa.cursorCol, sb.cursorCol, "seed \(seed) cursorCol \(input.debugDescription)")
             XCTAssertEqual(sa.wrapPending, sb.wrapPending, "seed \(seed) wrapPending \(input.debugDescription)")
+            // The PATH-B transcript must be a fixed point over the same vocabulary.
+            let t1 = TerminalReplaySnapshot.composeTranscript(raw: Data(input.utf8), rows: rows, cols: cols)
+            let t2 = TerminalReplaySnapshot.composeTranscript(raw: t1, rows: rows, cols: cols)
+            XCTAssertEqual(t1, t2, "seed \(seed) transcript fixed point \(input.debugDescription)")
+        }
+    }
+
+    // MARK: Transcript compose (PATH B — fresh-spawn journal restore)
+
+    /// The transcript is CONTENT-ONLY: no private modes (mouse/alt/cursor-visibility), no
+    /// cursor positioning, no DECSCUSR — everything about the DEAD life's terminal state must
+    /// die with it, because these bytes front a brand-new shell.
+    func testTranscriptEmitsNoModesNoAltNoCursorState() {
+        let raw = Data(
+            ("\(ESC)[?1000h\(ESC)[?2004h\(ESC)[5 qmain content\r\n"
+                + "\(ESC)[2;5r\(ESC)[?1049hTUI-ALT-CONTENT\(ESC)[3;4H").utf8,
+        )
+        let out = TerminalReplaySnapshot.composeTranscript(raw: raw, rows: 6, cols: 30)
+        let text = String(data: out, encoding: .utf8) ?? ""
+        XCTAssertFalse(text.contains("\(ESC)[?"), "no private modes may survive into a fresh shell")
+        XCTAssertFalse(text.contains(" q"), "no DECSCUSR — the new shell owns its cursor shape")
+        XCTAssertFalse(text.contains("TUI-ALT-CONTENT"), "the dead TUI's alt screen is dropped")
+        XCTAssertTrue(text.contains("main content"), "the main screen beneath the TUI is the transcript")
+        XCTAssertNil(
+            text.range(of: "\(ESC)\\[[0-9;]*H", options: .regularExpression),
+            "no cursor positioning — transcript lines are sequential",
+        )
+    }
+
+    /// Scrollback + grid arrive as plain sequential lines, trailing blank grid rows dropped,
+    /// and the output ends with a line feed so the fresh prompt starts on its own line.
+    func testTranscriptLinesAndTrailingNewline() {
+        let input = (1...9).map { "line \($0)" }.joined(separator: "\r\n") + "\r\n"
+        let out = TerminalReplaySnapshot.composeTranscript(raw: Data(input.utf8), rows: 6, cols: 12)
+        XCTAssertEqual(String(data: out, encoding: .utf8), input, "plain lines pass through verbatim")
+        XCTAssertTrue(out.suffix(2).elementsEqual([0x0D, 0x0A]))
+    }
+
+    /// A soft-wrapped line still ON the grid (not yet scrolled into history) must re-join into
+    /// one logical line — the client re-wraps it at its own width.
+    func testTranscriptJoinsSoftWrappedGridRows() {
+        let long = String(repeating: "abcdefghij", count: 3) // 30 chars over 12 cols = 3 grid rows
+        let out = TerminalReplaySnapshot.composeTranscript(raw: Data(long.utf8), rows: 6, cols: 12)
+        XCTAssertNotNil(String(data: out, encoding: .utf8)?.range(of: long), "one contiguous logical line")
+    }
+
+    /// The overprint guarantee holds on the transcript path too: a progress bar repainted
+    /// hundreds of times restores as its final revision alone.
+    func testTranscriptCollapsesOverprintToFinalRevision() {
+        var input = ""
+        for pct in 0...200 {
+            input += "Progress \(pct / 2)%\r"
+        }
+        input += "\r\nDone.\r\n$ "
+        let out = TerminalReplaySnapshot.composeTranscript(raw: Data(input.utf8), rows: 6, cols: 40)
+        let text = String(data: out, encoding: .utf8) ?? ""
+        XCTAssertEqual(text.components(separatedBy: "Progress").count - 1, 1, "one revision survives")
+        XCTAssertTrue(text.contains("Progress 100%"))
+        XCTAssertTrue(text.contains("Done."))
+    }
+
+    /// A dead stream's trailing incomplete escape/UTF-8 fragment is DROPPED (no continuation
+    /// bytes will ever follow it), unlike ``TerminalReplaySnapshot/compose``'s hold-back.
+    func testTranscriptDropsTrailingIncompleteFragments() {
+        let escOut = TerminalReplaySnapshot.composeTranscript(
+            raw: Data("hello\(ESC)[3".utf8), rows: 4, cols: 20,
+        )
+        XCTAssertEqual(String(data: escOut, encoding: .utf8), "hello\r\n")
+        var rawUTF8 = Data("ok".utf8)
+        rawUTF8.append(contentsOf: [0xE6, 0x97]) // first 2 of 3 bytes of 日
+        let utf8Out = TerminalReplaySnapshot.composeTranscript(raw: rawUTF8, rows: 4, cols: 20)
+        XCTAssertEqual(String(data: utf8Out, encoding: .utf8), "ok\r\n")
+    }
+
+    /// Transcript canonicalization: composing a transcript OF a transcript reproduces it
+    /// byte-exact — over curated churn and the fuzz vocabulary's benign subset. This is what
+    /// makes repeated daemon restarts stable (each life re-journals the restored preamble's
+    /// SHAPE only through fresh PTY output, but the invariant keeps render growth at zero).
+    func testTranscriptIdempotent() {
+        var samples: [String] = [
+            "$ ls\r\nREADME.md  Sources\r\n$ ",
+            "\(ESC)[31mred\(ESC)[0m \(ESC)[1;38;5;196mbright\(ESC)[0m\r\n"
+                + "\(ESC)[48;2;10;20;30mrgb bg\(ESC)[0m plain",
+            "blank\r\n\r\nafter-blank\r\n",
+            String(repeating: "abcdefghij", count: 4) + "\r\ntail",
+            (1...30).map { "history line \($0)" }.joined(separator: "\r\n"),
+        ]
+        var progress = ""
+        for pct in 0...50 {
+            progress += "tick \(pct)\r"
+        }
+        samples.append(progress + "\r\ndone")
+        for (index, sample) in samples.enumerated() {
+            let once = TerminalReplaySnapshot.composeTranscript(raw: Data(sample.utf8), rows: 6, cols: 12)
+            let twice = TerminalReplaySnapshot.composeTranscript(raw: once, rows: 6, cols: 12)
+            XCTAssertEqual(once, twice, "sample \(index) transcript must be a fixed point")
         }
     }
 }
