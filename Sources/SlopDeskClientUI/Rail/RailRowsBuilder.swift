@@ -525,21 +525,17 @@ enum RailRowsBuilder {
     /// "Other" bucket (video / cwd-less panes) takes its first-appearance slot too. Query filter composes
     /// first; an all-filtered section is DROPPED. Pure + static so the per-pane grouping rule is
     /// unit-pinned without a SwiftUI view.
+    ///
+    /// The bucketing is ``TabOrderingEngine/bucketedByProject(_:projectKey:)`` — the SAME code the close
+    /// rule reads at tab granularity, so focus after a close can only land where this drew something.
     static func sectionedByProject(_ rows: [RailRow], tabOrder: [TabID], query: String) -> [RailRowGroup] {
         let survivors = filtered(rows, query: query)
-        // Pass 1 — bucket in CREATION order; `order` fixes the (stable) section sequence.
-        var order: [String?] = []
-        var buckets: [String?: [RailRow]] = [:]
-        for row in survivors {
-            let key = TabOrderingEngine.normalizedProjectKey(row.projectKey)
-            if buckets[key] == nil { order.append(key) }
-            buckets[key, default: []].append(row)
-        }
-        // Pass 2 — order rows WITHIN each section by the sorted tab order (respects "Sort By"), pane pre-order
-        // as the stable tiebreak. A row whose tab isn't in `tabOrder` (shouldn't happen) sorts last, stably.
+        let sections = TabOrderingEngine.bucketedByProject(survivors, projectKey: \.projectKey)
+        // Order rows WITHIN each section by the tab order, pane pre-order as the stable tiebreak.
+        // A row whose tab isn't in `tabOrder` (shouldn't happen) sorts last, stably.
         let rank = Dictionary(tabOrder.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { a, _ in a })
-        let groups = order.map { key in
-            let sorted = (buckets[key] ?? []).enumerated()
+        let groups = sections.map { section in
+            let sorted = section.elements.enumerated()
                 .sorted { lhs, rhs in
                     let lRank = rank[lhs.element.tabID] ?? Int.max
                     let rRank = rank[rhs.element.tabID] ?? Int.max
@@ -548,7 +544,9 @@ enum RailRowsBuilder {
                 }
                 .map(\.element)
             return RailRowGroup(
-                header: TabOrderingEngine.projectSectionHeader(for: key), projectKey: key, rows: sorted,
+                header: TabOrderingEngine.projectSectionHeader(for: section.key),
+                projectKey: section.key,
+                rows: sorted,
             )
         }
         return headerDisambiguated(groups)

@@ -7,8 +7,10 @@ import Foundation
 /// grouping/sort hamburger, `.byDate` buckets, `.updated` recency sort, or manual drag-reorder; see
 /// `docs/DECISIONS.md` for the rationale. The bucketing itself lives in
 /// ``RailRowsBuilder/sectionedByProject(_:tabOrder:query:)`` (per-PANE, so a split tab's panes land in
-/// their respective projects); these two statics are the shared key-normalization/header rules so every
-/// caller derives identical sections from a key. No SwiftUI, no I/O — fully headless-testable.
+/// their respective projects), but the BUCKETING ITSELF is ``bucketedByProject(_:projectKey:)`` right
+/// here — the rail and the close rule read the same sections from the same code, at their two different
+/// granularities, rather than from two hand-written first-appearance loops free to drift apart.
+/// No SwiftUI, no I/O — fully headless-testable.
 public enum TabOrderingEngine {
     /// Normalize a raw project key for BUCKETING: trim whitespace, strip trailing slashes (but keep root
     /// `/`), and treat an empty result as absent (`nil` ⇒ the "Other" bucket). The trailing-slash strip is
@@ -35,11 +37,41 @@ public enum TabOrderingEngine {
         return String(last)
     }
 
+    // MARK: - By-Project bucketing (the ONE sectioning rule)
+
+    /// Buckets `elements` into By-Project sections: keys ``normalizedProjectKey``-folded, SECTIONS in
+    /// first-appearance order, elements WITHIN a section in their incoming order. The sidebar's single
+    /// layout, expressed once and generically so its two granularities share it —
+    /// ``RailRowsBuilder/sectionedByProject(_:tabOrder:query:)`` passes pane ROWS (a split tab's panes
+    /// land in their respective projects) and ``projectGroupedTabOrder(_:projectKey:)`` passes TABs (what
+    /// "the adjacent tab" means for the close rule). Two hand-written first-appearance loops would be free
+    /// to drift, and the drift would show up as focus landing somewhere the sidebar never drew.
+    ///
+    /// Sections are (key, elements) PAIRS keyed on `String?`, not a dictionary behind a stand-in string for
+    /// the keyless case: a sentinel here would be a second literal that merely LOOKS coupled to the rail's
+    /// "Other" collapse key, and the two answer different questions. `nil` is its own section, natively.
+    /// Linear section lookup is right at these counts (sections in the tens) and keeps first-appearance
+    /// order without a side table.
+    public static func bucketedByProject<Element>(
+        _ elements: [Element],
+        projectKey: (Element) -> String?,
+    ) -> [(key: String?, elements: [Element])] {
+        var sections: [(key: String?, elements: [Element])] = []
+        for element in elements {
+            let bucket = normalizedProjectKey(projectKey(element))
+            if let index = sections.firstIndex(where: { $0.key == bucket }) {
+                sections[index].elements.append(element)
+            } else {
+                sections.append((bucket, [element]))
+            }
+        }
+        return sections
+    }
+
     // MARK: - Close → next selection
 
-    /// The tab ids in the order the sidebar DRAWS them: bucketed by ``normalizedProjectKey``, sections and
-    /// rows both in first-appearance order — the tab-level mirror of
-    /// ``RailRowsBuilder/sectionedByProject(_:tabOrder:query:)`` (which buckets per PANE, for split tabs).
+    /// The tab ids in the order the sidebar DRAWS them — ``bucketedByProject(_:projectKey:)`` flattened,
+    /// the tab-level reading of the same sectioning the rail renders per PANE.
     ///
     /// This exists because `session.tabs` is CREATION order while the rail is PROJECT order, and the two
     /// disagree the moment a new tab for an already-open project appends past a different project's tab.
@@ -49,21 +81,7 @@ public enum TabOrderingEngine {
         _ tabs: [TabID],
         projectKey: (TabID) -> String?,
     ) -> [TabID] {
-        // Sections as (key, ids) PAIRS keyed on `String?`, not a dictionary behind a stand-in string for the
-        // keyless case: a sentinel here would be a second literal that merely LOOKS coupled to the rail's
-        // "Other" collapse key, and the two answer different questions. `nil` is its own section, natively.
-        // Linear lookup is right at tab counts (tens), and it keeps first-appearance order without a
-        // side table.
-        var sections: [(key: String?, ids: [TabID])] = []
-        for tab in tabs {
-            let bucket = normalizedProjectKey(projectKey(tab))
-            if let index = sections.firstIndex(where: { $0.key == bucket }) {
-                sections[index].ids.append(tab)
-            } else {
-                sections.append((bucket, [tab]))
-            }
-        }
-        return sections.flatMap(\.ids)
+        bucketedByProject(tabs, projectKey: projectKey).flatMap(\.elements)
     }
 
     /// The tab to focus once `closing` is gone, in preference order:

@@ -855,6 +855,51 @@ final class RailRowBuilderTests: XCTestCase {
         XCTAssertEqual(sections.last?.rows.map(\.id), [beta])
     }
 
+    /// THE CROSS-LAYER INVARIANT. The sidebar sections pane ROWS here in ClientUI; the tab-close rule
+    /// sections TABs over in WorkspaceCore (`plannedTabSuccessor` → `projectGroupedTabOrder`). Both now run
+    /// `TabOrderingEngine.bucketedByProject`, and the reason that matters is this: the order tabs first
+    /// APPEAR in the rendered rail must equal the order the close rule walks — otherwise "focus the
+    /// neighbouring tab" names a tab that is nowhere near the closed one on screen, which is exactly the
+    /// bug this pins against.
+    ///
+    /// Shaped like the report: a tab in alpha, a tab in beta, then ⌘T back in alpha — which APPENDS past
+    /// beta in `session.tabs` but DRAWS in alpha's section. A creation-order reading gives
+    /// `[alpha1, beta, alpha2]`; the rail draws `[alpha1, alpha2, beta]`.
+    func testTabDisplayOrderMatchesTheOrderTabsAppearInTheRail() {
+        let store = makeStore()
+        store.newTab(kind: .terminal, launchGrace: .zero)
+        store.newTab(kind: .terminal, launchGrace: .zero)
+        let seeded = RailRowsBuilder.rows(for: store)
+        store.setLastKnownCwd("/Users/me/alpha", for: seeded[0].id)
+        store.setLastKnownCwd("/Users/me/beta", for: seeded[1].id)
+        store.setLastKnownCwd("/Users/me/alpha", for: seeded[2].id)
+
+        let rows = RailRowsBuilder.rows(for: store)
+        let drawn = RailRowsBuilder
+            .sectionedByProject(rows, tabOrder: store.flatOrderedTabIDs(), query: "")
+            .flatMap { $0.rows.map(\.tabID) }
+            .reduce(into: [TabID]()) { order, tab in if !order.contains(tab) { order.append(tab) } }
+
+        // The close rule's reading, built from the store's own per-pane key lookup rather than the rows.
+        var representative: [TabID: PaneID] = [:]
+        for row in rows where representative[row.tabID] == nil { representative[row.tabID] = row.id }
+        let walked = TabOrderingEngine.projectGroupedTabOrder(store.flatOrderedTabIDs()) { tab in
+            representative[tab].flatMap { store.paneProjectKey($0) }
+        }
+
+        XCTAssertEqual(walked, drawn, "the close rule must walk the order the sidebar actually drew")
+        XCTAssertNotEqual(
+            walked, store.flatOrderedTabIDs(),
+            "and that order is NOT creation order here — otherwise this fixture proves nothing",
+        )
+        var number: [TabID: Int] = [:]
+        for row in rows where number[row.tabID] == nil { number[row.tabID] = row.tabNumber }
+        XCTAssertEqual(
+            drawn.map { number[$0] }, [1, 3, 2],
+            "the ⌘T tab (#3) draws beside its own project's tab #1, ahead of beta's tab #2",
+        )
+    }
+
     // MARK: - Per-pane By-Project sectioning (the split-tab "group name flickers with focus" bug)
 
     /// A SPLIT tab whose two panes are in DIFFERENT projects must land its panes in their RESPECTIVE project
