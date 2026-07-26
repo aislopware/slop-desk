@@ -597,7 +597,7 @@
       "promptOrdinal": 0
     },
     {
-      "commandText": "grep · 文字 🚀",
+      "commandText": "grep \u00b7 \u6587\u5b57 \ud83d\ude80",
       "complete": true,
       "durationMs": 4294967295,
       "exitCode": -2147483648,
@@ -759,12 +759,12 @@
       "outOriginXBits": 4638144666238189568,
       "outOriginYBits": 4638144666238189568,
       "outWidthBits": 4649368480934526976,
-      "targetPID": 407,
-      "targetWindowID": 1783,
       "tH": 4647503709213818880,
       "tW": 4649368480934526976,
       "tX": 4638144666238189568,
       "tY": 4638144666238189568,
+      "targetPID": 407,
+      "targetWindowID": 1783,
       "windows": []
     },
     {
@@ -778,12 +778,12 @@
       "outOriginXBits": 4629137466983448576,
       "outOriginYBits": 4638144666238189568,
       "outWidthBits": 4650951777678524416,
-      "targetPID": 407,
-      "targetWindowID": 1783,
       "tH": 4647503709213818880,
       "tW": 4649368480934526976,
       "tX": 4638144666238189568,
       "tY": 4638144666238189568,
+      "targetPID": 407,
+      "targetWindowID": 1783,
       "windows": [
         {
           "fH": 4646588915539509248,
@@ -807,12 +807,12 @@
       "outOriginXBits": 4638144666238189568,
       "outOriginYBits": 4638144666238189568,
       "outWidthBits": 4649368480934526976,
-      "targetPID": 407,
-      "targetWindowID": 1783,
       "tH": 4647503709213818880,
       "tW": 4649368480934526976,
       "tX": 4638144666238189568,
       "tY": 4638144666238189568,
+      "targetPID": 407,
+      "targetWindowID": 1783,
       "windows": [
         {
           "fH": 4651127699538968576,
@@ -836,12 +836,12 @@
       "outOriginXBits": 4638144666238189568,
       "outOriginYBits": 4638144666238189568,
       "outWidthBits": 4649368480934526976,
-      "targetPID": 407,
-      "targetWindowID": 1783,
       "tH": 4647503709213818880,
       "tW": 4649368480934526976,
       "tX": 4638144666238189568,
       "tY": 4638144666238189568,
+      "targetPID": 407,
+      "targetWindowID": 1783,
       "windows": [
         {
           "fH": 4647503709213818880,
@@ -865,12 +865,12 @@
       "outOriginXBits": 4638144666238189568,
       "outOriginYBits": 4638144666238189568,
       "outWidthBits": 4649368480934526976,
-      "targetPID": 407,
-      "targetWindowID": 1783,
       "tH": 4647503709213818880,
       "tW": 4649368480934526976,
       "tX": 4638144666238189568,
       "tY": 4638144666238189568,
+      "targetPID": 407,
+      "targetWindowID": 1783,
       "windows": [
         {
           "fH": 4649368480934526976,
@@ -894,12 +894,12 @@
       "outOriginXBits": 4638144666238189568,
       "outOriginYBits": 4638144666238189568,
       "outWidthBits": 4649368480934526976,
-      "targetPID": 407,
-      "targetWindowID": 1783,
       "tH": 4647503709213818880,
       "tW": 4649368480934526976,
       "tX": 4638144666238189568,
       "tY": 4638144666238189568,
+      "targetPID": 407,
+      "targetWindowID": 1783,
       "windows": [
         {
           "fH": 4647503709213818880,
@@ -923,12 +923,12 @@
       "outOriginXBits": 4638144666238189568,
       "outOriginYBits": 4638144666238189568,
       "outWidthBits": 4649368480934526976,
-      "targetPID": 407,
-      "targetWindowID": 1783,
       "tH": 4647503709213818880,
       "tW": 4649368480934526976,
       "tX": 4638144666238189568,
       "tY": 4638144666238189568,
+      "targetPID": 407,
+      "targetWindowID": 1783,
       "windows": [
         {
           "fH": 4647503709213818880,
@@ -952,12 +952,12 @@
       "outOriginXBits": 0,
       "outOriginYBits": 4629137466983448576,
       "outWidthBits": 4650160129306525696,
-      "targetPID": 407,
-      "targetWindowID": 1783,
       "tH": 4647503709213818880,
       "tW": 4649368480934526976,
       "tX": 0,
       "tY": 4629137466983448576,
+      "targetPID": 407,
+      "targetWindowID": 1783,
       "windows": [
         {
           "fH": 4646588915539509248,
@@ -981,12 +981,12 @@
       "outOriginXBits": 4638144666238189568,
       "outOriginYBits": 4638144666238189568,
       "outWidthBits": 0,
-      "targetPID": 407,
-      "targetWindowID": 1783,
       "tH": 4647503709213818880,
       "tW": 0,
       "tX": 4638144666238189568,
       "tY": 4638144666238189568,
+      "targetPID": 407,
+      "targetWindowID": 1783,
       "windows": []
     },
     {
@@ -1000,12 +1000,12 @@
       "outOriginXBits": 9218868437227405312,
       "outOriginYBits": 9218868437227405312,
       "outWidthBits": 0,
-      "targetPID": 407,
-      "targetWindowID": 1783,
       "tH": 4636737291354636288,
       "tW": 4636737291354636288,
       "tX": 4662219572839972864,
       "tY": 4662219572839972864,
+      "targetPID": 407,
+      "targetWindowID": 1783,
       "windows": []
     },
     {
@@ -1019,12 +1019,12 @@
       "outOriginXBits": 9218868437227405312,
       "outOriginYBits": 9218868437227405312,
       "outWidthBits": 0,
-      "targetPID": 407,
-      "targetWindowID": 1783,
       "tH": 4647503709213818880,
       "tW": 4649368480934526976,
       "tX": 4638144666238189568,
       "tY": 4638144666238189568,
+      "targetPID": 407,
+      "targetWindowID": 1783,
       "windows": []
     },
     {
@@ -1038,12 +1038,12 @@
       "outOriginXBits": 0,
       "outOriginYBits": 0,
       "outWidthBits": 4639481672377565184,
-      "targetPID": 407,
-      "targetWindowID": 1783,
       "tH": 4636737291354636288,
       "tW": 4636737291354636288,
       "tX": 0,
       "tY": 0,
+      "targetPID": 407,
+      "targetWindowID": 1783,
       "windows": [
         {
           "fH": 4636737291354636288,
@@ -1067,12 +1067,12 @@
       "outOriginXBits": 0,
       "outOriginYBits": 0,
       "outWidthBits": 4636737291354636288,
-      "targetPID": 407,
-      "targetWindowID": 1783,
       "tH": 4636737291354636288,
       "tW": 4636737291354636288,
       "tX": 0,
       "tY": 0,
+      "targetPID": 407,
+      "targetWindowID": 1783,
       "windows": [
         {
           "fH": 4636737291354636288,
@@ -1096,12 +1096,12 @@
       "outOriginXBits": 4629137466983448576,
       "outOriginYBits": 4638144666238189568,
       "outWidthBits": 4650951777678524416,
-      "targetPID": 407,
-      "targetWindowID": 1783,
       "tH": 4647503709213818880,
       "tW": 4649368480934526976,
       "tX": 4638144666238189568,
       "tY": 4638144666238189568,
+      "targetPID": 407,
+      "targetWindowID": 1783,
       "windows": [
         {
           "fH": 13869960952394285056,
@@ -1698,7 +1698,7 @@
     {
       "hex": "060000000c67c3b520c491c6b0e1bba36320e69687e5ad97",
       "tag": 12,
-      "text": "gõ được 文字",
+      "text": "g\u00f5 \u0111\u01b0\u1ee3c \u6587\u5b57",
       "variant": "text"
     }
   ],
@@ -3032,7 +3032,7 @@
         "height": 200,
         "isSecure": true,
         "owner": "SecurityAgent",
-        "title": "Authenticate · 認証 🔐",
+        "title": "Authenticate \u00b7 \u8a8d\u8a3c \ud83d\udd10",
         "width": 400,
         "windowID": 26
       },
@@ -3044,7 +3044,7 @@
         "fWBits": 4645744490609377280,
         "isOnScreen": true,
         "ownerName": "SecurityAgent",
-        "title": "Authenticate · 認証 🔐",
+        "title": "Authenticate \u00b7 \u8a8d\u8a3c \ud83d\udd10",
         "windowID": 26
       }
     },
@@ -3542,7 +3542,7 @@
     {
       "hex": "0000001e156275696c6420e29c8520646f6e6520f09f9a8020e2809420636166c3a9",
       "kind": "title",
-      "title": "build ✅ done 🚀 — café"
+      "title": "build \u2705 done \ud83d\ude80 \u2014 caf\u00e9"
     },
     {
       "hex": "0000000115",
@@ -3583,7 +3583,7 @@
       "kind": "commandStatus"
     },
     {
-      "body": "green ✅ — đa byte",
+      "body": "green \u2705 \u2014 \u0111a byte",
       "hex": "0000001b1900024349677265656e20e29c8520e2809420c491612062797465",
       "kind": "notification",
       "title": "CI"
@@ -3613,7 +3613,7 @@
     {
       "hex": "000000141a6e6f646520e2809420636166c3a920f09f9a80",
       "kind": "foregroundProcess",
-      "name": "node — café 🚀"
+      "name": "node \u2014 caf\u00e9 \ud83d\ude80"
     },
     {
       "hex": "000000051b00000000",
@@ -3633,7 +3633,7 @@
       "hex": "000000221b0203001d446f6e6520e2809420e29c85206275696c6420677265656e20f09f9a80",
       "kind": "claudeStatus",
       "kindByte": 3,
-      "label": "Done — ✅ build green 🚀",
+      "label": "Done \u2014 \u2705 build green \ud83d\ude80",
       "state": 2
     },
     {
@@ -3683,7 +3683,7 @@
     {
       "ahead": 2,
       "behind": 1,
-      "branch": "feature/tiếng-việt",
+      "branch": "feature/ti\u1ebfng-vi\u1ec7t",
       "changed": 15,
       "conflicted": 7,
       "hex": "000000502300152f55736572732f6d652f70726f6a656374206469720016666561747572652f7469e1babf6e672d7669e1bb8774000000020000000100000003000000040000000500000006000000070000000f",
@@ -3710,7 +3710,7 @@
     },
     {
       "hex": "00000029246669782074686520666c616b79204349207465737420e28094207469e1babf6e67205669e1bb8774",
-      "intent": "fix the flaky CI test — tiếng Việt",
+      "intent": "fix the flaky CI test \u2014 ti\u1ebfng Vi\u1ec7t",
       "kind": "agent_session_intent"
     },
     {
@@ -4005,7 +4005,7 @@
         {
           "appName": "Google Chrome",
           "height": 800,
-          "title": "Tab — Title",
+          "title": "Tab \u2014 Title",
           "width": 1200,
           "windowID": 1
         },
@@ -4094,7 +4094,7 @@
           "display": 0,
           "flags": 25,
           "height": 982,
-          "title": "~/work — zsh",
+          "title": "~/work \u2014 zsh",
           "width": 1512,
           "windowID": 42
         },
@@ -4429,7 +4429,7 @@
     },
     {
       "hex": "0468c3a96c6c6f20c2b720e7aa97e58fa3",
-      "title": "héllo · 窗口",
+      "title": "h\u00e9llo \u00b7 \u7a97\u53e3",
       "variant": "title"
     }
   ],
@@ -4589,6 +4589,18 @@
       "winWBits": 4652009507864444928
     }
   ],
+  "workspaceStateCodec": {
+    "diff": "000000040000000000000000000000000000000000020000000a6d61632d73747564696f02b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b20000000008736c6f706465736b03a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1030000000003a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a108000000047669202e0000000103a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a163",
+    "emptyDiff": "0000000000000000",
+    "key": "03a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a108",
+    "layoutDepth1": "01d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0000100a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "layoutDepth11": "01dadadadadadadadadadadadadadadada000101d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9010101d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8000101d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7010101d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6000101d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5010101d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4000101d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3010101d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2000101d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1010101d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0000100a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "layoutDepthCap": "01dbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdb010101dadadadadadadadadadadadadadadada000101d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9010101d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8000101d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7010101d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6000101d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5010101d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4000101d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3010101d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2000101d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1010101d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0000100a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "layoutFanout": "01c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3010400e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e000e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e100e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e200e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3",
+    "snapshot": "000000040000000000000000000000000000000000020000000a6d61632d73747564696f02b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b20000000008736c6f706465736b03a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1030000000003a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a108000000047669202e",
+    "weightFixed240": "01406e000000000000",
+    "weightFlexThird": "003fd5555555555555"
+  },
   "ycbcr": [
     {
       "cbToB": 1072530509,

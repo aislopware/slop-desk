@@ -3,6 +3,7 @@ import Foundation
 import SlopDeskProtocol // WireMessage, MuxEnvelopeCodec (terminal/PTY path)
 import SlopDeskVideoClient // TrendlineEstimator, OwdLateDetector, PacerDepthPolicy
 import SlopDeskVideoHost // NetworkEstimate, FPSGovernor (pure controllers)
+import SlopDeskWorkspaceModel // WorkspaceStateCodec (the host workspace document, docs/45)
 
 // `UDPReceiveLoopPolicy` is a byte-identical twin exported by BOTH the host and client modules. The
 // host module also exports a TYPE named `SlopDeskVideoHost`, so `SlopDeskVideoHost.UDPReceiveLoopPolicy`
@@ -1653,6 +1654,94 @@ root["udpBackoff"] = [0, 1, 2, 3, 4, 5, 8, 16, 17, 100].map(udpBackoffRecord)
 root["udpRearm"] = [
     ["alive": true, "rearm": UDPReceiveLoopPolicy.shouldRearm(connectionIsAlive: true)],
     ["alive": false, "rearm": UDPReceiveLoopPolicy.shouldRearm(connectionIsAlive: false)],
+]
+
+// MARK: WorkspaceStateCodec (docs/45 — the host workspace document)
+
+// Deterministic fixtures: every UUID is a FIXED byte pattern, never `UUID()`. The corpus must be
+// reproducible across machines and runs, and the codec's canonical emission order is exactly what
+// these vectors exist to pin.
+func wsUUID(_ byte: UInt8) -> UUID {
+    UUID(uuid: (
+        byte,
+        byte,
+        byte,
+        byte,
+        byte,
+        byte,
+        byte,
+        byte,
+        byte,
+        byte,
+        byte,
+        byte,
+        byte,
+        byte,
+        byte,
+        byte,
+    ))
+}
+
+let wsPane = wsUUID(0xA1)
+let wsTab = wsUUID(0xB2)
+let wsSplit = wsUUID(0xC3)
+
+func wsHex(_ data: Data) -> String { data.map { String(format: "%02x", $0) }.joined() }
+
+// A state exercising: a normal string field, a ZERO-LENGTH value (the title-retirement signal — a
+// present-and-empty entry, not an absent one), the all-zero root objectID, and an out-of-order
+// insertion that must emit in canonical order regardless.
+let wsState = HostWorkspaceState([
+    WorkspaceEntry(key: WorkspaceKey(kind: 3, objectID: wsPane, field: 8), value: Data("vi .".utf8)),
+    WorkspaceEntry(
+        key: WorkspaceKey(kind: 0, objectID: WorkspaceObjectKind.rootObjectID, field: 2),
+        value: Data("mac-studio".utf8),
+    ),
+    WorkspaceEntry(key: WorkspaceKey(kind: 3, objectID: wsPane, field: 3), value: Data()),
+    WorkspaceEntry(key: WorkspaceKey(kind: 2, objectID: wsTab, field: 0), value: Data("slopdesk".utf8)),
+])
+
+let wsBase = HostWorkspaceState([
+    WorkspaceEntry(
+        key: WorkspaceKey(kind: 3, objectID: wsPane, field: 3),
+        value: Data("main.go - NVIM".utf8),
+    ),
+    WorkspaceEntry(key: WorkspaceKey(kind: 3, objectID: wsPane, field: 99), value: Data("gone".utf8)),
+])
+
+// `layoutStructure` at depth 1 and at the depth cap (`SplitNode.maxDepth` = 12). Depth 13 is not a
+// vector: it does not ENCODE to anything valid, it is a DECODE rejection, pinned by
+// `WorkspaceStateCodecHostileTests`.
+func wsNested(_ depth: Int) -> WorkspaceLayoutNode {
+    var node = WorkspaceLayoutNode.leaf(PaneID(raw: wsPane))
+    for i in 0..<depth {
+        node = .split(
+            id: SplitNodeID(raw: wsUUID(UInt8(0xD0 &+ i))),
+            axis: i.isMultiple(of: 2) ? .horizontal : .vertical,
+            children: [node],
+        )
+    }
+    return node
+}
+
+root["workspaceStateCodec"] = [
+    "key": wsHex(WorkspaceStateCodec.encode(key: WorkspaceKey(kind: 3, objectID: wsPane, field: 8))),
+    "snapshot": wsHex(WorkspaceStateCodec.encodeSnapshot(wsState)),
+    "diff": wsHex(WorkspaceStateCodec.encodeDiff(wsState.diff(from: wsBase))),
+    "emptyDiff": wsHex(WorkspaceStateCodec.encodeDiff(wsState.diff(from: wsState))),
+    "layoutDepth1": wsHex(WorkspaceStateCodec.encodeLayout(wsNested(1))),
+    "layoutDepth11": wsHex(WorkspaceStateCodec.encodeLayout(wsNested(11))),
+    "layoutDepthCap": wsHex(WorkspaceStateCodec.encodeLayout(wsNested(SplitNode.maxDepth))),
+    "layoutFanout": wsHex(WorkspaceStateCodec.encodeLayout(
+        .split(
+            id: SplitNodeID(raw: wsSplit),
+            axis: .vertical,
+            children: (0..<4).map { .leaf(PaneID(raw: wsUUID(UInt8(0xE0 &+ $0)))) },
+        ),
+    )),
+    // Weights ride as a raw `bitPattern` — never a re-parsed decimal (the bit-exact float rule).
+    "weightFlexThird": wsHex(WorkspaceStateCodec.encodeWeight(.flex(1.0 / 3.0))),
+    "weightFixed240": wsHex(WorkspaceStateCodec.encodeWeight(.fixed(240))),
 ]
 
 // MARK: emit
