@@ -22,6 +22,7 @@
 #if os(macOS) && canImport(SwiftUI)
 import AppKit
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 
 // MARK: - SatellitePaneWindow (marker class)

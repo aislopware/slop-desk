@@ -1,4 +1,5 @@
 import SlopDeskTransport
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 

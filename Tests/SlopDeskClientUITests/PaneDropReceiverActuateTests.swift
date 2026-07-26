@@ -13,6 +13,7 @@
 // B). A store-level test that only ever exercises a single-pane store would miss this class of bug.
 
 #if canImport(SwiftUI)
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore

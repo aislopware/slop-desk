@@ -105,8 +105,23 @@ let package = Package(
             dependencies: [
                 "SlopDeskTransport", "SlopDeskProtocol", "SlopDeskInspector",
                 "SlopDeskAgentDetect", "SlopDeskVideoProtocol",
+                // docs/45: the host owns the workspace document, so it needs the value model.
+                // Leaf target (Foundation + CoreGraphics), so this does NOT widen the daemon graph.
+                "SlopDeskWorkspaceModel",
             ],
         ),
+
+        // The workspace VALUE MODEL — the Session→Tab→split tree, `PaneSpec`, the pure
+        // `WorkspaceTreeOps`, the canvas value types, and (from docs/45) the host workspace-document
+        // state + codec.
+        //
+        // A LEAF: Foundation + CoreGraphics only, ZERO package dependencies. That is the whole point.
+        // `SlopDeskWorkspaceCore` depends on SlopDeskClient/Transport/Inspector/ClaudeCode/
+        // AgentDetect/Terminal/VideoProtocol/Defaults, so hostd — which depends on none of those —
+        // could not import it and therefore could not so much as name a tab. Splitting the values out
+        // lets the HOST own the workspace document (docs/45) without dragging the client graph into
+        // the daemon. Keep it dependency-free: anything needing a package dep belongs one level up.
+        .target(name: "SlopDeskWorkspaceModel"),
 
         // Shared client: connection mgr, reconnect, input encoding. (WF-4.)
         .target(name: "SlopDeskClient", dependencies: ["SlopDeskTransport", "SlopDeskProtocol"]),
@@ -159,6 +174,8 @@ let package = Package(
         .target(
             name: "SlopDeskWorkspaceCore",
             dependencies: [
+                // The dependency-free workspace VALUE MODEL (tree, PaneSpec, canvas, tree ops).
+                "SlopDeskWorkspaceModel",
                 "SlopDeskClient",
                 "SlopDeskTransport",
                 "SlopDeskInspector",
@@ -441,6 +458,7 @@ let package = Package(
             name: "slopdesk-corevectors",
             dependencies: [
                 "SlopDeskProtocol",
+                "SlopDeskWorkspaceModel",
                 "SlopDeskVideoProtocol",
                 "SlopDeskVideoHost",
                 "SlopDeskVideoClient",
@@ -523,10 +541,19 @@ let package = Package(
         // PreferencesStore, and the video/remote-window logic. Genuinely view-rendering tests
         // (DS tokens, chrome transforms, palette-entry/sidebar views) were deleted with the views.
         // Deterministic, runs on macOS — no libghostty / Metal / VideoToolbox instantiated.
+        // The workspace VALUE MODEL's own suite. Depends on the leaf and NOTHING else — that is the
+        // point: if a tree/canvas/parser test needs a client, a transport or a store to compile, the
+        // type under test does not belong in the leaf target.
+        .testTarget(
+            name: "SlopDeskWorkspaceModelTests",
+            dependencies: ["SlopDeskWorkspaceModel"],
+        ),
+
         .testTarget(
             name: "SlopDeskWorkspaceCoreTests",
             dependencies: [
                 "SlopDeskWorkspaceCore",
+                "SlopDeskWorkspaceModel",
                 "SlopDeskClient",
                 "SlopDeskTransport",
                 "SlopDeskHost",

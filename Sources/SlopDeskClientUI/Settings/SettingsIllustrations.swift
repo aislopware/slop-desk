@@ -20,6 +20,7 @@
 import SFSafeSymbols
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 
 // MARK: - Art (the shared diagram beat)

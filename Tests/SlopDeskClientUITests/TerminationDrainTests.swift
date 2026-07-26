@@ -15,6 +15,7 @@
 // NOT driven here (no `NSApplication` in unit tests — hang-safety); its manual verification steps are in
 // the delegate's doc comment / the fix report.
 
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore

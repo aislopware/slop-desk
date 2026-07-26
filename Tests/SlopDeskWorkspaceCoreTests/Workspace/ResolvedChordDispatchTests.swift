@@ -9,6 +9,7 @@
 // Backed by `FakePaneSession` — no real client / SCStream / VT / Metal.
 
 import SlopDeskVideoProtocol
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 

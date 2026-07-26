@@ -3,6 +3,7 @@
 // the already-active pane, and a gone pane all stay silent — absent, never wrong), and the pure
 // `JumpBreadcrumb` title precedence / session-qualification never drift.
 
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 

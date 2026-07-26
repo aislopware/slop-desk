@@ -21,6 +21,7 @@
 #if canImport(SwiftUI)
 import SFSafeSymbols
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 
 /// The shared coordinate space the move gesture reports its location in — `SplitContainer` names its

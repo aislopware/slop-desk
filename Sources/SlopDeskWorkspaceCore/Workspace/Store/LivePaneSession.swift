@@ -4,6 +4,7 @@ import SlopDeskAgentDetect
 import SlopDeskClient
 import SlopDeskInspector
 import SlopDeskVideoProtocol // EnvConfig — the behaviour-preserving config resolver (env → overlay → default)
+import SlopDeskWorkspaceModel
 
 // MARK: - LivePaneSession (the production handle)
 

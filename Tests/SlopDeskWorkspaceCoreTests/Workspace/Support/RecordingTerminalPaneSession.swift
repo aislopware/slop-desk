@@ -1,5 +1,6 @@
 import Foundation
 import SlopDeskTerminal
+import SlopDeskWorkspaceModel
 @testable import SlopDeskWorkspaceCore
 
 // MARK: - RecordingSurfaceActions (a headless TerminalSurface that records performBindingAction)

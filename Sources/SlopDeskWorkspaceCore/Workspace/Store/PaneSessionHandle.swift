@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - The liveness handle (the table-of-liveness element)
 

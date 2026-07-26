@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 /// Connection + session-retention lifecycle helpers for ``WorkspaceStore`` (R-lifecycle). Split into an
 /// extension to keep the core store body within the lint budget, mirroring the existing `WorkspaceStore+*`

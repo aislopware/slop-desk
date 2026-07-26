@@ -17,6 +17,7 @@
 import Foundation
 import SFSafeSymbols
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 #if os(macOS)
 import AppKit // NSPasteboard for "Copy Path"

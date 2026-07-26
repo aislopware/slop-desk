@@ -22,6 +22,7 @@
 #if canImport(SwiftUI)
 import SFSafeSymbols
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 #if os(macOS)
 import AppKit

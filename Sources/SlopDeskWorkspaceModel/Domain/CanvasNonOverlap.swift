@@ -299,7 +299,10 @@ public enum CanvasNonOverlap {
     /// The minimal translation that separates `a` from `b` by `gutter` along the cheaper axis, or `nil`
     /// when they are already ≥ `gutter` apart. The vector moves `a` AWAY from `b` (the caller splits it
     /// between the pair by inverse mass). Two touching rects (raw overlap 0) still get a full-gutter push.
-    static func separation(_ a: CGRect, _ b: CGRect, gutter: CGFloat) -> CGVector? {
+    ///
+    /// `public` so `CanvasNonOverlapTests` — one module up — can assert against the SAME predicate the
+    /// solver uses rather than reimplementing it and drifting.
+    public static func separation(_ a: CGRect, _ b: CGRect, gutter: CGFloat) -> CGVector? {
         let overlapX = (Swift.min(a.maxX, b.maxX) - Swift.max(a.minX, b.minX)) + gutter
         let overlapY = (Swift.min(a.maxY, b.maxY) - Swift.max(a.minY, b.minY)) + gutter
         guard overlapX > 0, overlapY > 0 else { return nil }

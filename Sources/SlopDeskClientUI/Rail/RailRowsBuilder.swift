@@ -5,6 +5,7 @@
 import Foundation
 import SlopDeskAgentDetect
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 
 /// The data a single rail row binds to (derived from a pane within the active session's tabs). A pure value
 /// type — kept with the builder logic rather than a view, since it carries no view/design-system coupling.

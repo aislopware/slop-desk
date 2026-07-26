@@ -10,6 +10,7 @@
 // `shouldRefreshGitOnSnapshot` / `paneGitFetchedAt`), so none is tautological.
 
 import Foundation
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 

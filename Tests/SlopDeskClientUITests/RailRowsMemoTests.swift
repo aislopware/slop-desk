@@ -14,6 +14,7 @@
 // Headless: same `MountTestPaneSession` tree-model store as `RailRowBuilderTests` (no socket / video /
 // Metal).
 
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore

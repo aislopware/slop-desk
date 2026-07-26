@@ -10,6 +10,7 @@ import AppKit
 import SFSafeSymbols
 import SlopDeskTerminal
 import SlopDeskTransport
+import SlopDeskWorkspaceModel
 import SwiftUI
 import XCTest
 @testable import SlopDeskClientUI
@@ -232,12 +233,12 @@ final class SlateSnapshotRender: XCTestCase {
     /// header's hover tooltip carries a real git line.
     @MainActor
     private func makeSectionStore(key: String) -> WorkspaceStore {
-        var tabs: [SlopDeskWorkspaceCore.Tab] = []
+        var tabs: [SlopDeskWorkspaceModel.Tab] = []
         var specs: [PaneID: PaneSpec] = [:]
         for _ in 0..<3 {
             let pane = PaneID()
             specs[pane] = PaneSpec(kind: .terminal, title: "", lastKnownCwd: key)
-            tabs.append(SlopDeskWorkspaceCore.Tab(title: "", root: .leaf(pane), activePane: pane))
+            tabs.append(SlopDeskWorkspaceModel.Tab(title: "", root: .leaf(pane), activePane: pane))
         }
         let session = Session(name: "Local", tabs: tabs, activeTabIndex: 0, specs: specs)
         let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)
@@ -291,12 +292,12 @@ final class SlateSnapshotRender: XCTestCase {
         // `Tab` is ambiguous here: SwiftUI (macOS 15+) ships its own `Tab`, and this file `@testable
         // import`s `SlopDeskWorkspaceCore`. Qualify to the workspace domain type (same idiom as
         // `SplitContainer.swift`) so the fixture resolves to the tree model.
-        var tabs: [SlopDeskWorkspaceCore.Tab] = []
+        var tabs: [SlopDeskWorkspaceModel.Tab] = []
         var specs: [PaneID: PaneSpec] = [:]
         for row in rows {
             let pane = PaneID()
             specs[pane] = PaneSpec(kind: .terminal, title: row.title, lastKnownCwd: row.cwd)
-            tabs.append(SlopDeskWorkspaceCore.Tab(title: row.title, root: .leaf(pane), activePane: pane))
+            tabs.append(SlopDeskWorkspaceModel.Tab(title: row.title, root: .leaf(pane), activePane: pane))
         }
         let session = Session(name: "Local", tabs: tabs, activeTabIndex: 0, specs: specs)
         let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)

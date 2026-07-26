@@ -19,6 +19,7 @@
 #if os(macOS)
 import AppKit
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 
 /// Owns the app-level `.keyDown` local monitor, turning each keystroke into a
 /// `WorkspaceBindingRegistry.route(...)` call (a bound single chord) or a passthrough. `@MainActor` —

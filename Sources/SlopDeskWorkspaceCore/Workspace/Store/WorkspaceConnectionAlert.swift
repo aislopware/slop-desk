@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // WorkspaceConnectionAlert (C8 improvement 3) — the pure, `Equatable` fold of every live pane's PATH-1
 // connection status into a compact "is anything wrong" summary. It backs the collapsed-sidebar connection

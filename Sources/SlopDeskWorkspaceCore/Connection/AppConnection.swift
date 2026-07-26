@@ -1,6 +1,7 @@
 import Foundation
 import SlopDeskProtocol
 import SlopDeskTransport
+import SlopDeskWorkspaceModel
 
 /// The ONE app-global connection (docs/31): the single host the whole app talks to, fronted by the
 /// Connect-to-Host editor (the host/port overlay, opened from the top-bar status pill / palette). It owns

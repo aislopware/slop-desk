@@ -31,6 +31,7 @@ import SlopDeskAgentDetect
 import SlopDeskCLICore // JumpResolver — the PURE frecency/$HOME-toggle/`--no-cd` jump resolution
 import SlopDeskVideoProtocol // ThemeChoice — the typed theme selection the `config set theme` write maps onto
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 #if canImport(AppKit)
 import AppKit // NSFontManager — the macOS font enumeration for `font list` (compiled-only; iOS = empty)
 import CoreText // CTFontDescriptorCopyAttribute(kCTFontURLAttribute) — the per-face URL the scope split reads

@@ -1,4 +1,5 @@
 import SlopDeskVideoProtocol
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 

@@ -13,6 +13,7 @@
 import Foundation
 import SlopDeskAgentDetect
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 #if canImport(AppKit)
 import AppKit // NSPasteboard for the client-side "Copy Path"
 #elseif canImport(UIKit)

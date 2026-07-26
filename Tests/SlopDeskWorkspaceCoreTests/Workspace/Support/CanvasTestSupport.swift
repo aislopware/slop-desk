@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import SlopDeskWorkspaceModel
 @testable import SlopDeskWorkspaceCore
 
 // MARK: - Canvas / Workspace test helpers (single-canvas model, docs/31)

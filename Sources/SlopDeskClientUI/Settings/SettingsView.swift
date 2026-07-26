@@ -41,6 +41,7 @@ import SFSafeSymbols
 import SlopDeskCLICore
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 import UserNotifications
 #if os(macOS)

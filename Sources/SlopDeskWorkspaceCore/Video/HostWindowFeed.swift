@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // The HOST-WINDOWS rail's cross-platform data layer (docs/45): the mirror record + seam (the
 // `RemoteWindowSummary`/`RemoteWindowDiscovery` pattern — SlopDeskClientUI never imports the gated

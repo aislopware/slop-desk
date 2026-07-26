@@ -2,6 +2,7 @@
 // (docs/DECISIONS.md 2026-07-22): a `.desktop` pane lives ONLY in `Session.detached` (its satellite
 // window), is minted there directly, never reattaches into a tab, and never survives a relaunch.
 
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 

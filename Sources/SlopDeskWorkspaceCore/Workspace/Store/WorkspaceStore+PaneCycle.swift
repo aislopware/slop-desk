@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - WorkspaceStore × Sequential pane cycle + reopen-closed (store hooks)
 

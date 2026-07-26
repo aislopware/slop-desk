@@ -1,6 +1,6 @@
 import CoreGraphics
 import XCTest
-@testable import SlopDeskWorkspaceCore
+@testable import SlopDeskWorkspaceModel
 
 /// Tests for ``FocusResolver`` — geometric, tmux-style focus movement resolved against the
 /// **solved rects the user actually sees** (docs/22 §1.3, §2.1). To make the directional logic

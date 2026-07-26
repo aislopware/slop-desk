@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 @testable import SlopDeskWorkspaceCore
 
 // MARK: - FakePaneSession (the store test double)

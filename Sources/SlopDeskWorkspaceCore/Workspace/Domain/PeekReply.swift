@@ -1,5 +1,6 @@
 import Foundation
 import SlopDeskAgentDetect
+import SlopDeskWorkspaceModel
 
 // MARK: - PeekContent (the headless peek DTO + its pure recent-lines builder)
 

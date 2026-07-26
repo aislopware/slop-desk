@@ -12,6 +12,7 @@ import Foundation
 import Observation
 import SlopDeskAgentDetect
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 
 /// How the palette was opened (warp-overlays-actions.md §2.1) — governs only the friendly omnibar label.
 /// BOTH entry points are the verbs-only ⌘⇧P Command Palette; the multi-source ⌘⇧O Open-Quickly jump-to is

@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - WorkspaceStore × Read-only mode
 

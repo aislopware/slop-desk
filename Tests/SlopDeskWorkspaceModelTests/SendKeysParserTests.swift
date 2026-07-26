@@ -1,5 +1,5 @@
 import XCTest
-@testable import SlopDeskWorkspaceCore
+@testable import SlopDeskWorkspaceModel
 
 /// Pins the ``SendKeysParser`` control-key token grammar — the shared "send-keys" primitive (launch
 /// presets, session templates, block re-run, drops, the CLI `pane send-keys`): literal text is UTF-8,

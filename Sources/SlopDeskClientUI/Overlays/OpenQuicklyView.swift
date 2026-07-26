@@ -23,6 +23,7 @@ import Foundation
 import SFSafeSymbols
 import SlopDeskProtocol
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 
 struct OpenQuicklyView: View {

@@ -1,5 +1,6 @@
 #if canImport(SwiftUI)
 import Foundation
+import SlopDeskWorkspaceModel
 
 /// Polls the host's shareable-window list while connected and AUTO-SWITCHES to a layout preset when a
 /// host app it is bound to (``LayoutPreset/triggerAppName``) first appears — e.g. launching Grafana on

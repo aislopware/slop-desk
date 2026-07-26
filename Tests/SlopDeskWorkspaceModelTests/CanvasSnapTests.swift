@@ -1,6 +1,6 @@
 import CoreGraphics
 import XCTest
-@testable import SlopDeskWorkspaceCore
+@testable import SlopDeskWorkspaceModel
 
 /// Pure tests for ``CanvasSnap`` — the smart-snap solver behind canvas drag-to-move / resize:
 /// engage/release hysteresis, pane edge/centre alignment, gutter adjacency, viewport edges, the

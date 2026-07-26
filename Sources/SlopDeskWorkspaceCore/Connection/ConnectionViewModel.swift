@@ -1,6 +1,7 @@
 import Foundation
 import SlopDeskClient
 import SlopDeskProtocol
+import SlopDeskWorkspaceModel
 
 /// Orchestrates a ``SlopDeskClient`` + ``ReconnectManager`` for the UI: host/port entry,
 /// connect/disconnect, and a live status the chrome renders. Owns the connect lifecycle so views

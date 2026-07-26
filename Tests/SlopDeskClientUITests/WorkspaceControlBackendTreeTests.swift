@@ -10,6 +10,7 @@
 // Hang-safe (CLAUDE.md rule #6): a tree-model store over a recording in-memory fake, an isolated
 // `PreferencesStore` + a temp-file `FolderFrecencyStore` — no socket, no GUI, no SCStream/VT/Metal/NSWindow.
 
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore

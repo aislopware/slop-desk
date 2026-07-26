@@ -5,6 +5,7 @@ import SlopDeskAgentDetect
 import SlopDeskClient
 import SlopDeskInspector
 import SlopDeskTransport
+import SlopDeskWorkspaceModel
 
 // MARK: - WorkspaceStore (the one @MainActor @Observable owner)
 

@@ -1,6 +1,7 @@
 import Foundation
 import os
 import SlopDeskTerminal
+import SlopDeskWorkspaceModel
 
 // MARK: - CommandBlock → PeekBlockLine (the peek "recent output" shape)
 

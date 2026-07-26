@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - Sidebar ordering (ALWAYS grouped By-Project, in creation order) + tab selection helpers
 

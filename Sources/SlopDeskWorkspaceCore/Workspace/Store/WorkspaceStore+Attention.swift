@@ -1,5 +1,6 @@
 import Foundation
 import SlopDeskAgentDetect
+import SlopDeskWorkspaceModel
 
 // MARK: - Supervision cockpit — attention edge, jump-to-unread, sidebar summary + liveness
 

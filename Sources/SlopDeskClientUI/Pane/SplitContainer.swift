@@ -18,6 +18,7 @@
 
 #if canImport(SwiftUI)
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 
 struct SplitContainer: View {
@@ -40,7 +41,7 @@ struct SplitContainer: View {
     /// surface and force a repaint via the lossy ring replay. Stale retained ids (a since-closed session) are dropped
     /// by the `tree.sessions` intersection; the active session is always included even before the first switch
     /// (when the retention set is still empty).
-    private var tabs: [SlopDeskWorkspaceCore.Tab] {
+    private var tabs: [SlopDeskWorkspaceModel.Tab] {
         let retained = store.retainedSessionIDs
         let activeID = store.tree.activeSessionID
         return store.tree.sessions
@@ -106,7 +107,7 @@ struct SplitContainer: View {
     /// disables all but the active one. Interaction chrome (dividers, move handles, drop) is drawn only for
     /// the active tab — a hidden tab is non-interactive, so it needs none.
     @ViewBuilder
-    private func tabLayer(_ tab: SlopDeskWorkspaceCore.Tab, isActive: Bool, in bounds: CGRect) -> some View {
+    private func tabLayer(_ tab: SlopDeskWorkspaceModel.Tab, isActive: Bool, in bounds: CGRect) -> some View {
         let layout = SplitTreeRenderModel.layout(for: tab, in: bounds)
         let frames = Dictionary(layout.leaves.map { ($0.id, $0.rect) }, uniquingKeysWith: { a, _ in a })
         ZStack(alignment: .topLeading) {
@@ -207,7 +208,7 @@ struct SplitContainer: View {
     /// Every mounted background tab still carries its own `activePane`, but it must NOT claim first responder
     /// (`GhosttyLayerBackedView.applyKeyboardFocus` acts only when `isFocusedPane`), or the last-mounted hidden
     /// tab would steal the keyboard from the visible one. Pure + static so it is headlessly testable.
-    static func isPaneFocused(_ paneID: PaneID, in tab: SlopDeskWorkspaceCore.Tab, activeTabID: TabID?) -> Bool {
+    static func isPaneFocused(_ paneID: PaneID, in tab: SlopDeskWorkspaceModel.Tab, activeTabID: TabID?) -> Bool {
         tab.id == activeTabID && paneID == tab.activePane
     }
 

@@ -4,6 +4,7 @@
 // per-window remote-window kind is removed).
 
 import Foundation
+import SlopDeskWorkspaceModel
 
 public extension WorkspaceStore {
     /// Opens the REMOTE DESKTOP WINDOW (⌥⌘N / palette): a `.desktop` pane streaming the host's whole

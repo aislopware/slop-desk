@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - WorkspaceStore + Session templates (open a named layout / capture the current one)
 

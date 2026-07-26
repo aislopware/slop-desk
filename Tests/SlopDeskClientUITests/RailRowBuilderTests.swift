@@ -8,6 +8,7 @@
 // real `LivePaneSession`. Each assertion fails on a `RailRow` that carries none of these
 // fields, so none is tautological.
 
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore

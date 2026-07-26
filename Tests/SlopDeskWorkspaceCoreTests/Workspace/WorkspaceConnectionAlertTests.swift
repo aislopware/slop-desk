@@ -4,6 +4,7 @@
 // first-at-worst tie-break. Pure value — headless, no view / no socket.
 
 import Foundation
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 

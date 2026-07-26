@@ -9,6 +9,7 @@
 import SlopDeskTransport // ConnectionRegistry + LiveMuxConnectionFactory (the per-host shared mux pool)
 import SlopDeskVideoProtocol // EnvConfig — the behaviour-preserving config resolver (env → overlay → default)
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 import SwiftUIIntrospect // reach THIS scene's NSWindow from the SwiftUI WindowGroup (no NSApplication.windows hack)
 #if os(iOS)

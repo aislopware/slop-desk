@@ -7,6 +7,7 @@
 // Metal — hang-safety). The dwell/cancel TIMING rides a Task the gesture drives; only the pure target
 // resolution is pinned here.
 
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore

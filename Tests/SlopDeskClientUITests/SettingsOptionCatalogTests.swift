@@ -18,6 +18,7 @@
 #if canImport(SwiftUI)
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientUI
 

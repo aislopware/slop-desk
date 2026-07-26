@@ -25,6 +25,7 @@
 
 import Foundation
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 
 /// The structural fingerprint of the rail — everything `RailRowsBuilder.rows(for:)` output depends on
 /// EXCEPT the volatile per-row chrome (which the row views read live). Field coverage:

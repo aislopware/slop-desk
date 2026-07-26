@@ -25,6 +25,7 @@
 import Defaults
 import SFSafeSymbols
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 
 struct GuiLeafView: View {

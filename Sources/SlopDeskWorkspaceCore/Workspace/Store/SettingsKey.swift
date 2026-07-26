@@ -1,6 +1,7 @@
 import Defaults
 import Foundation
 import SlopDeskVideoProtocol
+import SlopDeskWorkspaceModel
 
 // `SettingsKey`: the pure `UserDefaults`-key namespace + fire-time boolean/`PaneKind` accessors read by the
 // headless logic (CommandCompletionNotifier, AppLaunchMonitor, WorkspaceStore+Completion, the monitors). The

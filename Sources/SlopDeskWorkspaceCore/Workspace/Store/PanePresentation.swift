@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // L0: extracted from the deleted SwiftUI `FloatingPaneHandle.swift`. `PanePresentation` is the
 // pure `@MainActor` namespace of pane-header derivations (connection status / running / latency /

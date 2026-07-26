@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // Per-pane `@MainActor @Observable` LOGIC for one PATH-2 video stream (a whole display for a
 // `.desktop` pane; one host window on the automation seam): open/close, the latched pane modes,

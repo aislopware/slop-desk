@@ -1,6 +1,6 @@
 import CoreGraphics
 import XCTest
-@testable import SlopDeskWorkspaceCore
+@testable import SlopDeskWorkspaceModel
 
 /// Pure tests for ``CanvasNonOverlap`` — the non-overlap layout solver behind canvas drags:
 /// swept collide-and-slide (flush stop, tangential slide, inside-corner tuck, path-independence),

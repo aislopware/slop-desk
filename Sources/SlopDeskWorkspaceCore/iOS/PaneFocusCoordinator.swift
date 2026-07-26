@@ -1,3 +1,4 @@
+import SlopDeskWorkspaceModel
 #if os(iOS)
 import UIKit
 #endif

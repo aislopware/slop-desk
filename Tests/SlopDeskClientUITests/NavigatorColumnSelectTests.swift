@@ -5,6 +5,7 @@
 // Headless: a tree-model `WorkspaceStore` over the `MountTestPaneSession` fake (no socket / video / Metal —
 // hang-safety).
 
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore

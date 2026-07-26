@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - TabOrderingEngine (the pure By-Project key helpers)
 

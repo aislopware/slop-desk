@@ -3,6 +3,7 @@
 // (its own OS window — never a tab), reveal-dedupes per display, and the retired Stage domain
 // stays decode-tolerated — a persisted Stage-era file loads with its orphaned specs pruned.
 
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 

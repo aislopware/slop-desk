@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - Background-pane command-completion awareness (B3 — badge + focus-gated notify)
 

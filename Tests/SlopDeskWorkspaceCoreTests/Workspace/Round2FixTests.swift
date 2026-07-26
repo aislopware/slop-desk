@@ -1,5 +1,6 @@
 import CoreGraphics
 import SlopDeskAgentDetect
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 

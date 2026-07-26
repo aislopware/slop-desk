@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - Workspace persistence (the tree of intent ↔ disk)
 

@@ -62,9 +62,10 @@ public enum SplitLayoutSolver {
     /// falls back to an equal split so no pane vanishes. Pure. (The partition is axis-agnostic — `total`
     /// is already the bound's length along the relevant axis.)
     ///
-    /// `internal` (not private) so ``SplitTreeRenderModel`` can reuse the EXACT same un-clamped partition
-    /// to place its divider handles on the same seams the solver tiles to (no second, drifting copy).
-    static func extents(for children: [WeightedChild], total: CGFloat) -> [CGFloat] {
+    /// `public` (not private) so ``SplitTreeRenderModel`` — which lives one module up in
+    /// `SlopDeskWorkspaceCore` — can reuse the EXACT same un-clamped partition to place its divider
+    /// handles on the same seams the solver tiles to (no second, drifting copy).
+    public static func extents(for children: [WeightedChild], total: CGFloat) -> [CGFloat] {
         // First pass: RESERVE each fixed child its per-child extent with a RUNNING clamp (so the fixed sum
         // is ≤ total and no band overruns the bound), recording that exact extent per index. Pass 2 reuses
         // it verbatim — emitting the same per-child share, NOT the whole bound — so the two passes are

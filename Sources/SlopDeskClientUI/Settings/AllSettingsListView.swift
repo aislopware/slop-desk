@@ -17,6 +17,7 @@ import Defaults
 import SFSafeSymbols
 import SlopDeskVideoProtocol
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 
 /// The Advanced → All Settings panel. Returns a `Group` of `Section`s so it composes into the host

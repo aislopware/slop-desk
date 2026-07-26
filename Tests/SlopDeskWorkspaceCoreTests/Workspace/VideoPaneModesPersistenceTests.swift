@@ -3,6 +3,7 @@
 // wiring, close-tab → reopen-the-same-target restore, and the relaunch restore seed. The runtime
 // (detach-remount) half — injector `didSet` re-asserts — is pinned in `RemoteWindowStreamControlsTests`.
 
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 

@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - RecentlyClosedTab (the tree-path reopen-last-closed LIFO record)
 

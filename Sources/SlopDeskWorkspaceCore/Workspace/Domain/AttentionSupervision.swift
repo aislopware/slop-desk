@@ -1,5 +1,6 @@
 import Foundation
 import SlopDeskAgentDetect
+import SlopDeskWorkspaceModel
 
 // MARK: - AttentionEdge (the pure "should this status change raise an attention notification" policy)
 

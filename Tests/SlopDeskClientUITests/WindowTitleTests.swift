@@ -7,6 +7,7 @@
 // Metal — the hang-safety rule), exactly like `RailRowBuilderTests`. Each assertion pins a concrete string,
 // not `windowTitle`'s own derivation, so none is tautological.
 
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore

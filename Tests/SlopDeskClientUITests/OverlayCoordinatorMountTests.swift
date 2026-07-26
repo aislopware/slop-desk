@@ -8,6 +8,7 @@
 // video/Metal/SCStream (hang-safety rule), over a tree-model `WorkspaceStore` + tiny fake session.
 
 import SlopDeskAgentDetect
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore

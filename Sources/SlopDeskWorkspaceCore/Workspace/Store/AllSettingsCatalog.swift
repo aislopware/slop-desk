@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - AllSettingsCatalog (headless source for the Advanced "All Settings" list)
 

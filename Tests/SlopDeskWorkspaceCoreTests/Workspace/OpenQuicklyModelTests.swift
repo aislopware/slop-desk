@@ -1,5 +1,6 @@
 import Foundation
 import SlopDeskProtocol
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
 

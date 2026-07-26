@@ -16,6 +16,7 @@
 
 #if os(macOS)
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 
 /// The macOS menu-bar commands for the workspace, attached to the `WindowGroup` via `.commands { }`. Pure

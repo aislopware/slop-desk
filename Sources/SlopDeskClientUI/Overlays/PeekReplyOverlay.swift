@@ -20,6 +20,7 @@
 import SlopDeskAgentDetect
 import SlopDeskInspector
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 
 struct PeekReplyOverlay: View {

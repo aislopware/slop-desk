@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - JumpBreadcrumb (the "where did that jump land" readout)
 

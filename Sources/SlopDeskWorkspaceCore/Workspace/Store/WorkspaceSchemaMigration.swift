@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - Workspace schema migration (single-user: NO backward-compat path)
 

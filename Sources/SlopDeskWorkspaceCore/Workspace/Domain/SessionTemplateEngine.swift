@@ -1,4 +1,5 @@
 import Foundation
+import SlopDeskWorkspaceModel
 
 // MARK: - SessionTemplateEngine (pure expand ↔ capture)
 

@@ -1,5 +1,6 @@
 import Foundation
 import SlopDeskProtocol
+import SlopDeskWorkspaceModel
 
 // MARK: - The pure Open-Quickly (`⌘⇧O`) switcher model
 

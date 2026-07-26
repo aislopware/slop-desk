@@ -5,6 +5,7 @@
 // screen ⇄ canvas-local coordinate flip. All inputs are plain rects — no views, windows, or stores.
 
 import CoreGraphics
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientUI
 @testable import SlopDeskWorkspaceCore

@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 import XCTest
-@testable import SlopDeskWorkspaceCore
+@testable import SlopDeskWorkspaceModel
 
 /// Pure split-tree + Session/Tab/`TreeWorkspace` operations (W2, docs/42 Phase C1).
 ///

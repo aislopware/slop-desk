@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 import XCTest
-@testable import SlopDeskWorkspaceCore
+@testable import SlopDeskWorkspaceModel
 
 /// Flex-partition correctness for ``SplitLayoutSolver`` (W1, docs/42 Phase C1).
 ///

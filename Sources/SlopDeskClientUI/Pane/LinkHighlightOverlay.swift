@@ -23,6 +23,7 @@
 #if canImport(SwiftUI)
 import SlopDeskTerminal
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel
 import SwiftUI
 
 struct LinkHighlightOverlay: View {

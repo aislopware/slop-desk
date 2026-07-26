@@ -1,5 +1,6 @@
 import SlopDeskAgentDetect
 import SlopDeskTransport
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClient
 @testable import SlopDeskWorkspaceCore
