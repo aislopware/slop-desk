@@ -1230,16 +1230,27 @@ public final class HostServer: @unchecked Sendable {
         public let cols: Int
     }
 
-    /// Returns a snapshot of all live panes (mux + standalone control panes).
+    /// Returns a snapshot of all live panes (mux + standalone control panes + DETACHED panes).
     /// Called from the agent-control `list-panes` verb handler. O(N) over active panes
     /// (each pane costs one `TIOCGWINSZ` + one `proc_pidinfo` foreground probe — the same
     /// syscall class the input path already pays per keystroke batch).
+    ///
+    /// Detached sessions are included because they are LIVE — the shell keeps running with no
+    /// client attached (`DetachedSessionStore`, tmux semantics). Omitting them made a pane that
+    /// survived a client quit invisible to the one "describe all panes" API the product has, which
+    /// is precisely the pane an orchestrator reattaching to a machine wants to find. The three
+    /// sources are disjoint: `detachMuxSession` removes from `muxSessions` before inserting into
+    /// the store, and `claim` removes before the reattach re-registers.
     public func listPanesForControl() -> [PaneInfo] {
         lock.lock()
         let mux = Array(muxSessions.values)
         let ctrl = Array(controlSessions.values)
         lock.unlock()
-        return (mux + ctrl).map { session in
+        // Outside `lock`: the store takes its OWN lock, and the nesting contract is one-way
+        // (HostServer.lock → DetachedSessionStore.lock is allowed, never the reverse). `nil` when
+        // `SLOPDESK_DETACH_ENABLED=0` — no store, nothing detached, nothing to add.
+        let detached = detachedStore?.allSessions() ?? []
+        return (mux + ctrl + detached).map { session in
             let agent = session.agentStatusAndMessageForControl
             let size = session.pty.currentWindowSize()
             return PaneInfo(

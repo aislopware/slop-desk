@@ -1138,6 +1138,24 @@ final class MuxChannelSession: @unchecked Sendable {
         projectKeyLock.unlock()
         if let cwdTruth { messages.append(.cwd(cwdTruth)) }
         if let key { messages.append(.projectKey(key)) }
+        // Host-authoritative window TITLE (type 21): the pane's CURRENT title, re-told so a
+        // returning client's row keeps `main.go - NVIM` instead of falling back to the raw command
+        // line (`vi .`) for the rest of the session. Every other activity truth here was already
+        // re-asserted; this one's absence WAS the bug.
+        //
+        // ORDERING IS LOAD-BEARING: `commandStatusForReattach()` is appended at the TOP of this
+        // function, so the title lands AFTER it in the same batch and the client's freshness
+        // comparison (title stamp vs command-start stamp) passes. Pinned by
+        // `testTitleIsEnqueuedAfterCommandStatus`. Dies with the stamp comparison itself when
+        // `pane/titleFresh` ships the host's verdict (docs/45 §4.4).
+        //
+        // Empty is skipped, not sent: `publishAgentEmission` clears `_currentTitle` to "" as the
+        // ownership-RETIREMENT signal (:1027), so an empty here means "the agent handed the title
+        // back" — re-asserting it would resurrect a dead agent's title on every reconnect.
+        titleLock.lock()
+        let title = _currentTitle
+        titleLock.unlock()
+        if !title.isEmpty { messages.append(.title(title)) }
         if !messages.isEmpty { enqueueControl(messages) }
     }
 
@@ -1301,8 +1319,9 @@ final class MuxChannelSession: @unchecked Sendable {
         // control to `enqueueControl`, which reads `controlWakeContinuation` (nil'd by detach());
         // were the output drain built + kicked first, it could run in the window before this
         // reassignment and strand a detached-window control message (e.g. an OSC-0/2 title change)
-        // in `controlOut` with no wake — `.title` is not re-asserted by any reestablish call, so a
-        // quiet reconnect would never flush it. Starting the control sender this early is safe in
+        // in `controlOut` with no wake. `reestablishActivityOnReattach()` now re-asserts `.title`,
+        // so a stranded one is no longer unrecoverable — but it would still arrive a beat late and
+        // out of order with the batch, so the ordering below stands. Starting the control sender this early is safe in
         // the other direction: it simply parks on its fresh wake stream until the first enqueue.
         let (controlWakeups, controlWake) =
             AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))

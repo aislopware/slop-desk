@@ -195,6 +195,22 @@ final class DetachedSessionStore: @unchecked Sendable {
         return store[sessionID] != nil
     }
 
+    // MARK: Enumerate
+
+    /// Every stored session — the detached half of the host's pane inventory.
+    ///
+    /// A pane whose client quit is ALIVE (that is the entire point of the store) but lived outside
+    /// every enumeration the product had: `listPanesForControl` read only `muxSessions +
+    /// controlSessions`, so `slopdesk-ctl list-panes` reported nothing for exactly the panes a
+    /// returning user cares about. Ordered by `detachedAt` so the listing is stable rather than
+    /// dictionary-ordered. Safe while holding `HostServer.lock` (one-way nesting — see the class
+    /// doc).
+    func allSessions() -> [MuxChannelSession] {
+        lock.lock()
+        defer { lock.unlock() }
+        return store.values.sorted { $0.detachedAt < $1.detachedAt }.map(\.session)
+    }
+
     // MARK: Remove (clean exit while in store)
 
     /// Removes the entry WITHOUT killing the shell. Called when the shell exits naturally

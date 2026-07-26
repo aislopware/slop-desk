@@ -81,6 +81,44 @@ final class BackgroundCompletionWiringTests: XCTestCase {
         )
     }
 
+    /// The hookless-shell half of the reported `vi .` bug (docs/45 §9 Phase 1). A shell with no
+    /// OSC-133 integration — Starship, a bare `sh` — never stamps `paneCommandStartedAt`, so the
+    /// two-stamp gate could never open and the row fell through to the raw command line no matter
+    /// how many titles the program asserted. A title with NO command-start stamp is now TRUSTED:
+    /// the host only ever re-asserts a title it CURRENTLY holds (`_currentTitle` is cleared to ""
+    /// on retirement), so there is no stale value for the missing stamp to have guarded against.
+    func testTitleWithNoCommandStartIsTrusted() throws {
+        let store = makeStore()
+        let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
+        store.tree = WorkspaceTreeOps.updatingSpec(paneID, in: store.tree) { spec in
+            spec.lastKnownTitle = "main.swift - NVIM"
+        }
+
+        store.paneTitleAt[paneID] = Date()
+        XCTAssertEqual(
+            store.programTitle(for: paneID), "main.swift - NVIM",
+            "a hookless shell has no command-start stamp — the title it asserted is still the truth",
+        )
+    }
+
+    /// The relaxation above must not weaken the leftover-title rejection: once a command-start
+    /// stamp EXISTS, a title predating it is still an earlier program's leftover.
+    func testTitlePredatingCommandStartIsStillRejected() throws {
+        let store = makeStore()
+        let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
+        store.tree = WorkspaceTreeOps.updatingSpec(paneID, in: store.tree) { spec in
+            spec.lastKnownTitle = "main.swift - NVIM"
+        }
+
+        let commandStart = Date()
+        store.paneCommandStartedAt[paneID] = commandStart
+        store.paneTitleAt[paneID] = commandStart.addingTimeInterval(-5)
+        XCTAssertNil(
+            store.programTitle(for: paneID),
+            "a title predating a KNOWN command start stays a leftover — the relaxation is scoped to a missing stamp",
+        )
+    }
+
     // MARK: - rollup: failure dominates success
 
     func testRollupFailureDominatesSuccess() throws {

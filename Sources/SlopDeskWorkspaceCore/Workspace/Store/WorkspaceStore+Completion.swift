@@ -222,12 +222,20 @@ public extension WorkspaceStore {
     /// The pane's PROGRAM-SET title, but only while it is FRESH for the current foreground command:
     /// the shell pushed an OSC title (wire 21, ``WorkspaceStore/paneTitleAt``) at-or-after the command
     /// started (``WorkspaceStore/paneCommandStartedAt``) — i.e. the running program (nvim, claude, ssh)
-    /// asserted it, not a leftover from an earlier program. `nil` when no title, no stamps, or the title
-    /// predates the command — the sidebar's title chain then keeps the raw command line. The caller
-    /// strips agent glyph prefixes (``RailRowsBuilder`` `strippedProgramTitle`).
+    /// asserted it, not a leftover from an earlier program. `nil` when no title arrived at all, or when
+    /// the title predates a KNOWN command start — the sidebar's title chain then keeps the raw command
+    /// line. The caller strips agent glyph prefixes (``RailRowsBuilder`` `strippedProgramTitle`).
+    ///
+    /// A title with NO command-start stamp is TRUSTED. A shell without OSC-133 integration (Starship,
+    /// a bare `sh`) never stamps `paneCommandStartedAt`, so requiring both stamps meant such a pane
+    /// could never show a program title at all — the hookless half of the `vi .` bug (docs/45 §9
+    /// Phase 1). It is safe because the host only ever asserts a title it CURRENTLY holds:
+    /// `MuxChannelSession._currentTitle` is cleared to "" on agent retirement, so there is no stale
+    /// value the missing stamp was guarding against. The whole comparison retires when the host ships
+    /// its own `pane/titleFresh` verdict (docs/45 §4.4).
     func programTitle(for id: PaneID) -> String? {
-        guard let stamped = paneTitleAt[id], let started = paneCommandStartedAt[id],
-              stamped >= started else { return nil }
+        guard let stamped = paneTitleAt[id] else { return nil }
+        if let started = paneCommandStartedAt[id], stamped < started { return nil }
         let title = tree.spec(for: id)?.lastKnownTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let title, !title.isEmpty else { return nil }
         return title

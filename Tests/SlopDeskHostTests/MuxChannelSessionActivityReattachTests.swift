@@ -19,12 +19,13 @@ import XCTest
 /// REVERT-TO-FAIL: removing the `reestablishActivityOnReattach()` call from `rebindRelay` (or any of
 /// its four sources) turns the corresponding re-assert batch into `nil`/missing and these fail.
 final class MuxChannelSessionActivityReattachTests: XCTestCase {
-    private func makeSession() -> MuxChannelSession {
+    private func makeSession(agentDetectEnabled: Bool = false) -> MuxChannelSession {
         MuxChannelSession(
             channelID: 1,
             pty: PTYProcess(), // unspawned — relay never started; truths driven via the seams
             data: MuxSubChannel(channelID: 1, channel: .data) { _, _ in },
             control: MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
+            agentDetectEnabled: agentDetectEnabled,
         )
     }
 
@@ -153,6 +154,61 @@ final class MuxChannelSessionActivityReattachTests: XCTestCase {
             session.takeControlBatchForTesting(),
             [.claudeStatus(state: 1, kind: 0, label: "")],
             "the rest title demotes the stuck working back to idle",
+        )
+    }
+
+    // MARK: - type-21: the pane's CURRENT title
+
+    /// The reported bug. `nvim` titles the pane, the client quits, and the SAME live shell is
+    /// reattached — but the row reads `vi .` again, forever. The host holds the truth
+    /// (`_currentTitle`) and simply never re-tells it: type-21 was the one activity truth missing
+    /// from this re-assert, so the returning client's title-freshness stamp was never written and
+    /// its gate could never open.
+    func testReattachReassertsCurrentTitle() {
+        let session = makeSession()
+        // nvim set the pane title. The sniffed type-21 rides the merged output frame with its
+        // chunk, so the returning client — whose control-out was wiped by `rebindRelay` — has no
+        // way to learn it. Drain the live-emission side-products first.
+        session.ingestPTYChunkForTesting(osc("0;main.go - NVIM"))
+        drainControlOut(session)
+
+        session.reestablishActivityOnReattachForTesting()
+        XCTAssertEqual(
+            session.takeControlBatchForTesting(), [.title("main.go - NVIM")],
+            "the pane's current title is re-told, so the returning client's row keeps nvim's title",
+        )
+    }
+
+    /// The retirement's counterpart: `publishAgentEmission` clears `_currentTitle` to "" when a
+    /// detected agent hands the title back, and the re-assert must honour that clear rather than
+    /// resurrect a dead agent's `✳ <topic>` on every reconnect.
+    func testReattachDoesNotResurrectRetiredTitle() {
+        let session = makeSession(agentDetectEnabled: true)
+        session.ingestAgentHookRecord(Data(#"{"hook_event_name":"SessionStart","session_id":"s1"}"#.utf8))
+        session.ingestPTYChunkForTesting(osc("0;✳ Claude Code"))
+        session.ingestAgentHookRecord(Data(#"{"hook_event_name":"SessionEnd","session_id":"s1"}"#.utf8))
+        drainControlOut(session)
+
+        session.reestablishActivityOnReattachForTesting()
+        let titles = (session.takeControlBatchForTesting() ?? [])
+            .compactMap { if case let .title(t) = $0 { t } else { nil } }
+        XCTAssertEqual(titles, [], "a retired title is not re-asserted — the pane stays handed back")
+    }
+
+    /// ORDERING IS LOAD-BEARING until `pane/titleFresh` ships (docs/45 §4.4): the client trusts a
+    /// title by comparing its arrival stamp against the command-start stamp, so the type-21 must
+    /// land AFTER the type-23 in the same batch. A careless reorder silently regresses the fix.
+    func testTitleIsEnqueuedAfterCommandStatus() {
+        let session = makeSession()
+        session.ingestPTYChunkForTesting(osc("133;C"))
+        session.ingestPTYChunkForTesting(osc("0;main.go - NVIM"))
+        drainControlOut(session)
+
+        session.reestablishActivityOnReattachForTesting()
+        XCTAssertEqual(
+            session.takeControlBatchForTesting(),
+            [.commandStatus(.running), .title("main.go - NVIM")],
+            "the title follows the command status so the client's freshness comparison passes",
         )
     }
 
