@@ -1132,8 +1132,12 @@ public final class WorkspaceStore {
     /// The per-pane block-bookmark persistence seam + the per-pane jump-to-failed cursor, bundled into
     /// one stored holder (``BlockBookmarkSeam``) so the store body stays under the lint ceiling. The seam's
     /// `load`/`save` are wired by the app to the ``PreferencesStore`` (`settings.blockBookmarks.v1`), keyed
-    /// by the pane's STABLE id (`PaneID.raw`, persisted with the tree so it survives reconnect / relaunch);
-    /// left default (tests / previews) bookmarks are in-memory only. The `jumpCursor` records the block
+    /// by `bookmarkScopeKey` — the per-MATERIALIZATION token, NOT the stable `PaneID`. A relaunch mints a
+    /// fresh segmenter that re-numbers blocks from 0, so keying by pane id re-applied a prior run's raw
+    /// indices onto unrelated commands; the scope key deliberately starts a relaunch with NO stars, while
+    /// staying stable across a transport reconnect within one launch. (This doc claimed stable-`PaneID`
+    /// keying until 2026-07-26 — `WorkspaceStore+Blocks.swift` has always been the truth.)
+    /// Left default (tests / previews) bookmarks are in-memory only. The `jumpCursor` records the block
     /// index the last jump-to-failed landed on so a repeated ⌃⌘⇧[ / ⌃⌘⇧] walks every failure in order.
     /// `@ObservationIgnored`: wiring, not view state. `internal` so the WorkspaceStore+Blocks extension
     /// reaches it (extensions can't add stored state).

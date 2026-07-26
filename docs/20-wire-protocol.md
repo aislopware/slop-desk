@@ -350,10 +350,16 @@ never offers or falls back to another version.
     signals; pane identity rides the mux channel envelope, not the body. Not sequenced/replayed.
 
 The next free **client → host** CONTROL type byte is **17** (10–16 used). The next free
-**host → client** CONTROL type byte is **36** (20–35 used). (Byte 28 was once reserved for a W14 OSC-8
+**host → client** CONTROL type byte is **37** (20–36 used). (Byte 28 was once reserved for a W14 OSC-8
 hyperlink type, but W14 ships OSC-8 click-to-open via **libghostty's own hit-testing** —
 `GHOSTTY_ACTION_OPEN_URL` / `GHOSTTY_ACTION_MOUSE_OVER_LINK` — so no wire change was needed; 28 was
 later taken by the Warp-style `commandBlock`. See DECISIONS.md "W14 terminal parity".)
+
+> **These two numbers are prose and drift.** They read 17 / **36** until 2026-07-26, by which point
+> 36 was `agentSessionIntent`. Before minting a verb, verify against the type-byte switch in
+> `Sources/SlopDeskProtocol/WireMessage.swift` — that is the source of truth — and update the
+> unknown-type probe in `Tests/SlopDeskProtocolTests/MetadataWireMessageTests.swift`, which pins
+> specific unused values and must move with them.
 
 ## 5. Seq / ack / replay semantics
 
@@ -373,11 +379,15 @@ un-acked `output` messages so a reconnect is lossless:
 
 ### Replay-buffer caps (WF-2, documented here for the contract)
 
-- **64 MiB** retained-byte ceiling (`ReplayBuffer.maxBackupBytes`; ET `MAX_BACKUP_BYTES`).
-- **4 MiB offline gate** (`ReplayBuffer.offlineGateBytes`): while the client is offline, once
-  buffered bytes pass 4 MiB the host **pauses the PTY drain** (ET `SKIPPED`) instead of growing
+- **256 MiB** retained-byte ceiling (`ReplayBuffer.maxBackupBytes` — 4× ET `MAX_BACKUP_BYTES`, since
+  a coding-tool host is ≥ 32 GB).
+- **64 MiB offline gate** (`ReplayBuffer.offlineGateBytes`): while the client is offline, once
+  buffered bytes reach 64 MiB the host **pauses the PTY drain** (ET `SKIPPED`) instead of growing
   unbounded; below the gate it keeps buffering (`BUFFERED_ONLY`). A long background build must not
   overflow the buffer and silently lose output.
+  <br>*(These figures read 64 MiB / 4 MiB here until 2026-07-26 while the code said 256 / 64. The
+  constants in `Sources/SlopDeskTransport/ReplayBuffer.swift` are the contract; any multi-subscriber
+  eviction policy is calibrated against them.)*
 - Seq is **`Int64`** (ET proto2 used int32, which truncates on very long sessions).
 - **No app-layer crypto.** Deployment assumes a trusted private network — typically a WireGuard mesh
   (e.g. NetBird/Tailscale) providing E2E encryption + node auth — so the buffer stores **raw bytes**.
