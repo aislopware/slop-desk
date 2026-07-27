@@ -487,6 +487,33 @@ final class WorkspacePersistenceTests: XCTestCase {
         )
     }
 
+    /// A file from the shape BEFORE the device-local facts left the tree resets aside, keeping the user's
+    /// presets and templates recoverable.
+    ///
+    /// The retired keys (`launchPresets`, `sessionTemplates`, `videoModesByTarget`, `Session.connection`)
+    /// are outside ``TreeWorkspace`` `CodingKeys`, so the decoder ignores them — meaning without a version
+    /// bump the old file decodes "successfully", the store's next autosave rewrites it without them, and
+    /// the library the user built is gone with no `.corrupt` copy anywhere. Stale data decode-FAILS to the
+    /// default; that is the repo rule, and the version is what makes it true here.
+    func testLoadTreeResetsAFileFromTheShapeThatCarriedTheDeviceLocalFacts() throws {
+        let url = try tempURL()
+        let persistence = WorkspacePersistence(fileURL: url)
+        let previousShape: [String: Any] = [
+            "schemaVersion": TreeWorkspace.currentSchemaVersion - 1,
+            "sessions": [],
+            "launchPresets": [["id": UUID().uuidString, "name": "deploy", "command": "make deploy"]],
+        ]
+        try JSONSerialization.data(withJSONObject: previousShape).write(to: url, options: [.atomic])
+
+        let loaded = persistence.loadTree()
+
+        assertIsDefaultTreeShape(loaded, "the previous tree shape → safe default reset")
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: url.appendingPathExtension("corrupt").path),
+            "the user's presets and templates must still be recoverable from the sidecar",
+        )
+    }
+
     /// A file whose leaf count EXCEEDS ``WorkspacePersistence/maxItems`` is bounded-reset (a corrupt file must
     /// not make the store eagerly allocate a session per leaf on launch).
     func testLoadTreeExceedingMaxItemsIsBoundedReset() throws {

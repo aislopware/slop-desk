@@ -47,6 +47,14 @@ final class WorkspaceChannelClientTests: XCTestCase {
         func deliver(_ message: WireMessage) { continuation.yield(message) }
         func endStream() { continuation.finish() }
 
+        /// Makes every subsequent `send` throw WITHOUT ending the inbound stream — a mux write error
+        /// on a channel the client still believes is live.
+        func failSubsequentSends() {
+            lock.lock()
+            failSends = true
+            lock.unlock()
+        }
+
         var sentMessages: [WireMessage] {
             lock.lock()
             defer { lock.unlock() }
@@ -569,5 +577,96 @@ final class WorkspaceChannelClientTests: XCTestCase {
         rig.pipe.deliver(snapshot(paneEntries(title: "held", fresh: true), stateNum: 1))
 
         await expect("the snapshot still lands") { !rig.pipe.requests(verb: .ack).isEmpty }
+    }
+
+    // MARK: - An optimistic patch never outlives its intent
+
+    /// A layout the host holds, so `stageIntent` has a topology to apply an intent against.
+    private func layoutEntries() -> (entries: [WorkspaceEntry], tab: TabID) {
+        let leaf = PaneID(raw: pane)
+        let tab = Tab(id: TabID(), title: "one", root: .leaf(leaf), activePane: leaf)
+        let session = Session(
+            id: SessionID(),
+            name: "Local",
+            tabs: [tab],
+            specs: [leaf: PaneSpec(kind: .terminal, title: "Terminal")],
+        )
+        var state = HostWorkspaceState()
+        state.write(topology: WorkspaceTopology(tree: TreeWorkspace(
+            sessions: [session], activeSessionID: session.id,
+        )))
+        return (state.sortedEntries, tab.id)
+    }
+
+    /// A write that never left the machine leaves NOTHING staged.
+    ///
+    /// The patch takes precedence over host truth on every read, and no `intentResult` can ever
+    /// arrive for a request the host was never sent — so a patch kept here would render a rename
+    /// only this client can see, across every subsequent snapshot and diff, forever.
+    func testAFailedIntentSendDropsItsOptimisticPatchImmediately() async {
+        let rig = makeRig()
+        let layout = layoutEntries()
+        rig.client.start()
+        await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
+        rig.pipe.deliver(snapshot(layout.entries, stateNum: 1))
+        await expect("the channel to go live") { rig.client.state == .live(1) }
+
+        rig.pipe.failSubsequentSends()
+        let staged = rig.client.send(
+            intent: .renameTab, args: WorkspaceIntentArgs.encode(id: layout.tab.raw, name: "renamed"),
+        )
+        XCTAssertTrue(staged, "the patch is staged optimistically before the write is attempted")
+
+        await expect("the failed intent's patch to be dropped") { rig.box.pendingIntentCount == 0 }
+        XCTAssertEqual(
+            rig.box.mirror.topology?.tree.sessions.first?.tabs.first?.title, "one",
+            "the layout snapped back to host truth rather than freezing on the optimistic title",
+        )
+    }
+
+    /// A host that took the intent and never answered: the next document frame sweeps the patch.
+    ///
+    /// The sweep has to happen BEFORE the frame is folded in. A patch outranks host truth on every
+    /// read, so an expired one left in place would make this very frame invisible for exactly the
+    /// keys it covers — the frozen disagreement stated as a render.
+    func testAnUnansweredIntentPatchIsSweptByTheNextHostFrame() async {
+        let rig = makeRig()
+        let layout = layoutEntries()
+        // A clock the test owns, so the three-second deadline needs no three-second sleep — and the
+        // self-driving backstop disarmed, so the FRAME is provably what swept the patch.
+        let clock = Box(1000.0)
+        rig.client.now = { clock.value }
+        rig.client.pendingSweepDelay = nil
+        rig.client.start()
+        await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
+        rig.pipe.deliver(snapshot(layout.entries, stateNum: 1))
+        await expect("the channel to go live") { rig.client.state == .live(1) }
+
+        XCTAssertTrue(rig.client.send(
+            intent: .renameTab,
+            args: WorkspaceIntentArgs.encode(id: layout.tab.raw, name: "renamed"),
+            now: clock.value,
+        ))
+        await expect("the intent to reach the wire") { !rig.pipe.requests(verb: .intent).isEmpty }
+        XCTAssertEqual(
+            rig.box.mirror.topology?.tree.sessions.first?.tabs.first?.title, "renamed",
+            "the optimistic patch is what the user is looking at while the host is asked",
+        )
+
+        clock.mutate { $0 += HostWorkspaceMirror.pendingTimeout }
+        rig.pipe.deliver(diff(
+            WorkspaceStateDiff(sets: [WorkspaceEntry(
+                key: WorkspaceKey(.pane, pane, WorkspacePaneField.cwd),
+                value: WorkspaceStateCodec.encodeString("/after"),
+            )]),
+            base: 1,
+            new: 2,
+        ))
+
+        await expect("the unanswered patch to be swept") { rig.box.pendingIntentCount == 0 }
+        XCTAssertEqual(
+            rig.box.mirror.topology?.tree.sessions.first?.tabs.first?.title, "one",
+            "with the patch gone the row shows what the host actually says",
+        )
     }
 }

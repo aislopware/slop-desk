@@ -119,6 +119,11 @@ public final class WorkspaceMirrorBox {
         if mirror.expirePending(now: now) { onChange?() }
     }
 
+    /// Drops one staged patch because the request never reached the host.
+    public func dropPending(_ intentID: UUID) {
+        if mirror.dropPending(intentID) { onChange?() }
+    }
+
     /// Repaints after ``HostWorkspaceMirror`` folded an intent result in.
     ///
     /// Separate from ``apply(kind:epoch:baseStateNum:newStateNum:payload:)``'s own repaint because

@@ -43,10 +43,12 @@ public struct TreeWorkspace: Codable, Sendable, Equatable {
         case activeSessionID
     }
 
-    /// Hand-written decode so a key this shape no longer carries — the retired `layoutPresets` /
-    /// `launchPresets` / `sessionTemplates` / `videoModesByTarget` collections, or a stale `snippets` —
-    /// is simply not in ``CodingKeys`` and is decode-ignored rather than trapping. The tree is SHAPE;
-    /// the device-local collections it used to carry are read from ``DevicePreferences`` instead.
+    /// Hand-written decode so a key outside ``CodingKeys`` is decode-IGNORED rather than trapping. The
+    /// tree is SHAPE; every device-local collection is read from ``DevicePreferences``, so a file
+    /// carrying one is describing something this type does not own.
+    ///
+    /// This is tolerance for a hand-edited file, NOT a migration seam: a whole file written by a
+    /// build that shaped the tree differently is caught by ``currentSchemaVersion`` and reset aside.
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
@@ -57,7 +59,14 @@ public struct TreeWorkspace: Codable, Sendable, Equatable {
     /// The schema version this shape writes. A file carrying any OTHER version is not migrated — the
     /// load path resets it aside (single-user, no backward compatibility). The retained-but-dead
     /// canvas ``Workspace`` owns its own `currentSchemaVersion = 9`.
-    public static let currentSchemaVersion = 11
+    ///
+    /// 12 is the shape whose device-local half lives in ``DevicePreferences``. The bump is what makes
+    /// the no-migration rule TRUE rather than merely stated: the retired keys are outside
+    /// ``CodingKeys``, so a file from the previous shape would otherwise decode "successfully" and the
+    /// next autosave would rewrite it without the user's presets, templates and latched video modes —
+    /// silently, with no `.corrupt` copy kept. A version this build does not speak resets aside
+    /// instead, which keeps the old file recoverable.
+    public static let currentSchemaVersion = 12
 }
 
 // MARK: - Construction

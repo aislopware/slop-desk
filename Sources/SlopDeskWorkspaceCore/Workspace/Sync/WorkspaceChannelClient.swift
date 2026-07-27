@@ -251,6 +251,11 @@ public final class WorkspaceChannelClient {
     // MARK: - Apply
 
     private func handle(kind: UInt8, epoch: UUID, base: Int64, new: Int64, payload: Data) async {
+        // Sweep patches the host never answered before folding the frame in. A patch older than
+        // `pendingTimeout` describes an intent whose verdict is not coming, and it takes precedence
+        // over `entries` on every read — so leaving it in place would make this very frame invisible
+        // for the keys it touches.
+        box.expirePending(now: now())
         let outcome = box.apply(
             kind: kind,
             epoch: epoch,
@@ -356,22 +361,50 @@ public final class WorkspaceChannelClient {
     ) -> Bool {
         guard case .live = state else { return false }
         guard let intent = box.stageIntent(op: op, args: args, issuedAt: now) else { return false }
-        Task { [weak self] in await self?.send(verb: .intent, payload: intent.encode()) }
+        Task { [weak self] in
+            guard let self else { return }
+            // A failed write means the host was never asked, so no `intentResult` will ever retire
+            // this patch and no timeout should have to: snap it away now. Otherwise the split the
+            // user requested would stay on screen — on this client only — across every subsequent
+            // host frame, which is the frozen disagreement the pending layer exists to prevent.
+            guard await send(verb: .intent, payload: intent.encode()) else {
+                box.dropPending(intent.intentID)
+                return
+            }
+            // The host WAS asked. Arm the backstop for the case with no other signal — a host that
+            // accepted and died before answering, on a channel quiet enough that no later frame
+            // arrives to sweep it.
+            guard let delay = pendingSweepDelay else { return }
+            try? await Task.sleep(for: delay)
+            box.expirePending(now: self.now())
+        }
         return true
     }
 
-    private func send(verb: WorkspaceRequestVerb, payload: Data) async {
-        guard let control else { return }
+    @discardableResult
+    private func send(verb: WorkspaceRequestVerb, payload: Data) async -> Bool {
+        guard let control else { return false }
         do {
             // `requestSeq` is reserved: the host answers requests by CONTENT (an ack carries the
             // stateNum, an intent result carries the intentID), so nothing correlates on it.
             try await control.send(.workspaceRequest(requestSeq: 0, verb: verb.rawValue, payload: payload))
+            return true
         } catch {
             onLog?("workspace channel: send(\(verb)) failed (\(error))")
+            return false
         }
     }
 
     // MARK: - Test seams
+
+    /// The clock the pending sweep reads. Injectable so a test can prove the expiry without sleeping.
+    var now: @MainActor () -> TimeInterval = { Date().timeIntervalSince1970 }
+
+    /// How long after an intent goes out the self-driving backstop sweep fires. One `pendingTimeout`
+    /// in production, so the check is already past the deadline when it runs. `nil` disables it,
+    /// which is what isolates the FRAME-driven sweep in a test — the two would otherwise race and
+    /// whichever won would look like the one under test.
+    var pendingSweepDelay: Duration? = .seconds(HostWorkspaceMirror.pendingTimeout)
 
     var isRunningForTesting: Bool { runTask != nil }
     var presenceClockForTesting: Int64 { presenceClock }

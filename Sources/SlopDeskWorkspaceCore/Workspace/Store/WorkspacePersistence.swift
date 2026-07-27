@@ -210,17 +210,21 @@ public struct WorkspacePersistence: @unchecked Sendable {
     /// **Idempotent across repeated new-window launches.** A PERSISTENT `New Window` setting fires this on
     /// EVERY launch, so a naive always-overwrite would lose data: launch 1 snapshots the REAL session into
     /// `.previous`, the store autosaves a DEFAULT over `workspace.json`; launch 2 would snapshot that
-    /// throwaway default over `.previous`, clobbering the backup with no recovery. So the guard SKIPS the
-    /// snapshot when `workspace.json` is already a fresh ``TreeWorkspace/defaultWorkspace()``-shaped tree —
-    /// and ONLY then, because a default is re-seedable. The sidecar thus always preserves the
-    /// most-recent session worth recovering.
+    /// throwaway default over `.previous`, clobbering the backup with no recovery.
+    ///
+    /// So the skip needs TWO facts, not one, and the second is what makes it safe. Shape alone cannot tell
+    /// a throwaway default from a real single never-renamed terminal — the tree carries layout and nothing
+    /// else, so the two are structurally identical — and skipping on shape alone destroys the real one:
+    /// `workspace.json` is overwritten by the autosave, and with it the pane ids the host has PTYs filed
+    /// under, which can then never be reattached. The second fact is that a sidecar ALREADY EXISTS: a
+    /// default-shaped file with a `.previous` beside it is the throwaway from a prior new-window launch,
+    /// and there is a preserved session to protect. With no sidecar there is nothing to lose by writing
+    /// one, so the snapshot is taken.
     public func snapshotPreviousSession() {
         guard fileManager.fileExists(atPath: fileURL.path) else { return } // first launch: nothing to back up
-        // Idempotency guard: a default-shaped `workspace.json` is the throwaway tree the store autosaved
-        // over the real session on a PRIOR new-window launch — re-snapshotting it would overwrite the real
-        // session already in `.previous`. A default is re-seedable, so skip (validate-then-drop: an
-        // unreadable/corrupt file is NOT default-shaped → it is preserved aside).
-        if let data = try? Data(contentsOf: fileURL),
+        // Validate-then-drop: an unreadable/corrupt file is NOT default-shaped, so it is preserved aside.
+        if fileManager.fileExists(atPath: previousSessionURL.path),
+           let data = try? Data(contentsOf: fileURL),
            let tree = try? JSONDecoder().decode(TreeWorkspace.self, from: data),
            Self.isDefaultTreeShape(tree)
         {
@@ -231,13 +235,15 @@ public struct WorkspacePersistence: @unchecked Sendable {
         try? fileManager.copyItem(at: fileURL, to: sidecar)
     }
 
-    /// Whether `tree` is the EXACT fresh-default tree the store autosaves over a real session on a
-    /// `.newWindow` launch — one "Local" session, one tab, one terminal leaf titled "Terminal", AND that
-    /// leaf's spec carrying none of the additive persistence fields — ignoring only the random ids
-    /// ``TreeWorkspace/defaultWorkspace()`` mints per call (so a value `==` is impossible). The idempotency
-    /// guard in ``snapshotPreviousSession()`` uses it to avoid clobbering a real session already in the
-    /// sidecar with a throwaway default. Only session content distinguishes real from default, so
-    /// app-config presets are intentionally NOT tested.
+    /// Whether `tree` is SHAPED like the fresh-default tree the store autosaves over a real session on a
+    /// `.newWindow` launch — one "Local" session, one tab, one terminal leaf titled "Terminal", no video —
+    /// ignoring only the random ids ``TreeWorkspace/defaultWorkspace()`` mints per call (so a value `==` is
+    /// impossible). Only session content distinguishes real from default, so app-config presets are
+    /// intentionally NOT tested.
+    ///
+    /// It is a SHAPE test and nothing more: a real session the user never grew past one un-renamed
+    /// terminal answers `true` too. ``snapshotPreviousSession()`` is where that ambiguity is resolved, and
+    /// it resolves it by asking whether a preserved session already exists.
     ///
     static func isDefaultTreeShape(_ tree: TreeWorkspace) -> Bool {
         guard tree.sessions.count == 1,

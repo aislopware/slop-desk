@@ -102,11 +102,11 @@ public struct WorkspaceTopology: Equatable, Sendable {
 /// State the document deliberately does not carry, named as a value rather than left implicit —
 /// a silently-dropped field is the failure mode this whole document exists to end.
 ///
-/// The device-local facts are no longer ON ``TreeWorkspace`` at all: the latched video modes, the
-/// committed connection target and the preset library live in the client's `device-prefs.json`
-/// (docs/45 §7.3), because the tree is the LAYOUT and the layout is identical on every attached
-/// client. A 27″ Studio and an iPhone must not share an immersive-mode latch, and "which host am I
-/// talking to" is definitionally a client concept.
+/// The device-local facts are not on ``TreeWorkspace``: the latched video modes, the committed
+/// connection target and the preset library live in the client's `device-prefs.json` (docs/45 §7.3),
+/// because the tree is the LAYOUT and the layout is identical on every attached client. A 27″ Studio
+/// and an iPhone must not share an immersive-mode latch, and "which host am I talking to" is
+/// definitionally a client concept.
 ///
 /// What remains omitted from a tree that otherwise crosses whole:
 ///

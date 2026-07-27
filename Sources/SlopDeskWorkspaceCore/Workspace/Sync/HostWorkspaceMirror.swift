@@ -278,6 +278,20 @@ public struct HostWorkspaceMirror: Sendable {
         return pending.count != before
     }
 
+    /// Drops one staged patch outright — what a client does when the request never left the machine.
+    ///
+    /// Distinct from ``expirePending(now:timeout:)``: a send that FAILED needs no grace period. The
+    /// host was never asked, so there is no answer coming and no reason to keep showing a split
+    /// nobody made for three seconds first.
+    ///
+    /// - Returns: `true` if a patch was actually removed, so the caller can repaint.
+    @discardableResult
+    public mutating func dropPending(_ intentID: UUID) -> Bool {
+        let before = pending.count
+        pending.removeAll { $0.intentID == intentID }
+        return pending.count != before
+    }
+
     // MARK: - Read
 
     /// The single funnel every read goes through: `pending` → ``entries`` → ``fastPath``.

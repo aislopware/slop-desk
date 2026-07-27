@@ -775,19 +775,32 @@ a four-hour disconnect is wrong. The UI disables mutation while the workspace ch
 **`workspace-cache.json`**
 
 ```json
-{ "hostKey": "<host identity>", "epoch": "<uuid>", "stateNum": 4471,
-  "snapshot": "<base64 of the raw kind-0 payload bytes>" }
+{ "hostKey": "<host identity>", "snapshot": "<base64 of the raw kind-0 payload bytes>" }
 ```
 
-The **exact snapshot payload bytes**, not a re-encoded model. Painted immediately at launch so there is
-no blank window, and **never authoritative**: no promotion, no fallback title, no freshness heuristic.
+The **exact snapshot payload bytes**, not a re-encoded model — the wire codec is the one decoder both
+ends already agree on, and a second JSON shape for the same facts is a second place for them to drift.
+Painted immediately at launch so there is no blank window, and **never authoritative**: no promotion,
+no fallback title, no freshness heuristic.
 
-**The paint gate is `hostKey` + a successful length-checked decode — not the epoch.** The epoch's job
+**Which layer a cached fact seeds is decided by what the fact IS** (DECISIONS, Multi-client Phase 5b
+ruling 2). `pane/spawnCwd` is TOPOLOGY — where the pane's shell is asked to start — and a respawn
+after a host restart has no live shell to ask, so it joins the seeded topology. `pane/cwd` and
+`pane/projectKey` are LIVENESS — where a shell IS — and seed the mirror's FAST PATH, which the
+erasure rule deletes for any key a host frame supplies. That is what makes "never authoritative"
+mechanical rather than a promise.
+
+**The paint gate is `hostKey` + a successful bounded decode — not the epoch.** The epoch's job
 is to prevent accepting a stale *delta*, not to prevent painting a stale *picture*. A hostd restart
 mints a new epoch while `workspace-state.json` restores the document byte-identically; gating the paint
-on the epoch would blank the window on exactly the reboot case the cache exists for. The recorded epoch
-is used for one thing: `subscribe` sends `knownStateNum = 0` when it differs. The incoming kind-0
-snapshot replaces the cache wholesale regardless.
+on the epoch would blank the window on exactly the reboot case the cache exists for. No epoch or
+`stateNum` is recorded at all: the mirror resets on every channel stop, so nothing resumes from this
+file and a recorded resume position would be a claim the client cannot honour.
+
+**The rows are filtered by `WorkspaceStateFile.persisting` on the way out AND back in**, which is the
+same policy the host's own `workspace-state.json` uses. It is what keeps `commandRunning = 1` and
+`liveness = attached` off the disk: a restored fake-live row is the render §6.5 exists to prevent, and
+this file is the one input a user can edit by hand.
 
 `hostKey` mismatch or a failed decode → discard to empty; the client shows a connecting state for one
 RTT. Strictly better than "show `vi .` forever".
@@ -1258,9 +1271,11 @@ test cannot tune `SLOPDESK_SUB_LAG_BYTES`. Plus `bash scripts/check-ios.sh`.
 
 **Open questions**
 
-1. Should `SLOPDESK_WORKSPACE_DOC` ever flip default-ON before Phase 6 lands, given that Phases 4–5
-   ship a synchronized document over a still-single-attach PTY? The `attachedBy` gate makes it
-   coherent, but "see it, can't open it" is a UX call, not an architecture one.
+1. ~~Should `SLOPDESK_WORKSPACE_DOC` ever flip default-ON before Phase 6 lands?~~ **SETTLED**
+   (DECISIONS, Multi-client Phase 5b ruling 1): it stays OFF, and the render path is not allowed to
+   depend on it. The flag gates a TRANSPORT — a flag-off client draws the same sidebar one RTT
+   staler, off the per-pane control pushes and `workspace-cache.json`. It flips when the store's
+   mutations become intents, because at that point a flag-off client has no layout at all.
 2. `SLOPDESK_SUB_LAG_BYTES = 32 MiB` is a first guess. Only a cellular-iOS soak settles it.
 3. Does the document itself ever need sweeping, or is the capped `closedTabRing` + explicit
    `closePane` sufficient across months of churn? Measure before adding a GC.

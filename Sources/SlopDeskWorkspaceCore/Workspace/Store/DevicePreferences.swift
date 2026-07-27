@@ -51,7 +51,8 @@ public struct DevicePreferences: Codable, Sendable, Equatable {
     /// brand-new ``PaneID``/spec) as well as a relaunch.
     public var videoModesByTarget: [String: VideoPaneModes]
     /// The last committed ``ConnectionTarget`` per host, keyed by ``hostKey(for:)``. The connect gate's
-    /// per-host port memory: re-dialling a known host restores the video ports it was reached on.
+    /// per-host port memory, read back by ``connectionTarget(seededBy:)``: re-dialling a known host
+    /// restores the video ports it was reached on.
     public var connectionByHostKey: [String: ConnectionTarget]
     /// Whether the client's selection follows the host's session focus. Defaults per platform — see
     /// ``platformDefaultFollowSessionFocus``.
@@ -69,6 +70,16 @@ public struct DevicePreferences: Codable, Sendable, Equatable {
         self.videoModesByTarget = videoModesByTarget
         self.connectionByHostKey = connectionByHostKey
         self.followSessionFocus = followSessionFocus
+    }
+
+    /// The target the connect gate prefills, given the host `seed` names.
+    ///
+    /// ``AppConnection/launchSeedTarget()`` remembers the TERMINAL address and nothing else, so
+    /// re-dialling a host reached on non-default video ports would silently offer the defaults for
+    /// them. This is what closes that: the whole target, filed under the same `host:port` the MRU
+    /// dedupes on. An unknown host answers `seed` unchanged.
+    public func connectionTarget(seededBy seed: ConnectionTarget) -> ConnectionTarget {
+        connectionByHostKey[Self.hostKey(for: seed)] ?? seed
     }
 }
 

@@ -186,6 +186,25 @@ public final class WorkspaceStore {
         try? devicePreferencesStore?.save(devicePreferences)
     }
 
+    /// Where the last picture of the host's document is cached (docs/45 §7.3), so a cold launch paints
+    /// real folder names before a packet moves. Injectable on the same terms as ``persistence``:
+    /// `nil` (the test/automation default) never touches disk.
+    private let documentCache: WorkspaceCacheStore?
+
+    /// The `host:port` the cache was SEEDED from — the connect gate's launch target, and the only
+    /// host this run's picture can honestly be filed under.
+    private let documentCacheSeedHostKey: String
+
+    /// The `host:port` the cache is written under. EMPTY reads as nothing and writes nothing: a
+    /// picture with no host on it can never be shown to the right one.
+    ///
+    /// Cleared for the rest of the run by a connect to a DIFFERENT host than the seed
+    /// (``commitConnectionTarget(_:)``). The facts are absolute paths on ONE machine's filesystem, so
+    /// after a mid-session host switch the mirror holds a mix of two — and a mixed picture belongs to
+    /// neither. The next launch seeds from whichever host the MRU then names, so this self-heals in
+    /// one launch rather than persisting a blend forever.
+    private var documentCacheHostKey: String
+
     /// The ``ConnectionTarget`` this app run is talking to — seeded by the app shell from the
     /// ``AppConnection`` MRU at launch and re-stamped by ``commitConnectionTarget(_:)`` on every
     /// successful connect. Purely presentational (the pane status bar names the host); the live
@@ -212,6 +231,11 @@ public final class WorkspaceStore {
     /// The pending debounced-save task. Cancelled + replaced on each mutation so only the last
     /// mutation in a burst actually writes; cancel-safe (a cancelled sleep simply returns).
     private var saveTask: Task<Void, Never>?
+
+    /// The pending debounced `workspace-cache.json` write, on the same terms as ``saveTask`` — its
+    /// own task because a fact change and a layout change are different edges (see
+    /// ``scheduleDocumentCacheSave()``).
+    @ObservationIgnored var documentCacheSaveTask: Task<Void, Never>?
 
     /// A monotonic save-generation guard (mirrors ``FocusGenerationGuard``). Each `scheduleSave()` bumps it
     /// and captures the value; the debounced write re-checks it on a MainActor hop BEFORE writing and skips
@@ -337,6 +361,10 @@ public final class WorkspaceStore {
     ///     passes a real ``WorkspacePersistence``.
     ///   - devicePreferences: where the device-local facts persist (docs/45 §7.3). `nil` (the default)
     ///     ⇒ in-memory only, so the pure test seam never touches `device-prefs.json`.
+    ///   - documentCache: where the last picture of the host's document is cached (docs/45 §7.3).
+    ///     `nil` (the default) ⇒ no disk, so the pure test seam never touches `workspace-cache.json`.
+    ///   - cacheHostKey: the `host:port` that cache belongs to — the connect gate's launch target.
+    ///     Empty (the default) reads and writes nothing.
     ///   - saveDebounce: the mutation-coalescing window before a write (default 600ms).
     @preconcurrency
     public init(
@@ -347,6 +375,8 @@ public final class WorkspaceStore {
         liveVideoCap: Int = 2,
         persistence: WorkspacePersistence? = nil,
         devicePreferences: DevicePreferencesStore? = nil,
+        documentCache: WorkspaceCacheStore? = nil,
+        cacheHostKey: String = "",
         saveDebounce: Duration = .milliseconds(600),
         videoTeardownSettle: Duration = .zero,
     ) {
@@ -361,6 +391,9 @@ public final class WorkspaceStore {
         self.persistence = persistence
         devicePreferencesStore = devicePreferences
         self.devicePreferences = devicePreferences?.load() ?? DevicePreferences()
+        self.documentCache = documentCache
+        documentCacheSeedHostKey = cacheHostKey
+        documentCacheHostKey = cacheHostKey
         self.saveDebounce = saveDebounce
         self.videoTeardownSettle = videoTeardownSettle
         // The mirror is a plain value in a plain box — nothing about folding a frame into it is
@@ -377,7 +410,12 @@ public final class WorkspaceStore {
         // A client with no channel — headless, a test, the flag off — never gets one, and a nil
         // topology is silent: `WorkspaceMirrorBox.stageIntent` returns `nil` for it and every call
         // built on that becomes a no-op with nothing logged anywhere.
-        seedWorkspaceMirror(from: tree)
+        //
+        // The per-pane facts come from the cache alongside it. They are what makes the FIRST paint a
+        // sidebar of folder names in their project sections, and what puts a respawned shell back in
+        // its project directory: the client has no live shell to ask on launch, so a fact it does not
+        // remember is a fact that is gone.
+        seedWorkspaceMirror(from: tree, cache: documentCache?.load(hostKey: cacheHostKey) ?? HostWorkspaceState())
         // The live model picks the init reconcile. `.canvas` materializes the canvas panes (the
         // retained-but-dead path); `.tree` (the app) materializes the tree's leaves through the SAME
         // registry diff — exactly one of the two trees ever drives a given store.
@@ -2829,17 +2867,9 @@ public final class WorkspaceStore {
     /// Replaces the live ``tree`` with `next` — the in-file mutation seam the `WorkspaceStore+Templates`
     /// extension calls (the `private(set)` setter + `private` `scheduleSave()` are not reachable from a
     /// cross-file extension, so the feature's logic lives there but touches the tree through this one
-    /// internal hook). The caller is responsible for the following `reconcileTree()` / `mutateTree { … }`.
+    /// internal hook). The caller is responsible for the following `reconcileTree()`.
     func replaceTree(_ next: TreeWorkspace) {
         tree = next
-    }
-
-    /// Mutates the live ``tree`` in place via `transform` and schedules the debounced save — the tree-edit
-    /// seam for cross-file store extensions (the `private(set)` setter and `private` `scheduleSave()` are
-    /// out of their reach).
-    func mutateTree(_ transform: (inout TreeWorkspace) -> Void) {
-        transform(&tree)
-        scheduleSave()
     }
 
     /// Applies a launch preset by id: opens a NEW TAB whose first pane runs the preset's command (and, for
@@ -3147,10 +3177,6 @@ public final class WorkspaceStore {
     /// that re-renders the rail at the reveal boundary), cleared on completion. NOT persisted;
     /// PRUNED to the live leaf set alongside ``paneCompletedAt``.
     public internal(set) var paneCommandStartedAt: [PaneID: Date] = [:]
-
-    /// Where each pane's shell was asked to START (`pane/spawnCwd`) — read by ``spawnCwd(for:)``,
-    /// written when the pane is created. PRUNED to the live leaf set alongside the other per-pane maps.
-    @ObservationIgnored var paneSpawnCwd: [PaneID: String] = [:]
 
     /// RUNTIME-ONLY unread agent-finish latch — panes whose agent hit `.done` while the user was NOT
     /// watching (``isSourcePaneVisible(_:)`` false at the edge) and that have not been visited since.
@@ -3696,10 +3722,6 @@ public final class WorkspaceStore {
         if !paneCommandStartedAt.isEmpty {
             paneCommandStartedAt = paneCommandStartedAt.filter { leafSet.contains($0.key) }
         }
-        // Spawn cwd (`pane/spawnCwd` — where a closed pane's shell WOULD have started):
-        if !paneSpawnCwd.isEmpty {
-            paneSpawnCwd = paneSpawnCwd.filter { leafSet.contains($0.key) }
-        }
         // Unread agent-finish latch (Set-prune idiom, like `paneReadOnly` below):
         if !paneUnseenDone.isEmpty, !paneUnseenDone.isSubset(of: leafSet) {
             paneUnseenDone.formIntersection(leafSet)
@@ -4036,6 +4058,7 @@ public final class WorkspaceStore {
     /// any in-flight debounced save first so the two never race. Best-effort: a thrown error is
     /// swallowed (the previous good file is kept). A no-op when no `persistence` is configured.
     public func saveImmediately() {
+        saveDocumentCacheNow()
         guard let persistence else { return }
         // Bump the generation so any in-flight (already-past-sleep) debounced task reliably loses the
         // trailing-clear guard and cannot resurrect/nil the handle after this explicit save.
@@ -4043,6 +4066,41 @@ public final class WorkspaceStore {
         saveTask?.cancel()
         saveTask = nil
         try? Self.write(persistableSnapshot(), to: persistence)
+    }
+
+    // MARK: - Document cache (docs/45 §7.3)
+
+    /// Coalesces a burst of fact changes into one `workspace-cache.json` write.
+    ///
+    /// Its own debounce rather than a ride on ``scheduleSave()``: the tree and the facts move on
+    /// different edges — a `cd` changes no layout at all, and a divider drag changes no fact — so
+    /// sharing a timer would make each one pay for the other's churn. The window is the same, and
+    /// both are best-effort: a failed write keeps the previous good picture.
+    func scheduleDocumentCacheSave() {
+        guard savingEnabled, documentCache != nil else { return }
+        documentCacheSaveTask?.cancel()
+        let debounce = saveDebounce
+        documentCacheSaveTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: debounce)
+            } catch {
+                return // superseded by a newer change (cancelled) — that one will write.
+            }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                documentCacheSaveTask = nil
+                saveDocumentCacheNow()
+            }
+        }
+    }
+
+    /// Writes the cache synchronously NOW — the scenePhase-background path, and what
+    /// ``saveImmediately()`` folds in so quitting never loses the last `cd`.
+    func saveDocumentCacheNow() {
+        guard let documentCache else { return }
+        documentCacheSaveTask?.cancel()
+        documentCacheSaveTask = nil
+        try? documentCache.save(documentFactsSnapshot(), hostKey: documentCacheHostKey)
     }
 
     // MARK: - Tree lookups
@@ -4087,6 +4145,10 @@ public final class WorkspaceStore {
             scheduleSave()
         case .tree:
             let key = DevicePreferences.hostKey(for: target)
+            // The cache is a picture of ONE host. A connect to a different one than this run was
+            // seeded from leaves the mirror holding facts about two machines, so it stops being
+            // written rather than filing one host's folders under the other's name.
+            documentCacheHostKey = key == documentCacheSeedHostKey ? key : ""
             guard devicePreferences.connectionByHostKey[key] != target else { return }
             mutateDevicePreferences { $0.connectionByHostKey[key] = target }
         }
@@ -4668,6 +4730,9 @@ public extension WorkspaceStore {
         workspaceMirror.writeFastPath(
             pane: documentPaneID(paneID), field: WorkspacePaneField.cwd, string: cwd,
         )
+        // Remember it for the next cold launch: the folder name is what the rail titles this row by,
+        // and a client that starts with the host unreachable has no other way to know it.
+        scheduleDocumentCacheSave()
         // The cwd just CHANGED (the guard above proves it differs from the stored value), so this is a
         // genuine visit — notify the frecency sink. Kept after the dirty guard so an unchanged re-focus is silent.
         onCwdVisited?(cwd)
@@ -4697,6 +4762,9 @@ public extension WorkspaceStore {
         workspaceMirror.writeFastPath(
             pane: documentPaneID(paneID), field: WorkspacePaneField.projectKey, string: key,
         )
+        // Persisted with the cwd, and for the same reason: without it a cold launch collapses every
+        // By-Project section into one "Other" bucket until each pane's own channel reconnects.
+        scheduleDocumentCacheSave()
     }
 
     // MARK: - Spawn cwd (where the shell STARTS)
@@ -4707,15 +4775,29 @@ public extension WorkspaceStore {
     /// Deliberately NOT `pane/cwd`: that is where the shell IS right now. A respawn after a host
     /// restart has no live shell to ask, and starting it at the last-observed cwd would silently
     /// relocate a pane the user placed deliberately.
+    ///
+    /// Read through the MIRROR, so a host whose document carries this pane's spawn directory and a
+    /// client that minted it locally answer with one value. A device-local dictionary here would give
+    /// two clients of one document two different answers for where the same pane's shell belongs.
+    /// The empty string is RETIRED, not a directory — it maps back to `nil` so the host takes its own
+    /// default rather than being handed a path of nothing.
     func spawnCwd(for id: PaneID) -> String? {
-        paneSpawnCwd[id]
+        observeWorkspaceMirror()
+        guard let cwd = workspaceMirror.string(.pane, documentPaneID(id), WorkspacePaneField.spawnCwd),
+              !cwd.isEmpty else { return nil }
+        return cwd
     }
 
     /// Records where a newly-created pane's shell should start. The split / new-tab / new-session
     /// seeding and the launch-preset expansion are its only writers — a pane's spawn dir is decided
-    /// once, when the pane is made.
+    /// once, when the pane is made — and it is persisted, because the pane outlives both the shell
+    /// and this process.
     func setSpawnCwd(_ cwd: String?, for id: PaneID) {
-        paneSpawnCwd[id] = cwd
+        guard spawnCwd(for: id) != cwd else { return }
+        workspaceMirror.writeFastPath(
+            pane: documentPaneID(id), field: WorkspacePaneField.spawnCwd, string: cwd,
+        )
+        scheduleDocumentCacheSave()
     }
 
     /// cwd-freshness fallback: pull pane `id`'s current working directory from the host `cwd` RPC

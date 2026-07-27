@@ -206,13 +206,11 @@ public struct SlopDeskClientApp: App {
         let restoredTree = WorkspacePersistence.launchTree(
             behavior: SettingsKey.onLaunch, persistence: persistence,
         )
-        let env = WorkspaceStore.automationInputs()
-        // The connect gate's prefill. The layout is host-owned and arrives over the wire, so it names no
-        // host: the last successfully connected target is the only host memory that exists before a
-        // connection, and it is the same MRU the gate's "recent hosts" menu offers.
-        let seedTarget: ConnectionTarget = isAutomation
-            ? (WorkspaceStore.videoTarget(from: env)?.0 ?? WorkspaceStore.terminalTarget(from: env) ?? .default)
-            : AppConnection.launchSeedTarget()
+        // Automation gets an in-memory value for the device-local facts, never rewriting the real
+        // `device-prefs.json` — the same discipline as `persistence` above. Built here rather than at
+        // the store's init because the connect-gate prefill reads it.
+        let devicePrefs: DevicePreferencesStore? = isAutomation ? nil : DevicePreferencesStore()
+        let seedTarget = Self.launchSeedTarget(isAutomation: isAutomation, devicePreferences: devicePrefs)
         let appConnection = AppConnection(registry: muxRegistry, seed: seedTarget)
         let store = WorkspaceStore(
             restoringTree: restoredTree,
@@ -224,9 +222,12 @@ public struct SlopDeskClientApp: App {
             ),
             liveVideoCap: liveVideoCap,
             persistence: persistence,
-            // Same discipline for the device-local facts (presets, latched video modes, the per-host
-            // target): automation gets an in-memory value, never rewriting the real `device-prefs.json`.
-            devicePreferences: isAutomation ? nil : DevicePreferencesStore(),
+            devicePreferences: devicePrefs,
+            // The last picture of this host's document (docs/45 §7.3), so a launch paints folder names
+            // and respawns each pane's shell in its project directory before anything connects.
+            // Automation gets none, on the same terms as the two files above.
+            documentCache: isAutomation ? nil : WorkspaceCacheStore(),
+            cacheHostKey: DevicePreferences.hostKey(for: seedTarget),
             // Hold a closed video pane's cap slot briefly past `teardown()` so the dismantle
             // releases the stack before a same-tick sibling is admitted (avoids a transient cap+1).
             videoTeardownSettle: .milliseconds(250),
@@ -979,6 +980,26 @@ public struct SlopDeskClientApp: App {
             let value = String(arg[arg.index(after: eq)...])
             setenv(key, value, 1)
         }
+    }
+
+    /// The connect gate's prefill, and the `host:port` the document cache is gated on.
+    ///
+    /// The layout is host-owned and arrives over the wire, so it names no host: the last successfully
+    /// connected target is the only host memory that exists before a connection, and it is the same
+    /// MRU the gate's "recent hosts" menu offers. That MRU carries the TERMINAL address only — the
+    /// video ports the host was last reached on are filed per `host:port` in
+    /// ``DevicePreferences/connectionByHostKey``, so the whole target comes back rather than its
+    /// terminal half plus two defaults.
+    private static func launchSeedTarget(
+        isAutomation: Bool,
+        devicePreferences: DevicePreferencesStore?,
+        env: [String: String] = WorkspaceStore.automationInputs(),
+    ) -> ConnectionTarget {
+        let seed: ConnectionTarget = isAutomation
+            ? (WorkspaceStore.videoTarget(from: env)?.0 ?? WorkspaceStore.terminalTarget(from: env) ?? .default)
+            : AppConnection.launchSeedTarget()
+        guard let devicePreferences else { return seed }
+        return devicePreferences.load().connectionTarget(seededBy: seed)
     }
 
     /// Whether any AUTOCONNECT env var is set (gates the bootstrap + the front-on-autoconnect path).

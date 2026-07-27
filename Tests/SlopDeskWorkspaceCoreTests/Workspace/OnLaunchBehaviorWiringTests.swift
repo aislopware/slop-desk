@@ -208,18 +208,8 @@ final class OnLaunchBehaviorWiringTests: XCTestCase {
         )
     }
 
-    /// REGRESSION — a REAL single-un-renamed-terminal session is NOT the throwaway default merely because it
-    /// shares the default's STRUCTURAL shape. The most common real workspace is one un-renamed terminal in a
-    /// project dir: its leaf spec carries a `lastKnownCwd` (the subtitle hint) and, for a detached host session,
-    /// a `resumeSessionID` reattach handle — while its `title` is still "Terminal" (the raw-decode idempotency
-    /// guard runs BEFORE the load-time `lastKnownTitle → title` promotion). A `.newWindow` launch must snapshot it
-    /// aside before the store autosaves the fresh default over `workspace.json`, exactly as it does a renamed
-    /// session, or the cwd/resume hints are PERMANENTLY lost.
-    ///
-    /// Revert-to-confirm-fail: with the old shape-only `isDefaultTreeShape` (no additive-field check), this tree
-    /// matches the default ⇒ `snapshotPreviousSession()` SKIPS the copy ⇒ no sidecar, and the recovery assertions
-    /// below FAIL. With the tightened guard the session is preserved aside and they PASS.
-    func testNewWindowPreservesRealSingleTerminalWithCwdHint() throws {
+    /// A REAL multi-tab session is preserved aside on a `.newWindow` launch.
+    func testNewWindowPreservesARealMultiTabSession() throws {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("slopdesk-onlaunch-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -235,8 +225,8 @@ final class OnLaunchBehaviorWiringTests: XCTestCase {
         tree.sessions[0].specs[extra] = PaneSpec(kind: .terminal, title: "Terminal")
         try persistence.save(tree)
 
-        // Direct contract pin: a cwd-bearing real session is NOT default-shaped, while the pure re-seedable
-        // default still IS (so the repeated-launch idempotency win survives the tightening).
+        // Direct contract pin: a multi-tab session is NOT default-shaped, while the pure re-seedable
+        // default IS.
         XCTAssertFalse(
             WorkspacePersistence.isDefaultTreeShape(tree),
             "a real multi-tab session must not be classified as the throwaway default",
@@ -261,6 +251,43 @@ final class OnLaunchBehaviorWiringTests: XCTestCase {
         XCTAssertTrue(
             recovered.allPaneIDs().contains(extra),
             "a real session must be preserved aside on a .newWindow launch",
+        )
+    }
+
+    /// The most common real workspace — ONE un-renamed terminal — is preserved aside on a `.newWindow`
+    /// launch, even though it is structurally indistinguishable from the throwaway default.
+    ///
+    /// The tree carries layout and nothing else, so shape cannot tell the two apart and the skip must not
+    /// be decided on shape alone. What is lost when it is: `workspace.json` is overwritten by the store's
+    /// autosave with a default carrying a BRAND-NEW `PaneID`, and since a pane presents its own id as the
+    /// mux session id on `channelOpen`, the still-running host PTY filed under the old one can never be
+    /// reattached again. The second fact the skip needs is that a preserved session already EXISTS.
+    func testNewWindowPreservesARealSinglePaneSession() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("slopdesk-onlaunch-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let persistence = WorkspacePersistence(fileURL: dir.appendingPathComponent("workspace.json"))
+
+        // A real session the user has worked in all week: one "Local" session, one tab, one terminal that
+        // was never renamed. Identical in shape to `TreeWorkspace.defaultWorkspace()`, and its pane id is
+        // the one the host has a PTY filed under.
+        let tree = TreeWorkspace.defaultWorkspace().normalized()
+        let leaf = try XCTUnwrap(tree.allPaneIDs().first)
+        try persistence.save(tree)
+
+        XCTAssertNil(WorkspacePersistence.launchTree(behavior: .newWindow, persistence: persistence))
+        // Emulate the store's first autosave overwriting the primary file with a fresh default.
+        try persistence.save(TreeWorkspace.defaultWorkspace().normalized())
+        XCTAssertFalse(
+            persistence.loadTree().contains(leaf),
+            "the autosave overwrote the primary workspace.json, as a .newWindow launch always does",
+        )
+
+        let recovered = WorkspacePersistence(fileURL: persistence.previousSessionURL).loadTree()
+        XCTAssertTrue(
+            recovered.contains(leaf),
+            "the real session's pane id is gone from both the file and the sidecar — its host PTY is orphaned",
         )
     }
 

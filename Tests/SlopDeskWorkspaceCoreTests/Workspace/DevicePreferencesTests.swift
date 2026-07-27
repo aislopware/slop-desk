@@ -154,4 +154,24 @@ final class LaunchConnectionSeedTests: XCTestCase {
     func testLaunchSeedFallsBackToTheDefaultTargetOnAFreshInstall() throws {
         XCTAssertEqual(try AppConnection.launchSeedTarget(defaults: scratchDefaults()), .default)
     }
+
+    /// The MRU remembers the TERMINAL address; the video ports come back from the per-host file.
+    ///
+    /// Without this read the map is written on every connect and consulted by nobody, so re-dialling
+    /// a host reached on non-default media/cursor ports silently offers 9000/9001 instead.
+    func testTheSeedRestoresTheVideoPortsThatHostWasReachedOn() {
+        let reached = ConnectionTarget(host: "studio", port: 7420, mediaPort: 9100, cursorPort: 9101)
+        var preferences = DevicePreferences()
+        preferences.connectionByHostKey[DevicePreferences.hostKey(for: reached)] = reached
+
+        // What the MRU alone can offer: the right host and terminal port, default video ports.
+        let fromMRU = ConnectionTarget(host: "studio", port: 7420)
+        XCTAssertEqual(preferences.connectionTarget(seededBy: fromMRU), reached)
+    }
+
+    /// A host this device has never reached is offered back unchanged — no invented ports.
+    func testAnUnknownHostIsSeededUnchanged() {
+        let fresh = ConnectionTarget(host: "macbook", port: 7420)
+        XCTAssertEqual(DevicePreferences().connectionTarget(seededBy: fresh), fresh)
+    }
 }

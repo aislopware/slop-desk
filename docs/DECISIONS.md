@@ -3417,3 +3417,65 @@ diff's `baseStateNum` equal to what the client actually holds.
 **A test that constructs a `HostServer` with the document enabled must inject a store.** `load()`
 mints and the persist sink writes, both against `<Application Support>/SlopDesk/workspace-state.json`
 — so one test against the default path silently replaces a workspace somebody is using.
+
+## Multi-client Phase 5b: the pane's facts get somewhere to live (2026-07-27)
+
+[docs/45](45-multi-client-state-sync.md) §7.3. Phase 5b moved every per-pane fact off `PaneSpec` and
+into the document, read through `HostWorkspaceMirror`. Three rulings the move forced.
+
+### 1. `SLOPDESK_WORKSPACE_DOC` stays default-OFF, and the client is not allowed to need it
+
+The open question in docs/45 §10 was whether the flag flips ON with this phase. It does not. The
+reason is a rule, not a schedule: **the flag gates a TRANSPORT, so nothing on the render path may
+depend on it.** A client with the flag off must draw the same sidebar as one with it on, one RTT
+staler — otherwise "off" is not a bake-in switch, it is a second product with its own bug list, and
+the no-backcompat directive forbids exactly that dual path.
+
+That is why the store still owns `tree`, and why the facts that left `PaneSpec` land in the MIRROR
+rather than in the channel: the mirror has two producers, and the per-pane control pushes are the one
+that works with the flag off. The flag flips when the store's mutations become intents (the remaining
+Phase 5b step) — at which point a flag-off client would have no layout at all, and the answer is to
+flip it, not to keep a tree-owning path beside the projection.
+
+### 2. The client's cache is a PICTURE, and the two layers say which
+
+`workspace-cache.json` holds what this device last knew about ONE host's panes, gated on
+`host:port` — the only host identity available before connecting. What it seeds is split by what the
+fact IS, and the split is the whole reason it can never go stale:
+
+- `pane/spawnCwd` is TOPOLOGY — where this pane's shell is asked to start. It joins the seeded
+  topology, because a respawn after a host restart has no live shell to ask and no other source.
+- `pane/cwd` and `pane/projectKey` are LIVENESS — where a shell IS. They go to the mirror's FAST
+  PATH, which the erasure rule deletes for any key a host frame supplies.
+
+No promotion step, no fallback title, no freshness heuristic: those three are how a cache outlives
+the fact it cached, which is the `vi .` bug in its original form. The epoch is deliberately not a
+gate — a hostd restart mints a new one while restoring the document byte-identically, and gating the
+paint on it would blank the window on exactly the reboot case the cache exists for.
+
+**The reopen ring counts as live.** A closed pane's facts are not reaped on the close edge, because
+⇧⌘T restores the original `PaneID`s and would otherwise bring the pane back with no directory. The
+host's applier already unions `closedTabs` into its live set; one document with two answers is the
+failure mode.
+
+### 3. Shape can no longer tell a real session from the throwaway default
+
+`On Launch = New Window` skips its `.previous` snapshot when `workspace.json` is "the default the
+store autosaved last time". With the pane's facts gone from the tree, a real single un-renamed
+terminal is structurally IDENTICAL to that default — and skipping on shape destroys it, taking with
+it the `PaneID` the host has a PTY filed under, which can then never be reattached.
+
+So the skip takes two facts: default-shaped AND a sidecar already exists. With no sidecar there is
+nothing to lose by writing one. `isDefaultTreeShape` is a shape test and says so; the ambiguity is
+resolved where the consequence is.
+
+Two things that follow, and are not decisions:
+
+**`TreeWorkspace.currentSchemaVersion` goes to 12.** The retired keys are outside `CodingKeys`, so a
+file from the previous shape decodes "successfully" and the next autosave rewrites it without the
+user's presets and templates — silently, with no `.corrupt` copy. Stale data has to decode-FAIL.
+
+**An optimistic patch needs a driver.** `expirePending` had none: a send that threw left a patch
+standing over host truth forever. The failed send now drops its own patch at once (the host was never
+asked — there is no answer to wait for), every inbound frame sweeps before it is folded in, and a
+one-shot backstop covers a host that accepted and died on a channel too quiet to sweep itself.

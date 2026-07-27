@@ -33,14 +33,34 @@ extension WorkspaceStore {
     static let seedEpoch = WireMessage.newSessionID
 
     /// Encodes `tree` into ``workspaceMirror`` as a kind-0 snapshot at state 1 — the store's own
-    /// layout, published to itself.
+    /// layout, published to itself — with `cache`'s per-pane facts folded back in.
     ///
     /// A SNAPSHOT rather than a diff because the mirror has nothing to diff against yet. The first real
     /// host frame carries the HOST's epoch, which differs from ``seedEpoch``, so it resets the mirror
     /// and replaces the seed wholesale rather than diffing onto a document the host never wrote.
-    func seedWorkspaceMirror(from tree: TreeWorkspace) {
+    ///
+    /// `cache` (``WorkspaceCacheStore``, docs/45 §7.3) lands in TWO layers, and the split is the whole
+    /// correctness argument:
+    /// - `pane/spawnCwd` is a TOPOLOGY fact — where this pane's shell is asked to start — so it joins
+    ///   the seeded topology. Without it a relaunch respawns every pane in `$HOME` instead of its
+    ///   project directory, because the client has no live shell left to ask.
+    /// - `pane/cwd` and `pane/projectKey` are LIVENESS: they describe where a shell IS. They go to the
+    ///   FAST PATH, where the erasure rule deletes them for any key the first host frame supplies —
+    ///   so a cached folder name paints the rail instantly and is replaced, never promoted.
+    ///
+    /// Facts for panes the restored tree no longer contains are dropped: a cached row with no leaf to
+    /// hang on is unreachable memory that the next save would write out again.
+    func seedWorkspaceMirror(from tree: TreeWorkspace, cache: HostWorkspaceState = HostWorkspaceState()) {
+        var topology = WorkspaceTopology(tree: tree)
+        let livePanes = Set(tree.allPaneIDs()).union(tree.detachedPaneIDs())
+        for pane in livePanes {
+            let key = WorkspaceKey(.pane, documentPaneID(pane), WorkspacePaneField.spawnCwd)
+            guard let cwd = cache[key].flatMap({ WorkspaceStateCodec.decodeString($0) }), !cwd.isEmpty
+            else { continue }
+            topology.spawnCwd[pane] = cwd
+        }
         var state = HostWorkspaceState()
-        state.write(topology: WorkspaceTopology(tree: tree))
+        state.write(topology: topology)
         workspaceMirror.apply(
             kind: WorkspaceEventKind.snapshot.rawValue,
             epoch: Self.seedEpoch,
@@ -48,6 +68,49 @@ extension WorkspaceStore {
             newStateNum: 1,
             payload: WorkspaceStateCodec.encodeSnapshot(state),
         )
+        for pane in livePanes {
+            for field in [WorkspacePaneField.cwd, WorkspacePaneField.projectKey] {
+                let key = WorkspaceKey(.pane, documentPaneID(pane), field)
+                guard let value = cache[key] else { continue }
+                workspaceMirror.writeFastPath(key, value)
+            }
+        }
+    }
+
+    /// The three per-pane facts the cache carries: where the shell STARTS (`pane/spawnCwd`), where it
+    /// IS (`pane/cwd`), and which project that puts it in (`pane/projectKey`).
+    static let cachedPaneFields: [UInt8] = [
+        WorkspacePaneField.spawnCwd,
+        WorkspacePaneField.cwd,
+        WorkspacePaneField.projectKey,
+    ]
+
+    /// What ``WorkspaceCacheStore`` writes — exactly the rows ``seedWorkspaceMirror(from:cache:)``
+    /// reads back, for exactly the panes that still exist.
+    ///
+    /// Read off `resolved` rather than `entries`, because with the workspace document off `entries`
+    /// holds only the launch seed: every folder name the control pushes have landed since lives in
+    /// the fast path, and those are the ones the next cold launch needs.
+    ///
+    /// Scoped to the live leaves plus the reopen ring for two reasons. A cached row for a pane no
+    /// loader will ever look up is a file that only grows; and while the client still owns the tree,
+    /// the layout half of the mirror is a launch-time seed rather than a picture of anything, so
+    /// writing it out would persist a snapshot of the tree as it was at launch under the name of the
+    /// document.
+    func documentFactsSnapshot() -> HostWorkspaceState {
+        let live = Set(tree.allPaneIDs()).union(tree.detachedPaneIDs())
+        let ids = Set(live.map { documentPaneID($0) }).union(reopenableDocumentPaneIDs())
+        let resolved = workspaceMirror.mirror.resolved
+        var out = HostWorkspaceState()
+        for id in ids {
+            for field in Self.cachedPaneFields {
+                let key = WorkspaceKey(.pane, id, field)
+                guard let value = resolved[key], !value.isEmpty else { continue }
+                out.set(key, value)
+            }
+        }
+        // Re-filtered through the file's own policy, which is where "what may touch the disk" lives.
+        return WorkspaceStateFile.persisting(out)
     }
 
     // MARK: - Fast-path producers
@@ -106,11 +169,23 @@ extension WorkspaceStore {
 
     /// Drops a closed pane's whole overlay. Called from the reconcile prune, beside the other
     /// per-pane maps — an overlay for a leaf that no longer exists is unreachable memory.
+    ///
+    /// The reopen-closed-tab ring counts as live. Its records keep the original ``PaneID``s, so a
+    /// ⇧⌘T restores the very panes this sweep just saw leave the tree; reaping their facts here
+    /// would bring each one back with no cwd and no spawn directory. It is also the rule the HOST's
+    /// applier already follows (`WorkspaceIntentApplier.pruned` unions `closedTabs`), and the two
+    /// answering differently is the divergence the document exists to end.
     func pruneWorkspaceMirror(keeping leaves: Set<PaneID>) {
         let live = Set(leaves.map { documentPaneID($0) })
+            .union(reopenableDocumentPaneIDs())
         for paneID in workspaceMirror.mirror.fastPathPaneIDs where !live.contains(paneID) {
             workspaceMirror.clearFastPath(pane: paneID)
         }
+    }
+
+    /// The document ids of every pane a ⇧⌘T could bring back.
+    func reopenableDocumentPaneIDs() -> Set<UUID> {
+        Set(recentlyClosedTabs.flatMap { $0.specs.keys.map { documentPaneID($0) } })
     }
 
     // MARK: - Presence
