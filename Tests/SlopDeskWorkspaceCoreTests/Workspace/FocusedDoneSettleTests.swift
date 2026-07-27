@@ -18,12 +18,14 @@ import XCTest
 @MainActor
 final class FocusedDoneSettleTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: .defaultWorkspace(),
             liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     private func firstPane(_ store: WorkspaceStore) throws -> PaneID {

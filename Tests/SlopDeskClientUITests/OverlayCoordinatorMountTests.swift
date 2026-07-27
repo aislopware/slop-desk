@@ -19,6 +19,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     /// injected. No socket, no video — the fake session never opens one.
     private func makeCoordinator() -> (OverlayCoordinator, WorkspaceStore) {
         let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        store.attachLoopbackWorkspaceDocument()
         let overlay = OverlayCoordinator(store: store)
         overlay.connectionTarget = { store.committedConnectionTarget ?? .default }
         return (overlay, store)

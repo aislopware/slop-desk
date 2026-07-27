@@ -154,6 +154,7 @@ final class ClaudeStatusWiringTests: XCTestCase {
     /// this test would then see extra mutations. Driven through the real store sink + the session fold.
     func testRepeatedIdenticalStatusEmitsOnlyOnce() throws {
         let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
+        store.attachLoopbackWorkspaceDocument()
         let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
 
         // Track every DISTINCT value paneAgentStatus took for this pane (one entry per real mutation).
@@ -187,6 +188,7 @@ final class ClaudeStatusWiringTests: XCTestCase {
     /// `AgentStatusDot`'s live source.
     func testSetAgentStatusFeedsRollupDots() throws {
         let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
+        store.attachLoopbackWorkspaceDocument()
         // The default tree has one session with one tab + one leaf.
         let sessionID = try XCTUnwrap(store.tree.sessions.first?.id)
         let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
@@ -212,6 +214,7 @@ final class ClaudeStatusWiringTests: XCTestCase {
     /// pane next to a `.needsPermission` pane rolls up to `.needsPermission`.
     func testRollupSurfacesMostUrgentAcrossPanes() throws {
         let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
+        store.attachLoopbackWorkspaceDocument()
         let sessionID = try XCTUnwrap(store.tree.sessions.first?.id)
         let first = try XCTUnwrap(store.tree.allPaneIDs().first)
         // Split to get a second pane in the same tab.

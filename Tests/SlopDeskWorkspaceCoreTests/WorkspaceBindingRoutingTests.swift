@@ -13,12 +13,14 @@ import XCTest
 final class WorkspaceBindingRoutingTests: XCTestCase {
     /// A `.tree`-live store backed by the recording (terminal-model carrying) session seam.
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: .defaultWorkspace(),
             liveModel: .tree,
             makeSession: { seed in RecordingTerminalPaneSession(seed.spec) },
             liveVideoCap: 2,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     /// The active pane's recording session.
@@ -124,6 +126,7 @@ final class WorkspaceBindingRoutingTests: XCTestCase {
             makeSession: { seed in RecordingTerminalPaneSession(seed.spec) },
             liveVideoCap: 2,
         )
+        store.attachLoopbackWorkspaceDocument()
         var fired = 0
         WorkspaceBindingRegistry.route(.pinWindow, to: store, togglePinWindow: { fired += 1 })
         XCTAssertEqual(fired, 1, "the canvas path also forwards Pin Window to the closure")

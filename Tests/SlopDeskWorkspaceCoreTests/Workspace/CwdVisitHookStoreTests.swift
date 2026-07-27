@@ -15,13 +15,15 @@ final class CwdVisitHookStoreTests: XCTestCase {
     // MARK: - Fixtures
 
     private func makeTreeStore(restoringTree: TreeWorkspace) -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: restoringTree,
             liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
             persistence: nil,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     /// A single-session, single-pane workspace whose pane carries `cwd` as its last-known cwd.

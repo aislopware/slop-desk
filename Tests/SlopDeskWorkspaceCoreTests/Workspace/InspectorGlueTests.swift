@@ -470,6 +470,7 @@ final class InspectorGlueTests: XCTestCase {
                 },
             )
         })
+        store.attachLoopbackWorkspaceDocument()
         store.reconcileTree()
         let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
         let session = try XCTUnwrap(store.handle(for: paneID) as? LivePaneSession)

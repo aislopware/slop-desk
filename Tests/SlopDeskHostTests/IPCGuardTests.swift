@@ -261,7 +261,7 @@ final class IPCGuardTests: XCTestCase {
             id: "t",
             method: method,
             params: params,
-            server: HostServer(port: 0),
+            server: HostServer(port: 0, workspaceDocEnabled: false),
             guards: guards,
             foregroundName: foregroundName,
         )

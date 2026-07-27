@@ -87,6 +87,7 @@ final class RedialDetachedPaneTests: XCTestCase {
                 )
             },
         )
+        store.attachLoopbackWorkspaceDocument()
         return (store, left, right)
     }
 

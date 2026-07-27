@@ -14,7 +14,9 @@ final class OverviewTests: XCTestCase {
     }
 
     private func makeStore(restoring: Workspace? = nil) -> WorkspaceStore {
-        WorkspaceStore(restoring: restoring, makeSession: { seed in FakePaneSession(seed.spec) })
+        let store = WorkspaceStore(restoring: restoring, makeSession: { seed in FakePaneSession(seed.spec) })
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     // MARK: - Geometry

@@ -22,22 +22,26 @@ final class PeekReplyTests: XCTestCase {
     // MARK: - Fixtures
 
     private func makeTreeStore() -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: .defaultWorkspace(),
             liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     /// A store whose panes carry REAL terminal models (so `peekContent` recent-lines resolve).
     private func makeTerminalStore() -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: .defaultWorkspace(),
             liveModel: .tree,
             makeSession: { seed in RecordingTerminalPaneSession(seed.spec) },
             liveVideoCap: 2,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     private func route(_ action: WorkspaceAction, _ store: WorkspaceStore) {

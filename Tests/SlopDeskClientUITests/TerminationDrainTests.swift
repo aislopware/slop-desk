@@ -62,6 +62,7 @@ final class TerminationDrainTests: XCTestCase {
             fakes.append(fake)
             return fake
         })
+        store.attachLoopbackWorkspaceDocument()
         store.reconcileTree()
         store.splitActivePane(axis: .horizontal, kind: .terminal, leading: false, launchGrace: .zero)
         XCTAssertEqual(fakes.count, 2, "two live panes materialized")

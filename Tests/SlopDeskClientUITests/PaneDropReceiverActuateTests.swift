@@ -22,7 +22,9 @@ import XCTest
 final class PaneDropReceiverActuateTests: XCTestCase {
     /// A live tree-model store whose sessions are headless doubles (no socket).
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     /// The set of pane ids that are DIRECT `.leaf` children of the split node that directly contains `id` as a

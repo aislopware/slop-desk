@@ -41,6 +41,7 @@ final class HostServerHookSinkStableKeyTests: XCTestCase {
             agentHookListener: listener,
             detachEnabled: true,
             resumeOnRecovery: true,
+            workspaceDocEnabled: false,
         )
     }
 

@@ -10,12 +10,14 @@ import XCTest
 @MainActor
 final class LaunchPresetStoreTests: XCTestCase {
     private func treeStore() -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: TreeWorkspace.defaultWorkspace(),
             liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             persistence: nil,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     // MARK: Defaults seeded

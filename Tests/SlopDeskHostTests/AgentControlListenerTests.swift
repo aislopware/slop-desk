@@ -550,7 +550,7 @@ final class AgentControlListenerTests: XCTestCase {
     /// serve the control verb dispatch without touching the network). We test only the pure
     /// dispatch layer; the server is never `start()`'d in this test file.
     private func makeNullServer() -> HostServer {
-        HostServer(port: 0)
+        HostServer(port: 0, workspaceDocEnabled: false)
     }
 
     private func parseResponseObject(_ line: String) -> [String: Any]? {

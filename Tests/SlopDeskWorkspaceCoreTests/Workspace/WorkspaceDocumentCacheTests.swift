@@ -69,6 +69,7 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
             documentCache: cache,
             cacheHostKey: hostKey,
         )
+        first.attachLoopbackWorkspaceDocument()
         first.setSpawnCwd(project, for: pane)
         first.saveImmediately()
 
@@ -105,6 +106,7 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
             documentCache: cache,
             cacheHostKey: hostKey,
         )
+        first.attachLoopbackWorkspaceDocument()
         first.setSpawnCwd(project, for: pane)
         first.saveImmediately()
 
@@ -119,6 +121,7 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
             documentCache: cache,
             cacheHostKey: "other-mac:7420",
         )
+        second.attachLoopbackWorkspaceDocument()
         XCTAssertNil(log.spawnCwd(for: pane), "another host's folders must not seed this one")
         XCTAssertNil(second.paneCwd(for: pane))
     }
@@ -137,6 +140,7 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
             makeSession: { FakePaneSession($0.spec) },
             documentCache: cache,
         )
+        store.attachLoopbackWorkspaceDocument()
         store.setSpawnCwd(project, for: pane)
         store.saveImmediately()
 
@@ -165,6 +169,7 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
             documentCache: cache,
             cacheHostKey: hostKey,
         )
+        store.attachLoopbackWorkspaceDocument()
         store.setLastKnownCwd(project, for: pane)
         store.saveImmediately()
         XCTAssertFalse(cache.load(hostKey: hostKey).isEmpty, "the seed host's picture is written")
@@ -202,6 +207,7 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
             documentCache: cache,
             cacheHostKey: hostKey,
         )
+        first.attachLoopbackWorkspaceDocument()
         first.setLastKnownCwd(project, for: pane)
         first.setProjectKey(project, for: pane)
         first.saveImmediately()
@@ -213,6 +219,7 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
             documentCache: cache,
             cacheHostKey: hostKey,
         )
+        second.attachLoopbackWorkspaceDocument()
         XCTAssertEqual(second.paneCwd(for: pane), project, "the row has no folder name to show")
         XCTAssertEqual(second.projectKey(for: pane), project, "By-Project collapses to one bucket")
     }
@@ -232,6 +239,7 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
             documentCache: cache,
             cacheHostKey: hostKey,
         )
+        first.attachLoopbackWorkspaceDocument()
         first.setLastKnownCwd(project, for: pane)
         first.saveImmediately()
 
@@ -242,6 +250,7 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
             documentCache: cache,
             cacheHostKey: hostKey,
         )
+        second.attachLoopbackWorkspaceDocument()
         XCTAssertEqual(second.paneCwd(for: pane), project)
 
         // A host frame carrying a different cwd for the same pane.
@@ -288,6 +297,7 @@ final class WorkspaceDocumentCacheTests: XCTestCase {
                 return FakePaneSession(seed.spec)
             },
         )
+        store.attachLoopbackWorkspaceDocument()
         store.setSpawnCwd(project, for: pane)
         let closing = try XCTUnwrap(store.tree.tab(containing: pane))
         store.closeTab(closing.1)

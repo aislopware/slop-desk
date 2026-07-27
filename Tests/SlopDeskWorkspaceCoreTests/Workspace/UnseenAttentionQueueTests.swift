@@ -12,7 +12,9 @@ import XCTest
 @MainActor
 final class UnseenAttentionQueueTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
+        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     /// A store with a second, UNFOCUSED pane: split, then re-focus the original leaf.

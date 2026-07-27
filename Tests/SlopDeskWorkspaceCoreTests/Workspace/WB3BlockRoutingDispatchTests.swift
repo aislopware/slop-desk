@@ -19,12 +19,14 @@ final class WB3BlockRoutingDispatchTests: XCTestCase {
 
     /// A `.tree`-live store backed by the recording (terminal-model-carrying) session seam.
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: .defaultWorkspace(),
             liveModel: .tree,
             makeSession: { seed in RecordingTerminalPaneSession(seed.spec) },
             liveVideoCap: 2,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     /// The active pane's recording session.

@@ -134,6 +134,7 @@ final class WorkspaceLayoutTests: XCTestCase {
             ),
             makeSession: { seed in FakePaneSession(seed.spec) },
         )
+        store.attachLoopbackWorkspaceDocument()
         return (store, [a0, a1, a2])
     }
 
@@ -259,6 +260,7 @@ final class WorkspaceLayoutTests: XCTestCase {
             ),
             makeSession: { seed in FakePaneSession(seed.spec) },
         )
+        store.attachLoopbackWorkspaceDocument()
         let hostA = FakeHost(), hostB = FakeHost()
         store.focusCoordinator.register(hostA, for: pA)
         store.focusCoordinator.register(hostB, for: pB)

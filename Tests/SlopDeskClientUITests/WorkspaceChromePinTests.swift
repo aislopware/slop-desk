@@ -57,6 +57,7 @@ final class WorkspaceChromePinTests: XCTestCase {
     /// so the ✓ never lights and `pinned == true` below fails.
     func testToggledStateLightsPinRowWhenPinned() {
         let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        store.attachLoopbackWorkspaceDocument()
         let chrome = WorkspaceChromeState()
         let pinItem = PaletteItem(
             id: "action.pinWindow", icon: "pin", title: "Pin Window",

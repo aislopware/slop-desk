@@ -37,6 +37,7 @@ final class DispatcherKeyWindowGateTests: XCTestCase {
     /// destructive close observable as a leaf-count drop.
     private func makeTwoLeafStore() -> WorkspaceStore {
         let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        store.attachLoopbackWorkspaceDocument()
         WorkspaceBindingRegistry.route(.splitRight, to: store)
         XCTAssertEqual(store.tree.allPaneIDs().count, 2, "precondition: the split gave the tab two leaves")
         return store

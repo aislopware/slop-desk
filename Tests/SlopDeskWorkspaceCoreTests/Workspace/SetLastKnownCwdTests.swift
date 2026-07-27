@@ -9,12 +9,14 @@ import XCTest
 @MainActor
 final class SetLastKnownCwdTests: XCTestCase {
     private func makeTreeStore(restoringTree: TreeWorkspace) -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: restoringTree,
             liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     private func singlePaneWorkspace(_ pane: PaneID) -> TreeWorkspace {

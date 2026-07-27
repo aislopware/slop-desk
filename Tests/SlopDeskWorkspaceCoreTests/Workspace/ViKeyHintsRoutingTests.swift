@@ -17,10 +17,12 @@ import XCTest
 final class ViKeyHintsRoutingTests: XCTestCase {
     /// A `.tree`-live store whose active pane carries a REAL terminal model.
     private func makeRecordingStore() -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: .defaultWorkspace(), liveModel: .tree,
             makeSession: { seed in RecordingTerminalPaneSession(seed.spec) }, liveVideoCap: 2,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     /// The live terminal model behind the active pane.

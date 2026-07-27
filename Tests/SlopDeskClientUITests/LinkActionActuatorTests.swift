@@ -24,7 +24,9 @@ final class LinkActionActuatorTests: XCTestCase {
     // MARK: - Fixtures
 
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     private func urlLink(_ raw: String = "https://example.com") -> DetectedLink {

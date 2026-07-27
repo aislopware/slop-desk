@@ -17,7 +17,9 @@ import XCTest
 final class RailRowBuilderTests: XCTestCase {
     /// A headless tree-model store over the fake session (mirrors `OverlayCoordinatorMountTests`).
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     /// The pane id of the row at `index` in the freshly-built rail (the rows are rebuilt each call so a

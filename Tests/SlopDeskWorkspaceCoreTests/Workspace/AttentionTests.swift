@@ -21,12 +21,14 @@ final class AttentionTests: XCTestCase {
     // MARK: - Fixtures
 
     private func makeTreeStore(restoringTree: TreeWorkspace = .defaultWorkspace()) -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: restoringTree,
             liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     private func route(_ action: WorkspaceAction, _ store: WorkspaceStore) {

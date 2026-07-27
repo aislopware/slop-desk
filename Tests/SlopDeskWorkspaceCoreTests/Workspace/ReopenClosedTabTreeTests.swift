@@ -18,12 +18,14 @@ final class ReopenClosedTabTreeTests: XCTestCase {
 
     /// A `.tree`-live store seeded from `restoringTree`, backed by the `FakePaneSession` seam.
     private func makeTreeStore(restoringTree: TreeWorkspace) -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: restoringTree,
             liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     /// A single-session workspace with one single-leaf tab per `title` (each leaf a terminal pane whose

@@ -24,12 +24,14 @@ final class TreeCommandRoutingTests: XCTestCase {
     /// A `.tree`-live store seeded from `restoringTree` (default: one terminal pane), backed by the
     /// `FakePaneSession` seam — so init reconciles the TREE and the routing then drives it.
     private func makeTreeStore(restoringTree: TreeWorkspace = .defaultWorkspace()) -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: restoringTree,
             liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     /// The tree's leaf ids in DFS order.

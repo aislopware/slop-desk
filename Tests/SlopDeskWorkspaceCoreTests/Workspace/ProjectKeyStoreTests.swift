@@ -37,6 +37,7 @@ final class ProjectKeyStoreTests: XCTestCase {
             liveVideoCap: 2,
             persistence: nil,
         )
+        store.attachLoopbackWorkspaceDocument()
         // The per-pane FACTS ride the mirror, not the spec — seeded here the way the control push does.
         for (i, pane) in panes.enumerated() {
             store.workspaceMirror.writeFastPath(
@@ -137,6 +138,7 @@ final class ProjectKeyStoreTests: XCTestCase {
             restoringTree: TreeWorkspace(sessions: [session], activeSessionID: session.id),
             liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) }, liveVideoCap: 2, persistence: nil,
         )
+        store.attachLoopbackWorkspaceDocument()
         // Past the write guard, the way a pre-guard persisted value would have arrived.
         store.workspaceMirror.writeFastPath(pane: a.raw, field: WorkspacePaneField.cwd, string: poison)
         XCTAssertNil(store.paneProjectKey(a), "a plugin-looking cwd is not a project key ⇒ Other bucket")

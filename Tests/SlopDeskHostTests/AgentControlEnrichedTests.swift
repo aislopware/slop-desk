@@ -32,7 +32,7 @@ final class AgentControlEnrichedTests: XCTestCase {
 
     /// A server with `session` registered in the live map, addressable by its pane UUID.
     private func makeServer(with session: MuxChannelSession) -> HostServer {
-        let server = HostServer(port: 0)
+        let server = HostServer(port: 0, workspaceDocEnabled: false)
         server.registerMuxSessionForTesting(
             session, key: MuxSessionKey(connectionID: UUID(), channelID: 1),
         )

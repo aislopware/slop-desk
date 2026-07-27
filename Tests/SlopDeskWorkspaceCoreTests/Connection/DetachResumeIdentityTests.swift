@@ -192,6 +192,7 @@ final class DetachResumeIdentityTests: XCTestCase {
                 )
             },
         )
+        store.attachLoopbackWorkspaceDocument()
 
         let connection = (store.handle(for: paneID) as? LivePaneSession)?.connection
         return SessionHarness(store: store, connection: connection)

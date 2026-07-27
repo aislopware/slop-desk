@@ -37,11 +37,13 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
     /// Builds a store with the ``FakePaneSession`` seam (NEVER a real client/host). `restoring` lets a
     /// test pin a known canvas; default is the one-terminal-pane default workspace.
     private func makeStore(restoring: Workspace? = nil, liveVideoCap: Int = 2) -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoring: restoring,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: liveVideoCap,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     /// All pane ids on the single canvas, in z-order (the reconcile diff domain) — the source of truth

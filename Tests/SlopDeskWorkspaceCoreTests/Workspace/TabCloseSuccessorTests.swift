@@ -103,13 +103,15 @@ final class TabCloseSuccessorTests: XCTestCase {
     // MARK: - Store wiring
 
     private func makeStore(_ tree: TreeWorkspace) -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: tree,
             liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
             persistence: nil,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     /// One session whose tabs each hold a single pane in `project` (the sectioning source). The keys

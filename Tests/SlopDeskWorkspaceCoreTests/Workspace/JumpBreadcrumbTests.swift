@@ -12,12 +12,14 @@ final class JumpBreadcrumbTests: XCTestCase {
     // MARK: - Fixtures
 
     private func makeTreeStore(restoringTree: TreeWorkspace) -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: restoringTree,
             liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     /// One session ("Local") with one single-leaf tab per title, first tab active — the same shape the

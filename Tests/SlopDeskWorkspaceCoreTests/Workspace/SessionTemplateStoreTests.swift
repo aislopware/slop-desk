@@ -10,12 +10,14 @@ import XCTest
 @MainActor
 final class SessionTemplateStoreTests: XCTestCase {
     private func treeStore() -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: TreeWorkspace.defaultWorkspace(),
             liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             persistence: nil,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     // MARK: Defaults seeded
@@ -168,6 +170,7 @@ final class SessionTemplateStoreTests: XCTestCase {
             makeSession: { seed in FakePaneSession(seed.spec) },
             devicePreferences: prefsStore,
         )
+        store.attachLoopbackWorkspaceDocument()
         store.splitActivePaneDefault(axis: .vertical)
         store.saveCurrentSessionAsTemplate(name: "Persisted", symbol: "star")
 

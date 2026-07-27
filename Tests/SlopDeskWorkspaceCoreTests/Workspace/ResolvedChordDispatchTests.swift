@@ -21,12 +21,14 @@ final class ResolvedChordDispatchTests: XCTestCase {
     }
 
     private func makeTreeStore() -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: .defaultWorkspace(),
             liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     private func leaves(_ store: WorkspaceStore) -> [PaneID] { store.tree.allPaneIDs() }

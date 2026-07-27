@@ -20,12 +20,14 @@ import XCTest
 @MainActor
 final class BusyDotThresholdTests: XCTestCase {
     private func makeTreeStore() -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: .defaultWorkspace(),
             liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 5,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     private func activePane(_ store: WorkspaceStore) throws -> PaneID {

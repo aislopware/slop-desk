@@ -17,7 +17,9 @@ import XCTest
 @MainActor
 final class SidebarGitAndRenameStoreTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
+        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     private func firstPane(_ store: WorkspaceStore) throws -> PaneID {

@@ -60,7 +60,7 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
     /// has no PATH-1 connection, and the default workspace's terminal pane is lazy-connect (no view
     /// ever triggers `connect()` in a headless store test).
     private func makeLiveStore(devicePreferences: DevicePreferencesStore? = nil) -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             liveModel: .tree,
             makeSession: { seed in
                 LivePaneSession.make(
@@ -71,6 +71,8 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
             },
             devicePreferences: devicePreferences,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     private func remoteWindowModel(in store: WorkspaceStore, for id: PaneID) throws -> RemoteWindowModel {

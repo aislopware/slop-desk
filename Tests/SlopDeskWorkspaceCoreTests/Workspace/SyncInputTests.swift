@@ -20,12 +20,14 @@ final class SyncInputTests: XCTestCase {
 
     /// A `.tree`-live store with the default single-pane workspace, backed by `FakePaneSession`.
     private func makeTreeStore(restoringTree: TreeWorkspace = .defaultWorkspace()) -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: restoringTree,
             liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     /// The DFS-ordered leaf ids for `store`.

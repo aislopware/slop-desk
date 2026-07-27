@@ -16,12 +16,14 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
     // MARK: - Fixtures
 
     private func makeTreeStore(restoringTree: TreeWorkspace = .defaultWorkspace()) -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: restoringTree,
             liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 5,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     private func activePane(_ store: WorkspaceStore) -> PaneID? {

@@ -227,6 +227,7 @@ final class CopyModeTests: XCTestCase {
             makeSession: { seed in RecordingTerminalPaneSession(seed.spec) },
             liveVideoCap: 2,
         )
+        store.attachLoopbackWorkspaceDocument()
         let active = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
         let session = try XCTUnwrap(store.handle(for: active) as? RecordingTerminalPaneSession)
         let model = try XCTUnwrap(session.terminalModel)

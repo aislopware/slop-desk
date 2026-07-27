@@ -71,13 +71,15 @@ final class WorkspaceStoreLiveTreeTests: XCTestCase {
         restoringTree: TreeWorkspace?,
         saveDebounce: Duration = .milliseconds(600),
     ) -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: restoringTree,
             liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             persistence: persistence,
             saveDebounce: saveDebounce,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     private func registryIDs(_ store: WorkspaceStore) -> Set<PaneID> {

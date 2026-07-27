@@ -14,7 +14,9 @@ import XCTest
 final class NavigatorColumnSelectTests: XCTestCase {
     /// A headless tree-model store over the fake session (mirrors `RailRowBuilderTests`).
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     /// Builds a two-tab session where TAB B (index 1) holds a split pane, then activates TAB A so tab B is a

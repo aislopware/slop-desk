@@ -19,7 +19,9 @@ import XCTest
 @MainActor
 final class CompletionEpochTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
+        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     private func applySnapshot(
@@ -217,6 +219,7 @@ final class CompletionEpochTests: XCTestCase {
             restoringTree: restored, liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
         )
+        returning.attachLoopbackWorkspaceDocument()
         returning.completionSeen.load = { persisted }
         let returningPane = paneID
         try returning.focusPaneTree(XCTUnwrap(returning.tree.allPaneIDs().first { $0 != returningPane }))
@@ -232,6 +235,7 @@ final class CompletionEpochTests: XCTestCase {
             restoringTree: restored, liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
         )
+        elsewhere.attachLoopbackWorkspaceDocument()
         elsewhere.completionSeen.load = { persisted }
         let elsewherePane = paneID
         try elsewhere.focusPaneTree(XCTUnwrap(elsewhere.tree.allPaneIDs().first { $0 != elsewherePane }))

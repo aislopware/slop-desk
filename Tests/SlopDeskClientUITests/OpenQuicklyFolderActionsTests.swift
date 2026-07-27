@@ -13,6 +13,7 @@ import XCTest
 final class OpenQuicklyFolderActionsTests: XCTestCase {
     func testFolderActionsIncludeSplitRightAndDown() {
         let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        store.attachLoopbackWorkspaceDocument()
 
         let titles = OpenQuicklyView.folderRowActions(
             path: "/Users/me/proj", store: store, model: nil, folders: nil,

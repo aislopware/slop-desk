@@ -53,6 +53,7 @@ final class SlateSnapshotRender: XCTestCase {
         }
 
         let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
+        store.attachLoopbackWorkspaceDocument()
         let overlay = OverlayCoordinator(store: store)
         overlay.openPalette()
         overlay.paletteQuery = "split" // a typed query so the fzf highlight runs render
@@ -251,6 +252,7 @@ final class SlateSnapshotRender: XCTestCase {
             liveVideoCap: 2,
             persistence: nil,
         )
+        store.attachLoopbackWorkspaceDocument()
         for (pane, cwd) in paneCwds { store.setLastKnownCwd(cwd, for: pane) }
         store.projectGitSummary[key] = PaneGitSummary(
             hasRepo: true, branch: "main", ahead: 2, behind: 1, changedCount: 4, staged: 1, modified: 3,
@@ -313,6 +315,7 @@ final class SlateSnapshotRender: XCTestCase {
             liveVideoCap: 2,
             persistence: nil,
         )
+        store.attachLoopbackWorkspaceDocument()
         for (pane, cwd) in paneCwds { store.setLastKnownCwd(cwd, for: pane) }
         let panes = tabs.compactMap(\.activePane)
         if panes.count >= 5 {

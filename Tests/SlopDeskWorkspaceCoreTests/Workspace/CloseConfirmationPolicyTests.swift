@@ -84,13 +84,15 @@ final class CloseConfirmationStoreTests: XCTestCase {
     // MARK: - Fixtures
 
     private func makeTreeStore(restoringTree: TreeWorkspace) -> WorkspaceStore {
-        WorkspaceStore(
+        let store = WorkspaceStore(
             restoringTree: restoringTree,
             liveModel: .tree,
             makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
             persistence: nil,
         )
+        store.attachLoopbackWorkspaceDocument()
+        return store
     }
 
     /// A single-session workspace whose active session holds `tabCount` single-pane tabs (each a distinct
