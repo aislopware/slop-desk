@@ -230,13 +230,14 @@ public final class HostServer: @unchecked Sendable {
     /// ``HostTransport``'s `reaperTask`).
     private var journalSweepTask: Task<Void, Never>?
 
-    /// `SLOPDESK_WORKSPACE_DOC` — the workspace-document channel (docs/45). **Default-OFF** (`== "1"`
-    /// to enable) during bake-in; it flips to the default-ON idiom once hardware-proven.
+    /// `SLOPDESK_WORKSPACE_DOC` — the workspace-document channel (docs/45). **Default-ON**
+    /// (`!= "0"` to disable).
     ///
-    /// With it off, `channelClass == 1` is refused and the retained type-21/26/27/32/33/34/36 edge
-    /// sinks ARE the fallback — they still drive the UI exactly as they do today. That is the whole
-    /// reason this ships as an addition rather than a replacement: the old path is not touched, so
-    /// the flag is a real off switch and not a half-migration.
+    /// With it off, `channelClass == 1` is refused. The retained type-21/26/27/32/33/34/36 edge sinks
+    /// still push every per-pane fact, but the LAYOUT does not come back: a client renders its tree
+    /// from the document and a refusal leaves it with none. So this default and
+    /// `WorkspaceChannelClient.isEnabledByDefault` move together — turning it off here without
+    /// turning it off there gives that client a blank window and no error.
     public let workspaceDocEnabled: Bool
 
     /// The host's single copy of the workspace. `nil` when ``workspaceDocEnabled`` is false.
@@ -309,10 +310,10 @@ public final class HostServer: @unchecked Sendable {
         self.blocksEnabled = blocksEnabled
         self.scrollbackSweepInterval = scrollbackSweepInterval
         self.workspaceReconcileInterval = workspaceReconcileInterval
-        // Default-OFF idiom (`== "1"`), unlike most flags here: the document is additive and unproven
-        // on hardware, and the edge sinks it will eventually replace are all still in place.
+        // Default-ON idiom (`!= "0"`): the client's layout is this document, so a host that does not
+        // serve it is a host a client cannot render.
         let wantsDocument = workspaceDocEnabled
-            ?? (ProcessInfo.processInfo.environment["SLOPDESK_WORKSPACE_DOC"] == "1")
+            ?? (ProcessInfo.processInfo.environment["SLOPDESK_WORKSPACE_DOC"] != "0")
         self.workspaceDocEnabled = wantsDocument
         // A fresh `epoch` per HostServer instance — which is per hostd start. Without it a restarted
         // daemon counts `stateNum` back up from 1 and a returning client one behind would accept a

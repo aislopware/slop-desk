@@ -24,15 +24,24 @@ final class CompletionEpochTests: XCTestCase {
         return store
     }
 
+    /// Publishes `record` as a host snapshot, carrying the store's CURRENT topology alongside it.
+    ///
+    /// The topology is not decoration. A snapshot under a fresh epoch resets the mirror, and the
+    /// store's layout IS the mirror — so a payload of liveness alone would leave a workspace with no
+    /// panes, and a marker about a pane that does not exist is not a test of anything. A real host
+    /// republishes its whole document on every restart, which is exactly this.
     private func applySnapshot(
         _ record: PaneLiveness, to store: WorkspaceStore, epoch: UUID = UUID(), stateNum: Int64 = 1,
     ) {
+        var state = HostWorkspaceState()
+        state.write(topology: WorkspaceTopology(tree: store.tree))
+        for entry in record.entries() { state.set(entry.key, entry.value) }
         store.workspaceMirror.apply(
             kind: WorkspaceEventKind.snapshot.rawValue,
             epoch: epoch,
             baseStateNum: 0,
             newStateNum: stateNum,
-            payload: WorkspaceStateCodec.encodeSnapshot(HostWorkspaceState(record.entries())),
+            payload: WorkspaceStateCodec.encodeSnapshot(state),
         )
     }
 

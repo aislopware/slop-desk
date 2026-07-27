@@ -134,13 +134,17 @@ final class SessionTemplateStoreTests: XCTestCase {
     }
 
     /// The documented no-op: with NO active session, `saveCurrentSessionAsTemplate` must NOT append (the
-    /// `guard let session = tree.activeSession else { return }` at WorkspaceStore+Templates.swift:48).
-    /// `replaceTree` (no re-normalize) lets the test reach the empty-sessions state the public open/close
-    /// paths re-seed away from.
+    /// `guard let session = tree.activeSession else { return }` in `WorkspaceStore+Templates`).
+    ///
+    /// `WorkspaceTopology(entries:)` answers `nil` for a session-less document, so a store whose
+    /// document holds no sessions has no topology at all — which is the same "renders nothing" state
+    /// by a different route, and the closest one that is actually reachable. Reaching it by resetting
+    /// the mirror rather than by grafting an empty tree is deliberate: the graft would publish a
+    /// topology the codec cannot carry back.
     func testSaveCurrentSessionWithNoActiveSessionIsNoOp() {
         let store = treeStore()
         let templatesBefore = store.sessionTemplates.count
-        store.replaceTree(TreeWorkspace(sessions: [], activeSessionID: nil))
+        store.workspaceMirror.reset()
         XCTAssertNil(store.tree.activeSession, "precondition: no active session")
 
         store.saveCurrentSessionAsTemplate(name: "Should Not Append", symbol: "x")

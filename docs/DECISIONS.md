@@ -3580,3 +3580,35 @@ client's `persistence: nil` under automation protected the developer's `workspac
 nothing once the client reshapes the HOST. Fresh, not merely private: `adoptWorkspace` answers
 `rejectedStale` to a host that already has a workspace, so a reused dir would keep a stale layout and
 the screenshot would prove the wrong thing.
+
+### 6. What the cutover found once every mutator went through the applier
+
+Six client rules turned out to live in the client. Each is now the applier's, because a client cannot
+correct the host afterwards:
+
+**A cascaded-away tab is as reopenable as a closed one.** `closeTab` filed the whole tab onto the ring;
+`closePane` did not — so closing a tab's SOLE leaf silently cost the user their ⇧⌘T. It captures now,
+through the same helper, when the pane it is asked to close is its tab's only leaf.
+
+**Closing a BACKGROUND tab returns the session's own active tab.** Ahead of the MRU ring, because the
+ring's head is where the user was BEFORE, which is not where they are now. Without it, dismissing a tab
+you are not looking at moves your selection — the bug the index clamp used to cause.
+
+**A closed tab outlives its session.** A session emptied by closing its last tab takes its id with it,
+while the tabs it lost still hold the only copy of their panes' specs. So ingestion requires the
+`tab/sessionID` back-pointer to be PRESENT but no longer to resolve, and `reopenClosedTab` lands an
+orphan in whichever session is active rather than refusing it.
+
+**`adoptWorkspace` is staged optimistically.** `pristine` is a fact about the HOST's own file and no
+cell carries it, so a client asking `WorkspaceIntentApplier` "would this be accepted" can only answer
+by assuming yes. `WorkspaceMirrorBox.stageIntent` therefore passes `documentIsPristine: true` and lets
+a `rejectedStale` snap the patch away — which is what the pending layer is for. Refusing locally
+instead would make op 0 unsendable by construction, and the automation bootstrap is its only caller.
+
+**`canMutate` requires `.live`, not merely a channel.** The mirror is SEEDED with the restored tree at
+`init`, so `topology != nil` the moment the store exists — a bootstrap armed on "there is a topology"
+would fire before the subscription and be dropped by `send(intent:)`'s own guard, consuming itself.
+
+**A tab with no active pane is unrepresentable.** The document's tab decoder repairs a missing focus to
+the tab's first leaf. So the client's "looking at no pane" report is reached by having no workspace at
+all — refused, or not yet subscribed — which is the state a client is actually ever in.

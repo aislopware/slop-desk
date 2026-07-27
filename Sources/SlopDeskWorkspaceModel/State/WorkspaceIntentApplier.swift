@@ -223,6 +223,12 @@ public enum WorkspaceIntentApplier {
         // two different tabs, and the index clamp underneath reintroduces the cross-project jump.
         let owningTab = next.tree.tab(containing: paneID)
         let successor = owningTab.flatMap { successorAfterClosing($0.1, in: next, projectKey) }
+        // A pane that is its tab's SOLE leaf takes the whole tab with it, and a cascaded-away tab is
+        // as reopenable as an explicitly closed one — the user closed the same thing either way. The
+        // capture happens BEFORE the op, because afterwards there is no tab left to record.
+        if let removed = owningTab?.1, soleLeaf(of: removed, in: next) == paneID {
+            next = capturing(tab: removed, in: next)
+        }
         next.tree = WorkspaceTreeOps.closePane(paneID, tabSuccessor: successor, in: next.tree)
         return accept(pruned(next))
     }
@@ -235,25 +241,41 @@ public enum WorkspaceIntentApplier {
         guard let raw = reader.uuid(), reader.isAtEnd else { return .rejectedInvalid }
         let tabID = TabID(raw: raw)
         guard hasTab(tabID, in: topology) else { return .rejectedNotFound }
-        var next = topology
-        // Kept WHOLE, not as an id: ⇧⌘T has to put the split tree and every pane's spec back, and a
-        // `TabID` alone cannot rebuild either.
-        if let session = next.tree.sessions.first(where: { $0.tabs.contains { $0.id == tabID } }),
-           let tab = session.tabs.first(where: { $0.id == tabID })
-        {
-            var specs: [PaneID: PaneSpec] = [:]
-            for paneID in tab.allPaneIDs() { specs[paneID] = session.specs[paneID] }
-            next.closedTabs.append(WorkspaceTopology.ClosedTab(
-                sessionID: session.id, tab: tab, specs: specs,
-            ))
-            if next.closedTabs.count > WorkspaceTopology.closedTabRingCap {
-                next.closedTabs.removeFirst(next.closedTabs.count - WorkspaceTopology.closedTabRingCap)
-            }
-        }
+        var next = capturing(tab: tabID, in: topology)
         next.tree = WorkspaceTreeOps.closeTab(
             tabID, successor: successorAfterClosing(tabID, in: next, projectKey), in: next.tree,
         )
         return accept(pruned(next))
+    }
+
+    /// Files `tabID` whole onto the reopen ring — its split tree, its title, and the ``PaneSpec`` of
+    /// every leaf in it.
+    ///
+    /// Kept WHOLE, not as an id: ⇧⌘T has to put the split tree and every pane's spec back, and a
+    /// `TabID` alone cannot rebuild either. Bounded, because a ring that grew without limit would keep
+    /// every pane the user ever closed alive in the document, on every client, forever.
+    private static func capturing(tab tabID: TabID, in topology: WorkspaceTopology) -> WorkspaceTopology {
+        var next = topology
+        guard let session = next.tree.sessions.first(where: { $0.tabs.contains { $0.id == tabID } }),
+              let tab = session.tabs.first(where: { $0.id == tabID })
+        else { return next }
+        var specs: [PaneID: PaneSpec] = [:]
+        for paneID in tab.allPaneIDs() { specs[paneID] = session.specs[paneID] }
+        next.closedTabs.append(WorkspaceTopology.ClosedTab(sessionID: session.id, tab: tab, specs: specs))
+        if next.closedTabs.count > WorkspaceTopology.closedTabRingCap {
+            next.closedTabs.removeFirst(next.closedTabs.count - WorkspaceTopology.closedTabRingCap)
+        }
+        return next
+    }
+
+    /// The pane `tabID` would be emptied by losing — i.e. its ONLY leaf. `nil` when the tab has
+    /// siblings and therefore survives.
+    private static func soleLeaf(of tabID: TabID, in topology: WorkspaceTopology) -> PaneID? {
+        guard let session = topology.tree.sessions.first(where: { $0.tabs.contains { $0.id == tabID } }),
+              let tab = session.tabs.first(where: { $0.id == tabID }),
+              tab.root.leafCount == 1
+        else { return nil }
+        return tab.allPaneIDs().first
     }
 
     /// The tab to select when `closing` goes away: the most recent OTHER tab in its session, else the
@@ -274,6 +296,13 @@ public enum WorkspaceIntentApplier {
     ) -> TabID? {
         guard let session = topology.tree.sessions.first(where: { $0.tabs.contains { $0.id == closing } })
         else { return nil }
+        // Closing a BACKGROUND tab returns the session's OWN active tab: the user dismissed something
+        // they were not looking at, and focus has no business moving. Ahead of the ring, because the
+        // ring's head is where they were BEFORE — which is not where they are now.
+        if session.tabs.indices.contains(session.activeTabIndex) {
+            let active = session.tabs[session.activeTabIndex].id
+            if active != closing { return active }
+        }
         let ring = topology.focusMRU[session.id] ?? []
         let live = Set(session.tabs.map(\.id))
         if let recent = ring.first(where: { $0 != closing && live.contains($0) }) { return recent }
@@ -582,11 +611,16 @@ public enum WorkspaceIntentApplier {
         // every client roll back a patch it never made.
         guard topology.closedTabs.indices.contains(arrayIndex) else { return .applied(topology) }
         let restored = topology.closedTabs[arrayIndex]
-        guard let index = topology.tree.sessions.firstIndex(where: { $0.id == restored.sessionID })
-        else { return .rejectedNotFound }
         var next = topology
         next.closedTabs.remove(at: arrayIndex)
-        next.tree = WorkspaceTreeOps.selectSession(restored.sessionID, in: next.tree)
+        // The owning session may have been closed while the record sat on the ring. The tab still
+        // holds live panes, so it lands in whichever session IS active rather than being refused —
+        // refusing would strand the only copy of those panes in a ring entry that was just consumed.
+        if next.tree.sessions.contains(where: { $0.id == restored.sessionID }) {
+            next.tree = WorkspaceTreeOps.selectSession(restored.sessionID, in: next.tree)
+        }
+        guard let index = next.tree.sessions.firstIndex(where: { $0.id == next.tree.activeSessionID })
+        else { return .rejectedNotFound }
         next.tree = WorkspaceTreeOps.insertTab(
             restored.tab,
             specs: restored.specs,

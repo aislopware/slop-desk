@@ -273,7 +273,7 @@ public extension WorkspaceBindingRegistry {
         case .closeWindow:
             if let close = toggles.closeWindow { close() } else { store.requestCloseWindow() }
         // Reopen the most recently closed TAB: pops the tree shell's
-        // in-memory ``WorkspaceStore/recentlyClosedTabs`` LIFO and re-inserts the tab. A no-op when the LIFO
+        // document's ``WorkspaceStore/closedTabRecords`` ring and re-inserts the tab. A no-op when the ring
         // is empty — live, never dead.
         case .reopenClosed: store.reopenLastClosedPane()
         // Synchronized input (Zellij ToggleActiveSyncTab)

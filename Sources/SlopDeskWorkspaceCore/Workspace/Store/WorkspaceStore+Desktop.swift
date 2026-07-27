@@ -19,10 +19,11 @@ public extension WorkspaceStore {
             _ = revealSatelliteWindow?(existing)
             return existing
         }
-        let (next, id) = WorkspaceTreeOps.mintDetachedPane(
-            spec: Self.desktopSpec(displayID: displayID), in: tree,
-        )
-        tree = next
+        let spec = Self.desktopSpec(displayID: displayID)
+        let id = PaneID()
+        guard stage(.spawnDetachedPane, WorkspaceIntentArgs.encode(
+            detachedPane: id, kind: spec.kind, video: spec.video,
+        )) else { return id }
         reconcileTree()
         return id
     }

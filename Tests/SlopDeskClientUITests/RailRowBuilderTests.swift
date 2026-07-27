@@ -873,7 +873,7 @@ final class RailRowBuilderTests: XCTestCase {
     }
 
     /// THE CROSS-LAYER INVARIANT. The sidebar sections pane ROWS here in ClientUI; the tab-close rule
-    /// sections TABs over in WorkspaceCore (`plannedTabSuccessor` → `projectGroupedTabOrder`). Both now run
+    /// sections TABs in the applier (`successorAfterClosing` → `projectGroupedTabOrder`). Both now run
     /// `TabOrderingEngine.bucketedByProject`, and the reason that matters is this: the order tabs first
     /// APPEAR in the rendered rail must equal the order the close rule walks — otherwise "focus the
     /// neighbouring tab" names a tab that is nowhere near the closed one on screen, which is exactly the

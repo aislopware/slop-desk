@@ -530,19 +530,18 @@ public enum OpenQuicklyModel {
         return out
     }
 
-    /// Build the **Recent** rows from the store's recently-closed-tab LIFO. `records` is the raw
-    /// `recentlyClosedTabs` array (appended OLDEST→newest); the rows are emitted NEWEST-first with `index` =
-    /// the LIFO distance from the top (`0` = most-recently closed — the one `reopenLastClosedPane()` pops).
-    /// The title is the closed tab's title (falling back to its active pane's live shell title); the
-    /// subtitle is that pane's cwd.
+    /// Build the **Recent** rows from the DOCUMENT's reopen ring. `records` arrives NEWEST-first
+    /// (``WorkspaceStore/closedTabRecords``) and `index` is the LIFO distance from the top (`0` = the
+    /// most-recently closed tab, the one `reopenLastClosedPane()` restores). The title is the closed
+    /// tab's title (falling back to its active pane's live shell title); the subtitle is that pane's cwd.
     ///
     /// - Parameter facts: as ``openedItems(from:facts:)``. A closed pane's facts may already have been
     ///   reaped, which is honest: the row then reads by the tab's own title.
     public static func recentItems(
-        from records: [RecentlyClosedTab],
+        from records: [WorkspaceTopology.ClosedTab],
         facts: (PaneID) -> (title: String?, cwd: String?) = { _ in (nil, nil) },
     ) -> [OpenQuicklyItem] {
-        records.reversed().enumerated().map { index, record in
+        records.enumerated().map { index, record in
             let activePane = record.tab.activePane
             let activeSpec = activePane.flatMap { record.specs[$0] }
             let fact: (title: String?, cwd: String?) = activePane.map(facts) ?? (nil, nil)

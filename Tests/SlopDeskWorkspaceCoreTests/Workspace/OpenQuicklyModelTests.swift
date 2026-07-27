@@ -546,12 +546,12 @@ final class OpenQuicklyModelTests: XCTestCase {
     }
 
     func testRecentItemsAreNewestFirstWithLifoIndex() {
-        // recentlyClosedTabs is appended OLDEST→newest; the rows must come back newest-first, index 0 on top.
+        // `closedTabRecords` arrives NEWEST-first, and the rows keep that order with index 0 on top.
         let (oldTab, oldPid, oldSpec) = leafTab(title: "old", paneTitle: "zsh", cwd: "/old")
         let (newTab, newPid, newSpec) = leafTab(title: "new", paneTitle: "zsh", cwd: "/new")
         let records = [
-            RecentlyClosedTab(tab: oldTab, specs: [oldPid: oldSpec], sessionID: nil),
-            RecentlyClosedTab(tab: newTab, specs: [newPid: newSpec], sessionID: nil),
+            WorkspaceTopology.ClosedTab(sessionID: SessionID(), tab: newTab, specs: [newPid: newSpec]),
+            WorkspaceTopology.ClosedTab(sessionID: SessionID(), tab: oldTab, specs: [oldPid: oldSpec]),
         ]
         let items = OpenQuicklyModel.recentItems(from: records, facts: facts)
         XCTAssertEqual(items.map(\.title), ["new", "old"], "the most-recently-closed tab is first")
@@ -573,7 +573,7 @@ final class OpenQuicklyModelTests: XCTestCase {
         let spec = PaneSpec(kind: .terminal, title: "")
         paneFacts[pid] = ("claude", nil)
         let tab = Tab(title: "", root: .leaf(pid), activePane: pid)
-        let records = [RecentlyClosedTab(tab: tab, specs: [pid: spec], sessionID: nil)]
+        let records = [WorkspaceTopology.ClosedTab(sessionID: SessionID(), tab: tab, specs: [pid: spec])]
         XCTAssertEqual(
             OpenQuicklyModel.recentItems(from: records, facts: facts).first?.title,
             "claude",
@@ -582,7 +582,7 @@ final class OpenQuicklyModelTests: XCTestCase {
 
         let bare = PaneID(raw: UUID())
         let bareTab = Tab(title: "", root: .leaf(bare), activePane: bare)
-        let bareRecords = [RecentlyClosedTab(tab: bareTab, specs: [:], sessionID: nil)]
+        let bareRecords = [WorkspaceTopology.ClosedTab(sessionID: SessionID(), tab: bareTab, specs: [:])]
         XCTAssertEqual(
             OpenQuicklyModel.recentItems(from: bareRecords, facts: facts).first?.title,
             "Tab",

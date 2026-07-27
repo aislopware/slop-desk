@@ -8,9 +8,9 @@ import SlopDeskWorkspaceModel
 /// capture the active session's geometry into a reusable template. CLIENT-ONLY — no wire / host / FFI /
 /// schema-version change. The template LIBRARY is device-local (``DevicePreferences/sessionTemplates``),
 /// so it belongs to this machine rather than to the host-owned layout every client shares. The pure
-/// expand/capture is ``SessionTemplateEngine``; the store only inserts the session (via the
-/// ``replaceTree(_:)`` in-file seam), reconciles, and sends each pane's launch bytes after its PTY comes
-/// up (the SAME 1400 ms grace the launch-preset apply uses).
+/// expand/capture is ``SessionTemplateEngine``; the store only asks the document for the session and
+/// its panes, reconciles, and sends each pane's launch bytes after its PTY comes up (the SAME 1400 ms
+/// grace the launch-preset apply uses).
 public extension WorkspaceStore {
     /// The user's session templates (built-ins + any they captured), in display order. The palette / menu
     /// read this; ``newSessionFromTemplate(_:)`` opens one.
@@ -33,11 +33,33 @@ public extension WorkspaceStore {
     @discardableResult
     func newSessionFromTemplate(_ template: SessionTemplate, launchGrace: Duration) -> [PaneID] {
         let (session, launches) = SessionTemplateEngine.makeSession(from: template, name: defaultSessionName)
-        replaceTree(WorkspaceTreeOps.insertSession(session, in: tree, makeActive: true))
-        // BEFORE the reconcile: the spawn cwd rides `channelOpen`, which the materialize builds.
+        guard let first = launches.first else { return [] }
+        // Three steps, because a template is a SHAPE and the ops that mint panes cannot express one.
+        // The session and its first pane arrive together (op 18); every further pane is split off the
+        // one before it (op 6) purely to bring it into existence; then ONE `setTabLayout` (op 24)
+        // re-tiles the tab into the template's actual tree, which it can do because the leaf set now
+        // matches exactly.
+        guard stage(.newSession, WorkspaceIntentArgs.encode(
+            newSession: session.id, newPane: first.0, name: session.name, spawnCwd: first.1.cwd,
+        )) else { return [] }
+        var previous = first.0
+        for (paneID, pane) in launches.dropFirst() {
+            guard stage(.splitPane, WorkspaceIntentArgs.encode(
+                target: previous.raw, axis: .horizontal, before: false, newPane: paneID, spawnCwd: pane.cwd,
+            )) else { continue }
+            previous = paneID
+        }
+        if let tab = session.tabs.first, launches.count > 1 {
+            stage(.setTabLayout, WorkspaceIntentArgs.encode(
+                tab: tree.tab(containing: first.0)?.1 ?? tab.id,
+                layout: WorkspaceTopology.layout(of: tab.root),
+            ))
+        }
         for (paneID, pane) in launches {
+            if let title = session.specs[paneID]?.title, !title.isEmpty, title != "Terminal" {
+                stage(.renamePane, WorkspaceIntentArgs.encode(id: paneID.raw, name: title))
+            }
             guard let cwd = pane.cwd, !cwd.isEmpty else { continue }
-            setSpawnCwd(cwd, for: paneID)
             setLastKnownCwd(cwd, for: paneID)
         }
         reconcileTree()

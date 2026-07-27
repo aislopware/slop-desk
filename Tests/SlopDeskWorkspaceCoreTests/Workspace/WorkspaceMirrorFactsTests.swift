@@ -76,15 +76,20 @@ final class WorkspaceMirrorFactsTests: XCTestCase {
 
     // MARK: - Presence
 
-    /// A TAB with no active pane reports the ZERO id — the wire's "none", which the host reads as a
-    /// client looking at nothing in particular.
+    /// A client looking at NO pane reports the ZERO id — the wire's "none".
+    ///
+    /// Reached by having no document at all rather than by blanking a tab's `activePane`: the
+    /// document's tab decoder repairs a missing focus to the tab's first leaf, so "a tab with no
+    /// active pane" is a state host truth cannot carry. What it CAN carry is no workspace, and that
+    /// is the state a client actually finds itself in — refused by the host, or not yet subscribed.
     func testAViewOfNoPaneReportsNone() throws {
         let store = makeStore()
         let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
         XCTAssertEqual(store.currentWorkspaceView().paneID, paneID.raw, "the active pane, by its own id")
 
-        store.tree.sessions[0].tabs[0].activePane = nil
+        store.workspaceMirror.reset()
         XCTAssertEqual(store.currentWorkspaceView().paneID, WireMessage.newSessionID)
+        XCTAssertEqual(store.currentWorkspaceView().tabID, WireMessage.newSessionID)
     }
 
     /// Who ELSE has this pane on screen. Reads the roster's `viewingPaneID`, in document ids, minus

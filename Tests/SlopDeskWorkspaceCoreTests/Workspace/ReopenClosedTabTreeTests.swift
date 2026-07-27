@@ -10,8 +10,9 @@ import XCTest
 /// Captured before any TAB-removing close — both the explicit ``WorkspaceStore/closeTab(_:)`` and the
 /// implicit sole-leaf ``WorkspaceStore/closePaneTree(_:)`` cascade — and popped LIFO into the active
 /// session (or, when the owning session vanished while the record sat on the stack, the active session as
-/// a fallback). In-memory only, bounded at ``WorkspaceStore/recentlyClosedTabsCap``. The store is
-/// `.tree`-live and backed by the `FakePaneSession` seam — no real `SlopDeskClient` / `HostServer`.
+/// a fallback). The ring is the DOCUMENT's (``WorkspaceStore/closedTabRecords``, newest FIRST), bounded
+/// at ``WorkspaceTopology/closedTabRingCap``. The store is `.tree`-live and backed by the
+/// `FakePaneSession` seam — no real `SlopDeskClient` / `HostServer`.
 @MainActor
 final class ReopenClosedTabTreeTests: XCTestCase {
     // MARK: - Fixtures
@@ -64,12 +65,12 @@ final class ReopenClosedTabTreeTests: XCTestCase {
         store.closeTab(tabIDs[1]) // close "B"
         XCTAssertEqual(store.tree.activeSession?.tabs.count, 2, "tab B closed")
         XCTAssertFalse(store.tree.activeSession?.tabs.contains { $0.title == "B" } ?? true, "B gone from the tree")
-        XCTAssertEqual(store.recentlyClosedTabs.count, 1, "B captured on the LIFO")
+        XCTAssertEqual(store.closedTabRecords.count, 1, "B captured on the ring")
 
         store.reopenLastClosedPane()
         XCTAssertEqual(store.tree.activeSession?.tabs.count, 3, "B restored")
         XCTAssertEqual(activeTabTitle(store), "B", "the reopened tab is selected")
-        XCTAssertTrue(store.recentlyClosedTabs.isEmpty, "the slot is consumed")
+        XCTAssertTrue(store.closedTabRecords.isEmpty, "the slot is consumed")
         // The restored pane reuses its ORIGINAL id + spec, and a FRESH idle session materializes for it.
         XCTAssertEqual(store.tree.activeSession?.activeTab?.activePane, paneIDs[1], "original pane id reused")
         XCTAssertEqual(store.tree.spec(for: paneIDs[1])?.title, "B", "the spec came back")
@@ -86,7 +87,7 @@ final class ReopenClosedTabTreeTests: XCTestCase {
 
         store.closePaneTree(paneIDs[0]) // the sole leaf of tab A → tab A cascades away
         XCTAssertEqual(store.tree.activeSession?.tabs.count, 1, "tab A cascaded away")
-        XCTAssertEqual(store.recentlyClosedTabs.count, 1, "the sole-leaf close captured tab A")
+        XCTAssertEqual(store.closedTabRecords.count, 1, "the sole-leaf close captured tab A")
 
         store.reopenLastClosedPane()
         XCTAssertEqual(store.tree.activeSession?.tabs.count, 2, "tab A restored")
@@ -111,7 +112,7 @@ final class ReopenClosedTabTreeTests: XCTestCase {
 
         store.closePaneTree(a) // tab survives (b remains) → no tab removed → nothing captured
         XCTAssertEqual(store.tree.activeSession?.tabs.count, 1, "the tab is still alive")
-        XCTAssertTrue(store.recentlyClosedTabs.isEmpty, "closing one of several panes captures no tab")
+        XCTAssertTrue(store.closedTabRecords.isEmpty, "closing one of several panes captures no tab")
     }
 
     // MARK: - LIFO order
@@ -122,13 +123,13 @@ final class ReopenClosedTabTreeTests: XCTestCase {
         let store = makeTreeStore(restoringTree: ws)
         store.closeTab(tabIDs[0]) // close A (by id — index-shift-safe)
         store.closeTab(tabIDs[2]) // close C
-        XCTAssertEqual(store.recentlyClosedTabs.count, 2)
+        XCTAssertEqual(store.closedTabRecords.count, 2)
 
         store.reopenLastClosedPane() // pops the LAST close first → C
         XCTAssertEqual(activeTabTitle(store), "C", "LIFO: the last-closed tab reopens first")
         store.reopenLastClosedPane() // then A
         XCTAssertEqual(activeTabTitle(store), "A")
-        XCTAssertTrue(store.recentlyClosedTabs.isEmpty, "both records consumed")
+        XCTAssertTrue(store.closedTabRecords.isEmpty, "both records consumed")
     }
 
     // MARK: - Index-addressed reopen (Recent rows reopen the RIGHT tab)
@@ -145,16 +146,16 @@ final class ReopenClosedTabTreeTests: XCTestCase {
         store.closeTab(tabIDs[1]) // B
         store.closeTab(tabIDs[2]) // C
         store.closeTab(tabIDs[3]) // D
-        XCTAssertEqual(store.recentlyClosedTabs.count, 4, "A,B,C,D captured (oldest→newest)")
+        XCTAssertEqual(store.closedTabRecords.count, 4, "A,B,C,D captured (newest first)")
 
         let reopened = store.reopenClosedTab(at: 2) // LIFO top is D(0); index 2 = B (second-oldest)
 
         XCTAssertEqual(activeTabTitle(store), "B", "index 2 reopens B (NOT the newest D the old popLast did)")
         XCTAssertNotNil(reopened, "the restored tab's active pane id is returned")
-        XCTAssertEqual(store.recentlyClosedTabs.count, 3, "exactly B's record is consumed")
-        XCTAssertFalse(store.recentlyClosedTabs.contains { $0.tab.title == "B" }, "B is no longer on the LIFO")
+        XCTAssertEqual(store.closedTabRecords.count, 3, "exactly B's record is consumed")
+        XCTAssertFalse(store.closedTabRecords.contains { $0.tab.title == "B" }, "B is no longer on the ring")
         XCTAssertTrue(
-            ["A", "C", "D"].allSatisfy { t in store.recentlyClosedTabs.contains { $0.tab.title == t } },
+            ["A", "C", "D"].allSatisfy { t in store.closedTabRecords.contains { $0.tab.title == t } },
             "the other three records survive untouched",
         )
     }
@@ -165,12 +166,12 @@ final class ReopenClosedTabTreeTests: XCTestCase {
         let (ws, tabIDs, _) = tabbedWorkspace(["A", "B", "C"])
         let store = makeTreeStore(restoringTree: ws)
         store.closeTab(tabIDs[0]) // one record on the LIFO
-        XCTAssertEqual(store.recentlyClosedTabs.count, 1)
+        XCTAssertEqual(store.closedTabRecords.count, 1)
 
         XCTAssertNil(store.reopenClosedTab(at: 5), "index past the end is nil")
         XCTAssertNil(store.reopenClosedTab(at: -1), "a negative index is nil")
 
-        XCTAssertEqual(store.recentlyClosedTabs.count, 1, "no record consumed by an out-of-range reopen")
+        XCTAssertEqual(store.closedTabRecords.count, 1, "no record consumed by an out-of-range reopen")
         XCTAssertEqual(store.tree.activeSession?.tabs.count, 2, "the tree is untouched")
     }
 
@@ -216,7 +217,7 @@ final class ReopenClosedTabTreeTests: XCTestCase {
     func testReopenWithEmptyStackIsNoOp() {
         let (ws, _, _) = tabbedWorkspace(["A", "B"])
         let store = makeTreeStore(restoringTree: ws)
-        XCTAssertTrue(store.recentlyClosedTabs.isEmpty)
+        XCTAssertTrue(store.closedTabRecords.isEmpty)
 
         store.reopenLastClosedPane()
 
@@ -257,10 +258,10 @@ final class ReopenClosedTabTreeTests: XCTestCase {
 
     // MARK: - Bounded LIFO (cap)
 
-    /// The LIFO is bounded at ``WorkspaceStore/recentlyClosedTabsCap`` — closing more than the cap drops
+    /// The ring is bounded at ``WorkspaceTopology/closedTabRingCap`` — closing more than the cap drops
     /// the OLDEST records, keeping the most recent ones.
     func testLIFOIsBoundedAtCap() {
-        let cap = WorkspaceStore.recentlyClosedTabsCap
+        let cap = WorkspaceTopology.closedTabRingCap
         let titles = (0..<(cap + 5)).map { "T\($0)" }
         let (ws, tabIDs, _) = tabbedWorkspace(titles)
         let store = makeTreeStore(restoringTree: ws)
@@ -268,8 +269,8 @@ final class ReopenClosedTabTreeTests: XCTestCase {
         // Close the first cap+4 tabs by id (leaving ≥1 so the session never re-seeds a default mid-loop).
         for i in 0..<(cap + 4) { store.closeTab(tabIDs[i]) }
 
-        XCTAssertEqual(store.recentlyClosedTabs.count, cap, "the LIFO is bounded at the cap")
-        XCTAssertEqual(store.recentlyClosedTabs.last?.tab.title, "T\(cap + 3)", "the most recent close is on top")
-        XCTAssertFalse(store.recentlyClosedTabs.contains { $0.tab.title == "T0" }, "the oldest record dropped off")
+        XCTAssertEqual(store.closedTabRecords.count, cap, "the ring is bounded at the cap")
+        XCTAssertEqual(store.closedTabRecords.first?.tab.title, "T\(cap + 3)", "the most recent close is on top")
+        XCTAssertFalse(store.closedTabRecords.contains { $0.tab.title == "T0" }, "the oldest record dropped off")
     }
 }

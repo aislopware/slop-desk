@@ -108,6 +108,12 @@ public final class WorkspaceMirrorBox {
         guard let current = resolved.topology else { return nil }
         let outcome = WorkspaceIntentApplier.apply(
             op: op.rawValue, args: args, to: current,
+            // A client cannot know whether the host's document is still untouched — `pristine` is a
+            // fact about the host's own file, and there is no cell carrying it. So the bootstrap is
+            // staged OPTIMISTICALLY and a `rejectedStale` snaps the patch away, which is exactly what
+            // the pending layer is for. Refusing here instead would make ``WorkspaceIntentOp/adoptWorkspace``
+            // unsendable by construction.
+            documentIsPristine: true,
             projectKey: { resolved.projectKey(forPane: $0) },
         )
         guard let next = outcome.topology else { return nil }

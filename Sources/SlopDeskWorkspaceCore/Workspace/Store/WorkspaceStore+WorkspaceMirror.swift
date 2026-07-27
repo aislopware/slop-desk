@@ -185,7 +185,7 @@ extension WorkspaceStore {
 
     /// The document ids of every pane a ⇧⌘T could bring back.
     func reopenableDocumentPaneIDs() -> Set<UUID> {
-        Set(recentlyClosedTabs.flatMap { $0.specs.keys.map { documentPaneID($0) } })
+        Set(closedTabRecords.flatMap { $0.specs.keys.map { documentPaneID($0) } })
     }
 
     // MARK: - Presence
@@ -328,6 +328,12 @@ public extension WorkspaceStore {
     func attachWorkspaceChannel(_ client: WorkspaceChannelClient?) {
         workspaceChannel?.stop()
         workspaceChannel = client
+        // The automation bootstrap reshapes the HOST's workspace, so it can only run once there is a
+        // subscription with a topology behind it. Both edges matter: a loopback document is already
+        // `.live` when it is attached (so the call below fires it), and a real channel reaches `.live`
+        // several round trips later (so the hook does).
+        client?.onStateChange = { [weak self] in self?.runArmedBootstrapIfPossible() }
+        runArmedBootstrapIfPossible()
     }
 
     /// Opens (or re-opens) the channel for the connection that just established.

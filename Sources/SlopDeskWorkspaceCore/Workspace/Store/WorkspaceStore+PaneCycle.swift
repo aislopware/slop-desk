@@ -39,7 +39,7 @@ public extension WorkspaceStore {
     /// Reopens the recently-closed tab at LIFO `lifoIndex` (0 = most-recently closed, the top of the stack;
     /// 1 = the one closed before it; …) — the index-addressed reopen the Open-Quickly **Recent** rows route
     /// through so row N reopens EXACTLY tab N, not always the newest (the bug a plain `popLast()` caused for
-    /// every row but the first). Removes that record from the in-memory ``recentlyClosedTabs`` LIFO and
+    /// every row but the first). Removes that record from the DOCUMENT's ``closedTabRecords`` ring and
     /// re-inserts it via ``WorkspaceTreeOps/insertTab(_:specs:at:in:)`` at the configured ``NewTabPosition``
     /// — restoring the whole tab (its split tree + every pane's spec, keeping the original ``PaneID``s). The
     /// tab lands back in its OWNING session when that session is still alive; otherwise (the session was
@@ -50,20 +50,23 @@ public extension WorkspaceStore {
     /// no-op.
     @discardableResult
     func reopenClosedTab(at lifoIndex: Int) -> PaneID? {
-        // LIFO index → array index: the stack TOP (index 0) is the LAST element (appended oldest→newest).
-        let arrayIndex = recentlyClosedTabs.count - 1 - lifoIndex
-        guard recentlyClosedTabs.indices.contains(arrayIndex) else { return nil }
-        let record = recentlyClosedTabs.remove(at: arrayIndex)
-        // Land the restored tab back in its owning session when it still exists; `insertTab` inserts into
-        // whichever session is active, so re-point the active session first (the fallback when the owner
-        // vanished is simply to leave the active session as-is).
-        if let owner = record.sessionID, tree.sessions.contains(where: { $0.id == owner }) {
-            tree.activeSessionID = owner
-        }
-        tree = WorkspaceTreeOps.insertTab(
-            record.tab, specs: record.specs, at: SettingsKey.newTabPosition, in: tree,
-        )
+        guard lifoIndex >= 0, closedTabRecords.indices.contains(lifoIndex) else { return nil }
+        // The applier re-points the active session at the record's owner and re-inserts the whole tab
+        // — its split tree, its specs, its original `PaneID`s — so nothing about the restore is
+        // reconstructed here from a second copy of the ring.
+        guard stage(.reopenClosedTab, WorkspaceIntentArgs.encode(
+            reopenLIFOIndex: lifoIndex, position: SettingsKey.newTabPosition,
+        )) else { return nil }
         reconcileTree()
         return tree.activeSession?.activeTab?.activePane
+    }
+
+    /// ⇧⌘T's ring, NEWEST FIRST — the document's `closedTabs` read in LIFO order.
+    ///
+    /// The ring is host-owned (docs/45 §4.1): a per-client undo stack over shared state would reopen
+    /// a tab the host never heard of, which the next document frame would then delete.
+    var closedTabRecords: [WorkspaceTopology.ClosedTab] {
+        observeWorkspaceMirror()
+        return (workspaceMirror.topology?.closedTabs ?? []).reversed()
     }
 }

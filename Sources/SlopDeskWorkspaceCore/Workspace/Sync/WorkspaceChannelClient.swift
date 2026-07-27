@@ -69,10 +69,15 @@ public final class WorkspaceChannelClient {
         case closed
     }
 
-    /// `SLOPDESK_WORKSPACE_DOC` — `== "1"`, default-OFF during bake-in. With it off the client never
-    /// opens the channel and the per-pane control sinks drive the UI exactly as they do today.
+    /// `SLOPDESK_WORKSPACE_DOC` — `!= "0"`, **default-ON**. The client's layout IS the document, so
+    /// with the channel closed there is no layout: `topology` stays `nil`, the store renders zero
+    /// sessions and every mutation is a silent no-op.
+    ///
+    /// That is also why this default and `HostServer.workspaceDocEnabled`'s move TOGETHER. A
+    /// default-ON client against a default-OFF host gets `sendOpenAck(accepted: false)`, which
+    /// publishes ``State/refused`` and never retries — a blank window with no error anywhere.
     public static var isEnabledByDefault: Bool {
-        ProcessInfo.processInfo.environment["SLOPDESK_WORKSPACE_DOC"] == "1"
+        ProcessInfo.processInfo.environment["SLOPDESK_WORKSPACE_DOC"] != "0"
     }
 
     /// What this device calls itself in the presence roster — what OTHER clients see when a pane is
@@ -88,6 +93,13 @@ public final class WorkspaceChannelClient {
     /// fast path — one instance, so host truth erases an overlay entry the UI would actually read.
     public let box: WorkspaceMirrorBox
     public private(set) var state: State = .idle
+
+    /// Whether this client can carry an intent right now. `false` while opening, after a refusal and
+    /// after a close — the states in which ``send(intent:args:now:)`` drops on the floor.
+    public var isLive: Bool {
+        guard case .live = state else { return false }
+        return true
+    }
 
     /// Fired on the main actor when the CHANNEL's own state changes. Document changes are announced
     /// by the box, not here.
@@ -489,5 +501,9 @@ public final class WorkspaceChannelClient {
     var pendingSweepDelay: Duration? = .seconds(HostWorkspaceMirror.pendingTimeout)
 
     var isRunningForTesting: Bool { runTask != nil }
+
+    /// The in-process document, for the handful of states no intent can reach — a tree with zero
+    /// sessions, or one carrying a `.desktop` leaf the public surface refuses to build.
+    var localDocumentForTesting: LoopbackWorkspaceDocument? { localDocument }
     var presenceClockForTesting: Int64 { presenceClock }
 }

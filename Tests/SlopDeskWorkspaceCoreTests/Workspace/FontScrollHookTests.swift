@@ -137,14 +137,15 @@ final class FontScrollHookTests: XCTestCase {
     func testFontScrollAreNoOpOnNonTerminalActivePane() throws {
         let store = makeStore()
         // Video never enters the tree through the store's public surface (docs/DECISIONS.md
-        // 2026-07-23), so graft a `.desktop` leaf DIRECTLY into the tree value — pinning the
+        // 2026-07-23), so graft a `.desktop` leaf DIRECTLY into the DOCUMENT — pinning the
         // defensive contract for a tree that somehow carries one; the recorder of the ORIGINAL
         // terminal pane must stay empty after we act on the GUI pane.
         let seed = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
-        let (next, _) = WorkspaceTreeOps.splitPane(
+        let (next, grafted) = WorkspaceTreeOps.splitPane(
             seed, axis: .horizontal, newSpec: PaneSpec(kind: .desktop, title: "Desktop"), in: store.tree,
         )
-        store.tree = next
+        _ = grafted
+        try store.graftDocumentTree(next)
         store.reconcileTree()
         let active = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
         let guiSession = try XCTUnwrap(store.handle(for: active) as? RecordingTerminalPaneSession)

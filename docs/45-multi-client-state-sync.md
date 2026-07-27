@@ -731,7 +731,10 @@ Precedence on read: `pending` → `entries` → `fastPath`. No SwiftUI, no trans
 Its **published surface does not change** — views keep reading `tree`, `paneAgentStatus`, and friends.
 What changes is who writes it.
 
-- `tree` becomes `mirror.project()`.
+- `tree` becomes `mirror.project()` — **SHIPPED**: a computed `workspaceMirror.topology?.tree`,
+  memoized against `workspaceMirrorRevision` (a projection walks every cell and a view body reads
+  `tree` dozens of times a frame), with an empty `TreeWorkspace` when there is no topology. Nothing
+  assigns to it, and the only local overlay on top is the in-flight divider PREVIEW (below).
 - The per-pane mirrors (`WorkspaceStore.swift:2934-2966`) become **computed reads through the mirror**.
 - The existing type-21/26/27/32/33/34/36 control sinks are kept as a **low-latency fast path** — but
   they write `mirror.fastPath`, **never `entries`**. `entries` remains provably
@@ -757,6 +760,21 @@ func renamePane(_ id: PaneID, to title: String) {
 ```
 
 The overlay is a **set of key→value writes**, never a replay of `WorkspaceTreeOps` operations.
+
+**The one thing that is NOT an intent: a live divider drag.** `setDividerWeightLive` runs per drag
+FRAME. One intent per frame would flood the channel and make every other client watch the drag, so it
+records an ephemeral `(split, index, weight)` the `tree` getter overlays onto the projection, and
+`commitDividerResize()` sends the single op-17 with the CLAMPED weight the user actually saw. The
+preview is discarded the instant the intent is staged.
+
+**Geometry is resolved client-side, and the WINNER travels.** The host has no viewport, so it cannot
+answer "which pane is to the left". `moveFocusTree` resolves the neighbour against the layout this
+client is looking at and sends `focusPane` naming it; `swapActivePaneInDirection` sends the resolved
+`swapPanes` PAIR; `resizeActivePane` sends the resolved `setDividerWeight`.
+
+**Every gesture that mints a pane titles it "Terminal".** A launch preset or a session template that
+names its panes (`htop`, `Editor`) follows the mint with `renamePane`, which is also what the name is:
+an authored identity the next OSC title must not overwrite.
 `renamePane` is idempotent; `splitPane` / `spawnPane` are **not**. Staging a patch removes the
 double-apply window between the delta carrying an intent's effect and the `intentResult` retiring it —
 and removes the need to define that ordering at all.
@@ -1293,6 +1311,9 @@ test cannot tune `SLOPDESK_SUB_LAG_BYTES`. Plus `bash scripts/check-ios.sh`.
 2. `SLOPDESK_SUB_LAG_BYTES = 32 MiB` is a first guess. Only a cellular-iOS soak settles it.
 3. Does the document itself ever need sweeping, or is the capped `closedTabRing` + explicit
    `closePane` sufficient across months of churn? Measure before adding a GC.
+4. `followSessionFocus` is persisted and platform-defaulted (§8.2) but nothing reads it yet. It gates
+   whether local navigation sends `focusTab`/`focusPane` INTENTS or only presence; until it is wired,
+   every client follows.
 
 ---
 

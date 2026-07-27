@@ -54,12 +54,60 @@ public final class WorkspaceStore {
     /// methods change it (each then reconciles), so the registry can never drift from the tree.
     public private(set) var workspace: Workspace
 
-    /// The `Session → Tab → Pane` split tree (``TreeWorkspace``, docs/42 §"W4 — Store retarget") — the live
-    /// source of truth under ``LiveModel/tree``, dormant under ``LiveModel/canvas``. Mutated by the
-    /// tree-mutation methods below (each delegates to ``WorkspaceTreeOps`` then ``reconcileTree()``s, so the
-    /// registry can't drift). `internal(set)`: read-only to the UI (cross-module), settable only by the
-    /// store's tree-mutation methods + same-module extensions (e.g. `WorkspaceStore+RemoteWindow`).
-    public internal(set) var tree: TreeWorkspace
+    /// The `Session → Tab → Pane` split tree (``TreeWorkspace``, docs/42 §"W4 — Store retarget") — a
+    /// PROJECTION of the workspace document (docs/45 §7.2), live under ``LiveModel/tree`` and dormant
+    /// under ``LiveModel/canvas``.
+    ///
+    /// Nothing assigns to it. The tree-mutation methods below stage an INTENT
+    /// (``WorkspaceStore/stage(_:_:)``), the channel folds the host's own applier into the optimistic
+    /// layer, and this reads the result back — so what is on screen is what the host is about to
+    /// publish, and two clients converge because there is one owner.
+    ///
+    /// **With no topology it is EMPTY**, and that is the whole state: a store with no channel, or one
+    /// whose host refused the class, renders nothing and every mutation below is a silent no-op. It is
+    /// deliberately not a fallback to a locally-owned tree — that dual path is exactly what this
+    /// phase removes.
+    ///
+    /// Memoized against ``workspaceMirrorRevision`` because a projection walks every cell in the
+    /// document, and a view body reads `tree` dozens of times per frame.
+    public var tree: TreeWorkspace {
+        observeWorkspaceMirror()
+        if let cached = treeProjection, cached.revision == workspaceMirrorRevision { return cached.tree }
+        var projected = workspaceMirror.topology?.tree ?? TreeWorkspace(sessions: [], activeSessionID: nil)
+        // The divider PREVIEW rides on top: a drag frame is a local overlay, never an intent (see
+        // ``setDividerWeightLive(splitID:leadingChildIndex:leadingWeight:)``).
+        if let live = liveDividerWeight {
+            projected = WorkspaceTreeOps.setDividerWeight(
+                splitID: live.split, leadingChildIndex: live.index, leadingWeight: live.weight, in: projected,
+            )
+        }
+        treeProjection = (workspaceMirrorRevision, projected)
+        return projected
+    }
+
+    /// The last projection and the mirror revision it was built from.
+    @ObservationIgnored
+    private var treeProjection: (revision: UInt, tree: TreeWorkspace)?
+
+    /// The in-flight divider drag's weight, overlaid onto the projection until
+    /// ``commitDividerResize()`` stages it. `nil` between drags.
+    @ObservationIgnored
+    var liveDividerWeight: (split: SplitNodeID, index: Int, weight: Double)?
+
+    /// The automation environment ``bootstrapFromEnvironment(_:)`` was handed before a document
+    /// existed, held until one does. `nil` once it has run, or when it never had to wait.
+    @ObservationIgnored
+    var armedBootstrapEnvironment: [String: String]?
+
+    /// Records (or clears) the divider preview.
+    ///
+    /// Bumps ``workspaceMirrorRevision`` even though nothing in the document moved: that counter is
+    /// both the projection cache's key and the Observation shadow every `tree` reader binds to, so a
+    /// drag frame that skipped it would neither repaint nor invalidate.
+    func setLiveDividerWeight(_ next: (split: SplitNodeID, index: Int, weight: Double)?) {
+        liveDividerWeight = next
+        workspaceMirrorRevision &+= 1
+    }
 
     /// The table of liveness: 1:1 with the leaves of whichever model is live — `workspace`'s on the canvas
     /// path, ``tree``'s on the tree path. Both paths diff the SAME registry, but only ONE drives a given
@@ -382,10 +430,6 @@ public final class WorkspaceStore {
     ) {
         self.liveModel = liveModel
         workspace = restoring ?? .defaultWorkspace()
-        // Launch-only: fold persisted detached panes back into tabs (satellite windows do not restore
-        // across relaunch — v1; a quit/crash while detached loses nothing). NEVER inside `normalized()`,
-        // which runs op-internally and would undo a live detach.
-        tree = (restoringTree ?? .defaultWorkspace()).normalized().redockingDetachedPanes()
         self.makeSession = makeSession
         self.liveVideoCap = liveVideoCap
         self.persistence = persistence
@@ -415,7 +459,13 @@ public final class WorkspaceStore {
         // sidebar of folder names in their project sections, and what puts a respawned shell back in
         // its project directory: the client has no live shell to ask on launch, so a fact it does not
         // remember is a fact that is gone.
-        seedWorkspaceMirror(from: tree, cache: documentCache?.load(hostKey: cacheHostKey) ?? HostWorkspaceState())
+        // Launch-only: fold persisted detached panes back into tabs (satellite windows do not restore
+        // across relaunch — v1; a quit/crash while detached loses nothing). NEVER inside `normalized()`,
+        // which runs op-internally and would undo a live detach.
+        seedWorkspaceMirror(
+            from: (restoringTree ?? .defaultWorkspace()).normalized().redockingDetachedPanes(),
+            cache: documentCache?.load(hostKey: cacheHostKey) ?? HostWorkspaceState(),
+        )
         // The live model picks the init reconcile. `.canvas` materializes the canvas panes (the
         // retained-but-dead path); `.tree` (the app) materializes the tree's leaves through the SAME
         // registry diff — exactly one of the two trees ever drives a given store.
@@ -668,27 +718,14 @@ public final class WorkspaceStore {
     /// not "Undo History".
     public private(set) var recentlyClosed: RecentlyClosedPane?
 
-    /// The most CLOSED-TABS-the-LIFO can hold before the oldest record is dropped — the tree-shell reopen
-    /// stack's bound (a long open/close session can never grow this unbounded).
-    static let recentlyClosedTabsCap = 25
-
-    /// The TREE shell's "Reopen Closed Tab" LIFO (the ⇧⌘T chord) — a bounded stack of
-    /// ``RecentlyClosedTab`` records captured before a tab-removing close, popped in last-in-first-out
-    /// order by ``reopenLastClosedPane()``. In-memory only (deliberately not persisted, exactly like the
-    /// canvas single-slot ``recentlyClosed``: a relaunch already restores the live layout, so there is no
-    /// untrusted-decode surface). Distinct from the canvas slot — the tree shell restores whole TABS (a
-    /// split tree + every pane's spec), not a single canvas pane. `internal(set)`: read-only to the UI,
-    /// mutated only by the store's close paths + the `WorkspaceStore+PaneCycle` reopen extension.
-    public internal(set) var recentlyClosedTabs: [RecentlyClosedTab] = []
-
     /// Which tabs were focused, most-recent FIRST — the "where was I" the close path returns to
     /// (``TabOrderingEngine/successorAfterClose(closing:displayOrder:projectKey:focusHistory:)`` rule 1).
     /// Recorded by ``recordTabFocus()`` on every ``reconcileTree()``, so it follows a tab switch no matter
     /// which gesture caused it (⌘1–⌘9, ⌘T, the rail, a pane focus that crosses tabs).
     ///
-    /// In-memory only and capped, exactly like ``recentlyClosedTabs``: a relaunch restores the layout but
-    /// deliberately not the history, so a cold launch falls through to the section-adjacency rule rather
-    /// than resurrecting a stale focus order that no longer describes anything the user did.
+    /// In-memory only and capped: a relaunch restores the layout but deliberately not the history, so a
+    /// cold launch falls through to the section-adjacency rule rather than resurrecting a stale focus
+    /// order that no longer describes anything the user did.
     /// Internal (not private) so the recorder + successor helpers can live in `WorkspaceStore+TabOrdering`,
     /// beside the rest of the sidebar-ordering surface, keeping this class body under `type_body_length`.
     var tabFocusHistory: [TabID] = []
@@ -1404,8 +1441,16 @@ public final class WorkspaceStore {
 
     /// The set of tab IDs for which per-tab synchronized input is ON (Zellij `ToggleActiveSyncTab`): every
     /// keystroke typed in the focused pane of a sync-armed tab is ALSO sent to every OTHER pane in that
-    /// same tab. Transient — never persisted (the same rationale as ``broadcastActive``).
-    public private(set) var syncInputTabs: Set<TabID> = []
+    /// same tab.
+    ///
+    /// HOST TRUTH, carried as `tab/syncInputArmed` and persisted with the rest of the topology
+    /// (DECISIONS, Multi-client Phase 5b). tmux models `synchronize-panes` as a server-side window
+    /// option and it has to be one: hosting only the armed bit while fanning client-side would mean
+    /// another client's keystrokes silently do not fan.
+    var syncInputTabs: Set<TabID> {
+        observeWorkspaceMirror()
+        return workspaceMirror.topology?.syncInputTabs ?? []
+    }
 
     /// Arms / disarms broadcast input (⇧⌘B / Pane ▸ Broadcast Input).
     public func toggleBroadcast() { broadcastActive.toggle() }
@@ -1479,11 +1524,9 @@ public final class WorkspaceStore {
     /// keystroke typed in any pane of the tab is also mirrored into the tab's other panes via
     /// ``fanSyncInput(from:_:)``. Idempotent when called on the same tab twice (insert → remove cycle).
     public func toggleSyncInput(tabID: TabID) {
-        if syncInputTabs.contains(tabID) {
-            syncInputTabs.remove(tabID)
-        } else {
-            syncInputTabs.insert(tabID)
-        }
+        // ASSIGN, never toggle (DECISIONS, Multi-client Phase 5 ruling 2): the desired state travels,
+        // so two clients asking at once converge on it instead of cancelling each other out.
+        stage(.setSyncInput, WorkspaceIntentArgs.encode(id: tabID.raw, flag: !syncInputTabs.contains(tabID)))
     }
 
     /// Whether pane `id`'s tab is armed for synchronized input — the `⚠ SYNC INPUT` pill's visibility
@@ -1500,7 +1543,7 @@ public final class WorkspaceStore {
     /// pane outside any tab is a no-op.
     public func disarmSyncInput(for paneID: PaneID) {
         guard let (_, tabID) = tree.tab(containing: paneID) else { return }
-        syncInputTabs.remove(tabID)
+        stage(.setSyncInput, WorkspaceIntentArgs.encode(id: tabID.raw, flag: false))
     }
 
     /// The per-tab synchronized-input fan-out (Zellij `ToggleActiveSyncTab`): mirrors the bytes that the
@@ -1777,11 +1820,14 @@ public final class WorkspaceStore {
         onLocalCopy?(text)
     }
 
-    /// A REOPENABLE tab was just recorded onto the ⇧⌘T LIFO (``recordClosedTab(_:)`` — a close that
-    /// removed a tab holding ≥1 real pane). The app wires this to the overlay coordinator's transient
-    /// "TAB CLOSED · ⇧⌘T REOPENS" notice — the undo affordance for the workspace's most destructive
-    /// routine action. Never fires for an all-ephemeral (system-dialog) tab, which is skipped by the
-    /// record itself. `nil` in tests / headless ⇒ the cue is dropped. `@ObservationIgnored`: wiring.
+    /// A REOPENABLE tab just landed on the DOCUMENT's ⇧⌘T ring — a close that removed a tab, whether
+    /// the user closed the tab or its last pane. The app wires this to the overlay coordinator's
+    /// transient "TAB CLOSED · ⇧⌘T REOPENS" notice, the undo affordance for the workspace's most
+    /// destructive routine action.
+    ///
+    /// Fired by ``stageClose(_:_:)`` on the ring actually GROWING, which is why it can no longer
+    /// promise something the host did not do: a pane close that left its tab alive records nothing and
+    /// stays silent. `nil` in tests / headless ⇒ the cue is dropped. `@ObservationIgnored`: wiring.
     @ObservationIgnored public var onTabCloseRecorded: (() -> Void)?
 
     /// A TELEPORT focus (``jumpToPaneTree(_:)``) just CROSSED a tab (or session) boundary — the whole
@@ -2261,6 +2307,16 @@ public final class WorkspaceStore {
     }
 
     public func bootstrapFromEnvironment(_ env: [String: String] = WorkspaceStore.automationInputs()) {
+        // The bootstrap RESHAPES the workspace, and the workspace belongs to the host — so it needs a
+        // document to reshape. The app shell runs this synchronously at launch, BEFORE the channel is
+        // installed and long before it is `.live`; arming it here and firing from
+        // ``attachWorkspaceChannel(_:)`` is what keeps the automation seam working without the shell
+        // having to learn when a subscription lands.
+        guard canMutate else {
+            armedBootstrapEnvironment = env
+            return
+        }
+        armedBootstrapEnvironment = nil
         // The window-targeted video autoconnect (`check-video.sh` serves ONE host window) boots the
         // remote desktop the way the user gets it: a DETACHED `.desktop` pane in its own OS window —
         // video never enters the workspace tree (docs/DECISIONS.md 2026-07-23). The window-shaped
@@ -2269,11 +2325,10 @@ public final class WorkspaceStore {
         if liveModel == .tree, let (target, video) = Self.videoTarget(from: env) {
             let session = Session.singlePane(name: target.host, spec: PaneSpec(kind: .terminal, title: "Terminal"))
             committedConnectionTarget = target
-            let base = TreeWorkspace(sessions: [session], activeSessionID: session.id).normalized()
-            let (next, _) = WorkspaceTreeOps.mintDetachedPane(
-                spec: PaneSpec(kind: .desktop, title: video.title, video: video), in: base,
-            )
-            tree = next
+            stageAdopt(TreeWorkspace(sessions: [session], activeSessionID: session.id).normalized())
+            stage(.spawnDetachedPane, WorkspaceIntentArgs.encode(
+                detachedPane: PaneID(), kind: .desktop, video: video,
+            ))
             reconcileTree()
             return
         }
@@ -2291,9 +2346,9 @@ public final class WorkspaceStore {
             if let bootstrap {
                 let session = Session.singlePane(name: bootstrap.target.host, spec: bootstrap.spec)
                 committedConnectionTarget = bootstrap.target
-                tree = TreeWorkspace(sessions: [session], activeSessionID: session.id).normalized()
+                stageAdopt(TreeWorkspace(sessions: [session], activeSessionID: session.id).normalized())
             } else {
-                tree = .defaultWorkspace()
+                stageAdopt(.defaultWorkspace())
             }
             reconcileTree()
         case .canvas:
@@ -2371,12 +2426,13 @@ public final class WorkspaceStore {
         // mux `channelOpen`, so the host spawns the PTY there directly.
         let activeCwd = inheritableCwd(of: active)
         let inheritedCwd = SettingsKey.workingDirectoryNewSplit.resolve(activePaneCwd: activeCwd)
-        let spec = PaneSpec(kind: kind, title: defaultTitle(for: kind))
-        // `splitPane` already makes the new leaf the active pane, so the split lands focused.
-        let (next, newID) = WorkspaceTreeOps.splitPane(
-            active, axis: axis, newSpec: spec, before: leading, in: tree,
-        )
-        tree = next
+        // The CLIENT mints the id (DECISIONS, Multi-client Phase 5 ruling 1): the optimistic overlay
+        // cannot insert a leaf it has no id for, so a host-minted one would make every split wait a
+        // round trip before anything appeared. `splitPane` lands the new leaf focused.
+        let newID = PaneID()
+        guard stage(.splitPane, WorkspaceIntentArgs.encode(
+            target: active.raw, axis: axis, before: leading, newPane: newID, spawnCwd: inheritedCwd,
+        )) else { return }
         seedNewPaneFacts(newID, spawnCwd: inheritedCwd, inheritingFrom: active)
         reconcileTree()
     }
@@ -2385,9 +2441,9 @@ public final class WorkspaceStore {
     /// Video kinds no-op (video never enters the tree — docs/DECISIONS.md 2026-07-23).
     public func splitPaneTree(_ target: PaneID, axis: SplitAxis, kind: PaneKind) {
         guard !kind.isVideo else { return }
-        let spec = PaneSpec(kind: kind, title: defaultTitle(for: kind))
-        let (next, _) = WorkspaceTreeOps.splitPane(target, axis: axis, newSpec: spec, in: tree)
-        tree = next
+        guard stage(.splitPane, WorkspaceIntentArgs.encode(
+            target: target.raw, axis: axis, before: false, newPane: PaneID(), spawnCwd: nil,
+        )) else { return }
         reconcileTree()
     }
 
@@ -2398,23 +2454,12 @@ public final class WorkspaceStore {
         // Clear a matching parked busy-close so confirming/closing the same leaf twice cannot strand a
         // phantom confirmation dialog (mirrors the canvas `closePane(_:)` `pendingClose` clear).
         if pendingClose == target { pendingClose = nil }
-        // A DETACHED pane is not in any tab tree — `closePane` would silently no-op and leave a zombie
-        // handle streaming into a dead satellite window (the PTY-exit close path routes here too). Its
-        // dedicated op drops the detached entry + spec so reconcile tears the handle down.
-        if tree.isDetached(target) {
-            tree = WorkspaceTreeOps.closeDetachedPane(target, in: tree)
-            reconcileTree()
-            return
-        }
-        // When `target` is its tab's SOLE tiled leaf, closing it cascades the whole TAB away — capture the
-        // tab for ⇧⌘T reopen BEFORE the op mutates the tree (the cascade can also drop the session, so the
-        // pre-mutation snapshot is the only source). A pane that is one of several leaves leaves its tab
-        // alive, so nothing is recorded.
-        // …and pick the tab to land on for that same cascade, while the closing tab is still sectioned.
-        let removedTab = tabRemovedByClosing(target)
-        if let removedTab { recordClosedTab(removedTab) }
-        let successor = removedTab.flatMap { plannedTabSuccessor(closing: $0) }
-        tree = WorkspaceTreeOps.closePane(target, tabSuccessor: successor, in: tree)
+        // ONE op for both shapes: the applier branches on `isDetached` itself, so a detached pane's
+        // entry + spec are dropped (reconcile then tears the zombie handle down) and a tiled one
+        // cascades. The tab it may take with it goes onto the DOCUMENT's reopen ring, and the
+        // successor is picked host-side from the shared MRU — two clients computing it from two local
+        // rings pick two different tabs.
+        guard stageClose(.closePane, WorkspaceIntentArgs.encode(pane: target)) else { return }
         reconcileTree()
     }
 
@@ -2431,8 +2476,7 @@ public final class WorkspaceStore {
     /// session keeps running and only the VIEW remounts in the satellite window the app-layer coordinator
     /// opens for it. No-op if `target` is not a tree leaf (already detached / absent).
     public func detachPaneToWindow(_ target: PaneID) {
-        guard tree.contains(target) else { return }
-        tree = WorkspaceTreeOps.detachPane(target, in: tree)
+        guard stage(.detachPane, WorkspaceIntentArgs.encode(pane: target)) else { return }
         reconcileTree()
     }
 
@@ -2441,8 +2485,7 @@ public final class WorkspaceStore {
     /// coordinator closes the window when the pane leaves ``detachedPanes``. No-op if `target` is not
     /// detached.
     public func reattachPane(_ target: PaneID) {
-        guard tree.isDetached(target) else { return }
-        tree = WorkspaceTreeOps.reattachPane(target, in: tree)
+        guard stage(.reattachPane, WorkspaceIntentArgs.encode(pane: target)) else { return }
         reconcileTree()
     }
 
@@ -2452,10 +2495,15 @@ public final class WorkspaceStore {
     /// the view remounts in the main window). ONE reconcile, fired from the gesture's `.onEnded`. No-op if
     /// `target` is not detached, `anchor` is absent / in another session, or the insert would breach the
     /// depth ceiling.
+    ///
+    /// TWO intents: the dock back into the tree, then the placement. `reattachPane` names only the
+    /// pane -- where a returning pane LANDS is the tree's own rule (origin tab, else a fresh one) --
+    /// so the destination is expressed by the op that already means "put this pane beside that one".
     public func reattachPaneTree(_ target: PaneID, beside anchor: PaneID, axis: SplitAxis, before: Bool) {
-        let next = WorkspaceTreeOps.reattachPane(target, beside: anchor, axis: axis, before: before, in: tree)
-        guard next != tree else { return }
-        tree = next
+        guard stage(.reattachPane, WorkspaceIntentArgs.encode(pane: target)) else { return }
+        stage(.movePane, WorkspaceIntentArgs.encode(
+            source: target, target: anchor, axis: axis, before: before,
+        ))
         reconcileTree()
     }
 
@@ -2463,27 +2511,41 @@ public final class WorkspaceStore {
     /// drop on the main canvas. KEEPS `PaneID` (no surface teardown); ONE reconcile on release. No-op if
     /// `target` is not detached / its session is not active / the dock would breach the depth ceiling.
     public func reattachPaneToActiveTabRootEdgeTree(_ target: PaneID, edge: PaneDropEdge) {
-        let next = WorkspaceTreeOps.reattachPane(target, toActiveTabRootEdge: edge, in: tree)
-        guard next != tree else { return }
-        tree = next
+        guard stage(.reattachPane, WorkspaceIntentArgs.encode(pane: target)) else { return }
+        if let tab = activeTreeTab {
+            stage(.dockPaneAtTabEdge, WorkspaceIntentArgs.encode(dock: target, tab: tab, edge: edge))
+        }
         reconcileTree()
     }
 
     /// Reattaches detached pane `target` into a FRESH tab (the drag-to-merge "New Tab" drop). KEEPS
     /// `PaneID` (no surface teardown); ONE reconcile on release. No-op if `target` is not detached.
     public func reattachPaneToNewTabTree(_ target: PaneID) {
-        let next = WorkspaceTreeOps.reattachPaneToNewTab(target, in: tree)
-        guard next != tree else { return }
-        tree = next
+        guard stage(.reattachPane, WorkspaceIntentArgs.encode(pane: target)) else { return }
+        // A reattach that already landed in a fresh tab leaves nothing to break out of, and the op
+        // refuses a lone leaf -- so the second intent is the "it went home to a shared tab" case.
+        stage(.breakPaneToTab, WorkspaceIntentArgs.encode(pane: target))
         reconcileTree()
     }
 
     /// Reattaches every detached pane (the "Reattach All Panes" menu/palette action).
     public func reattachAllPanes() {
         for entry in detachedPanes {
-            tree = WorkspaceTreeOps.reattachPane(entry.pane, in: tree)
+            stage(.reattachPane, WorkspaceIntentArgs.encode(pane: entry.pane))
         }
         reconcileTree()
+    }
+
+    /// The ``TabID`` that closing leaf `target` would REMOVE — i.e. `target` is the only leaf in its tab,
+    /// so the close empties the tree and cascades the tab away. `nil` when the tab survives the close
+    /// (more than one leaf) or `target` is absent. Read by the close-confirmation policy, which has to
+    /// know whether a ⌘W is about to take a whole tab with it.
+    func tabRemovedByClosing(_ target: PaneID) -> TabID? {
+        guard let (sIdx, tIdx) = WorkspaceTreeOps.locate(target, in: tree) else { return nil }
+        let tab = tree.sessions[sIdx].tabs[tIdx]
+        // The tab is removed only when `target` is the SOLE leaf (the tree prunes to empty).
+        guard tab.root.leafCount == 1 else { return nil }
+        return tab.id
     }
 
     /// Detaches the active tab's active pane (the chord / menu routing target). No-op without one.
@@ -2492,56 +2554,27 @@ public final class WorkspaceStore {
         detachPaneToWindow(active)
     }
 
-    /// The ``TabID`` that closing leaf `target` would REMOVE — i.e. `target` is the only leaf in its tab,
-    /// so the close empties the tree and cascades the tab away. `nil` when the tab survives the close
-    /// (more than one leaf) or `target` is absent. Lets the close paths capture the whole tab for reopen
-    /// BEFORE the op drops it.
-    private func tabRemovedByClosing(_ target: PaneID) -> TabID? {
-        guard let (sIdx, tIdx) = WorkspaceTreeOps.locate(target, in: tree) else { return nil }
-        let tab = tree.sessions[sIdx].tabs[tIdx]
-        // The tab is removed only when `target` is the SOLE leaf (the tree prunes to empty).
-        guard tab.root.leafCount == 1 else { return nil }
-        return tab.id
-    }
-
-    /// Captures tab `tabID` — its split tree + every leaf's ``PaneSpec`` + the owning ``SessionID`` — onto
-    /// the in-memory ``recentlyClosedTabs`` LIFO so ⇧⌘T (``reopenLastClosedPane()``) can restore it.
-    /// Called BEFORE a close op mutates the tree (the cascade can drop the whole session, so the
-    /// pre-mutation snapshot is the only source). Bounded at ``recentlyClosedTabsCap`` — the oldest
-    /// record(s) drop off past the cap so a long open/close session never grows it unbounded. No-op if
-    /// `tabID` is absent.
-    func recordClosedTab(_ tabID: TabID) {
-        for session in tree.sessions {
-            guard let tab = session.tabs.first(where: { $0.id == tabID }) else { continue }
-            let leaves = tab.allPaneIDs()
-            // Snapshot only the closing tab's specs (its leaf set), not the whole session's side table.
-            var specs: [PaneID: PaneSpec] = [:]
-            for id in leaves where session.specs[id] != nil {
-                specs[id] = session.specs[id]
-            }
-            recentlyClosedTabs.append(RecentlyClosedTab(tab: tab, specs: specs, sessionID: session.id))
-            if recentlyClosedTabs.count > Self.recentlyClosedTabsCap {
-                recentlyClosedTabs.removeFirst(recentlyClosedTabs.count - Self.recentlyClosedTabsCap)
-            }
-            // The record IS the undo affordance — surface it (the app wires this to the transient
-            // "TAB CLOSED · ⇧⌘T REOPENS" chip). After the append so a hook observer sees the LIFO state.
-            onTabCloseRecorded?()
-            return
-        }
-    }
-
     /// Toggles render-only zoom on the active tab's active pane (the tree is untouched). Tree no-op when
     /// there is no active pane.
     public func toggleZoomTree() {
-        guard let active = tree.activeSession?.activeTab?.activePane else { return }
-        tree = WorkspaceTreeOps.toggleZoom(active, in: tree)
+        guard let tab = tree.activeSession?.activeTab, let active = tab.activePane else { return }
+        // ASSIGN, never toggle (DECISIONS, Multi-client Phase 5 ruling 2): a toggle over shared state
+        // resolves differently depending on how many clients sent it.
+        let zoomed = tab.zoomedPane == active
+        guard stage(.setZoom, WorkspaceIntentArgs.encode(id: active.raw, flag: !zoomed)) else { return }
         reconcileTree()
     }
 
     /// Moves focus in `direction` from the active pane, resolved geometrically against the active tab
     /// solved into `bounds` (the store passes the live viewport; tests pass any finite rect).
+    ///
+    /// The neighbour is resolved HERE, against the layout this client is looking at, and the winner
+    /// travels as an id -- the host has no viewport and cannot answer "which pane is to the left".
     public func moveFocusTree(_ direction: FocusDirection, bounds: CGRect) {
-        tree = WorkspaceTreeOps.moveFocus(direction, bounds: bounds, in: tree)
+        let next = WorkspaceTreeOps.moveFocus(direction, bounds: bounds, in: tree)
+        guard let landed = next.activeSession?.activeTab?.activePane,
+              landed != tree.activeSession?.activeTab?.activePane else { return }
+        guard stage(.focusPane, WorkspaceIntentArgs.encode(pane: landed)) else { return }
         reconcileTree()
     }
 
@@ -2567,16 +2600,23 @@ public final class WorkspaceStore {
     /// Core of ``newTab(kind:)``. `launchGrace` is kept for call-site + overload parity with the paths that
     /// still schedule a deferred send (chat / agent-resume call this then defer their OWN command), but this
     /// path types no startup `cd` — the inherited cwd rides `channelOpen`, so the grace is unused (`_`).
-    func newTab(kind: PaneKind, launchGrace _: Duration) {
+    ///
+    /// `kind` is likewise unused: `spawnTab` mints a terminal, and video never enters the tree
+    /// (docs/DECISIONS.md 2026-07-23). It stays in the signature because the call sites name it.
+    func newTab(kind _: PaneKind, launchGrace _: Duration) {
         // Resolve the new tab's initial cwd from the NEW-TAB working-directory policy against the active
         // pane's last-known cwd (none when there is no active pane) and stamp it on the new spec. The host
         // starts the PTY in that cwd; no visible startup `cd` is sent.
+        guard let session = tree.activeSessionID else { return }
         let activePane = tree.activeSession?.activeTab?.activePane
         let activeCwd = inheritableCwd(of: activePane)
         let inheritedCwd = SettingsKey.workingDirectoryNewTab.resolve(activePaneCwd: activeCwd)
-        let spec = PaneSpec(kind: kind, title: defaultTitle(for: kind))
-        let (next, newID) = WorkspaceTreeOps.newTab(in: tree, spec: spec, at: SettingsKey.newTabPosition)
-        tree = next
+        // Both ids are CLIENT-minted, so the optimistic overlay can draw the tab before the host
+        // answers (DECISIONS, Multi-client Phase 5 ruling 1).
+        let newID = PaneID()
+        guard stage(.spawnTab, WorkspaceIntentArgs.encode(
+            session: session, newPane: newID, position: SettingsKey.newTabPosition, spawnCwd: inheritedCwd,
+        )) else { return }
         seedNewPaneFacts(newID, spawnCwd: inheritedCwd, inheritingFrom: activePane)
         reconcileTree()
     }
@@ -2588,8 +2628,11 @@ public final class WorkspaceStore {
     /// The project key is seeded only when it genuinely covers the new cwd (see
     /// ``inheritableProjectKey(of:covering:)``); the host's own type-34 for the child's PTY confirms or
     /// corrects it either way.
+    ///
+    /// The spawn directory is NOT written here: it rides the intent's own `cwd` argument (ops 6 / 12 /
+    /// 13 / 18 all carry one) and lands in the document's topology, which is what makes a relaunch
+    /// respawn the pane where the user put it rather than at `$HOME`.
     private func seedNewPaneFacts(_ id: PaneID, spawnCwd: String?, inheritingFrom parent: PaneID?) {
-        setSpawnCwd(spawnCwd, for: id)
         // The document's own `pane/cwd` for a pane whose shell has not started yet is the dir it is
         // being started IN — that is what the rail, the title chain and the section bucket read.
         if let spawnCwd { setLastKnownCwd(spawnCwd, for: id) }
@@ -2630,12 +2673,11 @@ public final class WorkspaceStore {
     }
 
     /// Closes tab `tabID` (dropping its panes) and cascades like ``closePaneTree(_:)``.
+    ///
+    /// No successor argument: the HOST picks it, from the shared MRU ring and then the project-section
+    /// rule. Two clients computing it from two local rings pick two different tabs.
     public func closeTab(_ tabID: TabID) {
-        recordClosedTab(tabID) // capture BEFORE the op drops the tab (⇧⌘T reopen)
-        // Likewise pre-mutation: the successor is chosen against the project sections + focus history as
-        // they stand WITH the closing tab still in them.
-        let successor = plannedTabSuccessor(closing: tabID)
-        tree = WorkspaceTreeOps.closeTab(tabID, successor: successor, in: tree)
+        guard stageClose(.closeTab, WorkspaceIntentArgs.encode(tab: tabID)) else { return }
         reconcileTree()
     }
 
@@ -2667,7 +2709,10 @@ public final class WorkspaceStore {
     /// Selects tab at `index` in the active session — a pure active-state change (the FULL leaf set stays
     /// registered; only focus follows). Reconcile is a registry no-op.
     public func selectTab(_ index: Int) {
-        tree = WorkspaceTreeOps.selectTab(index, in: tree)
+        // The intent names the TAB, never the slot: an index resolved on the host would land on a
+        // different tab the moment another client reorders or closes one.
+        guard let session = tree.activeSession, session.tabs.indices.contains(index) else { return }
+        guard stage(.focusTab, WorkspaceIntentArgs.encode(tab: session.tabs[index].id)) else { return }
         reconcileTree()
         // Badge auto-clear: acknowledge any completion/done badge for every pane in the newly-active tab
         // regardless of HOW the tab switch was triggered (keyboard ⌘1–⌘9, cycleTab, NavigatorColumn, or a
@@ -2688,17 +2733,18 @@ public final class WorkspaceStore {
     /// Core of ``newSession(name:kind:)``. `launchGrace` is kept for call-site + overload parity with
     /// `newTab` / `splitActivePane`, but this path types no startup `cd` — the inherited cwd rides
     /// `channelOpen` (host-side spawn), so the grace is unused here (`_`).
-    func newSession(name: String, kind: PaneKind, launchGrace _: Duration) {
+    func newSession(name: String, kind _: PaneKind, launchGrace _: Duration) {
         // Resolve the new window's initial cwd from the NEW-WINDOW policy against the active pane's
         // last-known cwd (none when there is no active pane), stamp it on the new spec, and let the host
         // spawn the PTY directly in that cwd. Mirrors `newTab` / `splitActivePane`.
         let activePane = tree.activeSession?.activeTab?.activePane
         let activeCwd = inheritableCwd(of: activePane)
         let inheritedCwd = SettingsKey.workingDirectoryNewWindow.resolve(activePaneCwd: activeCwd)
-        let spec = PaneSpec(kind: kind, title: defaultTitle(for: kind))
         let previous = tree.activeSessionID
-        let (next, newID) = WorkspaceTreeOps.newSession(in: tree, name: name, spec: spec)
-        tree = next
+        let newID = PaneID()
+        guard stage(.newSession, WorkspaceIntentArgs.encode(
+            newSession: SessionID(), newPane: newID, name: name, spawnCwd: inheritedCwd,
+        )) else { return }
         seedNewPaneFacts(newID, spawnCwd: inheritedCwd, inheritingFrom: activePane)
         // Keep the OUTGOING session mounted: creating + switching to a new session must not dismantle the
         // session you just left — otherwise returning to it repaints from the lossy ring.
@@ -2709,7 +2755,7 @@ public final class WorkspaceStore {
     /// Closes session `sessionID` (dropping all its tabs/panes) and selects another (or re-seeds a default
     /// when it was the last). Reconcile tears down its leaves.
     public func closeSession(_ sessionID: SessionID) {
-        tree = WorkspaceTreeOps.closeSession(sessionID, in: tree)
+        guard stage(.closeSession, WorkspaceIntentArgs.encode(session: sessionID)) else { return }
         noteSessionClosed(sessionID) // drop it from the keep-mounted retention LRU; keep the now-active one
         reconcileTree()
     }
@@ -2726,9 +2772,15 @@ public final class WorkspaceStore {
     public internal(set) var retainedSessionIDs: [SessionID] = []
 
     /// Selects session `sessionID` — a pure active-state change (the full leaf set stays registered).
+    ///
+    /// Expressed as `focusTab` on the session's own active tab: no op names a session directly, and
+    /// the applier repoints `activeSessionID` at whichever session owns the named tab — which is the
+    /// same change, said in the vocabulary the document has.
     public func selectSession(_ sessionID: SessionID) {
+        guard let session = tree.sessions.first(where: { $0.id == sessionID }),
+              let tab = session.activeTab ?? session.tabs.first else { return }
         noteActiveSessionChanged(to: sessionID, from: tree.activeSessionID)
-        tree = WorkspaceTreeOps.selectSession(sessionID, in: tree)
+        guard stage(.focusTab, WorkspaceIntentArgs.encode(tab: tab.id)) else { return }
         reconcileTree()
     }
 
@@ -2740,7 +2792,7 @@ public final class WorkspaceStore {
         guard tree.contains(id) else { return }
         let alreadyActive = tree.activeSession?.activeTab?.activePane == id
         guard !alreadyActive else { return }
-        tree = WorkspaceTreeOps.focusPane(id, in: tree)
+        guard stage(.focusPane, WorkspaceIntentArgs.encode(pane: id)) else { return }
         reconcileTree()
     }
 
@@ -2771,22 +2823,28 @@ public final class WorkspaceStore {
     /// the reconcile only persists. The `DividerHandle` view converts a pixel drag → a weight delta and
     /// calls this on the active tab's split.
     public func resizeDividerTree(splitID: SplitNodeID, leadingChildIndex: Int, delta: Double) {
-        tree = WorkspaceTreeOps.resizeDivider(
+        // The delta is resolved against the weights on screen; the op writes ABSOLUTE weights, so what
+        // travels is the settled number rather than an increment two clients could both apply.
+        let next = WorkspaceTreeOps.resizeDivider(
             splitID: splitID, leadingChildIndex: leadingChildIndex, delta: delta, in: tree,
         )
+        guard let weight = Self.leadingWeight(splitID: splitID, index: leadingChildIndex, in: next) else { return }
+        guard stage(.setDividerWeight, WorkspaceIntentArgs.encode(
+            split: splitID, leadingIndex: leadingChildIndex, leadingWeight: weight,
+        )) else { return }
         reconcileTree()
     }
 
     /// Ejects leaf `id` into a NEW tab of its session (Zellij/Herdr "break pane"); the source tab
     /// collapses/rebalances. No-op if it is its tab's only leaf.
     public func breakPaneToTab(_ id: PaneID) {
-        tree = WorkspaceTreeOps.breakPaneToTab(id, in: tree)
+        guard stage(.breakPaneToTab, WorkspaceIntentArgs.encode(pane: id)) else { return }
         reconcileTree()
     }
 
     /// Renames tab `tabID`. Pure metadata — the leaf set is unchanged, so the reconcile only persists.
     public func renameTab(_ tabID: TabID, to title: String) {
-        tree = WorkspaceTreeOps.renameTab(tabID, to: title, in: tree)
+        guard stage(.renameTab, WorkspaceIntentArgs.encode(id: tabID.raw, name: title)) else { return }
         reconcileTree()
     }
 
@@ -2810,7 +2868,7 @@ public final class WorkspaceStore {
 
     /// Renames session `sessionID`. Pure metadata — the leaf set is unchanged.
     public func renameSession(_ sessionID: SessionID, to name: String) {
-        tree = WorkspaceTreeOps.renameSession(sessionID, to: name, in: tree)
+        guard stage(.renameSession, WorkspaceIntentArgs.encode(id: sessionID.raw, name: name)) else { return }
         reconcileTree()
     }
 
@@ -2862,16 +2920,6 @@ public final class WorkspaceStore {
         mutateDevicePreferences { $0.launchPresets = LaunchPreset.builtIns }
     }
 
-    // MARK: - Tree-mutation seams for store extensions
-
-    /// Replaces the live ``tree`` with `next` — the in-file mutation seam the `WorkspaceStore+Templates`
-    /// extension calls (the `private(set)` setter + `private` `scheduleSave()` are not reachable from a
-    /// cross-file extension, so the feature's logic lives there but touches the tree through this one
-    /// internal hook). The caller is responsible for the following `reconcileTree()`.
-    func replaceTree(_ next: TreeWorkspace) {
-        tree = next
-    }
-
     /// Applies a launch preset by id: opens a NEW TAB whose first pane runs the preset's command (and, for
     /// a two-pane preset, splits it and runs the secondary command), then types each pane's keystrokes once
     /// its PTY is live. Returns the created pane ids (for tests / the caller), or `[]` for an unknown id.
@@ -2890,25 +2938,34 @@ public final class WorkspaceStore {
     @discardableResult
     public func applyLaunchPreset(_ preset: LaunchPreset) -> [PaneID] {
         let plan = LaunchPresetEngine.plan(for: preset)
-        guard let first = plan.panes.first else { return [] }
+        guard let first = plan.panes.first, let session = tree.activeSessionID else { return [] }
 
-        // Pane 0: a new tab carrying the preset's first pane.
-        let (afterTab, firstID) = WorkspaceTreeOps.newTab(in: tree, spec: first.spec)
-        tree = afterTab
+        // Pane 0: a new tab carrying the preset's first pane. The spawn cwd rides the intent, so the
+        // document carries it and the materialize reads it back off the topology.
+        let firstID = PaneID()
+        guard stage(.spawnTab, WorkspaceIntentArgs.encode(
+            session: session, newPane: firstID, position: .auto, spawnCwd: first.spawnCwd,
+        )) else { return [] }
         var createdIDs = [firstID]
 
         // Pane 1 (optional): split pane 0 along the preset's axis.
         if let axis = plan.splitAxis, plan.panes.count > 1 {
-            let (afterSplit, secondID) = WorkspaceTreeOps.splitPane(
-                firstID, axis: axis, newSpec: plan.panes[1].spec, in: tree,
-            )
-            tree = afterSplit
-            createdIDs.append(secondID)
+            let secondID = PaneID()
+            if stage(.splitPane, WorkspaceIntentArgs.encode(
+                target: firstID.raw, axis: axis, before: false, newPane: secondID,
+                spawnCwd: plan.panes[1].spawnCwd,
+            )) {
+                createdIDs.append(secondID)
+            }
         }
-        // BEFORE the reconcile: the spawn cwd rides `channelOpen`, which the materialize builds.
         for (paneID, pane) in zip(createdIDs, plan.panes) {
+            // The preset NAMES its panes ("htop", "Claude Code"). Every op that mints a pane titles it
+            // "Terminal", so the name is a rename — which is also what it is: an authored identity the
+            // next OSC title must not overwrite.
+            if !pane.spec.title.isEmpty, pane.spec.title != "Terminal" {
+                stage(.renamePane, WorkspaceIntentArgs.encode(id: paneID.raw, name: pane.spec.title))
+            }
             guard let cwd = pane.spawnCwd, !cwd.isEmpty else { continue }
-            setSpawnCwd(cwd, for: paneID)
             setLastKnownCwd(cwd, for: paneID)
         }
         reconcileTree()
@@ -2967,7 +3024,11 @@ public final class WorkspaceStore {
     /// active pane.
     public func swapActivePaneInDirection(_ direction: FocusDirection) {
         guard let active = tree.activeSession?.activeTab?.activePane else { return }
-        tree = WorkspaceTreeOps.movePaneInDirection(active, direction, bounds: treeGeometryBounds, in: tree)
+        // The geometric neighbour is resolved HERE, against the layout this client is looking at, and
+        // the resolved PAIR travels — the host has no viewport to answer "which pane is to the left".
+        let moved = WorkspaceTreeOps.movePaneInDirection(active, direction, bounds: treeGeometryBounds, in: tree)
+        guard let partner = Self.swapPartner(of: active, before: tree, after: moved) else { return }
+        guard stage(.swapPanes, WorkspaceIntentArgs.encode(swap: active, with: partner)) else { return }
         reconcileTree()
     }
 
@@ -2979,7 +3040,13 @@ public final class WorkspaceStore {
     /// at the min-weight floor.
     public func resizeActivePane(_ direction: FocusDirection, step: Double = 0.1) {
         guard let active = tree.activeSession?.activeTab?.activePane else { return }
-        tree = WorkspaceTreeOps.resizeActivePane(active, direction, step: step, in: tree)
+        // The enclosing split + child index are structural, so they resolve locally and the settled
+        // ABSOLUTE weight travels as one `setDividerWeight`.
+        let next = WorkspaceTreeOps.resizeActivePane(active, direction, step: step, in: tree)
+        guard let change = Self.changedDividerWeight(before: tree, after: next) else { return }
+        guard stage(.setDividerWeight, WorkspaceIntentArgs.encode(
+            split: change.split, leadingIndex: change.index, leadingWeight: change.weight,
+        )) else { return }
         reconcileTree()
     }
 
@@ -2988,7 +3055,11 @@ public final class WorkspaceStore {
     /// registry no-op. No-op without an active pane.
     public func balanceActivePaneSplits() {
         guard let active = tree.activeSession?.activeTab?.activePane else { return }
-        tree = WorkspaceTreeOps.balanceSplits(activeTabContaining: active, in: tree)
+        // `setTabLayout` rebuilds every split at an equal `.flex(1)` share, which IS the even reset —
+        // so the shape alone carries it and no weight has to travel.
+        guard stageTabLayout(containing: active, of: WorkspaceTreeOps.balanceSplits(
+            activeTabContaining: active, in: tree,
+        )) else { return }
         reconcileTree()
     }
 
@@ -3004,7 +3075,9 @@ public final class WorkspaceStore {
     /// surface stays mounted). No-op (a 0/1-leaf tab, or no active pane) leaves the tree unchanged.
     public func applyLayout(_ preset: WorkspaceTreeOps.LayoutPreset) {
         guard let active = tree.activeSession?.activeTab?.activePane else { return }
-        tree = WorkspaceTreeOps.applyLayout(preset, activeTabContaining: active, in: tree)
+        guard stageTabLayout(containing: active, of: WorkspaceTreeOps.applyLayout(
+            preset, activeTabContaining: active, in: tree,
+        )) else { return }
         lastAppliedLayout = preset
         reconcileTree()
     }
@@ -3017,7 +3090,7 @@ public final class WorkspaceStore {
         let (next, applied) = WorkspaceTreeOps.cycleLayout(
             activeTabContaining: active, from: lastAppliedLayout, in: tree,
         )
-        tree = next
+        guard stageTabLayout(containing: active, of: next) else { return }
         lastAppliedLayout = applied
         reconcileTree()
     }
@@ -3627,10 +3700,29 @@ public final class WorkspaceStore {
     /// Updates the spec for `id` in whichever live model is active: the tree's side table when
     /// ``liveModel`` is ``LiveModel/tree``, else the canvas. Used by the shared pane-rebind wiring so a
     /// committed endpoint persists into the right model.
+    ///
+    /// On the tree path the spec belongs to the document, so the transform is run against the current
+    /// value and the RESULT is expressed as an intent. Exactly one spec field has one: an AUTHORED
+    /// title, which `renamePane` writes together with the `userRenamed` flag that is what "authored"
+    /// means.
+    ///
+    /// A DERIVED title has no op and needs none — the document already carries the video binding it
+    /// is derived from, and sending it as a rename would set the authorship flag and make the next
+    /// re-pick unable to update it. Anything else a transform touches is named in the debug log
+    /// rather than dropped silently, because a spec field with no intent behind it is a fact this
+    /// client cannot publish and the next host frame will erase.
     func updateSpecLive(_ id: PaneID, _ transform: @escaping (inout PaneSpec) -> Void) {
         switch liveModel {
         case .tree:
-            tree = WorkspaceTreeOps.updatingSpec(id, in: tree, transform)
+            guard var spec = tree.spec(for: id) else { return }
+            let before = spec
+            transform(&spec)
+            guard spec != before else { return }
+            guard spec.userRenamed, spec.title != before.title || !before.userRenamed else {
+                logIntentRefusal(.renamePane, "spec change with no intent for pane \(id.raw)")
+                return
+            }
+            guard stage(.renamePane, WorkspaceIntentArgs.encode(id: id.raw, name: spec.title)) else { return }
             reconcileTree()
         case .canvas:
             updateSpec(id, transform)
@@ -4188,9 +4280,7 @@ public extension WorkspaceStore {
     /// drag. No-op if the ids are equal or either is absent / they are in different tabs.
     func swapPanesTree(_ source: PaneID, _ target: PaneID) {
         guard source != target else { return }
-        let next = WorkspaceTreeOps.swapPanes(source, target, in: tree)
-        guard next != tree else { return }
-        tree = next
+        guard stage(.swapPanes, WorkspaceIntentArgs.encode(swap: source, with: target)) else { return }
         reconcileTree()
     }
 
@@ -4203,9 +4293,9 @@ public extension WorkspaceStore {
     /// not change the tree.
     func moveLeafTree(_ source: PaneID, beside target: PaneID, axis: SplitAxis, before: Bool) {
         guard source != target else { return }
-        let next = WorkspaceTreeOps.moveLeaf(source, beside: target, axis: axis, before: before, in: tree)
-        guard next != tree else { return }
-        tree = next
+        guard stage(.movePane, WorkspaceIntentArgs.encode(
+            source: source, target: target, axis: axis, before: before,
+        )) else { return }
         reconcileTree()
     }
 
@@ -4216,9 +4306,10 @@ public extension WorkspaceStore {
     /// only one leaf, the dock would breach the depth ceiling, or it would not change the tree (already
     /// docked there).
     func moveLeafToRootEdgeTree(_ source: PaneID, edge: PaneDropEdge) {
-        let next = WorkspaceTreeOps.moveLeafToRootEdge(source, edge: edge, in: tree)
-        guard next != tree else { return }
-        tree = next
+        guard let tab = tree.tab(containing: source)?.1 else { return }
+        guard stage(.dockPaneAtTabEdge, WorkspaceIntentArgs.encode(
+            dock: source, tab: tab, edge: edge,
+        )) else { return }
         reconcileTree()
     }
 
@@ -4230,9 +4321,9 @@ public extension WorkspaceStore {
     /// no-ops (the pane's spec cannot leave its session's side table).
     func moveLeafAcrossTabsTree(_ source: PaneID, beside target: PaneID, axis: SplitAxis, before: Bool) {
         guard source != target else { return }
-        let next = WorkspaceTreeOps.moveLeafAcrossTabs(source, beside: target, axis: axis, before: before, in: tree)
-        guard next != tree else { return }
-        tree = next
+        guard stage(.movePane, WorkspaceIntentArgs.encode(
+            source: source, target: target, axis: axis, before: before,
+        )) else { return }
         reconcileTree()
     }
 
@@ -4241,9 +4332,10 @@ public extension WorkspaceStore {
     /// (docs/45). KEEPS `PaneID` (no surface teardown); ONE reconcile on release; no-op when nothing
     /// would change (already docked there / sole pane of the active tab).
     func moveLeafToActiveTabRootEdgeTree(_ source: PaneID, edge: PaneDropEdge) {
-        let next = WorkspaceTreeOps.moveLeafToActiveTabRootEdge(source, edge: edge, in: tree)
-        guard next != tree else { return }
-        tree = next
+        guard let tab = activeTreeTab else { return }
+        guard stage(.dockPaneAtTabEdge, WorkspaceIntentArgs.encode(
+            dock: source, tab: tab, edge: edge,
+        )) else { return }
         reconcileTree()
     }
 
@@ -4284,16 +4376,28 @@ public extension WorkspaceStore {
     /// brackets the drag with ``setTerminalResizeSuspended(_:)`` — holding the host grid-resize send until
     /// release, the "update the layout live but defer the server event to drag-end" rule — and commits once on
     /// release via ``commitDividerResize()``.
+    ///
+    /// A PREVIEW, not an intent: one intent per drag frame would flood the channel and make every
+    /// other client watch the drag. ``WorkspaceStore/tree`` overlays it onto the projection, and
+    /// ``commitDividerResize()`` discards it the instant the single real intent is staged.
     func setDividerWeightLive(splitID: SplitNodeID, leadingChildIndex: Int, leadingWeight: Double) {
-        tree = WorkspaceTreeOps.setDividerWeight(
-            splitID: splitID, leadingChildIndex: leadingChildIndex, leadingWeight: leadingWeight, in: tree,
-        )
+        setLiveDividerWeight((split: splitID, index: leadingChildIndex, weight: leadingWeight))
     }
 
     /// Commits a finished live divider drag: reconcile (housekeeping) + persist the settled ratio ONCE. The
     /// per-frame ``setDividerWeightLive(splitID:leadingChildIndex:leadingWeight:)`` skips this, so it runs a
     /// single time on release rather than every frame.
     func commitDividerResize() {
+        // Read the CLAMPED weight off the preview rather than the raw drag number: the op is
+        // sum-preserving, so what the user actually saw is what must travel.
+        if let live = liveDividerWeight,
+           let settled = Self.leadingWeight(splitID: live.split, index: live.index, in: tree)
+        {
+            setLiveDividerWeight(nil)
+            stage(.setDividerWeight, WorkspaceIntentArgs.encode(
+                split: live.split, leadingIndex: live.index, leadingWeight: settled,
+            ))
+        }
         reconcileTree()
     }
 
@@ -4303,7 +4407,11 @@ public extension WorkspaceStore {
     /// even reset stays on ``balanceActivePaneSplits()`` (the ⌃⌘= chord). The leaf set is unchanged, so
     /// reconcile is a registry no-op.
     func evenDividerTree(splitID: SplitNodeID, leadingChildIndex: Int) {
-        tree = WorkspaceTreeOps.evenDivider(splitID: splitID, leadingChildIndex: leadingChildIndex, in: tree)
+        let next = WorkspaceTreeOps.evenDivider(splitID: splitID, leadingChildIndex: leadingChildIndex, in: tree)
+        guard let weight = Self.leadingWeight(splitID: splitID, index: leadingChildIndex, in: next) else { return }
+        guard stage(.setDividerWeight, WorkspaceIntentArgs.encode(
+            split: splitID, leadingIndex: leadingChildIndex, leadingWeight: weight,
+        )) else { return }
         reconcileTree()
     }
 
@@ -4779,6 +4887,12 @@ public extension WorkspaceStore {
     /// Read through the MIRROR, so a host whose document carries this pane's spawn directory and a
     /// client that minted it locally answer with one value. A device-local dictionary here would give
     /// two clients of one document two different answers for where the same pane's shell belongs.
+    ///
+    /// The resolution order is the mirror's own: the TOPOLOGY (`entries`, where the intent that minted
+    /// the pane put it) before the fast path, which is only reached for a pane the document does not
+    /// name yet — a launch-time cache row whose leaf has not been re-published. That order is what
+    /// makes a relaunch respawn a restored pane in its last spawn directory rather than `$HOME`.
+    ///
     /// The empty string is RETIRED, not a directory — it maps back to `nil` so the host takes its own
     /// default rather than being handed a path of nothing.
     func spawnCwd(for id: PaneID) -> String? {
@@ -4788,10 +4902,13 @@ public extension WorkspaceStore {
         return cwd
     }
 
-    /// Records where a newly-created pane's shell should start. The split / new-tab / new-session
-    /// seeding and the launch-preset expansion are its only writers — a pane's spawn dir is decided
-    /// once, when the pane is made — and it is persisted, because the pane outlives both the shell
-    /// and this process.
+    /// Records where a pane's shell should start, on the FAST PATH.
+    ///
+    /// Not the mint path: a pane the client creates carries its spawn directory in the intent's own
+    /// `cwd` argument (ops 6 / 12 / 13 / 18 all take one), so the value lands in the document's
+    /// topology where every client and the host read the same answer. What is left for this is the
+    /// facts that never went through an intent — the launch cache re-seeded at startup — which is why
+    /// it writes the overlay lane and schedules the cache save.
     func setSpawnCwd(_ cwd: String?, for id: PaneID) {
         guard spawnCwd(for: id) != cwd else { return }
         workspaceMirror.writeFastPath(

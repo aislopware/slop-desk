@@ -118,7 +118,11 @@ public final class LoopbackWorkspaceDocument {
         guard let current = state.topology else { return (.rejectedNotFound, nil) }
         let outcome = WorkspaceIntentApplier.apply(
             op: op, args: args, to: current, documentIsPristine: isPristine,
-            projectKey: { [state] in state.projectKey(forPane: $0) },
+            // The RESOLVED mirror, not this document's own `state`. A real host learns each pane's
+            // cwd from the PTY it owns and publishes it as `pane/cwd`; in-process the same fact
+            // arrives on the client's fast path, which is a lane `state` cannot see. Reading it here
+            // is what keeps the close rule's project sections working on the loopback path.
+            projectKey: { [box] in box.mirror.resolved.projectKey(forPane: $0) },
         )
         guard let accepted = outcome.topology else { return (Self.status(for: outcome), nil) }
         // The bootstrap is the one op that may not run twice, so ANY accepted intent ends pristine —

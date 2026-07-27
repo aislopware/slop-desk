@@ -5,7 +5,7 @@
 // opens on **Current** (the Jump-To scope).
 //
 // SEAM: every source is assembled by the PURE `OpenQuicklyModel` (headlessly tested) — Opened from
-// `WorkspaceStore.tree`, Recent from `recentlyClosedTabs`, Folders from the injected `FolderFrecencyStore`,
+// `WorkspaceStore.tree`, Recent from `closedTabRecords`, Folders from the injected `FolderFrecencyStore`,
 // Current from the focused pane's `JumpToModel` snapshot, Agents from its host metadata RPC
 // (`MetadataClient.listAgentSessions`, Claude-only) loaded ASYNC. Ranking runs the vendored `FuzzyMatcher`.
 // Each row's default + `⌘K` actions actuate through the shared `LinkActionActuator` (renderer + Jump-To use
@@ -662,7 +662,7 @@ struct OpenQuicklyView: View {
     private var sources: [OpenQuicklyFilter: [OpenQuicklyItem]] {
         [
             .opened: OpenQuicklyModel.openedItems(from: store.tree, facts: paneFacts),
-            .recent: OpenQuicklyModel.recentItems(from: store.recentlyClosedTabs, facts: paneFacts),
+            .recent: OpenQuicklyModel.recentItems(from: store.closedTabRecords, facts: paneFacts),
             .folders: OpenQuicklyModel.folderItems(from: folders?.ranked() ?? []),
             .agents: agentItems,
             .current: OpenQuicklyModel.currentItems(from: currentJumpItems),

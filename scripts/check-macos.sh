@@ -131,6 +131,10 @@ if [[ "${CONNECT}" == "1" ]]; then
   HOSTD_WORKSPACE="${WORK}/hostd-workspace"
   rm -rf "${HOSTD_WORKSPACE}"
   mkdir -p "${HOSTD_WORKSPACE}"
+  if [[ -z "${HOSTD_WORKSPACE}" ]]; then
+    echo "==> FAIL: SLOPDESK_WORKSPACE_STATE_DIR would be empty — refusing to launch hostd" >&2
+    exit 1
+  fi
   HOME="${HOSTD_HOME}" SLOPDESK_WORKSPACE_STATE_DIR="${HOSTD_WORKSPACE}" \
     "${REPO_ROOT}/.build/debug/slopdesk-hostd" \
     --port "${CONNECT_PORT}" --shell /bin/sh > "${HOSTD_LOG}" 2>&1 &

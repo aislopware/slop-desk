@@ -57,41 +57,6 @@ public extension WorkspaceStore {
         tabFocusHistory = Array(updated.prefix(Self.tabFocusHistoryCap))
     }
 
-    /// The tab to focus after `closing` is dropped — MRU survivor, else its neighbour inside its own project
-    /// section, else its neighbour in the display order
-    /// (``TabOrderingEngine/successorAfterClose(closing:displayOrder:projectKey:focusHistory:)``).
-    ///
-    /// Closing a BACKGROUND tab returns the ACTIVE tab: the user dismissed something they were not looking
-    /// at, and focus has no business moving. (The old index clamp moved it anyway — closing tab 0 while on
-    /// tab 2 re-pointed the selection at index 0.)
-    ///
-    /// Resolved against whichever session OWNS `closing`, not the active one: a tab can be closed in a
-    /// background session (another window), and reading the active session's tabs there would compare the
-    /// closing tab against a list it is not in and give up.
-    ///
-    /// `nil` when no session owns `closing`; the caller then leaves the tree ops on their index-clamp
-    /// fallback.
-    func plannedTabSuccessor(closing: TabID) -> TabID? {
-        guard let session = tree.sessions.first(where: { $0.tabs.contains { $0.id == closing } }) else {
-            return nil
-        }
-        if let active = session.activeTab?.id, active != closing { return active }
-        // The lookups read THIS store's mirror while the ordering rules stay pure and session-scoped.
-        let key: (TabID) -> String? = { [self] in
-            TabOrderingEngine.tabProjectKey(
-                $0, in: session, projectKey: { projectKey(for: $0) }, cwd: { paneCwd(for: $0) },
-            )
-        }
-        return TabOrderingEngine.successorAfterClose(
-            closing: closing,
-            displayOrder: TabOrderingEngine.projectGroupedTabOrder(
-                session.tabs.map(\.id), projectKey: key,
-            ),
-            projectKey: key,
-            focusHistory: tabFocusHistory,
-        )
-    }
-
     /// Prunes the TREE-keyed sidebar mirror to the live tree on every ``reconcileTree()``: the E20 manual
     /// tab-badge override (keyed by ``TabID``). A closed tab must not keep a stale manual badge (and the
     /// dict must not grow unbounded across a long session of open/close). Empty in the common case ⇒ cheap.

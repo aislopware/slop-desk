@@ -70,14 +70,31 @@ final class SyncInputTests: XCTestCase {
     }
 
     /// Toggling a different tab's id does not affect the current tab.
+    ///
+    /// The second tab is a REAL one. The armed bit is host truth now (`tab/syncInputArmed`), and the
+    /// applier answers `rejectedNotFound` for a tab the document does not have — which is stricter
+    /// than the client-owned Set this replaced, and right: arming a tab that does not exist is a
+    /// state no other client could ever be shown.
     func testToggleIsPerTab() throws {
         let store = makeTreeStore()
         let tabA = try XCTUnwrap(activeTabID(store))
-        let tabB = TabID() // a synthetic id that does not exist in the tree
+        store.newTab(kind: .terminal)
+        let tabB = try XCTUnwrap(activeTabID(store))
+        XCTAssertNotEqual(tabA, tabB)
 
         store.toggleSyncInput(tabID: tabB)
         XCTAssertFalse(store.syncInputTabs.contains(tabA), "only tabB was toggled")
         XCTAssertTrue(store.syncInputTabs.contains(tabB), "tabB is armed")
+    }
+
+    /// A tab the document does not name cannot be armed — there is nothing to arm.
+    func testTogglingAnUnknownTabArmsNothing() {
+        let store = makeTreeStore()
+        let ghost = TabID()
+
+        store.toggleSyncInput(tabID: ghost)
+
+        XCTAssertFalse(store.syncInputTabs.contains(ghost))
     }
 
     // MARK: - Fan-out target computation (off → empty; on → siblings)

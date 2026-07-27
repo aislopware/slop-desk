@@ -311,14 +311,17 @@ public extension WorkspaceTopology {
         // dropped rather than duplicated — one tab cannot be both open and reopenable, and rendering
         // it twice is worse than losing one undo step.
         var closed: [ClosedTab] = []
-        let sessionIDSet = Set(sessions.map(\.id))
         for tabID in (state.uuidList(.root(WorkspaceRootField.closedTabRing)) ?? []).map({ TabID(raw: $0) })
             where !live.contains(tabID)
         {
+            // The owner may be GONE — a session emptied by closing its last tab takes its id with it,
+            // while the tabs it lost are still reopenable and still carry the only copy of their
+            // panes' specs. So the back-pointer must be PRESENT (it says which session to prefer) but
+            // need not still resolve; `reopenClosedTab` falls back to the active session for one that
+            // does not.
             guard let tab = Self.tab(tabID, from: state),
                   let owner = state.uuid(WorkspaceKey(.tab, tabID.raw, WorkspaceTabField.sessionID))
-                  .map({ SessionID(raw: $0) }),
-                  sessionIDSet.contains(owner)
+                  .map({ SessionID(raw: $0) })
             else { continue }
             var specs: [PaneID: PaneSpec] = [:]
             for paneID in tab.allPaneIDs() {
