@@ -68,7 +68,7 @@ public struct ForegroundProcessDetector: Sendable {
 
         public var isEmpty: Bool { foreground == nil && status == nil }
 
-        /// Flattened for the caller's `enqueueControl([WireMessage])` — foreground first
+        /// Flattened for the caller's `broadcastControl([WireMessage])` — foreground first
         /// (presence floor), then the richer status, mirroring the machine's precedence.
         public var messages: [WireMessage] {
             var out: [WireMessage] = []

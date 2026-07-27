@@ -118,7 +118,7 @@ public struct ClaudePaneDetector: Sendable {
     }
 
     /// One decision: the (possibly empty) CONTROL messages to enqueue for this fold. Shape-identical to
-    /// ``ForegroundProcessDetector/Emission`` so both drive the same `enqueueControl` wiring.
+    /// ``ForegroundProcessDetector/Emission`` so both drive the same `broadcastControl` wiring.
     public struct Emission: Sendable, Equatable {
         /// The type-26 `foregroundProcess(name:)` to send, or `nil` (no basename edge).
         public var foreground: WireMessage?
@@ -133,7 +133,7 @@ public struct ClaudePaneDetector: Sendable {
 
         public var isEmpty: Bool { foreground == nil && status == nil && intent == nil && title == nil }
 
-        /// Flattened for the caller's `enqueueControl([WireMessage])` — foreground first (presence
+        /// Flattened for the caller's `broadcastControl([WireMessage])` — foreground first (presence
         /// floor), then the richer status, then the intent, mirroring the machine's precedence, and
         /// the title retirement last (a display consequence of the status having dropped).
         public var messages: [WireMessage] {
