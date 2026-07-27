@@ -1,0 +1,320 @@
+import Foundation
+import SlopDeskProtocol
+import SlopDeskTransport
+import SlopDeskWorkspaceModel
+
+/// The client end of the workspace-document channel (`channelClass == 1`, docs/45 §5.1).
+///
+/// Owns one ``HostWorkspaceMirror`` and the loop that feeds it: open → **await the ack** →
+/// subscribe → apply → ack. Everything the UI reads comes off the mirror; everything the host needs
+/// to know goes out as a type-17 request. There is no other traffic on this channel.
+///
+/// The transport is INJECTED rather than reached for, so the whole loop is provable over an
+/// in-memory channel pair with no socket, no `HostServer` and no registry.
+@preconcurrency
+@MainActor
+public final class WorkspaceChannelClient {
+    /// An opened workspace channel, narrowed to what this client actually uses.
+    ///
+    /// Only the CONTROL sub-channel appears, because only CONTROL carries workspace traffic: the
+    /// document is small, latency-sensitive control state, and CONTROL is unwindowed — so a
+    /// workspace frame can never stall behind a PTY output flood waiting on flow-control credit.
+    /// The DATA sub-channel the mux opens alongside stays idle, and naming it here would invite a
+    /// future caller to use it.
+    public struct Handle: Sendable {
+        public let channelID: UInt32
+        public let control: any MessageChannel
+        /// The host's `channelOpenAck` verdict. `nil` for a transport that never acks.
+        public let awaitAccepted: (@Sendable () async -> Bool)?
+
+        @preconcurrency
+        public init(
+            channelID: UInt32,
+            control: any MessageChannel,
+            awaitAccepted: (@Sendable () async -> Bool)? = nil,
+        ) {
+            self.channelID = channelID
+            self.control = control
+            self.awaitAccepted = awaitAccepted
+        }
+
+        /// Adapts a mux acquisition. Production's only construction path.
+        public init(_ acquisition: MuxAcquisition) {
+            var accepted: (@Sendable () async -> Bool)?
+            if let awaitOpenAck = acquisition.awaitOpenAck {
+                accepted = { await awaitOpenAck().accepted }
+            }
+            self.init(
+                channelID: acquisition.channelID,
+                control: acquisition.control,
+                awaitAccepted: accepted,
+            )
+        }
+    }
+
+    /// Opens a `channelClass 1` channel.
+    public typealias Open = @Sendable () async throws -> Handle
+    /// Releases the channel by id.
+    public typealias Close = @Sendable (UInt32) async -> Void
+
+    public enum State: Equatable, Sendable {
+        case idle
+        case opening
+        /// Subscribed and applying frames. The associated value is the last acked `stateNum`.
+        case live(Int64)
+        /// The host does not serve this channel — the flag is off there, or a subscriber for this
+        /// connection already exists. A definite answer, so the client stops rather than retrying.
+        case refused
+        /// The channel died. The connection layer restarts us; nothing retries in here.
+        case closed
+    }
+
+    /// `SLOPDESK_WORKSPACE_DOC` — `== "1"`, default-OFF during bake-in. With it off the client never
+    /// opens the channel and the per-pane control sinks drive the UI exactly as they do today.
+    public static var isEnabledByDefault: Bool {
+        ProcessInfo.processInfo.environment["SLOPDESK_WORKSPACE_DOC"] == "1"
+    }
+
+    public private(set) var mirror = HostWorkspaceMirror()
+    public private(set) var state: State = .idle
+
+    /// Fired on the main actor after any change the UI should repaint for. Deliberately a callback
+    /// rather than `@Observable`: this type is headless and must stay testable without SwiftUI.
+    public var onChange: (@MainActor () -> Void)?
+
+    /// This client's identity in the presence roster. One per app instance — two windows of one app
+    /// are two connections and two identities, exactly as intended.
+    public let clientInstanceID: UUID
+    private let clientKind: WorkspaceClientKind
+    private let label: String
+
+    private let open: Open
+    private let close: Close
+    private let onLog: (@Sendable (String) -> Void)?
+
+    private var channelID: UInt32?
+    private var control: (any MessageChannel)?
+    private var runTask: Task<Void, Never>?
+    /// Monotonic, per-connection. The host keeps the NEWEST and ignores anything older, so a
+    /// reconnecting client must never restart this below what it has already sent.
+    private var presenceClock: Int64 = 0
+    private var lastPresence: WorkspacePresenceUpdate?
+
+    @preconcurrency
+    public init(
+        clientInstanceID: UUID = UUID(),
+        clientKind: WorkspaceClientKind,
+        label: String,
+        open: @escaping Open,
+        close: @escaping Close,
+        onLog: (@Sendable (String) -> Void)? = nil,
+    ) {
+        self.clientInstanceID = clientInstanceID
+        self.clientKind = clientKind
+        self.label = label
+        self.open = open
+        self.close = close
+        self.onLog = onLog
+    }
+
+    // MARK: - Lifecycle
+
+    /// Opens and subscribes. Idempotent while a run is in flight, and a no-op once the host has
+    /// REFUSED — a refusal is a fact about this host, not a transient failure.
+    public func start() {
+        guard runTask == nil, state != .refused else { return }
+        state = .opening
+        runTask = Task { [weak self] in await self?.run() }
+    }
+
+    /// Tears the channel down and forgets host truth.
+    ///
+    /// The mirror is reset because `entries` is only meaningful with respect to a live subscription:
+    /// keeping it would let a reconnect apply a diff against a document the host may have replaced.
+    /// The next subscribe declares `stateNum 0` and gets a snapshot, which is one frame.
+    public func stop() {
+        runTask?.cancel()
+        runTask = nil
+        let id = channelID
+        channelID = nil
+        control = nil
+        mirror = HostWorkspaceMirror()
+        lastPresence = nil
+        if state != .refused { state = .closed }
+        // Claiming `channelID` above is what makes this the SINGLE release: the run task's exit path
+        // releases only the channel it still owns, so a stop that races the loop unwinding cannot
+        // close the same id twice — and a second close would tear down a shared connection a
+        // reconnect had already rebuilt under the same pool key.
+        if let id {
+            let close = close
+            Task { await close(id) }
+        }
+        onChange?()
+    }
+
+    private func run() async {
+        let opened: Handle
+        do {
+            opened = try await open()
+        } catch {
+            onLog?("workspace channel: open failed (\(error))")
+            finish(.closed)
+            return
+        }
+
+        // Claim the channel BEFORE the ack await, so a `stop()` arriving mid-handshake still knows
+        // there is something to release. `control` stays nil until the ack lands, which is what
+        // makes the ordering rule below unbreakable rather than merely observed: `send` has nothing
+        // to write through.
+        channelID = opened.channelID
+
+        // **Await the ack BEFORE the first request** (docs/45 §11.3, DECISIONS Phase-4 ruling 7).
+        // `channelOpen` is announced on the DATA link while every request rides CONTROL, so a
+        // subscribe sent immediately can beat the host's registration of the control sub-channel and
+        // be dropped — leaving this client waiting for a snapshot that will never come. The failure
+        // presents as a hang, not an error, which is exactly why it must be structural.
+        if let awaitAccepted = opened.awaitAccepted {
+            guard await awaitAccepted() else {
+                onLog?("workspace channel: host refused — falling back to the control-push sinks")
+                await releaseIfOwned(opened.channelID)
+                finish(.refused)
+                return
+            }
+        }
+        guard !Task.isCancelled else {
+            await releaseIfOwned(opened.channelID)
+            finish(.closed)
+            return
+        }
+
+        control = opened.control
+        await sendSubscribe()
+
+        do {
+            for try await message in opened.control.inbound {
+                guard case let .workspaceEvent(kind, epoch, base, new, payload) = message else { continue }
+                await handle(kind: kind, epoch: epoch, base: base, new: new, payload: payload)
+            }
+        } catch {
+            onLog?("workspace channel: receive ended (\(error))")
+        }
+        // Clean close OR error — either way this subscription is over. The connection layer decides
+        // whether to start a new one; retrying in here would fight it.
+        control = nil
+        await releaseIfOwned(opened.channelID)
+        finish(.closed)
+    }
+
+    /// Releases `id` only while this client still owns it. A `stop()` that already claimed the
+    /// channel wins, and the loser does nothing.
+    private func releaseIfOwned(_ id: UInt32) async {
+        guard channelID == id else { return }
+        channelID = nil
+        control = nil
+        await close(id)
+    }
+
+    private func finish(_ next: State) {
+        runTask = nil
+        // `stop()` has the last word: it cancelled us and already published the state it wanted.
+        guard state != .refused || next == .refused else { return }
+        state = next
+        onChange?()
+    }
+
+    // MARK: - Apply
+
+    private func handle(kind: UInt8, epoch: UUID, base: Int64, new: Int64, payload: Data) async {
+        let outcome = mirror.apply(
+            kind: kind,
+            epoch: epoch,
+            baseStateNum: base,
+            newStateNum: new,
+            payload: payload,
+        )
+        switch outcome {
+        case let .applied(stateNum):
+            state = .live(stateNum)
+            await send(verb: .ack, payload: WorkspaceStateCodec.encodeI64(stateNum))
+            onChange?()
+
+        case .needsResubscribe:
+            // A repeat `subscribe` IS the resync verb — there is deliberately no separate "resend".
+            // The mirror already refused the frame, so what goes out describes where we actually are.
+            onLog?("workspace channel: re-subscribing from stateNum \(mirror.knownStateNum)")
+            await sendSubscribe()
+
+        case .reset:
+            state = .live(0)
+            onChange?()
+
+        case .presence:
+            onChange?()
+
+        case .intentResult:
+            // Phase 5 owns the optimistic overlay. Until then the host answers `unknownOp` and there
+            // is nothing staged to retire.
+            break
+
+        case .ignored,
+             .dropped:
+            break
+        }
+    }
+
+    // MARK: - Requests
+
+    private func sendSubscribe() async {
+        let request = WorkspaceSubscribe(
+            clientInstanceID: clientInstanceID,
+            clientKind: clientKind.rawValue,
+            knownEpoch: mirror.knownEpoch,
+            knownStateNum: mirror.knownStateNum,
+            // No flags in Phase 4. `contributesSize` belongs to Phase 6's size fold and
+            // `followsFocus` to Phase 5's host-truth focus; setting either now would put this client
+            // in a roster column that does not yet mean anything.
+            flags: 0,
+            label: label,
+        )
+        await send(verb: .subscribe, payload: request.encode())
+        // A resubscribe resets the host's per-subscriber presence expectations along with its base,
+        // so re-assert what this client is looking at rather than waiting for the next UI change.
+        if let lastPresence { await sendPresence(lastPresence) }
+    }
+
+    /// Tells the host what this client is looking at. Phase 4 ships the identity half of presence;
+    /// the viewport is carried but not yet folded into a PTY size.
+    public func updatePresence(viewingTabID: UUID, viewingPaneID: UUID, cols: UInt16, rows: UInt16) {
+        presenceClock += 1
+        let update = WorkspacePresenceUpdate(
+            presenceClock: presenceClock,
+            viewingTabID: viewingTabID,
+            viewingPaneID: viewingPaneID,
+            cols: cols,
+            rows: rows,
+            flags: 0,
+        )
+        lastPresence = update
+        Task { [weak self] in await self?.sendPresence(update) }
+    }
+
+    private func sendPresence(_ update: WorkspacePresenceUpdate) async {
+        await send(verb: .presence, payload: update.encode())
+    }
+
+    private func send(verb: WorkspaceRequestVerb, payload: Data) async {
+        guard let control else { return }
+        do {
+            // `requestSeq` is reserved: the host answers requests by CONTENT (an ack carries the
+            // stateNum, an intent result carries the intentID), so nothing correlates on it.
+            try await control.send(.workspaceRequest(requestSeq: 0, verb: verb.rawValue, payload: payload))
+        } catch {
+            onLog?("workspace channel: send(\(verb)) failed (\(error))")
+        }
+    }
+
+    // MARK: - Test seams
+
+    var isRunningForTesting: Bool { runTask != nil }
+    var presenceClockForTesting: Int64 { presenceClock }
+}

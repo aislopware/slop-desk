@@ -83,11 +83,17 @@ public final class ConnectionRegistry {
     /// Acquires a channel on the shared connection for `(host,port)`, creating the connection on
     /// the FIRST acquisition for that endpoint and reusing it thereafter (refcount++). Opens one
     /// logical channel and returns its data + control sub-channel pair.
+    ///
+    /// - Parameter channelClass: `0` (a pane) unless the caller is opening one of the non-pane
+    ///   classes — `1` is the workspace document (docs/45 §5.1). The class rides the `channelOpen`
+    ///   and decides how the HOST routes it; the pool's refcounting is class-agnostic, which is what
+    ///   makes a workspace channel keep the shared connection alive exactly like a pane does.
     public func acquire(
         host: String,
         port: UInt16,
         sessionID: UUID,
         lastReceivedSeq: Int64,
+        channelClass: UInt8 = 0,
         initialCwd: String? = nil,
     ) async throws -> MuxAcquisition {
         let key = Self.key(host, port)
@@ -113,7 +119,7 @@ public final class ConnectionRegistry {
             pair = try await connection.openChannel(
                 sessionID: sessionID,
                 lastReceivedSeq: lastReceivedSeq,
-                channelClass: 0,
+                channelClass: channelClass,
                 initialCwd: initialCwd,
             )
         } catch {
