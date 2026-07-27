@@ -3479,3 +3479,69 @@ user's presets and templates — silently, with no `.corrupt` copy. Stale data h
 standing over host truth forever. The failed send now drops its own patch at once (the host was never
 asked — there is no answer to wait for), every inbound frame sweeps before it is folded in, and a
 one-shot backstop covers a host that accepted and died on a channel too quiet to sweep itself.
+
+## Multi-client Phase 5b: the store's mutations become intents (2026-07-27)
+
+[docs/45](45-multi-client-state-sync.md) §7.2. The step the entry above defers: `WorkspaceStore.tree`
+stops being a stored `TreeWorkspace` and becomes a projection of `workspaceMirror.topology`, and every
+mutator becomes an intent. Two rulings, and the seam that makes the cutover reviewable.
+
+### 1. `SLOPDESK_WORKSPACE_DOC` flips default-ON on BOTH ends in the SAME commit
+
+Not a schedule — a coupling. A host with the flag off answers `sendOpenAck(accepted: false)`, which
+the client publishes as `.refused` and never retries, because a refusal is a definite answer rather
+than a transient failure. So a default-ON client against a default-OFF host holds `topology == nil`:
+zero sessions, a blank window, and no error anywhere, since a nil topology makes `stageIntent` return
+`nil` and every mutation a silent no-op. The two defaults move together or not at all.
+
+The flag keeps its `!= "0"` shape on both ends, which is this repo's default-ON idiom.
+
+Two things this ruling costs, named rather than discovered:
+
+**`syncInputTabs` becomes persisted host truth.** It rides `tab/syncInputArmed`, which the host
+persists with the rest of the topology — overturning its "never persisted, dies with the app" doc
+comment. Sync-input surviving a relaunch is a behaviour change and is the price of the tab being one
+object that every client and the host agree about.
+
+**The close successor becomes plain MRU.** `plannedTabSuccessor` picks MRU, else the neighbour inside
+the same PROJECT SECTION, else display order — that middle clause is the `ed76f137` fix for the
+close-jumps-to-another-project bug. The host's `successorAfterClosing` has only MRU with a fallback to
+the tree op's index clamp. It is not fixable client-side once the host owns the close, so the rule is
+re-landed HOST-side or the regression is taken deliberately; it is not allowed to be discovered.
+
+### 2. The seam is opt-in, and the client never installs a document of its own
+
+`WorkspaceChannelClient.send(intent:)` refuses anything that is not `.live`, and `.live` is published
+only from inside the async `start()` run loop. Every store mutator is synchronous. So the cutover
+turns ~430 synchronous call sites across ~100 test files into no-ops that compile, log nothing, and
+fail the suite as "nothing happened" with no pointer to the cause.
+
+`LoopbackWorkspaceDocument` answers that by BEING the host in-process: the same
+`WorkspaceIntentApplier`, the same `encodeDiff` → `decodeDiff` round trip through the mirror's own
+apply entry point, on the caller's turn. A differential test pins it against `HostWorkspaceDocument`
+byte for byte, because the decision function is shared but the versioning around it is not.
+
+**Nothing installs one by default, and that is the ruling.** A client that can rewrite its own
+workspace with no host in the loop IS the locally-owned tree this phase exists to delete, and shipping
+one as the default would make "the host applied my intent" and "I applied my own intent" the same
+code path — a green suite with the workspace channel entirely broken. So it is reached by name
+(`WorkspaceStore.attachLoopbackWorkspaceDocument()`), production builds its channel through
+`liveWorkspaceChannel`, which has no document, and a client with no host keeps exactly one honest
+outcome: it cannot change the layout.
+
+**Frame order is result-then-document.** `WorkspaceChannelSession.drain` writes every queued
+`intentResult` before the state frame, so an `applied` result arms its patch at `framesApplied + 1`
+and the diff immediately behind retires it in the same turn. The loopback reproduces that order; the
+opposite order leaves one inert patch shadowing host truth until some later intent sweeps it.
+
+### 3. Two facts the cutover has to carry, found by measuring
+
+**`spawnTab` and `splitPane` are not determined by their arguments.** `WorkspaceTreeOps.newTab` mints
+the `TabID` itself, so the client's optimistic patch and the host's diff name different tabs for the
+same intent. Ruling 1 of the Phase 5 entry — new object ids are PROPOSED by the client — covers the
+pane and not the tab.
+
+**Presence is drained by one task, not one per update.** A detached task per `updatePresence`
+publishes in scheduling order, not issue order, and the host keeps the newest `presenceClock` and
+ignores the rest — so a reordered burst leaves the roster showing a view the user has already left,
+permanently, with nothing later to correct it.

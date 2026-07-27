@@ -345,6 +345,30 @@ public extension WorkspaceStore {
         workspaceChannel?.stop()
     }
 
+    /// Installs an in-process document that answers this store's intents synchronously, seeded from
+    /// the layout the store already restored.
+    ///
+    /// The seam a caller with no host reaches for. ``WorkspaceChannelClient/send(intent:args:now:)``
+    /// refuses anything that is not `.live`, and `.live` arrives only from inside the async run loop —
+    /// so without this, every synchronous mutation against a document-driven layout is a no-op that
+    /// compiles, logs nothing, and simply does not happen.
+    ///
+    /// Deliberately NOT called from ``init``. A client that can rewrite its own workspace with no host
+    /// in the loop is the locally-owned tree this document replaces, and it stays something a caller
+    /// asks for by name.
+    ///
+    /// - Returns: the document, so the caller can drive its liveness half too.
+    @discardableResult
+    func attachLoopbackWorkspaceDocument(label: String = "loopback") -> LoopbackWorkspaceDocument {
+        let document = LoopbackWorkspaceDocument(box: workspaceMirror)
+        // Adopt rather than install: `seedWorkspaceMirror(from:cache:)` has already published the
+        // restored tree and the cached per-pane facts, and re-publishing them would churn every
+        // observer for a document that did not change.
+        document.adopt(pristine: true)
+        attachWorkspaceChannel(.loopback(document: document, label: label))
+        return document
+    }
+
     /// Builds the production channel and installs it. The app shell's one-liner.
     func installWorkspaceChannel(
         muxRegistry: ConnectionRegistry,

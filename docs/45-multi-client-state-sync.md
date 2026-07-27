@@ -770,6 +770,17 @@ correct visible outcome of a rejected rename), or a **3 s timeout**.
 **Offline intents are dropped at disconnect, never queued or replayed.** Replaying "close tab 3" after
 a four-hour disconnect is wrong. The UI disables mutation while the workspace channel is down.
 
+**Testing this needs a seam, and the seam is opt-in.** `send(intent:)` refuses anything that is not
+`.live`, and `.live` is published only from inside the async run loop — so every synchronous store
+mutation against a projected `tree` is a no-op in a test that cannot suspend.
+`LoopbackWorkspaceDocument` (`Sources/SlopDeskWorkspaceCore/Workspace/Sync/`) is that far end
+in-process: the same `WorkspaceIntentApplier`, the same `encodeDiff` → `decodeDiff` round trip through
+`WorkspaceMirrorBox.apply`, answering on the caller's turn, and pinned against `HostWorkspaceDocument`
+byte for byte. Reached by name via `WorkspaceStore.attachLoopbackWorkspaceDocument()` and never
+installed by default — a client that can rewrite its own workspace with no host IS the locally-owned
+tree this document replaces (DECISIONS, Multi-client Phase 5b — "the store's mutations become
+intents" ruling 2).
+
 ### 7.3 What the client persists
 
 **`workspace-cache.json`**
@@ -1272,10 +1283,13 @@ test cannot tune `SLOPDESK_SUB_LAG_BYTES`. Plus `bash scripts/check-ios.sh`.
 **Open questions**
 
 1. ~~Should `SLOPDESK_WORKSPACE_DOC` ever flip default-ON before Phase 6 lands?~~ **SETTLED**
-   (DECISIONS, Multi-client Phase 5b ruling 1): it stays OFF, and the render path is not allowed to
-   depend on it. The flag gates a TRANSPORT — a flag-off client draws the same sidebar one RTT
-   staler, off the per-pane control pushes and `workspace-cache.json`. It flips when the store's
-   mutations become intents, because at that point a flag-off client has no layout at all.
+   (DECISIONS, Multi-client Phase 5b — "the pane's facts get somewhere to live" ruling 1, then "the
+   store's mutations become intents" ruling 1). While the store owns `tree` the flag gates a
+   TRANSPORT and stays OFF: a flag-off client draws the same sidebar one RTT staler, off the per-pane
+   control pushes and `workspace-cache.json`, and the render path is not allowed to depend on it. It
+   flips **default-ON on BOTH ends in the same commit that projects the tree**, because a
+   default-ON client against a default-OFF host is answered `.refused`, holds `topology == nil`, and
+   renders a blank window with no error.
 2. `SLOPDESK_SUB_LAG_BYTES = 32 MiB` is a first guess. Only a cellular-iOS soak settles it.
 3. Does the document itself ever need sweeping, or is the capped `closedTabRing` + explicit
    `closePane` sufficient across months of churn? Measure before adding a GC.

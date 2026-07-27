@@ -103,6 +103,14 @@ public final class WorkspaceChannelClient {
     private let close: Close
     private let onLog: (@Sendable (String) -> Void)?
 
+    /// The in-process document this client serves its own intents from, or `nil` for a channel that
+    /// talks to a host.
+    ///
+    /// Set only by ``loopback(document:clientInstanceID:clientKind:label:)``. Production builds its
+    /// channel through `WorkspaceStore.liveWorkspaceChannel`, which never sets it, so every branch on
+    /// it below is inert in the shipped app.
+    private var localDocument: LoopbackWorkspaceDocument?
+
     private var channelID: UInt32?
     private var control: (any MessageChannel)?
     private var runTask: Task<Void, Never>?
@@ -113,6 +121,14 @@ public final class WorkspaceChannelClient {
     /// reconnecting client must never restart this below what it has already sent.
     private var presenceClock: Int64 = 0
     private var lastPresence: WorkspacePresenceUpdate?
+    /// Presence updates waiting to go out, oldest first, and the single task that drains them.
+    ///
+    /// One task rather than one per update, because a detached task per call publishes in SCHEDULING
+    /// order, not issue order: two updates minted in the same turn can reach the host with their
+    /// clocks reversed, and the host keeps the newest clock — so the view it shows everyone else is
+    /// the one the user already left, permanently.
+    private var presenceQueue: [WorkspacePresenceUpdate] = []
+    private var presenceDrain: Task<Void, Never>?
 
     @preconcurrency
     public init(
@@ -135,9 +151,39 @@ public final class WorkspaceChannelClient {
 
     // MARK: - Lifecycle
 
+    /// Builds a client whose document is `document` rather than a host on the far end of a socket.
+    ///
+    /// It is `.live` from the moment it is built, so a SYNCHRONOUS caller can send an intent and read
+    /// the result on its next line — the property the async run loop cannot offer, and the reason a
+    /// store whose layout comes from the document is otherwise untestable outside `async` code.
+    ///
+    /// `open`/`close` are unreachable: ``start()`` and ``stop()`` are inert for a loopback, because
+    /// this client has nothing to open and because `stop()`'s `box.reset()` would erase the very
+    /// `entries` the document is authoritative over.
+    public static func loopback(
+        document: LoopbackWorkspaceDocument,
+        clientInstanceID: UUID = UUID(),
+        clientKind: WorkspaceClientKind = .thisPlatform,
+        label: String = localDeviceLabel(),
+    ) -> WorkspaceChannelClient {
+        let client = WorkspaceChannelClient(
+            box: document.box,
+            clientInstanceID: clientInstanceID,
+            clientKind: clientKind,
+            label: label,
+            open: { throw CancellationError() },
+            close: { _ in },
+        )
+        client.localDocument = document
+        client.publish(.live(document.stateNum))
+        return client
+    }
+
     /// Opens and subscribes. Idempotent while a run is in flight, and a no-op once the host has
     /// REFUSED — a refusal is a fact about this host, not a transient failure.
     public func start() {
+        // A loopback client is already live against a document that is already installed.
+        guard localDocument == nil else { return }
         guard runTask == nil, state != .refused else { return }
         runGeneration &+= 1
         let generation = runGeneration
@@ -151,6 +197,10 @@ public final class WorkspaceChannelClient {
     /// keeping it would let a reconnect apply a diff against a document the host may have replaced.
     /// The next subscribe declares `stateNum 0` and gets a snapshot, which is one frame.
     public func stop() {
+        // A loopback client has no subscription to tear down, and `box.reset()` would delete the
+        // document it is authoritative over. The store re-opens its channel on every connection
+        // establish, so this holds structurally rather than by nobody calling it.
+        guard localDocument == nil else { return }
         runGeneration &+= 1
         runTask?.cancel()
         runTask = nil
@@ -158,7 +208,7 @@ public final class WorkspaceChannelClient {
         channelID = nil
         control = nil
         box.reset()
-        lastPresence = nil
+        clearPresence()
         // A deliberate teardown clears a refusal too: the next `start()` may be against a DIFFERENT
         // host, or the same one with the flag now on, and a refusal is a fact about one connection.
         publish(.closed)
@@ -337,7 +387,33 @@ public final class WorkspaceChannelClient {
             flags: 0,
         )
         lastPresence = update
-        Task { [weak self] in await self?.sendPresence(update) }
+        presenceQueue.append(update)
+        // Already draining: the loop below picks this up on its next pass, in the order it was queued.
+        guard presenceDrain == nil else { return }
+        presenceDrain = Task { [weak self] in
+            while let next = self?.takeQueuedPresence() {
+                await self?.sendPresence(next)
+            }
+            // No `await` between the empty check and this, so on the main actor the two are one step
+            // and an `updatePresence` arriving in between cannot find a drain that is neither running
+            // nor restartable.
+            self?.presenceDrain = nil
+        }
+    }
+
+    private func takeQueuedPresence() -> WorkspacePresenceUpdate? {
+        presenceQueue.isEmpty ? nil : presenceQueue.removeFirst()
+    }
+
+    /// Forgets what this client last said it was looking at, and abandons anything still queued.
+    ///
+    /// The drain task is left to notice the empty queue on its next pass rather than being cancelled
+    /// and its slot cleared. Clearing the slot is what would let a stopped-then-reused client start a
+    /// SECOND drain, and two drains sharing one queue reorder precisely what the single one exists to
+    /// keep in order.
+    private func clearPresence() {
+        lastPresence = nil
+        presenceQueue.removeAll()
     }
 
     private func sendPresence(_ update: WorkspacePresenceUpdate) async {
@@ -361,6 +437,12 @@ public final class WorkspaceChannelClient {
     ) -> Bool {
         guard case .live = state else { return false }
         guard let intent = box.stageIntent(op: op, args: args, issuedAt: now) else { return false }
+        // A loopback client IS the far end: it answers here, before this call returns, so the patch
+        // staged one line above is already retired by the document frame the answer carries.
+        if let localDocument {
+            localDocument.serve(intent)
+            return true
+        }
         Task { [weak self] in
             guard let self else { return }
             // A failed write means the host was never asked, so no `intentResult` will ever retire

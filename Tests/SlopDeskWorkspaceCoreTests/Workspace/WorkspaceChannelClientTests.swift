@@ -410,6 +410,31 @@ final class WorkspaceChannelClientTests: XCTestCase {
         XCTAssertEqual(updates.last?.viewingTabID, tab)
     }
 
+    /// A BURST of view changes reaches the host in issue order.
+    ///
+    /// The host keeps the newest `presenceClock` and ignores anything older, so an out-of-order
+    /// arrival is not a cosmetic race: the roster settles on a view the user has already left, and
+    /// nothing later corrects it because the correct update was the one that got ignored. One
+    /// detached task per update publishes in SCHEDULING order, which is not issue order — so the
+    /// sends are drained by a single task off an ordered queue.
+    func testABurstOfPresenceUpdatesArrivesInIssueOrder() async {
+        let rig = await makeRig()
+        let tabs = (0..<6).map { _ in UUID() }
+        await MainActor.run { rig.client.start() }
+        await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
+
+        await MainActor.run {
+            for tab in tabs {
+                rig.client.updatePresence(viewingTabID: tab, viewingPaneID: self.pane, cols: 0, rows: 0)
+            }
+        }
+
+        await expect("every presence frame") { rig.pipe.requests(verb: .presence).count == tabs.count }
+        let updates = rig.pipe.requests(verb: .presence).compactMap { try? WorkspacePresenceUpdate.decode($0) }
+        XCTAssertEqual(updates.map(\.presenceClock), Array(1...Int64(tabs.count)))
+        XCTAssertEqual(updates.map(\.viewingTabID), tabs)
+    }
+
     /// The caller is the reconcile funnel, which fires for a spec edit and a badge tick as readily as
     /// for a tab switch. Only a changed VIEW is news — an unguarded repeat would spend a frame per
     /// reconcile on a workspace nobody is navigating, and run the clock away for nothing.
