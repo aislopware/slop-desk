@@ -3628,8 +3628,11 @@ public final class WorkspaceStore {
         if !paneDoneDwellSince.isEmpty {
             paneDoneDwellSince = paneDoneDwellSince.filter { leafSet.contains($0.key) }
         }
-        // OSC-title recency stamp (the program-title freshness clock):
+        // The workspace document's client side: drop closed panes' overlays, and tell the host what
+        // this client is now looking at (dirty-guarded at the channel — most reconciles are not a
+        // view change).
         pruneWorkspaceMirror(keeping: leafSet)
+        publishWorkspacePresence()
         // Working-turn start stamp (the trailing-slot elapsed readout):
         if !paneWorkingSince.isEmpty {
             paneWorkingSince = paneWorkingSince.filter { leafSet.contains($0.key) }

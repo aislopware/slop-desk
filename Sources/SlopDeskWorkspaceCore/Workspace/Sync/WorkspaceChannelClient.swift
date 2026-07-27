@@ -308,7 +308,19 @@ public final class WorkspaceChannelClient {
 
     /// Tells the host what this client is looking at. Phase 4 ships the identity half of presence;
     /// the viewport is carried but not yet folded into a PTY size.
+    ///
+    /// Dirty-guarded, because the caller is the reconcile funnel — which also fires for a spec edit,
+    /// a badge tick and a rename. Only a changed VIEW is news; without the guard the channel would
+    /// spend a frame per reconcile on a workspace nobody is navigating, and the monotone clock would
+    /// run away for no reason. The resubscribe re-assert bypasses this: it repeats `lastPresence`
+    /// verbatim rather than minting a new one.
     public func updatePresence(viewingTabID: UUID, viewingPaneID: UUID, cols: UInt16, rows: UInt16) {
+        if let lastPresence, lastPresence.viewingTabID == viewingTabID,
+           lastPresence.viewingPaneID == viewingPaneID, lastPresence.cols == cols,
+           lastPresence.rows == rows
+        {
+            return
+        }
         presenceClock += 1
         let update = WorkspacePresenceUpdate(
             presenceClock: presenceClock,

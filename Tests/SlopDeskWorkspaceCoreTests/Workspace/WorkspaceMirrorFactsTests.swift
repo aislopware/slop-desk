@@ -95,6 +95,31 @@ final class WorkspaceMirrorFactsTests: XCTestCase {
         XCTAssertEqual(store.liveProgramTitle(for: paneID), "nvim")
     }
 
+    // MARK: - Presence
+
+    /// The roster is SHARED. A tree-local pane id in it names nothing on any other client, and
+    /// nothing would ever complain: no decoder can tell one UUID from another.
+    func testTheReportedViewCarriesTheDocumentPaneID() throws {
+        let store = makeStore()
+        let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
+        let hostPaneID = UUID()
+        store.noteResumeIdentity(sessionID: hostPaneID, seq: 0, for: paneID)
+
+        XCTAssertEqual(store.currentWorkspaceView().paneID, hostPaneID)
+        XCTAssertNotEqual(store.currentWorkspaceView().paneID, paneID.raw)
+    }
+
+    /// A pane that has never connected has no document id to report. The zero UUID is the wire's
+    /// "none" — the host reads it as a client that is looking at nothing in particular, which is
+    /// exactly true of one whose only pane has not come up yet.
+    func testAViewOfAnUnconnectedPaneReportsNone() throws {
+        let store = makeStore()
+        let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
+
+        XCTAssertEqual(store.currentWorkspaceView().paneID, WireMessage.newSessionID)
+        XCTAssertNotEqual(store.currentWorkspaceView().paneID, paneID.raw)
+    }
+
     // MARK: - runningCommand
 
     /// The degradation, then the repair. A client with no blocks of its own can say no more than

@@ -402,6 +402,38 @@ final class WorkspaceChannelClientTests: XCTestCase {
         XCTAssertEqual(updates.last?.viewingTabID, tab)
     }
 
+    /// The caller is the reconcile funnel, which fires for a spec edit and a badge tick as readily as
+    /// for a tab switch. Only a changed VIEW is news — an unguarded repeat would spend a frame per
+    /// reconcile on a workspace nobody is navigating, and run the clock away for nothing.
+    func testAnUnchangedViewSendsNothing() async {
+        let rig = await makeRig()
+        let tab = UUID()
+        await MainActor.run { rig.client.start() }
+        await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
+
+        await MainActor.run {
+            rig.client.updatePresence(viewingTabID: tab, viewingPaneID: self.pane, cols: 0, rows: 0)
+        }
+        await expect("the first presence") { rig.pipe.requests(verb: .presence).count == 1 }
+
+        await MainActor.run {
+            rig.client.updatePresence(viewingTabID: tab, viewingPaneID: self.pane, cols: 0, rows: 0)
+            rig.client.updatePresence(viewingTabID: tab, viewingPaneID: self.pane, cols: 0, rows: 0)
+        }
+        await expectNever("a second frame for the same view") {
+            rig.pipe.requests(verb: .presence).count > 1
+        }
+
+        // …and a genuine move still speaks.
+        let other = UUID()
+        await MainActor.run {
+            rig.client.updatePresence(viewingTabID: tab, viewingPaneID: other, cols: 0, rows: 0)
+        }
+        await expect("the move") { rig.pipe.requests(verb: .presence).count == 2 }
+        let updates = rig.pipe.requests(verb: .presence).compactMap { try? WorkspacePresenceUpdate.decode($0) }
+        XCTAssertEqual(updates.map(\.presenceClock), [1, 2], "the guard skips the clock too")
+    }
+
     /// A resubscribe resets the host's per-subscriber view along with its base, so what this client
     /// is looking at must be re-asserted rather than waiting for the next UI change.
     func testAResubscribeReAssertsPresence() async {

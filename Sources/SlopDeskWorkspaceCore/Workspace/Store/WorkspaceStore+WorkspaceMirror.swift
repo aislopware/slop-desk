@@ -30,12 +30,18 @@ extension WorkspaceStore {
     /// id (a resume that failed into a fresh shell) strands its old overlay under the old key, and
     /// ``pruneWorkspaceMirror(keeping:)`` collects it on the reconcile that follows.
     func documentPaneID(_ id: PaneID) -> UUID {
-        let resumeID =
-            switch liveModel {
-            case .tree: tree.spec(for: id)?.resumeSessionID
-            case .canvas: workspace.canvas.spec(for: id)?.resumeSessionID
-            }
-        return resumeID ?? id.raw
+        documentPaneIDIfKnown(id) ?? id.raw
+    }
+
+    /// ``documentPaneID(_:)`` without the local-id fallback — `nil` for a pane that has never
+    /// connected. The fallback is right for the MIRROR, whose overlay is this client's own namespace,
+    /// and wrong for anything SHARED: a tree-local id in the presence roster names nothing on any
+    /// other client, and no decoder can tell one UUID from another to say so.
+    func documentPaneIDIfKnown(_ id: PaneID) -> UUID? {
+        switch liveModel {
+        case .tree: tree.spec(for: id)?.resumeSessionID
+        case .canvas: workspace.canvas.spec(for: id)?.resumeSessionID
+        }
     }
 
     /// Records what the host told us about pane `id`'s session: the HOST-MINTED session id and the
@@ -119,6 +125,43 @@ extension WorkspaceStore {
         }
     }
 
+    // MARK: - Presence
+
+    /// Publishes this client's VIEW on the workspace channel — which tab and pane it is looking at.
+    ///
+    /// Driven from the reconcile funnel for the same reason ``recordTabFocus()`` is: every tab switch,
+    /// rail click and pane focus passes through it, and recording at the individual gestures instead
+    /// would miss whichever one gets added next. The channel's own dirty guard drops the reconciles
+    /// that changed something other than the view.
+    ///
+    /// The pane travels as its DOCUMENT id — the roster is shared, so a tree-local id in it would
+    /// name nothing on any other client. The TAB does not: tabs are still client-local until Phase 5
+    /// makes topology host-owned, and the host stores this id opaquely and only echoes it back.
+    ///
+    /// `cols`/`rows` stay zero. Phase 4's subscribe declares no `contributesSize`, so a number here
+    /// would be an offer nobody folds — and inventing one is how the first client that DOES fold it
+    /// ends up letterboxing against a fiction.
+    func publishWorkspacePresence() {
+        guard let workspaceChannel else { return }
+        let view = currentWorkspaceView()
+        workspaceChannel.updatePresence(
+            viewingTabID: view.tabID, viewingPaneID: view.paneID, cols: 0, rows: 0,
+        )
+    }
+
+    /// What ``publishWorkspacePresence()`` would report, as a value — so the id MAPPING is pinnable
+    /// with no socket in sight. Getting it wrong is silent: a tree-local pane id in a shared roster
+    /// names nothing anywhere else, and no decoder would ever complain.
+    func currentWorkspaceView() -> WorkspaceViewReport {
+        let tab = tree.activeSession?.activeTab
+        return WorkspaceViewReport(
+            tabID: tab?.id.raw ?? WireMessage.newSessionID,
+            // A pane with no host id yet reports NONE rather than a local one — see
+            // ``documentPaneIDIfKnown(_:)``.
+            paneID: tab?.activePane.flatMap { documentPaneIDIfKnown($0) } ?? WireMessage.newSessionID,
+        )
+    }
+
     // MARK: - Reads
 
     /// The pane's PROGRAM-SET title, but only while it is FRESH — the title `nvim` asserted, not a
@@ -165,6 +208,12 @@ extension WorkspaceStore {
         if let open, !open.isEmpty { return open }
         return processLabel
     }
+}
+
+/// Which tab and pane a client is looking at, in DOCUMENT ids.
+struct WorkspaceViewReport: Equatable {
+    let tabID: UUID
+    let paneID: UUID
 }
 
 extension HostWorkspaceMirror {
