@@ -48,6 +48,8 @@ final class WorkspaceChannelSession: @unchecked Sendable {
     private var pendingAck: Int64?
     private var pendingSubscribe: WorkspaceSubscribe?
     private var pendingResults: [WorkspaceIntentResult] = []
+    /// The client's last accepted presence update — its view and viewport offer.
+    private var presence: WorkspacePresenceUpdate?
     private var closed = false
 
     // MARK: Send-task-owned bookkeeping
@@ -184,6 +186,22 @@ final class WorkspaceChannelSession: @unchecked Sendable {
         wakeContinuation.yield()
     }
 
+    /// Records the client's view. Presence is per-CONNECTION and dies with the link, so the
+    /// connection itself is the TTL — a timer could only ever fire after the subscriber was already
+    /// gone.
+    ///
+    /// - Returns: `false` when the update is IGNORED because its clock is not newer. Newest wins
+    ///   with no merge: a client reconnecting with a stale clock must not resurrect a view it has
+    ///   since left.
+    func note(presence update: WorkspacePresenceUpdate) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !closed else { return false }
+        if let presence, update.presenceClock <= presence.presenceClock { return false }
+        presence = update
+        return true
+    }
+
     /// A repeat `subscribe` IS the resync verb — there is deliberately no separate "resend".
     func note(resubscribe request: WorkspaceSubscribe) {
         lock.lock()
@@ -204,12 +222,18 @@ final class WorkspaceChannelSession: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         var flags: UInt8 = 0
-        if contributesSize { flags |= WorkspaceSubscribe.flagContributesSize }
+        // The presence update's own flag wins over the subscribe's: the client's willingness to
+        // contribute to the size fold is a live property of its window, not of its connection.
+        if presence?.contributesSize ?? contributesSize { flags |= WorkspaceSubscribe.flagContributesSize }
         if followsFocus { flags |= WorkspaceSubscribe.flagFollowsFocus }
         return WorkspaceRosterClient(
             clientInstanceID: clientInstanceID,
             clientKind: clientKind,
             flags: flags,
+            viewingTabID: presence?.viewingTabID ?? WireMessage.newSessionID,
+            viewingPaneID: presence?.viewingPaneID ?? WireMessage.newSessionID,
+            cols: presence?.cols ?? 0,
+            rows: presence?.rows ?? 0,
             label: label,
         )
     }

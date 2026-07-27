@@ -151,6 +151,18 @@ final class MuxChannelSession: @unchecked Sendable {
     private let titleLock = NSLock()
     private var _currentTitle: String = ""
 
+    /// When ``_currentTitle`` was sniffed, `nil` when no title has arrived or the agent retired the
+    /// one it owned. Half of the `pane/titleFresh` verdict (docs/45 §4.4) — the host decides
+    /// freshness and ships the ANSWER, because the client's own two-stamp comparison reset to empty
+    /// on every cold start and so failed permanently.
+    ///
+    /// Stamped on `timeIntervalSinceReferenceDate`, deliberately matching
+    /// ``HostOutputSniffer/commandRunningSince()`` rather than the `systemUptime` the detector folds
+    /// on. The two stamps are COMPARED; on two different clocks — one of which stops during sleep —
+    /// the comparison would be meaningless in exactly the case (a laptop that slept) where the user
+    /// notices.
+    private var _currentTitleAt: TimeInterval?
+
     /// Set when the detector retired an exiting agent's title (see ``ClaudePaneDetector/Emission``)
     /// and consumed by the PTY read loop before its next sniffer pass. The retirement can be folded
     /// from ANY of the detector's feeds — the foreground poll, the scan task, the hook socket — but
@@ -166,6 +178,25 @@ final class MuxChannelSession: @unchecked Sendable {
     /// on the read-loop thread; read by the reattach path).
     private let progressLock = NSLock()
     private var lastProgress: WireMessage?
+
+    /// The freshest OSC 9;4 pair, latched beside ``lastProgress`` so the document can publish the
+    /// VALUE rather than re-deriving it from a message.
+    private var lastProgressPair: (state: UInt8, percent: UInt8)?
+
+    /// The last foreground process name the watcher sampled (`pane/foregroundProcess`). Latched
+    /// here rather than re-probed per read: `PTYForegroundProbe.foregroundName` is a syscall, and
+    /// the reconciler would pay it per pane per tick.
+    private let foregroundLock = NSLock()
+    private var _lastForeground: String?
+
+    /// Monotone count of `working → done` edges (`pane/completionEpoch`).
+    ///
+    /// The host holds ZERO per-client acknowledgement state: it publishes how many turns have
+    /// finished, and each viewer compares that against its own device-local `seenCompletionEpoch`.
+    /// Clients agree on the FACT and are free to disagree about the ACKNOWLEDGEMENT — which is
+    /// what makes "unseen" per-device without any of it crossing the wire.
+    private let completionLock = NSLock()
+    private var _completionEpoch: UInt32 = 0
 
     /// Host-authoritative By-Project key (type 34) — the reattach/dedupe latches. `lastCwdTruth` is
     /// the freshest cwd this session has observed (OSC-7 sniff, else the prompt-edge `proc_pidinfo`
@@ -245,6 +276,9 @@ final class MuxChannelSession: @unchecked Sendable {
     /// the ctl `list-panes` handler threads). `nil` until the first code-carrying `D`.
     private let commandExitLock = NSLock()
     private var lastExitTruth: Int32?
+
+    /// The host-measured C→D duration of the last completed command (`pane/lastDurationMS`).
+    private var lastDurationTruth: UInt32?
 
     /// A dedicated serial queue for the host metadata RPC's BLOCKING probe work (git/lsof/proc/
     /// FileManager). Kept OFF the serial control loop so a slow `lsof` / `git` can never stall this
@@ -554,6 +588,14 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Invokes ``onAgentStatusChanged`` (if set) with `status`. Called from the detector-folding
     /// sites AFTER `agentDetectLock` is released, only on a real status transition.
     private func notifyAgentStatusChanged(_ status: ClaudeStatus) {
+        // A `working → done` edge is one finished turn. Counting them here — at the ONE place every
+        // detector fold funnels a real transition through — is why the count cannot be double-bumped
+        // by two feeds observing the same edge.
+        if status == .done {
+            completionLock.lock()
+            _completionEpoch &+= 1
+            completionLock.unlock()
+        }
         onAgentStatusChanged?(status)
     }
 
@@ -1001,6 +1043,9 @@ final class MuxChannelSession: @unchecked Sendable {
     /// OS probe and the pure fold are separable — the fold is exercised directly by tests via a seam,
     /// mirroring ``foldEchoSample(echoOn:)``.
     private func foldForegroundSample(name: String, at now: TimeInterval) {
+        foregroundLock.lock()
+        _lastForeground = name
+        foregroundLock.unlock()
         agentDetectLock.lock()
         // Tick FIRST so the decay is evaluated at this `now`, then the presence sample; both emit
         // type-27 only on a real triple change (the detector dedupes), so at most one status frame ships.
@@ -1025,6 +1070,9 @@ final class MuxChannelSession: @unchecked Sendable {
         if emission.title != nil {
             titleLock.lock()
             _currentTitle = ""
+            // No title, no stamp: an ownership retirement must not leave a freshness verdict behind
+            // for a title that no longer exists.
+            _currentTitleAt = nil
             pendingTitleCoalescingReset = true
             titleLock.unlock()
         }
@@ -1943,6 +1991,7 @@ final class MuxChannelSession: @unchecked Sendable {
             if case let .title(t) = msg {
                 titleLock.lock()
                 _currentTitle = t
+                _currentTitleAt = Date().timeIntervalSinceReferenceDate
                 titleLock.unlock()
                 // Agent-detection: the title carries Claude Code's own busy/rest telltale (the
                 // Braille spinner / `✳` prefix) — fold the EDGE into the ONE detector (the sniffer
@@ -1955,6 +2004,13 @@ final class MuxChannelSession: @unchecked Sendable {
             // Agent-control: latch the freshest `133;D;<code>` exit so `list-panes` can answer
             // `lastExitCode` even with blocks tracking off. A code-less `D` keeps the prior latch
             // (the shim always reports `$?`; a bare `D` carries no new truth to replace it with).
+            if case let .commandStatus(.idle(_, durationMS)) = msg {
+                // The duration is host-measured C→D wall clock and arrives on EVERY `D`, including
+                // the code-less one the exit latch below deliberately ignores.
+                commandExitLock.lock()
+                lastDurationTruth = durationMS
+                commandExitLock.unlock()
+            }
             if case let .commandStatus(.idle(exitCode, _)) = msg, let exitCode {
                 commandExitLock.lock()
                 lastExitTruth = exitCode
@@ -2273,11 +2329,96 @@ final class MuxChannelSession: @unchecked Sendable {
         return lastCwdTruth
     }
 
+    /// The freshest By-Project key (type 34's current value), `nil` until resolved.
+    var projectKeyForControl: String? {
+        projectKeyLock.lock()
+        defer { projectKeyLock.unlock() }
+        return lastProjectKey
+    }
+
     /// The freshest OSC-133-D exit code, `nil` until the first code-carrying `D`.
     var lastExitCodeForControl: Int32? {
         commandExitLock.lock()
         defer { commandExitLock.unlock() }
         return lastExitTruth
+    }
+
+    // MARK: - Workspace-document surface (the CURRENT VALUE behind each edge)
+
+    //
+    // Every fact below is already published as an edge-triggered control message. These accessors
+    // expose the value that edge left behind, so a client that was not listening at the instant of
+    // the edge can still be told what is true — which is the whole point of the document.
+
+    /// ``currentTitle`` and the `systemUptime` it was sniffed at, in ONE lock acquisition: two reads
+    /// could interleave a retirement and pair a live title with a cleared stamp.
+    var titleAndStampForControl: (title: String, stampedAt: TimeInterval?) {
+        titleLock.lock()
+        defer { titleLock.unlock() }
+        return (_currentTitle, _currentTitleAt)
+    }
+
+    /// The `systemUptime` at which the CURRENT command block opened, `nil` at a prompt. The other
+    /// half of the `pane/titleFresh` verdict.
+    var commandStartedAtForControl: TimeInterval? {
+        sniffer.commandRunningSince()
+    }
+
+    /// The host's own open command block — the pane's running command line, `nil` at a prompt or
+    /// with blocks tracking off.
+    ///
+    /// This is the fact a client cannot reproduce: `RailRowsBuilder.liveRowTitle(runningCommand:)`
+    /// reads the CLIENT's per-materialization `TerminalBlockModel`, so a client that has rendered
+    /// zero bytes has no running command at all and its sidebar row falls back to the raw command
+    /// line. Publishing the host's block is what lets the host alone render the row.
+    var runningCommandForControl: String? {
+        blocksLock.lock()
+        defer { blocksLock.unlock() }
+        guard let open = blockTracker?.openBlockForControl() else { return nil }
+        let text = open.commandText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
+
+    /// The last foreground process name the watcher sampled (type 26's current value).
+    var foregroundProcessForControl: String? {
+        foregroundLock.lock()
+        defer { foregroundLock.unlock() }
+        return _lastForeground
+    }
+
+    /// The type-27 triple the status stream currently stands at, plus the agent's session intent
+    /// (type 36) — read in ONE `agentDetectLock` acquisition, like ``agentStatusAndMessageForControl``.
+    var agentPublishedStateForControl: (state: UInt8, kind: UInt8, label: String?, intent: String?) {
+        agentDetectLock.lock()
+        defer { agentDetectLock.unlock() }
+        let triple = agentDetector.lastEmittedStatusForControl
+        return (
+            triple?.state ?? 0,
+            triple?.kind ?? 0,
+            agentDetector.statusLabel,
+            agentDetector.sessionIntentForControl,
+        )
+    }
+
+    /// The freshest OSC 9;4 progress pair, `nil` when cleared or never reported (type 32's value).
+    var progressPairForControl: (state: UInt8, percent: UInt8)? {
+        progressLock.lock()
+        defer { progressLock.unlock() }
+        return lastProgressPair
+    }
+
+    /// The host-measured duration of the last completed command, `nil` until the first `D`.
+    var lastDurationMSForControl: UInt32? {
+        commandExitLock.lock()
+        defer { commandExitLock.unlock() }
+        return lastDurationTruth
+    }
+
+    /// How many `working → done` edges this pane has produced (`pane/completionEpoch`).
+    var completionEpochForControl: UInt32 {
+        completionLock.lock()
+        defer { completionLock.unlock() }
+        return _completionEpoch
     }
 
     // MARK: - Agent-control block surface (the `last-output` / `run --wait` verbs)
@@ -2588,9 +2729,10 @@ final class MuxChannelSession: @unchecked Sendable {
     /// message verbatim; the last one in the batch wins (latest-state fold, same as the client's).
     private func latchProgress(_ messages: [WireMessage]) {
         for message in messages {
-            guard case let .progress(state, _) = message else { continue }
+            guard case let .progress(state, percent) = message else { continue }
             progressLock.lock()
             lastProgress = state == ProgressState.clear.rawValue ? nil : message
+            lastProgressPair = state == ProgressState.clear.rawValue ? nil : (state, percent)
             progressLock.unlock()
         }
     }

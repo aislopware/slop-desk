@@ -149,6 +149,14 @@ public struct ClaudePaneDetector: Sendable {
     /// The current rolled-up status (diagnostics / the live wiring's per-pane rollup).
     public var status: ClaudeStatus { machine.status }
 
+    /// The `(state, kind, label)` triple the type-27 stream currently stands at — the CURRENT VALUE
+    /// behind the edge, `nil` before the first emission. The workspace document publishes this so a
+    /// client that missed the edge still learns the pane's agent state.
+    public var lastEmittedStatusForControl: ForegroundProcessDetector.StatusTriple? { lastEmittedStatus }
+
+    /// The agent's current session intent (type 36's value), `nil` when none is established.
+    public var sessionIntentForControl: String? { sessionIntent }
+
     /// The machine's short human label (blocking question / last assistant line), `nil` when empty.
     /// Surfaced by the ctl `list-panes` verb as `stateMessage` so an orchestrator can read WHY a
     /// pane is blocked without scraping scrollback.

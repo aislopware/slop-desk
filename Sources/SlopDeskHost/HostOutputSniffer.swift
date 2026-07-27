@@ -267,6 +267,18 @@ public final class HostOutputSniffer: @unchecked Sendable {
         return runningSince != nil ? .commandStatus(.running) : nil
     }
 
+    /// When the CURRENT command block opened, `nil` at a prompt.
+    ///
+    /// The same latch ``commandStatusForReattach()`` reads, exposed as a TIME rather than a message:
+    /// the workspace document needs to compare it against the title's stamp to decide
+    /// `pane/titleFresh` (docs/45 §4.4), and a `.running` message carries no timestamp to compare.
+    /// Returned on the sniffer's own `clock()` scale, which is the scale `runningSince` is stamped on.
+    public func commandRunningSince() -> TimeInterval? {
+        lock.lock()
+        defer { lock.unlock() }
+        return runningSince?.timeIntervalSinceReferenceDate
+    }
+
     // MARK: State machine (the strict superset — also emits `.bell` in ground)
 
     private func step(_ byte: UInt8, into messages: inout [WireMessage]) {

@@ -230,6 +230,49 @@ public final class HostServer: @unchecked Sendable {
     /// ``HostTransport``'s `reaperTask`).
     private var journalSweepTask: Task<Void, Never>?
 
+    /// `SLOPDESK_WORKSPACE_DOC` — the workspace-document channel (docs/45). **Default-OFF** (`== "1"`
+    /// to enable) during bake-in; it flips to the default-ON idiom once hardware-proven.
+    ///
+    /// With it off, `channelClass == 1` is refused and the retained type-21/26/27/32/33/34/36 edge
+    /// sinks ARE the fallback — they still drive the UI exactly as they do today. That is the whole
+    /// reason this ships as an addition rather than a replacement: the old path is not touched, so
+    /// the flag is a real off switch and not a half-migration.
+    public let workspaceDocEnabled: Bool
+
+    /// The host's single copy of the workspace. `nil` when ``workspaceDocEnabled`` is false.
+    let workspaceDocument: HostWorkspaceDocument?
+
+    /// At most ONE workspace channel per mux connection, keyed by `connectionID` and guarded by
+    /// `lock`. A second `channelClass == 1` open on the same connection is refused: two subscribers
+    /// behind one link would each keep their own acked base for the same viewer, and the roster
+    /// would show one device twice.
+    private var workspaceChannels: [UUID: WorkspaceChannelSession] = [:]
+
+    /// Reconciler cadence — how often every live pane is re-captured into the document.
+    ///
+    /// A tick is the BACKSTOP, not the mechanism: the event sites kick a reconcile directly, so the
+    /// steady-state latency is one hop rather than half a period. The tick exists because a fact can
+    /// change with no edge to hang a kick on (a foreground process the watcher sampled, a window
+    /// resize), and because an unchanged capture costs nothing — it produces no version bump and
+    /// therefore no frame.
+    public let workspaceReconcileInterval: Duration
+
+    private var workspaceReconcileTask: Task<Void, Never>?
+
+    /// Stable document object ids for projects, keyed by the project's absolute toplevel path and
+    /// guarded by `lock`.
+    ///
+    /// MINTED, not hashed. docs/45 §5.3 proposed `UUIDv5(projectKey)`, which would need a SHA-1 this
+    /// target does not otherwise link. A minted id is exact where a hash is merely unlikely to
+    /// collide, and its only cost — a different id after a restart — is invisible: a restart mints a
+    /// new `epoch`, every client resets and re-snapshots, and `project/key` carries the actual path,
+    /// which is what the client joins on.
+    private var projectObjectIDs: [String: UUID] = [:]
+    /// Depth-1 coalescing for the reconciler: a kick arriving while one runs sets the "again" flag
+    /// instead of stacking another pass. Guarded by `lock`.
+    private var workspaceReconcileInFlight = false
+    private var workspaceReconcileAgain = false
+
     public init(
         port: UInt16,
         shellPath: String? = nil,
@@ -246,6 +289,8 @@ public final class HostServer: @unchecked Sendable {
         resumeOnRecovery: Bool? = nil,
         scrollbackJournals: ScrollbackJournalStore? = nil,
         scrollbackSweepInterval: Duration = .seconds(24 * 3600),
+        workspaceDocEnabled: Bool? = nil,
+        workspaceReconcileInterval: Duration = .milliseconds(500),
     ) {
         self.port = port
         self.shellPath = shellPath ?? HostEnvironment.loginShell()
@@ -257,6 +302,16 @@ public final class HostServer: @unchecked Sendable {
         self.ctlBinaryPath = ctlBinaryPath
         self.blocksEnabled = blocksEnabled
         self.scrollbackSweepInterval = scrollbackSweepInterval
+        self.workspaceReconcileInterval = workspaceReconcileInterval
+        // Default-OFF idiom (`== "1"`), unlike most flags here: the document is additive and unproven
+        // on hardware, and the edge sinks it will eventually replace are all still in place.
+        let wantsDocument = workspaceDocEnabled
+            ?? (ProcessInfo.processInfo.environment["SLOPDESK_WORKSPACE_DOC"] == "1")
+        self.workspaceDocEnabled = wantsDocument
+        // A fresh `epoch` per HostServer instance — which is per hostd start. Without it a restarted
+        // daemon counts `stateNum` back up from 1 and a returning client one behind would accept a
+        // delta computed against a completely different document.
+        workspaceDocument = wantsDocument ? HostWorkspaceDocument() : nil
         gitWatchEnabled = ProcessInfo.processInfo.environment["SLOPDESK_GIT_WATCH"] != "0"
         transport = HostTransport()
 
@@ -322,6 +377,10 @@ public final class HostServer: @unchecked Sendable {
             let sessions = Array(muxSessions.values) + Array(controlSessions.values)
             lock.unlock()
             for session in sessions { session.pushProjectGitStatusIfMatching(status) }
+            // …and into the document, keyed by PROJECT. Type 35 keeps pushing as the fast path; this
+            // is the retained value, so a client that has never seen this host renders the git line
+            // from the snapshot instead of waiting for the next FSEvents edge to fire.
+            publishProjectGitSummary(status)
         }
         // No client connection ⇒ nobody to tell: skip the git subprocess entirely (a wall of
         // detached agents churning a repo must not keep probing for an empty audience).
@@ -350,6 +409,55 @@ public final class HostServer: @unchecked Sendable {
                 }
             }
         }
+    }
+
+    /// Launches the workspace reconciler's backstop tick (see ``workspaceReconcileInterval``). Lives
+    /// here rather than in `HostServer+Workspace` because it owns a stored task, and the task is
+    /// cancelled by ``stop()`` so a repeated Start→Stop cycle never leaks a loop — the same contract
+    /// `startJournalSweep` has.
+    private func startWorkspaceReconciler() {
+        guard workspaceDocEnabled else { return }
+        let interval = workspaceReconcileInterval
+        workspaceReconcileTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: interval)
+                } catch {
+                    return // cancelled
+                }
+                await self?.reconcileWorkspaceDocument()
+            }
+        }
+    }
+
+    /// The document object id for a project path, minting one on first sight.
+    func projectObjectID(forKey key: String) -> UUID {
+        lock.lock()
+        defer { lock.unlock() }
+        if let existing = projectObjectIDs[key] { return existing }
+        let minted = UUID()
+        projectObjectIDs[key] = minted
+        return minted
+    }
+
+    /// Publishes one repo's git summary into the document.
+    ///
+    /// The value is the type-35 BODY verbatim — the same bytes the fast path pushes — so
+    /// `project/gitSummary` costs no new codec on either end: the client already has a decoder for
+    /// exactly these bytes.
+    private func publishProjectGitSummary(_ status: WireMessage.ProjectGitStatus) {
+        guard let document = workspaceDocument else { return }
+        let id = projectObjectID(forKey: status.repoRoot)
+        let key = status.repoRoot
+        let body = Self.wireBody(of: .projectGitStatus(status))
+        Task { await document.setProject(id: id, key: key, gitSummary: body) }
+    }
+
+    /// A message's body — `encode()` minus the 4-byte length prefix and the 1-byte type tag.
+    static func wireBody(of message: WireMessage) -> Data {
+        let framed = message.encode()
+        guard framed.count > 5 else { return Data() }
+        return framed.subdata(in: (framed.startIndex + 5)..<framed.endIndex)
     }
 
     /// The stable pane id for a channel — the composite `(connectionID, channelID)` key, which
@@ -382,6 +490,7 @@ public final class HostServer: @unchecked Sendable {
         Task.detached(priority: .utility) { [weak self] in
             _ = self?.resolveEffectiveTerm(requested: .ghostty, explicitOverride: false)
         }
+        startWorkspaceReconciler()
         let muxStream = transport.muxConnections
         muxAcceptTask = Task { [weak self] in
             for await muxConnection in muxStream {
@@ -418,6 +527,10 @@ public final class HostServer: @unchecked Sendable {
             }
             await group.waitForAll()
         }
+        workspaceReconcileTask?.cancel()
+        workspaceReconcileTask = nil
+        await workspaceDocument?.shutdown()
+        drainWorkspaceChannels()
         // Kill every detached session — shells that were kept alive across a client disconnect.
         detachedStore?.drainAll()
         // Cancel every repo FSEvents stream (the per-session teardown signals already released the
@@ -458,6 +571,99 @@ public final class HostServer: @unchecked Sendable {
         return live
     }
 
+    // MARK: - Workspace-document registry (the lock discipline stays in THIS file)
+
+    //
+    // `lock`, `stopping` and the session maps are file-private on purpose, so `HostServer+Workspace`
+    // reaches them only through these — the same idiom `pushProjectGitStatusIfMatching` uses for the
+    // project-key latch. Each one takes the lock, does one thing, and releases it; none of them can
+    // be held across an `await`.
+
+    /// Registers the connection's ONE workspace subscriber. Returns `nil` when refused — the daemon
+    /// is stopping, or this connection already has one.
+    func registerWorkspaceChannel(
+        connectionID: UUID,
+        make: () -> WorkspaceChannelSession,
+    ) -> WorkspaceChannelSession? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !stopping, workspaceChannels[connectionID] == nil else { return nil }
+        let session = make()
+        workspaceChannels[connectionID] = session
+        return session
+    }
+
+    func workspaceChannel(for connectionID: UUID) -> WorkspaceChannelSession? {
+        lock.lock()
+        defer { lock.unlock() }
+        return workspaceChannels[connectionID]
+    }
+
+    @discardableResult
+    func unregisterWorkspaceChannel(connectionID: UUID) -> WorkspaceChannelSession? {
+        lock.lock()
+        defer { lock.unlock() }
+        return workspaceChannels.removeValue(forKey: connectionID)
+    }
+
+    /// `true` when the caller may proceed with a reconcile pass; `false` when one is already running
+    /// (in which case the "again" flag is set instead — depth-1 coalescing, not a queue).
+    func beginWorkspaceReconcile() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if workspaceReconcileInFlight {
+            workspaceReconcileAgain = true
+            return false
+        }
+        workspaceReconcileInFlight = true
+        return true
+    }
+
+    /// Ends a pass. Returns `true` if a kick arrived while it ran and another pass is owed.
+    func endWorkspaceReconcile() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        workspaceReconcileInFlight = false
+        let again = workspaceReconcileAgain
+        workspaceReconcileAgain = false
+        return again
+    }
+
+    /// `true` when a reconcile is already running — the cheap pre-check a kick makes before
+    /// spawning a task.
+    func workspaceReconcileIsRunning() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if workspaceReconcileInFlight {
+            workspaceReconcileAgain = true
+            return true
+        }
+        return false
+    }
+
+    /// Every pane the host knows about, split by how live it is.
+    ///
+    /// The three inventories are disjoint by construction — `detachMuxSession` removes from
+    /// `muxSessions` before inserting into the store, and `claim` removes before the reattach
+    /// re-registers — the same argument `listPanesForControl()` relies on. `detachedStore` is read
+    /// OUTSIDE `lock`: the store takes its own, and the nesting contract is one-way.
+    func paneSessionsForWorkspace() -> (attachedToClient: [MuxChannelSession], unattached: [MuxChannelSession]) {
+        lock.lock()
+        let mux = Array(muxSessions.values)
+        let ctrl = Array(controlSessions.values)
+        lock.unlock()
+        return (mux, ctrl + (detachedStore?.allSessions() ?? []))
+    }
+
+    /// Synchronously drops every workspace subscriber (NSLock is unavailable from async `stop()`).
+    /// The document's own `shutdown()` already closed them; this clears the map so a Start→Stop→Start
+    /// cycle does not refuse the returning client's channel as a duplicate.
+    private func drainWorkspaceChannels() {
+        lock.lock()
+        workspaceChannels.removeAll()
+        lock.unlock()
+    }
+
     /// Synchronously removes and returns every retained accepted connection. The caller `close()`s them
     /// outside the lock (cancelling receive loops + sockets + breaking the handler cycle).
     private func drainMuxConnections() -> [MuxNWConnection] {
@@ -490,7 +696,14 @@ public final class HostServer: @unchecked Sendable {
     private func removeMuxConnection(_ id: UUID) {
         lock.lock()
         let conn = muxConnections.removeValue(forKey: id)
+        // A workspace subscriber lives and dies with its link: presence is connection-scoped, so the
+        // connection going away IS the expiry. Dropping it here also fans the departure to everyone
+        // else, because a roster that merely stops arriving is indistinguishable from a stalled host.
+        let workspace = workspaceChannels.removeValue(forKey: id)
         lock.unlock()
+        if let workspace, let document = workspaceDocument {
+            Task { await document.removeSubscriber(id: workspace.id) }
+        }
         if let conn { Task { await conn.close() } }
     }
 
@@ -614,6 +827,14 @@ public final class HostServer: @unchecked Sendable {
     ///   with `resumeFromSeq=0` (the `sendOpenAck` with `accepted: true` on a fresh shell)
     ///   signals this.
     private func spawnMuxChannel(_ open: MuxChannelOpen, on connection: MuxNWConnection, connectionID: UUID) {
+        // FIRST line, and deliberately BEFORE the exclusivity critical section below: a workspace
+        // channel carries no PTY, so it must never touch the `attachedElsewhere` / detached-claim
+        // reasoning that keeps one shell to one attachment. Routing here leaves that invariant
+        // literally untouched (docs/45 §5.1).
+        if open.channelClass == MuxChannelClass.workspace.rawValue {
+            openWorkspaceChannel(open, on: connection, connectionID: connectionID)
+            return
+        }
         let key = MuxSessionKey(connectionID: connectionID, channelID: open.channelID)
         // (`hasRealSessionID` compares the ZERO sentinel `WireMessage.newSessionID` — a
         // first-connect preamble from a raw/old client. Our mux client replaces the sentinel
@@ -969,6 +1190,7 @@ public final class HostServer: @unchecked Sendable {
         let owner = ObjectIdentifier(session)
         session.onProjectKeyResolved = { [weak self] key in
             self?.repoWatcher.noteProjectKey(key, owner: owner)
+            self?.noteWorkspaceFactChanged()
         }
         session.onTeardown = { [weak self] in
             self?.repoWatcher.dropOwner(owner)
@@ -1108,6 +1330,9 @@ public final class HostServer: @unchecked Sendable {
             for (key, session) in sessionsToDetach {
                 detachMuxSession(key: key, session: session)
             }
+            // `attached` → `detached` is a visible fact: the remaining clients render the pane as
+            // running with nobody watching, rather than as still held by the client that just died.
+            if !sessionsToDetach.isEmpty { noteWorkspaceFactChanged() }
         }
         // Always reap the connection itself (frees sockets + receive tasks + retain cycle).
         removeMuxConnection(connectionID)
@@ -1174,6 +1399,10 @@ public final class HostServer: @unchecked Sendable {
         let session = muxSessions.removeValue(forKey: key)
         let isStopping = stopping
         lock.unlock()
+        // A pane that just went away is the one case where a client MUST hear promptly: the row is
+        // still on screen. `reconcileWorkspaceDocument` reaps by "not captured", so this kick is
+        // what turns a close into a delete rather than waiting out a tick.
+        if session != nil { noteWorkspaceFactChanged() }
         // Disk-journal policy: a pane that ends DELIBERATELY (peer `channelClose` / attached
         // child exit — exactly this method's callers) takes its transcript with it. Link-drop
         // detach, TTL eviction, and daemon stop never come through here, and the `stopping`
@@ -1321,6 +1550,13 @@ public final class HostServer: @unchecked Sendable {
         for observer in observers { observer(paneId, state, present, title, ts) }
     }
 
+    /// Kicks a workspace reconcile from a fact-changing event, so the steady-state latency is one
+    /// hop rather than half a reconciler period. Cheap and idempotent — an unchanged capture bumps
+    /// nothing and sends nothing.
+    func noteWorkspaceFactChanged() {
+        kickWorkspaceReconcile()
+    }
+
     /// Wires a freshly-created session's `onAgentStatusChanged` to the server fan-out. Called from
     /// EVERY session-creation site (mux + control spawn) so a transition on any pane reaches the
     /// top-level subscribers. `[weak self]` avoids retaining the server through the session.
@@ -1329,6 +1565,10 @@ public final class HostServer: @unchecked Sendable {
         session.onAgentStatusChanged = { [weak self, weak session] status in
             let title = session?.currentTitle ?? ""
             self?.fanAgentStatusChanged(paneId: paneId, title: title, status: status)
+            // Kick HERE, not inside `fanAgentStatusChanged` — that funnel returns early when no ctl
+            // observer is registered, which is the ordinary case, so a kick placed there would fire
+            // only when an orchestrator happened to be watching.
+            self?.noteWorkspaceFactChanged()
         }
     }
 
@@ -1601,6 +1841,15 @@ public final class HostServer: @unchecked Sendable {
     }
 
     /// Drives the REAL `handleLinkDown` — the whole-link-drop detach sweep (testing only).
+    /// Drives the REAL `channelOpen` router (`spawnMuxChannel`) from a test.
+    ///
+    /// The seam exists so the `channelClass` routing can be exercised end-to-end over an in-memory
+    /// mux, which is the only way to prove that a workspace open never reaches the PTY spawn path.
+    /// Calling `openWorkspaceChannel` directly would test the handler while skipping the decision.
+    func spawnMuxChannelForTesting(_ open: MuxChannelOpen, on connection: MuxNWConnection, connectionID: UUID) {
+        spawnMuxChannel(open, on: connection, connectionID: connectionID)
+    }
+
     func handleLinkDownForTesting(connectionID: UUID) {
         handleLinkDown(connectionID: connectionID)
     }
