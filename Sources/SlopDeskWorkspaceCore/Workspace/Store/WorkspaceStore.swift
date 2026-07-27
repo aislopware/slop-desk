@@ -3096,6 +3096,11 @@ public final class WorkspaceStore {
     /// supplies. One instance is the point — two would let the two producers disagree forever.
     public let workspaceMirror = WorkspaceMirrorBox()
 
+    /// The channel feeding ``workspaceMirror``'s host truth. `nil` headless / in tests / with
+    /// `SLOPDESK_WORKSPACE_DOC` off — the control-push overlay then drives the UI on its own.
+    @ObservationIgnored
+    public internal(set) var workspaceChannel: WorkspaceChannelClient?
+
     public internal(set) var paneUnseenDone: Set<PaneID> = []
 
     /// RUNTIME-ONLY per-pane "how long has the user been LOOKING at this finished pane" clock — the dwell

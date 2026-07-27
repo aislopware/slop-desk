@@ -43,6 +43,16 @@ public enum WorkspaceIntentStatus: UInt8, Sendable, CaseIterable {
 public enum WorkspaceClientKind: UInt8, Sendable, CaseIterable {
     case macOS = 0
     case iOS = 1
+
+    /// The kind THIS build is. The host branches on it for the size fold (an iPhone is size-passive)
+    /// and the roster shows it, so it must be decided at compile time rather than guessed.
+    public static var thisPlatform: Self {
+        #if os(iOS)
+        .iOS
+        #else
+        .macOS
+        #endif
+    }
 }
 
 // MARK: - subscribe (verb 0)

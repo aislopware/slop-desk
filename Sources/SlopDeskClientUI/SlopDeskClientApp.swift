@@ -238,7 +238,16 @@ public struct SlopDeskClientApp: App {
         // disconnected/failed/unreachable — the leaf's connect-on-appear `.task` never re-fires under
         // keep-all-mounted, so without this fan-out a restored pane that gave up while the host was down stays
         // a dead, blank terminal behind a green pill until a manual per-pane Reconnect.
-        appConnection.onConnectionEstablished = { [weak store] in store?.redialDisconnectedPanes() }
+        // The workspace-document channel (`channelClass 1`, docs/45 §5) rides the SAME shared
+        // connection and holds it up on its own, so a client with every pane closed keeps rendering
+        // the rail. Behind `SLOPDESK_WORKSPACE_DOC`; with it off the channel is never opened and the
+        // per-pane control sinks drive the UI exactly as before. Re-opened on every establish: the
+        // previous subscription died with the old link, and the target may have changed.
+        store.installWorkspaceChannel(muxRegistry: muxRegistry, target: { appConnection.target })
+        appConnection.onConnectionEstablished = { [weak store] in
+            store?.redialDisconnectedPanes()
+            store?.startWorkspaceChannelIfEnabled()
+        }
         // Host identity: the titlebar speaks the host's NAME even when the user connected by
         // IP. The resolver asks the host itself over the metadata RPC (verb 14) through whichever pane
         // carries a live channel — resolved at call time like the Agents card, so the fetcher survives

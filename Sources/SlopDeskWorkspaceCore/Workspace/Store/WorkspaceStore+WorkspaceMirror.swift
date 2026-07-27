@@ -1,4 +1,6 @@
 import Foundation
+import SlopDeskProtocol
+import SlopDeskTransport
 import SlopDeskWorkspaceModel
 
 // The store's side of the workspace document (docs/45 §7.2).
@@ -95,5 +97,80 @@ extension HostWorkspaceMirror {
         var ids = Set<UUID>()
         for key in fastPath.keys where key.kind == WorkspaceObjectKind.pane.rawValue { ids.insert(key.objectID) }
         return ids
+    }
+}
+
+// MARK: - The workspace channel's lifecycle
+
+public extension WorkspaceStore {
+    /// Installs the workspace-document channel. `nil` (headless, tests, automation) leaves the store
+    /// running on the control-push overlay alone, which is exactly the flag-off shape.
+    func attachWorkspaceChannel(_ client: WorkspaceChannelClient?) {
+        workspaceChannel?.stop()
+        workspaceChannel = client
+    }
+
+    /// Opens (or re-opens) the channel for the connection that just established.
+    ///
+    /// Re-opening on every establish is deliberate: the previous subscription died with the old link,
+    /// and the target may have CHANGED — a host that refused the class is not evidence about the next
+    /// one. `stop()` clears the refusal for that reason.
+    func startWorkspaceChannelIfEnabled() {
+        guard let workspaceChannel, WorkspaceChannelClient.isEnabledByDefault else { return }
+        workspaceChannel.stop()
+        workspaceChannel.start()
+    }
+
+    func stopWorkspaceChannel() {
+        workspaceChannel?.stop()
+    }
+
+    /// Builds the production channel and installs it. The app shell's one-liner.
+    func installWorkspaceChannel(
+        muxRegistry: ConnectionRegistry,
+        target: @escaping @MainActor () -> ConnectionTarget,
+    ) {
+        attachWorkspaceChannel(Self.liveWorkspaceChannel(
+            box: workspaceMirror,
+            muxRegistry: muxRegistry,
+            target: target,
+        ))
+    }
+
+    /// Builds the production channel: `channelClass 1` on the app-global shared connection.
+    ///
+    /// The pool refcounts it exactly like a pane channel, so the workspace subscription holds the
+    /// shared connection up on its own — which is what a client with every pane closed needs in
+    /// order to keep rendering the rail.
+    @MainActor
+    static func liveWorkspaceChannel(
+        box: WorkspaceMirrorBox,
+        muxRegistry: ConnectionRegistry,
+        target: @escaping @MainActor () -> ConnectionTarget,
+        clientKind: WorkspaceClientKind = .thisPlatform,
+        label: String = WorkspaceChannelClient.localDeviceLabel(),
+    ) -> WorkspaceChannelClient {
+        WorkspaceChannelClient(
+            box: box,
+            clientKind: clientKind,
+            label: label,
+            open: {
+                let endpoint = await target()
+                let acquisition = try await muxRegistry.acquire(
+                    host: endpoint.host,
+                    port: endpoint.port,
+                    // The workspace document is not a pane, so it carries the zero session id and no
+                    // resume position — there is no PTY behind it to reattach to.
+                    sessionID: WireMessage.newSessionID,
+                    lastReceivedSeq: 0,
+                    channelClass: MuxChannelClass.workspace.rawValue,
+                )
+                return WorkspaceChannelClient.Handle(acquisition)
+            },
+            close: { channelID in
+                let endpoint = await target()
+                await muxRegistry.release(host: endpoint.host, port: endpoint.port, channelID: channelID)
+            },
+        )
     }
 }
