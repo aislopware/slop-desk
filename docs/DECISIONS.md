@@ -3862,3 +3862,68 @@ docs/45 §9 said "delete it". It survives as the flag-OFF branch instead, and th
 shipping path byte-identical: with the flag unset the JOIN route is unreachable, `subscribers.count`
 never exceeds 1, the drain never leaves its inline single-send, and no outbox is ever built. It gets
 deleted the day the flag flips default-ON — which needs hardware, and hardware has said nothing yet.
+
+## Multi-client: two clients, watched (2026-07-28)
+
+Design: [45 — Multi-client state sync](45-multi-client-state-sync.md) §9 Phase 5b. `docs/45` carried
+one open item through six phases — "nobody has yet watched two real clients converge on one layout".
+`scripts/check-multiclient.sh` is that observation, standing. No production code moved: the gate is a
+script plus the contract tests that keep it honest.
+
+### 1. The gate observes the CLIENT, not the host
+
+The claim is "client B's view followed". Reading the host's `workspace-state.json` proves the host
+applied the intent, which is the PREMISE — a gate built on it stays green through any client-side
+regression that stops B rendering what it was sent. So each instance is asked what IT is showing,
+over its own `SLOPDESK_CLIENT_SOCKET`: `slopdesk --socket … windows|tabs|panes` is served by
+`WorkspaceControlBackend` off `WorkspaceStore.tree`, which IS the projection. `GuiGateLaunchContract-
+Tests` asserts the host document file never reappears in the gate's code.
+
+### 2. No test seam was needed, and none was added
+
+The obvious move — an env var that makes a client dump its topology — buys production code for an
+automation-only reader. The client-control socket already answers the same question through a
+SHIPPING path, so a regression in the thing the gate reads is a regression a user would also feel.
+
+### 3. The gesture is a real menu click
+
+`Panes ▸ Split Right` through System Events, addressed by unix id (two same-named processes). That
+exercises command → intent → host → fan-out → projection, which an env seam calling the store
+directly would skip. The price is an Accessibility TCC grant for whatever terminal runs the gate; it
+is named in the failure message, and the gate is already Aqua-only.
+
+### 4. What converges is TOPOLOGY
+
+Pane ids, owning tab, pane kind, tab order, per-tab pane counts. Titles and cwd are LIVENESS (§4.1) —
+pushed on a pane's own control channel, which with `SLOPDESK_PANE_FANOUT` off only ONE client holds —
+and focus is device-overridable on purpose (§8.2). Comparing them would pin flakiness as if it were
+the contract.
+
+### 5. The second client starts from a DIFFERENT layout, deliberately
+
+Both instances launch with the same automation bootstrap, so B mints its own session/tab/pane, mounts
+them, and has its `adoptWorkspace` refused by a host that already has one. Convergence from two
+different starting layouts is a stronger claim than convergence from an empty one, and it is the only
+shape that exercises the refusal path end to end.
+
+### 6. Shells are counted LIVE, not cumulative
+
+`N panes ⇒ N shells` is a statement about what is still running. The cumulative `shell … attached`
+count legitimately includes B's refused launch pane and the pane a closed tab took with it — both
+reaped. Counting log lines would pin a number that has no invariant behind it; counting the daemon's
+children names the actual failure, which is a PTY nobody's layout claims.
+
+### 7. Fan-out is asserted POSITIVELY, per pane
+
+With `SLOPDESK_PANE_FANOUT=1`, "no `attachedElsewhere` refusals" is satisfied by a second client that
+never tried to attach. Every pane in the final layout must appear in a hostd `joined live session …
+as subscriber` line; only then does the absence of refusals mean anything.
+
+### 8. One thing hardware said that no test had
+
+Flag ON, closing a tab on client A makes client B spawn a fresh PTY for the pane that just died: B's
+leaf re-dials in the window between the host's `channelClose` and the document diff that removes the
+pane, and a pane channel naming a session the host no longer has is a SPAWN. Transient — the diff
+lands, the leaf unmounts, the shell is reaped, and the live count is exact afterwards — and absent
+with the flag off, where B holds no channel to re-dial. Recorded in [45 §9 Phase 6], not fixed here:
+it belongs to the flag that is still default-OFF.

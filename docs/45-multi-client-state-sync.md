@@ -1474,9 +1474,27 @@ projection owed the rest of the app")
   swallowed; the ⇧⌘T cue asks which tab is on the ring rather than how many; a re-tile exits zoom
   host-side; the client's dead `tabFocusHistory` is deleted in favour of `topology.focusMRU`.
 
+**SHIPPED — hardware verification, `scripts/check-multiclient.sh`**
+
+Two real macOS instances, one `slopdesk-hostd`, one machine. Each client gets its own
+`CFFIXED_USER_HOME` container and its own `SLOPDESK_CLIENT_SOCKET`; the gate drives a REAL menu
+gesture on client A (System Events, addressed by unix id) and reads what client B is rendering.
+
+- **It observes the CLIENT, not the host.** The shipping client-control socket already answers the
+  question — `slopdesk --socket … windows|tabs|panes` is served by `WorkspaceControlBackend` off
+  `WorkspaceStore.tree`, the projection itself — so the gate needs no test seam. Reading the host's
+  `workspace-state.json` would only have proven the host applied the intent, which is the premise.
+- **What it watched.** Client B mints its own session/tab/pane at launch, mounts them, and has its
+  `adoptWorkspace` refused; it then throws its own ids away and projects A's. `Panes ▸ Split Right`,
+  `Tabs ▸ New Tab` and `Tabs ▸ Close Tab` on A each land in B's projection — the removing direction
+  included. Topology only (§4.1 liveness and §8.2 focus are device-scoped by design).
+- **N panes ⇒ N live shells**, counted as the daemon's children rather than as log lines: the
+  cumulative attach count legitimately includes B's refused launch pane and the closed tab's pane,
+  both reaped. A leak is a shell that is still there.
+- Pinned by `GuiGateLaunchContractTests`, which is what keeps the gate from quietly reading the host
+  document, sharing one container between the instances, or warning instead of failing.
+
 **NOT shipped**
-- **Hardware verification.** Everything above is proven headlessly and by the two GUI gates; nobody has
-  yet watched two real clients converge on one layout. That is the open item.
 - **A cross-SESSION dock.** Refused by design — a pane's spec lives in its session's side table, so
   moving one between sessions is a different op with a different invariant, and no gesture asks.
 
@@ -1561,9 +1579,22 @@ processes on one `--session-id` against one `slopdesk-hostd`, real PTYs. Per
 is not acceptable evidence here. Plus `bash scripts/check-ios.sh`, and the full suite green with
 `SLOPDESK_PANE_FANOUT` unset AND `=1`.
 
-**Still owed, and honestly owed:** nothing in Phases 4–6 is hardware-verified. The laggard-eviction
-threshold in particular is a policy invention calibrated below the real 64 MiB offline gate — only a
-cellular-iOS soak settles it, and a unit test cannot.
+**Hardware, as far as it goes:** `SLOPDESK_PANE_FANOUT=1 bash scripts/check-multiclient.sh` runs the
+Phase 5b gate with the flag on and adds one assertion of its own — every pane in the FINAL layout has
+to appear in a hostd `joined live session … as subscriber` line, and only then does the absence of
+`attachedElsewhere` refusals mean anything ("no refusals" alone is satisfied by a second client that
+never tried). Green on two real macOS instances against one daemon.
+
+**Observed there, and NOT yet addressed:** with the flag ON, closing a tab on client A makes client B
+spawn a fresh PTY for the pane that just died — B's leaf re-dials in the window between the host's
+`channelClose` and the document diff that removes the pane from B's projection, and a pane channel
+naming a session the host no longer has is a SPAWN. It is transient (the diff lands, the leaf
+unmounts, the shell is reaped, and the gate's N-panes-⇒-N-shells count is exact afterwards) and it
+does not happen with the flag off, where B holds no channel to re-dial. With a real login shell it is
+still a whole rc execution for a pane the user just closed.
+
+**Still owed, and honestly owed:** the laggard-eviction threshold is a policy invention calibrated
+below the real 64 MiB offline gate — only a cellular-iOS soak settles it, and a unit test cannot.
 
 ---
 
