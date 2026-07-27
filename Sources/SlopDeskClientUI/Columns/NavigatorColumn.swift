@@ -520,8 +520,13 @@ struct NavigatorColumn: View {
 /// `make check · 1.3s · exit 0` line. Only non-empty parts render; a raw `\(cwd)` interpolation of the
 /// `String?` field would render the literal `Optional(...)` wrapper, so every part is unwrapped first.
 enum SidebarRowTooltip {
-    static func text(cwd: String?, detail: String?, lastCommand: String?) -> String? {
-        let parts = [cwd, detail, lastCommand].compactMap { part -> String? in
+    static func text(
+        cwd: String?, detail: String?, lastCommand: String?, viewers: [String] = [],
+    ) -> String? {
+        // Who ELSE has this pane on screen. Viewers, not owners — see
+        // ``WorkspaceStore/paneViewers(for:)``; nothing yet knows whose channel holds the PTY.
+        let alsoOpen = viewers.isEmpty ? nil : "Also open on \(viewers.joined(separator: ", "))"
+        let parts = [cwd, detail, lastCommand, alsoOpen].compactMap { part -> String? in
             guard let part, !part.isEmpty else { return nil }
             return part
         }
@@ -936,6 +941,7 @@ private struct SidebarLiveRow: View {
                 cwd: row.cwd,
                 detail: detail,
                 lastCommand: lastCommand,
+                viewers: store.paneViewers(for: row.id),
             ),
             onSelect: onSelect,
             onClose: onClose,

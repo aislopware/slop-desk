@@ -184,6 +184,27 @@ extension WorkspaceStore {
         return title
     }
 
+    /// The labels of the OTHER clients currently looking at pane `id`, in roster order.
+    ///
+    /// Deliberately VIEWERS and not "held by". Attachment — which client's channel actually owns the
+    /// PTY — needs the pane channel to declare whose it is, and it does not: only the workspace
+    /// channel's `subscribe` carries a `clientInstanceID`, which is why the host fills the roster's
+    /// `panes` list with nothing. That declaration arrives with the pane-observer class in Phase 6,
+    /// and claiming ownership before then would be a guess dressed as a fact.
+    ///
+    /// What the roster DOES know is honest and useful on its own: someone else has this pane on
+    /// screen right now.
+    public func paneViewers(for id: PaneID) -> [String] {
+        observeWorkspaceMirror()
+        guard let roster = workspaceMirror.roster, let objectID = documentPaneIDIfKnown(id),
+              let mine = workspaceChannel?.clientInstanceID
+        else { return [] }
+        return roster.clients
+            .filter { $0.viewingPaneID == objectID && $0.clientInstanceID != mine }
+            .map(\.label)
+            .filter { !$0.isEmpty }
+    }
+
     /// The pane's RUNNING command line — what a busy row titles itself by.
     ///
     /// The HOST's own open block leads, and this is the one liveness fact where that matters most.

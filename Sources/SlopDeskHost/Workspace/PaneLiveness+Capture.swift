@@ -52,6 +52,10 @@ extension PaneLiveness {
             lastDurationMS: session.lastDurationMSForControl,
             grid: size.map { Grid(cols: $0.cols, rows: $0.rows) },
             completionEpoch: session.completionEpochForControl,
+            // Deliberately unstamped. The session keeps no last-activity latch, and the only place
+            // to make one is the PTY read path — a wall-clock read per chunk, on the hot path, for a
+            // field nothing reads yet. `0` is the record's own "never observed", so an absent stamp
+            // is already expressible; it stays that way until something needs it.
             lastActivityMS: 0,
         )
     }

@@ -120,6 +120,46 @@ final class WorkspaceMirrorFactsTests: XCTestCase {
         XCTAssertNotEqual(store.currentWorkspaceView().paneID, paneID.raw)
     }
 
+    /// Who ELSE has this pane on screen. Reads the roster's `viewingPaneID`, in document ids, minus
+    /// this client's own entry — a client is not "also" looking at its own pane.
+    ///
+    /// Deliberately viewers and not owners: attachment needs the pane channel to declare whose it is,
+    /// and only the workspace channel's subscribe carries a `clientInstanceID` today.
+    func testViewersNameTheOtherClientsLookingAtAPane() throws {
+        let store = makeStore()
+        let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
+        let hostPaneID = UUID()
+        store.noteResumeIdentity(sessionID: hostPaneID, seq: 0, for: paneID)
+        let mine = UUID()
+        let theirs = UUID()
+        store.attachWorkspaceChannel(WorkspaceChannelClient(
+            box: store.workspaceMirror, clientInstanceID: mine, clientKind: .macOS, label: "mac-studio",
+            open: { throw CancellationError() }, close: { _ in },
+        ))
+
+        store.workspaceMirror.apply(
+            kind: WorkspaceEventKind.presence.rawValue,
+            epoch: UUID(), baseStateNum: 0, newStateNum: 0,
+            payload: WorkspacePresenceRoster(clients: [
+                WorkspaceRosterClient(
+                    clientInstanceID: mine, clientKind: 0, flags: 0,
+                    viewingTabID: UUID(), viewingPaneID: hostPaneID, cols: 0, rows: 0,
+                    label: "mac-studio",
+                ),
+                WorkspaceRosterClient(
+                    clientInstanceID: theirs, clientKind: 1, flags: 0,
+                    viewingTabID: UUID(), viewingPaneID: hostPaneID, cols: 0, rows: 0,
+                    label: "iPad",
+                ),
+            ]).encode(),
+        )
+
+        XCTAssertEqual(
+            store.paneViewers(for: paneID), ["iPad"],
+            "the other client is listed; this one is not 'also' looking at its own pane",
+        )
+    }
+
     // MARK: - runningCommand
 
     /// The degradation, then the repair. A client with no blocks of its own can say no more than
