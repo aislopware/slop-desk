@@ -211,6 +211,21 @@ public struct PaneLiveness: Equatable, Sendable {
         ]
     }
 
+    /// The other half of one pane's fields — what an INTENT writes and a host restart restores.
+    ///
+    /// The two lists partition ``WorkspacePaneField`` and must keep doing so. A field in neither is
+    /// written by nobody and reaped by nobody; a field in both makes a liveness recapture silently
+    /// delete a persisted title. ``PaneLivenessFieldPartitionTests`` pins it.
+    public static func topologyFields() -> [UInt8] {
+        [
+            WorkspacePaneField.kind,
+            WorkspacePaneField.title,
+            WorkspacePaneField.userRenamed,
+            WorkspacePaneField.videoTarget,
+            WorkspacePaneField.spawnCwd,
+        ]
+    }
+
     // MARK: Reconstruction
 
     /// Reads one pane's liveness record back out of a document.

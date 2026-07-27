@@ -91,6 +91,28 @@ public enum WorkspacePaneField {
     public static let spawnCwd: UInt8 = 21
 }
 
+/// The `pane/kind` byte. `PaneKind` is `String`-raw so its PERSISTED discriminator stays readable;
+/// on the wire it is a byte, and these numbers are frozen the moment a golden vector carries one.
+///
+/// An unknown tag decodes to ``PaneKind/terminal`` rather than dropping the pane: a kind this build
+/// does not know still occupies a real slot in a real tab, and rendering it as a terminal is a
+/// degraded pane where dropping it would be a hole in a layout every other client can see.
+public enum WorkspacePaneKindTag {
+    public static let terminal: UInt8 = 0
+    public static let desktop: UInt8 = 1
+
+    public static func byte(for kind: PaneKind) -> UInt8 {
+        switch kind {
+        case .terminal: terminal
+        case .desktop: desktop
+        }
+    }
+
+    public static func kind(for byte: UInt8) -> PaneKind {
+        byte == desktop ? .desktop : .terminal
+    }
+}
+
 /// `kindTag 4` — one divider, addressed by its `SplitNodeID`.
 ///
 /// Weights are their OWN object rather than part of `tab/layoutStructure` so two clients dragging two

@@ -259,12 +259,17 @@ public enum WorkspaceStateCodec {
 
     // MARK: Scalar field values
 
-    /// A `splitNode/weight` value: `[u8 weightKind][u64 BE Double.bitPattern]`.
+    /// One weight: `[u8 weightKind][u64 BE Double.bitPattern]`.
     ///
     /// The Double rides as its raw `bitPattern`, never a re-parsed decimal — the repo's bit-exact
     /// float rule, and the same discipline the golden generator's `bytesEwmaBits` uses.
     public static func encodeWeight(_ weight: SplitWeight) -> Data {
         var out: [UInt8] = []
+        appendWeight(weight, into: &out)
+        return Data(out)
+    }
+
+    private static func appendWeight(_ weight: SplitWeight, into out: inout [UInt8]) {
         let bits: UInt64
         switch weight {
         case let .flex(value):
@@ -277,18 +282,150 @@ public enum WorkspaceStateCodec {
         for shift in stride(from: 56, through: 0, by: -8) {
             out.append(UInt8(truncatingIfNeeded: bits >> UInt64(shift)))
         }
-        return Data(out)
     }
 
     public static func decodeWeight(_ data: Data) throws -> SplitWeight {
         var reader = ByteReader(data)
+        let weight = try readWeight(&reader)
+        guard reader.remaining == 0 else { throw WorkspaceCodecError.malformedBody }
+        return weight
+    }
+
+    private static func readWeight(_ reader: inout ByteReader) throws -> SplitWeight {
         let kind = try reader.u8()
         guard reader.remaining >= 8 else { throw WorkspaceCodecError.malformedBody }
         var bits: UInt64 = 0
         for _ in 0..<8 { bits = try (bits << 8) | UInt64(reader.u8()) }
-        guard reader.remaining == 0 else { throw WorkspaceCodecError.malformedBody }
         let value = Double(bitPattern: bits)
         return kind == 0 ? .flex(value) : .fixed(value)
+    }
+
+    /// A `splitNode/weight` value: `[u8 childCount]([u8 weightKind][u64 BE bits])*` — ALL of one
+    /// split's child weights, in child order.
+    ///
+    /// One entry per SPLIT rather than per child is what makes a divider drag atomic: the op the
+    /// intent maps onto (`SplitNode.settingDividerWeight`) moves a leading/trailing PAIR, so
+    /// splitting the pair across two cells would let a diff carry half a drag. Two clients dragging
+    /// dividers in two DIFFERENT splits still write two different keys and cannot clobber each other,
+    /// which is the conflict granularity docs/45 §5.3 is after.
+    ///
+    /// `childCount` is a `u8`, so the fan-out is bounded by the FORMAT — the same discipline
+    /// `layoutStructure` uses, and it must stay in step with it.
+    public static func encodeWeights(_ weights: [SplitWeight]) -> Data {
+        var out: [UInt8] = []
+        let count = min(weights.count, Int(UInt8.max))
+        out.append(UInt8(truncatingIfNeeded: count))
+        for weight in weights.prefix(count) { appendWeight(weight, into: &out) }
+        return Data(out)
+    }
+
+    /// `nil` on any framing the bytes cannot back — a wrong-width value is a DROP, and the caller
+    /// falls back to an even share rather than rendering a layout it half-understood.
+    public static func decodeWeights(_ data: Data) -> [SplitWeight]? {
+        var reader = ByteReader(data)
+        guard let count = try? Int(reader.u8()) else { return nil }
+        // Nine bytes per weight, checked before reserving: a declared 255 over an empty tail costs
+        // nothing.
+        guard reader.remaining == count * 9 else { return nil }
+        var out: [SplitWeight] = []
+        out.reserveCapacity(count)
+        for _ in 0..<count {
+            guard let weight = try? readWeight(&reader) else { return nil }
+            out.append(weight)
+        }
+        return out
+    }
+
+    // MARK: Identity field values
+
+    /// A bare `UUID` field value — `root/activeSessionID`, `tab/sessionID`, `tab/activePaneID`.
+    ///
+    /// An ABSENT optional is an absent KEY, never the all-zero UUID: the zero UUID is the wire's
+    /// "none" in the presence records, and letting it mean the same thing here would make "no active
+    /// pane" and "the pane whose id happens to be zero" the same cell.
+    public static func encodeUUID(_ id: UUID) -> Data {
+        var out: [UInt8] = []
+        out.reserveCapacity(16)
+        out.append(uuid: id)
+        return Data(out)
+    }
+
+    public static func decodeUUID(_ data: Data) -> UUID? {
+        guard data.count == 16 else { return nil }
+        var reader = ByteReader(data)
+        return try? reader.uuid()
+    }
+
+    /// `session/detachedPanes`: `[u16 n]([16B paneID][16B originTabID])*`.
+    ///
+    /// A detached pane with no remembered origin tab rides as the all-zero UUID — here it IS the
+    /// sentinel, because a pane always has an id but its origin is genuinely optional and the pair is
+    /// fixed-width.
+    public static func encodeDetachedPanes(_ panes: [(pane: UUID, originTab: UUID?)]) -> Data {
+        var out: [UInt8] = []
+        let count = min(panes.count, Int(UInt16.max))
+        out.append(UInt8(truncatingIfNeeded: count >> 8))
+        out.append(UInt8(truncatingIfNeeded: count))
+        for entry in panes.prefix(count) {
+            out.append(uuid: entry.pane)
+            out.append(uuid: entry.originTab ?? WorkspaceObjectKind.rootObjectID)
+        }
+        return Data(out)
+    }
+
+    public static func decodeDetachedPanes(_ data: Data) -> [(pane: UUID, originTab: UUID?)]? {
+        var reader = ByteReader(data)
+        guard reader.remaining >= 2, let high = try? reader.u8(), let low = try? reader.u8() else { return nil }
+        let count = Int((UInt16(high) << 8) | UInt16(low))
+        guard reader.remaining == count * 32 else { return nil }
+        var out: [(pane: UUID, originTab: UUID?)] = []
+        out.reserveCapacity(count)
+        for _ in 0..<count {
+            guard let pane = try? reader.uuid(), let origin = try? reader.uuid() else { return nil }
+            out.append((pane, origin == WorkspaceObjectKind.rootObjectID ? nil : origin))
+        }
+        return out
+    }
+
+    /// `pane/videoTarget`: `[u32 windowID][u8 hasDisplay][u32 displayID][u16 titleLen][title][u16 appLen][app]`.
+    ///
+    /// `displayID` is optional in the model — a window-shaped endpoint has none — so it carries its
+    /// own presence byte rather than overloading `0`, which is a legitimate display id (the main one).
+    public static func encodeVideoTarget(_ endpoint: VideoEndpoint) -> Data {
+        var out: [UInt8] = []
+        out.appendBE(endpoint.windowID)
+        out.append(endpoint.displayID == nil ? 0 : 1)
+        out.appendBE(endpoint.displayID ?? 0)
+        for text in [endpoint.title, endpoint.appName] {
+            let bytes = encodeString(text)
+            out.append(UInt8(truncatingIfNeeded: bytes.count >> 8))
+            out.append(UInt8(truncatingIfNeeded: bytes.count))
+            out.append(contentsOf: bytes)
+        }
+        return Data(out)
+    }
+
+    public static func decodeVideoTarget(_ data: Data) -> VideoEndpoint? {
+        var reader = ByteReader(data)
+        guard let windowID = try? reader.u32(),
+              let hasDisplay = try? reader.u8(),
+              let displayID = try? reader.u32()
+        else { return nil }
+        var strings: [String] = []
+        for _ in 0..<2 {
+            guard let high = try? reader.u8(), let low = try? reader.u8() else { return nil }
+            let length = Int((UInt16(high) << 8) | UInt16(low))
+            guard let bytes = try? reader.take(length), let text = decodeString(bytes) else { return nil }
+            strings.append(text)
+        }
+        guard reader.remaining == 0 else { return nil }
+        return VideoEndpoint(
+            windowID: windowID,
+            title: strings[0],
+            appName: strings[1],
+            // C-style bool discipline on a byte that crossed the network.
+            displayID: hasDisplay != 0 ? displayID : nil,
+        )
     }
 
     /// A string field value: strict UTF-8, never lossy. Clamped at a Unicode SCALAR boundary so a
