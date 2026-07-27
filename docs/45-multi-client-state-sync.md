@@ -1115,17 +1115,30 @@ fallback — they still write `fastPath` and, with no `entries` to lose to, driv
 - ctl panes get entries under `root/unattachedSessionID`.
 - `channelClass == 1` routing in `spawnMuxChannel`, **before** the `attachedElsewhere` gate.
 
-**Client**
-- `HostWorkspaceMirror` with all three layers; per-pane mirrors become computed reads; the existing
-  control sinks write `fastPath` only.
-- **Delete** `paneTitleAt`, `paneCommandStartedAt` (as titling inputs), `programTitle(for:)`,
-  `promotingLastKnownTitles()`.
+**Client** — SHIPPED; four bullets below were revised in the doing, see
+[DECISIONS](DECISIONS.md) § *Multi-client Phase 4d*.
+
+- `HostWorkspaceMirror` with **two** layers, not three: `entries` and `fastPath`. The optimistic
+  `pending` layer has no writer until Phase 5's intents, and `value(for:)` is its insertion point.
+- Every mirror key is the **host-minted** pane id (`documentPaneID(_:)`), never the tree-local
+  `PaneID`. Getting this wrong is silent — it was, for one commit.
+- Mirror reads open with `observeWorkspaceMirror()`. The box is not `@Observable`; a funnel that
+  forgets renders once and then goes deaf.
+- **Deleted** `paneTitleAt`, `programTitle(for:)`. `paneCommandStartedAt` stays — it is the
+  client's own freshness stamp when the document is off, not a titling input.
+  `promotingLastKnownTitles()` moves to Phase 5: it is about PERSISTED spec titles, which is topology.
 - `RailRowsBuilder.liveRowTitle` reads `pane/liveTitle` gated on `pane/titleFresh`, plus
-  `pane/runningCommand`, `pane/foregroundProcess`, `pane/agentIntent`.
-- `paneUnseenDone` family → `pane/completionEpoch` vs device-local `seenCompletionEpoch`.
-- A pane whose presence `attachedBy` is non-empty and lacks my `clientInstanceID` renders **held by
-  `<label>`** and does **not** send `channelOpen`. This is the Phase-4/5 answer to the
-  still-single-attach PTY, and it is continuous into Phase 6.
+  `pane/runningCommand`. `foregroundProcess` / `agentIntent` / `agentLabel` / `agentState` stay on
+  their store dicts: `reestablishOnReattach` re-asserts all of them, so routing them changes nothing
+  observable until Phase 5 brings the rows a second client would render them in.
+- `paneUnseenDone` becomes the PROJECTION of `pane/completionEpoch` vs device-local
+  `seenCompletionEpoch` (persisted, scoped to the document epoch). Nothing writes the Set but
+  `refreshUnseenDone(for:)`.
+- The client publishes presence from the reconcile funnel, dirty-guarded on the view.
+- **held by `<label>` moves to Phase 6.** Attachment needs the pane channel to declare whose it is,
+  and only the workspace `subscribe` carries a `clientInstanceID` — which is why the host fills the
+  roster's `panes` list with nothing. Phase 4 renders VIEWERS in the row tooltip instead, and does
+  not suppress `channelOpen`.
 
 **Wire / golden / docs:** all of §5.7 except the topology entries.
 

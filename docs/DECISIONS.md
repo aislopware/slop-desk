@@ -3262,3 +3262,89 @@ always present, and why [CLAUDE.md](../CLAUDE.md) says in-memory loopback misses
 Awaiting the iterator strands xctest the moment an expected frame does not arrive, and a hung suite
 tells you nothing while blocking the gate. With the `channelClass` route reverted, the tests now fail
 in six seconds with "timed out waiting for 1× snapshot".
+
+## Multi-client Phase 4d: two silent defects, and where the rest of it actually lives (2026-07-27)
+
+Phase 4c shipped the client half. Two of its rules were wrong in ways nothing could report.
+
+### 1. The document is keyed by the HOST's pane id
+
+4c wrote and read the mirror under `PaneID.raw`. That id is minted on the CLIENT when a pane is
+created; the document keys panes by the id the host mints on channel open. Two different UUIDs, and
+no decoder can tell them apart.
+
+So host truth landed under keys the UI never queried — the document was inert on a live client — and
+worse, the two mirror layers were keyed APART, which makes the erasure rule that keeps them disjoint
+unreachable. A client guess the host contradicts would have won forever: the exact bug the document
+exists to end, reintroduced one layer down. The 4c suite missed it by building its fixtures from
+`paneID.raw`, asserting the mapping it also assumed.
+
+`PaneSpec.resumeSessionID` already held the host's id — `onResumeIdentitySnapshot` fires on every
+connect, not only under the detach flag, and the store persists it — so the mapping was on disk the
+whole time and survives a relaunch exactly as the document does. `documentPaneID(_:)` reads it.
+
+The local-id FALLBACK is right for the mirror, whose overlay is this client's own namespace, and
+wrong for anything shared. `documentPaneIDIfKnown(_:)` is the shared-surface form: a tree-local id in
+the presence roster names nothing on any other client.
+
+### 2. A mirror change repainted nothing
+
+The mirror is a plain value in a plain box, so that its convergence is provable with no SwiftUI near
+it — which also means folding a frame in is not `@Observable`. A read funnel consulting only the
+mirror registered no dependency, so the row held its old value until an unrelated mutation happened
+to repaint it. That is precisely the multi-client case: a client whose only source of news is the
+document changes nothing of its own, so the unrelated mutation never comes.
+
+`workspaceMirrorRevision` is the box's observable shadow, bumped from `onChange`. It carries no data
+— the `completionFlashTick` idiom.
+
+### 3. Only `runningCommand` was worth routing through the document in Phase 4
+
+The obvious reading of §7.2 is "move every per-pane fact to the mirror". Most of them do not need it:
+`ClaudePaneDetector.reestablishOnReattach` already re-asserts types 26/27/36, so foreground process,
+agent status, label and intent all recover on a returning client by themselves. Routing them would
+have been churn with no observable effect until Phase 5 brings the ROWS a second client would render
+them in.
+
+The open command's TEXT is the exception, and it is not re-asserted by anything: it lives in the
+client's `CommandBlock` model, which is per-materialization. A pane whose bytes were never rendered
+here has no blocks at all, so a busy row could say no more than "zsh".
+
+`cwd` and `projectKey` stay on `PaneSpec` for the same reason — persisted, restored cold, and about
+to be re-homed wholesale when Phase 5 makes topology host-owned.
+
+### 4. The unread finish is a comparison; "seen" is scoped to the document epoch
+
+`paneUnseenDone` was the fact itself, so it disagreed between clients, died on relaunch, and could
+not be learned by a client disconnected across the finish — the host's done→idle decay had already
+taken the edge. The counter is askable; the Set survives only as its projection.
+
+Two rules the mechanism needs:
+
+- The comparison is INEQUALITY, not `>`. A restarted daemon counts from zero again, and a `seen`
+  stranded above the live counter silences that pane forever. For the same reason the persisted map
+  carries the document epoch it was recorded under and is dropped when that changes: one re-announced
+  finish beats permanent silence.
+- A zero counter must never be RECORDED as seen. Every pane reads zero until the document arrives,
+  so writing it erases a restored map before the channel has said which document this is.
+
+"A finish you are LOOKING at is a finish you have seen" moves from the EDGE to the COMPARISON. Stated
+at the edge it loses to ordering the moment the document is live, because the host's counter and this
+client's own `.done` arrive on different paths in no guaranteed order.
+
+### 5. "Held by `<label>`" is blocked on Phase 6, not deferred
+
+§7.2 filed it under Phase 4. It cannot be: attachment needs the pane channel to declare whose it is,
+and only the workspace channel's `subscribe` carries a `clientInstanceID` — which is why the host
+fills the roster's `panes` list with nothing. The declaration arrives with the pane-observer class.
+
+The roster does know who is VIEWING each pane, which is honest on its own and now reads in the row
+tooltip. Rendering ownership on a viewing record would have been a guess dressed as a fact, and
+suppressing `channelOpen` on the strength of it would make panes unopenable for a reason the user
+could not undo.
+
+### 6. `pane/lastActivityMS` stays unstamped
+
+The session keeps no last-activity latch and the only place to make one is the PTY read path — a
+wall-clock read per chunk, on the hot path, for a field nothing reads. `0` is already the record's
+own "never observed", so the absence is expressible rather than a lie.
