@@ -142,7 +142,7 @@ public final class OverlayCoordinator {
     /// EAGERLY resolve the focused pane's cwd (host `cwd()` RPC →
     /// ``WorkspaceStore/setLastKnownCwd(_:for:)``) so the WORKING DIRECTORY header's cwd pill is populated the
     /// moment the palette opens. Bound by ``WorkspaceRootView`` to the live ``MetadataClient``. WITHOUT this
-    /// the pill stayed blank on a freshly-connected pane at a prompt: the only other `lastKnownCwd` writer — a
+    /// the pill stayed blank on a freshly-connected pane at a prompt: the only other `pane/cwd` writer — a
     /// command completing (OSC 133;D) — hadn't fired. Fired from ``openPalette(mode:query:)``; the resolution
     /// lands reactively within ~1 RTT, so the pill pops in without blocking the open. No-op by default (tests /
     /// previews / a disconnected pane), and spends NO new wire message (the `cwd()` RPC already exists).

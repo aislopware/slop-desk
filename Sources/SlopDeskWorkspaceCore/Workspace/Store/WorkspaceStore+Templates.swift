@@ -34,10 +34,16 @@ public extension WorkspaceStore {
     func newSessionFromTemplate(_ template: SessionTemplate, launchGrace: Duration) -> [PaneID] {
         let (session, launches) = SessionTemplateEngine.makeSession(from: template, name: defaultSessionName)
         replaceTree(WorkspaceTreeOps.insertSession(session, in: tree, makeActive: true))
+        // BEFORE the reconcile: the spawn cwd rides `channelOpen`, which the materialize builds.
+        for (paneID, pane) in launches {
+            guard let cwd = pane.cwd, !cwd.isEmpty else { continue }
+            setSpawnCwd(cwd, for: paneID)
+            setLastKnownCwd(cwd, for: paneID)
+        }
         reconcileTree()
 
         // Send each pane's command bytes once its PTY is live (deferred — the shell prompt must come up
-        // first), mirroring `applyLaunchPreset`. The cwd already rides the pane spec into host-side spawn.
+        // first), mirroring `applyLaunchPreset`. The cwd rides `channelOpen` into the host-side spawn.
         for (paneID, pane) in launches {
             guard let bytes = SessionTemplateEngine.launchBytes(cwd: nil, command: pane.command) else {
                 continue

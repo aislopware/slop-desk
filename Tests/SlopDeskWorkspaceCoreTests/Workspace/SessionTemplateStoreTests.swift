@@ -13,7 +13,7 @@ final class SessionTemplateStoreTests: XCTestCase {
         WorkspaceStore(
             restoringTree: TreeWorkspace.defaultWorkspace(),
             liveModel: .tree,
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
             persistence: nil,
         )
     }
@@ -165,7 +165,7 @@ final class SessionTemplateStoreTests: XCTestCase {
         let store = WorkspaceStore(
             restoringTree: TreeWorkspace.defaultWorkspace(),
             liveModel: .tree,
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
             devicePreferences: prefsStore,
         )
         store.splitActivePaneDefault(axis: .vertical)

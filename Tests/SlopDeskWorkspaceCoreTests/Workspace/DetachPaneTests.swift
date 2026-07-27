@@ -355,7 +355,7 @@ final class DetachPaneTests: XCTestCase {
             restoring: Workspace(canvas: Canvas(items: []), focusedPane: nil),
             restoringTree: restoringTree,
             liveModel: .tree,
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
         )
     }
 

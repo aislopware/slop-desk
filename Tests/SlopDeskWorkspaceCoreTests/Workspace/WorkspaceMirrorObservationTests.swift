@@ -24,7 +24,7 @@ final class WorkspaceMirrorObservationTests: XCTestCase {
     }
 
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0) })
+        WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
     }
 
     @discardableResult

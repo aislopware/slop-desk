@@ -20,7 +20,7 @@ final class CommandRoutingTests: XCTestCase {
     private func makeStore(restoring: Workspace? = nil) -> WorkspaceStore {
         WorkspaceStore(
             restoring: restoring,
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
         )
     }

@@ -18,7 +18,7 @@ final class CwdVisitHookStoreTests: XCTestCase {
         WorkspaceStore(
             restoringTree: restoringTree,
             liveModel: .tree,
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
             persistence: nil,
         )
@@ -27,16 +27,30 @@ final class CwdVisitHookStoreTests: XCTestCase {
     /// A single-session, single-pane workspace whose pane carries `cwd` as its last-known cwd.
     private func singlePaneWorkspace(_ pane: PaneID, cwd: String?) -> TreeWorkspace {
         let tab = Tab(root: .leaf(pane), activePane: pane)
-        let specs: [PaneID: PaneSpec] = [pane: PaneSpec(kind: .terminal, title: "Terminal", lastKnownCwd: cwd)]
+        _ = cwd
+        let specs: [PaneID: PaneSpec] = [pane: PaneSpec(kind: .terminal, title: "Terminal")]
         let session = Session(name: "Local", tabs: [tab], activeTabIndex: 0, specs: specs)
         return TreeWorkspace(sessions: [session], activeSessionID: session.id)
+    }
+
+    /// A live `.tree` store over ``singlePaneWorkspace(_:cwd:)`` with the pane's `pane/cwd` already
+    /// seeded — written straight to the mirror's fast path, past ``WorkspaceStore/setLastKnownCwd(_:for:)``'s
+    /// plugin-cwd guard, which is how a value captured before that guard existed would present itself.
+    private func makeStore(_ pane: PaneID, cwd: String?) -> WorkspaceStore {
+        let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: cwd))
+        if let cwd {
+            store.workspaceMirror.writeFastPath(
+                pane: pane.raw, field: WorkspacePaneField.cwd, string: cwd,
+            )
+        }
+        return store
     }
 
     // MARK: - Fires on a CHANGED cwd
 
     func testHookFiresWithNewCwdOnChange() {
         let pane = PaneID()
-        let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: nil))
+        let store = makeStore(pane, cwd: nil)
         var visited: [String] = []
         store.onCwdVisited = { visited.append($0) }
 
@@ -47,12 +61,12 @@ final class CwdVisitHookStoreTests: XCTestCase {
             "a changed cwd fires the visit hook once with the new directory",
         )
         // And the spec was actually updated (the hook is downstream of the real write, not instead of it).
-        XCTAssertEqual(store.tree.spec(for: pane)?.lastKnownCwd, "/Users/me/project")
+        XCTAssertEqual(store.paneCwd(for: pane), "/Users/me/project")
     }
 
     func testHookFiresOncePerDistinctChange() {
         let pane = PaneID()
-        let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: nil))
+        let store = makeStore(pane, cwd: nil)
         var visited: [String] = []
         store.onCwdVisited = { visited.append($0) }
 
@@ -68,7 +82,7 @@ final class CwdVisitHookStoreTests: XCTestCase {
     func testHookDoesNotFireWhenCwdUnchanged() {
         let pane = PaneID()
         // Seed the pane already at this cwd so the first call is a no-op behind the dirty guard.
-        let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: "/Users/me/project"))
+        let store = makeStore(pane, cwd: "/Users/me/project")
         var visited: [String] = []
         store.onCwdVisited = { visited.append($0) }
 
@@ -79,7 +93,7 @@ final class CwdVisitHookStoreTests: XCTestCase {
 
     func testHookFiresOnceAcrossARepeatedWrite() {
         let pane = PaneID()
-        let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: nil))
+        let store = makeStore(pane, cwd: nil)
         var visited: [String] = []
         store.onCwdVisited = { visited.append($0) }
 
@@ -93,9 +107,9 @@ final class CwdVisitHookStoreTests: XCTestCase {
 
     func testNoHookIsACleanNoOp() {
         let pane = PaneID()
-        let store = makeTreeStore(restoringTree: singlePaneWorkspace(pane, cwd: nil))
+        let store = makeStore(pane, cwd: nil)
         // onCwdVisited left nil (the default): setLastKnownCwd must still update the spec without crashing.
         store.setLastKnownCwd("/Users/me/project", for: pane)
-        XCTAssertEqual(store.tree.spec(for: pane)?.lastKnownCwd, "/Users/me/project")
+        XCTAssertEqual(store.paneCwd(for: pane), "/Users/me/project")
     }
 }

@@ -78,9 +78,9 @@ final class RedialDetachedPaneTests: XCTestCase {
             restoring: Workspace(canvas: Canvas(items: []), focusedPane: nil),
             restoringTree: ws,
             liveModel: .tree,
-            makeSession: { spec in
+            makeSession: { seed in
                 LivePaneSession.make(
-                    spec,
+                    paneID: seed.id, spec: seed.spec, spawnCwd: seed.spawnCwd,
                     makeClient: { _ in SlopDeskClient(makeTransport: { rec.makeTransport() }) },
                     makeInspector: { _ in nil },
                     target: { .default },

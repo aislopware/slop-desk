@@ -106,25 +106,32 @@ final class TabCloseSuccessorTests: XCTestCase {
         WorkspaceStore(
             restoringTree: tree,
             liveModel: .tree,
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
             persistence: nil,
         )
     }
 
-    /// One session whose tabs each hold a single pane stamped with `projectKey` (the sectioning source).
+    /// One session whose tabs each hold a single pane in `project` (the sectioning source). The keys
+    /// themselves are seeded onto the STORE by ``seedProjects(_:in:)`` — they are document facts.
     private func workspace(projects: [String]) -> (TreeWorkspace, [TabID]) {
         var tabs: [Tab] = []
         var specs: [PaneID: PaneSpec] = [:]
-        for project in projects {
+        for _ in projects {
             let pane = PaneID()
-            var spec = PaneSpec(kind: .terminal, title: "Terminal", lastKnownCwd: project)
-            spec.projectKey = project
-            specs[pane] = spec
+            specs[pane] = PaneSpec(kind: .terminal, title: "Terminal")
             tabs.append(Tab(root: .leaf(pane), activePane: pane))
         }
         let session = Session(name: "Local", tabs: tabs, activeTabIndex: 0, specs: specs)
         return (TreeWorkspace(sessions: [session], activeSessionID: session.id), tabs.map(\.id))
+    }
+
+    /// Stamps each pane's `pane/cwd` + `pane/projectKey`, in the tree's own pane order.
+    private func seedProjects(_ projects: [String], in store: WorkspaceStore) {
+        for (pane, project) in zip(store.tree.allPaneIDs(), projects) {
+            store.setLastKnownCwd(project, for: pane)
+            store.setProjectKey(project, for: pane)
+        }
     }
 
     private func activeTab(_ store: WorkspaceStore) -> TabID? {
@@ -135,8 +142,10 @@ final class TabCloseSuccessorTests: XCTestCase {
     /// (a slop-desk tab), close it. Focus must land on the slop-desk tab — before the fix it landed on
     /// git-line-demo, because the new tab appended to index 2 and the clamp resolved index 1.
     func testClosingNewTabReturnsToOriginatingProjectTab() throws {
-        let (tree, tabs) = workspace(projects: ["/w/slop-desk", "/w/git-line-demo"])
+        let projects = ["/w/slop-desk", "/w/git-line-demo"]
+        let (tree, tabs) = workspace(projects: projects)
         let store = makeStore(tree)
+        seedProjects(projects, in: store)
         let slopDesk = tabs[0], gitLineDemo = tabs[1]
 
         store.selectTab(1) // visit git-line-demo…
@@ -160,8 +169,10 @@ final class TabCloseSuccessorTests: XCTestCase {
     /// Closing a BACKGROUND tab is not a focus change — the user dismissed something they were not looking
     /// at. The old clamp re-pointed the selection at the removed tab's index regardless.
     func testClosingBackgroundTabLeavesFocusAlone() {
-        let (tree, tabs) = workspace(projects: ["/w/alpha", "/w/beta", "/w/gamma"])
+        let projects = ["/w/alpha", "/w/beta", "/w/gamma"]
+        let (tree, tabs) = workspace(projects: projects)
         let store = makeStore(tree)
+        seedProjects(projects, in: store)
 
         store.selectTab(2)
         XCTAssertEqual(activeTab(store), tabs[2])
@@ -174,8 +185,10 @@ final class TabCloseSuccessorTests: XCTestCase {
     /// Focus history is recorded through `reconcileTree()`, so it follows ANY gesture that changes the
     /// active tab — and a repeat reconcile for the same tab must not evict the genuinely-previous one.
     func testFocusHistoryTracksSwitchesWithoutFloodingOnRepeats() {
-        let (tree, tabs) = workspace(projects: ["/w/alpha", "/w/beta", "/w/gamma"])
+        let projects = ["/w/alpha", "/w/beta", "/w/gamma"]
+        let (tree, tabs) = workspace(projects: projects)
         let store = makeStore(tree)
+        seedProjects(projects, in: store)
 
         store.selectTab(1)
         store.selectTab(2)
@@ -195,8 +208,10 @@ final class TabCloseSuccessorTests: XCTestCase {
     /// resolved against the OWNING session — reading the active session's tabs would not find the closing
     /// tab at all and would silently fall back to the index clamp.
     func testSuccessorResolvesAgainstOwningSessionNotActiveOne() throws {
-        let (tree, tabs) = workspace(projects: ["/w/slop-desk", "/w/git-line-demo", "/w/slop-desk"])
+        let projects = ["/w/slop-desk", "/w/git-line-demo", "/w/slop-desk"]
+        let (tree, tabs) = workspace(projects: projects)
         let store = makeStore(tree)
+        seedProjects(projects, in: store)
         let background = try XCTUnwrap(store.tree.activeSession?.id)
 
         // A second session becomes active; the first keeps its own active tab (index 0).
@@ -214,19 +229,50 @@ final class TabCloseSuccessorTests: XCTestCase {
         )
     }
 
+    /// By-Project sectioning must resolve for a session that is NOT the active one. The close path runs
+    /// there — a tab can be closed in a background window — so a resolver that only consults
+    /// `tree.activeSession` would return nil for every pane, collapsing the whole rail into "Other" and
+    /// degrading `successorAfterClose`'s same-section rule to the plain display order.
+    func testPaneProjectKeyResolvesForANonActiveSession() throws {
+        let projects = ["/w/alpha", "/w/beta"]
+        let (tree, _) = workspace(projects: projects)
+        let store = makeStore(tree)
+        seedProjects(projects, in: store)
+        let background = try XCTUnwrap(store.tree.activeSession)
+
+        // A SECOND session becomes the active one; `background` is now nobody's active session.
+        store.newSession(name: "Second", kind: .terminal)
+        XCTAssertNotEqual(store.tree.activeSessionID, background.id, "precondition: it is not active")
+
+        for (pane, project) in zip(background.allPaneIDs(), projects) {
+            XCTAssertEqual(
+                WorkspaceStore.paneProjectKey(
+                    pane, projectKey: { store.projectKey(for: $0) }, cwd: { store.paneCwd(for: $0) },
+                ),
+                project,
+                "a background session's panes still bucket by their own project",
+            )
+        }
+        XCTAssertEqual(
+            WorkspaceStore.tabProjectKey(
+                background.tabs[1].id, in: background,
+                projectKey: { store.projectKey(for: $0) }, cwd: { store.paneCwd(for: $0) },
+            ),
+            "/w/beta",
+            "and so does the TAB key the close path resolves successors against",
+        )
+    }
+
     /// A split tab straddling two projects has a row in EACH section, so no single key describes it. The
     /// close path uses the FOCUSED pane's key — the section the user was actually reading.
     func testSplitTabAcrossProjectsSectionsByItsFocusedPane() {
         let slopA = PaneID(), slopB = PaneID(), split = PaneID(), other = PaneID()
         var specs: [PaneID: PaneSpec] = [:]
-        for (pane, project) in [
+        let projects: [(PaneID, String)] = [
             (slopA, "/w/slop-desk"), (slopB, "/w/slop-desk"),
             (split, "/w/git-line-demo"), (other, "/w/git-line-demo"),
-        ] {
-            var spec = PaneSpec(kind: .terminal, title: "Terminal", lastKnownCwd: project)
-            spec.projectKey = project
-            specs[pane] = spec
-        }
+        ]
+        for (pane, _) in projects { specs[pane] = PaneSpec(kind: .terminal, title: "Terminal") }
         // Tab 1 is the split: a slop-desk pane AND a git-line-demo pane, focused on the git-line-demo one.
         let tab0 = Tab(root: .leaf(slopA), activePane: slopA)
         let tab1 = Tab(
@@ -239,9 +285,17 @@ final class TabCloseSuccessorTests: XCTestCase {
         let tab2 = Tab(root: .leaf(other), activePane: other)
         let session = Session(name: "Local", tabs: [tab0, tab1, tab2], activeTabIndex: 0, specs: specs)
         let store = makeStore(TreeWorkspace(sessions: [session], activeSessionID: session.id))
+        for (pane, project) in projects {
+            store.setLastKnownCwd(project, for: pane)
+            store.setProjectKey(project, for: pane)
+        }
 
         XCTAssertEqual(
-            WorkspaceStore.tabProjectKey(tab1.id, in: session), "/w/git-line-demo",
+            WorkspaceStore.tabProjectKey(
+                tab1.id, in: session,
+                projectKey: { store.projectKey(for: $0) }, cwd: { store.paneCwd(for: $0) },
+            ),
+            "/w/git-line-demo",
             "the FOCUSED pane decides the section, not the tab's first leaf",
         )
 
@@ -260,8 +314,10 @@ final class TabCloseSuccessorTests: XCTestCase {
     /// (the neighbour INSIDE the closing tab's project section) is the only thing keeping focus in the
     /// project then, so it has to hold through the store, not just the engine.
     func testColdLaunchWithoutHistoryStaysInsideProjectSection() {
-        let (tree, tabs) = workspace(projects: ["/w/slop-desk", "/w/git-line-demo", "/w/slop-desk"])
+        let projects = ["/w/slop-desk", "/w/git-line-demo", "/w/slop-desk"]
+        let (tree, tabs) = workspace(projects: projects)
         let store = makeStore(tree)
+        seedProjects(projects, in: store)
 
         XCTAssertTrue(
             store.tabFocusHistory.allSatisfy { $0 == tabs[0] },
@@ -280,8 +336,10 @@ final class TabCloseSuccessorTests: XCTestCase {
     /// later through `confirmPendingClose()`. The successor is computed at confirm time, so the rule has to
     /// survive the park round-trip rather than being decided (and lost) when the dialog was armed.
     func testParkedTabCloseHonoursSuccessorRuleOnConfirm() throws {
-        let (tree, tabs) = workspace(projects: ["/w/slop-desk", "/w/git-line-demo"])
+        let projects = ["/w/slop-desk", "/w/git-line-demo"]
+        let (tree, tabs) = workspace(projects: projects)
         let store = makeStore(tree)
+        seedProjects(projects, in: store)
 
         store.selectTab(1)
         store.selectTab(0)
@@ -309,8 +367,10 @@ final class TabCloseSuccessorTests: XCTestCase {
     /// it died, so the reopened tab has to re-enter the ring on its own — otherwise the second close of the
     /// same tab would find no MRU survivor and fall back a rule.
     func testReopenedTabRejoinsFocusHistoryAndClosesBackToItsOrigin() {
-        let (tree, tabs) = workspace(projects: ["/w/slop-desk", "/w/git-line-demo", "/w/slop-desk"])
+        let projects = ["/w/slop-desk", "/w/git-line-demo", "/w/slop-desk"]
+        let (tree, tabs) = workspace(projects: projects)
         let store = makeStore(tree)
+        seedProjects(projects, in: store)
 
         store.selectTab(2)
         store.closeTab(tabs[2])
@@ -333,8 +393,10 @@ final class TabCloseSuccessorTests: XCTestCase {
     /// Closing a tab's LAST pane cascades the tab away, and that cascade must honour the same successor
     /// rule as an explicit `closeTab` (the sidebar `×` and a PTY exit both route through `closePaneTree`).
     func testClosingLastPaneOfTabUsesSameSuccessorRule() throws {
-        let (tree, tabs) = workspace(projects: ["/w/slop-desk", "/w/git-line-demo", "/w/slop-desk"])
+        let projects = ["/w/slop-desk", "/w/git-line-demo", "/w/slop-desk"]
+        let (tree, tabs) = workspace(projects: projects)
         let store = makeStore(tree)
+        seedProjects(projects, in: store)
 
         store.selectTab(0)
         store.selectTab(2) // now on the second slop-desk tab

@@ -493,19 +493,27 @@ public enum OpenQuicklyModel {
 
     /// Build the **Opened** rows: one ``OpenQuicklyItem(.pane)`` per LIVE pane across every session → tab,
     /// in `tree` order (the vertical-rail "Opened" — no horizontal tab-bar concept). The display title is the
-    /// pane's `lastKnownTitle` (falling back to its spec `title`, then a generic "Pane"); the subtitle + extra
-    /// haystack is its `lastKnownCwd`. `↩` focuses the pane. Pure so the view stays a thin renderer and the
+    /// pane's live shell title (falling back to its spec `title`, then a generic "Pane"); the subtitle + extra
+    /// haystack is its cwd. `↩` focuses the pane. Pure so the view stays a thin renderer and the
     /// enumeration is headlessly testable.
-    public static func openedItems(from tree: TreeWorkspace) -> [OpenQuicklyItem] {
+    ///
+    /// - Parameter facts: the two per-pane facts the tree does not carry — the pane's live shell title and
+    ///   its working directory. The caller reads them from the workspace mirror; a pane the mirror knows
+    ///   nothing about answers `(nil, nil)` and falls through to the spec title with no subtitle.
+    public static func openedItems(
+        from tree: TreeWorkspace,
+        facts: (PaneID) -> (title: String?, cwd: String?) = { _ in (nil, nil) },
+    ) -> [OpenQuicklyItem] {
         var out: [OpenQuicklyItem] = []
         for session in tree.sessions {
             for tab in session.tabs {
                 for paneID in tab.allPaneIDs() {
                     let spec = session.specs[paneID]
+                    let fact = facts(paneID)
                     out.append(paneItem(
                         paneID: paneID,
-                        title: paneDisplayTitle(spec),
-                        cwd: nonEmpty(spec?.lastKnownCwd),
+                        title: paneDisplayTitle(spec, liveTitle: fact.title),
+                        cwd: nonEmpty(fact.cwd),
                         // Thread the workspace pane kind so a `.desktop` row reads as its
                         // stream target (glyph + badge + host subtitle). Defaults to
                         // `.terminal` when the spec side-table is momentarily missing (the gap
@@ -525,31 +533,41 @@ public enum OpenQuicklyModel {
     /// Build the **Recent** rows from the store's recently-closed-tab LIFO. `records` is the raw
     /// `recentlyClosedTabs` array (appended OLDEST→newest); the rows are emitted NEWEST-first with `index` =
     /// the LIFO distance from the top (`0` = most-recently closed — the one `reopenLastClosedPane()` pops).
-    /// The title is the closed tab's title (falling back to its active pane's last-known title); the subtitle
-    /// is that pane's last-known cwd.
-    public static func recentItems(from records: [RecentlyClosedTab]) -> [OpenQuicklyItem] {
+    /// The title is the closed tab's title (falling back to its active pane's live shell title); the
+    /// subtitle is that pane's cwd.
+    ///
+    /// - Parameter facts: as ``openedItems(from:facts:)``. A closed pane's facts may already have been
+    ///   reaped, which is honest: the row then reads by the tab's own title.
+    public static func recentItems(
+        from records: [RecentlyClosedTab],
+        facts: (PaneID) -> (title: String?, cwd: String?) = { _ in (nil, nil) },
+    ) -> [OpenQuicklyItem] {
         records.reversed().enumerated().map { index, record in
-            let activeSpec = record.tab.activePane.flatMap { record.specs[$0] }
+            let activePane = record.tab.activePane
+            let activeSpec = activePane.flatMap { record.specs[$0] }
+            let fact: (title: String?, cwd: String?) = activePane.map(facts) ?? (nil, nil)
             return recentTabItem(
                 index: index,
-                title: recentDisplayTitle(tabTitle: record.tab.title, activeSpec: activeSpec),
-                cwd: nonEmpty(activeSpec?.lastKnownCwd),
+                title: recentDisplayTitle(
+                    tabTitle: record.tab.title, activeSpec: activeSpec, liveTitle: fact.title,
+                ),
+                cwd: nonEmpty(fact.cwd),
             )
         }
     }
 
-    /// The display title for an **Opened** pane row: `lastKnownTitle` → spec `title` → the generic "Pane".
-    static func paneDisplayTitle(_ spec: PaneSpec?) -> String {
-        if let last = spec?.lastKnownTitle, !last.isEmpty { return last }
+    /// The display title for an **Opened** pane row: the live shell title → spec `title` → generic "Pane".
+    static func paneDisplayTitle(_ spec: PaneSpec?, liveTitle: String?) -> String {
+        if let last = liveTitle, !last.isEmpty { return last }
         if let spec, !spec.title.isEmpty { return spec.title }
         return "Pane"
     }
 
-    /// The display title for a **Recent** tab row: the closed tab's title → its active pane's last-known
+    /// The display title for a **Recent** tab row: the closed tab's title → its active pane's live shell
     /// title → the generic "Tab".
-    static func recentDisplayTitle(tabTitle: String, activeSpec: PaneSpec?) -> String {
+    static func recentDisplayTitle(tabTitle: String, activeSpec: PaneSpec?, liveTitle: String?) -> String {
         if !tabTitle.isEmpty { return tabTitle }
-        if let last = activeSpec?.lastKnownTitle, !last.isEmpty { return last }
+        if let last = liveTitle, !last.isEmpty { return last }
         if let activeSpec, !activeSpec.title.isEmpty { return activeSpec.title }
         return "Tab"
     }

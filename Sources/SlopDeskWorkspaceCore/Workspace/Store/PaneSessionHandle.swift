@@ -1,6 +1,30 @@
 import Foundation
 import SlopDeskWorkspaceModel
 
+// MARK: - What the store hands its session factory
+
+/// Everything the `makeSession` seam needs to stand a leaf up: the leaf's identity, its spec, and
+/// where its shell is asked to start.
+///
+/// The IDENTITY is part of it because the pane presents that id to the host on `channelOpen` — the
+/// layout and the host's liveness records share one namespace, so the factory has to know the id
+/// BEFORE it builds the client, not after (`adopt(id:)` runs too late to reach a resume seed).
+///
+/// The SPAWN CWD travels beside the spec rather than on it: `pane/spawnCwd` is a document fact about
+/// the pane, not part of the layout the spec describes.
+public struct PaneMaterialization: Sendable {
+    public let id: PaneID
+    public let spec: PaneSpec
+    /// Where the host is asked to start this pane's PTY (`pane/spawnCwd`); `nil` ⇒ the host default.
+    public let spawnCwd: String?
+
+    public init(id: PaneID, spec: PaneSpec, spawnCwd: String? = nil) {
+        self.id = id
+        self.spec = spec
+        self.spawnCwd = spawnCwd
+    }
+}
+
 // MARK: - The liveness handle (the table-of-liveness element)
 
 /// One live pane session, abstracted to exactly what the store needs to **reconcile** the table

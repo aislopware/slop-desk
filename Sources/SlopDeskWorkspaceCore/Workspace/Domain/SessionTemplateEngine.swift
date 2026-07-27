@@ -42,7 +42,7 @@ public enum SessionTemplateEngine {
         switch node {
         case let .pane(pane):
             let id = PaneID()
-            specs[id] = PaneSpec(kind: pane.kind, title: pane.title, lastKnownCwd: pane.cwd)
+            specs[id] = PaneSpec(kind: pane.kind, title: pane.title)
             launches.append((id, pane))
             return .leaf(id)
         case let .split(axis, children):

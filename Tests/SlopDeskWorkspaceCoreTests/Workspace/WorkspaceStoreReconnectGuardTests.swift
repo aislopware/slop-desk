@@ -11,7 +11,7 @@ import XCTest
 @MainActor
 final class WorkspaceStoreReconnectGuardTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(restoring: nil, makeSession: { FakePaneSession($0) }, liveVideoCap: 2)
+        WorkspaceStore(restoring: nil, makeSession: { seed in FakePaneSession(seed.spec) }, liveVideoCap: 2)
     }
 
     private func leafIDs(_ store: WorkspaceStore) -> [PaneID] {

@@ -13,7 +13,7 @@ final class LaunchPresetStoreTests: XCTestCase {
         WorkspaceStore(
             restoringTree: TreeWorkspace.defaultWorkspace(),
             liveModel: .tree,
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
             persistence: nil,
         )
     }

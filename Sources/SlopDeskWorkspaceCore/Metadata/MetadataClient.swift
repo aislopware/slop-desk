@@ -36,7 +36,7 @@ public final class MetadataClient {
     @ObservationIgnored private var directoryCache: [String: [MetadataCodec.DirEntry]] = [:]
 
     /// The most recently fetched cwd (the authoritative path the inspector writes into
-    /// ``PaneSpec/lastKnownCwd``). `nil` until the first ``cwd()`` round-trip resolves `ok`.
+    /// `pane/cwd`). `nil` until the first ``cwd()`` round-trip resolves `ok`.
     public private(set) var cachedCwd: String?
 
     public init(
@@ -83,7 +83,7 @@ public final class MetadataClient {
     }
 
     /// The pane's current working directory (``MetadataVerb/cwd``). `nil` on any failure. Caches the value
-    /// into ``cachedCwd`` so the inspector can mirror it into ``PaneSpec/lastKnownCwd``.
+    /// into ``cachedCwd`` so the inspector can mirror it into `pane/cwd`.
     public func cwd() async -> String? {
         let (status, payload) = await request(.cwd)
         guard status == .ok, let path = String(data: payload, encoding: .utf8) else { return nil }

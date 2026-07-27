@@ -14,7 +14,7 @@ import XCTest
 @MainActor
 final class ExplicitNotificationTests: XCTestCase {
     private func makeStore(restoring: Workspace? = nil) -> WorkspaceStore {
-        WorkspaceStore(restoring: restoring, makeSession: { FakePaneSession($0) })
+        WorkspaceStore(restoring: restoring, makeSession: { seed in FakePaneSession(seed.spec) })
     }
 
     // MARK: - Content policy

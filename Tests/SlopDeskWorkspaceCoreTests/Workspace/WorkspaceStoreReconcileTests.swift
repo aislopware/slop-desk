@@ -39,7 +39,7 @@ final class WorkspaceStoreReconcileTests: XCTestCase {
     private func makeStore(restoring: Workspace? = nil, liveVideoCap: Int = 2) -> WorkspaceStore {
         WorkspaceStore(
             restoring: restoring,
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: liveVideoCap,
         )
     }

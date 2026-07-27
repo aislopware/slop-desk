@@ -15,7 +15,7 @@ final class JumpBreadcrumbTests: XCTestCase {
         WorkspaceStore(
             restoringTree: restoringTree,
             liveModel: .tree,
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
         )
     }
@@ -95,7 +95,7 @@ final class JumpBreadcrumbTests: XCTestCase {
 
     func testTabDisplayTitlePrecedence() {
         let pane = PaneID()
-        var spec = PaneSpec(kind: .terminal, title: "spec-title")
+        let spec = PaneSpec(kind: .terminal, title: "spec-title")
         let named = Tab(title: "renamed", root: .leaf(pane), activePane: pane)
         XCTAssertEqual(
             JumpBreadcrumb.tabDisplayTitle(tab: named, specs: [pane: spec]), "renamed",
@@ -103,13 +103,14 @@ final class JumpBreadcrumbTests: XCTestCase {
         )
 
         let derived = Tab(root: .leaf(pane), activePane: pane)
-        spec.lastKnownTitle = "osc-title"
         XCTAssertEqual(
-            JumpBreadcrumb.tabDisplayTitle(tab: derived, specs: [pane: spec]), "osc-title",
-            "an untitled tab derives from the active pane's last-known OSC title",
+            JumpBreadcrumb.tabDisplayTitle(
+                tab: derived, specs: [pane: spec], liveTitle: { _ in "osc-title" },
+            ),
+            "osc-title",
+            "an untitled tab derives from the active pane's live OSC title",
         )
 
-        spec.lastKnownTitle = nil
         XCTAssertEqual(
             JumpBreadcrumb.tabDisplayTitle(tab: derived, specs: [pane: spec]), "spec-title",
             "no OSC title yet ⇒ the spec title",

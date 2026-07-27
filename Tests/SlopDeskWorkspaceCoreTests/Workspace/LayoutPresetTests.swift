@@ -9,7 +9,7 @@ import XCTest
 @MainActor
 final class LayoutPresetTests: XCTestCase {
     private func makeStore(restoring: Workspace? = nil) -> WorkspaceStore {
-        WorkspaceStore(restoring: restoring, makeSession: { FakePaneSession($0) }, liveVideoCap: 5)
+        WorkspaceStore(restoring: restoring, makeSession: { seed in FakePaneSession(seed.spec) }, liveVideoCap: 5)
     }
 
     private func twoPaneWorkspace() -> (Workspace, PaneID, PaneID) {

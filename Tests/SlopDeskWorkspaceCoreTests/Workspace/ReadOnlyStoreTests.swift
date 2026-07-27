@@ -19,7 +19,7 @@ final class ReadOnlyStoreTests: XCTestCase {
     private func makeRecordingStore() -> WorkspaceStore {
         WorkspaceStore(
             restoringTree: .defaultWorkspace(), liveModel: .tree,
-            makeSession: { RecordingTerminalPaneSession($0) }, liveVideoCap: 2,
+            makeSession: { seed in RecordingTerminalPaneSession(seed.spec) }, liveVideoCap: 2,
         )
     }
 
@@ -27,7 +27,7 @@ final class ReadOnlyStoreTests: XCTestCase {
     private func makeFakeStore() -> WorkspaceStore {
         WorkspaceStore(
             restoringTree: .defaultWorkspace(), liveModel: .tree,
-            makeSession: { FakePaneSession($0) }, liveVideoCap: 2,
+            makeSession: { seed in FakePaneSession(seed.spec) }, liveVideoCap: 2,
         )
     }
 

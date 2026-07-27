@@ -24,7 +24,7 @@ struct PaletteView: View {
     /// The single overlay reducer — bound so the search field can two-way edit `paletteQuery` and `body`
     /// re-renders on `paletteSelection` / `rankedResults` changes.
     @Bindable var coordinator: OverlayCoordinator
-    /// The live store — read-only here, for the WORKING-DIRECTORY badge (the focused pane's `lastKnownCwd`).
+    /// The live store — read-only here, for the WORKING-DIRECTORY badge (the focused pane's `pane/cwd`).
     let store: WorkspaceStore
     /// Whether a row currently shows its ✓ (toggled-on) gutter. Built by the host from the chrome
     /// state (e.g. `id == "action.toggleSidebar" ? !chrome.sidebarCollapsed : false`) so the pure coordinator
@@ -325,12 +325,12 @@ struct PaletteView: View {
         return nil
     }
 
-    /// The focused pane's last-known working directory (cwd over the wire; stale-by-RTT is acceptable for
+    /// The focused pane's working directory (cwd over the wire; stale-by-RTT is acceptable for
     /// display). nil ⇒ no badge. Reads the same active-pane chain the rest of the chrome uses.
     private var workingDirectory: String? {
         guard let session = store.tree.activeSession,
               let paneID = session.activeTab?.activePane else { return nil }
-        let cwd = session.specs[paneID]?.lastKnownCwd
+        let cwd = store.paneCwd(for: paneID)
         guard let cwd, !cwd.isEmpty else { return nil }
         return cwd
     }

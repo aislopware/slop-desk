@@ -21,7 +21,7 @@ final class E1KeymapParityTests: XCTestCase {
         WorkspaceStore(
             restoringTree: restoringTree,
             liveModel: .tree,
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
         )
     }

@@ -651,12 +651,18 @@ struct OpenQuicklyView: View {
 
     // MARK: - Sources + sectioning
 
+    /// The two per-pane facts the pure builders need and the tree does not carry — read here, from the
+    /// workspace mirror, so ``OpenQuicklyModel`` stays a pure value function.
+    private var paneFacts: (PaneID) -> (title: String?, cwd: String?) {
+        { (store.liveProgramTitle(for: $0), store.paneCwd(for: $0)) }
+    }
+
     /// The per-pill source rows, assembled from the live store / folders / async Agents / Current snapshot
     /// via the PURE `OpenQuicklyModel` builders — the view stays a thin renderer.
     private var sources: [OpenQuicklyFilter: [OpenQuicklyItem]] {
         [
-            .opened: OpenQuicklyModel.openedItems(from: store.tree),
-            .recent: OpenQuicklyModel.recentItems(from: store.recentlyClosedTabs),
+            .opened: OpenQuicklyModel.openedItems(from: store.tree, facts: paneFacts),
+            .recent: OpenQuicklyModel.recentItems(from: store.recentlyClosedTabs, facts: paneFacts),
             .folders: OpenQuicklyModel.folderItems(from: folders?.ranked() ?? []),
             .agents: agentItems,
             .current: OpenQuicklyModel.currentItems(from: currentJumpItems),
@@ -748,11 +754,11 @@ struct OpenQuicklyView: View {
         return (store.handle(for: id) as? LivePaneSession)?.connection?.activeMetadataClient
     }
 
-    /// The focused pane's last-known cwd (OSC 7), used as the Agents project scope + to resolve relative
-    /// detected paths in the Current snapshot. Empty ⇒ nil.
+    /// The focused pane's working directory (`pane/cwd`), used as the Agents project scope + to resolve
+    /// relative detected paths in the Current snapshot. Empty ⇒ nil.
     private var activeCwd: String? {
         guard let id = store.tree.activeSession?.activeTab?.activePane,
-              let cwd = store.tree.activeSession?.specs[id]?.lastKnownCwd, !cwd.isEmpty else { return nil }
+              let cwd = store.paneCwd(for: id), !cwd.isEmpty else { return nil }
         return cwd
     }
 

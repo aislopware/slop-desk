@@ -41,7 +41,7 @@ public struct SessionTemplate: Codable, Sendable, Equatable, Identifiable {
 // MARK: - TemplatePane (one leaf of a template — kind + title + cwd/command)
 
 /// One leaf of a ``SessionTemplate``'s ``TemplateNode`` layout: the pane's ``kind`` + display ``title``
-/// plus the optional working directory + startup command. The cwd is stamped on ``PaneSpec/lastKnownCwd``
+/// plus the optional working directory + startup command. The cwd is stamped on `pane/cwd`
 /// for host-side PTY spawn; the command is typed once the PTY is live. A pure value.
 public struct TemplatePane: Codable, Sendable, Equatable {
     public var kind: PaneKind

@@ -11,55 +11,43 @@ import SlopDeskWorkspaceModel
 extension WorkspaceStore {
     // MARK: - Identity
 
-    /// Pane `id`'s identity IN THE DOCUMENT — the HOST-minted pane id (the mux session id), which is
-    /// not this client's ``PaneID``.
+    /// Pane `id`'s identity IN THE DOCUMENT — its own ``PaneID``, verbatim.
     ///
-    /// They are different UUIDs and always were: a `PaneID` is minted HERE when the pane is created,
-    /// while the document keys panes by the id the host mints on channel open. Reading the document
-    /// under the local id would query a key host truth never writes — the whole document would land
-    /// where nothing looks, and the two mirror layers would be keyed apart so the erasure rule that
-    /// keeps them disjoint could never fire.
+    /// One namespace, by construction. The client PROPOSES object ids (DECISIONS, Multi-client
+    /// Phase 5 ruling 1) and presents each pane's id as the mux session id on `channelOpen`, so the
+    /// host files that pane's liveness under the very key the topology names it by. Two namespaces
+    /// with a translation table between them is what made an overlay and host truth land on different
+    /// keys — where the erasure rule that keeps the two mirror layers disjoint could never fire.
     ///
-    /// ``PaneSpec/resumeSessionID`` is where the host's id already lands: `onResumeIdentitySnapshot`
-    /// fires on every connect (not only under the detach flag) and the store persists it, so the
-    /// mapping survives a relaunch exactly as the document does.
-    ///
-    /// Falls back to the LOCAL id for a pane that has never connected. Nothing host-side can be keyed
-    /// by it, so an overlay written there is private to this client — which is correct, because before
-    /// a connect there is no host truth to reconcile with. A pane whose next connect mints a DIFFERENT
-    /// id (a resume that failed into a fresh shell) strands its old overlay under the old key, and
-    /// ``pruneWorkspaceMirror(keeping:)`` collects it on the reconcile that follows.
-    func documentPaneID(_ id: PaneID) -> UUID {
-        documentPaneIDIfKnown(id) ?? id.raw
-    }
+    /// Kept as a named funnel rather than inlining `id.raw` at forty call sites: it is the sentence
+    /// "the document calls this pane what we call it", and it belongs somewhere it can be read.
+    func documentPaneID(_ id: PaneID) -> UUID { id.raw }
 
-    /// ``documentPaneID(_:)`` without the local-id fallback — `nil` for a pane that has never
-    /// connected. The fallback is right for the MIRROR, whose overlay is this client's own namespace,
-    /// and wrong for anything SHARED: a tree-local id in the presence roster names nothing on any
-    /// other client, and no decoder can tell one UUID from another to say so.
-    func documentPaneIDIfKnown(_ id: PaneID) -> UUID? {
-        switch liveModel {
-        case .tree: tree.spec(for: id)?.resumeSessionID
-        case .canvas: workspace.canvas.spec(for: id)?.resumeSessionID
-        }
-    }
+    // MARK: - Seeding
 
-    /// Records what the host told us about pane `id`'s session: the HOST-MINTED session id and the
-    /// highest contiguous seq, so the next launch can feed both into `seedResumeIdentity` →
-    /// RETURNING_CLIENT reattach.
+    /// The epoch a SEEDED mirror carries: the zero UUID, the wire's "none".
     ///
-    /// The same id is this pane's identity in the workspace document (``documentPaneID(_:)``), which
-    /// is why the two sinks that used to write it inline share one funnel now — a second transcription
-    /// would be free to drift, and this one decides where every mirror key for this pane goes.
+    /// It has to be a value that is not a document identity, because everything scoped BY the document
+    /// epoch — the device's `seenCompletionEpoch` map above all — would otherwise read the seed as "a
+    /// different document" and throw itself away on every single launch.
+    static let seedEpoch = WireMessage.newSessionID
+
+    /// Encodes `tree` into ``workspaceMirror`` as a kind-0 snapshot at state 1 — the store's own
+    /// layout, published to itself.
     ///
-    /// An id that CHANGED (a resume that failed into a fresh shell) strands the old key's overlay; the
-    /// `reconcileTree` this write runs through prunes it in the same breath.
-    func noteResumeIdentity(sessionID: UUID, seq: Int64, for id: PaneID) {
-        updateSpecLive(id) { spec in
-            guard spec.resumeSessionID != sessionID || spec.resumeLastReceivedSeq != seq else { return }
-            spec.resumeSessionID = sessionID
-            spec.resumeLastReceivedSeq = seq
-        }
+    /// A SNAPSHOT rather than a diff because the mirror has nothing to diff against yet. The first real
+    /// host frame carries the HOST's epoch, which differs from ``seedEpoch``, so it resets the mirror
+    /// and replaces the seed wholesale rather than diffing onto a document the host never wrote.
+    func seedWorkspaceMirror(from tree: TreeWorkspace) {
+        var state = HostWorkspaceState()
+        state.write(topology: WorkspaceTopology(tree: tree))
+        workspaceMirror.apply(
+            kind: WorkspaceEventKind.snapshot.rawValue,
+            epoch: Self.seedEpoch,
+            baseStateNum: 0,
+            newStateNum: 1,
+            payload: WorkspaceStateCodec.encodeSnapshot(state),
+        )
     }
 
     // MARK: - Fast-path producers
@@ -134,9 +122,8 @@ extension WorkspaceStore {
     /// would miss whichever one gets added next. The channel's own dirty guard drops the reconciles
     /// that changed something other than the view.
     ///
-    /// The pane travels as its DOCUMENT id — the roster is shared, so a tree-local id in it would
-    /// name nothing on any other client. The TAB does not: tabs are still client-local until Phase 5
-    /// makes topology host-owned, and the host stores this id opaquely and only echoes it back.
+    /// The pane and the tab both travel as their own ids — the client proposes object ids, so the
+    /// roster names the same objects every other client's topology does.
     ///
     /// `cols`/`rows` stay zero. Phase 4's subscribe declares no `contributesSize`, so a number here
     /// would be an offer nobody folds — and inventing one is how the first client that DOES fold it
@@ -149,16 +136,14 @@ extension WorkspaceStore {
         )
     }
 
-    /// What ``publishWorkspacePresence()`` would report, as a value — so the id MAPPING is pinnable
-    /// with no socket in sight. Getting it wrong is silent: a tree-local pane id in a shared roster
-    /// names nothing anywhere else, and no decoder would ever complain.
+    /// What ``publishWorkspacePresence()`` would report, as a value — so the report is pinnable with
+    /// no socket in sight. A tab with no active pane reports the ZERO id, which the roster reads as
+    /// "looking at no pane in particular".
     func currentWorkspaceView() -> WorkspaceViewReport {
         let tab = tree.activeSession?.activeTab
         return WorkspaceViewReport(
             tabID: tab?.id.raw ?? WireMessage.newSessionID,
-            // A pane with no host id yet reports NONE rather than a local one — see
-            // ``documentPaneIDIfKnown(_:)``.
-            paneID: tab?.activePane.flatMap { documentPaneIDIfKnown($0) } ?? WireMessage.newSessionID,
+            paneID: tab?.activePane.map { documentPaneID($0) } ?? WireMessage.newSessionID,
         )
     }
 
@@ -184,6 +169,20 @@ extension WorkspaceStore {
         return title
     }
 
+    /// The banner/toast title for a command that just finished in pane `id`
+    /// (``PaneLabel/completionNotificationTitle(title:cwd:liveTitle:)``), resolved against the mirror.
+    ///
+    /// Reads the FRESHNESS-GATED ``liveProgramTitle(for:)`` rather than raw `pane/liveTitle`: a banner
+    /// naming the program that ran BEFORE this command is worse than one naming the folder.
+    func completionNotificationTitle(for id: PaneID) -> String {
+        let paneSpec = tree.spec(for: id) ?? workspace.canvas.spec(for: id)
+        return PaneLabel.completionNotificationTitle(
+            title: paneSpec?.title ?? "",
+            cwd: paneCwd(for: id),
+            liveTitle: liveProgramTitle(for: id),
+        )
+    }
+
     /// The labels of the OTHER clients currently looking at pane `id`, in roster order.
     ///
     /// Deliberately VIEWERS and not "held by". Attachment — which client's channel actually owns the
@@ -196,8 +195,8 @@ extension WorkspaceStore {
     /// screen right now.
     public func paneViewers(for id: PaneID) -> [String] {
         observeWorkspaceMirror()
-        guard let roster = workspaceMirror.roster, let objectID = documentPaneIDIfKnown(id),
-              let mine = workspaceChannel?.clientInstanceID
+        let objectID = documentPaneID(id)
+        guard let roster = workspaceMirror.roster, let mine = workspaceChannel?.clientInstanceID
         else { return [] }
         return roster.clients
             .filter { $0.viewingPaneID == objectID && $0.clientInstanceID != mine }

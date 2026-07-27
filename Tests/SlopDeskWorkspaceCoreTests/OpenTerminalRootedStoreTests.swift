@@ -12,7 +12,7 @@ final class OpenTerminalRootedStoreTests: XCTestCase {
     /// A live tree-model store whose sessions are headless fakes (no socket) — the same seam
     /// `WorkspaceStoreProgressTests` / `DockTintPolicyTests` use.
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0) })
+        WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
     }
 
     /// Drains the deferred (0 ms-grace) drop `cd` send by yielding the main actor until `fake` records bytes

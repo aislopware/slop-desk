@@ -131,7 +131,7 @@ final class ClaudeKindRemovalTests: XCTestCase {
     func testPlainTerminalDoesNotOpenInspector() async {
         var madeInspector = false
         let session = LivePaneSession.make(
-            PaneSpec(kind: .terminal, title: "term"),
+            paneID: PaneID(), spec: PaneSpec(kind: .terminal, title: "term"),
             makeClient: { _ in
                 SlopDeskClient(makeTransport: {
                     MuxClientTransport(

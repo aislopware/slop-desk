@@ -19,36 +19,37 @@ public extension WorkspaceStore {
         tree.activeSession?.tabs.map(\.id) ?? []
     }
 
-    /// The By-Project key for pane `id`: the HOST-pushed ``PaneSpec/projectKey`` (wire type 34 — the git
-    /// worktree toplevel containing the pane's cwd, else the cwd; persisted so a cold relaunch renders the
-    /// final sections from disk), else the pane's `lastKnownCwd` until the first push lands. `nil` ⇒ the
-    /// pane lands in the "Other" bucket.
+    /// The By-Project key for pane `id`: its HOST-pushed `pane/projectKey` (wire type 34 — the git
+    /// worktree toplevel containing the pane's cwd, else the cwd), else its `pane/cwd` until the first
+    /// push lands. `nil` ⇒ the pane lands in the "Other" bucket.
     ///
     /// A transient plugin-cache dir (``PaneSpec/looksLikeTransientPluginCwd(_:)`` — `…/owner---repo`) is
-    /// NEVER a project key: the host's resolver (or a persisted-poison `lastKnownCwd` from before the write
-    /// guards) can race a zinit turbo `builtin cd` — either would file a real project's pane under a phantom
-    /// `zsh-users---zsh-autosuggestions` section. The write sinks (``WorkspaceStore/setProjectKey(_:for:)``,
-    /// ``WorkspaceStore/setLastKnownCwd(_:for:)``) already drop such readings; this is the read-side
-    /// backstop so grouping stays clean even if one slips through. A guarded-out source falls through to
-    /// the next (host key → cwd → `nil`/"Other") — self-healing once the shell settles.
+    /// NEVER a project key: the host's resolver can race a zinit turbo `builtin cd`, which would file a
+    /// real project's pane under a phantom `zsh-users---zsh-autosuggestions` section. The write sinks
+    /// (``WorkspaceStore/setProjectKey(_:for:)``, ``WorkspaceStore/setLastKnownCwd(_:for:)``) already drop
+    /// such readings; this is the read-side backstop so grouping stays clean even if one slips through. A
+    /// guarded-out source falls through to the next (host key → cwd → `nil`/"Other") — self-healing once
+    /// the shell settles.
     func paneProjectKey(_ id: PaneID) -> String? {
-        guard let session = tree.activeSession else { return nil }
-        return Self.paneProjectKey(id, in: session)
+        Self.paneProjectKey(
+            id, projectKey: { projectKey(for: $0) }, cwd: { paneCwd(for: $0) },
+        )
     }
 
-    /// ``paneProjectKey(_:)`` against an EXPLICIT session — the close path resolves keys for whichever
-    /// session owns the closing tab, which is not necessarily the active one. Static + session-parameterized
-    /// so both callers share ONE copy of the host-key → cwd → `nil` precedence and its plugin-cwd guards;
-    /// a second transcription of those rules would be free to drift out of agreement with the sidebar.
-    static func paneProjectKey(_ id: PaneID, in session: Session) -> String? {
-        if let key = session.specs[id]?.projectKey,
-           !key.isEmpty, !PaneSpec.looksLikeTransientPluginCwd(key)
-        {
+    /// ``paneProjectKey(_:)`` over EXPLICIT lookups — the close path resolves keys for whichever
+    /// session owns the closing tab, which is not necessarily the active one, and the rail resolves them
+    /// for every pane it draws. Static + lookup-parameterized so every caller shares ONE copy of the
+    /// host-key → cwd → `nil` precedence and its plugin-cwd guards; a second transcription of those
+    /// rules would be free to drift out of agreement with the sidebar.
+    static func paneProjectKey(
+        _ id: PaneID,
+        projectKey: (PaneID) -> String?,
+        cwd: (PaneID) -> String?,
+    ) -> String? {
+        if let key = projectKey(id), !key.isEmpty, !PaneSpec.looksLikeTransientPluginCwd(key) {
             return key
         }
-        guard let cwd = session.specs[id]?.lastKnownCwd,
-              !PaneSpec.looksLikeTransientPluginCwd(cwd)
-        else { return nil }
+        guard let cwd = cwd(id), !PaneSpec.looksLikeTransientPluginCwd(cwd) else { return nil }
         return cwd
     }
 
@@ -96,13 +97,18 @@ public extension WorkspaceStore {
             return nil
         }
         if let active = session.activeTab?.id, active != closing { return active }
+        // The lookups read THIS store's mirror while the ordering rules stay pure and session-scoped.
+        let key: (TabID) -> String? = { [self] in
+            Self.tabProjectKey(
+                $0, in: session, projectKey: { projectKey(for: $0) }, cwd: { paneCwd(for: $0) },
+            )
+        }
         return TabOrderingEngine.successorAfterClose(
             closing: closing,
             displayOrder: TabOrderingEngine.projectGroupedTabOrder(
-                session.tabs.map(\.id),
-                projectKey: { Self.tabProjectKey($0, in: session) },
+                session.tabs.map(\.id), projectKey: key,
             ),
-            projectKey: { Self.tabProjectKey($0, in: session) },
+            projectKey: key,
             focusHistory: tabFocusHistory,
         )
     }
@@ -112,10 +118,20 @@ public extension WorkspaceStore {
     /// A tab is one row per PANE in the sidebar, so a split tab straddling two projects genuinely has no
     /// single section — it draws in both. The pane the user is focused on is the honest answer to "which
     /// section did this tab live in", and it is the one the close gesture was aimed at.
-    static func tabProjectKey(_ id: TabID, in session: Session) -> String? {
+    static func tabProjectKey(
+        _ id: TabID,
+        in session: Session,
+        projectKey: (PaneID) -> String?,
+        cwd: (PaneID) -> String?,
+    ) -> String? {
         guard let tab = session.tabs.first(where: { $0.id == id }) else { return nil }
-        if let active = tab.activePane, let key = paneProjectKey(active, in: session) { return key }
-        return tab.allPaneIDs().lazy.compactMap { paneProjectKey($0, in: session) }.first
+        if let active = tab.activePane,
+           let key = paneProjectKey(active, projectKey: projectKey, cwd: cwd) { return key }
+        // A plain loop, not `lazy.compactMap`: the two lookups are non-escaping.
+        for pane in tab.allPaneIDs() {
+            if let key = paneProjectKey(pane, projectKey: projectKey, cwd: cwd) { return key }
+        }
+        return nil
     }
 
     /// Prunes the TREE-keyed sidebar mirror to the live tree on every ``reconcileTree()``: the E20 manual

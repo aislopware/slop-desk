@@ -17,7 +17,7 @@ final class WindowTitleTests: XCTestCase {
     /// A headless tree-model store over the fake session (one session, one tab, one terminal pane titled
     /// "Terminal"), mirroring `RailRowBuilderTests`.
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
+        WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
     }
 
     /// The active pane of the store's active session.

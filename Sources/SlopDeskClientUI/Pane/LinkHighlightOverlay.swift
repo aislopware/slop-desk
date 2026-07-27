@@ -30,7 +30,7 @@ struct LinkHighlightOverlay: View {
     /// The pane's terminal model — read for the OBSERVABLE ⌘-hold flag (`linkHighlightActive`) + the alt-screen
     /// gate, and dereferenced (non-reactively) for its `surface` viewport snapshot at draw time.
     let model: TerminalViewModel
-    /// The pane cwd (OSC 7 `PaneSpec.lastKnownCwd`) so a RELATIVE detected path resolves — only affects the
+    /// The pane cwd (OSC 7 `pane/cwd`) so a RELATIVE detected path resolves — only affects the
     /// detector's `resolvedAbsolute` (used by the hover preview), never the underline rect, which is pure cells.
     let cwd: String?
 

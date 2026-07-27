@@ -9,7 +9,7 @@ import XCTest
 @MainActor
 final class CanvasReviewFixTests: XCTestCase {
     private func makeStore(restoring: Workspace? = nil) -> WorkspaceStore {
-        WorkspaceStore(restoring: restoring, makeSession: { FakePaneSession($0) }, liveVideoCap: 2)
+        WorkspaceStore(restoring: restoring, makeSession: { seed in FakePaneSession(seed.spec) }, liveVideoCap: 2)
     }
 
     private func pid(_ n: Int) -> PaneID {

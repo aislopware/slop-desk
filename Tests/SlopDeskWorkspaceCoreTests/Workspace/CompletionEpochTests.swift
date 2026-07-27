@@ -19,7 +19,7 @@ import XCTest
 @MainActor
 final class CompletionEpochTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0) })
+        WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
     }
 
     private func applySnapshot(
@@ -51,8 +51,7 @@ final class CompletionEpochTests: XCTestCase {
     func testAFinishThatHappenedWhileAwayIsStillUnread() throws {
         let store = makeStore()
         let paneID = try makeBackgroundPane(store)
-        let hostPaneID = UUID()
-        store.noteResumeIdentity(sessionID: hostPaneID, seq: 0, for: paneID)
+        let hostPaneID = paneID.raw
 
         XCTAssertFalse(store.paneUnseenDone.contains(paneID), "nothing has finished")
 
@@ -73,8 +72,7 @@ final class CompletionEpochTests: XCTestCase {
     func testAcknowledgingRecordsTheCounterAndTheNextFinishReturns() throws {
         let store = makeStore()
         let paneID = try makeBackgroundPane(store)
-        let hostPaneID = UUID()
-        store.noteResumeIdentity(sessionID: hostPaneID, seq: 0, for: paneID)
+        let hostPaneID = paneID.raw
         let epoch = UUID()
 
         applySnapshot(
@@ -99,8 +97,7 @@ final class CompletionEpochTests: XCTestCase {
     func testAHostRestartDoesNotSilenceThePaneForever() throws {
         let store = makeStore()
         let paneID = try makeBackgroundPane(store)
-        let hostPaneID = UUID()
-        store.noteResumeIdentity(sessionID: hostPaneID, seq: 0, for: paneID)
+        let hostPaneID = paneID.raw
 
         applySnapshot(
             PaneLiveness(paneID: hostPaneID, liveness: .attached, completionEpoch: 9),
@@ -129,8 +126,7 @@ final class CompletionEpochTests: XCTestCase {
     func testAFinishOnAVisiblePaneIsAlreadySeen() throws {
         let store = makeStore()
         let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
-        let hostPaneID = UUID()
-        store.noteResumeIdentity(sessionID: hostPaneID, seq: 0, for: paneID)
+        let hostPaneID = paneID.raw
         store.isAppActive = true
 
         applySnapshot(
@@ -199,8 +195,7 @@ final class CompletionEpochTests: XCTestCase {
     func testTheSeenMapIsPersistedAndScopedToItsDocumentEpoch() throws {
         let store = makeStore()
         let paneID = try makeBackgroundPane(store)
-        let hostPaneID = UUID()
-        store.noteResumeIdentity(sessionID: hostPaneID, seq: 0, for: paneID)
+        let hostPaneID = paneID.raw
         var saved: SeenCompletionEpochs?
         store.completionSeen.save = { saved = $0 }
         let documentEpoch = UUID()
@@ -215,11 +210,16 @@ final class CompletionEpochTests: XCTestCase {
         XCTAssertEqual(persisted.documentEpoch, documentEpoch)
         XCTAssertEqual(persisted.seen[hostPaneID], 5)
 
-        // A relaunch under the SAME document keeps the acknowledgement…
-        let returning = makeStore()
+        // A relaunch under the SAME document keeps the acknowledgement. The relaunched store restores
+        // the SAME tree, so the pane keeps its id — which is exactly the id the seen map is keyed by.
+        let restored = store.tree
+        let returning = WorkspaceStore(
+            restoringTree: restored, liveModel: .tree,
+            makeSession: { seed in FakePaneSession(seed.spec) },
+        )
         returning.completionSeen.load = { persisted }
-        let returningPane = try makeBackgroundPane(returning)
-        returning.noteResumeIdentity(sessionID: hostPaneID, seq: 0, for: returningPane)
+        let returningPane = paneID
+        try returning.focusPaneTree(XCTUnwrap(returning.tree.allPaneIDs().first { $0 != returningPane }))
         returning.loadCompletionSeen()
         applySnapshot(
             PaneLiveness(paneID: hostPaneID, liveness: .attached, completionEpoch: 5),
@@ -228,10 +228,13 @@ final class CompletionEpochTests: XCTestCase {
         XCTAssertFalse(returning.paneUnseenDone.contains(returningPane), "already read")
 
         // …and a relaunch against a DIFFERENT document drops it, because the counters restarted.
-        let elsewhere = makeStore()
+        let elsewhere = WorkspaceStore(
+            restoringTree: restored, liveModel: .tree,
+            makeSession: { seed in FakePaneSession(seed.spec) },
+        )
         elsewhere.completionSeen.load = { persisted }
-        let elsewherePane = try makeBackgroundPane(elsewhere)
-        elsewhere.noteResumeIdentity(sessionID: hostPaneID, seq: 0, for: elsewherePane)
+        let elsewherePane = paneID
+        try elsewhere.focusPaneTree(XCTUnwrap(elsewhere.tree.allPaneIDs().first { $0 != elsewherePane }))
         elsewhere.loadCompletionSeen()
         applySnapshot(
             PaneLiveness(paneID: hostPaneID, liveness: .attached, completionEpoch: 5),

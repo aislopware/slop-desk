@@ -228,9 +228,9 @@ public struct WorkspaceRootView: View {
 
     /// Bind the overlay coordinator's `resolveActiveCwd` to the focused pane's live ``MetadataClient`` so
     /// opening the command palette EAGERLY resolves its working directory (host `cwd()` RPC) and mirrors it
-    /// into ``PaneSpec/lastKnownCwd`` — which the WORKING DIRECTORY header's cwd pill (and the titlebar / rail)
+    /// into `pane/cwd` — which the WORKING DIRECTORY header's cwd pill (and the titlebar / rail)
     /// read reactively. Without this the pill stayed blank on a freshly-connected pane at a prompt: the only
-    /// other `lastKnownCwd` writer (a command completing via OSC 133;D) had not fired. Reuses the EXACT
+    /// other `pane/cwd` writer (a command completing via OSC 133;D) had not fired. Reuses the EXACT
     /// live-metadata path Open-Quickly uses (`store.handle(for:) as? LivePaneSession → activeMetadataClient`),
     /// so it spends NO new wire message. `[store]` captures the live store; a disconnected pane / nil client /
     /// empty cwd is a silent no-op (validate-then-drop). Cross-platform (macOS via `wireChromeToggles()`, iOS
@@ -346,9 +346,11 @@ public struct WorkspaceRootView: View {
         // `.navigationTitle` — hence the WHOLE root view body — a dependent of the WHOLE process dict, so a
         // background pane's 1Hz process tick would re-evaluate the root view even though only a cwd-less,
         // non-renamed terminal pane's title ever depends on that dict.
-        let titledByProcess = RailStructureKey.titledByProcess(kind: kind, spec: spec)
+        let cwd = store.paneCwd(for: paneID)
+        let titledByProcess = RailStructureKey.titledByProcess(kind: kind, spec: spec, cwd: cwd)
         let title = RailRowsBuilder.rowTitle(
-            kind: kind, spec: spec, processLabel: titledByProcess ? store.paneForegroundProcess[paneID] : nil,
+            kind: kind, spec: spec, cwd: cwd, liveTitle: store.liveProgramTitle(for: paneID),
+            processLabel: titledByProcess ? store.paneForegroundProcess[paneID] : nil,
         )
         return title.isEmpty ? productName : title
     }

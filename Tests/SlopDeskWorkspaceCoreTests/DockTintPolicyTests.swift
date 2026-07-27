@@ -115,7 +115,7 @@ final class DockTintPolicyTests: XCTestCase {
     // MARK: - store aggregate: dockTileModel reflects the cross-session union (default toggles)
 
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0) })
+        WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
     }
 
     /// With the default toggles (error-badge ON, animate OFF), a held `.error` progress on ANY pane tints the

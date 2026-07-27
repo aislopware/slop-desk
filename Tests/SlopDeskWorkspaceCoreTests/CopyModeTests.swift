@@ -224,7 +224,7 @@ final class CopyModeTests: XCTestCase {
         let store = WorkspaceStore(
             restoringTree: .defaultWorkspace(),
             liveModel: .tree,
-            makeSession: { RecordingTerminalPaneSession($0) },
+            makeSession: { seed in RecordingTerminalPaneSession(seed.spec) },
             liveVideoCap: 2,
         )
         let active = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)

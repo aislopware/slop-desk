@@ -496,11 +496,19 @@ final class OpenQuicklyModelTests: XCTestCase {
         cwd: String? = nil,
     ) -> (Tab, PaneID, PaneSpec) {
         let pid = PaneID(raw: UUID())
-        var spec = PaneSpec(kind: .terminal, title: paneTitle)
-        spec.lastKnownTitle = lastKnownTitle
-        spec.lastKnownCwd = cwd
+        let spec = PaneSpec(kind: .terminal, title: paneTitle)
         let tab = Tab(title: title, root: .leaf(pid), activePane: pid)
+        paneFacts[pid] = (lastKnownTitle, cwd)
         return (tab, pid, spec)
+    }
+
+    /// The two per-pane facts the tree no longer carries, keyed by pane — what the view reads from the
+    /// workspace mirror and hands the pure builders.
+    private var paneFacts: [PaneID: (title: String?, cwd: String?)] = [:]
+
+    /// The lookup shape ``OpenQuicklyModel/openedItems(from:facts:)`` takes.
+    private func facts(_ id: PaneID) -> (title: String?, cwd: String?) {
+        paneFacts[id] ?? (nil, nil)
     }
 
     func testOpenedItemsEnumeratesEveryLivePaneAcrossSessionsAndTabs() {
@@ -513,7 +521,7 @@ final class OpenQuicklyModelTests: XCTestCase {
         )
         let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)
 
-        let items = OpenQuicklyModel.openedItems(from: tree)
+        let items = OpenQuicklyModel.openedItems(from: tree, facts: facts)
         XCTAssertEqual(items.count, 2, "one Opened row per live pane across every session → tab")
         XCTAssertEqual(items.map(\.kind), [.pane, .pane])
         XCTAssertEqual(items[0].title, "vim", "lastKnownTitle wins over the spec title")
@@ -533,7 +541,7 @@ final class OpenQuicklyModelTests: XCTestCase {
         let tab = Tab(title: "", root: .leaf(pid), activePane: pid)
         let session = Session(name: "s", tabs: [tab], specs: [:])
         let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)
-        let items = OpenQuicklyModel.openedItems(from: tree)
+        let items = OpenQuicklyModel.openedItems(from: tree, facts: facts)
         XCTAssertEqual(items.first?.title, "Pane", "a spec-less pane never renders a blank row")
     }
 
@@ -545,7 +553,7 @@ final class OpenQuicklyModelTests: XCTestCase {
             RecentlyClosedTab(tab: oldTab, specs: [oldPid: oldSpec], sessionID: nil),
             RecentlyClosedTab(tab: newTab, specs: [newPid: newSpec], sessionID: nil),
         ]
-        let items = OpenQuicklyModel.recentItems(from: records)
+        let items = OpenQuicklyModel.recentItems(from: records, facts: facts)
         XCTAssertEqual(items.map(\.title), ["new", "old"], "the most-recently-closed tab is first")
         XCTAssertEqual(items[0].subtitle, "/new")
         if case let .reopenRecentTab(index) = items[0].act {
@@ -562,12 +570,12 @@ final class OpenQuicklyModelTests: XCTestCase {
 
     func testRecentItemsTitleFallsBackToActivePaneThenGeneric() {
         let pid = PaneID(raw: UUID())
-        var spec = PaneSpec(kind: .terminal, title: "")
-        spec.lastKnownTitle = "claude"
+        let spec = PaneSpec(kind: .terminal, title: "")
+        paneFacts[pid] = ("claude", nil)
         let tab = Tab(title: "", root: .leaf(pid), activePane: pid)
         let records = [RecentlyClosedTab(tab: tab, specs: [pid: spec], sessionID: nil)]
         XCTAssertEqual(
-            OpenQuicklyModel.recentItems(from: records).first?.title,
+            OpenQuicklyModel.recentItems(from: records, facts: facts).first?.title,
             "claude",
             "an empty tab title falls back to the active pane's last-known title",
         )
@@ -576,7 +584,7 @@ final class OpenQuicklyModelTests: XCTestCase {
         let bareTab = Tab(title: "", root: .leaf(bare), activePane: bare)
         let bareRecords = [RecentlyClosedTab(tab: bareTab, specs: [:], sessionID: nil)]
         XCTAssertEqual(
-            OpenQuicklyModel.recentItems(from: bareRecords).first?.title,
+            OpenQuicklyModel.recentItems(from: bareRecords, facts: facts).first?.title,
             "Tab",
             "no title anywhere ⇒ the generic 'Tab' label, never a blank row",
         )
@@ -632,8 +640,8 @@ final class OpenQuicklyModelTests: XCTestCase {
     func testOpenedItemsDifferentiatesVideoPanesFromTerminalPanes() {
         let termID = PaneID(raw: UUID())
         let videoID = PaneID(raw: UUID())
-        var termSpec = PaneSpec(kind: .terminal, title: "zsh")
-        termSpec.lastKnownCwd = "/work/proj"
+        let termSpec = PaneSpec(kind: .terminal, title: "zsh")
+        paneFacts[termID] = (nil, "/work/proj")
         let videoSpec = PaneSpec(
             kind: .desktop,
             title: "Safari — GitHub",
@@ -644,7 +652,7 @@ final class OpenQuicklyModelTests: XCTestCase {
         let session = Session(name: "s", tabs: [termTab, videoTab], specs: [termID: termSpec, videoID: videoSpec])
         let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)
 
-        let items = OpenQuicklyModel.openedItems(from: tree)
+        let items = OpenQuicklyModel.openedItems(from: tree, facts: facts)
         XCTAssertEqual(items.count, 2, "one Opened row per live pane — the terminal AND the desktop")
         let termRow = items.first { $0.act == .focusPane(termID) }
         let videoRow = items.first { $0.act == .focusPane(videoID) }

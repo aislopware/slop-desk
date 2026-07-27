@@ -11,7 +11,7 @@ import XCTest
 @MainActor
 final class SessionRetentionLRUTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0) })
+        WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
     }
 
     /// Creating a second session KEEPS the outgoing (original) session retained, so returning to it does not

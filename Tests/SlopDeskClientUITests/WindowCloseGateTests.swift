@@ -33,7 +33,7 @@ final class WindowCloseGateTests: XCTestCase {
     /// A live tree-model store with one default session (one terminal pane) — enough for `requestCloseWindow`
     /// to resolve an active session.
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
+        WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
     }
 
     func testNoConfirmationNeededClosesImmediatelyWithoutPrompting() {

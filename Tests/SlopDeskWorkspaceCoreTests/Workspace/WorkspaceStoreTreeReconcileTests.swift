@@ -32,7 +32,7 @@ extension WorkspaceStoreReconcileTests {
         WorkspaceStore(
             restoring: Workspace(canvas: Canvas(items: []), focusedPane: nil),
             restoringTree: restoringTree,
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: liveVideoCap,
             videoTeardownSettle: videoTeardownSettle,
         )
@@ -304,7 +304,7 @@ extension WorkspaceStoreReconcileTests {
     /// reconcile). This pins that init does NOT call reconcileTree (no double-binding).
     func testInitDoesNotReconcileTree() {
         // Default construction (non-empty default canvas) — the canvas path materialized its pane.
-        let store = WorkspaceStore(makeSession: { FakePaneSession($0) }, liveVideoCap: 2)
+        let store = WorkspaceStore(makeSession: { seed in FakePaneSession(seed.spec) }, liveVideoCap: 2)
         // The registry backs the CANVAS pane, NOT the tree's default leaf (init did not reconcileTree).
         let canvasPane = store.workspace.canvas.allIDs()[0]
         XCTAssertEqual(store.allSessions.count, 1, "init materialized exactly the canvas pane")

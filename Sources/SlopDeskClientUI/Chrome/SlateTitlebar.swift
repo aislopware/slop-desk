@@ -50,9 +50,11 @@ struct SlateTitlebar: View {
         // this titlebar is ALWAYS mounted, so an unconditional read made its body a dependent of the WHOLE
         // process dict — a background pane's 1Hz process tick re-ran it even though only a cwd-less,
         // non-renamed pane's title ever depends on that dict.
-        let titledByProcess = RailStructureKey.titledByProcess(kind: kind, spec: spec)
+        let cwd = store.paneCwd(for: id)
+        let titledByProcess = RailStructureKey.titledByProcess(kind: kind, spec: spec, cwd: cwd)
         let title = RailRowsBuilder.rowTitle(
-            kind: kind, spec: spec, processLabel: titledByProcess ? store.paneForegroundProcess[id] : nil,
+            kind: kind, spec: spec, cwd: cwd, liveTitle: store.liveProgramTitle(for: id),
+            processLabel: titledByProcess ? store.paneForegroundProcess[id] : nil,
         )
         return title.isEmpty ? "~" : title
     }
@@ -169,7 +171,7 @@ struct TitlePaneMenu: View {
 
     private var cwd: String? {
         guard let id = activePane else { return nil }
-        return store.tree.activeSession?.specs[id]?.lastKnownCwd
+        return store.paneCwd(for: id)
     }
 
     var body: some View {

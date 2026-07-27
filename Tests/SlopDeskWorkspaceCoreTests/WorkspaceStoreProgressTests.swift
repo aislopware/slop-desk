@@ -10,7 +10,7 @@ import XCTest
 @MainActor
 final class WorkspaceStoreProgressTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0) })
+        WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
     }
 
     // MARK: - store mirror: set / clear

@@ -19,7 +19,7 @@ final class ViKeyHintsRoutingTests: XCTestCase {
     private func makeRecordingStore() -> WorkspaceStore {
         WorkspaceStore(
             restoringTree: .defaultWorkspace(), liveModel: .tree,
-            makeSession: { RecordingTerminalPaneSession($0) }, liveVideoCap: 2,
+            makeSession: { seed in RecordingTerminalPaneSession(seed.spec) }, liveVideoCap: 2,
         )
     }
 

@@ -26,7 +26,7 @@ import SlopDeskWorkspaceModel
 /// ### The test seam
 /// Sessions are built through the injected `makeSession` factory — NOT a fake `SlopDeskClient` (which is
 /// impossible) and NEVER a real `HostServer` (forbidden, pool deadlock). Tests inject a
-/// `FakePaneSession`; production injects ``LivePaneSession/make(_:makeClient:makeInspector:)``.
+/// `FakePaneSession`; production injects ``LivePaneSession/make(paneID:spec:spawnCwd:makeClient:makeInspector:target:)``.
 @preconcurrency
 @MainActor
 @Observable
@@ -79,9 +79,10 @@ public final class WorkspaceStore {
     /// pause). ``PaneContainer`` gates it on THIS pane actually changing size, so only resized panes scrim.
     public private(set) var isInteractiveResizeActive = false
 
-    /// The injection seam (docs/22 §0). Spec-only — the store re-points the built handle at the leaf
-    /// id via `adopt(id:)` (see ``PaneSessionIDAdopting``).
-    private let makeSession: @MainActor (PaneSpec) -> any PaneSessionHandle
+    /// The injection seam (docs/22 §0). Takes a ``PaneMaterialization`` — id, spec and spawn cwd —
+    /// because the pane's own id is what it presents to the host on `channelOpen`, so the factory
+    /// needs it before it builds the client, not after.
+    private let makeSession: @MainActor (PaneMaterialization) -> any PaneSessionHandle
 
     /// Maximum number of video panes that may hold a LIVE video stack at once (docs/22 §7 the
     /// 2N-UDP / N-VTDecompression / N-CVDisplayLink ceiling). Injectable; default 2. The app resolves it
@@ -342,7 +343,7 @@ public final class WorkspaceStore {
         restoring: Workspace? = nil,
         restoringTree: TreeWorkspace? = nil,
         liveModel: LiveModel = .canvas,
-        makeSession: @escaping @MainActor (PaneSpec) -> any PaneSessionHandle,
+        makeSession: @escaping @MainActor (PaneMaterialization) -> any PaneSessionHandle,
         liveVideoCap: Int = 2,
         persistence: WorkspacePersistence? = nil,
         devicePreferences: DevicePreferencesStore? = nil,
@@ -371,6 +372,12 @@ public final class WorkspaceStore {
             reconcileSeenCompletionEpochDocument()
             refreshUnseenDoneForAllPanes()
         }
+        // Seed the mirror with the tree the store just restored, so `workspaceMirror.topology` is a
+        // real layout from the first instant rather than `nil` until a host frame happens to arrive.
+        // A client with no channel — headless, a test, the flag off — never gets one, and a nil
+        // topology is silent: `WorkspaceMirrorBox.stageIntent` returns `nil` for it and every call
+        // built on that becomes a no-op with nothing logged anywhere.
+        seedWorkspaceMirror(from: tree)
         // The live model picks the init reconcile. `.canvas` materializes the canvas panes (the
         // retained-but-dead path); `.tree` (the app) materializes the tree's leaves through the SAME
         // registry diff — exactly one of the two trees ever drives a given store.
@@ -2326,12 +2333,13 @@ public final class WorkspaceStore {
         // mux `channelOpen`, so the host spawns the PTY there directly.
         let activeCwd = inheritableCwd(of: active)
         let inheritedCwd = SettingsKey.workingDirectoryNewSplit.resolve(activePaneCwd: activeCwd)
-        var spec = PaneSpec(kind: kind, title: defaultTitle(for: kind))
-        spec.lastKnownCwd = inheritedCwd
-        spec.projectKey = inheritableProjectKey(of: active, covering: inheritedCwd)
+        let spec = PaneSpec(kind: kind, title: defaultTitle(for: kind))
         // `splitPane` already makes the new leaf the active pane, so the split lands focused.
-        let (next, _) = WorkspaceTreeOps.splitPane(active, axis: axis, newSpec: spec, before: leading, in: tree)
+        let (next, newID) = WorkspaceTreeOps.splitPane(
+            active, axis: axis, newSpec: spec, before: leading, in: tree,
+        )
         tree = next
+        seedNewPaneFacts(newID, spawnCwd: inheritedCwd, inheritingFrom: active)
         reconcileTree()
     }
 
@@ -2528,15 +2536,31 @@ public final class WorkspaceStore {
         let activePane = tree.activeSession?.activeTab?.activePane
         let activeCwd = inheritableCwd(of: activePane)
         let inheritedCwd = SettingsKey.workingDirectoryNewTab.resolve(activePaneCwd: activeCwd)
-        var spec = PaneSpec(kind: kind, title: defaultTitle(for: kind))
-        spec.lastKnownCwd = inheritedCwd
-        spec.projectKey = inheritableProjectKey(of: activePane, covering: inheritedCwd)
-        let (next, _) = WorkspaceTreeOps.newTab(in: tree, spec: spec, at: SettingsKey.newTabPosition)
+        let spec = PaneSpec(kind: kind, title: defaultTitle(for: kind))
+        let (next, newID) = WorkspaceTreeOps.newTab(in: tree, spec: spec, at: SettingsKey.newTabPosition)
         tree = next
+        seedNewPaneFacts(newID, spawnCwd: inheritedCwd, inheritingFrom: activePane)
         reconcileTree()
     }
 
-    /// The `lastKnownCwd` of pane `id` sanitized as an INHERIT SOURCE for a new tab / split / window: a
+    /// Stamps a freshly-created pane's two inherited facts: where its shell starts, and which project
+    /// section it draws in on the FIRST frame. The one funnel every new-pane gesture (split / new tab /
+    /// new window) passes through, so the two can't be seeded by three transcriptions that drift.
+    ///
+    /// The project key is seeded only when it genuinely covers the new cwd (see
+    /// ``inheritableProjectKey(of:covering:)``); the host's own type-34 for the child's PTY confirms or
+    /// corrects it either way.
+    private func seedNewPaneFacts(_ id: PaneID, spawnCwd: String?, inheritingFrom parent: PaneID?) {
+        setSpawnCwd(spawnCwd, for: id)
+        // The document's own `pane/cwd` for a pane whose shell has not started yet is the dir it is
+        // being started IN — that is what the rail, the title chain and the section bucket read.
+        if let spawnCwd { setLastKnownCwd(spawnCwd, for: id) }
+        if let key = inheritableProjectKey(of: parent, covering: spawnCwd) {
+            setProjectKey(key, for: id)
+        }
+    }
+
+    /// The working directory of pane `id` sanitized as an INHERIT SOURCE for a new tab / split / window: a
     /// transient plugin-cache dir (``PaneSpec/looksLikeTransientPluginCwd(_:)`` — `…/owner---repo`) is
     /// dropped to `nil`. Without this a racing `cwd`/`gitStatus` probe that caught the shell mid zinit
     /// turbo `builtin cd` can seed the NEW pane's cwd — poisoning its spawn dir, its folder-name title,
@@ -2544,12 +2568,12 @@ public final class WorkspaceStore {
     /// spawn-seed guard in `LivePaneSession.initialCwd` and the write guard in ``setLastKnownCwd(_:for:)``.
     /// `nil` pane / no cwd ⇒ `nil` (the policy then resolves the host default).
     private func inheritableCwd(of id: PaneID?) -> String? {
-        id.flatMap { tree.spec(for: $0)?.lastKnownCwd }
+        id.flatMap { paneCwd(for: $0) }
             .flatMap { PaneSpec.looksLikeTransientPluginCwd($0) ? nil : $0 }
     }
 
-    /// The parent pane's HOST-pushed ``PaneSpec/projectKey``, seeded onto a new split/tab/window
-    /// spec so the child sections under the parent's project on the FIRST frame — without it the
+    /// The parent pane's HOST-pushed `pane/projectKey`, seeded onto a new split/tab/window pane so the
+    /// child sections under the parent's project on the FIRST frame — without it the
     /// child sections by its raw inherited cwd (a repo SUBDIRECTORY tears off into its own
     /// subdir-named section) until the host's type-34 for the child's own PTY round-trips.
     /// Guarded by SUBTREE COVERAGE: the seed applies only when `inheritedCwd` sits inside the key's
@@ -2559,7 +2583,7 @@ public final class WorkspaceStore {
     /// it beside the parent. The host's own push (seeded server-side at spawn) re-confirms or
     /// corrects the seed either way.
     private func inheritableProjectKey(of id: PaneID?, covering inheritedCwd: String?) -> String? {
-        guard let id, let key = tree.spec(for: id)?.projectKey,
+        guard let id, let key = projectKey(for: id),
               !key.isEmpty, !PaneSpec.looksLikeTransientPluginCwd(key),
               let cwd = inheritedCwd,
               cwd == key || cwd.hasPrefix(key.hasSuffix("/") ? key : key + "/")
@@ -2633,12 +2657,11 @@ public final class WorkspaceStore {
         let activePane = tree.activeSession?.activeTab?.activePane
         let activeCwd = inheritableCwd(of: activePane)
         let inheritedCwd = SettingsKey.workingDirectoryNewWindow.resolve(activePaneCwd: activeCwd)
-        var spec = PaneSpec(kind: kind, title: defaultTitle(for: kind))
-        spec.lastKnownCwd = inheritedCwd
-        spec.projectKey = inheritableProjectKey(of: activePane, covering: inheritedCwd)
+        let spec = PaneSpec(kind: kind, title: defaultTitle(for: kind))
         let previous = tree.activeSessionID
-        let (next, _) = WorkspaceTreeOps.newSession(in: tree, name: name, spec: spec)
+        let (next, newID) = WorkspaceTreeOps.newSession(in: tree, name: name, spec: spec)
         tree = next
+        seedNewPaneFacts(newID, spawnCwd: inheritedCwd, inheritingFrom: activePane)
         // Keep the OUTGOING session mounted: creating + switching to a new session must not dismantle the
         // session you just left — otherwise returning to it repaints from the lossy ring.
         if let newID = tree.activeSessionID { noteActiveSessionChanged(to: newID, from: previous) }
@@ -2698,7 +2721,9 @@ public final class WorkspaceStore {
               tab.id != beforeTab, tab.contains(id) else { return }
         onCrossTabJump?(JumpBreadcrumb.text(
             sessionName: session.name,
-            tabTitle: JumpBreadcrumb.tabDisplayTitle(tab: tab, specs: session.specs),
+            tabTitle: JumpBreadcrumb.tabDisplayTitle(
+                tab: tab, specs: session.specs, liveTitle: { liveProgramTitle(for: $0) },
+            ),
             includeSession: tree.sessions.count > 1,
         ))
     }
@@ -2735,7 +2760,7 @@ public final class WorkspaceStore {
     ///
     /// Also sets ``PaneSpec/userRenamed`` — the unambiguous "this title is a custom user identity" flag
     /// ``RailRowsBuilder/rowTitle(kind:spec:processLabel:)`` gates the rename branch on. Inferring the flag
-    /// from `title != lastKnownTitle` instead misfires for shells that emit changing OSC titles.
+    /// from `title != liveTitle` instead misfires for shells that emit changing OSC titles.
     public func renamePane(_ id: PaneID, to title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
@@ -2849,6 +2874,12 @@ public final class WorkspaceStore {
             )
             tree = afterSplit
             createdIDs.append(secondID)
+        }
+        // BEFORE the reconcile: the spawn cwd rides `channelOpen`, which the materialize builds.
+        for (paneID, pane) in zip(createdIDs, plan.panes) {
+            guard let cwd = pane.spawnCwd, !cwd.isEmpty else { continue }
+            setSpawnCwd(cwd, for: paneID)
+            setLastKnownCwd(cwd, for: paneID)
         }
         reconcileTree()
 
@@ -3116,6 +3147,10 @@ public final class WorkspaceStore {
     /// that re-renders the rail at the reveal boundary), cleared on completion. NOT persisted;
     /// PRUNED to the live leaf set alongside ``paneCompletedAt``.
     public internal(set) var paneCommandStartedAt: [PaneID: Date] = [:]
+
+    /// Where each pane's shell was asked to START (`pane/spawnCwd`) — read by ``spawnCwd(for:)``,
+    /// written when the pane is created. PRUNED to the live leaf set alongside the other per-pane maps.
+    @ObservationIgnored var paneSpawnCwd: [PaneID: String] = [:]
 
     /// RUNTIME-ONLY unread agent-finish latch — panes whose agent hit `.done` while the user was NOT
     /// watching (``isSourcePaneVisible(_:)`` false at the edge) and that have not been visited since.
@@ -3429,9 +3464,10 @@ public final class WorkspaceStore {
         // notification only when backgrounded.
         connection?.onCommandCompleted = { [weak self, weak connection] exitCode, durationMS in
             guard let self else { return }
-            // See ``PaneSpec/completionNotificationTitle`` — prefers the live OSC 0/2 shell title over
-            // the static spec title so the banner/toast identifies WHICH command/directory finished.
-            let title = tree.spec(for: id)?.completionNotificationTitle ?? ""
+            // See ``PaneLabel/completionNotificationTitle(title:cwd:liveTitle:)`` — prefers the live
+            // OSC 0/2 shell title over the static spec title so the banner/toast identifies WHICH
+            // command/directory finished.
+            let title = completionNotificationTitle(for: id)
             handleCommandCompleted(id: id, exitCode: exitCode, durationMS: durationMS, paneTitle: title)
             // cwd-freshness fallback: refresh this pane's last-known cwd from the host `cwd` RPC on
             // command completion too, so shells without OSC 7 still update the inherit source for the next
@@ -3441,24 +3477,16 @@ public final class WorkspaceStore {
             // branch + dirty state) — same validate-then-drop RPC idiom as the cwd refresh above.
             refreshGitSummary(for: id, from: connection)
         }
-        // LIVE TITLE PERSISTENCE: persist the shell's live OSC title into lastKnownTitle so a relaunch can
-        // restore the tab title for untouched (default-titled) panes. The dirty guard avoids a needless
-        // reconcile + save when the title didn't actually change.
+        // LIVE TITLE: the shell's OSC title folds into `pane/liveTitle` + `pane/titleFresh`, which is
+        // what the whole title chain reads back through. Every push lands (even an unchanged one): a
+        // repeated push proves the running program is STILL asserting it, half of the freshness verdict.
         connection?.onTitleChanged = { [weak self] title in
-            // Fold into the mirror FIRST (even for an unchanged title): a repeated push proves the
-            // running program is STILL asserting it, which is half of the freshness verdict.
             self?.noteTitlePushed(title, for: id)
-            self?.updateSpecLive(id) { spec in
-                guard spec.lastKnownTitle != title else { return }
-                spec.lastKnownTitle = title
-            }
         }
-        // RESUME IDENTITY CAPTURE (SLOPDESK_DETACH_ENABLED): persist the live session UUID +
-        // highest-contiguous-seq into the spec on each RTT snapshot (~3 s cadence) and on reconnect
-        // so the next launch can feed them into seedResumeIdentity → RETURNING_CLIENT reattach.
-        connection?.onResumeIdentitySnapshot = { [weak self, weak connection] sessionID, seq in
+        // The RTT-snapshot edge (~3 s cadence) and reconnect: the pane already presents its own id as
+        // its session identity, so there is nothing to transcribe — only the two refreshes it gates.
+        connection?.onResumeIdentitySnapshot = { [weak self, weak connection] _, _ in
             guard let self else { return }
-            noteResumeIdentity(sessionID: sessionID, seq: seq, for: id)
             // GIT-LINE population/staleness on the RTT-snapshot edge (~3 s): populate once when absent
             // (a freshly-attached pane gets its line before the first OSC 133;D), then re-fetch ONLY the
             // ACTIVE pane and ONLY when its cached line is older than `gitSummaryStaleWindow` — so a pane
@@ -3472,7 +3500,7 @@ public final class WorkspaceStore {
             // reports its cwd until a command completes, so a freshly-connected pane's title sits at the
             // "Terminal" fallback. The snapshot edge is the earliest recurring post-connect signal — pull the
             // host cwd ONCE here (populate-once gate) so the folder-name title lands without waiting for a
-            // command. The gate closes the moment `lastKnownCwd` is set, so this never becomes a cwd poll.
+            // command. The gate closes the moment `pane/cwd` is set, so this never becomes a cwd poll.
             // `retries` collapses the up-to-3 s wait for the FIRST landing into ~1 s when the metadata client
             // is briefly not ready at the first snapshot (it self-heals via the cadence regardless).
             if shouldRefreshCwdOnAttach(id) {
@@ -3493,7 +3521,7 @@ public final class WorkspaceStore {
             // completes. Paired with the unconditional `initialCwd` hint (SlopDeskClient.connect) that
             // puts the respawned shell back in the project dir, so this reads the RIGHT cwd, not `$HOME`.
             // `retries` matters MOST here: the reconnect edge has no populate-once cadence to fall back on
-            // (`lastKnownCwd` is already non-nil), so a single-shot pull that raced the control plane would
+            // (`pane/cwd` is already non-nil), so a single-shot pull that raced the control plane would
             // never re-fire — the bounded retry guarantees the fresh-shell cwd re-lands.
             refreshCwd(for: id, from: connection, retries: 3)
             // INSPECTOR RE-ARM across a link flap: the inspector second channel (terminal port + 1) dies
@@ -3668,6 +3696,10 @@ public final class WorkspaceStore {
         if !paneCommandStartedAt.isEmpty {
             paneCommandStartedAt = paneCommandStartedAt.filter { leafSet.contains($0.key) }
         }
+        // Spawn cwd (`pane/spawnCwd` — where a closed pane's shell WOULD have started):
+        if !paneSpawnCwd.isEmpty {
+            paneSpawnCwd = paneSpawnCwd.filter { leafSet.contains($0.key) }
+        }
         // Unread agent-finish latch (Set-prune idiom, like `paneReadOnly` below):
         if !paneUnseenDone.isEmpty, !paneUnseenDone.isSubset(of: leafSet) {
             paneUnseenDone.formIntersection(leafSet)
@@ -3786,7 +3818,7 @@ public final class WorkspaceStore {
         //    let the caller wire it (the canvas path's pane-rebind / OSC-9 closures).
         for id in desiredLeafIDs where registry[id] == nil {
             guard let spec = spec(id) else { continue }
-            let handle = makeSession(spec)
+            let handle = makeSession(PaneMaterialization(id: id, spec: spec, spawnCwd: spawnCwd(for: id)))
             (handle as? PaneSessionIDAdopting)?.adopt(id: id)
             registry[id] = handle
             onMaterialize?(id, handle)
@@ -3879,8 +3911,8 @@ public final class WorkspaceStore {
                 // BACKGROUND-PANE COMMAND-COMPLETION: same focus-gated completion route as the tree path.
                 connection?.onCommandCompleted = { [weak self] exitCode, durationMS in
                     guard let self else { return }
-                    // Same live-title preference as the tree path — see ``PaneSpec/completionNotificationTitle``.
-                    let title = spec(for: id)?.completionNotificationTitle ?? ""
+                    // Same live-title preference as the tree path.
+                    let title = completionNotificationTitle(for: id)
                     handleCommandCompleted(id: id, exitCode: exitCode, durationMS: durationMS, paneTitle: title)
                 }
                 connection?.onWorkingDirectoryChanged = { [weak self] cwd in
@@ -3894,18 +3926,9 @@ public final class WorkspaceStore {
                 connection?.onAgentIntentChanged = { [weak self] intent in
                     self?.setAgentIntent(intent, for: id)
                 }
-                // LIVE TITLE PERSISTENCE (canvas path): same lastKnownTitle wire as wireMaterializedLeaf,
-                // including the mirror fold the title chain reads back through.
+                // LIVE TITLE (canvas path): same `pane/liveTitle` fold as wireMaterializedLeaf.
                 connection?.onTitleChanged = { [weak self] title in
                     self?.noteTitlePushed(title, for: id)
-                    self?.updateSpecLive(id) { spec in
-                        guard spec.lastKnownTitle != title else { return }
-                        spec.lastKnownTitle = title
-                    }
-                }
-                // RESUME IDENTITY CAPTURE (canvas path): same wire as wireMaterializedLeaf.
-                connection?.onResumeIdentitySnapshot = { [weak self] sessionID, seq in
-                    self?.noteResumeIdentity(sessionID: sessionID, seq: seq, for: id)
                 }
             },
         )
@@ -4310,7 +4333,7 @@ public extension WorkspaceStore {
                 for paneID in tab.allPaneIDs() {
                     guard let spec = session.spec(for: paneID), spec.kind == .terminal,
                           let model = (registry[paneID] as? TerminalModelProviding)?.terminalModel else { continue }
-                    let title = spec.title.isEmpty ? (spec.lastKnownTitle ?? "Tab") : spec.title
+                    let title = spec.title.isEmpty ? (liveProgramTitle(for: paneID) ?? "Tab") : spec.title
                     sources.append(GlobalSearchSource(
                         paneID: paneID,
                         sessionID: session.id,
@@ -4380,7 +4403,7 @@ public extension WorkspaceStore {
 public extension WorkspaceStore {
     /// The production `makeSession` factory: wires ``LivePaneSession`` with a mux-backed client
     /// factory and an inspector builder. The app passes `WorkspaceStore.liveMakeSession(...)` as
-    /// `makeSession` so tests can substitute `{ FakePaneSession($0) }` instead (docs/22 §0).
+    /// `makeSession` so tests can substitute `{ FakePaneSession($0.spec) }` instead (docs/22 §0).
     ///
     /// - Parameters:
     ///   - makeInspector: builds the read-only `InspectorClient` for a terminal endpoint (subscribed
@@ -4393,13 +4416,16 @@ public extension WorkspaceStore {
         makeInspector: @escaping @MainActor (ConnectionTarget) -> InspectorClient? = liveMakeInspector,
         muxRegistry: ConnectionRegistry,
         target: @escaping @MainActor () -> ConnectionTarget = { .default },
-    ) -> @MainActor (PaneSpec) -> any PaneSessionHandle {
+    ) -> @MainActor (PaneMaterialization) -> any PaneSessionHandle {
         // Every pane is backed by a logical channel over the per-host shared `MuxNWConnection`
         // (refcounted by the registry), connecting to the ONE app-global `target`. This is the SOLE
         // client-side construction site; nothing on the per-message path is touched.
         let effectiveMakeClient = muxBackedClientFactory(registry: muxRegistry)
-        return { spec in
-            LivePaneSession.make(spec, makeClient: effectiveMakeClient, makeInspector: makeInspector, target: target)
+        return { seed in
+            LivePaneSession.make(
+                paneID: seed.id, spec: seed.spec, spawnCwd: seed.spawnCwd,
+                makeClient: effectiveMakeClient, makeInspector: makeInspector, target: target,
+            )
         }
     }
 
@@ -4605,30 +4631,31 @@ public extension WorkspaceStore {
         }
     }
 
-    /// Model-agnostic read of pane `id`'s persisted ``PaneSpec/lastKnownCwd`` (from the tree or canvas
-    /// spec, whichever backs ``liveModel``). Shared by ``setLastKnownCwd(_:for:)``'s dirty guard and the
-    /// attach-edge cwd-pull gate ``shouldRefreshCwdOnAttach(_:)``.
-    func lastKnownCwd(for paneID: PaneID) -> String? {
-        switch liveModel {
-        case .tree: tree.spec(for: paneID)?.lastKnownCwd
-        case .canvas: workspace.canvas.spec(for: paneID)?.lastKnownCwd
-        }
+    /// Pane `id`'s WORKING DIRECTORY — where its shell IS (`pane/cwd`, field 5), read through the
+    /// mirror so a host frame and this client's own control-push overlay answer through one funnel.
+    /// Shared by ``setLastKnownCwd(_:for:)``'s dirty guard, the attach-edge cwd-pull gate
+    /// ``shouldRefreshCwdOnAttach(_:)`` and ``effectiveGitProjectKey(_:)``.
+    ///
+    /// Distinct from ``spawnCwd(for:)``, which is where the shell was asked to START.
+    func paneCwd(for paneID: PaneID) -> String? {
+        observeWorkspaceMirror()
+        return workspaceMirror.string(.pane, documentPaneID(paneID), WorkspacePaneField.cwd)
     }
 
     /// Whether the connect/reconnect snapshot edge should pull pane `id`'s cwd from the host. TRUE
-    /// only while ``PaneSpec/lastKnownCwd`` is still empty — a POPULATE-ONCE gate so the ~3 s RTT-snapshot
+    /// only while `pane/cwd` is still empty — a POPULATE-ONCE gate so the ~3 s RTT-snapshot
     /// cadence never becomes a cwd poll. A shell that emits no OSC-7 (Starship / hookless) would otherwise
     /// sit at the "Terminal" fallback until its first command completes; one host `proc_pidinfo` pull on
     /// attach lands the folder-name title. Once any source populates the cwd this returns false and stops.
     func shouldRefreshCwdOnAttach(_ id: PaneID) -> Bool {
-        lastKnownCwd(for: id) == nil
+        paneCwd(for: id) == nil
     }
 
-    /// Persists the host-resolved working directory of pane `paneID` into ``PaneSpec/lastKnownCwd`` — the
-    /// single sink every cwd source (OSC 7, the `cwd` RPC, the palette resolver) funnels through, so the
-    /// titlebar / rail / palette all mirror the same value. Live-model-aware (routes through the same
-    /// `updateSpecLive` wire as `lastKnownTitle`); guarded against an unchanged value so a re-focus does NOT
-    /// spend a reconcile.
+    /// Records the host-resolved working directory of pane `paneID` as `pane/cwd` — the single sink
+    /// every cwd source (OSC 7, the `cwd` RPC, the palette resolver) funnels through, so the titlebar /
+    /// rail / palette all mirror the same value. Writes the mirror's FAST PATH, which host truth erases
+    /// the moment the document supplies the same key; guarded against an unchanged value so a re-focus
+    /// spends nothing.
     func setLastKnownCwd(_ cwd: String, for paneID: PaneID) {
         // Drop a TRANSIENT plugin-cache-dir reading before it can poison the inherit source (see
         // ``PaneSpec/looksLikeTransientPluginCwd(_:)``). The live-cwd sources are `proc_pidinfo`-based
@@ -4636,9 +4663,11 @@ public extension WorkspaceStore {
         // manager's turbo `builtin cd`; without this a later new-tab / split / relaunch spawns its PTY in
         // e.g. `…/zsh-users---zsh-autosuggestions` instead of the real project cwd.
         guard !PaneSpec.looksLikeTransientPluginCwd(cwd) else { return }
-        let current = lastKnownCwd(for: paneID)
+        let current = paneCwd(for: paneID)
         guard current != cwd else { return }
-        updateSpecLive(paneID) { $0.lastKnownCwd = cwd }
+        workspaceMirror.writeFastPath(
+            pane: documentPaneID(paneID), field: WorkspacePaneField.cwd, string: cwd,
+        )
         // The cwd just CHANGED (the guard above proves it differs from the stored value), so this is a
         // genuine visit — notify the frecency sink. Kept after the dirty guard so an unchanged re-focus is silent.
         onCwdVisited?(cwd)
@@ -4649,25 +4678,44 @@ public extension WorkspaceStore {
         refreshGitSummary(for: paneID, from: (handle(for: paneID) as? LivePaneSession)?.connection)
     }
 
-    /// Model-agnostic read of pane `id`'s persisted ``PaneSpec/projectKey`` (tree or canvas spec, whichever
-    /// backs ``liveModel``) — the ``setProjectKey(_:for:)`` dirty guard's mirror of ``lastKnownCwd(for:)``.
+    /// Pane `id`'s HOST-computed By-Project key (`pane/projectKey`, field 6), read through the mirror —
+    /// the ``setProjectKey(_:for:)`` dirty guard's mirror of ``paneCwd(for:)``.
     func projectKey(for paneID: PaneID) -> String? {
-        switch liveModel {
-        case .tree: tree.spec(for: paneID)?.projectKey
-        case .canvas: workspace.canvas.spec(for: paneID)?.projectKey
-        }
+        observeWorkspaceMirror()
+        return workspaceMirror.string(.pane, documentPaneID(paneID), WorkspacePaneField.projectKey)
     }
 
-    /// Persists the HOST-computed By-Project key (wire type 34) into ``PaneSpec/projectKey`` — the write
-    /// sink ``ConnectionViewModel/onProjectKeyChanged`` funnels into, mirroring ``setLastKnownCwd(_:for:)``:
+    /// Records the HOST-computed By-Project key (wire type 34) as `pane/projectKey` — the write sink
+    /// ``ConnectionViewModel/onProjectKeyChanged`` funnels into, mirroring ``setLastKnownCwd(_:for:)``:
     /// a transient plugin-cache reading (``PaneSpec/looksLikeTransientPluginCwd(_:)`` — the host's resolver
     /// can race a zinit turbo `builtin cd` just as a client-side `gitStatus` sweep can) is DROPPED, and an
-    /// unchanged value short-circuits before `updateSpecLive` so a reattach re-assert never spends a
-    /// reconcile + save. ``paneProjectKey(_:)`` reads it back for the sidebar sectioning.
+    /// unchanged value short-circuits so a reattach re-assert spends nothing.
+    /// ``paneProjectKey(_:)`` reads it back for the sidebar sectioning.
     func setProjectKey(_ key: String, for paneID: PaneID) {
         guard !key.isEmpty, !PaneSpec.looksLikeTransientPluginCwd(key) else { return }
         guard projectKey(for: paneID) != key else { return }
-        updateSpecLive(paneID) { $0.projectKey = key }
+        workspaceMirror.writeFastPath(
+            pane: documentPaneID(paneID), field: WorkspacePaneField.projectKey, string: key,
+        )
+    }
+
+    // MARK: - Spawn cwd (where the shell STARTS)
+
+    /// Where pane `id`'s shell was asked to start (`pane/spawnCwd`, field 21) — the value that rides
+    /// the mux `channelOpen` so the host spawns the PTY there directly, with no visible startup `cd`.
+    ///
+    /// Deliberately NOT `pane/cwd`: that is where the shell IS right now. A respawn after a host
+    /// restart has no live shell to ask, and starting it at the last-observed cwd would silently
+    /// relocate a pane the user placed deliberately.
+    func spawnCwd(for id: PaneID) -> String? {
+        paneSpawnCwd[id]
+    }
+
+    /// Records where a newly-created pane's shell should start. The split / new-tab / new-session
+    /// seeding and the launch-preset expansion are its only writers — a pane's spawn dir is decided
+    /// once, when the pane is made.
+    func setSpawnCwd(_ cwd: String?, for id: PaneID) {
+        paneSpawnCwd[id] = cwd
     }
 
     /// cwd-freshness fallback: pull pane `id`'s current working directory from the host `cwd` RPC
@@ -4680,7 +4728,7 @@ public extension WorkspaceStore {
     /// **Attach-edge retry.** On a fresh (re)connect the pane's `activeMetadataClient` can
     /// briefly be `nil` — the control plane is still being (re)established — so a single-shot pull can MISS
     /// and leave the title at "Terminal" until the next ~3 s RTT-snapshot retry (and the RECONNECT caller,
-    /// whose `lastKnownCwd` is already non-nil, has NO populate-once retry at all). `retries > 0` re-arms a
+    /// whose `pane/cwd` is already non-nil, has NO populate-once retry at all). `retries > 0` re-arms a
     /// short-delayed retry up to `retries` times, stopping the instant the RPC answers — so the cwd lands in
     /// ~1 RTT on connect and a reconnect that respawned a fresh shell reliably re-reads the host cwd.
     /// `retries == 0` (the command-completion caller, where the client is long-since live) keeps the
@@ -4712,7 +4760,7 @@ public extension WorkspaceStore {
         if let key = projectKey(for: id), !key.isEmpty, !PaneSpec.looksLikeTransientPluginCwd(key) {
             return TabOrderingEngine.normalizedProjectKey(key)
         }
-        guard let cwd = lastKnownCwd(for: id), !PaneSpec.looksLikeTransientPluginCwd(cwd) else { return nil }
+        guard let cwd = paneCwd(for: id), !PaneSpec.looksLikeTransientPluginCwd(cwd) else { return nil }
         return TabOrderingEngine.normalizedProjectKey(cwd)
     }
 

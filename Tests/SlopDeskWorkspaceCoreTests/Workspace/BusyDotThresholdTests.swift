@@ -23,7 +23,7 @@ final class BusyDotThresholdTests: XCTestCase {
         WorkspaceStore(
             restoringTree: .defaultWorkspace(),
             liveModel: .tree,
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 5,
         )
     }

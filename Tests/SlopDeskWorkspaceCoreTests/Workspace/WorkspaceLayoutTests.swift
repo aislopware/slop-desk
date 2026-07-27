@@ -132,7 +132,7 @@ final class WorkspaceLayoutTests: XCTestCase {
                 ],
                 focused: a1,
             ),
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
         )
         return (store, [a0, a1, a2])
     }
@@ -257,7 +257,7 @@ final class WorkspaceLayoutTests: XCTestCase {
                 ],
                 focused: pA,
             ),
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
         )
         let hostA = FakeHost(), hostB = FakeHost()
         store.focusCoordinator.register(hostA, for: pA)

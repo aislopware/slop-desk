@@ -121,10 +121,10 @@ final class WorkspaceControlBackend: ClientControlBackend {
                     out.append(ClientPaneInfo(
                         id: paneID.raw.uuidString,
                         tabId: tab.id.raw.uuidString,
-                        title: spec?.lastKnownTitle ?? spec?.title ?? "",
+                        title: store.liveProgramTitle(for: paneID) ?? spec?.title ?? "",
                         kind: (spec?.kind ?? .terminal).rawValue,
                         isFocused: paneID == focused,
-                        cwd: Self.nonEmpty(spec?.lastKnownCwd),
+                        cwd: Self.nonEmpty(store.paneCwd(for: paneID)),
                     ))
                 }
             }
@@ -493,12 +493,13 @@ final class WorkspaceControlBackend: ClientControlBackend {
 
     // MARK: - Helpers
 
-    /// The displayed tab title: the explicit `Tab.title`, else the active pane's last-known / spec title.
+    /// The displayed tab title: the explicit `Tab.title`, else the active pane's live shell title,
+    /// else its spec title.
     private func tabTitle(session: Session, tab: Tab) -> String {
         if !tab.title.isEmpty { return tab.title }
         guard let active = tab.activePane ?? tab.allPaneIDs().first,
               let spec = session.specs[active] else { return "" }
-        return spec.lastKnownTitle ?? spec.title
+        return store?.liveProgramTitle(for: active) ?? spec.title
     }
 
     /// The tab's single fused badge TOKEN: a MANUAL `tab badge --kind` override if one is set, else the badge
@@ -558,15 +559,12 @@ final class WorkspaceControlBackend: ClientControlBackend {
         return store.handle(for: focused)
     }
 
-    /// The focused pane's cached OSC-7 working directory (``PaneSpec/lastKnownCwd``), or `nil` when there is
-    /// no focused pane / its cwd was never seen. This is the client cwd cache `jump` (no query) and `learn`
-    /// (no path) default to (the cwd lives on the host; the client only knows it via OSC 7).
+    /// The focused pane's working directory (`pane/cwd`), or `nil` when there is no focused pane / its
+    /// cwd was never seen. This is what `jump` (no query) and `learn` (no path) default to — the cwd
+    /// lives on the host; the client knows it through the document and OSC 7.
     private func focusedCwd() -> String? {
         guard let store, let focused = focusedPaneID() else { return nil }
-        for session in store.tree.sessions {
-            if let spec = session.specs[focused] { return Self.nonEmpty(spec.lastKnownCwd) }
-        }
-        return nil
+        return Self.nonEmpty(store.paneCwd(for: focused))
     }
 
     /// Resolve a tab-id string (`nil` = the focused tab) into a known ``TabID`` in the live tree, else `nil`

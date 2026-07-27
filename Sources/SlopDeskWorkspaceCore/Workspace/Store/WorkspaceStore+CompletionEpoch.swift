@@ -124,10 +124,12 @@ public extension WorkspaceStore {
     ///
     /// A `nil` live epoch (no channel, or not yet subscribed) is not evidence of a different
     /// document, so it leaves the map alone — otherwise every launch would discard the map before the
-    /// channel had a chance to say which document this is.
+    /// channel had a chance to say which document this is. Neither is
+    /// ``WorkspaceStore/seedEpoch``, which is what the store's own restored layout carries until a
+    /// real host frame arrives.
     internal func reconcileSeenCompletionEpochDocument() {
         let live: UUID? = workspaceMirror.mirror.epoch
-        guard let live else { return }
+        guard let live, live != Self.seedEpoch else { return }
         guard seenCompletionEpochDocument != live else { return }
         if seenCompletionEpochDocument != nil { seenCompletionEpoch.removeAll() }
         seenCompletionEpochDocument = live

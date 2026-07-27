@@ -12,7 +12,7 @@ final class BroadcastInputTests: XCTestCase {
     private func store(_ items: [CanvasItem], focus: PaneID) -> WorkspaceStore {
         WorkspaceStore(
             restoring: Workspace(canvas: Canvas(items: items), focusedPane: focus),
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 5,
         )
     }

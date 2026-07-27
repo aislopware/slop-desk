@@ -276,7 +276,7 @@ public enum WireMessage: Equatable, Sendable {
 
     /// The pane's current working directory (OSC 7, type 33, host → client, CONTROL). Shells emit
     /// `ESC ] 7 ; file://<host>/<absolute-path> ST/BEL` on prompt redraw / `cd`; the host forwards only
-    /// the decoded absolute path. The client persists it into ``PaneSpec/lastKnownCwd`` so new
+    /// the decoded absolute path. The client persists it into `pane/cwd` so new
     /// tabs/splits inherit the live cwd immediately.
     case cwd(String)
 

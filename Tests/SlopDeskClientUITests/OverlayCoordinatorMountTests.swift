@@ -18,7 +18,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     /// Builds the coordinator the way the app does: headless tree-model store, `connectionTarget` seam
     /// injected. No socket, no video — the fake session never opens one.
     private func makeCoordinator() -> (OverlayCoordinator, WorkspaceStore) {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
+        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
         let overlay = OverlayCoordinator(store: store)
         overlay.connectionTarget = { store.committedConnectionTarget ?? .default }
         return (overlay, store)

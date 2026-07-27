@@ -14,7 +14,7 @@ final class BackgroundCompletionWiringTests: XCTestCase {
     private let longMS: UInt32 = CommandNotificationPolicy.longRunningThresholdMS // 10_000
 
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0) })
+        WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
     }
 
     // MARK: - badge: only on an UNFOCUSED pane

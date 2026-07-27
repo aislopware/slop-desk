@@ -14,7 +14,7 @@ import XCTest
 @MainActor
 final class WorkspaceControlBackendTabBadgeTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
+        WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
     }
 
     private func makeBackend(_ store: WorkspaceStore, _ name: String = #function) -> WorkspaceControlBackend {

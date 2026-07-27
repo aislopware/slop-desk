@@ -15,7 +15,7 @@ import XCTest
 @MainActor
 final class PaletteContentAndReachTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
+        WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
     }
 
     private func makeOverlay() -> (OverlayCoordinator, WorkspaceStore) {

@@ -139,7 +139,7 @@ final class VideoCapPolicyTests: XCTestCase {
         let spec = PaneSpec(kind: .desktop, title: "Desktop")
         let store = WorkspaceStore(
             restoring: Workspace.make(panes: [(rootID, spec)], focused: rootID),
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: phoneCap,
         )
         store.addPane(kind: .desktop)

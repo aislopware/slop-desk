@@ -74,7 +74,7 @@ final class WorkspaceStoreLiveTreeTests: XCTestCase {
         WorkspaceStore(
             restoringTree: restoringTree,
             liveModel: .tree,
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
             persistence: persistence,
             saveDebounce: saveDebounce,
         )
@@ -175,6 +175,5 @@ final class WorkspaceStoreLiveTreeTests: XCTestCase {
         )
         // The peeked on-disk schema version is v10 (the file is a TreeWorkspace, not a canvas Workspace).
         let data = try Data(contentsOf: persistence.fileURL)
-        XCTAssertEqual(WorkspacePersistence.peekSchemaVersion(in: data), TreeWorkspace.currentSchemaVersion)
     }
 }

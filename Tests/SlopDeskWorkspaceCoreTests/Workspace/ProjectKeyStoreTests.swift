@@ -21,23 +21,33 @@ final class ProjectKeyStoreTests: XCTestCase {
         var tabs: [Tab] = []
         var specs: [PaneID: PaneSpec] = [:]
         let cwds = ["/Users/me/alpha", "/Users/me/beta", "/Users/me/gamma"]
+        var panes: [PaneID] = []
         for i in 0..<3 {
             let pane = PaneID()
-            var spec = PaneSpec(kind: .terminal, title: "T\(i)")
-            spec.lastKnownCwd = cwds[i]
-            spec.projectKey = seedProjectKeys[i]
+            panes.append(pane)
             tabs.append(Tab(root: .leaf(pane), activePane: pane))
-            specs[pane] = spec
+            specs[pane] = PaneSpec(kind: .terminal, title: "T\(i)")
         }
         let session = Session(name: "Local", tabs: tabs, activeTabIndex: 0, specs: specs)
         let tree = TreeWorkspace(sessions: [session], activeSessionID: session.id)
         let store = WorkspaceStore(
             restoringTree: tree,
             liveModel: .tree,
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
             persistence: nil,
         )
+        // The per-pane FACTS ride the mirror, not the spec — seeded here the way the control push does.
+        for (i, pane) in panes.enumerated() {
+            store.workspaceMirror.writeFastPath(
+                pane: pane.raw, field: WorkspacePaneField.cwd, string: cwds[i],
+            )
+            if let key = seedProjectKeys[i] {
+                store.workspaceMirror.writeFastPath(
+                    pane: pane.raw, field: WorkspacePaneField.projectKey, string: key,
+                )
+            }
+        }
         return (store, tabs.map(\.id))
     }
 
@@ -47,9 +57,8 @@ final class ProjectKeyStoreTests: XCTestCase {
 
     // MARK: - setProjectKey persists into the spec; paneProjectKey prefers it over the cwd
 
-    /// The host push wins over the cwd fallback AND lands in the persisted spec (so a cold relaunch
-    /// renders the final sections from disk). FAILS pre-change (no `PaneSpec.projectKey` — won't compile).
-    func testSetProjectKeyPersistsIntoSpecAndWinsOverCwd() throws {
+    /// The host push wins over the cwd fallback AND lands in the mirror, where every reader looks.
+    func testSetProjectKeyLandsInTheMirrorAndWinsOverCwd() throws {
         let (store, _) = makeStore()
         let pane = try activePane(store, tab: 0)
         XCTAssertEqual(
@@ -59,7 +68,7 @@ final class ProjectKeyStoreTests: XCTestCase {
 
         store.setProjectKey("/repo/root", for: pane)
         XCTAssertEqual(
-            store.tree.activeSession?.specs[pane]?.projectKey, "/repo/root",
+            store.projectKey(for: pane), "/repo/root",
             "the push is PERSISTED into the pane spec (not a runtime-only mirror)",
         )
         XCTAssertEqual(
@@ -73,7 +82,7 @@ final class ProjectKeyStoreTests: XCTestCase {
     func testPaneProjectKeyFallsBackToCwdUntilFirstPush() throws {
         let (store, _) = makeStore()
         let pane = try activePane(store, tab: 1)
-        XCTAssertNil(store.tree.activeSession?.specs[pane]?.projectKey, "no push yet")
+        XCTAssertNil(store.projectKey(for: pane), "no push yet")
         XCTAssertEqual(store.paneProjectKey(pane), "/Users/me/beta", "cwd fallback until the host pushes")
     }
 
@@ -89,7 +98,7 @@ final class ProjectKeyStoreTests: XCTestCase {
 
         store.setProjectKey(poison, for: pane)
         XCTAssertNil(
-            store.tree.activeSession?.specs[pane]?.projectKey,
+            store.projectKey(for: pane),
             "a plugin-cache push is dropped at the write sink, never persisted",
         )
         XCTAssertEqual(
@@ -99,15 +108,15 @@ final class ProjectKeyStoreTests: XCTestCase {
     }
 
     /// READ guard (the backstop): even a poisoned value already IN the spec (persisted before the write
-    /// guard existed — seeded through the restoring tree, past `setProjectKey`) is never returned —
+    /// guard existed — seeded past `setProjectKey`) is never returned —
     /// `paneProjectKey` falls through to the cwd. FAILS on a read that trusts any non-empty spec key.
-    func testPaneProjectKeySkipsPluginKeySeededInSpec() throws {
+    func testPaneProjectKeySkipsAPluginKeyThatSlippedPastTheWriteGuard() throws {
         let (store, _) = makeStore(seedProjectKeys: [0: "/x/.zinit/plugins/romkatv---powerlevel10k"])
         let pane = try activePane(store, tab: 0)
         XCTAssertEqual(
-            store.tree.activeSession?.specs[pane]?.projectKey,
+            store.projectKey(for: pane),
             "/x/.zinit/plugins/romkatv---powerlevel10k",
-            "precondition: the poisoned value IS in the spec (seeded past the write guard)",
+            "precondition: the poisoned value IS in the mirror (seeded past the write guard)",
         )
         XCTAssertEqual(
             store.paneProjectKey(pane), "/Users/me/alpha",
@@ -115,20 +124,21 @@ final class ProjectKeyStoreTests: XCTestCase {
         )
     }
 
-    /// READ guard for a persisted-poison cwd fallback (pre-guard file): a plugin-looking `lastKnownCwd` is
+    /// READ guard for a poisoned cwd fallback: a plugin-looking `pane/cwd` is
     /// treated as absent → the "Other" bucket, never a phantom plugin section.
     func testPaneProjectKeySkipsPluginCwdFallback() {
         let a = PaneID()
         let poison = "/Users/me/.local/share/zinit/plugins/zsh-users---zsh-autosuggestions"
-        var spec = PaneSpec(kind: .terminal, title: "A")
-        spec.lastKnownCwd = poison
         let session = Session(
-            name: "Local", tabs: [Tab(root: .leaf(a), activePane: a)], activeTabIndex: 0, specs: [a: spec],
+            name: "Local", tabs: [Tab(root: .leaf(a), activePane: a)], activeTabIndex: 0,
+            specs: [a: PaneSpec(kind: .terminal, title: "A")],
         )
         let store = WorkspaceStore(
             restoringTree: TreeWorkspace(sessions: [session], activeSessionID: session.id),
-            liveModel: .tree, makeSession: { FakePaneSession($0) }, liveVideoCap: 2, persistence: nil,
+            liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) }, liveVideoCap: 2, persistence: nil,
         )
+        // Past the write guard, the way a pre-guard persisted value would have arrived.
+        store.workspaceMirror.writeFastPath(pane: a.raw, field: WorkspacePaneField.cwd, string: poison)
         XCTAssertNil(store.paneProjectKey(a), "a plugin-looking cwd is not a project key ⇒ Other bucket")
     }
 
@@ -138,7 +148,7 @@ final class ProjectKeyStoreTests: XCTestCase {
         let (store, _) = makeStore()
         let pane = try activePane(store, tab: 0)
         store.setProjectKey("", for: pane)
-        XCTAssertNil(store.tree.activeSession?.specs[pane]?.projectKey, "an empty push is dropped")
+        XCTAssertNil(store.projectKey(for: pane), "an empty push is dropped")
         XCTAssertEqual(store.paneProjectKey(pane), "/Users/me/alpha", "the cwd fallback stands")
     }
 
@@ -162,21 +172,21 @@ final class ProjectKeyStoreTests: XCTestCase {
 
         let mutated = MutationFlag()
         withObservationTracking {
-            _ = store.tree
+            _ = store.workspaceMirrorRevision
         } onChange: {
             mutated.fired = true
         }
         store.setProjectKey("/repo/root", for: pane) // the reattach re-assert: same value
-        XCTAssertFalse(mutated.fired, "an unchanged push must not touch the tree (dirty guard)")
+        XCTAssertFalse(mutated.fired, "an unchanged push must not repaint anything (dirty guard)")
 
         store.setProjectKey("/repo/other", for: pane) // a genuine change writes through
-        XCTAssertTrue(mutated.fired, "a changed push writes the spec (the guard only blocks no-ops)")
+        XCTAssertTrue(mutated.fired, "a changed push moves the mirror (the guard only blocks no-ops)")
         XCTAssertEqual(store.paneProjectKey(pane), "/repo/other")
     }
 
     // MARK: - A cwd change does NOT clobber the host key (the host re-derives and re-pushes)
 
-    /// The host owns the key: a later `cd` updates `lastKnownCwd` (the fallback) but the persisted host key
+    /// The host owns the key: a later `cd` updates `pane/cwd` (the fallback) but the host key
     /// keeps winning until the host pushes a new one — no client-side invalidation heuristics remain.
     func testCwdChangeLeavesHostKeyStanding() throws {
         let (store, _) = makeStore()
@@ -207,7 +217,7 @@ final class ProjectKeyStoreTests: XCTestCase {
         let child = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane, "the split lands focused")
         XCTAssertNotEqual(child, parent, "a new leaf exists and is active")
         XCTAssertEqual(
-            store.tree.activeSession?.specs[child]?.lastKnownCwd, "/repo/root/packages/api",
+            store.paneCwd(for: child), "/repo/root/packages/api",
             "precondition: the split inherited the parent's cwd",
         )
         XCTAssertEqual(
@@ -231,7 +241,7 @@ final class ProjectKeyStoreTests: XCTestCase {
         store.newSession(name: "Second", kind: .terminal)
         let windowChild = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
         XCTAssertNil(
-            store.tree.activeSession?.specs[windowChild]?.projectKey,
+            store.projectKey(for: windowChild),
             "the default new-window policy opens at HOME — outside the parent key's subtree, so the "
                 + "guard seeds nothing and the host resolves the child's own key",
         )
@@ -250,7 +260,7 @@ final class ProjectKeyStoreTests: XCTestCase {
         store.splitActivePane(axis: .horizontal, kind: .terminal)
         let child = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
         XCTAssertNil(
-            store.tree.activeSession?.specs[child]?.projectKey,
+            store.projectKey(for: child),
             "an uncovered inherited cwd seeds nothing — the host resolves the child's key",
         )
         XCTAssertEqual(
@@ -264,11 +274,11 @@ final class ProjectKeyStoreTests: XCTestCase {
     func testSplitFromCwdFallbackParentSeedsNothing() throws {
         let (store, _) = makeStore()
         let parent = try activePane(store, tab: 0)
-        XCTAssertNil(store.tree.activeSession?.specs[parent]?.projectKey, "precondition: no host key")
+        XCTAssertNil(store.projectKey(for: parent), "precondition: no host key")
 
         store.splitActivePane(axis: .horizontal, kind: .terminal)
         let child = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
-        XCTAssertNil(store.tree.activeSession?.specs[child]?.projectKey, "nothing to inherit")
+        XCTAssertNil(store.projectKey(for: child), "nothing to inherit")
         XCTAssertEqual(
             store.paneProjectKey(child), "/Users/me/alpha",
             "the child's own cwd fallback matches the parent's section anyway",

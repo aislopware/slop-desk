@@ -13,12 +13,17 @@ import SlopDeskWorkspaceModel
 /// (`JumpBreadcrumbTests`) without a store.
 public enum JumpBreadcrumb {
     /// The tab's display title, resolved with the SAME precedence the control backend / Open Quickly use:
-    /// an explicit (user-renamed) `Tab.title` wins; else the active pane's last-known OSC title; else its
+    /// an explicit (user-renamed) `Tab.title` wins; else the active pane's live OSC title; else its
     /// spec title; else the "Tab" placeholder. Never empty — the chip must name SOMETHING.
-    public static func tabDisplayTitle(tab: Tab, specs: [PaneID: PaneSpec]) -> String {
+    ///
+    /// - Parameter liveTitle: the pane's live shell title, which the tree does not carry — the caller
+    ///   reads it from the workspace mirror. `nil` simply falls through to the spec title.
+    public static func tabDisplayTitle(
+        tab: Tab, specs: [PaneID: PaneSpec], liveTitle: (PaneID) -> String? = { _ in nil },
+    ) -> String {
         if !tab.title.isEmpty { return tab.title }
         if let active = tab.activePane ?? tab.allPaneIDs().first, let spec = specs[active] {
-            if let last = spec.lastKnownTitle, !last.isEmpty { return last }
+            if let last = liveTitle(active), !last.isEmpty { return last }
             if !spec.title.isEmpty { return spec.title }
         }
         return "Tab"

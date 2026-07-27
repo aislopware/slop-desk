@@ -25,7 +25,7 @@ final class GroupCycleFocusTests: XCTestCase {
                 focusedPane: a.id,
                 groups: [PaneGroup(id: gid, name: "G")],
             ),
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
         )
 
         store.cycleFocusInGroup(forward: true)
@@ -46,7 +46,7 @@ final class GroupCycleFocusTests: XCTestCase {
         let solo = item(0)
         let store = WorkspaceStore(
             restoring: Workspace(canvas: Canvas(items: [solo]), focusedPane: solo.id),
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
         )
         XCTAssertNil(store.inGroupCycleTarget(forward: true), "a singleton bucket has no cycle target (guard fired)")
         XCTAssertNil(store.inGroupCycleTarget(forward: false))
@@ -65,7 +65,7 @@ final class GroupCycleFocusTests: XCTestCase {
                 focusedPane: u1.id,
                 groups: [PaneGroup(id: gid, name: "G")],
             ),
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
         )
         store.cycleFocusInGroup(forward: true)
         XCTAssertEqual(store.focusedPane, u2.id, "cycles within the ungrouped bucket")

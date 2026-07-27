@@ -12,7 +12,7 @@ import XCTest
 @MainActor
 final class OpenQuicklyFolderActionsTests: XCTestCase {
     func testFolderActionsIncludeSplitRightAndDown() {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
+        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
 
         let titles = OpenQuicklyView.folderRowActions(
             path: "/Users/me/proj", store: store, model: nil, folders: nil,

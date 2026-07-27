@@ -15,7 +15,7 @@ import XCTest
 @MainActor
 final class WorkspaceMirrorFactsTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0) })
+        WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
     }
 
     @discardableResult
@@ -31,38 +31,16 @@ final class WorkspaceMirrorFactsTests: XCTestCase {
         )
     }
 
-    // MARK: - Whose pane id?
+    // MARK: - One id
 
-    /// The document keys panes by the id the HOST mints on channel open. This client's ``PaneID`` is a
-    /// different UUID entirely — minted here, when the pane was created — so a client that queries its
-    /// own id reads a key host truth never writes, and the whole document lands where nothing looks.
+    /// The document keys panes by the id the CLIENT proposed, which is the pane's own ``PaneID``. So
+    /// host truth and this client's control-push overlay land on the SAME key — which is what lets the
+    /// erasure rule (host truth deletes the overlay entry for any key it supplies) actually fire.
     ///
-    /// The mapping is already on disk: `onResumeIdentitySnapshot` fires on every connect and the store
-    /// persists what it learns into ``PaneSpec/resumeSessionID``.
-    func testHostTruthLandsUnderTheHostsPaneID() throws {
+    /// Keyed apart, a client guess that host truth contradicted would win forever. That is the bug.
+    func testHostTruthErasesTheOverlayItContradicts() throws {
         let store = makeStore()
         let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
-        let hostPaneID = UUID()
-        store.noteResumeIdentity(sessionID: hostPaneID, seq: 0, for: paneID)
-
-        applySnapshot(
-            PaneLiveness(
-                paneID: hostPaneID, liveness: .attached, liveTitle: "main.swift - NVIM", titleFresh: true,
-            ),
-            to: store,
-        )
-
-        XCTAssertEqual(store.liveProgramTitle(for: paneID), "main.swift - NVIM")
-    }
-
-    /// …and the overlay has to use that same key, or the two layers are keyed apart and the erasure
-    /// rule — the thing that keeps them disjoint — can never fire. A client guess host truth
-    /// contradicts would then win forever, which is the bug this document exists to end.
-    func testTheOverlayAndHostTruthShareTheHostsKey() throws {
-        let store = makeStore()
-        let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
-        let hostPaneID = UUID()
-        store.noteResumeIdentity(sessionID: hostPaneID, seq: 0, for: paneID)
 
         store.handleCommandStarted(id: paneID)
         store.noteTitlePushed("vi .", for: paneID)
@@ -71,7 +49,7 @@ final class WorkspaceMirrorFactsTests: XCTestCase {
 
         applySnapshot(
             PaneLiveness(
-                paneID: hostPaneID, liveness: .attached, liveTitle: "main.swift - NVIM", titleFresh: true,
+                paneID: paneID.raw, liveness: .attached, liveTitle: "main.swift - NVIM", titleFresh: true,
             ),
             to: store,
         )
@@ -83,10 +61,9 @@ final class WorkspaceMirrorFactsTests: XCTestCase {
         )
     }
 
-    /// A pane that has never connected has no host id to be keyed by. Its overlay stays under the
-    /// local id, which is right: there is no host truth to reconcile with yet, and the reads have to
-    /// keep working headlessly.
-    func testAPaneThatNeverConnectedKeepsItsLocalKey() throws {
+    /// A pane with no host truth yet still reads its own overlay: the reads work headlessly, with no
+    /// channel and nothing to reconcile against.
+    func testAPaneWithNoHostTruthReadsItsOwnOverlay() throws {
         let store = makeStore()
         let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
 
@@ -97,27 +74,15 @@ final class WorkspaceMirrorFactsTests: XCTestCase {
 
     // MARK: - Presence
 
-    /// The roster is SHARED. A tree-local pane id in it names nothing on any other client, and
-    /// nothing would ever complain: no decoder can tell one UUID from another.
-    func testTheReportedViewCarriesTheDocumentPaneID() throws {
+    /// A TAB with no active pane reports the ZERO id — the wire's "none", which the host reads as a
+    /// client looking at nothing in particular.
+    func testAViewOfNoPaneReportsNone() throws {
         let store = makeStore()
         let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
-        let hostPaneID = UUID()
-        store.noteResumeIdentity(sessionID: hostPaneID, seq: 0, for: paneID)
+        XCTAssertEqual(store.currentWorkspaceView().paneID, paneID.raw, "the active pane, by its own id")
 
-        XCTAssertEqual(store.currentWorkspaceView().paneID, hostPaneID)
-        XCTAssertNotEqual(store.currentWorkspaceView().paneID, paneID.raw)
-    }
-
-    /// A pane that has never connected has no document id to report. The zero UUID is the wire's
-    /// "none" — the host reads it as a client that is looking at nothing in particular, which is
-    /// exactly true of one whose only pane has not come up yet.
-    func testAViewOfAnUnconnectedPaneReportsNone() throws {
-        let store = makeStore()
-        let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
-
+        store.tree.sessions[0].tabs[0].activePane = nil
         XCTAssertEqual(store.currentWorkspaceView().paneID, WireMessage.newSessionID)
-        XCTAssertNotEqual(store.currentWorkspaceView().paneID, paneID.raw)
     }
 
     /// Who ELSE has this pane on screen. Reads the roster's `viewingPaneID`, in document ids, minus
@@ -128,8 +93,7 @@ final class WorkspaceMirrorFactsTests: XCTestCase {
     func testViewersNameTheOtherClientsLookingAtAPane() throws {
         let store = makeStore()
         let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
-        let hostPaneID = UUID()
-        store.noteResumeIdentity(sessionID: hostPaneID, seq: 0, for: paneID)
+        let hostPaneID = paneID.raw
         let mine = UUID()
         let theirs = UUID()
         store.attachWorkspaceChannel(WorkspaceChannelClient(

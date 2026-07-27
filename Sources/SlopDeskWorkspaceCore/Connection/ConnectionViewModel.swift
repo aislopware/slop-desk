@@ -43,15 +43,14 @@ public final class ConnectionViewModel {
     // MARK: Detach/resume identity mirror (SLOPDESK_DETACH_ENABLED)
 
     /// The session UUID the client is currently using (presented to the host in the channelOpen
-    /// preamble). Mirrors ``SlopDeskClient/sessionID`` after a successful connect so the store can
-    /// snapshot it into ``PaneSpec/resumeSessionID`` for the next launch. `nil` until the first
-    /// handshake completes. Named to avoid shadowing `sessionID` (the value learned from the last
-    /// `helloAck` — same thing on this path).
+    /// preamble) — the pane's own ``PaneID``, echoed back by the host. Mirrors
+    /// ``SlopDeskClient/sessionID`` after a successful connect. `nil` until the first handshake
+    /// completes. Named to avoid shadowing `sessionID` (the value learned from the last `helloAck` —
+    /// same thing on this path).
     public private(set) var effectiveSessionID: UUID?
 
-    /// Highest contiguous output seq received from the host, snapshotted so the store can persist it
-    /// into ``PaneSpec/resumeLastReceivedSeq``. Driven by the `.rtt` probe tick (~3 s) so it stays
-    /// fresh without a dedicated timer. `0` until the first output chunk.
+    /// Highest contiguous output seq received from the host, snapshotted on the `.rtt` probe tick
+    /// (~3 s) so it stays fresh without a dedicated timer. `0` until the first output chunk.
     public private(set) var snapshotedContiguousSeq: Int64 = 0
 
     /// Last log line from the reconnect supervisor (surfaced in the UI for diagnostics).
@@ -69,14 +68,14 @@ public final class ConnectionViewModel {
     public var onExplicitNotification: ((_ paneTitle: String, _ title: String, _ body: String) -> Void)?
 
     /// A live OSC title change (wire type `.title`). The store persists it into
-    /// ``PaneSpec/lastKnownTitle`` so a relaunch can restore the shell's last-known tab title without a
+    /// `pane/liveTitle` so a relaunch can restore the shell's last-known tab title without a
     /// manual rename. Empty strings suppressed (the host emits "" on connect before the shell sets a
     /// real one). `nil` ⇒ no observer (dropped).
     public var onTitleChanged: ((String) -> Void)?
 
-    /// A resume-identity snapshot (SLOPDESK_DETACH_ENABLED). Called whenever the effective session UUID
-    /// or snapshotted seq change so the store can persist them into ``PaneSpec/resumeSessionID`` /
-    /// ``PaneSpec/resumeLastReceivedSeq`` for the next launch. `nil` ⇒ no observer.
+    /// A resume-identity snapshot (SLOPDESK_DETACH_ENABLED). Fires whenever the effective session UUID
+    /// or the snapshotted seq change — the ~3 s recurring post-connect edge the store hangs its
+    /// git-line and cwd refreshes off. `nil` ⇒ no observer.
     public var onResumeIdentitySnapshot: ((_ sessionID: UUID, _ seq: Int64) -> Void)?
 
     /// A GENUINE reconnect edge (`.reconnected` — distinct from the ~3 s RTT snapshot that also drives
@@ -120,7 +119,7 @@ public final class ConnectionViewModel {
     public var onProgressUpdate: ((_ progress: PaneProgress?) -> Void)?
 
     /// A HOST-derived cwd edge (wire type 33). The store persists this into
-    /// ``PaneSpec/lastKnownCwd`` so the tab's cwd line + cwd inheritance follow the live cwd
+    /// `pane/cwd` so the tab's cwd line + cwd inheritance follow the live cwd
     /// immediately. Host-gated single-source (``MuxChannelSession.deriveProjectKey``): the host
     /// emits only warm-up-gated, dedupe-anchored, probe-preferred change edges (plus the reattach
     /// re-assert), so — like `.projectKey` — it is applied UNGATED here; the plugin-dir poison
@@ -128,7 +127,7 @@ public final class ConnectionViewModel {
     public var onWorkingDirectoryChanged: ((_ cwd: String) -> Void)?
 
     /// A HOST-computed By-Project key edge (wire type 34): the git worktree toplevel containing the
-    /// pane's cwd, else the cwd. The store persists it into ``PaneSpec/projectKey`` (the sidebar's
+    /// pane's cwd, else the cwd. The store persists it into `pane/projectKey` (the sidebar's
     /// By-Project sectioning key). Applied ungated, like `.cwd` — the host re-asserts the latched key
     /// on reattach BEFORE any command runs, and that re-assert is exactly what makes a reconnect
     /// render the final sections without a flicker; transient plugin-dir poison is dropped at the
@@ -741,13 +740,13 @@ public final class ConnectionViewModel {
             // a stale type-30 after a pane switch is harmless.
             metadataClient?.resolve(requestID: requestID, status: status, payload: payload)
         case let .title(text):
-            // Persist the live shell title into the pane spec so a relaunch can restore it. Empty strings
-            // suppressed — the host emits "" on connect before the shell sets a real one.
+            // Fold the live shell title into `pane/liveTitle`. Empty strings suppressed — the host
+            // emits "" on connect before the shell sets a real one.
             // "Title — Shell Controlled" (default ON): when OFF, the SAME fire-time gate the VM
-            // applies to `TerminalViewModel.handle(.title)` must ALSO gate this PERSISTENCE path — otherwise
-            // a remote OSC 0/2 title still writes `spec.lastKnownTitle` and leaks onto the sidebar rail
-            // (which sources its row title from `lastKnownTitle`). Gating here keeps the rail + the relaunch
-            // restore consistent with the VM display gate.
+            // applies to `TerminalViewModel.handle(.title)` must ALSO gate this path — otherwise a
+            // remote OSC 0/2 title still lands in `pane/liveTitle` and leaks onto the sidebar rail
+            // (which sources its row title from there). Gating here keeps the rail consistent with
+            // the VM display gate.
             if SettingsKey.titleShellControlledEnabled, !text.isEmpty { onTitleChanged?(text) }
         case .inputEcho:
             // Secure input (wire type 31): the host PTY echo edge. The terminal model folds it

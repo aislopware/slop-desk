@@ -18,7 +18,8 @@ struct RailRow: Identifiable, Equatable {
     /// The row's muted second line (``SlateTabRow`` subtitle). A terminal shows its cwd RELATIVE to
     /// its section's project key — and ONLY when it strayed from the project root (the git line moved
     /// up to the section header, and repeating the section's own path on every row is noise); a video
-    /// pane keeps its kind-generic ``PaneSpec/railSubtitle`` (host-app/window label). `nil` ⇒ a
+    /// pane keeps its kind-generic ``PaneLabel/railSubtitle(kind:title:video:cwd:liveTitle:)``
+    /// (host-app/window label). `nil` ⇒ a
     /// single-line row (the common at-root pane).
     let subtitle: String?
     let status: ClaudeStatus
@@ -34,8 +35,7 @@ struct RailRow: Identifiable, Equatable {
     /// ``WorkspaceStore/paneReadOnly`` set so the sidebar lock indicator and the pane's `🔒 READ ONLY ×` pill
     /// share one source of truth. Drives ``SlateTabRow``'s trailing lock glyph.
     let readOnly: Bool
-    /// The pane's raw last-known working directory — a terminal pane's `lastKnownCwd`, `nil` for a
-    /// video pane. NOT rendered as chrome: it is the row's TOOLTIP (`.help`) text AND a hidden search key so
+    /// The pane's raw working directory (`pane/cwd`) — `nil` for a video pane. NOT rendered as chrome: it is the row's TOOLTIP (`.help`) text AND a hidden search key so
     /// an at-root row (whose visible subtitle is absent) stays searchable BY PATH and two same-named
     /// worktrees are told apart by their full cwd.
     let cwd: String?
@@ -46,7 +46,7 @@ struct RailRow: Identifiable, Equatable {
     /// Selected = the row's tab is active AND this pane is the tab's active pane.
     let isSelected: Bool
     /// The pane's OWN By-Project key (``WorkspaceStore/paneProjectKey(_:)`` — the HOST-pushed
-    /// ``PaneSpec/projectKey`` else cwd, plugin-dirs guarded out), carried per-ROW so
+    /// `pane/projectKey` else cwd, plugin-dirs guarded out), carried per-ROW so
     /// ``RailRowsBuilder/sectionedByProject(_:tabOrder:query:)`` buckets each pane by ITS project, not its
     /// tab's active-pane project. This is what makes a SPLIT tab's two panes land in their respective
     /// project sections AND stops the section header from flickering with focus. `nil` for a keyless /
@@ -108,6 +108,10 @@ enum RailRowsBuilder {
             for paneID in tab.allPaneIDs() {
                 let spec = session.specs[paneID]
                 let kind = spec?.kind ?? .terminal
+                // The two per-pane FACTS the tree does not carry (docs/45 §5.3): where the shell is,
+                // and the freshness-gated title the running program asserted.
+                let cwd = store.paneCwd(for: paneID)
+                let liveTitle = store.liveProgramTitle(for: paneID)
                 // The row's VOLATILE chrome (status / badge / git line / process / lock / rename mode) —
                 // resolved by the SAME `chrome(...)` the live row views read directly. The sidebar body
                 // memoizes these rows and each row VIEW re-reads its own chrome fresh, so the resolution
@@ -125,7 +129,8 @@ enum RailRowsBuilder {
                 // at-root pane titles by its foreground program (the section header names the folder); a
                 // cwd-less pane falls back to its foreground program before the generic chain.
                 let title = Self.rowTitle(
-                    kind: kind, spec: spec, processLabel: chrome.processLabel, projectKey: projectKey,
+                    kind: kind, spec: spec, cwd: cwd, liveTitle: liveTitle,
+                    processLabel: chrome.processLabel, projectKey: projectKey,
                 )
                 let isSelected = tabIsActive && tab.activePane == paneID
                 out.append(RailRow(
@@ -139,7 +144,7 @@ enum RailRowsBuilder {
                     badge: chrome.badge,
                     processLabel: chrome.processLabel,
                     readOnly: chrome.readOnly,
-                    cwd: kind == .terminal ? spec?.lastKnownCwd : nil,
+                    cwd: kind == .terminal ? cwd : nil,
                     isEditing: chrome.isEditing,
                     isSelected: isSelected,
                     projectKey: projectKey,
@@ -176,7 +181,7 @@ enum RailRowsBuilder {
     /// Resolve one pane's volatile chrome — the SINGLE resolution rule behind both ``rows(for:)`` (the full
     /// model build) and ``liveChrome(for:store:)`` (the per-row view's fresh read), so the two can't drift.
     ///
-    /// Line 2 (``paneSubtitle(kind:spec:projectKey:)``): a terminal shows its cwd RELATIVE to its
+    /// Line 2 (``paneSubtitle(kind:spec:cwd:liveTitle:projectKey:)``): a terminal shows its cwd RELATIVE to its
     /// section's project key, and only when it differs (the git line lives on the section header now —
     /// the one per-pane fact left is "this pane strayed from the project root"); a
     /// `.desktop` video pane (no shell cwd) keeps the host-side target's owning app
@@ -203,6 +208,7 @@ enum RailRowsBuilder {
         let processLabel = store.paneForegroundProcess[paneID]
         let subtitle = Self.paneSubtitle(
             kind: kind, spec: spec,
+            cwd: store.paneCwd(for: paneID), liveTitle: store.liveProgramTitle(for: paneID),
             projectKey: kind == .terminal ? store.paneProjectKey(paneID) : nil,
         )
         let status = store.paneAgentStatus[paneID] ?? .none
@@ -239,20 +245,23 @@ enum RailRowsBuilder {
     /// `nil` when the pane sits AT the project root (the section header already names the place; a
     /// subtitle repeating it on every row is noise, and the row collapses to single-line height), the
     /// relative path (`packages/api`) when it strayed INTO the project's subtree, and the kind-generic
-    /// ``PaneSpec/railSubtitle`` (the full cwd) when the cwd is OUTSIDE the key's subtree — a stale
+    /// kind-generic subtitle (the full cwd) when the cwd is OUTSIDE the key's subtree — a stale
     /// key across an un-re-pushed `cd`, where a relative path can't be formed and hiding the location
-    /// would lie. Non-terminal kinds always keep ``PaneSpec/railSubtitle`` (video host-app label).
+    /// would lie. Non-terminal kinds always keep the kind-generic subtitle (video host-app label).
     /// Pure + static so the rule is unit-pinned without a view.
-    static func paneSubtitle(kind: PaneKind, spec: PaneSpec?, projectKey: String?) -> String? {
-        guard kind == .terminal, let spec else { return spec?.railSubtitle }
+    static func paneSubtitle(
+        kind: PaneKind, spec: PaneSpec?, cwd paneCwd: String?, liveTitle: String?, projectKey: String?,
+    ) -> String? {
+        let generic = spec?.railSubtitle(cwd: paneCwd, liveTitle: liveTitle)
+        guard kind == .terminal, spec != nil else { return generic }
         guard let key = TabOrderingEngine.normalizedProjectKey(projectKey),
-              var cwd = spec.lastKnownCwd?.trimmingCharacters(in: .whitespacesAndNewlines),
+              var cwd = paneCwd?.trimmingCharacters(in: .whitespacesAndNewlines),
               !cwd.isEmpty
-        else { return spec.railSubtitle }
+        else { return generic }
         while cwd.count > 1, cwd.hasSuffix("/") { cwd.removeLast() }
         if cwd == key { return nil }
         if cwd.hasPrefix(key + "/") { return String(cwd.dropFirst(key.count + 1)) }
-        return spec.railSubtitle
+        return generic
     }
 
     /// The row VIEW's entry: resolve `row`'s CURRENT volatile chrome from the live store (the cached
@@ -309,7 +318,7 @@ enum RailRowsBuilder {
     /// the basepath still beats the meaningless kind-generic "Terminal") — rather than an OSC shell
     /// title restating the place; and a pane with no known cwd yet falls back to the host FOREGROUND-PROCESS name
     /// (`processLabel`, wire type 26 — a real program, a bare login shell suppressed) before the generic
-    /// shell-title chain. Non-terminal kinds keep the `lastKnownTitle ?? title` chain unchanged. Pure +
+    /// shell-title chain. Non-terminal kinds keep the `liveTitle ?? title` chain unchanged. Pure +
     /// static so the mapping is unit-pinned without a view.
     ///
     /// - Parameter processLabel: the pane's host-reported foreground process (``WorkspaceStore/paneForegroundProcess``),
@@ -319,25 +328,26 @@ enum RailRowsBuilder {
     ///   supplied by the SIDEBAR builder only, where a section header already names the project. The
     ///   titlebar/window call sites omit it (no header there — the folder name stays the right title).
     static func rowTitle(
-        kind: PaneKind, spec: PaneSpec?, processLabel: String? = nil, projectKey: String? = nil,
+        kind: PaneKind, spec: PaneSpec?, cwd: String? = nil, liveTitle: String? = nil,
+        processLabel: String? = nil, projectKey: String? = nil,
     ) -> String {
-        let fallback = spec?.lastKnownTitle ?? spec?.title ?? ""
+        let fallback = liveTitle ?? spec?.title ?? ""
         guard kind == .terminal, let spec else { return fallback }
         // An EXPLICIT user rename (⌘R / palette / inline field) always wins — gated on the unambiguous
-        // `userRenamed` flag, NOT a `title != lastKnownTitle` heuristic: that would latch a stale
+        // `userRenamed` flag, NOT a `title != liveTitle` heuristic: that would latch a stale
         // load-time-promoted title as a phantom "rename" the moment a shell emits a SECOND OSC title.
         if spec.userRenamed, !spec.title.isEmpty {
             return spec.title
         }
         // At the project root the folder name repeats the section header — title by the program.
         if let key = TabOrderingEngine.normalizedProjectKey(projectKey),
-           TabOrderingEngine.normalizedProjectKey(spec.lastKnownCwd) == key
+           TabOrderingEngine.normalizedProjectKey(cwd) == key
         {
             return processDisplayName(processLabel) ?? ""
         }
         // Folder name is the primary identity; when the cwd is not known yet (no OSC-7, host pull not
         // landed) the pane is titled by its live foreground program before the generic "Terminal" chain.
-        return cwdFolderName(spec.lastKnownCwd)
+        return cwdFolderName(cwd)
             ?? processDisplayName(processLabel)
             ?? fallback
     }

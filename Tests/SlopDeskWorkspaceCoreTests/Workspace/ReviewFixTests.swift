@@ -10,7 +10,7 @@ import XCTest
 @MainActor
 final class ReviewFixTests: XCTestCase {
     private func makeStore(restoring: Workspace? = nil) -> WorkspaceStore {
-        WorkspaceStore(restoring: restoring, makeSession: { FakePaneSession($0) }, liveVideoCap: 5)
+        WorkspaceStore(restoring: restoring, makeSession: { seed in FakePaneSession(seed.spec) }, liveVideoCap: 5)
     }
 
     // MARK: - F1: layout switch clears pending dialogs

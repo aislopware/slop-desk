@@ -52,7 +52,7 @@ final class SlateSnapshotRender: XCTestCase {
             throw XCTSkip("set SLOPDESK_OVERLAY_SNAPSHOT_DIR=<dir> to render the overlay panels")
         }
 
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
+        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
         let overlay = OverlayCoordinator(store: store)
         overlay.openPalette()
         overlay.paletteQuery = "split" // a typed query so the fzf highlight runs render
@@ -235,9 +235,11 @@ final class SlateSnapshotRender: XCTestCase {
     private func makeSectionStore(key: String) -> WorkspaceStore {
         var tabs: [SlopDeskWorkspaceModel.Tab] = []
         var specs: [PaneID: PaneSpec] = [:]
+        var paneCwds: [PaneID: String] = [:]
         for _ in 0..<3 {
             let pane = PaneID()
-            specs[pane] = PaneSpec(kind: .terminal, title: "", lastKnownCwd: key)
+            specs[pane] = PaneSpec(kind: .terminal, title: "")
+            paneCwds[pane] = key
             tabs.append(SlopDeskWorkspaceModel.Tab(title: "", root: .leaf(pane), activePane: pane))
         }
         let session = Session(name: "Local", tabs: tabs, activeTabIndex: 0, specs: specs)
@@ -245,10 +247,11 @@ final class SlateSnapshotRender: XCTestCase {
         let store = WorkspaceStore(
             restoringTree: tree,
             liveModel: .tree,
-            makeSession: { MountTestPaneSession($0) },
+            makeSession: { seed in MountTestPaneSession(seed.spec) },
             liveVideoCap: 2,
             persistence: nil,
         )
+        for (pane, cwd) in paneCwds { store.setLastKnownCwd(cwd, for: pane) }
         store.projectGitSummary[key] = PaneGitSummary(
             hasRepo: true, branch: "main", ahead: 2, behind: 1, changedCount: 4, staged: 1, modified: 3,
             untracked: 5, conflicted: 2, stash: 1,
@@ -267,7 +270,7 @@ final class SlateSnapshotRender: XCTestCase {
     /// `SlateSectionHeader` sections (project basenames) with the per-row `#N` / badge chrome. SAME
     /// `ImageRenderer` opt-in idiom as the badge render; writes `navigator-grouped.png` into
     /// `SLOPDESK_TABROW_SNAPSHOT_DIR`. Headless: a `.tree` store over `MountTestPaneSession` (no socket / video /
-    /// Metal — the hang-safety rule); the project keys come from each pane's `lastKnownCwd`.
+    /// Metal — the hang-safety rule); the project keys come from each pane's `pane/cwd`.
     @MainActor
     func testRenderNavigatorGrouped() throws {
         guard let dir = ProcessInfo.processInfo.environment["SLOPDESK_TABROW_SNAPSHOT_DIR"] else {
@@ -294,9 +297,11 @@ final class SlateSnapshotRender: XCTestCase {
         // `SplitContainer.swift`) so the fixture resolves to the tree model.
         var tabs: [SlopDeskWorkspaceModel.Tab] = []
         var specs: [PaneID: PaneSpec] = [:]
+        var paneCwds: [PaneID: String] = [:]
         for row in rows {
             let pane = PaneID()
-            specs[pane] = PaneSpec(kind: .terminal, title: row.title, lastKnownCwd: row.cwd)
+            specs[pane] = PaneSpec(kind: .terminal, title: row.title)
+            paneCwds[pane] = row.cwd
             tabs.append(SlopDeskWorkspaceModel.Tab(title: row.title, root: .leaf(pane), activePane: pane))
         }
         let session = Session(name: "Local", tabs: tabs, activeTabIndex: 0, specs: specs)
@@ -304,10 +309,11 @@ final class SlateSnapshotRender: XCTestCase {
         let store = WorkspaceStore(
             restoringTree: tree,
             liveModel: .tree,
-            makeSession: { MountTestPaneSession($0) },
+            makeSession: { seed in MountTestPaneSession(seed.spec) },
             liveVideoCap: 2,
             persistence: nil,
         )
+        for (pane, cwd) in paneCwds { store.setLastKnownCwd(cwd, for: pane) }
         let panes = tabs.compactMap(\.activePane)
         if panes.count >= 5 {
             store.setForegroundProcess("zsh", for: panes[0])

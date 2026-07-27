@@ -22,7 +22,7 @@ import XCTest
 @MainActor
 final class RailRowsMemoTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
+        WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
     }
 
     /// A rich store: three tabs across two projects, one split tab, plus seeded statuses/git/process — the
@@ -139,6 +139,61 @@ final class RailRowsMemoTests: XCTestCase {
         let afterRename = memo.rows(for: store)
         XCTAssertEqual(memo.buildCount, 4, "an explicit rename → rebuild")
         XCTAssertEqual(afterRename[4].title, "deploy box")
+    }
+
+    /// THE MEMO'S BLIND SPOT, pinned. A pane's cwd and its live shell title are not on its `PaneSpec`
+    /// — they are document facts — so the structural fingerprint has to name them EXPLICITLY. If it does
+    /// not, the memo returns cached rows forever and the sidebar freezes on a stale title and a stale
+    /// tooltip after a `cd`: no crash, no log, no compile error.
+    ///
+    /// Both mutations here are deliberately masked against every OTHER fingerprint member: the pane's
+    /// `projectKey` is HOST-PUSHED and held constant, so the cwd cannot leak in through the sectioning
+    /// key, and the pane is STRAYED (cwd below the key) so its title never resolves from the process.
+    func testAChangedCwdRebuildsTheRows() throws {
+        let store = makeStore()
+        let pane = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
+        store.setProjectKey("/Users/me/repo", for: pane)
+        store.setLastKnownCwd("/Users/me/repo/packages/api", for: pane)
+
+        let memo = RailRowsMemo()
+        let before = memo.rows(for: store)
+        XCTAssertEqual(memo.buildCount, 1)
+        XCTAssertEqual(before.first?.title, "api", "the folder name titles the strayed row")
+        XCTAssertEqual(memo.rows(for: store).count, before.count, "settled: the next read is a hit")
+        XCTAssertEqual(memo.buildCount, 1)
+
+        // ONLY the cwd moves. The project key is unchanged, so nothing else in the key can notice.
+        store.setLastKnownCwd("/Users/me/repo/packages/web", for: pane)
+        let afterCwd = memo.rows(for: store)
+        XCTAssertEqual(memo.buildCount, 2, "a `cd` must rebuild — the rail titles itself by the cwd")
+        XCTAssertEqual(afterCwd.first?.title, "web", "and the rebuilt row carries the new folder name")
+        XCTAssertEqual(
+            afterCwd.first?.cwd, "/Users/me/repo/packages/web",
+            "the raw cwd rides the MEMOIZED row (tooltip + hidden search key), not `liveChrome`",
+        )
+    }
+
+    /// The same blind spot for the live shell title: `nvim` asserts one, the row must show it, and the
+    /// memo has to see it move. Freshness-gated, so the assertion goes through the same funnel the
+    /// title chain uses rather than the raw `pane/liveTitle`.
+    func testAChangedLiveTitleRebuildsTheRows() throws {
+        let store = makeStore()
+        let pane = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
+        store.setProjectKey("/Users/me/repo", for: pane)
+        store.setLastKnownCwd("/Users/me/repo", for: pane) // AT root ⇒ the row titles by program
+        store.setForegroundProcess("nvim", for: pane)
+
+        let memo = RailRowsMemo()
+        _ = memo.rows(for: store)
+        _ = memo.rows(for: store)
+        XCTAssertEqual(memo.buildCount, 1, "settled")
+
+        store.noteTitlePushed("main.swift - NVIM", for: pane)
+        _ = memo.rows(for: store)
+        XCTAssertEqual(
+            memo.buildCount, 2,
+            "an OSC title the running program asserted is a title input — the memo must see it move",
+        )
     }
 
     /// Title-resolution asymmetry: a CWD-LESS pane titles itself by its foreground process, so a process change on such a
@@ -286,40 +341,46 @@ final class RailRowsMemoTests: XCTestCase {
     func testTitledByProcessGuard() {
         let bareTerminal = PaneSpec(kind: .terminal, title: "")
         XCTAssertTrue(
-            RailStructureKey.titledByProcess(kind: .terminal, spec: bareTerminal),
+            RailStructureKey.titledByProcess(kind: .terminal, spec: bareTerminal, cwd: nil),
             "a cwd-less, non-renamed terminal pane titles itself by the foreground process",
         )
 
-        let cwdSpec = PaneSpec(kind: .terminal, title: "", lastKnownCwd: "/Users/me/alpha")
         XCTAssertFalse(
-            RailStructureKey.titledByProcess(kind: .terminal, spec: cwdSpec),
+            RailStructureKey.titledByProcess(
+                kind: .terminal, spec: bareTerminal, cwd: "/Users/me/alpha",
+            ),
             "a known cwd folder name wins where no section key is supplied (titlebar/window-title sites)",
         )
 
         // The sidebar fingerprint supplies the section key: AT the project root the at-root rung
         // titles by the program (the process IS a title input); a strayed pane keeps the folder name.
         XCTAssertTrue(
-            RailStructureKey.titledByProcess(kind: .terminal, spec: cwdSpec, projectKey: "/Users/me/alpha"),
+            RailStructureKey.titledByProcess(
+                kind: .terminal, spec: bareTerminal, cwd: "/Users/me/alpha",
+                projectKey: "/Users/me/alpha",
+            ),
             "at the project root the title resolves from the process — structural for the sidebar",
         )
         XCTAssertFalse(
-            RailStructureKey.titledByProcess(kind: .terminal, spec: cwdSpec, projectKey: "/Users/me"),
+            RailStructureKey.titledByProcess(
+                kind: .terminal, spec: bareTerminal, cwd: "/Users/me/alpha", projectKey: "/Users/me",
+            ),
             "a strayed pane stays folder-titled — its process ticks stay volatile",
         )
 
         let renamedSpec = PaneSpec(kind: .terminal, title: "deploy box", userRenamed: true)
         XCTAssertFalse(
-            RailStructureKey.titledByProcess(kind: .terminal, spec: renamedSpec),
+            RailStructureKey.titledByProcess(kind: .terminal, spec: renamedSpec, cwd: nil),
             "an explicit user rename wins — it never falls back to the process",
         )
 
         XCTAssertFalse(
-            RailStructureKey.titledByProcess(kind: .desktop, spec: bareTerminal),
+            RailStructureKey.titledByProcess(kind: .desktop, spec: bareTerminal, cwd: nil),
             "only a terminal pane's title chain ever escapes to the process fallback",
         )
 
         XCTAssertFalse(
-            RailStructureKey.titledByProcess(kind: .terminal, spec: nil),
+            RailStructureKey.titledByProcess(kind: .terminal, spec: nil, cwd: nil),
             "a spec-less pane has no title chain to resolve, structural or otherwise",
         )
     }

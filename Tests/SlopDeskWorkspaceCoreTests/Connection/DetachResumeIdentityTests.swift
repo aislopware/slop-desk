@@ -72,162 +72,40 @@ final class DetachResumeIdentityTests: XCTestCase {
         )
     }
 
-    // MARK: - WorkspaceStore wires onResumeIdentitySnapshot → updateSpecLive
+    // MARK: - Cold-launch reattach: the pane presents its OWN id
 
-    /// The store's `wireMaterializedLeaf` wires `onResumeIdentitySnapshot` so a snapshot call
-    /// persists the session UUID and seq into the pane's spec (the same mechanism as `onTitleChanged`
-    /// → `lastKnownTitle`). Proved on the tree path via `reconcileTree()`.
-    func testStoreWiresResumeIdentitySnapshotIntoSpec() async throws {
-        let paneID = PaneID()
-        let session = makeSession(paneID: paneID)
-        let vm = try XCTUnwrap(session.connection)
-
-        // The VM should have `onResumeIdentitySnapshot` wired by the store at materialize time.
-        XCTAssertNotNil(vm.onResumeIdentitySnapshot, "store must wire onResumeIdentitySnapshot on materialize")
-
-        let capturedID = UUID()
-        let capturedSeq: Int64 = 77
-
-        // Fire the closure directly (simulates the RTT-tick snapshot or a .reconnected event).
-        vm.onResumeIdentitySnapshot?(capturedID, capturedSeq)
-
-        // The store should have persisted it into the spec via updateSpecLive.
-        // Give the runloop a turn for the synchronous updateSpecLive path.
-        await Task.yield()
-        let spec = session.store.tree.spec(for: paneID)
-        XCTAssertEqual(
-            spec?.resumeSessionID, capturedID,
-            "onResumeIdentitySnapshot must persist sessionID into spec.resumeSessionID",
-        )
-        XCTAssertEqual(
-            spec?.resumeLastReceivedSeq, capturedSeq,
-            "onResumeIdentitySnapshot must persist seq into spec.resumeLastReceivedSeq",
-        )
-    }
-
-    /// A second snapshot with a higher seq must overwrite (no dirty-guard that would block updates).
-    func testResumeIdentitySnapshotUpdatesExistingValues() async throws {
-        let paneID = PaneID()
-        let session = makeSession(paneID: paneID)
-        let vm = try XCTUnwrap(session.connection)
-
-        let id = UUID()
-        vm.onResumeIdentitySnapshot?(id, 10)
-        await Task.yield()
-        vm.onResumeIdentitySnapshot?(id, 20)
-        await Task.yield()
-
-        XCTAssertEqual(
-            session.store.tree.spec(for: paneID)?.resumeLastReceivedSeq, 20,
-            "a second snapshot with a higher seq must overwrite the first",
-        )
-    }
-
-    /// A snapshot with the SAME values as already in the spec must not cause an extra reconcile
-    /// (the dirty guard `guard spec.resumeSessionID != sessionID || spec.resumeLastReceivedSeq != seq`
-    /// prevents a needless spec update + save burst).
-    func testResumeIdentitySnapshotDirtyGuardSuppressesNoOpUpdate() async throws {
-        let paneID = PaneID()
-        let session = makeSession(paneID: paneID)
-        let vm = try XCTUnwrap(session.connection)
-
-        let id = UUID()
-        let seq: Int64 = 42
-        vm.onResumeIdentitySnapshot?(id, seq)
-        await Task.yield()
-
-        // Record the save-generation before the second (no-op) call.
-        let genBefore = session.store.saveGeneration
-        vm.onResumeIdentitySnapshot?(id, seq) // identical values → should be a no-op
-        await Task.yield()
-        let genAfter = session.store.saveGeneration
-
-        XCTAssertEqual(
-            genBefore, genAfter,
-            "a snapshot with identical values must not bump saveGeneration (dirty guard)",
-        )
-    }
-
-    // MARK: - Cold-launch scrollback: LivePaneSession.make seeds seq=0 always
-
-    /// COLD LAUNCH contract (SLOPDESK_SCROLLBACK_PERSIST):
-    /// `LivePaneSession.make` with a spec that carries BOTH `resumeSessionID` and a
-    /// non-zero `resumeLastReceivedSeq` must seed the client's resume identity with
-    /// `seq=0`, NOT the spec's saved seq.
+    /// THE NORTH-STAR REATTACH CONTRACT. `LivePaneSession.make` seeds the client's resume identity
+    /// with the LEAF's own `PaneID` and `seq = 0`.
     ///
-    /// Why: `resumeLastReceivedSeq` is the seq from a PREVIOUS session's live state,
-    /// persisted to disk. On cold launch the client is brand-new (`highestContiguousSeq=0`
-    /// in the fresh actor), so presenting the old seq to the host would cause it to skip
-    /// the scrollback ring entries (all with seq ≤ ackedSeq ≤ savedSeq). By always seeding
-    /// `seq=0` the host gets `lastReceivedSeq=0` and replays the entire ring.
+    /// The id: the client proposes object ids, so the pane the layout calls X is the pane the host
+    /// files its PTY and its liveness under. A pane that has run before reattaches to its own shell;
+    /// a brand-new one spawns a fresh shell under that same id (`HostServer.spawnFreshShell` branches
+    /// only on the ZERO id), so nothing has to know which case it is in.
     ///
-    /// Proved by connecting the seeded client to a recording transport and asserting that
-    /// `connect(lastReceivedSeq:)` receives 0, not the spec's saved seq.
-    func testLivePaneSessionMakeSeedsSeqZeroEvenWhenSpecHasNonZeroResumeSeq() async throws {
-        let resumeID = UUID()
-        let savedSeq: Int64 = 9999 // a non-zero seq from the previous session
-
-        // Build a spec with BOTH resumeSessionID and resumeLastReceivedSeq set.
-        let spec = PaneSpec(
-            kind: .terminal,
-            title: "Terminal",
-            resumeSessionID: resumeID,
-            resumeLastReceivedSeq: savedSeq,
-        )
-
-        // Build the seeded client the same way LivePaneSession.make does:
-        // seed seq=0 always (the cold-launch fix).
-        let savedResumeID = spec.resumeSessionID // non-nil
+    /// The seq: this is a COLD path — the client actor is brand-new, so `highestContiguousSeq` starts
+    /// at 0 regardless. Presenting a non-zero seq would tell the host to replay only `seq > N`,
+    /// skipping the whole scrollback ring; presenting 0 gets the full ring, like `tmux attach`.
+    func testMakeTerminalPresentsThePanesOwnIDAsTheResumeSeed() async throws {
+        let paneID = PaneID()
         let recording = SeedRecordingTransport()
-        let client = SlopDeskClient(makeTransport: { recording })
-        if let id = savedResumeID {
-            await client.seedResumeIdentity(sessionID: id, seq: 0) // THE FIXED LINE
-        }
+        let session = LivePaneSession.make(
+            paneID: paneID,
+            spec: PaneSpec(kind: .terminal, title: "Terminal"),
+            makeClient: { seed in SlopDeskClient(makeTransport: { recording }, resumeSeed: seed) },
+            makeInspector: { _ in nil },
+            target: { .default },
+        )
 
-        // Connect so the recording transport captures what was presented.
-        try await client.connect(host: "h", port: 1)
+        let vm = try XCTUnwrap(session.connection, "a .terminal pane always has a connection")
+        await vm.connect()
+
         let (presentedResume, presentedSeq) = await recording.connectArgs
-
         XCTAssertEqual(
-            presentedResume,
-            resumeID,
-            "cold launch must present the saved resumeSessionID to the host",
+            presentedResume, paneID.raw,
+            "the pane presents its OWN id, so host liveness lands under the id the topology uses",
         )
-        XCTAssertEqual(
-            presentedSeq,
-            0,
-            "cold launch must present lastReceivedSeq=0 regardless of spec.resumeLastReceivedSeq (\(savedSeq))",
-        )
-
-        await client.close()
-    }
-
-    /// Validates that the OLD behavior (seeding with `spec.resumeLastReceivedSeq`) would have
-    /// presented a non-zero seq to the host — confirming that the fix actually changes behavior.
-    ///
-    /// This is the "revert-to-confirm-fail" companion: if we used the OLD code
-    /// `seedResumeIdentity(sessionID:, seq: spec.resumeLastReceivedSeq ?? 0)` with a non-nil
-    /// spec seq, the host would receive a non-zero `lastReceivedSeq` and skip the scrollback ring.
-    func testOldCodeWithNonZeroSpecSeqWouldPresentNonZeroToHost() async throws {
-        let resumeID = UUID()
-        let savedSeq: Int64 = 5000 // the old code would use this
-
-        let recording = SeedRecordingTransport()
-        let client = SlopDeskClient(makeTransport: { recording })
-        // Simulate OLD behavior: seed with the spec seq (non-zero).
-        await client.seedResumeIdentity(sessionID: resumeID, seq: savedSeq)
-
-        try await client.connect(host: "h", port: 1)
-        let (_, presentedSeq) = await recording.connectArgs
-
-        XCTAssertEqual(
-            presentedSeq,
-            savedSeq,
-            "OLD behavior (seeding spec seq) would present savedSeq (\(savedSeq)) to the host, "
-                + "skipping the scrollback ring — this is the bug the fix corrects",
-        )
-
-        await client.close()
+        XCTAssertEqual(presentedSeq, 0, "a cold launch asks for the whole ring")
+        XCTAssertEqual(session.id, paneID, "and the handle IS that leaf, with no adopt() to fix it up")
     }
 
     // MARK: - seed-resume-identity-race: LivePaneSession.make seeds at construction, not via a Task
@@ -249,17 +127,11 @@ final class DetachResumeIdentityTests: XCTestCase {
     /// order, because the seed is set synchronously in `init` before `makeClientSeeded` (a plain
     /// zero-arg closure with no `Task` left in it) ever returns the client.
     func testLivePaneSessionMakeSeedsClientAtConstructionNoRace() async throws {
-        let resumeID = UUID()
-        let spec = PaneSpec(
-            kind: .terminal,
-            title: "Terminal",
-            resumeSessionID: resumeID,
-            resumeLastReceivedSeq: 555, // must be ignored — cold path always presents 0
-        )
-
+        let paneID = PaneID()
         let recording = SeedRecordingTransport()
         let session = LivePaneSession.make(
-            spec,
+            paneID: paneID,
+            spec: PaneSpec(kind: .terminal, title: "Terminal"),
             makeClient: { seed in SlopDeskClient(makeTransport: { recording }, resumeSeed: seed) },
             makeInspector: { _ in nil },
             target: { .default },
@@ -270,13 +142,13 @@ final class DetachResumeIdentityTests: XCTestCase {
 
         let (presentedResume, presentedSeq) = await recording.connectArgs
         XCTAssertEqual(
-            presentedResume, resumeID,
-            "LivePaneSession.make must seed the restored sessionID at construction, with no race "
+            presentedResume, paneID.raw,
+            "LivePaneSession.make must seed the resume identity at construction, with no race "
                 + "against ConnectionViewModel's separately-scheduled connect() Task",
         )
         XCTAssertEqual(
             presentedSeq, 0,
-            "cold launch must present lastReceivedSeq=0 regardless of the saved spec seq",
+            "cold launch must present lastReceivedSeq=0",
         )
     }
 
@@ -305,9 +177,9 @@ final class DetachResumeIdentityTests: XCTestCase {
         let store = WorkspaceStore(
             restoringTree: tree,
             liveModel: .tree,
-            makeSession: { spec in
+            makeSession: { seed in
                 LivePaneSession.make(
-                    spec,
+                    paneID: seed.id, spec: seed.spec, spawnCwd: seed.spawnCwd,
                     makeClient: { _ in
                         SlopDeskClient(makeTransport: {
                             // An inert transport: connect() is never called in these tests,

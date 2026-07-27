@@ -16,7 +16,7 @@ final class WorkspaceBindingRoutingTests: XCTestCase {
         WorkspaceStore(
             restoringTree: .defaultWorkspace(),
             liveModel: .tree,
-            makeSession: { RecordingTerminalPaneSession($0) },
+            makeSession: { seed in RecordingTerminalPaneSession(seed.spec) },
             liveVideoCap: 2,
         )
     }
@@ -121,7 +121,7 @@ final class WorkspaceBindingRoutingTests: XCTestCase {
     /// `routeCanvas` case FORWARDS (not just compiles the exhaustive switch).
     func testPinWindowRoutesOnCanvasPath() {
         let store = WorkspaceStore(
-            makeSession: { RecordingTerminalPaneSession($0) },
+            makeSession: { seed in RecordingTerminalPaneSession(seed.spec) },
             liveVideoCap: 2,
         )
         var fired = 0

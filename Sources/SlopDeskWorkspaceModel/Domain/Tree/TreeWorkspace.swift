@@ -54,10 +54,9 @@ public struct TreeWorkspace: Codable, Sendable, Equatable {
         activeSessionID = try c.decodeIfPresent(SessionID.self, forKey: .activeSessionID)
     }
 
-    /// The schema version this redesigned shape writes (docs/42 §Domain model = 10; bumped to 11 for
-    /// the additive Stage-1 persistence fields on ``PaneSpec`` — `resumeSessionID`,
-    /// `resumeLastReceivedSeq`, `lastKnownCwd`, `lastKnownTitle`). The live v9 ``Workspace`` still
-    /// owns its own `currentSchemaVersion = 9`; these coexist during the cutover.
+    /// The schema version this shape writes. A file carrying any OTHER version is not migrated — the
+    /// load path resets it aside (single-user, no backward compatibility). The retained-but-dead
+    /// canvas ``Workspace`` owns its own `currentSchemaVersion = 9`.
     public static let currentSchemaVersion = 11
 }
 

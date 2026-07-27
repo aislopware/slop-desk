@@ -27,7 +27,7 @@ import SlopDeskWorkspaceModel
 ///   connection-backed terminal.
 ///
 /// ### Lazy connect (load-bearing, docs/22 §6 RESTORED-vs-RECONNECTED)
-/// ``make(_:makeClient:makeInspector:)`` BUILDS the `ConnectionViewModel` (host/port pre-filled from
+/// ``make(paneID:spec:spawnCwd:makeClient:makeInspector:target:)`` BUILDS the `ConnectionViewModel` (host/port pre-filled from
 /// `spec.endpoint`) but does **not** `connect()`. The view triggers `connect()` lazily on appear
 /// so restoring a 12-pane workspace doesn't slam 12 sockets at launch.
 @preconcurrency
@@ -38,8 +38,8 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
 {
     // MARK: Identity
 
-    /// Placeholder at construction, then re-pointed to the leaf's id by the store's `reconcile()` via
-    /// ``adopt(id:)`` (injection seam is spec-only — see ``PaneSessionIDAdopting``). Stable thereafter.
+    /// The leaf's identity, handed to the factory at construction and stable for the session's life.
+    /// ``adopt(id:)`` survives for the handles that are built without one (the test doubles).
     public private(set) var id: PaneID
     public let kind: PaneKind
 
@@ -218,7 +218,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     // MARK: Init
 
     /// The designated initializer is private — production builds a `LivePaneSession` only through
-    /// ``make(_:makeClient:makeInspector:)`` so the wiring stays in one audited place.
+    /// ``make(paneID:spec:spawnCwd:makeClient:makeInspector:target:)`` so the wiring stays in one audited place.
     private init(
         id: PaneID,
         kind: PaneKind,
@@ -249,6 +249,9 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// (docs/22 §6 lazy connect). What the store injects as `makeSession` in production.
     ///
     /// - Parameters:
+    ///   - paneID: the LEAF's identity. It is also the session id this pane presents to the host on
+    ///     `channelOpen`, so the host's liveness records land under the very id the layout uses — one
+    ///     namespace, no translation table (DECISIONS, Multi-client Phase 5 ruling 1).
     ///   - spec: the leaf intent (kind + endpoint(s) + title). Endpoint pre-fills the connection /
     ///     remote-window form fields; an unconfigured spec yields an idle, fillable session.
     ///   - makeClient: the `@Sendable (SlopDeskClient.ResumeSeed?) -> SlopDeskClient` factory used to
@@ -263,19 +266,21 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     ///     second channel is available. Retained for the `resume()` rebuild.
     @preconcurrency
     public static func make(
-        _ spec: PaneSpec,
+        paneID: PaneID,
+        spec: PaneSpec,
+        spawnCwd: String? = nil,
         makeClient: @escaping @Sendable (SlopDeskClient.ResumeSeed?) -> SlopDeskClient,
         makeInspector: @escaping @MainActor (ConnectionTarget) -> InspectorClient?,
         target: @escaping @MainActor () -> ConnectionTarget = { .default },
     ) -> LivePaneSession {
-        // `make` is a pure spec→session factory: the spec carries no id (identity lives on the tree
-        // leaf), so the session mints a placeholder ``PaneID`` here; the store's `reconcile()` re-points
-        // it to the real leaf id via `adopt(id:)` before registering.
         switch spec.kind {
         case .terminal:
-            makeTerminal(spec, makeClient: makeClient, makeInspector: makeInspector, target: target)
+            makeTerminal(
+                paneID: paneID, spec: spec, spawnCwd: spawnCwd,
+                makeClient: makeClient, makeInspector: makeInspector, target: target,
+            )
         case .desktop:
-            makeVideo(spec, target: target)
+            makeVideo(paneID: paneID, spec: spec, target: target)
         }
     }
 
@@ -284,28 +289,29 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// machine — wired for EVERY terminal. The inspector second channel is not opened here; it's
     /// subscribed dynamically once ``claudeStatus`` lifts off `.none`.
     private static func makeTerminal(
-        _ spec: PaneSpec,
+        paneID: PaneID,
+        spec: PaneSpec,
+        spawnCwd: String?,
         makeClient: @escaping @Sendable (SlopDeskClient.ResumeSeed?) -> SlopDeskClient,
         makeInspector: @escaping @MainActor (ConnectionTarget) -> InspectorClient?,
         target: @escaping @MainActor () -> ConnectionTarget,
     ) -> LivePaneSession {
         let terminal = TerminalViewModel()
-        // SLOPDESK_DETACH_ENABLED (default ON — env != "0"): when the restored spec carries a saved
-        // session UUID (set by Stage 2's capture path), pre-seed the client's resume identity BEFORE the
-        // first connect() so the channelOpen preamble presents the saved UUID + last-received seq,
-        // enabling a RETURNING_CLIENT reattach. A nil resumeSessionID (brand-new/never-connected pane)
-        // takes the fresh-shell path. Routes through `EnvConfig` (env → overlay → default); the
-        // default-ON (`!= "0"`) idiom is preserved exactly via `boolDefaultOn`, an EMPTY overlay
-        // byte-identical.
+        // SLOPDESK_DETACH_ENABLED (default ON — env != "0"): the pane presents its OWN id as the session
+        // id in the channelOpen preamble, so a pane that has run before reattaches to the very PTY the
+        // host filed under it (RETURNING_CLIENT), and a brand-new pane spawns a fresh shell under that
+        // same id — `HostServer.spawnFreshShell` branches only on the zero id, never on whether it has
+        // seen this one. One namespace for the layout and for liveness. Routes through `EnvConfig`
+        // (env → overlay → default); the default-ON (`!= "0"`) idiom is `boolDefaultOn`.
         let detachEnabled = EnvConfig.boolDefaultOn("SLOPDESK_DETACH_ENABLED")
-        let savedResumeID = detachEnabled ? spec.resumeSessionID : nil
-        // A persisted `lastKnownCwd` poisoned in a prior session (a plugin manager's transient turbo `cd`
-        // captured via the host `cwd` RPC — see ``PaneSpec/looksLikeTransientPluginCwd(_:)``) would re-spawn
-        // this PTY in the plugin cache dir via `channelOpen`. Sanitize it to `nil` so the host falls back to
-        // its default (home) instead — the poison self-heals on the next launch.
-        let initialCwd = spec.lastKnownCwd.flatMap { PaneSpec.looksLikeTransientPluginCwd($0) ? nil : $0 }
-        // COLD LAUNCH: always seed seq=0 even when spec.resumeLastReceivedSeq is non-nil. This is a COLD
-        // path — the client actor is brand-new (process relaunch), so highestContiguousSeq starts at 0
+        let savedResumeID = detachEnabled ? paneID.raw : nil
+        // A spawn cwd poisoned in a prior session (a plugin manager's transient turbo `cd` captured via
+        // the host `cwd` RPC — see ``PaneSpec/looksLikeTransientPluginCwd(_:)``) would re-spawn this PTY
+        // in the plugin cache dir via `channelOpen`. Sanitize it to `nil` so the host falls back to its
+        // default (home) instead — the poison self-heals on the next launch.
+        let initialCwd = spawnCwd.flatMap { PaneSpec.looksLikeTransientPluginCwd($0) ? nil : $0 }
+        // COLD LAUNCH: the seq is always 0. This is a COLD path — the client actor is brand-new (process
+        // relaunch), so highestContiguousSeq starts at 0
         // regardless. Seeding a non-zero seq would present lastReceivedSeq=N to the host, replaying only
         // seq > N — skipping the whole scrollback ring (history with seq ≤ N). Seeding seq=0 sends
         // lastReceivedSeq=0, triggering full ring replay (entries 1..ackedSeq) then the un-acked tail —
@@ -340,7 +346,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         inputBar.sendSink = { [weak terminal] data in terminal?.sendInput(data) }
 
         return LivePaneSession(
-            id: PaneID(),
+            id: paneID,
             kind: spec.kind,
             connection: connection,
             inputBar: inputBar,
@@ -358,7 +364,8 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
     /// Builds a VIDEO session (`.desktop`): a `RemoteWindowModel` bound to the app
     /// target with the per-pane target pre-filled, NOT opened (UDP is user-initiated — docs/22 §6).
     private static func makeVideo(
-        _ spec: PaneSpec,
+        paneID: PaneID,
+        spec: PaneSpec,
         target: @escaping @MainActor () -> ConnectionTarget,
     ) -> LivePaneSession {
         let model =
@@ -384,7 +391,7 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
         // (`DevicePreferences.videoModesByTarget`), which this pure spec→session factory can't see — the
         // store seeds the model at wiring time (`wireMaterializedLeaf`) and on every endpoint commit.
         return LivePaneSession(
-            id: PaneID(),
+            id: paneID,
             kind: spec.kind,
             connection: nil,
             inputBar: nil,

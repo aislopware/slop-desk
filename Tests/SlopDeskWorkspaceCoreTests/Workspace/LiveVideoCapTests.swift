@@ -34,7 +34,7 @@ final class LiveVideoCapTests: XCTestCase {
 
     /// A store wired with the test double and an explicit cap. Never constructs a real client/host.
     private func makeStore(cap: Int) -> WorkspaceStore {
-        WorkspaceStore(makeSession: { FakePaneSession($0) }, liveVideoCap: cap)
+        WorkspaceStore(makeSession: { seed in FakePaneSession(seed.spec) }, liveVideoCap: cap)
     }
 
     /// Casts a handle to the concrete double so a test can read its recorded video state.
@@ -60,7 +60,7 @@ final class LiveVideoCapTests: XCTestCase {
         let ws = Workspace.make(panes: [(rootID, spec)])
         let store = WorkspaceStore(
             restoring: ws,
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: cap,
             videoTeardownSettle: videoTeardownSettle,
         )
@@ -323,7 +323,7 @@ final class LiveVideoCapTests: XCTestCase {
         let persistence = WorkspacePersistence(fileURL: tmp)
         let store = WorkspaceStore(
             restoring: nil, // default workspace: exactly 1 pane
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
             persistence: persistence,
             saveDebounce: .milliseconds(40), // SHORT — the parked task WILL fire during the test

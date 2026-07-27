@@ -59,7 +59,7 @@ public enum WorkspacePaneField {
     public static let kind: UInt8 = 0
     public static let title: UInt8 = 1
     public static let userRenamed: UInt8 = 2
-    /// The OSC-sniffed window title. Was `PaneSpec.lastKnownTitle` — a client cache of
+    /// The OSC-sniffed window title. Was `pane/liveTitle` — a client cache of
     /// `MuxChannelSession._currentTitle` with no invalidation signal, which is the reported bug.
     public static let liveTitle: UInt8 = 3
     /// The host's VERDICT on whether ``liveTitle`` still describes what is on screen. Replaces the

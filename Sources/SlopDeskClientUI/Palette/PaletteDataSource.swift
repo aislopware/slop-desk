@@ -67,7 +67,7 @@ public struct ActionsPaletteSource: PaletteDataSource {
             run: { store in
                 guard let session = store.tree.activeSession,
                       let paneID = session.activeTab?.activePane,
-                      let cwd = session.specs[paneID]?.lastKnownCwd, !cwd.isEmpty else { return }
+                      let cwd = store.paneCwd(for: paneID), !cwd.isEmpty else { return }
                 copyToPasteboard(cwd)
                 // Pane-less confirmation: the palette sheet is closing as the write lands, so the
                 // window-level `COPIED · N` chip (store hook → overlay coordinator) is the receipt.
@@ -444,7 +444,7 @@ public struct MovePaneToTabSource: PaletteDataSource {
         var out: [Entry] = []
         for (index, tab) in session.tabs.enumerated() where index != session.activeTabIndex {
             let spec = tab.activePane.flatMap { session.specs[$0] }
-            let live = spec?.lastKnownTitle ?? spec?.title ?? ""
+            let live = tab.activePane.flatMap { store.liveProgramTitle(for: $0) } ?? spec?.title ?? ""
             out.append(Entry(tabID: tab.id, title: live, tabNumber: index + 1))
         }
         return Self(entries: out)
@@ -510,8 +510,8 @@ public struct TabsPaletteSource: PaletteDataSource {
                 let spec = session.specs[paneID]
                 let isVideo = spec?.kind.isVideo == true
                 let fallback = isVideo ? "Remote window" : "Terminal"
-                let title = spec?.lastKnownTitle ?? spec?.title ?? fallback
-                let subtitle = isVideo ? spec?.video?.appName : spec?.lastKnownCwd
+                let title = store.liveProgramTitle(for: paneID) ?? spec?.title ?? fallback
+                let subtitle = isVideo ? spec?.video?.appName : store.paneCwd(for: paneID)
                 let isAgent = (store.paneAgentStatus[paneID] ?? .none) != .none
                 out.append(Entry(
                     paneID: paneID, tabIndex: tabIndex,

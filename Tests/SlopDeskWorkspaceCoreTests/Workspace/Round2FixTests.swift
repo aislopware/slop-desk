@@ -10,7 +10,7 @@ import XCTest
 @MainActor
 final class Round2FixTests: XCTestCase {
     private func makeStore(restoring: Workspace? = nil) -> WorkspaceStore {
-        WorkspaceStore(restoring: restoring, makeSession: { FakePaneSession($0) }, liveVideoCap: 5)
+        WorkspaceStore(restoring: restoring, makeSession: { seed in FakePaneSession(seed.spec) }, liveVideoCap: 5)
     }
 
     private func item(_ id: PaneID, _ frame: CGRect, _ kind: PaneKind = .terminal) -> CanvasItem {

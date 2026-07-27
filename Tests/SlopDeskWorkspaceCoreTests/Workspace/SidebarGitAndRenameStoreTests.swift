@@ -17,7 +17,7 @@ import XCTest
 @MainActor
 final class SidebarGitAndRenameStoreTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0) })
+        WorkspaceStore(liveModel: .tree, makeSession: { seed in FakePaneSession(seed.spec) })
     }
 
     private func firstPane(_ store: WorkspaceStore) throws -> PaneID {
@@ -86,7 +86,7 @@ final class SidebarGitAndRenameStoreTests: XCTestCase {
     func testSnapshotSkipsKeylessPane() throws {
         let store = makeStore()
         let pane = try firstPane(store)
-        XCTAssertNil(store.tree.spec(for: pane)?.lastKnownCwd, "precondition: no cwd")
+        XCTAssertNil(store.paneCwd(for: pane), "precondition: no cwd")
         XCTAssertFalse(store.shouldRefreshGitOnSnapshot(pane), "no section identity ⇒ no git bookkeeping")
     }
 

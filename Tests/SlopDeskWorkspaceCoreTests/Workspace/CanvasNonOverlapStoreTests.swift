@@ -11,7 +11,7 @@ final class CanvasNonOverlapStoreTests: XCTestCase {
     private func makeStore(_ items: [CanvasItem], focused: PaneID, groups: [PaneGroup] = []) -> WorkspaceStore {
         WorkspaceStore(
             restoring: Workspace(canvas: Canvas(items: items), focusedPane: focused, groups: groups),
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 5,
         )
     }

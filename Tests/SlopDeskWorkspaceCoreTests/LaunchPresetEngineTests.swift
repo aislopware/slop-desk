@@ -31,21 +31,21 @@ final class LaunchPresetEngineTests: XCTestCase {
     func testWorkingDirectoryStampsPaneSpecAndDoesNotEmitCdPrefix() {
         let preset = LaunchPreset(name: "Build", command: "make", workingDirectory: "/Users/me/proj")
         let plan = LaunchPresetEngine.plan(for: preset)
-        XCTAssertEqual(plan.panes[0].spec.lastKnownCwd, "/Users/me/proj")
+        XCTAssertEqual(plan.panes[0].spawnCwd, "/Users/me/proj")
         XCTAssertEqual(text(plan.panes[0].keystrokes), "make\n")
     }
 
     func testWorkingDirectoryWithSpacesStampsPaneSpec() {
         let preset = LaunchPreset(name: "X", command: "ls", workingDirectory: "/a b/c")
         let plan = LaunchPresetEngine.plan(for: preset)
-        XCTAssertEqual(plan.panes[0].spec.lastKnownCwd, "/a b/c")
+        XCTAssertEqual(plan.panes[0].spawnCwd, "/a b/c")
         XCTAssertEqual(text(plan.panes[0].keystrokes), "ls\n")
     }
 
     func testWorkingDirectoryWithSingleQuoteStampsPaneSpec() {
         let preset = LaunchPreset(name: "X", command: "ls", workingDirectory: "/it's/here")
         let plan = LaunchPresetEngine.plan(for: preset)
-        XCTAssertEqual(plan.panes[0].spec.lastKnownCwd, "/it's/here")
+        XCTAssertEqual(plan.panes[0].spawnCwd, "/it's/here")
         XCTAssertEqual(text(plan.panes[0].keystrokes), "ls\n")
     }
 
@@ -66,7 +66,7 @@ final class LaunchPresetEngineTests: XCTestCase {
         )
         let plan = LaunchPresetEngine.plan(for: preset)
         let bytes = plan.panes[0].keystrokes
-        XCTAssertEqual(plan.panes[0].spec.lastKnownCwd, "/tmp/proj<Enter>rm -rf important")
+        XCTAssertEqual(plan.panes[0].spawnCwd, "/tmp/proj<Enter>rm -rf important")
         XCTAssertFalse(bytes.contains(0x0D), "cwd token injected CR into startup keystrokes")
         XCTAssertEqual(bytes.count(where: { $0 == 0x0A }), 1)
         XCTAssertEqual(text(bytes), "ls\n")
@@ -90,7 +90,7 @@ final class LaunchPresetEngineTests: XCTestCase {
         )
         let plan = LaunchPresetEngine.plan(for: preset)
         let bytes = plan.panes[0].keystrokes
-        XCTAssertEqual(plan.panes[0].spec.lastKnownCwd, "/tmp/p<Enter>j")
+        XCTAssertEqual(plan.panes[0].spawnCwd, "/tmp/p<Enter>j")
         XCTAssertEqual(bytes, Array("echo hi".utf8) + [0x0D] + Array("echo bye".utf8) + [0x0A])
     }
 
@@ -115,8 +115,8 @@ final class LaunchPresetEngineTests: XCTestCase {
         )
         let plan = LaunchPresetEngine.plan(for: preset)
         XCTAssertEqual(plan.splitAxis, .vertical)
-        XCTAssertEqual(plan.panes[0].spec.lastKnownCwd, "/proj")
-        XCTAssertEqual(plan.panes[1].spec.lastKnownCwd, "/proj")
+        XCTAssertEqual(plan.panes[0].spawnCwd, "/proj")
+        XCTAssertEqual(plan.panes[1].spawnCwd, "/proj")
         XCTAssertEqual(text(plan.panes[0].keystrokes), "nvim .\n")
         XCTAssertEqual(text(plan.panes[1].keystrokes), "ls\n")
     }

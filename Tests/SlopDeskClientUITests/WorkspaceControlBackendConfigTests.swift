@@ -30,7 +30,7 @@ final class WorkspaceControlBackendConfigTests: XCTestCase {
     }
 
     private func makeHarness(_ name: String) -> Harness {
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
+        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
         let suite = "WorkspaceControlBackendConfigTests." + name
         let defaults = UserDefaults(suiteName: suite)!
         defaults.removePersistentDomain(forName: suite)

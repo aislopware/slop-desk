@@ -19,7 +19,7 @@ final class RecentPaneRingTests: XCTestCase {
         }
         let store = WorkspaceStore(
             restoring: Workspace(canvas: Canvas(items: items), focusedPane: items[0].id),
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
         )
         return (store, items.map(\.id))
     }

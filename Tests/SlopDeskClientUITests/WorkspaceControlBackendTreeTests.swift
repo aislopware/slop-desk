@@ -56,7 +56,7 @@ final class WorkspaceControlBackendTreeTests: XCTestCase {
     }
 
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { RecordingPaneSession($0) })
+        WorkspaceStore(liveModel: .tree, makeSession: { seed in RecordingPaneSession(seed.spec) })
     }
 
     private func makeBackend(
@@ -94,10 +94,8 @@ final class WorkspaceControlBackendTreeTests: XCTestCase {
         let store = makeStore()
         let backend = makeBackend(store)
         let focused = try focusedLeaf(store)
-        store.tree = WorkspaceTreeOps.updatingSpec(focused, in: store.tree) { spec in
-            spec.lastKnownCwd = "/work/proj"
-            spec.lastKnownTitle = "vim"
-        }
+        store.setLastKnownCwd("/work/proj", for: focused)
+        store.noteTitlePushed("vim", for: focused)
         store.reconcileTree()
 
         let windows = backend.listWindows()
@@ -111,12 +109,29 @@ final class WorkspaceControlBackendTreeTests: XCTestCase {
         let panes = backend.listPanes(tabId: nil)
         let pane = try XCTUnwrap(panes.first { $0.id == focused.raw.uuidString })
         XCTAssertTrue(pane.isFocused, "the focused pane is flagged")
-        XCTAssertEqual(pane.cwd, "/work/proj", "cwd maps from PaneSpec.lastKnownCwd")
-        XCTAssertEqual(pane.title, "vim", "title maps from PaneSpec.lastKnownTitle")
+        XCTAssertEqual(pane.cwd, "/work/proj", "cwd maps from the pane's `pane/cwd`")
+        XCTAssertEqual(pane.title, "vim", "title maps from the pane's live shell title")
         XCTAssertEqual(pane.kind, PaneKind.terminal.rawValue, "kind maps from PaneSpec.kind")
     }
 
     // MARK: - (b) jump emits a SHELL-QUOTED `cd -- '…'`
+
+    /// `focusedCwd()` feeds `slopdesk jump` (no query) and `slopdesk learn` (no path). A nil there is
+    /// silent: both verbs simply return nothing, with no error to explain why. So it is pinned through
+    /// the one verb whose OUTPUT names it — `learn` with no path records the focused pane's cwd.
+    func testFocusedCwdIsNotNilAfterTheMove() throws {
+        let store = makeStore()
+        let backend = makeBackend(store)
+        let focused = try focusedLeaf(store)
+
+        XCTAssertNil(backend.learn(path: nil), "precondition: no cwd is known yet")
+
+        store.setLastKnownCwd("/work/proj", for: focused)
+        XCTAssertEqual(
+            backend.learn(path: nil), "/work/proj",
+            "the focused pane's cwd resolves through the mirror — the frecency verbs still have an input",
+        )
+    }
 
     func testJumpQuotesPathWithSpace() throws {
         let store = makeStore()

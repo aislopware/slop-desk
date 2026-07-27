@@ -227,67 +227,30 @@ public struct VideoPaneModes: Codable, Sendable, Equatable {
 /// The store reads it to materialize a session; mutating it (e.g. rename) is done through
 /// ``PaneNode/updatingSpec(_:_:)`` and triggers a reconcile downstream.
 ///
-/// ### Additive persistence fields (Stage 1 — schema v11)
-/// Four optional fields are persisted when a pane has been connected at least once. They are ADDITIVE:
-/// a v10 file that does not carry these keys decodes with all four `nil` (never traps). Only
-/// `lastKnownTitle` feeds the load-time auto-title promotion (see ``WorkspacePersistence/loadTree()``);
-/// the resume fields are reserved for Stage 2 (host-side detach/reattach) and are NOT fed into
-/// `connect()` yet.
+/// ### What a spec does NOT carry
+/// The pane's live FACTS — its working directory, its By-Project key, the shell title it last asserted,
+/// and the host session it resumes — are not here. They are per-pane state the workspace document owns
+/// (`pane/cwd`, `pane/projectKey`, `pane/liveTitle`, `pane/spawnCwd`; docs/45 §5.3), read through
+/// ``HostWorkspaceMirror``. The spec is what ``WorkspaceTopology/spec(_:from:)`` can rebuild from the
+/// document and nothing more, so there is exactly one place each fact lives. The pane's resume identity
+/// is its own ``PaneID``: the client proposes object ids (DECISIONS, Multi-client Phase 5 ruling 1), so
+/// the id the host keys its liveness records by IS the id the layout uses.
 public struct PaneSpec: Sendable, Equatable {
     public var kind: PaneKind
     public var title: String
     /// Set for video panes (which host-side display or window to stream).
     public var video: VideoEndpoint?
 
-    // MARK: Stage-1 additive persistence fields (schema v11)
-
-    /// The session ID assigned by the host on the most-recent successful connection. Reserved for Stage 2
-    /// (host-side detach/reattach). NOT fed into `connect()` in Stage 1.
-    public var resumeSessionID: UUID?
-    /// The last sequence number successfully received from the host (used to resume from a mid-stream
-    /// disconnect in Stage 2). NOT fed into `connect()` in Stage 1.
-    public var resumeLastReceivedSeq: Int64?
-    /// The working directory reported by the host shell at last-seen time. Used as the display subtitle
-    /// and as a hint for Stage 2 cwd-restore. Read-only from the client perspective.
-    public var lastKnownCwd: String?
-    /// The shell title (e.g. the running process or tab title) as last reported by the host. Written into
-    /// ``title`` on load only when the user has not renamed the pane (see
-    /// ``WorkspacePersistence/loadTree()``). Read-only from the client perspective.
-    public var lastKnownTitle: String?
-
-    /// The HOST-computed By-Project sidebar key (wire type 34): the git worktree toplevel containing the
-    /// pane's cwd, else the cwd itself. Persisted so a cold relaunch renders the FINAL sections from disk
-    /// (no cwd-fallback → toplevel re-bucketing flash). Written only through the guarded
-    /// ``WorkspaceStore/setProjectKey(_:for:)`` sink; an absent key decodes `nil`
-    /// (``WorkspaceStore/paneProjectKey(_:)`` then falls back to ``lastKnownCwd``).
-    public var projectKey: String?
-
     /// True when the user has EXPLICITLY renamed this pane (⌘R / the palette / the inline rail field →
     /// ``WorkspaceStore/renamePane(_:to:)``). The single, unambiguous signal that ``title`` is a custom
     /// user identity that must win over the cwd-folder / shell-title auto-derivations.
     ///
-    /// A heuristic like `title != defaultTitle && title != lastKnownTitle` MISFIRES the moment a shell
-    /// emits a SECOND OSC title: the load-time promotion set `title == lastKnownTitle₀`, then
-    /// `lastKnownTitle` advances to `title₁` while `title` stays `title₀`, so `title != lastKnownTitle`
-    /// flips true and the stale promoted title latches as if the user had renamed it. An explicit flag
-    /// removes the ambiguity (only a real rename sets it). Additive persisted field (encoded only when
-    /// `true`); an older file without it decodes to `false`, so a pane renamed before this flag existed
-    /// falls back to its cwd-folder title until re-named.
+    /// A heuristic like `title != defaultTitle && title != liveTitle` MISFIRES the moment a shell emits
+    /// a SECOND OSC title: `title` stays at `title₀` while the live one advances to `title₁`, so the
+    /// comparison flips true and a stale title latches as if the user had renamed it. An explicit flag
+    /// removes the ambiguity — only a real rename sets it. Encoded only when `true`, so a never-renamed
+    /// pane's JSON stays minimal.
     public var userRenamed: Bool = false
-
-    /// The title to surface in a command-completion notification/toast — the live OSC 0/2 shell title
-    /// (``lastKnownTitle``, often the running command line) when the shell has reported one, else the
-    /// host cwd's FOLDER NAME (``cwdDisplayName(_:)`` of ``lastKnownCwd`` — the same identity the
-    /// sidebar/tab/window title show), else the static ``title`` (e.g. "Terminal"). Distinct from
-    /// ``title`` itself, which stays the pane's persisted/renamable identity — this is only for the
-    /// completion sink, which would otherwise read `title` directly and always show the generic default.
-    ///
-    /// The cwd fallback keeps the banner consistent with the visible pane title for a shell that emits
-    /// NO OSC-0/2 title (Starship / hookless) — without it the banner says "Terminal" while every other
-    /// surface shows the folder name.
-    public var completionNotificationTitle: String {
-        lastKnownTitle ?? Self.cwdDisplayName(lastKnownCwd) ?? title
-    }
 
     /// The display FOLDER NAME of a working directory: its last path component (`/a/b/repo` → `repo`,
     /// trailing-slash tolerant), the root as `/`, a bare `~` kept as-is. `nil` for `nil`/blank so a caller
@@ -305,10 +268,10 @@ public struct PaneSpec: Sendable, Equatable {
     }
 
     /// True when `path` is almost certainly a plugin-manager's TRANSIENT cache dir — not a directory the
-    /// user navigated to — so it must never become a pane's ``lastKnownCwd`` (the inherit source for new
+    /// user navigated to — so it must never become a pane's `pane/cwd` (the inherit source for new
     /// panes + the sidebar/title label).
     ///
-    /// On a shell WITHOUT an OSC-7 chpwd hook, `lastKnownCwd` is fed only by the host `cwd` RPC
+    /// On a shell WITHOUT an OSC-7 chpwd hook, `pane/cwd` is fed only by the host `cwd` RPC
     /// (`proc_pidinfo` of the shell), which reads the KERNEL cwd and so observes every transient `chdir`
     /// the shell makes internally. A zsh plugin manager in TURBO / deferred mode (zinit `wait lucid`,
     /// antidote, …) `builtin cd`s into a plugin's cache dir to SOURCE it — synchronously inside a precmd,
@@ -332,39 +295,24 @@ public struct PaneSpec: Sendable, Equatable {
         kind: PaneKind,
         title: String,
         video: VideoEndpoint? = nil,
-        resumeSessionID: UUID? = nil,
-        resumeLastReceivedSeq: Int64? = nil,
-        lastKnownCwd: String? = nil,
-        lastKnownTitle: String? = nil,
-        projectKey: String? = nil,
         userRenamed: Bool = false,
     ) {
         self.kind = kind
         self.title = title
         self.video = video
-        self.resumeSessionID = resumeSessionID
-        self.resumeLastReceivedSeq = resumeLastReceivedSeq
-        self.lastKnownCwd = lastKnownCwd
-        self.lastKnownTitle = lastKnownTitle
-        self.projectKey = projectKey
         self.userRenamed = userRenamed
     }
 }
 
-// MARK: - PaneSpec Codable (additive — new keys are decodeIfPresent so v10 files still load)
+// MARK: - PaneSpec Codable
 
 extension PaneSpec: Codable {
-    /// A stale `floatingFrame` key (the floating-pane feature was removed) is simply not in
-    /// ``CodingKeys`` → decode-ignored.
+    /// A key this build does not know (a retired field, a hand edit) is simply not in ``CodingKeys``
+    /// → decode-ignored.
     private enum CodingKeys: String, CodingKey {
         case kind
         case title
         case video
-        case resumeSessionID
-        case resumeLastReceivedSeq
-        case lastKnownCwd
-        case lastKnownTitle
-        case projectKey
         case userRenamed
     }
 
@@ -373,13 +321,7 @@ extension PaneSpec: Codable {
         kind = try c.decode(PaneKind.self, forKey: .kind)
         title = try c.decode(String.self, forKey: .title)
         video = try c.decodeIfPresent(VideoEndpoint.self, forKey: .video)
-        resumeSessionID = try c.decodeIfPresent(UUID.self, forKey: .resumeSessionID)
-        resumeLastReceivedSeq = try c.decodeIfPresent(Int64.self, forKey: .resumeLastReceivedSeq)
-        lastKnownCwd = try c.decodeIfPresent(String.self, forKey: .lastKnownCwd)
-        lastKnownTitle = try c.decodeIfPresent(String.self, forKey: .lastKnownTitle)
-        // Additive: a file written before the host-pushed key decodes to `nil` (cwd fallback).
-        projectKey = try c.decodeIfPresent(String.self, forKey: .projectKey)
-        // Additive: an older file without the key decodes to `false` (validate-then-default).
+        // Absent ⇒ `false` (validate-then-default).
         userRenamed = try c.decodeIfPresent(Bool.self, forKey: .userRenamed) ?? false
     }
 
@@ -388,50 +330,70 @@ extension PaneSpec: Codable {
         try c.encode(kind, forKey: .kind)
         try c.encode(title, forKey: .title)
         try c.encodeIfPresent(video, forKey: .video)
-        try c.encodeIfPresent(resumeSessionID, forKey: .resumeSessionID)
-        try c.encodeIfPresent(resumeLastReceivedSeq, forKey: .resumeLastReceivedSeq)
-        try c.encodeIfPresent(lastKnownCwd, forKey: .lastKnownCwd)
-        try c.encodeIfPresent(lastKnownTitle, forKey: .lastKnownTitle)
-        try c.encodeIfPresent(projectKey, forKey: .projectKey)
-        // Encoded only when set, so a never-renamed pane's JSON is unchanged (additive-minimal).
+        // Encoded only when set, so a never-renamed pane's JSON stays minimal.
         if userRenamed { try c.encode(userRenamed, forKey: .userRenamed) }
     }
 }
 
-// MARK: - PaneSpec presentation derivations
+// MARK: - Pane presentation derivations
 
-public extension PaneSpec {
-    /// The sidebar-rail SECOND LINE for this pane — the single, kind-generic source of truth the
-    /// native rail row (``RailRowsBuilder`` in `SlopDeskClientUI`) and any other surface bind their subtitle
-    /// to, so a video pane is a first-class peer of a terminal in the rail (carry-overs §0).
+/// The pane-label rules that combine a pane's SPEC (kind, title, video target) with the live FACTS the
+/// workspace document owns (its cwd, the shell title it last asserted).
+///
+/// Free functions rather than ``PaneSpec`` properties because the two halves have different owners: the
+/// spec is layout the document rebuilds verbatim, the facts are per-pane state read from the mirror. A
+/// property on the spec would have to pretend the spec knows both, which is precisely the cache that
+/// went stale.
+public enum PaneLabel {
+    /// The title to surface in a command-completion notification/toast — the live OSC 0/2 shell title
+    /// (`liveTitle`, often the running command line) when the shell has reported one, else the host
+    /// cwd's FOLDER NAME (``PaneSpec/cwdDisplayName(_:)`` — the same identity the sidebar/tab/window
+    /// title show), else the static spec `title` (e.g. "Terminal"). Distinct from the spec title itself,
+    /// which stays the pane's persisted/renamable identity — this is only for the completion sink, which
+    /// would otherwise read `title` directly and always show the generic default.
     ///
-    /// - A `.terminal` pane shows its last-known working directory (``lastKnownCwd``), or NOTHING when the cwd
-    ///   is unknown — a single-line row, never a blank second line.
+    /// The cwd fallback keeps the banner consistent with the visible pane title for a shell that emits
+    /// NO OSC-0/2 title (Starship / hookless) — without it the banner says "Terminal" while every other
+    /// surface shows the folder name.
+    public static func completionNotificationTitle(
+        title: String, cwd: String?, liveTitle: String?,
+    ) -> String {
+        liveTitle ?? PaneSpec.cwdDisplayName(cwd) ?? title
+    }
+
+    /// The sidebar-rail SECOND LINE for a pane — the single, kind-generic source of truth the native
+    /// rail row (``RailRowsBuilder`` in `SlopDeskClientUI`) and any other surface bind their subtitle to,
+    /// so a video pane is a first-class peer of a terminal in the rail (carry-overs §0).
+    ///
+    /// - A `.terminal` pane shows its working directory, or NOTHING when the cwd is unknown — a
+    ///   single-line row, never a blank second line.
     /// - A VIDEO pane (`.desktop`) has no shell cwd, so the host-side target's owning APP
     ///   name (``VideoEndpoint/appName``) stands in — falling back to the window ``VideoEndpoint/title`` when
     ///   the app name is empty (a manual-id binding). A remote-window row then reads as a *labelled window*
     ///   (its window title on line 1, the host app on line 2) rather than a bare single line.
     /// - A real cwd, if ever present, always wins (the subtitle never silently drops a working directory).
     ///
-    /// Pure + total — NO kind is dropped (the `default`/non-video arm just yields the cwd-or-nil a terminal
+    /// Pure + total — NO kind is dropped (the non-video arm just yields the cwd-or-nil a terminal
     /// already used), so the builder stays kind-generic and never branches the whole row. Mirrors the
     /// Open-Quickly subtitle discipline (``OpenQuicklyModel`` `paneRowSubtitle`), which carries the leaner
     /// window-title fold; the rail gets this richer host-app line. A non-empty trimmed-presence check keeps an
     /// empty field from rendering a blank line (the ``OpenQuicklyModel`` `nonEmpty` discipline).
-    var railSubtitle: String? {
-        if let cwd = Self.presentablePresence(lastKnownCwd) { return cwd }
+    public static func railSubtitle(
+        kind: PaneKind, title: String, video: VideoEndpoint?, cwd: String?, liveTitle: String?,
+    ) -> String? {
+        if let cwd = presentablePresence(cwd) { return cwd }
         guard kind.isVideo, let video else { return nil }
-        if let app = Self.presentablePresence(video.appName) {
+        if let app = presentablePresence(video.appName) {
             // EMPTY HOST-TITLE PARITY: when the streamed window has NO title, the endpoint LABEL
             // collapses to the app name — so the display title (line 1) AND the
             // streamed window title are BOTH just the app name. Printing the host app on line 2 then shows it
             // on both lines. Suppress to a single line ONLY in that all-collapsed case; a window WITH a real
             // title keeps line 1 distinct, so the host-app subtitle still shows (a labelled window).
-            let line1 = Self.presentablePresence(lastKnownTitle) ?? Self.presentablePresence(title)
-            if line1 == app, Self.presentablePresence(video.title) == app { return nil }
+            let line1 = presentablePresence(liveTitle) ?? presentablePresence(title)
+            if line1 == app, presentablePresence(video.title) == app { return nil }
             return app
         }
-        return Self.presentablePresence(video.title)
+        return presentablePresence(video.title)
     }
 
     /// A trimmed-presence helper: `nil` for `nil`/blank, the trimmed string otherwise — so an empty/whitespace
@@ -440,6 +402,14 @@ public extension PaneSpec {
         guard let s else { return nil }
         let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+public extension PaneSpec {
+    /// ``PaneLabel/railSubtitle(kind:title:video:cwd:liveTitle:)`` for THIS spec — the caller supplies
+    /// the two facts the spec does not carry.
+    func railSubtitle(cwd: String?, liveTitle: String?) -> String? {
+        PaneLabel.railSubtitle(kind: kind, title: title, video: video, cwd: cwd, liveTitle: liveTitle)
     }
 }
 

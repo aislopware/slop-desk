@@ -15,7 +15,7 @@ import XCTest
 @MainActor
 final class PaneDragSpringLoadTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
+        WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
     }
 
     /// Two tabs; tab B (index 1) in the background — the canonical spring-load scenario.

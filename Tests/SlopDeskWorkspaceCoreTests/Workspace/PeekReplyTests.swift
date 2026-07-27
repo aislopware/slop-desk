@@ -25,7 +25,7 @@ final class PeekReplyTests: XCTestCase {
         WorkspaceStore(
             restoringTree: .defaultWorkspace(),
             liveModel: .tree,
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 2,
         )
     }
@@ -35,7 +35,7 @@ final class PeekReplyTests: XCTestCase {
         WorkspaceStore(
             restoringTree: .defaultWorkspace(),
             liveModel: .tree,
-            makeSession: { RecordingTerminalPaneSession($0) },
+            makeSession: { seed in RecordingTerminalPaneSession(seed.spec) },
             liveVideoCap: 2,
         )
     }

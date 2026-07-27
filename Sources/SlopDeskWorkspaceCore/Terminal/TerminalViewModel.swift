@@ -1454,7 +1454,7 @@ public final class TerminalViewModel {
     /// hover-preview can read it. Never set on iOS.
     public var hoveredLinkFullPath: String?
 
-    /// The pane's last-known working directory (OSC 7 `PaneSpec.lastKnownCwd`), mirrored here by the leaf so the
+    /// The pane's last-known working directory (OSC 7 `pane/cwd`), mirrored here by the leaf so the
     /// AppKit renderer's ⌘-hover hit-test can resolve a RELATIVE detected path to absolute for the status-bar
     /// preview. WIRING, not view state (`@ObservationIgnored`): syncing it must never invalidate a view, and the
     /// SwiftUI ``LinkHighlightOverlay`` takes cwd as a parameter — only the renderer reads this.
@@ -2337,7 +2337,7 @@ public final class TerminalViewModel {
              .projectGitStatus,
              .agentSessionIntent:
             // All four are pane/project-METADATA edges the connection layer routes to the store
-            // (`lastKnownCwd` / `PaneSpec.projectKey` / `projectGitSummary` / `paneAgentIntent`);
+            // (`pane/cwd` / `pane/projectKey` / `projectGitSummary` / `paneAgentIntent`);
             // the terminal surface itself renders none of them.
             break
         }

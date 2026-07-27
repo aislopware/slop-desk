@@ -15,7 +15,7 @@ import XCTest
 @MainActor
 final class BookmarkTests: XCTestCase {
     private func makeStore(restoring: Workspace? = nil) -> WorkspaceStore {
-        WorkspaceStore(restoring: restoring, makeSession: { FakePaneSession($0) })
+        WorkspaceStore(restoring: restoring, makeSession: { seed in FakePaneSession(seed.spec) })
     }
 
     /// The store's default viewport (no view has reported one in headless tests).

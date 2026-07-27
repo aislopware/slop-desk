@@ -62,9 +62,9 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
     private func makeLiveStore(devicePreferences: DevicePreferencesStore? = nil) -> WorkspaceStore {
         WorkspaceStore(
             liveModel: .tree,
-            makeSession: { spec in
+            makeSession: { seed in
                 LivePaneSession.make(
-                    spec,
+                    paneID: seed.id, spec: seed.spec, spawnCwd: seed.spawnCwd,
                     makeClient: { _ in fatalError("connect() never runs in this test") },
                     makeInspector: { _ in nil },
                 )

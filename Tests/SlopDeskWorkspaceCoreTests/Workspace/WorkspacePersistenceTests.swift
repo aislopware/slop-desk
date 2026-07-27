@@ -16,7 +16,7 @@ import XCTest
 ///    sub-minimum / degenerate frame is sanitized to ``Canvas/minItemSize`` on decode.
 /// 4. **Schema fallback + the migration seam** — corrupt JSON / an unknown `schemaVersion` fall back to
 ///    ``Workspace/defaultWorkspace()``; a current (v3) payload is restored verbatim.
-/// 5. **Real `load()`** — end-to-end on disk: verbatim restore, future-version → default + `.corrupt`
+/// 5. **Real `load()`** — end-to-end on disk: verbatim restore, unreadable → default + `.corrupt`
 ///    sidecar, duplicate-id re-mint, dangling focusedPane / orphaned group repair.
 ///
 /// (The app has no released persisted format, so there is no backward-compat migration to test — an
@@ -246,45 +246,7 @@ final class WorkspacePersistenceTests: XCTestCase {
         XCTAssertEqual(restored.canvas.itemCount, 2)
     }
 
-    // MARK: - 5. Schema migration seam (the value-level seam; older shapes fail pre-decode)
-
-    func testMigrationIdentityForCurrentVersion() {
-        let original = Workspace.make(panes: [
-            (PaneID(), PaneSpec(kind: .terminal, title: "shell")),
-            (PaneID(), PaneSpec(kind: .desktop, title: "agent")),
-        ])
-        let migrated = WorkspaceSchemaMigration.migrate(original, from: Workspace.currentSchemaVersion)
-        XCTAssertEqual(migrated, original, "from == to is the identity migration")
-    }
-
-    func testMigrationRejectsNewerThanCurrent() {
-        var future = Workspace.defaultWorkspace()
-        future.schemaVersion = Workspace.currentSchemaVersion + 1
-        let migrated = WorkspaceSchemaMigration.migrate(future, from: future.schemaVersion)
-        XCTAssertNil(migrated, "a future schemaVersion is un-migratable → nil")
-    }
-
-    func testMigrationRejectsUnknownGap() {
-        var ancient = Workspace.defaultWorkspace()
-        ancient.schemaVersion = -1
-        let migrated = WorkspaceSchemaMigration.migrate(ancient, from: ancient.schemaVersion)
-        XCTAssertNil(migrated, "a gap in the upgrade chain is un-migratable → nil")
-    }
-
-    /// There are no value-level upgrade steps (single-user, no backward-compat): any `from != to`
-    /// migrates to `nil` so the caller resets to the default. An older on-disk shape that no longer
-    /// decodes never even reaches the migration seam.
-    func testMigrationOfAnyOlderVersionIsRejected() {
-        let original = Workspace.defaultWorkspace()
-        for older in [0, 1, 2] {
-            XCTAssertNil(
-                WorkspaceSchemaMigration.migrate(original, from: older),
-                "schemaVersion \(older) has no upgrade step → nil",
-            )
-        }
-    }
-
-    // MARK: - 6. Real load() through the persistence + migration seam (end-to-end on disk)
+    // MARK: - 5. Real load() through the persistence seam (end-to-end on disk)
 
     func testLoadCurrentVersionPayloadIsRestoredVerbatimViaRealLoad() throws {
         let url = try tempURL()
@@ -452,94 +414,6 @@ final class WorkspacePersistenceTests: XCTestCase {
         XCTAssertEqual(moved.canvas, c.canvas, "membership unchanged by a reorder")
     }
 
-    // MARK: - 8. W3 migration seams (peek / migrateV9toV10 / migrateToTree) — exposed, not yet on load()
-
-    /// `peekSchemaVersion` reads ONLY the version discriminator off raw bytes without a full typed decode:
-    /// 9 off a valid v9 ``Workspace`` JSON, 11 off a v11 ``TreeWorkspace`` JSON (the current schema), and
-    /// `nil` (validate-then-drop) on garbage / a JSON object missing `schemaVersion`.
-    func testPeekSchemaVersionReadsVersionOrDropsCleanly() throws {
-        // A real v9 Workspace file.
-        let v9Data = try makeEncoder().encode(Workspace.defaultWorkspace())
-        XCTAssertEqual(WorkspacePersistence.peekSchemaVersion(in: v9Data), 9, "peeks 9 off a v9 Workspace file")
-
-        // A real v11 TreeWorkspace file (no canvas/groups — would FAIL a typed v9 decode).
-        let v11Data = try makeEncoder().encode(TreeWorkspace.defaultWorkspace())
-        XCTAssertEqual(
-            WorkspacePersistence.peekSchemaVersion(in: v11Data),
-            TreeWorkspace.currentSchemaVersion,
-            "peeks the current schema version off a current TreeWorkspace file",
-        )
-
-        // Garbage bytes → nil, never a throw.
-        XCTAssertNil(
-            WorkspacePersistence.peekSchemaVersion(in: Data("not json at all }{".utf8)),
-            "garbage bytes peek to nil (validate-then-drop, no throw)",
-        )
-        // A JSON object that simply lacks `schemaVersion` → nil.
-        XCTAssertNil(
-            WorkspacePersistence.peekSchemaVersion(in: Data("{\"foo\": 1}".utf8)),
-            "a JSON object missing schemaVersion peeks to nil",
-        )
-    }
-
-    // L0 / D2: testMigrateV9toV10ProducesRoundTrippableTreeOrNil was DELETED — the canvas-era v5–v9 → tree
-    // migration (`WorkspacePersistence.migrateV9toV10` through the frozen `WorkspaceV9` shadow) is removed
-    // per the "No backcompat / single-user" directive. A stale v5–v9 file now decode-fails to the default
-    // workspace instead.
-
-    /// `WorkspaceSchemaMigration.migrateToTree` after the L0/D2 cut:
-    /// - `nil` for `from ∈ 5...9` — the canvas-era v9-mirror migration is GONE (stale files reset to default).
-    /// - non-nil for `from == 10` — identity re-decode as a v10 ``TreeWorkspace``; the four new optional
-    ///   ``PaneSpec`` fields are absent from a v10 file but `decodeIfPresent` resolves them to `nil`.
-    /// - `nil` for `from == 11` (the current version — caller decodes directly, nothing to upgrade).
-    /// - `nil` for out-of-range versions.
-    func testMigrateToTreeRejectsV5ThroughV9AndAcceptsV10() throws {
-        let v9Data = try makeEncoder().encode(Workspace.defaultWorkspace())
-        for from in [5, 8, 9] {
-            XCTAssertNil(
-                WorkspaceSchemaMigration.migrateToTree(v9Data, from: from),
-                "from=\(from) no longer migrates (D2: the v5–v9 canvas migration was deleted) → nil",
-            )
-        }
-
-        // from=10: a valid v10 TreeWorkspace JSON is identity-decoded (new optional fields → nil).
-        let v10JSON = try """
-        {
-          "schemaVersion": 10,
-          "sessions": [\(String(data: makeEncoder().encode(
-              Session.singlePane(name: "Local", spec: PaneSpec(kind: .terminal, title: "Terminal")),
-          ), encoding: .utf8)!)],
-          "activeSessionID": null
-        }
-        """
-        let v10Data = Data(v10JSON.utf8)
-        let v10Result = WorkspaceSchemaMigration.migrateToTree(v10Data, from: 10)
-        XCTAssertNotNil(v10Result, "from=10 is an identity re-decode to TreeWorkspace (additive step)")
-        XCTAssertEqual(v10Result?.allPaneIDs().count, 1, "the single pane survives the v10 identity decode")
-
-        // from=11 (current) and out-of-range → nil.
-        XCTAssertNil(
-            WorkspaceSchemaMigration.migrateToTree(v9Data, from: 11),
-            "from=11 is the current version — caller decodes directly → nil",
-        )
-        for from in [0, 99] {
-            XCTAssertNil(
-                WorkspaceSchemaMigration.migrateToTree(v9Data, from: from),
-                "from=\(from) is out of range → nil",
-            )
-        }
-        // Garbage bytes for from=10 fail soft (nil, not a trap).
-        XCTAssertNil(
-            WorkspaceSchemaMigration.migrateToTree(Data("garbage }{".utf8), from: 10),
-            "garbage bytes for from=10 migrate to nil (not a trap)",
-        )
-    }
-
-    // L0 / D2: testSyntheticOlderShapedFileDecodesThroughV9MirrorAndMigrates was DELETED — it proved the
-    // v5–v9 → tree migration through the frozen `WorkspaceV9` mirror, which is removed per the
-    // "No backcompat / single-user" directive. The version-peek of an old file still works (covered by
-    // testPeekSchemaVersionReadsVersionOrDropsCleanly); a v5–v9 file now resets to the default workspace.
-
     // MARK: - 9. loadTree() — the LIVE load path's safety branches (C2)
 
     /// A real v11 ``TreeWorkspace`` file decodes + round-trips through `loadTree()` with NO migration
@@ -678,18 +552,14 @@ final class WorkspacePersistenceTests: XCTestCase {
         return dir.appendingPathComponent("workspace.json")
     }
 
-    /// The decode-with-fallback mirror for the value-level schema-seam tests. Decodes a v3 `Workspace`,
-    /// forward-migrates, defaults on any failure.
+    /// The decode-with-fallback mirror of the load path: decode a `Workspace`, gate its version,
+    /// default on either failing. There is no migration hop — a shape or a version this build cannot
+    /// read resets to the default.
     private func decodeOrDefault(_ data: Data) -> Workspace {
-        do {
-            let candidate = try decoder.decode(Workspace.self, from: data)
-            guard let migrated = WorkspaceSchemaMigration.migrate(candidate, from: candidate.schemaVersion) else {
-                return .defaultWorkspace()
-            }
-            return migrated
-        } catch {
-            return .defaultWorkspace()
-        }
+        guard let decoded = try? decoder.decode(Workspace.self, from: data),
+              decoded.schemaVersion == Workspace.currentSchemaVersion
+        else { return .defaultWorkspace() }
+        return decoded
     }
 
     private func assertIsDefaultWorkspaceShape(

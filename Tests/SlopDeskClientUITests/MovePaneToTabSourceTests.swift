@@ -14,7 +14,7 @@ import XCTest
 @MainActor
 final class MovePaneToTabSourceTests: XCTestCase {
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
+        WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
     }
 
     /// Three tabs, tab C (index 2) active — so A and B are candidate destinations.

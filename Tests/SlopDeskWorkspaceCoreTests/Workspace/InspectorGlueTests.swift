@@ -251,7 +251,7 @@ final class InspectorGlueTests: XCTestCase {
 
         // The store's makeInspector seam: hand the session a loopback-backed client (no network).
         let session = LivePaneSession.make(
-            PaneSpec(kind: .terminal, title: "claude"),
+            paneID: PaneID(), spec: PaneSpec(kind: .terminal, title: "claude"),
             makeClient: { _ in makeUnconnectedClient() },
             makeInspector: { _ in InspectorClient(channel: clientCh) },
         )
@@ -290,7 +290,7 @@ final class InspectorGlueTests: XCTestCase {
         let source = InspectorSource(channel: hostCh)
 
         let session = LivePaneSession.make(
-            PaneSpec(kind: .terminal, title: "claude"),
+            paneID: PaneID(), spec: PaneSpec(kind: .terminal, title: "claude"),
             makeClient: { _ in makeUnconnectedClient() },
             makeInspector: { _ in InspectorClient(channel: clientCh) },
         )
@@ -322,7 +322,7 @@ final class InspectorGlueTests: XCTestCase {
 
         var clientHandedOut = 0
         let session = LivePaneSession.make(
-            PaneSpec(kind: .terminal, title: "claude"),
+            paneID: PaneID(), spec: PaneSpec(kind: .terminal, title: "claude"),
             makeClient: { _ in makeUnconnectedClient() },
             makeInspector: { _ in
                 clientHandedOut += 1
@@ -361,7 +361,7 @@ final class InspectorGlueTests: XCTestCase {
         let source = InspectorSource(channel: hostCh)
 
         let session = LivePaneSession.make(
-            PaneSpec(kind: .terminal, title: "claude"),
+            paneID: PaneID(), spec: PaneSpec(kind: .terminal, title: "claude"),
             makeClient: { _ in makeUnconnectedClient() },
             makeInspector: { _ in InspectorClient(channel: clientCh) },
         )
@@ -397,7 +397,7 @@ final class InspectorGlueTests: XCTestCase {
         let source = InspectorSource(channel: hostCh)
 
         let session = LivePaneSession.make(
-            PaneSpec(kind: .terminal, title: "claude"),
+            paneID: PaneID(), spec: PaneSpec(kind: .terminal, title: "claude"),
             makeClient: { _ in makeUnconnectedClient() },
             makeInspector: { _ in InspectorClient(channel: clientCh) },
         )
@@ -431,7 +431,7 @@ final class InspectorGlueTests: XCTestCase {
     func testPlainTerminalDoesNotOpenInspectorUntilClaudeDetected() async {
         var makeInspectorCalled = false
         let session = LivePaneSession.make(
-            PaneSpec(kind: .terminal, title: "term"),
+            paneID: PaneID(), spec: PaneSpec(kind: .terminal, title: "term"),
             makeClient: { _ in makeUnconnectedClient() },
             makeInspector: { _ in
                 makeInspectorCalled = true
@@ -458,9 +458,9 @@ final class InspectorGlueTests: XCTestCase {
     func testStoreReconnectHookReSubscribesInspectorWhileClaudeActive() async throws {
         var hostSides: [InspectorSource] = []
         var makeInspectorCalls = 0
-        let store = WorkspaceStore(liveModel: .tree, makeSession: { spec in
+        let store = WorkspaceStore(liveModel: .tree, makeSession: { seed in
             LivePaneSession.make(
-                spec,
+                paneID: seed.id, spec: seed.spec, spawnCwd: seed.spawnCwd,
                 makeClient: { _ in makeUnconnectedClient() },
                 makeInspector: { _ in
                     makeInspectorCalls += 1
@@ -501,7 +501,7 @@ final class InspectorGlueTests: XCTestCase {
     func testReestablishInspectorClosesStaleClientAndFoldsFreshOne() async throws {
         var hostSides: [InspectorSource] = []
         let session = LivePaneSession.make(
-            PaneSpec(kind: .terminal, title: "claude"),
+            paneID: PaneID(), spec: PaneSpec(kind: .terminal, title: "claude"),
             makeClient: { _ in makeUnconnectedClient() },
             makeInspector: { _ in
                 let (host, client) = LoopbackByteChannel.pair()
@@ -530,7 +530,7 @@ final class InspectorGlueTests: XCTestCase {
     func testReestablishInspectorNoOpsWhileNoClaudeDetected() async {
         var makeInspectorCalled = false
         let session = LivePaneSession.make(
-            PaneSpec(kind: .terminal, title: "term"),
+            paneID: PaneID(), spec: PaneSpec(kind: .terminal, title: "term"),
             makeClient: { _ in makeUnconnectedClient() },
             makeInspector: { _ in
                 makeInspectorCalled = true

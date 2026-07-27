@@ -371,8 +371,8 @@ public actor SlopDeskClient {
     /// UUID and last-received seq to the host (the SLOPDESK_DETACH_ENABLED path).
     ///
     /// NOT the production restore-a-pane path (seed-resume-identity-race, docs/DECISIONS):
-    /// ``LivePaneSession/makeTerminal(_:makeClient:makeInspector:target:)`` threads a restored
-    /// ``PaneSpec/resumeSessionID`` through ``init(ackInterval:makeTransport:resumeSeed:)`` instead,
+    /// `LivePaneSession.makeTerminal` threads the pane's own id
+    /// through ``init(ackInterval:makeTransport:resumeSeed:)`` instead,
     /// because calling this method requires an actor hop (`await`) that a separately-scheduled
     /// `connect()` Task is not ordered against. Init-time seeding has no such window: the fields are
     /// set before the object is ever handed to a second caller. This method remains for the CLI

@@ -30,9 +30,14 @@ import SlopDeskWorkspaceModel
 /// The structural fingerprint of the rail — everything `RailRowsBuilder.rows(for:)` output depends on
 /// EXCEPT the volatile per-row chrome (which the row views read live). Field coverage:
 ///   • tab identity + order, pane identity + pre-order (row set / order / `tabNumber`),
-///   • each pane's full `PaneSpec` (kind, title + `userRenamed`, cwd, `lastKnownTitle`, `railSubtitle` —
-///     the title/subtitle/cwd/disambiguation inputs; `PaneSpec` is `Equatable`, so any spec edit misses),
-///   • the pane's By-Project key (`paneProjectKey` — the host-pushed spec key else cwd; sectioning input),
+///   • each pane's `PaneSpec` (kind, title, `userRenamed` — `PaneSpec` is `Equatable`, so any spec edit
+///     misses),
+///   • the pane's two mirror-held FACTS: its `pane/cwd` and its freshness-gated live shell title. They
+///     are named MEMBERS, not implied by the spec: they feed the row title, the subtitle, the tooltip,
+///     the search corpus and the disambiguation pass, and the spec no longer carries either. Without
+///     them here the memo returns cached rows forever and the sidebar freezes on a stale title after a
+///     `cd` — with no crash, no log and no compile error,
+///   • the pane's By-Project key (`paneProjectKey` — the host-pushed key else cwd; sectioning input),
 ///   • A4 only: the foreground process of a pane that would TITLE itself by it (no folder name, or AT
 ///     its project root — the at-root rung; never a user rename). Read conditionally so the whole-dict
 ///     Observation dependency on `paneForegroundProcess` is registered only while such a pane exists —
@@ -45,6 +50,12 @@ struct RailStructureKey: Equatable {
     struct PaneKey: Equatable {
         let id: PaneID
         let spec: PaneSpec?
+        /// `pane/cwd` — the row's title, subtitle, tooltip and hidden search key all derive from it.
+        let cwd: String?
+        /// The FRESHNESS-GATED live shell title (``WorkspaceStore/liveProgramTitle(for:)``), which is
+        /// what the title chain actually reads. Never the raw `pane/liveTitle`: a stale title is
+        /// precisely the bug the freshness verdict exists to end.
+        let liveTitle: String?
         let projectKey: String?
         /// A4: the title's process fallback — populated ONLY when this pane's title would resolve from it.
         let titleProcessFallback: String?
@@ -67,13 +78,19 @@ struct RailStructureKey: Equatable {
             TabKey(id: tab.id, panes: tab.allPaneIDs().map { paneID in
                 let spec = session.specs[paneID]
                 let kind = spec?.kind ?? .terminal
+                let cwd = store.paneCwd(for: paneID)
+                let liveTitle = store.liveProgramTitle(for: paneID)
                 let projectKey = kind == .terminal ? store.paneProjectKey(paneID) : nil
                 // Project-key-aware: an AT-ROOT pane titles by its program (the at-root rung), so its
                 // process is part of the SIDEBAR's structural fingerprint too.
-                let titledByProcess = Self.titledByProcess(kind: kind, spec: spec, projectKey: projectKey)
+                let titledByProcess = Self.titledByProcess(
+                    kind: kind, spec: spec, cwd: cwd, projectKey: projectKey,
+                )
                 return PaneKey(
                     id: paneID,
                     spec: spec,
+                    cwd: cwd,
+                    liveTitle: liveTitle,
                     projectKey: projectKey,
                     titleProcessFallback: titledByProcess ? store.paneForegroundProcess[paneID] : nil,
                 )
@@ -91,13 +108,15 @@ struct RailStructureKey: Equatable {
     /// folder name stays their title) so every title site registers the volatile process dict as an
     /// Observation dependency ONLY for a pane that would actually retitle by it — a background pane's
     /// process tick otherwise re-evaluates a body/view that can never change as a result.
-    static func titledByProcess(kind: PaneKind, spec: PaneSpec?, projectKey: String? = nil) -> Bool {
+    static func titledByProcess(
+        kind: PaneKind, spec: PaneSpec?, cwd: String?, projectKey: String? = nil,
+    ) -> Bool {
         guard kind == .terminal, spec != nil,
               !(spec?.userRenamed == true && spec?.title.isEmpty == false)
         else { return false }
-        if RailRowsBuilder.cwdFolderName(spec?.lastKnownCwd) == nil { return true }
+        if RailRowsBuilder.cwdFolderName(cwd) == nil { return true }
         if let key = TabOrderingEngine.normalizedProjectKey(projectKey),
-           TabOrderingEngine.normalizedProjectKey(spec?.lastKnownCwd) == key
+           TabOrderingEngine.normalizedProjectKey(cwd) == key
         {
             return true
         }

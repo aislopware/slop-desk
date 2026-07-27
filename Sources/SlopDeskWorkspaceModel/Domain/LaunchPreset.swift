@@ -102,11 +102,15 @@ public enum LaunchPresetEngine {
     /// One pane the preset opens, with the bytes to type into it after it connects.
     public struct PaneLaunch: Equatable, Sendable {
         public let spec: PaneSpec
+        /// Where the preset asks this pane's shell to START (`pane/spawnCwd`). It rides the mux
+        /// `channelOpen`, so the host spawns the PTY there directly — no visible startup `cd`.
+        public let spawnCwd: String?
         /// The bytes to send once the pane's transport is live (a `cd …\n` + `command\n`), or empty for a
         /// plain shell pane. Computed via ``SendKeysParser`` semantics (literal text + `\n`).
         public let keystrokes: [UInt8]
-        public init(spec: PaneSpec, keystrokes: [UInt8]) {
+        public init(spec: PaneSpec, spawnCwd: String? = nil, keystrokes: [UInt8]) {
             self.spec = spec
+            self.spawnCwd = spawnCwd
             self.keystrokes = keystrokes
         }
     }
@@ -129,7 +133,8 @@ public enum LaunchPresetEngine {
     /// post-connect keystrokes. A two-pane preset adds a second `.terminal` pane and the split axis.
     public static func plan(for preset: LaunchPreset) -> Plan {
         let primary = PaneLaunch(
-            spec: PaneSpec(kind: .terminal, title: preset.name, lastKnownCwd: preset.workingDirectory),
+            spec: PaneSpec(kind: .terminal, title: preset.name),
+            spawnCwd: preset.workingDirectory,
             keystrokes: keystrokes(command: preset.command, cwd: nil),
         )
         guard let split = preset.split else {
@@ -137,7 +142,8 @@ public enum LaunchPresetEngine {
         }
         let secondary = PaneLaunch(
             // The second pane shares the preset's cwd (a split inherits the working directory).
-            spec: PaneSpec(kind: .terminal, title: preset.name, lastKnownCwd: preset.workingDirectory),
+            spec: PaneSpec(kind: .terminal, title: preset.name),
+            spawnCwd: preset.workingDirectory,
             keystrokes: keystrokes(command: split.secondaryCommand, cwd: nil),
         )
         return Plan(panes: [primary, secondary], splitAxis: split.axis)

@@ -226,24 +226,24 @@ final class OnLaunchBehaviorWiringTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         let persistence = WorkspacePersistence(fileURL: dir.appendingPathComponent("workspace.json"))
 
-        // A tree that is STRUCTURALLY the default shape (one "Local" session, one tab, one "Terminal" leaf) but is
-        // a REAL connected session — its leaf carries a `lastKnownCwd` subtitle hint. The title stays "Terminal"
-        // because the raw-decode guard runs before the load-time `lastKnownTitle → title` promotion.
+        // A tree that is a REAL session, not the throwaway default: a second tab is enough to tell them
+        // apart, and it is the only thing the tree itself still carries (the pane's cwd is a document
+        // fact now, not a spec field).
         var tree = TreeWorkspace.defaultWorkspace().normalized()
-        let leaf = try XCTUnwrap(tree.allPaneIDs().first)
-        let cwd = "/Users/me/project-with-unsaved-context"
-        tree.sessions[0].specs[leaf]?.lastKnownCwd = cwd
+        let extra = PaneID()
+        tree.sessions[0].tabs.append(Tab(title: "work", root: .leaf(extra), activePane: extra))
+        tree.sessions[0].specs[extra] = PaneSpec(kind: .terminal, title: "Terminal")
         try persistence.save(tree)
 
         // Direct contract pin: a cwd-bearing real session is NOT default-shaped, while the pure re-seedable
         // default still IS (so the repeated-launch idempotency win survives the tightening).
         XCTAssertFalse(
             WorkspacePersistence.isDefaultTreeShape(tree),
-            "a real single terminal with a lastKnownCwd hint must not be classified as the throwaway default",
+            "a real multi-tab session must not be classified as the throwaway default",
         )
         XCTAssertTrue(
             WorkspacePersistence.isDefaultTreeShape(TreeWorkspace.defaultWorkspace().normalized()),
-            "the pure all-nil default must still be classified as the re-seedable default (idempotency win)",
+            "the pure default must still be classified as the re-seedable default (idempotency win)",
         )
 
         // `.newWindow` must snapshot this real session aside (it is NOT the throwaway default).
@@ -251,18 +251,16 @@ final class OnLaunchBehaviorWiringTests: XCTestCase {
 
         // Emulate the store's first autosave overwriting the primary file with a fresh default.
         try persistence.save(TreeWorkspace.defaultWorkspace().normalized())
-        let primaryLeaf = try XCTUnwrap(persistence.loadTree().allPaneIDs().first)
-        XCTAssertNil(
-            persistence.loadTree().spec(for: primaryLeaf)?.lastKnownCwd,
-            "the autosave overwrote the primary workspace.json with the fresh default (no cwd hint)",
+        XCTAssertEqual(
+            persistence.loadTree().sessions.first?.tabs.count, 1,
+            "the autosave overwrote the primary workspace.json with the fresh default (one tab)",
         )
 
-        // The real session's cwd hint must still be recoverable from the `.previous` sidecar.
+        // The real session must still be recoverable from the `.previous` sidecar.
         let recovered = WorkspacePersistence(fileURL: persistence.previousSessionURL).loadTree()
-        let recoveredLeaf = try XCTUnwrap(recovered.allPaneIDs().first)
-        XCTAssertEqual(
-            recovered.spec(for: recoveredLeaf)?.lastKnownCwd, cwd,
-            "a real single-un-renamed-terminal session must be preserved aside on a .newWindow launch",
+        XCTAssertTrue(
+            recovered.allPaneIDs().contains(extra),
+            "a real session must be preserved aside on a .newWindow launch",
         )
     }
 

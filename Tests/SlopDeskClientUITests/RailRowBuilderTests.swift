@@ -17,7 +17,7 @@ import XCTest
 final class RailRowBuilderTests: XCTestCase {
     /// A headless tree-model store over the fake session (mirrors `OverlayCoordinatorMountTests`).
     private func makeStore() -> WorkspaceStore {
-        WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
+        WorkspaceStore(liveModel: .tree, makeSession: { seed in MountTestPaneSession(seed.spec) })
     }
 
     /// The pane id of the row at `index` in the freshly-built rail (the rows are rebuilt each call so a
@@ -425,38 +425,45 @@ final class RailRowBuilderTests: XCTestCase {
     func testRowTitlePrecedence() {
         // A rename rides the explicit `userRenamed` flag (set by `renamePane`), not a title-vs-cwd
         // heuristic — so the folder name is overridden only for a genuinely user-renamed pane.
-        let renamed = PaneSpec(kind: .terminal, title: "build box", lastKnownCwd: "/srv/app", userRenamed: true)
-        XCTAssertEqual(RailRowsBuilder.rowTitle(kind: .terminal, spec: renamed), "build box")
-
-        let unnamed = PaneSpec(kind: .terminal, title: "Terminal", lastKnownCwd: "/srv/app")
-        XCTAssertEqual(RailRowsBuilder.rowTitle(kind: .terminal, spec: unnamed), "app")
-
-        // The load-time auto-promotion (`title == lastKnownTitle`) is NOT a rename — folder name wins.
-        let promoted = PaneSpec(
-            kind: .terminal, title: "zsh — slopdesk", lastKnownCwd: "/srv/app",
-            lastKnownTitle: "zsh — slopdesk",
+        let renamed = PaneSpec(kind: .terminal, title: "build box", userRenamed: true)
+        XCTAssertEqual(
+            RailRowsBuilder.rowTitle(kind: .terminal, spec: renamed, cwd: "/srv/app"), "build box",
         )
-        XCTAssertEqual(RailRowsBuilder.rowTitle(kind: .terminal, spec: promoted), "app")
+
+        let unnamed = PaneSpec(kind: .terminal, title: "Terminal")
+        XCTAssertEqual(RailRowsBuilder.rowTitle(kind: .terminal, spec: unnamed, cwd: "/srv/app"), "app")
+
+        // A spec title that happens to equal the shell's live title is NOT a rename — folder name wins.
+        let promoted = PaneSpec(kind: .terminal, title: "zsh — slopdesk")
+        XCTAssertEqual(
+            RailRowsBuilder.rowTitle(
+                kind: .terminal, spec: promoted, cwd: "/srv/app", liveTitle: "zsh — slopdesk",
+            ),
+            "app",
+        )
 
         let noCwd = PaneSpec(kind: .terminal, title: "Terminal")
         XCTAssertEqual(RailRowsBuilder.rowTitle(kind: .terminal, spec: noCwd), "Terminal")
 
         // Non-terminal kinds keep the title-fallback chain untouched.
-        let video = PaneSpec(kind: .desktop, title: "Docs", lastKnownTitle: "Docs — Safari")
-        XCTAssertEqual(RailRowsBuilder.rowTitle(kind: .desktop, spec: video), "Docs — Safari")
+        let video = PaneSpec(kind: .desktop, title: "Docs")
+        XCTAssertEqual(
+            RailRowsBuilder.rowTitle(kind: .desktop, spec: video, liveTitle: "Docs — Safari"),
+            "Docs — Safari",
+        )
     }
 
-    /// Regression: a `title != lastKnownTitle` heuristic MISFIRES once a shell emits a SECOND
-    /// OSC title — `title` stays the load-time-promoted first title while `lastKnownTitle` advances, so the
+    /// Regression: a `title != liveTitle` heuristic MISFIRES once a shell emits a SECOND
+    /// OSC title — `title` stays the first title while the live one advances, so the
     /// stale promoted title would latch as a phantom "rename". With the explicit `userRenamed` flag (false here),
     /// the FOLDER NAME wins. Revert-to-confirm-fail: that heuristic returns "zsh — proj-v1" for this spec.
     func testRowTitleDoesNotMisfireAsRenameWhenShellEmitsSecondOSCTitle() {
-        let secondTitle = PaneSpec(
-            kind: .terminal, title: "zsh — proj-v1", lastKnownCwd: "/srv/app",
-            lastKnownTitle: "zsh — proj-v2", userRenamed: false,
-        )
+        let secondTitle = PaneSpec(kind: .terminal, title: "zsh — proj-v1", userRenamed: false)
         XCTAssertEqual(
-            RailRowsBuilder.rowTitle(kind: .terminal, spec: secondTitle), "app",
+            RailRowsBuilder.rowTitle(
+                kind: .terminal, spec: secondTitle, cwd: "/srv/app", liveTitle: "zsh — proj-v2",
+            ),
+            "app",
             "a shell's changing OSC title is NOT a user rename — the folder name still titles the pane",
         )
     }
@@ -493,9 +500,10 @@ final class RailRowBuilderTests: XCTestCase {
             "a bare login shell is suppressed — it falls through to the generic chain, not \"zsh\"",
         )
         // A known cwd still beats the process fallback.
-        let withCwd = PaneSpec(kind: .terminal, title: "Terminal", lastKnownCwd: "/srv/app")
+        let withCwd = PaneSpec(kind: .terminal, title: "Terminal")
         XCTAssertEqual(
-            RailRowsBuilder.rowTitle(kind: .terminal, spec: withCwd, processLabel: "vim"), "app",
+            RailRowsBuilder.rowTitle(kind: .terminal, spec: withCwd, cwd: "/srv/app", processLabel: "vim"),
+            "app",
             "the cwd folder name is the primary identity; the process fallback is only for a cwd-less pane",
         )
     }
@@ -503,18 +511,20 @@ final class RailRowBuilderTests: XCTestCase {
     /// A pane sitting AT its project root titles by its foreground PROGRAM, never by the folder name
     /// the section header already carries; an idle shell yields "" (the view's kind-generic reads).
     func testRowTitleAtProjectRootIsTheProgramNotTheFolder() {
-        let atRoot = PaneSpec(kind: .terminal, title: "zsh — app", lastKnownCwd: "/srv/app")
+        let atRoot = PaneSpec(kind: .terminal, title: "zsh — app")
 
         XCTAssertEqual(
             RailRowsBuilder.rowTitle(
-                kind: .terminal, spec: atRoot, processLabel: "claude", projectKey: "/srv/app",
+                kind: .terminal, spec: atRoot, cwd: "/srv/app",
+                processLabel: "claude", projectKey: "/srv/app",
             ),
             "claude",
             "at the project root the folder name would restate the section header — the program titles the row",
         )
         XCTAssertEqual(
             RailRowsBuilder.rowTitle(
-                kind: .terminal, spec: atRoot, processLabel: "-zsh", projectKey: "/srv/app",
+                kind: .terminal, spec: atRoot, cwd: "/srv/app",
+                processLabel: "-zsh", projectKey: "/srv/app",
             ),
             "",
             "an idle shell at root yields empty (⇒ the view's generic), NOT the OSC shell title restating the place",
@@ -522,31 +532,35 @@ final class RailRowBuilderTests: XCTestCase {
         // Trailing-slash / whitespace forms of the same root still count as AT root.
         XCTAssertEqual(
             RailRowsBuilder.rowTitle(
-                kind: .terminal, spec: atRoot, processLabel: "vim", projectKey: "/srv/app/",
+                kind: .terminal, spec: atRoot, cwd: "/srv/app",
+                processLabel: "vim", projectKey: "/srv/app/",
             ),
             "vim",
         )
         // A STRAYED pane (cwd inside the project subtree) keeps the folder-name identity.
-        let strayed = PaneSpec(kind: .terminal, title: "Terminal", lastKnownCwd: "/srv/app/packages/api")
+        let strayed = PaneSpec(kind: .terminal, title: "Terminal")
         XCTAssertEqual(
             RailRowsBuilder.rowTitle(
-                kind: .terminal, spec: strayed, processLabel: "claude", projectKey: "/srv/app",
+                kind: .terminal, spec: strayed, cwd: "/srv/app/packages/api",
+                processLabel: "claude", projectKey: "/srv/app",
             ),
             "api",
         )
         // An explicit rename still beats the at-root rung.
-        let renamed = PaneSpec(
-            kind: .terminal, title: "build box", lastKnownCwd: "/srv/app", userRenamed: true,
-        )
+        let renamed = PaneSpec(kind: .terminal, title: "build box", userRenamed: true)
         XCTAssertEqual(
             RailRowsBuilder.rowTitle(
-                kind: .terminal, spec: renamed, processLabel: "claude", projectKey: "/srv/app",
+                kind: .terminal, spec: renamed, cwd: "/srv/app",
+                processLabel: "claude", projectKey: "/srv/app",
             ),
             "build box",
         )
         // The titlebar call sites omit the key — the folder name stays the window-title identity.
         XCTAssertEqual(
-            RailRowsBuilder.rowTitle(kind: .terminal, spec: atRoot, processLabel: "claude"), "app",
+            RailRowsBuilder.rowTitle(
+                kind: .terminal, spec: atRoot, cwd: "/srv/app", processLabel: "claude",
+            ),
+            "app",
         )
     }
 

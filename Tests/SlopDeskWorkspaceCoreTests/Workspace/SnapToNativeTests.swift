@@ -21,7 +21,7 @@ final class SnapToNativeTests: XCTestCase {
         )
         let store = WorkspaceStore(
             restoring: Workspace(canvas: Canvas(items: [item]), focusedPane: id),
-            makeSession: { FakePaneSession($0) },
+            makeSession: { seed in FakePaneSession(seed.spec) },
             liveVideoCap: 5,
         )
         return (store, id)

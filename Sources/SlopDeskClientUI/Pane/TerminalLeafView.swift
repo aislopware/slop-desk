@@ -33,7 +33,7 @@ struct TerminalLeafView: View {
     /// EAGER/STATIC render path for headless ImageRenderer snapshots.
     var staticMirror: Bool = false
 
-    /// The host-reported working directory (`PaneSpec.lastKnownCwd`, live-set from OSC 7)
+    /// The host-reported working directory (`pane/cwd`, live-set from OSC 7)
     /// for the bottom status bar's left field. Resolved by ``PaneContainer`` from the store's spec so it stays
     /// reactive; `nil` until the host first reports a cwd.
     let cwd: String?
