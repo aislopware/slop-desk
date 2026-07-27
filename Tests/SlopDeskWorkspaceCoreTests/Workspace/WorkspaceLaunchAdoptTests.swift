@@ -1,3 +1,4 @@
+import Foundation
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -27,7 +28,12 @@ final class WorkspaceLaunchAdoptTests: XCTestCase {
         var panes: [PaneID] = []
     }
 
-    private func makeStore(_ tree: TreeWorkspace, log: Materializations = Materializations()) -> WorkspaceStore {
+    private func makeStore(
+        _ tree: TreeWorkspace,
+        log: Materializations = Materializations(),
+        cache: WorkspaceCacheStore? = nil,
+        cacheHostKey: String = "",
+    ) -> WorkspaceStore {
         WorkspaceStore(
             restoringTree: tree,
             liveModel: .tree,
@@ -35,6 +41,8 @@ final class WorkspaceLaunchAdoptTests: XCTestCase {
                 log.panes.append(seed.id)
                 return FakePaneSession(seed.spec)
             },
+            documentCache: cache,
+            cacheHostKey: cacheHostKey,
         )
     }
 
@@ -140,6 +148,92 @@ final class WorkspaceLaunchAdoptTests: XCTestCase {
         XCTAssertEqual(store.workspaceMirror.pendingIntentCount, 0, "the refused patch is gone")
         XCTAssertEqual(store.allSessionHandles.count, 1, "only the host's own pane is live")
         XCTAssertNil(store.pendingLaunchAdopt, "and the one offer this launch had is spent")
+    }
+
+    /// …and it costs exactly ONE materialization: the host's own pane, dialled once.
+    ///
+    /// The live-handle count above cannot see this. Losing three restored panes and gaining the
+    /// host's one is the CORRECT outcome of a refusal — the host's tree is the only copy of a layout
+    /// somebody built — but `allSessionHandles.count == 1` reads the same whether the host's pane was
+    /// materialized once or the restored three were rebuilt and torn down again around it. That
+    /// difference is three abandoned PTYs on the host, on every single connect.
+    ///
+    /// RED without the reconcile hold `reconcileTreeFromDocument()` keeps while an offer is
+    /// outstanding: the host frame lands first and materializes its pane, the optimistic patch then
+    /// projects the restored tree and materializes alpha/beta/gamma a second time, and the refusal
+    /// tears all three down again — four materializations for one connect.
+    func testARefusedAdoptMaterializesTheHostsOwnPaneExactlyOnce() {
+        let log = Materializations()
+        let restored = clientTree()
+        let store = makeStore(restored, log: log)
+        let hostPane = PaneID()
+        let hostSession = Session(
+            name: "host",
+            tabs: [Tab(title: "host tab", root: .leaf(hostPane), activePane: hostPane)],
+            activeTabIndex: 0,
+            specs: [hostPane: PaneSpec(kind: .terminal, title: "Terminal")],
+        )
+        // Everything past this line happens AFTER the window is up and every restored pane holds a PTY.
+        log.panes.removeAll()
+
+        _ = attachHostDocument(
+            to: store,
+            tree: TreeWorkspace(sessions: [hostSession], activeSessionID: hostSession.id),
+            pristine: false,
+        )
+
+        XCTAssertEqual(
+            log.panes, [hostPane],
+            "a refused adopt dials the host's pane once and no restored pane a second time",
+        )
+    }
+
+    // MARK: - What the offer carries
+
+    /// The offer carries each pane's SPAWN DIRECTORY, not just the shape of the tree.
+    ///
+    /// `pane/spawnCwd` is a TOPOLOGY fact, and on a cold launch this device is the only thing that
+    /// remembers it: the panes have no live shell to ask, so the value comes from
+    /// `workspace-cache.json` and `seedWorkspaceMirror(from:cache:)` folds it into the seeded topology
+    /// for exactly that reason. A proposal rebuilt from the TREE alone defaults `spawnCwd` to `[:]`,
+    /// so a pristine host that ACCEPTS the layout republishes every pane with its project directory
+    /// stripped — and the first cwd push after that rewrites the cache from the mirror, writing the
+    /// loss to disk. Next launch every shell starts in hostd's cwd and By-Project collapses to one
+    /// section.
+    func testAnAcceptedAdoptCarriesEveryPanesSpawnDirectory() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("slopdesk-adopt-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = WorkspaceCacheStore(fileURL: directory.appendingPathComponent("workspace-cache.json"))
+        let hostKey = "mac-studio:7420"
+
+        let restored = clientTree()
+        let panes = restored.allPaneIDs().sorted { $0.raw.uuidString < $1.raw.uuidString }
+        let spawnCwds = Dictionary(uniqueKeysWithValues: panes.enumerated().map { ($1, "/work/project-\($0)") })
+        var cached = HostWorkspaceState()
+        for (pane, cwd) in spawnCwds {
+            cached.set(
+                WorkspaceKey(.pane, pane.raw, WorkspacePaneField.spawnCwd),
+                WorkspaceStateCodec.encodeString(cwd),
+            )
+        }
+        try cache.save(cached, hostKey: hostKey)
+
+        let store = makeStore(restored, cache: cache, cacheHostKey: hostKey)
+        for (pane, cwd) in spawnCwds {
+            XCTAssertEqual(store.spawnCwd(for: pane), cwd, "the seed reads the cache — the launch is fine")
+        }
+
+        let document = attachHostDocument(to: store, pristine: true)
+
+        for (pane, cwd) in spawnCwds {
+            XCTAssertEqual(
+                document.topology?.spawnCwd[pane], cwd,
+                "the host adopted a layout whose panes have no spawn directory",
+            )
+            XCTAssertEqual(store.spawnCwd(for: pane), cwd, "…and the client can no longer answer for one")
+        }
     }
 
     /// Once per launch. A reconnect must not re-offer a tree that describes the workspace as it was

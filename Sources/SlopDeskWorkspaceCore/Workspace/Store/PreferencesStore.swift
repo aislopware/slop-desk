@@ -339,6 +339,11 @@ public final class PreferencesStore {
     /// models (see `customization__advanced-settings.md`). Non-setting STATE keys (first-launch flag,
     /// CLI-installed flag, window geometry, tab sort/grouping) are deliberately excluded — app state, not
     /// user-editable settings.
+    ///
+    /// Everything it reaches lives in `UserDefaults` or in one of the typed models here. The advertised
+    /// rows that do NOT (``AllSettingsCatalog/deviceLocalKeys``) belong to ``WorkspaceStore`` and
+    /// `device-prefs.json`, so the affordance the panel actually invokes is
+    /// ``resetEverySetting(deviceLocal:)`` — this alone leaves them standing.
     public func resetAll() {
         terminal = TerminalPreferences()
         video = VideoPreferences()
@@ -355,6 +360,24 @@ public final class PreferencesStore {
         // re-publish happened at all. Rebuild from the now-DEFAULT Controls so the live terminal reflects the
         // reset immediately (not only after the next settings change / relaunch).
         refreshTerminalControls()
+    }
+
+    /// "Reset All Settings" as the alert states it — *every* advertised row, including the ones no
+    /// `Defaults.reset(_:)` can reach.
+    ///
+    /// A settings value lives in one of three places, and only two of them are here: `UserDefaults`,
+    /// a typed model on this store, or `device-prefs.json` behind ``WorkspaceStore``
+    /// (``AllSettingsCatalog/deviceLocalKeys``). ``resetAll()`` covers the first two. Splitting the
+    /// affordance across two objects and trusting each call site to remember both is what left
+    /// `follow-session-focus` standing through a reset that had just promised to clear it — so this is
+    /// the ONE entry point the panel calls, and `AllSettingsCatalogTests` pins that every advertised
+    /// key is reachable from it.
+    ///
+    /// - Parameter store: the app's ``WorkspaceStore``, or `nil` in a preview / an un-injected host —
+    ///   where there is no `device-prefs.json` to restore and the rest of the reset still stands.
+    public func resetEverySetting(deviceLocal store: WorkspaceStore?) {
+        resetAll()
+        store?.resetDeviceLocalSettings()
     }
 
     /// Reset the ADVANCED-ONLY settings — the keys with NO dedicated settings tab (the "Reset Advanced Only"

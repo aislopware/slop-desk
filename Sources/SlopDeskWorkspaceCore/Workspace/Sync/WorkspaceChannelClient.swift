@@ -446,11 +446,14 @@ public final class WorkspaceChannelClient {
     /// host's own applier — so the split is on screen in the same frame the user asked for it, and
     /// what appears is what the host is about to publish.
     ///
-    /// `optimistic: false` sends the request WITHOUT staging a patch, for the one intent whose answer
-    /// the client genuinely cannot predict: `adoptWorkspace` is decided by whether the HOST's own file
-    /// is untouched, a fact no cell carries. Showing the proposal and snapping it away on
-    /// `rejectedStale` would replace the whole layout for a round trip — and, now that the projection
-    /// drives the registry, spawn a shell for every pane in it before tearing them all down again.
+    /// EVERY intent takes this path, `adoptWorkspace` included — the one whose answer the client
+    /// genuinely cannot predict, since `documentIsPristine` is a fact about the HOST's own file that
+    /// no cell carries. It is staged anyway, and that is deliberate: the layout on offer is the one
+    /// the window is already showing, so the patch keeps the projection where the panes are and the
+    /// reconcile it triggers is a no-op. Proposing it silently instead would leave the host's
+    /// first-run default as the thing to project for a round trip — and, now that the projection
+    /// drives the registry, that tears down every restored pane's shell and dials a throwaway for the
+    /// host's own. A refusal costs one snap-back of a layout nobody had moved to.
     ///
     /// - Returns: `false` when this client can already tell the intent is invalid against the
     ///   document it holds. Nothing is staged and nothing is sent: a request whose answer is already
@@ -460,12 +463,8 @@ public final class WorkspaceChannelClient {
         intent op: WorkspaceIntentOp,
         args: Data,
         now: TimeInterval = Date().timeIntervalSince1970,
-        optimistic: Bool = true,
     ) -> Bool {
         guard case .live = state else { return false }
-        guard optimistic else {
-            return send(unstaged: WorkspaceIntent(intentID: UUID(), op: op.rawValue, args: args))
-        }
         guard let intent = box.stageIntent(op: op, args: args, issuedAt: now) else { return false }
         // A loopback client IS the far end: it answers here, before this call returns, so the patch
         // staged one line above is already retired by the document frame the answer carries.
@@ -489,21 +488,6 @@ public final class WorkspaceChannelClient {
             guard let delay = pendingSweepDelay else { return }
             try? await Task.sleep(for: delay)
             box.expirePending(now: self.now())
-        }
-        return true
-    }
-
-    /// Puts one intent on the wire with no optimistic patch behind it. Nothing to roll back, so a
-    /// refusal costs a frame and changes nothing on screen; an acceptance arrives as an ordinary
-    /// document frame like any other client's change.
-    private func send(unstaged intent: WorkspaceIntent) -> Bool {
-        if let localDocument {
-            localDocument.serve(intent)
-            return true
-        }
-        Task { [weak self] in
-            guard let self else { return }
-            await send(verb: .intent, payload: intent.encode())
         }
         return true
     }

@@ -119,8 +119,11 @@ public final class WorkspaceStore {
 
     /// The layout this client restored at launch, held until a host document turns up to offer it to
     /// (``runArmedLaunchAdoptIfPossible()``). `nil` once offered, and on the canvas path.
+    ///
+    /// The seeded TOPOLOGY, not the tree: it carries the cached `spawnCwd` for every restored pane,
+    /// and by the time the offer goes out the mirror holds the host's own first frame instead.
     @ObservationIgnored
-    var pendingLaunchAdopt: TreeWorkspace?
+    var pendingLaunchAdopt: WorkspaceTopology?
 
     /// Records (or clears) the divider preview.
     ///
@@ -259,14 +262,37 @@ public final class WorkspaceStore {
 
     /// Sets whether this device follows the host's session focus (docs/45 §8.2).
     ///
-    /// Turning it back ON drops ``deviceFocus``: a device that has resumed following must show what
-    /// the host says is focused, and a surviving overlay would pin it to a tab no other client can
-    /// see it on. That is also why the overlay needs no second guard on the flag — the only way to
-    /// hold one is to be unfollowing.
+    /// Both directions move ``deviceFocus``, because the flag is the only thing that decides which of
+    /// the two views this device renders and neither answer may wait for a tap.
+    ///
+    /// - ON drops the overlay: a device that has resumed following must show what the host says is
+    ///   focused, and a surviving overlay would pin it to a tab no other client can see it on. That
+    ///   is also why the overlay needs no second guard on the flag — the only way to hold one is to
+    ///   be unfollowing.
+    /// - OFF takes hold of what this device is looking at *now*
+    ///   (``currentViewAsDeviceFocus()``). With no overlay recorded the projection is host truth
+    ///   verbatim, so the other client that is dragging this one goes on dragging it — and this
+    ///   switch is reached for precisely while that is happening.
     public func setFollowSessionFocus(_ following: Bool) {
         guard devicePreferences.followSessionFocus != following else { return }
         mutateDevicePreferences { $0.followSessionFocus = following }
-        if following { setDeviceFocus(nil) }
+        setDeviceFocus(following ? nil : currentViewAsDeviceFocus())
+    }
+
+    /// Restores the DEVICE-LOCAL rows the Advanced → All Settings list advertises
+    /// (``AllSettingsCatalog/deviceLocalKeys``) to their defaults — the half of "Reset All Settings"
+    /// that lives in `device-prefs.json` and no `Defaults.reset(_:)` can reach.
+    ///
+    /// SETTINGS only. The rest of ``DevicePreferences`` — the preset library, the latched video modes,
+    /// the per-host connection MRU — is device STATE and content, on exactly the terms
+    /// ``PreferencesStore/resetAll()`` leaves the first-launch flag and the window geometry alone.
+    /// Nothing in the All-Settings list advertises them, and a reset that emptied a user's preset
+    /// library would be data loss behind a button that promises defaults.
+    ///
+    /// Routed through ``setFollowSessionFocus(_:)`` so resuming follow drops the device-local focus
+    /// overlay here too — the one edit path, and the rule it enforces cannot be routed around.
+    public func resetDeviceLocalSettings() {
+        setFollowSessionFocus(DevicePreferences.platformDefaultFollowSessionFocus)
     }
 
     /// Where the last picture of the host's document is cached (docs/45 §7.3), so a cold launch paints
@@ -500,14 +526,16 @@ public final class WorkspaceStore {
         // across relaunch — v1; a quit/crash while detached loses nothing). NEVER inside `normalized()`,
         // which runs op-internally and would undo a live detach.
         let seeded = (restoringTree ?? .defaultWorkspace()).normalized().redockingDetachedPanes()
-        seedWorkspaceMirror(
+        let seededTopology = seedWorkspaceMirror(
             from: seeded,
             cache: documentCache?.load(hostKey: cacheHostKey) ?? HostWorkspaceState(),
         )
         // …and hold it for a host that has never had a workspace of its own, which is how a layout
         // built before this client ever spoke to a document gets uploaded instead of discarded
-        // (``runArmedLaunchAdoptIfPossible()``).
-        if liveModel == .tree { pendingLaunchAdopt = seeded }
+        // (``runArmedLaunchAdoptIfPossible()``). The SEEDED TOPOLOGY, so the offer carries each pane's
+        // spawn directory as well as its place in the tree — the cache is the only thing that still
+        // knows it, and the host's own first frame replaces these entries before the offer goes out.
+        if liveModel == .tree { pendingLaunchAdopt = seededTopology }
         // The live model picks the init reconcile. `.canvas` materializes the canvas panes (the
         // retained-but-dead path); `.tree` (the app) materializes the tree's leaves through the SAME
         // registry diff — exactly one of the two trees ever drives a given store.

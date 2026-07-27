@@ -112,7 +112,9 @@ extension WorkspaceStore {
         armedBootstrapEnvironment = nil
         armedBootstrapShape = nil
         pendingLaunchAdopt = nil
-        stageAdopt(shape.tree)
+        // Nothing to fold in beside the tree: an autoconnect shape is minted here, not restored, so its
+        // panes have no spawn directory to carry and the host takes its own default for each.
+        stageAdopt(WorkspaceTopology(tree: shape.tree))
         // The window-targeted video autoconnect (`check-video.sh` serves ONE host window) boots the
         // remote desktop the way the user gets it: a DETACHED `.desktop` pane in its own OS window —
         // video never enters the workspace tree (docs/DECISIONS.md 2026-07-23). Its pane id is minted

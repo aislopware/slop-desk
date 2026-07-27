@@ -389,6 +389,61 @@ final class AllSettingsCatalogTests: XCTestCase {
         }
     }
 
+    /// …and so is every `.hasDedicatedTab` key, which the assertion above walks straight past.
+    ///
+    /// That bucket is a RENDERING hint ("jump to the tab that owns the real control"), never a
+    /// statement about who resets the value — so a row landing in it silently leaves the anti-drift
+    /// guard, which is exactly how `follow-session-focus` became the first advertised row a Reset All
+    /// could not restore. Each one has to be reachable by SOMETHING: a `Defaults.Key` in one of the
+    /// two reset sets, the typed render models `resetAll()` replaces wholesale, or
+    /// ``AllSettingsCatalog/deviceLocalKeys`` — the rows that live in `device-prefs.json`, which no
+    /// `Defaults.reset` can touch.
+    func testResetCoverageReachesEveryAdvertisedKeyInEitherBucket() {
+        let reachable = Set(
+            (PreferencesStore.tabReachableDefaultsKeys + PreferencesStore.advancedOnlyDefaultsKeys).map(\.name),
+        )
+        .union(AllSettingsCatalog.modelBackedKeys)
+        .union(AllSettingsCatalog.deviceLocalKeys)
+        for entry in AllSettingsCatalog.entries {
+            XCTAssertTrue(
+                reachable.contains(entry.key),
+                "advertised All-Settings key '\(entry.key)' is restored by nothing (survives Reset All)",
+            )
+        }
+    }
+
+    /// "Reset All Settings" restores the DEVICE-LOCAL rows too — the ones no `Defaults.reset` can
+    /// reach, because they live in `device-prefs.json` behind ``WorkspaceStore``.
+    ///
+    /// The alert promises "every setting to its default". `follow-session-focus` is advertised in the
+    /// same list, jumps to a real control on General, and is the whole reason a Mac does or does not
+    /// get dragged between tabs by another device — so a reset that skipped it would leave the row
+    /// reading "Off" beside its own `· Default: On` with nothing left to say the reset had missed it.
+    func testResetEverySettingRestoresTheDeviceLocalRows() {
+        let preferences = PreferencesStore(defaults: makeIsolatedDefaults(), sidecarURL: nil, applyOnInit: false)
+        let workspace = WorkspaceStore(liveModel: .tree, makeSession: { FakePaneSession($0.spec) })
+        let flipped = !DevicePreferences.platformDefaultFollowSessionFocus
+        workspace.setFollowSessionFocus(flipped)
+        XCTAssertEqual(workspace.devicePreferences.followSessionFocus, flipped, "precondition: it is off default")
+
+        preferences.resetEverySetting(deviceLocal: workspace)
+
+        XCTAssertEqual(
+            workspace.devicePreferences.followSessionFocus,
+            DevicePreferences.platformDefaultFollowSessionFocus,
+            "Reset All left an advertised row at the value the user set",
+        )
+    }
+
+    /// Every key ``AllSettingsCatalog/deviceLocalKeys`` claims is actually advertised, so the escape
+    /// hatch cannot be used to excuse a key the list does not even show.
+    func testTheDeviceLocalKeysAreAdvertisedRows() {
+        let advertised = Set(AllSettingsCatalog.entries.map(\.key))
+        for key in AllSettingsCatalog.deviceLocalKeys {
+            XCTAssertTrue(advertised.contains(key), "'\(key)' is claimed device-local but is in no row")
+        }
+    }
+
     /// The two reset sets are DISJOINT (no key is reset twice / classified both tab-reachable and
     /// advanced-only), so the tab-reachable/advanced-only split is unambiguous.
     func testResetSetsAreDisjoint() {

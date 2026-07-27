@@ -51,7 +51,16 @@ extension WorkspaceStore {
     ///
     /// Facts for panes the restored tree no longer contains are dropped: a cached row with no leaf to
     /// hang on is unreachable memory that the next save would write out again.
-    func seedWorkspaceMirror(from tree: TreeWorkspace, cache: HostWorkspaceState = HostWorkspaceState()) {
+    ///
+    /// - Returns: the topology it seeded — the tree WITH the cached spawn directories on it. That is
+    ///   the value ``WorkspaceStore/runArmedLaunchAdoptIfPossible()`` offers a pristine host, and it
+    ///   has to be captured here: by the time the offer goes out the mirror holds the host's own first
+    ///   frame, which has already replaced these entries.
+    @discardableResult
+    func seedWorkspaceMirror(
+        from tree: TreeWorkspace,
+        cache: HostWorkspaceState = HostWorkspaceState(),
+    ) -> WorkspaceTopology {
         var topology = WorkspaceTopology(tree: tree)
         let livePanes = Set(tree.allPaneIDs()).union(tree.detachedPaneIDs())
         for pane in livePanes {
@@ -76,6 +85,7 @@ extension WorkspaceStore {
                 workspaceMirror.writeFastPath(key, value)
             }
         }
+        return topology
     }
 
     /// The three per-pane facts the cache carries: where the shell STARTS (`pane/spawnCwd`), where it

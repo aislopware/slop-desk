@@ -1,3 +1,5 @@
+import Foundation
+import SlopDeskProtocol
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskWorkspaceCore
@@ -140,6 +142,65 @@ final class FollowSessionFocusTests: XCTestCase {
         XCTAssertEqual(store.tree.activeSession?.activeTab?.activePane, seed.secondPane)
         XCTAssertEqual(store.tree.activeSession?.activeTab?.id, seed.second)
         XCTAssertEqual(store.currentWorkspaceView().paneID, seed.secondPane.raw)
+    }
+
+    /// Turning it OFF detaches this device NOW, not at its next local tap.
+    ///
+    /// The moment somebody reaches for this switch is the moment something else is dragging them. With
+    /// no overlay recorded, `tree` is host truth verbatim — so the iPad that is yanking the Mac between
+    /// tabs goes on yanking it until the Mac happens to click a tab of its own, which is exactly the
+    /// gesture the user just said they did not want to have to make.
+    func testTurningFollowingOffDetachesTheDeviceImmediately() {
+        let seed = seed()
+        let store = WorkspaceStore(
+            restoringTree: seed.workspace,
+            liveModel: .tree,
+            makeSession: { FakePaneSession($0.spec) },
+            liveVideoCap: 2,
+        )
+        let document = store.attachLoopbackWorkspaceDocument()
+        store.setFollowSessionFocus(true)
+        XCTAssertEqual(store.tree.activeSession?.activeTab?.id, seed.first)
+
+        store.setFollowSessionFocus(false)
+        // Another client moves the shared focus — the whole reason the switch was reached for.
+        document.serve(WorkspaceIntent(
+            intentID: UUID(),
+            op: WorkspaceIntentOp.focusTab.rawValue,
+            args: WorkspaceIntentArgs.encode(tab: seed.second),
+        ))
+
+        XCTAssertEqual(hostTruthActiveTab(store), seed.second, "the shared focus did move")
+        XCTAssertEqual(
+            store.tree.activeSession?.activeTab?.id, seed.first,
+            "…and this device stayed where it was looking when it stopped following",
+        )
+    }
+
+    /// The pane half of the same instant: an unfollowed device holds its own pane inside the tab too.
+    func testTurningFollowingOffHoldsThePaneTheDeviceWasLookingAt() {
+        let seed = seed()
+        let store = WorkspaceStore(
+            restoringTree: seed.workspace,
+            liveModel: .tree,
+            makeSession: { FakePaneSession($0.spec) },
+            liveVideoCap: 2,
+        )
+        let document = store.attachLoopbackWorkspaceDocument()
+        store.setFollowSessionFocus(true)
+
+        store.setFollowSessionFocus(false)
+        document.serve(WorkspaceIntent(
+            intentID: UUID(),
+            op: WorkspaceIntentOp.focusPane.rawValue,
+            args: WorkspaceIntentArgs.encode(pane: seed.secondPane),
+        ))
+
+        XCTAssertEqual(hostTruthActivePane(store), seed.secondPane)
+        XCTAssertEqual(
+            store.tree.activeSession?.activeTab?.activePane, seed.firstPane,
+            "the device holds the pane it was on when it stopped following",
+        )
     }
 
     /// The device's own view yields the moment it starts following again — otherwise turning the flag

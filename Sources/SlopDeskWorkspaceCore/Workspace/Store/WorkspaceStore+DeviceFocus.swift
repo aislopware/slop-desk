@@ -67,6 +67,25 @@ extension WorkspaceStore {
         return true
     }
 
+    /// What this device is looking at RIGHT NOW, as an overlay — the value it takes hold of the instant
+    /// it stops following.
+    ///
+    /// Without it, stopping is not an event: `deviceFocus` would stay `nil`, ``WorkspaceStore/tree``
+    /// would go on projecting host truth verbatim, and the device would keep being dragged until it
+    /// happened to navigate locally. The moment somebody reaches for that switch is the moment
+    /// something else is dragging them, so "detach at the next tap" is precisely the wrong time.
+    ///
+    /// The pane rides along only when carrying it changes nothing on screen: ``applying(_:to:)`` runs
+    /// `focusPane`, which exits a zoom that is showing some OTHER pane. Detaching must be invisible.
+    ///
+    /// `nil` with no active tab — there is nothing to hold, and host truth showing through IS the
+    /// right answer for a device that is looking at an empty workspace.
+    func currentViewAsDeviceFocus() -> DeviceFocus? {
+        guard let tab = tree.activeSession?.activeTab else { return nil }
+        let zoomHoldsAnotherPane = tab.zoomedPane != nil && tab.zoomedPane != tab.activePane
+        return DeviceFocus(tab: tab.id, pane: zoomHoldsAnotherPane ? nil : tab.activePane)
+    }
+
     /// Publishes a TAB focus the way this device is configured to: an intent when following, a local
     /// overlay when not. `true` when the focus landed somewhere.
     @discardableResult

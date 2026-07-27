@@ -1015,7 +1015,11 @@ exactly the way the divider preview does (§7.2). It applies the same `Workspace
 would have, so the device sees what it would have seen had it been following; it resolves against the
 projection on every read, so a tab another client closed stops applying instead of stranding the
 device on a view of nothing; and it is dropped the moment following resumes, because a surviving one
-would pin the device to a tab no other client can see it on. `selectTab`, `selectSession`,
+would pin the device to a tab no other client can see it on. **Turning the flag OFF is the same instant
+in reverse**: the overlay takes hold of what the device is looking at *right then*
+(`currentViewAsDeviceFocus()`), because with none recorded the projection is host truth verbatim — and
+the moment somebody reaches for that switch is the moment another client is dragging them, so
+"detaches at your next tap" is the one timing that fails the gesture. `selectTab`, `selectSession`,
 `focusPaneTree` and the directional `moveFocusTree` all fork through `stageFocus(tab:)` /
 `stageFocus(pane:)`, so no gesture can grow a path around the flag. Presence is published from the
 projection either way — looking away is not hiding.
@@ -1026,7 +1030,14 @@ list as `follow-session-focus`. Cross-platform on purpose — the default differ
 with no row keeps its default forever and the escape hatch is unreachable in whichever direction that
 device did not start in. It is device-local, so it is not a `Defaults.Key`: the row writes through
 `setFollowSessionFocus(_:)` into `device-prefs.json`, which is also what makes the overlay-drop rule apply
-to the control for free.
+to the control for free. Being outside `UserDefaults` is also why **"Reset All Settings" reaches it
+through a second object**: `PreferencesStore.resetAll()` clears `Defaults.Keys` and the typed models and
+can touch neither `device-prefs.json` nor a row it does not know about, so the panel calls
+`resetEverySetting(deviceLocal:)` — `resetAll()` plus `WorkspaceStore.resetDeviceLocalSettings()`, which
+restores exactly `AllSettingsCatalog.deviceLocalKeys` and leaves the preset library, the video-mode
+latches and the connection MRU alone (device *state*, not settings — the same line `resetAll()` draws at
+window geometry). `AllSettingsCatalogTests` binds all three reset surfaces to the advertised list, so a
+future row belonging to none of them fails there instead of quietly outliving the reset.
 
 ### 8.3 PTY size — monotone min-fold over ATTACHMENT, never presence, never a latch
 
@@ -1443,6 +1454,11 @@ projection owed the rest of the app")
 - **The launch adopt has a caller**, so an upgrading client offers its restored layout to a first-run
   host instead of discarding it. Staged optimistically and held for one turn (§7 note 4), so the panes
   the window already dialled keep their shells; a refusal snaps the patch away and host truth stands.
+  What it offers is the SEEDED TOPOLOGY, not the tree: `pane/spawnCwd` is a topology fact that on a
+  cold launch only `workspace-cache.json` still knows (the panes have no live shell to ask), and a
+  proposal rebuilt from the tree alone would have a pristine host accept every pane with its project
+  directory stripped — the next launch starting all of them in hostd's own cwd, and the first cwd push
+  after that writing the loss into the cache.
 - **A refused layout change is reported** (`onLayoutChangeUnavailable` → a transient chip) rather than
   swallowed; the ⇧⌘T cue asks which tab is on the ring rather than how many; a re-tile exits zoom
   host-side; the client's dead `tabFocusHistory` is deleted in favour of `topology.focusMRU`.
@@ -1450,9 +1466,6 @@ projection owed the rest of the app")
 **NOT shipped**
 - **Hardware verification.** Everything above is proven headlessly and by the two GUI gates; nobody has
   yet watched two real clients converge on one layout. That is the open item.
-- **A settings row for `followSessionFocus`.** The flag is persisted, read and settable
-  (`WorkspaceStore.setFollowSessionFocus(_:)`); no UI toggles it, so a device keeps its platform
-  default.
 - **A cross-SESSION dock.** Refused by design — a pane's spec lives in its session's side table, so
   moving one between sessions is a different op with a different invariant, and no gesture asks.
 

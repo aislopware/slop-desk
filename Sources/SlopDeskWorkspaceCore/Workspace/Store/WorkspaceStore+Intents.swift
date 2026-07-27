@@ -127,22 +127,20 @@ public extension WorkspaceStore {
         return true
     }
 
-    /// Uploads `tree` as this workspace's starting shape (op 0).
+    /// Uploads `topology` as this workspace's starting shape (op 0).
     ///
     /// Accepted only by a PRISTINE document — a host that already has a workspace answers
     /// `rejectedStale` and keeps it, because that tree is the only copy of a layout somebody built.
     ///
-    /// `optimistic: false` proposes it without showing it first — see
-    /// ``WorkspaceChannelClient/send(intent:args:now:optimistic:)``.
-    func stageAdopt(_ tree: TreeWorkspace, optimistic: Bool = true) {
+    /// A TOPOLOGY rather than a tree, because the tree is not the whole layout. `spawnCwd` says where
+    /// each pane's shell is asked to start, and on a cold launch this client is the only thing that
+    /// remembers it — the panes have no live shell to ask. Rebuilding the proposal from the tree alone
+    /// defaults that map to `[:]`, so an ACCEPTED adopt would republish every pane with its project
+    /// directory stripped and the next launch would start all of them in hostd's own cwd.
+    func stageAdopt(_ topology: WorkspaceTopology) {
         var state = HostWorkspaceState()
-        state.write(topology: WorkspaceTopology(tree: tree))
-        let args = WorkspaceStateCodec.encodeSnapshot(state)
-        guard optimistic else {
-            workspaceChannel?.send(intent: .adoptWorkspace, args: args, optimistic: false)
-            return
-        }
-        stage(.adoptWorkspace, args)
+        state.write(topology: topology)
+        stage(.adoptWorkspace, WorkspaceStateCodec.encodeSnapshot(state))
     }
 
     /// Offers the layout THIS CLIENT restored at launch to a host that has never had one.
@@ -168,10 +166,10 @@ public extension WorkspaceStore {
     /// A refusal reads the same as it always did: `rejectedStale` snaps the patch away, host truth
     /// stands, and only then do the restored panes go.
     func runArmedLaunchAdoptIfPossible() {
-        guard let tree = pendingLaunchAdopt, armedBootstrapEnvironment == nil, canMutate,
+        guard let topology = pendingLaunchAdopt, armedBootstrapEnvironment == nil, canMutate,
               workspaceMirror.knownEpoch != Self.seedEpoch else { return }
         pendingLaunchAdopt = nil
-        stageAdopt(tree)
+        stageAdopt(topology)
         // That line released the hold, so the reconcile it was holding has to happen. Staging normally
         // performs it — every mirror write announces itself — but whether a given intent reaches the
         // mirror is the channel's business, and a proposal it refuses would otherwise leave the registry

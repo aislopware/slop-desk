@@ -84,6 +84,35 @@ public enum AllSettingsCatalog {
     /// ONCE, so the catalog row and the view that renders the real control cannot split-brain.
     public static let followSessionFocusKey = "follow-session-focus"
 
+    /// The advertised rows that persist OUTSIDE `UserDefaults` — the DEVICE-LOCAL facts in
+    /// `device-prefs.json` (docs/45 §7.3), owned by ``WorkspaceStore``.
+    ///
+    /// `Defaults.reset(_:)` cannot reach them, and no typed model in ``PreferencesStore`` holds them
+    /// either, so a Reset All restores them through ``WorkspaceStore/resetDeviceLocalSettings()`` —
+    /// which is what ``PreferencesStore/resetEverySetting(deviceLocal:)`` calls. Named here, beside
+    /// the rows themselves, so `AllSettingsCatalogTests` can bind the three reset surfaces to the one
+    /// list of advertised keys: a row that belongs to none of them fails there rather than quietly
+    /// outliving the reset the panel just promised.
+    public static let deviceLocalKeys: Set<String> = [followSessionFocusKey]
+
+    /// The advertised rows ``PreferencesStore/resetAll()`` restores WITHOUT a global `Defaults.Key`,
+    /// so they can never appear in either reset key set. Two kinds:
+    ///
+    /// - the typed RENDER FIELDS — `resetAll()` replaces ``PreferencesStore/terminal`` and
+    ///   ``PreferencesStore/appearance`` wholesale, and `font-family` and friends come back with the
+    ///   model. They are config-style pseudo-keys exactly as they render: they name a field, not a
+    ///   `UserDefaults` entry;
+    /// - `appearance.density`, which `resetAll()` clears BY NAME from the store's own injected
+    ///   defaults suite (the per-instance store that keeps tests isolated).
+    ///
+    /// `AllSettingsCatalogTests` uses this to tell "restored by `PreferencesStore` another way" apart
+    /// from "restored by nobody".
+    public static let modelBackedKeys: Set<String> = [
+        "font-family", "font-size", "scrollback-limit",
+        "cursor-style", "cursor-style-blink", "theme",
+        SettingsKey.density,
+    ]
+
     /// Every client-side configuration key, in a readable section order (General → Shell → Controls →
     /// Editor → Appearance → Agents, then the typed render fields). The list is the single source the All
     /// Settings view iterates; `AllSettingsCatalogTests.testCatalogCoversEveryClientSettingsKey` pins that no

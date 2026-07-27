@@ -144,7 +144,9 @@ struct AllSettingsListView: View {
         .alert("Reset All Settings?", isPresented: $confirmResetAll) {
             Button("Cancel", role: .cancel) {}
             Button("Reset All", role: .destructive) {
-                store.resetAll()
+                // The affordance in full: `resetAll()` alone cannot reach `device-prefs.json`, and the
+                // alert below promises "every setting" (`AllSettingsCatalog.deviceLocalKeys`).
+                store.resetEverySetting(deviceLocal: workspaceStore)
                 onAfterReset()
             }
         } message: {
