@@ -211,10 +211,15 @@ echo "==> client up (pid ${PID})"
 # document (docs/45): the client asks for it with an intent over `channelClass 1`, so the terminal
 # daemon accepting that channel is what everything below hangs off. Failing here says the document
 # never opened; failing at 5b says it opened and the video leg still did not dial.
+#
+# Matched on the ACCEPT line specifically. `workspace channel …` is also the prefix hostd uses for
+# every refusal and error on that channel — `refused — already open`, `receive ended`, `malformed
+# subscribe dropped`, `unknown verb dropped` — and the first of those is logged with no accept at
+# all, so a substring match would print "accepted ✅" for a channel the host turned away.
 echo "==> waiting for the workspace document channel on :${CONNECT_PORT}…"
 DOC_OK=0
 for _ in $(seq 1 20); do
-  if grep -q "workspace channel" "${TERMLOG}" 2> /dev/null; then
+  if grep -qE "workspace channel .* accepted" "${TERMLOG}" 2> /dev/null; then
     DOC_OK=1
     break
   fi

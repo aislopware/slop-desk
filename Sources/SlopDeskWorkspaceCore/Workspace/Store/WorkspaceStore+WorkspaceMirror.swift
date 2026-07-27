@@ -218,6 +218,21 @@ extension WorkspaceStore {
         // between, and that `.live` edge is what fires ``runArmedBootstrapIfPossible()``. So the
         // reconcile the bootstrap's own optimistic patch triggers is the first one SwiftUI can see.
         guard armedBootstrapEnvironment == nil else { return }
+        // …and so does an OUTSTANDING LAUNCH ADOPT, which is the same race on the ORDINARY user's
+        // path. The layout this client restored from `workspace.json` is about to be offered to a host
+        // that has never had one (``runArmedLaunchAdoptIfPossible()``), and the frame that arrives
+        // first is that host's own first-run default. Projecting it would tear down every restored
+        // terminal and the shell behind it, materialize the host's default pane and give THAT a shell,
+        // and then rebuild all of them as new sessions when the offer is accepted a round trip later.
+        //
+        // The same one turn as the bootstrap's, and the same edge releases it: the frame lands, then
+        // `.live` publishes, and the offer's own optimistic patch triggers the first reconcile SwiftUI
+        // can see.
+        //
+        // Scoped to a REAL host document. Before one lands the mirror holds this client's own seed,
+        // which IS the tree on offer — nothing to hold against — and a client whose host never opens a
+        // workspace channel (the flag off there) would otherwise stop reconciling for good.
+        guard pendingLaunchAdopt == nil || workspaceMirror.knownEpoch == Self.seedEpoch else { return }
         reconcileTree(acknowledgingFocus: false)
     }
 

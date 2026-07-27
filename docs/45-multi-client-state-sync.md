@@ -881,7 +881,7 @@ identity. Per the no-migration directive a file from a different shape **decode-
 
 ### 7.4 Cold-start sequence
 
-Three ordered facts hold this together, and each exists because the one before it does:
+Four ordered facts hold this together, and each exists because the one before it does:
 
 1. **The mirror is SEEDED before a packet moves.** `init` publishes the restored tree as a kind-0
    snapshot at `stateNum 1` under `seedEpoch` (the zero UUID, the wire's "none"), with the cache's
@@ -908,6 +908,18 @@ Three ordered facts hold this together, and each exists because the one before i
    spawn a second shell for the pane that replaces it. The hold is that one turn: the channel folds a
    frame and publishes `.live` with no suspension between, and that `.live` edge is what runs the
    bootstrap.
+
+4. **The LAUNCH ADOPT holds the same turn, and is staged optimistically.** The ordinary user's path
+   has the identical race: the layout restored from `workspace.json` is about to be offered to a
+   pristine host (`runArmedLaunchAdoptIfPossible`), and the frame that arrives first is that host's
+   own first-run default. So `reconcileTreeFromDocument` holds while an offer is outstanding AND a
+   real host epoch has landed — before one lands the mirror holds this client's own seed, which IS
+   the tree on offer, and a host that never opens a workspace channel must not stop the reconcile
+   for good. The offer then stages OPTIMISTICALLY, which puts that tree straight back over host
+   truth, so the reconcile releasing the hold is a no-op and every restored terminal keeps the shell
+   it dialled at launch. Silently proposing it instead cost three panes their sessions and left the
+   host's default pane running a PTY nobody was attached to. A refusal is unchanged: `rejectedStale`
+   snaps the patch away and host truth stands.
 
 ```
 CLIENT                                                     HOST (hostd)
@@ -1420,9 +1432,9 @@ projection owed the rest of the app")
   ONE golden change in the phase. Without it the display switcher's commit reached nothing.
 - **The device-focus overlay follows the object THIS device just made** — an unfollowing iPhone's ⌘T
   and split land focused, while a gesture that moves no focus leaves it where it was looking.
-- **The launch adopt has a caller**, sent WITHOUT an optimistic patch, so an upgrading client offers
-  its restored layout to a first-run host instead of discarding it — and a refusal costs no flash and
-  no spawned shells.
+- **The launch adopt has a caller**, so an upgrading client offers its restored layout to a first-run
+  host instead of discarding it. Staged optimistically and held for one turn (§7 note 4), so the panes
+  the window already dialled keep their shells; a refusal snaps the patch away and host truth stands.
 - **A refused layout change is reported** (`onLayoutChangeUnavailable` → a transient chip) rather than
   swallowed; the ⇧⌘T cue asks which tab is on the ring rather than how many; a re-tile exits zoom
   host-side; the client's dead `tabFocusHistory` is deleted in favour of `topology.focusMRU`.

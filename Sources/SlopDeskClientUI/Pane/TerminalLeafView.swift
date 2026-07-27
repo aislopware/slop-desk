@@ -515,8 +515,25 @@ struct TerminalLeafView: View {
     /// while the channel is still dialling, and a pane whose id never changes never remounts to run it
     /// again. That is an OUT path that is dead for the rest of the launch.
     private var autotypeTargetIfConnected: PaneID? {
-        guard let live, live.isAutotypeTarget, case .connected = live.connection?.status else { return nil }
-        return live.id
+        Self.autotypeTaskKey(
+            pane: live?.id,
+            isTarget: live?.isAutotypeTarget ?? false,
+            status: live?.connection?.status,
+        )
+    }
+
+    /// The pure rule behind ``autotypeTargetIfConnected``, so the property that DRIVES the OUT-path proof
+    /// is provable with no window (the whole seam otherwise only fails on hardware, and only in
+    /// `check-macos.sh --connect`).
+    ///
+    /// Two things have to hold, and they are separate claims. It must be `nil` for anything but the marked
+    /// pane on a live channel — bytes typed into a dialling pane go nowhere and would spend the one shot
+    /// doing it. And it must MOVE as that pane connects: `.task(id:)` re-fires only when its key changes,
+    /// so a key that is already the pane's id while the channel is still dialling is a task that runs once,
+    /// too early, and never again.
+    static func autotypeTaskKey(pane: PaneID?, isTarget: Bool, status: ConnectionStatus?) -> PaneID? {
+        guard let pane, isTarget, case .connected = status else { return nil }
+        return pane
     }
 
     /// Hands this leaf to the `SLOPDESK_AUTOTYPE` OUT-path proof seam (``AutotypeSeam``), which owns

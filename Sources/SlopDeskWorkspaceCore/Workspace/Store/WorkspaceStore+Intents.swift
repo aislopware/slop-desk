@@ -156,11 +156,28 @@ public extension WorkspaceStore {
     /// Gated on the mirror holding a REAL host document (an epoch other than
     /// ``WorkspaceStore/seedEpoch``): the seed IS this tree, so offering it back to an in-process
     /// document that already adopted it would spend the host's one pristine chance on a no-op.
+    ///
+    /// Staged OPTIMISTICALLY, exactly as the automation bootstrap's own op 0 is, and that is what
+    /// keeps the restored panes alive. ``WorkspaceStore/reconcileTreeFromDocument()`` holds while this
+    /// offer is outstanding, so the registry still holds the sessions the window dialled at launch;
+    /// putting this tree straight back on top of host truth makes the reconcile that releases the hold
+    /// a no-op. Proposing it silently instead leaves the host's first-run default as the thing to
+    /// project for one turn — every restored terminal torn down and rebuilt a round trip later, and a
+    /// shell spawned for the host's default pane and abandoned.
+    ///
+    /// A refusal reads the same as it always did: `rejectedStale` snaps the patch away, host truth
+    /// stands, and only then do the restored panes go.
     func runArmedLaunchAdoptIfPossible() {
         guard let tree = pendingLaunchAdopt, armedBootstrapEnvironment == nil, canMutate,
               workspaceMirror.knownEpoch != Self.seedEpoch else { return }
         pendingLaunchAdopt = nil
-        stageAdopt(tree, optimistic: false)
+        stageAdopt(tree)
+        // That line released the hold, so the reconcile it was holding has to happen. Staging normally
+        // performs it — every mirror write announces itself — but whether a given intent reaches the
+        // mirror is the channel's business, and a proposal it refuses would otherwise leave the registry
+        // holding panes the document does not have: leaves with no live session behind them. Asked for
+        // here instead, where the hold is known to be over. The pass is idempotent.
+        reconcileTreeFromDocument()
     }
 
     /// Runs an armed automation bootstrap now that there is a document to run it against. Fired from

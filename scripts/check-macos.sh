@@ -235,7 +235,26 @@ if [[ "${CONNECT}" == "1" ]]; then
     exit 1
   fi
 
-  # ── 4d. (--connect) keystroke-echo latency numbers (SLOPDESK_ECHO_PROBE) ─────────────────
+  # ── 4d. (--connect) ONE auto-connect spawns ONE shell ─────────────────────────────────────
+  # The terminal autoconnect shape is a LONE terminal pane, so exactly one shell may ever attach.
+  # A second means the client mounted one pane, gave it a PTY, and then let the workspace document
+  # replace it — the first shell abandoned on the host and a second spawned for its replacement.
+  #
+  # Asserted DIRECTLY rather than inferred from 4c. The OUT-path proof used to fail as a side effect
+  # of that bug, because the autotype latch was spent by the pane that got torn down; the seam now
+  # re-arms and rides the replacement pane's connect edge, which is correct on its own terms and
+  # leaves 4c green. Nothing else in this gate would have noticed. Read AFTER 4c so a second attach
+  # that happens while the proof is still polling still counts.
+  SHELLS="$(grep -c 'shell .* attached' "${HOSTD_LOG}" || true)"
+  if [[ "${SHELLS}" != "1" ]]; then
+    echo "==> FAIL: one auto-connect must attach exactly 1 shell; saw ${SHELLS}" >&2
+    echo "--- hostd log ---" >&2
+    cat "${HOSTD_LOG}" >&2
+    exit 1
+  fi
+  echo "==> exactly one shell attached for one auto-connect ✅"
+
+  # ── 4e. (--connect) keystroke-echo latency numbers (SLOPDESK_ECHO_PROBE) ─────────────────
   # The probe prints one "key→ingest NN.Nms" line per echoed keystroke on the app's stderr —
   # the user-feel span (wire out + host PTY + wire back + client delivery to the render feed).
   # Informational, never a failure: the smoothness-work A/B number, not a gate.

@@ -1,5 +1,7 @@
+import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClientUI
+@testable import SlopDeskWorkspaceCore
 
 /// The `SLOPDESK_AUTOTYPE` OUT-path proof seam's one rule: the single shot is spent on the SEND.
 ///
@@ -85,5 +87,57 @@ final class AutotypeSeamTests: XCTestCase {
         )
         XCTAssertEqual(survivor, .sent, "the pane that survives can still prove the OUT path")
         XCTAssertEqual(sent, [Data("echo 42\n".utf8)])
+    }
+
+    // MARK: - The trigger
+
+    /// The seam's rules above say nothing about WHEN it is asked, and "when" is the defect that kept the
+    /// gate red after the latch was fixed: the task was driven by the leaf's MOUNT, so it fired once
+    /// while the channel was still dialling, traced `skipped (target=true connected=false)`, and never
+    /// ran again for a pane whose id never changes.
+    ///
+    /// ``TerminalLeafView/autotypeTaskKey(pane:isTarget:status:)`` is that trigger as a value, so the two
+    /// claims it rests on are checkable with no window. Cases are hand-enumerated rather than derived
+    /// from the expression.
+    func testTheTaskKeyIsNilUntilTheMarkedPaneIsConnected() {
+        let pane = PaneID()
+        let other: [ConnectionStatus] = [
+            .disconnected, .connecting, .reconnecting(attempt: 0, nextRetry: nil), .unreachable,
+            .failed("refused"),
+        ]
+        for status in other {
+            XCTAssertNil(
+                TerminalLeafView.autotypeTaskKey(pane: pane, isTarget: true, status: status),
+                "\(status.label): bytes typed into a channel that is not up go nowhere",
+            )
+        }
+        XCTAssertNil(
+            TerminalLeafView.autotypeTaskKey(pane: pane, isTarget: false, status: .connected),
+            "a connected pane that is not the marked one is not the gate's subject",
+        )
+        XCTAssertNil(
+            TerminalLeafView.autotypeTaskKey(pane: nil, isTarget: true, status: .connected),
+            "a leaf with no live session has nothing to type into",
+        )
+        XCTAssertEqual(
+            TerminalLeafView.autotypeTaskKey(pane: pane, isTarget: true, status: .connected), pane,
+            "the marked pane on a live channel IS the key",
+        )
+    }
+
+    /// …and the load-bearing half: the key MOVES on that edge. `.task(id:)` re-fires only when its key
+    /// changes, so a key that already reads as the pane's id while it is still dialling is a task that
+    /// runs once, too early, and never again — an OUT path silently dead for the whole launch, with a
+    /// red `check-macos.sh --connect` as the only signal.
+    func testTheTaskKeyMovesWhenThePaneConnects() {
+        let pane = PaneID()
+        let dialling = TerminalLeafView.autotypeTaskKey(pane: pane, isTarget: true, status: .connecting)
+        let connected = TerminalLeafView.autotypeTaskKey(pane: pane, isTarget: true, status: .connected)
+
+        XCTAssertNotEqual(dialling, connected, "the connect edge has to be a NEW key, or the task never re-fires")
+        XCTAssertEqual(
+            connected, TerminalLeafView.autotypeTaskKey(pane: pane, isTarget: true, status: .connected),
+            "…and it settles: a stable connection must not re-run the seam on every body pass",
+        )
     }
 }

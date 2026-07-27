@@ -86,4 +86,46 @@ final class GuiGateLaunchContractTests: XCTestCase {
             XCTAssertTrue(source.contains(expected), "check-video.sh lost its `\(expected)` assertion")
         }
     }
+
+    /// BOTH gates count the shells, because neither the OUT-path proof nor the pixels can.
+    ///
+    /// One auto-connect must attach exactly one shell. A second is the client mounting a pane, giving
+    /// it a PTY, and then letting the workspace document replace it — the first shell abandoned on the
+    /// host. `check-macos.sh` used to catch that as a side effect: the autotype latch was spent by the
+    /// doomed pane, so the OUT-path proof went red. The seam now re-arms and rides the replacement
+    /// pane's connect edge — correct in itself, and it leaves the OUT-path proof green while a shell is
+    /// abandoned on every launch. So the count is asserted OUT LOUD, in the gate that can run without
+    /// Screen Recording TCC as well as the one that cannot.
+    func testEveryConnectGateCountsTheShells() throws {
+        for script in Self.gateScripts {
+            let source = try String(contentsOf: scriptURL(script), encoding: .utf8)
+            XCTAssertTrue(
+                source.contains("FAIL: one auto-connect must attach exactly 1 shell"),
+                "\(script) no longer asserts the one-shell rule — an abandoned PTY is invisible to it",
+            )
+        }
+    }
+
+    /// The workspace-document gate must match the ACCEPT line, not the channel's name.
+    ///
+    /// hostd prefixes every refusal and error on that channel with `workspace channel …` too —
+    /// `refused — already open`, `receive ended`, `malformed subscribe dropped`, `unknown verb
+    /// dropped` — and the refusal is logged with no accept anywhere, so a substring match reports
+    /// "accepted ✅" for a channel the host explicitly turned away.
+    func testTheDocumentGateMatchesTheAcceptLine() throws {
+        let source = try String(contentsOf: scriptURL("scripts/check-video.sh"), encoding: .utf8)
+        let probes = source
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }
+            .filter { $0.contains("grep") && $0.contains("workspace channel") }
+        XCTAssertFalse(probes.isEmpty, "check-video.sh no longer probes hostd for the workspace channel")
+        for probe in probes {
+            XCTAssertTrue(
+                probe.contains("accepted"),
+                "check-video.sh accepts any `workspace channel` line, including hostd's refusals. "
+                    + "Offending line: \(probe.trimmingCharacters(in: .whitespaces))",
+            )
+        }
+    }
 }
