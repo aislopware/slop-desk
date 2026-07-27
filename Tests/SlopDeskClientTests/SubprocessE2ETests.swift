@@ -650,6 +650,123 @@ final class SubprocessE2ETests: XCTestCase {
         )
     }
 
+    /// A `channelClass == 2` OBSERVER, over two shipped binaries and a real PTY: it SEES everything
+    /// and it CANNOT type.
+    ///
+    /// Both halves matter and both are unprovable in the loopback. The read half exercises the
+    /// widened `MuxClientTransport.acquire` hop end-to-end — the class byte was on the wire from the
+    /// start, but the client could not express it, so every channel opened as a pane. The write half
+    /// is a NEGATIVE, ordered against a barrier: the observer types, then the holder types a
+    /// sentinel, and the observer's line must be absent from a transcript that provably reached the
+    /// later one.
+    ///
+    /// The third assertion is the one that would otherwise fail only on hardware: after being
+    /// ignored, the observer must still be RECEIVING. Credit is granted at consumption, so a host
+    /// that dropped the input without crediting it would park the observer's sender at one window
+    /// and the channel would die silently.
+    func testAnObserverSeesEverythingAndTypesNothing() throws {
+        guard let hostdURL = builtProductURL("slopdesk-hostd"),
+              let clientURL = builtProductURL("slopdesk-client")
+        else {
+            throw XCTSkip("built slopdesk-hostd / slopdesk-client not found next to test bundle")
+        }
+
+        let sandboxHome = try makeSandboxHome()
+        defer { try? FileManager.default.removeItem(at: sandboxHome) }
+        let hostd = Process()
+        hostd.executableURL = hostdURL
+        hostd.arguments = ["--port", "0", "--shell", "/bin/sh"]
+        var hostEnv = ProcessInfo.processInfo.environment
+        hostEnv["HOME"] = sandboxHome.path
+        hostEnv["SLOPDESK_PANE_FANOUT"] = "1"
+        hostd.environment = hostEnv
+        let hostdErr = Pipe()
+        hostd.standardError = hostdErr
+        hostd.standardOutput = Pipe()
+        do { try hostd.run() } catch { throw XCTSkip("could not launch hostd: \(error)") }
+        defer { if hostd.isRunning { hostd.terminate() } }
+        guard let bound = awaitBoundPort(from: hostdErr.fileHandleForReading, timeout: 10),
+              bound.port > 0, bound.banner.contains("shell=/bin/sh")
+        else { throw XCTSkip("hostd did not report a bound port in time") }
+
+        let sessionID = UUID()
+        let holderMarker = "OBS_HOLDER_\(UInt32.random(in: 0..<1_000_000))"
+        let observerMarker = "OBS_TYPED_\(UInt32.random(in: 0..<1_000_000))"
+        let sentinel = "OBS_SENTINEL_\(UInt32.random(in: 0..<1_000_000))"
+
+        func launchClient(observe: Bool) throws -> (process: Process, stdin: FileHandle, out: OutputBox) {
+            let client = Process()
+            client.executableURL = clientURL
+            var arguments = [
+                "--host", "127.0.0.1", "--port", String(bound.port), "--no-raw",
+                "--session-id", sessionID.uuidString,
+            ]
+            if observe { arguments.append("--observe") }
+            client.arguments = arguments
+            let stdinPipe = Pipe()
+            let stdoutPipe = Pipe()
+            client.standardInput = stdinPipe
+            client.standardOutput = stdoutPipe
+            client.standardError = Pipe()
+            let collected = OutputBox()
+            stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if data.isEmpty { handle.readabilityHandler = nil } else { collected.append(data) }
+            }
+            try client.run()
+            return (client, stdinPipe.fileHandleForWriting, collected)
+        }
+
+        func wait(for text: String, in box: OutputBox, timeout: TimeInterval) -> Bool {
+            let deadline = Date().addingTimeInterval(timeout)
+            while Date() < deadline {
+                if box.string.contains(text) { return true }
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            return box.string.contains(text)
+        }
+
+        // --- The holder takes the pane. ---
+        let holder = try launchClient(observe: false)
+        defer { if holder.process.isRunning { holder.process.terminate() } }
+        writeToChild(holder.stdin, "echo \(holderMarker)\n")
+        guard wait(for: holderMarker, in: holder.out, timeout: 20) else {
+            throw XCTSkip("the holder never saw its own echo (sandboxed PTY?): "
+                + "\(holder.out.string.prefix(300))")
+        }
+
+        // --- The observer joins read-only and is state-transferred the screen. ---
+        let observer = try launchClient(observe: true)
+        defer { if observer.process.isRunning { observer.process.terminate() } }
+        XCTAssertTrue(
+            wait(for: holderMarker, in: observer.out, timeout: 20),
+            "a class-2 channel must be ACCEPTED and state-transferred; got: "
+                + "\(observer.out.string.prefix(600))",
+        )
+        XCTAssertTrue(observer.process.isRunning, "the observer must stay connected, not be refused")
+
+        // --- It types. The shell must never hear it. ---
+        writeToChild(observer.stdin, "echo \(observerMarker)\n")
+        // The BARRIER: a command from the holder, sent after the observer's, whose echo proves the
+        // PTY has moved past that point. Without it, "the marker is absent" only means "not yet".
+        writeToChild(holder.stdin, "echo \(sentinel)\n")
+        XCTAssertTrue(
+            wait(for: sentinel, in: holder.out, timeout: 20),
+            "the barrier command must run; got: \(holder.out.string.suffix(600))",
+        )
+        XCTAssertFalse(
+            holder.out.string.contains(observerMarker),
+            "the observer's keystrokes must never reach the PTY; got: \(holder.out.string.suffix(600))",
+        )
+
+        // --- And it is still receiving: the dropped input was credited. ---
+        XCTAssertTrue(
+            wait(for: sentinel, in: observer.out, timeout: 20),
+            "an ignored observer must keep receiving — an uncredited drop parks its sender at one "
+                + "window and the channel dies silently; got: \(observer.out.string.suffix(600))",
+        )
+    }
+
     // MARK: - Helpers
 
     /// Writes to a child's stdin WITHOUT taking the process down when that child is already gone.

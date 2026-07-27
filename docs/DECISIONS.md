@@ -3783,3 +3783,82 @@ INVISIBLE rather than that it is possible. So `stage(_:_:)` fires `onLayoutChang
 app raises a transient chip beside the ⇧⌘T and jump cues it already has. A refusal ON THE MERITS — a
 re-tile of a lone leaf, a reopen with an empty ring — stays silent: that is the document doing its job
 and says nothing about reachability.
+
+---
+
+## Multi-client Phase 6: the read-only subscriber, and the phone that fits (2026-07-27)
+
+Design: [45 — Multi-client state sync](45-multi-client-state-sync.md) §8.3, §8.4, §9 Phase 6. Shipped
+behind `SLOPDESK_PANE_FANOUT` (`== "1"`, **default-OFF**). No wire change, no golden change: the whole
+phase leaves `golden/golden_vectors.json` byte-identical and moves no unknown-type probe.
+
+### 1. Read-only is a property of the SUBSCRIBER, never of the session
+
+An observer (`channelClass == 2`) is one member of a `MuxChannelSession` that has other members. Two
+things share the PTY with it and must keep writing: every ordinary member's own input relay, and
+`writeRawForControl` — the `slopdesk-ctl` / orchestrator injection path, which is not a subscriber at
+all. A session-level `isReadOnly` flag would gag the cockpit the moment somebody opened a read-only
+view, breaking every scripted answer with no error. So the drop lives in `startInputRelay(for:)` and
+nowhere else.
+
+### 2. A dropped frame is STILL credited — this is the whole trap
+
+Credit is granted at CONSUMPTION. A frame that is dropped without `noteConsumed` never returns the
+window: the observer's sender parks after exactly one window and the channel dies silently, with no
+error and nothing to grep for. It would present as "the read-only client froze after a while", on
+hardware, weeks later. `testAnObserversInputIsDroppedButStillCredited` delivers more than a full
+window so a build that drops-without-crediting cannot pass by accident.
+
+The echo probe and `foldUserInput` ARE skipped with the write. `foldUserInput` is the Esc-cancel
+unblock edge, so an observer's stray keystroke would clear another client's `.needsPermission` latch —
+the supervision alert vanishes and nobody answers the prompt.
+
+### 3. An observer never votes in the size fold, and the rule is structural
+
+Passivity is applied inside `addResizeContributor`, not at the join call site, so every path that
+re-resolves passivity (notably `reresolveSizePassivity` on a late workspace `subscribe`) keeps it. The
+observer is still REGISTERED as an attachment with `contributes: false` — it genuinely holds the pane,
+and publishing it is what lets a client name who IS clamping.
+
+The same audit found `reresolveSizePassivity` addressing `primarySubscriberID` unconditionally: under
+a fan-out, one session is named by N keys, so a phone's late subscribe would have marked the MAC's
+contribution passive and handed the phone the vote it was denied. It now resolves the subscriber the
+connection actually rides.
+
+### 4. `MuxClientTransport`'s acquire hop was the missing half
+
+`channelClass` has ridden `MuxChannelOpen` since the mux landed, and `ConnectionRegistry.acquire` and
+`MuxNWConnection.openChannel` both took it with a default of 0 — but `MuxClientTransport`'s injected
+closure was 5-arg and could not express it, so every pane opened as class 0 because that was the only
+value the hop had. The widening is a Swift signature change inside `SlopDeskTransport`, not a wire
+change. Anyone estimating this as "the field is already on the wire" measured the host half only.
+
+### 5. VIEWERS and HOLDERS are different facts and the UI says both
+
+`paneViewers` reads the roster's `clients` (`viewingPaneID`); `paneHolders` reads its `panes`
+(`attachments`), joined to `clients` for a label. A client can look at a pane it does not hold and
+hold one it is not showing. The join to a label is OPTIONAL and legitimately misses —
+`slopdesk-client` opens no workspace channel — so an unlabelled attachment is NAMED (`another
+client`), never force-unwrapped and never dropped: dropping it would make a CLI-held pane read as
+unheld and make the resolved grid's arithmetic unexplainable.
+
+### 6. The iOS letterbox SHRINKS, and never magnifies
+
+A phone is size-passive host-side, so the grid belongs to whichever Mac clamped the fold. The surface
+is framed at its NATURAL size for that grid and then transformed — sizing the frame to the scaled rect
+would make the renderer derive a different grid from it, which is the phone reflowing to its own
+window, the exact thing size-passivity exists to stop. Scale is capped at 1: magnifying a glyph grid
+is blur, and a coding tool's text has to be exact.
+
+Every input can legitimately be absent (no roster, no cell metrics, pre-layout), and each of those
+renders FULL-BLEED — the honest ceiling the pane's other overlays already keep: an absent decoration,
+never a wrong one. The geometry and the `120×40 · sized by MacBook Pro` readout are pure values in
+`SlopDeskTerminal` so they carry the tests the iOS-only SwiftUI path cannot; `check-ios.sh` proves the
+view type-checks.
+
+### 7. The `attachedElsewhere` refusal is flag-conditional, not deleted
+
+docs/45 §9 said "delete it". It survives as the flag-OFF branch instead, and that is what keeps the
+shipping path byte-identical: with the flag unset the JOIN route is unreachable, `subscribers.count`
+never exceeds 1, the drain never leaves its inline single-send, and no outbox is ever built. It gets
+deleted the day the flag flips default-ON — which needs hardware, and hardware has said nothing yet.

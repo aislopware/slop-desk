@@ -74,13 +74,14 @@ final class HostServerChannelClassTests: XCTestCase {
         await rig.server.stop()
     }
 
-    /// Class 2 (`paneObserver`) is RESERVED, not yet routed. It must fail the same way an unknown
-    /// class does rather than fork a second shell for what is meant to become a read-only view of
-    /// an EXISTING one.
-    func testTheObserverClassIsNotRoutedYetAndForksNothing() async throws {
+    /// Class 2 (`paneObserver`) is a READ-ONLY view of a live pane, and this rig runs with
+    /// `SLOPDESK_PANE_FANOUT` off — so it is refused exactly as an unknown class is, and forks
+    /// nothing for a pane it was never going to be allowed to watch. The flag-ON route is
+    /// `HostServerObserverRoutingTests`.
+    func testTheObserverClassForksNothingWithTheFanoutOff() async throws {
         let rig = await makeRig()
         let accepted = try await openClass(rig, MuxChannelClass.paneObserver.rawValue)
-        XCTAssertFalse(accepted, "the observer class arrives with the fan-out, not before it")
+        XCTAssertFalse(accepted, "the observer class is gated by SLOPDESK_PANE_FANOUT")
         XCTAssertTrue(rig.server.listPanesForControl().isEmpty)
         await rig.server.stop()
     }

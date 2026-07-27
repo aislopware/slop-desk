@@ -29,11 +29,21 @@ public actor MuxClientTransport: ClientTransporting, InitialCwdConfigurableTrans
         _ port: UInt16,
         _ sessionID: UUID,
         _ lastReceivedSeq: Int64,
+        _ channelClass: UInt8,
         _ initialCwd: String?,
     )
         async throws -> MuxAcquisition
     /// Releases this transport's channel from the shared connection (refcount--, tear down on 0).
     private let release: @Sendable (_ host: String, _ port: UInt16, _ channelID: UInt32) async -> Void
+
+    /// What this transport's channel is FOR — the ``SlopDeskProtocol/MuxChannelClass`` byte that
+    /// rides every `channelOpen` it makes. `0` (a pane) for every shipped call site; `2` opens a
+    /// READ-ONLY view of a pane another client holds (docs/45 §8.4), which the host answers with a
+    /// subscriber whose `input` it drops.
+    ///
+    /// Fixed for the transport's life: the class decides how the HOST routes the open, so a channel
+    /// that changed class across a reconnect would silently become a different kind of thing.
+    private let channelClass: UInt8
 
     public private(set) var sessionID: UUID?
     public private(set) var resumeFromSeq: Int64 = 0
@@ -49,24 +59,43 @@ public actor MuxClientTransport: ClientTransporting, InitialCwdConfigurableTrans
     private var connectedPort: UInt16?
     private var forwarders: [Task<Void, Never>] = []
 
+    /// Compatibility overload: neither a cwd hint nor a class. Opens a PANE.
     @preconcurrency
     public init(
         acquire: @escaping @Sendable (String, UInt16, UUID, Int64) async throws -> MuxAcquisition,
         release: @escaping @Sendable (String, UInt16, UInt32) async -> Void,
     ) {
         self.init(
-            acquire: { host, port, sessionID, lastReceivedSeq, _ in
+            acquire: { host, port, sessionID, lastReceivedSeq, _, _ in
                 try await acquire(host, port, sessionID, lastReceivedSeq)
             },
             release: release,
         )
     }
 
+    /// Compatibility overload: a cwd hint, no class. Opens a PANE.
     @preconcurrency
     public init(
         acquire: @escaping @Sendable (String, UInt16, UUID, Int64, String?) async throws -> MuxAcquisition,
         release: @escaping @Sendable (String, UInt16, UInt32) async -> Void,
     ) {
+        self.init(
+            acquire: { host, port, sessionID, lastReceivedSeq, _, initialCwd in
+                try await acquire(host, port, sessionID, lastReceivedSeq, initialCwd)
+            },
+            release: release,
+        )
+    }
+
+    /// Designated init. `channelClass` defaults to ``SlopDeskProtocol/MuxChannelClass/pane`` so an
+    /// existing call site that omits it opens exactly what it always opened.
+    @preconcurrency
+    public init(
+        channelClass: UInt8 = MuxChannelClass.pane.rawValue,
+        acquire: @escaping @Sendable (String, UInt16, UUID, Int64, UInt8, String?) async throws -> MuxAcquisition,
+        release: @escaping @Sendable (String, UInt16, UInt32) async -> Void,
+    ) {
+        self.channelClass = channelClass
         self.acquire = acquire
         self.release = release
         var continuation: AsyncThrowingStream<WireMessage, Error>.Continuation?
@@ -101,7 +130,7 @@ public actor MuxClientTransport: ClientTransporting, InitialCwdConfigurableTrans
         // project dir is exactly what we want (else the new shell lands in the daemon's `$HOME` and the
         // cwd-derived title collapses to "Terminal"). See `SlopDeskClient.connect`.
         let cwdHint = initialCwd
-        let acquisition = try await acquire(host, port, id, lastReceivedSeq, cwdHint)
+        let acquisition = try await acquire(host, port, id, lastReceivedSeq, channelClass, cwdHint)
         // The `channelOpenAck` carries the HOST-AUTHORITATIVE `resumeFromSeq` (docs/20 §8.2):
         // 0 = fresh shell (PATH B/C — the client must reset its seq marks), > 0 = the SAME
         // live session reattached (PATH A — the marks are already correct and the replay

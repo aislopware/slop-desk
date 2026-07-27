@@ -73,6 +73,8 @@ Grep `SLOPDESK_` for the full set. **Default idiom:** `!= "0"` → default-ON; `
 | `SLOPDESK_DISPLAY_CAPTURE` | `window` / `display` / `include` |
 | `SLOPDESK_PACER` | default present-on-arrival; `=deadline` for smoothness pacer |
 | `SLOPDESK_AUDIO` | host app-audio stream gate (default-ON); `_CODEC=pcm` bypasses AAC-ELD |
+| `SLOPDESK_PANE_FANOUT` | `== "1"` → **default-OFF**. N clients on ONE PTY (docs/45 §9 Phase 6) + `channelClass 2` read-only observers. OFF = today's one-attachment refusal, byte-identical. Host-side only |
+| `SLOPDESK_SUB_LAG_BYTES` | laggard-eviction threshold, default **32 MiB** — deliberately BELOW the 64 MiB offline gate. Only read under fan-out; a lone subscriber is never evicted |
 
 ## Traps
 

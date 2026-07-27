@@ -52,6 +52,9 @@ struct Args {
     /// Session UUID to present on connect (detach reattach / disk-scrollback restore). `nil` =
     /// a fresh UUID per run (the transport replaces the zero sentinel).
     var sessionID: UUID?
+    /// Open a READ-ONLY view (`channelClass == 2`) of a pane another client already holds
+    /// (docs/45 §8.4) instead of a pane of our own. The host drops this channel's `input` frames.
+    var observe: Bool
 }
 
 let programName = CommandLine.arguments.first
@@ -63,13 +66,17 @@ func stderrLine(_ s: String) {
 
 func usage() -> Never {
     FileHandle.standardError.write(Data("""
-    usage: \(programName) --host <h> --port <n> [--no-raw] [--session-id <uuid>]
+    usage: \(programName) --host <h> --port <n> [--no-raw] [--session-id <uuid>] [--observe]
 
       --host, -h <host>   host running slopdesk-hostd
       --port, -p <port>   TCP port slopdesk-hostd listens on
       --no-raw            do not put the local terminal in raw mode (pipe/scripting)
       --session-id <uuid> present this session UUID on connect (reattach to a detached
                           shell / restore the disk-journaled scrollback; E2E harness)
+      --observe           WATCH the pane named by --session-id read-only instead of holding
+                          one: the host drops this channel's input and the pane's size fold
+                          ignores it. Needs SLOPDESK_PANE_FANOUT=1 on the host and a pane
+                          that is already live, else the channel is refused.
 
     Disconnect key (interactive mode): Ctrl-] cleanly disconnects and exits 0.
 
@@ -82,6 +89,7 @@ func parseArgs(_ argv: [String]) -> Args? {
     var port: UInt16?
     var noRaw = false
     var sessionID: UUID?
+    var observe = false
     var it = argv.dropFirst().makeIterator()
     while let arg = it.next() {
         switch arg {
@@ -98,6 +106,8 @@ func parseArgs(_ argv: [String]) -> Args? {
         case "--session-id":
             guard let v = it.next(), let id = UUID(uuidString: v) else { return nil }
             sessionID = id
+        case "--observe":
+            observe = true
         case "--help":
             return nil
         default:
@@ -105,7 +115,10 @@ func parseArgs(_ argv: [String]) -> Args? {
         }
     }
     guard let host, let port else { return nil }
-    return Args(host: host, port: port, noRaw: noRaw, sessionID: sessionID)
+    // An observer watches a NAMED pane. Without `--session-id` there is nothing to watch, and a
+    // fresh id would be refused by the host for exactly that reason — say so here instead.
+    guard !observe || sessionID != nil else { return nil }
+    return Args(host: host, port: port, noRaw: noRaw, sessionID: sessionID, observe: observe)
 }
 
 guard let args = parseArgs(CommandLine.arguments) else { usage() }
@@ -172,11 +185,18 @@ let interactive = (isatty(STDIN_FILENO) != 0) && !args.noRaw
 // MuxClientTransport.connect → registry.acquire) reuses the same pool and opens a fresh channel on
 // the surviving shared connection. The transport's acquire/release @Sendable closures are async, so
 // they hop onto the main actor to call the @MainActor registry.
+let channelClass = args.observe
+    ? MuxChannelClass.paneObserver.rawValue
+    : MuxChannelClass.pane.rawValue
 let client = SlopDeskClient(makeTransport: {
     MuxClientTransport(
-        acquire: { host, port, sessionID, lastReceivedSeq in
+        // The class rides every `channelOpen` this transport makes and decides how the HOST routes
+        // it — a pane of our own, or a read-only view of somebody else's.
+        channelClass: channelClass,
+        acquire: { host, port, sessionID, lastReceivedSeq, channelClass, _ in
             try await CLIMux.shared.acquire(
                 host: host, port: port, sessionID: sessionID, lastReceivedSeq: lastReceivedSeq,
+                channelClass: channelClass,
             )
         },
         release: { host, port, channelID in

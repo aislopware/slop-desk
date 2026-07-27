@@ -1,5 +1,6 @@
 import Foundation
 import SlopDeskProtocol
+import SlopDeskTerminal
 import SlopDeskTransport
 import SlopDeskWorkspaceModel
 
@@ -322,14 +323,9 @@ extension WorkspaceStore {
 
     /// The labels of the OTHER clients currently looking at pane `id`, in roster order.
     ///
-    /// Deliberately VIEWERS and not "held by". Attachment — which client's channel actually owns the
-    /// PTY — needs the pane channel to declare whose it is, and it does not: only the workspace
-    /// channel's `subscribe` carries a `clientInstanceID`, which is why the host fills the roster's
-    /// `panes` list with nothing. That declaration arrives with the pane-observer class in Phase 6,
-    /// and claiming ownership before then would be a guess dressed as a fact.
-    ///
-    /// What the roster DOES know is honest and useful on its own: someone else has this pane on
-    /// screen right now.
+    /// VIEWING is a separate fact from HOLDING, and both are worth saying. A client can have a pane
+    /// on screen with no channel on it (the tab it last looked at), and it can hold a channel on a
+    /// pane it is not showing. ``paneHolders(for:)`` answers the other question.
     public func paneViewers(for id: PaneID) -> [String] {
         observeWorkspaceMirror()
         let objectID = documentPaneID(id)
@@ -339,6 +335,82 @@ extension WorkspaceStore {
             .filter { $0.viewingPaneID == objectID && $0.clientInstanceID != mine }
             .map(\.label)
             .filter { !$0.isEmpty }
+    }
+
+    /// What an attachment with no workspace channel behind it is called.
+    ///
+    /// `slopdesk-client` opens no workspace channel, so the host publishes its attachment with the
+    /// all-zero `clientInstanceID` and nothing can name it. It is still a real client holding a real
+    /// pane at a real size — the honest readout is "somebody", never silence.
+    public static let unlabelledHolder = "another client"
+
+    /// The labels of the OTHER clients holding a channel on pane `id`, in roster order.
+    ///
+    /// Reads the roster's `panes` half — one `WorkspaceRosterPane` per pane, carrying one attachment
+    /// per attached device — and joins each attachment's `clientInstanceID` to `clients` for a
+    /// human-readable label. This client's own attachment is filtered out: it is not "also" holding
+    /// its own pane.
+    ///
+    /// The join is OPTIONAL and legitimately misses. It is never a force-unwrap and never a drop:
+    /// an attachment whose id names no roster client is a CLI, and it is reported as
+    /// ``unlabelledHolder``. Dropping it would make a pane held by a `slopdesk-client` read as
+    /// unheld, and make the resolved grid's arithmetic unexplainable.
+    public func paneHolders(for id: PaneID) -> [String] {
+        observeWorkspaceMirror()
+        guard let roster = workspaceMirror.roster else { return [] }
+        let objectID = documentPaneID(id)
+        guard let record = roster.panes.first(where: { $0.paneID == objectID }) else { return [] }
+        let mine = workspaceChannel?.clientInstanceID
+        var labels: [String: String] = [:]
+        for client in roster.clients where !client.label.isEmpty {
+            labels[client.clientInstanceID.uuidString] = client.label
+        }
+        return record.attachments.compactMap { attachment in
+            guard attachment.clientInstanceID != mine else { return nil }
+            return labels[attachment.clientInstanceID.uuidString] ?? Self.unlabelledHolder
+        }
+    }
+
+    /// How many clients hold a channel on pane `id`, INCLUDING this one and including the ones no
+    /// roster client names. The count the resolved grid has to be explainable against.
+    public func paneAttachmentCount(for id: PaneID) -> Int {
+        observeWorkspaceMirror()
+        guard let roster = workspaceMirror.roster else { return 0 }
+        let objectID = documentPaneID(id)
+        return roster.panes.first { $0.paneID == objectID }?.attachments.count ?? 0
+    }
+
+    /// The grid the HOST resolved for pane `id` (docs/45 §8.3), or `nil` when the roster has not
+    /// published one. What a size-passive client places behind a letterbox instead of reflowing to
+    /// its own window.
+    public func paneResolvedGrid(for id: PaneID) -> (cols: Int, rows: Int)? {
+        observeWorkspaceMirror()
+        guard let roster = workspaceMirror.roster else { return nil }
+        let objectID = documentPaneID(id)
+        guard let record = roster.panes.first(where: { $0.paneID == objectID }),
+              record.resolvedCols > 0, record.resolvedRows > 0 else { return nil }
+        return (cols: Int(record.resolvedCols), rows: Int(record.resolvedRows))
+    }
+
+    /// §8.3 rule 7's readout for pane `id` — `120×40 · sized by MacBook Pro` — or `nil` when the
+    /// host has resolved no grid for it.
+    ///
+    /// This is what makes the size policy debuggable on hardware: without it a phone shows a pane
+    /// that is the wrong size for no stated reason, and a rule reads as a bug.
+    public func paneGridReadout(for id: PaneID) -> String? {
+        observeWorkspaceMirror()
+        guard let roster = workspaceMirror.roster else { return nil }
+        let objectID = documentPaneID(id)
+        guard let record = roster.panes.first(where: { $0.paneID == objectID }) else { return nil }
+        var labels: [UUID: String] = [:]
+        for client in roster.clients where !client.label.isEmpty {
+            labels[client.clientInstanceID] = client.label
+        }
+        return TerminalGridReadout.text(
+            for: record,
+            labels: labels,
+            selfClientInstanceID: workspaceChannel?.clientInstanceID,
+        )
     }
 
     /// The pane's RUNNING command line — what a busy row titles itself by.

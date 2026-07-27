@@ -16,6 +16,7 @@
 #if canImport(SwiftUI)
 import Defaults // observe the Auto-Secure-Input / indicator defaults so the toggle is LIVE.
 import Foundation
+import SlopDeskTerminal // TerminalViewportSnapshotting — the iOS letterbox reads the live cell advance.
 import SlopDeskWorkspaceCore
 import SwiftUI
 #if canImport(AppKit)
@@ -130,10 +131,12 @@ struct TerminalLeafView: View {
     private var terminalSurface: some View {
         ZStack(alignment: .topLeading) {
             if let model = live?.terminalModel {
-                if TerminalRendererFactory.shared != nil {
-                    TerminalRendererFactory.make(model: model, isFocused: isFocused)
-                } else {
-                    BuildStatusPlaceholderView(model: model)
+                letterboxed(model: model) {
+                    if TerminalRendererFactory.shared != nil {
+                        TerminalRendererFactory.make(model: model, isFocused: isFocused)
+                    } else {
+                        BuildStatusPlaceholderView(model: model)
+                    }
                 }
                 // The ⌘-hold link underline, a DECORATION overlay over the surface (never a
                 // content branch — libghostty-freeze guardrail). Coincident with the surface (both fill this
@@ -248,6 +251,35 @@ struct TerminalLeafView: View {
         .animation(Slate.Anim.reveal, value: showViModePill)
         .animation(Slate.Anim.reveal, value: showViHintBar)
         .animation(Slate.Anim.reveal, value: navigatorChrome.isVisible)
+    }
+
+    /// Places the terminal pixels.
+    ///
+    /// On iOS the pane holds a grid it did NOT choose — a phone is size-passive host-side (docs/45
+    /// §8.3), so the resolved grid belongs to whichever Mac clamped the fold — and the surface is
+    /// centred with letterbox bars plus the `120×40 · sized by MacBook Pro` readout. On macOS the
+    /// window IS a contributor, so the surface fills the pane exactly as it always has and a bar
+    /// would frame a pane that is already right.
+    @ViewBuilder
+    private func letterboxed(
+        model: TerminalViewModel,
+        @ViewBuilder _ content: @escaping () -> some View,
+    ) -> some View {
+        #if os(iOS)
+        TerminalLetterboxContainer(
+            // `flatMap`, not `map`: both reads are themselves optional, and a nested optional here
+            // would make "no pane" and "no resolved grid" different values that mean the same thing.
+            grid: live.flatMap { store.paneResolvedGrid(for: $0.id) },
+            // The renderer's own natural cell advance. Absent for a placeholder / pre-layout surface,
+            // which is exactly when the container degrades to full-bleed.
+            cellSize: (model.surface as? TerminalViewportSnapshotting)?.cellMetrics()
+                .map { CGSize(width: $0.cellWidth, height: $0.cellHeight) },
+            readout: live.flatMap { store.paneGridReadout(for: $0.id) },
+            content: content,
+        )
+        #else
+        content()
+        #endif
     }
 
     /// Whether the `🛡 SECURE INPUT` pill is shown. Visible iff secure input is active

@@ -1022,12 +1022,25 @@ final class MuxChannelSession: @unchecked Sendable {
     /// thread — a few wedged writers would degrade every other pane's drains. Credit is granted only
     /// AFTER the write returns (credit-at-consumption), so a stalled PTY transitively parks the
     /// CLIENT's sender at one window instead of buffering the paste in host RAM.
+    ///
+    /// ### Read-only is a property of the SUBSCRIBER
+    /// A `channelClass == 2` member (docs/45 §8.4) READS the pane: its `input` is dropped HERE, and
+    /// here only. There are two other writers into the same PTY — every ordinary member's own copy
+    /// of this loop, and ``writeRawForControl(_:)`` (the `slopdesk-ctl` / orchestrator injection) —
+    /// and both must keep writing while somebody watches, so a session-level flag would be wrong.
+    ///
+    /// A dropped frame is STILL credited. Credit is granted at CONSUMPTION, so a drop that skips
+    /// ``MuxSubChannel/noteConsumed(_:)`` never returns the window: the observer's sender parks after
+    /// exactly one window and the channel dies with no error anywhere. The echo probe and the
+    /// blocked-agent unblock fold are skipped with the write — `foldUserInput` is the Esc-cancel
+    /// edge, so a read-only client's stray keystroke would clear ANOTHER client's blocked latch.
     private func startInputRelay(for sub: Subscriber) {
         let data = sub.data
+        let readOnly = sub.channelClass == .paneObserver
         let relay = Task.detached { [weak self] in
             do {
                 for try await message in data.inbound {
-                    if case let .input(bytes) = message {
+                    if case let .input(bytes) = message, !readOnly {
                         await self?.writePTYInput(bytes)
                         // termios ECHO flips fastest around a password prompt — re-probe right
                         // after writing this keystroke so AUTO Secure Keyboard Entry engages with minimal
@@ -1040,10 +1053,10 @@ final class MuxChannelSession: @unchecked Sendable {
                             foldUserInput(bytes)
                         }
                     }
-                    // Consumed (written to the PTY / processed): grant the window back ON THE
-                    // CHANNEL THE BYTES ARRIVED ON. Every ``MuxSubChannel`` owns its own
-                    // ``ReceiveWindowAccountant``, and a sender parked on an exhausted window wakes
-                    // only on a grant for ITS channel — crediting any other one parks the real
+                    // Consumed (written to the PTY / processed / DROPPED for an observer): grant the
+                    // window back ON THE CHANNEL THE BYTES ARRIVED ON. Every ``MuxSubChannel`` owns
+                    // its own ``ReceiveWindowAccountant``, and a sender parked on an exhausted window
+                    // wakes only on a grant for ITS channel — crediting any other one parks the real
                     // sender after a single window with no event that can ever free it.
                     await data.noteConsumed(message.wireByteCount)
                 }
@@ -2192,17 +2205,25 @@ final class MuxChannelSession: @unchecked Sendable {
     /// An existing member keeps its standing offer: a reattach swaps the sub-channels while the same
     /// PTY lives on, and forgetting the offer there would snap the pane back to its spawn size until
     /// the returning client happened to send a new one.
+    ///
+    /// An OBSERVER (`channelClass == 2`) is passive whatever the caller says. It is watching a grid
+    /// it did not choose, so letting its window clamp the fold would shrink somebody else's shell to
+    /// a spectator's. It is still REGISTERED — it genuinely holds the pane — and the roster publishes
+    /// it with `contributes: false`, which is what lets the UI name who IS clamping.
     func addResizeContributor(
         _ subscriber: MuxSubscriberID = MuxChannelSession.primarySubscriberID,
         sizePassive: Bool,
     ) {
+        // Resolved BEFORE `resizeLock`: `subscribersLock` is this file's innermost lock and is never
+        // held across another acquisition.
+        let passive = sizePassive || self.subscriber(subscriber)?.channelClass == .paneObserver
         resizeLock.lock()
         let before = contributingCountLocked()
         if var existing = resizeContributions[subscriber] {
-            existing.sizePassive = sizePassive
+            existing.sizePassive = passive
             resizeContributions[subscriber] = existing
         } else {
-            resizeContributions[subscriber] = ResizeContribution(sizePassive: sizePassive, offer: nil)
+            resizeContributions[subscriber] = ResizeContribution(sizePassive: passive, offer: nil)
         }
         armSizeSettleIfSetChangedLocked(from: before)
         resizeLock.unlock()

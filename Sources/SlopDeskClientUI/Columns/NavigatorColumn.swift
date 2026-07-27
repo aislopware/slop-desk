@@ -522,11 +522,15 @@ struct NavigatorColumn: View {
 enum SidebarRowTooltip {
     static func text(
         cwd: String?, detail: String?, lastCommand: String?, viewers: [String] = [],
+        holders: [String] = [],
     ) -> String? {
-        // Who ELSE has this pane on screen. Viewers, not owners — see
-        // ``WorkspaceStore/paneViewers(for:)``; nothing yet knows whose channel holds the PTY.
+        // Who ELSE has this pane ON SCREEN (``WorkspaceStore/paneViewers(for:)``) and who else holds
+        // a CHANNEL on its PTY (``WorkspaceStore/paneHolders(for:)``). Two different facts, both
+        // useful: a client can be looking at a pane it does not hold, and holding one it is not
+        // showing. Viewing first — it is the softer claim.
         let alsoOpen = viewers.isEmpty ? nil : "Also open on \(viewers.joined(separator: ", "))"
-        let parts = [cwd, detail, lastCommand, alsoOpen].compactMap { part -> String? in
+        let heldBy = holders.isEmpty ? nil : "Held by \(holders.joined(separator: ", "))"
+        let parts = [cwd, detail, lastCommand, alsoOpen, heldBy].compactMap { part -> String? in
             guard let part, !part.isEmpty else { return nil }
             return part
         }
@@ -942,6 +946,7 @@ private struct SidebarLiveRow: View {
                 detail: detail,
                 lastCommand: lastCommand,
                 viewers: store.paneViewers(for: row.id),
+                holders: store.paneHolders(for: row.id),
             ),
             onSelect: onSelect,
             onClose: onClose,

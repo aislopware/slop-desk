@@ -4653,12 +4653,16 @@ public extension WorkspaceStore {
             SlopDeskClient(
                 makeTransport: {
                     MuxClientTransport(
-                        acquire: { host, port, sessionID, lastReceivedSeq, initialCwd in
+                        // The class the transport announces reaches the registry hop, which puts it
+                        // on the `channelOpen`. A pane here — a read-only view (class 2) is opened
+                        // by a transport constructed with that class, not by a flag on this one.
+                        acquire: { host, port, sessionID, lastReceivedSeq, channelClass, initialCwd in
                             try await registry.acquire(
                                 host: host,
                                 port: port,
                                 sessionID: sessionID,
                                 lastReceivedSeq: lastReceivedSeq,
+                                channelClass: channelClass,
                                 initialCwd: initialCwd,
                             )
                         },

@@ -42,6 +42,36 @@ final class SidebarRowTooltipTests: XCTestCase {
         XCTAssertEqual(text, "answering")
     }
 
+    // MARK: - Who else is on this pane
+
+    /// VIEWING and HOLDING are different facts and the tooltip says both, in that order: who has
+    /// the pane on screen, then whose channel is on its PTY.
+    func testViewersAndHoldersRenderAsSeparateLines() {
+        let text = SidebarRowTooltip.text(
+            cwd: "/Users/me/project",
+            detail: nil,
+            lastCommand: nil,
+            viewers: ["iPad"],
+            holders: ["mac-studio"],
+        )
+        XCTAssertEqual(text, "/Users/me/project\nAlso open on iPad\nHeld by mac-studio")
+    }
+
+    /// Several holders read as a list — two Macs and a phone on one nvim is the whole point of the
+    /// fan-out, and the tooltip has to name all of them.
+    func testSeveralHoldersJoinWithCommas() {
+        let text = SidebarRowTooltip.text(
+            cwd: nil, detail: nil, lastCommand: nil, holders: ["mac-studio", "macbook-pro"],
+        )
+        XCTAssertEqual(text, "Held by mac-studio, macbook-pro")
+    }
+
+    /// The common case: this client alone holds the pane, so the line is absent rather than empty.
+    func testNoHoldersRendersNoLine() {
+        let text = SidebarRowTooltip.text(cwd: "/Users/me/project", detail: nil, lastCommand: nil)
+        XCTAssertEqual(text, "/Users/me/project")
+    }
+
     // MARK: - The last-command line
 
     /// A finished block: `command · duration · exit N`.

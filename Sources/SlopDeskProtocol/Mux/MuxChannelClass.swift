@@ -14,6 +14,9 @@ public enum MuxChannelClass: UInt8, Sendable, CaseIterable {
     /// The workspace-document channel: at most ONE per mux connection, CONTROL sub-channel only
     /// (the DATA sub-channel `openChannel` also creates stays idle).
     case workspace = 1
-    /// A read-only PTY subscriber (Phase 6). Reserved here so the number cannot be spent twice.
+    /// A READ-ONLY subscriber on a pane another client already holds (docs/45 §8.4). The host joins
+    /// it to the existing session — one PTY, N readers — and DROPS its `input` frames while still
+    /// crediting them; it contributes nothing to the pane's size fold. Gated by
+    /// `SLOPDESK_PANE_FANOUT`, and refused outright when that is off.
     case paneObserver = 2
 }

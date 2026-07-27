@@ -672,12 +672,20 @@ public final class HostServer: @unchecked Sendable {
     /// a client that opens its panes before it subscribes would otherwise have every pane resolved
     /// against a workspace channel that did not exist yet — an iPhone silently contributing for the
     /// life of the connection. The subscribe is the edge that settles it.
+    ///
+    /// The re-resolve is addressed to the SUBSCRIBER this connection rides, never to the pane's
+    /// primary: under a fan-out one session is named by N keys, and a phone subscribing would
+    /// otherwise mark the MAC's contribution passive and hand the phone the vote it was denied.
     func reresolveSizePassivity(connectionID: UUID) {
         let passive = sizePassiveForConnection(connectionID)
         lock.lock()
-        let sessions = muxSessions.filter { $0.key.connectionID == connectionID }.map(\.value)
+        let members = muxSessions
+            .filter { $0.key.connectionID == connectionID }
+            .map { (session: $0.value, subscriber: muxSubscriberIDs[$0.key] ?? MuxChannelSession.primarySubscriberID) }
         lock.unlock()
-        for session in sessions { session.addResizeContributor(sizePassive: passive) }
+        for member in members {
+            member.session.addResizeContributor(member.subscriber, sizePassive: passive)
+        }
     }
 
     @discardableResult
@@ -1003,11 +1011,18 @@ public final class HostServer: @unchecked Sendable {
             openWorkspaceChannel(open, on: connection, connectionID: connectionID)
             return
         }
+        // Also before the exclusivity section, for the same reason: an OBSERVER (docs/45 §8.4) is a
+        // read-only member of a pane somebody else already holds, so it must never take the
+        // detached-claim or fresh-spawn paths that keep one shell to one attachment.
+        if open.channelClass == MuxChannelClass.paneObserver.rawValue {
+            openPaneObserverChannel(open, on: connection, connectionID: connectionID)
+            return
+        }
         // Anything this host does not route is DECLINED, never guessed at — and declined HERE, before
         // the exclusivity critical section, for the same reason the workspace route sits above it.
         // Every unrouted class used to fall through into the PTY spawn path, so a peer one version
         // ahead got a login shell it never asked for: a pty, a reaper thread and a scrollback journal
-        // addressed by nobody. `paneObserver` (2) is reserved and arrives with the fan-out.
+        // addressed by nobody.
         guard open.channelClass == MuxChannelClass.pane.rawValue else {
             onLog?(
                 "mux channel \(open.channelID) (conn \(connectionID)): declined — "
@@ -1139,6 +1154,66 @@ public final class HostServer: @unchecked Sendable {
         }
     }
 
+    /// PATH E: a `channelClass == 2` READ-ONLY view of a pane that is already live.
+    ///
+    /// An observer joins something; it never creates one. There is no fresh-spawn fallback and no
+    /// detached claim — the only two answers to "observe a pane nobody is holding" are a refusal and
+    /// a login shell nobody asked for, and the second is the failure the class guard exists to stop.
+    ///
+    /// Gated by ``paneFanoutEnabled``, mirroring ``openWorkspaceChannel(_:on:connectionID:)``'s own
+    /// flag-off refusal: with `SLOPDESK_PANE_FANOUT` unset no observer subscriber can exist, so the
+    /// shipping path keeps exactly one member per pane.
+    private func openPaneObserverChannel(
+        _ open: MuxChannelOpen,
+        on connection: MuxNWConnection,
+        connectionID: UUID,
+    ) {
+        guard paneFanoutEnabled else {
+            onLog?(
+                "mux channel \(open.channelID) (conn \(connectionID)): declined — "
+                    + "the observer class needs SLOPDESK_PANE_FANOUT=1",
+            )
+            Task { await connection.sendOpenAck(open.channelID, accepted: false) }
+            return
+        }
+        let key = MuxSessionKey(connectionID: connectionID, channelID: open.channelID)
+        let hasRealSessionID = open.sessionID != WireMessage.newSessionID
+        // The same critical section shape the pane route uses: resolve the target and register this
+        // key against it under ONE `lock`, so a concurrent close cannot retire the session between
+        // the lookup and the registration.
+        lock.lock()
+        let isStopping = stopping
+        let alreadyLive = muxSessions[key] != nil
+        var target: MuxChannelSession?
+        if !isStopping, !alreadyLive, hasRealSessionID {
+            target = muxSessions.first { $0.value.sessionID == open.sessionID }?.value
+            if let target { muxSessions[key] = target }
+        }
+        lock.unlock()
+
+        if isStopping || alreadyLive {
+            Task { await connection.sendOpenAck(open.channelID, accepted: !isStopping) }
+            return
+        }
+        guard let target else {
+            onLog?(
+                "mux channel \(open.channelID) (conn \(connectionID)): refused — "
+                    + "no live pane \(open.sessionID) to observe",
+            )
+            Task { await connection.sendOpenAck(open.channelID, accepted: false) }
+            return
+        }
+        Task { [weak self] in
+            await self?.performJoin(
+                session: target,
+                open: open,
+                connection: connection,
+                connectionID: connectionID,
+                channelClass: .paneObserver,
+            )
+        }
+    }
+
     /// PATH D: add a SECOND (third, …) client to a pane somebody is already watching.
     ///
     /// `performReattach`'s ordering, reproduced against a drain that is LIVE: ack FIRST (the client
@@ -1156,6 +1231,7 @@ public final class HostServer: @unchecked Sendable {
         open: MuxChannelOpen,
         connection: MuxNWConnection,
         connectionID: UUID,
+        channelClass: MuxChannelClass = .pane,
     ) async {
         let key = MuxSessionKey(connectionID: connectionID, channelID: open.channelID)
         // Ack BEFORE the replay, exactly as the reattach does: the resume verdict rides the DATA
@@ -1166,6 +1242,7 @@ public final class HostServer: @unchecked Sendable {
         let joined = await session.joinSubscriber(
             data: open.data,
             control: open.control,
+            channelClass: channelClass,
             sizePassive: sizePassiveForConnection(connectionID),
         )
         guard let subscriberID = joined else {
@@ -1184,7 +1261,7 @@ public final class HostServer: @unchecked Sendable {
         noteWorkspaceFactChanged()
         onLog?(
             "mux channel \(open.channelID) (conn \(connectionID)): joined live session \(open.sessionID) "
-                + "as subscriber \(subscriberID)",
+                + "as \(channelClass == .paneObserver ? "observer" : "subscriber") \(subscriberID)",
         )
     }
 

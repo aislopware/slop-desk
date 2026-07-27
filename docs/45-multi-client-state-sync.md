@@ -1045,18 +1045,44 @@ a Studio's nvim — network jitter driving a terminal reflow. So:
 7. The resolved grid and the contributor list are published in the presence frame, so a
    non-contributing client renders a **labelled** letterbox — `120×40 · sized by MacBook Pro` —
    instead of guessing. That readout is what makes the policy debuggable on hardware.
+   `TerminalLetterbox` (shrink-to-fit, never magnify; centred; degrades to full-bleed for every
+   unknown) and `TerminalGridReadout` are pure values in `SlopDeskTerminal`, so the arithmetic and
+   the sentence carry unit tests the iOS-only SwiftUI path cannot.
 
 Known, accepted cost: zellij's smallest-client-wins is a documented pain point (Discussion #5066). The
-iOS-passive default removes the worst case. **iOS needs a scale-to-fit path in `TerminalSurface` that
-does not exist yet** — Phase 6 work, not free.
+iOS-passive default removes the worst case.
+
+**Rule 6 undercounts the writers.** There are FOUR `TIOCSWINSZ` sites, not two: `setWindowSize`
+(`PTYProcess.swift:301` — the one the fold routes through), `beginRedrawJiggle` (`:367`),
+`endRedrawJiggle` (`:388`) and the spawn-time `openpty` winsize (`:99`). The jiggle pair is outside
+the fold on purpose, and it is precisely why rule 5's idempotence compares against the live
+`TIOCGWINSZ`. Every file:line in this section predates Phases 5–6 and is stale by roughly +67 to
++250 lines; the symbol names are current, the numbers are not.
 
 ### 8.4 Input, and the badge
 
 **Last-writer-wins into the one PTY. No arbitration, no locking, no exclusivity.** tmux, `screen -x`
 and WezTerm all do this, and it is correct here because the writers are **one human on two machines**,
-not adversaries. `MuxChannelSession.inputTask` (`:774-798`) merges N subscriber `.inbound` streams into
-the existing single writer; bytes interleave atomically at frame granularity. Observer-class
-(`channelClass == 2`) subscribers' `input` frames are **dropped host-side**.
+not adversaries. Each subscriber's own input relay feeds the session's ONE serial PTY writer; bytes
+interleave atomically at frame granularity.
+
+**Observer-class (`channelClass == 2`) subscribers' `input` frames are dropped host-side.** Three
+things make that a property of the SUBSCRIBER rather than of the session:
+
+- The drop lives in `startInputRelay(for:)` and NOWHERE else. There is a third writer into the same
+  PTY — `writeRawForControl` (the `slopdesk-ctl` / orchestrator injection) — and it must keep writing
+  while somebody watches, so a session-level `isReadOnly` flag would gag the cockpit.
+- A dropped frame is **still credited** (`noteConsumed`). Credit is granted at CONSUMPTION, so a drop
+  that skips the credit never returns the window: the observer's sender parks after exactly one
+  window and the channel dies with no error anywhere. This is the failure that would otherwise only
+  appear on hardware.
+- The echo probe and `foldUserInput` are skipped with the write. `foldUserInput` is the Esc-cancel
+  UNBLOCK edge, so a read-only client's stray keystroke would clear ANOTHER client's blocked latch
+  and make a supervision alert vanish with nobody answering the prompt.
+
+An observer contributes nothing to the size fold (§8.3): it is watching a grid it did not choose. It
+is still published as an attachment with `contributes: false`, which is what lets a client name who
+IS clamping.
 
 `tab/syncInputArmed` fans a sync-armed tab's input from **any** subscriber to every pane in the tab,
 and the SYNC INPUT pill shows on every client — true `synchronize-panes` parity.
@@ -1393,28 +1419,62 @@ projection owed the rest of the app")
 - **A cross-SESSION dock.** Refused by design — a pane's spec lives in its session's side table, so
   moving one between sessions is a different op with a different invariant, and no gesture asks.
 
-### Phase 6 — PTY fan-out · `SLOPDESK_PANE_FANOUT` (`== "1"`, default-OFF), LAST
+### Phase 6 — PTY fan-out · `SLOPDESK_PANE_FANOUT` (`== "1"`, default-OFF), LAST — **SHIPPED BEHIND THE FLAG**
 
-**Value: two clients watch one live nvim.**
+**Value: two clients watch one live nvim.** Four commits, no wire change and no golden change in any
+of them: `golden/golden_vectors.json` is byte-identical across the whole phase and no unknown-type
+probe moves. Everything the fan-out needed was already on the wire — `channelClass` on
+`MuxChannelOpen`, `WorkspaceRosterPane.attachments` in the presence roster — and close-vs-leave is
+resolved by the HOST-owned `closePane` intent rather than a `closeReason` byte.
 
-- `MuxChannelSession.data` / `.control` (`:56-58`) → `subscribers: [MuxSubscriberID: Subscriber]`;
-  `rebindRelay` (`:1243-1466`) splits into `addSubscriber` / `removeSubscriber` (the existing swap
-  becomes the 1-subscriber special case).
-- `reestablishActivityOnReattach()` runs **on JOIN**, per new subscriber.
-- **`min(lastAckedSeq)` retention + `SLOPDESK_SUB_LAG_BYTES` eviction, in this same commit** (§8.6).
-- min-fold over `attachedBy` with the 750 ms settle timer; both `pty.setWindowSize` sites (`:1850`,
-  `:2138`) route through `applyResolvedGrid()`; iOS size-passive; contributors published.
-- `channelClass == 2` observer subscribers (input dropped host-side).
-- **Delete** the `attachedElsewhere` refusal (`HostServer.swift:634-643`). The hazard it names — two
-  sessions aliased to one id — dissolves: with **one** session object and N sub-channels there is one
-  journal writer and one close path.
+- `MuxChannelSession.data` / `.control` → `subscribers: [MuxSubscriberID: Subscriber]`. A subscriber
+  IS its sub-channel pair (`let`), so a returning client REPLACES the member instead of having
+  channels swapped under tasks a departed one owned; `rebindRelay` becomes the one-member join.
+- `reestablishActivityOnReattach()` runs **on JOIN**, addressed to the new member only.
+- **`min(lastAckedSeq)` retention + `SLOPDESK_SUB_LAG_BYTES` eviction, in the same commit** (§8.6).
+  `ReplayBuffer.retainedBytes(above:)` is the metric, and the lag check runs on BOTH the append and
+  the ack side — a client that has stopped acking never calls `acknowledge`, so a consumer-side-only
+  check never fires on the exact member it exists to remove.
+- min-fold over the ATTACHED set with the 750 ms settle; every `pty.setWindowSize` caller routes
+  through `applyResolvedGrid()`; iOS size-passive; contributors published in the roster.
+- `channelClass == 2` observer subscribers: `input` DROPPED host-side and still credited, no echo
+  probe, no `foldUserInput`, no vote in the size fold.
 - Park in `DetachedSessionStore` only when the subscriber set empties.
-- iOS `TerminalSurface` letterbox / scale-to-fit (does not exist today).
+- iOS letterbox / scale-to-fit, with §8.3 rule 7's readout.
 
-**Gate:** `SubprocessE2ETests` gains a **two-subscriber** case with a **real PTY**. Per
+**Four corrections this phase earned, against the text above and in §8.3:**
+
+1. **The `attachedElsewhere` refusal is flag-CONDITIONAL, not deleted.** It survives as the flag-OFF
+   branch, which is what keeps the shipping path byte-identical: with `SLOPDESK_PANE_FANOUT` unset
+   the JOIN route is unreachable, `subscribers.count` never exceeds 1, the drain never leaves its
+   inline single-send, and no outbox is ever built. It gets deleted the day the flag flips
+   default-ON, not before.
+2. **There are FOUR `TIOCSWINSZ` writers, not two.** §8.3 rule 6 names `setWindowSize` and the ctl
+   verb and misses two: `PTYProcess.beginRedrawJiggle` (`:367`) and `endRedrawJiggle` (`:388`), plus
+   the spawn-time `openpty` winsize (`:99`). The jiggle pair stays deliberately OUTSIDE the fold — it
+   is a transient repaint dance that restores what it borrowed — which is exactly why idempotence
+   compares against the live `TIOCGWINSZ` and never against a remembered resolved grid. Every
+   file:line in §8.3 and §9 predates Phases 5–6 and is stale by roughly +67 to +250 lines; the
+   symbol names are current, the numbers are not.
+3. **The 750 ms settle arms on a CONTRIBUTOR-SET change, never on a resize frame** — and only when
+   the set moves between two non-empty states. Arming per frame would put 750 ms between a divider
+   drag and the shell noticing; arming on 0→1 would make a fresh pane's first client wait for a fold
+   it alone decides.
+4. **Close-vs-leave needs no wire change.** Phase 5 moved the topology host-side, so
+   `WorkspaceIntentApplier.closePane` (verb 4) runs on the HOST: a `channelClose` on a pane channel
+   is ALWAYS a refcounted LEAVE, and the unconditional REAP is driven by the document's own
+   `closePane` / `closeTab` apply, which `channelClose`s every subscriber and kills the PTY. That
+   satisfies §8.6's asymmetry and §8.7's "the host always sends one `channelClose`".
+
+**Gate:** `SubprocessE2ETests`' `testTwoClientsShareOneRealPTY` — two shipped `slopdesk-client`
+processes on one `--session-id` against one `slopdesk-hostd`, real PTYs. Per
 [CLAUDE.md](../CLAUDE.md) the in-memory loopback provably misses open-order races, so a loopback test
-is not acceptable evidence here. Plus a laggard-eviction soak on a real cellular iOS client — a unit
-test cannot tune `SLOPDESK_SUB_LAG_BYTES`. Plus `bash scripts/check-ios.sh`.
+is not acceptable evidence here. Plus `bash scripts/check-ios.sh`, and the full suite green with
+`SLOPDESK_PANE_FANOUT` unset AND `=1`.
+
+**Still owed, and honestly owed:** nothing in Phases 4–6 is hardware-verified. The laggard-eviction
+threshold in particular is a policy invention calibrated below the real 64 MiB offline gate — only a
+cellular-iOS soak settles it, and a unit test cannot.
 
 ---
 

@@ -95,8 +95,10 @@ final class WorkspaceMirrorFactsTests: XCTestCase {
     /// Who ELSE has this pane on screen. Reads the roster's `viewingPaneID`, in document ids, minus
     /// this client's own entry — a client is not "also" looking at its own pane.
     ///
-    /// Deliberately viewers and not owners: attachment needs the pane channel to declare whose it is,
-    /// and only the workspace channel's subscribe carries a `clientInstanceID` today.
+    /// VIEWING and HOLDING are different facts and both are useful: a client can have a pane on
+    /// screen without a channel on it (a background tab it last looked at), and it can hold a
+    /// channel on a pane it is not currently showing. ``WorkspaceStore/paneHolders(for:)`` answers
+    /// the second question, from the roster's `panes` half.
     func testViewersNameTheOtherClientsLookingAtAPane() throws {
         let store = makeStore()
         let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
@@ -128,6 +130,185 @@ final class WorkspaceMirrorFactsTests: XCTestCase {
         XCTAssertEqual(
             store.paneViewers(for: paneID), ["iPad"],
             "the other client is listed; this one is not 'also' looking at its own pane",
+        )
+    }
+
+    // MARK: - paneHolders
+
+    /// Who ELSE holds a channel on this pane. The roster's `panes` half publishes one
+    /// `WorkspaceRosterPane` per pane carrying one attachment per attached device, joined to
+    /// `clients` for a human-readable label — the fact that lets a UI say "held by mac-studio"
+    /// instead of guessing.
+    func testHoldersNameTheOtherClientsAttachedToAPane() throws {
+        let store = makeStore()
+        let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
+        let mine = UUID()
+        let theirs = UUID()
+        store.attachWorkspaceChannel(WorkspaceChannelClient(
+            box: store.workspaceMirror, clientInstanceID: mine, clientKind: .macOS, label: "mac-studio",
+            open: { throw CancellationError() }, close: { _ in },
+        ))
+
+        applyRoster(
+            to: store,
+            clients: [
+                rosterClient(mine, label: "mac-studio"),
+                rosterClient(theirs, label: "iPad"),
+            ],
+            panes: [WorkspaceRosterPane(
+                paneID: paneID.raw,
+                resolvedCols: 120,
+                resolvedRows: 40,
+                attachments: [
+                    WorkspaceRosterPane.Attachment(
+                        clientInstanceID: mine, contributes: true, cols: 120, rows: 40,
+                    ),
+                    WorkspaceRosterPane.Attachment(
+                        clientInstanceID: theirs, contributes: false, cols: 60, rows: 20,
+                    ),
+                ],
+            )],
+        )
+
+        XCTAssertEqual(
+            store.paneHolders(for: paneID), ["iPad"],
+            "the other device is named; this client is not 'also' holding its own pane",
+        )
+    }
+
+    /// The `slopdesk-client` case, and the reason the join must never be a force-unwrap: a CLI opens
+    /// no workspace channel at all, so the host publishes its attachment with the all-zero id. It is
+    /// a real client holding a real pane at a real size — dropping the RECORD would make the pane
+    /// look unheld, and dropping the attachment would make the size fold's arithmetic unexplainable.
+    func testAnUnlabelledAttachmentIsCountedAndNamedNeutrally() throws {
+        let store = makeStore()
+        let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
+        let mine = UUID()
+        store.attachWorkspaceChannel(WorkspaceChannelClient(
+            box: store.workspaceMirror, clientInstanceID: mine, clientKind: .macOS, label: "mac-studio",
+            open: { throw CancellationError() }, close: { _ in },
+        ))
+
+        applyRoster(
+            to: store,
+            clients: [rosterClient(mine, label: "mac-studio")],
+            panes: [WorkspaceRosterPane(
+                paneID: paneID.raw,
+                resolvedCols: 80,
+                resolvedRows: 24,
+                attachments: [
+                    WorkspaceRosterPane.Attachment(
+                        clientInstanceID: mine, contributes: true, cols: 120, rows: 40,
+                    ),
+                    WorkspaceRosterPane.Attachment(
+                        clientInstanceID: WireMessage.newSessionID, contributes: true, cols: 80, rows: 24,
+                    ),
+                ],
+            )],
+        )
+
+        XCTAssertEqual(
+            store.paneHolders(for: paneID), [WorkspaceStore.unlabelledHolder],
+            "the CLI is counted, and named for what it is rather than dropped",
+        )
+        XCTAssertEqual(
+            store.paneAttachmentCount(for: paneID), 2,
+            "both attachments count — the fold's arithmetic has to be explainable",
+        )
+    }
+
+    /// A pane nobody else holds says nothing. Silence is the correct readout for the common case.
+    func testAPaneOnlyThisClientHoldsNamesNobody() throws {
+        let store = makeStore()
+        let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
+        let mine = UUID()
+        store.attachWorkspaceChannel(WorkspaceChannelClient(
+            box: store.workspaceMirror, clientInstanceID: mine, clientKind: .macOS, label: "mac-studio",
+            open: { throw CancellationError() }, close: { _ in },
+        ))
+
+        applyRoster(
+            to: store,
+            clients: [rosterClient(mine, label: "mac-studio")],
+            panes: [WorkspaceRosterPane(
+                paneID: paneID.raw,
+                resolvedCols: 120,
+                resolvedRows: 40,
+                attachments: [WorkspaceRosterPane.Attachment(
+                    clientInstanceID: mine, contributes: true, cols: 120, rows: 40,
+                )],
+            )],
+        )
+
+        XCTAssertEqual(store.paneHolders(for: paneID), [])
+        XCTAssertEqual(store.paneAttachmentCount(for: paneID), 1)
+    }
+
+    // MARK: - The resolved grid, and who clamped it
+
+    /// A size-passive client (iOS) reads the grid the Macs folded to — and the sentence that says
+    /// why it is that size. Without the readout a phone shows a pane that is the wrong size for no
+    /// stated reason.
+    func testASizePassiveClientReadsTheResolvedGridAndItsAuthor() throws {
+        let store = makeStore()
+        let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
+        let mine = UUID()
+        let mac = UUID()
+        store.attachWorkspaceChannel(WorkspaceChannelClient(
+            box: store.workspaceMirror, clientInstanceID: mine, clientKind: .iOS, label: "iPhone",
+            open: { throw CancellationError() }, close: { _ in },
+        ))
+
+        applyRoster(
+            to: store,
+            clients: [rosterClient(mine, label: "iPhone"), rosterClient(mac, label: "MacBook Pro")],
+            panes: [WorkspaceRosterPane(
+                paneID: paneID.raw,
+                resolvedCols: 120,
+                resolvedRows: 40,
+                attachments: [
+                    WorkspaceRosterPane.Attachment(
+                        clientInstanceID: mac, contributes: true, cols: 120, rows: 40,
+                    ),
+                    WorkspaceRosterPane.Attachment(
+                        clientInstanceID: mine, contributes: false, cols: 60, rows: 20,
+                    ),
+                ],
+            )],
+        )
+
+        let grid = try XCTUnwrap(store.paneResolvedGrid(for: paneID))
+        XCTAssertEqual(grid.cols, 120)
+        XCTAssertEqual(grid.rows, 40)
+        XCTAssertEqual(store.paneGridReadout(for: paneID), "120×40 · sized by MacBook Pro")
+    }
+
+    /// No roster at all (the document is off, or the first presence frame has not landed): no grid
+    /// and no readout, so the pane renders exactly as it always did.
+    func testNoRosterMeansNoLetterboxAndNoReadout() throws {
+        let store = makeStore()
+        let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
+        XCTAssertNil(store.paneResolvedGrid(for: paneID))
+        XCTAssertNil(store.paneGridReadout(for: paneID))
+    }
+
+    private func rosterClient(_ id: UUID, label: String) -> WorkspaceRosterClient {
+        WorkspaceRosterClient(
+            clientInstanceID: id, clientKind: 0, flags: 0,
+            viewingTabID: UUID(), viewingPaneID: WireMessage.newSessionID, cols: 0, rows: 0,
+            label: label,
+        )
+    }
+
+    private func applyRoster(
+        to store: WorkspaceStore,
+        clients: [WorkspaceRosterClient],
+        panes: [WorkspaceRosterPane],
+    ) {
+        store.workspaceMirror.apply(
+            kind: WorkspaceEventKind.presence.rawValue,
+            epoch: UUID(), baseStateNum: 0, newStateNum: 0,
+            payload: WorkspacePresenceRoster(clients: clients, panes: panes).encode(),
         )
     }
 
