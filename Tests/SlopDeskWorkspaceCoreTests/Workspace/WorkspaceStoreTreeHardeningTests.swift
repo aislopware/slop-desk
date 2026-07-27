@@ -129,20 +129,11 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
     /// AppLaunchMonitor side: `liveLayoutPresets` resolves from the TREE under `.tree`, and
     /// `presetForLaunchedApp` matches against it — so a tree-carried trigger preset is reachable while a
     /// canvas one is dead. A regression here has the monitor read `workspace.layoutPresets` (the dead canvas's, empty).
-    func testLiveLayoutPresetsResolveFromTree() {
-        var tree = TreeWorkspace.defaultWorkspace()
-        tree.layoutPresets = [LayoutPreset(
-            name: "monitoring",
-            canvas: Canvas(items: []),
-            groups: [],
-            focusedPane: nil,
-            triggerAppName: "Grafana",
-        )]
-        let store = makeTreeStore(restoringTree: tree)
+    func testLiveLayoutPresetsAreEmptyOnTheTreeShell() {
+        let store = makeTreeStore()
 
-        XCTAssertEqual(store.liveLayoutPresets.map(\.name), ["monitoring"], "live presets come from the tree")
-        XCTAssertEqual(store.presetForLaunchedApp("grafana")?.name, "monitoring", "the trigger matches the tree preset")
-        XCTAssertNil(store.presetForLaunchedApp("nope"), "no spurious match")
+        XCTAssertTrue(store.liveLayoutPresets.isEmpty, "a LayoutPreset embeds a Canvas the tree shell never renders")
+        XCTAssertNil(store.presetForLaunchedApp("grafana"), "so the app-launch trigger scan finds nothing to switch to")
     }
 
     // MARK: - ⌘⇧R renames the active TAB (was a dead-end on .tree)
@@ -185,7 +176,7 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
     // MARK: - The live tree branches of bootstrap + commitConnectionTarget
 
     /// `bootstrapFromEnvironment(.tree)` reshapes the TREE from the autoconnect env (one session/tab/leaf
-    /// carrying the spec + the per-session connection) and materializes it — not the canvas.
+    /// carrying the spec) and materializes it — not the canvas. The target itself is device-local.
     func testBootstrapFromEnvironmentTreeBranch() throws {
         let store = makeTreeStore()
         store.bootstrapFromEnvironment([
@@ -198,21 +189,25 @@ final class WorkspaceStoreTreeHardeningTests: XCTestCase {
         XCTAssertEqual(leaves.count, 1, "one bootstrap leaf")
         let leaf = try XCTUnwrap(leaves.first)
         XCTAssertEqual(store.tree.spec(for: leaf)?.kind, .terminal, "a terminal bootstrap pane")
-        XCTAssertEqual(store.tree.activeSession?.connection?.host, "10.0.0.5", "the per-session connection is stamped")
+        XCTAssertEqual(store.committedConnectionTarget?.host, "10.0.0.5", "the bootstrap target is stamped")
         XCTAssertNotNil(store.handle(for: leaf) as? FakePaneSession, "init reconciled the bootstrapped tree")
     }
 
-    /// `commitConnectionTarget(.tree)` stamps the target onto the ACTIVE SESSION (the gate-prefill source),
-    /// not the dead canvas `workspace.connection`.
+    /// `commitConnectionTarget(.tree)` files the target in the DEVICE preferences under `host:port` — not
+    /// on the host-owned layout, and not on the dead canvas `workspace.connection`.
     func testCommitConnectionTargetTreeBranch() {
         let store = makeTreeStore()
         let target = ConnectionTarget(host: "192.168.1.9", port: 7777)
         store.commitConnectionTarget(target)
 
-        XCTAssertEqual(store.tree.activeSession?.connection, target, "the active session carries the committed target")
-        // It is a no-op if already equal (no churn).
+        XCTAssertEqual(
+            store.devicePreferences.connectionByHostKey["192.168.1.9:7777"], target,
+            "the target is filed under host:port in the DEVICE preferences, not on the shared layout",
+        )
+        XCTAssertEqual(store.committedConnectionTarget, target, "and it is what the pane status bar names")
+        // The layout is host-owned and carries no host association at all.
         let sessionsBefore = store.tree.sessions
         store.commitConnectionTarget(target)
-        XCTAssertEqual(store.tree.sessions, sessionsBefore, "an identical re-commit is a no-op")
+        XCTAssertEqual(store.tree.sessions, sessionsBefore, "committing a target never touches the tree")
     }
 }

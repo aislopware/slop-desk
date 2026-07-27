@@ -20,7 +20,7 @@ final class OverlayCoordinatorMountTests: XCTestCase {
     private func makeCoordinator() -> (OverlayCoordinator, WorkspaceStore) {
         let store = WorkspaceStore(liveModel: .tree, makeSession: { MountTestPaneSession($0) })
         let overlay = OverlayCoordinator(store: store)
-        overlay.connectionTarget = { store.tree.activeSession?.connection ?? .default }
+        overlay.connectionTarget = { store.committedConnectionTarget ?? .default }
         return (overlay, store)
     }
 

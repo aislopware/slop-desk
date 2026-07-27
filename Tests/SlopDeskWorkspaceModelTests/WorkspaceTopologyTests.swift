@@ -54,9 +54,6 @@ final class WorkspaceTopologyTests: XCTestCase {
             tree: TreeWorkspace(
                 sessions: [session, other],
                 activeSessionID: other.id,
-                layoutPresets: [],
-                launchPresets: [],
-                sessionTemplates: [],
             ),
             syncInputTabs: [tab1.id],
             focusMRU: [session.id: [tab2.id, tab1.id]],
@@ -122,7 +119,6 @@ final class WorkspaceTopologyTests: XCTestCase {
         )
         let topology = WorkspaceTopology(tree: TreeWorkspace(
             sessions: [session], activeSessionID: session.id,
-            layoutPresets: [], launchPresets: [], sessionTemplates: [],
         ))
 
         let decoded = try XCTUnwrap(state(topology).topology)
@@ -158,24 +154,7 @@ final class WorkspaceTopologyTests: XCTestCase {
 
     // MARK: - What must not cross
 
-    /// Device-local state and the preset config are deliberately dropped. Pinned rather than left
-    /// implicit: a 27″ Studio and an iPhone sharing an immersive-mode latch is a bug, and a silent
-    /// re-inclusion later would be invisible.
-    func testDeviceLocalAndPresetFieldsDoNotCross() throws {
-        var topology = fixture()
-        topology.tree.videoModesByTarget = ["display:1": VideoPaneModes(immersive: true)]
-        topology.tree.launchPresets = LaunchPreset.builtIns
-        topology.tree.sessionTemplates = SessionTemplate.builtIns
-        topology.tree.sessions[0].connection = ConnectionTarget(host: "example", port: 7420)
-
-        let decoded = try XCTUnwrap(state(topology).topology)
-        XCTAssertTrue(decoded.tree.videoModesByTarget.isEmpty)
-        XCTAssertTrue(decoded.tree.launchPresets.isEmpty)
-        XCTAssertTrue(decoded.tree.sessionTemplates.isEmpty)
-        XCTAssertNil(decoded.tree.sessions[0].connection)
-    }
-
-    /// …and a future build's presets must survive a topology write rather than being reaped by it.
+    /// A future build's presets must survive a topology write rather than being reaped by it.
     /// `write(topology:)` DELETES every topology key the projection did not supply, so a root field
     /// this build does not produce has to be excluded from that sweep by name.
     func testATopologyWriteDoesNotReapTheReservedPresetFields() {

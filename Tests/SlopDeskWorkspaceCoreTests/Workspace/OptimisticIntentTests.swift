@@ -31,7 +31,6 @@ final class OptimisticIntentTests: XCTestCase {
         var state = HostWorkspaceState()
         state.write(topology: WorkspaceTopology(tree: TreeWorkspace(
             sessions: [session], activeSessionID: session.id,
-            layoutPresets: [], launchPresets: [], sessionTemplates: [],
         )))
         let box = WorkspaceMirrorBox()
         box.apply(

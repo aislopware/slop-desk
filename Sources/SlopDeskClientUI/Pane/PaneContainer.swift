@@ -132,9 +132,9 @@ struct PaneContainer: View {
                 staticMirror: staticMirror,
                 // Feeds the bottom status bar. cwd is the host-reported OSC-7 dir kept on
                 // the spec (reactive — reading it here re-renders on change); host is the app-global
-                // connection target persisted on the active session.
+                // connection target, which is device-local and never rides the shared layout.
                 cwd: spec?.lastKnownCwd,
-                host: store.tree.activeSession?.connection?.host ?? "",
+                host: store.committedConnectionTarget?.host ?? "",
                 // The Command Navigator (⌃⌘O) jumps the scrollback through the store.
                 store: store,
             )

@@ -380,8 +380,8 @@ public final class LivePaneSession: @MainActor PaneSessionHandle, @MainActor Ide
                     desktopDisplayID: spec.video?.displayID ?? 0,
                 )
             }
-        // LATCHED-MODE RESTORE is NOT seeded here: the modes are TARGET-keyed on the tree
-        // (`TreeWorkspace.videoModesByTarget`), which this pure spec→session factory can't see — the
+        // LATCHED-MODE RESTORE is NOT seeded here: the modes are TARGET-keyed in the device preferences
+        // (`DevicePreferences.videoModesByTarget`), which this pure spec→session factory can't see — the
         // store seeds the model at wiring time (`wireMaterializedLeaf`) and on every endpoint commit.
         return LivePaneSession(
             id: PaneID(),

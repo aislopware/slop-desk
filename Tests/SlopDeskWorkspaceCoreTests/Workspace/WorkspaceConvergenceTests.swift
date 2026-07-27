@@ -127,7 +127,6 @@ final class WorkspaceConvergenceTests: XCTestCase {
         return (
             WorkspaceTopology(tree: TreeWorkspace(
                 sessions: [session], activeSessionID: session.id,
-                layoutPresets: [], launchPresets: [], sessionTemplates: [],
             )),
             session.id, tab.id, pane,
         )

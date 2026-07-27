@@ -793,8 +793,15 @@ snapshot replaces the cache wholesale regardless.
 RTT. Strictly better than "show `vi .` forever".
 
 **`device-prefs.json` / UserDefaults** — window frame, sidebar width, rail collapsed,
-`videoModesByTarget`, `seenCompletionEpoch`, `followSessionFocus`, `focusHistory` seed,
-`blockBookmarks`, `Session.connection` per `hostKey`. Everything in §4.3.
+`videoModesByTarget`, `launchPresets`, `sessionTemplates`, `seenCompletionEpoch`, `followSessionFocus`,
+`focusHistory` seed, `blockBookmarks`, the connection target per `hostKey`. Everything in §4.3.
+
+**`hostKey` is `"<host>:<port>"`** (`DevicePreferences.hostKey(for:)`). It is the only host identity
+known *before* connecting — `root/hostDisplayName` arrives WITH the snapshot, so it cannot gate a
+pre-connect read — and it is already what `AppConnection.recentTargets` dedupes on, so the cache gate
+and the gate's recent-hosts menu agree on what "the same host" means.
+
+`followSessionFocus` defaults **ON for macOS, OFF for iOS** (§8.2), resolved at compile time.
 
 **Gone from disk:** `TreeWorkspace` (sessions/tabs/splits/specs/presets), `lastKnownTitle`,
 `lastKnownCwd`, `projectKey`, `resumeSessionID`, `resumeLastReceivedSeq`. Per the no-migration

@@ -35,7 +35,6 @@ final class WorkspaceIntentApplierTests: XCTestCase {
         return Fixture(
             topology: WorkspaceTopology(tree: TreeWorkspace(
                 sessions: [session], activeSessionID: session.id,
-                layoutPresets: [], launchPresets: [], sessionTemplates: [],
             )),
             session: session.id,
             tabA: tabA.id,

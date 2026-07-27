@@ -17,7 +17,6 @@ final class WorkspaceStateFileTests: XCTestCase {
                     specs: [PaneID(raw: paneID): PaneSpec(kind: .terminal, title: "nvim", userRenamed: true)],
                 )],
                 activeSessionID: nil,
-                layoutPresets: [], launchPresets: [], sessionTemplates: [],
             ),
             hostDisplayName: "mac-studio",
         ))

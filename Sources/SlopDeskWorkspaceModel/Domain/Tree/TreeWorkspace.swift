@@ -3,9 +3,10 @@ import Foundation
 // MARK: - TreeWorkspace (the tree-rooted workspace container — transitional name)
 
 /// The tree-rooted workspace container for the `Session → Tab → Pane` redesign (docs/42 §Domain model).
-/// It holds `[Session]` + the active session + the client-state the live ``Workspace`` carries that still
-/// applies (`layoutPresets`). A pure `Codable`/`Equatable`/`Sendable` value with no SwiftUI
-/// or transport import.
+/// It holds `[Session]` + the active session and NOTHING device-local: the preset library, the latched
+/// video modes and the per-host connection target live in ``DevicePreferences`` (docs/45 §7.3), because
+/// the tree describes THE LAYOUT — which every attached client shares — and those describe one machine.
+/// A pure `Codable`/`Equatable`/`Sendable` value with no SwiftUI or transport import.
 ///
 /// **Transitional name (W2 is purely additive).** The plan's final type name for this is `Workspace`
 /// (docs/42 §Domain model, `currentSchemaVersion = 11`), but the live ``Workspace`` (the v9 canvas value)
@@ -25,76 +26,32 @@ public struct TreeWorkspace: Codable, Sendable, Equatable {
     public var sessions: [Session]
     /// The selected session, or `nil` only transiently before repair.
     public var activeSessionID: SessionID?
-    /// Named launch templates — carried from v9; repurposed to Session/Tab templates in a later item.
-    public var layoutPresets: [LayoutPreset]
-    /// Named **launch configurations** (docs/42 W14 #9): a title + a command (+ optional cwd / split) that
-    /// SPAWN a terminal pane running that command (Warp launch-configurations parity). Distinct from
-    /// ``layoutPresets`` (a saved geometry). Seeded
-    /// with ``LaunchPreset/builtIns`` (Claude Code / htop / Git log) on a fresh workspace; a v10 file
-    /// written before W14 has no `launchPresets` key, so the decode below tolerates its absence and the
-    /// store re-seeds the built-ins (see ``seedingBuiltInLaunchPresetsIfEmpty()``).
-    public var launchPresets: [LaunchPreset]
-    /// Named **session templates / project profiles**: a layout + per-pane cwd/optional command that
-    /// SPAWN a whole named session (distinct from ``launchPresets``, which open one tab in the current
-    /// session). Seeded with ``SessionTemplate/builtIns`` on a fresh workspace; an existing v10 file
-    /// written before this field has no `sessionTemplates` key, so the decode below tolerates its absence
-    /// (`decodeIfPresent` ⇒ `[]`) and the store re-seeds the built-ins — NO schema bump, NO migration step
-    /// (mirrors the ``launchPresets`` additive field exactly).
-    public var sessionTemplates: [SessionTemplate]
-    /// The user's latched video-pane modes (immersive / audio / viewport lock / stream overrides),
-    /// keyed by the stream TARGET (``VideoEndpoint/modesKey`` — a display, or a window's owning app) —
-    /// NOT by pane. Keying by target is what lets the modes survive a close-tab → reopen (the reopened
-    /// target mints a brand-new ``PaneID``/spec, so anything pane-keyed dies with the tab) as well as a
-    /// relaunch. Written only through the store's explicit-toggle sink
-    /// (``WorkspaceStore``'s `persistVideoModes`); read to seed a freshly-materialized / re-targeted
-    /// ``RemoteWindowModel``. Additive (`decodeIfPresent` ⇒ `[:]`); unbounded but tiny (one entry per
-    /// distinct app/display the user ever latched a mode on — entries clear when toggled back to default).
-    public var videoModesByTarget: [String: VideoPaneModes]
 
     public init(
         schemaVersion: Int = Self.currentSchemaVersion,
         sessions: [Session],
         activeSessionID: SessionID?,
-        layoutPresets: [LayoutPreset] = [],
-        launchPresets: [LaunchPreset] = LaunchPreset.builtIns,
-        sessionTemplates: [SessionTemplate] = SessionTemplate.builtIns,
-        videoModesByTarget: [String: VideoPaneModes] = [:],
     ) {
         self.schemaVersion = schemaVersion
         self.sessions = sessions
         self.activeSessionID = activeSessionID
-        self.layoutPresets = layoutPresets
-        self.launchPresets = launchPresets
-        self.sessionTemplates = sessionTemplates
-        self.videoModesByTarget = videoModesByTarget
     }
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion
         case sessions
         case activeSessionID
-        case layoutPresets
-        case launchPresets
-        case sessionTemplates
-        case videoModesByTarget
     }
 
-    /// Additive-tolerant decode (docs/42 W14): every existing key decodes normally; `launchPresets` is the
-    /// only NEW key, so it is `decodeIfPresent` — a v10 file written before W14 (no `launchPresets`)
-    /// decodes with an empty list, which the store then re-seeds with the built-ins. Never traps on the
-    /// missing key (the persisted-data contract — a forward-compatible additive field must not brick load).
-    /// A stale `snippets` key (the feature is removed) is simply not in ``CodingKeys`` → decode-ignored.
+    /// Hand-written decode so a key this shape no longer carries — the retired `layoutPresets` /
+    /// `launchPresets` / `sessionTemplates` / `videoModesByTarget` collections, or a stale `snippets` —
+    /// is simply not in ``CodingKeys`` and is decode-ignored rather than trapping. The tree is SHAPE;
+    /// the device-local collections it used to carry are read from ``DevicePreferences`` instead.
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
         sessions = try c.decode([Session].self, forKey: .sessions)
         activeSessionID = try c.decodeIfPresent(SessionID.self, forKey: .activeSessionID)
-        layoutPresets = try c.decodeIfPresent([LayoutPreset].self, forKey: .layoutPresets) ?? []
-        launchPresets = try c.decodeIfPresent([LaunchPreset].self, forKey: .launchPresets) ?? []
-        sessionTemplates = try c.decodeIfPresent([SessionTemplate].self, forKey: .sessionTemplates) ?? []
-        // Additive: an older file without the key decodes to an empty map (no latched modes).
-        videoModesByTarget =
-            try c.decodeIfPresent([String: VideoPaneModes].self, forKey: .videoModesByTarget) ?? [:]
     }
 
     /// The schema version this redesigned shape writes (docs/42 §Domain model = 10; bumped to 11 for
@@ -288,37 +245,12 @@ public extension TreeWorkspace {
         return copy
     }
 
-    /// Seeds ``LaunchPreset/builtIns`` (Claude Code / htop / Git log) when ``launchPresets`` is empty — the
-    /// fresh-workspace and pre-W14-file case (a v10 file with no `launchPresets` key decodes to `[]`). A
-    /// workspace the user has curated (≥ 1 preset, even after deleting some) is left untouched, so the
-    /// re-seed never resurrects a built-in the user removed. Pure.
-    func seedingBuiltInLaunchPresetsIfEmpty() -> TreeWorkspace {
-        guard launchPresets.isEmpty else { return self }
-        var copy = self
-        copy.launchPresets = LaunchPreset.builtIns
-        return copy
-    }
-
-    /// Seeds ``SessionTemplate/builtIns`` when ``sessionTemplates`` is empty — the fresh-workspace and
-    /// pre-templates-file case (a v10 file with no `sessionTemplates` key decodes to `[]`). A workspace the
-    /// user has curated (≥ 1 template, even after deleting some) is left untouched, so the re-seed never
-    /// resurrects a built-in they removed. Mirrors ``seedingBuiltInLaunchPresetsIfEmpty()`` exactly. Pure.
-    func seedingBuiltInSessionTemplatesIfEmpty() -> TreeWorkspace {
-        guard sessionTemplates.isEmpty else { return self }
-        var copy = self
-        copy.sessionTemplates = SessionTemplate.builtIns
-        return copy
-    }
-
-    /// The repairs in the order `load()` applies them: specs first (so the active-pane repair sees a
-    /// consistent leaf set), plus the built-in launch-preset + session-template seeds for a fresh /
-    /// pre-feature file. Pure. Deliberately does NOT re-dock detached panes — `normalized()` runs after
+    /// The repairs in the order `load()` applies them: specs first, so the active-pane repair sees a
+    /// consistent leaf set. Pure. Deliberately does NOT re-dock detached panes — `normalized()` runs after
     /// every close/cascade op, so folding ``redockingDetachedPanes()`` in here would instantly undo any
     /// detach. Re-dock is a LAUNCH-ONLY step (the store's restore path).
     func normalized() -> TreeWorkspace {
         normalizingSpecs().normalizingActive()
-            .seedingBuiltInLaunchPresetsIfEmpty()
-            .seedingBuiltInSessionTemplatesIfEmpty()
     }
 
     /// Re-docks every detached pane back into a tab — the LAUNCH-ONLY restore policy (v1): satellite

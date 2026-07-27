@@ -141,7 +141,7 @@ public struct VideoEndpoint: Codable, Sendable, Equatable {
     /// missing key to `nil` — an older file's window endpoints are unaffected).
     public var displayID: UInt32?
 
-    /// The stable TARGET identity latched modes are keyed by (``TreeWorkspace/videoModesByTarget``):
+    /// The stable TARGET identity latched modes are keyed by (`DevicePreferences.videoModesByTarget`):
     /// a desktop pane keys by its DISPLAY; a window-shaped endpoint (the automation seam) keys by its
     /// owning APP (CGWindowIDs recycle across host restarts — the app is the stable identity), falling
     /// back to the raw window id when no app name is known.
@@ -159,10 +159,11 @@ public struct VideoEndpoint: Codable, Sendable, Equatable {
 }
 
 /// The user's LATCHED video-pane modes (a `.desktop` pane): immersive system-key
-/// capture, host audio, the viewport position lock, and the stream-quality overrides. Persisted with the
-/// tree keyed by the stream TARGET (``TreeWorkspace/videoModesByTarget`` / ``VideoEndpoint/modesKey``) —
-/// deliberately NOT per pane, so close-tab → reopen-the-same-target restores them (a reopened target
-/// mints a brand-new pane) as well as a relaunch. The runtime source of truth is ``RemoteWindowModel``
+/// capture, host audio, the viewport position lock, and the stream-quality overrides. DEVICE-LOCAL —
+/// persisted in the client's `device-prefs.json` keyed by the stream TARGET
+/// (`DevicePreferences.videoModesByTarget` / ``VideoEndpoint/modesKey``), deliberately NOT per pane, so
+/// close-tab → reopen-the-same-target restores them (a reopened target mints a brand-new pane) as well
+/// as a relaunch. The runtime source of truth is ``RemoteWindowModel``
 /// (which re-asserts each wish into every freshly-published sink on a detach/reattach remount); this
 /// struct is only the persisted snapshot of the user's last EXPLICIT toggles for a target.
 ///

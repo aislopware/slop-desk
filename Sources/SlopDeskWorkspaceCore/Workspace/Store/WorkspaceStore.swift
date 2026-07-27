@@ -168,6 +168,29 @@ public final class WorkspaceStore {
     /// touches disk. The app passes a real ``WorkspacePersistence``.
     private let persistence: WorkspacePersistence?
 
+    /// Where the DEVICE-LOCAL facts are persisted (docs/45 §7.3) — the preset library, the latched video
+    /// modes, the per-host connection target and ``DevicePreferences/followSessionFocus``. Injectable on
+    /// the same terms as ``persistence``: `nil` (the test/automation default) never touches disk.
+    private let devicePreferencesStore: DevicePreferencesStore?
+
+    /// The live device-local facts. Loaded once at init and written through on every edit, so the
+    /// projected layout — which is host-owned and shared by every client — can never regenerate them away.
+    public private(set) var devicePreferences: DevicePreferences
+
+    /// Mutates ``devicePreferences`` and writes it through. Best-effort: a failed write keeps the previous
+    /// good file, and with no ``devicePreferencesStore`` the edit is purely in-memory. Internal so the
+    /// cross-file store extensions (session templates) share the one edit path.
+    func mutateDevicePreferences(_ transform: (inout DevicePreferences) -> Void) {
+        transform(&devicePreferences)
+        try? devicePreferencesStore?.save(devicePreferences)
+    }
+
+    /// The ``ConnectionTarget`` this app run is talking to — seeded by the app shell from the
+    /// ``AppConnection`` MRU at launch and re-stamped by ``commitConnectionTarget(_:)`` on every
+    /// successful connect. Purely presentational (the pane status bar names the host); the live
+    /// connection itself is owned by ``AppConnection``, never by the store.
+    public var committedConnectionTarget: ConnectionTarget?
+
     /// How long to coalesce a burst of mutations before writing the tree (docs/22 §6 "debounced on
     /// mutation"). One write per quiet period, not one per keystroke-driven split/resize.
     private let saveDebounce: Duration
@@ -311,6 +334,8 @@ public final class WorkspaceStore {
     ///   - persistence: where to debounce-save the live model after mutations (docs/22 §6). `nil` (the
     ///     default) ⇒ no disk writes, so the pure/fake test seam never touches the filesystem; the app
     ///     passes a real ``WorkspacePersistence``.
+    ///   - devicePreferences: where the device-local facts persist (docs/45 §7.3). `nil` (the default)
+    ///     ⇒ in-memory only, so the pure test seam never touches `device-prefs.json`.
     ///   - saveDebounce: the mutation-coalescing window before a write (default 600ms).
     @preconcurrency
     public init(
@@ -320,6 +345,7 @@ public final class WorkspaceStore {
         makeSession: @escaping @MainActor (PaneSpec) -> any PaneSessionHandle,
         liveVideoCap: Int = 2,
         persistence: WorkspacePersistence? = nil,
+        devicePreferences: DevicePreferencesStore? = nil,
         saveDebounce: Duration = .milliseconds(600),
         videoTeardownSettle: Duration = .zero,
     ) {
@@ -332,6 +358,8 @@ public final class WorkspaceStore {
         self.makeSession = makeSession
         self.liveVideoCap = liveVideoCap
         self.persistence = persistence
+        devicePreferencesStore = devicePreferences
+        self.devicePreferences = devicePreferences?.load() ?? DevicePreferences()
         self.saveDebounce = saveDebounce
         self.videoTeardownSettle = videoTeardownSettle
         // The mirror is a plain value in a plain box — nothing about folding a frame into it is
@@ -1760,13 +1788,13 @@ public final class WorkspaceStore {
 
     // MARK: - Named layout presets (save / switch canvas contexts)
 
-    /// The saved layout presets in whichever live model is current: the tree's under
-    /// ``LiveModel/tree`` (where they are carried verbatim from v9), else the canvas's. The app-launch
-    /// monitor reads THIS so its trigger scan resolves against the live model — on the tree shell the
-    /// canvas presets are dead (and empty), so the monitor must not read them.
+    /// The saved layout presets in whichever live model is current. A ``LayoutPreset`` embeds a whole
+    /// ``Canvas``, which only the canvas model renders — so the tree shell has NONE, and the app-launch
+    /// monitor's trigger scan (which reads THIS) finds nothing to switch to there. Named session
+    /// templates are the tree shell's equivalent feature.
     public var liveLayoutPresets: [LayoutPreset] {
         switch liveModel {
-        case .tree: tree.layoutPresets
+        case .tree: []
         case .canvas: workspace.layoutPresets
         }
     }
@@ -2194,8 +2222,8 @@ public final class WorkspaceStore {
         // endpoint (displayID nil) keeps the E2E stream on the classic window `hello`. Tree-shell
         // only: the retained-but-dead canvas has no detached set.
         if liveModel == .tree, let (target, video) = Self.videoTarget(from: env) {
-            var session = Session.singlePane(name: target.host, spec: PaneSpec(kind: .terminal, title: "Terminal"))
-            session.connection = target
+            let session = Session.singlePane(name: target.host, spec: PaneSpec(kind: .terminal, title: "Terminal"))
+            committedConnectionTarget = target
             let base = TreeWorkspace(sessions: [session], activeSessionID: session.id).normalized()
             let (next, _) = WorkspaceTreeOps.mintDetachedPane(
                 spec: PaneSpec(kind: .desktop, title: video.title, video: video), in: base,
@@ -2216,8 +2244,8 @@ public final class WorkspaceStore {
             // The live tree is what the IDE shell binds, so the automation bootstrap reshapes the TREE
             // (one session/tab/leaf carrying the spec + per-session connection) and reconciles it.
             if let bootstrap {
-                var session = Session.singlePane(name: bootstrap.target.host, spec: bootstrap.spec)
-                session.connection = bootstrap.target
+                let session = Session.singlePane(name: bootstrap.target.host, spec: bootstrap.spec)
+                committedConnectionTarget = bootstrap.target
                 tree = TreeWorkspace(sessions: [session], activeSessionID: session.id).normalized()
             } else {
                 tree = .defaultWorkspace()
@@ -2748,28 +2776,27 @@ public final class WorkspaceStore {
 
     /// The user's launch presets (built-ins + any they created), in display order. The settings / palette
     /// read this; ``applyLaunchPreset(_:)`` opens one.
-    public var launchPresets: [LaunchPreset] { tree.launchPresets }
+    public var launchPresets: [LaunchPreset] { devicePreferences.launchPresets }
 
     /// Adds (or replaces, by id) a launch preset, then persists. The settings "save preset" path.
     public func upsertLaunchPreset(_ preset: LaunchPreset) {
-        if let idx = tree.launchPresets.firstIndex(where: { $0.id == preset.id }) {
-            tree.launchPresets[idx] = preset
-        } else {
-            tree.launchPresets.append(preset)
+        mutateDevicePreferences { prefs in
+            if let idx = prefs.launchPresets.firstIndex(where: { $0.id == preset.id }) {
+                prefs.launchPresets[idx] = preset
+            } else {
+                prefs.launchPresets.append(preset)
+            }
         }
-        scheduleSave()
     }
 
     /// Removes a launch preset by id, then persists. The settings "delete preset" path.
     public func removeLaunchPreset(_ id: UUID) {
-        tree.launchPresets.removeAll { $0.id == id }
-        scheduleSave()
+        mutateDevicePreferences { $0.launchPresets.removeAll { $0.id == id } }
     }
 
     /// Resets the launch-preset list back to the shipped built-ins (settings "reset to defaults").
     public func resetLaunchPresetsToBuiltIns() {
-        tree.launchPresets = LaunchPreset.builtIns
-        scheduleSave()
+        mutateDevicePreferences { $0.launchPresets = LaunchPreset.builtIns }
     }
 
     // MARK: - Tree-mutation seams for store extensions
@@ -2782,9 +2809,9 @@ public final class WorkspaceStore {
         tree = next
     }
 
-    /// Mutates the live ``tree`` in place via `transform` and schedules the debounced save — the
-    /// side-collection (presets / templates) edit seam for cross-file store extensions, mirroring
-    /// the launch-preset CRUD's `tree.launchPresets … ; scheduleSave()` shape so the two paths can't drift.
+    /// Mutates the live ``tree`` in place via `transform` and schedules the debounced save — the tree-edit
+    /// seam for cross-file store extensions (the `private(set)` setter and `private` `scheduleSave()` are
+    /// out of their reach).
     func mutateTree(_ transform: (inout TreeWorkspace) -> Void) {
         transform(&tree)
         scheduleSave()
@@ -2799,7 +2826,7 @@ public final class WorkspaceStore {
     /// expansion is done by ``LaunchPresetEngine`` (unit-tested); the store only materializes + sends.
     @discardableResult
     public func applyLaunchPreset(_ id: UUID) -> [PaneID] {
-        guard let preset = tree.launchPresets.first(where: { $0.id == id }) else { return [] }
+        guard let preset = devicePreferences.launchPresets.first(where: { $0.id == id }) else { return [] }
         return applyLaunchPreset(preset)
     }
 
@@ -3331,12 +3358,12 @@ public final class WorkspaceStore {
                 // from the target's saved modes (`close()` reset the runtime just before). The
                 // fresh session's sink publishes then re-assert each wish. No entry ⇒ leave the model
                 // as-is (nothing saved for this target; the post-close defaults are already correct).
-                if let saved = tree.videoModesByTarget[endpoint.modesKey] {
+                if let saved = devicePreferences.videoModesByTarget[endpoint.modesKey] {
                     model?.seedModes(saved)
                 }
             }
             // LATCHED-MODE PERSISTENCE: every explicit mode toggle persists under the pane's TARGET key
-            // (`TreeWorkspace.videoModesByTarget`) — target-keyed, not pane-keyed, so a close-tab →
+            // (`DevicePreferences.videoModesByTarget`) — target-keyed, not pane-keyed, so a close-tab →
             // reopen-the-same-target restores it (the reopened target mints a brand-new pane/spec).
             model.onModesChanged = { [weak self] modes in
                 self?.persistVideoModes(modes, for: id)
@@ -3345,7 +3372,7 @@ public final class WorkspaceStore {
             // restore / openRemoteWindow / ⌥⌘N desktop mint) — reconcile is synchronous, so this lands
             // before any view publishes a sink.
             if let key = tree.spec(for: id)?.video?.modesKey,
-               let saved = tree.videoModesByTarget[key]
+               let saved = devicePreferences.videoModesByTarget[key]
             {
                 model.seedModes(saved)
             }
@@ -3557,17 +3584,17 @@ public final class WorkspaceStore {
     }
 
     /// LATCHED-MODE PERSISTENCE (the `RemoteWindowModel.onModesChanged` sink): records pane `id`'s
-    /// explicit mode toggles under its TARGET key in ``TreeWorkspace/videoModesByTarget`` — keyed by
+    /// explicit mode toggles under its TARGET key in ``DevicePreferences/videoModesByTarget`` — keyed by
     /// target (display / owning app), not pane, so a close-tab → reopen-the-same-target restores them.
-    /// Default-normalized to a removed entry + dirty-guarded (a redundant fire never churns a save).
-    /// A still-unbound pane (no endpoint yet) has no key to file under.
+    /// DEVICE-LOCAL, not workspace state: a 27" Studio and an iPhone attached to the same host must not
+    /// share an immersive-mode latch. Default-normalized to a removed entry + dirty-guarded (a redundant
+    /// fire never churns a write). A still-unbound pane (no endpoint yet) has no key to file under.
     private func persistVideoModes(_ modes: VideoPaneModes, for id: PaneID) {
         guard let spec = tree.spec(for: id) ?? spec(for: id),
               let key = spec.video?.modesKey else { return }
         let normalized: VideoPaneModes? = modes.isDefault ? nil : modes
-        guard tree.videoModesByTarget[key] != normalized else { return }
-        tree.videoModesByTarget[key] = normalized
-        scheduleSave()
+        guard devicePreferences.videoModesByTarget[key] != normalized else { return }
+        mutateDevicePreferences { $0.videoModesByTarget[key] = normalized }
     }
 
     // MARK: - reconcileRegistry (the shared, leaf-source-agnostic diff core)
@@ -4021,21 +4048,25 @@ public final class WorkspaceStore {
     /// records a phantom visit.
     public var onCwdVisited: ((String) -> Void)?
 
-    /// Commits the app-global connection ``ConnectionTarget`` into the persisted ``Workspace/connection``
-    /// (called by ``AppConnection/onTargetCommitted`` on a successful connect) so the connect-gate
-    /// prefills the last-used host next launch. Debounced-saves like any other mutation.
+    /// Records the app-global connection ``ConnectionTarget`` (called by ``AppConnection/onTargetCommitted``
+    /// on a successful connect).
+    ///
+    /// On the tree shell the target is DEVICE-LOCAL: it is filed in ``DevicePreferences/connectionByHostKey``
+    /// under `host:port`, so re-dialling a known host restores the video ports it was reached on, and the
+    /// layout — which every attached client shares — carries no host association at all. The canvas branch
+    /// still writes the retired ``Workspace/connection``.
     public func commitConnectionTarget(_ target: ConnectionTarget) {
+        committedConnectionTarget = target
         switch liveModel {
         case .canvas:
             guard workspace.connection != target else { return }
             workspace.connection = target
+            scheduleSave()
         case .tree:
-            // Stamp the target onto the active session (the per-session host seam; MVP all sessions
-            // share the one AppConnection, so this is the prefill source for the gate next launch).
-            guard let sIdx = tree.activeSessionIndex, tree.sessions[sIdx].connection != target else { return }
-            tree.sessions[sIdx].connection = target
+            let key = DevicePreferences.hostKey(for: target)
+            guard devicePreferences.connectionByHostKey[key] != target else { return }
+            mutateDevicePreferences { $0.connectionByHostKey[key] = target }
         }
-        scheduleSave()
     }
 
     /// A neighbour to refocus on after closing `id`, resolved geometrically against the last solved

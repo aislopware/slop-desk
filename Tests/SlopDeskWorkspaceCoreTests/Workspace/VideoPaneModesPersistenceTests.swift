@@ -1,7 +1,8 @@
 // VideoPaneModesPersistenceTests — pins the latched video-pane modes' TARGET-keyed persistence
-// (`TreeWorkspace.videoModesByTarget`): the additive codable contract, the explicit-toggle → map
-// wiring, close-tab → reopen-the-same-target restore, and the relaunch restore seed. The runtime
-// (detach-remount) half — injector `didSet` re-asserts — is pinned in `RemoteWindowStreamControlsTests`.
+// (`DevicePreferences.videoModesByTarget`, device-local: two clients on one host keep their own
+// latches): the codable contract, the explicit-toggle → map wiring, close-tab → reopen-the-same-target
+// restore, and the relaunch restore seed. The runtime (detach-remount) half — injector `didSet`
+// re-asserts — is pinned in `RemoteWindowStreamControlsTests`.
 
 import SlopDeskWorkspaceModel
 import XCTest
@@ -27,29 +28,16 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
         XCTAssertEqual(VideoEndpoint(windowID: 42, title: "Docs").modesKey, "window:42")
     }
 
-    // MARK: - TreeWorkspace codable (additive)
+    // MARK: - DevicePreferences codable
 
-    func testTreeRoundTripsVideoModesByTarget() throws {
-        var tree = TreeWorkspace.defaultWorkspace()
-        tree.videoModesByTarget = [
+    func testDevicePreferencesRoundTripVideoModesByTarget() throws {
+        var prefs = DevicePreferences()
+        prefs.videoModesByTarget = [
             "display:0": VideoPaneModes(immersive: true, fpsCap: 30),
             "app:Safari": VideoPaneModes(audioEnabled: true, bitrateCeilingBps: 10_000_000),
         ]
-        let restored = try decoder.decode(TreeWorkspace.self, from: makeEncoder().encode(tree))
-        XCTAssertEqual(restored.videoModesByTarget, tree.videoModesByTarget)
-    }
-
-    /// An older file without the key decodes to an empty map — never traps (additive contract).
-    func testAbsentVideoModesByTargetKeyDecodesEmpty() throws {
-        var tree = TreeWorkspace.defaultWorkspace()
-        tree.videoModesByTarget = ["display:0": VideoPaneModes(immersive: true)]
-        let data = try makeEncoder().encode(tree)
-        // Simulate a pre-modes file by stripping the key from the emitted JSON object.
-        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        XCTAssertNotNil(object.removeValue(forKey: "videoModesByTarget"), "precondition: the key was emitted")
-        let stripped = try JSONSerialization.data(withJSONObject: object)
-        let restored = try decoder.decode(TreeWorkspace.self, from: stripped)
-        XCTAssertEqual(restored.videoModesByTarget, [:])
+        let restored = try decoder.decode(DevicePreferences.self, from: makeEncoder().encode(prefs))
+        XCTAssertEqual(restored.videoModesByTarget, prefs.videoModesByTarget)
     }
 
     /// Per-field additive decode + validate-then-default on the mode struct itself: a partial object
@@ -71,14 +59,18 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
     /// One real session factory for the store tests. `makeClient` is never called here: a video pane
     /// has no PATH-1 connection, and the default workspace's terminal pane is lazy-connect (no view
     /// ever triggers `connect()` in a headless store test).
-    private func makeLiveStore(restoringTree: TreeWorkspace? = nil) -> WorkspaceStore {
-        WorkspaceStore(restoringTree: restoringTree, liveModel: .tree, makeSession: { spec in
-            LivePaneSession.make(
-                spec,
-                makeClient: { _ in fatalError("connect() never runs in this test") },
-                makeInspector: { _ in nil },
-            )
-        })
+    private func makeLiveStore(devicePreferences: DevicePreferencesStore? = nil) -> WorkspaceStore {
+        WorkspaceStore(
+            liveModel: .tree,
+            makeSession: { spec in
+                LivePaneSession.make(
+                    spec,
+                    makeClient: { _ in fatalError("connect() never runs in this test") },
+                    makeInspector: { _ in nil },
+                )
+            },
+            devicePreferences: devicePreferences,
+        )
     }
 
     private func remoteWindowModel(in store: WorkspaceStore, for id: PaneID) throws -> RemoteWindowModel {
@@ -97,14 +89,14 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
         model.applyAudioEnabled(true)
 
         XCTAssertEqual(
-            store.tree.videoModesByTarget["display:0"],
+            store.devicePreferences.videoModesByTarget["display:0"],
             VideoPaneModes(audioEnabled: true),
             "the explicit toggle persists under the target key, not the pane",
         )
 
         model.applyAudioEnabled(false)
         XCTAssertNil(
-            store.tree.videoModesByTarget["display:0"],
+            store.devicePreferences.videoModesByTarget["display:0"],
             "all-default modes remove the entry",
         )
     }
@@ -140,22 +132,25 @@ final class VideoPaneModesPersistenceTests: XCTestCase {
         XCTAssertEqual(audio, [true])
     }
 
-    /// **Relaunch restores too:** the map rides the persisted tree. The desktop PANE itself never
-    /// restores across relaunch (docs/DECISIONS.md 2026-07-22 — the launch restore drops it), so the
-    /// relaunch contract is: reopening the SAME target in the restored store seeds the fresh model
-    /// from the persisted target-keyed map.
-    func testRelaunchRestoreSeedsFromPersistedTree() throws {
-        let store = makeLiveStore()
+    /// **Relaunch restores too:** the map rides `device-prefs.json`, through a REAL file. The desktop
+    /// PANE itself never restores across relaunch (docs/DECISIONS.md 2026-07-22 — the launch restore
+    /// drops it), so the relaunch contract is: reopening the SAME target in a store built on the same
+    /// preferences file seeds the fresh model from the persisted target-keyed map.
+    func testRelaunchRestoreSeedsFromPersistedDevicePreferences() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("slopdesk-video-modes-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let prefsStore = DevicePreferencesStore(fileURL: dir.appendingPathComponent("device-prefs.json"))
+
+        let store = makeLiveStore(devicePreferences: prefsStore)
         let id = store.openDesktopWindow(displayID: 2)
         let model = try remoteWindowModel(in: store, for: id)
         model.open()
         model.viewportInjector = { _ in }
         model.toggleViewportLock()
 
-        // Simulate the relaunch: encode → decode the tree, restore a fresh store from it. The desktop
-        // pane is dropped by the launch restore; the target-keyed modes map survives on the tree.
-        let restoredTree = try decoder.decode(TreeWorkspace.self, from: makeEncoder().encode(store.tree))
-        let relaunched = makeLiveStore(restoringTree: restoredTree)
+        // Simulate the relaunch: a fresh store reading the SAME preferences file.
+        let relaunched = makeLiveStore(devicePreferences: prefsStore)
         XCTAssertNil(
             relaunched.tree.allPaneIDs().first { relaunched.tree.spec(for: $0)?.kind == .desktop },
             "a persisted desktop pane never restores (the dedicated-window model)",

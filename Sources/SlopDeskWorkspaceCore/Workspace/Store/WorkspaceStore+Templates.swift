@@ -6,13 +6,15 @@ import SlopDeskWorkspaceModel
 /// The store-side surface for **session templates / project profiles** (a layout + per-pane cwd/command):
 /// open a fresh named session from a template (the panes auto-`cd` + run their command once live), and
 /// capture the active session's geometry into a reusable template. CLIENT-ONLY — no wire / host / FFI /
-/// schema-version change. The pure expand/capture is ``SessionTemplateEngine``; the store only inserts the
-/// session (via the ``replaceTree(_:)`` / ``mutateTree(_:)`` in-file seams), reconciles, and sends each
-/// pane's launch bytes after its PTY comes up (the SAME 1400 ms grace the launch-preset apply uses).
+/// schema-version change. The template LIBRARY is device-local (``DevicePreferences/sessionTemplates``),
+/// so it belongs to this machine rather than to the host-owned layout every client shares. The pure
+/// expand/capture is ``SessionTemplateEngine``; the store only inserts the session (via the
+/// ``replaceTree(_:)`` in-file seam), reconciles, and sends each pane's launch bytes after its PTY comes
+/// up (the SAME 1400 ms grace the launch-preset apply uses).
 public extension WorkspaceStore {
     /// The user's session templates (built-ins + any they captured), in display order. The palette / menu
     /// read this; ``newSessionFromTemplate(_:)`` opens one.
-    var sessionTemplates: [SessionTemplate] { tree.sessionTemplates }
+    var sessionTemplates: [SessionTemplate] { devicePreferences.sessionTemplates }
 
     /// Opens a NEW named session laid out by `template`: expands the template into a ``Session`` (one tab,
     /// the template's split tree, fresh ``PaneID``s + seeded specs), inserts it ACTIVE, reconciles to
@@ -49,7 +51,7 @@ public extension WorkspaceStore {
     }
 
     /// Captures the ACTIVE session's active-tab geometry into a fresh user template named `name` (a default
-    /// "Layout N" when blank) with `symbol`, appends it to ``TreeWorkspace/sessionTemplates``, and persists.
+    /// "Layout N" when blank) with `symbol`, appends it to ``DevicePreferences/sessionTemplates``, and persists.
     /// The capture is pure (``SessionTemplateEngine/captureTemplate(from:name:symbol:)``) — `cwd`/`command`
     /// are not recoverable from a running PTY, so the captured panes carry only kind + title. No-op (no
     /// append) when there is no active session.
@@ -58,28 +60,28 @@ public extension WorkspaceStore {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let finalName = trimmed.isEmpty ? defaultLayoutTemplateName : trimmed
         let template = SessionTemplateEngine.captureTemplate(from: session, name: finalName, symbol: symbol)
-        mutateTree { $0.sessionTemplates.append(template) }
+        mutateDevicePreferences { $0.sessionTemplates.append(template) }
     }
 
     /// Adds (or replaces, by id) a session template, then persists. The settings / capture "save" path.
     func upsertSessionTemplate(_ template: SessionTemplate) {
-        mutateTree { tree in
-            if let idx = tree.sessionTemplates.firstIndex(where: { $0.id == template.id }) {
-                tree.sessionTemplates[idx] = template
+        mutateDevicePreferences { prefs in
+            if let idx = prefs.sessionTemplates.firstIndex(where: { $0.id == template.id }) {
+                prefs.sessionTemplates[idx] = template
             } else {
-                tree.sessionTemplates.append(template)
+                prefs.sessionTemplates.append(template)
             }
         }
     }
 
     /// Removes a session template by id, then persists.
     func removeSessionTemplate(_ id: UUID) {
-        mutateTree { $0.sessionTemplates.removeAll { $0.id == id } }
+        mutateDevicePreferences { $0.sessionTemplates.removeAll { $0.id == id } }
     }
 
     /// The default name for a CAPTURED template — "Layout N" where N is one past the current template
     /// count, so a saved layout is never blank (mirrors ``defaultSessionName``).
     var defaultLayoutTemplateName: String {
-        "Layout \(tree.sessionTemplates.count + 1)"
+        "Layout \(devicePreferences.sessionTemplates.count + 1)"
     }
 }

@@ -31,9 +31,9 @@ public struct DetachedPane: Codable, Sendable, Equatable, Identifiable {
 /// A `Session` owns its tabs (``tabs``, ≥ 1 for a live session) and the per-session ``specs`` side
 /// table (the **specs == leafIDs invariant**: `Set(specs.keys) == Set(leafIDs across every tab)`).
 /// The tree is MIXED-KIND: a leaf's `PaneSpec.kind` decides its content (terminal / desktop / remote
-/// window) — the full-desktop pivot, docs/DECISIONS.md 2026-07-14. It also models a per-session host
-/// (``connection``): the schema is multi-host capable now even though the MVP shares the one
-/// app-global `AppConnection` (docs/42 Decisions.9 — model now, no later migration).
+/// window) — the full-desktop pivot, docs/DECISIONS.md 2026-07-14. It carries NO host association: which
+/// host this client talks to is device-local, so the committed ``ConnectionTarget`` lives in
+/// ``DevicePreferences`` keyed by `host:port` (docs/45 §7.3).
 public struct Session: Identifiable, Sendable, Equatable {
     public let id: SessionID
     public var name: String
@@ -44,9 +44,6 @@ public struct Session: Identifiable, Sendable, Equatable {
     /// Side table mapping each pane ``PaneID`` (tree leaf OR detached) to its ``PaneSpec`` (so a rename
     /// never churns a tree diff). Invariant: `Set(specs.keys) == leafIDSet() ∪ detachedIDSet()`.
     public var specs: [PaneID: PaneSpec]
-    /// Per-session host association. MVP shares the one app-global connection (all sessions `nil` ⇒ the
-    /// app target); modeled now so multi-host needs no later migration (docs/42 Decisions.9).
-    public var connection: ConnectionTarget?
     /// Panes detached into their own OS windows, in detach order. Each keeps its spec in ``specs`` and
     /// its live registry handle (the store's reconcile counts detached panes as desired), so detach ↔
     /// reattach never tears a session down. Additive v11 field — absent in older files (`decodeIfPresent`),
@@ -59,7 +56,6 @@ public struct Session: Identifiable, Sendable, Equatable {
         tabs: [Tab],
         activeTabIndex: Int = 0,
         specs: [PaneID: PaneSpec],
-        connection: ConnectionTarget? = nil,
         detached: [DetachedPane] = [],
     ) {
         self.id = id
@@ -67,7 +63,6 @@ public struct Session: Identifiable, Sendable, Equatable {
         self.tabs = tabs
         self.activeTabIndex = activeTabIndex
         self.specs = specs
-        self.connection = connection
         self.detached = detached
     }
 }
@@ -88,7 +83,6 @@ extension Session: Codable {
         case tabs
         case activeTabIndex
         case specs
-        case connection
         case detached
     }
 
@@ -107,7 +101,6 @@ extension Session: Codable {
         var map: [PaneID: PaneSpec] = [:]
         for entry in entries { map[entry.pane] = entry.spec }
         specs = map
-        connection = try container.decodeIfPresent(ConnectionTarget.self, forKey: .connection)
         detached = try container.decodeIfPresent([DetachedPane].self, forKey: .detached) ?? []
         // A file written during the short-lived Stage era may carry `stagePanes`/`activeStagePane`
         // keys — ignored here; the orphaned specs are pruned by `normalizingSpecs()` (streamed-window
@@ -125,7 +118,6 @@ extension Session: Codable {
             .map { SpecEntry(pane: $0.key, spec: $0.value) }
             .sorted { $0.pane.raw.uuidString < $1.pane.raw.uuidString }
         try container.encode(entries, forKey: .specs)
-        try container.encodeIfPresent(connection, forKey: .connection)
         // Only when non-empty — a detach-free session's persisted bytes stay identical to pre-feature files.
         if !detached.isEmpty {
             try container.encode(detached, forKey: .detached)

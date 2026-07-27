@@ -207,9 +207,12 @@ public struct SlopDeskClientApp: App {
             behavior: SettingsKey.onLaunch, persistence: persistence,
         )
         let env = WorkspaceStore.automationInputs()
+        // The connect gate's prefill. The layout is host-owned and arrives over the wire, so it names no
+        // host: the last successfully connected target is the only host memory that exists before a
+        // connection, and it is the same MRU the gate's "recent hosts" menu offers.
         let seedTarget: ConnectionTarget = isAutomation
             ? (WorkspaceStore.videoTarget(from: env)?.0 ?? WorkspaceStore.terminalTarget(from: env) ?? .default)
-            : (restoredTree?.activeSession?.connection ?? .default)
+            : AppConnection.launchSeedTarget()
         let appConnection = AppConnection(registry: muxRegistry, seed: seedTarget)
         let store = WorkspaceStore(
             restoringTree: restoredTree,
@@ -221,18 +224,24 @@ public struct SlopDeskClientApp: App {
             ),
             liveVideoCap: liveVideoCap,
             persistence: persistence,
+            // Same discipline for the device-local facts (presets, latched video modes, the per-host
+            // target): automation gets an in-memory value, never rewriting the real `device-prefs.json`.
+            devicePreferences: isAutomation ? nil : DevicePreferencesStore(),
             // Hold a closed video pane's cap slot briefly past `teardown()` so the dismantle
             // releases the stack before a same-tick sibling is admitted (avoids a transient cap+1).
             videoTeardownSettle: .milliseconds(250),
         )
+
+        // The pane status bar names the host before anything dials; the commit sink below re-stamps it.
+        store.committedConnectionTarget = seedTarget
 
         // Automation seams: only when the env vars are present do we let the bootstrap REPLACE the
         // restored workspace with the autoconnect/video shape (a normal launch restores untouched).
         if isAutomation {
             store.bootstrapFromEnvironment()
         }
-        // Persist a committed target into the tree (so the Connect-to-Host editor prefills the last host
-        // next launch).
+        // File a committed target under its `host:port` in the device preferences (so re-dialling a known
+        // host restores the video ports it was reached on).
         appConnection.onTargetCommitted = { [weak store] target in store?.commitConnectionTarget(target) }
         // When the app-global connection (re)establishes, re-dial every pane channel stuck
         // disconnected/failed/unreachable — the leaf's connect-on-appear `.task` never re-fires under

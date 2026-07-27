@@ -20,7 +20,7 @@ final class SessionTemplateStoreTests: XCTestCase {
 
     // MARK: Defaults seeded
 
-    func testDefaultWorkspaceSeedsBuiltInSessionTemplates() {
+    func testAFreshDeviceSeedsBuiltInSessionTemplates() {
         XCTAssertEqual(
             treeStore().sessionTemplates.map(\.name),
             ["Editor + Terminal", "Editor · Server · Git", "Claude + Terminal"],
@@ -153,29 +153,28 @@ final class SessionTemplateStoreTests: XCTestCase {
         XCTAssertEqual(store.sessionTemplates.last?.name, expected)
     }
 
-    /// A captured template survives a real persistence round-trip (reload via a fresh store on the same
-    /// file).
+    /// A captured template survives a real round-trip through the DEVICE preferences — the template
+    /// library belongs to this machine, not to the host-owned layout, so it is `device-prefs.json` and
+    /// not `workspace.json` that has to carry it.
     func testCapturedTemplateSurvivesPersistenceRoundTrip() {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("slopdesk-store-tmpl-\(UUID().uuidString)", isDirectory: true)
-        let url = dir.appendingPathComponent("workspace.json")
         defer { try? FileManager.default.removeItem(at: dir) }
-        let persistence = WorkspacePersistence(fileURL: url)
+        let prefsStore = DevicePreferencesStore(fileURL: dir.appendingPathComponent("device-prefs.json"))
 
         let store = WorkspaceStore(
             restoringTree: TreeWorkspace.defaultWorkspace(),
             liveModel: .tree,
             makeSession: { FakePaneSession($0) },
-            persistence: persistence,
+            devicePreferences: prefsStore,
         )
         store.splitActivePaneDefault(axis: .vertical)
         store.saveCurrentSessionAsTemplate(name: "Persisted", symbol: "star")
-        store.saveImmediately()
 
-        let reloaded = persistence.loadTree()
+        let reloaded = prefsStore.load()
         XCTAssertTrue(
             reloaded.sessionTemplates.contains { $0.name == "Persisted" && $0.layout.paneCount == 2 },
-            "captured template round-trips through persistence",
+            "captured template round-trips through the device preferences",
         )
     }
 

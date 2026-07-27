@@ -99,23 +99,23 @@ public struct WorkspaceTopology: Equatable, Sendable {
 
 // MARK: - What does NOT cross
 
-/// Fields of ``TreeWorkspace`` the document deliberately does not carry, so a round-trip drops them.
-/// Named as a value rather than left implicit, because a silently-dropped field is the failure mode
-/// this whole document exists to end and the omissions each have a different reason:
+/// State the document deliberately does not carry, named as a value rather than left implicit —
+/// a silently-dropped field is the failure mode this whole document exists to end.
 ///
-/// - `videoModesByTarget` and `Session.connection` are DEVICE-LOCAL (docs/45 §4.3). A 27″ Studio and
-///   an iPhone must not share an immersive-mode latch, and "which host am I talking to" is
-///   definitionally a client concept.
+/// The device-local facts are no longer ON ``TreeWorkspace`` at all: the latched video modes, the
+/// committed connection target and the preset library live in the client's `device-prefs.json`
+/// (docs/45 §7.3), because the tree is the LAYOUT and the layout is identical on every attached
+/// client. A 27″ Studio and an iPhone must not share an immersive-mode latch, and "which host am I
+/// talking to" is definitionally a client concept.
+///
+/// What remains omitted from a tree that otherwise crosses whole:
+///
 /// - `schemaVersion` is a property of the client's persistence FILE. The document has an `epoch`
 ///   instead, and a foreign epoch means reset-then-snapshot rather than migrate.
-/// - `layoutPresets` embeds a whole `Canvas` — the retired canvas era's value, which the tree path
-///   never reads. Hand-rolling the canvas geometry model onto a golden-pinned wire would buy nothing.
-/// - `launchPresets` / `sessionTemplates` are host CONFIG rather than topology (docs/45 §4.1 puts
-///   them in the document; §5.3 reserves `root` fields 3–5 for them). They are additive and
-///   length-prefixed, so adding them later costs no compatibility — they are simply not what "the
-///   layout is identical on every client" means, and they are not gated on anything here.
+/// - `root` fields 3–5 stay RESERVED (docs/45 §5.3). Nothing writes them, and a topology write must
+///   not reap a value some future build put there — hence ``reservedRootFields``.
 public enum WorkspaceTopologyOmissions {
-    /// The `root` fields reserved for the preset config that does not cross yet.
+    /// The `root` fields reserved for config that does not cross.
     public static let reservedRootFields: Set<UInt8> = [
         WorkspaceRootField.layoutPresets,
         WorkspaceRootField.launchPresets,
@@ -334,12 +334,6 @@ public extension WorkspaceTopology {
             tree: TreeWorkspace(
                 sessions: sessions,
                 activeSessionID: state.uuid(.root(WorkspaceRootField.activeSessionID)).map { SessionID(raw: $0) },
-                // The presets are host CONFIG and do not cross — see ``WorkspaceTopologyOmissions``.
-                // Empty rather than the built-in seed: seeding is the consumer's decision, and doing
-                // it here would resurrect a built-in the user deleted on every single snapshot.
-                layoutPresets: [],
-                launchPresets: [],
-                sessionTemplates: [],
             ),
             syncInputTabs: armed,
             focusMRU: focus,

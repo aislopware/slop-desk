@@ -169,10 +169,7 @@ public struct WorkspacePersistence: @unchecked Sendable {
         }
         // Bound leaf/collection counts so a corrupt file can't make the store allocate unboundedly on
         // launch (same ceiling as the canvas load).
-        guard tree.allPaneIDs().count <= Self.maxItems,
-              tree.layoutPresets.count <= Self.maxItems,
-              tree.launchPresets.count <= Self.maxItems,
-              tree.sessionTemplates.count <= Self.maxItems else { return resetTreeToDefault() }
+        guard tree.allPaneIDs().count <= Self.maxItems else { return resetTreeToDefault() }
         let normalized = tree.normalized()
         return Self.sanitizingTransientPluginCwds(in: Self.promotingLastKnownTitles(in: normalized))
     }

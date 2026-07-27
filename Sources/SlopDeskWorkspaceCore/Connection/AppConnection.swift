@@ -205,6 +205,16 @@ public final class AppConnection {
         return (try? JSONDecoder().decode([ConnectionTarget].self, from: data)) ?? []
     }
 
+    /// The connect gate's LAUNCH prefill: the most-recently connected target, else ``ConnectionTarget/default``.
+    ///
+    /// The MRU is the only host memory that exists before a connection: the workspace layout is
+    /// host-owned and arrives over the wire, so nothing in it can name the host to dial. Reading the MRU
+    /// here also keeps the prefill and the gate's "recent hosts" menu on one source — the field the user
+    /// sees pre-filled is always the top of the list they can pick from.
+    public static func launchSeedTarget(defaults: UserDefaults = SettingsKey.store) -> ConnectionTarget {
+        loadRecentTargets(from: defaults).first ?? .default
+    }
+
     /// Pure MRU push: dedupe by host:port (a re-connect with changed video ports REPLACES the entry —
     /// host:port is the identity, ports are settings), insert at the front, cap at `limit`.
     static func pushingRecent(
