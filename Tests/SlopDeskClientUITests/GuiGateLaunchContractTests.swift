@@ -30,10 +30,16 @@ final class GuiGateLaunchContractTests: XCTestCase {
     /// `check-multiclient.sh` execs it TWICE (one instance per client), which is exactly why it
     /// belongs here: a persistence-path launch would give the second instance zero windows and the
     /// gate would compare one real projection against one that never mounted.
+    ///
+    /// `check-launch-restore.sh` execs it twice as well (a launch and a relaunch) and is the one gate
+    /// that sets NO `SLOPDESK_AUTOCONNECT_*` at all — which makes the flag matter more there, not
+    /// less: with zero windows its client would never restore, never dial, and never open its control
+    /// socket, and the failure would read as a timeout rather than as a launch that made no UI.
     private static let gateScripts = [
         "scripts/check-macos.sh",
         "scripts/check-video.sh",
         "scripts/check-multiclient.sh",
+        "scripts/check-launch-restore.sh",
     ]
 
     private func scriptURL(_ relativePath: String) -> URL {
@@ -125,6 +131,11 @@ final class GuiGateLaunchContractTests: XCTestCase {
             "scripts/check-macos.sh": "FAIL: one auto-connect must attach exactly 1 shell",
             "scripts/check-video.sh": "FAIL: one auto-connect must attach exactly 1 shell",
             "scripts/check-multiclient.sh": "pane(s) but the host is running",
+            // The restore gate states it twice over, because it is the only one whose panes exist
+            // before the connection does: LIVE shells must equal the restored pane count, and the
+            // CUMULATIVE spawn count must never exceed it (a pane torn down and re-dialled leaves
+            // the live count right and abandons a PTY).
+            "scripts/check-launch-restore.sh": "restored panes but",
         ]
         for script in Self.gateScripts {
             let expected = try XCTUnwrap(shellRule[script], "\(script) has no shell-count rule declared")

@@ -1,0 +1,99 @@
+{
+  "activeSessionID" : {
+    "raw" : "5E551011-0000-4000-8000-000000000001"
+  },
+  "schemaVersion" : 12,
+  "sessions" : [
+    {
+      "activeTabIndex" : 0,
+      "id" : {
+        "raw" : "5E551011-0000-4000-8000-000000000001"
+      },
+      "name" : "Local",
+      "specs" : [
+        {
+          "pane" : {
+            "raw" : "11111111-1111-4111-8111-111111111111"
+          },
+          "spec" : {
+            "kind" : "terminal",
+            "title" : "alpha"
+          }
+        },
+        {
+          "pane" : {
+            "raw" : "22222222-2222-4222-8222-222222222222"
+          },
+          "spec" : {
+            "kind" : "terminal",
+            "title" : "beta"
+          }
+        },
+        {
+          "pane" : {
+            "raw" : "33333333-3333-4333-8333-333333333333"
+          },
+          "spec" : {
+            "kind" : "terminal",
+            "title" : "gamma"
+          }
+        }
+      ],
+      "tabs" : [
+        {
+          "activePane" : {
+            "raw" : "11111111-1111-4111-8111-111111111111"
+          },
+          "id" : {
+            "raw" : "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"
+          },
+          "root" : {
+            "split" : {
+              "axis" : "horizontal",
+              "children" : [
+                {
+                  "node" : {
+                    "leaf" : {
+                      "raw" : "11111111-1111-4111-8111-111111111111"
+                    }
+                  },
+                  "weight" : {
+                    "flex" : 1
+                  }
+                },
+                {
+                  "node" : {
+                    "leaf" : {
+                      "raw" : "22222222-2222-4222-8222-222222222222"
+                    }
+                  },
+                  "weight" : {
+                    "flex" : 1
+                  }
+                }
+              ],
+              "id" : {
+                "raw" : "5D111111-0000-4000-8000-000000000001"
+              }
+            }
+          },
+          "title" : ""
+        },
+        {
+          "activePane" : {
+            "raw" : "33333333-3333-4333-8333-333333333333"
+          },
+          "id" : {
+            "raw" : "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB"
+          },
+          "root" : {
+            "leaf" : {
+              "raw" : "33333333-3333-4333-8333-333333333333"
+            }
+          },
+          "title" : ""
+        }
+      ]
+    }
+  ]
+}
