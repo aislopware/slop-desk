@@ -854,15 +854,13 @@ private struct SidebarLiveRow: View {
         let doneLine: String? = (chrome.badge == .completed || chrome.badge == .finished)
             && (chrome.status == .done || store.paneUnseenDone.contains(row.id))
             ? store.agentLabel(for: row.id) : nil
-        // The RUNNING command (busy non-agent shells): the OPEN block's command text, falling back to
-        // the coarse foreground-process label when the block model hasn't seen the command.
+        // The RUNNING command (busy non-agent shells): the host document's own open block, this
+        // client's newest open block, then the coarse foreground-process label — one resolver, so the
+        // macOS and iOS rows cannot drift.
         let runningCommand: String? = (chrome.badge == .commandRunning || chrome.badge == .commandBusy)
-            ? {
-                let open = blocks.last(where: { !$0.complete })?
-                    .commandText.trimmingCharacters(in: .whitespacesAndNewlines)
-                if let open, !open.isEmpty { return open }
-                return RailRowsBuilder.processDisplayName(chrome.processLabel)
-            }()
+            ? store.liveRunningCommand(
+                for: row.id, processLabel: RailRowsBuilder.processDisplayName(chrome.processLabel),
+            )
             : nil
         // The SHOWN title resolves in the live leaf (rename → agent-session intent → structural →
         // running command → last executed command → generic) because intent + blocks are volatile —
@@ -970,12 +968,9 @@ private struct IOSSidebarLiveRow: View {
         // the busy-badge-gated RUNNING rung.
         let blocks = store.commandBlocks(for: row.id)
         let runningCommand: String? = (chrome.badge == .commandRunning || chrome.badge == .commandBusy)
-            ? {
-                let open = blocks.last(where: { !$0.complete })?
-                    .commandText.trimmingCharacters(in: .whitespacesAndNewlines)
-                if let open, !open.isEmpty { return open }
-                return RailRowsBuilder.processDisplayName(chrome.processLabel)
-            }()
+            ? store.liveRunningCommand(
+                for: row.id, processLabel: RailRowsBuilder.processDisplayName(chrome.processLabel),
+            )
             : nil
         let shownTitle = RailRowsBuilder.liveRowTitle(
             structuralTitle: row.title,

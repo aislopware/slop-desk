@@ -429,7 +429,7 @@ enum RailRowsBuilder {
     /// gates `runningCommand` on the busy-badge reveal, so the title upgrades with the spinner
     /// and a fast `ls` never flashes in. Wherever the RUNNING command would title the row, a FRESH
     /// `programTitle` (an OSC title the running program itself asserted —
-    /// ``WorkspaceStore/programTitle(for:)`` + `strippedProgramTitle`) out-ranks it: nvim's
+    /// ``WorkspaceStore/liveProgramTitle(for:)`` + `strippedProgramTitle`) out-ranks it: nvim's
     /// "main.swift - NVIM" says more than `vi .` (a program that sets no title keeps the command
     /// line; a FOLDER structural title is an identity and never yields). Pure + static so the
     /// chain is unit-pinned without a view.

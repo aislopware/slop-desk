@@ -3410,11 +3410,7 @@ public final class WorkspaceStore {
         // so the next launch can feed them into seedResumeIdentity → RETURNING_CLIENT reattach.
         connection?.onResumeIdentitySnapshot = { [weak self, weak connection] sessionID, seq in
             guard let self else { return }
-            updateSpecLive(id) { spec in
-                guard spec.resumeSessionID != sessionID || spec.resumeLastReceivedSeq != seq else { return }
-                spec.resumeSessionID = sessionID
-                spec.resumeLastReceivedSeq = seq
-            }
+            noteResumeIdentity(sessionID: sessionID, seq: seq, for: id)
             // GIT-LINE population/staleness on the RTT-snapshot edge (~3 s): populate once when absent
             // (a freshly-attached pane gets its line before the first OSC 133;D), then re-fetch ONLY the
             // ACTIVE pane and ONLY when its cached line is older than `gitSummaryStaleWindow` — so a pane
@@ -3529,7 +3525,7 @@ public final class WorkspaceStore {
     /// Updates the spec for `id` in whichever live model is active: the tree's side table when
     /// ``liveModel`` is ``LiveModel/tree``, else the canvas. Used by the shared pane-rebind wiring so a
     /// committed endpoint persists into the right model.
-    private func updateSpecLive(_ id: PaneID, _ transform: @escaping (inout PaneSpec) -> Void) {
+    func updateSpecLive(_ id: PaneID, _ transform: @escaping (inout PaneSpec) -> Void) {
         switch liveModel {
         case .tree:
             tree = WorkspaceTreeOps.updatingSpec(id, in: tree, transform)
@@ -3857,11 +3853,7 @@ public final class WorkspaceStore {
                 }
                 // RESUME IDENTITY CAPTURE (canvas path): same wire as wireMaterializedLeaf.
                 connection?.onResumeIdentitySnapshot = { [weak self] sessionID, seq in
-                    self?.updateSpecLive(id) { spec in
-                        guard spec.resumeSessionID != sessionID || spec.resumeLastReceivedSeq != seq else { return }
-                        spec.resumeSessionID = sessionID
-                        spec.resumeLastReceivedSeq = seq
-                    }
+                    self?.noteResumeIdentity(sessionID: sessionID, seq: seq, for: id)
                 }
             },
         )
