@@ -276,9 +276,10 @@ public final class WorkspaceChannelClient {
             break
 
         case .intentResult:
-            // Phase 5 owns the optimistic overlay. Until then the host answers `unknownOp` and there
-            // is nothing staged to retire.
-            break
+            // The mirror has already folded the verdict in — a refusal snapped its patch away, an
+            // acceptance armed it to retire on the next document frame. What is left is the repaint,
+            // which the box does not fire for a result because most results change nothing on screen.
+            box.notePendingChanged()
 
         case .ignored,
              .dropped:
@@ -336,6 +337,27 @@ public final class WorkspaceChannelClient {
 
     private func sendPresence(_ update: WorkspacePresenceUpdate) async {
         await send(verb: .presence, payload: update.encode())
+    }
+
+    /// Asks the host to change the layout, showing the change immediately.
+    ///
+    /// The optimistic patch is staged BEFORE anything goes out, and it is computed by running the
+    /// host's own applier — so the split is on screen in the same frame the user asked for it, and
+    /// what appears is what the host is about to publish.
+    ///
+    /// - Returns: `false` when this client can already tell the intent is invalid against the
+    ///   document it holds. Nothing is staged and nothing is sent: a request whose answer is already
+    ///   known is a round trip and a rollback for no reason.
+    @discardableResult
+    public func send(
+        intent op: WorkspaceIntentOp,
+        args: Data,
+        now: TimeInterval = Date().timeIntervalSince1970,
+    ) -> Bool {
+        guard case .live = state else { return false }
+        guard let intent = box.stageIntent(op: op, args: args, issuedAt: now) else { return false }
+        Task { [weak self] in await self?.send(verb: .intent, payload: intent.encode()) }
+        return true
     }
 
     private func send(verb: WorkspaceRequestVerb, payload: Data) async {

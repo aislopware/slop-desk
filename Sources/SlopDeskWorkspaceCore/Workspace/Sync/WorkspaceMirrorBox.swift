@@ -85,7 +85,53 @@ public final class WorkspaceMirrorBox {
         onChange?()
     }
 
+    // MARK: Optimistic intents
+
+    /// Stages one intent optimistically and hands back what to put on the wire.
+    ///
+    /// The patch is computed by running the SAME ``WorkspaceIntentApplier`` the host will run, and
+    /// diffing the result against what is on screen now. That is the whole reason the applier is pure
+    /// and lives in the model target: two implementations of "what does a split do" would drift, and
+    /// the drift would look exactly like a sync bug.
+    ///
+    /// - Returns: `nil` when this client can already tell the host will refuse. The intent is not
+    ///   sent at all — a request we know the answer to is a round trip and a rollback for nothing.
+    public func stageIntent(
+        _ intentID: UUID = UUID(),
+        op: WorkspaceIntentOp,
+        args: Data,
+        issuedAt: TimeInterval,
+    ) -> WorkspaceIntent? {
+        guard let current = mirror.topology else { return nil }
+        let outcome = WorkspaceIntentApplier.apply(op: op.rawValue, args: args, to: current)
+        guard let next = outcome.topology else { return nil }
+        var projected = HostWorkspaceState()
+        projected.write(topology: next)
+        var base = HostWorkspaceState()
+        base.write(topology: current)
+        mirror.beginPending(intentID, diff: projected.diff(from: base), issuedAt: issuedAt)
+        onChange?()
+        return WorkspaceIntent(intentID: intentID, op: op.rawValue, args: args)
+    }
+
+    /// Drops patches the host never answered. Driven by the caller's clock.
+    public func expirePending(now: TimeInterval) {
+        if mirror.expirePending(now: now) { onChange?() }
+    }
+
+    /// Repaints after ``HostWorkspaceMirror`` folded an intent result in.
+    ///
+    /// Separate from ``apply(kind:epoch:baseStateNum:newStateNum:payload:)``'s own repaint because
+    /// most results change nothing on screen — an accepted one only ARMS its patch — and a repaint
+    /// per result would churn the whole UI on a burst of accepted intents.
+    public func notePendingChanged() { onChange?() }
+
+    public var pendingIntentCount: Int { mirror.pending.count }
+
     // MARK: Reads (the UI's whole surface)
+
+    /// The layout to render: host truth with this client's unanswered intents already applied.
+    public var topology: WorkspaceTopology? { mirror.topology }
 
     public var knownEpoch: UUID { mirror.knownEpoch }
     public var knownStateNum: Int64 { mirror.knownStateNum }

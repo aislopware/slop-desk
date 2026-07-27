@@ -22,9 +22,36 @@ import SlopDeskWorkspaceModel
 /// would freeze that disagreement forever, which is precisely the bug class this document exists to
 /// end, reintroduced as an optimisation.
 ///
-/// Phase 5 adds a third layer, `pending` (optimistic intent patches), ahead of `entries`. Every read
-/// already funnels through ``value(for:)``, so it lands in one place.
+/// **A third layer, ``pending``, sits AHEAD of both.** It holds the optimistic patches for intents
+/// this client has sent and the host has not yet answered — so a split appears the instant the user
+/// asks for it rather than a round trip later. Every read funnels through ``value(for:)``, so the
+/// precedence lives in exactly one place: `pending` → `entries` → `fastPath`.
 public struct HostWorkspaceMirror: Sendable {
+    /// One in-flight intent's optimistic effect on the document.
+    ///
+    /// The patch is a DIFF rather than a whole topology, so it composes with host truth the same way
+    /// a host diff does and two in-flight intents stack in issue order. It is computed by running the
+    /// SAME `WorkspaceIntentApplier` the host will run, which is what makes the optimistic render and
+    /// the eventual truth agree except when the host refuses.
+    public struct PendingPatch: Sendable {
+        public let intentID: UUID
+        public var sets: [WorkspaceKey: Data]
+        public var deletes: Set<WorkspaceKey>
+        /// When it was issued, in the caller's clock. The mirror stays clockless — it only compares —
+        /// which is the same discipline `PaneTitleFreshness` uses one layer down.
+        public let issuedAt: TimeInterval
+        /// Set once the host answers `applied`: the frame count at which this patch has certainly
+        /// been superseded by host truth.
+        public var retireAtFrame: UInt64?
+
+        public init(intentID: UUID, diff: WorkspaceStateDiff, issuedAt: TimeInterval) {
+            self.intentID = intentID
+            sets = Dictionary(diff.sets.map { ($0.key, $0.value) }, uniquingKeysWith: { _, last in last })
+            deletes = Set(diff.deletes)
+            self.issuedAt = issuedAt
+        }
+    }
+
     /// What a frame did. The client acts on this and nothing else.
     public enum ApplyOutcome: Equatable, Sendable {
         /// Host truth moved. The argument is the `stateNum` the client must now ACK.
@@ -60,6 +87,25 @@ public struct HostWorkspaceMirror: Sendable {
 
     /// The control-push overlay. Written by the client's own sinks, erased by host truth.
     public private(set) var fastPath: [WorkspaceKey: Data] = [:]
+
+    /// Optimistic patches for intents the host has not confirmed, oldest first.
+    public private(set) var pending: [PendingPatch] = []
+
+    /// How many host DOCUMENT frames (snapshot or diff) this mirror has applied.
+    ///
+    /// The retirement watermark, and it is a frame count rather than a `stateNum` because
+    /// `intentResult` does not carry one. It does not need to: the host bumps `stateNum` and queues
+    /// the new document BEFORE it queues the result, and the result is not gated on the outstanding
+    /// frame — so the first document frame to arrive AFTER an `applied` result provably already
+    /// contains that intent's effect.
+    public private(set) var framesApplied: UInt64 = 0
+
+    /// How long an unanswered patch may stand before it is dropped.
+    ///
+    /// The backstop for the case with no other signal: a host that accepted the intent and died
+    /// before answering. Long enough that a slow link is not mistaken for a lost intent, short enough
+    /// that a stale optimistic layout does not become the thing the user is looking at.
+    public static let pendingTimeout: TimeInterval = 3
 
     /// The last presence roster the host broadcast. Not versioned and never diffed: presence is a
     /// full replace whose lifetime is the connection.
@@ -107,6 +153,7 @@ public struct HostWorkspaceMirror: Sendable {
             return .presence
         case .intentResult:
             guard let decoded = try? WorkspaceIntentResult.decode(payload) else { return .dropped }
+            note(result: decoded)
             return .intentResult(decoded)
         case nil:
             // A kind from a newer host. Dropping one frame is the correct forward-tolerance: this
@@ -124,6 +171,7 @@ public struct HostWorkspaceMirror: Sendable {
         epoch = frameEpoch
         stateNum = new
         retireFastPath(supplying: decoded.entries.keys)
+        noteDocumentFrame()
         return .applied(new)
     }
 
@@ -143,6 +191,7 @@ public struct HostWorkspaceMirror: Sendable {
         // as well, or a retired title would reappear from the overlay.
         retireFastPath(supplying: diff.sets.map(\.key))
         retireFastPath(supplying: diff.deletes)
+        noteDocumentFrame()
         return .applied(new)
     }
 
@@ -156,6 +205,11 @@ public struct HostWorkspaceMirror: Sendable {
         entries = HostWorkspaceState()
         epoch = frameEpoch
         stateNum = 0
+        // Pending patches go, unlike the fast path. They describe edits to a document that no longer
+        // exists — the host declared a different one — so keeping them would render a split against a
+        // tree that never had it. The intents are simply lost, which is correct: nobody knows whether
+        // the old host applied them, and re-sending a guess is worse than a layout that snaps back.
+        pending.removeAll()
         return .reset
     }
 
@@ -180,13 +234,80 @@ public struct HostWorkspaceMirror: Sendable {
         fastPath = fastPath.filter { !($0.key.kind == WorkspaceObjectKind.pane.rawValue && $0.key.objectID == paneID) }
     }
 
+    // MARK: - Pending
+
+    /// Stages one intent's optimistic effect. Newest patches win over older ones.
+    public mutating func beginPending(_ intentID: UUID, diff: WorkspaceStateDiff, issuedAt: TimeInterval) {
+        guard !diff.isEmpty else { return }
+        pending.removeAll { $0.intentID == intentID }
+        pending.append(PendingPatch(intentID: intentID, diff: diff, issuedAt: issuedAt))
+    }
+
+    /// Folds in the host's verdict on one intent.
+    ///
+    /// A non-zero status snaps the layout back IMMEDIATELY rather than at the next frame. That is the
+    /// anti-flicker rule stated the useful way round: a refusal is the one case where waiting shows
+    /// the user something the host has already said is not true.
+    private mutating func note(result: WorkspaceIntentResult) {
+        guard let index = pending.firstIndex(where: { $0.intentID == result.intentID }) else { return }
+        guard result.status == WorkspaceIntentStatus.applied.rawValue else {
+            pending.remove(at: index)
+            return
+        }
+        // Applied: hold the patch until host truth arrives, so the pane does not blink out between
+        // the answer and the frame that makes it real.
+        pending[index].retireAtFrame = framesApplied + 1
+    }
+
+    private mutating func noteDocumentFrame() {
+        framesApplied &+= 1
+        pending.removeAll { patch in
+            guard let retireAt = patch.retireAtFrame else { return false }
+            return framesApplied >= retireAt
+        }
+    }
+
+    /// Drops patches the host never answered. The caller owns the clock.
+    ///
+    /// - Returns: `true` if anything was dropped, so the caller can repaint. A patch that expires
+    ///   silently would leave the UI showing a split the host never made, with nothing to correct it.
+    @discardableResult
+    public mutating func expirePending(now: TimeInterval, timeout: TimeInterval = pendingTimeout) -> Bool {
+        let before = pending.count
+        pending.removeAll { now - $0.issuedAt >= timeout && $0.retireAtFrame == nil }
+        return pending.count != before
+    }
+
     // MARK: - Read
 
-    /// The single funnel every read goes through. Phase 5's `pending` layer slots in ahead of
-    /// ``entries`` here and nowhere else.
+    /// The single funnel every read goes through: `pending` → ``entries`` → ``fastPath``.
     public func value(for key: WorkspaceKey) -> Data? {
-        entries[key] ?? fastPath[key]
+        // Newest first: two in-flight intents touching one cell resolve to the later one, which is
+        // the order the host will resolve them in too.
+        for patch in pending.reversed() {
+            if let value = patch.sets[key] { return value }
+            if patch.deletes.contains(key) { return nil }
+        }
+        return entries[key] ?? fastPath[key]
     }
+
+    /// The whole document as one value, read through the full precedence chain.
+    ///
+    /// What the topology projection reads, because a tree has to be rebuilt from every cell at once
+    /// and cell-by-cell reads cannot express "this pane is gone".
+    public var resolved: HostWorkspaceState {
+        var out = entries
+        for (key, value) in fastPath where out[key] == nil { out[key] = value }
+        for patch in pending {
+            for (key, value) in patch.sets { out[key] = value }
+            for key in patch.deletes { out[key] = nil }
+        }
+        return out
+    }
+
+    /// The topology as the UI should render it right now — host truth with this client's unanswered
+    /// intents already applied.
+    public var topology: WorkspaceTopology? { resolved.topology }
 
     public func value(_ kind: WorkspaceObjectKind, _ objectID: UUID, _ field: UInt8) -> Data? {
         value(for: WorkspaceKey(kind, objectID, field))
