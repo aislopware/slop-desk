@@ -116,7 +116,9 @@ if [[ -z "${WID}" ]]; then
   echo "     or pass one explicitly: bash scripts/check-video.sh --window-title Slack)" >&2
   exit 1
 fi
-WTITLE="$(echo "${LISTING}" | grep -E "id=${WID}\b" | sed -E 's/.*id=[0-9]+ +//')"
+# The listing line ends with the pixel size; the remote window's NAME is the app + title alone.
+# It becomes the detached pane's window title, so it is read off the screenshot — keep it clean.
+WTITLE="$(echo "${LISTING}" | grep -E "id=${WID}\b" | sed -E 's/.*id=[0-9]+ +//; s/ *\[[0-9]+x[0-9]+\] *$//')"
 echo "==> serving window id=${WID} (${WTITLE}) on media:${MEDIA_PORT} cursor:${CURSOR_PORT}"
 
 # ── 3. Start the host ──────────────────────────────────────────────────────────────────────────
@@ -171,6 +173,13 @@ fi
 echo "==> hostd up (pid ${TERMD_PID})"
 
 # ── 4. Launch the client with the PATH 2 auto-open seam (capture its log) ───────────────────────
+# -ApplePersistenceIgnoreState YES is LOAD-BEARING, exactly as in check-macos.sh: launching the
+# bundle binary directly on AppKit's persistence path brings the app up with ZERO windows. No
+# window ⇒ no scene, and every automation seam this gate depends on is a scene `.task` — the
+# auto-connect, the workspace-document channel, the video pane. The app then sits in its run loop
+# with no UI, no TCP, no UDP, and the screenshot shows the desktop. Ignoring persisted state makes
+# every automation launch a clean first launch. (HW-confirmed 2026-07-28: `YES` ⇒ window + session
+# + frames; omitted or `NO` ⇒ 0 windows, 0 sockets, every time.)
 pkill -f "${APP_PROC_PAT}" 2> /dev/null || true
 CLIENTLOG="${WORK}/client.log"
 SLOPDESK_VIDEO_DEBUG=1 \
@@ -180,7 +189,7 @@ SLOPDESK_VIDEO_DEBUG=1 \
   SLOPDESK_VIDEO_AUTOCONNECT_WINDOW_ID="${WID}" \
   SLOPDESK_VIDEO_AUTOCONNECT_TITLE="${WTITLE} (remote)" \
   SLOPDESK_AUTOCONNECT_PORT="${CONNECT_PORT}" \
-  "${APP_BIN}" > "${CLIENTLOG}" 2>&1 &
+  "${APP_BIN}" -ApplePersistenceIgnoreState YES > "${CLIENTLOG}" 2>&1 &
 PID=""
 for _ in $(seq 1 16); do
   PID="$(pgrep -f "${APP_PROC_PAT}" | head -1 || true)"
@@ -193,7 +202,36 @@ done
 }
 echo "==> client up (pid ${PID})"
 
-# ── 5. Wait for the client to CONNECT both UDP channels (the real connectivity gate) ───────────
+# ── 5. The connectivity gates — machine-checked, and FATAL ─────────────────────────────────────
+# A client that never dialled cannot have rendered anything, so a screenshot taken past this point
+# would prove nothing. These are assertions, not observations: the gate exits non-zero and dumps
+# the logs rather than printing a warning and carrying on to a picture of the desktop.
+
+# 5a. The workspace DOCUMENT leg first. The detached `.desktop` pane is an object in the HOST's
+# document (docs/45): the client asks for it with an intent over `channelClass 1`, so the terminal
+# daemon accepting that channel is what everything below hangs off. Failing here says the document
+# never opened; failing at 5b says it opened and the video leg still did not dial.
+echo "==> waiting for the workspace document channel on :${CONNECT_PORT}…"
+DOC_OK=0
+for _ in $(seq 1 20); do
+  if grep -q "workspace channel" "${TERMLOG}" 2> /dev/null; then
+    DOC_OK=1
+    break
+  fi
+  sleep 0.5
+done
+if [[ "${DOC_OK}" != "1" ]]; then
+  echo "==> FAIL: slopdesk-hostd never accepted a workspace channel — the client has no document to" >&2
+  echo "    send its pane-spawn intent to, so no remote-desktop pane can exist." >&2
+  echo "--- hostd log ---" >&2
+  cat "${TERMLOG}" >&2
+  echo "--- client log ---" >&2
+  cat "${CLIENTLOG}" >&2
+  exit 1
+fi
+echo "==> workspace document channel accepted ✅"
+
+# 5b. Both UDP channels.
 echo "==> waiting for client↔host UDP (media:${MEDIA_PORT} + cursor:${CURSOR_PORT})…"
 CONNECTED=0
 for _ in $(seq 1 20); do
@@ -203,15 +241,32 @@ for _ in $(seq 1 20); do
   fi
   sleep 0.5
 done
-if [[ "${CONNECTED}" == "1" ]]; then
-  echo "==> client connected to host over UDP ✅"
-else
-  echo "==> WARN: did not observe a client→host UDP flow on :${MEDIA_PORT} (client may not have opened the sheet)." >&2
+if [[ "${CONNECTED}" != "1" ]]; then
+  echo "==> FAIL: no client→host UDP flow on :${MEDIA_PORT} — the remote-desktop pane never dialled." >&2
+  echo "--- video host log ---" >&2
+  cat "${HOSTLOG}" >&2
+  echo "--- client log ---" >&2
+  cat "${CLIENTLOG}" >&2
+  exit 1
 fi
+echo "==> client connected to host over UDP ✅"
 # Give the capture→encode→decode→render pipeline a few seconds to produce + present frames.
 sleep 5
 
-# ── 5b. Capture the host + client OSLog flow (diagnostics: where, if anywhere, it stalls) ──────
+# 5c. ONE auto-connect spawns ONE shell. The video shape is a lone terminal plus a DETACHED
+# desktop pane, and a `.desktop` pane runs no PTY — so exactly one shell may ever attach. A second
+# means the bootstrap adopted a tree the window was not already showing and abandoned the first
+# pane's shell. Read AFTER the render settle, so a late second attach still counts.
+SHELLS="$(grep -c 'shell .* attached' "${TERMLOG}" || true)"
+if [[ "${SHELLS}" != "1" ]]; then
+  echo "==> FAIL: one auto-connect must attach exactly 1 shell; saw ${SHELLS}" >&2
+  echo "--- hostd log ---" >&2
+  cat "${TERMLOG}" >&2
+  exit 1
+fi
+echo "==> exactly one shell attached for one auto-connect ✅"
+
+# ── 5d. Capture the host + client OSLog flow (diagnostics: where, if anywhere, it stalls) ──────
 OSLOG="${WORK}/oslog.txt"
 {
   echo "### host (slopdesk-videohostd) ###"
@@ -233,7 +288,8 @@ screencapture -x "${SHOT}"
 echo "==> screenshot (full screen; client raised) saved: ${SHOT}"
 echo
 echo "================================================================================"
-echo " DONE. Now tell your agent: read  ${SHOT}"
+echo " DONE. Document channel, UDP flow and the one-shell rule are already ASSERTED above; what is"
+echo " left is the pixels. Now tell your agent: read  ${SHOT}"
 echo " PASS = the remote-desktop window shows the remote '${WTITLE}' window's live pixels."
 echo " FAIL = the window is white/black/placeholder (no frames decoded)."
 echo " host log:   ${HOSTLOG}"
