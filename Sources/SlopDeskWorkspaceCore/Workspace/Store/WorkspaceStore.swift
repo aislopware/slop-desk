@@ -3089,6 +3089,13 @@ public final class WorkspaceStore {
     /// switch / focus / ⌘⇧U) or by the agent doing something new (`.working` / `.needsPermission`).
     /// The t3code/herdr model: "done" is unread-completion, orthogonal to the live status. Feeds
     /// ``TabBadgeGating/resolve(...)`` `unseenAgentDone`. NOT persisted; PRUNED to the live leaf set.
+    /// The client's replica of the host-owned workspace document (docs/45 §7).
+    ///
+    /// Shared with ``WorkspaceChannelClient``: host frames land in its `entries`, the per-pane
+    /// control sinks write its `fastPath`, and host truth erases an overlay entry for any key it
+    /// supplies. One instance is the point — two would let the two producers disagree forever.
+    public let workspaceMirror = WorkspaceMirrorBox()
+
     public internal(set) var paneUnseenDone: Set<PaneID> = []
 
     /// RUNTIME-ONLY per-pane "how long has the user been LOOKING at this finished pane" clock — the dwell
@@ -3107,14 +3114,6 @@ public final class WorkspaceStore {
     /// that the marker still does its job — you see that a turn ended — and short enough that a pane you
     /// are actually reading stops shouting about it.
     public static let focusedDoneSettleWindow: TimeInterval = 30
-
-    /// RUNTIME-ONLY per-pane "when did the shell last push an OSC title" stamp (wire type 21 —
-    /// `spec.lastKnownTitle` holds the text; this holds its recency). ``programTitle(for:)`` compares it
-    /// against ``paneCommandStartedAt`` so a title set BY the currently-running program (nvim's
-    /// `title`, claude's topic) can out-rank the raw command line in the sidebar row — while a stale
-    /// title left behind by an exited program never resurfaces on the next command. NOT persisted
-    /// (a restored pane re-earns its title on the program's next push); PRUNED to the live leaf set.
-    public internal(set) var paneTitleAt: [PaneID: Date] = [:]
 
     /// RUNTIME-ONLY per-pane "when did the agent's current turn start" stamp — set on the genuine entry
     /// into ``ClaudeStatus/working`` (``setAgentStatus(_:for:at:)``), cleared when the pane leaves
@@ -3373,9 +3372,9 @@ public final class WorkspaceStore {
         // restore the tab title for untouched (default-titled) panes. The dirty guard avoids a needless
         // reconcile + save when the title didn't actually change.
         connection?.onTitleChanged = { [weak self] title in
-            // Recency stamp FIRST (even for an unchanged title): `programTitle(for:)` needs "the
-            // running program is still asserting this title", which a repeated push proves.
-            self?.paneTitleAt[id] = Date()
+            // Fold into the mirror FIRST (even for an unchanged title): a repeated push proves the
+            // running program is STILL asserting it, which is half of the freshness verdict.
+            self?.noteTitlePushed(title, for: id)
             self?.updateSpecLive(id) { spec in
                 guard spec.lastKnownTitle != title else { return }
                 spec.lastKnownTitle = title
@@ -3609,9 +3608,7 @@ public final class WorkspaceStore {
             paneDoneDwellSince = paneDoneDwellSince.filter { leafSet.contains($0.key) }
         }
         // OSC-title recency stamp (the program-title freshness clock):
-        if !paneTitleAt.isEmpty {
-            paneTitleAt = paneTitleAt.filter { leafSet.contains($0.key) }
-        }
+        pruneWorkspaceMirror(keeping: leafSet)
         // Working-turn start stamp (the trailing-slot elapsed readout):
         if !paneWorkingSince.isEmpty {
             paneWorkingSince = paneWorkingSince.filter { leafSet.contains($0.key) }
@@ -3825,9 +3822,9 @@ public final class WorkspaceStore {
                     self?.setAgentIntent(intent, for: id)
                 }
                 // LIVE TITLE PERSISTENCE (canvas path): same lastKnownTitle wire as wireMaterializedLeaf,
-                // including the recency stamp `programTitle(for:)` reads.
+                // including the mirror fold the title chain reads back through.
                 connection?.onTitleChanged = { [weak self] title in
-                    self?.paneTitleAt[id] = Date()
+                    self?.noteTitlePushed(title, for: id)
                     self?.updateSpecLive(id) { spec in
                         guard spec.lastKnownTitle != title else { return }
                         spec.lastKnownTitle = title

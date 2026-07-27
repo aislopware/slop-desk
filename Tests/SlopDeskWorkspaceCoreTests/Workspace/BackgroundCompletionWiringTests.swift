@@ -1,3 +1,4 @@
+import SlopDeskProtocol
 import SlopDeskWorkspaceModel
 import XCTest
 @testable import SlopDeskClient
@@ -56,67 +57,108 @@ final class BackgroundCompletionWiringTests: XCTestCase {
         XCTAssertEqual(store.pendingCompletion(for: second), .success, "a long background success badges")
     }
 
-    // MARK: - programTitle: the freshness gate (title stamped at-or-after the command start)
+    // MARK: - liveProgramTitle: the freshness verdict, computed at the EDGE
 
-    /// `programTitle(for:)` yields the pane's OSC title ONLY when the running program asserted it —
-    /// the title stamp is at-or-after the command-start stamp. A title left behind by an earlier
-    /// program (stamp predates the current command) never resurfaces; missing stamps yield nil.
-    func testProgramTitleRequiresFreshStamp() throws {
+    /// A title is worth showing only while the program that asserted it is still the one running.
+    /// The verdict is now stamped at the moment each edge arrives instead of being re-derived at read
+    /// time from two dictionaries — which is the repair: those dictionaries were empty on every app
+    /// launch, so a title asserted before a relaunch could never be believed again.
+    func testAPushedTitleGoesStaleWhenANewCommandStarts() throws {
         let store = makeStore()
         let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
-        store.tree = WorkspaceTreeOps.updatingSpec(paneID, in: store.tree) { spec in
-            spec.lastKnownTitle = "main.swift - NVIM"
-        }
 
-        XCTAssertNil(store.programTitle(for: paneID), "no stamps → no program title")
+        XCTAssertNil(store.liveProgramTitle(for: paneID), "nothing observed → no program title")
 
-        let commandStart = Date()
-        store.paneCommandStartedAt[paneID] = commandStart
-        store.paneTitleAt[paneID] = commandStart.addingTimeInterval(-5)
-        XCTAssertNil(store.programTitle(for: paneID), "a title predating the command is a leftover")
+        store.noteTitlePushed("main.swift - NVIM", for: paneID)
+        XCTAssertEqual(store.liveProgramTitle(for: paneID), "main.swift - NVIM")
 
-        store.paneTitleAt[paneID] = commandStart.addingTimeInterval(1)
+        store.handleCommandStarted(id: paneID)
+        XCTAssertNil(store.liveProgramTitle(for: paneID), "a new command has asserted nothing yet")
+
+        store.noteTitlePushed("main.swift - NVIM", for: paneID)
         XCTAssertEqual(
-            store.programTitle(for: paneID), "main.swift - NVIM",
-            "a title the running program asserted is fresh",
+            store.liveProgramTitle(for: paneID), "main.swift - NVIM",
+            "the running program asserting it again makes it fresh",
         )
     }
 
     /// The hookless-shell half of the reported `vi .` bug (docs/45 §9 Phase 1). A shell with no
-    /// OSC-133 integration — Starship, a bare `sh` — never stamps `paneCommandStartedAt`, so the
-    /// two-stamp gate could never open and the row fell through to the raw command line no matter
-    /// how many titles the program asserted. A title with NO command-start stamp is now TRUSTED:
-    /// the host only ever re-asserts a title it CURRENTLY holds (`_currentTitle` is cleared to ""
-    /// on retirement), so there is no stale value for the missing stamp to have guarded against.
+    /// OSC-133 integration — Starship, a bare `sh` — never reports a command start, so a gate that
+    /// demanded both stamps could never open and the row fell through to the raw command line no
+    /// matter how many titles the program asserted.
     func testTitleWithNoCommandStartIsTrusted() throws {
         let store = makeStore()
         let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
-        store.tree = WorkspaceTreeOps.updatingSpec(paneID, in: store.tree) { spec in
-            spec.lastKnownTitle = "main.swift - NVIM"
-        }
 
-        store.paneTitleAt[paneID] = Date()
+        store.noteTitlePushed("main.swift - NVIM", for: paneID)
+
         XCTAssertEqual(
-            store.programTitle(for: paneID), "main.swift - NVIM",
-            "a hookless shell has no command-start stamp — the title it asserted is still the truth",
+            store.liveProgramTitle(for: paneID), "main.swift - NVIM",
+            "a hookless shell reports no command start — the title it asserted is still the truth",
         )
     }
 
-    /// The relaxation above must not weaken the leftover-title rejection: once a command-start
-    /// stamp EXISTS, a title predating it is still an earlier program's leftover.
-    func testTitlePredatingCommandStartIsStillRejected() throws {
+    /// A finished command removes the thing the title had to postdate, so the standing title is
+    /// trusted again — rule 1 of docs/45 §4.4.
+    func testAFinishedCommandRestoresTheStandingTitle() throws {
         let store = makeStore()
         let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
-        store.tree = WorkspaceTreeOps.updatingSpec(paneID, in: store.tree) { spec in
-            spec.lastKnownTitle = "main.swift - NVIM"
-        }
 
-        let commandStart = Date()
-        store.paneCommandStartedAt[paneID] = commandStart
-        store.paneTitleAt[paneID] = commandStart.addingTimeInterval(-5)
-        XCTAssertNil(
-            store.programTitle(for: paneID),
-            "a title predating a KNOWN command start stays a leftover — the relaxation is scoped to a missing stamp",
+        store.noteTitlePushed("main.swift - NVIM", for: paneID)
+        store.handleCommandStarted(id: paneID)
+        XCTAssertNil(store.liveProgramTitle(for: paneID))
+
+        store.handleCommandCompleted(id: paneID, exitCode: 0, durationMS: 10, paneTitle: "")
+
+        XCTAssertEqual(store.liveProgramTitle(for: paneID), "main.swift - NVIM")
+    }
+
+    /// An empty wire-21 is this codebase's title RETIREMENT signal — the agent giving up ownership.
+    /// It must read as "no program title", not as an empty one.
+    func testARetiredTitleReadsAsAbsent() throws {
+        let store = makeStore()
+        let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
+
+        store.noteTitlePushed("claude", for: paneID)
+        store.noteTitlePushed("", for: paneID)
+
+        XCTAssertNil(store.liveProgramTitle(for: paneID))
+    }
+
+    // MARK: - Host truth outranks the client's own verdict
+
+    /// The reported bug's death certificate.
+    ///
+    /// The client's local verdict says stale (a command is running and this client never saw the
+    /// title asserted after it — the exact state a freshly-launched app is in). The host, which HAS
+    /// the stamps, says fresh. Host truth wins, and the overlay entry that disagreed is erased rather
+    /// than left to win back later.
+    func testTheHostsFreshnessVerdictOverridesTheClients() throws {
+        let store = makeStore()
+        let paneID = try XCTUnwrap(store.tree.allPaneIDs().first)
+        store.handleCommandStarted(id: paneID)
+        store.noteTitlePushed("vi .", for: paneID)
+        store.handleCommandStarted(id: paneID)
+        XCTAssertNil(store.liveProgramTitle(for: paneID), "the client alone cannot tell")
+
+        let record = PaneLiveness(
+            paneID: paneID.raw,
+            liveness: .attached,
+            liveTitle: "main.swift - NVIM",
+            titleFresh: true,
+        )
+        store.workspaceMirror.apply(
+            kind: WorkspaceEventKind.snapshot.rawValue,
+            epoch: UUID(),
+            baseStateNum: 0,
+            newStateNum: 1,
+            payload: WorkspaceStateCodec.encodeSnapshot(HostWorkspaceState(record.entries())),
+        )
+
+        XCTAssertEqual(store.liveProgramTitle(for: paneID), "main.swift - NVIM")
+        XCTAssertTrue(
+            store.workspaceMirror.mirror.fastPath.isEmpty,
+            "the overlay the host contradicted is erased, so it can never win back",
         )
     }
 

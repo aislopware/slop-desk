@@ -70,6 +70,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
     @MainActor
     private struct Rig {
         let pipe: PipeChannel
+        let box: WorkspaceMirrorBox
         let client: WorkspaceChannelClient
         let released: () -> [UInt32]
         let acceptOpen: (Bool) -> Void
@@ -89,7 +90,9 @@ final class WorkspaceChannelClientTests: XCTestCase {
         let releasedIDs = Box<[UInt32]>([])
         let openCount = Box(0)
 
+        let box = WorkspaceMirrorBox()
         let client = WorkspaceChannelClient(
+            box: box,
             clientInstanceID: UUID(uuidString: "CCCCCCCC-1111-2222-3333-444444444444")!,
             clientKind: .macOS,
             label: "mac-studio",
@@ -105,6 +108,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
         )
         return Rig(
             pipe: pipe,
+            box: box,
             client: client,
             released: { releasedIDs.value },
             acceptOpen: { verdict.set($0) },
@@ -279,10 +283,10 @@ final class WorkspaceChannelClientTests: XCTestCase {
         await MainActor.run {
             XCTAssertEqual(rig.client.state, .live(4))
             XCTAssertEqual(
-                rig.client.mirror.string(.pane, self.pane, WorkspacePaneField.liveTitle),
+                rig.box.mirror.string(.pane, self.pane, WorkspacePaneField.liveTitle),
                 "main.swift - NVIM",
             )
-            XCTAssertTrue(rig.client.mirror.bool(.pane, self.pane, WorkspacePaneField.titleFresh))
+            XCTAssertTrue(rig.box.mirror.bool(.pane, self.pane, WorkspacePaneField.titleFresh))
         }
     }
 
@@ -306,7 +310,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
         let acked = rig.pipe.requests(verb: .ack).compactMap { WorkspaceStateCodec.decodeI64($0) }
         XCTAssertEqual(acked, [1, 2])
         await MainActor.run {
-            XCTAssertEqual(rig.client.mirror.string(.pane, self.pane, WorkspacePaneField.liveTitle), "new")
+            XCTAssertEqual(rig.box.mirror.string(.pane, self.pane, WorkspacePaneField.liveTitle), "new")
         }
     }
 
@@ -332,7 +336,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
         XCTAssertEqual(resub?.knownEpoch, epoch)
         await MainActor.run {
             XCTAssertEqual(
-                rig.client.mirror.string(.pane, self.pane, WorkspacePaneField.liveTitle), "held",
+                rig.box.mirror.string(.pane, self.pane, WorkspacePaneField.liveTitle), "held",
                 "the rejected frame changed nothing",
             )
         }
@@ -359,7 +363,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
 
         await expect("the resubscribe") { rig.pipe.requests(verb: .subscribe).count == 2 }
         await MainActor.run {
-            XCTAssertEqual(rig.client.mirror.string(.pane, self.pane, WorkspacePaneField.liveTitle), "held")
+            XCTAssertEqual(rig.box.mirror.string(.pane, self.pane, WorkspacePaneField.liveTitle), "held")
         }
     }
 
@@ -434,9 +438,9 @@ final class WorkspaceChannelClientTests: XCTestCase {
             epoch: epoch, baseStateNum: 0, newStateNum: 0, payload: roster.encode(),
         ))
 
-        await expect("the roster") { rig.client.mirror.roster?.clients.count == 1 }
+        await expect("the roster") { rig.box.mirror.roster?.clients.count == 1 }
         await MainActor.run {
-            XCTAssertEqual(rig.client.mirror.roster?.clients.first?.label, "iPad")
+            XCTAssertEqual(rig.box.mirror.roster?.clients.first?.label, "iPad")
         }
         await expectNever("an ack for presence") { !rig.pipe.requests(verb: .ack).isEmpty }
     }
@@ -468,9 +472,9 @@ final class WorkspaceChannelClientTests: XCTestCase {
 
         await MainActor.run {
             XCTAssertEqual(rig.client.state, .closed)
-            XCTAssertNil(rig.client.mirror.epoch)
-            XCTAssertEqual(rig.client.mirror.knownStateNum, 0)
-            XCTAssertTrue(rig.client.mirror.entries.isEmpty)
+            XCTAssertNil(rig.box.mirror.epoch)
+            XCTAssertEqual(rig.box.mirror.knownStateNum, 0)
+            XCTAssertTrue(rig.box.mirror.entries.isEmpty)
         }
         await expect("the channel to be released") { rig.released() == [7] }
     }
@@ -518,7 +522,7 @@ final class WorkspaceChannelClientTests: XCTestCase {
 
         await expect("the channel still works") { rig.pipe.requests(verb: .ack).count == 2 }
         await MainActor.run {
-            XCTAssertEqual(rig.client.mirror.string(.pane, self.pane, WorkspacePaneField.cwd), "/after")
+            XCTAssertEqual(rig.box.mirror.string(.pane, self.pane, WorkspacePaneField.cwd), "/after")
         }
     }
 

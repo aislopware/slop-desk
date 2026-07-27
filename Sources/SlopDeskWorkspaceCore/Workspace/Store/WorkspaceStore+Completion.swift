@@ -121,6 +121,9 @@ public extension WorkspaceStore {
         // The command is over — retire its busy-dot reveal clock (the dot itself already dropped with
         // the live busy bit; this just keeps the stamp map honest for the next start edge).
         paneCommandStartedAt.removeValue(forKey: id)
+        // The command side of the freshness comparison moved — a standing title with nothing to
+        // postdate is trusted again (rule 1 of docs/45 §4.4).
+        refreshTitleFreshness(for: id)
         let focused = isPaneFocused(id)
         let threshold = CommandNotificationPolicy.longRunningThresholdMS
         let badge = BackgroundCompletionPolicy.badge(
@@ -173,6 +176,8 @@ public extension WorkspaceStore {
     func handleCommandStarted(id: PaneID, at date: Date = Date()) {
         setCompletionBadge(nil, for: id)
         paneCommandStartedAt[id] = date
+        // A new command has asserted no title yet, so whatever is standing is now stale.
+        refreshTitleFreshness(for: id)
         flashDecayScheduler(SettingsKey.tabBadgeBusyDelaySecondsValue) { [weak self] in
             self?.completionFlashTick &+= 1
         }
@@ -218,28 +223,6 @@ public extension WorkspaceStore {
     func isSourcePaneVisible(byIDString idString: String) -> Bool {
         guard let uuid = UUID(uuidString: idString) else { return false }
         return isSourcePaneVisible(PaneID(raw: uuid))
-    }
-
-    /// The pane's PROGRAM-SET title, but only while it is FRESH for the current foreground command:
-    /// the shell pushed an OSC title (wire 21, ``WorkspaceStore/paneTitleAt``) at-or-after the command
-    /// started (``WorkspaceStore/paneCommandStartedAt``) — i.e. the running program (nvim, claude, ssh)
-    /// asserted it, not a leftover from an earlier program. `nil` when no title arrived at all, or when
-    /// the title predates a KNOWN command start — the sidebar's title chain then keeps the raw command
-    /// line. The caller strips agent glyph prefixes (``RailRowsBuilder`` `strippedProgramTitle`).
-    ///
-    /// A title with NO command-start stamp is TRUSTED. A shell without OSC-133 integration (Starship,
-    /// a bare `sh`) never stamps `paneCommandStartedAt`, so requiring both stamps meant such a pane
-    /// could never show a program title at all — the hookless half of the `vi .` bug (docs/45 §9
-    /// Phase 1). It is safe because the host only ever asserts a title it CURRENTLY holds:
-    /// `MuxChannelSession._currentTitle` is cleared to "" on agent retirement, so there is no stale
-    /// value the missing stamp was guarding against. The whole comparison retires when the host ships
-    /// its own `pane/titleFresh` verdict (docs/45 §4.4).
-    func programTitle(for id: PaneID) -> String? {
-        guard let stamped = paneTitleAt[id] else { return nil }
-        if let started = paneCommandStartedAt[id], stamped < started { return nil }
-        let title = tree.spec(for: id)?.lastKnownTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let title, !title.isEmpty else { return nil }
-        return title
     }
 
     /// Clears the badge on whatever leaf is the active one (called when the app returns active via the

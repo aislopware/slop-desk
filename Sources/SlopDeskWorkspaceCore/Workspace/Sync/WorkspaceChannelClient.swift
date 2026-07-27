@@ -75,12 +75,14 @@ public final class WorkspaceChannelClient {
         ProcessInfo.processInfo.environment["SLOPDESK_WORKSPACE_DOC"] == "1"
     }
 
-    public private(set) var mirror = HostWorkspaceMirror()
+    /// The SHARED mirror. Host frames land here and the store's per-pane control sinks write its
+    /// fast path — one instance, so host truth erases an overlay entry the UI would actually read.
+    public let box: WorkspaceMirrorBox
     public private(set) var state: State = .idle
 
-    /// Fired on the main actor after any change the UI should repaint for. Deliberately a callback
-    /// rather than `@Observable`: this type is headless and must stay testable without SwiftUI.
-    public var onChange: (@MainActor () -> Void)?
+    /// Fired on the main actor when the CHANNEL's own state changes. Document changes are announced
+    /// by the box, not here.
+    public var onStateChange: (@MainActor () -> Void)?
 
     /// This client's identity in the presence roster. One per app instance — two windows of one app
     /// are two connections and two identities, exactly as intended.
@@ -102,6 +104,7 @@ public final class WorkspaceChannelClient {
 
     @preconcurrency
     public init(
+        box: WorkspaceMirrorBox,
         clientInstanceID: UUID = UUID(),
         clientKind: WorkspaceClientKind,
         label: String,
@@ -109,6 +112,7 @@ public final class WorkspaceChannelClient {
         close: @escaping Close,
         onLog: (@Sendable (String) -> Void)? = nil,
     ) {
+        self.box = box
         self.clientInstanceID = clientInstanceID
         self.clientKind = clientKind
         self.label = label
@@ -123,7 +127,7 @@ public final class WorkspaceChannelClient {
     /// REFUSED — a refusal is a fact about this host, not a transient failure.
     public func start() {
         guard runTask == nil, state != .refused else { return }
-        state = .opening
+        publish(.opening)
         runTask = Task { [weak self] in await self?.run() }
     }
 
@@ -138,9 +142,9 @@ public final class WorkspaceChannelClient {
         let id = channelID
         channelID = nil
         control = nil
-        mirror = HostWorkspaceMirror()
+        box.reset()
         lastPresence = nil
-        if state != .refused { state = .closed }
+        if state != .refused { publish(.closed) }
         // Claiming `channelID` above is what makes this the SINGLE release: the run task's exit path
         // releases only the channel it still owns, so a stop that races the loop unwinding cannot
         // close the same id twice — and a second close would tear down a shared connection a
@@ -149,7 +153,6 @@ public final class WorkspaceChannelClient {
             let close = close
             Task { await close(id) }
         }
-        onChange?()
     }
 
     private func run() async {
@@ -218,14 +221,19 @@ public final class WorkspaceChannelClient {
         runTask = nil
         // `stop()` has the last word: it cancelled us and already published the state it wanted.
         guard state != .refused || next == .refused else { return }
+        publish(next)
+    }
+
+    private func publish(_ next: State) {
+        guard state != next else { return }
         state = next
-        onChange?()
+        onStateChange?()
     }
 
     // MARK: - Apply
 
     private func handle(kind: UInt8, epoch: UUID, base: Int64, new: Int64, payload: Data) async {
-        let outcome = mirror.apply(
+        let outcome = box.apply(
             kind: kind,
             epoch: epoch,
             baseStateNum: base,
@@ -234,22 +242,20 @@ public final class WorkspaceChannelClient {
         )
         switch outcome {
         case let .applied(stateNum):
-            state = .live(stateNum)
+            publish(.live(stateNum))
             await send(verb: .ack, payload: WorkspaceStateCodec.encodeI64(stateNum))
-            onChange?()
 
         case .needsResubscribe:
             // A repeat `subscribe` IS the resync verb — there is deliberately no separate "resend".
             // The mirror already refused the frame, so what goes out describes where we actually are.
-            onLog?("workspace channel: re-subscribing from stateNum \(mirror.knownStateNum)")
+            onLog?("workspace channel: re-subscribing from stateNum \(box.knownStateNum)")
             await sendSubscribe()
 
         case .reset:
-            state = .live(0)
-            onChange?()
+            publish(.live(0))
 
         case .presence:
-            onChange?()
+            break
 
         case .intentResult:
             // Phase 5 owns the optimistic overlay. Until then the host answers `unknownOp` and there
@@ -268,8 +274,8 @@ public final class WorkspaceChannelClient {
         let request = WorkspaceSubscribe(
             clientInstanceID: clientInstanceID,
             clientKind: clientKind.rawValue,
-            knownEpoch: mirror.knownEpoch,
-            knownStateNum: mirror.knownStateNum,
+            knownEpoch: box.knownEpoch,
+            knownStateNum: box.knownStateNum,
             // No flags in Phase 4. `contributesSize` belongs to Phase 6's size fold and
             // `followsFocus` to Phase 5's host-truth focus; setting either now would put this client
             // in a roster column that does not yet mean anything.
