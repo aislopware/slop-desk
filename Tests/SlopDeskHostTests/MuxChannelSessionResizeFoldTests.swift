@@ -383,16 +383,24 @@ final class MuxChannelSessionResizeFoldTests: XCTestCase {
     /// and skips — and the pane stays one row short for the rest of the session.
     ///
     /// Idempotence is therefore a comparison against the live `TIOCGWINSZ`, never against a memo.
+    ///
+    /// A 60-second debounce parks the offer's own timer for the whole test, so the ONLY thing that
+    /// can touch the grid is a flush. Otherwise the short row is a state two appliers are racing to
+    /// repair — the debounce firing between the jiggle and the assertion below repairs it early and
+    /// reads as "the jiggle never happened", which is a scheduling accident rather than a fact about
+    /// the fold.
     func testAFlushReAssertsTheGridAfterAJiggleLeftItShort() throws {
         let pty = try makePTY()
         let control = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
-        let session = makeSession(pty: pty, control: control)
+        let session = makeSession(pty: pty, resizeDebounce: .seconds(60), control: control)
         session.startRelay()
 
         deliver(control, [
             .resize(cols: 120, rows: 40, pxWidth: 0, pxHeight: 0),
             .ack(seq: 0), // the synchronous flush
         ])
+        // With the debounce parked, reaching 120x40 IS the ack's flush — so once it is observed
+        // there is no apply left in flight, and the jiggle below has the PTY to itself.
         XCTAssertEqual(pollGrid(pty, untilCols: 120, rows: 40).rows, 40, "the client's grid landed")
 
         // The first half of the resize dance, left deliberately unfinished — the state a client

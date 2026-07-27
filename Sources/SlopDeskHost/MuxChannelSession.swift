@@ -758,6 +758,22 @@ final class MuxChannelSession: @unchecked Sendable {
     /// `shutdown()` — so unlike the single-writer `controlTask`-only fields it needs a lock (the
     /// codebase's `taskLock`/`replayLock` discipline). Held only around O(1) field reads/writes.
     private let resizeLock = NSLock()
+    /// Makes "the ONE writer" a claim about the WRITE, not just about the resolve.
+    ///
+    /// ``applyResolvedGrid(ifGeneration:)`` runs from four contexts at once (the control relay's
+    /// flush, the debounce task, the settle task, `resizeForControl` on the ctl connection thread).
+    /// `resizeLock` alone only makes each RESOLVE atomic: two callers can resolve in one order and
+    /// land their `TIOCSWINSZ` in the other, so the grid the PTY keeps is whichever thread the
+    /// scheduler happened to resume LAST — an older fold silently undoing a newer one. That is how a
+    /// busy host loses a `slopdesk-ctl resize` (the override applies, then a flush that resolved a
+    /// beat earlier writes the old fold back over it) and how the journal size sidecar ends up
+    /// naming a geometry the PTY no longer has.
+    ///
+    /// Holding this across the generation check, the resolve, the live compare and the ioctl makes
+    /// the applies TOTALLY ORDERED: whoever writes last also resolved last, so the last write is by
+    /// construction the newest state. OUTERMOST — taken only by `applyResolvedGrid`, always before
+    /// `resizeLock`, so the order is one-directional and cannot invert.
+    private let resizeWriteLock = NSLock()
     /// Every subscriber's standing offer. The fold's input, and the ONLY input: presence is
     /// 100 ms-throttled, per-connection, newest-clock-wins NETWORK state, and folding it would let a
     /// WireGuard flap reflow a terminal.
@@ -2140,8 +2156,9 @@ final class MuxChannelSession: @unchecked Sendable {
         // `resizeDebounceTask` is owned by `resizeLock` (scheduleResize / applyResolvedGrid), NOT
         // `taskLock`. Cancelling it under taskLock would race scheduleResize's store under
         // resizeLock — two disjoint mutexes guarding one ARC `Task` reference = a data race (torn read /
-        // ARC over-release / missed cancel). Read+nil under its own lock, then cancel outside the lock,
-        // matching applyResolvedGrid's discipline (locks are never nested in this file → no deadlock).
+        // ARC over-release / missed cancel). Read+nil under its own lock, then cancel outside the lock.
+        // The file's only nesting is one-directional (`resizeWriteLock` → `resizeLock`, taken by
+        // `applyResolvedGrid` alone), and this path takes neither of them across another → no deadlock.
         resizeLock.lock()
         let resizeTask = resizeDebounceTask
         resizeDebounceTask = nil
@@ -2340,10 +2357,20 @@ final class MuxChannelSession: @unchecked Sendable {
     /// then leave the pane one row short for the rest of the session. Reading the size the PTY
     /// actually holds costs one non-blocking ioctl and cannot go stale.
     ///
+    /// **The resolve and the write are ONE critical section** (`resizeWriteLock`). Resolving under
+    /// `resizeLock` and writing after releasing it lets two callers land their ioctls in the opposite
+    /// order to their resolutions, so the geometry the PTY keeps is the one whose thread the
+    /// scheduler resumed last rather than the one the state says. Serialised, the last write is by
+    /// construction the newest resolution — and the `ifGeneration` check below is only meaningful
+    /// because it now shares that section with the write it guards.
+    ///
     /// - Parameter ifGeneration: when non-nil (a timer-fire path), apply only if it still matches
     ///   `resizeGeneration` — a stale already-past-sleep task must not apply an old fold. The flush
     ///   paths (ack/bye/close) pass `nil` to apply UNCONDITIONALLY (they must never strand a size).
     func applyResolvedGrid(ifGeneration generation: UInt64? = nil) {
+        resizeWriteLock.lock()
+        defer { resizeWriteLock.unlock() }
+
         resizeLock.lock()
         if let generation, resizeGeneration != generation {
             resizeLock.unlock()
@@ -2368,7 +2395,9 @@ final class MuxChannelSession: @unchecked Sendable {
         pty.setWindowSize(cols: grid.cols, rows: grid.rows, pxWidth: grid.px, pxHeight: grid.py)
         // Persist the RESOLVED size next to the disk journal — not the requester's offer. A later
         // daemon life's snapshot restore parses the journaled bytes at the geometry they were
-        // emitted for, and a sidecar naming a width no client ever had re-wraps every line.
+        // emitted for, and a sidecar naming a width no client ever had re-wraps every line. Inside
+        // the writer section for the same reason as the ioctl: the sidecar describes the size the
+        // PTY holds, so it takes its order from the same total order.
         scrollbackJournal?.recordWindowSize(rows: Int(grid.rows), cols: Int(grid.cols))
         // The resident screen grid is fixed-size — a geometry change rebuilds it from the ring
         // on the next scan (full-screen apps repaint at the new size anyway).
@@ -2826,13 +2855,16 @@ final class MuxChannelSession: @unchecked Sendable {
     /// no longer held after every `slopdesk-ctl resize`.
     ///
     /// Called on the control socket's per-connection handler thread. Safe to call there: the apply is
-    /// a pair of non-blocking O(1) ioctls, and the lock held (``PTYProcess/exitLock``) is never
-    /// contended from this path (it guards PTY-fd lifetime, not application state).
+    /// a pair of non-blocking O(1) ioctls, and the only wait it can take is `resizeWriteLock` behind
+    /// one other apply of the same shape — bounded by those ioctls, and the reason the override is
+    /// the LAST write rather than merely the newest intent.
     func resizeForControl(rows: UInt16, cols: UInt16) {
         resizeLock.lock()
         ctlGridOverride = (cols: cols, rows: rows, px: 0, py: 0)
         // Supersede any in-flight debounce/settle: the override is being applied RIGHT NOW, and a
-        // timer that fired afterwards with the older fold would undo it a frame later.
+        // timer that fired afterwards with the older fold would undo it a frame later. The bump only
+        // retires a timer that has NOT yet resolved; `resizeWriteLock` is what stops one that already
+        // did from landing its ioctl after this one's.
         resizeGeneration &+= 1
         resizeLock.unlock()
         applyResolvedGrid()
