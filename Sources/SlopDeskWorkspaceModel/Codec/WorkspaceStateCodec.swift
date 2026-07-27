@@ -304,4 +304,115 @@ public enum WorkspaceStateCodec {
     public static func decodeString(_ data: Data) -> String? {
         String(data: data, encoding: .utf8)
     }
+
+    // MARK: Fixed-width scalars
+
+    /// A one-byte field (`titleFresh`, `commandRunning`, `liveness`, `syncInputArmed`, `userRenamed`).
+    public static func encodeU8(_ value: UInt8) -> Data { Data([value]) }
+
+    /// `nil` on any length but exactly 1 — a wrong-width value is a DROP, never a lenient prefix read.
+    /// Strictness here is what stops a mis-numbered field from decoding into a plausible-looking value.
+    public static func decodeU8(_ data: Data) -> UInt8? {
+        data.count == 1 ? data[data.startIndex] : nil
+    }
+
+    /// C-style bool discipline: any non-zero byte is `true`, matching the interop rule the rest of the
+    /// codebase uses for bytes that crossed a language or network boundary.
+    public static func encodeBool(_ value: Bool) -> Data { encodeU8(value ? 1 : 0) }
+
+    public static func decodeBool(_ data: Data) -> Bool? {
+        guard let byte = decodeU8(data) else { return nil }
+        return byte != 0
+    }
+
+    /// A two-byte pair — `agentState` (`[state][kind]`) and `progress` (`[state][percent]`).
+    public static func encodeU8Pair(_ first: UInt8, _ second: UInt8) -> Data { Data([first, second]) }
+
+    public static func decodeU8Pair(_ data: Data) -> (UInt8, UInt8)? {
+        guard data.count == 2 else { return nil }
+        let bytes = [UInt8](data)
+        return (bytes[0], bytes[1])
+    }
+
+    /// A `[u16 BE][u16 BE]` pair — `pane/grid` is `(cols, rows)`, in that order.
+    public static func encodeU16Pair(_ first: UInt16, _ second: UInt16) -> Data {
+        Data([
+            UInt8(truncatingIfNeeded: first >> 8), UInt8(truncatingIfNeeded: first),
+            UInt8(truncatingIfNeeded: second >> 8), UInt8(truncatingIfNeeded: second),
+        ])
+    }
+
+    public static func decodeU16Pair(_ data: Data) -> (UInt16, UInt16)? {
+        guard data.count == 4 else { return nil }
+        let b = [UInt8](data)
+        return ((UInt16(b[0]) << 8) | UInt16(b[1]), (UInt16(b[2]) << 8) | UInt16(b[3]))
+    }
+
+    public static func encodeU32(_ value: UInt32) -> Data {
+        var out: [UInt8] = []
+        out.reserveCapacity(4)
+        out.appendBE(value)
+        return Data(out)
+    }
+
+    public static func decodeU32(_ data: Data) -> UInt32? {
+        guard data.count == 4 else { return nil }
+        let b = [UInt8](data)
+        return (UInt32(b[0]) << 24) | (UInt32(b[1]) << 16) | (UInt32(b[2]) << 8) | UInt32(b[3])
+    }
+
+    /// `pane/lastExitCode`. Rides as the `UInt32` bit pattern so a negative code (a signal-killed
+    /// child) survives without a sign convention to get wrong on either end.
+    public static func encodeI32(_ value: Int32) -> Data { encodeU32(UInt32(bitPattern: value)) }
+
+    public static func decodeI32(_ data: Data) -> Int32? {
+        guard let bits = decodeU32(data) else { return nil }
+        return Int32(bitPattern: bits)
+    }
+
+    public static func encodeI64(_ value: Int64) -> Data {
+        let bits = UInt64(bitPattern: value)
+        var out: [UInt8] = []
+        out.reserveCapacity(8)
+        for shift in stride(from: 56, through: 0, by: -8) {
+            out.append(UInt8(truncatingIfNeeded: bits >> UInt64(shift)))
+        }
+        return Data(out)
+    }
+
+    public static func decodeI64(_ data: Data) -> Int64? {
+        guard data.count == 8 else { return nil }
+        var bits: UInt64 = 0
+        for byte in data { bits = (bits << 8) | UInt64(byte) }
+        return Int64(bitPattern: bits)
+    }
+
+    /// A `[u16 BE count]` list of UUIDs — `root/sessionOrder`, `session/tabOrder`, `root/closedTabRing`.
+    public static func encodeUUIDList(_ ids: [UUID]) -> Data {
+        var out: [UInt8] = []
+        let count = UInt16(truncatingIfNeeded: min(ids.count, Int(UInt16.max)))
+        out.append(UInt8(truncatingIfNeeded: count >> 8))
+        out.append(UInt8(truncatingIfNeeded: count))
+        for id in ids.prefix(Int(count)) { out.append(uuid: id) }
+        return Data(out)
+    }
+
+    /// `nil` on a count the bytes cannot back — the length is validated against what REMAINS before
+    /// any capacity is reserved, so a hostile `0xFFFF` costs nothing.
+    public static func decodeUUIDList(_ data: Data) -> [UUID]? {
+        var reader = ByteReader(data)
+        guard reader.remaining >= 2 else { return nil }
+        let high = try? reader.u8()
+        let low = try? reader.u8()
+        guard let high, let low else { return nil }
+        let count = Int((UInt16(high) << 8) | UInt16(low))
+        guard reader.remaining == count * 16 else { return nil }
+        var out: [UUID] = []
+        out.reserveCapacity(count)
+        for _ in 0..<count {
+            guard let id = try? reader.uuid() else { return nil }
+            out.append(id)
+        }
+        return out
+    }
 }

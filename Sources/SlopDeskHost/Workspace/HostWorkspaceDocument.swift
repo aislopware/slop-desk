@@ -1,0 +1,199 @@
+import Foundation
+import SlopDeskProtocol
+import SlopDeskWorkspaceModel
+
+/// The host's single copy of the workspace, and the SINGLE SERIALIZATION POINT for every write to it.
+///
+/// The bug this exists to end is not a persistence bug. The host already derives every per-pane fact
+/// with a stateful parser — it just publishes each one as an EDGE (types 21/23/26/27/32/33/34/36) and
+/// keeps no current value anywhere a client can ask for. A client that was not listening at the
+/// instant of the edge loses the fact permanently and has no way to request it. Retaining the facts
+/// as one versioned value, and letting any client ask for it at any time, is the whole design.
+///
+/// **Every mutation runs on this actor**, so `stateNum` is monotone by construction and there is no
+/// merge function anywhere: the last write to a `(kind, objectID, field)` cell wins by ARRIVAL here.
+/// That is Figma's model, and the reason a CRDT is not warranted — the precedent is Zed, which uses
+/// CRDTs for text buffers and host-authoritative RPC for the worktree tree. This is the worktree tree.
+///
+/// **The `epoch` is minted per hostd start and is not optional.** Without it a restarted daemon counts
+/// `stateNum` back up from zero and a returning client sitting one behind accepts a delta computed
+/// against a completely different document — divergence that is permanent, silent, and has no
+/// detector. The epoch is also the no-migration directive expressed on the wire: a foreign epoch
+/// means reset-then-snapshot, which is the same code path as a missed frame and as a four-hour
+/// reconnect.
+public actor HostWorkspaceDocument {
+    /// Identity of THIS document instance. A new one on every host start, and on any non-recoverable
+    /// rebuild.
+    public let epoch: UUID
+
+    /// Monotone, and bumped ONLY when the state actually changed. Every bump costs every subscriber a
+    /// frame, so a no-op recapture must never move it — an idle host has to be silent.
+    ///
+    /// Starts at **1**, never 0. Zero is the "I know nothing" sentinel a client sends in `subscribe`
+    /// and the base every snapshot declares; if the host could also legitimately BE at 0, a client
+    /// that had genuinely received and acked the empty opening document would be indistinguishable
+    /// from one that had never connected — and the host would keep re-snapshotting it forever.
+    public private(set) var stateNum: Int64 = 1
+
+    private var state: HostWorkspaceState
+    private var subscribers: [UUID: WorkspaceChannelSession] = [:]
+    private let onLog: (@Sendable (String) -> Void)?
+
+    @preconcurrency
+    public init(
+        epoch: UUID = UUID(),
+        state: HostWorkspaceState = HostWorkspaceState(),
+        onLog: (@Sendable (String) -> Void)? = nil,
+    ) {
+        self.epoch = epoch
+        self.state = state
+        self.onLog = onLog
+    }
+
+    /// The document as a value. Read-only; the only way to change it is through this actor.
+    public var snapshot: HostWorkspaceState { state }
+
+    public var subscriberCount: Int { subscribers.count }
+
+    // MARK: - Mutation
+
+    /// Applies an arbitrary edit and broadcasts iff it changed anything.
+    ///
+    /// The change test is on the VALUE, not on whether the closure ran: `HostWorkspaceState` is
+    /// `Equatable` precisely so a caller cannot accidentally version a no-op.
+    @discardableResult
+    public func mutate(_ body: (inout HostWorkspaceState) -> Void) -> Bool {
+        var next = state
+        body(&next)
+        guard next != state else { return false }
+        state = next
+        bump()
+        return true
+    }
+
+    /// Replaces one pane's liveness fields, leaving its topology fields untouched.
+    @discardableResult
+    public func merge(paneLiveness record: PaneLiveness) -> Bool {
+        mutate { $0.merge(paneLiveness: record) }
+    }
+
+    /// Replaces the liveness half of EVERY pane in one version bump.
+    ///
+    /// The reconciler's entry point: it captures every live pane and hands the whole set over, so a
+    /// tick that observed three changed panes costs one `stateNum`, not three. Panes present in the
+    /// document but absent from `records` are left alone — reaping is ``removePanes(keeping:)``, a
+    /// separate decision with a separate failure mode.
+    @discardableResult
+    public func merge(paneLiveness records: [PaneLiveness]) -> Bool {
+        mutate { next in
+            for record in records { next.merge(paneLiveness: record) }
+        }
+    }
+
+    /// Deletes a pane OBJECT — every field, topology included.
+    @discardableResult
+    public func removePane(_ paneID: UUID) -> Bool {
+        mutate { $0.removeObject(kind: WorkspaceObjectKind.pane.rawValue, objectID: paneID) }
+    }
+
+    /// Reaps every pane object the host no longer knows about.
+    ///
+    /// A pane that vanished without a close — a child that exited, a detached session the store
+    /// evicted — otherwise lingers in the document forever, and every client keeps rendering a row
+    /// for a process that does not exist.
+    @discardableResult
+    public func removePanes(keeping live: Set<UUID>) -> Bool {
+        let stale = Set(
+            state.entries.keys
+                .filter { $0.kind == WorkspaceObjectKind.pane.rawValue }
+                .map(\.objectID),
+        ).subtracting(live)
+        guard !stale.isEmpty else { return false }
+        return mutate { next in
+            for paneID in stale { next.removeObject(kind: WorkspaceObjectKind.pane.rawValue, objectID: paneID) }
+        }
+    }
+
+    /// Publishes a project's git summary — the type-35 body verbatim.
+    ///
+    /// Keyed by PROJECT, not by pane: the summary is a property of the repository, and a pane-keyed
+    /// copy would be N copies of one fact that can disagree. Without this a never-seen-this-host
+    /// client renders no git line at all until the first FSEvents edge happens to fire.
+    @discardableResult
+    public func setProject(id: UUID, key: String, gitSummary: Data?) -> Bool {
+        mutate { next in
+            next.set(
+                WorkspaceKey(.project, id, WorkspaceProjectField.key),
+                WorkspaceStateCodec.encodeString(key),
+            )
+            next[WorkspaceKey(.project, id, WorkspaceProjectField.gitSummary)] = gitSummary
+        }
+    }
+
+    private func bump() {
+        stateNum &+= 1
+        broadcast()
+    }
+
+    private func broadcast() {
+        for session in subscribers.values {
+            session.deliver(epoch: epoch, stateNum: stateNum, state: state)
+        }
+    }
+
+    // MARK: - Subscribers
+
+    /// Registers a subscriber and immediately offers it the current document.
+    ///
+    /// The offer is unconditional: a subscriber that has never seen this host needs a snapshot, and
+    /// one that HAS gets an empty diff it never sends. Deciding here would duplicate the reasoning
+    /// that already lives, correctly, in the session.
+    func addSubscriber(_ session: WorkspaceChannelSession) {
+        subscribers[session.id] = session
+        session.start()
+        session.deliver(epoch: epoch, stateNum: stateNum, state: state)
+        broadcastRoster()
+    }
+
+    public func removeSubscriber(id: UUID) {
+        guard let session = subscribers.removeValue(forKey: id) else { return }
+        session.close()
+        // The null broadcast when the last one leaves is deliberate: a roster that simply stops
+        // arriving is indistinguishable from a stalled host, and every remaining client would keep
+        // rendering a viewer who is gone.
+        broadcastRoster()
+    }
+
+    public func handle(ack stateNum: Int64, from subscriberID: UUID) {
+        subscribers[subscriberID]?.note(ack: stateNum)
+    }
+
+    /// A repeat `subscribe` IS the resync verb.
+    public func handle(resubscribe request: WorkspaceSubscribe, from subscriberID: UUID) {
+        guard let session = subscribers[subscriberID] else { return }
+        session.note(resubscribe: request)
+        session.deliver(epoch: epoch, stateNum: stateNum, state: state)
+        broadcastRoster()
+    }
+
+    /// Rebuilds the roster and fans it to everyone.
+    ///
+    /// Presence never touches `stateNum`: a kind-2 frame that advanced it would make the host retire,
+    /// via `assumedAcked`, a diff it never sent — permanent silent divergence on the very first
+    /// rename. Presence is derived, TTL-expired and never persisted, so it is broadcast whole.
+    public func broadcastRoster() {
+        let roster = WorkspacePresenceRoster(
+            clients: subscribers.values
+                .map { $0.rosterRecord() }
+                .sorted { $0.clientInstanceID.uuidString < $1.clientInstanceID.uuidString },
+            panes: [],
+        )
+        for session in subscribers.values { session.deliver(roster: roster) }
+    }
+
+    /// Tears every subscriber down — daemon shutdown.
+    public func shutdown() {
+        for session in subscribers.values { session.close() }
+        subscribers.removeAll()
+    }
+}
