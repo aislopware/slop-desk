@@ -83,6 +83,7 @@ extension WorkspaceStore {
     ///
     /// The caller strips agent glyph prefixes (``RailRowsBuilder`` `strippedProgramTitle`).
     public func liveProgramTitle(for id: PaneID) -> String? {
+        observeWorkspaceMirror()
         guard workspaceMirror.bool(.pane, id.raw, WorkspacePaneField.titleFresh) else { return nil }
         let title = workspaceMirror.string(.pane, id.raw, WorkspacePaneField.liveTitle)?
             .trimmingCharacters(in: .whitespacesAndNewlines)

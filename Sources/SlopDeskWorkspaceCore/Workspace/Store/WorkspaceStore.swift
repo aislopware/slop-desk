@@ -334,6 +334,9 @@ public final class WorkspaceStore {
         self.persistence = persistence
         self.saveDebounce = saveDebounce
         self.videoTeardownSettle = videoTeardownSettle
+        // The mirror is a plain value in a plain box — nothing about folding a frame into it is
+        // `@Observable`. This is the one wire that makes a document change repaint anything.
+        workspaceMirror.onChange = { [weak self] in self?.workspaceMirrorRevision &+= 1 }
         // The live model picks the init reconcile. `.canvas` materializes the canvas panes (the
         // retained-but-dead path); `.tree` (the app) materializes the tree's leaves through the SAME
         // registry diff — exactly one of the two trees ever drives a given store.
@@ -3095,6 +3098,23 @@ public final class WorkspaceStore {
     /// control sinks write its `fastPath`, and host truth erases an overlay entry for any key it
     /// supplies. One instance is the point — two would let the two producers disagree forever.
     public let workspaceMirror = WorkspaceMirrorBox()
+
+    /// The mirror's `@Observable` shadow: bumped on every change the box reports, and READ by every
+    /// store funnel that answers from the mirror.
+    ///
+    /// Without it a mirror read registers no Observation dependency at all, and the row would sit on
+    /// its old value until some unrelated mutation happened to repaint it. That is precisely the
+    /// multi-client case: a client whose only source of news is the document changes nothing of its
+    /// own, so "some unrelated mutation" never comes. Carries no data — it exists only to invalidate,
+    /// exactly like ``completionFlashTick``.
+    public internal(set) var workspaceMirrorRevision: UInt = 0
+
+    /// Registers the caller's Observation dependency on ``workspaceMirror``. Every store read funnel
+    /// that answers from the mirror opens with this — a funnel that forgets it renders once and then
+    /// goes deaf, which is a failure with no symptom until a second client is watching.
+    func observeWorkspaceMirror() {
+        _ = workspaceMirrorRevision
+    }
 
     /// The channel feeding ``workspaceMirror``'s host truth. `nil` headless / in tests / with
     /// `SLOPDESK_WORKSPACE_DOC` off — the control-push overlay then drives the UI on its own.
