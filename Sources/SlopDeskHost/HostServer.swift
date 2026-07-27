@@ -102,7 +102,10 @@ public final class HostServer: @unchecked Sendable {
     /// Under ``paneFanoutEnabled`` several keys map to ONE `MuxChannelSession`, and every
     /// per-client action — a link drop, a peer `channelClose`, an eviction — has to name the ONE
     /// member it concerns rather than the session. A key with no entry is the pane's original
-    /// channel (``MuxChannelSession/primarySubscriberID``).
+    /// channel (``MuxChannelSession/primarySubscriberID``), and that is the ONLY thing a missing
+    /// entry may mean: a JOIN writes its entry in the same critical section that writes
+    /// `muxSessions` (``registerJoiningKeyLocked(_:key:)``), so no key is ever briefly
+    /// indistinguishable from the primary.
     private var muxSubscriberIDs: [MuxSessionKey: MuxSubscriberID] = [:]
 
     /// Accepted shared mux connections, keyed by their stable `connectionID`, guarded by `lock`.
@@ -1070,9 +1073,10 @@ public final class HostServer: @unchecked Sendable {
         // critical section, so a third concurrent open sees the pane as held and routes here too.
         // The subscriber itself is added OUTSIDE the lock — it composes a snapshot and awaits sends.
         var joining: MuxChannelSession?
+        var joiningSubscriber: MuxSubscriberID?
         if paneFanoutEnabled, let live = liveElsewhere {
             joining = live
-            muxSessions[key] = live
+            joiningSubscriber = registerJoiningKeyLocked(live, key: key)
         }
         let attachedElsewhere = joining == nil && liveElsewhere != nil
         // PATH A claim: exclusively TAKE the detached session (removes the entry + cancels
@@ -1127,11 +1131,12 @@ public final class HostServer: @unchecked Sendable {
             Task { await connection.sendOpenAck(open.channelID, accepted: false) }
             return
         }
-        if let session = joining {
+        if let session = joining, let subscriber = joiningSubscriber {
             // PATH D: the pane is LIVE and somebody else is already watching it — join them.
             Task { [weak self] in
                 await self?.performJoin(
                     session: session,
+                    subscriber: subscriber,
                     open: open,
                     connection: connection,
                     connectionID: connectionID,
@@ -1185,9 +1190,10 @@ public final class HostServer: @unchecked Sendable {
         let isStopping = stopping
         let alreadyLive = muxSessions[key] != nil
         var target: MuxChannelSession?
+        var targetSubscriber: MuxSubscriberID?
         if !isStopping, !alreadyLive, hasRealSessionID {
             target = muxSessions.first { $0.value.sessionID == open.sessionID }?.value
-            if let target { muxSessions[key] = target }
+            if let target { targetSubscriber = registerJoiningKeyLocked(target, key: key) }
         }
         lock.unlock()
 
@@ -1195,7 +1201,7 @@ public final class HostServer: @unchecked Sendable {
             Task { await connection.sendOpenAck(open.channelID, accepted: !isStopping) }
             return
         }
-        guard let target else {
+        guard let target, let targetSubscriber else {
             onLog?(
                 "mux channel \(open.channelID) (conn \(connectionID)): refused — "
                     + "no live pane \(open.sessionID) to observe",
@@ -1206,6 +1212,7 @@ public final class HostServer: @unchecked Sendable {
         Task { [weak self] in
             await self?.performJoin(
                 session: target,
+                subscriber: targetSubscriber,
                 open: open,
                 connection: connection,
                 connectionID: connectionID,
@@ -1223,11 +1230,17 @@ public final class HostServer: @unchecked Sendable {
     /// (echo / blocks / activity, `.title` after `.commandStatus`) are addressed to the new member
     /// only, so the incumbent is not flooded with the truths it already holds.
     ///
-    /// The session was registered under `key` inside `spawnMuxChannel`'s critical section, so a
-    /// failure here must UNREGISTER it — leaving the key behind would make a later close of this
-    /// connection reap a pane it never joined.
+    /// The session was registered under `key` — with `subscriber` RESERVED for it — inside
+    /// `spawnMuxChannel`'s critical section, so a failure here must UNREGISTER it: leaving the key
+    /// behind would make a later close of this connection reap a pane it never joined.
+    ///
+    /// The reservation is what makes the whole async window below attributable. `joinSubscriber`
+    /// composes an O(retained history) screen and then ships it through this client's credit
+    /// window; a link drop anywhere in there must retire THIS member, and a key that named no id
+    /// would resolve to the pane's primary and retire the INCUMBENT instead.
     private func performJoin(
         session: MuxChannelSession,
+        subscriber: MuxSubscriberID,
         open: MuxChannelOpen,
         connection: MuxNWConnection,
         connectionID: UUID,
@@ -1240,6 +1253,7 @@ public final class HostServer: @unchecked Sendable {
         // its own `lastReceivedSeq`.
         await connection.sendOpenAck(open.channelID, accepted: true, resumeFromSeq: open.lastReceivedSeq)
         let joined = await session.joinSubscriber(
+            id: subscriber,
             data: open.data,
             control: open.control,
             channelClass: channelClass,
@@ -1247,8 +1261,11 @@ public final class HostServer: @unchecked Sendable {
         )
         guard let subscriberID = joined else {
             // The pane emptied or the joining link died while we were composing. Unregister and
-            // refuse; the client reconnects and takes whichever path is true then.
+            // refuse; the client reconnects and takes whichever path is true then. The reserved id
+            // may have been registered as a size contributor by a workspace `subscribe` that landed
+            // mid-join, so it goes too — a phantom contributor would sit in the roster forever.
             unregisterJoinKey(key, ifStill: session)
+            session.removeResizeContributor(subscriber)
             onLog?(
                 "mux channel \(open.channelID) (conn \(connectionID)): refused — "
                     + "session \(open.sessionID) was not joinable (link died mid-join or pane emptied)",
@@ -1256,7 +1273,6 @@ public final class HostServer: @unchecked Sendable {
             Task { await connection.sendOpenAck(open.channelID, accepted: false) }
             return
         }
-        recordJoinedSubscriber(subscriberID, for: key)
         emitConnectionCount()
         noteWorkspaceFactChanged()
         onLog?(
@@ -1265,13 +1281,25 @@ public final class HostServer: @unchecked Sendable {
         )
     }
 
-    /// Records which member of its session a freshly-joined key rides (NSLock is unavailable from
-    /// the async ``performJoin(session:open:connection:connectionID:)`` — the ``markStopping()``
-    /// discipline).
-    private func recordJoinedSubscriber(_ id: MuxSubscriberID, for key: MuxSessionKey) {
-        lock.lock()
+    /// Registers a JOINING key against the session it is about to join AND reserves the member id
+    /// that join will use — both under the caller's `lock`, so the pair is installed atomically.
+    ///
+    /// Recording the id only after the async join returned left a window in which `muxSessions` knew
+    /// the key but `muxSubscriberIDs` did not: every per-client path (`handleLinkDown`,
+    /// `leavePaneChannel`, `channelKey(for:subscriber:)`) falls back to
+    /// ``MuxChannelSession/primarySubscriberID`` for an unknown key, so a joiner whose link died
+    /// mid-state-transfer retired the INCUMBENT — and, if that was the pane's only member, parked a
+    /// session whose client was still connected.
+    ///
+    /// - Precondition: the caller holds `lock`.
+    private func registerJoiningKeyLocked(
+        _ session: MuxChannelSession,
+        key: MuxSessionKey,
+    ) -> MuxSubscriberID {
+        let id = session.reserveSubscriberID()
+        muxSessions[key] = session
         muxSubscriberIDs[key] = id
-        lock.unlock()
+        return id
     }
 
     /// Drops a join registration that never completed, iff the key still names `session`.
@@ -2309,6 +2337,19 @@ public final class HostServer: @unchecked Sendable {
         muxSessions[key] = session
         muxSubscriberIDs[key] = subscriber
         lock.unlock()
+    }
+
+    /// Drives the REAL join REGISTRATION — the state `spawnMuxChannel`'s critical section leaves
+    /// behind for `performJoin`, BEFORE the async state transfer has admitted anybody (testing
+    /// only). The window in which a joiner's link can drop while its member does not yet exist.
+    @discardableResult
+    func registerJoiningKeyForTesting(
+        _ session: MuxChannelSession,
+        key: MuxSessionKey,
+    ) -> MuxSubscriberID {
+        lock.lock()
+        defer { lock.unlock() }
+        return registerJoiningKeyLocked(session, key: key)
     }
 
     /// How many live-map keys currently name a session (testing only) — the alias count a reap

@@ -305,4 +305,40 @@ final class MuxChannelSessionObserverTests: XCTestCase {
             "…but the roster says it does not vote, so the UI can name who does",
         )
     }
+
+    /// Passivity an observer can never shed. A pane held only by SIZE-PASSIVE members is sized by
+    /// them (an iPhone-only setup would otherwise run every shell at 80×24) — but that fallback must
+    /// not reach an observer, whose whole contract is that it watches a grid it did not choose.
+    func testAnObserverAloneOnAPaneStillDoesNotSizeIt() async throws {
+        let session = makeSession()
+        session.scheduleResize(cols: 120, rows: 40, px: 0, py: 0)
+        await waitUntil { session.resolvedGridForWorkspace.cols == 120 }
+
+        let observerControl = makeControlChannel()
+        let joined = await session.joinSubscriber(
+            data: makeDataChannel(),
+            control: observerControl,
+            channelClass: .paneObserver,
+            sizePassive: false,
+        )
+        let observer = try XCTUnwrap(joined)
+        await observerControl.deliver(
+            payload: WireMessage.resize(cols: 40, rows: 12, pxWidth: 0, pxHeight: 0).encode(),
+        )
+
+        // The holder leaves. The observer is now the only contributor in the set.
+        session.removeSubscriber(MuxChannelSession.primarySubscriberID)
+        session.applyResolvedGrid()
+        try await Task.sleep(for: .milliseconds(200))
+
+        XCTAssertEqual(
+            session.resolvedGridForWorkspace.cols, 120,
+            "a pane left to an observer keeps its size — the spectator does not inherit the vote",
+        )
+        XCTAssertEqual(
+            session.resizeContributionsForWorkspace.first { $0.subscriber == observer }?.contributes,
+            false,
+            "and the roster still says the observer does not vote",
+        )
+    }
 }

@@ -40,6 +40,7 @@ final class MuxChannelSessionResizeFoldTests: XCTestCase {
         sizeSettle: Duration = .milliseconds(750),
         journal: ScrollbackJournal? = nil,
         control: MuxSubChannel? = nil,
+        sizePassive: Bool = false,
     ) -> MuxChannelSession {
         let session = MuxChannelSession(
             channelID: 1,
@@ -48,6 +49,7 @@ final class MuxChannelSessionResizeFoldTests: XCTestCase {
             control: control ?? MuxSubChannel(channelID: 1, channel: .control) { _, _ in },
             resizeDebounce: resizeDebounce,
             sizeSettle: sizeSettle,
+            isSizePassive: sizePassive,
             scrollbackJournal: journal,
         )
         sessions.append(session)
@@ -285,25 +287,95 @@ final class MuxChannelSessionResizeFoldTests: XCTestCase {
         )
     }
 
-    /// A ctl resize is an OVERRIDE, and a one-shot one: the next client offer still wins. A sticky
-    /// override would make every pane an orchestrator ever touched permanently deaf to its window.
-    func testTheCtlOverrideIsConsumedByOneApply() throws {
+    /// A ctl resize is an OVERRIDE that stands until the next client OFFER — not until the next
+    /// APPLY.
+    ///
+    /// Every `.ack` flushes the fold, and the override's own `TIOCSWINSZ` delivers a `SIGWINCH` that
+    /// makes the shell repaint, whose output the client acks tens of milliseconds later. An override
+    /// retired by whichever apply happened to come next would therefore be undone by the output it
+    /// caused: `slopdesk-ctl resize` would be inert on every pane a client is attached to.
+    func testTheCtlOverrideOutlivesAnAckAndIsRetiredByAnOffer() throws {
         let pty = try makePTY()
-        let session = makeSession(pty: pty)
+        let control = MuxSubChannel(channelID: 1, channel: .control) { _, _ in }
+        let session = makeSession(pty: pty, control: control)
         session.startRelay()
-        session.scheduleResize(cols: 120, rows: 40, px: 0, py: 0)
-        session.applyResolvedGrid()
-        XCTAssertEqual(pollGrid(pty, untilCols: 120, rows: 40).cols, 120)
+        deliver(control, [.resize(cols: 120, rows: 40, pxWidth: 0, pxHeight: 0), .ack(seq: 0)])
+        XCTAssertEqual(pollGrid(pty, untilCols: 120, rows: 40).cols, 120, "the client's grid landed")
 
         session.resizeForControl(rows: 50, cols: 132)
-        XCTAssertEqual(pollGrid(pty, untilCols: 132, rows: 50).cols, 132, "the override wins its apply")
+        XCTAssertEqual(pollGrid(pty, untilCols: 132, rows: 50).cols, 132, "the override applies")
 
-        // Nothing new offered — the fold alone decides again, and it still holds the client's grid.
-        session.applyResolvedGrid()
-        XCTAssertEqual(
-            pollGrid(pty, untilCols: 120, rows: 40).cols, 120,
-            "the override was spent; the contributing set is back in charge",
+        // The repaint the override itself provoked comes back as an ack — which flushes the fold.
+        deliver(control, [.ack(seq: 1)])
+        assertGridHolds(
+            pty, cols: 132, rows: 50, seconds: 0.3,
+            "an ack is not an offer, so the orchestrator's size stands",
         )
+
+        // A real client offer IS what retires it.
+        deliver(control, [.resize(cols: 100, rows: 30, pxWidth: 0, pxHeight: 0), .ack(seq: 2)])
+        XCTAssertEqual(
+            pollGrid(pty, untilCols: 100, rows: 30).cols, 100,
+            "the next client offer still wins, exactly as the ctl verb has always promised",
+        )
+    }
+
+    /// A pane held ONLY by size-passive clients is sized by them.
+    ///
+    /// "A phone must never crush a Mac" (docs/45 §8.3 rule 3) is a statement about a Mac that is
+    /// THERE. iOS is passive host-side from its workspace `clientKind`, so on an iPhone-only setup
+    /// every contributor is passive, the fold resolves to nothing, and the shell keeps the `openpty`
+    /// default 80×24 for its whole life — a phone unable to size its own pane.
+    func testAPaneHeldOnlyByPassiveClientsIsSizedByThem() throws {
+        let pty = try makePTY()
+        let session = makeSession(pty: pty, sizePassive: true)
+        session.startRelay() // registers the only contributor, and it is passive
+
+        session.scheduleResize(cols: 60, rows: 20, px: 0, py: 0)
+        session.applyResolvedGrid()
+
+        let grid = pollGrid(pty, untilCols: 60, rows: 20)
+        XCTAssertEqual(grid.cols, 60, "with nobody to crush, the phone sizes its own shell")
+        XCTAssertEqual(grid.rows, 20)
+        XCTAssertEqual(
+            session.resizeContributionsForWorkspace.first?.contributes, true,
+            "…and the roster says so, or the phone would letterbox itself crediting nobody",
+        )
+    }
+
+    /// The other direction, which is the rule the fallback must not break: a VOTER holding the pane
+    /// shuts the phone out even before that voter has said how big it is.
+    ///
+    /// Keyed on the contributing set being EMPTY rather than on it having produced no offer — a Mac
+    /// opens its pane channel a beat before it sends its first `resize`, and a fallback keyed on the
+    /// offer would crush its shell to a phone's width for exactly that window.
+    func testAPassiveClientNeverSizesAPaneAVoterHolds() throws {
+        let pty = try makePTY()
+        let session = makeSession(pty: pty, sizePassive: true)
+        session.startRelay()
+        session.scheduleResize(cols: 60, rows: 20, px: 0, py: 0)
+        session.applyResolvedGrid()
+        XCTAssertEqual(pollGrid(pty, untilCols: 60, rows: 20).cols, 60, "precondition: the phone sized it")
+
+        // A Mac takes the pane. It has not offered a size yet.
+        let mac: MuxSubscriberID = 9
+        session.addResizeContributor(mac, sizePassive: false)
+        session.scheduleResize(cols: 44, rows: 14, px: 0, py: 0) // the phone rotates
+        session.applyResolvedGrid()
+        assertGridHolds(
+            pty, cols: 60, rows: 20, seconds: 0.3,
+            "a silent voter still shuts the passive client out — the pane keeps its last size",
+        )
+        XCTAssertEqual(
+            session.resizeContributionsForWorkspace
+                .first(where: { $0.subscriber == MuxChannelSession.primarySubscriberID })?.contributes,
+            false,
+            "and the roster stops crediting the phone the moment a voter arrives",
+        )
+
+        session.scheduleResize(from: mac, cols: 132, rows: 50, px: 0, py: 0)
+        session.applyResolvedGrid()
+        XCTAssertEqual(pollGrid(pty, untilCols: 132, rows: 50).cols, 132, "the voter decides")
     }
 
     /// A redraw jiggle deliberately leaves the PTY one row SHORT while the app re-layouts. If the

@@ -197,6 +197,74 @@ final class HostServerFanOutRoutingTests: XCTestCase {
         )
     }
 
+    // MARK: - A join that has not landed yet still names its own member
+
+    /// A joining key is registered in `muxSessions` synchronously, but the member it will become
+    /// only exists once `joinSubscriber` has composed an O(retained history) screen and shipped it
+    /// through the joiner's credit window. A link drop inside that window must retire the JOINER.
+    ///
+    /// Recording the id only after the join returned left the key resolving to
+    /// `primarySubscriberID` for the whole transfer, so the joiner's link dying there retired the
+    /// INCUMBENT: its input/control/sender tasks cancelled, its pane silent, and — since it was the
+    /// only member — its still-connected session parked in the detached store.
+    func testALinkDropDuringAJoinRetiresTheJoinerNotTheIncumbent() {
+        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true, workspaceDocEnabled: false)
+        defer { Task { await server.stop() } }
+
+        let id = UUID()
+        let session = makeSession(sessionID: id)
+        let incumbent = MuxSessionKey(connectionID: UUID(), channelID: 1)
+        server.registerMuxSessionForTesting(session, key: incumbent)
+
+        // The state `spawnMuxChannel`'s critical section leaves behind — the key is live, the member
+        // is not.
+        let joining = MuxSessionKey(connectionID: UUID(), channelID: 1)
+        let reserved = server.registerJoiningKeyForTesting(session, key: joining)
+        XCTAssertNotEqual(
+            reserved, MuxChannelSession.primarySubscriberID,
+            "a reservation must never collide with the channel the pane was opened for",
+        )
+
+        server.handleLinkDownForTesting(connectionID: joining.connectionID)
+
+        XCTAssertNil(server.muxSessionForTesting(key: joining), "the aborted join's key is gone")
+        XCTAssertTrue(
+            server.muxSessionForTesting(key: incumbent) === session,
+            "the incumbent still holds its pane",
+        )
+        XCTAssertEqual(
+            session.subscriberCountForTesting, 1,
+            "and is still a MEMBER — a join that never landed may not retire somebody else",
+        )
+        XCTAssertFalse(
+            session.isDetached,
+            "so the session must not be parked while its client is right there",
+        )
+        XCTAssertFalse(server.detachedStoreForTesting?.contains(id) ?? true)
+    }
+
+    /// The same window reached by a clean peer `channelClose` — a client cancelling a slow join.
+    func testAPeerCloseDuringAJoinLeavesTheIncumbentsShellRunning() {
+        let server = HostServer(port: 0, detachEnabled: true, resumeOnRecovery: true, workspaceDocEnabled: false)
+        defer { Task { await server.stop() } }
+
+        let id = UUID()
+        let session = makeSession(sessionID: id)
+        let incumbent = MuxSessionKey(connectionID: UUID(), channelID: 1)
+        server.registerMuxSessionForTesting(session, key: incumbent)
+        let joining = MuxSessionKey(connectionID: UUID(), channelID: 1)
+        server.registerJoiningKeyForTesting(session, key: joining)
+
+        server.leavePaneChannelForTesting(joining)
+
+        XCTAssertNil(server.muxSessionForTesting(key: joining))
+        XCTAssertEqual(
+            server.listPanesForControl().map(\.paneId), [id.uuidString],
+            "an aborted join must not hard-kill the incumbent's running shell",
+        )
+        XCTAssertEqual(session.subscriberCountForTesting, 1)
+    }
+
     // MARK: - The flag
 
     /// The default is OFF, and it is read with the `== "1"` idiom (`!= "0"` would make it

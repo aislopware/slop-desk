@@ -1027,8 +1027,13 @@ a Studio's nvim — network jitter driving a terminal reflow. So:
    alone would be defeated by any build that predates it. A pane channel with **no** workspace channel
    behind it **CONTRIBUTES** — that is `slopdesk-client` and every `SLOPDESK_WORKSPACE_DOC=0` client,
    and defaulting them to passive would leave a CLI unable to size its own pane. Panes opened before
-   the workspace `subscribe` lands are re-resolved by the subscribe itself.
-4. **A pane with zero contributing subscribers keeps its last size** — it does not snap to 80×24.
+   the workspace `subscribe` lands are re-resolved by the subscribe itself. **A pane no VOTER holds
+   is sized by its size-passive members instead** — "never crush a Mac" is about a Mac that is
+   THERE, and folding every contributor away on an iOS-only setup left the shell at the `openpty`
+   default for its whole life. The fallback keys on the contributing set being EMPTY, not on it
+   having made no offer, so a Mac that has opened its channel but not yet offered still shuts the
+   phone out; OBSERVERS are excluded from it either way (§8.4).
+4. **A pane with zero ATTACHED subscribers keeps its last size** — it does not snap to 80×24.
 5. Wire type 11 `resize` stops being a command and becomes a **contribution**. `scheduleResize`
    records the offering subscriber's LATEST offer; `applyResolvedGrid()` folds the min and performs
    the one `pty.setWindowSize`. **No wire change.** Idempotence is a comparison against the live
@@ -1036,9 +1041,11 @@ a Studio's nvim — network jitter driving a terminal reflow. So:
    the PTY one row short while an app re-layouts, and a "resolved size unchanged, skip" memo would
    leave the pane short for the rest of the session.
 6. The ctl socket's `resize` verb (`resizeForControl(rows:cols:)`, used by `slopdesk-ctl` and
-   orchestrators) routes through the same `applyResolvedGrid()` as an explicit ONE-SHOT override — so
-   the next client offer still wins, and the ctl path gets the journal size sidecar and the settled
-   redraw nudge it never had. A second, independent `TIOCSWINSZ` there silently breaks the
+   orchestrators) routes through the same `applyResolvedGrid()` as an explicit override that stands
+   until the next CONTRIBUTING client offer — so the next client offer still wins, and the ctl path
+   gets the journal size sidecar and the settled redraw nudge it never had. Retiring it on the next
+   APPLY instead makes the verb inert: `.ack` flushes the fold, and the override's own `SIGWINCH`
+   provokes a repaint the client acks tens of milliseconds later. A second, independent `TIOCSWINSZ` there silently breaks the
    monotone-min invariant AND leaves the sidecar describing a geometry the PTY no longer holds.
    `PTYProcess.beginRedrawJiggle` / `endRedrawJiggle` stay outside the fold on purpose: they are a
    transient repaint dance that restores what it borrowed.
@@ -1442,7 +1449,7 @@ resolved by the HOST-owned `closePane` intent rather than a `closeReason` byte.
 - Park in `DetachedSessionStore` only when the subscriber set empties.
 - iOS letterbox / scale-to-fit, with §8.3 rule 7's readout.
 
-**Four corrections this phase earned, against the text above and in §8.3:**
+**Eight corrections this phase earned, against the text above and in §8.3:**
 
 1. **The `attachedElsewhere` refusal is flag-CONDITIONAL, not deleted.** It survives as the flag-OFF
    branch, which is what keeps the shipping path byte-identical: with `SLOPDESK_PANE_FANOUT` unset
@@ -1465,6 +1472,34 @@ resolved by the HOST-owned `closePane` intent rather than a `closeReason` byte.
    is ALWAYS a refcounted LEAVE, and the unconditional REAP is driven by the document's own
    `closePane` / `closeTab` apply, which `channelClose`s every subscriber and kills the PTY. That
    satisfies §8.6's asymmetry and §8.7's "the host always sends one `channelClose`".
+5. **The fan-out shape is cleared by an EMPTIED set, not by a leave.** A pane that fanned out and
+   then lost every client reaches `rebindRelay` with the drain still routing into per-member
+   outboxes — and `rebindRelay` builds only the returning member's CONTROL sender, so the reattached
+   client would receive the state transfer and then nothing at all, `.exit` included, while
+   `dequeueOutput` kept the queue gate flowing so the PTY never backpressured. Clearing on a mere
+   LEAVE would be wrong for the opposite reason (two writers on one data channel while the survivor's
+   sender is mid-outbox); clearing on EMPTY is safe because `detach()` retired every member first.
+6. **A joining channel RESERVES its subscriber id in the same critical section that registers its
+   key.** `muxSessions[key]` is written synchronously, but the member only exists after an
+   O(retained history) render and a whole state transfer through the joiner's credit window. A key
+   with no `muxSubscriberIDs` entry falls back to `primarySubscriberID`, so a link drop in that
+   window retired the INCUMBENT — and parked a session whose client was still connected.
+7. **A joiner's outbox is kicked when its sender is built.** The joiner enters the set before its
+   sender exists, so frames the drain fans out during the state transfer land on a nil wake and
+   their producer-side yields go nowhere. Without the kick they wait for the next PTY byte, which a
+   pane that just went idle never produces.
+8. **Two §8.3 rules are amended by what they do on hardware-shaped inputs:**
+   - **Rule 6 — the ctl override stands until the next client OFFER, not until the next APPLY.**
+     Every `.ack` flushes the fold, and the override's own `SIGWINCH` provokes a repaint whose ack
+     lands within tens of milliseconds, so an override retired by the next apply is undone by the
+     output it caused: `slopdesk-ctl resize` would be inert on any pane a client holds. A
+     CONTRIBUTING subscriber's `resize` retires it; nothing else does.
+   - **Rule 3 — a pane no VOTER holds is sized by its size-passive members.** "A phone must never
+     crush a Mac" is a statement about a Mac that is THERE; on an iOS-only setup every contributor is
+     passive, the fold resolved to nothing, and rule 4 then kept the `openpty` default 80×24 for the
+     shell's whole life. The fallback keys on the contributing set being EMPTY — not on it having
+     made no offer — so a Mac that has opened its channel but not yet offered still shuts the phone
+     out, and OBSERVERS are excluded from it, because a spectator never inherits the vote.
 
 **Gate:** `SubprocessE2ETests`' `testTwoClientsShareOneRealPTY` — two shipped `slopdesk-client`
 processes on one `--session-id` against one `slopdesk-hostd`, real PTYs. Per

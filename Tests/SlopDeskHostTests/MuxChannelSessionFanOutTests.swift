@@ -530,6 +530,155 @@ final class MuxChannelSessionFanOutTests: XCTestCase {
         )
     }
 
+    // MARK: - The fan-out shape does not outlive the set that caused it
+
+    /// A pane that was fanned out, then EMPTIED, then reattached is a one-member pane again — and
+    /// its drain has to be back on the inline send.
+    ///
+    /// `fanoutActive` survives a member merely leaving (flipping modes under a surviving sender
+    /// would put two writers on one data channel), but `rebindRelay` builds only the returning
+    /// member's CONTROL sender — the two `startDataSender` sites are both inside the JOIN path. A
+    /// drain still in its fan-out shape would therefore hand every frame to an outbox with a nil
+    /// wake: the client sees the caller's `replayTail` state transfer and then silence, `.exit`
+    /// included, while `dequeueOutput` keeps the queue gate flowing so the PTY never backpressures.
+    func testAReattachAfterAFanOutGoesBackToTheInlineSend() async {
+        let session = makeLiveSession(primary: SendRecorder(), primaryControl: SendRecorder())
+        let joined = await session.joinSubscriber(
+            data: makeChannel(SendRecorder(), kind: .data),
+            control: makeChannel(SendRecorder(), kind: .control),
+            sizePassive: false,
+        )
+        XCTAssertNotNil(joined, "precondition: the pane really did fan out")
+        XCTAssertTrue(session.isFannedOutForTesting)
+
+        // Both links drop: the set empties and the session parks, as `handleLinkDown` leaves it.
+        session.detach(onDetachedExit: { _ in })
+        XCTAssertEqual(session.subscriberCountForTesting, 0, "precondition: the set emptied")
+
+        let back = SendRecorder()
+        XCTAssertTrue(session.rebindRelay(
+            data: makeChannel(back, kind: .data),
+            control: makeChannel(SendRecorder(), kind: .control),
+            onExit: nil,
+        ))
+        XCTAssertFalse(
+            session.isFannedOutForTesting,
+            "an emptied set leaves no sender mid-outbox, so the returning client is one member again",
+        )
+
+        session.enqueueChunkForTesting(bytes: Data("AFTER_REATTACH\n".utf8))
+        await waitUntil { back.outputBytes.contains(Data("AFTER_REATTACH\n".utf8)) }
+        XCTAssertTrue(
+            back.outputBytes.contains(Data("AFTER_REATTACH\n".utf8)),
+            "the reattached client receives live output; got \(back.outputBytes.count) bytes",
+        )
+
+        session.enqueueExitForTesting(code: 3)
+        await waitUntil { back.exitCodes == [3] }
+        XCTAssertEqual(back.exitCodes, [3], "and the shell's exit code, which rides the same flag")
+        session.shutdownDetached()
+    }
+
+    /// Frames the drain fans out WHILE a joiner's state transfer is on the wire must reach it
+    /// without waiting for the next PTY byte.
+    ///
+    /// `admitJoiner` enters the member before its sender exists, so those frames land in an outbox
+    /// whose `dataWake` is still nil and whose producer-side yields go nowhere. `startDataSender`
+    /// then installs the wake and parks on an empty `bufferingNewest(1)` stream. A pane that goes
+    /// idle right after a join — a finished build, a returned prompt — would leave the joiner on the
+    /// pre-join screen until something unrelated happened to produce output.
+    func testTheJoinersSenderShipsWhatArrivedBeforeItExisted() async {
+        let session = makeLiveSession(primary: SendRecorder(), primaryControl: SendRecorder())
+        defer { session.pty.completeExitForTesting(code: 0)
+            session.shutdownDetached()
+        }
+
+        let marker = Data("DURING_TRANSFER\n".utf8)
+        session.onJoinerAdmittedForTesting = { [weak session] in
+            guard let session else { return }
+            let before = session.retainedBytesForTesting
+            session.enqueueChunkForTesting(bytes: marker)
+            // Wait for the drain to have SEQUENCED it: the append and the hand-off to every
+            // member's outbox happen in one critical section, so a grown retention total means the
+            // frame is already sitting in the joiner's queue with no wake. Without this the test
+            // could pass for the wrong reason — a later enqueue carrying a wake of its own.
+            let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+            while ContinuousClock.now < deadline, session.retainedBytesForTesting == before {
+                try? await Task.sleep(for: .milliseconds(2))
+            }
+        }
+
+        let b = SendRecorder()
+        let joined = await session.joinSubscriber(
+            data: makeChannel(b, kind: .data),
+            control: makeChannel(SendRecorder(), kind: .control),
+            sizePassive: false,
+        )
+        XCTAssertNotNil(joined)
+
+        // NOTHING is enqueued after the join, deliberately: the only wake that can ship this frame
+        // is the one `startDataSender` gives itself.
+        await waitUntil { b.outputBytes.contains(marker) }
+        XCTAssertTrue(
+            b.outputBytes.contains(marker),
+            "the joiner's own sender flushes what accumulated before it existed; got "
+                + "\(b.outputBytes.count) bytes",
+        )
+    }
+
+    // MARK: - A departed member's late ack
+
+    /// A retired member's control relay can still deliver one buffered `.ack`: `Task.cancel()` does
+    /// not unwind an iteration already in flight. Honouring that cursor would release the tail of a
+    /// laggard that is STILL HERE — its later cold reattach then composes from a truncated history,
+    /// and `evictLaggingSubscribers` under-reports its lag because the retained bytes collapsed.
+    func testALateAckFromADepartedMemberDoesNotReleaseTheSurvivorsTail() async {
+        let session = makeLiveSession(primary: SendRecorder(), primaryControl: SendRecorder())
+        defer { session.pty.completeExitForTesting(code: 0)
+            session.shutdownDetached()
+        }
+        let joined = await session.joinSubscriber(
+            data: makeChannel(SendRecorder(), kind: .data),
+            control: makeChannel(SendRecorder(), kind: .control),
+            sizePassive: false,
+        )
+        guard let fast = joined else {
+            XCTFail("join must succeed")
+            return
+        }
+        session.ackForTesting(upTo: 0, from: fast)
+
+        let s1 = session.appendForTesting(Data(repeating: 0x41, count: 100))
+        let s2 = session.appendForTesting(Data(repeating: 0x42, count: 100))
+        session.ackForTesting(upTo: s1, from: MuxChannelSession.primarySubscriberID)
+        session.ackForTesting(upTo: s2, from: fast)
+        XCTAssertEqual(session.ackedSeqForTesting, s1, "precondition: the survivor's cursor is the floor")
+
+        XCTAssertFalse(session.removeSubscriber(fast), "one of two leaving does not empty the set")
+        session.ackForTesting(upTo: s2, from: fast) // the buffered ack its cancelled relay still had
+
+        XCTAssertEqual(
+            session.ackedSeqForTesting, s1,
+            "a ghost's cursor may not release bytes the member that REMAINS has not confirmed",
+        )
+        XCTAssertEqual(session.retainedBytesForTesting, 100)
+    }
+
+    /// The other half: with the set EMPTY there is genuinely no laggard left to hold the buffer for,
+    /// so an ack still releases. This is the ack test seam's own path, and dropping it would leave a
+    /// parked session pinning its whole tail forever.
+    func testAnAckOnAnEmptySetStillReleases() {
+        let session = makeLiveSession(primary: SendRecorder(), primaryControl: SendRecorder())
+        defer { session.pty.completeExitForTesting(code: 0)
+            session.shutdownDetached()
+        }
+        let seq = session.appendForTesting(Data(repeating: 0x41, count: 100))
+        XCTAssertTrue(session.removeSubscriber(MuxChannelSession.primarySubscriberID))
+        session.ackForTesting(upTo: seq)
+        XCTAssertEqual(session.ackedSeqForTesting, seq)
+        XCTAssertEqual(session.retainedBytesForTesting, 0)
+    }
+
     /// Thread-safe collector for eviction ids (the seam fires from a detached task).
     private final class EvictionBox: @unchecked Sendable {
         private let lock = NSLock()

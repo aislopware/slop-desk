@@ -165,15 +165,22 @@ final class MuxChannelSession: @unchecked Sendable {
     /// are below the seqs it will start from).
     ///
     /// Held ONLY across non-suspending work: the drain's inline `await send` happens after the
-    /// unlock. Lock order: `fanoutLock` → `subscribersLock` / `replayLock`; nothing takes it in
-    /// the other direction.
+    /// unlock. Lock order: `fanoutLock` → `subscribersLock` / `replayLock` / `taskLock`; nothing
+    /// takes it in the other direction. Only ``admitJoiner`` and
+    /// ``rebindRelay(data:control:onExit:transformDetachedBacklog:)`` hold it together with
+    /// `taskLock`, and both take it FIRST — the rebind then releases it before doing its work, so no
+    /// section ever holds `taskLock` while a drain is parked on this.
     private let fanoutLock = NSLock()
 
     /// Whether the drain hands frames to per-member outboxes instead of sending inline.
     ///
-    /// STICKY: set the first time a second member joins and never cleared, so the send path cannot
-    /// flip modes underneath a member whose sender is still draining its outbox (which would put
-    /// two writers on one data channel). Guarded by `fanoutLock`.
+    /// Set the first time a second member joins, and cleared at exactly ONE place: a
+    /// ``rebindRelay(data:control:onExit:transformDetachedBacklog:)`` on a session whose set has
+    /// EMPTIED. It survives a member merely LEAVING, deliberately — flipping modes while a surviving
+    /// member's sender is still draining its outbox would put two writers on one data channel. An
+    /// emptied set has no such member: `detach()` retired every one of them, finishing its wake and
+    /// dropping its outbox, so the returning client is a genuine one-member pane again.
+    /// Guarded by `fanoutLock`.
     ///
     /// While false — every session on the shipping path, where `SLOPDESK_PANE_FANOUT` is unset and
     /// the JOIN route is unreachable — the drain is the byte-identical inline send it has always
@@ -712,9 +719,14 @@ final class MuxChannelSession: @unchecked Sendable {
     /// The offer is `nil` until that subscriber sends its first wire-11 `resize` — a channel that
     /// has opened but not yet said how big it is votes for nothing rather than for 0×0.
     struct ResizeContribution {
-        /// tmux's `ignore-size`: present in the set, folded into nothing. **iOS is size-passive**, so
-        /// a phone in a pocket can never crush a Studio's nvim to its own width.
+        /// tmux's `ignore-size`: present in the set, folded into nothing while anybody who VOTES
+        /// holds the pane. **iOS is size-passive**, so a phone in a pocket can never crush a Studio's
+        /// nvim to its own width.
         var sizePassive: Bool
+        /// A `channelClass == 2` member. Passivity it can never shed: an observer is watching a grid
+        /// it did not choose, so it stays out of the fold even when it is the last one here — unlike
+        /// a size-passive PANE member, which sizes a pane no voter holds (see ``fold(_:)``).
+        var observer: Bool = false
         var offer: (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)?
     }
 
@@ -754,10 +766,16 @@ final class MuxChannelSession: @unchecked Sendable {
     /// "120×40 · sized by MacBook Pro" instead of guessing. **Never** consulted to decide whether an
     /// apply is needed; see ``applyResolvedGrid(ifGeneration:)``.
     private var resolvedGrid: (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)?
-    /// The ctl socket's `resize` verb, held for exactly one apply. An orchestrator saying "make this
-    /// pane 132×50" is an OVERRIDE, not a vote — but a one-shot one, so the next client offer still
-    /// wins, which is what the ctl verb has always done.
-    private var pendingCtlOverride: (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)?
+    /// The ctl socket's `resize` verb. An orchestrator saying "make this pane 132×50" is an
+    /// OVERRIDE, not a vote — and it stands until the NEXT CLIENT OFFER, which is what the ctl verb
+    /// has always done.
+    ///
+    /// Superseded by a contributing subscriber's `.resize` (``scheduleResize(from:cols:rows:px:py:)``)
+    /// and by nothing else. Retiring it on the next APPLY instead would make the verb inert: every
+    /// `.ack` flushes the fold, the SIGWINCH the override itself delivers makes the shell repaint,
+    /// and the repaint's ack lands within tens of milliseconds — so the orchestrator's size would be
+    /// undone by the output it caused.
+    private var ctlGridOverride: (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)?
     /// The in-flight debounce task (cancel-replace, à la `WorkspaceStore.scheduleSave`).
     private var resizeDebounceTask: Task<Void, Never>?
     /// The in-flight contributor-set settle task, and whether one is outstanding. While it is, an
@@ -1688,8 +1706,14 @@ final class MuxChannelSession: @unchecked Sendable {
         onExit newOnExit: (@Sendable (UInt32) -> Void)?,
         transformDetachedBacklog: Bool = false,
     ) -> Bool {
+        // Lock order `fanoutLock` → `taskLock`, matching ``admitJoiner`` — the only two places that
+        // hold both. Taken across the guards as well as the clear below, so the decision "this
+        // session is detached, so its set is empty" cannot be invalidated by a concurrent join
+        // between reading it and acting on it.
+        fanoutLock.lock()
         taskLock.lock()
         guard isDetached else { taskLock.unlock()
+            fanoutLock.unlock()
             return false
         }
         // Refuse DEAD sub-channels: `MuxNWConnection.finishLink` finishes every sub-channel BEFORE
@@ -1701,8 +1725,17 @@ final class MuxChannelSession: @unchecked Sendable {
         // (live agent unreachable by every map, store, TTL, and stop()). Refusing keeps the session
         // detached and claimable; the caller re-parks/reaps via its failed-rebind path.
         guard !newData.isFinished, !newControl.isFinished else { taskLock.unlock()
+            fanoutLock.unlock()
             return false
         }
+        // Back to ONE member, so back to the inline send. A pane that was ever fanned out reaches
+        // here with `fanoutActive` still true, and the member below is built with no outbox sender
+        // (only the JOIN path builds those) — leaving the flag set would route every frame into a
+        // queue with a nil wake: the returning client sees the caller's `replayTail` state transfer
+        // and then silence, forever, `.exit` included. Safe precisely because the set EMPTIED:
+        // `detach()` retired every member, so no surviving sender can be mid-outbox here.
+        fanoutActive = false
+        fanoutLock.unlock()
         // JOIN — the one-subscriber special case. The returning client REPLACES the member the
         // detach retired: a subscriber IS its channel pair, so a new pair is a new member under the
         // same id, never a swap underneath the tasks a departed one owned.
@@ -2216,14 +2249,17 @@ final class MuxChannelSession: @unchecked Sendable {
     ) {
         // Resolved BEFORE `resizeLock`: `subscribersLock` is this file's innermost lock and is never
         // held across another acquisition.
-        let passive = sizePassive || self.subscriber(subscriber)?.channelClass == .paneObserver
+        let observer = self.subscriber(subscriber)?.channelClass == .paneObserver
+        let passive = sizePassive || observer
         resizeLock.lock()
         let before = contributingCountLocked()
         if var existing = resizeContributions[subscriber] {
             existing.sizePassive = passive
+            existing.observer = observer
             resizeContributions[subscriber] = existing
         } else {
-            resizeContributions[subscriber] = ResizeContribution(sizePassive: passive, offer: nil)
+            resizeContributions[subscriber] =
+                ResizeContribution(sizePassive: passive, observer: observer, offer: nil)
         }
         armSizeSettleIfSetChangedLocked(from: before)
         resizeLock.unlock()
@@ -2266,6 +2302,10 @@ final class MuxChannelSession: @unchecked Sendable {
             ?? ResizeContribution(sizePassive: openedSizePassive, offer: nil)
         contribution.offer = (cols, rows, px, py)
         resizeContributions[subscriber] = contribution
+        // "The next client offer still wins" — and this is that offer. Only a CONTRIBUTING one: a
+        // size-passive member's offer wins nothing over the fold either, so letting it retire an
+        // orchestrator's override would hand a pocketed phone a vote by the back door.
+        if !contribution.sizePassive { ctlGridOverride = nil }
         // A contributor-set change is still settling: this offer simply joins the fold the settle
         // will resolve. Arming the short debounce here is precisely what would make a burst of joins
         // SIGWINCH the shell once per arrival.
@@ -2309,13 +2349,8 @@ final class MuxChannelSession: @unchecked Sendable {
             resizeLock.unlock()
             return
         }
-        let resolved: (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)?
-        if let override = pendingCtlOverride {
-            pendingCtlOverride = nil
-            resolved = override
-        } else {
-            resolved = Self.fold(resizeContributions)
-        }
+        let resolved: (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)? =
+            ctlGridOverride ?? Self.fold(resizeContributions)
         guard let grid = resolved else {
             // Nobody is holding this pane at a size — it keeps the one it has.
             resizeLock.unlock()
@@ -2346,16 +2381,31 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Monotone, so it settles. An input-keyed "whoever typed last drives" latch has no hysteresis:
     /// two clients typing alternately would flap `TIOCSWINSZ` + `SIGWINCH` + a full TUI repaint on
     /// every exchange.
+    ///
+    /// **A pane no VOTER holds is sized by its size-passive members instead.** "A phone must never
+    /// crush a Mac" (docs/45 §8.3 rule 3) is a statement about a Mac that is THERE: with an iOS-only
+    /// setup every subscriber is passive, and folding them all away leaves the shell at the
+    /// `openpty` default 80×24 for its whole life — a phone unable to size its own pane. The
+    /// fallback keys on the contributing set being EMPTY, not on it having made no offer, so a Mac
+    /// that has opened its channel but not yet said how big it is still shuts the phone out.
+    /// OBSERVERS are excluded from both passes: they watch a grid they did not choose.
     private static func fold(
+        _ contributions: [MuxSubscriberID: ResizeContribution],
+    ) -> (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)? {
+        let voters = contributions.filter { !$0.value.sizePassive }
+        if !voters.isEmpty { return foldOffers(voters) }
+        return foldOffers(contributions.filter { !$0.value.observer })
+    }
+
+    /// `min(cols)` / `min(rows)` over whichever slice of the set the fold decided votes.
+    private static func foldOffers(
         _ contributions: [MuxSubscriberID: ResizeContribution],
     ) -> (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)? {
         var folded: (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)?
         // Deterministic order so the pixel fields (which are NOT folded — they describe one client's
         // cell metrics, and a min over them is meaningless) come from a stable contributor.
         for subscriber in contributions.keys.sorted() {
-            guard let contribution = contributions[subscriber],
-                  !contribution.sizePassive,
-                  let offer = contribution.offer else { continue }
+            guard let offer = contributions[subscriber]?.offer else { continue }
             guard let current = folded else {
                 folded = offer
                 continue
@@ -2433,14 +2483,21 @@ final class MuxChannelSession: @unchecked Sendable {
     ///
     /// A subscriber that has not yet offered reports 0×0, which is honest: it holds the pane but has
     /// not said how big it is.
+    ///
+    /// `contributes` is what the fold ACTUALLY does, not the passivity flag alone: a phone alone on
+    /// a pane sizes it (see ``fold(_:)``), and publishing `false` there would make it render a
+    /// letterbox crediting a client that is not here.
     var resizeContributionsForWorkspace: [ResizeAttachment] {
         resizeLock.lock()
         defer { resizeLock.unlock() }
+        let passiveDecides = contributingCountLocked() == 0
         return resizeContributions.keys.sorted().compactMap { subscriber in
             guard let contribution = resizeContributions[subscriber] else { return nil }
+            let contributes = !contribution.sizePassive
+                || (passiveDecides && !contribution.observer)
             return ResizeAttachment(
                 subscriber: subscriber,
-                contributes: !contribution.sizePassive,
+                contributes: contributes,
                 cols: contribution.offer?.cols ?? 0,
                 rows: contribution.offer?.rows ?? 0,
             )
@@ -2760,8 +2817,8 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Resizes the PTY for the agent-control `resize` verb.
     ///
     /// An explicit OVERRIDE of the fold rather than a vote — an orchestrator saying "make this pane
-    /// 132×50" means it, and a ctl pane often has no contributing subscriber at all. It is a one-shot
-    /// override, so the next client offer still wins.
+    /// 132×50" means it, and a ctl pane often has no contributing subscriber at all. It stands until
+    /// a CONTRIBUTING subscriber offers a size of its own, and that offer is what retires it.
     ///
     /// Routed through ``applyResolvedGrid(ifGeneration:)`` — the ONE writer — so the ctl verb gets
     /// the journal size sidecar and the settled redraw nudge that the client path has always had. A
@@ -2773,7 +2830,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// contended from this path (it guards PTY-fd lifetime, not application state).
     func resizeForControl(rows: UInt16, cols: UInt16) {
         resizeLock.lock()
-        pendingCtlOverride = (cols: cols, rows: rows, px: 0, py: 0)
+        ctlGridOverride = (cols: cols, rows: rows, px: 0, py: 0)
         // Supersede any in-flight debounce/settle: the override is being applied RIGHT NOW, and a
         // timer that fired afterwards with the older fold would undo it a frame later.
         resizeGeneration &+= 1
@@ -3452,21 +3509,24 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Retention is `min` over the set, not last-writer-wins: the buffer holds what the SLOWEST
     /// reader still needs, so nobody's tail can be released out from under it by somebody else's
     /// progress. With one member the min IS that member's cursor, so this releases exactly what a
-    /// bare `replay.ack(upTo: seq)` did. An ack from a subscriber that is not in the set (already
-    /// departed, or the ack test seam on a session with none) releases to `seq` — there is no
-    /// laggard left to hold the buffer for.
+    /// bare `replay.ack(upTo: seq)` did.
+    ///
+    /// An ack from a subscriber that is NOT in the set records nothing and releases only to the min
+    /// over the members that remain. A departed member's control relay can still deliver one
+    /// buffered `.ack` after `retireSubscriber` dropped it (`Task.cancel()` does not unwind an
+    /// iteration already in flight), and honouring that cursor would release the tail of a laggard
+    /// that is still here — its later cold reattach then composes from a truncated history. Only an
+    /// EMPTY set falls through to `seq`: the ack test seam on a session with no members, where there
+    /// is genuinely no laggard left to hold the buffer for.
     ///
     /// The floor is recomputed INSIDE the `backpressureApplyLock` section, together with the pause
     /// decision it feeds: see ``updateReplayBackpressure()`` for why a value computed before the
     /// lock and applied after it can land stale on the gate and wedge the read loop.
     private func acknowledge(upTo seq: Int64, from id: MuxSubscriberID = MuxChannelSession.primarySubscriberID) {
         backpressureApplyLock.lock()
-        var floor = seq
         subscribersLock.lock()
-        if let sub = subscribers[id] {
-            sub.lastAckedSeq = seq
-            floor = subscribers.values.map(\.lastAckedSeq).min() ?? seq
-        }
+        subscribers[id]?.lastAckedSeq = seq
+        let floor = subscribers.values.map(\.lastAckedSeq).min() ?? seq
         subscribersLock.unlock()
         replayLock.lock()
         replay.ack(upTo: floor)
@@ -3771,6 +3831,11 @@ final class MuxChannelSession: @unchecked Sendable {
     /// rebuilt BEFORE the output drain can run.
     var onOutputDrainRestartedForTesting: (() -> Void)?
 
+    /// Race seam — fired inside ``joinSubscriber(id:data:control:channelClass:sizePassive:)`` with
+    /// the joiner already in the set and its DATA sender not yet built: the window in which fanned-out
+    /// frames land in an outbox whose wake is nil.
+    var onJoinerAdmittedForTesting: (@Sendable () async -> Void)?
+
     /// Whether a subscriber's control sender has its wake continuation installed. Read
     /// under `controlOutLock` — the same lock the enqueue reads it under, so this answers
     /// exactly "would an enqueue right now be woken?".
@@ -3962,6 +4027,9 @@ extension MuxChannelSession {
         let (wakeups, wake) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
         fifoLock.lock()
         sub.dataWake = wake
+        // Read under the SAME section that installs the wake: an enqueue after this point sees the
+        // wake and yields for itself, so the two cases are exhaustive with no window between them.
+        let hasBacklog = !sub.dataOut.isEmpty
         fifoLock.unlock()
         let data = sub.data
         let sender = Task { [weak self] in
@@ -3978,6 +4046,14 @@ extension MuxChannelSession {
             self?.markExitDelivered(sub)
         }
         install(sender, as: \.dataSendTask, on: sub)
+        // Kick ONCE for whatever is already queued. A joiner is entered into the set BEFORE its
+        // sender exists (`admitJoiner`), so every frame the drain fans out while its state transfer
+        // is on the wire lands in an outbox whose wake is still nil — those producer-side yields go
+        // nowhere. Without this kick they wait for the NEXT PTY byte: a pane that goes idle right
+        // after a join (a finished build, a returned prompt) leaves the joiner showing the pre-join
+        // screen indefinitely. `bufferingNewest(1)` holds the yield until the task reaches its
+        // for-await, and a retired member's finished continuation makes it a no-op.
+        if hasBacklog { wake.yield(()) }
     }
 
     /// Appends to ONE member's outbound data queue and wakes its sender. Guarded by `fifoLock` —
@@ -4100,9 +4176,17 @@ extension MuxChannelSession {
     /// they would delete a window of the incumbent's un-shipped output — bytes that are pre-seq, so
     /// no replay can recover them — and rewrite the seqs it is mid-stream on.
     ///
+    /// - Parameter id: the id the caller RESERVED for this join (``reserveSubscriberID()``) inside
+    ///   the same critical section that registered its channel key. The key is visible to every
+    ///   per-client teardown path the instant it is written, but the member does not exist until
+    ///   this method returns — so the reservation is what makes a link drop in that window
+    ///   attributable to the JOINER. `nil` mints one at admission: the unit-test shape, where
+    ///   nothing else can name the key.
+    ///
     /// - Returns: `false` when the pair is already dead (the joining link died mid-open), leaving
     ///   the set untouched so the caller can refuse the channel.
     func joinSubscriber(
+        id: MuxSubscriberID? = nil,
         data newData: MuxSubChannel,
         control newControl: MuxSubChannel,
         channelClass: MuxChannelClass = .pane,
@@ -4120,7 +4204,7 @@ extension MuxChannelSession {
         // A join must cost the client already watching nothing.
         let (rendered, composedThrough) = composeJoinSnapshot()
         guard let (sub, catchUp) = admitJoiner(
-            data: newData, control: newControl, channelClass: channelClass,
+            reserved: id, data: newData, control: newControl, channelClass: channelClass,
             composedThrough: composedThrough,
         ) else { return nil }
         let id = sub.id
@@ -4132,6 +4216,11 @@ extension MuxChannelSession {
         for message in rendered + catchUp {
             try? await newData.send(message)
         }
+        // Race seam: the joiner is IN the set and its data sender does not exist yet, so every frame
+        // the drain sequences right now lands in an outbox with a nil wake. Async, so a test can
+        // await the drain reaching that state instead of blocking a cooperative thread. `nil` in
+        // production — an un-called optional method is not a suspension point.
+        await onJoinerAdmittedForTesting?()
         startDataSender(for: sub)
 
         // JOIN-scoped re-asserts, addressed to the new member only — the incumbents were told these
@@ -4155,6 +4244,7 @@ extension MuxChannelSession {
     /// NSLock is unavailable from an async context (the ``snapshotReplayTailForSend(after:)``
     /// discipline), and the whole point of this section is that it never suspends anyway.
     private func admitJoiner(
+        reserved: MuxSubscriberID?,
         data newData: MuxSubChannel,
         control newControl: MuxSubChannel,
         channelClass: MuxChannelClass,
@@ -4181,8 +4271,7 @@ extension MuxChannelSession {
         }
         replayLock.unlock()
         subscribersLock.lock()
-        let id = nextSubscriberID
-        nextSubscriberID &+= 1
+        let id = reserved ?? mintSubscriberIDLocked()
         let sub = Subscriber(id: id, channelClass: channelClass, data: newData, control: newControl)
         // The joiner starts CURRENT: it is receiving the rendered screen, not the history behind
         // it, so its retention cursor must not hold bytes every other member has already acked.
@@ -4216,6 +4305,31 @@ extension MuxChannelSession {
             if case let .output(seq, _) = message { covered = Swift.max(covered, seq) }
         }
         return (messages, covered)
+    }
+
+    /// RESERVES the id a pending JOIN will enter the set under, before the join runs.
+    ///
+    /// The composite key a joining channel registers under is visible to every per-client teardown
+    /// path (`handleLinkDown`, a peer `channelClose`, the eviction seam) the instant it is written,
+    /// but the member itself does not exist until ``joinSubscriber(id:data:control:channelClass:sizePassive:)``
+    /// has composed an O(retained history) screen and shipped it through the joiner's credit window —
+    /// seconds on a pane with a full scrollback. A key naming no id in that window falls back to
+    /// ``primarySubscriberID``, and the joiner's link dropping there retires the INCUMBENT and parks
+    /// its live pane. Reserving under the same critical section that registers the key is what makes
+    /// the window attributable.
+    ///
+    /// A reservation the join never uses (a refused or failed open) simply skips an id.
+    func reserveSubscriberID() -> MuxSubscriberID {
+        subscribersLock.lock()
+        defer { subscribersLock.unlock() }
+        return mintSubscriberIDLocked()
+    }
+
+    /// Caller holds `subscribersLock`.
+    private func mintSubscriberIDLocked() -> MuxSubscriberID {
+        let id = nextSubscriberID
+        nextSubscriberID &+= 1
+        return id
     }
 
     /// Synchronous read of the detach latch (NSLock is unavailable from an async context).

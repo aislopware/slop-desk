@@ -111,6 +111,11 @@ final class WorkspaceRosterPanesTests: XCTestCase {
     /// A pane channel and the workspace channel are announced independently on one connection, so a
     /// client that opens its panes BEFORE it subscribes resolves them against a workspace channel
     /// that does not exist yet. The subscribe is the edge that settles it.
+    ///
+    /// A Mac holds the same pane throughout, deliberately: `contributes` is what the fold ACTUALLY
+    /// does, and a pane no voter holds is sized by its passive members (§8.3 rule 3). Without a
+    /// voter present the phone would keep publishing `contributes: true` after the re-resolve — for
+    /// the right reason, but the assertion would then be blind to the thing it exists to check.
     func testASubscribeReresolvesPassivityForPanesOpenedFirst() {
         let server = HostServer(port: 0, workspaceDocEnabled: false)
         defer { Task { await server.stop() } }
@@ -118,6 +123,7 @@ final class WorkspaceRosterPanesTests: XCTestCase {
         let connectionID = UUID()
         let session = makeSession(sessionID: UUID())
         session.addResizeContributor(sizePassive: server.sizePassiveForConnection(connectionID))
+        session.addResizeContributor(9, sizePassive: false) // a Mac also holds this pane
         server.registerMuxSessionForTesting(session, key: MuxSessionKey(connectionID: connectionID, channelID: 1))
         XCTAssertEqual(
             session.resizeContributionsForWorkspace.first?.contributes, true,
