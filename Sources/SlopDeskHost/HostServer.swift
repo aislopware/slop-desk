@@ -242,6 +242,11 @@ public final class HostServer: @unchecked Sendable {
     /// The host's single copy of the workspace. `nil` when ``workspaceDocEnabled`` is false.
     let workspaceDocument: HostWorkspaceDocument?
 
+    /// Where that copy lives between daemon runs, and where the first-run default comes from. `nil`
+    /// when the document is off, or when Application Support cannot be resolved — a host that cannot
+    /// persist still serves a workspace, it just mints a fresh one every start.
+    let workspaceStore: HostWorkspaceStore?
+
     /// At most ONE workspace channel per mux connection, keyed by `connectionID` and guarded by
     /// `lock`. A second `channelClass == 1` open on the same connection is refused: two subscribers
     /// behind one link would each keep their own acked base for the same viewer, and the roster
@@ -290,6 +295,7 @@ public final class HostServer: @unchecked Sendable {
         scrollbackJournals: ScrollbackJournalStore? = nil,
         scrollbackSweepInterval: Duration = .seconds(24 * 3600),
         workspaceDocEnabled: Bool? = nil,
+        workspaceStore: HostWorkspaceStore? = nil,
         workspaceReconcileInterval: Duration = .milliseconds(500),
     ) {
         self.port = port
@@ -312,6 +318,12 @@ public final class HostServer: @unchecked Sendable {
         // daemon counts `stateNum` back up from 1 and a returning client one behind would accept a
         // delta computed against a completely different document.
         workspaceDocument = wantsDocument ? HostWorkspaceDocument() : nil
+        // Injected by tests, which must never read or write the developer's real Application
+        // Support: `load()` mints and `scheduleSave` writes, and one test doing either against the
+        // shared path would silently replace a workspace somebody is using.
+        self.workspaceStore = wantsDocument
+            ? (workspaceStore ?? HostWorkspaceStore.make(hostDisplayName: HostWorkspaceStore.hostDisplayName()))
+            : nil
         gitWatchEnabled = ProcessInfo.processInfo.environment["SLOPDESK_GIT_WATCH"] != "0"
         transport = HostTransport()
 
@@ -366,6 +378,12 @@ public final class HostServer: @unchecked Sendable {
                 sessionID: session.sessionID, instance: session.scrollbackJournal,
             )
             self?.unregisterHookSink(session: session)
+            // The store killed a session behind the document's back. Without this the document goes
+            // semantically stale with no signal and every client keeps rendering a live row for a
+            // shell that was reaped on a TTL.
+            guard let document = self?.workspaceDocument else { return }
+            let paneID = session.sessionID
+            Task { await document.markPaneDead(paneID) }
         }
 
         // Repo-watch push wiring (the closures capture weak self, so they wire AFTER init's stored
@@ -490,6 +508,7 @@ public final class HostServer: @unchecked Sendable {
         Task.detached(priority: .utility) { [weak self] in
             _ = self?.resolveEffectiveTerm(requested: .ghostty, explicitOverride: false)
         }
+        await installWorkspaceDocument()
         startWorkspaceReconciler()
         let muxStream = transport.muxConnections
         muxAcceptTask = Task { [weak self] in
@@ -529,6 +548,8 @@ public final class HostServer: @unchecked Sendable {
         }
         workspaceReconcileTask?.cancel()
         workspaceReconcileTask = nil
+        // A debounce that outlives the process loses the last thing the user did.
+        await workspaceStore?.flush()
         await workspaceDocument?.shutdown()
         drainWorkspaceChannels()
         // Kill every detached session — shells that were kept alive across a client disconnect.

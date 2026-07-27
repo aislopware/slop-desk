@@ -66,6 +66,26 @@ public actor HostWorkspaceStore {
 
     // MARK: - Load
 
+    /// Whether this host has ever written a workspace.
+    ///
+    /// The question `adoptWorkspace` asks — "has this host had a workspace of its own?" — and a file
+    /// on disk answers it yes however plain its contents. Deliberately separate from ``load()``,
+    /// which returns a usable document either way and so cannot say which it was.
+    public var hasStoredWorkspace: Bool {
+        FileManager.default.fileExists(atPath: fileURL.path)
+    }
+
+    /// The name this host publishes as its own.
+    ///
+    /// `Host.current().localizedName` is what a Mac calls itself in Sharing preferences — the name
+    /// the user already recognises. It falls back to the POSIX hostname, then to a constant, because
+    /// a workspace with no label is still a workspace.
+    public static func hostDisplayName() -> String {
+        if let localized = Host.current().localizedName, !localized.isEmpty { return localized }
+        let name = ProcessInfo.processInfo.hostName
+        return name.isEmpty ? "SlopDesk" : name
+    }
+
     /// The workspace this host starts with.
     ///
     /// Every failure lands on the same answer — a usable default — because a corrupt file must never

@@ -39,6 +39,19 @@ public actor HostWorkspaceDocument {
     private var subscribers: [UUID: WorkspaceChannelSession] = [:]
     private let onLog: (@Sendable (String) -> Void)?
 
+    /// Called with the whole document whenever its TOPOLOGY half changed — the persistence sink.
+    ///
+    /// Only the topology half, because liveness does not survive a restart and offering it would
+    /// rewrite the same filtered bytes on every reconciler tick for a host nobody is even using.
+    private var onTopologyChange: (@Sendable (HostWorkspaceState) -> Void)?
+
+    /// Whether this document is still exactly what the host minted for a first run.
+    ///
+    /// Read by one thing only: `adoptWorkspace`, the legacy bootstrap. A client may upload its local
+    /// tree to a host that has never had one, and to no other kind of host — which makes this the
+    /// difference between importing somebody's layout and destroying it.
+    public private(set) var isPristine = true
+
     @preconcurrency
     public init(
         epoch: UUID = UUID(),
@@ -49,6 +62,27 @@ public actor HostWorkspaceDocument {
         self.state = state
         self.onLog = onLog
     }
+
+    /// Installs the workspace this host starts with — restored from disk, or freshly minted.
+    ///
+    /// `pristine` says which. A restored document has a workspace somebody built and must refuse an
+    /// upload; a minted one is the only kind that may accept one.
+    ///
+    /// No version bump: this runs before any subscriber exists, and a bump would only make the first
+    /// snapshot claim to be the second.
+    @preconcurrency
+    public func install(
+        state restored: HostWorkspaceState,
+        pristine: Bool,
+        onTopologyChange sink: (@Sendable (HostWorkspaceState) -> Void)? = nil,
+    ) {
+        state = restored
+        isPristine = pristine
+        onTopologyChange = sink
+    }
+
+    /// The topology half as a value, or `nil` before one is installed.
+    public var topology: WorkspaceTopology? { state.topology }
 
     /// The document as a value. Read-only; the only way to change it is through this actor.
     public var snapshot: HostWorkspaceState { state }
@@ -81,12 +115,99 @@ public actor HostWorkspaceDocument {
     ///
     /// The reconciler's entry point: it captures every live pane and hands the whole set over, so a
     /// tick that observed three changed panes costs one `stateNum`, not three. Panes present in the
-    /// document but absent from `records` are left alone — reaping is ``removePanes(keeping:)``, a
+    /// document but absent from `records` are left alone — reaping is ``reconcile(captured:)``, a
     /// separate decision with a separate failure mode.
     @discardableResult
     public func merge(paneLiveness records: [PaneLiveness]) -> Bool {
         mutate { next in
             for record in records { next.merge(paneLiveness: record) }
+        }
+    }
+
+    /// One reconciler pass: fold in what was captured, and decide what the rest of the panes are.
+    ///
+    /// The decision the naive "reap what was not captured" rule gets wrong once topology lives here.
+    /// A pane the host restored from disk has no process — that is the whole point of a restart — but
+    /// it is still a REAL pane in a REAL tab, and deleting it would erase the user's layout every
+    /// time hostd restarted. So:
+    ///
+    /// - captured → its liveness is whatever the capture says;
+    /// - in the topology but not captured → `liveness = 2`, rendered STALE rather than fake-live, and
+    ///   keeping the two fields that describe a PLACE rather than a process;
+    /// - neither → reaped, because nothing owns it. That is a pane whose channel closed and whose tab
+    ///   entry is gone, which is the case the old rule was actually for.
+    @discardableResult
+    public func reconcile(captured records: [PaneLiveness]) -> Bool {
+        mutate { next in
+            for record in records { next.merge(paneLiveness: record) }
+            let alive = Set(records.map(\.paneID))
+            let topologyPanes = Set(
+                next.entries.keys
+                    .filter {
+                        $0.kind == WorkspaceObjectKind.pane.rawValue
+                            && PaneLiveness.topologyFields().contains($0.field)
+                    }
+                    .map(\.objectID),
+            )
+            let known = Set(
+                next.entries.keys
+                    .filter { $0.kind == WorkspaceObjectKind.pane.rawValue }
+                    .map(\.objectID),
+            )
+            for paneID in known.subtracting(alive) {
+                guard topologyPanes.contains(paneID) else {
+                    next.removeObject(kind: WorkspaceObjectKind.pane.rawValue, objectID: paneID)
+                    continue
+                }
+                next.markPaneDead(paneID)
+            }
+        }
+    }
+
+    /// Marks one pane as having no process — `DetachedSessionStore`'s eviction hook.
+    ///
+    /// Without it the document goes semantically stale with no signal: the store kills a session
+    /// behind the document's back, and every client keeps rendering a live row for a shell that was
+    /// reaped on a TTL.
+    @discardableResult
+    public func markPaneDead(_ paneID: UUID) -> Bool {
+        mutate { $0.markPaneDead(paneID) }
+    }
+
+    // MARK: - Intents
+
+    /// Applies one client's requested topology change.
+    ///
+    /// The decision itself is `WorkspaceIntentApplier` — pure, and the same function the client runs
+    /// for its optimistic overlay. What happens HERE is the part that cannot be pure: the actor
+    /// serializes it, so `stateNum` is monotone by construction and two clients racing the same cell
+    /// resolve by arrival order rather than by a merge function nobody can reason about.
+    public func apply(intent op: UInt8, args: Data) -> WorkspaceIntentStatus {
+        guard let current = state.topology else {
+            // No workspace to change. A client that got this far has a document; one that has not
+            // will be snapshotted the moment there is one.
+            return .rejectedNotFound
+        }
+        let outcome = WorkspaceIntentApplier.apply(
+            op: op, args: args, to: current, documentIsPristine: isPristine,
+        )
+        guard let next = outcome.topology else { return Self.status(for: outcome) }
+        // The bootstrap is the one op that may not run twice, so ANY accepted intent ends pristine —
+        // including one that changed nothing. A client that renamed a tab to its own name has still
+        // taken ownership of this workspace.
+        isPristine = false
+        mutate { $0.write(topology: next) }
+        onTopologyChange?(state)
+        return .applied
+    }
+
+    private static func status(for outcome: WorkspaceIntentOutcome) -> WorkspaceIntentStatus {
+        switch outcome {
+        case .applied: .applied
+        case .rejectedStale: .rejectedStale
+        case .rejectedInvalid: .rejectedInvalid
+        case .rejectedNotFound: .rejectedNotFound
+        case .unknownOp: .unknownOp
         }
     }
 

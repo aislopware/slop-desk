@@ -59,16 +59,38 @@ final class WorkspaceChannelLoopbackTests: XCTestCase {
         let server: HostServer
         let client: MuxNWConnection
         let host: MuxNWConnection
+        let directory: URL
+    }
+
+    private var temporaryDirectories: [URL] = []
+
+    override func tearDown() {
+        for url in temporaryDirectories { try? FileManager.default.removeItem(at: url) }
+        temporaryDirectories = []
     }
 
     private func makeRig(workspaceDocEnabled: Bool = true) async -> Rig {
+        // A REAL store, pointed at a scratch directory. Never the default location: `load()` mints
+        // and the persist sink writes, and one test doing either against Application Support would
+        // silently replace a workspace somebody is using.
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("slopdesk-workspace-rig-\(UUID().uuidString)", isDirectory: true)
+        temporaryDirectories.append(directory)
         let server = HostServer(
             port: 0,
             workspaceDocEnabled: workspaceDocEnabled,
+            workspaceStore: HostWorkspaceStore(
+                fileURL: directory.appendingPathComponent("workspace-state.json"),
+                hostDisplayName: "mac-studio",
+                debounce: .milliseconds(1),
+            ),
             // Long enough that nothing in these tests is carried by the backstop tick: every
             // assertion must be satisfied by the explicit subscribe-time reconcile or a kick.
             workspaceReconcileInterval: .seconds(3600),
         )
+        // What `start()` does before the listener accepts anything. Called directly because the rig
+        // drives loopback links rather than a socket.
+        await server.installWorkspaceDocumentForTesting()
         let (clientControl, hostControl) = LoopbackMuxLink.pair()
         let (clientData, hostData) = LoopbackMuxLink.pair()
         let host = MuxNWConnection(role: .host, controlLink: hostControl, dataLink: hostData)
@@ -79,7 +101,7 @@ final class WorkspaceChannelLoopbackTests: XCTestCase {
         }
         await host.start()
         await client.start()
-        return Rig(server: server, client: client, host: host)
+        return Rig(server: server, client: client, host: host, directory: directory)
     }
 
     /// Opens the workspace channel and subscribes, returning the control sub-channel and a collector
@@ -204,6 +226,32 @@ final class WorkspaceChannelLoopbackTests: XCTestCase {
         await expect({ collector.events(kind).count >= count }, "\(count)× \(kind)", file: file, line: line)
         let matching = collector.events(kind)
         return matching.count >= count ? matching[count - 1] : nil
+    }
+
+    /// Acks every document frame as it arrives — what a real client does, and what the host's flow
+    /// control assumes. Exactly ONE frame is outstanding at a time: while an ack is pending, further
+    /// updates coalesce into the pending slot, which is also what keeps every diff's declared
+    /// `baseStateNum` equal to what the client actually holds. A test that acks once therefore sees
+    /// one more frame and then silence, and it would look like the host had stopped publishing.
+    private func startAckPump(_ control: MuxSubChannel, _ collector: FrameCollector) -> Task<Void, Never> {
+        Task {
+            var acked: Int64 = 0
+            while !Task.isCancelled {
+                let latest = collector.all().last {
+                    ($0.kind == WorkspaceEventKind.snapshot.rawValue
+                        || $0.kind == WorkspaceEventKind.diff.rawValue) && $0.new > acked
+                }
+                if let latest {
+                    acked = latest.new
+                    try? await control.send(.workspaceRequest(
+                        requestSeq: 0,
+                        verb: WorkspaceRequestVerb.ack.rawValue,
+                        payload: WorkspaceStateCodec.encodeI64(acked),
+                    ))
+                }
+                try? await Task.sleep(for: .milliseconds(2))
+            }
+        }
     }
 
     func testAWorkspaceOpenIsAcceptedAndYieldsASnapshot() async throws {
@@ -357,7 +405,9 @@ final class WorkspaceChannelLoopbackTests: XCTestCase {
         await rig.server.stop()
     }
 
-    func testAnIntentIsAnsweredUnknownOpUntilPhaseFive() async throws {
+    /// An op byte this build does not know gets a definite answer, not silence — the client rolls
+    /// its optimistic patch back at once rather than waiting out a timeout.
+    func testAnUnknownOpIsAnsweredRatherThanIgnored() async throws {
         let rig = await makeRig()
         let (control, collector, _) = try await openWorkspace(rig)
         defer { collector.stop() }
@@ -367,14 +417,147 @@ final class WorkspaceChannelLoopbackTests: XCTestCase {
         try await control.send(.workspaceRequest(
             requestSeq: 9,
             verb: WorkspaceRequestVerb.intent.rawValue,
-            payload: WorkspaceIntent(intentID: intentID, op: 2, args: Data([1, 2])).encode(),
+            payload: WorkspaceIntent(intentID: intentID, op: 250, args: Data()).encode(),
         ))
-        // A definite answer, not silence: the client rolls its optimistic patch back at once rather
-        // than waiting out a timeout.
+
         let result = try await unwrapEvent(awaitEvent(collector, kind: .intentResult))
         let decoded = try WorkspaceIntentResult.decode(result.payload)
         XCTAssertEqual(decoded.intentID, intentID)
         XCTAssertEqual(decoded.status, WorkspaceIntentStatus.unknownOp.rawValue)
+        await rig.server.stop()
+    }
+
+    /// The round trip the whole phase is for: a client asks, the host decides, and the CHANGE comes
+    /// back to every subscriber as an ordinary diff — not as a reply only the asker sees.
+    func testAnIntentIsAnsweredAndTheChangeArrivesAsADiff() async throws {
+        let rig = await makeRig()
+        let (control, collector, _) = try await openWorkspace(rig)
+        defer { collector.stop() }
+        let snapshot = try await unwrapEvent(awaitEvent(collector, kind: .snapshot))
+        let before = try WorkspaceStateCodec.decodeSnapshot(snapshot.payload)
+        let tabID = try XCTUnwrap(before.topology?.tree.sessions.first?.tabs.first?.id)
+
+        let pump = startAckPump(control, collector)
+        defer { pump.cancel() }
+
+        let intentID = UUID()
+        try await control.send(.workspaceRequest(
+            requestSeq: 9,
+            verb: WorkspaceRequestVerb.intent.rawValue,
+            payload: WorkspaceIntent(
+                intentID: intentID,
+                op: WorkspaceIntentOp.renameTab.rawValue,
+                args: WorkspaceIntentArgs.encode(id: tabID.raw, name: "build"),
+            ).encode(),
+        ))
+
+        let result = try await unwrapEvent(awaitEvent(collector, kind: .intentResult))
+        XCTAssertEqual(
+            try WorkspaceIntentResult.decode(result.payload).status,
+            WorkspaceIntentStatus.applied.rawValue,
+        )
+        await expect({
+            guard let frame = collector.events(.diff).last,
+                  let diff = try? WorkspaceStateCodec.decodeDiff(frame.payload) else { return false }
+            return diff.sets.contains {
+                $0.key == WorkspaceKey(.tab, tabID.raw, WorkspaceTabField.title)
+                    && WorkspaceStateCodec.decodeString($0.value) == "build"
+            }
+        }, "the rename arrives as a diff every subscriber gets")
+        await rig.server.stop()
+    }
+
+    /// A host with no file publishes a real workspace on the very first snapshot. Once client-side
+    /// tree persistence is gone this IS the cold start — a blank first frame would dead-end it.
+    func testTheFirstSnapshotAlreadyCarriesAWorkspace() async throws {
+        let rig = await makeRig()
+        let (_, collector, _) = try await openWorkspace(rig)
+        defer { collector.stop() }
+        let snapshot = try await unwrapEvent(awaitEvent(collector, kind: .snapshot))
+
+        let topology = try XCTUnwrap(try WorkspaceStateCodec.decodeSnapshot(snapshot.payload).topology)
+        XCTAssertEqual(topology.tree.sessions.count, 1)
+        XCTAssertEqual(topology.tree.allPaneIDs().count, 1)
+        XCTAssertEqual(topology.hostDisplayName, "mac-studio")
+        await rig.server.stop()
+    }
+
+    /// An applied intent reaches DISK, so the layout survives a daemon restart. The sink fires on the
+    /// topology half only — a liveness tick must not rewrite the file for a host nobody is using.
+    func testAnAppliedIntentIsPersisted() async throws {
+        let rig = await makeRig()
+        let (control, collector, _) = try await openWorkspace(rig)
+        defer { collector.stop() }
+        let snapshot = try await unwrapEvent(awaitEvent(collector, kind: .snapshot))
+        let tabID = try XCTUnwrap(
+            try WorkspaceStateCodec.decodeSnapshot(snapshot.payload).topology?.tree.sessions.first?.tabs.first?.id,
+        )
+
+        try await control.send(.workspaceRequest(
+            requestSeq: 9,
+            verb: WorkspaceRequestVerb.intent.rawValue,
+            payload: WorkspaceIntent(
+                intentID: UUID(),
+                op: WorkspaceIntentOp.renameTab.rawValue,
+                args: WorkspaceIntentArgs.encode(id: tabID.raw, name: "persisted"),
+            ).encode(),
+        ))
+        _ = await awaitEvent(collector, kind: .intentResult)
+        await rig.server.workspaceStore?.flush()
+
+        let reloaded = HostWorkspaceStore(
+            fileURL: rig.directory.appendingPathComponent("workspace-state.json"),
+            hostDisplayName: "mac-studio",
+        )
+        let restored = await reloaded.load()
+        XCTAssertEqual(
+            restored.string(WorkspaceKey(.tab, tabID.raw, WorkspaceTabField.title)), "persisted",
+        )
+        await rig.server.stop()
+    }
+
+    /// The bootstrap is a bootstrap, not a migration. A host that has already written a workspace
+    /// refuses an upload — and the loser is TOLD, because its tree is the only copy of a layout
+    /// somebody built.
+    func testAdoptIsRefusedOnceTheHostHasWrittenAWorkspace() async throws {
+        let rig = await makeRig()
+        let (control, collector, _) = try await openWorkspace(rig)
+        defer { collector.stop() }
+        let snapshot = try await unwrapEvent(awaitEvent(collector, kind: .snapshot))
+        let tabID = try XCTUnwrap(
+            try WorkspaceStateCodec.decodeSnapshot(snapshot.payload).topology?.tree.sessions.first?.tabs.first?.id,
+        )
+        // Any accepted intent takes ownership of this workspace.
+        try await control.send(.workspaceRequest(
+            requestSeq: 9,
+            verb: WorkspaceRequestVerb.intent.rawValue,
+            payload: WorkspaceIntent(
+                intentID: UUID(),
+                op: WorkspaceIntentOp.renameTab.rawValue,
+                args: WorkspaceIntentArgs.encode(id: tabID.raw, name: "mine"),
+            ).encode(),
+        ))
+        _ = await awaitEvent(collector, kind: .intentResult)
+
+        var uploaded = HostWorkspaceState()
+        uploaded.write(topology: WorkspaceTopology(tree: .defaultWorkspace()))
+        let adoptID = UUID()
+        try await control.send(.workspaceRequest(
+            requestSeq: 10,
+            verb: WorkspaceRequestVerb.intent.rawValue,
+            payload: WorkspaceIntent(
+                intentID: adoptID,
+                op: WorkspaceIntentOp.adoptWorkspace.rawValue,
+                args: WorkspaceStateCodec.encodeSnapshot(uploaded),
+            ).encode(),
+        ))
+
+        await expect({
+            guard let frame = collector.events(.intentResult).last,
+                  let decoded = try? WorkspaceIntentResult.decode(frame.payload) else { return false }
+            return decoded.intentID == adoptID
+                && decoded.status == WorkspaceIntentStatus.rejectedStale.rawValue
+        }, "the second workspace is refused, not merged")
         await rig.server.stop()
     }
 

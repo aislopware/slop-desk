@@ -283,6 +283,22 @@ public struct PaneLiveness: Equatable, Sendable {
 // MARK: - Merge
 
 public extension HostWorkspaceState {
+    /// Declares that one pane has no process, keeping only what describes a PLACE.
+    ///
+    /// `cwd` and `projectKey` survive because they are still true — the directory a dead pane was
+    /// working in has not moved — and because the By-Project sidebar would otherwise re-bucket every
+    /// restored row the moment its shell is gone. Everything else is a claim about a running process
+    /// and would render the pane fake-live.
+    @discardableResult
+    mutating func markPaneDead(_ paneID: UUID) -> Bool {
+        merge(paneLiveness: PaneLiveness(
+            paneID: paneID,
+            liveness: .dead,
+            cwd: string(WorkspaceKey(.pane, paneID, WorkspacePaneField.cwd)),
+            projectKey: string(WorkspaceKey(.pane, paneID, WorkspacePaneField.projectKey)),
+        ))
+    }
+
     /// Replaces one pane's LIVENESS fields wholesale, leaving its topology fields untouched.
     ///
     /// Clear-then-write, not write-over: a fact that stopped being true has to disappear. Writing

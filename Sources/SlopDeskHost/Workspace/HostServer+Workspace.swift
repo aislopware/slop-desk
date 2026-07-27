@@ -3,12 +3,45 @@ import SlopDeskProtocol
 import SlopDeskTransport
 import SlopDeskWorkspaceModel
 
-// The workspace-document channel (`channelClass == 1`, docs/45 §5.1) — accept, serve, reconcile.
+// The workspace-document channel (`channelClass == 1`, docs/45 §5.1) — accept, serve, reconcile,
+// and apply what clients ask for.
 //
-// Everything here is READ-ONLY in Phase 4: the host publishes what it knows and the client mirrors
-// it. Intents (verb 3) are accepted by the codec and answered `unknownOp` until Phase 5, so a client
-// built against a later protocol gets a definite answer rather than silence.
+// The traffic is asymmetric on purpose. The host publishes a whole document and diffs against what
+// each subscriber acked; a client sends only INTENTS — never state — so there is exactly one place
+// the topology changes and no merge function anywhere.
 extension HostServer {
+    // MARK: - Bootstrap
+
+    /// Gives the document the workspace this host starts with, and wires it to disk.
+    ///
+    /// Runs from `start()`, before the listener can accept anything — a subscriber that arrived first
+    /// would be snapshotted an empty document and then immediately re-snapshotted, which is harmless
+    /// but makes the very first frame a lie.
+    ///
+    /// With no store (Application Support unresolvable), the host still serves a workspace: it mints
+    /// a fresh default each start. Degraded, not broken — and `pristine` stays true, so a client can
+    /// still upload the layout it has.
+    func installWorkspaceDocument() async {
+        guard let document = workspaceDocument else { return }
+        guard let store = workspaceStore else {
+            var minted = HostWorkspaceState()
+            minted.write(topology: WorkspaceTopology(
+                tree: .defaultWorkspace(),
+                hostDisplayName: HostWorkspaceStore.hostDisplayName(),
+            ))
+            await document.install(state: minted, pristine: true)
+            return
+        }
+        // Asked BEFORE the load, which mints a default when there is nothing to restore and so can
+        // no longer tell the two apart afterwards.
+        let hadWorkspace = await store.hasStoredWorkspace
+        let restored = await store.load()
+        await document.install(state: restored, pristine: !hadWorkspace) { [weak store] state in
+            guard let store else { return }
+            Task { await store.scheduleSave(state) }
+        }
+    }
+
     // MARK: - Accept
 
     /// Handles a `channelOpen` whose class is ``MuxChannelClass/workspace``.
@@ -100,11 +133,18 @@ extension HostServer {
             await document.broadcastRoster()
 
         case .intent:
-            // Phase 5. Answer definitively rather than silently, so a client's optimistic patch is
-            // rolled back at once instead of waiting out a timeout.
+            // A malformed envelope is dropped in silence — there is no `intentID` to answer to. Every
+            // DECODABLE intent gets a definite answer, including a refusal, so a client's optimistic
+            // patch is rolled back at once instead of waiting out a timeout.
             guard let intent = try? WorkspaceIntent.decode(payload) else { return }
             guard let session = workspaceChannel(for: connectionID) else { return }
-            session.deliver(result: WorkspaceIntentResult(intentID: intent.intentID, status: .unknownOp))
+            let status = await document.apply(intent: intent.op, args: intent.args)
+            session.deliver(result: WorkspaceIntentResult(intentID: intent.intentID, status: status))
+            if status == .applied {
+                // The topology moved, so the pane inventory may have too — a close reaps, a spawn
+                // wants its liveness published before the client's optimistic patch retires.
+                await reconcileWorkspaceDocument()
+            }
 
         case nil:
             onLog?("workspace channel (conn \(connectionID)): unknown verb \(verb) dropped")
@@ -166,14 +206,10 @@ extension HostServer {
         guard beginWorkspaceReconcile() else { return }
         defer { finishWorkspaceReconcile() }
 
-        let records = captureWorkspacePanes()
-        await document.merge(paneLiveness: records)
-        // Reap panes the host no longer knows about — a child that exited, a detached session the
-        // store evicted. Without this every client keeps rendering a row for a process that is gone.
-        //
-        // Phase 4 holds ONLY liveness records, so "not captured" and "not a pane" coincide. Phase 5
-        // adds persisted topology, and this must narrow to panes with no topology fields then.
-        await document.removePanes(keeping: Set(records.map(\.paneID)))
+        // One pass decides all three cases: captured panes get their liveness, panes the topology
+        // still names but nothing captured go STALE rather than being deleted (that is every pane on
+        // a host that just restarted), and panes nothing owns at all are reaped.
+        await document.reconcile(captured: captureWorkspacePanes())
     }
 
     private func finishWorkspaceReconcile() {
@@ -206,5 +242,9 @@ extension HostServer {
 
     func reconcileWorkspaceDocumentForTesting() async {
         await reconcileWorkspaceDocument()
+    }
+
+    func installWorkspaceDocumentForTesting() async {
+        await installWorkspaceDocument()
     }
 }
