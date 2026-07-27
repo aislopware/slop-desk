@@ -142,9 +142,22 @@ extension HostServer {
             // patch is rolled back at once instead of waiting out a timeout.
             guard let intent = try? WorkspaceIntent.decode(payload) else { return }
             guard let session = workspaceChannel(for: connectionID) else { return }
+            // The pane inventory BEFORE the apply, so a topology delete can be told apart from a
+            // client merely letting go of a pane. `closePane` / `closeTab` run HOST-side, so the
+            // DOCUMENT is where "this pane is gone" is decided — a `channelClose` is only ever one
+            // client leaving, and under a fan-out reaping on it would take down the other client's
+            // running agent.
+            let before = await Self.topologyPaneIDs(document.topology)
             let status = await document.apply(intent: intent.op, args: intent.args)
             session.deliver(result: WorkspaceIntentResult(intentID: intent.intentID, status: status))
             if status == .applied {
+                // A pane the topology no longer names is REAPED unconditionally and refcount-blind:
+                // close every subscriber's channel for it and kill the shell. Skipping that would
+                // leave a running shell with no UI anywhere and no document entry — the orphan
+                // docs/45 §8.6 forbids — and it is what makes §8.7's "tear down only on
+                // `channelClose`" satisfiable, because the host always sends one.
+                let after = await Self.topologyPaneIDs(document.topology)
+                reapPanesRemovedFromTopology(before.subtracting(after))
                 // The topology moved, so the pane inventory may have too — a close reaps, a spawn
                 // wants its liveness published before the client's optimistic patch retires.
                 await reconcileWorkspaceDocument()
@@ -179,6 +192,18 @@ extension HostServer {
             // A repeat subscribe IS the resync verb.
             await document.handle(resubscribe: request, from: existing.id)
         }
+    }
+
+    /// Every pane the topology currently PLACES. A closed tab's panes are deliberately excluded:
+    /// the ring keeps their records so ⇧⌘T can rebuild the layout, but their shells go with the
+    /// close, exactly as they always have.
+    static func topologyPaneIDs(_ topology: WorkspaceTopology?) -> Set<UUID> {
+        guard let topology else { return [] }
+        var ids = Set<UUID>()
+        for session in topology.tree.sessions {
+            for pane in session.allPaneIDs() { ids.insert(pane.raw) }
+        }
+        return ids
     }
 
     private func dropWorkspaceSubscriber(connectionID: UUID) {

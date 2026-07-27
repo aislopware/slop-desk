@@ -83,6 +83,12 @@ public struct ReplayBuffer: Sendable {
     private struct Entry {
         let seq: Int64
         let bytes: Data
+        /// Running byte total over ``entries`` STRICTLY BEFORE this one, measured against
+        /// ``tailCumulativeBytes``. Maintained only for the un-acked tail (ring entries carry 0 —
+        /// the ring is acked history and never contributes to a retained-bytes answer), and it is
+        /// what makes ``retainedBytes(above:)`` a binary search plus one subtraction instead of a
+        /// walk that materialises payloads.
+        var cumulativeBefore: Int = 0
     }
 
     /// Un-acked retained entries, in ascending seq order (FIFO; oldest at the front).
@@ -118,6 +124,11 @@ public struct ReplayBuffer: Sendable {
     /// Maintained incrementally on every ``append(bytes:)`` / ``ack(upTo:)`` — O(1) to read,
     /// always equal to the true retained total.
     public private(set) var retainedBytes: Int = 0
+
+    /// Monotonic byte total behind ``Entry/cumulativeBefore``: the sum of every payload that has
+    /// entered ``entries``, never decremented by an ack. The subtrahend in
+    /// ``retainedBytes(above:)``.
+    private var tailCumulativeBytes: Int = 0
 
     /// Whether the connection layer currently considers the client reachable.
     ///
@@ -194,9 +205,32 @@ public struct ReplayBuffer: Sendable {
     @discardableResult
     public mutating func append(bytes: Data) -> Int64 {
         highestSeq += 1
-        entries.append(Entry(seq: highestSeq, bytes: bytes))
+        entries.append(Entry(seq: highestSeq, bytes: bytes, cumulativeBefore: tailCumulativeBytes))
+        tailCumulativeBytes += bytes.count
         retainedBytes += bytes.count
         return highestSeq
+    }
+
+    /// Retained (un-acked) bytes with `seq > seq` — how far behind the head a subscriber that has
+    /// confirmed up to `seq` actually is.
+    ///
+    /// O(log n) and COPY-FREE: `entries` is ascending by seq, so one binary search finds the first
+    /// entry above the cursor and the answer is a subtraction of two running totals. The existing
+    /// "bytes above S" primitives (``messages(after:)`` / ``snapshotSource(after:)``) materialise
+    /// every payload — up to the 256 MiB ceiling — which is not something a per-ack lag check can
+    /// afford to do under the owner's replay lock.
+    ///
+    /// A cursor at or past the head answers 0, and a cursor BELOW the retained window answers the
+    /// whole retained tail (the acked prefix is gone; it is not lag any more).
+    public func retainedBytes(above seq: Int64) -> Int {
+        var low = 0
+        var high = entries.count
+        while low < high {
+            let mid = low + (high - low) / 2
+            if entries[mid].seq > seq { high = mid } else { low = mid + 1 }
+        }
+        guard low < entries.count else { return 0 }
+        return tailCumulativeBytes - entries[low].cumulativeBefore
     }
 
     /// Records a client ack, dropping retained entries with `seq <= seq` and updating
@@ -467,13 +501,20 @@ public struct ReplayBuffer: Sendable {
                 ring.append(Entry(seq: seq, bytes: bytes))
                 ringBytes += bytes.count
             } else if seq > ackedSeq {
-                tail.append(Entry(seq: seq, bytes: bytes))
+                // The adopted stream REPLACES the tail, so its cumulative labels are re-derived
+                // from the running total's current value — the invariant
+                // ``retainedBytes(above:)`` reads is "labels ascend to `tailCumulativeBytes`",
+                // and rebasing here keeps that true across a wholesale replacement.
+                tail.append(Entry(
+                    seq: seq, bytes: bytes, cumulativeBefore: tailCumulativeBytes + tailBytes,
+                ))
                 tailBytes += bytes.count
             }
         }
         scrollbackRing = ring
         scrollbackBytes = ringBytes
         entries = tail
+        tailCumulativeBytes += tailBytes
         retainedBytes = tailBytes
         pendingAltReopen = nil
         evictScrollbackToFit()

@@ -89,6 +89,36 @@ final class MuxChannelSession: @unchecked Sendable {
         var controlSendTask: Task<Void, Never>?
         var retired = false
 
+        /// This subscriber's OWN outbound DATA queue + wake + sender, built only once the pane is
+        /// FANNED OUT (see ``MuxChannelSession/fanoutActive``). With one member the drain sends
+        /// inline and all three stay nil.
+        ///
+        /// One queue per member is the only shape that keeps the drain single-consumer without
+        /// giving the slowest reader head-of-line over everybody: ``MuxSubChannel/send(_:)`` parks
+        /// on its OWN credit window, so a serial `for sub in subscribers { await sub.data.send() }`
+        /// would let one parked phone stall delivery to a Studio indefinitely — and eviction could
+        /// never fire, because the drain that would notice is the thing that is parked.
+        ///
+        /// Unbounded by construction and bounded in effect: everything queued here is un-acked, so
+        /// ``MuxChannelSession/subscriberLagBytes`` caps it at 32 MiB per member before eviction
+        /// takes the member out.
+        var dataOut: [WireMessage] = []
+        var dataWake: AsyncStream<Void>.Continuation?
+        var dataSendTask: Task<Void, Never>?
+
+        /// One-shot latch: this member has already been handed to ``onEvictSubscriber``.
+        ///
+        /// Eviction is asynchronous by necessity (the laggard is parked in a send, so the close
+        /// runs on a detached task), and the condition that triggered it stays true until the close
+        /// lands. Without the latch every subsequent appended frame would fire another
+        /// `closeChannel` and another log line for a member already on its way out.
+        var evicting = false
+
+        /// Whether this member's `.exit` frame has left the sender (or the member died trying).
+        /// The exit task must not release `onExit` → `shutdown()` until every reachable member has
+        /// been told, or members 2..N watch a shell that is already dead with no exit code.
+        var exitDelivered = false
+
         /// This subscriber's OWN pending control queue + wake. One queue per member, deliberately:
         /// the ``MuxChannelSession/maxControlOutQueued`` newest-shed promises a bound per reader, and
         /// a single shared queue with N cursors would let one stalled reader hold it at the cap and
@@ -126,6 +156,48 @@ final class MuxChannelSession: @unchecked Sendable {
     private let subscribersLock = NSLock()
     private var subscribers: [MuxSubscriberID: Subscriber] = [:]
 
+    /// Serializes the drain's [assign seq → hand the frame to every member] step against a JOIN.
+    ///
+    /// A joiner is state-transferred a rendered screen and then follows the live stream. Those two
+    /// halves must MEET: composing the snapshot and entering the set have to be atomic w.r.t. the
+    /// drain, or frames sequenced in between go to the incumbent alone and the joiner's transcript
+    /// has a hole that no replay can fill (the joiner is not in the set to receive them, and they
+    /// are below the seqs it will start from).
+    ///
+    /// Held ONLY across non-suspending work: the drain's inline `await send` happens after the
+    /// unlock. Lock order: `fanoutLock` → `subscribersLock` / `replayLock`; nothing takes it in
+    /// the other direction.
+    private let fanoutLock = NSLock()
+
+    /// Whether the drain hands frames to per-member outboxes instead of sending inline.
+    ///
+    /// STICKY: set the first time a second member joins and never cleared, so the send path cannot
+    /// flip modes underneath a member whose sender is still draining its outbox (which would put
+    /// two writers on one data channel). Guarded by `fanoutLock`.
+    ///
+    /// While false — every session on the shipping path, where `SLOPDESK_PANE_FANOUT` is unset and
+    /// the JOIN route is unreachable — the drain is the byte-identical inline send it has always
+    /// been and no outbox is ever built.
+    private var fanoutActive = false
+
+    /// Mints the next JOIN's subscriber id. `primarySubscriberID` (0) belongs to the channel the
+    /// session was opened for; joiners count up from 1. Guarded by `subscribersLock`.
+    private var nextSubscriberID: MuxSubscriberID = 1
+
+    /// Closes ONE subscriber's channel from OUTSIDE this session — the eviction seam.
+    ///
+    /// `MuxSubChannel.finish()` is internal to `SlopDeskTransport` and a session holds no reference
+    /// to the owning ``MuxNWConnection``, so there is no way to wake a member parked on an
+    /// exhausted credit window from in here. ``HostServer`` wires this to
+    /// `connection.closeChannel(channelID)`, which finishes both sub-channels — a parked sender
+    /// throws and unwinds. Invoked from a DETACHED task, never from the drain the park is blocking
+    /// and never via a further `send`.
+    var onEvictSubscriber: (@Sendable (MuxSubscriberID) -> Void)?
+
+    /// Optional diagnostic sink (the daemon log), set by the owner. `nil` (the headless smoke
+    /// daemon and every unit test that does not wire it) means an eviction is silent.
+    var onLog: (@Sendable (String) -> Void)?
+
     /// Every subscriber in ascending id order — a deterministic broadcast order (dictionary order
     /// is not).
     private func subscriberList() -> [Subscriber] {
@@ -134,18 +206,18 @@ final class MuxChannelSession: @unchecked Sendable {
         return subscribers.keys.sorted().compactMap { subscribers[$0] }
     }
 
+    /// How many members hold this pane right now (the fold's and the gate's population).
+    var subscriberCount: Int {
+        subscribersLock.lock()
+        defer { subscribersLock.unlock() }
+        return subscribers.count
+    }
+
     private func subscriber(_ id: MuxSubscriberID) -> Subscriber? {
         subscribersLock.lock()
         defer { subscribersLock.unlock() }
         return subscribers[id]
     }
-
-    /// The DATA sub-channel the output drain writes this session's frames on.
-    ///
-    /// A LOOKUP, never a captured reference: a REPLACE mints a new member with a new pair, and a
-    /// captured channel would keep writing into the dead link. `nil` only while the set is empty —
-    /// the window in which the retired pair used to be there and threw on every send.
-    private func outputTarget() -> MuxSubChannel? { subscriberList().first?.data }
 
     /// The per-session ZDOTDIR shim directory, if the zsh shell-integration shim was installed for
     /// this pane. Deleted in ``shutdown()`` once the child has exited — safe because the shell read
@@ -869,9 +941,10 @@ final class MuxChannelSession: @unchecked Sendable {
     /// via the per-channel ``ReplayBuffer``, and write them on the subscriber's DATA channel.
     ///
     /// Session-level, not per-subscriber: there is one out-FIFO and one sequence space, so exactly
-    /// one task may pop. The send target is RESOLVED per frame (``outputTarget()``) rather than
-    /// captured, so a REPLACE lands the next frame on the returning client's channel instead of
-    /// half-following the swap.
+    /// one task may pop. One seq per byte range is the ReplayBuffer's whole contract, so the POP
+    /// stays single-consumer and only the RESULT fans out. The targets are RESOLVED per frame
+    /// rather than captured, so a REPLACE lands the next frame on the returning client's channel
+    /// instead of half-following the swap.
     private func startOutputDrain() {
         let (outputWakeups, outputWake) =
             AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
@@ -884,26 +957,34 @@ final class MuxChannelSession: @unchecked Sendable {
                 // pending wake — a one-frame-per-wake drain would strand backlog).
                 while let frame = self?.takeMergedFrame() {
                     guard let self else { return }
-                    // Resolved per frame. `nil` (the set is empty) drops the frame exactly as a
-                    // send on the finished pair a departed client left behind did — including the
-                    // dequeue, without which the gate would strand bytes and wedge the read loop.
-                    let target = outputTarget()
                     switch frame {
                     case let .output(bytes, byteCount, controlMessages):
-                        let seq = nextSeq(for: bytes)
-                        // `send` SUSPENDS on the per-channel credit window, so a flooding
-                        // channel naturally slows here. After the write is accepted we dequeue
-                        // the bytes and resume the read loop if the FIFO drained below the
-                        // bound — dequeue MUST stay post-send (the gate bounds
-                        // enqueued-not-yet-SENT; moving it to take-time would let the read
-                        // loop refill while a merged frame is still unsent).
-                        if let target { try? await target.send(.output(seq: seq, bytes: bytes)) }
+                        // Sequence the frame and choose its delivery shape ATOMICALLY w.r.t. a
+                        // JOIN, so a joiner is either in the set for this frame or state-
+                        // transferred a screen that already contains it — never neither.
+                        let (fannedOut, targets, seq) = sequenceAndFanOut(bytes)
+                        if !fannedOut {
+                            // ONE member: send inline, exactly as a single-subscriber pane always
+                            // has. `send` SUSPENDS on the per-channel credit window, so a flooding
+                            // channel naturally slows here. An EMPTY set drops the frame, exactly
+                            // as a send on the finished pair a departed client left behind did —
+                            // including the dequeue, without which the gate would strand bytes and
+                            // wedge the read loop.
+                            if let target = targets.first {
+                                try? await target.data.send(.output(seq: seq, bytes: bytes))
+                            }
+                        }
+                        // dequeue MUST stay post-send (the gate bounds enqueued-not-yet-SENT;
+                        // moving it to take-time would let the read loop refill while a merged
+                        // frame is still unsent). Under fan-out "sent" means "handed to every
+                        // member's outbox" — the host owns one copy per laggard until it acks,
+                        // which is what `subscriberLagBytes` eviction exists to bound.
                         dequeueOutput(byteCount)
                         // Hand sniffed control to the control senders: the data drain never awaits
                         // a control socket, so a stalled control link cannot freeze data.
                         if !controlMessages.isEmpty { broadcastControl(controlMessages) }
                     case let .exit(code):
-                        if let target { try? await target.send(.exit(code: code)) }
+                        await deliverExit(code: code)
                         signalExitSent() // release the exit task's await so onExit can run
                     }
                 }
@@ -1076,15 +1157,24 @@ final class MuxChannelSession: @unchecked Sendable {
     private func cancelSubscriberTasks(_ sub: Subscriber) {
         subscribersLock.lock()
         sub.retired = true
-        let tasks = [sub.inputTask, sub.controlTask, sub.controlSendTask]
+        let tasks = [sub.inputTask, sub.controlTask, sub.controlSendTask, sub.dataSendTask]
         sub.inputTask = nil
         sub.controlTask = nil
         sub.controlSendTask = nil
+        sub.dataSendTask = nil
         subscribersLock.unlock()
         controlOutLock.lock()
         sub.controlWake?.finish()
         sub.controlWake = nil
         controlOutLock.unlock()
+        // The outbound data queue goes with the member, like its control queue: nothing left in it
+        // is deliverable, and its bytes were already dequeued from the session's gate when the
+        // drain handed them over.
+        fifoLock.lock()
+        sub.dataWake?.finish()
+        sub.dataWake = nil
+        sub.dataOut.removeAll(keepingCapacity: false)
+        fifoLock.unlock()
         for task in tasks { task?.cancel() }
     }
 
@@ -1533,12 +1623,12 @@ final class MuxChannelSession: @unchecked Sendable {
         // Engage the offline gate so the PTY drain pauses: the read loop parks on its
         // NSCondition and the kernel PTY buffer backpressures the shell.
         recomputeClientOnline()
-        // Re-size the queue bound for detached life: 64 KiB is a LATENCY bound (head-of-line
-        // delay to a consuming client) — with no client it would stall a still-working agent at
-        // 64 KiB + one kernel buffer. The detached bound is the "output while away" budget
-        // (``MuxFlowControl/detachedHostQueueCapacityBytes``, default 64 MiB); rebindRelay
-        // restores the attached sizing.
-        outputGate?.setCapacity(MuxFlowControl.detachedHostQueueCapacityBytes)
+        // Re-size the queue bound for detached life. The set is empty here, so this resolves to the
+        // "output while away" budget (``MuxFlowControl/detachedHostQueueCapacityBytes``, default
+        // 64 MiB) rather than the 64 KiB latency bound; a join restores the attached sizing. Routed
+        // through the population helper so the capacity is a function of who is listening, not of
+        // which lifecycle method last ran.
+        applyQueueCapacityForPopulation()
         // With the client gone this is the one moment a multi-second render is FREE — fold the
         // ring now so the eventual reattach compose is O(canonical + delta), not O(raw churn).
         scheduleDetachedRingFold()
@@ -1628,11 +1718,12 @@ final class MuxChannelSession: @unchecked Sendable {
         // stateless/re-derived (the echo truth and block metadata are re-asserted below), and the
         // joining member starts with an empty one.
 
-        // Restore the ATTACHED queue sizing (detach() raised it to the detached budget). With a
+        // Restore the ATTACHED queue sizing (detach() raised it to the detached budget — the set
+        // now has a member again, so the population helper resolves to the latency bound). With a
         // >64 KiB detached backlog outstanding this immediately re-pauses the read loop; the
         // restarted drain ships the backlog, dequeues its accounting, and resumes it — the exact
         // rebalance the note above describes.
-        outputGate?.setCapacity(MuxFlowControl.hostQueueCapacityBytes)
+        applyQueueCapacityForPopulation()
 
         // COLD client: the detached-window backlog is history to a terminal that has rendered
         // nothing — run the replay transform over it BEFORE the drain restarts (the drain would
@@ -1786,9 +1877,18 @@ final class MuxChannelSession: @unchecked Sendable {
     ///   (byte-exact continuation is worth more than a wipe+re-render);
     /// - the rendered bytes exceed the seq budget's frame-cap ceiling (pathological tiny-
     ///   session expansion — the raw path is cheap there anyway).
+    ///
+    /// `adopting: false` is the JOIN mode: read-only. Both destructive acts above belong to the
+    /// caller sequence [detached → drain stopped → replay → rebind] and are justified by the drain
+    /// NOT running (see ``peekDetachedBacklog()``). A join to a live session has no such window, so
+    /// it neither splices the FIFO (deleting a window of the incumbent's un-shipped, pre-seq output
+    /// that no replay could recover) nor adopts the history (rewriting the seqs the incumbent is
+    /// mid-stream on). The read-only compose therefore ignores the FIFO backlog entirely — those
+    /// bytes reach the joiner the ordinary way, on the live drain it has just joined.
     private func composeSnapshotReplay(
         after lastReceivedSeq: Int64,
         policy: SnapshotReplayPolicy,
+        adopting: Bool = true,
     ) -> [WireMessage]? {
         // Cheap eligibility first — the warm-below-threshold case is EVERY ordinary
         // reconnect, and must not pay the backlog/history copies just to say "no".
@@ -1805,7 +1905,9 @@ final class MuxChannelSession: @unchecked Sendable {
         let source = replay.snapshotSource(after: lastReceivedSeq)
         replayLock.unlock()
         guard !source.replaySeqs.isEmpty else { return nil }
-        let backlog = peekDetachedBacklog()
+        // A JOIN never touches the FIFO — not even to READ it, because bytes it rendered into the
+        // snapshot would ALSO reach the joiner when the live drain ships them.
+        let backlog = adopting ? peekDetachedBacklog() : DetachedBacklogPeek.empty
         guard cold || source.replayBytes + backlog.bytes.count >= policy.warmThresholdBytes else {
             return nil
         }
@@ -1820,8 +1922,9 @@ final class MuxChannelSession: @unchecked Sendable {
         // must fit the seq budget or the LAST chunk would exceed the cap.
         guard rendered.count <= source.replaySeqs.count * MuxFlowControl.maxOutputFramePayloadBytes
         else { return nil }
-        consumeDetachedBacklog(backlog)
         let messages = ReplayBuffer.rechunkSnapshot(rendered, across: source.replaySeqs)
+        guard adopting else { return messages }
+        consumeDetachedBacklog(backlog)
         // Adopt the rendered stream AS the retained history ("as if the host had emitted it
         // all along"): the consumed backlog got no seqs of its own — without this it would
         // exist only in the delivered bytes and vanish from every later cold replay — and the
@@ -1876,6 +1979,9 @@ final class MuxChannelSession: @unchecked Sendable {
         let bytes: Data
         let control: [WireMessage]
         let range: Range<Int>
+
+        /// The "read nothing, consume nothing" peek a JOIN composes against.
+        static let empty = Self(bytes: Data(), control: [], range: 0..<0)
     }
 
     /// Byte count of the detached-window chunk backlog WITHOUT copying it (the warm-threshold
@@ -3349,6 +3455,9 @@ final class MuxChannelSession: @unchecked Sendable {
         replayLock.unlock()
         outputGate?.setReplayPause(shouldPause)
         backpressureApplyLock.unlock()
+        // A HEALTHY member's ack is the other half of the laggard check: it recomputes the min, so
+        // it is the moment the gap between fastest and slowest is freshest.
+        evictLaggingSubscribers()
     }
 
     /// Marks the client online/offline for the offline (64 MiB) gate, then recomputes backpressure. A
@@ -3514,8 +3623,34 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Drives the real ``nextSeq(for:)`` glue (append + recompute + gate). Returns the assigned seq.
     @discardableResult
     func appendForTesting(_ bytes: Data) -> Int64 { nextSeq(for: bytes) }
-    /// Drives the real ``acknowledge(upTo:)`` glue (ack + recompute + gate).
-    func ackForTesting(upTo seq: Int64) { acknowledge(upTo: seq) }
+    /// Drives the real ``acknowledge(upTo:from:)`` glue (per-member cursor + min-fold + gate +
+    /// the laggard check).
+    func ackForTesting(upTo seq: Int64, from id: MuxSubscriberID = MuxChannelSession.primarySubscriberID) {
+        acknowledge(upTo: seq, from: id)
+    }
+
+    /// The ReplayBuffer's un-acked total — what the MIN-fold retention releases.
+    var retainedBytesForTesting: Int {
+        replayLock.lock()
+        defer { replayLock.unlock() }
+        return replay.retainedBytes
+    }
+
+    /// The retention floor the buffer has actually released to.
+    var ackedSeqForTesting: Int64 {
+        replayLock.lock()
+        defer { replayLock.unlock() }
+        return replay.ackedSeq
+    }
+
+    /// Whether the drain is in its fan-out shape (per-member outboxes) rather than the inline
+    /// single-send fast path the shipping default never leaves.
+    var isFannedOutForTesting: Bool {
+        fanoutLock.lock()
+        defer { fanoutLock.unlock() }
+        return fanoutActive
+    }
+
     /// Drives the real ``setClientOnline(_:)`` glue (offline-gate side).
     func setClientOnlineForTesting(_ online: Bool) { setClientOnline(online) }
     /// Whether the ReplayBuffer currently regards the pane as reachable — the offline-gate truth
@@ -3710,5 +3845,411 @@ final class MuxChannelSession: @unchecked Sendable {
             }
         }
         #endif
+    }
+}
+
+// MARK: - The subscriber set: join, leave, fan-out, and the laggard
+
+/// The fan-out half of the relay, in an extension so the type body stays readable — `private`
+/// members are file-scoped in Swift, so this reaches the same locks and state the main body does
+/// with no visibility relaxed.
+///
+/// Everything here is the identity function on a ONE-member pane: the drain never leaves its
+/// inline send, no outbox is built, the min-fold over one cursor is that cursor, and a lone
+/// subscriber is never a laggard.
+extension MuxChannelSession {
+    /// Assigns `bytes` its seq and, when the pane is fanned out, hands the frame to EVERY member's
+    /// outbox — both under `fanoutLock`, which is what makes a JOIN indivisible from the stream.
+    ///
+    /// - Returns: whether the frame was handed off (so the caller must not send it itself), the
+    ///   members it targets, and the assigned seq.
+    private func sequenceAndFanOut(_ bytes: Data) -> (fannedOut: Bool, targets: [Subscriber], seq: Int64) {
+        fanoutLock.lock()
+        let fan = fanoutActive
+        let targets = subscriberList()
+        replayLock.lock()
+        let seq = replay.append(bytes: bytes)
+        replayLock.unlock()
+        if fan {
+            let message = WireMessage.output(seq: seq, bytes: bytes)
+            for sub in targets { enqueueData([message], on: sub) }
+        }
+        fanoutLock.unlock()
+        // OUTSIDE `fanoutLock`: appending may push retained bytes over the 256 MiB cap (or the
+        // 64 MiB offline gate), and the pause is applied through `backpressureApplyLock` — kept off
+        // the join-ordering lock so the two never nest.
+        updateReplayBackpressure()
+        // A laggard is evicted rather than indulged, and the check runs HERE as well as on the ack
+        // path: a client that has stopped acking never calls `acknowledge`, so a consumer-side-only
+        // check never fires on the exact member it exists to remove.
+        evictLaggingSubscribers()
+        return (fan, targets, seq)
+    }
+
+    /// Delivers `.exit` to EVERY reachable member before the exit task is released.
+    ///
+    /// Signalling after the FIRST send would release `awaitExitSentOrTimeout` → `onExit` →
+    /// `shutdown()` → `outputTask.cancel()`, and members 2..N would never receive the exit code:
+    /// their panes hang showing a shell that is already dead. Bounded, so an unreachable member
+    /// cannot hold the teardown open.
+    private func deliverExit(code: Int32) async {
+        let (fan, targets) = handOffExit(code: code)
+        guard fan else {
+            if let target = targets.first { try? await target.data.send(.exit(code: code)) }
+            return
+        }
+        // Each member's own sender ships its copy; wait (bounded) until every one has either
+        // delivered it or died trying. Polling, like the EOF latch: this runs once per pane.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while ContinuousClock.now < deadline {
+            if !hasPendingExitDelivery(among: targets) { return }
+            try? await Task.sleep(for: .milliseconds(2))
+            if Task.isCancelled { return }
+        }
+    }
+
+    /// The synchronous half of ``deliverExit(code:)`` (NSLock is unavailable from an async context
+    /// — the ``snapshotReplayTailForSend(after:)`` discipline).
+    private func handOffExit(code: Int32) -> (fannedOut: Bool, targets: [Subscriber]) {
+        fanoutLock.lock()
+        defer { fanoutLock.unlock() }
+        let fan = fanoutActive
+        let targets = subscriberList()
+        if fan {
+            for sub in targets { enqueueData([.exit(code: code)], on: sub) }
+        }
+        return (fan, targets)
+    }
+
+    private func hasPendingExitDelivery(among targets: [Subscriber]) -> Bool {
+        subscribersLock.lock()
+        defer { subscribersLock.unlock() }
+        return targets.contains { !$0.exitDelivered && !$0.retired }
+    }
+
+    /// Builds `sub`'s outbound DATA sender: one serial drain of ITS outbox onto ITS data
+    /// sub-channel. Idempotent — a member already carrying a sender keeps it.
+    ///
+    /// Every park on an exhausted credit window happens HERE, inside one member's own task, which
+    /// is the whole point: a stalled reader delays nobody else's frames and the session drain stays
+    /// free to keep sequencing (and to keep noticing that this member has fallen too far behind).
+    private func startDataSender(for sub: Subscriber) {
+        subscribersLock.lock()
+        let alreadyRunning = sub.dataSendTask != nil || sub.retired
+        subscribersLock.unlock()
+        guard !alreadyRunning else { return }
+        let (wakeups, wake) = AsyncStream.makeStream(of: Void.self, bufferingPolicy: .bufferingNewest(1))
+        fifoLock.lock()
+        sub.dataWake = wake
+        fifoLock.unlock()
+        let data = sub.data
+        let sender = Task { [weak self] in
+            for await _ in wakeups {
+                while let batch = self?.takeDataBatch(for: sub) {
+                    for message in batch {
+                        try? await data.send(message)
+                        if case .exit = message { self?.markExitDelivered(sub) }
+                    }
+                }
+            }
+            // The wake finished (retirement / teardown): anything still queued is undeliverable,
+            // and a pending `.exit` must stop blocking the session's bounded wait.
+            self?.markExitDelivered(sub)
+        }
+        install(sender, as: \.dataSendTask, on: sub)
+    }
+
+    /// Appends to ONE member's outbound data queue and wakes its sender. Guarded by `fifoLock` —
+    /// the same lock that guards the session's out-FIFO and its wake, because this queue is the
+    /// per-member continuation of exactly that pipeline.
+    private func enqueueData(_ messages: [WireMessage], on sub: Subscriber) {
+        fifoLock.lock()
+        sub.dataOut.append(contentsOf: messages)
+        let wake = sub.dataWake
+        fifoLock.unlock()
+        wake?.yield(())
+    }
+
+    /// Atomically takes ONE member's whole pending data batch; `nil` when empty (its sender
+    /// re-parks).
+    private func takeDataBatch(for sub: Subscriber) -> [WireMessage]? {
+        fifoLock.lock()
+        defer { fifoLock.unlock() }
+        guard !sub.dataOut.isEmpty else { return nil }
+        let batch = sub.dataOut
+        sub.dataOut.removeAll(keepingCapacity: true)
+        return batch
+    }
+
+    private func markExitDelivered(_ sub: Subscriber) {
+        subscribersLock.lock()
+        sub.exitDelivered = true
+        subscribersLock.unlock()
+    }
+
+    /// Sizes the bounded output queue for the CURRENT population.
+    ///
+    /// 64 KiB attached is a LATENCY bound (head-of-line delay to a consuming client); the detached
+    /// budget (default 64 MiB) is the "output while away" allowance that keeps a working agent from
+    /// stalling at 64 KiB plus one kernel buffer. Which one applies is a function of the subscriber
+    /// set being EMPTY — not of a detach/rebind pair — because with a fan-out one member leaving
+    /// says nothing about whether anybody is still consuming.
+    ///
+    /// This gate is a SECOND ledger, distinct from the ReplayBuffer's: it accounts the out-FIFO
+    /// (enqueued-not-yet-sent, single-consumer), while ``ReplayBuffer/retainedBytes`` accounts
+    /// sent-not-yet-acked. Their thresholds mean different things and must not be conflated.
+    private func applyQueueCapacityForPopulation() {
+        let capacity = subscriberList().isEmpty
+            ? MuxFlowControl.detachedHostQueueCapacityBytes
+            : MuxFlowControl.hostQueueCapacityBytes
+        outputGate?.setCapacity(capacity)
+    }
+
+    // MARK: - The subscriber set: join, leave, and the laggard
+
+    /// How far behind the head one member may fall before it is EVICTED rather than buffered for.
+    ///
+    /// Default 32 MiB (`SLOPDESK_SUB_LAG_BYTES`), deliberately BELOW the ReplayBuffer's 64 MiB
+    /// offline gate: with N members, evicting the laggard replaces buffering for it, and the gate's
+    /// pause-the-PTY semantics stay reserved for the case where they still mean what they always
+    /// meant — nobody is listening. Without this, one sleeping iPhone freezes a build for two Macs.
+    /// `0` disables eviction.
+    static let subscriberLagBytes: Int = {
+        guard let raw = ProcessInfo.processInfo.environment["SLOPDESK_SUB_LAG_BYTES"],
+              let value = Int(raw), value >= 0
+        else { return 32 * 1024 * 1024 }
+        return value
+    }()
+
+    /// Evicts every member whose un-acked backlog exceeds ``subscriberLagBytes``.
+    ///
+    /// Runs on BOTH sides of the flow — from the producer (`sequenceAndFanOut`) and from the ack
+    /// path — because a member that has stopped acking never calls `acknowledge`, so a
+    /// consumer-side-only check never fires on the exact client it exists to remove.
+    ///
+    /// Never with ONE member: a lone subscriber's backpressure is the ReplayBuffer's 64 MiB /
+    /// 256 MiB gate, exactly as it has always been, and evicting it would turn a slow link into a
+    /// dropped session. The healthiest member is never evicted either, so a pane can never evict
+    /// its way to empty.
+    ///
+    /// The eviction itself is fired from a DETACHED task: the laggard is by definition parked
+    /// inside `MuxSubChannel.send`, so closing its channel from the drain that its park is blocking
+    /// would deadlock against the very condition it is breaking.
+    private func evictLaggingSubscribers() {
+        guard Self.subscriberLagBytes > 0, let evict = onEvictSubscriber else { return }
+        let subs = subscriberList()
+        guard subs.count > 1 else { return }
+        subscribersLock.lock()
+        let cursors = subs.map { (sub: $0, acked: $0.lastAckedSeq) }
+        subscribersLock.unlock()
+        // The furthest-ahead member is the survivor by construction — if EVERY member is behind
+        // the threshold nobody is consuming, which is the offline gate's job, not eviction's.
+        guard let healthiest = cursors.map(\.acked).max() else { return }
+        replayLock.lock()
+        let lagging = cursors.filter {
+            $0.acked != healthiest && replay.retainedBytes(above: $0.acked) > Self.subscriberLagBytes
+        }
+        replayLock.unlock()
+        guard !lagging.isEmpty else { return }
+        // Latch under the membership lock so a concurrent producer and ack path cannot both decide
+        // to evict the same member.
+        subscribersLock.lock()
+        let doomed = lagging.filter { !$0.sub.evicting && !$0.sub.retired }.map(\.sub)
+        for sub in doomed { sub.evicting = true }
+        subscribersLock.unlock()
+        for sub in doomed {
+            onLog?("pane subscriber \(sub.id): evicted — more than \(Self.subscriberLagBytes) bytes behind")
+            let id = sub.id
+            Task.detached { evict(id) }
+        }
+    }
+
+    /// JOINS a live pane: the Nth client takes its own place in the subscriber set, is
+    /// state-transferred the current screen, and follows the live stream from that instant.
+    ///
+    /// The ordering is `performReattach`'s, reproduced against a drain that is already RUNNING:
+    /// the caller sends `channelOpenAck` first (the client awaits it), then this composes the
+    /// joiner's snapshot and enters it in the set ATOMICALLY w.r.t. the drain, then ships the
+    /// snapshot, then starts the member's own sender so the frames that accumulated meanwhile
+    /// follow it in order. Neither a hole nor a duplicate is possible.
+    ///
+    /// The compose is deliberately NON-DESTRUCTIVE (``composeSnapshotReplay`` `adopting: false`):
+    /// the reattach path's version splices the out-FIFO and REPLACES the retained history, which
+    /// are safe only because a reattach happens with the drain stopped. Run against a live session
+    /// they would delete a window of the incumbent's un-shipped output — bytes that are pre-seq, so
+    /// no replay can recover them — and rewrite the seqs it is mid-stream on.
+    ///
+    /// - Returns: `false` when the pair is already dead (the joining link died mid-open), leaving
+    ///   the set untouched so the caller can refuse the channel.
+    func joinSubscriber(
+        data newData: MuxSubChannel,
+        control newControl: MuxSubChannel,
+        channelClass: MuxChannelClass = .pane,
+        sizePassive: Bool,
+    ) async -> MuxSubscriberID? {
+        guard !newData.isFinished, !newControl.isFinished else { return nil }
+        // A DETACHED session has no drain to join; that is `rebindRelay`'s job. Re-checked inside
+        // `admitJoiner` under the join lock — this early exit only avoids paying for a render that
+        // could not be used.
+        guard !isDetachedForJoin() else { return nil }
+
+        // Composed OUTSIDE the join lock, deliberately: rendering the screen model is an
+        // O(retained history) walk — seconds on a pane with a full scrollback — and holding the
+        // drain's ordering lock across it would stall the INCUMBENT's output for that whole window.
+        // A join must cost the client already watching nothing.
+        let (rendered, composedThrough) = composeJoinSnapshot()
+        guard let (sub, catchUp) = admitJoiner(
+            data: newData, control: newControl, channelClass: channelClass,
+            composedThrough: composedThrough,
+        ) else { return nil }
+        let id = sub.id
+
+        // The joiner is in the set, so live frames are already accumulating in its outbox — its
+        // sender is deliberately NOT started yet, so this replay owns the channel until it is done.
+        addResizeContributor(id, sizePassive: sizePassive)
+        startControlSender(for: sub)
+        for message in rendered + catchUp {
+            try? await newData.send(message)
+        }
+        startDataSender(for: sub)
+
+        // JOIN-scoped re-asserts, addressed to the new member only — the incumbents were told these
+        // truths when they happened, and re-telling them would flood a client that is up to date.
+        reestablishEchoOnReattach(echoOn: PTYEchoProbe.echoEnabled(masterFD: pty.masterFD), to: id)
+        resendBlocksOnReattach(to: id)
+        reestablishActivityOnReattach(to: id)
+
+        startInputRelay(for: sub)
+        startControlRelay(for: sub)
+        applyQueueCapacityForPopulation()
+        recomputeClientOnline()
+        return id
+    }
+
+    /// The synchronous half of ``joinSubscriber(data:control:channelClass:sizePassive:)``: switches
+    /// the drain to fan-out, composes the state transfer, and enters the new member — all under
+    /// `fanoutLock`, so no frame can be sequenced between "the drain now fans out" and "every
+    /// member can receive a fan-out", nor between the snapshot and the joiner's arrival.
+    ///
+    /// NSLock is unavailable from an async context (the ``snapshotReplayTailForSend(after:)``
+    /// discipline), and the whole point of this section is that it never suspends anyway.
+    private func admitJoiner(
+        data newData: MuxSubChannel,
+        control newControl: MuxSubChannel,
+        channelClass: MuxChannelClass,
+        composedThrough: Int64,
+    ) -> (Subscriber, [WireMessage])? {
+        fanoutLock.lock()
+        defer { fanoutLock.unlock() }
+        // A session whose set emptied (or detached) while the render ran has no drain to join.
+        taskLock.lock()
+        let detached = isDetached
+        taskLock.unlock()
+        guard !detached else { return nil }
+        let incumbents = subscriberList()
+        guard !incumbents.isEmpty else { return nil }
+        for sub in incumbents { startDataSender(for: sub) }
+        fanoutActive = true
+        // Whatever the drain sequenced WHILE the snapshot was rendering, byte-exact and exactly
+        // once: the render covers through `composedThrough`, the joiner's outbox starts collecting
+        // at the seq assigned after this lock is taken, and this bridges the two. Without it the
+        // joiner's transcript has a hole the width of the render.
+        replayLock.lock()
+        let catchUp = replay.messages(after: composedThrough).map {
+            WireMessage.output(seq: $0.seq, bytes: $0.bytes)
+        }
+        replayLock.unlock()
+        subscribersLock.lock()
+        let id = nextSubscriberID
+        nextSubscriberID &+= 1
+        let sub = Subscriber(id: id, channelClass: channelClass, data: newData, control: newControl)
+        // The joiner starts CURRENT: it is receiving the rendered screen, not the history behind
+        // it, so its retention cursor must not hold bytes every other member has already acked.
+        sub.lastAckedSeq = replayHighestSeqLocked()
+        subscribers[id] = sub
+        subscribersLock.unlock()
+        return (sub, catchUp)
+    }
+
+    /// The rendered screen a joiner opens on: the same state transfer a cold reattach receives,
+    /// composed WITHOUT consuming the out-FIFO or replacing the retained history. Falls back to the
+    /// raw retained tail when no policy is injected or the compose declines.
+    ///
+    /// - Returns: the messages, and the highest seq they actually cover. That coverage point is
+    ///   DERIVED from what was produced rather than read off the buffer afterwards: a frame
+    ///   appended between the snapshot source being taken and the read would otherwise be either
+    ///   skipped (a hole) or shipped twice, depending on which side of the race won.
+    private func composeJoinSnapshot() -> ([WireMessage], Int64) {
+        var messages: [WireMessage] = []
+        if let policy = snapshotReplay,
+           let rendered = composeSnapshotReplay(after: 0, policy: policy, adopting: false)
+        {
+            messages = rendered
+        } else {
+            replayLock.lock()
+            messages = replay.replay(after: 0)
+            replayLock.unlock()
+        }
+        var covered: Int64 = 0
+        for message in messages {
+            if case let .output(seq, _) = message { covered = Swift.max(covered, seq) }
+        }
+        return (messages, covered)
+    }
+
+    /// Synchronous read of the detach latch (NSLock is unavailable from an async context).
+    private func isDetachedForJoin() -> Bool {
+        taskLock.lock()
+        defer { taskLock.unlock() }
+        return isDetached
+    }
+
+    private func replayHighestSeqLocked() -> Int64 {
+        replayLock.lock()
+        defer { replayLock.unlock() }
+        return replay.highestSeq
+    }
+
+    /// LEAVES: retires ONE member and reports whether the set is now EMPTY.
+    ///
+    /// Refcounted, deliberately: with two clients on one pane, one closing its lid must not engage
+    /// the offline gate that pauses the PTY drain — the other client's pane would go dead-quiet
+    /// while the shell keeps producing, and because the drain's wake continuation is nil'd on
+    /// detach even a later chunk could not re-wake it. The session-wide teardown belongs to the set
+    /// EMPTYING, and the caller owns that decision.
+    @discardableResult
+    func removeSubscriber(_ id: MuxSubscriberID) -> Bool {
+        guard let sub = subscriber(id) else { return subscriberCount == 0 }
+        let emptied = retireSubscriber(sub)
+        removeResizeContributor(id)
+        // Recomputed from the SET, never asserted: with somebody still holding the pane this reads
+        // TRUE and the offline gate stays clear, which is the whole difference between a refcounted
+        // leave and today's detach. Only an EMPTIED set reads false.
+        recomputeClientOnline()
+        // Retention releases to the MIN over the members that REMAIN — a departed member's stale
+        // cursor must not keep pinning the buffer for a reader that has gone.
+        releaseRetentionToMinimum()
+        // The queue bound follows the population: still attached → the 64 KiB latency bound;
+        // emptied → the detached "output while away" budget, which is what `detach()` would set
+        // anyway when the caller parks the session.
+        applyQueueCapacityForPopulation()
+        return emptied
+    }
+
+    /// Recomputes the retention floor over the CURRENT set and releases the ReplayBuffer to it.
+    /// Called when membership changes (a departure can only ever RAISE the floor).
+    private func releaseRetentionToMinimum() {
+        backpressureApplyLock.lock()
+        subscribersLock.lock()
+        let floor = subscribers.values.map(\.lastAckedSeq).min()
+        subscribersLock.unlock()
+        if let floor {
+            replayLock.lock()
+            replay.ack(upTo: floor)
+            let shouldPause = replay.shouldPauseDrain
+            replayLock.unlock()
+            outputGate?.setReplayPause(shouldPause)
+        }
+        backpressureApplyLock.unlock()
     }
 }

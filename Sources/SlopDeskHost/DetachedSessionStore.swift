@@ -100,10 +100,18 @@ final class DetachedSessionStore: @unchecked Sendable {
                 lock.unlock()
                 return
             }
-            // Same id, DIFFERENT session (defensive — the attached-elsewhere refusal should
-            // make this unreachable): newest wins, but the displaced entry's TTL task must be
+            // Same id, DIFFERENT session: newest wins, but the displaced entry's TTL task must be
             // cancelled (it would evict the NEW entry later) and its now-unreachable session
             // reaped instead of leaking.
+            //
+            // What keeps this shape rare is no longer the attached-elsewhere refusal — under
+            // ``HostServer/paneFanoutEnabled`` a live sessionID routes to the JOIN, so two
+            // connections holding one pane share ONE session object and park it exactly once, when
+            // the LAST subscriber leaves. But "should be unreachable" is not a licence to reap
+            // blind: the displaced session is only reaped below if NOBODY holds it. A session with
+            // subscribers is live, reachable through `muxSessions`, and its life belongs to whoever
+            // is on it — killing it here would take down a client's running agent to make room for
+            // a store entry.
             displaced = store.removeValue(forKey: id)
         }
         if let maxSessions, store.count >= maxSessions,
@@ -124,7 +132,8 @@ final class DetachedSessionStore: @unchecked Sendable {
 
         if let displaced {
             displaced.ttlTask?.cancel()
-            displaced.session.shutdownDetached()
+            // Reaped only when nothing is watching it — see the note at the removal above.
+            if displaced.session.subscriberCount == 0 { displaced.session.shutdownDetached() }
         }
         if let overflowVictim {
             overflowVictim.ttlTask?.cancel()
