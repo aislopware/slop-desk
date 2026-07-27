@@ -74,6 +74,11 @@ public final class WorkspaceStore {
         observeWorkspaceMirror()
         if let cached = treeProjection, cached.revision == workspaceMirrorRevision { return cached.tree }
         var projected = workspaceMirror.topology?.tree ?? TreeWorkspace(sessions: [], activeSessionID: nil)
+        // A device that does not follow the host's focus rides its own on top (docs/45 §8.2) — which is
+        // what lets a phone look at one tab while the Studio works in another.
+        if let focus = deviceFocus {
+            projected = Self.applying(focus, to: projected)
+        }
         // The divider PREVIEW rides on top: a drag frame is a local overlay, never an intent (see
         // ``setDividerWeightLive(splitID:leadingChildIndex:leadingWeight:)``).
         if let live = liveDividerWeight {
@@ -93,6 +98,12 @@ public final class WorkspaceStore {
     /// ``commitDividerResize()`` stages it. `nil` between drags.
     @ObservationIgnored
     var liveDividerWeight: (split: SplitNodeID, index: Int, weight: Double)?
+
+    /// Where THIS device is looking while ``DevicePreferences/followSessionFocus`` is off (docs/45
+    /// §8.2) — overlaid onto the projection, never sent as an intent. `nil` while this device follows,
+    /// which is the only state ``setFollowSessionFocus(_:)`` leaves it in when the flag goes back on.
+    @ObservationIgnored
+    var deviceFocus: DeviceFocus?
 
     /// The automation environment ``bootstrapFromEnvironment(_:)`` was handed before a document
     /// existed, held until one does. `nil` once it has run, or when it never had to wait.
@@ -232,6 +243,18 @@ public final class WorkspaceStore {
     func mutateDevicePreferences(_ transform: (inout DevicePreferences) -> Void) {
         transform(&devicePreferences)
         try? devicePreferencesStore?.save(devicePreferences)
+    }
+
+    /// Sets whether this device follows the host's session focus (docs/45 §8.2).
+    ///
+    /// Turning it back ON drops ``deviceFocus``: a device that has resumed following must show what
+    /// the host says is focused, and a surviving overlay would pin it to a tab no other client can
+    /// see it on. That is also why the overlay needs no second guard on the flag — the only way to
+    /// hold one is to be unfollowing.
+    public func setFollowSessionFocus(_ following: Bool) {
+        guard devicePreferences.followSessionFocus != following else { return }
+        mutateDevicePreferences { $0.followSessionFocus = following }
+        if following { setDeviceFocus(nil) }
     }
 
     /// Where the last picture of the host's document is cached (docs/45 §7.3), so a cold launch paints
@@ -2574,7 +2597,7 @@ public final class WorkspaceStore {
         let next = WorkspaceTreeOps.moveFocus(direction, bounds: bounds, in: tree)
         guard let landed = next.activeSession?.activeTab?.activePane,
               landed != tree.activeSession?.activeTab?.activePane else { return }
-        guard stage(.focusPane, WorkspaceIntentArgs.encode(pane: landed)) else { return }
+        guard stageFocus(pane: landed) else { return }
         reconcileTree()
     }
 
@@ -2712,7 +2735,7 @@ public final class WorkspaceStore {
         // The intent names the TAB, never the slot: an index resolved on the host would land on a
         // different tab the moment another client reorders or closes one.
         guard let session = tree.activeSession, session.tabs.indices.contains(index) else { return }
-        guard stage(.focusTab, WorkspaceIntentArgs.encode(tab: session.tabs[index].id)) else { return }
+        guard stageFocus(tab: session.tabs[index].id) else { return }
         reconcileTree()
         // Badge auto-clear: acknowledge any completion/done badge for every pane in the newly-active tab
         // regardless of HOW the tab switch was triggered (keyboard ⌘1–⌘9, cycleTab, NavigatorColumn, or a
@@ -2780,7 +2803,7 @@ public final class WorkspaceStore {
         guard let session = tree.sessions.first(where: { $0.id == sessionID }),
               let tab = session.activeTab ?? session.tabs.first else { return }
         noteActiveSessionChanged(to: sessionID, from: tree.activeSessionID)
-        guard stage(.focusTab, WorkspaceIntentArgs.encode(tab: tab.id)) else { return }
+        guard stageFocus(tab: tab.id) else { return }
         reconcileTree()
     }
 
@@ -2792,7 +2815,7 @@ public final class WorkspaceStore {
         guard tree.contains(id) else { return }
         let alreadyActive = tree.activeSession?.activeTab?.activePane == id
         guard !alreadyActive else { return }
-        guard stage(.focusPane, WorkspaceIntentArgs.encode(pane: id)) else { return }
+        guard stageFocus(pane: id) else { return }
         reconcileTree()
     }
 

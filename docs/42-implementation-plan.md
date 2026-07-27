@@ -14,7 +14,7 @@
 5. **Claude Code = runtime-detected status, not a stored `PaneKind`.** Drop `PaneKind.claudeCode`; any `.terminal` running `claude` is auto-detected. Three signals, defense-in-depth: **(1) host foreground-process watch** (primary, zero-config, wire type 26), **(2) Claude Code hooks** (richest, opt-in, wire type 27), **(3) client screen-manifest fallback** (no wire). Drives a **pure headless state machine** in a new `SlopDeskAgentDetect` target. (§7.5, §7.9.)
 6. **GUI Settings.** Two bridges: **`@AppStorage`** (live client/terminal-render prefs) + a **prefs sidecar → daemon-at-launch** for the ~80 `SLOPDESK_*` video flags (read at `static let` init from `ProcessInfo.environment`, cannot live-reload → "applies on reconnect/restart"). The ~80 sites route through a new `EnvConfig` resolver, **behavior-preserving** (empty overrides ≡ today, pinned by test + `make golden`). (§7.10.)
 7. **Terminal parity.** Font/theme/keybind via `ghostty_config_load_string` (unblocks the grid-mismatch), tabs/splits via our tree, scrollback search, sticky command header, OSC 8 click-to-open, launch presets, right-click menu.
-8. **Migration = a real v9→v10 step** (first non-trivial one). Preserve every `PaneID`+`PaneSpec`; groups → tabs. Requires a pre-decode raw-JSON version peek (a v9 file fails the *typed* v10 decode before migration runs). A **frozen `WorkspaceV9` mirror** immunizes the migration against future live-type edits. (§7.4.)
+8. **There is NO migration — a `schemaVersion` this build does not speak resets aside.** Single-user, no backward compatibility: `WorkspacePersistence.load()` gates on `schemaVersion ==` and answers the default workspace otherwise, keeping the old file as a `.corrupt` sidecar so nothing is destroyed. The version bump is what makes that rule true rather than merely stated — a file from a different shape would otherwise decode "successfully" through the tolerant `init(from:)` and the next autosave would rewrite it without the fields it does not know. See [DECISIONS](DECISIONS.md) "no backcompat/migrations". (§7.4.)
 9. **Deferred, schema-reserved now:** per-session multi-host (`Session.connection` modeled; MVP shares the one `AppConnection`); `Tab.floatingPanes` (empty in MVP, no later migration). (§7.2, §7.3.)
 10. **Reuse, do not rebuild:** `Sources/SlopDeskInspector/HookIngest.swift` (`HookParser`/`HookPayload`/`EventBuilder`) already parses `SessionStart`/`PostToolUse`/`SubagentStop` with fixtures — **extend** it (test-first) with `Notification(permission_prompt)`/`Stop`/`SessionEnd`, don't reimplement. `Sources/SlopDeskHost/InspectorServer.swift` is a complete `NWListener` daemon on `terminalPort+1` — **feed it**, don't rebuild; the only net-new host piece is the Claude-hook Unix-socket listener.
 
@@ -66,13 +66,13 @@ public struct Session: Identifiable, Codable, Sendable, Equatable {
     public var connection: ConnectionTarget?   // per-session host; MVP shares the one AppConnection (§7.2)
 }
 
-public struct Workspace: Codable, Sendable, Equatable {  // currentSchemaVersion = 10
-    public var schemaVersion: Int
+public struct Workspace: Codable, Sendable, Equatable {  // ships as TreeWorkspace, currentSchemaVersion = 12
+    public var schemaVersion: Int              // the RESET gate, not a migration seam — see Decision 8
     public var sessions: [Session]             // ≥ 1
     public var activeSessionID: SessionID?
-    public var snippets: [Snippet]             // KEEP verbatim
-    public var layoutPresets: [LayoutPreset]   // repurposed → Session/Tab launch templates (C5)
-    // RETIRED from v9: canvas, focusedPane, maximizedPane (→ Tab), groups, bookmarks, connection (→ Session)
+    // NOT carried: snippets, layoutPresets (retired with the canvas); launchPresets / sessionTemplates /
+    // videoModesByTarget / Session.connection live in DevicePreferences (docs/45 §7.3) — the tree is
+    // THE LAYOUT, which every attached client shares, and those describe one machine.
 }
 ```
 
@@ -94,26 +94,26 @@ public extension Workspace {
 
 ---
 
-## Migration (from current persistence schema)
+## Persistence, and why there is no migration seam
 
-Current: `currentSchemaVersion = 9`; `WorkspaceSchemaMigration.migrate` is hard-reset (`from != to → nil`) on the **already-decoded typed value** (`WorkspacePersistence.swift:100`). A v10 `Workspace` has no `canvas`/`groups`, so a v9 file **fails the typed v10 decode** at `:95` *before* migration runs. Fix = a **pre-decode raw-JSON version peek**.
+**A file this build does not speak resets to the default and is kept aside.** That is the whole policy
+(Decision 8). `WorkspacePersistence.load()` decodes, checks `schemaVersion == currentSchemaVersion`,
+and answers `defaultWorkspace()` / an empty `TreeWorkspace` on any other outcome, moving the old bytes
+to a `.corrupt` sidecar first. There is no `WorkspaceSchemaMigration`, no frozen legacy mirror and no
+version-peek branch: this is a single-user tool, the layout is cheap to rebuild, and a half-migrated
+one is a bug with no failing test.
 
-`WorkspacePersistence.load()` edit:
-1. Decode `struct VersionPeek: Decodable { let schemaVersion: Int }` off the raw bytes.
-2. `== 10` → typed-decode `Workspace` directly.
-3. `9` (forward-tolerant `5...9`) → decode a **frozen `WorkspaceV9` shadow** (snapshot of the v9 `Workspace`/`Canvas`/`CanvasItem`/`PaneGroup` shapes in `Legacy/WorkspaceV9.swift`, so future live-type edits can't break migration), then `WorkspaceMigrationV9toV10.migrate(_:) -> Workspace`.
-4. unknown/future → reset-to-default + `.corrupt` sidecar (unchanged).
-5. Run the existing repair chain retargeted to v10 invariants (`normalizingSpecs()`/`normalizingActive()`).
+`TreeWorkspace.init(from:)` is deliberately TOLERANT of an unknown KEY — a hand-edited file describing
+something the type does not own is decode-ignored rather than trapping. That tolerance is exactly why
+the version gate has to be strict: without the bump, a file from a different shape would decode
+"successfully" with the retired keys dropped, and the next autosave would rewrite it without them,
+silently and with no `.corrupt` copy kept.
 
-`WorkspaceMigrationV9toV10.migrate` mapping (pure):
-- **One Session** named `v9.connection?.host ?? "Local"`, `connection = v9.connection`.
-- **Groups → tabs**: one `Tab` per `PaneGroup` (group name → tab title); ungrouped panes → a leading `"Main"` tab; no groups → one `"Main"` tab.
-- **Tab.root**: 1 pane → `.leaf(id)`; else an n-ary `.split(axis: .horizontal, children:)` of leaves ordered by `frame.minX` then `minY` (deterministic, test-pinned).
-- **Session.specs** = `[paneID: item.spec]`, preserving every `PaneID`+`PaneSpec`; `.claudeCode` spec kept while the enum still has the case (C1), rewritten `.claudeCode → .terminal` in the same atomic commit that removes the case (C3). Drop `frame`/`z`/`groupID`/`camera`/`bookmarks`/`maximizedPane`.
-- `activePane = v9.focusedPane` if in tab; `zoomedPane = v9.maximizedPane` if in tab; `activeSessionID`/`activeTabIndex` from the focused pane's owner.
-- `snippets` carried; `layoutPresets` carried (embedded v9 canvases run the same item→tree transform → a one-tab template, or names-only if dropped).
-
-`WorkspaceTransfer.formatVersion → 2`; import reuses the v9→v10 transform on `formatVersion: 1`; `maxItems` re-applied to `allPaneIDs().count`.
+**Where each half lives now** (docs/45 §7.3): the LAYOUT is the host's `workspace-state.json`; the
+client keeps `workspace-cache.json` (the raw kind-0 snapshot bytes, painted at launch and never
+authoritative) and `device-prefs.json` (presets, templates, `videoModesByTarget`, the per-host
+connection target, `followSessionFocus`). A corrupt `device-prefs.json` resets to a fresh default on
+the same rule.
 
 ---
 
@@ -135,10 +135,10 @@ Ordered work-items; each builds + tests green **standalone** and is **one atomic
 - First-test: `WorkspaceTreeOpsTests.swift` — split (n-ary insert vs replace), close (collapse + flex redistribution + tab/session cascade), resizeDivider (sum-preserve), togglingZoom, breakPaneToTab, newTab/closeTab (≥1 invariant), newSession/closeSession, `allPaneIDs()` DFS order, `spec(for:)`, `Set(specs.keys)==Set(leafIDs)` invariant, `normalizing*` repairs. Revert-to-confirm-fail each.
 - Verify: `swift build && swift test --filter WorkspaceTreeOps`.
 
-**W3 — v9→v10 migration + persistence version-peek.** Deps: W2.
-- Add: `Legacy/WorkspaceV9.swift` (frozen mirror), `Store/WorkspaceMigrationV9toV10.swift`. Change: `Store/WorkspacePersistence.load()` (pre-decode peek branch), `Store/WorkspaceSchemaMigration.swift` (real v9→v10 step), `Store/WorkspaceTransfer.swift` (`formatVersion = 2` + import migration).
-- First-test: `WorkspaceMigrationV9toV10Tests.swift` — hand-built v9 JSON (1 pane / N panes / grouped / focused+maximized / with `.claudeCode` / with a `.remoteGUI` carrying a `VideoEndpoint` / with a preset) → exact v10 tree; PaneID+spec preservation; deterministic `frame.minX` ordering; round-trip `encode(v10) |> decode == v10`. `WorkspacePersistenceMigrationTests.swift` — write a v9 file → `load()` yields migrated v10; future version → reset-aside + `.corrupt`. Proven to fail against today's `nil`-returning migration.
-- Verify: `swift test --filter Migration && swift test --filter Persistence`.
+**W3 — the tree's own persistence slot, version-gated.** Deps: W2.
+- Change: `Store/WorkspacePersistence.swift` — a `TreeWorkspace` load/save beside the canvas one, each gated on its own `schemaVersion ==`, decode-or-default, corrupt-file-kept-aside, atomic write. No migration step, no legacy mirror, no version peek (see "Persistence, and why there is no migration seam").
+- First-test: `WorkspacePersistenceTests` — byte-stable round trip; a file at a version this build does not speak yields the default AND leaves a `.corrupt` sidecar; an unknown KEY inside a current-version file is decode-ignored rather than fatal; the repair chain (`normalizingSpecs()` / `normalizingActive()`) fixes a hand-broken invariant.
+- Verify: `swift test --filter Persistence`.
 
 **W4 — Store retarget (reconcile over the new tree).** Deps: W2, W3.
 - Change: `Store/WorkspaceStore.swift` — `allLeafIDs()` → `workspace.allPaneIDs()`; the ~12 direct `workspace.canvas.allIDs()` sites (`:274, :327, :658, :1056, :1057, :1092, :1492, :1758, :2236, :2287, :2380`) → `workspace.allPaneIDs()`/`activeTabPaneIDs()`; `spec(for:)` (`:2346`) → `workspace.spec(for:)`; `defaultTitle` (`:2392`); add tree-mutation methods (splitPane/closePane/newTab/selectTab/newSession/move(.direction)/zoom) wrapping the pure ops + `reconcile()`; delete canvas/group/camera/snap/non-overlap/arrange/overview methods; `isPaneOnCanvas` → `isPaneInActiveTab`; `neighbourForRefocus` uses the new solver's frames; `defaultWorkspace()` → one Session/Tab/leaf. **Do not touch `reconcile()` body.** Model `Session.connection`; MVP all sessions share the one `AppConnection` (`// TODO(multi-host)`).
@@ -212,8 +212,8 @@ Ordered work-items; each builds + tests green **standalone** and is **one atomic
 ## Constraint checklist (golden corpus, headless, wire, float idioms) — how the plan preserves each
 
 - **Golden corpus / wire freeze.** The terminal wire **IS** golden-pinned via the `terminalWireMessages` key in `golden/golden_vectors.json` (generator `Sources/slopdesk-corevectors/main.swift:664`; `WireMessage+Encode/Decode.swift` doc-comments confirm). New CONTROL types 26/27 (and 28 in C5) are **additive within wire version 1**, always **surgically merged** into `terminalWireMessages` — never `>`-redirected (drops the 13 frozen XCTest-pinned keys). Every wire item (W9, W14-OSC8) runs `bash scripts/golden-check.sh` (43 keys) + `slopdesk-loopback-validate`. Host still accepts only version 1; old clients drop unknown CONTROL types (validate-then-drop). No existing byte shifts — the layout redesign touches zero wire. The **video** golden is re-proven byte-identical by W12's `make golden` + loopback (empty `EnvConfig.overrides` ≡ today).
-- **Headless-first.** The entire domain (SplitNode/Tab/Session/Workspace/ops/solver/migration — W1–W4), the Claude state machine + manifest matcher + rollup in the isolated `SlopDeskAgentDetect` target (W7, which *physically cannot* import GUI/VT/libghostty), the hook parser (W8), the wire codec (W9), the host watcher/listener/installer *pure decoders* (W10), and the settings models + `EnvConfig`/`EnvBridge` (W12) are all pure value types / pure functions with failing-first headless tests. GUI views (W5, W13, W14) are compiled + code-reviewed and proven via `check-macos.sh`/`check-ios.sh` — **no `SCStream`/`VTCompressionSession`/`VTDecompressionSession`/Metal/libghostty surface is instantiated in any test** (hang-safety). The watcher/listener are tested as pure parsers, never against a real socket/PTY.
+- **Headless-first.** The entire domain (SplitNode/Tab/Session/Workspace/ops/solver/persistence — W1–W4), the Claude state machine + manifest matcher + rollup in the isolated `SlopDeskAgentDetect` target (W7, which *physically cannot* import GUI/VT/libghostty), the hook parser (W8), the wire codec (W9), the host watcher/listener/installer *pure decoders* (W10), and the settings models + `EnvConfig`/`EnvBridge` (W12) are all pure value types / pure functions with failing-first headless tests. GUI views (W5, W13, W14) are compiled + code-reviewed and proven via `check-macos.sh`/`check-ios.sh` — **no `SCStream`/`VTCompressionSession`/`VTDecompressionSession`/Metal/libghostty surface is instantiated in any test** (hang-safety). The watcher/listener are tested as pure parsers, never against a real socket/PTY.
 - **Bit-exact float idioms.** Weight normalization in the solver/ops uses **separate `*`+`+`** and **ordered min/max** (`Double.maximum`/`Double.minimum`, never a bare `<`/`>` ternary), never `addingProduct`/`fma`. No FEC/QP/congestion float path is edited — the only video-path change (W12 `EnvConfig` indirection) is behavior-preserving and pinned byte-identical.
 - **FEC m==1 ≡ XOR, single C target, validate-then-drop.** Untouched — the redesign is client-UI + terminal-host-control + settings. `Sources/CSlopDeskSIMD` (GF(2⁸) NEON kernel, scalar xxHash) is out of scope, re-proven incidentally by `loopback-validate`/`make golden`. New wire decoders (26/27/28) and the hook-socket validate-then-drop on short/garbage; foreground watch uses ordinary Darwin syscalls; no new `unsafe`/C.
-- **Migration safety.** First real migration: pre-decode version peek + **frozen `WorkspaceV9` mirror** (immunized against future live-type edits) + every `PaneID`+`PaneSpec` preserved (restored sessions reconcile identically) + round-trip tested; unknown/future versions still reset-to-default with a `.corrupt` sidecar (no brick-on-launch).
-- **Atomic green layers + traps.** Each W-item is one atomic commit, builds + tests green standalone; the `SLOPDESK_IDE_SHELL` flag + the W5 atomic delete keep `swift build` green across the domain swap. The `.claudeCode`-enum removal is ordered across phases (C1 migration keeps the case; W11 removes it AND rewrites the migration map in one commit) so no commit references a deleted case. prek partial-pathspec trap honored (commit all related files together). `bash scripts/check-ios.sh` after W5/W11/W15.
+- **Persistence safety, without a migration.** A file at a version this build does not speak resets to the default with a `.corrupt` sidecar (no brick-on-launch, nothing destroyed), the write is atomic, and the repair chain fixes a hand-broken invariant rather than crashing on it. Round-trip byte stability is test-pinned. The layout itself is the HOST's file (docs/45), so the client has nothing schema-shaped left to carry forward.
+- **Atomic green layers + traps.** Each W-item is one atomic commit, builds + tests green standalone; the `SLOPDESK_IDE_SHELL` flag + the W5 atomic delete keep `swift build` green across the domain swap. The `.claudeCode`-enum removal is ordered across phases (C1 keeps the case; W11 removes it AND every reference in one commit) so no commit references a deleted case. prek partial-pathspec trap honored (commit all related files together). `bash scripts/check-ios.sh` after W5/W11/W15.

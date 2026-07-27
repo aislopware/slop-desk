@@ -19,8 +19,8 @@ All file:line citations below are verified against the working tree at `fc306605
 Run `nvim` in a pane. The sidebar row updates to `main.go - NVIM`. Quit the client, reopen it — the
 row reads `vi .` again.
 
-Nothing about that is a persistence bug. `PaneSpec.lastKnownTitle` is persisted
-(`Sources/SlopDeskWorkspaceCore/Workspace/Domain/PaneSpec.swift:255`), the quit-time flush is
+Nothing about that is a persistence bug. The title is persisted (as `PaneSpec.lastKnownTitle`, the
+client-side cache this document replaces with `pane/liveTitle`), the quit-time flush is
 synchronous (`SlopDeskClientApp.swift:786`), and the client very often reattaches to the *same live
 nvim process* — `DetachedSessionStore` parks it with an indefinite TTL by default
 (`HostServer.swift:279`, [DECISIONS.md](DECISIONS.md):679). The pane the user comes back to is
@@ -92,7 +92,11 @@ Two pieces of it, however, already do:
   (`HostServer.swift:1263-1340`) is a `[UUID: closure]` observer set feeding the ctl socket. The
   pattern exists; it is simply not wired to the GUI wire.
 
-### 2.2 Who owns what today
+### 2.2 Who owns what — the split this design starts from
+
+The inventory §5.7 maps and §7 moves. Every `PaneSpec.*` row is a client-side cache of a fact the host
+already holds; the document cell each one lands in is in the §5.7 table, and the caches themselves are
+gone from `PaneSpec` (`b89aeebb`).
 
 | State | Lives | Persisted | Host knows |
 |---|---|---|---|
@@ -110,9 +114,9 @@ Two pieces of it, however, already do:
 | PTY + `_currentTitle` / `lastCwdTruth` / `lastProjectKey` / `lastExitTruth` | host, in memory | **no** | — |
 | `<uuid>.scrollback` + `<uuid>.scrollback.size` | host disk (`<App Support>/SlopDesk/scrollback/`) | yes | — |
 
-`lastKnownCwd` / `projectKey` are the working counter-example: host-derived, persisted client-side as
-a warm cache, **and** re-asserted on every reattach. That is the pattern this document generalizes to
-everything.
+A pane's cwd and project key are the working counter-example: host-derived, cached client-side as a
+warm picture, **and** re-asserted on every reattach. They live in the mirror as `pane/cwd` and
+`pane/projectKey`, and that is the pattern this document generalizes to everything.
 
 ### 2.3 What the wire can express
 
@@ -173,7 +177,7 @@ PER-CLIENT-PRESENCE — fanned out, TTL-expired, never persisted, never versione
 | `WeightedChild.weight` | `splitNode/weight` (**its own object**) | Two clients dragging two different dividers write two different keys and cannot clobber each other. |
 | `PaneSpec.kind` | `pane/kind` | Topology. |
 | `PaneSpec.title` + `.userRenamed` | `pane/title`, `pane/userRenamed` | A rename is authorship — but authorship *of shared state*. A tab renamed on the Mac is renamed on the phone. |
-| `PaneSpec.lastKnownTitle` → **`pane/liveTitle`** | `pane/liveTitle` | Was a client cache of `MuxChannelSession._currentTitle` (`:152`) with **no invalidation signal**. That cache is the reported bug. |
+| `PaneSpec.lastKnownTitle` → **`pane/liveTitle`** | `pane/liveTitle` | The client-side cache it replaces holds `MuxChannelSession._currentTitle` (`:152`) with **no invalidation signal**, which is the reported bug. |
 | **NEW** `pane/titleFresh` (u8) | `pane/titleFresh` | Replaces `programTitle(for:)`'s two-stamp guess. The host owns both inputs (OSC-title stamp; segmenter open-block start), so the host ships the **verdict**. §4.4 states the rule. |
 | `PaneSpec.lastKnownCwd` | `pane/cwd` | Already host truth (`lastCwdTruth`, type 33). |
 | `PaneSpec.projectKey` | `pane/projectKey` | Already host truth (`lastProjectKey`, type 34). |
@@ -188,10 +192,16 @@ PER-CLIENT-PRESENCE — fanned out, TTL-expired, never persisted, never versione
 | `PaneSpec.video` **target identity only** | `pane/videoTarget` | Both clients must agree "tab 3 slot 2 is a video pane on Display 1" — that is topology. The **modes** stay device-local (§4.3). |
 | **NEW** git summary (type 35) | `project/gitSummary` | `projectGitSummary` (`:3006`) is host truth keyed by **project**, not pane — so it needs its own object kind, or a never-seen-this-host client renders no git line until the first FSEvents edge. |
 
-**Pane identity becomes host-minted.** The host's `sessionID` UUID **is** the pane objectID, published
-in every snapshot. A client spawning a pane sends an intent and **learns the id back**. `PaneID`
-survives client-side as the local rendering key, seeded from the host id. `PaneSpec.resumeSessionID`
-is deleted — the host-minted pane id *is* the rendezvous identity.
+**Pane identity is ONE namespace.** A pane's `PaneID` **is** its document objectID and its mux
+`sessionID`, verbatim — `WorkspaceStore.documentPaneID(_:)` is the identity function, kept as a named
+funnel because it is the sentence "the document calls this pane what we call it". The client PROPOSES
+the id (DECISIONS, Multi-client Phase 5 ruling 1: a host-minted id would make every split wait a round
+trip) and presents it on `channelOpen`, so the host files that pane's liveness under the very key the
+topology names it by. `PaneSpec.resumeSessionID` is deleted: that id *is* the rendezvous identity, so
+a second field for it could only disagree.
+
+Two namespaces with a translation table between them is what put an optimistic overlay and host truth
+on different keys, where the erasure rule that keeps the mirror's two layers disjoint could never fire.
 
 **ctl-spawned panes are in the document.** `spawnControlPane` (`HostServer.swift:1388`, registered at
 `:1537`) creates a real PTY pane with no client connection. It gets `pane/*` entries parented to a
@@ -230,7 +240,7 @@ this document is false.
 | **NEW** `followSessionFocus` (Bool, default **ON** macOS / **OFF** iOS) | §8.2. |
 | `blockBookmarks` | Client-local and per-materialization. Note the pre-existing doc/impl mismatch: `WorkspaceStore.swift:1132-1140` claims stable-`PaneID` keying, `WorkspaceStore+Blocks.swift:21-25` uses `bookmarkScopeKey`. **Fix the comment, not the code.** |
 
-### 4.4 Deleted outright, not relocated
+### 4.4 Deleted outright, not relocated — **SHIPPED**
 
 - `WorkspacePersistence.promotingLastKnownTitles()` (`:200-219`)
 - `WorkspaceStore.programTitle(for:)` (`WorkspaceStore+Completion.swift:228-234`)
@@ -734,7 +744,10 @@ What changes is who writes it.
 - `tree` becomes `mirror.project()` — **SHIPPED**: a computed `workspaceMirror.topology?.tree`,
   memoized against `workspaceMirrorRevision` (a projection walks every cell and a view body reads
   `tree` dozens of times a frame), with an empty `TreeWorkspace` when there is no topology. Nothing
-  assigns to it, and the only local overlay on top is the in-flight divider PREVIEW (below).
+  assigns to it, and exactly two local overlays ride on top — the in-flight divider PREVIEW and an
+  unfollowing device's own focus (both below). Both are keyed off `workspaceMirrorRevision`, which is
+  simultaneously the projection cache's key and the Observation shadow every reader binds to, so an
+  overlay change repaints without a document frame.
 - The per-pane mirrors (`WorkspaceStore.swift:2934-2966`) become **computed reads through the mirror**.
 - The existing type-21/26/27/32/33/34/36 control sinks are kept as a **low-latency fast path** — but
   they write `mirror.fastPath`, **never `entries`**. `entries` remains provably
@@ -766,6 +779,15 @@ FRAME. One intent per frame would flood the channel and make every other client 
 records an ephemeral `(split, index, weight)` the `tree` getter overlays onto the projection, and
 `commitDividerResize()` sends the single op-17 with the CLAMPED weight the user actually saw. The
 preview is discarded the instant the intent is staged.
+
+**The second thing that is NOT an intent: focus on a device that does not follow.** With
+`followSessionFocus` off (§8.2 — the iOS default) `selectTab` / `selectSession` / `focusPaneTree` /
+`moveFocusTree` send nothing at all and record a `WorkspaceStore.DeviceFocus` (one tab, plus a pane
+when the gesture named one) that the `tree` getter overlays. The overlay applies the very ops the
+applier would have — `WorkspaceTreeOps.focusPane` included, so the shared zoom's collapse rule still
+holds locally — and resolves against the projection on every read, so a tab another client closed
+stops applying instead of stranding this device. Turning the flag back on drops it. Presence is
+unaffected: `currentWorkspaceView()` reports the projection, overlay and all.
 
 **Geometry is resolved client-side, and the WINNER travels.** The host has no viewport, so it cannot
 answer "which pane is to the left". `moveFocusTree` resolves the neighbour against the layout this
@@ -845,18 +867,40 @@ and the gate's recent-hosts menu agree on what "the same host" means.
 
 `followSessionFocus` defaults **ON for macOS, OFF for iOS** (§8.2), resolved at compile time.
 
-**Gone from disk:** `TreeWorkspace` (sessions/tabs/splits/specs/presets), `lastKnownTitle`,
-`lastKnownCwd`, `projectKey`, `resumeSessionID`, `resumeLastReceivedSeq`. Per the no-migration
-directive the existing v11 file simply **decode-fails to default** on first run of the new build.
+**Not on disk, on any client:** the `TreeWorkspace` itself (sessions/tabs/splits/specs/presets), and
+the five per-pane caches `PaneSpec` does not carry — a pane's live title, its cwd, its project key, its
+resume session id and its resume sequence. The layout is the host's file; those facts are the mirror's
+cells (`pane/liveTitle`, `pane/cwd`, `pane/projectKey`) and the pane's own id is the rendezvous
+identity. Per the no-migration directive a file from a different shape **decode-fails to default**.
 
 ### 7.4 Cold-start sequence
+
+Three ordered facts hold this together, and each exists because the one before it does:
+
+1. **The mirror is SEEDED before a packet moves.** `init` publishes the restored tree as a kind-0
+   snapshot at `stateNum 1` under `seedEpoch` (the zero UUID, the wire's "none"), with the cache's
+   `pane/spawnCwd` folded into the topology and its `pane/cwd` / `pane/projectKey` into the fast path.
+   So `topology != nil` the instant the store exists and the window paints a real layout rather than
+   the empty one a projection with no document renders. The first HOST frame carries the host's own
+   epoch, which differs, so it RESETS the mirror and replaces the seed wholesale — a seed is never
+   diffed onto.
+2. **`canMutate` is `.live` AND a topology, not either one.** Step 1 makes `topology != nil` true
+   immediately, so a gate that asked only that would open before the subscription — and
+   `send(intent:)`'s own `.live` guard would then drop the intent silently.
+3. **The automation bootstrap is ARMED, not run, until the channel is live.** The app shell calls
+   `bootstrapFromEnvironment` synchronously at launch, before the channel is even installed. With no
+   document to reshape it stores the environment in `armedBootstrapEnvironment`;
+   `attachWorkspaceChannel` and the channel's own state changes re-fire it, and it runs exactly once,
+   when there is a host to send `adoptWorkspace` / `spawnDetachedPane` to.
 
 ```
 CLIENT                                                     HOST (hostd)
   |                                                              |
   |-- read workspace-cache.json ------------------------------→  |   (local, ~2 ms)
+  |   SEED the mirror from it + the restored tree (epoch = zero) |
   |   PAINT the full sidebar from cached snapshot bytes          |
   |   every row marked "unconfirmed" (subtle, not a spinner)     |
+  |   mutation is REFUSED here: canMutate needs `.live` too      |
   |                                                              |
   |-- TCP mux connect, hello(v1) ------------------------------→ |
   |←------------------------------------------------ helloAck --|
@@ -936,6 +980,17 @@ default **ON for macOS, OFF for iOS**:
 This is zellij's per-client `ActivePanes` + Yjs awareness, with tmux's shared `curw` as the default for
 machines that want it. It is unambiguous, it never diverges shared state, and picking up a phone can
 never yank a Mac's screen.
+
+**SHIPPED**, as an OVERLAY rather than a second tree. The OFF row is a `WorkspaceStore.DeviceFocus` —
+one tab, plus a pane when the gesture named one — that the `tree` getter lays over the projection,
+exactly the way the divider preview does (§7.2). It applies the same `WorkspaceTreeOps` op the applier
+would have, so the device sees what it would have seen had it been following; it resolves against the
+projection on every read, so a tab another client closed stops applying instead of stranding the
+device on a view of nothing; and it is dropped the moment following resumes, because a surviving one
+would pin the device to a tab no other client can see it on. `selectTab`, `selectSession`,
+`focusPaneTree` and the directional `moveFocusTree` all fork through `stageFocus(tab:)` /
+`stageFocus(pane:)`, so no gesture can grow a path around the flag. Presence is published from the
+projection either way — looking away is not hiding.
 
 ### 8.3 PTY size — monotone min-fold over ATTACHMENT, never presence, never a latch
 
@@ -1169,8 +1224,8 @@ fallback — they still write `fastPath` and, with no `entries` to lose to, driv
 
 - `HostWorkspaceMirror` with **two** layers, not three: `entries` and `fastPath`. The optimistic
   `pending` layer has no writer until Phase 5's intents, and `value(for:)` is its insertion point.
-- Every mirror key is the **host-minted** pane id (`documentPaneID(_:)`), never the tree-local
-  `PaneID`. Getting this wrong is silent — it was, for one commit.
+- Every mirror key is the pane's DOCUMENT id (`documentPaneID(_:)`), and both ends must agree which
+  UUID that is. Getting it wrong is silent — it was, for one commit.
 - Mirror reads open with `observeWorkspaceMirror()`. The box is not `@Observable`; a funnel that
   forgets renders once and then goes deaf.
 - **Deleted** `paneTitleAt`, `programTitle(for:)`. `paneCommandStartedAt` stays — it is the
@@ -1229,12 +1284,11 @@ fallback — they still write `fastPath` and, with no `entries` to lose to, driv
 - `WorkspaceChannelClient.send(intent:args:)` — stages before it sends, and does not send at all when
   this client can already tell the host will refuse.
 
-**Still to do — the store cutover**
-The client `WorkspaceStore` still owns and persists its own `TreeWorkspace`; the document is read for
-per-pane facts and the optimistic layer, not yet for the LAYOUT. Until that flips, two clients see
-two trees and the phase's headline value is not delivered on hardware. It is deliberately separate
-because it is the single riskiest change in the plan — every UI surface reads `store.workspace` —
-and everything under it is now proven headlessly. It carries with it:
+**Deferred to Phase 5b — the store cutover**
+Phase 5 left the client `WorkspaceStore` owning and persisting its own `TreeWorkspace`: the document
+was read for per-pane facts and the optimistic layer, not for the LAYOUT, so two clients still saw two
+trees. It was split out because it is the single riskiest change in the plan — every UI surface reads
+`store.workspace` — and everything under it was proven headlessly first. It carried with it:
 - `workspace.json` → `workspace-cache.json` (raw snapshot bytes) + `device-prefs.json`
 - `followSessionFocus` (default ON macOS / OFF iOS)
 - deleting `PaneSpec.resumeSessionID`, the tree's `WorkspaceSchemaMigration`,
@@ -1256,6 +1310,46 @@ future build's config survives this one.
 - `WorkspaceStateFileTests` / `HostWorkspaceStoreTests` — no living process survives a restart
 - Golden: `workspaceStateCodec` extended, `workspaceIntentOps` + `workspaceIntentArgs` added
   (corpus 50 → 52). **Gate included `bash scripts/check-ios.sh`.**
+
+### Phase 5b — the store's mutations become intents
+
+**Value: the headline one. `WorkspaceStore.tree` is a projection of the document, so two clients see
+ONE tree.** Landed as five commits, wire-frozen throughout: the ops it needed shipped in `2ca874f8`
+and **no golden vector changed in any of them**.
+
+**SHIPPED**
+- **The device-local facts leave the tree.** Presets, templates, `videoModesByTarget` and the
+  connection target move to `DevicePreferences` + `device-prefs.json` (§7.3); the client's layout cache
+  becomes `workspace-cache.json`, raw snapshot bytes.
+- **A pane's id IS its document id**, and the five cached facts come off `PaneSpec` — `lastKnownTitle`,
+  `lastKnownCwd`, `projectKey`, `resumeSessionID`, `resumeLastReceivedSeq`. Every reader is retargeted
+  at `workspaceMirror`. `spawnCwd` is read through the mirror too, topology before fast path, which is
+  what makes a relaunch respawn a restored pane where it started rather than in `$HOME`.
+- **`TabOrderingEngine` moves into `SlopDeskWorkspaceModel`**, below both ends, and
+  `WorkspaceIntentApplier.successorAfterClosing` re-lands the `ed76f137` project-section rule. The
+  RULE is unchanged; the MRU RING is now shared, so two clients closing one tab land on one tab.
+- **Op 23 `dockPaneAtTabEdge` honours the tab its args always named** —
+  `WorkspaceTreeOps.moveLeafToTabRootEdge`, so the cross-tab rail-drag gutter drop lands. No wire
+  change.
+- **`LoopbackWorkspaceDocument`** — the opt-in in-process document (§7.2) every tree-driving test now
+  holds, pinned byte-for-byte against `HostWorkspaceDocument`.
+- **`SLOPDESK_WORKSPACE_DOC` is default-ON (`!= "0"`) on BOTH ends, in one commit.** The 47 assignment
+  sites are intents; `recentlyClosedTabs`, `plannedTabSuccessor`, `replaceTree` and `mutateTree` are
+  deleted; `syncInputTabs` is host truth via `tab/syncInputArmed`, and therefore persisted.
+- **`followSessionFocus` is read** (§8.2) — an unfollowing device overlays its own focus on the
+  projection and sends no intent, while still publishing presence.
+- **The GUI gates prove the shipping path.** `check-macos.sh` and `check-video.sh` give their daemon a
+  fresh `SLOPDESK_WORKSPACE_STATE_DIR`, and `check-video.sh` stands up a real `slopdesk-hostd` for the
+  detached `.desktop` pane's intent to land in.
+
+**NOT shipped**
+- **Hardware verification.** Everything above is proven headlessly and by the two GUI gates; nobody has
+  yet watched two real clients converge on one layout. That is the open item.
+- **A settings row for `followSessionFocus`.** The flag is persisted, read and settable
+  (`WorkspaceStore.setFollowSessionFocus(_:)`); no UI toggles it, so a device keeps its platform
+  default.
+- **A cross-SESSION dock.** Refused by design — a pane's spec lives in its session's side table, so
+  moving one between sessions is a different op with a different invariant, and no gesture asks.
 
 ### Phase 6 — PTY fan-out · `SLOPDESK_PANE_FANOUT` (`== "1"`, default-OFF), LAST
 
@@ -1311,9 +1405,11 @@ test cannot tune `SLOPDESK_SUB_LAG_BYTES`. Plus `bash scripts/check-ios.sh`.
 2. `SLOPDESK_SUB_LAG_BYTES = 32 MiB` is a first guess. Only a cellular-iOS soak settles it.
 3. Does the document itself ever need sweeping, or is the capped `closedTabRing` + explicit
    `closePane` sufficient across months of churn? Measure before adding a GC.
-4. `followSessionFocus` is persisted and platform-defaulted (§8.2) but nothing reads it yet. It gates
-   whether local navigation sends `focusTab`/`focusPane` INTENTS or only presence; until it is wired,
-   every client follows.
+4. ~~Does anything read `followSessionFocus`?~~ **SETTLED** (DECISIONS, Multi-client Phase 5b — "the
+   store's mutations become intents" ruling 7). Every focus gesture forks through
+   `stageFocus(tab:)` / `stageFocus(pane:)`: ON sends the intent, OFF records a `DeviceFocus` the
+   `tree` getter overlays and sends nothing. Presence goes out either way. What is still open is the
+   UI — no control toggles the flag, so a device keeps its platform default.
 
 ---
 
@@ -1426,9 +1522,9 @@ unconditionally and `channelClose`s every subscriber; only `detach` is refcounte
 - [20](20-wire-protocol.md):373-381 "Replay-buffer caps" is **stale**: it says 64 MiB ceiling / 4 MiB
   offline gate; the code is 256 MiB (`ReplayBuffer.swift:54-55`) and 64 MiB (`:57-58`).
 - [22](22-workspace-architecture.md):349 is **stale** ("a relaunch is a fresh session… sessionIDs are
-  NOT persisted" — `PaneSpec.resumeSessionID` persists them and Stage-2 resume is default-ON), and its
-  `SlopDeskClientUI/…` paths are stale (the code lives under
-  `Sources/SlopDeskWorkspaceCore/Workspace/`).
+  NOT persisted"): a pane's own id is its mux `sessionID`, so presenting it on `channelOpen` resumes
+  the shell, and Stage-2 resume is default-ON. Its `SlopDeskClientUI/…` paths are stale too (the code
+  lives under `Sources/SlopDeskWorkspaceCore/Workspace/`).
 - `WorkspaceStore.swift:1132-1140`'s `blockBookmarks` field doc claims stable-`PaneID` keying while
   `WorkspaceStore+Blocks.swift:21-25` uses the per-materialization `bookmarkScopeKey` — **fix the
   comment, keep the code**.

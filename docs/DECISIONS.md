@@ -3513,6 +3513,11 @@ exactly how the bug comes back. `WorkspaceIntentApplier.apply` takes the pane �
 parameter; the host document, the loopback and the client's optimistic overlay all feed it the same two
 document cells (`pane/projectKey`, else `pane/cwd`) so all three pick the same tab.
 
+So the successor RULE is unchanged. What the move actually changes is the ring it reads: the MRU is
+host-owned and SHARED, so two clients closing the same tab land on the same tab, where two per-client
+rings would have sent them to two different ones. That is the point of the phase, stated in the one
+place a user would notice it.
+
 ### 2. The seam is opt-in, and the client never installs a document of its own
 
 `WorkspaceChannelClient.send(intent:)` refuses anything that is not `.live`, and `.live` is published
@@ -3612,3 +3617,50 @@ would fire before the subscription and be dropped by `send(intent:)`'s own guard
 **A tab with no active pane is unrepresentable.** The document's tab decoder repairs a missing focus to
 the tab's first leaf. So the client's "looking at no pane" report is reached by having no workspace at
 all — refused, or not yet subscribed — which is the state a client is actually ever in.
+
+### 7. `followSessionFocus` is an OVERLAY on the projection, not a second tree
+
+docs/45 §8.2 shipped the flag — persisted, ON macOS, OFF iOS — and nothing read it. Reading it is the
+last thing the cutover owed, and it is the one place where "the layout is one value" has to bend: an
+iPhone glancing at a build log must not drag a Studio's screen with it, and OFF is the shipped iOS
+default, so the unfollowing path is not an edge case.
+
+It is expressed the same way the divider drag already is — a device-local value the `tree` getter lays
+over `workspaceMirror.topology`, keyed off the same `workspaceMirrorRevision` that both caches the
+projection and invalidates every reader. `WorkspaceStore.DeviceFocus` holds one tab and, when the
+navigation named one, one pane; `stageFocus(tab:)` / `stageFocus(pane:)` are the fork, and every focus
+gesture — `selectTab`, `selectSession`, `focusPaneTree`, and the directional `moveFocusTree` — goes
+through them, so nothing can grow a fifth path that ignores the flag.
+
+Three things this shape decides:
+
+**The overlay re-applies the applier's own op.** It runs `WorkspaceTreeOps.focusPane`, which is
+literally what op 10 runs host-side, so an unfollowing device sees precisely what it would have seen
+had it been following — including the zoom-exit rule, without which a local focus could land on a pane
+the tab's shared zoom hides.
+
+**It resolves at read time and is never reconciled.** A tab or pane another client closed simply stops
+applying and host truth shows through, so there is no sweep to get wrong and no way for this device to
+be stranded on a view of a thing that is gone.
+
+**Turning following back ON clears it.** A surviving overlay would pin the device to a tab no other
+client can see it on. That also means the only state in which one can be held is "not following", so
+the overlay needs no second guard on the flag — one rule, checked in one place.
+
+Presence is untouched by all of this and deliberately so: `currentWorkspaceView()` reports the
+projection, which already carries the overlay, so an unfollowing client still publishes where it is
+looking and the roster still names it. That is the whole difference between looking away and hiding.
+
+Two consequences that fall out of putting the overlay under `tree` rather than beside it, both wanted:
+
+**A LAYOUT gesture still lands where the user is pointing.** `splitActivePane`, `toggleZoomTree` and
+the rest resolve their target off `tree`, so they name the pane THIS device sees — an unfollowing
+phone splits its own pane, not the Studio's. The intent carries that pane's id, so the host applies it
+to the right leaf and every client sees the split. Only FOCUS is device-local; the layout stays one
+value, which is the line the whole phase draws.
+
+**An unfollowing device does not feed `session/focusMRU`.** The ring is advanced by the `focusTab`
+intent, so a phone that sends none contributes no history and the close successor is chosen from where
+the FOLLOWING clients have been. That is the correct reading of §8.2 — a client that declines to move
+shared focus has also declined to vote on it — and closing a tab remains a shared layout change either
+way, so the phone's own view falls back to host truth when the tab it was on goes.
