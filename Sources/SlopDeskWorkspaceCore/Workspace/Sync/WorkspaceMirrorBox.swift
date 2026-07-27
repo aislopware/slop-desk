@@ -102,8 +102,14 @@ public final class WorkspaceMirrorBox {
         args: Data,
         issuedAt: TimeInterval,
     ) -> WorkspaceIntent? {
-        guard let current = mirror.topology else { return nil }
-        let outcome = WorkspaceIntentApplier.apply(op: op.rawValue, args: args, to: current)
+        // Resolved ONCE: it is the input the applier decides from AND the cells the close ops read
+        // their project keys out of, and building it per pane would be quadratic in a big workspace.
+        let resolved = mirror.resolved
+        guard let current = resolved.topology else { return nil }
+        let outcome = WorkspaceIntentApplier.apply(
+            op: op.rawValue, args: args, to: current,
+            projectKey: { resolved.projectKey(forPane: $0) },
+        )
         guard let next = outcome.topology else { return nil }
         var projected = HostWorkspaceState()
         projected.write(topology: next)

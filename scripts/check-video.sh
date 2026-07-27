@@ -17,9 +17,14 @@
 # WHAT IT PROVES on success:
 #   - slopdesk-videohostd captures a real on-screen window and HEVC-encodes it,
 #   - the client boots the DETACHED remote-desktop window (SLOPDESK_VIDEO_AUTOCONNECT seam mints a
-#     window-targeted detached .desktop pane — video never enters the workspace tree), connects both
-#     UDP channels, and the host streams frames,
+#     window-targeted detached .desktop pane), connects both UDP channels, and the host streams frames,
 #   - the desktop-window screenshot shows the decoded remote pixels (visual confirmation).
+#
+# It runs TWO daemons: slopdesk-videohostd for the pixels, and slopdesk-hostd because the detached
+# .desktop pane is an object in the HOST's workspace document (docs/45) — the client asks for it with
+# an intent and has nowhere to send one without a terminal daemon. Both get a throwaway HOME and the
+# hostd a throwaway SLOPDESK_WORKSPACE_STATE_DIR, so an automation run can never reshape the
+# developer's real layout.
 #
 # USAGE:
 #   bash scripts/check-video.sh [--window-title SUBSTR]   # default: first Finder window
@@ -36,8 +41,10 @@ APP_BIN="${APP}/Contents/MacOS/SlopDesk"
 HOSTD="${REPO_ROOT}/.build/debug/slopdesk-videohostd"
 SHOT="${WORK}/client-shot.png"
 HOSTLOG="${WORK}/host.log"
+TERMLOG="${WORK}/hostd.log"
 MEDIA_PORT=9000
 CURSOR_PORT=9001
+CONNECT_PORT=47421 # the TERMINAL daemon that owns the workspace document (47420 is check-macos.sh)
 
 TITLE_NEEDLE="Finder"
 case "${1:-}" in
@@ -51,17 +58,20 @@ esac
 
 mkdir -p "${WORK}"
 HOSTD_PID=""
+TERMD_PID=""
 APP_PROC_PAT="video-verify/DD.*MacOS/SlopDesk"
 
 cleanup() {
   pkill -f "${APP_PROC_PAT}" 2> /dev/null || true
   [[ -n "${HOSTD_PID}" ]] && kill "${HOSTD_PID}" 2> /dev/null || true
+  [[ -n "${TERMD_PID}" ]] && kill "${TERMD_PID}" 2> /dev/null || true
 }
 trap cleanup EXIT
 
-# ── 1. Build the host daemon + the client app (placeholder spec already links SlopDeskVideoClient) ─
-echo "==> building slopdesk-videohostd"
+# ── 1. Build both host daemons + the client app (placeholder spec already links SlopDeskVideoClient) ─
+echo "==> building slopdesk-videohostd + slopdesk-hostd"
 (cd "${REPO_ROOT}" && swift build --product slopdesk-videohostd > /dev/null)
+(cd "${REPO_ROOT}" && swift build --product slopdesk-hostd > /dev/null)
 echo "==> generating + building the client app"
 git -C "${REPO_ROOT}" checkout -- "${SPEC}" 2> /dev/null || true
 xcodegen generate --spec "${SPEC}" > /dev/null
@@ -121,6 +131,41 @@ if ! kill -0 "${HOSTD_PID}" 2> /dev/null; then
 fi
 echo "==> host up (pid ${HOSTD_PID})"
 
+# ── 3b. Start the TERMINAL daemon too — it owns the workspace document ─────────────────────────
+# The video pane is a DETACHED `.desktop` pane in the workspace tree, and the tree is the host's
+# (docs/45). `bootstrapFromEnvironment` mints it with an intent over `channelClass 1`, so with no
+# `slopdesk-hostd` there is no document to send it to and the client renders an empty window —
+# this gate would pass on a blank screenshot. `WorkspaceStore.videoTarget(from:)` reads
+# SLOPDESK_AUTOCONNECT_PORT for the TCP leg of the very same `ConnectionTarget`, so pointing that
+# at this daemon is the whole wiring.
+echo "==> starting slopdesk-hostd on 127.0.0.1:${CONNECT_PORT}"
+pkill -f "slopdesk-hostd --port ${CONNECT_PORT}" 2> /dev/null || true
+sleep 0.5
+# Both dirs FRESH per run, under ${WORK}. The state dir is correctness, not hygiene: the client's
+# `adoptWorkspace` is `rejectedStale` against a host that already has a workspace, so a reused dir
+# would silently keep a stale layout and the proof would render the wrong thing. It is also the
+# automation-safety gate — a client that mutates the HOST can reshape the developer's real layout,
+# and `persistence: nil` on the client protects nothing from that.
+if [[ -z "${WORK}" ]]; then
+  echo "==> FAIL: WORK is empty — refusing to run a daemon against an unpinned state dir" >&2
+  exit 1
+fi
+HOSTD_HOME="${WORK}/hostd-home"
+HOSTD_WORKSPACE="${WORK}/hostd-workspace"
+rm -rf "${HOSTD_WORKSPACE}"
+mkdir -p "${HOSTD_HOME}" "${HOSTD_WORKSPACE}"
+HOME="${HOSTD_HOME}" SLOPDESK_WORKSPACE_STATE_DIR="${HOSTD_WORKSPACE}" \
+  "${REPO_ROOT}/.build/debug/slopdesk-hostd" \
+  --port "${CONNECT_PORT}" --shell /bin/sh > "${TERMLOG}" 2>&1 &
+TERMD_PID=$!
+sleep 1
+if ! kill -0 "${TERMD_PID}" 2> /dev/null; then
+  echo "==> FAIL: slopdesk-hostd (the workspace document) did not stay up; log:" >&2
+  cat "${TERMLOG}" >&2
+  exit 1
+fi
+echo "==> hostd up (pid ${TERMD_PID})"
+
 # ── 4. Launch the client with the PATH 2 auto-open seam (capture its log) ───────────────────────
 pkill -f "${APP_PROC_PAT}" 2> /dev/null || true
 CLIENTLOG="${WORK}/client.log"
@@ -130,6 +175,7 @@ SLOPDESK_VIDEO_DEBUG=1 \
   SLOPDESK_VIDEO_AUTOCONNECT_CURSOR_PORT="${CURSOR_PORT}" \
   SLOPDESK_VIDEO_AUTOCONNECT_WINDOW_ID="${WID}" \
   SLOPDESK_VIDEO_AUTOCONNECT_TITLE="${WTITLE} (remote)" \
+  SLOPDESK_AUTOCONNECT_PORT="${CONNECT_PORT}" \
   "${APP_BIN}" > "${CLIENTLOG}" 2>&1 &
 PID=""
 for _ in $(seq 1 16); do

@@ -119,7 +119,20 @@ if [[ "${CONNECT}" == "1" ]]; then
   # computes the $((6*7)) proof just as well, and the throwaway HOME sandboxes both files.
   HOSTD_HOME="${WORK}/hostd-home"
   mkdir -p "${HOSTD_HOME}"
-  HOME="${HOSTD_HOME}" "${REPO_ROOT}/.build/debug/slopdesk-hostd" \
+  # The client MUTATES the host's workspace document (docs/45), so the daemon must never be pointed
+  # at the developer's real `workspace-state.json` — an automation run would reshape the layout they
+  # are actually working in. FRESH per run, and empty: `adoptWorkspace` answers `rejectedStale`
+  # against a host that already has a workspace, so a reused dir would keep a stale layout and the
+  # screenshot would prove the wrong thing.
+  if [[ -z "${WORK}" ]]; then
+    echo "==> FAIL: WORK is empty — refusing to run a daemon against an unpinned state dir" >&2
+    exit 1
+  fi
+  HOSTD_WORKSPACE="${WORK}/hostd-workspace"
+  rm -rf "${HOSTD_WORKSPACE}"
+  mkdir -p "${HOSTD_WORKSPACE}"
+  HOME="${HOSTD_HOME}" SLOPDESK_WORKSPACE_STATE_DIR="${HOSTD_WORKSPACE}" \
+    "${REPO_ROOT}/.build/debug/slopdesk-hostd" \
     --port "${CONNECT_PORT}" --shell /bin/sh > "${HOSTD_LOG}" 2>&1 &
   HOSTD_PID=$!
   sleep 1

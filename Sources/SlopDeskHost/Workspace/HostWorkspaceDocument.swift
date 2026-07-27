@@ -190,6 +190,7 @@ public actor HostWorkspaceDocument {
         }
         let outcome = WorkspaceIntentApplier.apply(
             op: op, args: args, to: current, documentIsPristine: isPristine,
+            projectKey: { [state] in state.projectKey(forPane: $0) },
         )
         guard let next = outcome.topology else { return Self.status(for: outcome) }
         // The bootstrap is the one op that may not run twice, so ANY accepted intent ends pristine —

@@ -1233,7 +1233,10 @@ a patch it never made.
 **Op 23 docks against the CONTAINER, not a leaf.** It wraps the whole tab root, which no
 `(source, target, axis, before)` triple can express. The tab is named as well as the source so the
 intent is self-validating: a host whose tree has since moved the pane elsewhere refuses rather than
-docking it somewhere the user never pointed at.
+docking it somewhere the user never pointed at. The named tab may be one the source is not in — the
+rail-drag gutter drop moves a pane out of its tab and into another one, and the origin tab is removed
+when the source was its only leaf. A tab in another SESSION is refused: a pane's spec lives in its
+session's side table and cannot follow it across.
 
 **Op 24 is every re-tile.** Applying a preset, cycling to the next one and balancing the splits are
 all "this tab now has this shape", so they are one op rather than a burst of `setDividerWeight`. The

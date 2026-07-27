@@ -346,38 +346,57 @@ public enum WorkspaceTreeOps {
         return copy
     }
 
-    /// Docks leaf `source` at the OUTERMOST `edge` of its session's ACTIVE tab — the cross-tab superset of
+    /// Docks leaf `source` at the OUTERMOST `edge` of `tab` — the cross-tab superset of
     /// ``moveLeafToRootEdge(_:edge:in:)``, backing the rail-drag MOVE gutter drop (docs/45): the dragged
     /// window's existing pane leaves its tab and becomes a full-span column/row of the tab under the
-    /// cursor. Source already in the active tab delegates to `moveLeafToRootEdge` (same no-op rules);
-    /// from another tab of the SAME session the source is pruned (a sole-leaf tab is removed) and
-    /// root-inserted into the active tab — which, unlike the same-tab dock, works against a lone-leaf
-    /// active tab (there IS something to dock beside: the destination's own leaf). KEEPS `PaneID`; the
-    /// active tab keeps selection with `source` focused and zoom exited. No-op if `source` is absent, its
-    /// session is not the ACTIVE session, or the dock would breach ``SplitNode/maxDepth``. Preserves the
-    /// **specs == leafIDs invariant**.
-    public static func moveLeafToActiveTabRootEdge(
+    /// cursor. Source already in `tab` delegates to `moveLeafToRootEdge` (same no-op rules); from another
+    /// tab of the SAME session the source is pruned (a sole-leaf tab is removed) and root-inserted into
+    /// `tab` — which, unlike the same-tab dock, works against a lone-leaf destination (there IS something
+    /// to dock beside: the destination's own leaf). KEEPS `PaneID`; `tab` becomes selected with `source`
+    /// focused and zoom exited. No-op if `source` is absent, `tab` is not in the SOURCE'S session (the
+    /// prune and the insert are one session's business, and a spec would have to move too), or the dock
+    /// would breach ``SplitNode/maxDepth``. Preserves the **specs == leafIDs invariant**.
+    public static func moveLeafToTabRootEdge(
         _ source: PaneID,
+        tab: TabID,
         edge: PaneDropEdge,
         in ws: TreeWorkspace,
     ) -> TreeWorkspace {
-        guard let (ss, st) = locate(source, in: ws), ws.activeSessionIndex == ss else { return ws }
+        guard let (ss, st) = locate(source, in: ws) else { return ws }
         var copy = ws
         var session = copy.sessions[ss]
-        guard session.tabs.indices.contains(session.activeTabIndex) else { return ws }
-        if st == session.activeTabIndex { return moveLeafToRootEdge(source, edge: edge, in: ws) }
-        var destTab = session.tabs[session.activeTabIndex]
+        guard let target = session.tabs.firstIndex(where: { $0.id == tab }) else { return ws }
+        if st == target { return moveLeafToRootEdge(source, edge: edge, in: ws) }
+        var destTab = session.tabs[target]
         let grown = destTab.root.insertingAtRoot(source, axis: edge.axis, before: edge.insertsBefore)
         guard grown.depth <= SplitNode.maxDepth else { return ws }
         pruneLeafFromTab(source, at: st, in: &session)
         destTab.root = grown
         destTab.activePane = source
         destTab.zoomedPane = nil
+        // The source tab's removal may have shifted the destination's index — re-resolve by id.
         guard let destIndex = session.tabs.firstIndex(where: { $0.id == destTab.id }) else { return ws }
         session.tabs[destIndex] = destTab
         session.activeTabIndex = destIndex
         copy.sessions[ss] = session
         return copy
+    }
+
+    /// ``moveLeafToTabRootEdge(_:tab:edge:in:)`` aimed at the ACTIVE tab — the local gesture, where the
+    /// destination is wherever the user is looking. Additionally no-ops when `source` lives outside the
+    /// ACTIVE session: a drop onto "the active tab" from another window's session names a destination
+    /// the dragger is not even showing.
+    public static func moveLeafToActiveTabRootEdge(
+        _ source: PaneID,
+        edge: PaneDropEdge,
+        in ws: TreeWorkspace,
+    ) -> TreeWorkspace {
+        guard let (ss, _) = locate(source, in: ws), ws.activeSessionIndex == ss else { return ws }
+        let session = ws.sessions[ss]
+        guard session.tabs.indices.contains(session.activeTabIndex) else { return ws }
+        return moveLeafToTabRootEdge(
+            source, tab: session.tabs[session.activeTabIndex].id, edge: edge, in: ws,
+        )
     }
 
     /// Removes leaf `source` from `session.tabs[index]` for a cross-tab move: the tab shrinks

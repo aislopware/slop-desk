@@ -49,9 +49,11 @@ final class WorkspaceIntentApplierTests: XCTestCase {
         _ args: Data,
         to topology: WorkspaceTopology,
         pristine: Bool = false,
+        projectKey: [PaneID: String] = [:],
     ) -> WorkspaceIntentOutcome {
         WorkspaceIntentApplier.apply(
             op: op.rawValue, args: args, to: topology, documentIsPristine: pristine,
+            projectKey: { projectKey[$0] },
         )
     }
 
@@ -226,6 +228,81 @@ final class WorkspaceIntentApplierTests: XCTestCase {
         XCTAssertFalse(topology.focusMRU[f.session]?.contains(f.tabB) ?? false)
     }
 
+    // MARK: - The project section, when the ring has nothing to say
+
+    /// Three tabs in CREATION order `[alpha, beta, alpha]`, which the sidebar draws By-Project as
+    /// `[alpha, alpha, beta]`. A fresh launch has an EMPTY ring, so closing the last-created alpha tab
+    /// leaves the index clamp — `min(removedIndex, count - 1)` over the ARRAY — pointing at beta, a
+    /// project the user was not reading. The `ed76f137` rule: fall through to the neighbour inside the
+    /// closing tab's own project section first.
+    func testClosingATabWithNoRingStaysInsideItsProjectSection() throws {
+        let (topology, tabs, keys) = threeTabsSectionedAlphaAlphaBeta()
+        XCTAssertTrue(topology.focusMRU.isEmpty, "a fresh launch has nothing to fall back on")
+
+        let after = try XCTUnwrap(apply(
+            .closeTab, WorkspaceIntentArgs.encode(tab: tabs.alphaTwo), to: topology, projectKey: keys,
+        ).topology)
+
+        let session = after.tree.sessions[0]
+        XCTAssertEqual(
+            session.tabs[session.activeTabIndex].id, tabs.alphaOne,
+            "focus stays in the alpha section the closed tab lived in",
+        )
+        XCTAssertNotEqual(
+            session.tabs[session.activeTabIndex].id, tabs.beta,
+            "the close must not jump to another project",
+        )
+    }
+
+    /// The ring still wins when it has a survivor: the section rule is the FALLBACK, not a new first
+    /// preference. Visiting beta and then the closing tab leaves beta at the ring's head, and that is
+    /// where the user was actually working — even though it is a different project.
+    func testTheRingStillOutranksTheProjectSection() throws {
+        var (topology, tabs, keys) = threeTabsSectionedAlphaAlphaBeta()
+        topology = try XCTUnwrap(apply(
+            .focusTab, WorkspaceIntentArgs.encode(tab: tabs.beta), to: topology, projectKey: keys,
+        ).topology)
+        topology = try XCTUnwrap(apply(
+            .focusTab, WorkspaceIntentArgs.encode(tab: tabs.alphaTwo), to: topology, projectKey: keys,
+        ).topology)
+
+        let after = try XCTUnwrap(apply(
+            .closeTab, WorkspaceIntentArgs.encode(tab: tabs.alphaTwo), to: topology, projectKey: keys,
+        ).topology)
+
+        let session = after.tree.sessions[0]
+        XCTAssertEqual(session.tabs[session.activeTabIndex].id, tabs.beta)
+    }
+
+    /// Three single-leaf tabs whose panes carry the project keys `[alpha, beta, alpha]` in creation
+    /// order, with the last one active and an empty MRU ring.
+    private func threeTabsSectionedAlphaAlphaBeta() -> (
+        WorkspaceTopology,
+        (alphaOne: TabID, beta: TabID, alphaTwo: TabID),
+        [PaneID: String],
+    ) {
+        let alphaOnePane = PaneID(), betaPane = PaneID(), alphaTwoPane = PaneID()
+        let alphaOne = Tab(id: TabID(), title: "one", root: .leaf(alphaOnePane), activePane: alphaOnePane)
+        let beta = Tab(id: TabID(), title: "two", root: .leaf(betaPane), activePane: betaPane)
+        let alphaTwo = Tab(id: TabID(), title: "three", root: .leaf(alphaTwoPane), activePane: alphaTwoPane)
+        let session = Session(
+            id: SessionID(),
+            name: "slop-desk",
+            tabs: [alphaOne, beta, alphaTwo],
+            activeTabIndex: 2,
+            specs: [
+                alphaOnePane: PaneSpec(kind: .terminal, title: "Terminal"),
+                betaPane: PaneSpec(kind: .terminal, title: "Terminal"),
+                alphaTwoPane: PaneSpec(kind: .terminal, title: "Terminal"),
+            ],
+        )
+        return (
+            WorkspaceTopology(tree: TreeWorkspace(sessions: [session], activeSessionID: session.id)),
+            (alphaOne.id, beta.id, alphaTwo.id),
+            [alphaOnePane: "/work/alpha", betaPane: "/work/beta", alphaTwoPane: "/work/alpha"],
+        )
+    }
+
     // MARK: - ⇧⌘T
 
     /// A `TabID` alone cannot rebuild a tab. The ring keeps the split tree and every pane's spec, or
@@ -396,6 +473,49 @@ final class WorkspaceIntentApplierTests: XCTestCase {
         XCTAssertEqual(axis, .vertical)
         XCTAssertEqual(children.count, 2)
         XCTAssertEqual(children.last?.node, .leaf(panes[2]))
+        XCTAssertTrue(docked.tree.isInvariantHeld())
+    }
+
+    /// The rail-drag gutter drop (docs/45): the dragged window's pane leaves its own tab and becomes a
+    /// full-span band of the tab under the cursor. The args have always named the target tab — this is
+    /// the op honouring it across tabs instead of only inside one.
+    func testDockingAPaneIntoANEIGHBOURTabMovesItThere() throws {
+        let f = fixture()
+        let (topology, tabA, panes) = try threeLeafTab(f)
+
+        let docked = try XCTUnwrap(apply(.dockPaneAtTabEdge, WorkspaceIntentArgs.encode(
+            dock: panes[2], tab: f.tabB, edge: .right,
+        ), to: topology).topology)
+
+        let session = docked.tree.sessions[0]
+        let destination = try XCTUnwrap(session.tabs.first { $0.id == f.tabB })
+        guard case let .split(_, axis, children) = destination.root else {
+            XCTFail("a root-edge dock produces a split at the destination's root")
+            return
+        }
+        XCTAssertEqual(axis, .horizontal)
+        XCTAssertEqual(children.last?.node, .leaf(panes[2]))
+        XCTAssertEqual(destination.activePane, panes[2], "the docked pane takes focus in its new tab")
+        let origin = try XCTUnwrap(session.tabs.first { $0.id == tabA })
+        XCTAssertEqual(
+            origin.root.allPaneIDs(), [panes[0], panes[1]], "the origin tab shrank by exactly the moved pane",
+        )
+        XCTAssertTrue(docked.tree.isInvariantHeld())
+    }
+
+    /// A tab whose SOLE leaf is dragged away goes with it — the origin vanishes rather than lingering
+    /// as an empty rectangle.
+    func testDockingAwayALoneLeafRemovesItsOriginTab() throws {
+        let f = fixture()
+
+        let docked = try XCTUnwrap(apply(.dockPaneAtTabEdge, WorkspaceIntentArgs.encode(
+            dock: f.paneB, tab: f.tabA, edge: .top,
+        ), to: f.topology).topology)
+
+        let session = docked.tree.sessions[0]
+        XCTAssertEqual(session.tabs.map(\.id), [f.tabA], "tab B held only pane B, so tab B is gone")
+        XCTAssertEqual(session.tabs[0].root.allPaneIDs(), [f.paneB, f.paneA])
+        XCTAssertEqual(session.specs.count, 2, "both panes keep their specs — nothing was closed")
         XCTAssertTrue(docked.tree.isInvariantHeld())
     }
 

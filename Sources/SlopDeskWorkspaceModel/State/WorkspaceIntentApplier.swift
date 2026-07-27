@@ -19,11 +19,18 @@ public enum WorkspaceIntentApplier {
     ///   - documentIsPristine: whether the document is still the untouched default. Only
     ///     ``WorkspaceIntentOp/adoptWorkspace`` reads it — a bootstrap that arrives after the host has
     ///     a real workspace is `rejectedStale`, and the loser keeps its tree rather than losing it.
+    ///   - projectKey: a pane's resolved By-Project key
+    ///     (``TabOrderingEngine/paneProjectKey(_:projectKey:cwd:)`` over the caller's own cells). Only
+    ///     the close ops read it, to keep focus inside the section the closed tab lived in. Every
+    ///     caller that owns a document supplies it; the default puts every pane in one section, which
+    ///     reduces the close rule to MRU-then-array-neighbour and is what a caller with no document
+    ///     cells to read — a tree-op unit test — wants.
     public static func apply(
         op rawOp: UInt8,
         args: Data,
         to topology: WorkspaceTopology,
         documentIsPristine: Bool = false,
+        projectKey: (PaneID) -> String? = { _ in nil },
     ) -> WorkspaceIntentOutcome {
         guard let op = WorkspaceIntentOp(rawValue: rawOp) else { return .unknownOp }
         var reader = WorkspaceIntentArgs.Reader(args)
@@ -32,8 +39,8 @@ public enum WorkspaceIntentApplier {
         case .renamePane: return renamePane(&reader, topology)
         case .renameTab: return renameTab(&reader, topology)
         case .renameSession: return renameSession(&reader, topology)
-        case .closePane: return closePane(&reader, topology)
-        case .closeTab: return closeTab(&reader, topology)
+        case .closePane: return closePane(&reader, topology, projectKey)
+        case .closeTab: return closeTab(&reader, topology, projectKey)
         case .splitPane: return splitPane(&reader, topology)
         case .spawnPane: return spawnPane(&reader, topology)
         case .movePane: return movePane(&reader, topology)
@@ -197,6 +204,7 @@ public enum WorkspaceIntentApplier {
     private static func closePane(
         _ reader: inout WorkspaceIntentArgs.Reader,
         _ topology: WorkspaceTopology,
+        _ projectKey: (PaneID) -> String?,
     ) -> WorkspaceIntentOutcome {
         guard let raw = reader.uuid(), reader.isAtEnd else { return .rejectedInvalid }
         let paneID = PaneID(raw: raw)
@@ -214,7 +222,7 @@ public enum WorkspaceIntentApplier {
         // whole reason that ring is host-owned: two clients computing it from two local rings pick
         // two different tabs, and the index clamp underneath reintroduces the cross-project jump.
         let owningTab = next.tree.tab(containing: paneID)
-        let successor = owningTab.flatMap { successorAfterClosing($0.1, in: next) }
+        let successor = owningTab.flatMap { successorAfterClosing($0.1, in: next, projectKey) }
         next.tree = WorkspaceTreeOps.closePane(paneID, tabSuccessor: successor, in: next.tree)
         return accept(pruned(next))
     }
@@ -222,6 +230,7 @@ public enum WorkspaceIntentApplier {
     private static func closeTab(
         _ reader: inout WorkspaceIntentArgs.Reader,
         _ topology: WorkspaceTopology,
+        _ projectKey: (PaneID) -> String?,
     ) -> WorkspaceIntentOutcome {
         guard let raw = reader.uuid(), reader.isAtEnd else { return .rejectedInvalid }
         let tabID = TabID(raw: raw)
@@ -242,18 +251,43 @@ public enum WorkspaceIntentApplier {
             }
         }
         next.tree = WorkspaceTreeOps.closeTab(
-            tabID, successor: successorAfterClosing(tabID, in: next), in: next.tree,
+            tabID, successor: successorAfterClosing(tabID, in: next, projectKey), in: next.tree,
         )
         return accept(pruned(next))
     }
 
-    /// The tab to select when `closing` goes away: the most recent OTHER tab in its session, else
-    /// `nil` so the tree op's index clamp takes over.
-    private static func successorAfterClosing(_ closing: TabID, in topology: WorkspaceTopology) -> TabID? {
+    /// The tab to select when `closing` goes away: the most recent OTHER tab in its session, else the
+    /// neighbour inside `closing`'s own PROJECT SECTION, else its neighbour in the display order
+    /// (``TabOrderingEngine/successorAfterClose(closing:displayOrder:projectKey:focusHistory:)``).
+    ///
+    /// The ring alone is not enough. A fresh launch has an empty ring and `session.tabs` is CREATION
+    /// order, so the tree op's `min(removedIndex, count - 1)` clamp underneath lands on whatever tab
+    /// happens to sit at that index — routinely a different project than the one the user was reading.
+    /// The section rule is the same one the sidebar draws with, run here because the HOST owns the
+    /// close and a client cannot correct it afterwards.
+    ///
+    /// `nil` when no session owns `closing`; the caller then leaves the tree op on its clamp.
+    private static func successorAfterClosing(
+        _ closing: TabID,
+        in topology: WorkspaceTopology,
+        _ projectKey: (PaneID) -> String?,
+    ) -> TabID? {
         guard let session = topology.tree.sessions.first(where: { $0.tabs.contains { $0.id == closing } })
         else { return nil }
+        let ring = topology.focusMRU[session.id] ?? []
         let live = Set(session.tabs.map(\.id))
-        return (topology.focusMRU[session.id] ?? []).first { $0 != closing && live.contains($0) }
+        if let recent = ring.first(where: { $0 != closing && live.contains($0) }) { return recent }
+        let tabKey: (TabID) -> String? = {
+            TabOrderingEngine.tabProjectKey($0, in: session, paneKey: projectKey)
+        }
+        return TabOrderingEngine.successorAfterClose(
+            closing: closing,
+            displayOrder: TabOrderingEngine.projectGroupedTabOrder(
+                session.tabs.map(\.id), projectKey: tabKey,
+            ),
+            projectKey: tabKey,
+            focusHistory: ring,
+        )
     }
 
     private static func splitPane(
@@ -603,14 +637,14 @@ public enum WorkspaceIntentApplier {
         let tabID = TabID(raw: tabRaw)
         guard topology.tree.contains(source), hasTab(tabID, in: topology) else { return .rejectedNotFound }
         var next = topology
-        next.tree = WorkspaceTreeOps.moveLeafToRootEdge(
-            source, edge: WorkspaceIntentArgs.edge(for: edgeByte), in: next.tree,
+        next.tree = WorkspaceTreeOps.moveLeafToTabRootEdge(
+            source, tab: tabID, edge: WorkspaceIntentArgs.edge(for: edgeByte), in: next.tree,
         )
-        // The op no-ops on a lone-leaf tab, a dock that would breach the depth cap, and a dock the
-        // pane already sits at. It also cannot cross tabs — so "did the source end up in the tab the
-        // client named" is the one check that covers every refusal.
+        // The op no-ops on a same-tab dock against a lone leaf, a dock that would breach the depth
+        // cap, a dock the pane already sits at, and a destination in another SESSION — so "did the
+        // source end up in the tab the client named" is the one check that covers every refusal.
         guard next.tree.tab(containing: source)?.1 == tabID else { return .rejectedInvalid }
-        return accept(next)
+        return accept(pruned(next))
     }
 
     private static func setTabLayout(

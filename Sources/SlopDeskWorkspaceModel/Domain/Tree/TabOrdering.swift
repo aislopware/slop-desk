@@ -1,5 +1,4 @@
 import Foundation
-import SlopDeskWorkspaceModel
 
 // MARK: - TabOrderingEngine (the pure By-Project key helpers)
 
@@ -12,6 +11,12 @@ import SlopDeskWorkspaceModel
 /// here — the rail and the close rule read the same sections from the same code, at their two different
 /// granularities, rather than from two hand-written first-appearance loops free to drift apart.
 /// No SwiftUI, no I/O — fully headless-testable.
+///
+/// It lives in the leaf VALUE model, below both ends, because the close rule has two runners:
+/// `WorkspaceStore` draws the rail with it, and `WorkspaceIntentApplier` — which is the HOST deciding
+/// where focus lands after a close — reaches it from `SlopDeskHost`, a target that does not (and must
+/// not) depend on `SlopDeskWorkspaceCore`. A second transcription host-side is exactly how the
+/// close-jumps-to-another-project bug comes back.
 public enum TabOrderingEngine {
     /// Normalize a raw project key for BUCKETING: trim whitespace, strip trailing slashes (but keep root
     /// `/`), and treat an empty result as absent (`nil` ⇒ the "Other" bucket). The trailing-slash strip is
@@ -36,6 +41,68 @@ public enum TabOrderingEngine {
             return trimmed
         }
         return String(last)
+    }
+
+    // MARK: - The pane → project-key precedence (the ONE resolution rule)
+
+    /// The By-Project key for pane `id`: its HOST-pushed `pane/projectKey` (the git worktree toplevel
+    /// containing the pane's cwd, else the cwd), else its `pane/cwd` until the first push lands. `nil` ⇒
+    /// the pane lands in the "Other" bucket.
+    ///
+    /// A transient plugin-cache dir (``PaneSpec/looksLikeTransientPluginCwd(_:)`` — `…/owner---repo`) is
+    /// NEVER a project key: the host's resolver can race a zinit turbo `builtin cd`, which would file a
+    /// real project's pane under a phantom `zsh-users---zsh-autosuggestions` section. A guarded-out
+    /// source falls through to the next (host key → cwd → `nil`/"Other") — self-healing once the shell
+    /// settles.
+    ///
+    /// Lookup-parameterized so every caller shares ONE copy of the precedence and its guards: the rail
+    /// reads a store, the close rule reads whichever session owns the closing tab, and the host reads
+    /// its own document's cells.
+    public static func paneProjectKey(
+        _ id: PaneID,
+        projectKey: (PaneID) -> String?,
+        cwd: (PaneID) -> String?,
+    ) -> String? {
+        if let key = projectKey(id), !key.isEmpty, !PaneSpec.looksLikeTransientPluginCwd(key) {
+            return key
+        }
+        guard let cwd = cwd(id), !PaneSpec.looksLikeTransientPluginCwd(cwd) else { return nil }
+        return cwd
+    }
+
+    /// A TAB's By-Project key for close-selection purposes: its ACTIVE pane's key, else its first pane's.
+    ///
+    /// A tab is one row per PANE in the sidebar, so a split tab straddling two projects genuinely has no
+    /// single section — it draws in both. The pane the user is focused on is the honest answer to "which
+    /// section did this tab live in", and it is the one the close gesture was aimed at.
+    ///
+    /// `paneKey` is a pane's ALREADY-RESOLVED key (``paneProjectKey(_:projectKey:cwd:)``), so a caller
+    /// whose sources are not a `projectKey`/`cwd` pair — the host, reading two document cells — still
+    /// gets the active-pane-else-first-pane rule from here rather than writing its own.
+    public static func tabProjectKey(
+        _ id: TabID,
+        in session: Session,
+        paneKey: (PaneID) -> String?,
+    ) -> String? {
+        guard let tab = session.tabs.first(where: { $0.id == id }) else { return nil }
+        if let active = tab.activePane, let key = paneKey(active) { return key }
+        // A plain loop, not `lazy.compactMap`: the lookup is non-escaping.
+        for pane in tab.allPaneIDs() {
+            if let key = paneKey(pane) { return key }
+        }
+        return nil
+    }
+
+    /// ``tabProjectKey(_:in:paneKey:)`` over the two RAW sources the client holds.
+    public static func tabProjectKey(
+        _ id: TabID,
+        in session: Session,
+        projectKey: (PaneID) -> String?,
+        cwd: (PaneID) -> String?,
+    ) -> String? {
+        tabProjectKey(id, in: session, paneKey: {
+            paneProjectKey($0, projectKey: projectKey, cwd: cwd)
+        })
     }
 
     // MARK: - By-Project bucketing (the ONE sectioning rule)

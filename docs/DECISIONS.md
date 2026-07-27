@@ -3503,11 +3503,15 @@ persists with the rest of the topology — overturning its "never persisted, die
 comment. Sync-input surviving a relaunch is a behaviour change and is the price of the tab being one
 object that every client and the host agree about.
 
-**The close successor becomes plain MRU.** `plannedTabSuccessor` picks MRU, else the neighbour inside
-the same PROJECT SECTION, else display order — that middle clause is the `ed76f137` fix for the
-close-jumps-to-another-project bug. The host's `successorAfterClosing` has only MRU with a fallback to
-the tree op's index clamp. It is not fixable client-side once the host owns the close, so the rule is
-re-landed HOST-side or the regression is taken deliberately; it is not allowed to be discovered.
+**The close successor is the host's, so the project-section rule moves with it.** `plannedTabSuccessor`
+picks MRU, else the neighbour inside the same PROJECT SECTION, else display order — that middle clause
+is the `ed76f137` fix for the close-jumps-to-another-project bug, and it is not fixable client-side
+once the host owns the close. So it is re-landed rather than surrendered: `TabOrderingEngine` (with the
+pane → project-key precedence that feeds it) lives in `SlopDeskWorkspaceModel`, below both ends,
+because `SlopDeskHost` cannot see `SlopDeskWorkspaceCore` and a second transcription host-side is
+exactly how the bug comes back. `WorkspaceIntentApplier.apply` takes the pane → key lookup as a
+parameter; the host document, the loopback and the client's optimistic overlay all feed it the same two
+document cells (`pane/projectKey`, else `pane/cwd`) so all three pick the same tab.
 
 ### 2. The seam is opt-in, and the client never installs a document of its own
 
@@ -3545,3 +3549,34 @@ pane and not the tab.
 publishes in scheduling order, not issue order, and the host keeps the newest `presenceClock` and
 ignores the rest — so a reordered burst leaves the roster showing a view the user has already left,
 permanently, with nothing later to correct it.
+
+### 4. The cross-tab gutter drop is a wider op 23, not a lost gesture
+
+`dockPaneAtTabEdge` already carries `(sourcePaneID, targetTabID, edgeByte)`, and it already refuses
+anything that does not land in the tab the client named. What it did not have was an applier that could
+GET there: it ran the same-tab `WorkspaceTreeOps.moveLeafToRootEdge`, so the rail-drag MOVE of a pane
+out of one tab into another tab's container gutter was refused on arrival. The fix is
+`moveLeafToTabRootEdge`, which resolves the destination by tab id instead of by `activeTabIndex`;
+`moveLeafToActiveTabRootEdge` delegates to it, and is the local gesture pointed at the active tab.
+**No wire change and no golden change** — the args always said which tab. Accepting the loss would
+have deleted a shipped gesture for more work than delivering it.
+
+A destination in another SESSION stays refused. The prune and the insert are one session's business —
+the pane's spec lives in `session.specs`, so a cross-session dock is a different op with a different
+invariant to keep, and no gesture asks for one.
+
+### 5. The GUI gates launch a real host and a throwaway workspace dir
+
+`check-video.sh` ran only `slopdesk-videohostd`. Once the layout is the host's, the detached `.desktop`
+pane the video seam mints is an object in a document that daemon does not have — the client would send
+its intent nowhere and the gate would pass on a screenshot of an empty window. So the video proof
+starts `slopdesk-hostd` too and points `SLOPDESK_AUTOCONNECT_PORT` at it, which is the TCP leg
+`WorkspaceStore.videoTarget(from:)` already reads. The alternative — installing a
+`LoopbackWorkspaceDocument` under automation — would make the GUI proof stop proving the shipping
+path's layout, and installing one by default is rejected in §2 above.
+
+Both gates give their daemon a throwaway `HOME` **and** a fresh `SLOPDESK_WORKSPACE_STATE_DIR`. The
+client's `persistence: nil` under automation protected the developer's `workspace.json`; it protects
+nothing once the client reshapes the HOST. Fresh, not merely private: `adoptWorkspace` answers
+`rejectedStale` to a host that already has a workspace, so a reused dir would keep a stale layout and
+the screenshot would prove the wrong thing.

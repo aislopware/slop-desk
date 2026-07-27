@@ -246,7 +246,7 @@ final class TabCloseSuccessorTests: XCTestCase {
 
         for (pane, project) in zip(background.allPaneIDs(), projects) {
             XCTAssertEqual(
-                WorkspaceStore.paneProjectKey(
+                TabOrderingEngine.paneProjectKey(
                     pane, projectKey: { store.projectKey(for: $0) }, cwd: { store.paneCwd(for: $0) },
                 ),
                 project,
@@ -254,7 +254,7 @@ final class TabCloseSuccessorTests: XCTestCase {
             )
         }
         XCTAssertEqual(
-            WorkspaceStore.tabProjectKey(
+            TabOrderingEngine.tabProjectKey(
                 background.tabs[1].id, in: background,
                 projectKey: { store.projectKey(for: $0) }, cwd: { store.paneCwd(for: $0) },
             ),
@@ -291,7 +291,7 @@ final class TabCloseSuccessorTests: XCTestCase {
         }
 
         XCTAssertEqual(
-            WorkspaceStore.tabProjectKey(
+            TabOrderingEngine.tabProjectKey(
                 tab1.id, in: session,
                 projectKey: { store.projectKey(for: $0) }, cwd: { store.paneCwd(for: $0) },
             ),

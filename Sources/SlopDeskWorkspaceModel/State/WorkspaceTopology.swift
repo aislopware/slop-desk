@@ -452,6 +452,21 @@ public extension HostWorkspaceState {
         self[key].flatMap { WorkspaceStateCodec.decodeString($0) }
     }
 
+    /// Pane `id`'s resolved By-Project key, read from this document's own cells: `pane/projectKey`
+    /// (the host's git-toplevel verdict), else `pane/cwd`, under
+    /// ``TabOrderingEngine/paneProjectKey(_:projectKey:cwd:)``'s plugin-cwd guards.
+    ///
+    /// The lookup `WorkspaceIntentApplier`'s close ops section by, defined once here so the host
+    /// document, the loopback and the client's optimistic overlay all read the same two cells in the
+    /// same order — three transcriptions of a precedence is three ways to pick a different tab.
+    func projectKey(forPane id: PaneID) -> String? {
+        TabOrderingEngine.paneProjectKey(
+            id,
+            projectKey: { string(WorkspaceKey(.pane, $0.raw, WorkspacePaneField.projectKey)) },
+            cwd: { string(WorkspaceKey(.pane, $0.raw, WorkspacePaneField.cwd)) },
+        )
+    }
+
     func bool(_ key: WorkspaceKey) -> Bool {
         self[key].flatMap { WorkspaceStateCodec.decodeBool($0) } ?? false
     }
