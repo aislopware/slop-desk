@@ -32,7 +32,13 @@ public struct WorkspaceTopology: Equatable, Sendable {
 
     /// ⇧⌘T's ring, newest last. A per-client undo stack over shared state is incoherent — the tab it
     /// reopens has panes that live host-side.
-    public var closedTabRing: [TabID]
+    ///
+    /// The RECORDS, not just the ids: a `TabID` alone cannot rebuild a tab, and the reopen has to put
+    /// back the split tree and every pane's spec. They ride in the document as ordinary `tab/*`,
+    /// `splitNode/*` and `pane/*` entries — a closed tab is exactly a tab whose `tab/sessionID` names
+    /// a session that does not list it in `tabOrder` — so this costs no new grammar, only the rule
+    /// that the reaper must leave them alone.
+    public var closedTabs: [ClosedTab]
 
     /// The host-owned session that parents panes with no client (ctl-spawned). Without it the host
     /// has two disagreeing pane inventories.
@@ -46,11 +52,37 @@ public struct WorkspaceTopology: Equatable, Sendable {
     /// at the last-observed cwd would silently relocate a pane the user placed deliberately.
     public var spawnCwd: [PaneID: String]
 
+    /// One tab the user closed, kept whole so ⇧⌘T can put it back.
+    public struct ClosedTab: Equatable, Sendable {
+        /// The session it belonged to. Its `tab/sessionID` back-pointer is what identifies it as
+        /// closed rather than orphaned, and where the reopen puts it.
+        public var sessionID: SessionID
+        public var tab: Tab
+        public var specs: [PaneID: PaneSpec]
+
+        public init(sessionID: SessionID, tab: Tab, specs: [PaneID: PaneSpec]) {
+            self.sessionID = sessionID
+            self.tab = tab
+            self.specs = specs
+        }
+    }
+
+    /// The ring as ids — what `root/closedTabRing` carries.
+    public var closedTabRing: [TabID] { closedTabs.map(\.tab.id) }
+
+    /// The cap. A ring that grew without bound would keep every pane the user ever closed alive in
+    /// the document, on every client, forever.
+    public static let closedTabRingCap = 25
+
+    /// The MRU cap. A handful of switches back is all the close path can meaningfully use, and the
+    /// ring rides in every snapshot.
+    public static let focusMRUCap = 16
+
     public init(
         tree: TreeWorkspace,
         syncInputTabs: Set<TabID> = [],
         focusMRU: [SessionID: [TabID]] = [:],
-        closedTabRing: [TabID] = [],
+        closedTabs: [ClosedTab] = [],
         unattachedSessionID: SessionID? = nil,
         hostDisplayName: String = "",
         spawnCwd: [PaneID: String] = [:],
@@ -58,7 +90,7 @@ public struct WorkspaceTopology: Equatable, Sendable {
         self.tree = tree
         self.syncInputTabs = syncInputTabs
         self.focusMRU = focusMRU
-        self.closedTabRing = closedTabRing
+        self.closedTabs = closedTabs
         self.unattachedSessionID = unattachedSessionID
         self.hostDisplayName = hostDisplayName
         self.spawnCwd = spawnCwd
@@ -101,11 +133,21 @@ public extension WorkspaceTopology {
         for session in tree.sessions {
             appendSession(session, into: &out)
             for tab in session.tabs {
-                appendTab(tab, session: session, into: &out)
+                appendTab(tab, sessionID: session.id, into: &out)
                 appendWeights(of: tab.root, into: &out)
             }
             for id in session.specs.keys.sorted(by: { $0.raw.uuidString < $1.raw.uuidString }) {
                 guard let spec = session.specs[id] else { continue }
+                appendPane(id, spec: spec, into: &out)
+            }
+        }
+        // A closed tab is a tab no session lists. It rides as the same entries a live one does — the
+        // ring names it and its `tab/sessionID` says where it goes back.
+        for closed in closedTabs {
+            appendTab(closed.tab, sessionID: closed.sessionID, into: &out)
+            appendWeights(of: closed.tab.root, into: &out)
+            for id in closed.specs.keys.sorted(by: { $0.raw.uuidString < $1.raw.uuidString }) {
+                guard let spec = closed.specs[id] else { continue }
                 appendPane(id, spec: spec, into: &out)
             }
         }
@@ -164,12 +206,12 @@ public extension WorkspaceTopology {
         }
     }
 
-    private func appendTab(_ tab: Tab, session: Session, into out: inout [WorkspaceEntry]) {
+    private func appendTab(_ tab: Tab, sessionID: SessionID, into out: inout [WorkspaceEntry]) {
         func entry(_ field: UInt8, _ value: Data) {
             out.append(WorkspaceEntry(key: WorkspaceKey(.tab, tab.id.raw, field), value: value))
         }
         entry(WorkspaceTabField.title, WorkspaceStateCodec.encodeString(tab.title))
-        entry(WorkspaceTabField.sessionID, WorkspaceStateCodec.encodeUUID(session.id.raw))
+        entry(WorkspaceTabField.sessionID, WorkspaceStateCodec.encodeUUID(sessionID.raw))
         entry(WorkspaceTabField.layoutStructure, WorkspaceStateCodec.encodeLayout(Self.layout(of: tab.root)))
         if let active = tab.activePane {
             entry(WorkspaceTabField.activePaneID, WorkspaceStateCodec.encodeUUID(active.raw))
@@ -247,20 +289,45 @@ public extension WorkspaceTopology {
         var focus: [SessionID: [TabID]] = [:]
         var armed: Set<TabID> = []
         var cwds: [PaneID: String] = [:]
+        var live: Set<TabID> = []
         for session in sessions {
             let key = WorkspaceKey(.session, session.id.raw, WorkspaceSessionField.focusMRU)
             if let ids = state.uuidList(key), !ids.isEmpty {
                 focus[session.id] = ids.map { TabID(raw: $0) }
             }
-            for tab in session.tabs
-                where state.bool(WorkspaceKey(.tab, tab.id.raw, WorkspaceTabField.syncInputArmed))
-            {
-                armed.insert(tab.id)
+            for tab in session.tabs {
+                live.insert(tab.id)
+                if state.bool(WorkspaceKey(.tab, tab.id.raw, WorkspaceTabField.syncInputArmed)) {
+                    armed.insert(tab.id)
+                }
             }
             for id in session.specs.keys {
                 let key = WorkspaceKey(.pane, id.raw, WorkspacePaneField.spawnCwd)
                 if let cwd = state.string(key) { cwds[id] = cwd }
             }
+        }
+
+        // A closed tab is one the ring names that no session lists. A ring entry that IS live is
+        // dropped rather than duplicated — one tab cannot be both open and reopenable, and rendering
+        // it twice is worse than losing one undo step.
+        var closed: [ClosedTab] = []
+        let sessionIDSet = Set(sessions.map(\.id))
+        for tabID in (state.uuidList(.root(WorkspaceRootField.closedTabRing)) ?? []).map({ TabID(raw: $0) })
+            where !live.contains(tabID)
+        {
+            guard let tab = Self.tab(tabID, from: state),
+                  let owner = state.uuid(WorkspaceKey(.tab, tabID.raw, WorkspaceTabField.sessionID))
+                  .map({ SessionID(raw: $0) }),
+                  sessionIDSet.contains(owner)
+            else { continue }
+            var specs: [PaneID: PaneSpec] = [:]
+            for paneID in tab.allPaneIDs() {
+                specs[paneID] = Self.spec(paneID, from: state)
+                if let cwd = state.string(WorkspaceKey(.pane, paneID.raw, WorkspacePaneField.spawnCwd)) {
+                    cwds[paneID] = cwd
+                }
+            }
+            closed.append(ClosedTab(sessionID: owner, tab: tab, specs: specs))
         }
 
         self.init(
@@ -276,7 +343,7 @@ public extension WorkspaceTopology {
             ),
             syncInputTabs: armed,
             focusMRU: focus,
-            closedTabRing: (state.uuidList(.root(WorkspaceRootField.closedTabRing)) ?? []).map { TabID(raw: $0) },
+            closedTabs: closed,
             unattachedSessionID: state.uuid(.root(WorkspaceRootField.unattachedSessionID))
                 .map { SessionID(raw: $0) },
             hostDisplayName: state.string(.root(WorkspaceRootField.hostDisplayName)) ?? "",

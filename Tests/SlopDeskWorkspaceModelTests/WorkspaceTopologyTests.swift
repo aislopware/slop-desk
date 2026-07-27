@@ -16,6 +16,7 @@ final class WorkspaceTopologyTests: XCTestCase {
     /// about the carried fields rather than a comparison rigged to pass.
     private func fixture() -> WorkspaceTopology {
         let a = PaneID(), b = PaneID(), c = PaneID(), detached = PaneID(), lone = PaneID()
+        let closed = PaneID()
         let inner = SplitNodeID(), outer = SplitNodeID()
         let tab1 = Tab(
             id: TabID(),
@@ -59,7 +60,11 @@ final class WorkspaceTopologyTests: XCTestCase {
             ),
             syncInputTabs: [tab1.id],
             focusMRU: [session.id: [tab2.id, tab1.id]],
-            closedTabRing: [TabID(), TabID()],
+            closedTabs: [WorkspaceTopology.ClosedTab(
+                sessionID: session.id,
+                tab: Tab(id: TabID(), title: "gone", root: .leaf(closed), activePane: closed),
+                specs: [closed: PaneSpec(kind: .terminal, title: "was here")],
+            )],
             unattachedSessionID: other.id,
             hostDisplayName: "mac-studio",
             spawnCwd: [a: "/Volumes/Lacie/Workspace"],

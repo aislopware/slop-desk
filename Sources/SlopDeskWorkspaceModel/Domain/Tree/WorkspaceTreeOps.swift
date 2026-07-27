@@ -19,14 +19,19 @@ public enum WorkspaceTreeOps {
     /// side (the split-left/up chords); the default `false` is the trailing insert, so existing call sites
     /// stay byte-identical. The new pane is focused. Returns the new workspace + minted ``PaneID``. No-op
     /// (target absent) returns `ws` unchanged with a throw-away id not in the tree.
+    /// - Parameter id: the new leaf's identity. Defaults to a fresh mint — the local-gesture path —
+    ///   but an INTENT supplies it, so a client's optimistic overlay can insert the leaf immediately
+    ///   instead of waiting a round trip to learn what the host called it. The caller is responsible
+    ///   for having checked that the id is free.
     public static func splitPane(
         _ target: PaneID,
         axis: SplitAxis,
         newSpec: PaneSpec,
         before: Bool = false,
+        id: PaneID = PaneID(),
         in ws: TreeWorkspace,
     ) -> (TreeWorkspace, PaneID) {
-        let newID = PaneID()
+        let newID = id
         guard let (sIdx, tIdx) = locate(target, in: ws) else { return (ws, newID) }
         var copy = ws
         var session = copy.sessions[sIdx]
@@ -768,12 +773,15 @@ public enum WorkspaceTreeOps {
     /// `position` defaults to ``NewTabPosition/end`` so existing call sites stay byte-identical to a plain
     /// `tabs.append(...)` (end index = append, selected index = `tabs.count - 1`). Only the ⌘T path passes a
     /// configured ``NewTabPosition``.
+    /// - Parameter id: as ``splitPane(_:axis:newSpec:before:id:in:)`` — a fresh mint for a local
+    ///   gesture, the client's proposal for an intent.
     public static func newTab(
         in ws: TreeWorkspace,
         spec: PaneSpec,
         at position: NewTabPosition = .end,
+        id: PaneID = PaneID(),
     ) -> (TreeWorkspace, PaneID) {
-        let paneID = PaneID()
+        let paneID = id
         guard let sIdx = ws.activeSessionIndex else { return (ws, paneID) }
         var copy = ws
         let tab = Tab(root: .leaf(paneID), activePane: paneID)
