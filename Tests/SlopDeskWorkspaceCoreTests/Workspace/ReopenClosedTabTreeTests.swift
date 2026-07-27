@@ -256,6 +256,28 @@ final class ReopenClosedTabTreeTests: XCTestCase {
         XCTAssertEqual(fired, 0, "closing one of several leaves keeps the tab ⇒ no record, no cue")
     }
 
+    /// The cue survives a FULL ring.
+    ///
+    /// RED before the hook asked about the ring's newest RECORD: the applier trims to
+    /// ``WorkspaceTopology/closedTabRingCap`` right after appending, so a `count` comparison stops
+    /// growing at the cap. The ring is host-persisted and shared, so it reaches the cap and stays
+    /// there — every close from that moment on would lose the ⇧⌘T affordance for good, while ⇧⌘T
+    /// itself still worked.
+    func testTheHookStillFiresOnceTheRingIsFull() {
+        let cap = WorkspaceTopology.closedTabRingCap
+        let (ws, tabIDs, _) = tabbedWorkspace((0..<(cap + 2)).map { "T\($0)" })
+        let store = makeTreeStore(restoringTree: ws)
+        for i in 0..<cap { store.closeTab(tabIDs[i]) }
+        XCTAssertEqual(store.closedTabRecords.count, cap, "the ring is full")
+        var fired = 0
+        store.onTabCloseRecorded = { fired += 1 }
+
+        store.closeTab(tabIDs[cap])
+
+        XCTAssertEqual(store.closedTabRecords.first?.tab.id, tabIDs[cap], "the tab IS reopenable")
+        XCTAssertEqual(fired, 1, "…so the undo affordance is offered")
+    }
+
     // MARK: - Bounded LIFO (cap)
 
     /// The ring is bounded at ``WorkspaceTopology/closedTabRingCap`` — closing more than the cap drops

@@ -61,6 +61,7 @@ public enum WorkspaceIntentApplier {
         case .dockPaneAtTabEdge: return dockPaneAtTabEdge(&reader, topology)
         case .setTabLayout: return setTabLayout(&reader, topology)
         case .spawnDetachedPane: return spawnDetachedPane(&reader, topology)
+        case .setPaneVideoTarget: return setPaneVideoTarget(&reader, topology)
         }
     }
 
@@ -704,7 +705,10 @@ public enum WorkspaceIntentApplier {
         // Every split comes back at an EQUAL `.flex(1)` share — `select-layout` semantics: a re-tile
         // discards the divider drags that described the OLD shape.
         next.tree.sessions[sIdx].tabs[tIdx].root = rebuilt(layout)
-        // A zoom survives only while its pane does, and it always does — the leaf set is unchanged.
+        // …and the tab EXITS zoom, `select-layout` semantics. A zoomed tab renders one pane, so a
+        // re-tile under a zoom re-shapes the tab invisibly: the user sees nothing happen while the
+        // caller's cycle cursor keeps advancing underneath.
+        next.tree.sessions[sIdx].tabs[tIdx].zoomedPane = nil
         return accept(next)
     }
 
@@ -768,6 +772,41 @@ public enum WorkspaceIntentApplier {
         // moved, leaving a satellite window with no pane behind it.
         guard grown.isDetached(minted) else { return .rejectedInvalid }
         next.tree = grown
+        return accept(next)
+    }
+
+    /// Re-points an existing pane's `pane/videoTarget`.
+    ///
+    /// The DERIVED title follows the binding, and only while it was tracking the previous one: a pane
+    /// whose title still reads as the old target's is renamed to the new target's, and a title the
+    /// user authored is left alone. That rule lives here rather than in the client, because the
+    /// document is where the spec is and two clients deciding it separately is the divergence this
+    /// whole document exists to end.
+    private static func setPaneVideoTarget(
+        _ reader: inout WorkspaceIntentArgs.Reader,
+        _ topology: WorkspaceTopology,
+    ) -> WorkspaceIntentOutcome {
+        guard let raw = reader.uuid(), let blob = reader.blob(), reader.isAtEnd
+        else { return .rejectedInvalid }
+        let paneID = PaneID(raw: raw)
+        // A zero-length blob UNBINDS; bytes that are present but do not decode are malformed, never a
+        // silently target-less pane — that would leave a satellite window streaming nothing.
+        let video: VideoEndpoint?
+        if blob.isEmpty {
+            video = nil
+        } else {
+            guard let decoded = WorkspaceStateCodec.decodeVideoTarget(blob) else { return .rejectedInvalid }
+            video = decoded
+        }
+        var next = topology
+        guard let sIdx = next.tree.sessions.firstIndex(where: { $0.specs[paneID] != nil }),
+              var spec = next.tree.sessions[sIdx].specs[paneID]
+        else { return .rejectedNotFound }
+        if !spec.userRenamed, spec.title == spec.video?.title || spec.video == nil {
+            spec.title = title(for: spec.kind, video: video)
+        }
+        spec.video = video
+        next.tree.sessions[sIdx].specs[paneID] = spec
         return accept(next)
     }
 

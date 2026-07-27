@@ -33,25 +33,97 @@ public extension WorkspaceStore {
     func stage(_ op: WorkspaceIntentOp, _ args: Data) -> Bool {
         guard let workspaceChannel else {
             logIntentRefusal(op, "no workspace channel")
+            onLayoutChangeUnavailable?()
             return false
         }
+        let focusBefore = stagedFocusProbe()
         guard workspaceChannel.send(intent: op, args: args) else {
-            logIntentRefusal(op, workspaceMirror.topology == nil ? "no topology" : "refused locally")
+            let live = workspaceChannel.isLive
+            let reachable = live && workspaceMirror.topology != nil
+            logIntentRefusal(op, live ? (reachable ? "refused locally" : "no topology") : "channel not live")
+            // A refusal ON THE MERITS is the document doing its job (a re-tile of a lone leaf, a
+            // reopen with an empty ring) and says nothing about reachability. Only the states where
+            // NOTHING can land are worth telling the user about.
+            if !reachable { onLayoutChangeUnavailable?() }
             return false
         }
+        adoptStagedFocus(after: focusBefore)
         return true
     }
 
-    /// Stages a close and raises the undo affordance iff the DOCUMENT's reopen ring actually grew.
+    /// The three focus facts an unfollowing device compares across one staged intent: where HOST TRUTH
+    /// is looking, and which pane is active in the tab THIS DEVICE is looking at.
+    ///
+    /// Both halves are needed because the appliers move two different things. `spawnTab` /
+    /// `reopenClosedTab` / `newSession` change the active tab; `splitPane` / `closePane` / `reattachPane`
+    /// leave the active tab alone and focus a leaf inside whichever tab they touched — which, on an
+    /// unfollowing device, is the device's tab and not the host's.
+    private struct StagedFocusProbe {
+        var hostTab: TabID?
+        var hostPane: PaneID?
+        /// The active pane of ``WorkspaceStore/deviceFocus``'s tab, or `nil` when that tab is not (or
+        /// no longer) in the document.
+        var ownTabPane: PaneID?
+    }
+
+    /// `nil` for a device that holds no overlay — a following one, or one that has not navigated. The
+    /// projection already shows host truth there, so there is nothing to correct and no reason to pay
+    /// for resolving the mirror twice per gesture.
+    private func stagedFocusProbe() -> StagedFocusProbe? {
+        guard let focus = deviceFocus, let tree = workspaceMirror.topology?.tree else { return nil }
+        let hostTab = tree.activeSession?.activeTab
+        let ownTab = tree.sessions.compactMap { session in
+            session.tabs.first { $0.id == focus.tab }
+        }.first
+        return StagedFocusProbe(
+            hostTab: hostTab?.id, hostPane: hostTab?.activePane, ownTabPane: ownTab?.activePane,
+        )
+    }
+
+    /// Moves an unfollowing device's own focus onto whatever the intent it just staged focused.
+    ///
+    /// The overlay is what lets a phone read one tab while the Studio works in another, and it has to
+    /// survive every change that is not this device's doing. A change that IS its doing is the
+    /// opposite case: the appliers land a new tab, a split's new leaf and a reopened tab FOCUSED, and
+    /// an overlay still naming the old one undoes exactly that — ⌘T grows a rail row this device never
+    /// switches to, and the pane the user just split keeps the keystrokes.
+    ///
+    /// Gated on focus having actually MOVED, so a divider drag, a rename or a badge write leaves the
+    /// device looking exactly where it was. A device whose own tab went away with the change drops the
+    /// overlay entirely rather than keeping a dead ``TabID`` — ⇧⌘T restores a tab under its ORIGINAL
+    /// id, so a stale overlay would silently come back to life with it.
+    private func adoptStagedFocus(after before: StagedFocusProbe?) {
+        guard let before, let focus = deviceFocus, let topology = workspaceMirror.topology,
+              let after = stagedFocusProbe() else { return }
+        if after.hostTab != before.hostTab || after.hostPane != before.hostPane {
+            guard let tab = after.hostTab else { return }
+            setDeviceFocus(DeviceFocus(tab: tab, pane: after.hostPane))
+        } else if let pane = after.ownTabPane, pane != before.ownTabPane {
+            setDeviceFocus(DeviceFocus(tab: focus.tab, pane: pane))
+        } else if after.ownTabPane == nil,
+                  !topology.tree.sessions.contains(where: { $0.tabs.contains { $0.id == focus.tab } })
+        {
+            setDeviceFocus(nil)
+        }
+    }
+
+    /// Stages a close and raises the undo affordance iff a tab actually landed on the DOCUMENT's
+    /// reopen ring.
     ///
     /// The ring is host-owned, so "did a tab go onto it" is a question about the document rather than
     /// something the client can decide from the shape it is closing: a pane that was one of several
     /// leaves takes no tab with it, and the applier is the thing that knows.
+    ///
+    /// Asked of the ring's NEWEST RECORD rather than its length. The applier trims to
+    /// ``WorkspaceTopology/closedTabRingCap`` after appending, and the ring is persisted host-side and
+    /// shared across clients — so a count reaches the cap and then never grows again, and every close
+    /// from that moment on would lose its ⇧⌘T cue for good.
     @discardableResult
     func stageClose(_ op: WorkspaceIntentOp, _ args: Data) -> Bool {
-        let before = workspaceMirror.topology?.closedTabs.count ?? 0
+        let before = workspaceMirror.topology?.closedTabs.last?.tab.id
         guard stage(op, args) else { return false }
-        if (workspaceMirror.topology?.closedTabs.count ?? 0) > before { onTabCloseRecorded?() }
+        let after = workspaceMirror.topology?.closedTabs.last?.tab.id
+        if let after, after != before { onTabCloseRecorded?() }
         return true
     }
 
@@ -59,10 +131,36 @@ public extension WorkspaceStore {
     ///
     /// Accepted only by a PRISTINE document — a host that already has a workspace answers
     /// `rejectedStale` and keeps it, because that tree is the only copy of a layout somebody built.
-    func stageAdopt(_ tree: TreeWorkspace) {
+    ///
+    /// `optimistic: false` proposes it without showing it first — see
+    /// ``WorkspaceChannelClient/send(intent:args:now:optimistic:)``.
+    func stageAdopt(_ tree: TreeWorkspace, optimistic: Bool = true) {
         var state = HostWorkspaceState()
         state.write(topology: WorkspaceTopology(tree: tree))
-        stage(.adoptWorkspace, WorkspaceStateCodec.encodeSnapshot(state))
+        let args = WorkspaceStateCodec.encodeSnapshot(state)
+        guard optimistic else {
+            workspaceChannel?.send(intent: .adoptWorkspace, args: args, optimistic: false)
+            return
+        }
+        stage(.adoptWorkspace, args)
+    }
+
+    /// Offers the layout THIS CLIENT restored at launch to a host that has never had one.
+    ///
+    /// Without it the upgrade path loses the workspace: the client restores its tabs and splits from
+    /// `workspace.json`, the host's first run publishes its own single-pane default, and the
+    /// projection simply becomes that — the user's layout discarded rather than uploaded, even though
+    /// `documentIsPristine` means the host would have taken it.
+    ///
+    /// Fired once per launch, from ``attachWorkspaceChannel(_:)`` and the channel's own state changes.
+    /// Gated on the mirror holding a REAL host document (an epoch other than
+    /// ``WorkspaceStore/seedEpoch``): the seed IS this tree, so offering it back to an in-process
+    /// document that already adopted it would spend the host's one pristine chance on a no-op.
+    func runArmedLaunchAdoptIfPossible() {
+        guard let tree = pendingLaunchAdopt, armedBootstrapEnvironment == nil, canMutate,
+              workspaceMirror.knownEpoch != Self.seedEpoch else { return }
+        pendingLaunchAdopt = nil
+        stageAdopt(tree, optimistic: false)
     }
 
     /// Runs an armed automation bootstrap now that there is a document to run it against. Fired from

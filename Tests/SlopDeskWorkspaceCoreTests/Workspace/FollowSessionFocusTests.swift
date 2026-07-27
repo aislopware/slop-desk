@@ -195,6 +195,56 @@ final class FollowSessionFocusTests: XCTestCase {
         )
     }
 
+    /// …and the object that gesture CREATES is the one the device then looks at.
+    ///
+    /// RED before the overlay followed a staged intent: `spawnTab` makes the new tab active in host
+    /// truth, the overlay re-applied the old one on every read of `tree`, and ⌘T on an iPhone looked
+    /// like a no-op — a rail row appeared and the view never moved.
+    func testANewTabOnAnUnfollowingDeviceIsTheTabThatDeviceThenSees() throws {
+        let seed = seed()
+        let store = makeStore(seed.workspace, following: false)
+        store.selectTab(1)
+        XCTAssertEqual(hostTruthActiveTab(store), seed.first, "host truth never followed the local switch")
+
+        store.newTab(kind: .terminal)
+
+        let landed = try XCTUnwrap(store.tree.activeSession?.activeTab?.id)
+        XCTAssertNotEqual(landed, seed.first)
+        XCTAssertNotEqual(landed, seed.second)
+        XCTAssertEqual(landed, hostTruthActiveTab(store), "the device looks at the tab it just made")
+    }
+
+    /// The split half of the same rule: the new leaf is focused host-side, so the next keystroke has
+    /// to reach it rather than the pane it was split off.
+    func testASplitOnAnUnfollowingDeviceFocusesTheNewLeaf() throws {
+        let seed = seed()
+        let store = makeStore(seed.workspace, following: false)
+        store.focusPaneTree(seed.secondPane)
+
+        store.splitActivePane(axis: .horizontal, kind: .terminal)
+
+        let focused = try XCTUnwrap(store.tree.activeSession?.activeTab?.activePane)
+        XCTAssertNotEqual(focused, seed.secondPane, "focus moved to the leaf the split created")
+        // Host truth's own ACTIVE tab never moved (this device is unfollowing), so the leaf to compare
+        // against is the one the applier focused inside the tab the split actually landed in.
+        let host = try XCTUnwrap(WorkspaceTopology(entries: store.workspaceMirror.mirror.entries))
+        let split = try XCTUnwrap(host.tree.sessions.first?.tabs.first { $0.id == seed.second })
+        XCTAssertEqual(focused, split.activePane, "and it is the leaf host truth focused")
+    }
+
+    /// A gesture that focuses NOTHING leaves the device where it was looking. Without this the
+    /// overlay would be discarded by a divider drag and the phone would snap to the Studio's tab.
+    func testAGestureThatMovesNoFocusLeavesTheDeviceWhereItWas() {
+        let seed = seed()
+        let store = makeStore(seed.workspace, following: false)
+        store.selectTab(1)
+
+        store.renameTab(seed.second, to: "renamed")
+
+        XCTAssertEqual(store.tree.activeSession?.activeTab?.id, seed.second)
+        XCTAssertEqual(hostTruthActiveTab(store), seed.first, "host truth is still on its own tab")
+    }
+
     // MARK: - The flag itself
 
     /// It is device-local and persisted, so it must be a preference write rather than a document one.

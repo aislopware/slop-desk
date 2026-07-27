@@ -44,8 +44,12 @@ public enum WorkspaceIntentOp: UInt8, Sendable, CaseIterable {
     /// to the next one, and balance the splits are all "this tab now has this shape".
     case setTabLayout = 24
     /// Mint a pane straight into a session's DETACHED set — how a `.desktop` pane is born, and the
-    /// only intent that can write `pane/kind` or `pane/videoTarget`.
+    /// only intent that can write `pane/kind`.
     case spawnDetachedPane = 25
+    /// Re-point an EXISTING pane's video binding. The display switcher and the window re-pick both
+    /// move a stream that is already running, so the mint's target cannot be the last word: without
+    /// this the document keeps naming the display the pane opened on, and a relaunch re-streams it.
+    case setPaneVideoTarget = 26
 }
 
 // MARK: - Outcome
@@ -220,6 +224,20 @@ public enum WorkspaceIntentArgs {
     public static func encode(detachedPane: PaneID, kind: PaneKind, video: VideoEndpoint?) -> Data {
         var out = WorkspaceStateCodec.encodeUUID(detachedPane.raw)
         out.append(WorkspacePaneKindTag.byte(for: kind))
+        let blob = video.map { WorkspaceStateCodec.encodeVideoTarget($0) } ?? Data()
+        out.append(UInt8(truncatingIfNeeded: blob.count >> 8))
+        out.append(UInt8(truncatingIfNeeded: blob.count))
+        out.append(blob)
+        return out
+    }
+
+    /// `setPaneVideoTarget`: `[16B pane][u16 len][videoTarget]`.
+    ///
+    /// The same blob `spawnDetachedPane` carries, so the mint and the re-point speak one grammar. A
+    /// zero length UNBINDS the pane — a picker cleared, a target that went away — which stays
+    /// distinct from "the bytes did not decode".
+    public static func encode(pane: PaneID, video: VideoEndpoint?) -> Data {
+        var out = WorkspaceStateCodec.encodeUUID(pane.raw)
         let blob = video.map { WorkspaceStateCodec.encodeVideoTarget($0) } ?? Data()
         out.append(UInt8(truncatingIfNeeded: blob.count >> 8))
         out.append(UInt8(truncatingIfNeeded: blob.count))

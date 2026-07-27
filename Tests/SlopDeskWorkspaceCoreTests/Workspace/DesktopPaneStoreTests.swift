@@ -52,6 +52,31 @@ final class DesktopPaneStoreTests: XCTestCase {
         XCTAssertEqual(store.tree.activeSession?.detached.count, 1)
     }
 
+    /// The DISPLAY SWITCHER's commit reaches the document.
+    ///
+    /// RED before op 26 existed: `RemoteWindowModel.onEndpointCommitted` — whose whole job is to
+    /// persist the target a re-pick moved to — wrote `spec.video`, and `updateSpecLive` dropped it
+    /// because the only spec op was a rename. The window kept streaming display 1 while the document
+    /// still said 0, so a relaunch re-streamed 0 and ⌥⌘N on display 0 revealed the window showing 1.
+    func testSwitchingDisplayPersistsTheNewTargetIntoTheDocument() throws {
+        let store = makeStore()
+        let id = store.openDesktopWindow(displayID: 0)
+
+        store.updateSpecLive(id) { spec in
+            spec.title = "Display 2"
+            spec.video = VideoEndpoint(windowID: 0, title: "Display 2", displayID: 1)
+        }
+
+        XCTAssertEqual(store.tree.spec(for: id)?.video?.displayID, 1, "the projection follows the re-pick")
+        let host = try XCTUnwrap(WorkspaceTopology(entries: store.workspaceMirror.mirror.entries))
+        XCTAssertEqual(
+            host.tree.sessions.first?.specs[id]?.video?.displayID, 1,
+            "…and so does host truth, which is what a relaunch restores from",
+        )
+        XCTAssertEqual(store.detachedDesktopPane(displayID: 1), id, "⌥⌘N on display 1 reveals it")
+        XCTAssertNil(store.detachedDesktopPane(displayID: 0), "…and no longer answers for display 0")
+    }
+
     /// A DIFFERENT display mints a sibling window (one desktop window per display).
     func testOpenDesktopWindowMintsPerDisplaySiblings() {
         let store = makeStore()

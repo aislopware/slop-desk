@@ -188,13 +188,75 @@ extension WorkspaceStore {
         Set(closedTabRecords.flatMap { $0.specs.keys.map { documentPaneID($0) } })
     }
 
+    // MARK: - Reconciling what the document changed
+
+    /// Diffs the registry against the layout a DOCUMENT change just produced.
+    ///
+    /// ``WorkspaceStore/tree`` is a projection, so the leaf set moves with no local gesture behind it:
+    /// another client splits, the host's first snapshot after a subscribe replaces the launch seed with
+    /// pane ids this device has never seen, an optimistic patch rolls back. Each of those has to reach
+    /// the registry — a leaf the document added needs a live session, and one it removed must not keep
+    /// its mux channel open forever. Every mutator reconciles on its own next line, which is exactly
+    /// what made this look covered.
+    ///
+    /// A reconcile ALREADY RUNNING skips: it clears the overlay of every pane it orphaned, each clear
+    /// announces itself, and the pass in flight is the one that owns the diff.
+    ///
+    /// So does the ABSENCE of a document, which is not an empty one. ``WorkspaceChannelClient/stop()``
+    /// resets the mirror on the way to every re-subscribe; reconciling against the zero sessions that
+    /// leaves would tear down every live pane and rebuild it from the snapshot a moment later, so a
+    /// reconnect would dismantle every terminal on screen and replay it back.
+    func reconcileTreeFromDocument() {
+        guard liveModel == .tree, !isReconcilingTree, workspaceMirror.topology != nil else { return }
+        reconcileTree(acknowledgingFocus: false)
+    }
+
+    /// Updates the spec for `id` in whichever live model is active: the tree's side table when
+    /// ``WorkspaceStore/liveModel`` is ``WorkspaceStore/LiveModel/tree``, else the canvas. Used by the
+    /// shared pane-rebind wiring so a committed endpoint persists into the right model.
+    ///
+    /// On the tree path the spec belongs to the document, so the transform is run against the current
+    /// value and the RESULT is expressed as an intent. Two spec fields have one: an AUTHORED title
+    /// (`renamePane`, which writes the `userRenamed` flag that is what "authored" means) and the VIDEO
+    /// BINDING (`setPaneVideoTarget` — the pane-rebind sink's whole job, since a display switch or a
+    /// window re-pick moves a stream that is already running).
+    ///
+    /// A DERIVED title needs no op of its own: it follows the binding, and the applier renames the
+    /// pane alongside the re-point. Sending it as a rename instead would set the authorship flag and
+    /// make the NEXT re-pick unable to update it. Anything else a transform touches is named in the
+    /// debug log rather than dropped silently, because a spec field with no intent behind it is a fact
+    /// this client cannot publish and the next host frame will erase.
+    func updateSpecLive(_ id: PaneID, _ transform: @escaping (inout PaneSpec) -> Void) {
+        switch liveModel {
+        case .tree:
+            guard var spec = tree.spec(for: id) else { return }
+            let before = spec
+            transform(&spec)
+            guard spec != before else { return }
+            if spec.video != before.video {
+                guard stage(.setPaneVideoTarget, WorkspaceIntentArgs.encode(
+                    pane: id, video: spec.video,
+                )) else { return }
+                reconcileTree()
+                return
+            }
+            guard spec.userRenamed, spec.title != before.title || !before.userRenamed else {
+                logIntentRefusal(.renamePane, "spec change with no intent for pane \(id.raw)")
+                return
+            }
+            guard stage(.renamePane, WorkspaceIntentArgs.encode(id: id.raw, name: spec.title)) else { return }
+            reconcileTree()
+        case .canvas:
+            updateSpec(id, transform)
+        }
+    }
+
     // MARK: - Presence
 
     /// Publishes this client's VIEW on the workspace channel — which tab and pane it is looking at.
     ///
-    /// Driven from the reconcile funnel for the same reason ``recordTabFocus()`` is: every tab switch,
-    /// rail click and pane focus passes through it, and recording at the individual gestures instead
-    /// would miss whichever one gets added next. The channel's own dirty guard drops the reconciles
+    /// Driven from the reconcile funnel: every tab switch, rail click and pane focus passes through
+    /// it, and reporting at the individual gestures instead would miss whichever one gets added next. The channel's own dirty guard drops the reconciles
     /// that changed something other than the view.
     ///
     /// The pane and the tab both travel as their own ids — the client proposes object ids, so the
@@ -331,9 +393,14 @@ public extension WorkspaceStore {
         // The automation bootstrap reshapes the HOST's workspace, so it can only run once there is a
         // subscription with a topology behind it. Both edges matter: a loopback document is already
         // `.live` when it is attached (so the call below fires it), and a real channel reaches `.live`
-        // several round trips later (so the hook does).
-        client?.onStateChange = { [weak self] in self?.runArmedBootstrapIfPossible() }
+        // several round trips later (so the hook does). The launch adopt rides the same two edges for
+        // the same reason.
+        client?.onStateChange = { [weak self] in
+            self?.runArmedBootstrapIfPossible()
+            self?.runArmedLaunchAdoptIfPossible()
+        }
         runArmedBootstrapIfPossible()
+        runArmedLaunchAdoptIfPossible()
     }
 
     /// Opens (or re-opens) the channel for the connection that just established.

@@ -3664,3 +3664,122 @@ intent, so a phone that sends none contributes no history and the close successo
 the FOLLOWING clients have been. That is the correct reading of §8.2 — a client that declines to move
 shared focus has also declined to vote on it — and closing a tab remains a shared layout change either
 way, so the phone's own view falls back to host truth when the tab it was on goes.
+
+## Multi-client Phase 5b: what the projection owed the rest of the app (2026-07-27)
+
+[docs/45](45-multi-client-state-sync.md) §7.2. A review round over the cutover above. Every finding
+here has the same shape: `WorkspaceStore.tree` became a value nothing local has to touch for it to
+change, and six things around it still assumed the opposite.
+
+### 1. A document change reconciles the registry — the tree of intent moved without its table of liveness
+
+`reconcileTree()` had 51 call sites and every one of them was a store MUTATOR. That was correct while
+the store owned the tree: nothing else could change the leaf set. With `tree` a projection it is the
+whole multi-client case that is missed — client A splits, client B's rail grows a row for a pane B has
+no `LivePaneSession` for (blank, no PTY, no error), and a pane A closes leaves B's handle and its mux
+channel up forever. It fires on the SINGLE-client path too, at every connect: the launch seed is
+replaced wholesale by the host's own snapshot, whose pane ids this client has never seen.
+
+So the mirror's change hook reconciles. Two rules make that safe:
+
+**A reconcile already running suppresses it.** The diff clears the overlay of every pane it orphaned,
+and each clear announces itself — without the guard the hook re-enters the pass that triggered it,
+once per cleared pane.
+
+**A document-driven pass does NOT acknowledge focus.** `clearActiveLeafCompletionBadge()` and
+`refreshFocusedDoneSettle()` mean "this user has arrived at the focused pane", and a change another
+client published is not this device visiting anything. Unread-completion is a per-DEVICE fact; running
+those on a remote change is how a ✓ disappears before anyone here saw it.
+
+### 2. With no document there is no layout, so nothing is written
+
+`stop()` resets the mirror, and it runs on the way to EVERY re-subscribe — so `topology == nil` and
+`tree` is a workspace of zero sessions for as long as the resubscribe takes, and forever against a
+host that refuses the channel. Both writers read `tree`: the layout save and the document-fact cache.
+A quit in that window replaced `workspace.json` with an empty workspace and `workspace-cache.json`
+with an empty state — the layout and the cold-paint folder names gone permanently, for a condition
+that is not an error at all.
+
+The absence of a document is not an empty document. Both writers skip.
+
+### 3. Op 26 `setPaneVideoTarget` — the mint is not the last word on a binding
+
+**This is a wire addition, and `golden/golden_vectors.json` moved for it** (one appended op entry,
+plus two new `workspaceIntentArgs` vectors; hand-merged, generated with no `SLOPDESK_*` set).
+
+`spawnDetachedPane` was documented as the only op that can write `pane/videoTarget`, and the cutover
+made `updateSpecLive` drop anything that was not an authored rename. Between them, the pane-rebind sink
+— whose entire job is "persist every committed video endpoint so a relaunch re-streams the bound
+window" — became a debug log line. The display switcher and the window re-pick both move a stream that
+is ALREADY RUNNING: the document kept naming display 0 while the window showed display 1, so a relaunch
+re-streamed 0 and ⌥⌘N on display 0 revealed the window showing 1 while ⌥⌘N on display 1 minted a
+duplicate.
+
+There is no client-side repair — a fact with no op behind it is one the next host frame erases. The op
+carries the DERIVED title with it (the applier renames the pane to the new target's title unless the
+user authored one) so the binding and the label can never disagree, and a zero-length target UNBINDS,
+which stays distinct from bytes that fail to decode.
+
+### 4. The device-focus overlay follows the object the device itself just made
+
+§7 above ruled that the overlay is never reconciled — a tab another client closed simply stops
+applying. That is right for a change this device did not ask for and wrong for one it did: the appliers
+land a new tab, a split's new leaf and a reopened tab FOCUSED, and an overlay still naming the old one
+undoes exactly that. On iOS, where not-following is the default, ⌘T grew a rail row the device never
+switched to and a split left the keystrokes in the pane it was split off.
+
+So a staged intent adopts the focus it moved, and the probe has two halves because the appliers move
+two different things: `spawnTab` / `newSession` / `reopenClosedTab` change the ACTIVE TAB, while
+`splitPane` / `closePane` / `reattachPane` leave it alone and focus a leaf inside whichever tab they
+touched — which, on an unfollowing device, is the device's tab and not the host's. A gesture that moves
+no focus at all (a divider drag, a rename) leaves the device exactly where it was looking, which is
+what keeps §7's guarantee intact.
+
+A device whose own tab went away with the change drops the overlay rather than keeping a dead `TabID`:
+⇧⌘T restores a tab under its ORIGINAL id, so a stale overlay would silently come back to life with it.
+
+### 5. The launch adopt is sent WITHOUT an optimistic patch
+
+§6 above ruled `adoptWorkspace` optimistic, because `pristine` is a fact about the host's own file and
+no cell carries it. That ruling stands for the automation bootstrap. It does not survive giving op 0 a
+NORMAL-launch caller, which it needed: `stageAdopt` had no non-automation caller at all, so a user
+upgrading with a six-tab workspace met a first-run host, got its single-pane default, and lost the
+layout — uploaded nowhere, even though `documentIsPristine` means the host would have taken it.
+
+Offered optimistically, the far more common REFUSAL (any host that already has a workspace, i.e. every
+launch after the first) would flash the client's stale layout for a round trip — and, with ruling 1
+above, spawn a shell for every pane in it and kill them all when the refusal lands. So the launch offer
+goes out unstaged: nothing to roll back, a refusal costs one frame and changes nothing on screen, an
+acceptance arrives as an ordinary document frame. Once per launch — a reconnect must not re-offer a
+tree that describes the workspace as it was before every change made since.
+
+### 6. Three rules that were counting the wrong thing
+
+**The ⇧⌘T cue asks WHICH tab is on the ring, not how many.** `WorkspaceIntentApplier.capturing` trims
+to `closedTabRingCap` right after appending, and the ring is host-persisted and shared — so the count
+reaches 25 and never grows again, and every close from that moment on loses its undo affordance while
+⇧⌘T keeps working.
+
+**A re-tile exits zoom.** `WorkspaceTreeOps.applyLayout` cleared `zoomedPane` ("`select-layout` exits
+zoom"); op 24 carries only ids and axes, so the applier preserved it. A zoomed tab renders one pane, so
+the re-tile lands invisibly while the caller's cycle cursor keeps advancing underneath. The applier
+clears it, which is where the rule belongs now.
+
+**`tabFocusHistory` is deleted, not kept.** The close successor reads `topology.focusMRU`; the client's
+ring had no reader left, and a test still pinned its exact contents. A pinned value that cannot affect
+behaviour is worse than no test: the next editor reasons about the wrong MRU. The tests now assert the
+document's ring, which is the one the close path actually reads.
+
+### 7. A refused layout change is REPORTED, not silently swallowed
+
+docs/45 §7.2 said "the UI disables mutation while the workspace channel is down", and nothing read
+`canMutate`. Because `init` seeds the mirror, a store with a dead channel renders a complete,
+normal-looking workspace in which every gesture is a no-op logged only behind
+`SLOPDESK_WORKSPACE_DEBUG` — indistinguishable from a UI that ignored the gesture.
+
+Disabling was rejected: the controls are the whole workspace (every divider, every tab, every pane),
+graying them is a large surface for a transient state, and the honest problem is that the failure is
+INVISIBLE rather than that it is possible. So `stage(_:_:)` fires `onLayoutChangeUnavailable` and the
+app raises a transient chip beside the ⇧⌘T and jump cues it already has. A refusal ON THE MERITS — a
+re-tile of a lone leaf, a reopen with an empty ring — stays silent: that is the document doing its job
+and says nothing about reachability.

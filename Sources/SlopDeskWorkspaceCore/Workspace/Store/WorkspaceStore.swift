@@ -110,6 +110,11 @@ public final class WorkspaceStore {
     @ObservationIgnored
     var armedBootstrapEnvironment: [String: String]?
 
+    /// The layout this client restored at launch, held until a host document turns up to offer it to
+    /// (``runArmedLaunchAdoptIfPossible()``). `nil` once offered, and on the canvas path.
+    @ObservationIgnored
+    var pendingLaunchAdopt: TreeWorkspace?
+
     /// Records (or clears) the divider preview.
     ///
     /// Bumps ``workspaceMirrorRevision`` even though nothing in the document moved: that counter is
@@ -471,6 +476,8 @@ public final class WorkspaceStore {
             workspaceMirrorRevision &+= 1
             reconcileSeenCompletionEpochDocument()
             refreshUnseenDoneForAllPanes()
+            // …and the one place the TABLE OF LIVENESS learns of a leaf nothing local asked for.
+            reconcileTreeFromDocument()
         }
         // Seed the mirror with the tree the store just restored, so `workspaceMirror.topology` is a
         // real layout from the first instant rather than `nil` until a host frame happens to arrive.
@@ -485,10 +492,15 @@ public final class WorkspaceStore {
         // Launch-only: fold persisted detached panes back into tabs (satellite windows do not restore
         // across relaunch — v1; a quit/crash while detached loses nothing). NEVER inside `normalized()`,
         // which runs op-internally and would undo a live detach.
+        let seeded = (restoringTree ?? .defaultWorkspace()).normalized().redockingDetachedPanes()
         seedWorkspaceMirror(
-            from: (restoringTree ?? .defaultWorkspace()).normalized().redockingDetachedPanes(),
+            from: seeded,
             cache: documentCache?.load(hostKey: cacheHostKey) ?? HostWorkspaceState(),
         )
+        // …and hold it for a host that has never had a workspace of its own, which is how a layout
+        // built before this client ever spoke to a document gets uploaded instead of discarded
+        // (``runArmedLaunchAdoptIfPossible()``).
+        if liveModel == .tree { pendingLaunchAdopt = seeded }
         // The live model picks the init reconcile. `.canvas` materializes the canvas panes (the
         // retained-but-dead path); `.tree` (the app) materializes the tree's leaves through the SAME
         // registry diff — exactly one of the two trees ever drives a given store.
@@ -740,22 +752,6 @@ public final class WorkspaceStore {
     /// that mattered). Single-slot is the honest scope: the menu item says "Reopen Closed Pane",
     /// not "Undo History".
     public private(set) var recentlyClosed: RecentlyClosedPane?
-
-    /// Which tabs were focused, most-recent FIRST — the "where was I" the close path returns to
-    /// (``TabOrderingEngine/successorAfterClose(closing:displayOrder:projectKey:focusHistory:)`` rule 1).
-    /// Recorded by ``recordTabFocus()`` on every ``reconcileTree()``, so it follows a tab switch no matter
-    /// which gesture caused it (⌘1–⌘9, ⌘T, the rail, a pane focus that crosses tabs).
-    ///
-    /// In-memory only and capped: a relaunch restores the layout but deliberately not the history, so a
-    /// cold launch falls through to the section-adjacency rule rather than resurrecting a stale focus
-    /// order that no longer describes anything the user did.
-    /// Internal (not private) so the recorder + successor helpers can live in `WorkspaceStore+TabOrdering`,
-    /// beside the rest of the sidebar-ordering surface, keeping this class body under `type_body_length`.
-    var tabFocusHistory: [TabID] = []
-
-    /// The ``tabFocusHistory`` cap — a handful of switches back is all the close path can meaningfully use,
-    /// and the bound keeps a long session from growing the ring without limit.
-    static let tabFocusHistoryCap = 16
 
     /// The pane awaiting close CONFIRMATION because its shell reported a running command (⌘W on a
     /// busy shell — killing the session would kill the command). The view observes this and shows a
@@ -1848,10 +1844,21 @@ public final class WorkspaceStore {
     /// transient "TAB CLOSED · ⇧⌘T REOPENS" notice, the undo affordance for the workspace's most
     /// destructive routine action.
     ///
-    /// Fired by ``stageClose(_:_:)`` on the ring actually GROWING, which is why it can no longer
-    /// promise something the host did not do: a pane close that left its tab alive records nothing and
-    /// stays silent. `nil` in tests / headless ⇒ the cue is dropped. `@ObservationIgnored`: wiring.
+    /// Fired by ``stageClose(_:_:)`` on the ring's NEWEST RECORD actually changing, which is why it
+    /// can no longer promise something the host did not do: a pane close that left its tab alive
+    /// records nothing and stays silent. `nil` in tests / headless ⇒ the cue is dropped.
+    /// `@ObservationIgnored`: wiring.
     @ObservationIgnored public var onTabCloseRecorded: (() -> Void)?
+
+    /// A layout change was asked for while nothing could carry it — no workspace channel, a channel
+    /// that is not `.live`, or one whose host has published no topology (docs/45 §7.2).
+    ///
+    /// The workspace is the document's, so with the document out of reach every split, close, ⌘T and
+    /// divider drag is a no-op. The store keeps rendering the last layout it knows, so the window
+    /// looks entirely normal and the gesture simply does not happen — which is indistinguishable from
+    /// a UI that ignored it. The app wires this to the overlay coordinator's transient notice, so the
+    /// refusal is at least SAID. `nil` in tests / headless. `@ObservationIgnored`: wiring.
+    @ObservationIgnored public var onLayoutChangeUnavailable: (() -> Void)?
 
     /// A TELEPORT focus (``jumpToPaneTree(_:)``) just CROSSED a tab (or session) boundary — the whole
     /// viewport changed in one frame with no cue of where it landed. Carries the ``JumpBreadcrumb``
@@ -2340,6 +2347,9 @@ public final class WorkspaceStore {
             return
         }
         armedBootstrapEnvironment = nil
+        // The bootstrap IS an adopt, and a second one behind it would put the restored layout back
+        // over the autoconnect shape this run exists to show.
+        pendingLaunchAdopt = nil
         // The window-targeted video autoconnect (`check-video.sh` serves ONE host window) boots the
         // remote desktop the way the user gets it: a DETACHED `.desktop` pane in its own OS window —
         // video never enters the workspace tree (docs/DECISIONS.md 2026-07-23). The window-shaped
@@ -3458,6 +3468,21 @@ public final class WorkspaceStore {
     /// for the pure-diff unit tests (`FakePaneSession` is not a `LivePaneSession`, and such stores carry no
     /// `persistence`), so the tree-reconcile suite still pins the bare diff. Idempotent.
     public func reconcileTree() {
+        reconcileTree(acknowledgingFocus: true)
+    }
+
+    /// - Parameter acknowledgingFocus: whether this pass counts as THIS USER arriving at the focused
+    ///   pane — clearing its completion badge and re-pointing the focused-finish watch. True for every
+    ///   local gesture, which is what routes here; false for
+    ///   ``reconcileTreeFromDocument()``, because a change another client (or the host) published is
+    ///   not this device visiting anything. Unread-completion is a per-DEVICE fact, and a remote
+    ///   focus move acknowledging a finish nobody here looked at is how the ✓ disappears unseen.
+    func reconcileTree(acknowledgingFocus: Bool) {
+        // The diff writes the mirror (`pruneWorkspaceMirror` clears a gone pane's overlay), and every
+        // mirror write announces itself — so without this the document hook below would re-enter the
+        // very pass that triggered it, once per cleared pane.
+        isReconcilingTree = true
+        defer { isReconcilingTree = false }
         reconcileRegistry(
             // Detached panes (own-window satellites) are OUT of the tree but stay DESIRED — their live
             // handles (PTY stream / video session) must survive the detach; only the view remounts.
@@ -3477,21 +3502,24 @@ public final class WorkspaceStore {
         if let focused = tree.activeSession?.activeTab?.activePane, focusCoordinator.focusedPane != focused {
             focusCoordinator.focus(focused)
         }
-        // A pane that just gained focus (selectTab / selectSession / focusPaneTree all route here) is being
-        // watched — clear its pending command-completion badge.
-        clearActiveLeafCompletionBadge()
-        // …and re-point the focused-finish watch at whatever is focused NOW (the pane that just lost focus
-        // abandons its clock; a newly focused pane still carrying a marker starts one).
-        refreshFocusedDoneSettle()
+        if acknowledgingFocus {
+            // A pane that just gained focus (selectTab / selectSession / focusPaneTree all route here) is
+            // being watched — clear its pending command-completion badge.
+            clearActiveLeafCompletionBadge()
+            // …and re-point the focused-finish watch at whatever is focused NOW (the pane that just lost
+            // focus abandons its clock; a newly focused pane still carrying a marker starts one).
+            refreshFocusedDoneSettle()
+        }
         // Prune the tree-keyed sidebar mirrors (the manual tab badges) to the live tree. Keyed by
         // TabID, so pruned here against the tree rather than in the pane-keyed `reconcileRegistry`
         // cache-prune. The helper lives in WorkspaceStore+TabOrdering.
         pruneTreeSidebarMirrors()
-        // Remember which tab is focused NOW, so the next close can return here. Recorded after the prune
-        // so a tab that just went away cannot re-enter the ring as its own successor candidate.
-        recordTabFocus()
         scheduleSave()
     }
+
+    /// TRUE for the duration of ``reconcileTree()``. The document hook reads it, and nothing else does.
+    @ObservationIgnored
+    var isReconcilingTree = false
 
     /// The per-new-leaf wiring the live reconcile runs for a materialized ``LivePaneSession`` — factored
     /// out of the canvas `reconcile()`'s `onMaterialize` closure so the tree path and the canvas path
@@ -3718,38 +3746,6 @@ public final class WorkspaceStore {
         // per-signal stamp HERE would be wrong: it also fires on a type-26 foreground-process change, which
         // carries no status transition.
         setAgentStatus(status, for: id)
-    }
-
-    /// Updates the spec for `id` in whichever live model is active: the tree's side table when
-    /// ``liveModel`` is ``LiveModel/tree``, else the canvas. Used by the shared pane-rebind wiring so a
-    /// committed endpoint persists into the right model.
-    ///
-    /// On the tree path the spec belongs to the document, so the transform is run against the current
-    /// value and the RESULT is expressed as an intent. Exactly one spec field has one: an AUTHORED
-    /// title, which `renamePane` writes together with the `userRenamed` flag that is what "authored"
-    /// means.
-    ///
-    /// A DERIVED title has no op and needs none — the document already carries the video binding it
-    /// is derived from, and sending it as a rename would set the authorship flag and make the next
-    /// re-pick unable to update it. Anything else a transform touches is named in the debug log
-    /// rather than dropped silently, because a spec field with no intent behind it is a fact this
-    /// client cannot publish and the next host frame will erase.
-    func updateSpecLive(_ id: PaneID, _ transform: @escaping (inout PaneSpec) -> Void) {
-        switch liveModel {
-        case .tree:
-            guard var spec = tree.spec(for: id) else { return }
-            let before = spec
-            transform(&spec)
-            guard spec != before else { return }
-            guard spec.userRenamed, spec.title != before.title || !before.userRenamed else {
-                logIntentRefusal(.renamePane, "spec change with no intent for pane \(id.raw)")
-                return
-            }
-            guard stage(.renamePane, WorkspaceIntentArgs.encode(id: id.raw, name: spec.title)) else { return }
-            reconcileTree()
-        case .canvas:
-            updateSpec(id, transform)
-        }
     }
 
     /// LATCHED-MODE PERSISTENCE (the `RemoteWindowModel.onModesChanged` sink): records pane `id`'s
@@ -4114,11 +4110,20 @@ public final class WorkspaceStore {
         case tree(TreeWorkspace)
     }
 
-    /// The PERSISTABLE snapshot of the live model right now.
-    private func persistableSnapshot() -> SaveSnapshot {
+    /// The PERSISTABLE snapshot of the live model right now, or `nil` when there is nothing to write.
+    ///
+    /// On the tree path ``tree`` is a PROJECTION: with no document it is a workspace of zero sessions —
+    /// the absence of a layout, not an empty one. Writing that out would replace the only copy of what
+    /// the next launch restores from, and the client is in exactly that state on the way to every
+    /// re-subscribe (``WorkspaceChannelClient/stop()`` resets the mirror before ``start()``) and for as
+    /// long as a host that does not serve the channel keeps refusing it.
+    private func persistableSnapshot() -> SaveSnapshot? {
         switch liveModel {
-        case .tree: .tree(tree)
-        case .canvas: .canvas(workspace)
+        case .tree:
+            guard workspaceMirror.topology != nil else { return nil }
+            return .tree(tree)
+        case .canvas:
+            return .canvas(workspace)
         }
     }
 
@@ -4141,7 +4146,7 @@ public final class WorkspaceStore {
         saveTask?.cancel()
         // Snapshot the (Sendable, value-typed) PERSISTABLE live model now (ephemeral dialog panes stripped
         // on the canvas path) so the write reflects this mutation.
-        let snapshot = persistableSnapshot()
+        guard let snapshot = persistableSnapshot() else { return }
         let debounce = saveDebounce
         saveGeneration &+= 1
         let generation = saveGeneration
@@ -4180,7 +4185,8 @@ public final class WorkspaceStore {
         saveGeneration &+= 1
         saveTask?.cancel()
         saveTask = nil
-        try? Self.write(persistableSnapshot(), to: persistence)
+        guard let snapshot = persistableSnapshot() else { return }
+        try? Self.write(snapshot, to: persistence)
     }
 
     // MARK: - Document cache (docs/45 §7.3)
@@ -4215,6 +4221,10 @@ public final class WorkspaceStore {
         guard let documentCache else { return }
         documentCacheSaveTask?.cancel()
         documentCacheSaveTask = nil
+        // The facts are scoped to the live leaves, and on the tree path those come from the projection —
+        // so with no document there are no facts to write, only the absence of them. Same rule as
+        // ``persistableSnapshot()``, for the same window.
+        guard liveModel == .canvas || workspaceMirror.topology != nil else { return }
         try? documentCache.save(documentFactsSnapshot(), hostKey: documentCacheHostKey)
     }
 

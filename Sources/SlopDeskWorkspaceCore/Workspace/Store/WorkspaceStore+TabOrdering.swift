@@ -34,27 +34,17 @@ public extension WorkspaceStore {
 
     // MARK: Close → next selection
 
-    /// Records the active tab at the head of ``WorkspaceStore/tabFocusHistory`` (most-recent first), pruned
-    /// to the live tab set and capped. Called from every ``reconcileTree()``, which is the one funnel every
-    /// tab switch passes through — recording at the individual gestures instead would miss whichever one
-    /// gets added next.
+    /// The tab MRU the close path returns to — the DOCUMENT's, most-recent first.
     ///
-    /// A repeat of the current head is dropped, so a burst of reconciles for the SAME tab (a spec update, a
-    /// badge clear) cannot flood the ring and evict the genuinely-previous tab this exists to remember.
-    func recordTabFocus() {
-        let liveTabs = Set(tree.sessions.flatMap { session in session.tabs.map(\.id) })
-        guard let active = tree.activeSession?.activeTab?.id else {
-            tabFocusHistory = tabFocusHistory.filter { liveTabs.contains($0) }
-            return
-        }
-        guard tabFocusHistory.first != active else {
-            // Still prune: a tab closed elsewhere must not linger as a successor candidate.
-            tabFocusHistory = tabFocusHistory.filter { liveTabs.contains($0) }
-            return
-        }
-        var updated = tabFocusHistory.filter { $0 != active && liveTabs.contains($0) }
-        updated.insert(active, at: 0)
-        tabFocusHistory = Array(updated.prefix(Self.tabFocusHistoryCap))
+    /// Host-owned (``WorkspaceTopology/focusMRU``), because close is an intent: the successor is picked
+    /// by ``WorkspaceIntentApplier``, and two clients computing it from two local rings pick two
+    /// different tabs. Empty for a session with nothing visited yet, which is what makes a cold launch
+    /// fall through to the project-section rule.
+    var tabFocusMRU: [TabID] {
+        observeWorkspaceMirror()
+        guard let topology = workspaceMirror.topology, let session = topology.tree.activeSessionID
+        else { return [] }
+        return topology.focusMRU[session] ?? []
     }
 
     /// Prunes the TREE-keyed sidebar mirror to the live tree on every ``reconcileTree()``: the E20 manual

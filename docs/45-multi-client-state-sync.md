@@ -808,7 +808,13 @@ pre-intent value for one RTT), a non-zero `status` (the UI **snaps** to host tru
 correct visible outcome of a rejected rename), or a **3 s timeout**.
 
 **Offline intents are dropped at disconnect, never queued or replayed.** Replaying "close tab 3" after
-a four-hour disconnect is wrong. The UI disables mutation while the workspace channel is down.
+a four-hour disconnect is wrong. What the UI does instead is SAY SO: `WorkspaceStore.stage(_:_:)` fires
+`onLayoutChangeUnavailable` for the states where nothing can land — no channel, a channel that is not
+`.live`, a host that has published no topology — and the app raises a `WORKSPACE OFFLINE · LAYOUT IS
+HOST-OWNED` chip. Deliberately a report rather than a disabled control: the store keeps rendering the
+last layout it knows, so the window looks entirely normal, and the failure being invisible is the whole
+problem. A refusal ON THE MERITS (a re-tile of a lone leaf, a reopen with an empty ring) stays silent —
+that is the document doing its job and says nothing about reachability.
 
 **Testing this needs a seam, and the seam is opt-in.** `send(intent:)` refuses anything that is not
 `.live`, and `.live` is published only from inside the async run loop — so every synchronous store
@@ -1314,8 +1320,8 @@ future build's config survives this one.
 ### Phase 5b — the store's mutations become intents
 
 **Value: the headline one. `WorkspaceStore.tree` is a projection of the document, so two clients see
-ONE tree.** Landed as five commits, wire-frozen throughout: the ops it needed shipped in `2ca874f8`
-and **no golden vector changed in any of them**.
+ONE tree.** The ops it needed shipped in `2ca874f8`; the cutover itself changed no golden vector, and
+the review round after it added exactly one op (26 `setPaneVideoTarget`, below).
 
 **SHIPPED**
 - **The device-local facts leave the tree.** Presets, templates, `videoModesByTarget` and the
@@ -1341,6 +1347,27 @@ and **no golden vector changed in any of them**.
 - **The GUI gates prove the shipping path.** `check-macos.sh` and `check-video.sh` give their daemon a
   fresh `SLOPDESK_WORKSPACE_STATE_DIR`, and `check-video.sh` stands up a real `slopdesk-hostd` for the
   detached `.desktop` pane's intent to land in.
+
+**SHIPPED — the review round after the cutover** (DECISIONS, Multi-client Phase 5b — "what the
+projection owed the rest of the app")
+
+- **A DOCUMENT change reconciles the pane registry.** The hook that made a host frame repaint now also
+  materializes the leaves it added and tears down the ones it removed — the multi-client case the
+  mutator-only reconcile could never see, and the first-connect case on a single client. A pass driven
+  by the document does NOT acknowledge focus: unread-completion is per-device.
+- **Nothing is persisted while there is no document.** `stop()` resets the mirror on the way to every
+  re-subscribe, so `tree` is empty for that window; both writers now skip rather than replacing
+  `workspace.json` and `workspace-cache.json` with empty ones.
+- **Op 26 `setPaneVideoTarget`** — re-point a LIVE pane's video binding, with the derived title. The
+  ONE golden change in the phase. Without it the display switcher's commit reached nothing.
+- **The device-focus overlay follows the object THIS device just made** — an unfollowing iPhone's ⌘T
+  and split land focused, while a gesture that moves no focus leaves it where it was looking.
+- **The launch adopt has a caller**, sent WITHOUT an optimistic patch, so an upgrading client offers
+  its restored layout to a first-run host instead of discarding it — and a refusal costs no flash and
+  no spawned shells.
+- **A refused layout change is reported** (`onLayoutChangeUnavailable` → a transient chip) rather than
+  swallowed; the ⇧⌘T cue asks which tab is on the ring rather than how many; a re-tile exits zoom
+  host-side; the client's dead `tabFocusHistory` is deleted in favour of `topology.focusMRU`.
 
 **NOT shipped**
 - **Hardware verification.** Everything above is proven headlessly and by the two GUI gates; nobody has

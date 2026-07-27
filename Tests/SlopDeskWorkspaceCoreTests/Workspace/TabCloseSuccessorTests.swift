@@ -184,9 +184,9 @@ final class TabCloseSuccessorTests: XCTestCase {
         XCTAssertEqual(activeTab(store), tabs[2], "closing a background tab keeps the active tab active")
     }
 
-    /// Focus history is recorded through `reconcileTree()`, so it follows ANY gesture that changes the
-    /// active tab — and a repeat reconcile for the same tab must not evict the genuinely-previous one.
-    func testFocusHistoryTracksSwitchesWithoutFloodingOnRepeats() {
+    /// The MRU the close path reads is the DOCUMENT's: a `focusTab` intent files the tab at the head,
+    /// and a reconcile that focused nothing new (a spec update, a badge clear) leaves it alone.
+    func testFocusMRUTracksSwitchesWithoutFloodingOnRepeats() {
         let projects = ["/w/alpha", "/w/beta", "/w/gamma"]
         let (tree, tabs) = workspace(projects: projects)
         let store = makeStore(tree)
@@ -198,8 +198,8 @@ final class TabCloseSuccessorTests: XCTestCase {
         store.reconcileTree()
 
         XCTAssertEqual(
-            store.tabFocusHistory, [tabs[2], tabs[1], tabs[0]],
-            "most-recent first, one entry per tab, repeats collapsed",
+            store.tabFocusMRU, [tabs[2], tabs[1]],
+            "most-recent first, one entry per VISITED tab, repeats collapsed",
         )
 
         store.closeTab(tabs[2])
@@ -322,7 +322,7 @@ final class TabCloseSuccessorTests: XCTestCase {
         seedProjects(projects, in: store)
 
         XCTAssertTrue(
-            store.tabFocusHistory.allSatisfy { $0 == tabs[0] },
+            store.tabFocusMRU.allSatisfy { $0 == tabs[0] },
             "nothing has been visited yet, so rule 1 has no survivor to offer",
         )
 
@@ -377,12 +377,12 @@ final class TabCloseSuccessorTests: XCTestCase {
         store.selectTab(2)
         store.closeTab(tabs[2])
         XCTAssertEqual(activeTab(store), tabs[0])
-        XCTAssertFalse(store.tabFocusHistory.contains(tabs[2]), "a dead tab is not a successor candidate")
+        XCTAssertFalse(store.tabFocusMRU.contains(tabs[2]), "a dead tab is not a successor candidate")
 
         store.reopenLastClosedPane() // ⇧⌘T
 
         XCTAssertEqual(activeTab(store), tabs[2], "the reopened tab takes focus")
-        XCTAssertEqual(store.tabFocusHistory.first, tabs[2], "…and re-enters the ring at the head")
+        XCTAssertEqual(store.tabFocusMRU.first, tabs[2], "…and re-enters the ring at the head")
 
         store.closeTab(tabs[2])
 

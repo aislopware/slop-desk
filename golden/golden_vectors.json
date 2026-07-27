@@ -4610,6 +4610,8 @@
     "reorderTabs": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f10002b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3",
     "setTabLayout": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b201c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3000200a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a100a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4",
     "spawnDetachedDesktop": "a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a701001400000000010000000000074465736b746f700000",
+    "setPaneVideoTarget": "a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7001400000000010000000100074465736b746f700000",
+    "setPaneVideoTargetUnbound": "a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a70000",
     "spawnDetachedNoTarget": "a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7000000",
     "spawnTab": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5020000",
     "split": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a10101a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3000e2f566f6c756d65732f4c61636965",
@@ -4719,6 +4721,10 @@
     {
       "name": "spawnDetachedPane",
       "op": 25
+    },
+    {
+      "name": "setPaneVideoTarget",
+      "op": 26
     }
   ],
   "workspaceStateCodec": {

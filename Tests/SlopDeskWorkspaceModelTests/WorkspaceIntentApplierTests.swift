@@ -559,6 +559,36 @@ final class WorkspaceIntentApplierTests: XCTestCase {
         XCTAssertTrue(laid.tree.isInvariantHeld())
     }
 
+    /// A re-tile EXITS zoom — tmux `select-layout` semantics, and the half of the gesture the client
+    /// used to own.
+    ///
+    /// A zoomed tab renders exactly one pane, so a re-tile under a zoom is invisible: the tab is
+    /// genuinely re-shaped and the user sees nothing happen, while the cycle cursor keeps advancing
+    /// underneath. Every caller of this op is a `select-layout` (apply a preset, cycle to the next,
+    /// balance the splits), and all three mean "show me this shape".
+    func testSettingATabLayoutExitsZoom() throws {
+        let f = fixture()
+        let (topology, tabA, panes) = try threeLeafTab(f)
+        let zoomed = try XCTUnwrap(apply(.setZoom, WorkspaceIntentArgs.encode(
+            id: panes[0].raw, flag: true,
+        ), to: topology).topology)
+        XCTAssertEqual(zoomed.tree.sessions[0].tabs.first { $0.id == tabA }?.zoomedPane, panes[0])
+
+        let laid = try XCTUnwrap(apply(.setTabLayout, WorkspaceIntentArgs.encode(
+            tab: tabA,
+            layout: .split(
+                id: SplitNodeID(),
+                axis: .vertical,
+                children: [.leaf(panes[1]), .leaf(panes[0]), .leaf(panes[2])],
+            ),
+        ), to: zoomed).topology)
+
+        XCTAssertNil(
+            laid.tree.sessions[0].tabs.first { $0.id == tabA }?.zoomedPane,
+            "the tab shows the shape it was just given",
+        )
+    }
+
     /// A layout whose leaf set differs by one pane is not a re-layout. Accepting it would either
     /// invent a pane with no spec or strand a live PTY with nothing rendering it.
     func testALayoutThatDropsALeafIsRefused() throws {
@@ -589,8 +619,67 @@ final class WorkspaceIntentApplierTests: XCTestCase {
         }
     }
 
-    /// The ONLY intent that can write `pane/kind` or `pane/videoTarget`. Both already round-trip
-    /// through the document; until this op nothing could ever put them there.
+    /// A stream that is already running can be re-pointed: the display switcher and the window
+    /// re-pick both move a LIVE pane's target, so the mint cannot be the last word on it.
+    func testRepointingAPanesVideoTargetCarriesTheDerivedTitleWithIt() throws {
+        let f = fixture()
+        let newPane = PaneID()
+        let spawned = try XCTUnwrap(apply(.spawnDetachedPane, WorkspaceIntentArgs.encode(
+            detachedPane: newPane,
+            kind: .desktop,
+            video: VideoEndpoint(windowID: 0, title: "Display 1", appName: "", displayID: 0),
+        ), to: f.topology).topology)
+
+        let moved = try XCTUnwrap(apply(.setPaneVideoTarget, WorkspaceIntentArgs.encode(
+            pane: newPane,
+            video: VideoEndpoint(windowID: 0, title: "Display 2", appName: "", displayID: 1),
+        ), to: spawned).topology)
+
+        let spec = try XCTUnwrap(moved.tree.sessions[0].specs[newPane])
+        XCTAssertEqual(spec.video?.displayID, 1, "a relaunch re-streams what the user is watching")
+        XCTAssertEqual(spec.title, "Display 2", "the derived title follows the binding")
+    }
+
+    /// A title the USER wrote outlives every re-pick — that is what `userRenamed` means.
+    func testRepointingLeavesAnAuthoredTitleAlone() throws {
+        let f = fixture()
+        let newPane = PaneID()
+        let spawned = try XCTUnwrap(apply(.spawnDetachedPane, WorkspaceIntentArgs.encode(
+            detachedPane: newPane,
+            kind: .desktop,
+            video: VideoEndpoint(windowID: 0, title: "Display 1", appName: "", displayID: 0),
+        ), to: f.topology).topology)
+        let named = try XCTUnwrap(apply(.renamePane, WorkspaceIntentArgs.encode(
+            id: newPane.raw, name: "build wall",
+        ), to: spawned).topology)
+
+        let moved = try XCTUnwrap(apply(.setPaneVideoTarget, WorkspaceIntentArgs.encode(
+            pane: newPane,
+            video: VideoEndpoint(windowID: 0, title: "Display 2", appName: "", displayID: 1),
+        ), to: named).topology)
+
+        let spec = try XCTUnwrap(moved.tree.sessions[0].specs[newPane])
+        XCTAssertEqual(spec.video?.displayID, 1)
+        XCTAssertEqual(spec.title, "build wall")
+    }
+
+    /// Validate-then-drop: a pane the document does not hold, and a blob that is present but does not
+    /// decode. Neither may leave a pane bound to nothing.
+    func testRepointingRefusesAnUnknownPaneAndAMalformedTarget() {
+        let f = fixture()
+        XCTAssertEqual(
+            apply(.setPaneVideoTarget, WorkspaceIntentArgs.encode(
+                pane: PaneID(), video: VideoEndpoint(windowID: 1, title: "x", appName: ""),
+            ), to: f.topology),
+            .rejectedNotFound,
+        )
+        var malformed = WorkspaceStateCodec.encodeUUID(f.paneA.raw)
+        malformed.append(contentsOf: [0, 3, 0xFF, 0xFF, 0xFF])
+        XCTAssertEqual(apply(.setPaneVideoTarget, malformed, to: f.topology), .rejectedInvalid)
+    }
+
+    /// The ONLY intent that can write `pane/kind`. Both fields already round-trip through the
+    /// document; until this op nothing could ever put them there.
     func testSpawningADetachedPaneCarriesItsKindAndVideoTarget() throws {
         let f = fixture()
         let newPane = PaneID()

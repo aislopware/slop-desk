@@ -368,10 +368,18 @@ public final class WorkspaceChannelClient {
             flags: 0,
             label: label,
         )
+        // Captured BEFORE the write: `updatePresence` can run while the subscribe is in flight, and
+        // re-asserting the value read AFTERWARDS would put a frame the ordered drain is already
+        // carrying on the wire a second time — or, worse, put an OLDER one behind a newer, which is
+        // precisely the reversal the single drain exists to prevent.
+        let reassert = lastPresence
         await send(verb: .subscribe, payload: request.encode())
         // A resubscribe resets the host's per-subscriber presence expectations along with its base,
         // so re-assert what this client is looking at rather than waiting for the next UI change.
-        if let lastPresence { await sendPresence(lastPresence) }
+        // Skipped when something newer has since been queued: that frame IS the re-assert.
+        guard let reassert, presenceQueue.isEmpty, lastPresence?.presenceClock == reassert.presenceClock
+        else { return }
+        await sendPresence(reassert)
     }
 
     /// Tells the host what this client is looking at. Phase 4 ships the identity half of presence;
@@ -438,6 +446,12 @@ public final class WorkspaceChannelClient {
     /// host's own applier — so the split is on screen in the same frame the user asked for it, and
     /// what appears is what the host is about to publish.
     ///
+    /// `optimistic: false` sends the request WITHOUT staging a patch, for the one intent whose answer
+    /// the client genuinely cannot predict: `adoptWorkspace` is decided by whether the HOST's own file
+    /// is untouched, a fact no cell carries. Showing the proposal and snapping it away on
+    /// `rejectedStale` would replace the whole layout for a round trip — and, now that the projection
+    /// drives the registry, spawn a shell for every pane in it before tearing them all down again.
+    ///
     /// - Returns: `false` when this client can already tell the intent is invalid against the
     ///   document it holds. Nothing is staged and nothing is sent: a request whose answer is already
     ///   known is a round trip and a rollback for no reason.
@@ -446,8 +460,12 @@ public final class WorkspaceChannelClient {
         intent op: WorkspaceIntentOp,
         args: Data,
         now: TimeInterval = Date().timeIntervalSince1970,
+        optimistic: Bool = true,
     ) -> Bool {
         guard case .live = state else { return false }
+        guard optimistic else {
+            return send(unstaged: WorkspaceIntent(intentID: UUID(), op: op.rawValue, args: args))
+        }
         guard let intent = box.stageIntent(op: op, args: args, issuedAt: now) else { return false }
         // A loopback client IS the far end: it answers here, before this call returns, so the patch
         // staged one line above is already retired by the document frame the answer carries.
@@ -471,6 +489,21 @@ public final class WorkspaceChannelClient {
             guard let delay = pendingSweepDelay else { return }
             try? await Task.sleep(for: delay)
             box.expirePending(now: self.now())
+        }
+        return true
+    }
+
+    /// Puts one intent on the wire with no optimistic patch behind it. Nothing to roll back, so a
+    /// refusal costs a frame and changes nothing on screen; an acceptance arrives as an ordinary
+    /// document frame like any other client's change.
+    private func send(unstaged intent: WorkspaceIntent) -> Bool {
+        if let localDocument {
+            localDocument.serve(intent)
+            return true
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            await send(verb: .intent, payload: intent.encode())
         }
         return true
     }

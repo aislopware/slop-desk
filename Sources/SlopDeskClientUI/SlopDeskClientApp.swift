@@ -390,21 +390,7 @@ public struct SlopDeskClientApp: App {
         store.onLocalCopy = { [weak overlay] text in
             overlay?.noteCopy(text)
         }
-        // Closing a tab is the workspace's most destructive ROUTINE action, and the ⇧⌘T reopen has no
-        // visible affordance at the moment it matters. The store fires this only when a REOPENABLE tab
-        // just landed on the LIFO, so the chip never promises an undo it can't deliver.
-        store.onTabCloseRecorded = { [weak overlay] in
-            overlay?.noteNotice(label: "TAB CLOSED", detail: "⇧⌘T REOPENS")
-        }
-        // A teleport jump (⌘⇧U walk, palette / Open Quickly, a Global Search hit, a notification /
-        // connection-alert click) swaps the whole viewport in one frame. The store fires this ONLY when
-        // the landing crossed a tab/session boundary — the breadcrumb chip says where you are now.
-        // SECURITY: the breadcrumb embeds OSC/PTY-settable titles → mask at the display site.
-        store.onCrossTabJump = { [weak overlay] breadcrumb in
-            overlay?.noteNotice(
-                label: "JUMPED", detail: Toast.redactSecretsIfEnabled(breadcrumb), dwell: .seconds(2.5),
-            )
-        }
+        Self.wireWorkspaceNotices(store: store, overlay: overlay)
         store.onLongCommandNotify = { [weak overlay, weak store] paneIDKey, paneTitle, exitCode, durationMS in
             // The background "your build finished" cue. FOCUS-gated like the other toasts: the per-command
             // policy path can authorise the sink while the source pane is the focused one (e.g. Notify While
@@ -947,6 +933,36 @@ public struct SlopDeskClientApp: App {
     /// `MetadataClient` is one-per-pane, so it routes through whichever pane is connected; a `nil` here lets
     /// the card show "Connect a session to manage hooks" instead of a dead button. Resolved at CALL time so a
     /// reconnect transparently re-points the seam.
+    /// The three workspace-level transient notices, wired to the overlay coordinator's chip.
+    ///
+    /// Grouped out of `init()` because they are one idea — a layout event with no visible trace of its
+    /// own gets SAID — and because `init()` sits on the `function_body_length` ceiling.
+    @MainActor
+    private static func wireWorkspaceNotices(store: WorkspaceStore, overlay: OverlayCoordinator) {
+        // Closing a tab is the workspace's most destructive ROUTINE action, and the ⇧⌘T reopen has no
+        // visible affordance at the moment it matters. The store fires this only when a REOPENABLE tab
+        // just landed on the LIFO, so the chip never promises an undo it can't deliver.
+        store.onTabCloseRecorded = { [weak overlay] in
+            overlay?.noteNotice(label: "TAB CLOSED", detail: "⇧⌘T REOPENS")
+        }
+        // A teleport jump (⌘⇧U walk, palette / Open Quickly, a Global Search hit, a notification /
+        // connection-alert click) swaps the whole viewport in one frame. The store fires this ONLY when
+        // the landing crossed a tab/session boundary — the breadcrumb chip says where you are now.
+        // SECURITY: the breadcrumb embeds OSC/PTY-settable titles → mask at the display site.
+        store.onCrossTabJump = { [weak overlay] breadcrumb in
+            overlay?.noteNotice(
+                label: "JUMPED", detail: Toast.redactSecretsIfEnabled(breadcrumb), dwell: .seconds(2.5),
+            )
+        }
+        // The workspace belongs to the host (docs/45 §7.2), so with the document out of reach every
+        // split, ⌘T, close and divider drag simply does not happen — while the window keeps rendering
+        // the last layout it knows and looks entirely normal. Saying so is the difference between a
+        // host that is unreachable and a UI that ignored the gesture.
+        store.onLayoutChangeUnavailable = { [weak overlay] in
+            overlay?.noteNotice(label: "WORKSPACE OFFLINE", detail: "LAYOUT IS HOST-OWNED")
+        }
+    }
+
     @MainActor
     private static func firstConnectedMetadataClient(_ store: WorkspaceStore) -> MetadataClient? {
         for id in store.tree.activeSession?.allPaneIDs() ?? [] {

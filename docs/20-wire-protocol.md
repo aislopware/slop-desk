@@ -1216,13 +1216,21 @@ and no merge function anywhere.
 | 23 | `dockPaneAtTabEdge` | `[16B sourcePaneID][16B tabID][u8 edge]` |
 | 24 | `setTabLayout` | `[16B tabID][layoutStructure…]` — the §11.4 layout encoding, to the last byte |
 | 25 | `spawnDetachedPane` | `[16B newPaneID][u8 kind][u16 len][videoTarget]` |
+| 26 | `setPaneVideoTarget` | `[16B paneID][u16 len][videoTarget]` — re-point a LIVE pane's binding |
 
 `position` (ops 13 and 20): `0 auto · 1 end · 2 afterCurrent`; an unknown byte is `auto`. `axis`: `0`
 horizontal (columns) / non-zero vertical (rows). `edge` (op 23): `0 leading · 1 trailing · 2 top ·
 3 bottom`; an unknown byte is leading, because every value is a legal dock and there is nothing to
-reject. `kind` (op 25) is the `pane/kind` tag (`0 terminal · 1 desktop`) and a zero-length
-`videoTarget` is "no target". `before` and the flag bytes follow the C-style bool rule — any non-zero
-is `true`.
+reject. `kind` (op 25) is the `pane/kind` tag (`0 terminal · 1 desktop`). A zero-length `videoTarget`
+is "no target" on op 25 and UNBINDS on op 26; bytes that are present but do not decode are malformed
+on both, never a silently target-less pane. `before` and the flag bytes follow the C-style bool rule
+— any non-zero is `true`.
+
+**Ops 25 and 26 are the pair.** The mint cannot be the last word on a video binding: the display
+switcher and the window re-pick both move a stream that is already running, and without op 26 the
+document keeps naming the display the pane opened on — so a relaunch re-streams it and ⌥⌘N on that
+display reveals a window showing another. Op 26 carries the DERIVED title with it (the applier
+renames the pane to the new target's title unless the user authored one), so the two never disagree.
 
 **`reopenClosedTab` is index-addressed.** `lifoIndex` counts from the END of the ring — `0` is the
 most recently closed tab. Open-Quickly's Recent rows must reopen row N, and a plain "pop the newest"
@@ -1245,9 +1253,12 @@ invent a pane with no spec, and one that drops a leaf would strand a live PTY wi
 it. Every split comes back at an equal `.flex(1)` share (`select-layout` semantics: a re-tile
 discards the drags that described the old shape).
 
-**Op 25 is the only writer of `pane/kind` and `pane/videoTarget`.** Both round-trip through the
-document already; until this op nothing could put them there. A `.desktop` pane is born detached — it
-never passes through a tab.
+**Op 25 is the only writer of `pane/kind`, and ops 25 and 26 the only writers of `pane/videoTarget`.**
+Both round-trip through the document already; until these ops nothing could put them there. A
+`.desktop` pane is born detached — it never passes through a tab.
+
+**A re-tile (op 24) exits zoom.** `tab/zoomedPane` is cleared alongside the new shape, `select-layout`
+semantics: a zoomed tab renders one pane, so a re-tile under a zoom lands invisibly.
 
 **New ids are proposed by the CLIENT.** `splitPane`, `spawnPane`, `spawnTab`, `newSession` and
 `spawnDetachedPane` all carry the id the new object will have. The host validates (a proposed id already in use, including

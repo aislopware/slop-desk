@@ -1839,7 +1839,7 @@ root["workspaceIntentArgs"] = [
             children: [.leaf(PaneID(raw: wsPane)), .leaf(PaneID(raw: wsUUID(0xA4)))],
         ),
     )),
-    // The only intent that can write `pane/kind` or `pane/videoTarget`.
+    // The only intent that can write `pane/kind`.
     "spawnDetachedDesktop": wsHex(WorkspaceIntentArgs.encode(
         detachedPane: PaneID(raw: wsUUID(0xA7)),
         kind: .desktop,
@@ -1847,6 +1847,15 @@ root["workspaceIntentArgs"] = [
     )),
     "spawnDetachedNoTarget": wsHex(WorkspaceIntentArgs.encode(
         detachedPane: PaneID(raw: wsUUID(0xA7)), kind: .terminal, video: nil,
+    )),
+    // The re-point carries the SAME `videoTarget` blob the mint does, so the display switcher and the
+    // pane's birth speak one grammar. A zero length UNBINDS.
+    "setPaneVideoTarget": wsHex(WorkspaceIntentArgs.encode(
+        pane: PaneID(raw: wsUUID(0xA7)),
+        video: VideoEndpoint(windowID: 0, title: "Desktop", appName: "", displayID: 1),
+    )),
+    "setPaneVideoTargetUnbound": wsHex(WorkspaceIntentArgs.encode(
+        pane: PaneID(raw: wsUUID(0xA7)), video: nil,
     )),
     // The reopen index counts from the NEWEST end of the ring — Open-Quickly's Recent rows reopen
     // row N, not always the newest.
