@@ -1015,18 +1015,33 @@ a Studio's nvim — network jitter driving a terminal reflow. So:
    unmounts a pane closes its channel and stops contributing, which the retained-session LRU already
    governs.
 2. The grid is `min(cols)` / `min(rows)` over contributing subscribers, behind a **750 ms settle
-   timer** so a burst of joins resolves once.
+   timer** so a burst of joins resolves once. The settle arms on a **CONTRIBUTOR-SET change**, never
+   on an ordinary resize frame — arming it per frame would put 750 ms between a divider drag and the
+   shell noticing. It arms only when the set moves BETWEEN two non-empty states: a set going 0→1 or
+   1→0 has exactly one possible fold, so a fresh pane's first client waits for nothing. An offer that
+   arrives while a settle is outstanding joins the fold rather than arming the 16 ms debounce; the
+   `.ack` / `.bye` / channel-close flushes bypass both timers, as they always have.
 3. A subscriber may declare itself **size-passive** (tmux `ignore-size`) and contributes nothing.
-   **iOS is size-passive by default.** A phone must never crush a Mac.
+   **iOS is size-passive by default.** A phone must never crush a Mac. Enforced HOST-side, from the
+   workspace channel's `clientKind`: `MuxChannelOpen` carries no client kind, so a client-side gate
+   alone would be defeated by any build that predates it. A pane channel with **no** workspace channel
+   behind it **CONTRIBUTES** — that is `slopdesk-client` and every `SLOPDESK_WORKSPACE_DOC=0` client,
+   and defaulting them to passive would leave a CLI unable to size its own pane. Panes opened before
+   the workspace `subscribe` lands are re-resolved by the subscribe itself.
 4. **A pane with zero contributing subscribers keeps its last size** — it does not snap to 80×24.
-5. Wire type 11 `resize` stops being a command and becomes a **contribution**.
-   `scheduleResize` / `flushPendingResize` (`MuxChannelSession.swift:1812-1850`) folds the min before
-   the single client-path `pty.setWindowSize` at **`:1850`**. **No wire change.**
-6. There is a **second, independent** `pty.setWindowSize` at **`:2138`**, inside
-   `resizeForControl(rows:cols:)` — the ctl socket's `resize` verb, used by `slopdesk-ctl` and
-   orchestrators. Both paths route through one `applyResolvedGrid()` that reads the folded contributor
-   set; the ctl verb is an explicit override that also updates `pane/grid`. Leaving `:2138` outside the
-   fold silently breaks the monotone-min invariant.
+5. Wire type 11 `resize` stops being a command and becomes a **contribution**. `scheduleResize`
+   records the offering subscriber's LATEST offer; `applyResolvedGrid()` folds the min and performs
+   the one `pty.setWindowSize`. **No wire change.** Idempotence is a comparison against the live
+   `TIOCGWINSZ`, **never** against a remembered resolved grid: `endRedrawJiggle` deliberately leaves
+   the PTY one row short while an app re-layouts, and a "resolved size unchanged, skip" memo would
+   leave the pane short for the rest of the session.
+6. The ctl socket's `resize` verb (`resizeForControl(rows:cols:)`, used by `slopdesk-ctl` and
+   orchestrators) routes through the same `applyResolvedGrid()` as an explicit ONE-SHOT override — so
+   the next client offer still wins, and the ctl path gets the journal size sidecar and the settled
+   redraw nudge it never had. A second, independent `TIOCSWINSZ` there silently breaks the
+   monotone-min invariant AND leaves the sidecar describing a geometry the PTY no longer holds.
+   `PTYProcess.beginRedrawJiggle` / `endRedrawJiggle` stay outside the fold on purpose: they are a
+   transient repaint dance that restores what it borrowed.
 7. The resolved grid and the contributor list are published in the presence frame, so a
    non-contributing client renders a **labelled** letterbox — `120×40 · sized by MacBook Pro` —
    instead of guessing. That readout is what makes the policy debuggable on hardware.

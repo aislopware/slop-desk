@@ -305,12 +305,22 @@ public final class PTYProcess: @unchecked Sendable {
     /// Same `exitLock` TOCTOU discipline as ``setWindowSize(cols:rows:pxWidth:pxHeight:)``.
     /// Surfaced by the agent-control `list-panes` verb (`rows`/`cols`).
     public func currentWindowSize() -> (rows: UInt16, cols: UInt16)? {
+        guard let full = currentWindowSizeWithPixels() else { return nil }
+        return (rows: full.rows, cols: full.cols)
+    }
+
+    /// The full `TIOCGWINSZ`, pixel fields included.
+    ///
+    /// The size fold compares its resolved grid against the LIVE winsize to decide whether an apply
+    /// is needed, and the cell-metric pixels are part of what a client asked for: comparing only
+    /// rows/cols would silently swallow a DPI change that never reaches the app.
+    public func currentWindowSizeWithPixels() -> (rows: UInt16, cols: UInt16, pxWidth: UInt16, pxHeight: UInt16)? {
         exitLock.lock()
         defer { exitLock.unlock() }
         guard masterFD >= 0 else { return nil }
         var ws = winsize()
         guard ioctl(masterFD, TIOCGWINSZ, &ws) == 0 else { return nil }
-        return (rows: ws.ws_row, cols: ws.ws_col)
+        return (rows: ws.ws_row, cols: ws.ws_col, pxWidth: ws.ws_xpixel, pxHeight: ws.ws_ypixel)
     }
 
     // MARK: Redraw jiggle (full-repaint resize dance)

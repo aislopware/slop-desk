@@ -3,6 +3,14 @@ import SlopDeskAgentDetect
 import SlopDeskProtocol
 import SlopDeskTransport
 
+/// Identity of ONE subscriber to a pane — the key the PTY-size fold and (from the fan-out on) the
+/// per-subscriber relay state are held under.
+///
+/// A plain integer minted by the session rather than the client's `sessionID`: subscribers are a
+/// host-side set with host-side lifetimes, and keying them by anything a peer supplies would let a
+/// peer address another peer's slot.
+typealias MuxSubscriberID = UInt64
+
 /// One logical mux channel's host-side PTY relay.
 ///
 /// A ``PTYProcess`` bridged to the client over a channel's data + control ``MuxSubChannel`` pair,
@@ -547,23 +555,68 @@ final class MuxChannelSession: @unchecked Sendable {
     /// Built in ``startRelay()`` once the `readLoop` exists (so the gate can drive it). `nil` until then.
     private var outputGate: PausableQueueGate?
 
-    // MARK: - Resize micro-debounce (latest-wins backstop)
+    // MARK: - The resolved grid (a min-fold over contributors, applied by ONE writer)
+
+    /// One subscriber's standing offer to the PTY-size fold (docs/45 §8.3).
+    ///
+    /// The offer is `nil` until that subscriber sends its first wire-11 `resize` — a channel that
+    /// has opened but not yet said how big it is votes for nothing rather than for 0×0.
+    struct ResizeContribution {
+        /// tmux's `ignore-size`: present in the set, folded into nothing. **iOS is size-passive**, so
+        /// a phone in a pocket can never crush a Studio's nvim to its own width.
+        var sizePassive: Bool
+        var offer: (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)?
+    }
+
+    /// One contributor as the workspace roster publishes it — who, whether they vote, and what they
+    /// offered (0×0 for a subscriber that holds the pane but has not said how big it is).
+    struct ResizeAttachment {
+        var subscriber: MuxSubscriberID
+        var contributes: Bool
+        var cols: UInt16
+        var rows: UInt16
+    }
+
+    /// The subscriber every pane has before the fan-out exists: the one client channel this session
+    /// was opened for. A named constant rather than a literal so the seam is visible.
+    static let primarySubscriberID: MuxSubscriberID = 0
 
     /// One-frame (default) settle window for the inline resize micro-debounce. Injected so a test
     /// drives the deadline deterministically (the `StaticIDRDecider` `now`-injection discipline) —
     /// `.zero` in tests applies the LATEST size on the next runloop turn with no wall-clock sleep.
     private let resizeDebounce: Duration
-    /// Guards the resize-debounce state below. The state is touched from THREE contexts — the serial
-    /// `controlTask`, the debounce `Task` when it fires, and `shutdown()` — so unlike the
-    /// single-writer `controlTask`-only fields it needs a lock (the codebase's `taskLock`/`replayLock`
-    /// discipline). Held only around O(1) field reads/writes + the inline `setWindowSize` ioctl.
+    /// The longer settle a CONTRIBUTOR-SET change arms, so a burst of joins resolves the grid ONCE
+    /// instead of SIGWINCHing the shell per arrival (docs/45 §8.3 rule 2).
+    private let sizeSettle: Duration
+    /// Whether the subscriber this session opens for votes in the fold. Resolved HOST-side from the
+    /// workspace channel's `clientKind`, never from anything the pane channel itself claims.
+    private let openedSizePassive: Bool
+    /// Guards the resize state below. The state is touched from FOUR contexts — the serial
+    /// `controlTask`, the debounce `Task` when it fires, the settle `Task` when it fires, and
+    /// `shutdown()` — so unlike the single-writer `controlTask`-only fields it needs a lock (the
+    /// codebase's `taskLock`/`replayLock` discipline). Held only around O(1) field reads/writes.
     private let resizeLock = NSLock()
-    /// The latest pending winsize awaiting a debounced apply; `nil` when nothing is pending.
-    private var pendingResize: (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)?
+    /// Every subscriber's standing offer. The fold's input, and the ONLY input: presence is
+    /// 100 ms-throttled, per-connection, newest-clock-wins NETWORK state, and folding it would let a
+    /// WireGuard flap reflow a terminal.
+    private var resizeContributions: [MuxSubscriberID: ResizeContribution] = [:]
+    /// The grid the fold last resolved — published to the workspace roster so a client can render
+    /// "120×40 · sized by MacBook Pro" instead of guessing. **Never** consulted to decide whether an
+    /// apply is needed; see ``applyResolvedGrid(ifGeneration:)``.
+    private var resolvedGrid: (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)?
+    /// The ctl socket's `resize` verb, held for exactly one apply. An orchestrator saying "make this
+    /// pane 132×50" is an OVERRIDE, not a vote — but a one-shot one, so the next client offer still
+    /// wins, which is what the ctl verb has always done.
+    private var pendingCtlOverride: (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)?
     /// The in-flight debounce task (cancel-replace, à la `WorkspaceStore.scheduleSave`).
     private var resizeDebounceTask: Task<Void, Never>?
-    /// Generation guard: `scheduleResize` bumps it; a debounce task PAST its sleep re-checks it and
-    /// bails if a newer resize superseded it. `Task.cancel()` cannot interrupt a task already past
+    /// The in-flight contributor-set settle task, and whether one is outstanding. While it is, an
+    /// ordinary offer joins the fold WITHOUT arming the 16 ms debounce — arming it there is exactly
+    /// what would make a burst of joins resolve N times instead of once.
+    private var sizeSettleTask: Task<Void, Never>?
+    private var sizeSettlePending = false
+    /// Generation guard: every scheduled apply bumps it; a task PAST its sleep re-checks it and
+    /// bails if a newer one superseded it. `Task.cancel()` cannot interrupt a task already past
     /// its `sleep`, so the generation — not cancellation alone — is what makes the LATEST size win.
     private var resizeGeneration: UInt64 = 0
     /// LOST-PROMPT guard: a one-shot, cancel-replace task that re-sends `SIGWINCH` (`pty.nudgeRedraw`) a
@@ -669,7 +722,12 @@ final class MuxChannelSession: @unchecked Sendable {
     }
 
     /// - Parameter resizeDebounce: the latest-wins settle window for `TIOCSWINSZ` applies (default
-    ///   ~one frame). See ``scheduleResize(cols:rows:px:py:)`` for WHY a host-side debounce exists.
+    ///   ~one frame). See ``scheduleResize(from:cols:rows:px:py:)`` for WHY a host-side debounce exists.
+    /// - Parameter sizeSettle: the longer window a CONTRIBUTOR-SET change arms (docs/45 §8.3 rule 2).
+    /// - Parameter isSizePassive: whether the subscriber this channel opens for votes in the size
+    ///   fold. `false` — CONTRIBUTES — is the right default: a pane channel with no workspace channel
+    ///   behind it is the shipped `slopdesk-client` CLI, and a CLI that cannot size its own pane is
+    ///   broken.
     /// - Parameter sessionID: the UUID the client included in the `channelOpen` preamble; used by
     ///   ``DetachedSessionStore`` to match a returning client to its detached shell.
     init(
@@ -679,6 +737,8 @@ final class MuxChannelSession: @unchecked Sendable {
         control: MuxSubChannel,
         sessionID: UUID = UUID(),
         resizeDebounce: Duration = .milliseconds(16),
+        sizeSettle: Duration = .milliseconds(750),
+        isSizePassive: Bool = false,
         replay: ReplayBuffer = MuxChannelSession.makeReplayBuffer(),
         shimDir: URL? = nil,
         agentDetectEnabled: Bool = false,
@@ -695,6 +755,8 @@ final class MuxChannelSession: @unchecked Sendable {
         self.control = control
         self.sessionID = sessionID
         self.resizeDebounce = resizeDebounce
+        self.sizeSettle = sizeSettle
+        openedSizePassive = isSizePassive
         self.replay = replay
         self.snapshotReplay = snapshotReplay
         coldBacklogTransform = replay.scrollbackDistiller
@@ -783,6 +845,11 @@ final class MuxChannelSession: @unchecked Sendable {
             }
         }
 
+        // The channel this session was opened for is a size CONTRIBUTOR from the moment its relay is
+        // live — a state-plane fact, established here rather than inferred from its first `.resize`,
+        // so the set is right even for a client that never sends one.
+        addResizeContributor(sizePassive: openedSizePassive)
+
         let readLoop = PTYReadLoop(
             fd: masterFD,
             onChunk: { [weak self] chunk in self?.ingestPTYChunk(chunk) },
@@ -861,32 +928,32 @@ final class MuxChannelSession: @unchecked Sendable {
                         // A non-resize control message: FLUSH any pending size FIRST so the serial
                         // loop's ordering contract holds (a size that arrived before this ack lands
                         // before the ack's effects) and no settled size is stranded.
-                        self.flushPendingResize()
+                        self.applyResolvedGrid()
                         self.acknowledge(upTo: seq)
                     case .bye:
-                        self.flushPendingResize() // client leaving cleanly: never strand a size at teardown.
+                        self.applyResolvedGrid() // client leaving cleanly: never strand a size at teardown.
                     case let .ping(timestampMS):
                         // Stateless RTT probe: echo the client's timestamp back on the
                         // control sender (FIFO, never blocks behind data). Deliberately NO
-                        // flushPendingResize — a periodic ping must not defeat the resize
+                        // applyResolvedGrid — a periodic ping must not defeat the resize
                         // micro-debounce, and a ping orders against nothing.
                         self.enqueueControl([.pong(timestampMS: timestampMS)])
                     case let .requestBlockOutput(index):
                         // Serve the block's retained output (type 29) from the ring, or an
                         // empty response if evicted / blocks disabled. Orders against nothing — like
-                        // a ping, deliberately NO flushPendingResize so it can't defeat the debounce.
+                        // a ping, deliberately NO applyResolvedGrid so it can't defeat the debounce.
                         self.serveBlockOutput(index: index)
                     case let .metadataRequest(requestID, verb, payload):
                         // Serve the Details-Panel metadata RPC (type 30) off the metadata queue.
-                        // Orders against nothing — like blockOutput, NO flushPendingResize.
+                        // Orders against nothing — like blockOutput, NO applyResolvedGrid.
                         self.serveMetadata(requestID: requestID, verb: verb, payload: payload)
                     default:
-                        self.flushPendingResize()
+                        self.applyResolvedGrid()
                     }
                 }
             } catch { /* control gone */ }
             // Channel closed: apply any settled-but-undebounced final size before the loop ends.
-            self.flushPendingResize()
+            self.applyResolvedGrid()
         }
 
         let id = channelID
@@ -1483,10 +1550,10 @@ final class MuxChannelSession: @unchecked Sendable {
                     case let .resize(cols, rows, px, py):
                         self?.scheduleResize(cols: cols, rows: rows, px: px, py: py)
                     case let .ack(seq):
-                        self?.flushPendingResize()
+                        self?.applyResolvedGrid()
                         self?.acknowledge(upTo: seq)
                     case .bye:
-                        self?.flushPendingResize()
+                        self?.applyResolvedGrid()
                     case let .ping(timestampMS):
                         self?.enqueueControl([.pong(timestampMS: timestampMS)])
                     case let .requestBlockOutput(index):
@@ -1494,14 +1561,14 @@ final class MuxChannelSession: @unchecked Sendable {
                     case let .metadataRequest(requestID, verb, payload):
                         // Serve the metadata RPC on the rebind (reattach) loop too — without this the
                         // Details Panel silently dies after a reconnect. Orders against nothing — NO
-                        // flushPendingResize.
+                        // applyResolvedGrid.
                         self?.serveMetadata(requestID: requestID, verb: verb, payload: payload)
                     default:
-                        self?.flushPendingResize()
+                        self?.applyResolvedGrid()
                     }
                 }
             } catch {}
-            self?.flushPendingResize()
+            self?.applyResolvedGrid()
         }
 
         // The ORIGINAL exit task from startRelay() keeps running untouched — do NOT cancel+recreate
@@ -1785,19 +1852,25 @@ final class MuxChannelSession: @unchecked Sendable {
         // host accumulating one per affected channel on every Start/Stop).
         outputTask?.cancel()
         taskLock.unlock()
-        // `resizeDebounceTask` is owned by `resizeLock` (scheduleResize / flushPendingResize), NOT
+        // `resizeDebounceTask` is owned by `resizeLock` (scheduleResize / applyResolvedGrid), NOT
         // `taskLock`. Cancelling it under taskLock would race scheduleResize's store under
         // resizeLock — two disjoint mutexes guarding one ARC `Task` reference = a data race (torn read /
         // ARC over-release / missed cancel). Read+nil under its own lock, then cancel outside the lock,
-        // matching flushPendingResize's discipline (locks are never nested in this file → no deadlock).
+        // matching applyResolvedGrid's discipline (locks are never nested in this file → no deadlock).
         resizeLock.lock()
         let resizeTask = resizeDebounceTask
         resizeDebounceTask = nil
         let nudgeTask = redrawNudgeTask
         redrawNudgeTask = nil
+        let settleTask = sizeSettleTask
+        sizeSettleTask = nil
+        sizeSettlePending = false
+        // Nobody holds a dead pane at a size.
+        resizeContributions.removeAll()
         resizeLock.unlock()
         resizeTask?.cancel()
         nudgeTask?.cancel()
+        settleTask?.cancel()
         // Release the exit task's EOF gate (it is also cancelled above, but signalling makes it
         // return promptly rather than polling to its timeout) so teardown never lingers on the latch.
         signalEOFReached()
@@ -1869,16 +1942,77 @@ final class MuxChannelSession: @unchecked Sendable {
         }
     }
 
-    // MARK: - Resize micro-debounce (latest-wins; restores kernel SIGWINCH-coalescing for any client)
+    // MARK: - The size fold (min over contributors; ONE writer to `TIOCSWINSZ`)
 
-    /// Buffers `pendingResize` to the LATEST size and (cancel-)re-arms a single debounce task that
-    /// applies it once after `resizeDebounce`. Because each `.resize` RE-ARMS (never blocks) the task,
-    /// the debounce ALWAYS fires after the LAST resize → the latest size always lands (trailing-edge
+    /// Registers `subscriber` as a member of the contributing set, or updates its passivity.
+    ///
+    /// Membership is a STATE-PLANE fact: it changes only on an explicit channel open / close, never
+    /// on a heartbeat. That is what makes the fold settle instead of flapping — tmux's
+    /// `aggressive-resize on` expressed structurally rather than as a timer.
+    ///
+    /// An existing member keeps its standing offer: a reattach swaps the sub-channels while the same
+    /// PTY lives on, and forgetting the offer there would snap the pane back to its spawn size until
+    /// the returning client happened to send a new one.
+    func addResizeContributor(
+        _ subscriber: MuxSubscriberID = MuxChannelSession.primarySubscriberID,
+        sizePassive: Bool,
+    ) {
+        resizeLock.lock()
+        let before = contributingCountLocked()
+        if var existing = resizeContributions[subscriber] {
+            existing.sizePassive = sizePassive
+            resizeContributions[subscriber] = existing
+        } else {
+            resizeContributions[subscriber] = ResizeContribution(sizePassive: sizePassive, offer: nil)
+        }
+        armSizeSettleIfSetChangedLocked(from: before)
+        resizeLock.unlock()
+    }
+
+    /// Drops `subscriber` from the contributing set. A pane whose set EMPTIES keeps its last size —
+    /// it does not snap back to 80×24 (docs/45 §8.3 rule 4).
+    func removeResizeContributor(_ subscriber: MuxSubscriberID = MuxChannelSession.primarySubscriberID) {
+        resizeLock.lock()
+        // Counted BEFORE the removal, not reconstructed after it: a size-PASSIVE leaver changes the
+        // membership without changing the FOLD, and there is nothing to settle when the arithmetic
+        // cannot have moved.
+        let before = contributingCountLocked()
+        guard resizeContributions.removeValue(forKey: subscriber) != nil else {
+            resizeLock.unlock()
+            return
+        }
+        armSizeSettleIfSetChangedLocked(from: before)
+        resizeLock.unlock()
+    }
+
+    /// Records `subscriber`'s LATEST offer and (cancel-)re-arms a single debounce task that resolves
+    /// the fold once after `resizeDebounce`. Because each `.resize` RE-ARMS (never blocks) the task,
+    /// the debounce ALWAYS fires after the LAST resize → the latest offer always lands (trailing-edge
     /// guarantee). A generation guard makes a task already past its sleep bail if superseded — the
     /// exact `WorkspaceStore.scheduleSave` cancel-replace+generation pattern.
-    private func scheduleResize(cols: UInt16, rows: UInt16, px: UInt16, py: UInt16) {
+    ///
+    /// An offer from a subscriber that is not in the set REGISTERS it as a contributor: the ctl-spawned
+    /// and null-sub-channel paths never call ``addResizeContributor(_:sizePassive:)``, and a resize
+    /// frame is itself proof that somebody is holding this pane at a size.
+    func scheduleResize(
+        from subscriber: MuxSubscriberID = MuxChannelSession.primarySubscriberID,
+        cols: UInt16,
+        rows: UInt16,
+        px: UInt16,
+        py: UInt16,
+    ) {
         resizeLock.lock()
-        pendingResize = (cols, rows, px, py)
+        var contribution = resizeContributions[subscriber]
+            ?? ResizeContribution(sizePassive: openedSizePassive, offer: nil)
+        contribution.offer = (cols, rows, px, py)
+        resizeContributions[subscriber] = contribution
+        // A contributor-set change is still settling: this offer simply joins the fold the settle
+        // will resolve. Arming the short debounce here is precisely what would make a burst of joins
+        // SIGWINCH the shell once per arrival.
+        guard !sizeSettlePending else {
+            resizeLock.unlock()
+            return
+        }
         resizeGeneration &+= 1
         let generation = resizeGeneration
         resizeDebounceTask?.cancel()
@@ -1891,37 +2025,181 @@ final class MuxChannelSession: @unchecked Sendable {
             }
             guard let self else { return }
             // Past the sleep: `Task.cancel()` no longer helps, so the generation guard decides. Apply
-            // only if still the latest scheduled resize (checked under the lock, atomic with the ioctl).
-            flushPendingResize(ifGeneration: generation)
+            // only if still the latest scheduled resize.
+            applyResolvedGrid(ifGeneration: generation)
         }
         resizeLock.unlock()
     }
 
-    /// Applies the buffered `pendingResize` (if any) via `TIOCSWINSZ` exactly once and clears it. The
-    /// single inline `setWindowSize` (microseconds) under `resizeLock`. Idempotent: a no-op when
-    /// nothing is pending, so the flush-on-ack / flush-on-bye / flush-on-close paths can all call it.
+    /// Resolves the grid from the contributing set and applies it via `TIOCSWINSZ` — the ONE writer
+    /// every client and ctl resize path funnels through.
     ///
-    /// - Parameter ifGeneration: when non-nil (the debounce-fire path), apply only if it still matches
-    ///   `resizeGeneration` — a stale already-past-sleep task must not apply an old size. The flush
+    /// **Idempotence is a comparison against the LIVE `TIOCGWINSZ`, never against `resolvedGrid`.**
+    /// A redraw jiggle (``PTYProcess/beginRedrawJiggle()``) deliberately leaves the PTY one row short
+    /// while the app re-layouts; a memo of the form "the resolved grid did not change, skip" would
+    /// then leave the pane one row short for the rest of the session. Reading the size the PTY
+    /// actually holds costs one non-blocking ioctl and cannot go stale.
+    ///
+    /// - Parameter ifGeneration: when non-nil (a timer-fire path), apply only if it still matches
+    ///   `resizeGeneration` — a stale already-past-sleep task must not apply an old fold. The flush
     ///   paths (ack/bye/close) pass `nil` to apply UNCONDITIONALLY (they must never strand a size).
-    private func flushPendingResize(ifGeneration generation: UInt64? = nil) {
+    func applyResolvedGrid(ifGeneration generation: UInt64? = nil) {
         resizeLock.lock()
-        if let generation, resizeGeneration != generation { resizeLock.unlock()
+        if let generation, resizeGeneration != generation {
+            resizeLock.unlock()
             return
         }
-        guard let r = pendingResize else { resizeLock.unlock()
+        let resolved: (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)?
+        if let override = pendingCtlOverride {
+            pendingCtlOverride = nil
+            resolved = override
+        } else {
+            resolved = Self.fold(resizeContributions)
+        }
+        guard let grid = resolved else {
+            // Nobody is holding this pane at a size — it keeps the one it has.
+            resizeLock.unlock()
             return
         }
-        pendingResize = nil
+        resolvedGrid = grid
         resizeLock.unlock()
-        pty.setWindowSize(cols: r.cols, rows: r.rows, pxWidth: r.px, pxHeight: r.py)
-        // Persist the applied size next to the disk journal: a later daemon life's snapshot
-        // restore parses the journaled bytes at the geometry they were emitted for.
-        scrollbackJournal?.recordWindowSize(rows: Int(r.rows), cols: Int(r.cols))
+
+        if let live = pty.currentWindowSizeWithPixels(),
+           live.cols == grid.cols, live.rows == grid.rows,
+           live.pxWidth == grid.px, live.pxHeight == grid.py
+        {
+            return // the PTY already holds exactly this grid.
+        }
+        pty.setWindowSize(cols: grid.cols, rows: grid.rows, pxWidth: grid.px, pxHeight: grid.py)
+        // Persist the RESOLVED size next to the disk journal — not the requester's offer. A later
+        // daemon life's snapshot restore parses the journaled bytes at the geometry they were
+        // emitted for, and a sidecar naming a width no client ever had re-wraps every line.
+        scrollbackJournal?.recordWindowSize(rows: Int(grid.rows), cols: Int(grid.cols))
         // The resident screen grid is fixed-size — a geometry change rebuilds it from the ring
         // on the next scan (full-screen apps repaint at the new size anyway).
         markScreenModelDirty()
         scheduleRedrawNudge()
+    }
+
+    /// `min(cols)` / `min(rows)` over the contributors that are neither size-passive nor silent.
+    ///
+    /// Monotone, so it settles. An input-keyed "whoever typed last drives" latch has no hysteresis:
+    /// two clients typing alternately would flap `TIOCSWINSZ` + `SIGWINCH` + a full TUI repaint on
+    /// every exchange.
+    private static func fold(
+        _ contributions: [MuxSubscriberID: ResizeContribution],
+    ) -> (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)? {
+        var folded: (cols: UInt16, rows: UInt16, px: UInt16, py: UInt16)?
+        // Deterministic order so the pixel fields (which are NOT folded — they describe one client's
+        // cell metrics, and a min over them is meaningless) come from a stable contributor.
+        for subscriber in contributions.keys.sorted() {
+            guard let contribution = contributions[subscriber],
+                  !contribution.sizePassive,
+                  let offer = contribution.offer else { continue }
+            guard let current = folded else {
+                folded = offer
+                continue
+            }
+            folded = (
+                cols: Swift.min(current.cols, offer.cols),
+                rows: Swift.min(current.rows, offer.rows),
+                px: current.px,
+                py: current.py,
+            )
+        }
+        return folded
+    }
+
+    /// How many contributors currently vote. Caller holds `resizeLock`.
+    private func contributingCountLocked() -> Int {
+        resizeContributions.values.count { !$0.sizePassive }
+    }
+
+    /// Arms the settle when the contributing set moved BETWEEN two non-empty states — a join into a
+    /// pane somebody already holds, or a leave that still leaves somebody.
+    ///
+    /// A set going 0→1 or 1→0 has exactly one possible fold, so there is nothing to coalesce: making
+    /// the first client of a fresh pane wait 750 ms for a size it alone decides would be latency for
+    /// nothing. Caller holds `resizeLock`.
+    private func armSizeSettleIfSetChangedLocked(from before: Int) {
+        let after = contributingCountLocked()
+        guard before != after, before > 0, after > 0 else { return }
+        resizeGeneration &+= 1
+        let generation = resizeGeneration
+        sizeSettlePending = true
+        sizeSettleTask?.cancel()
+        let settle = sizeSettle
+        sizeSettleTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: settle)
+            } catch {
+                return // superseded before firing — the re-armed settle owns the pending flag.
+            }
+            guard let self else { return }
+            clearSizeSettle(ifGeneration: generation)
+            applyResolvedGrid(ifGeneration: generation)
+        }
+    }
+
+    /// Releases the settle latch so ordinary offers arm the short debounce again. Guarded by the
+    /// generation so a superseded task cannot unlatch the settle a newer set change owns.
+    private func clearSizeSettle(ifGeneration generation: UInt64) {
+        resizeLock.lock()
+        if resizeGeneration == generation {
+            sizeSettlePending = false
+            sizeSettleTask = nil
+        }
+        resizeLock.unlock()
+    }
+
+    // MARK: Fold readouts (the workspace roster's publication sink)
+
+    /// The grid the fold resolved for this pane, as the roster publishes it.
+    ///
+    /// Falls back to the live winsize for a pane nothing has ever resolved — a ctl-spawned shell with
+    /// no contributing subscriber is still a real terminal at a real size, and publishing 0×0 for it
+    /// would make every client render a letterbox for a pane that is fine.
+    var resolvedGridForWorkspace: (cols: UInt16, rows: UInt16) {
+        resizeLock.lock()
+        let resolved = resolvedGrid
+        resizeLock.unlock()
+        if let resolved { return (cols: resolved.cols, rows: resolved.rows) }
+        guard let live = pty.currentWindowSize() else { return (cols: 0, rows: 0) }
+        return (cols: live.cols, rows: live.rows)
+    }
+
+    /// Every contributor's standing offer, in subscriber order — what the roster turns into
+    /// `WorkspaceRosterPane.attachments` so a client can name who is clamping the grid.
+    ///
+    /// A subscriber that has not yet offered reports 0×0, which is honest: it holds the pane but has
+    /// not said how big it is.
+    var resizeContributionsForWorkspace: [ResizeAttachment] {
+        resizeLock.lock()
+        defer { resizeLock.unlock() }
+        return resizeContributions.keys.sorted().compactMap { subscriber in
+            guard let contribution = resizeContributions[subscriber] else { return nil }
+            return ResizeAttachment(
+                subscriber: subscriber,
+                contributes: !contribution.sizePassive,
+                cols: contribution.offer?.cols ?? 0,
+                rows: contribution.offer?.rows ?? 0,
+            )
+        }
+    }
+
+    /// Regression seam: whether a delayed redraw nudge is armed. The nudge itself is a `SIGWINCH` to
+    /// somebody else's process group, which a test cannot observe.
+    var hasArmedRedrawNudgeForTesting: Bool {
+        resizeLock.lock()
+        defer { resizeLock.unlock() }
+        return redrawNudgeTask != nil
+    }
+
+    /// Regression seam: whether a contributor-set change is still settling.
+    var isSizeSettlingForTesting: Bool {
+        resizeLock.lock()
+        defer { resizeLock.unlock() }
+        return sizeSettlePending
     }
 
     /// Schedules a single delayed `SIGWINCH` (cancel-replace) so the shell repaints its prompt AFTER the
@@ -2201,17 +2479,26 @@ final class MuxChannelSession: @unchecked Sendable {
 
     /// Resizes the PTY for the agent-control `resize` verb.
     ///
-    /// Delegates directly to ``PTYProcess/setWindowSize(cols:rows:pxWidth:pxHeight:)`` which
-    /// performs `TIOCSWINSZ` under `exitLock` (TOCTOU-safe, non-blocking O(1) ioctl). The
-    /// kernel delivers `SIGWINCH` to the PTY's foreground process group automatically as part
-    /// of the `TIOCSWINSZ` call on macOS — no separate `kill`/`killpg` call is needed.
+    /// An explicit OVERRIDE of the fold rather than a vote — an orchestrator saying "make this pane
+    /// 132×50" means it, and a ctl pane often has no contributing subscriber at all. It is a one-shot
+    /// override, so the next client offer still wins.
     ///
-    /// Called on the control socket's per-connection handler thread. Safe to call there:
-    /// `setWindowSize` is documented non-blocking and the lock held (``PTYProcess/exitLock``)
-    /// is never contended from this path (it guards PTY-fd lifetime, not application state).
+    /// Routed through ``applyResolvedGrid(ifGeneration:)`` — the ONE writer — so the ctl verb gets
+    /// the journal size sidecar and the settled redraw nudge that the client path has always had. A
+    /// second, independent `TIOCSWINSZ` here is what left the sidecar describing a geometry the PTY
+    /// no longer held after every `slopdesk-ctl resize`.
+    ///
+    /// Called on the control socket's per-connection handler thread. Safe to call there: the apply is
+    /// a pair of non-blocking O(1) ioctls, and the lock held (``PTYProcess/exitLock``) is never
+    /// contended from this path (it guards PTY-fd lifetime, not application state).
     func resizeForControl(rows: UInt16, cols: UInt16) {
-        pty.setWindowSize(cols: cols, rows: rows)
-        markScreenModelDirty()
+        resizeLock.lock()
+        pendingCtlOverride = (cols: cols, rows: rows, px: 0, py: 0)
+        // Supersede any in-flight debounce/settle: the override is being applied RIGHT NOW, and a
+        // timer that fired afterwards with the older fold would undo it a frame later.
+        resizeGeneration &+= 1
+        resizeLock.unlock()
+        applyResolvedGrid()
     }
 
     /// Returns a plain-text snapshot of the ReplayBuffer scrollback (all acked + live tail).
@@ -2770,7 +3057,7 @@ final class MuxChannelSession: @unchecked Sendable {
     /// a slow query must never stall this pane's resize/ack/ping. ALWAYS replies (the builder maps any
     /// failure — unknown verb / confinement rejection / missing cwd / query-nil — to a status byte +
     /// empty payload), so the client's ``MetadataRequestRegistry`` never hangs waiting. Orders against
-    /// nothing (like a ping / blockOutput) — deliberately NO `flushPendingResize`.
+    /// nothing (like a ping / blockOutput) — deliberately NO `applyResolvedGrid`.
     ///
     /// In-flight work is BOUNDED per session (``maxMetadataInFlight``): past the cap the request is
     /// answered at once with the standard `.error` status instead of being enqueued — a request

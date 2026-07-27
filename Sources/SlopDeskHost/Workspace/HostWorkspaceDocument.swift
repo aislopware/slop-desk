@@ -45,6 +45,14 @@ public actor HostWorkspaceDocument {
     /// rewrite the same filtered bytes on every reconciler tick for a host nobody is even using.
     private var onTopologyChange: (@Sendable (HostWorkspaceState) -> Void)?
 
+    /// Where the roster's pane half comes from: the resolved grid and the attachments for every pane
+    /// the SERVER owns.
+    ///
+    /// A source rather than a stored value because it is derived from live sessions, and a copy kept
+    /// here would be one more thing that can go stale. `nil` (no server wired in) publishes no panes,
+    /// which is the honest answer for a document nobody has given an inventory to.
+    private var paneRoster: (@Sendable () -> [WorkspaceRosterPane])?
+
     /// Whether this document is still exactly what the host minted for a first run.
     ///
     /// Read by one thing only: `adoptWorkspace`, the legacy bootstrap. A client may upload its local
@@ -308,9 +316,18 @@ public actor HostWorkspaceDocument {
             clients: subscribers.values
                 .map { $0.rosterRecord() }
                 .sorted { $0.clientInstanceID.uuidString < $1.clientInstanceID.uuidString },
-            panes: [],
+            // The RESOLVED grid and its contributors, so a client that is not driving the size can
+            // render a labelled letterbox — "120×40 · sized by MacBook Pro" — instead of guessing.
+            panes: paneRoster?() ?? [],
         )
         for session in subscribers.values { session.deliver(roster: roster) }
+    }
+
+    /// Wires the pane inventory the roster publishes. Separate from ``install(state:pristine:onTopologyChange:)``
+    /// because it comes from the SERVER's session maps rather than from disk.
+    @preconcurrency
+    public func setPaneRoster(_ source: (@Sendable () -> [WorkspaceRosterPane])?) {
+        paneRoster = source
     }
 
     /// Tears every subscriber down — daemon shutdown.

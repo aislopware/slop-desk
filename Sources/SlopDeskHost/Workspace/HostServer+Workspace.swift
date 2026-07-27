@@ -23,6 +23,10 @@ extension HostServer {
     /// still upload the layout it has.
     func installWorkspaceDocument() async {
         guard let document = workspaceDocument else { return }
+        // The roster's pane half is DERIVED from the live session maps, so the document asks for it
+        // at broadcast time rather than being told. Weak: the document outlives nothing, but a strong
+        // capture here would be a retain cycle through the server's own property.
+        await document.setPaneRoster { [weak self] in self?.paneRosterRecords() ?? [] }
         guard let store = workspaceStore else {
             var minted = HostWorkspaceState()
             minted.write(topology: WorkspaceTopology(
@@ -162,6 +166,11 @@ extension HostServer {
             WorkspaceChannelSession(channel: control, subscribe: request, onLog: log)
         }
         if let created {
+            // The subscribe is where this connection's DEVICE KIND becomes known, and the size fold's
+            // predicate depends on it. Panes opened on this connection before the subscribe landed
+            // were resolved against a workspace channel that did not exist yet — settle them now,
+            // before the document broadcasts a roster that would describe the old verdict.
+            reresolveSizePassivity(connectionID: connectionID)
             await document.addSubscriber(created)
             // First subscribe: publish what is true RIGHT NOW rather than waiting up to a tick for
             // the reconciler. A client that has just connected is precisely the one with nothing.

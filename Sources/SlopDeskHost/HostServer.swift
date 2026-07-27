@@ -621,6 +621,37 @@ public final class HostServer: @unchecked Sendable {
         return workspaceChannels[connectionID]
     }
 
+    /// Whether a pane opened on `connectionID` votes in that pane's size fold (docs/45 §8.3 rule 3).
+    ///
+    /// Resolved HOST-side from the workspace channel's `clientKind`, because `MuxChannelOpen` carries
+    /// no client kind and the client's own resize path has no platform gate — a client-side rule
+    /// alone would be defeated by any build that predates it.
+    ///
+    /// **No workspace channel means CONTRIBUTES.** That is the shipped `slopdesk-client` CLI and the
+    /// `SLOPDESK_WORKSPACE_DOC=0` case; defaulting them to passive would leave a CLI unable to size
+    /// its own pane.
+    func sizePassiveForConnection(_ connectionID: UUID) -> Bool {
+        guard let channel = workspaceChannel(for: connectionID) else { return false }
+        // A phone must never crush a Mac. The subscribe's own `contributesSize` flag is a client
+        // OFFER and is not yet sent by anything, so the kind — which the host can check — is what is
+        // enforced.
+        return channel.clientKind == WorkspaceClientKind.iOS.rawValue
+    }
+
+    /// Re-resolves size-passivity for every pane already open on `connectionID`.
+    ///
+    /// A pane channel and the workspace channel are announced independently on one mux connection, so
+    /// a client that opens its panes before it subscribes would otherwise have every pane resolved
+    /// against a workspace channel that did not exist yet — an iPhone silently contributing for the
+    /// life of the connection. The subscribe is the edge that settles it.
+    func reresolveSizePassivity(connectionID: UUID) {
+        let passive = sizePassiveForConnection(connectionID)
+        lock.lock()
+        let sessions = muxSessions.filter { $0.key.connectionID == connectionID }.map(\.value)
+        lock.unlock()
+        for session in sessions { session.addResizeContributor(sizePassive: passive) }
+    }
+
     @discardableResult
     func unregisterWorkspaceChannel(connectionID: UUID) -> WorkspaceChannelSession? {
         lock.lock()
@@ -675,6 +706,59 @@ public final class HostServer: @unchecked Sendable {
         let ctrl = Array(controlSessions.values)
         lock.unlock()
         return (mux, ctrl + (detachedStore?.allSessions() ?? []))
+    }
+
+    /// Every pane's RESOLVED grid and who is holding it there — the presence roster's `panes` half.
+    ///
+    /// The join from a pane to a human-readable device is `MuxSessionKey.connectionID →
+    /// workspaceChannels[connectionID].clientInstanceID`, because panes and the workspace channel
+    /// share one `MuxNWConnection` per (host, port). The join is OPTIONAL and legitimately misses:
+    /// `slopdesk-client` opens no workspace channel at all. An unlabelled attachment still COUNTS —
+    /// it is a real client holding a real pane at a real size — so it is published with the all-zero
+    /// id rather than dropped.
+    ///
+    /// Sessions are copied out under `lock` and read afterwards: the reads take the PTY's `exitLock`,
+    /// and this file's one-way nesting contract keeps `lock` off that path.
+    func paneRosterRecords() -> [WorkspaceRosterPane] {
+        lock.lock()
+        let attached = muxSessions.map { (connectionID: $0.key.connectionID, session: $0.value) }
+        let ctrl = Array(controlSessions.values)
+        let identities = workspaceChannels.mapValues(\.clientInstanceID)
+        lock.unlock()
+
+        var records: [WorkspaceRosterPane] = []
+        records.reserveCapacity(attached.count + ctrl.count)
+        for (connectionID, session) in attached {
+            let grid = session.resolvedGridForWorkspace
+            let identity = identities[connectionID] ?? WireMessage.newSessionID
+            records.append(WorkspaceRosterPane(
+                paneID: session.sessionID,
+                resolvedCols: grid.cols,
+                resolvedRows: grid.rows,
+                attachments: session.resizeContributionsForWorkspace.map {
+                    WorkspaceRosterPane.Attachment(
+                        clientInstanceID: identity,
+                        contributes: $0.contributes,
+                        cols: $0.cols,
+                        rows: $0.rows,
+                    )
+                },
+            ))
+        }
+        // A ctl-spawned or detached pane has ZERO attachments by construction — nobody is watching
+        // it. It keeps its last size (§8.3 rule 4), and the empty list is what says so.
+        for session in ctrl + (detachedStore?.allSessions() ?? []) {
+            let grid = session.resolvedGridForWorkspace
+            records.append(WorkspaceRosterPane(
+                paneID: session.sessionID,
+                resolvedCols: grid.cols,
+                resolvedRows: grid.rows,
+                attachments: [],
+            ))
+        }
+        // Deterministic order, like the client half: a roster that reshuffled every broadcast would
+        // make every diff of it look like a change.
+        return records.sorted { $0.paneID.uuidString < $1.paneID.uuidString }
     }
 
     /// Synchronously drops every workspace subscriber (NSLock is unavailable from async `stop()`).
@@ -857,6 +941,19 @@ public final class HostServer: @unchecked Sendable {
             openWorkspaceChannel(open, on: connection, connectionID: connectionID)
             return
         }
+        // Anything this host does not route is DECLINED, never guessed at — and declined HERE, before
+        // the exclusivity critical section, for the same reason the workspace route sits above it.
+        // Every unrouted class used to fall through into the PTY spawn path, so a peer one version
+        // ahead got a login shell it never asked for: a pty, a reaper thread and a scrollback journal
+        // addressed by nobody. `paneObserver` (2) is reserved and arrives with the fan-out.
+        guard open.channelClass == MuxChannelClass.pane.rawValue else {
+            onLog?(
+                "mux channel \(open.channelID) (conn \(connectionID)): declined — "
+                    + "channel class \(open.channelClass) is not served by this host",
+            )
+            Task { await connection.sendOpenAck(open.channelID, accepted: false) }
+            return
+        }
         let key = MuxSessionKey(connectionID: connectionID, channelID: open.channelID)
         // (`hasRealSessionID` compares the ZERO sentinel `WireMessage.newSessionID` — a
         // first-connect preamble from a raw/old client. Our mux client replaces the sentinel
@@ -965,6 +1062,10 @@ public final class HostServer: @unchecked Sendable {
         connectionID: UUID,
     ) async {
         let key = MuxSessionKey(connectionID: connectionID, channelID: open.channelID)
+        // The returning client may be a DIFFERENT device from the one that detached — a Mac's pane
+        // picked up on a phone. Re-resolve the fold's predicate for the connection this session now
+        // rides, before any of its resize frames can land.
+        session.addResizeContributor(sizePassive: sizePassiveForConnection(connectionID))
         // Ack FIRST — synchronously, before the replay: the host-authoritative resume verdict
         // (`resumeFromSeq = lastReceivedSeq`, docs/20 §8.2) rides the DATA link FIFO-ahead of
         // the replayed `output` frames, so the awaiting client learns "same session resumed"
@@ -1150,6 +1251,9 @@ public final class HostServer: @unchecked Sendable {
             data: open.data,
             control: open.control,
             sessionID: open.sessionID,
+            // Read from the connection's workspace channel, if it has subscribed yet; the subscribe
+            // itself re-resolves this for panes that opened first.
+            isSizePassive: sizePassiveForConnection(connectionID),
             shimDir: shimDir,
             agentDetectEnabled: agentDetectEnabled,
             // Verb 13 reports the LIVE hook-listener bind state. Probed at request time (weak — the

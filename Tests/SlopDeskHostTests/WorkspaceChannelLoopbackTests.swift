@@ -8,7 +8,7 @@ import XCTest
 /// A pair of in-memory ``MuxByteLink``s that pipe bytes to each other — a headless substitute for
 /// two `NWConnection`s, so the whole `channelOpen` → route → subscribe → snapshot path runs without
 /// a socket. (The transport suite has its own copy; targets cannot share test support files.)
-private final class LoopbackMuxLink: MuxByteLink, @unchecked Sendable {
+final class LoopbackMuxLink: MuxByteLink, @unchecked Sendable {
     private let outbound: AsyncThrowingStream<Data, Error>.Continuation
     private let inbound: AsyncThrowingStream<Data, Error>
     private var peerInbound: AsyncThrowingStream<Data, Error>.Continuation?
