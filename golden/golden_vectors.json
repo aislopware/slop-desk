@@ -4597,7 +4597,106 @@
       "winWBits": 4652009507864444928
     }
   ],
+  "workspaceIntentArgs": {
+    "dividerWeight": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c300013fd5555555555555",
+    "flag": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a101",
+    "identity": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "move": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a40000",
+    "newSession": "f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a600056e6f746573",
+    "rename": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b20008736c6f706465736b",
+    "renameEmpty": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b20000",
+    "reorderTabs": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f10002b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3",
+    "spawnTab": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5020000",
+    "split": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a10101a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3000e2f566f6c756d65732f4c61636965"
+  },
+  "workspaceIntentOps": [
+    {
+      "name": "adoptWorkspace",
+      "op": 0
+    },
+    {
+      "name": "renamePane",
+      "op": 1
+    },
+    {
+      "name": "renameTab",
+      "op": 2
+    },
+    {
+      "name": "renameSession",
+      "op": 3
+    },
+    {
+      "name": "closePane",
+      "op": 4
+    },
+    {
+      "name": "closeTab",
+      "op": 5
+    },
+    {
+      "name": "splitPane",
+      "op": 6
+    },
+    {
+      "name": "movePane",
+      "op": 7
+    },
+    {
+      "name": "reorderTabs",
+      "op": 8
+    },
+    {
+      "name": "focusTab",
+      "op": 9
+    },
+    {
+      "name": "focusPane",
+      "op": 10
+    },
+    {
+      "name": "setSyncInput",
+      "op": 11
+    },
+    {
+      "name": "spawnPane",
+      "op": 12
+    },
+    {
+      "name": "spawnTab",
+      "op": 13
+    },
+    {
+      "name": "setZoom",
+      "op": 14
+    },
+    {
+      "name": "detachPane",
+      "op": 15
+    },
+    {
+      "name": "reattachPane",
+      "op": 16
+    },
+    {
+      "name": "setDividerWeight",
+      "op": 17
+    },
+    {
+      "name": "newSession",
+      "op": 18
+    },
+    {
+      "name": "closeSession",
+      "op": 19
+    },
+    {
+      "name": "reopenClosedTab",
+      "op": 20
+    }
+  ],
   "workspaceStateCodec": {
+    "detachedPanes": "0002a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a200000000000000000000000000000000",
     "diff": "000000040000000000000000000000000000000000020000000a6d61632d73747564696f02b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b20000000008736c6f706465736b03a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1030000000003a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a108000000047669202e0000000103a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a163",
     "emptyDiff": "0000000000000000",
     "key": "03a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a108",
@@ -4606,8 +4705,13 @@
     "layoutDepthCap": "01dbdbdbdbdbdbdbdbdbdbdbdbdbdbdbdb010101dadadadadadadadadadadadadadadada000101d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9d9010101d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8d8000101d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7d7010101d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6d6000101d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5d5010101d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4000101d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3010101d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2d2000101d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1010101d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0000100a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
     "layoutFanout": "01c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3010400e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e000e1e1e1e1e1e1e1e1e1e1e1e1e1e1e1e100e2e2e2e2e2e2e2e2e2e2e2e2e2e2e2e200e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3",
     "snapshot": "000000040000000000000000000000000000000000020000000a6d61632d73747564696f02b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b20000000008736c6f706465736b03a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1030000000003a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a108000000047669202e",
+    "uuidValue": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "videoTargetDisplay": "0000000001000000000009446973706c617920310000",
+    "videoTargetWindow": "123456780000000000000a6d61696e2e7377696674000747686f73747479",
     "weightFixed240": "01406e000000000000",
-    "weightFlexThird": "003fd5555555555555"
+    "weightFlexThird": "003fd5555555555555",
+    "weightsEmpty": "00",
+    "weightsPair": "02003fd555555555555501406e000000000000"
   },
   "workspaceWireMessages": [
     {

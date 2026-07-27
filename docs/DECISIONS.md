@@ -3348,3 +3348,72 @@ could not undo.
 The session keeps no last-activity latch and the only place to make one is the PTY read path — a
 wall-clock read per chunk, on the hot path, for a field nothing reads. `0` is already the record's
 own "never observed", so the absence is expressible rather than a lie.
+
+## Multi-client Phase 5: the layout becomes host truth (2026-07-27)
+
+[docs/45](45-multi-client-state-sync.md) Phase 5. Phase 4 shipped the per-pane FACTS, which repair a
+degraded row; two clients still held two separate trees, so a tab opened on the Mac simply did not
+exist on the phone. Six decisions the plan did not settle, or settled differently.
+
+### 1. New object ids are proposed by the CLIENT, not minted by the host
+
+§4.1 has the host mint pane ids and the client "learn the id back". It does not, for one reason:
+latency. An optimistic overlay cannot insert a leaf it has no id for, so a host-minted id makes every
+split wait a round trip before anything appears on screen — worst exactly where the round trip is
+longest. `splitPane`, `spawnPane`, `spawnTab` and `newSession` therefore carry the id, and the host
+validates rather than mints: a proposed id already in use — **including one parked in the closed-tab
+ring**, which is still a real pane a reopen will bring back — is `rejectedInvalid`. Aliasing two
+panes onto one PTY is the same hazard the mux's own exclusivity check exists for.
+
+The side benefit is that a retried intent is idempotent, which the plan's version could not be.
+
+### 2. Zoom and sync-input are ASSIGNED, never toggled
+
+Both were toggles client-side, where a toggle is unambiguous. Over shared state it is not: the result
+depends on how many clients sent it, and two clients zooming the same pane cancel out. An idempotent
+assignment cannot have that bug, and it is what makes a duplicated intent free.
+
+### 3. The closed-tab ring holds whole TABS, not ids
+
+§5.3 gives `root/closedTabRing` as a `TabID` list. A `TabID` alone cannot rebuild a tab, and ⇧⌘T has
+to put back the split tree and every pane's spec — so the ring names tabs whose `tab/*`,
+`splitNode/*` and `pane/*` entries are still in the document. **A closed tab is exactly a tab whose
+`tab/sessionID` back-pointer names a session that does not list it in `tabOrder`.** No new grammar;
+one new rule, which is that the reaper leaves them alone.
+
+### 4. The reaper had to narrow, and "not captured" is now three cases
+
+Phase 4's rule — reap what the capture pass did not report — was correct while the document held
+liveness only, because "not captured" and "not a pane" then coincided. With topology here they do
+not: a pane the host restored from disk has no process (that is what a restart IS) but is a real pane
+in a real tab, and the old rule would have erased the user's layout on every daemon restart. One pass
+now decides all three: captured → its liveness; in the topology but not captured → `liveness = 2`,
+keeping `cwd` and `projectKey`, which describe a PLACE rather than a process; neither → reaped.
+
+### 5. `pristine` is answered by the FILE, and any accepted intent ends it
+
+`adoptWorkspace` asks "has this host ever had a workspace of its own?". The answer is whether a file
+exists — and it has to be asked BEFORE `load()`, which mints a default when there is nothing to
+restore and so can no longer tell the two apart. Any accepted intent then ends pristine, including
+one that changed nothing: a client that renamed a tab to its own name has still taken ownership.
+
+### 6. The optimistic patch retires on a FRAME COUNT, not a `stateNum`
+
+`intentResult` carries no state number, and does not need one. The host bumps `stateNum` and queues
+the new document BEFORE it queues the result, and the result is not gated on the outstanding frame —
+so the first document frame to arrive after an `applied` result provably already contains that
+intent's effect. Retiring on the answer itself would blink the old layout back for one frame;
+retiring on a frame that arrived BEFORE the answer would show the old layout until the next unrelated
+change. A refusal is the exception and snaps back at once, because waiting keeps showing the user
+something the host has already said is not true.
+
+Two findings from wiring it up that are not decisions but bite the same way:
+
+**Exactly ONE document frame is outstanding at a time.** A test client that acks once sees one more
+frame and then silence, which reads as the host having stopped publishing. It is the flow control
+working: while an ack is pending, updates coalesce into the pending slot, which is what keeps every
+diff's `baseStateNum` equal to what the client actually holds.
+
+**A test that constructs a `HostServer` with the document enabled must inject a store.** `load()`
+mints and the persist sink writes, both against `<Application Support>/SlopDesk/workspace-state.json`
+— so one test against the default path silently replaces a workspace somebody is using.

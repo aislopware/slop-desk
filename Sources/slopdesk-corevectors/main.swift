@@ -1755,6 +1755,74 @@ root["workspaceStateCodec"] = [
     // Weights ride as a raw `bitPattern` — never a re-parsed decimal (the bit-exact float rule).
     "weightFlexThird": wsHex(WorkspaceStateCodec.encodeWeight(.flex(1.0 / 3.0))),
     "weightFixed240": wsHex(WorkspaceStateCodec.encodeWeight(.fixed(240))),
+    // One `splitNode/weight` cell carries ALL of a split's child weights, in child order — a divider
+    // drag moves a leading/trailing PAIR, so a per-child cell would let a diff carry half a drag.
+    "weightsPair": wsHex(WorkspaceStateCodec.encodeWeights([.flex(1.0 / 3.0), .fixed(240)])),
+    "weightsEmpty": wsHex(WorkspaceStateCodec.encodeWeights([])),
+    // A bare UUID field value. An ABSENT optional is an absent KEY, never the all-zero UUID.
+    "uuidValue": wsHex(WorkspaceStateCodec.encodeUUID(wsTab)),
+    // `session/detachedPanes` — the pair is fixed-width, so here the zero UUID IS the "no origin
+    // tab" sentinel.
+    "detachedPanes": wsHex(WorkspaceStateCodec.encodeDetachedPanes([
+        (wsPane, wsTab),
+        (wsUUID(0xA2), nil),
+    ])),
+    // `pane/videoTarget`. `displayID` carries its own presence byte rather than overloading `0`,
+    // which is a legitimate display id (the main one).
+    "videoTargetDisplay": wsHex(WorkspaceStateCodec.encodeVideoTarget(
+        VideoEndpoint(windowID: 0, title: "Display 1", appName: "", displayID: 0),
+    )),
+    "videoTargetWindow": wsHex(WorkspaceStateCodec.encodeVideoTarget(
+        VideoEndpoint(windowID: 0x1234_5678, title: "main.swift", appName: "Ghostty", displayID: nil),
+    )),
+]
+
+// MARK: workspaceIntentArgs (docs/45 §5.4 — the verb-3 payloads)
+
+// The op BYTES are frozen the moment this vector exists: a renumbering decodes cleanly into the
+// wrong meaning, because every value is length-prefixed.
+root["workspaceIntentOps"] = WorkspaceIntentOp.allCases.map { ["name": "\($0)", "op": Int($0.rawValue)] }
+
+root["workspaceIntentArgs"] = [
+    "rename": wsHex(WorkspaceIntentArgs.encode(id: wsTab, name: "slopdesk")),
+    "renameEmpty": wsHex(WorkspaceIntentArgs.encode(id: wsTab, name: "")),
+    "flag": wsHex(WorkspaceIntentArgs.encode(id: wsPane, flag: true)),
+    "identity": wsHex(WorkspaceIntentArgs.encode(pane: PaneID(raw: wsPane))),
+    // The new pane's id is PROPOSED BY THE CLIENT, so an optimistic overlay can insert the leaf
+    // without waiting a round trip to learn what the host called it.
+    "split": wsHex(WorkspaceIntentArgs.encode(
+        target: wsPane,
+        axis: .vertical,
+        before: true,
+        newPane: PaneID(raw: wsUUID(0xA3)),
+        spawnCwd: "/Volumes/Lacie",
+    )),
+    "move": wsHex(WorkspaceIntentArgs.encode(
+        source: PaneID(raw: wsPane),
+        target: PaneID(raw: wsUUID(0xA4)),
+        axis: .horizontal,
+        before: false,
+    )),
+    "reorderTabs": wsHex(WorkspaceIntentArgs.encode(
+        session: SessionID(raw: wsUUID(0xF1)),
+        tabOrder: [TabID(raw: wsTab), TabID(raw: wsUUID(0xB3))],
+    )),
+    "spawnTab": wsHex(WorkspaceIntentArgs.encode(
+        session: SessionID(raw: wsUUID(0xF1)),
+        newPane: PaneID(raw: wsUUID(0xA5)),
+        position: .afterCurrent,
+        spawnCwd: "",
+    )),
+    "newSession": wsHex(WorkspaceIntentArgs.encode(
+        newSession: SessionID(raw: wsUUID(0xF2)),
+        newPane: PaneID(raw: wsUUID(0xA6)),
+        name: "notes",
+    )),
+    // The LEADING weight only — the op is sum-preserving, so naming the trailing one too would let a
+    // hostile pair sum to something the solver has to repair anyway.
+    "dividerWeight": wsHex(WorkspaceIntentArgs.encode(
+        split: SplitNodeID(raw: wsSplit), leadingIndex: 1, leadingWeight: 1.0 / 3.0,
+    )),
 ]
 
 // MARK: workspaceWireMessages (docs/45 §5.2 — types 17 / 37)

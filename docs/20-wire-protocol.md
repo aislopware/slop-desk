@@ -1067,7 +1067,7 @@ shifts an unknown-type probe again. (Three probes pinned 17 before this document
 | 0 | `subscribe` | `[16B clientInstanceID][u8 clientKind][16B knownEpoch][i64 knownStateNum][u8 flags][u16 labelLen][label]`. Flags: b0 size-contributing, b1 focus-following; unknown bits are **ignored**, not an error. `labelLen > 64` → `malformedBody`. All-zero epoch + `knownStateNum 0` = "I know nothing". **Re-sending `subscribe` IS the resync verb** — there is no separate resend. |
 | 1 | `ack` | `[i64 stateNum]`, and nothing else — any other length is a framing bug, not a value to salvage |
 | 2 | `presence` | `[i64 presenceClock][16B viewingTabID][16B viewingPaneID][u16 cols][u16 rows][u8 flags]`. Newest clock wins with **no merge**; an older clock is ignored outright, so a client reconnecting stale cannot resurrect a view it has left |
-| 3 | `intent` | `[16B intentID][u8 op][u32 argLen][args…]` — Phase 5; answered `unknownOp` until then |
+| 3 | `intent` | `[16B intentID][u8 op][u32 argLen][args…]` — see §11.9. `intentID` is client-minted so the answer can be matched to the optimistic patch standing in for it |
 
 **Type 37 `workspaceEvent`** (host → client, CONTROL) —
 `[u8 kind][16B epoch][i64 baseStateNum][i64 newStateNum][u32 payloadLen][payload]`. Epoch and both
@@ -1183,7 +1183,88 @@ in a hand-rolled binary decoder over network input, that cap **is** the stack-sa
 `SplitNode+Codable` can lean on `JSONDecoder`'s own nesting limit. `childCount` is a `u8`, so
 fan-out is bounded at 255 by the format itself.
 
-### 11.8 State plane vs byte plane
+### 11.8 Intents (verb 3) — the only client→host writes
+
+A client never sends STATE, only intents. That is what leaves exactly one place the topology changes
+and no merge function anywhere.
+
+| op | name | args |
+|----|------|------|
+| 0 | `adoptWorkspace` | a snapshot payload (§11.4) — the legacy one-shot, §11.9 |
+| 1 | `renamePane` | `[16B paneID][u16 len][utf8]` |
+| 2 | `renameTab` | `[16B tabID][u16 len][utf8]` |
+| 3 | `renameSession` | `[16B sessionID][u16 len][utf8]` |
+| 4 | `closePane` | `[16B paneID]` |
+| 5 | `closeTab` | `[16B tabID]` |
+| 6 | `splitPane` | `[16B targetPaneID][u8 axis][u8 before][16B newPaneID][u16 len][spawnCwd]` |
+| 7 | `movePane` | `[16B sourcePaneID][16B targetPaneID][u8 axis][u8 before]` |
+| 8 | `reorderTabs` | `[16B sessionID][u16 n][16B tabID]*` — a PERMUTATION or nothing |
+| 9 | `focusTab` | `[16B tabID]` |
+| 10 | `focusPane` | `[16B paneID]` |
+| 11 | `setSyncInput` | `[16B tabID][u8 armed]` |
+| 12 | `spawnPane` | as `splitPane`, but the target is a **TabID** — splits whatever that tab has focused |
+| 13 | `spawnTab` | `[16B sessionID][16B newPaneID][u8 position][u16 len][spawnCwd]` |
+| 14 | `setZoom` | `[16B paneID][u8 zoomed]` |
+| 15 | `detachPane` | `[16B paneID]` |
+| 16 | `reattachPane` | `[16B paneID]` |
+| 17 | `setDividerWeight` | `[16B splitNodeID][u16 leadingIndex][u64 BE Double.bitPattern]` — the ONLY writer of `splitNode/weight` |
+| 18 | `newSession` | `[16B sessionID][16B newPaneID][u16 len][name]` |
+| 19 | `closeSession` | `[16B sessionID]` |
+| 20 | `reopenClosedTab` | empty |
+
+`position` (op 13): `0 auto · 1 end · 2 afterCurrent`; an unknown byte is `auto`. `axis`: `0`
+horizontal (columns) / non-zero vertical (rows). `before` and the flag bytes follow the C-style bool
+rule — any non-zero is `true`.
+
+**New ids are proposed by the CLIENT.** `splitPane`, `spawnPane`, `spawnTab` and `newSession` all
+carry the id the new object will have. The host validates (a proposed id already in use, including
+one parked in the closed-tab ring, is `rejectedInvalid`) and adopts it. The reason is latency: an
+optimistic overlay cannot insert a leaf it has no id for, so a host-minted id would make every split
+wait a round trip before anything appeared. It also makes a retried intent idempotent.
+
+**Zoom and sync-input are ASSIGNED, never toggled.** A toggle over shared state resolves differently
+depending on how many clients sent it.
+
+Validation is `rejectedNotFound` for any referenced id the document does not hold, and
+`rejectedInvalid` for a malformed payload, a proposed id in use, a partial `reorderTabs`, a
+non-finite or sub-floor divider weight, or a result that would breach the depth cap or the specs
+invariant. **An intent that changes nothing still answers `applied`** — focusing an already-focused
+pane is a satisfied request, and answering `rejected` would make the client roll back a patch it
+never made. It costs no `stateNum`: the version moves only when the state actually changed.
+
+A malformed type-17 ENVELOPE is dropped in silence, because there is no `intentID` to answer to.
+Every decodable intent gets an answer.
+
+### 11.9 `adoptWorkspace` — a bootstrap, not a migration
+
+The first client to reach a host that has **never written a workspace file** may upload its local
+tree once. The document actor serializes it, so exactly one wins. Refused `rejectedStale` forever
+after — and **any** accepted intent counts as taking ownership, including one that changed nothing.
+
+The loser is told, rather than silently overwritten: its tree is the only copy of a layout somebody
+built, and silent data loss is not acceptable even once.
+
+### 11.10 The client's optimistic layer
+
+A client stages an intent's effect LOCALLY before sending it, by running the same pure applier the
+host will run, and renders through `pending → entries → fastPath`. The change is on screen in the
+frame the user asked for it; the layer is not on the wire and the host knows nothing about it.
+
+How a patch retires:
+
+- `intentResult` with a **non-zero status** → dropped at once. Waiting would keep showing the user
+  something the host has already said is not true.
+- `intentResult applied` → **held**, and retired by the next document frame. Retiring on the answer
+  would blink the old layout back for one frame. There is no `stateNum` in `intentResult` and none is
+  needed: the host bumps `stateNum` and queues the document BEFORE it queues the result, and the
+  result is not gated on the outstanding frame, so the first document frame after an `applied` result
+  provably already contains that intent's effect.
+- **3 s with no answer** → dropped. The backstop for a host that accepted the intent and then died.
+- **`reset`** → every patch dropped, unlike the fast path. They describe edits to a document that no
+  longer exists; nobody knows whether the old host applied them, and re-sending a guess is worse than
+  a layout that snaps back.
+
+### 11.11 State plane vs byte plane
 
 A client can receive `pane/liveness = dead`, or a pane delete, on the workspace channel while
 `output` / `exit` frames for that pane are still in flight on an **independent** mux channel.

@@ -1157,40 +1157,56 @@ fallback — they still write `fastPath` and, with no `entries` to lose to, driv
 
 ### Phase 5 — topology flips host-side · intents, overlay, persistence
 
-**Value: the literal ask — the layout is identical on every client, and a never-seen-this-host client
-renders the full workspace from the host alone.**
+**Value: the literal ask — the layout is one value the host owns, and every client renders it.**
 
-**Host**
-- `HostWorkspaceDocument` gains root/session/tab/splitNode entries; `HostWorkspaceStore` persists
-  `workspace-state.json` with the §6.3 per-field policy and mints the **default document** for an empty
-  store.
-- `WorkspaceIntentApplier`: all 21 ops with full validate-then-drop; `intentResult`;
-  `adoptWorkspace` legacy bootstrap **with the orphan-file escape**.
-- Host-owned `session/focusMRU` drives `successorAfterClose`; host-owned `root/closedTabRing` drives
-  ⇧⌘T.
-- `closePane` / `closeTab` reap unconditionally and `channelClose` every subscriber (§8.6) — the hard
-  precondition for Phase 6.
-- `DetachedSessionStore.onEvicted` → `liveness = 2` (§6.6).
+**Host — SHIPPED**
+- `WorkspaceTopology`: root/session/tab/splitNode/pane-topology entries, projected and ingested.
+  The active tab crosses as an IDENTITY, never the index it is stored as (the `ed76f137` bug one
+  layer up). Divider weights are their own cell, one per SPLIT, riding as raw `bitPattern`s.
+- `HostWorkspaceStore` — `workspace-state.json`, the §6.3 per-field filter (applied on the way IN as
+  well as out), atomic write, 600 ms debounce, flush on shutdown, corrupt-file-kept-aside, and the
+  **default document** for a first-run host.
+- `WorkspaceIntentApplier` — all 21 ops, pure, with validate-then-drop and a re-check of the RESULT
+  against the depth cap and the specs invariant. `intentResult`; `adoptWorkspace` with the
+  pristine-is-a-file rule.
+- Host-owned `focusMRU` drives `closeTab`'s successor; host-owned closed-tab ring drives ⇧⌘T.
+- `DetachedSessionStore.onEvicted` → `liveness = 2`.
+- The reaper narrowed to three cases (§DECISIONS Phase 5.4).
 
-**Client**
-- Optimistic **patch** overlay + watermark reconciliation + 3 s timeout + the anti-flicker rule.
-- `workspace.json` → `workspace-cache.json` (raw snapshot bytes) + `device-prefs.json`.
-- `followSessionFocus` shipped **in this phase** (default ON macOS / OFF iOS).
-- Delete `PaneSpec.resumeSessionID`, the tree's `WorkspaceSchemaMigration`, the topology
-  `scheduleSave()` debounce.
+**Client — SHIPPED**
+- The `pending` optimistic layer, computed by running the host's own applier, with the anti-flicker
+  rule: a refusal snaps back at once, an acceptance is held until the next document frame, an
+  unanswered patch expires after 3 s, a `reset` drops them all.
+- `WorkspaceChannelClient.send(intent:args:)` — stages before it sends, and does not send at all when
+  this client can already tell the host will refuse.
 
-**Tests**
-- intent → delta → overlay-retire round trips
-- a **two-mirror convergence test** (two `HostWorkspaceMirror`s + one `HostWorkspaceDocument`,
-  interleaved intents, asserting byte-identical `project()`)
-- `Tests/SlopDeskHostTests/WorkspaceIntentHostileTests.swift` — depth 13, `childCount = 255`, counts
-  exceeding the buffer, references to non-existent IDs
-- `testEmptyDocumentSubscribeYieldsDefaultWorkspace`
-- `testRestoredDocumentReportsNoRunningCommandsAndNoAttachedClients`
-- `testRespawnedPaneDoesNotInheritDeadProcessTitle`
-- adopt race (two adopters, one wins, the loser's tree lands in the orphan file — **never silently
-  dropped**)
-- **Gate includes `bash scripts/check-ios.sh`.**
+**Still to do — the store cutover**
+The client `WorkspaceStore` still owns and persists its own `TreeWorkspace`; the document is read for
+per-pane facts and the optimistic layer, not yet for the LAYOUT. Until that flips, two clients see
+two trees and the phase's headline value is not delivered on hardware. It is deliberately separate
+because it is the single riskiest change in the plan — every UI surface reads `store.workspace` —
+and everything under it is now proven headlessly. It carries with it:
+- `workspace.json` → `workspace-cache.json` (raw snapshot bytes) + `device-prefs.json`
+- `followSessionFocus` (default ON macOS / OFF iOS)
+- deleting `PaneSpec.resumeSessionID`, the tree's `WorkspaceSchemaMigration`,
+  `WorkspacePersistence.promotingLastKnownTitles()`, and the topology `scheduleSave()` debounce
+- moving `cwd` / `projectKey` off `PaneSpec`
+
+**Not carried, with reasons** (`WorkspaceTopologyOmissions`): `layoutPresets` embeds a whole retired
+`Canvas` the tree path never reads; `launchPresets` / `sessionTemplates` are host CONFIG rather than
+topology and their root fields stay reserved — a topology write is excluded from reaping them, so a
+future build's config survives this one.
+
+**Tests — SHIPPED**
+- `WorkspaceTopologyTests` — round trip through the encoded snapshot, byte determinism, identity-not-
+  position, what must not cross, hostile structures
+- `WorkspaceIntentApplierTests` — every op, every refusal, hostile payloads, idempotence, the depth cap
+- `WorkspaceConvergenceTests` — **two mirrors, one document, interleaved intents, byte-identical
+  projections** through the real session; plus the late joiner and the refusal-moves-nothing case
+- `OptimisticIntentTests` — the anti-flicker rule in every direction
+- `WorkspaceStateFileTests` / `HostWorkspaceStoreTests` — no living process survives a restart
+- Golden: `workspaceStateCodec` extended, `workspaceIntentOps` + `workspaceIntentArgs` added
+  (corpus 50 → 52). **Gate included `bash scripts/check-ios.sh`.**
 
 ### Phase 6 — PTY fan-out · `SLOPDESK_PANE_FANOUT` (`== "1"`, default-OFF), LAST
 
