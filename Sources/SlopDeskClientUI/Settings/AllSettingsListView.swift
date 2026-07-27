@@ -33,6 +33,10 @@ struct AllSettingsListView: View {
     @State private var confirmResetAll = false
     @State private var confirmResetAdvanced = false
 
+    /// The owner of the DEVICE-LOCAL preferences (docs/45 §7.3) — read so the shared-focus row shows its
+    /// LIVE value beside the ✎ jump rather than a static default. Nil in a preview.
+    @Environment(\.workspaceStore) private var workspaceStore
+
     // The advanced-only rows bind directly to the global `Defaults.Keys` (the same channel the per-section
     // tabs use), so an inline edit applies live exactly like hand-editing the config.
     @Default(.onLaunch) private var onLaunch
@@ -216,6 +220,8 @@ struct AllSettingsListView: View {
         case "cursor-style-blink": store.terminal.cursorBlink.rawValue.capitalized
         case "theme": themeLabel(store.appearance.theme ?? .system)
         case SettingsKey.density: (store.appearance.density ?? "comfortable").capitalized
+        // Device-local, so it is read from the `WorkspaceStore` rather than a typed prefs model.
+        case SharedFocusSetting.catalogKey: SharedFocusSetting.valueText(workspaceStore)
         default: entry.defaultText
         }
     }

@@ -19,7 +19,9 @@
 // The app-owned `AgentHooksController` is THREADED in here and injected
 // onto the section content via `.agentHooksController(_:)`, mirroring the macOS `SlopDeskSettingsScene`.
 // Without it the Agents card was permanently `.disconnected` and the entire Agent-Behaviour toggle block was
-// greyed out on iOS (the controller's `@Environment` resolved nil).
+// greyed out on iOS (the controller's `@Environment` resolved nil). The app-owned `WorkspaceStore` rides the
+// same seam (`.workspaceStore(_:)`) for the DEVICE-LOCAL rows — General → Shared Focus, whose default is OFF
+// on exactly this platform, so an un-injected sheet would strand a phone unable to opt in.
 //
 // CROSS-PLATFORM COMPILE: although this is only ever PRESENTED on iOS, the struct compiles on every platform
 // (the lone iOS-only modifier `.navigationBarTitleDisplayMode` is abstracted behind `inlineNavTitle()`) so
@@ -46,6 +48,12 @@ struct SettingsSheet: View {
     /// (a preview / no scene) → the card renders the disabled "Connect a session" state rather than crashing.
     let agentHooks: AgentHooksController?
 
+    /// The app-owned ``WorkspaceStore``, threaded from `WorkspaceRootView` so the DEVICE-LOCAL preference
+    /// rows (General → Shared Focus, docs/45 §7.3) reach the value they edit. A sheet does not inherit the
+    /// presenter's custom environment values, so this must be handed in explicitly — the same reason
+    /// `agentHooks` is. `nil` (a preview) → those rows render the platform default, disabled.
+    let workspace: WorkspaceStore?
+
     @Environment(\.dismiss) private var dismiss
 
     /// A local selected-section state ONLY to satisfy the All-Settings ✎ jump binding. On the compact iOS
@@ -53,9 +61,14 @@ struct SettingsSheet: View {
     /// (a known follow-up), so on iOS setting this is a harmless no-op.
     @State private var selectedSection: SettingsSection = .general
 
-    init(store: PreferencesStore, agentHooks: AgentHooksController? = nil) {
+    init(
+        store: PreferencesStore,
+        agentHooks: AgentHooksController? = nil,
+        workspace: WorkspaceStore? = nil,
+    ) {
         self.store = store
         self.agentHooks = agentHooks
+        self.workspace = workspace
     }
 
     var body: some View {
@@ -69,6 +82,8 @@ struct SettingsSheet: View {
                         // Thread the app-owned controller into the pushed section so the Agents card +
                         // behaviour toggles resolve a live `@Environment(\.agentHooksController)` on iOS too.
                         .agentHooksController(agentHooks)
+                        // Same reason: the device-local rows edit `WorkspaceStore`, not `PreferencesStore`.
+                        .workspaceStore(workspace)
                         .navigationTitle(section.title)
                         .inlineNavTitle()
                     } label: {

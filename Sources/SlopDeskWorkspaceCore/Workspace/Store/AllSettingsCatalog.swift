@@ -78,6 +78,12 @@ public enum AllSettingsCatalog {
         }
     }
 
+    /// The config-style name the shared-focus row (``DevicePreferences/followSessionFocus``, docs/45 §8.2)
+    /// is filed under. NOT a ``SettingsKey``: the value lives in `device-prefs.json`, not `UserDefaults`,
+    /// so it is named here the way the typed render fields (`font-family`, `cursor-style`) are — and named
+    /// ONCE, so the catalog row and the view that renders the real control cannot split-brain.
+    public static let followSessionFocusKey = "follow-session-focus"
+
     /// Every client-side configuration key, in a readable section order (General → Shell → Controls →
     /// Editor → Appearance → Agents, then the typed render fields). The list is the single source the All
     /// Settings view iterates; `AllSettingsCatalogTests.testCatalogCoversEveryClientSettingsKey` pins that no
@@ -116,6 +122,19 @@ public enum AllSettingsCatalog {
             defaultText: "Running Process",
             bucket: .advancedOnly,
             keywords: "close confirm window prompt quit running process always",
+        ),
+        // Device-local, not a `Defaults.Key` — it persists in `device-prefs.json` and is written through
+        // `WorkspaceStore.setFollowSessionFocus(_:)`. So it is `.hasDedicatedTab`: the row advertises the
+        // key + its live value and JUMPS to General → Shared Focus, where the one real control lives.
+        SettingEntry(
+            key: followSessionFocusKey,
+            label: "Follow the Shared Focus",
+            description: "Whether switching tab or pane on this device moves every device that follows, "
+                + "or only this one's own view.",
+            defaultText: DevicePreferences.platformDefaultFollowSessionFocus ? "On" : "Off",
+            bucket: .hasDedicatedTab,
+            targetSection: "general",
+            keywords: "focus follow shared device local multi client mirror sync tab pane independent",
         ),
 
         // MARK: Shell (notifications — notification-setting.png — + working directory — window-tab-split spec)

@@ -63,19 +63,26 @@ public struct SlopDeskSettingsScene: Scene {
     /// round-trips reach the host. Optional — a preview/future host can omit it (card then renders the
     /// disabled "Connect a session" state).
     private let agentHooks: AgentHooksController?
+    /// The app-owned ``WorkspaceStore``, injected so the DEVICE-LOCAL preference rows (docs/45 §7.3 —
+    /// today: follow the shared focus) reach the value they edit. Optional — a preview can omit it, and
+    /// those rows then render the platform default, disabled.
+    private let workspace: WorkspaceStore?
 
     public init(
         store: PreferencesStore,
         agentHooks: AgentHooksController? = nil,
+        workspace: WorkspaceStore? = nil,
     ) {
         self.store = store
         self.agentHooks = agentHooks
+        self.workspace = workspace
     }
 
     public var body: some Scene {
         Settings {
             SettingsView(store: store)
                 .agentHooksController(agentHooks)
+                .workspaceStore(workspace)
                 // Native chrome → SYSTEM accent (not the theme accent) so toggles/steppers/radios read as
                 // native System-Settings controls; appearance still tracks the theme below.
                 .tint(nil)
@@ -318,6 +325,9 @@ enum GeneralSettingsLayout {
     static let general = "General"
     static let closeConfirmation = "Close Confirmation"
     static let privacyAndNewPanes = "Privacy & New Panes"
+    /// The device-local half of focus (docs/45 §8.2) — cross-platform, and the group whose DEFAULT differs
+    /// by platform, which is exactly why it needs a control on both.
+    static let sharedFocus = "Shared Focus"
     #if os(macOS)
     static let osIntegration = "OS Integration"
     #endif
@@ -325,7 +335,7 @@ enum GeneralSettingsLayout {
     /// The section headers the General page renders, in order. Drives the `Section(_:)` headers below so the
     /// pure list and the rendered Form stay in lockstep.
     static var sectionTitles: [String] {
-        var titles = [general, closeConfirmation, privacyAndNewPanes]
+        var titles = [general, closeConfirmation, privacyAndNewPanes, sharedFocus]
         #if os(macOS)
         titles.append(osIntegration)
         #endif
@@ -350,6 +360,10 @@ private struct GeneralSettingsTab: View {
     @Default(.closeConfirmTab) private var closeConfirmTab
     @Default(.closeConfirmWindow) private var closeConfirmWindow
     @Default(.redactSecrets) private var redactSecrets
+    /// The device-local `followSessionFocus` lives on the `WorkspaceStore`, not in `Defaults` — it is
+    /// persisted in `device-prefs.json` (docs/45 §7.3). Injected at the settings root; nil in a preview,
+    /// which greys the row on its platform default (`SharedFocusSetting`).
+    @Environment(\.workspaceStore) private var workspaceStore
     // The OS Integration "Default Terminal" status, refreshed on appear + after Set.
     // macOS-only — `DefaultTerminalIntegration` is `#if os(macOS)` (no iOS LaunchServices / deep-links).
     #if os(macOS)
@@ -397,6 +411,8 @@ private struct GeneralSettingsTab: View {
                 timingFooter(.live)
             }
 
+            sharedFocusSection
+
             // OS Integration — macOS-only. Reuses the SAME `DefaultTerminalIntegration` actions as
             // the first-launch sheet, so the buttons stay REACHABLE after "Skip Setup" (the bug this fixes).
             #if os(macOS)
@@ -404,6 +420,30 @@ private struct GeneralSettingsTab: View {
             #endif
         }
         .formStyle(.grouped)
+    }
+
+    // MARK: - Shared Focus (docs/45 §8.2 — the one device-local knob on this page)
+
+    /// Settings → General → Shared Focus. The only control over
+    /// ``DevicePreferences/followSessionFocus``, whose default is per-PLATFORM (ON macOS, OFF iOS) — so
+    /// without a row a device keeps that default forever, and the "pick up your phone without yanking the
+    /// Mac" escape hatch is unreachable in the direction you did not start in.
+    ///
+    /// Not a `Defaults.Key`: the value lives in `device-prefs.json` and is written through
+    /// ``WorkspaceStore/setFollowSessionFocus(_:)``, which also drops the device-local overlay when
+    /// following resumes. Greyed with no injected store (a preview) rather than writing nowhere.
+    private var sharedFocusSection: some View {
+        slateFormSection(GeneralSettingsLayout.sharedFocus) {
+            SettingsGlyphToggleRow(
+                .viewfinder,
+                "Follow the shared focus",
+                "Switching tab or pane here moves every device that follows. Off keeps this device's view "
+                    + "to itself — the others still see where it is looking.",
+                isOn: SharedFocusSetting.binding(workspaceStore),
+            )
+            .disabled(!SharedFocusSetting.isConfigurable(workspaceStore))
+            timingFooter(.live)
+        }
     }
 
     // MARK: - OS Integration (macOS-only, reachable post-first-launch)

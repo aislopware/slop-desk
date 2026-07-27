@@ -924,7 +924,7 @@ public struct SlopDeskClientApp: App {
         // window is the non-clashing home. Binds the SAME single live `PreferencesStore`. macOS-only:
         // `Settings` is unavailable on iOS (the iOS settings surface is an in-app sheet).
         #if os(macOS)
-        SlopDeskSettingsScene(store: preferences, agentHooks: agentHooks)
+        SlopDeskSettingsScene(store: preferences, agentHooks: agentHooks, workspace: store)
         #endif
     }
 

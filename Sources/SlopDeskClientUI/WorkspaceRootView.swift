@@ -201,7 +201,7 @@ public struct WorkspaceRootView: View {
             if let preferencesStore {
                 // Thread the app-owned controller into the sheet so the Agents card / behaviour toggles are
                 // live on iOS (a sheet does not inherit the presenter's custom environment values).
-                SettingsSheet(store: preferencesStore, agentHooks: agentHooksController)
+                SettingsSheet(store: preferencesStore, agentHooks: agentHooksController, workspace: store)
             }
         }
         #endif

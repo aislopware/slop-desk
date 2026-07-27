@@ -1020,6 +1020,14 @@ would pin the device to a tab no other client can see it on. `selectTab`, `selec
 `stageFocus(pane:)`, so no gesture can grow a path around the flag. Presence is published from the
 projection either way — looking away is not hiding.
 
+The flag is reachable: **Settings → General → Shared Focus**, one toggle on both platforms
+(`SharedFocusSetting` + `GeneralSettingsLayout.sharedFocus`), advertised in the searchable All-Settings
+list as `follow-session-focus`. Cross-platform on purpose — the default differs BY platform, so a device
+with no row keeps its default forever and the escape hatch is unreachable in whichever direction that
+device did not start in. It is device-local, so it is not a `Defaults.Key`: the row writes through
+`setFollowSessionFocus(_:)` into `device-prefs.json`, which is also what makes the overlay-drop rule apply
+to the control for free.
+
 ### 8.3 PTY size — monotone min-fold over ATTACHMENT, never presence, never a latch
 
 An input-keyed driver latch has **no hysteresis**: two clients typing alternately flap `TIOCSWINSZ` +
