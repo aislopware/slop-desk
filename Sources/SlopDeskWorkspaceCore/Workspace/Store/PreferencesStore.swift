@@ -100,6 +100,11 @@ public final class PreferencesStore {
         static let appearance = "settings.appearance.v1"
         static let rawOverrides = "settings.rawOverrides.v1"
         static let blockBookmarks = "settings.blockBookmarks.v1"
+        /// The completion counters this DEVICE has already read, scoped to the document epoch they
+        /// were recorded under (``SeenCompletionEpochs``). Device-local by design: the host holds no
+        /// per-client acknowledgement state, so every viewer answers "is this finish unread" for
+        /// itself.
+        static let seenCompletionEpochs = "settings.seenCompletionEpochs.v1"
         /// Dismissed agent-notification suggestion chips, keyed by agent display-name. A plain
         /// `[agentName: true]` JSON map so a dismissed pill stays dismissed across launches (Warp persists
         /// this in `AISSettings` keyed by agent+host).
@@ -443,6 +448,19 @@ public final class PreferencesStore {
         var map = loadBlockBookmarkMap()
         if indices.isEmpty { map.removeValue(forKey: sessionUUID) } else { map[sessionUUID] = indices }
         Self.encode(map, defaults, Key.blockBookmarks)
+    }
+
+    // MARK: Seen completion counters (the unread-finish marker's device half)
+
+    /// The persisted ``SeenCompletionEpochs``, or `nil` on a fresh install. A separate `UserDefaults`
+    /// key holding one small JSON value — NOT part of the four typed prefs models, never folded into
+    /// the env overlay / sidecar (golden corpus untouched).
+    public func seenCompletionEpochs() -> SeenCompletionEpochs? {
+        Self.decode(SeenCompletionEpochs.self, defaults, Key.seenCompletionEpochs)
+    }
+
+    public func setSeenCompletionEpochs(_ record: SeenCompletionEpochs) {
+        Self.encode(record, defaults, Key.seenCompletionEpochs)
     }
 
     // MARK: Agent notification suggestion chip (green "Enable … notifications" pill)

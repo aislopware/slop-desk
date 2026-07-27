@@ -262,6 +262,26 @@ public extension WorkspaceStore {
         ))
     }
 
+    /// Points the unread-finish marker's DEVICE half at the preferences store and seeds it.
+    ///
+    /// The document supplies each pane's completion counter; this remembers which of those counters
+    /// this Mac has already READ. Persisted, so quitting the app is not the same as reading
+    /// everything — the failure the in-memory latch had on every relaunch.
+    func attachCompletionSeenStore(_ preferences: PreferencesStore) {
+        completionSeen.load = { preferences.seenCompletionEpochs() }
+        completionSeen.save = { preferences.setSeenCompletionEpochs($0) }
+        loadCompletionSeen()
+    }
+
+    /// What the store does when the app-global shared connection comes up: redial the panes that were
+    /// left disconnected, then re-open the workspace subscription.
+    ///
+    /// Re-opening every time is deliberate — see ``startWorkspaceChannelIfEnabled()``.
+    func handleConnectionEstablished() {
+        redialDisconnectedPanes()
+        startWorkspaceChannelIfEnabled()
+    }
+
     /// Builds the production channel: `channelClass 1` on the app-global shared connection.
     ///
     /// The pool refcounts it exactly like a pane channel, so the workspace subscription holds the

@@ -53,16 +53,23 @@ public extension WorkspaceStore {
         if status == .done {
             paneCompletedAt[id] = date
             armCompletionFlashDecay()
-            // UNREAD latch: a turn finishing while the user is NOT watching stays marked until the
+            // UNREAD marker: a turn finishing while the user is NOT watching stays marked until the
             // pane is visited — the host's own done→idle decay (seconds) must not take the badge
             // with it. A finish the user watched happen (any split of the active tab / key
             // satellite) is pre-seen: it still gets the brief `.completed` flash via the live
             // `.done` status, but no sticky unread marker (t3code/herdr both pin this rule).
-            if !isSourcePaneVisible(id) { paneUnseenDone.insert(id) }
+            //
+            // Expressed as a COUNTER, not a bit. This bump is the client's own — refused the moment
+            // host truth holds the key, so with the document live the host's count is what everyone
+            // compares against and no client's local edge can disagree with another's.
+            bumpOwnCompletionEpoch(for: id)
+            refreshUnseenDone(for: id)
         } else if status == .working || status == .needsPermission {
             // The agent moved on — new activity supersedes the unread finish (herdr: any
-            // non-idle transition marks the pane seen).
-            paneUnseenDone.remove(id)
+            // non-idle transition marks the pane seen). Marking SEEN rather than clearing a bit:
+            // the next host frame re-asserts the same counter, and a cleared bit would come back.
+            markCompletionSeen(id)
+            refreshUnseenDone(for: id)
         }
         // The trailing-slot elapsed readout's anchor: a genuine entry into `.working` (the
         // idempotency guard above already filtered repeats) starts the turn clock; leaving
@@ -164,7 +171,8 @@ public extension WorkspaceStore {
     /// acknowledges unread output, it never fakes-away a still-active signal (and NEVER an approval gate).
     func clearAgentBadge(_ id: PaneID) {
         setCompletionBadge(nil, for: id)
-        paneUnseenDone.remove(id)
+        markCompletionSeen(id)
+        refreshUnseenDone(for: id)
         // The acknowledge already happened — a watch still ticking on this pane has nothing left to settle.
         paneDoneDwellSince.removeValue(forKey: id)
         if agentStatus(for: id) == .done { setAgentStatus(.idle, for: id) }

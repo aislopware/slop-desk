@@ -244,10 +244,8 @@ public struct SlopDeskClientApp: App {
         // per-pane control sinks drive the UI exactly as before. Re-opened on every establish: the
         // previous subscription died with the old link, and the target may have changed.
         store.installWorkspaceChannel(muxRegistry: muxRegistry, target: { appConnection.target })
-        appConnection.onConnectionEstablished = { [weak store] in
-            store?.redialDisconnectedPanes()
-            store?.startWorkspaceChannelIfEnabled()
-        }
+        store.attachCompletionSeenStore(preferences)
+        appConnection.onConnectionEstablished = { [weak store] in store?.handleConnectionEstablished() }
         // Host identity: the titlebar speaks the host's NAME even when the user connected by
         // IP. The resolver asks the host itself over the metadata RPC (verb 14) through whichever pane
         // carries a live channel — resolved at call time like the Agents card, so the fetcher survives

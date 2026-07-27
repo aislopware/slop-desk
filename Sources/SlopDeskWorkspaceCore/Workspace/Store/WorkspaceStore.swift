@@ -335,8 +335,14 @@ public final class WorkspaceStore {
         self.saveDebounce = saveDebounce
         self.videoTeardownSettle = videoTeardownSettle
         // The mirror is a plain value in a plain box — nothing about folding a frame into it is
-        // `@Observable`. This is the one wire that makes a document change repaint anything.
-        workspaceMirror.onChange = { [weak self] in self?.workspaceMirrorRevision &+= 1 }
+        // `@Observable`. This is the one wire that makes a document change repaint anything, and the
+        // one place a host frame can move a completion counter with no local edge firing at all.
+        workspaceMirror.onChange = { [weak self] in
+            guard let self else { return }
+            workspaceMirrorRevision &+= 1
+            reconcileSeenCompletionEpochDocument()
+            refreshUnseenDoneForAllPanes()
+        }
         // The live model picks the init reconcile. `.canvas` materializes the canvas panes (the
         // retained-but-dead path); `.tree` (the app) materializes the tree's leaves through the SAME
         // registry diff — exactly one of the two trees ever drives a given store.
@@ -3121,7 +3127,22 @@ public final class WorkspaceStore {
     @ObservationIgnored
     public internal(set) var workspaceChannel: WorkspaceChannelClient?
 
+    /// The PROJECTION of `pane/completionEpoch` vs ``seenCompletionEpoch`` — never written directly;
+    /// ``refreshUnseenDone(for:)`` owns it. Kept as a Set because every read already binds to one.
     public internal(set) var paneUnseenDone: Set<PaneID> = []
+
+    /// Device-local: the completion counter this device has already READ for each pane, keyed by the
+    /// pane's DOCUMENT id. Compared against `pane/completionEpoch`; the host holds no per-client
+    /// acknowledgement state at all, which is what lets any number of clients each answer for itself.
+    public internal(set) var seenCompletionEpoch: [UUID: UInt32] = [:]
+
+    /// Which document ``seenCompletionEpoch`` was recorded under. A host mints a fresh epoch on every
+    /// start and its counters restart with it, so a map carried across that would be measured against
+    /// the wrong scale — see ``reconcileSeenCompletionEpochDocument()``.
+    @ObservationIgnored public internal(set) var seenCompletionEpochDocument: UUID?
+
+    /// The device-store seam behind ``seenCompletionEpoch``. Left default the map is in-memory only.
+    @ObservationIgnored public var completionSeen = CompletionSeenSeam()
 
     /// RUNTIME-ONLY per-pane "how long has the user been LOOKING at this finished pane" clock — the dwell
     /// anchor behind ``refreshFocusedDoneSettle(at:)``. Stamped when a pane becomes focused (app active)
@@ -3632,6 +3653,7 @@ public final class WorkspaceStore {
         // this client is now looking at (dirty-guarded at the channel — most reconciles are not a
         // view change).
         pruneWorkspaceMirror(keeping: leafSet)
+        pruneCompletionSeen(keeping: leafSet)
         publishWorkspacePresence()
         // Working-turn start stamp (the trailing-slot elapsed readout):
         if !paneWorkingSince.isEmpty {
