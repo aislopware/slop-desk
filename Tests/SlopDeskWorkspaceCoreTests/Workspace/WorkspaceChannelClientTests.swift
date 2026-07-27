@@ -24,17 +24,25 @@ final class WorkspaceChannelClientTests: XCTestCase {
         private let lock = NSLock()
         private var sent: [WireMessage] = []
         private var failSends = false
+        private let intentGate = IntentWriteGate()
 
         init() {
             (inbound, continuation) = AsyncThrowingStream.makeStream(of: WireMessage.self)
         }
 
         func send(_ message: WireMessage) async throws {
+            await intentGate.waitIfHeld(message)
             await Task.yield()
             // A synchronous helper that RETURNS the verdict: `NSLock` is unavailable from an async
             // context, and holding one across a suspension is the mistake that ban exists to catch.
             guard record(message) else { throw SlopDeskTransportError.notConnected("test channel closed") }
         }
+
+        /// Suspends the FIRST intent write until ``releaseHeldIntentWrite()``. A slow write is what
+        /// makes wire order a QUESTION — without it the two requests race and the test passes or
+        /// fails on whichever task the runtime happened to run first.
+        func holdFirstIntentWrite() { intentGate.arm() }
+        func releaseHeldIntentWrite() { intentGate.open() }
 
         private func record(_ message: WireMessage) -> Bool {
             lock.lock()
@@ -148,6 +156,49 @@ final class WorkspaceChannelClientTests: XCTestCase {
                     try? await Task.sleep(for: .milliseconds(1))
                 }
             }
+        }
+    }
+
+    /// Holds the first intent write until the test lets it go. Everything else — the subscribe, the
+    /// acks — passes straight through, so only the ordering under test is affected.
+    private final class IntentWriteGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var armed = false
+        private var claimed = false
+        private var opened = false
+
+        func arm() {
+            lock.lock()
+            armed = true
+            lock.unlock()
+        }
+
+        func open() {
+            lock.lock()
+            opened = true
+            lock.unlock()
+        }
+
+        /// True exactly once, for the first intent write after ``arm()``.
+        private func claim(_ message: WireMessage) -> Bool {
+            guard case let .workspaceRequest(_, verb, _) = message,
+                  verb == WorkspaceRequestVerb.intent.rawValue else { return false }
+            lock.lock()
+            defer { lock.unlock() }
+            guard armed, !claimed else { return false }
+            claimed = true
+            return true
+        }
+
+        private var isOpen: Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            return opened
+        }
+
+        func waitIfHeld(_ message: WireMessage) async {
+            guard claim(message) else { return }
+            while !isOpen { try? await Task.sleep(for: .milliseconds(1)) }
         }
     }
 
@@ -621,6 +672,52 @@ final class WorkspaceChannelClientTests: XCTestCase {
             sessions: [session], activeSessionID: session.id,
         )))
         return (state.sortedEntries, tab.id)
+    }
+
+    // MARK: - The wire order IS the stage order
+
+    /// Two intents staged in one turn reach the host in the order they were staged.
+    ///
+    /// Not cosmetic. The optimistic overlay staged above each write is the HOST's own applier run
+    /// locally, in stage order, so a request that overtakes its predecessor makes the projection a
+    /// prediction of a sequence the host never runs. Every multi-intent gesture rides on it: a mint
+    /// followed by `renamePane`, the `swapPanes` pair — and the automation bootstrap, where it costs
+    /// a shell. `adoptWorkspace` is accepted only by a PRISTINE document, so a `spawnDetachedPane`
+    /// that overtakes it spends the host's one chance and the layout the window is ALREADY showing
+    /// comes back `rejectedStale`.
+    ///
+    /// `pendingSweepDelay` is left long on purpose: the ORDER that matters is the write's, and an
+    /// implementation that also serialized each intent's backstop sweep would hold the second
+    /// request for a full timeout — which reads here as a hang, not a pass.
+    func testTwoIntentsReachTheHostInTheOrderTheyWereStaged() async {
+        let rig = makeRig()
+        let layout = layoutEntries()
+        rig.client.pendingSweepDelay = .seconds(30)
+        rig.client.start()
+        await expect("subscribe") { !rig.pipe.requests(verb: .subscribe).isEmpty }
+        rig.pipe.deliver(snapshot(layout.entries, stateNum: 1))
+        await expect("the channel to go live") { rig.client.state == .live(1) }
+
+        let first = WorkspaceIntentArgs.encode(id: layout.tab.raw, name: "first")
+        let second = WorkspaceIntentArgs.encode(id: layout.tab.raw, name: "second")
+        // A slow first write, so which request reaches the host first is decided by the client and
+        // not by which task the runtime happened to schedule.
+        rig.pipe.holdFirstIntentWrite()
+        XCTAssertTrue(rig.client.send(intent: .renameTab, args: first))
+        XCTAssertTrue(rig.client.send(intent: .renameTab, args: second))
+
+        await expectNever("a request while the first write is held") {
+            !rig.pipe.requests(verb: .intent).isEmpty
+        }
+        rig.pipe.releaseHeldIntentWrite()
+
+        await expect("both intents on the wire") { rig.pipe.requests(verb: .intent).count == 2 }
+        let onTheWire = rig.pipe.requests(verb: .intent).compactMap { try? WorkspaceIntent.decode($0).args }
+        XCTAssertEqual(
+            onTheWire, [first, second],
+            "the host is asked in the order this client staged, so its applier runs the sequence the "
+                + "optimistic overlay already drew",
+        )
     }
 
     /// A write that never left the machine leaves NOTHING staged.

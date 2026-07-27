@@ -991,6 +991,17 @@ splits — correct, and identical everywhere. Two clients dragging **different**
 Ordering fields (`sessionOrder`, `tabOrder`) are short lists rewritten wholesale by the host.
 Fractional indexing is explicitly **not** needed at this scale (§11).
 
+**Arbitrary BETWEEN clients, fixed WITHIN one.** "Arrived in some order" is the rule for two devices
+racing; a single client's own intents arrive in the order it staged them, and that is a guarantee the
+transport owes rather than an accident of scheduling. The optimistic overlay each intent stages is
+this same applier run locally, in stage order — so a request that overtakes its predecessor makes the
+projection a prediction of a sequence the host never runs. Every multi-intent gesture depends on it: a
+mint followed by `renamePane`, the `swapPanes` pair, and the automation bootstrap's `adoptWorkspace`
+followed by `spawnDetachedPane` — where the cost is total, because only a PRISTINE document accepts an
+adopt and any intent that passes it spends that one chance. `WorkspaceChannelClient` therefore drains
+its intents through a single task (`intentQueue`), exactly as it already does its presence updates: a
+detached task per call publishes in SCHEDULING order, not issue order.
+
 ### 8.2 Focus — host-truth, with a shipped per-device follow flag
 
 `Session.activeTabID` and `Tab.activePaneID` **are HOST-TRUTH.** They are not a render preference —

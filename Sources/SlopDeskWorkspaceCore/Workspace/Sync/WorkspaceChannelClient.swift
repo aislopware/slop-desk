@@ -141,6 +141,17 @@ public final class WorkspaceChannelClient {
     /// the one the user already left, permanently.
     private var presenceQueue: [WorkspacePresenceUpdate] = []
     private var presenceDrain: Task<Void, Never>?
+    /// Intents waiting to go out, oldest first, and the single task that drains them.
+    ///
+    /// One task for exactly the reason ``presenceQueue`` has one, and here it costs more than a stale
+    /// viewport. The optimistic patch staged for each intent is the HOST's own applier run locally, in
+    /// STAGE order, so a request that overtakes its predecessor makes the projection a prediction of a
+    /// sequence the host never runs. Every multi-intent gesture rides on it — a mint followed by
+    /// `renamePane`, the `swapPanes` pair — and `adoptWorkspace` loses outright: only a PRISTINE
+    /// document accepts one, so any intent that passes it spends the host's single chance and the
+    /// layout this client is already showing comes back `rejectedStale`.
+    private var intentQueue: [WorkspaceIntent] = []
+    private var intentDrain: Task<Void, Never>?
 
     @preconcurrency
     public init(
@@ -220,6 +231,14 @@ public final class WorkspaceChannelClient {
         channelID = nil
         control = nil
         box.reset()
+        // Whatever is still queued is an OFFLINE intent, and those are dropped rather than replayed
+        // (docs/45 §7.2). `box.reset()` one line up just took away the patch each was standing in for,
+        // so a write that went out after this would ask a host for a change nothing on screen is
+        // predicting. The drain task is left to notice the empty queue on its next pass, for the same
+        // reason ``clearPresence()`` leaves its own: clearing the SLOT is what would let a
+        // stopped-then-reused client start a SECOND drain, and two drains sharing one queue reorder
+        // precisely what the single one exists to keep in order.
+        intentQueue.removeAll()
         clearPresence()
         // A deliberate teardown clears a refusal too: the next `start()` may be against a DIFFERENT
         // host, or the same one with the flag now on, and a refusal is a fact about one connection.
@@ -472,24 +491,54 @@ public final class WorkspaceChannelClient {
             localDocument.serve(intent)
             return true
         }
-        Task { [weak self] in
-            guard let self else { return }
-            // A failed write means the host was never asked, so no `intentResult` will ever retire
-            // this patch and no timeout should have to: snap it away now. Otherwise the split the
-            // user requested would stay on screen — on this client only — across every subsequent
-            // host frame, which is the frozen disagreement the pending layer exists to prevent.
-            guard await send(verb: .intent, payload: intent.encode()) else {
-                box.dropPending(intent.intentID)
-                return
-            }
-            // The host WAS asked. Arm the backstop for the case with no other signal — a host that
-            // accepted and died before answering, on a channel quiet enough that no later frame
-            // arrives to sweep it.
-            guard let delay = pendingSweepDelay else { return }
-            try? await Task.sleep(for: delay)
-            box.expirePending(now: self.now())
-        }
+        enqueue(intent: intent)
         return true
+    }
+
+    /// Queues one intent behind everything already waiting, starting the drain if it is idle.
+    private func enqueue(intent: WorkspaceIntent) {
+        intentQueue.append(intent)
+        // Already draining: the loop below picks this up on its next pass, in the order it was queued.
+        guard intentDrain == nil else { return }
+        intentDrain = Task { [weak self] in
+            while let next = self?.takeQueuedIntent() {
+                await self?.deliver(intent: next)
+            }
+            // No `await` between the empty check and this, so on the main actor the two are one step
+            // and a `send(intent:)` arriving in between cannot find a drain that is neither running
+            // nor restartable.
+            self?.intentDrain = nil
+        }
+    }
+
+    private func takeQueuedIntent() -> WorkspaceIntent? {
+        intentQueue.isEmpty ? nil : intentQueue.removeFirst()
+    }
+
+    /// Puts one intent on the wire and arms its backstop.
+    ///
+    /// The WRITE is awaited here, and that is the whole ordering guarantee: the next intent's request
+    /// is not framed until this one has been. The backstop sweep is NOT awaited — it fires a whole
+    /// `pendingTimeout` later, and holding the queue for it would delay every following gesture by
+    /// that long.
+    private func deliver(intent: WorkspaceIntent) async {
+        // A failed write means the host was never asked, so no `intentResult` will ever retire this
+        // patch and no timeout should have to: snap it away now. Otherwise the split the user
+        // requested would stay on screen — on this client only — across every subsequent host frame,
+        // which is the frozen disagreement the pending layer exists to prevent.
+        guard await send(verb: .intent, payload: intent.encode()) else {
+            box.dropPending(intent.intentID)
+            return
+        }
+        // The host WAS asked. Arm the backstop for the case with no other signal — a host that
+        // accepted and died before answering, on a channel quiet enough that no later frame arrives
+        // to sweep it.
+        guard let delay = pendingSweepDelay else { return }
+        Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard let self else { return }
+            box.expirePending(now: now())
+        }
     }
 
     @discardableResult

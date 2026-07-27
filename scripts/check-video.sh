@@ -61,12 +61,44 @@ HOSTD_PID=""
 TERMD_PID=""
 APP_PROC_PAT="video-verify/DD.*MacOS/SlopDesk"
 
+# How long a daemon may take to honour its SIGTERM before this script stops asking (×0.5s).
+# slopdesk-videohostd's own wedge watchdog force-exits at 5s, so the window has to be longer than
+# that or the escalation below would fire on a daemon that was about to stop by itself.
+REAP_PATIENCE=16
+
+# SIGTERM, then VERIFY, then SIGKILL.
+#
+# `kill` only ASKS. slopdesk-videohostd answers a termination signal with an orderly drain — bye to
+# every client, stop the SCStream, restore parked windows — and that drain can WEDGE on a leaked
+# SCStream continuation (its own source says so, and this gate has been seen exiting straight past
+# one). The daemon's watchdog force-exits five seconds later, which is long after this script has
+# returned to the shell: the run LOOKS finished while :9000 is still bound, and the next run's host
+# fails to bind against a phantom. So wait for the process to actually be gone, and escalate if it is
+# not — a gate that leaves daemons behind costs more than the one it just failed.
+reap() {
+  local pid="$1" name="$2"
+  [[ -n "${pid}" ]] || return 0
+  kill "${pid}" 2> /dev/null || return 0 # already gone
+  for _ in $(seq 1 "${REAP_PATIENCE}"); do
+    kill -0 "${pid}" 2> /dev/null || return 0
+    sleep 0.5
+  done
+  echo "==> ${name} (pid ${pid}) did not stop on SIGTERM — SIGKILL" >&2
+  kill -9 "${pid}" 2> /dev/null || true
+}
+
 cleanup() {
   pkill -f "${APP_PROC_PAT}" 2> /dev/null || true
-  [[ -n "${HOSTD_PID}" ]] && kill "${HOSTD_PID}" 2> /dev/null || true
-  [[ -n "${TERMD_PID}" ]] && kill "${TERMD_PID}" 2> /dev/null || true
+  reap "${HOSTD_PID}" slopdesk-videohostd
+  reap "${TERMD_PID}" slopdesk-hostd
 }
+# INT/TERM as well as EXIT: a bash EXIT trap does NOT run when the shell is killed by an untrapped
+# signal, so a Ctrl-C or a harness timeout would otherwise strand both daemons — the very state the
+# reap above exists to prevent. Each handler re-raises nothing; the explicit `exit` runs `cleanup`
+# once through the EXIT trap.
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # ── 1. Build both host daemons + the client app (placeholder spec already links SlopDeskVideoClient) ─
 echo "==> building slopdesk-videohostd + slopdesk-hostd"

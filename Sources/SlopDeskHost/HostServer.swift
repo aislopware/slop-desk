@@ -1565,7 +1565,12 @@ public final class HostServer: @unchecked Sendable {
         // socket (with this pane's id) routes into THIS channel's per-pane status handler.
         registerHookSink(session: session, connectionID: connectionID, channelID: open.channelID)
         Task { await connection.sendOpenAck(open.channelID, accepted: true) }
-        onLog?("mux channel \(open.channelID) (conn \(connectionID)): shell \(shellPath) (pid \(pty.pid)) attached")
+        // The PANE is named as well as the pid: both GUI gates assert on how many of these lines one
+        // auto-connect produces, and a second line is only diagnosable if it says which pane asked.
+        onLog?(
+            "mux channel \(open.channelID) (conn \(connectionID)): shell \(shellPath) "
+                + "(pid \(pty.pid)) attached for pane \(open.sessionID)",
+        )
     }
 
     /// Feeds this session's By-Project key edges into the ``RepoStatusWatcher`` refcounts (and
