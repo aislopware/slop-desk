@@ -110,6 +110,13 @@ public final class WorkspaceStore {
     @ObservationIgnored
     var armedBootstrapEnvironment: [String: String]?
 
+    /// The autoconnect layout that environment resolved to, minted ONCE and seeded locally so the
+    /// window mounts it immediately. Kept so the run that finally reaches a document adopts the very
+    /// tree the panes are already dialling — a second `Session.singlePane` there would mint pane ids
+    /// no running shell has. `nil` outside automation, and once the adopt has gone out.
+    @ObservationIgnored
+    var armedBootstrapShape: BootstrapShape?
+
     /// The layout this client restored at launch, held until a host document turns up to offer it to
     /// (``runArmedLaunchAdoptIfPossible()``). `nil` once offered, and on the canvas path.
     @ObservationIgnored
@@ -2304,115 +2311,26 @@ public final class WorkspaceStore {
         tearingDownVideo.removeAll()
     }
 
-    // MARK: - Bootstrap from environment (automation seams)
+    // MARK: - Bootstrap from environment, canvas half
 
-    /// Builds the INITIAL workspace from the automation env vars (docs/22 §7), replacing the current
-    /// `workspace` and reconciling. It only sets up SHAPE + INTENT (endpoints pre-filled) — it does
-    /// **not** connect or open video; the connect / autotype / video-open TRIGGER stays in the view
-    /// layer, and the env-var names are fixed by `check-macos.sh` / `check-video.sh`.
-    ///
-    /// - `SLOPDESK_AUTOCONNECT_HOST` + `SLOPDESK_AUTOCONNECT_PORT` ⇒ the app ``Workspace/connection`` target is
-    ///   that host:port and pane 0 is a plain terminal (it rides the app connection).
-    /// - `SLOPDESK_VIDEO_AUTOCONNECT_HOST` + media/cursor ports + window id ⇒ the app target is that host
-    ///   (+ video ports) and the remote desktop opens DETACHED, window-targeted (video takes precedence). Title
-    ///   from `SLOPDESK_VIDEO_AUTOCONNECT_TITLE` if set.
-    /// - neither set ⇒ the plain default single-terminal workspace.
-    ///
-    /// `automationInputs`: the process environment overlaid with any `KEY=VALUE` launch argument whose key
-    /// begins with `SLOPDESK_`. The env vars are the canonical seam, but a GUI-session launch cannot always
-    /// inject env (e.g. `open --args …` over SSH, no way to set the child's env without root); passing the
-    /// same `SLOPDESK_…=value` tokens as launch arguments is the equivalent — a matching argument overrides
-    /// the inherited env.
-    public static func automationInputs(
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        arguments: [String] = CommandLine.arguments,
-    ) -> [String: String] {
-        var inputs = environment
-        // Skip argv[0] (the executable path); a matching `SLOPDESK_…=value` argument overrides env.
-        for arg in arguments.dropFirst() {
-            guard arg.hasPrefix("SLOPDESK_"), let eq = arg.firstIndex(of: "=") else { continue }
-            inputs[String(arg[..<eq])] = String(arg[arg.index(after: eq)...])
-        }
-        return inputs
-    }
-
-    public func bootstrapFromEnvironment(_ env: [String: String] = WorkspaceStore.automationInputs()) {
-        // The bootstrap RESHAPES the workspace, and the workspace belongs to the host — so it needs a
-        // document to reshape. The app shell runs this synchronously at launch, BEFORE the channel is
-        // installed and long before it is `.live`; arming it here and firing from
-        // ``attachWorkspaceChannel(_:)`` is what keeps the automation seam working without the shell
-        // having to learn when a subscription lands.
+    /// The retained-but-dead canvas model's automation bootstrap. It lives here, alongside the tree
+    /// half in `WorkspaceStore+Bootstrap.swift`, only because `workspace` and ``reconcile()`` are
+    /// private to this file — the canvas owns its own workspace value and has no document to ask.
+    func bootstrapCanvas(from env: [String: String]) {
         guard canMutate else {
             armedBootstrapEnvironment = env
             return
         }
         armedBootstrapEnvironment = nil
-        // The bootstrap IS an adopt, and a second one behind it would put the restored layout back
-        // over the autoconnect shape this run exists to show.
         pendingLaunchAdopt = nil
-        // The window-targeted video autoconnect (`check-video.sh` serves ONE host window) boots the
-        // remote desktop the way the user gets it: a DETACHED `.desktop` pane in its own OS window —
-        // video never enters the workspace tree (docs/DECISIONS.md 2026-07-23). The window-shaped
-        // endpoint (displayID nil) keeps the E2E stream on the classic window `hello`. Tree-shell
-        // only: the retained-but-dead canvas has no detached set.
-        if liveModel == .tree, let (target, video) = Self.videoTarget(from: env) {
-            let session = Session.singlePane(name: target.host, spec: PaneSpec(kind: .terminal, title: "Terminal"))
-            committedConnectionTarget = target
-            stageAdopt(TreeWorkspace(sessions: [session], activeSessionID: session.id).normalized())
-            stage(.spawnDetachedPane, WorkspaceIntentArgs.encode(
-                detachedPane: PaneID(), kind: .desktop, video: video,
-            ))
-            reconcileTree()
-            return
+        if let target = Self.terminalTarget(from: env) {
+            workspace = Self.singleLeafWorkspace(
+                spec: PaneSpec(kind: .terminal, title: "Terminal"), connection: target,
+            )
+        } else {
+            workspace = .defaultWorkspace()
         }
-        // Resolve the single bootstrap pane spec + the app target from the terminal-autoconnect env.
-        let bootstrap: (spec: PaneSpec, target: ConnectionTarget)? =
-            if let target = Self.terminalTarget(from: env) {
-                (PaneSpec(kind: .terminal, title: "Terminal"), target)
-            } else {
-                nil
-            }
-        switch liveModel {
-        case .tree:
-            // The live tree is what the IDE shell binds, so the automation bootstrap reshapes the TREE
-            // (one session/tab/leaf carrying the spec + per-session connection) and reconciles it.
-            if let bootstrap {
-                let session = Session.singlePane(name: bootstrap.target.host, spec: bootstrap.spec)
-                committedConnectionTarget = bootstrap.target
-                stageAdopt(TreeWorkspace(sessions: [session], activeSessionID: session.id).normalized())
-            } else {
-                stageAdopt(.defaultWorkspace())
-            }
-            reconcileTree()
-        case .canvas:
-            if let bootstrap {
-                workspace = Self.singleLeafWorkspace(spec: bootstrap.spec, connection: bootstrap.target)
-            } else {
-                workspace = .defaultWorkspace()
-            }
-            reconcile()
-        }
-    }
-
-    /// The app target from the terminal-autoconnect env vars, or `nil`.
-    public static func terminalTarget(from env: [String: String]) -> ConnectionTarget? {
-        guard let host = env["SLOPDESK_AUTOCONNECT_HOST"], !host.isEmpty,
-              let portStr = env["SLOPDESK_AUTOCONNECT_PORT"], let port = UInt16(portStr) else { return nil }
-        return ConnectionTarget(host: host, port: port)
-    }
-
-    /// The app target + the per-pane window from the video-autoconnect env vars, or `nil`. The terminal
-    /// port defaults (the video automation only specifies UDP ports); the app target carries the host +
-    /// both UDP ports so the video pane rides the shared flow.
-    public static func videoTarget(from env: [String: String]) -> (ConnectionTarget, VideoEndpoint)? {
-        guard let host = env["SLOPDESK_VIDEO_AUTOCONNECT_HOST"], !host.isEmpty,
-              let mediaStr = env["SLOPDESK_VIDEO_AUTOCONNECT_MEDIA_PORT"], let media = UInt16(mediaStr),
-              let cursorStr = env["SLOPDESK_VIDEO_AUTOCONNECT_CURSOR_PORT"], let cursor = UInt16(cursorStr),
-              let widStr = env["SLOPDESK_VIDEO_AUTOCONNECT_WINDOW_ID"], let wid = UInt32(widStr) else { return nil }
-        let title = env["SLOPDESK_VIDEO_AUTOCONNECT_TITLE"].flatMap { $0.isEmpty ? nil : $0 } ?? "Remote window"
-        let port = env["SLOPDESK_AUTOCONNECT_PORT"].flatMap { UInt16($0) } ?? 7420
-        let target = ConnectionTarget(host: host, port: port, mediaPort: media, cursorPort: cursor)
-        return (target, VideoEndpoint(windowID: wid, title: title))
+        reconcile()
     }
 
     /// A one-pane workspace from `spec` (the bootstrap shape) with the app `connection` target. The pane

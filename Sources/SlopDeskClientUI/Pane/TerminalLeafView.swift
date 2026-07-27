@@ -18,6 +18,7 @@ import Defaults // observe the Auto-Secure-Input / indicator defaults so the tog
 import Foundation
 import SlopDeskTerminal // TerminalViewportSnapshotting — the iOS letterbox reads the live cell advance.
 import SlopDeskWorkspaceCore
+import SlopDeskWorkspaceModel // PaneID — the autotype seam's task key.
 import SwiftUI
 #if canImport(AppKit)
 import AppKit
@@ -100,6 +101,9 @@ struct TerminalLeafView: View {
         }
         .background(NativePaneColor.terminalBackground)
         .task(id: live?.id) { await connectIfNeeded() }
+        // The `SLOPDESK_AUTOTYPE` OUT-path proof (docs/22 §7) rides its OWN task, keyed on the pane
+        // being connected rather than on this leaf appearing — see `autotypeTargetIfConnected`.
+        .task(id: autotypeTargetIfConnected) { await runAutotypeIfRequested() }
         // Wire the pane's ⌘F / ⌘G / ⇧⌘G callbacks on appear AND on every live-session swap (`initial: true`
         // fires once up-front, then on each `live?.id` change). Synchronous `@MainActor` closure — no actor
         // hop, unlike the `@Sendable async` `.task` above.
@@ -500,29 +504,34 @@ struct TerminalLeafView: View {
         // down a healthy session or wipes the replay ring (the scrollback-lost-on-tab-switch regression). A genuinely
         // idle/dead channel still dials.
         await live?.connection?.connectIfNeeded()
-        await runAutotypeIfRequested()
     }
 
-    /// The `SLOPDESK_AUTOTYPE` OUT-path proof seam (docs/22 §7): keeps `LivePaneSession.isAutotypeTarget`
-    /// actually consumed so `check-macos.sh --connect`'s OUT-path proof stays green. After tab0/pane0's terminal
-    /// connects, if `SLOPDESK_AUTOTYPE` is set, push the command bytes through the REAL OUT path —
-    /// `terminalModel.sendInput` → the ordered drain → host PTY: the exact keystroke→host chain the
-    /// renderer drives, so the typed command actually executes on the host and renders back. IDEMPOTENT
-    /// per process: the `.task` re-fires on every tab-switch remount; the latch keeps a second copy of
-    /// the command off the shell. Unset in normal use, so a production launch is unaffected.
+    /// What the `SLOPDESK_AUTOTYPE` seam waits for: the marked pane, actually CONNECTED.
+    ///
+    /// The seam's `.task` is keyed on this rather than on the leaf's mount, and that is its whole driver.
+    /// `ConnectionViewModel` is `@Observable`, so the body re-runs as the pane's status moves and the task
+    /// fires on the edge that matters — and re-fires on any later change, which is what lets an attempt
+    /// cancelled inside the settle wait be retried. A mount-keyed task has neither property: it runs once,
+    /// while the channel is still dialling, and a pane whose id never changes never remounts to run it
+    /// again. That is an OUT path that is dead for the rest of the launch.
+    private var autotypeTargetIfConnected: PaneID? {
+        guard let live, live.isAutotypeTarget, case .connected = live.connection?.status else { return nil }
+        return live.id
+    }
+
+    /// Hands this leaf to the `SLOPDESK_AUTOTYPE` OUT-path proof seam (``AutotypeSeam``), which owns
+    /// the once-per-launch latch. Unset in normal use, so a production launch is unaffected.
     private func runAutotypeIfRequested() async {
-        guard let live, live.isAutotypeTarget, !Self.autotypeFired,
-              let cmd = ProcessInfo.processInfo.environment["SLOPDESK_AUTOTYPE"], !cmd.isEmpty,
-              let connection = live.connection, case .connected = connection.status,
-              let terminalModel = live.terminalModel else { return }
-        Self.autotypeFired = true
-        try? await Task.sleep(nanoseconds: 1_500_000_000) // let the remote prompt come up
-        terminalModel.sendInput(Data((cmd + "\n").utf8))
+        guard let live else { return }
+        let connected = if case .connected = live.connection?.status { true } else { false }
+        let model = live.terminalModel
+        await AutotypeSeam.run(
+            command: ProcessInfo.processInfo.environment["SLOPDESK_AUTOTYPE"],
+            isTarget: live.isAutotypeTarget,
+            isConnected: connected,
+            send: model.map { model in { model.sendInput($0) } },
+        )
     }
-
-    /// Once-per-process latch for ``runAutotypeIfRequested()`` — the `.task` re-fires on every remount,
-    /// and the proof command must land exactly once. `@MainActor`-confined (the leaf body/task both are).
-    @MainActor private static var autotypeFired = false
 
     // MARK: - Hint Mode actuation
 

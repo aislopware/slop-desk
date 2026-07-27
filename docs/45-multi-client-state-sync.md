@@ -893,11 +893,21 @@ Three ordered facts hold this together, and each exists because the one before i
 2. **`canMutate` is `.live` AND a topology, not either one.** Step 1 makes `topology != nil` true
    immediately, so a gate that asked only that would open before the subscription — and
    `send(intent:)`'s own `.live` guard would then drop the intent silently.
-3. **The automation bootstrap is ARMED, not run, until the channel is live.** The app shell calls
-   `bootstrapFromEnvironment` synchronously at launch, before the channel is even installed. With no
-   document to reshape it stores the environment in `armedBootstrapEnvironment`;
-   `attachWorkspaceChannel` and the channel's own state changes re-fire it, and it runs exactly once,
-   when there is a host to send `adoptWorkspace` / `spawnDetachedPane` to.
+3. **The automation bootstrap SHAPES at launch; only its UPLOAD waits for the channel.** The app
+   shell calls `bootstrapFromEnvironment` synchronously at launch, before the channel is even
+   installed — but the layout is already decided by then, so it is resolved once into a
+   `BootstrapShape` and seeded into the mirror right there. The window therefore mounts the
+   autoconnect pane and dials THAT, and nothing else. What waits is the `adoptWorkspace` /
+   `spawnDetachedPane` upload, re-fired from `attachWorkspaceChannel` and the channel's own state
+   changes; it adopts the very tree already on screen, pane ids included, so the document publishes
+   the pane that already holds the PTY.
+
+   While a bootstrap is armed, `reconcileTreeFromDocument` HOLDS. The host's first-run default is a
+   layout this client is about to replace, and the projection drives the registry — materializing it
+   would give the pane the window is showing, and the shell behind it, exactly one turn to live, then
+   spawn a second shell for the pane that replaces it. The hold is that one turn: the channel folds a
+   frame and publishes `.live` with no suspension between, and that `.live` edge is what runs the
+   bootstrap.
 
 ```
 CLIENT                                                     HOST (hostd)

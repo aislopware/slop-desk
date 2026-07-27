@@ -209,6 +209,15 @@ extension WorkspaceStore {
     /// reconnect would dismantle every terminal on screen and replay it back.
     func reconcileTreeFromDocument() {
         guard liveModel == .tree, !isReconcilingTree, workspaceMirror.topology != nil else { return }
+        // …and so does an ARMED BOOTSTRAP. That is a layout this client was told at launch to publish
+        // and has not yet had a channel to say it on, and the frame that arrives first is the host's
+        // own first-run default. Materializing it would tear down the pane the window is already
+        // showing — and the shell behind it — for the one turn it takes the bootstrap to run.
+        //
+        // One turn is all it is: the channel folds a frame and publishes `.live` with no suspension
+        // between, and that `.live` edge is what fires ``runArmedBootstrapIfPossible()``. So the
+        // reconcile the bootstrap's own optimistic patch triggers is the first one SwiftUI can see.
+        guard armedBootstrapEnvironment == nil else { return }
         reconcileTree(acknowledgingFocus: false)
     }
 
