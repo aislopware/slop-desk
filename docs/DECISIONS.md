@@ -3182,3 +3182,83 @@ the bytes were EMITTED for — persist it beside the journal and render the rest
 - ✅ [20](20-wire-protocol.md) "Replay-buffer caps" read 64 MiB ceiling / 4 MiB offline gate; the code is **256 MiB / 64 MiB**.
 - ✅ [22](22-workspace-architecture.md) claimed sessionIDs are NOT persisted; `PaneSpec.resumeSessionID` persists them and Stage-2 resume is default-ON. Its `SlopDeskClientUI/…` paths are also stale (the code lives under `Sources/SlopDeskWorkspaceCore/Workspace/`).
 - ✅ `WorkspaceStore.blockBookmarks`'s doc claimed stable-`PaneID` keying while the code uses the per-materialization `bookmarkScopeKey`. **Comment fixed, code kept** — the scope key is deliberate (a relaunch must not re-apply a prior run's raw block indices onto unrelated commands).
+
+---
+
+## Multi-client Phase 4: what the code decided that the design did not (2026-07-27)
+
+> Amends [45 — Multi-client state sync](45-multi-client-state-sync.md) §5–6 with the rulings that
+> only surfaced once the channel existed. Each of these was found by a test, not by review.
+
+### 1. `stateNum` starts at 1, never 0
+
+Zero is the "I know nothing" sentinel a client sends in `subscribe`, and the base every snapshot
+declares. If the host could also legitimately BE at zero, a client that had genuinely received and
+acked the opening document would be indistinguishable from one that had never connected — and would
+be re-snapshotted forever. Found by `testAChangeAfterTheAckArrivesAsADiffFromTheAckedBase`, which got
+a second snapshot where a diff belonged.
+
+### 2. One send outstanding at a time — which is what depth-1 coalescing MEANS
+
+§5.5 gives the client the rule "`baseStateNum != stateNum` → DROP and resubscribe". The host must
+therefore never declare a base the client does not hold. Recomputing from the acked base is necessary
+but not sufficient: while a frame is unacked, the acked base is STALE, so a second frame sent
+against it names a state the client has already moved past, and the client's own drop rule turns a
+burst into a resubscribe loop.
+
+**The host holds further updates until the previous frame is acked.** They coalesce into the pending
+slot and ship as one diff. 500 versions with no ack in between produce exactly ONE diff, and the
+500th value lands when the ack arrives. This costs one RTT of update latency and buys a natural rate
+limit; for titles and cwd that is a feature. It is safe without a retransmit path because this rides
+the mux CONTROL sub-channel, which is TCP: a frame is only ever "lost" with the link, and the link
+taking the channel down is itself the resubscribe trigger.
+
+### 3. `PaneLiveness` lives in the MODEL target, not the host
+
+§6.2 filed it under `Sources/SlopDeskHost/`. Both ends need it — the host writes `entries()`, the
+client reads `init(paneID:entries:)` — and one round-trippable value beats an encoder and a decoder
+maintained apart. It also buys a headless round-trip test with no PTY in sight, which is where the
+four `titleFresh` rules are pinned. The host keeps only `PaneLiveness.capture(from:)`.
+
+The spec's `assertions() -> [WireMessage]` is NOT implemented: the reattach re-assert's messages come
+partly from `agentDetector.reestablishOnReattach()`, which MUTATES the detector (it re-anchors so an
+unchanged state still re-emits). A pure snapshot cannot produce them. The two consumers stay separate
+until Phase 4c retires the message half.
+
+### 4. A liveness merge CLEARS before it writes
+
+Writing only the fields a record carries would latch `runningCommand` after the command finished and
+`agentLabel` after the agent exited — the same "edge published, current value retained nowhere"
+failure this document exists to end, moved one layer up. `merge(paneLiveness:)` replaces exactly the
+liveness field set and leaves topology alone.
+
+### 5. Facts are SWEPT, not pushed
+
+The per-pane truths come from at least five independent producers — the sniffer's read-loop thread,
+the foreground poll task, the hook socket, the blocks segmenter, the project-key resolver. Wiring
+each one to the document separately is precisely how a fact goes missing. `reconcileWorkspaceDocument`
+re-captures every pane and merges the lot: correct by construction, and free when nothing changed
+because `stateNum` only moves when the value did. Event sites KICK a pass rather than carry one, so
+steady-state latency is a hop; the periodic tick is only a backstop for facts with no edge to hang a
+kick on.
+
+### 6. Project object ids are MINTED, not `UUIDv5(projectKey)`
+
+§5.3 proposed a v5 UUID, which needs a SHA-1 the host target does not otherwise link. A minted id is
+exact where a hash is merely unlikely to collide, and its only cost — a different id after a restart
+— is invisible: a restart mints a new `epoch`, every client resets and re-snapshots, and
+`project/key` carries the path the client actually joins on.
+
+### 7. The client awaits `channelOpenAck` before its first request
+
+`channelOpen` is announced on the DATA link while `subscribe` rides CONTROL, so a subscribe sent
+immediately can beat the host's registration of the control sub-channel. The frame is dropped and the
+client waits forever for a snapshot that never comes. Same discipline as PATH A's reattach. This
+presented as a FLAKE under the full suite and passed in isolation — which is how open-order races
+always present, and why [CLAUDE.md](../CLAUDE.md) says in-memory loopback misses them.
+
+### 8. Loopback tests POLL a collector; they never await `inbound.next()`
+
+Awaiting the iterator strands xctest the moment an expected frame does not arrive, and a hung suite
+tells you nothing while blocking the gate. With the `channelClass` route reverted, the tests now fail
+in six seconds with "timed out waiting for 1× snapshot".

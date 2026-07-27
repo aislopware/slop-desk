@@ -1035,12 +1035,12 @@ final name (`report.pdf` → `report (1).pdf`); a dropped connection sweeps any 
 
 ---
 
-## 10. Workspace-document channel (`channelClass == 1`)
+## 11. Workspace-document channel (`channelClass == 1`)
 
 Design: [45 — Multi-client state sync](45-multi-client-state-sync.md). Types **17**
 (`workspaceRequest`) and **37** (`workspaceEvent`) on a dedicated mux channel.
 
-### 10.1 Channel classes
+### 11.1 Channel classes
 
 `MuxChannelOpen.channelClass` was already encoded, decoded and golden-pinned at 0 and 255 while being
 read nowhere in the host. It now carries meaning:
@@ -1054,7 +1054,51 @@ read nowhere in the host. It now carries meaning:
 Workspace routing happens in `spawnMuxChannel` **before** the `attachedElsewhere` critical section,
 so the PTY one-attachment-per-sessionID invariant is untouched.
 
-### 10.2 The entry grammar
+### 11.2 Verbs and kinds
+
+Both types are verb/kind-multiplexed envelopes shaped like `metadataRequest` (16) /
+`metadataResponse` (30), so **every future workspace operation costs zero type numbers** and never
+shifts an unknown-type probe again. (Three probes pinned 17 before this document claimed it.)
+
+**Type 17 `workspaceRequest`** (client → host, CONTROL) — `[u32 requestSeq][u8 verb][u32 payloadLen][payload]`
+
+| verb | name | payload |
+|------|------|---------|
+| 0 | `subscribe` | `[16B clientInstanceID][u8 clientKind][16B knownEpoch][i64 knownStateNum][u8 flags][u16 labelLen][label]`. Flags: b0 size-contributing, b1 focus-following; unknown bits are **ignored**, not an error. `labelLen > 64` → `malformedBody`. All-zero epoch + `knownStateNum 0` = "I know nothing". **Re-sending `subscribe` IS the resync verb** — there is no separate resend. |
+| 1 | `ack` | `[i64 stateNum]`, and nothing else — any other length is a framing bug, not a value to salvage |
+| 2 | `presence` | `[i64 presenceClock][16B viewingTabID][16B viewingPaneID][u16 cols][u16 rows][u8 flags]`. Newest clock wins with **no merge**; an older clock is ignored outright, so a client reconnecting stale cannot resurrect a view it has left |
+| 3 | `intent` | `[16B intentID][u8 op][u32 argLen][args…]` — Phase 5; answered `unknownOp` until then |
+
+**Type 37 `workspaceEvent`** (host → client, CONTROL) —
+`[u8 kind][16B epoch][i64 baseStateNum][i64 newStateNum][u32 payloadLen][payload]`. Epoch and both
+state numbers are hoisted into the envelope so a mis-based frame is dropped after a 33-byte read,
+without parsing the payload.
+
+| kind | name | base / new | payload |
+|------|------|-----------|---------|
+| 0 | `snapshot` | `0` / current | `[u32 entryCount][entry…]` |
+| 1 | `diff` | subscriber's **acked** / current | `[u32 setCount][entry…][u32 delCount][key…]` |
+| 2 | `presence` | `0` / `0` | roster — **full replace, never diffed** |
+| 3 | `intentResult` | `0` / `0` | `[16B intentID][u8 status]` — 0 applied · 1 rejectedStale · 2 rejectedInvalid · 3 unknownOp · 4 rejectedNotFound |
+| 4 | `reset` | `0` / `0`, `epoch` = the NEW epoch | empty |
+
+`stateNum` is `Int64` (one seq idiom with `output.seq` / `ack.seq` / `resumeFromSeq`) and **starts at
+1, never 0**. Zero is the "I know nothing" sentinel and the base every snapshot declares; a host that
+could also legitimately be at zero would make a client that had acked the opening document
+indistinguishable from one that had never connected, and re-snapshot it forever.
+
+### 11.3 Open order: await the ack before subscribing
+
+`channelOpen` is announced on the **DATA** link while `subscribe` rides **CONTROL**. A client that
+sends `subscribe` immediately after `openChannel` can therefore beat the host's registration of the
+control sub-channel; the frame is dropped and the client waits forever for a snapshot that never
+comes.
+
+> **Rule: the client awaits `channelOpenAck` before sending its first `workspaceRequest`.** Same
+> discipline as PATH A's reattach, and it presents as a FLAKE rather than a failure, which is how
+> open-order races always present.
+
+### 11.4 The entry grammar
 
 ```
 key   := [u8 kindTag][16B objectID][u8 field]           — 18 bytes, fixed, no length prefix
@@ -1075,7 +1119,7 @@ An entry whose `kindTag`/`field` this build does not recognise is **kept verbati
 length-prefixing makes forward tolerance free, and keeping means an older client's state stays
 byte-equal to the host's so its ack means what it says.
 
-### 10.3 Snapshot, diff, and the acked base
+### 11.5 Snapshot, diff, and the acked base
 
 The host keeps, per subscriber, the state that subscriber last **acked**, and every send computes
 `diff(from: assumedAcked, to: current)` — **from the acked base, not the last-sent base** (mosh SSP).
@@ -1113,7 +1157,7 @@ divergence that is permanent, silent, and has no detector. (Pinned as a hazard b
 `WorkspaceStateAlgebraTests.testDiffAgainstAForeignBaseSilentlyDiverges`.) The epoch is the
 no-migration directive expressed on the wire.
 
-### 10.4 Transport rules
+### 11.6 Transport rules
 
 - The workspace channel **must never** use `enqueueControl`. That queue sheds NEW messages past
   `maxControlOutQueued = 1024`, so a shed snapshot would leave a client pinned at `stateNum 0` with
@@ -1121,8 +1165,15 @@ no-migration directive expressed on the wire.
 - It owns its own send task with **depth-1 coalescing**: a pending diff is discarded and recomputed,
   never queued. Host memory is O(clients × state) regardless of how slow a client is; a sleeping
   iPhone is free.
+- **One send is outstanding at a time.** A diff's declared `baseStateNum` must name a state the
+  client actually holds, so the host holds further updates until the previous frame is acked — which
+  is also exactly what depth-1 coalescing means. 500 versions with no ack in between produce ONE
+  diff, and the 500th value lands when the ack arrives.
+- At most **4** sent-but-unacked states are retained per subscriber. An ack outside that window, or
+  for a state this subscriber never sent, falls back to a **snapshot** — never to a guessed base,
+  because a diff against the wrong base applies cleanly and corrupts silently.
 
-### 10.5 Decode contract
+### 11.7 Decode contract
 
 Every count is checked against the bytes **actually remaining** before any `reserveCapacity`; no
 field of attacker input is force-unwrapped; C-style bools are `byte != 0`; strings are strict UTF-8,
@@ -1132,7 +1183,7 @@ in a hand-rolled binary decoder over network input, that cap **is** the stack-sa
 `SplitNode+Codable` can lean on `JSONDecoder`'s own nesting limit. `childCount` is a `u8`, so
 fan-out is bounded at 255 by the format itself.
 
-### 10.6 State plane vs byte plane
+### 11.8 State plane vs byte plane
 
 A client can receive `pane/liveness = dead`, or a pane delete, on the workspace channel while
 `output` / `exit` frames for that pane are still in flight on an **independent** mux channel.
