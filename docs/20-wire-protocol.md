@@ -1208,16 +1208,46 @@ and no merge function anywhere.
 | 15 | `detachPane` | `[16B paneID]` |
 | 16 | `reattachPane` | `[16B paneID]` |
 | 17 | `setDividerWeight` | `[16B splitNodeID][u16 leadingIndex][u64 BE Double.bitPattern]` — the ONLY writer of `splitNode/weight` |
-| 18 | `newSession` | `[16B sessionID][16B newPaneID][u16 len][name]` |
+| 18 | `newSession` | `[16B sessionID][16B newPaneID][u16 len][name][u16 len][spawnCwd]` |
 | 19 | `closeSession` | `[16B sessionID]` |
-| 20 | `reopenClosedTab` | empty |
+| 20 | `reopenClosedTab` | `[u16 lifoIndex][u8 position]` |
+| 21 | `breakPaneToTab` | `[16B paneID]` — eject into a new tab of the same session |
+| 22 | `swapPanes` | `[16B paneA][16B paneB]` |
+| 23 | `dockPaneAtTabEdge` | `[16B sourcePaneID][16B tabID][u8 edge]` |
+| 24 | `setTabLayout` | `[16B tabID][layoutStructure…]` — the §11.4 layout encoding, to the last byte |
+| 25 | `spawnDetachedPane` | `[16B newPaneID][u8 kind][u16 len][videoTarget]` |
 
-`position` (op 13): `0 auto · 1 end · 2 afterCurrent`; an unknown byte is `auto`. `axis`: `0`
-horizontal (columns) / non-zero vertical (rows). `before` and the flag bytes follow the C-style bool
-rule — any non-zero is `true`.
+`position` (ops 13 and 20): `0 auto · 1 end · 2 afterCurrent`; an unknown byte is `auto`. `axis`: `0`
+horizontal (columns) / non-zero vertical (rows). `edge` (op 23): `0 leading · 1 trailing · 2 top ·
+3 bottom`; an unknown byte is leading, because every value is a legal dock and there is nothing to
+reject. `kind` (op 25) is the `pane/kind` tag (`0 terminal · 1 desktop`) and a zero-length
+`videoTarget` is "no target". `before` and the flag bytes follow the C-style bool rule — any non-zero
+is `true`.
 
-**New ids are proposed by the CLIENT.** `splitPane`, `spawnPane`, `spawnTab` and `newSession` all
-carry the id the new object will have. The host validates (a proposed id already in use, including
+**`reopenClosedTab` is index-addressed.** `lifoIndex` counts from the END of the ring — `0` is the
+most recently closed tab. Open-Quickly's Recent rows must reopen row N, and a plain "pop the newest"
+gave every row but the first the wrong tab. An index past the end of the ring is **not** an error: it
+answers `applied` with the topology unchanged, exactly as an empty ring does, so no client rolls back
+a patch it never made.
+
+**Op 23 docks against the CONTAINER, not a leaf.** It wraps the whole tab root, which no
+`(source, target, axis, before)` triple can express. The tab is named as well as the source so the
+intent is self-validating: a host whose tree has since moved the pane elsewhere refuses rather than
+docking it somewhere the user never pointed at.
+
+**Op 24 is every re-tile.** Applying a preset, cycling to the next one and balancing the splits are
+all "this tab now has this shape", so they are one op rather than a burst of `setDividerWeight`. The
+decoded leaf set must equal the tab's current leaf set EXACTLY — a shape that adds a leaf would
+invent a pane with no spec, and one that drops a leaf would strand a live PTY with nothing rendering
+it. Every split comes back at an equal `.flex(1)` share (`select-layout` semantics: a re-tile
+discards the drags that described the old shape).
+
+**Op 25 is the only writer of `pane/kind` and `pane/videoTarget`.** Both round-trip through the
+document already; until this op nothing could put them there. A `.desktop` pane is born detached — it
+never passes through a tab.
+
+**New ids are proposed by the CLIENT.** `splitPane`, `spawnPane`, `spawnTab`, `newSession` and
+`spawnDetachedPane` all carry the id the new object will have. The host validates (a proposed id already in use, including
 one parked in the closed-tab ring, is `rejectedInvalid`) and adopts it. The reason is latency: an
 optimistic overlay cannot insert a leaf it has no id for, so a host-minted id would make every split
 wait a round trip before anything appeared. It also makes a retried intent idempotent.

@@ -4599,15 +4599,21 @@
   ],
   "workspaceIntentArgs": {
     "dividerWeight": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c300013fd5555555555555",
+    "dockAtTabEdge": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b203",
     "flag": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a101",
     "identity": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
     "move": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a40000",
-    "newSession": "f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a600056e6f746573",
+    "newSession": "f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2f2a6a6a6a6a6a6a6a6a6a6a6a6a6a6a6a600056e6f746573000e2f566f6c756d65732f4c61636965",
     "rename": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b20008736c6f706465736b",
     "renameEmpty": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b20000",
+    "reopenClosedTab": "000102",
     "reorderTabs": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f10002b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3b3",
+    "setTabLayout": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b201c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3000200a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a100a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4",
+    "spawnDetachedDesktop": "a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a701001400000000010000000000074465736b746f700000",
+    "spawnDetachedNoTarget": "a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7000000",
     "spawnTab": "f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1f1a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5020000",
-    "split": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a10101a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3000e2f566f6c756d65732f4c61636965"
+    "split": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a10101a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3000e2f566f6c756d65732f4c61636965",
+    "swapPanes": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4"
   },
   "workspaceIntentOps": [
     {
@@ -4693,6 +4699,26 @@
     {
       "name": "reopenClosedTab",
       "op": 20
+    },
+    {
+      "name": "breakPaneToTab",
+      "op": 21
+    },
+    {
+      "name": "swapPanes",
+      "op": 22
+    },
+    {
+      "name": "dockPaneAtTabEdge",
+      "op": 23
+    },
+    {
+      "name": "setTabLayout",
+      "op": 24
+    },
+    {
+      "name": "spawnDetachedPane",
+      "op": 25
     }
   ],
   "workspaceStateCodec": {

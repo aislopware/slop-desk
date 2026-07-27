@@ -1166,7 +1166,7 @@ fallback — they still write `fastPath` and, with no `entries` to lose to, driv
 - `HostWorkspaceStore` — `workspace-state.json`, the §6.3 per-field filter (applied on the way IN as
   well as out), atomic write, 600 ms debounce, flush on shutdown, corrupt-file-kept-aside, and the
   **default document** for a first-run host.
-- `WorkspaceIntentApplier` — all 21 ops, pure, with validate-then-drop and a re-check of the RESULT
+- `WorkspaceIntentApplier` — every op, pure, with validate-then-drop and a re-check of the RESULT
   against the depth cap and the specs invariant. `intentResult`; `adoptWorkspace` with the
   pristine-is-a-file rule.
 - Host-owned `focusMRU` drives `closeTab`'s successor; host-owned closed-tab ring drives ⇧⌘T.

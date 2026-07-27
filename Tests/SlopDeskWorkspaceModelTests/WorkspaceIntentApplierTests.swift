@@ -1,7 +1,7 @@
 import XCTest
 @testable import SlopDeskWorkspaceModel
 
-/// The 21 topology changes a client may ASK for — and, mostly, the ways it may not.
+/// The topology changes a client may ASK for — and, mostly, the ways it may not.
 ///
 /// `WorkspaceTreeOps` has been in production for a long time against a caller that could not supply
 /// nonsense: the client's own `@MainActor` store, with local input. An intent hands the same ops a
@@ -54,6 +54,27 @@ final class WorkspaceIntentApplierTests: XCTestCase {
         WorkspaceIntentApplier.apply(
             op: op.rawValue, args: args, to: topology, documentIsPristine: pristine,
         )
+    }
+
+    /// A `reopenClosedTab` payload at the caller's preferred tab position.
+    private func reopen(_ lifoIndex: Int) -> Data {
+        WorkspaceIntentArgs.encode(reopenLIFOIndex: lifoIndex, position: .end)
+    }
+
+    /// A three-leaf tab, so the re-layout and dock ops have a shape to work on.
+    private func threeLeafTab(_ f: Fixture) throws -> (WorkspaceTopology, TabID, [PaneID]) {
+        var topology = f.topology
+        var previous = f.paneA
+        var panes = [f.paneA]
+        for _ in 0..<2 {
+            let next = PaneID()
+            topology = try XCTUnwrap(apply(.splitPane, WorkspaceIntentArgs.encode(
+                target: previous.raw, axis: .horizontal, before: false, newPane: next, spawnCwd: "",
+            ), to: topology).topology)
+            panes.append(next)
+            previous = next
+        }
+        return (topology, f.tabA, panes)
     }
 
     // MARK: - The happy paths
@@ -150,6 +171,26 @@ final class WorkspaceIntentApplierTests: XCTestCase {
         }
     }
 
+    /// A DETACHED pane is closed for real. `hasPane` unions the detached set, so the op accepts the
+    /// id; the tree op underneath only walks LEAVES, so a satellite window's pane would be accepted
+    /// and left standing — the client retires its optimistic patch against a document that never
+    /// moved and keeps a zombie handle streaming.
+    func testClosePaneOnADetachedPaneActuallyClosesIt() throws {
+        let f = fixture()
+        let extra = PaneID()
+        let split = try XCTUnwrap(apply(.splitPane, WorkspaceIntentArgs.encode(
+            target: f.paneA.raw, axis: .horizontal, before: false, newPane: extra, spawnCwd: "",
+        ), to: f.topology).topology)
+        let detached = try XCTUnwrap(apply(.detachPane, WorkspaceIntentArgs.encode(pane: extra), to: split).topology)
+        XCTAssertTrue(detached.tree.isDetached(extra))
+
+        let closed = try XCTUnwrap(apply(.closePane, WorkspaceIntentArgs.encode(pane: extra), to: detached).topology)
+
+        XCTAssertFalse(closed.tree.isDetached(extra))
+        XCTAssertNil(closed.tree.spec(for: extra))
+        XCTAssertTrue(closed.tree.isInvariantHeld())
+    }
+
     // MARK: - The shared MRU ring
 
     /// The reason the ring is host-owned. Two clients computing successors from two LOCAL rings pick
@@ -196,7 +237,7 @@ final class WorkspaceIntentApplierTests: XCTestCase {
         XCTAssertEqual(closed.tree.sessions[0].tabs.count, 1)
         XCTAssertEqual(closed.closedTabs.count, 1)
 
-        let reopened = try XCTUnwrap(apply(.reopenClosedTab, Data(), to: closed).topology)
+        let reopened = try XCTUnwrap(apply(.reopenClosedTab, reopen(0), to: closed).topology)
 
         let tab = try XCTUnwrap(reopened.tree.sessions[0].tabs.first { $0.id == f.tabB })
         XCTAssertEqual(tab.title, "two")
@@ -222,11 +263,47 @@ final class WorkspaceIntentApplierTests: XCTestCase {
         XCTAssertNotNil(decoded.closedTabs[0].specs[f.paneB])
     }
 
-    /// ⇧⌘T with nothing to reopen is a satisfied request, not an error.
+    /// ⇧⌘T with nothing to reopen is a satisfied request, not an error. So is an index past the end
+    /// of the ring — a Recent row the user clicked after another client already reopened it.
     func testReopeningAnEmptyRingChangesNothing() throws {
         let f = fixture()
-        let outcome = apply(.reopenClosedTab, Data(), to: f.topology)
-        XCTAssertEqual(try XCTUnwrap(outcome.topology), f.topology)
+        for index in [0, 7] {
+            let outcome = apply(.reopenClosedTab, reopen(index), to: f.topology)
+            XCTAssertEqual(try XCTUnwrap(outcome.topology), f.topology)
+        }
+    }
+
+    /// The Recent rows are INDEX-ADDRESSED: row N reopens tab N. A plain `popLast()` gave every row
+    /// but the first the newest tab instead of the one it named.
+    func testReopenClosedTabAtIndexOnePopsTheOlderTab() throws {
+        let f = fixture()
+        let extra = PaneID()
+        var topology = try XCTUnwrap(apply(.spawnTab, WorkspaceIntentArgs.encode(
+            session: f.session, newPane: extra, position: .end, spawnCwd: "",
+        ), to: f.topology).topology)
+        let tabC = try XCTUnwrap(topology.tree.tab(containing: extra)?.1)
+        // Close B first, then C — so C is the ring's newest and B sits at LIFO index 1.
+        topology = try XCTUnwrap(apply(.closeTab, WorkspaceIntentArgs.encode(tab: f.tabB), to: topology).topology)
+        topology = try XCTUnwrap(apply(.closeTab, WorkspaceIntentArgs.encode(tab: tabC), to: topology).topology)
+        XCTAssertEqual(topology.closedTabRing, [f.tabB, tabC])
+
+        let reopened = try XCTUnwrap(apply(.reopenClosedTab, reopen(1), to: topology).topology)
+
+        XCTAssertTrue(reopened.tree.sessions[0].tabs.contains { $0.id == f.tabB })
+        XCTAssertFalse(reopened.tree.sessions[0].tabs.contains { $0.id == tabC })
+        XCTAssertEqual(reopened.closedTabRing, [tabC])
+    }
+
+    /// A new window INHERITS a directory. Without the cwd on the wire it is unrepresentable and every
+    /// new session silently opens at the host default.
+    func testNewSessionCarriesSpawnCwd() throws {
+        let f = fixture()
+        let newPane = PaneID()
+        let topology = try XCTUnwrap(apply(.newSession, WorkspaceIntentArgs.encode(
+            newSession: SessionID(), newPane: newPane, name: "notes", spawnCwd: "/Volumes/Lacie",
+        ), to: f.topology).topology)
+
+        XCTAssertEqual(topology.spawnCwd[newPane], "/Volumes/Lacie")
     }
 
     /// The ring is capped, or every pane the user ever closed stays alive in the document forever, on
@@ -243,6 +320,187 @@ final class WorkspaceIntentApplierTests: XCTestCase {
             topology = try XCTUnwrap(apply(.closeTab, WorkspaceIntentArgs.encode(tab: tab), to: topology).topology)
         }
         XCTAssertEqual(topology.closedTabs.count, WorkspaceTopology.closedTabRingCap)
+    }
+
+    // MARK: - The gestures the first 21 ops could not express
+
+    /// ⌃⌘T. The pane leaves its tab for a fresh one in the SAME session, and the source collapses
+    /// around the hole.
+    func testBreakingAPaneOutMovesItIntoANewTab() throws {
+        let f = fixture()
+        let (topology, tabA, panes) = try threeLeafTab(f)
+        let moved = panes[1]
+
+        let broken = try XCTUnwrap(apply(.breakPaneToTab, WorkspaceIntentArgs.encode(pane: moved), to: topology)
+            .topology)
+
+        let landed = try XCTUnwrap(broken.tree.tab(containing: moved)?.1)
+        XCTAssertNotEqual(landed, tabA)
+        XCTAssertEqual(broken.tree.sessions[0].tabs.first { $0.id == landed }?.allPaneIDs(), [moved])
+        XCTAssertEqual(broken.tree.sessions[0].tabs.first { $0.id == tabA }?.allPaneIDs(), [panes[0], panes[2]])
+        // The new tab is where the user is now looking, so it heads the shared MRU ring.
+        XCTAssertEqual(broken.focusMRU[f.session]?.first, landed)
+        XCTAssertTrue(broken.tree.isInvariantHeld())
+    }
+
+    /// A pane that is its tab's only leaf has nothing to break out of. An unmoved pane is a refusal,
+    /// not a satisfied request — answering `applied` would retire a patch the host never made.
+    func testBreakingOutALoneLeafIsRefused() {
+        let f = fixture()
+        XCTAssertEqual(
+            apply(.breakPaneToTab, WorkspaceIntentArgs.encode(pane: f.paneA), to: f.topology),
+            .rejectedInvalid,
+        )
+    }
+
+    /// Two leaves exchange positions in place. The client resolves the geometric neighbour against
+    /// the layout it is looking at and sends the resolved PAIR, so the host needs no viewport.
+    func testSwappingTwoPanesExchangesThem() throws {
+        let f = fixture()
+        let (topology, tabA, panes) = try threeLeafTab(f)
+        let before = try XCTUnwrap(topology.tree.sessions[0].tabs.first { $0.id == tabA }?.allPaneIDs())
+
+        let swapped = try XCTUnwrap(apply(.swapPanes, WorkspaceIntentArgs.encode(
+            swap: panes[0], with: panes[2],
+        ), to: topology).topology)
+
+        let after = try XCTUnwrap(swapped.tree.sessions[0].tabs.first { $0.id == tabA }?.allPaneIDs())
+        XCTAssertEqual(after, [before[2], before[1], before[0]])
+        XCTAssertTrue(swapped.tree.isInvariantHeld())
+    }
+
+    /// Swapping a pane with itself is malformed, not a no-op: the only way to send it is a client
+    /// that resolved the same pane twice, and answering `applied` would hide that.
+    func testSwappingAPaneWithItselfIsRefused() {
+        let f = fixture()
+        XCTAssertEqual(
+            apply(.swapPanes, WorkspaceIntentArgs.encode(swap: f.paneA, with: f.paneA), to: f.topology),
+            .rejectedInvalid,
+        )
+    }
+
+    /// The gutter drop: the pane becomes a full-span band wrapping the WHOLE tab root, which no
+    /// `(source, target, axis, before)` triple can express.
+    func testDockingAPaneAtTheTabEdgeWrapsTheRoot() throws {
+        let f = fixture()
+        let (topology, tabA, panes) = try threeLeafTab(f)
+
+        let docked = try XCTUnwrap(apply(.dockPaneAtTabEdge, WorkspaceIntentArgs.encode(
+            dock: panes[2], tab: tabA, edge: .bottom,
+        ), to: topology).topology)
+
+        let root = try XCTUnwrap(docked.tree.sessions[0].tabs.first { $0.id == tabA }?.root)
+        guard case let .split(_, axis, children) = root else {
+            XCTFail("a root-edge dock produces a split at the root")
+            return
+        }
+        XCTAssertEqual(axis, .vertical)
+        XCTAssertEqual(children.count, 2)
+        XCTAssertEqual(children.last?.node, .leaf(panes[2]))
+        XCTAssertTrue(docked.tree.isInvariantHeld())
+    }
+
+    /// A dock into a tab the document does not hold is `rejectedNotFound` — the same rule every other
+    /// referenced id follows.
+    func testDockingIntoAnUnknownTabIsNotFound() throws {
+        let f = fixture()
+        let (topology, _, panes) = try threeLeafTab(f)
+        XCTAssertEqual(
+            apply(.dockPaneAtTabEdge, WorkspaceIntentArgs.encode(
+                dock: panes[2], tab: TabID(), edge: .left,
+            ), to: topology),
+            .rejectedNotFound,
+        )
+    }
+
+    /// One op for every re-tile — apply a preset, cycle to the next, balance the splits. The shape
+    /// arrives whole in the SAME grammar `tab/layoutStructure` publishes.
+    func testSettingATabLayoutAcceptsAPermutationOfTheSameLeaves() throws {
+        let f = fixture()
+        let (topology, tabA, panes) = try threeLeafTab(f)
+        let wanted = WorkspaceLayoutNode.split(
+            id: SplitNodeID(),
+            axis: .vertical,
+            children: [.leaf(panes[2]), .leaf(panes[1]), .leaf(panes[0])],
+        )
+
+        let laid = try XCTUnwrap(apply(.setTabLayout, WorkspaceIntentArgs.encode(
+            tab: tabA, layout: wanted,
+        ), to: topology).topology)
+
+        let tab = try XCTUnwrap(laid.tree.sessions[0].tabs.first { $0.id == tabA })
+        XCTAssertEqual(tab.allPaneIDs(), [panes[2], panes[1], panes[0]])
+        XCTAssertEqual(WorkspaceTopology.layout(of: tab.root), wanted)
+        guard case let .split(_, _, children) = tab.root else {
+            XCTFail("the re-tile produces a split")
+            return
+        }
+        // `select-layout` semantics: a re-tile discards the drags that described the OLD shape.
+        XCTAssertEqual(children.map(\.weight), [.flex(1), .flex(1), .flex(1)])
+        XCTAssertTrue(laid.tree.isInvariantHeld())
+    }
+
+    /// A layout whose leaf set differs by one pane is not a re-layout. Accepting it would either
+    /// invent a pane with no spec or strand a live PTY with nothing rendering it.
+    func testALayoutThatDropsALeafIsRefused() throws {
+        let f = fixture()
+        let (topology, tabA, panes) = try threeLeafTab(f)
+        let shapes: [WorkspaceLayoutNode] = [
+            // One leaf short.
+            .split(id: SplitNodeID(), axis: .vertical, children: [.leaf(panes[0]), .leaf(panes[1])]),
+            // One leaf too many.
+            .split(id: SplitNodeID(), axis: .vertical, children: [
+                .leaf(panes[0]), .leaf(panes[1]), .leaf(panes[2]), .leaf(PaneID()),
+            ]),
+            // The same pane in two places.
+            .split(id: SplitNodeID(), axis: .vertical, children: [
+                .leaf(panes[0]), .leaf(panes[1]), .leaf(panes[1]),
+            ]),
+            // A one-child split breaks the `.split` arity invariant.
+            .split(id: SplitNodeID(), axis: .vertical, children: [
+                .split(id: SplitNodeID(), axis: .horizontal, children: [.leaf(panes[0])]),
+                .leaf(panes[1]), .leaf(panes[2]),
+            ]),
+        ]
+        for shape in shapes {
+            XCTAssertEqual(
+                apply(.setTabLayout, WorkspaceIntentArgs.encode(tab: tabA, layout: shape), to: topology),
+                .rejectedInvalid,
+            )
+        }
+    }
+
+    /// The ONLY intent that can write `pane/kind` or `pane/videoTarget`. Both already round-trip
+    /// through the document; until this op nothing could ever put them there.
+    func testSpawningADetachedPaneCarriesItsKindAndVideoTarget() throws {
+        let f = fixture()
+        let newPane = PaneID()
+        let endpoint = VideoEndpoint(windowID: 0, title: "Desktop", appName: "", displayID: 0)
+
+        let spawned = try XCTUnwrap(apply(.spawnDetachedPane, WorkspaceIntentArgs.encode(
+            detachedPane: newPane, kind: .desktop, video: endpoint,
+        ), to: f.topology).topology)
+
+        XCTAssertTrue(spawned.tree.isDetached(newPane))
+        var state = HostWorkspaceState()
+        state.write(topology: spawned)
+        let decoded = try XCTUnwrap(state.topology)
+        let spec = try XCTUnwrap(decoded.tree.spec(for: newPane))
+        XCTAssertEqual(spec.kind, .desktop)
+        XCTAssertEqual(spec.video, endpoint)
+        XCTAssertTrue(decoded.tree.isDetached(newPane))
+    }
+
+    /// A proposed id already in use would alias two panes onto one stream — the same rule every other
+    /// client-proposed id follows.
+    func testSpawningADetachedPaneOntoAnIdInUseIsRefused() {
+        let f = fixture()
+        XCTAssertEqual(
+            apply(.spawnDetachedPane, WorkspaceIntentArgs.encode(
+                detachedPane: f.paneA, kind: .desktop, video: nil,
+            ), to: f.topology),
+            .rejectedInvalid,
+        )
     }
 
     // MARK: - Bootstrap
@@ -411,7 +669,7 @@ final class WorkspaceIntentApplierTests: XCTestCase {
             // salvaging the prefix would hide it behind a plausible value.
             WorkspaceIntentArgs.encode(id: f.paneA.raw, name: "x") + Data([0x00]),
         ]
-        for op in WorkspaceIntentOp.allCases where op != .reopenClosedTab && op != .adoptWorkspace {
+        for op in WorkspaceIntentOp.allCases where op != .adoptWorkspace {
             for payload in payloads {
                 let outcome = apply(op, payload, to: f.topology)
                 XCTAssertNotEqual(outcome, .applied(f.topology), "\(op) accepted \(payload.count) hostile bytes")
@@ -542,8 +800,10 @@ final class WorkspaceIntentApplierTests: XCTestCase {
             (.reattachPane, WorkspaceIntentArgs.encode(pane: extra)),
             (.closePane, WorkspaceIntentArgs.encode(pane: extra)),
             (.closeTab, WorkspaceIntentArgs.encode(tab: f.tabB)),
-            (.reopenClosedTab, Data()),
-            (.newSession, WorkspaceIntentArgs.encode(newSession: SessionID(), newPane: PaneID(), name: "notes")),
+            (.reopenClosedTab, reopen(0)),
+            (.newSession, WorkspaceIntentArgs.encode(
+                newSession: SessionID(), newPane: PaneID(), name: "notes", spawnCwd: "",
+            )),
         ]
         for (op, args) in script {
             topology = try XCTUnwrap(apply(op, args, to: topology).topology, "\(op)")

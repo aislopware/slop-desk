@@ -31,6 +31,21 @@ public enum WorkspaceIntentOp: UInt8, Sendable, CaseIterable {
     case newSession = 18
     case closeSession = 19
     case reopenClosedTab = 20
+    /// ⌃⌘T — eject a pane into a new tab of its session.
+    case breakPaneToTab = 21
+    /// Exchange two leaves in place. Backs both the drag-onto-pane swap and the directional move: the
+    /// client resolves the geometric neighbour against the layout IT is looking at and sends the
+    /// resolved pair, so the host never needs a viewport to answer "which pane is to the left".
+    case swapPanes = 22
+    /// Dock a pane at an OUTER edge of a tab, wrapping the whole tab root. No `(source, target, axis,
+    /// before)` triple can express it — there is no target leaf, the target is the container.
+    case dockPaneAtTabEdge = 23
+    /// Re-shape a tab from a whole `layoutStructure`. One op for every re-tile: apply a preset, cycle
+    /// to the next one, and balance the splits are all "this tab now has this shape".
+    case setTabLayout = 24
+    /// Mint a pane straight into a session's DETACHED set — how a `.desktop` pane is born, and the
+    /// only intent that can write `pane/kind` or `pane/videoTarget`.
+    case spawnDetachedPane = 25
 }
 
 // MARK: - Outcome
@@ -75,6 +90,10 @@ public enum WorkspaceIntentArgs {
     public static let maxNameBytes = 512
     /// Cap on a `reorderTabs` list. Real sessions have single-digit tab counts.
     public static let maxTabCount = 4096
+    /// Cap on the two blobs that carry a whole sub-payload — a `layoutStructure` and a
+    /// `videoTarget`. Both are bounded by their own grammars once decoded; this bounds them BEFORE
+    /// anything is copied out of the reader.
+    public static let maxBlobBytes = 16384
 
     // MARK: Encode
 
@@ -146,11 +165,77 @@ public enum WorkspaceIntentArgs {
         return out
     }
 
-    /// `newSession`: `[16B session][16B newPane][u16 len][name]`.
-    public static func encode(newSession: SessionID, newPane: PaneID, name: String) -> Data {
+    /// `newSession`: `[16B session][16B newPane][u16 len][name][u16 len][spawnCwd]`.
+    ///
+    /// The cwd rides alongside the name because a new window INHERITS one. Without it the pane's
+    /// starting directory is unrepresentable and every new session silently opens at the host default
+    /// — the same fact `splitPane` and `spawnTab` already carry.
+    public static func encode(
+        newSession: SessionID,
+        newPane: PaneID,
+        name: String,
+        spawnCwd: String?,
+    ) -> Data {
         var out = WorkspaceStateCodec.encodeUUID(newSession.raw)
         out.append(WorkspaceStateCodec.encodeUUID(newPane.raw))
         out.append(encodeName(name))
+        out.append(encodeName(spawnCwd ?? ""))
+        return out
+    }
+
+    /// `swapPanes`: `[16B a][16B b]`.
+    public static func encode(swap a: PaneID, with b: PaneID) -> Data {
+        var out = WorkspaceStateCodec.encodeUUID(a.raw)
+        out.append(WorkspaceStateCodec.encodeUUID(b.raw))
+        return out
+    }
+
+    /// `dockPaneAtTabEdge`: `[16B source][16B tab][u8 edge]`.
+    ///
+    /// The tab is named even though the source's own tab could be derived, because it is what makes
+    /// the intent SELF-VALIDATING: the client is asserting which container it saw the pane docked
+    /// into, and a host whose tree has since moved the pane elsewhere refuses instead of docking it
+    /// somewhere the user never pointed at.
+    public static func encode(dock source: PaneID, tab: TabID, edge: PaneDropEdge) -> Data {
+        var out = WorkspaceStateCodec.encodeUUID(source.raw)
+        out.append(WorkspaceStateCodec.encodeUUID(tab.raw))
+        out.append(edgeByte(edge))
+        return out
+    }
+
+    /// `setTabLayout`: `[16B tab][layoutStructure bytes]`.
+    ///
+    /// The SAME encoding `tab/layoutStructure` carries in the document — one shape grammar, so a
+    /// client can round-trip the layout it is looking at straight back as an intent.
+    public static func encode(tab: TabID, layout: WorkspaceLayoutNode) -> Data {
+        var out = WorkspaceStateCodec.encodeUUID(tab.raw)
+        out.append(WorkspaceStateCodec.encodeLayout(layout))
+        return out
+    }
+
+    /// `spawnDetachedPane`: `[16B newPane][u8 kind][u16 len][videoTarget]`.
+    ///
+    /// A zero length is "no target" — a detached terminal. The blob is the `pane/videoTarget`
+    /// encoding, so what the intent proposes and what the document publishes are the same bytes.
+    public static func encode(detachedPane: PaneID, kind: PaneKind, video: VideoEndpoint?) -> Data {
+        var out = WorkspaceStateCodec.encodeUUID(detachedPane.raw)
+        out.append(WorkspacePaneKindTag.byte(for: kind))
+        let blob = video.map { WorkspaceStateCodec.encodeVideoTarget($0) } ?? Data()
+        out.append(UInt8(truncatingIfNeeded: blob.count >> 8))
+        out.append(UInt8(truncatingIfNeeded: blob.count))
+        out.append(blob)
+        return out
+    }
+
+    /// `reopenClosedTab`: `[u16 lifoIndex][u8 position]`.
+    ///
+    /// The index counts from the END of the ring — `0` is the most recently closed tab, the one a
+    /// `popLast()` would return. Index-addressed rather than implicit because Open-Quickly's Recent
+    /// rows must reopen row N, and always popping the newest is exactly the bug that produced.
+    public static func encode(reopenLIFOIndex: Int, position: NewTabPosition) -> Data {
+        let index = UInt16(truncatingIfNeeded: max(0, reopenLIFOIndex))
+        var out = Data([UInt8(truncatingIfNeeded: index >> 8), UInt8(truncatingIfNeeded: index)])
+        out.append(positionByte(position))
         return out
     }
 
@@ -192,6 +277,29 @@ public enum WorkspaceIntentArgs {
         // An unknown byte from a newer client is `.auto` — the position the user's own preference
         // resolves, which is the least surprising place for a tab to land.
         default: .auto
+        }
+    }
+
+    /// The dock edge as a byte: `0 leading · 1 trailing · 2 top · 3 bottom`. Named by SIDE rather
+    /// than by axis so the byte says which gutter the user dropped into; the axis follows from it
+    /// through ``PaneDropEdge/axis``, which stays the one place that mapping lives.
+    static func edgeByte(_ edge: PaneDropEdge) -> UInt8 {
+        switch edge {
+        case .left: 0
+        case .right: 1
+        case .top: 2
+        case .bottom: 3
+        }
+    }
+
+    /// An unknown byte docks at the LEADING edge. Every value is a legal dock, so there is nothing to
+    /// reject — and defaulting keeps the pane on screen rather than dropping the gesture.
+    static func edge(for byte: UInt8) -> PaneDropEdge {
+        switch byte {
+        case 1: .right
+        case 2: .top
+        case 3: .bottom
+        default: .left
         }
     }
 
@@ -253,6 +361,22 @@ public enum WorkspaceIntentArgs {
             let slice = Data(bytes[offset..<offset + length])
             offset += length
             return WorkspaceStateCodec.decodeString(slice)
+        }
+
+        /// A length-prefixed sub-payload — a `videoTarget` blob. Bounded before anything is copied,
+        /// and over-long is MALFORMED for the same reason ``name()`` refuses one.
+        mutating func blob() -> Data? {
+            guard let length = u16(), length <= maxBlobBytes, remaining >= length else { return nil }
+            defer { offset += length }
+            return Data(bytes[offset..<offset + length])
+        }
+
+        /// Everything left. The trailing `layoutStructure` needs no length prefix of its own — it is
+        /// the last field, and the codec underneath validates its own framing to the last byte.
+        mutating func rest() -> Data? {
+            guard remaining <= maxBlobBytes else { return nil }
+            defer { offset = bytes.count }
+            return Data(bytes[offset...])
         }
 
         mutating func uuidList() -> [UUID]? {

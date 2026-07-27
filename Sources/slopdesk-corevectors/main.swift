@@ -1813,11 +1813,44 @@ root["workspaceIntentArgs"] = [
         position: .afterCurrent,
         spawnCwd: "",
     )),
+    // A new session carries the cwd it INHERITS alongside its name — without it a new window's
+    // starting directory is unrepresentable and silently becomes the host default.
     "newSession": wsHex(WorkspaceIntentArgs.encode(
         newSession: SessionID(raw: wsUUID(0xF2)),
         newPane: PaneID(raw: wsUUID(0xA6)),
         name: "notes",
+        spawnCwd: "/Volumes/Lacie",
     )),
+    "swapPanes": wsHex(WorkspaceIntentArgs.encode(
+        swap: PaneID(raw: wsPane), with: PaneID(raw: wsUUID(0xA4)),
+    )),
+    // A ROOT-edge dock names the container, not a target leaf — no `(source,target,axis,before)`
+    // triple can express wrapping the whole tab root.
+    "dockAtTabEdge": wsHex(WorkspaceIntentArgs.encode(
+        dock: PaneID(raw: wsPane), tab: TabID(raw: wsTab), edge: .bottom,
+    )),
+    // The layout blob is the SAME grammar `tab/layoutStructure` carries, so a client can round-trip
+    // the shape it is looking at straight back as an intent.
+    "setTabLayout": wsHex(WorkspaceIntentArgs.encode(
+        tab: TabID(raw: wsTab),
+        layout: .split(
+            id: SplitNodeID(raw: wsSplit),
+            axis: .horizontal,
+            children: [.leaf(PaneID(raw: wsPane)), .leaf(PaneID(raw: wsUUID(0xA4)))],
+        ),
+    )),
+    // The only intent that can write `pane/kind` or `pane/videoTarget`.
+    "spawnDetachedDesktop": wsHex(WorkspaceIntentArgs.encode(
+        detachedPane: PaneID(raw: wsUUID(0xA7)),
+        kind: .desktop,
+        video: VideoEndpoint(windowID: 0, title: "Desktop", appName: "", displayID: 0),
+    )),
+    "spawnDetachedNoTarget": wsHex(WorkspaceIntentArgs.encode(
+        detachedPane: PaneID(raw: wsUUID(0xA7)), kind: .terminal, video: nil,
+    )),
+    // The reopen index counts from the NEWEST end of the ring — Open-Quickly's Recent rows reopen
+    // row N, not always the newest.
+    "reopenClosedTab": wsHex(WorkspaceIntentArgs.encode(reopenLIFOIndex: 1, position: .afterCurrent)),
     // The LEADING weight only — the op is sum-preserving, so naming the trailing one too would let a
     // hostile pair sum to something the solver has to repair anyway.
     "dividerWeight": wsHex(WorkspaceIntentArgs.encode(

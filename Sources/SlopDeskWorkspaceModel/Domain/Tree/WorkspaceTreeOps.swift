@@ -1101,9 +1101,17 @@ public enum WorkspaceTreeOps {
     /// satellite coordinator materializes the window. `originTab` is nil-equivalent — recorded as the
     /// active tab purely because ``DetachedPane`` requires one; a desktop pane never reattaches, so
     /// the origin is never consulted. Preserves the (detach-widened) **specs invariant**.
-    public static func mintDetachedPane(spec: PaneSpec, in ws: TreeWorkspace) -> (TreeWorkspace, PaneID) {
+    ///
+    /// - Parameter id: the new pane's identity. Defaults to a fresh mint — the local-gesture path —
+    ///   but an INTENT supplies it, so a client's optimistic overlay can materialize the satellite
+    ///   window immediately instead of waiting a round trip to learn what the host called it. The
+    ///   caller is responsible for having checked that the id is free.
+    public static func mintDetachedPane(
+        spec: PaneSpec,
+        id: PaneID = PaneID(),
+        in ws: TreeWorkspace,
+    ) -> (TreeWorkspace, PaneID) {
         var copy = ws
-        let id = PaneID()
         guard let sIdx = copy.activeSessionIndex ?? copy.sessions.indices.first else { return (ws, id) }
         var session = copy.sessions[sIdx]
         session.specs[id] = spec

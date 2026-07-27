@@ -48,7 +48,12 @@ public enum WorkspaceIntentApplier {
         case .setDividerWeight: return setDividerWeight(&reader, topology)
         case .newSession: return newSession(&reader, topology)
         case .closeSession: return closeSession(&reader, topology)
-        case .reopenClosedTab: return reopenClosedTab(topology)
+        case .reopenClosedTab: return reopenClosedTab(&reader, topology)
+        case .breakPaneToTab: return breakPaneToTab(&reader, topology)
+        case .swapPanes: return swapPanes(&reader, topology)
+        case .dockPaneAtTabEdge: return dockPaneAtTabEdge(&reader, topology)
+        case .setTabLayout: return setTabLayout(&reader, topology)
+        case .spawnDetachedPane: return spawnDetachedPane(&reader, topology)
         }
     }
 
@@ -197,6 +202,14 @@ public enum WorkspaceIntentApplier {
         let paneID = PaneID(raw: raw)
         guard hasPane(paneID, in: topology) else { return .rejectedNotFound }
         var next = topology
+        // A DETACHED pane has no tab to walk. `hasPane` unions the detached set, so without this
+        // branch the op accepts the id and the tree op — which locates LEAVES only — hands back the
+        // same tree: the client retires its optimistic patch against a document that never moved and
+        // the satellite window keeps a zombie handle streaming.
+        if next.tree.isDetached(paneID) {
+            next.tree = WorkspaceTreeOps.closeDetachedPane(paneID, in: next.tree)
+            return accept(pruned(next))
+        }
         // The pane's tab may go with it. The successor comes from the SHARED MRU ring, which is the
         // whole reason that ring is host-owned: two clients computing it from two local rings pick
         // two different tabs, and the index clamp underneath reintroduces the cross-project jump.
@@ -488,12 +501,14 @@ public enum WorkspaceIntentApplier {
         _ reader: inout WorkspaceIntentArgs.Reader,
         _ topology: WorkspaceTopology,
     ) -> WorkspaceIntentOutcome {
-        guard let raw = reader.uuid(), let newRaw = reader.uuid(), let name = reader.name(), reader.isAtEnd
+        guard let raw = reader.uuid(), let newRaw = reader.uuid(), let name = reader.name(),
+              let cwd = reader.name(), reader.isAtEnd
         else { return .rejectedInvalid }
         let sessionID = SessionID(raw: raw)
         let newPane = PaneID(raw: newRaw)
         guard !hasSession(sessionID, in: topology), isFree(newPane, in: topology) else { return .rejectedInvalid }
         var next = topology
+        if !cwd.isEmpty { next.spawnCwd[newPane] = cwd }
         let tab = Tab(root: .leaf(newPane), activePane: newPane)
         next.tree = WorkspaceTreeOps.insertSession(
             Session(
@@ -520,21 +535,178 @@ public enum WorkspaceIntentApplier {
         return accept(pruned(next))
     }
 
-    private static func reopenClosedTab(_ topology: WorkspaceTopology) -> WorkspaceIntentOutcome {
-        // Nothing to reopen is NOT an error — ⇧⌘T on an empty ring is a satisfied request that
-        // changes nothing, and answering `rejected` would make every client roll back a patch it
-        // never made.
-        guard let restored = topology.closedTabs.last else { return .applied(topology) }
+    private static func reopenClosedTab(
+        _ reader: inout WorkspaceIntentArgs.Reader,
+        _ topology: WorkspaceTopology,
+    ) -> WorkspaceIntentOutcome {
+        guard let lifoIndex = reader.u16(), let positionByte = reader.u8(), reader.isAtEnd
+        else { return .rejectedInvalid }
+        // The ring is newest-LAST, and the index counts from the newest.
+        let arrayIndex = topology.closedTabs.count - 1 - lifoIndex
+        // Nothing to reopen — an empty ring, or an index past its end — is NOT an error. ⇧⌘T on an
+        // empty ring is a satisfied request that changes nothing, and answering `rejected` would make
+        // every client roll back a patch it never made.
+        guard topology.closedTabs.indices.contains(arrayIndex) else { return .applied(topology) }
+        let restored = topology.closedTabs[arrayIndex]
         guard let index = topology.tree.sessions.firstIndex(where: { $0.id == restored.sessionID })
         else { return .rejectedNotFound }
         var next = topology
-        next.closedTabs.removeLast()
+        next.closedTabs.remove(at: arrayIndex)
         next.tree = WorkspaceTreeOps.selectSession(restored.sessionID, in: next.tree)
         next.tree = WorkspaceTreeOps.insertTab(
-            restored.tab, specs: restored.specs, at: .end, in: next.tree,
+            restored.tab,
+            specs: restored.specs,
+            at: WorkspaceIntentArgs.position(for: positionByte),
+            in: next.tree,
         )
         guard next.tree.sessions[index].tabs.contains(where: { $0.id == restored.tab.id })
         else { return .rejectedInvalid }
         return accept(noting(focus: restored.tab.id, in: next))
+    }
+
+    private static func breakPaneToTab(
+        _ reader: inout WorkspaceIntentArgs.Reader,
+        _ topology: WorkspaceTopology,
+    ) -> WorkspaceIntentOutcome {
+        guard let raw = reader.uuid(), reader.isAtEnd else { return .rejectedInvalid }
+        let paneID = PaneID(raw: raw)
+        guard let origin = topology.tree.tab(containing: paneID)?.1 else { return .rejectedNotFound }
+        var next = topology
+        next.tree = WorkspaceTreeOps.breakPaneToTab(paneID, in: next.tree)
+        // The op is a no-op when the pane is its tab's ONLY leaf — there is nothing to break out of.
+        // An unmoved pane is a refusal, not a satisfied request.
+        guard let landed = next.tree.tab(containing: paneID)?.1, landed != origin else { return .rejectedInvalid }
+        return accept(noting(focus: landed, in: next))
+    }
+
+    private static func swapPanes(
+        _ reader: inout WorkspaceIntentArgs.Reader,
+        _ topology: WorkspaceTopology,
+    ) -> WorkspaceIntentOutcome {
+        guard let rawA = reader.uuid(), let rawB = reader.uuid(), reader.isAtEnd else { return .rejectedInvalid }
+        let a = PaneID(raw: rawA), b = PaneID(raw: rawB)
+        guard topology.tree.contains(a), topology.tree.contains(b) else { return .rejectedNotFound }
+        guard a != b else { return .rejectedInvalid }
+        var next = topology
+        next.tree = WorkspaceTreeOps.swapPanes(a, b, in: next.tree)
+        return accept(next)
+    }
+
+    private static func dockPaneAtTabEdge(
+        _ reader: inout WorkspaceIntentArgs.Reader,
+        _ topology: WorkspaceTopology,
+    ) -> WorkspaceIntentOutcome {
+        guard let sourceRaw = reader.uuid(), let tabRaw = reader.uuid(), let edgeByte = reader.u8(),
+              reader.isAtEnd
+        else { return .rejectedInvalid }
+        let source = PaneID(raw: sourceRaw)
+        let tabID = TabID(raw: tabRaw)
+        guard topology.tree.contains(source), hasTab(tabID, in: topology) else { return .rejectedNotFound }
+        var next = topology
+        next.tree = WorkspaceTreeOps.moveLeafToRootEdge(
+            source, edge: WorkspaceIntentArgs.edge(for: edgeByte), in: next.tree,
+        )
+        // The op no-ops on a lone-leaf tab, a dock that would breach the depth cap, and a dock the
+        // pane already sits at. It also cannot cross tabs — so "did the source end up in the tab the
+        // client named" is the one check that covers every refusal.
+        guard next.tree.tab(containing: source)?.1 == tabID else { return .rejectedInvalid }
+        return accept(next)
+    }
+
+    private static func setTabLayout(
+        _ reader: inout WorkspaceIntentArgs.Reader,
+        _ topology: WorkspaceTopology,
+    ) -> WorkspaceIntentOutcome {
+        guard let raw = reader.uuid(), let blob = reader.rest() else { return .rejectedInvalid }
+        let tabID = TabID(raw: raw)
+        // The decoder enforces the depth cap while it descends, so an over-deep shape never
+        // materializes as a value at all.
+        guard let layout = try? WorkspaceStateCodec.decodeLayout(blob) else { return .rejectedInvalid }
+        guard let sIdx = topology.tree.sessions.firstIndex(where: { $0.tabs.contains { $0.id == tabID } }),
+              let tIdx = topology.tree.sessions[sIdx].tabs.firstIndex(where: { $0.id == tabID })
+        else { return .rejectedNotFound }
+        let tab = topology.tree.sessions[sIdx].tabs[tIdx]
+        let current = tab.allPaneIDs()
+        guard let leaves = validLeaves(of: layout) else { return .rejectedInvalid }
+        // A RE-LAYOUT moves panes, it does not create or destroy them. A shape that adds a leaf would
+        // invent a pane with no spec; one that drops a leaf would strand a live PTY with nothing
+        // rendering it. Either is a different op, and neither is what a re-tile means.
+        guard leaves.count == current.count, Set(leaves) == Set(current) else { return .rejectedInvalid }
+        var next = topology
+        // Every split comes back at an EQUAL `.flex(1)` share — `select-layout` semantics: a re-tile
+        // discards the divider drags that described the OLD shape.
+        next.tree.sessions[sIdx].tabs[tIdx].root = rebuilt(layout)
+        // A zoom survives only while its pane does, and it always does — the leaf set is unchanged.
+        return accept(next)
+    }
+
+    /// The layout's leaves, or `nil` when the shape itself is not one a tab may hold: a split with
+    /// fewer than two children breaks the `.split` arity invariant, and a repeated leaf would alias
+    /// two positions onto one pane. Neither is caught by the specs invariant `accept` re-checks.
+    private static func validLeaves(of node: WorkspaceLayoutNode) -> [PaneID]? {
+        switch node {
+        case let .leaf(id):
+            return [id]
+        case let .split(_, _, children):
+            guard children.count >= 2 else { return nil }
+            var out: [PaneID] = []
+            for child in children {
+                guard let leaves = validLeaves(of: child) else { return nil }
+                out.append(contentsOf: leaves)
+            }
+            return Set(out).count == out.count ? out : nil
+        }
+    }
+
+    private static func rebuilt(_ node: WorkspaceLayoutNode) -> SplitNode {
+        switch node {
+        case let .leaf(id):
+            .leaf(id)
+        case let .split(id, axis, children):
+            .split(
+                id: id,
+                axis: axis,
+                children: children.map { WeightedChild(weight: .flex(1), node: rebuilt($0)) },
+            )
+        }
+    }
+
+    private static func spawnDetachedPane(
+        _ reader: inout WorkspaceIntentArgs.Reader,
+        _ topology: WorkspaceTopology,
+    ) -> WorkspaceIntentOutcome {
+        guard let raw = reader.uuid(), let kindByte = reader.u8(), let blob = reader.blob(), reader.isAtEnd
+        else { return .rejectedInvalid }
+        let newPane = PaneID(raw: raw)
+        guard isFree(newPane, in: topology) else { return .rejectedInvalid }
+        // A zero-length blob is "no target"; bytes that are present but do not decode are malformed,
+        // never a silently target-less pane — that would open a satellite window streaming nothing.
+        let video: VideoEndpoint?
+        if blob.isEmpty {
+            video = nil
+        } else {
+            guard let decoded = WorkspaceStateCodec.decodeVideoTarget(blob) else { return .rejectedInvalid }
+            video = decoded
+        }
+        let kind = WorkspacePaneKindTag.kind(for: kindByte)
+        var next = topology
+        let (grown, minted) = WorkspaceTreeOps.mintDetachedPane(
+            spec: PaneSpec(kind: kind, title: title(for: kind, video: video), video: video),
+            id: newPane,
+            in: next.tree,
+        )
+        // The mint is a no-op when there is no session to park the pane in. Nothing changed IS the
+        // refusal — reporting `applied` would retire a client's patch against a document that never
+        // moved, leaving a satellite window with no pane behind it.
+        guard grown.isDetached(minted) else { return .rejectedInvalid }
+        next.tree = grown
+        return accept(next)
+    }
+
+    /// The title a detached pane is born with. The endpoint's own title when it has one — that is
+    /// what the user picked in the window/display picker — else the kind's plain noun.
+    private static func title(for kind: PaneKind, video: VideoEndpoint?) -> String {
+        if let title = video?.title, !title.isEmpty { return title }
+        return kind == .desktop ? "Desktop" : "Terminal"
     }
 }

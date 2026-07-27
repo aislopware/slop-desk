@@ -9,7 +9,7 @@ import Foundation
 /// child is long gone as fake-live. Topology is what the user ARRANGED, and losing it is losing the
 /// workspace, so it is the persisted half and the half an intent may change.
 ///
-/// It wraps ``TreeWorkspace`` rather than re-modelling it because the 21 intent ops map 1:1 onto the
+/// It wraps ``TreeWorkspace`` rather than re-modelling it because the intent ops map 1:1 onto the
 /// pure `WorkspaceTreeOps` statics that already operate on that value — that reuse is the whole
 /// implementation lever. What it ADDS are the four facts docs/45 §4.1 moves host-side and that the
 /// tree value has never held: they lived in the client store, where two clients computing them
