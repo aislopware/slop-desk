@@ -343,11 +343,32 @@ reattached_all() {
   done <<< "${FIXTURE_PANES}"
   return 0
 }
-detached_all() {
+# How many times the host has parked each fixture pane, as `<pane> <count>` lines. Snapshotted into
+# `${DETACH_BASELINE}` immediately BEFORE a client is stopped, and compared against by
+# `detached_all_since` immediately after.
+#
+# The baseline is the whole point. `${HOSTD_LOG}` is never truncated — the spawn counts above are
+# CUMULATIVE by design — so a bare "has the host parked these?" is satisfied FOR EVER by the first
+# phase's parking, and every later phase's wait returns on its first poll having proven nothing. A
+# relaunch that then dials while the previous phase's sessions are still bound is answered `already
+# attached on another connection`: the panes come up on screen with DEAD terminals, and not one
+# assertion downstream can see it — they read the workspace document, which is host truth whether or
+# not anything is attached to it, plus a live-PTY count the refusal leaves untouched.
+detach_counts() {
   local pane
   while read -r pane; do
-    grep -q "detached session ${pane}" "${HOSTD_LOG}" || return 1
+    echo "${pane} $(grep -c "detached session ${pane}" "${HOSTD_LOG}" 2> /dev/null || true)"
   done <<< "${FIXTURE_PANES}"
+}
+
+# Every fixture pane parked at least once MORE than `${DETACH_BASELINE}` recorded — i.e. the host has
+# observed THIS phase's link go down, not some earlier one's.
+detached_all_since() {
+  local pane before now
+  while read -r pane before; do
+    now="$(grep -c "detached session ${pane}" "${HOSTD_LOG}" 2> /dev/null || true)"
+    [[ "${now}" -gt "${before}" ]] || return 1
+  done <<< "${DETACH_BASELINE}"
   return 0
 }
 
@@ -613,13 +634,14 @@ echo "==> phase A: the layout the client autosaved still names all ${PANE_COUNT}
 # claim is unchanged and the interesting one is underneath it: the three PTYs must be picked back up,
 # not replaced.
 echo "==> phase B: stopping the client"
+DETACH_BASELINE="$(detach_counts)"
 reap "${CLIENT_PID}" "client"
 pkill -f "${APP_PROC_PAT}" 2> /dev/null || true
 rm -f "${SOCK}"
 # Waited on the HOST's own observation of the dropped link, not slept through: until hostd parks the
 # sessions they are still "attached on another connection" and the relaunch's reattach would be
 # refused — a race that would make this gate flaky for a reason that has nothing to do with the claim.
-await "the host to park all ${PANE_COUNT} sessions" 60 detached_all
+await "the host to park all ${PANE_COUNT} sessions" 60 detached_all_since
 echo "==> phase B: the host parked all ${PANE_COUNT} sessions ✅"
 
 launch_client "phase B"
@@ -650,10 +672,11 @@ echo "==> phase B: the very same ${PANE_COUNT} shells (pids: ${LIVE_PIDS_B}) ✅
 # offer comes back `rejectedStale` and host truth wins. The visible outcome is the same signature as
 # before — and the claim underneath it is that nothing was dialled in the meantime.
 echo "==> phase C: stopping the client"
+DETACH_BASELINE="$(detach_counts)"
 reap "${CLIENT_PID}" "client"
 pkill -f "${APP_PROC_PAT}" 2> /dev/null || true
 rm -f "${SOCK}"
-await "the host to park all ${PANE_COUNT} sessions again" 60 detached_all
+await "the host to park all ${PANE_COUNT} sessions again" 60 detached_all_since
 cp "${DIVERGENT}" "${SEEDED_WORKSPACE}"
 echo "==> phase C: seeded a layout whose panes the host has never seen"
 

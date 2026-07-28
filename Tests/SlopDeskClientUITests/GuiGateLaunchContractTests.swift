@@ -93,9 +93,40 @@ final class GuiGateLaunchContractTests: XCTestCase {
         }
     }
 
+    /// The same contract from the other side: NO gate may launch the app through `open`.
+    ///
+    /// `open` cannot carry either half of the rule above. LaunchServices forwards no environment, so
+    /// an `open`ed app is one the gate cannot address at all — no autoconnect, no control socket; and
+    /// the flag would need `--args`. There is a third edge, and it is the nastiest: `open`ing an app
+    /// that is ALREADY running with zero windows makes AppKit RE-OPEN one. `check-macos.sh` used
+    /// `open "${APP}"` to raise the app for its screenshot, which repaired the exact failure the gate
+    /// is meant to observe — one line before the grab, after every assertion had already passed.
+    ///
+    /// RED before the fix: `check-macos.sh`'s default and --renderer modes launched with
+    /// `open "${APP}"` and no flag, and had no assertion that could notice either way.
+    func testNoGateLaunchesTheAppThroughOpen() throws {
+        for script in Self.gateScripts {
+            let offenders = try codeBody(of: script)
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .map(String.init)
+                .filter { $0.contains("open \"${APP") }
+            XCTAssertTrue(
+                offenders.isEmpty,
+                "\(script) launches (or raises) the app through `open`, which forwards no environment "
+                    + "and silently re-opens a window for an app that has none. Offending line(s): "
+                    + offenders.map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: " ⏎ "),
+            )
+        }
+    }
+
     /// The video gate's connectivity checks must be FATAL. It once observed the UDP flow, printed a
     /// warning when it was missing, and carried on to a screenshot — so a client that never dialled
     /// still exited 0. A gate that cannot go red on the failure it exists to catch is not a gate.
+    ///
+    /// Connectivity is only half of it: every one of those checks passes on a client that dialled and
+    /// then rendered NOTHING (a VT session that errors out, a `CAMetalLayer` that never vends a
+    /// drawable). So the decoded-frame and presented-frame assertions are pinned here too — they are
+    /// the only thing between "the socket exists" and a human deciding to open a PNG.
     func testTheVideoGateFailsHardWhenNothingConnected() throws {
         let source = try String(contentsOf: scriptURL("scripts/check-video.sh"), encoding: .utf8)
         XCTAssertFalse(
@@ -106,9 +137,32 @@ final class GuiGateLaunchContractTests: XCTestCase {
             "FAIL: no client→host UDP flow", // the video leg dialled
             "FAIL: slopdesk-hostd never accepted a workspace channel", // the document leg opened
             "FAIL: one auto-connect must attach exactly 1 shell", // one connect ⇒ one PTY
+            "FAIL: the client decoded NOT ONE frame", // the decode leg produced a picture
+            "PRESENTED none", // …and the picture reached a drawable
         ] {
             XCTAssertTrue(source.contains(expected), "check-video.sh lost its `\(expected)` assertion")
         }
+    }
+
+    /// Every GUI gate that launches a window must ASSERT there is one.
+    ///
+    /// "The process is alive" is not "the app came up": a macOS app with zero windows is a healthy
+    /// process in a run loop, and `check-macos.sh`'s default and --renderer modes had nothing else to
+    /// say about it — no auto-connect, so no ESTABLISHED check, no OUT-path proof. They printed
+    /// `alive after Ns ✅` and screenshotted whatever was on the desktop. The other gates each assert
+    /// it implicitly, by needing a scene `.task` to have run: a projection read back over the client
+    /// control socket, or a UDP flow that only a mounted video pane can open.
+    func testTheMacosGateAssertsTheAppHasAWindow() throws {
+        let code = try codeBody(of: "scripts/check-macos.sh")
+        XCTAssertTrue(
+            code.contains("windows --json"),
+            "check-macos.sh no longer asks the running app what it is rendering, so a launch that "
+                + "made no UI at all still passes `alive after Ns`",
+        )
+        XCTAssertTrue(
+            code.contains("FAIL: the app is running with NO window"),
+            "check-macos.sh's window check no longer terminates the run",
+        )
     }
 
     /// EVERY gate counts the shells, because neither the OUT-path proof nor the pixels nor the two
@@ -212,6 +266,41 @@ final class GuiGateLaunchContractTests: XCTestCase {
             code.contains("fatal \"${what}: the two clients did not converge"),
             "check-multiclient.sh's convergence check no longer terminates the run",
         )
+    }
+
+    /// The restore gate must wait for THIS phase's link-down, not for any link-down ever.
+    ///
+    /// `${HOSTD_LOG}` is never truncated — the spawn counts it asserts on are cumulative by design —
+    /// so a bare "has the host parked these sessions?" is satisfied FOR EVER by the first phase's
+    /// parking. The phase-C wait then returned on its first poll and the relaunch dialled while phase
+    /// B's sessions were still bound; the host answered `already attached on another connection` and
+    /// the three restored panes came up with DEAD terminals. Every phase-C assertion still passed:
+    /// they read the workspace document, which is host truth whether or not anything is attached to
+    /// it, plus a live-PTY count a refusal leaves untouched.
+    ///
+    /// RED before the fix, on hardware: freeze the phase-B client with `SIGSTOP` (a slow link-down,
+    /// no FIN) and the gate exits 0 with three `refused — … is already attached on another
+    /// connection` lines in the host log.
+    func testTheRestoreGateWaitsForThisPhasesDetach() throws {
+        let code = try codeBody(of: "scripts/check-launch-restore.sh")
+        XCTAssertTrue(
+            code.contains("DETACH_BASELINE=\"$(detach_counts)\""),
+            "check-launch-restore.sh no longer snapshots the per-pane park count before it stops a "
+                + "client, so its wait for the host to park them cannot tell this phase from the last",
+        )
+        let waits = code
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { $0.contains("await ") && $0.contains("to park") }
+        XCTAssertFalse(waits.isEmpty, "check-launch-restore.sh no longer waits for the host to park")
+        for wait in waits {
+            XCTAssertTrue(
+                wait.contains("detached_all_since"),
+                "check-launch-restore.sh waits on an unbaselined park check, which the PREVIOUS "
+                    + "phase's log lines already satisfy. Offending line: "
+                    + wait.trimmingCharacters(in: .whitespaces),
+            )
+        }
     }
 
     /// The workspace-document gate must match the ACCEPT line, not the channel's name.

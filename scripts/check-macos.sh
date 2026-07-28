@@ -10,9 +10,10 @@
 # UI (connection bar, terminal seam, input bar) — exactly how the iOS path is verified visually.
 #
 # MODES:
-#   (default)    Build the committed PLACEHOLDER app, launch, assert alive, screenshot.
+#   (default)    Build the committed PLACEHOLDER app, launch, assert alive AND WINDOWED, screenshot.
 #   --renderer   Wire in the libghostty renderer (enable-macos-renderer.sh), build, launch,
-#                assert alive, screenshot. Verifies the renderer app launches without crashing.
+#                assert alive AND WINDOWED, screenshot. Verifies the renderer app launches without
+#                crashing.
 #   --connect    --renderer PLUS a real END-TO-END render check: stand up `slopdesk-hostd` (a real
 #                PTY host daemon), launch the renderer app with SLOPDESK_AUTOCONNECT_HOST/PORT set
 #                so it auto-connects on launch (no fragile UI automation — see
@@ -25,7 +26,8 @@
 #                loopback file) — so this proves type→exec→render, not just a live socket.
 #
 # EXIT: non-zero if the build fails, the app dies within the settle window (a launch/connect
-# crash), or (--connect) no client↔host session is established.
+# crash), the app comes up with NO window (see step 4b — the one failure the default and --renderer
+# modes could not previously express), or (--connect) no client↔host session is established.
 #
 # STATUS (2026-06-02): all three modes pass. The earlier --renderer ~3 s launch crash (off-main
 # `MainActor.assumeIsolated` in libghostty's wakeup/write/resize callbacks, fired from its
@@ -45,7 +47,15 @@ APP="${DD}/Build/Products/Debug/SlopDesk.app"
 APP_BIN="${APP}/Contents/MacOS/SlopDesk"
 SHOT="${WORK}/macos-shot.png"
 HOSTD_LOG="${WORK}/hostd.log"
+CLI="${REPO_ROOT}/.build/debug/slopdesk"
 CONNECT_PORT=47420 # uncommon fixed loopback port for the e2e host daemon
+
+# The app's client-control socket, which step 4b asks whether a window exists. AF_UNIX paths cap at
+# ~104 bytes and `${WORK}` is already long — keyed by this script's pid under /tmp, removed on the way
+# out (the check-multiclient.sh / check-launch-restore.sh discipline). Per-run, never the Application
+# Support default: that one is the DEVELOPER's own running app, and asking it would answer about a
+# window this gate never launched.
+SOCK="/tmp/slopdesk-macos-$$.sock"
 
 WITH_RENDERER=0
 CONNECT=0
@@ -75,6 +85,7 @@ HOSTD_PID=""
 
 cleanup() {
   pkill -f "${APP_PROC_PAT}" 2> /dev/null || true
+  rm -f "${SOCK}"
   [[ -n "${HOSTD_PID}" ]] && kill "${HOSTD_PID}" 2> /dev/null || true
   if [[ "${WITH_RENDERER}" == "1" ]]; then
     echo "==> restoring committed placeholder project.yml"
@@ -104,6 +115,12 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
   build > /dev/null
 echo "==> build OK: ${APP}"
+
+# The `slopdesk` CLI is this gate's window observer (step 4b) — it asks the running app, over the
+# shipping client-control socket, what it is rendering. Built in EVERY mode, because every mode
+# launches a window.
+echo "==> building the slopdesk client CLI (the window observer)"
+(cd "${REPO_ROOT}" && swift build --product slopdesk > /dev/null)
 
 # ── 2b. (--connect) stand up the host daemon ────────────────────────────────────────────────
 if [[ "${CONNECT}" == "1" ]]; then
@@ -160,22 +177,34 @@ if [[ "${CONNECT}" == "1" ]]; then
 fi
 
 # ── 3. Launch + poll for the macOS process ──────────────────────────────────────────────────
+# EVERY mode execs the bundle's BINARY, never `open`, and every mode carries
+# `-ApplePersistenceIgnoreState YES`. Both halves are load-bearing, and the reason is written down
+# here because it has now bitten twice — once in this gate, once in check-video.sh.
+#
+#   ENV. LaunchServices forwards NO shell environment, and every seam these modes read is a
+#   `SLOPDESK_*` env var: the auto-connect pair, the autotype command, the echo probe, and
+#   `SLOPDESK_CLIENT_SOCKET` — the socket step 4b asks whether a window exists. `open` can carry ARGV
+#   (`open "${APP}" --args …`) but there is no `open` flag that carries an ENVIRONMENT, so an
+#   `open`-launched app is one this gate cannot address.
+#
+#   PERSISTENCE. A direct exec goes down AppKit's persistence path and brings the app up with ZERO
+#   windows. No window ⇒ no scene ⇒ not one scene `.task` runs: no auto-connect, no control socket,
+#   no workspace document. The process sits in its run loop with no UI and no sockets.
+#   (HW-confirmed 2026-07-28 on this host: with the flag ⇒ a window every time; without it ⇒ zero
+#   windows every time. `GuiGateLaunchContractTests` pins the flag onto every `"${APP_BIN}"` line in
+#   this file, and pins that no gate launches the app through `open` at all.)
+#
+# Stderr is kept: the SLOPDESK_ECHO_PROBE seam prints keystroke→ingest latency lines there (step 4f).
 pkill -f "${APP_PROC_PAT}" 2> /dev/null || true
+rm -f "${SOCK}"
+APP_LOG="${WORK}/app-stderr.log"
 if [[ "${CONNECT}" == "1" ]]; then
-  # Launch the bundle's binary DIRECTLY (not via `open`) so the auto-connect env vars are
-  # inherited — LaunchServices does not forward the shell environment. Stderr is kept (the
-  # SLOPDESK_ECHO_PROBE seam prints keystroke→ingest latency lines there — step 4d).
-  APP_LOG="${WORK}/app-stderr.log"
-  # -ApplePersistenceIgnoreState YES: a prior run killed mid-flight leaves AppKit savedState
-  # whose SwiftUI window identifier no longer matches the rebuilt binary → state restoration
-  # returns window=0x0 AND suppresses the default window → the app runs with ZERO windows, the
-  # scene .task autoconnect trigger never fires, and this check false-FAILs ("no ESTABLISHED
-  # session"). Ignoring persisted state makes every automation launch a clean first launch.
   SLOPDESK_AUTOCONNECT_HOST=127.0.0.1 SLOPDESK_AUTOCONNECT_PORT="${CONNECT_PORT}" \
-    SLOPDESK_AUTOTYPE="${AUTOTYPE}" SLOPDESK_ECHO_PROBE=1 \
+    SLOPDESK_AUTOTYPE="${AUTOTYPE}" SLOPDESK_ECHO_PROBE=1 SLOPDESK_CLIENT_SOCKET="${SOCK}" \
     "${APP_BIN}" -ApplePersistenceIgnoreState YES > /dev/null 2> "${APP_LOG}" &
 else
-  open "${APP}"
+  SLOPDESK_CLIENT_SOCKET="${SOCK}" \
+    "${APP_BIN}" -ApplePersistenceIgnoreState YES > /dev/null 2> "${APP_LOG}" &
 fi
 PID=""
 for _ in $(seq 1 16); do
@@ -201,7 +230,48 @@ if ! pgrep -f "${APP_PROC_PAT}" > /dev/null; then
 fi
 echo "==> alive after ${SETTLE}s ✅"
 
-# ── 4b. (--connect) assert the client↔host TCP session is established ────────────────────────
+# ── 4b. The app has a WINDOW — asserted, in every mode ───────────────────────────────────────
+# "The process is alive" is not "the app came up". A macOS app with ZERO windows is a perfectly
+# healthy process: it sits in its run loop, `pgrep` finds it, the settle window passes, and this gate
+# printed `alive after Ns ✅` and screenshotted the bare desktop. That is the exact shape that made
+# check-video.sh useless for months, and until this assertion existed the default and --renderer modes
+# had NOTHING else to say — they carry no auto-connect, so the ESTABLISHED/OUT-path checks below never
+# ran for them. Proven RED on this host: launched without `-ApplePersistenceIgnoreState YES` the app
+# reports 0 windows for the whole settle window and the gate still exited 0.
+#
+# Read off the SHIPPING client-control socket rather than off pixels or AX: no Screen-Recording and no
+# Accessibility TCC, and the answer is `WorkspaceStore.tree` — the value the window paints. It is also
+# a two-in-one claim, because `ClientControlServer.start()` is itself a scene `.task`: a windowless
+# app never binds the socket at all, so it fails here on the connect, not on the count.
+echo "==> asking the app what it is rendering (${SOCK})…"
+WINDOW_JSON=""
+for _ in $(seq 1 40); do
+  WINDOW_JSON="$("${CLI}" --socket "${SOCK}" windows --json 2> /dev/null || true)"
+  [[ -n "${WINDOW_JSON}" ]] && break
+  kill -0 "${PID}" 2> /dev/null || break
+  sleep 0.5
+done
+# `|| echo 0` covers BOTH an empty answer and a malformed one — either way it is not a window.
+WINDOW_COUNT="$(printf '%s' "${WINDOW_JSON}" | python3 -c '
+import json, sys
+raw = sys.stdin.read().strip()
+print(len(json.loads(raw)) if raw else 0)
+' 2> /dev/null || echo 0)"
+if [[ "${WINDOW_COUNT}" -lt 1 ]]; then
+  echo "==> FAIL: the app is running with NO window (${WINDOW_COUNT} reported over ${SOCK})." >&2
+  echo "    No window means no scene, and every scene .task seam is dead with it: the auto-connect," >&2
+  echo "    the workspace document, the control socket. A screenshot past this point proves nothing." >&2
+  echo "--- app stderr ---" >&2
+  tail -40 "${APP_LOG}" >&2 2> /dev/null || true
+  [[ "${CONNECT}" == "1" ]] && {
+    echo "--- hostd log ---" >&2
+    cat "${HOSTD_LOG}" >&2
+  }
+  exit 1
+fi
+echo "==> the app reports ${WINDOW_COUNT} window(s) ✅"
+
+# ── 4c. (--connect) assert the client↔host TCP session is established ────────────────────────
 if [[ "${CONNECT}" == "1" ]]; then
   if lsof -nP -iTCP:"${CONNECT_PORT}" -sTCP:ESTABLISHED > /dev/null 2>&1; then
     echo "==> client↔host session ESTABLISHED on :${CONNECT_PORT} ✅"
@@ -212,7 +282,7 @@ if [[ "${CONNECT}" == "1" ]]; then
     exit 1
   fi
 
-  # ── 4c. (--connect) assert the host shell EXECUTED a typed command (the OUT path) ──────────
+  # ── 4d. (--connect) assert the host shell EXECUTED a typed command (the OUT path) ──────────
   # ESTABLISHED only proves a live socket. This proves the round trip: the app auto-typed a
   # command through the real OUT path, the host PTY ran it, and the shell COMPUTED 42 (so this
   # is execution, not a literal-keystroke echo). The remote shell wrote the marker to a file on
@@ -235,12 +305,12 @@ if [[ "${CONNECT}" == "1" ]]; then
     exit 1
   fi
 
-  # ── 4d. (--connect) ONE auto-connect spawns ONE shell ─────────────────────────────────────
+  # ── 4e. (--connect) ONE auto-connect spawns ONE shell ─────────────────────────────────────
   # The terminal autoconnect shape is a LONE terminal pane, so exactly one shell may ever attach.
   # A second means the client mounted one pane, gave it a PTY, and then let the workspace document
   # replace it — the first shell abandoned on the host and a second spawned for its replacement.
   #
-  # Asserted DIRECTLY rather than inferred from 4c. The OUT-path proof used to fail as a side effect
+  # Asserted DIRECTLY rather than inferred from 4d. The OUT-path proof used to fail as a side effect
   # of that bug, because the autotype latch was spent by the pane that got torn down; the seam now
   # re-arms and rides the replacement pane's connect edge, which is correct on its own terms and
   # leaves 4c green. Nothing else in this gate would have noticed. Read AFTER 4c so a second attach
@@ -254,7 +324,7 @@ if [[ "${CONNECT}" == "1" ]]; then
   fi
   echo "==> exactly one shell attached for one auto-connect ✅"
 
-  # ── 4e. (--connect) keystroke-echo latency numbers (SLOPDESK_ECHO_PROBE) ─────────────────
+  # ── 4f. (--connect) keystroke-echo latency numbers (SLOPDESK_ECHO_PROBE) ─────────────────
   # The probe prints one "key→ingest NN.Nms" line per echoed keystroke on the app's stderr —
   # the user-feel span (wire out + host PTY + wire back + client delivery to the render feed).
   # Informational, never a failure: the smoothness-work A/B number, not a gate.
@@ -268,7 +338,12 @@ if [[ "${CONNECT}" == "1" ]]; then
 fi
 
 # ── 5. Screenshot for visual verification ───────────────────────────────────────────────────
-[[ "${CONNECT}" != "1" ]] && open "${APP}" # bring to front (direct-launch already foregrounds)
+# Raised through System Events, never by `open`ing the bundle. `open` on an app that is ALREADY
+# running with zero windows makes AppKit RE-OPEN one — so the old bring-to-front repaired the exact
+# failure this gate now asserts, one line before the screenshot, and handed the human a picture of a
+# healthy window. Best-effort (`|| true`): the raise wants Accessibility TCC, no assertion depends on
+# it, and every claim above was read off a socket.
+osascript -e 'tell application "System Events" to set frontmost of first process whose name is "SlopDesk" to true' 2> /dev/null || true
 sleep 1
 screencapture -x "${SHOT}"
 echo "==> screenshot: ${SHOT}"

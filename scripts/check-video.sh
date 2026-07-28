@@ -18,6 +18,8 @@
 #   - slopdesk-videohostd captures a real on-screen window and HEVC-encodes it,
 #   - the client boots the DETACHED remote-desktop window (SLOPDESK_VIDEO_AUTOCONNECT seam mints a
 #     window-targeted detached .desktop pane), connects both UDP channels, and the host streams frames,
+#   - the client DECODED at least one frame and PRESENTED at least one frame into a Metal drawable —
+#     the two legs a live dial cannot vouch for (step 5c),
 #   - the desktop-window screenshot shows the decoded remote pixels (visual confirmation).
 #
 # It runs TWO daemons: slopdesk-videohostd for the pixels, and slopdesk-hostd because the detached
@@ -290,7 +292,56 @@ echo "==> client connected to host over UDP ✅"
 # Give the capture→encode→decode→render pipeline a few seconds to produce + present frames.
 sleep 5
 
-# 5c. ONE auto-connect spawns ONE shell. The video shape is a lone terminal plus a DETACHED
+# 5c. A frame was DECODED, and a frame was PRESENTED.
+#
+# Everything above proves the client DIALLED. A client that dialled can still show a blank pane for
+# ever — a VT decompression session that errors out on the first IDR, a `CAMetalLayer` that never
+# hands out a drawable, a decode gate that never re-opens — and in every one of those capture, encode
+# and both sockets stay perfectly healthy, so not one check above moves. Without this the gate printed
+# ✅ four times and exited 0 on a white window, and the pixels were left entirely to a human reading
+# a PNG that nothing forced anyone to open.
+#
+# Read off the client's own `SLOPDESK_VIDEO_DEBUG` stream, which this gate already turns on:
+#   `DECODED frame #N` — `SlopDeskVideoClientSession.finishDecode`, decode-SUCCESS path only
+#                        (frame 1, then every 15th),
+#   `RENDER#N`         — `MetalVideoRenderer.render`, AFTER `metalLayer.nextDrawable()` returned a
+#                        drawable (frame 0, then every 120th).
+# Both land within a frame of each other on a healthy session. The OSLog flow captured below carries
+# the session SETUP only ("client decode pipeline up at capture WxH") — there is no per-frame counter
+# in it, and "the pipeline was built" is the premise, not the claim.
+#
+# The two halves fail differently and that is the point: decoded-but-never-presented is a present-path
+# regression (the pixels exist and never reach a drawable); neither is a decode regression.
+echo "==> waiting for a DECODED frame and a PRESENTED frame…"
+DECODED=0
+PRESENTED=0
+for _ in $(seq 1 40); do
+  DECODED="$(grep -c 'DECODED frame #' "${CLIENTLOG}" 2> /dev/null || true)"
+  PRESENTED="$(grep -c 'RENDER#' "${CLIENTLOG}" 2> /dev/null || true)"
+  [[ "${DECODED}" -gt 0 && "${PRESENTED}" -gt 0 ]] && break
+  sleep 0.5
+done
+if [[ "${DECODED}" -lt 1 ]]; then
+  echo "==> FAIL: the client decoded NOT ONE frame. Both sockets are up and the host is streaming," >&2
+  echo "    so this is the decode leg: VideoToolbox rejected the stream, or the decode gate never" >&2
+  echo "    re-opened. The remote-desktop pane is blank." >&2
+  echo "--- video host log ---" >&2
+  tail -60 "${HOSTLOG}" >&2
+  echo "--- client log ---" >&2
+  tail -60 "${CLIENTLOG}" >&2
+  exit 1
+fi
+if [[ "${PRESENTED}" -lt 1 ]]; then
+  echo "==> FAIL: the client is decoding (${DECODED} decode marker(s)) and PRESENTED none. The pixels exist" >&2
+  echo "    and never reached a drawable — the Metal present path (no CAMetalLayer drawable, no" >&2
+  echo "    renderer, a pacer that never fires). The remote-desktop pane is blank." >&2
+  echo "--- client log ---" >&2
+  tail -60 "${CLIENTLOG}" >&2
+  exit 1
+fi
+echo "==> frames DECODED and PRESENTED (${DECODED} decode / ${PRESENTED} render markers) ✅"
+
+# 5d. ONE auto-connect spawns ONE shell. The video shape is a lone terminal plus a DETACHED
 # desktop pane, and a `.desktop` pane runs no PTY — so exactly one shell may ever attach. A second
 # means the bootstrap adopted a tree the window was not already showing and abandoned the first
 # pane's shell. Read AFTER the render settle, so a late second attach still counts.
@@ -303,7 +354,7 @@ if [[ "${SHELLS}" != "1" ]]; then
 fi
 echo "==> exactly one shell attached for one auto-connect ✅"
 
-# ── 5d. Capture the host + client OSLog flow (diagnostics: where, if anywhere, it stalls) ──────
+# ── 5e. Capture the host + client OSLog flow (diagnostics: where, if anywhere, it stalls) ──────
 OSLOG="${WORK}/oslog.txt"
 {
   echo "### host (slopdesk-videohostd) ###"
@@ -325,10 +376,11 @@ screencapture -x "${SHOT}"
 echo "==> screenshot (full screen; client raised) saved: ${SHOT}"
 echo
 echo "================================================================================"
-echo " DONE. Document channel, UDP flow and the one-shell rule are already ASSERTED above; what is"
-echo " left is the pixels. Now tell your agent: read  ${SHOT}"
+echo " DONE. Document channel, UDP flow, a decoded + presented frame and the one-shell rule are all"
+echo " ASSERTED above; what is left is whether the pixels are the RIGHT ones. Tell your agent:"
+echo " read  ${SHOT}"
 echo " PASS = the remote-desktop window shows the remote '${WTITLE}' window's live pixels."
-echo " FAIL = the window is white/black/placeholder (no frames decoded)."
+echo " FAIL = it shows some OTHER window, or a stale/garbled frame. A blank pane cannot reach here."
 echo " host log:   ${HOSTLOG}"
 echo " client log: ${CLIENTLOG}"
 echo "================================================================================"
