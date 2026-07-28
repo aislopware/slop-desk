@@ -8,10 +8,14 @@ import SlopDeskProtocol
 /// `openpty()` allocates the master/slave pair with an initial cooked-mode `termios`
 /// (+ `IUTF8`) and `winsize`. The child is launched with **`fork()` + `login_tty(slave)` +
 /// `execve`** (NOT `posix_spawn`, NOT `forkpty`). The child runs ONLY raw libc/syscalls
-/// before `execve` — `login_tty`, `close`, `execve`, `_exit` — with NO Swift/ObjC runtime
-/// work (no allocation/ARC), honouring the `DECISIONS.md` caveat that ruled out `forkpty`
+/// before `execve` — `sigprocmask`, `signal`, `login_tty`, `chdir`, `close`, `execve`,
+/// `_exit` — with NO Swift/ObjC runtime work (no metadata, no conformance lookup, no
+/// allocation/ARC), honouring the `DECISIONS.md` caveat that ruled out `forkpty`
 /// (running the Swift runtime in a forked child is the unsafe part; bare pre-exec syscalls
-/// are not). In the child:
+/// are not). That window is one function,
+/// ``execInForkedChild(slave:master:cwd:path:argv:envp:sigDefault:)``, whose doc explains why the
+/// rule is not "avoid `for…in`" and whose contents are pinned by disassembly in
+/// `ForkExecWindowContractTests` — a comment cannot hold this line, and did not. In the child:
 ///
 /// - `login_tty(slave)` = `setsid()` + `ioctl(slave, TIOCSCTTY, 0)` (claim ctty) +
 ///   `dup2(slave → 0/1/2)` + `close(slave)` — this gives the shell job control + `SIGWINCH`;
@@ -107,19 +111,24 @@ public final class PTYProcess: @unchecked Sendable {
         // posix_openpt EINVAL caveat from [12] §1.1.
         Self.setBlocking(master)
 
-        // --- Build ALL C strings in the PARENT, before fork() ---
-        // The forked child must do NO Swift-runtime work (no allocation/ARC) before execve,
-        // so path/argv/envp are fully materialised here. `path` is held by `pathDup`; argv/envp
-        // are NULL-terminated arrays of strdup'd C strings. All freed in the parent's defer.
+        // --- Build ALL C strings AND the argv/envp VECTORS in the PARENT, before fork() ---
+        // The forked child must do NO Swift-runtime work (no allocation/ARC) before execve, so
+        // path/argv/envp are fully materialised here — and "materialised" has to mean raw `char *`,
+        // not a Swift `[UnsafeMutablePointer<CChar>?]`. Handing an ARRAY to `execve` looks like a C
+        // call and is not one: the array-to-pointer conversion is a `swift_bridgeObjectRetain`, a
+        // generic `_ArrayBuffer.firstElementAddressIfContiguous`, an `_ArrayBuffer.owner` and a
+        // matching release — and its non-contiguous fallback instantiates `ContiguousArray` metadata
+        // FROM A MANGLED NAME and allocates. All of that would run in the child, all of it behind
+        // runtime locks (see ``execInForkedChild(slave:master:cwd:path:argv:envp:sigDefault:)``).
+        // These vectors are NULL-terminated and already have the exact type `execve` takes, so the
+        // child's exec is a plain C call over pointers it was handed. Freed in the parent's defer.
         let argv0Value = argv0 ?? executable
         let argvStrings = [argv0Value] + arguments
-        var argv: [UnsafeMutablePointer<CChar>?] = argvStrings.map { strdup($0) }
-        argv.append(nil)
+        let argvVector = Self.makeArgumentVector(argvStrings)
 
         // envp: "KEY=VALUE" entries.
         let envStrings = environment.map { "\($0.key)=\($0.value)" }
-        var envp: [UnsafeMutablePointer<CChar>?] = envStrings.map { strdup($0) }
-        envp.append(nil)
+        let envpVector = Self.makeArgumentVector(envStrings)
 
         let pathDup = strdup(executable)
         // Validate the requested cwd HOST-SIDE before fork: a stale/deleted/foreign/`~`-style path
@@ -129,11 +138,16 @@ public final class PTYProcess: @unchecked Sendable {
         let cwdDup: UnsafeMutablePointer<CChar>? = resolvedCwd.flatMap { strdup($0) }
 
         defer {
-            for p in argv where p != nil { free(p) }
-            for p in envp where p != nil { free(p) }
+            Self.freeArgumentVector(argvVector, count: argvStrings.count)
+            Self.freeArgumentVector(envpVector, count: envStrings.count)
             free(pathDup)
             if let cwdDup { free(cwdDup) }
         }
+
+        // `SIG_DFL` is not a constant — the Darwin overlay exports it as a COMPUTED PROPERTY, so
+        // reading it is a cross-module getter call. Read it once here, in the parent, and hand the
+        // child the resulting value; the reset loop below then touches nothing but `signal(2)`.
+        let sigDefault: sig_t? = SIG_DFL
 
         // fork(), NOT posix_spawn: posix_spawn cannot run TIOCSCTTY in the child, and a
         // POSIX_SPAWN_SETSID child that only dup2s the slave does not reliably acquire the ctty
@@ -143,33 +157,23 @@ public final class PTYProcess: @unchecked Sendable {
         // Swift's Darwin overlay marks `fork()` unavailable, so we resolve the raw libc symbol
         // via `dlsym` and call it through a C function pointer — the literal `fork(2)`, same
         // single-threaded-child semantics. Safe here because the child does NO Swift-runtime work
-        // before `execve` (only `login_tty`/`close`/`execve`/`_exit`); the `DECISIONS.md` forkpty
-        // caveat is about running the Swift/ObjC runtime in the child, which we do not.
+        // before `execve` — ``execInForkedChild(slave:master:cwd:path:argv:envp:sigDefault:)`` is
+        // seven syscalls and a disassembly test that says so. The `DECISIONS.md` forkpty caveat is
+        // about running the Swift/ObjC runtime in the child, which is the thing being avoided.
         let childPID = Self.rawFork()
         if childPID == 0 {
-            // ===== CHILD: raw syscalls only, no Swift runtime. =====
-            // Reset inherited signal state BEFORE exec. A SIG_IGN disposition and a blocked
-            // signal mask both survive fork+execve — so a daemon launched under `nohup` (or a
-            // test runner) that ignores SIGHUP breeds shells that NEVER receive the destroy-path
-            // hangup (nohup semantics): zsh then skips its history save on pane teardown. A
-            // terminal emulator hands every child a clean slate; `sigprocmask`/`signal` are
-            // async-signal-safe raw syscalls. (SIGKILL/SIGSTOP reject SIG_DFL — harmless.)
-            var emptyMask = sigset_t(0)
-            sigprocmask(SIG_SETMASK, &emptyMask, nil)
-            for sig in Int32(1)...Int32(31) { signal(sig, SIG_DFL) }
-            // login_tty(slave) atomically: setsid(); ioctl(slave, TIOCSCTTY, 0);
-            // dup2(slave → 0,1,2); close(slave) if >2. This is what makes the slave the
-            // controlling terminal (so SIGWINCH / job control reach the shell).
-            if login_tty(slave) != 0 { _exit(127) }
-            // Best-effort chdir: `resolveCwd` already validated the dir in the parent, so this
-            // normally succeeds. A TOCTOU (dir deleted between validate and chdir) must NOT kill the
-            // pane — leave the child in the inherited cwd rather than `_exit 127` (dead pane).
-            if let cwdDup { _ = chdir(cwdDup) }
-            // The child must never hold the master, or its EOF would never arrive on read.
-            close(master)
-            _ = execve(pathDup, argv, envp)
-            // execve only returns on failure.
-            _exit(127)
+            // ===== CHILD ===== every argument is a raw pointer or an Int32 the PARENT already
+            // computed, so this call site itself converts nothing. The window's whole contents are
+            // one function, which is what `ForkExecWindowContractTests` disassembles.
+            execInForkedChild(
+                slave: slave,
+                master: master,
+                cwd: cwdDup,
+                path: pathDup,
+                argv: argvVector,
+                envp: envpVector,
+                sigDefault: sigDefault,
+            )
         }
 
         // Capture fork()'s errno IMMEDIATELY, before any other syscall can overwrite it. The
@@ -190,6 +194,33 @@ public final class PTYProcess: @unchecked Sendable {
         masterFD = master
         pid = childPID
         startReaper(pid: childPID)
+    }
+
+    // MARK: argv / envp vectors
+
+    /// A NULL-terminated `char *` vector of `strdup`ed copies — the exact shape `execve` takes,
+    /// built in the PARENT so the forked child hands the syscall a pointer it was given rather than
+    /// converting a Swift `Array` (which is runtime work; see ``execInForkedChild(slave:master:cwd:path:argv:envp:sigDefault:)``).
+    /// Paired with ``freeArgumentVector(_:count:)``.
+    private static func makeArgumentVector(
+        _ strings: [String],
+    ) -> UnsafeMutablePointer<UnsafeMutablePointer<CChar>?> {
+        let vector = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: strings.count + 1)
+        // Every slot NULL first: a `strdup` that fails under memory pressure then truncates the
+        // vector instead of leaving one uninitialised slot for `execve` to walk into.
+        vector.initialize(repeating: nil, count: strings.count + 1)
+        for (index, string) in strings.enumerated() { vector[index] = strdup(string) }
+        return vector
+    }
+
+    /// Frees a vector from ``makeArgumentVector(_:)`` — the `count` strings and the vector itself.
+    /// (`free(nil)` is a no-op, so a truncated vector frees cleanly too.)
+    private static func freeArgumentVector(
+        _ vector: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>,
+        count: Int,
+    ) {
+        for index in 0..<count { free(vector[index]) }
+        vector.deallocate()
     }
 
     /// Sets the standard control characters (VINTR, VEOF, VERASE, …) to sane defaults
@@ -273,7 +304,8 @@ public final class PTYProcess: @unchecked Sendable {
     /// (it discourages forking from the Swift runtime in general). We need the real syscall for the
     /// `login_tty` controlling-terminal acquisition (see ``spawn(_:arguments:environment:argv0:cols:rows:)``);
     /// the child does no Swift-runtime work before `execve`, so this specific use is safe. Resolved once
-    /// via `dlsym(RTLD_DEFAULT, "fork")` and cached.
+    /// via `dlsym(RTLD_DEFAULT, "fork")` and cached. The `static let` is a `swift_once`, which takes a
+    /// lock — it runs on the calling thread BEFORE the fork, so the child never reaches it.
     private typealias ForkFn = @convention(c) () -> pid_t
     private static let rawForkFn: ForkFn = {
         guard let sym = dlsym(UnsafeMutableRawPointer(bitPattern: -2 /* RTLD_DEFAULT */ ), "fork") else {
@@ -282,6 +314,10 @@ public final class PTYProcess: @unchecked Sendable {
         return unsafeBitCast(sym, to: ForkFn.self)
     }()
 
+    /// `@inline(never)` so the fork itself keeps a name in the binary: `ForkExecWindowContractTests`
+    /// anchors on this call to prove that nothing runs between `fork()` returning 0 and
+    /// ``execInForkedChild(slave:master:cwd:path:argv:envp:sigDefault:)``.
+    @inline(never)
     private static func rawFork() -> pid_t { rawForkFn() }
 
     // MARK: Resize
@@ -624,6 +660,92 @@ public final class PTYProcess: @unchecked Sendable {
         exitLock.unlock()
         for w in waiters { w.resume(returning: code) }
     }
+}
+
+// MARK: The fork-to-exec window
+
+/// Everything the child of ``PTYProcess/spawn(_:arguments:environment:argv0:cwd:cols:rows:)``'s
+/// `fork()` does before `execve` — and nothing else. It is ONE function so that the contract has an
+/// address: `ForkExecWindowContractTests` disassembles this symbol and fails on any call target
+/// outside `sigprocmask` / `signal` / `login_tty` / `chdir` / `close` / `execve` / `_exit`.
+///
+/// ## The window is a contract, not a comment
+/// Between `fork()` and `execve()` in a MULTI-THREADED process, only async-signal-safe raw syscalls
+/// are legal. The child inherits the parent's entire address space and exactly ONE thread, so every
+/// lock some other thread happened to hold at the instant of the fork is frozen HELD, by an owner
+/// that does not exist here. The Swift runtime keeps its type, witness-table and conformance caches
+/// behind `os_unfair_lock`, and `os_unfair_lock_lock` answers a lock whose owner thread is gone by
+/// ABORTING the process — before `execve`, so the pane's shell dies the instant it is born while the
+/// host has already logged `attached for pane`.
+///
+/// Swift trips that rule without writing anything that looks like a call. `for sig in 1...31` asks
+/// the runtime to instantiate `ClosedRange<Int32>` metadata, and it cost this host TEN `.ips` reports
+/// in one day — every one `_os_unfair_lock_corruption_abort` ← `os_unfair_lock_lock_slow` ←
+/// `PTYProcess.spawn`, with `asi` "crashed on child side of fork pre-exec". One line, TWO different
+/// locks: nine died in the generic-metadata cache (`Collection<>.makeIterator()` →
+/// `swift_getGenericMetadata` → `LockingConcurrentMap::getOrInsert`) and one in the conformance cache
+/// (`__swift_instantiateConcreteTypeFromMangledNameV2` → `swift_getTypeByMangledName` →
+/// `ConformanceState::cacheResult`) — which is why the rule has to be "no runtime", not "not that
+/// lock". One of the ten (pid 4995, parent hostd 4956) is the missing third shell of a
+/// `check-launch-restore.sh` run that went red with "3 pane(s) in the layout but 2 live shell(s)".
+/// Handing `execve` a Swift `[UnsafeMutablePointer<CChar>?]` was the same bug wearing a C call's
+/// clothes: the array-to-pointer conversion is ARC plus a generic `_ArrayBuffer` accessor, and its
+/// fallback instantiates `ContiguousArray` metadata and allocates.
+///
+/// Warming the caches cannot save it: this code runs ONLY in children, so the per-call-site metadata
+/// cache the parent owns is cold at every single fork and every fork reaches the runtime for real.
+///
+/// So, in here: no generics, no `for…in`, no `String`, no `Array`/`Dictionary` literal, no ARC, no
+/// `class` allocation, no `print`/`FileHandle`/`Foundation`, no `static let` (each is a `swift_once`,
+/// which locks) and no capturing closure. Every value is a pointer or an `Int32` that the parent
+/// materialised BEFORE the fork.
+///
+/// - Parameters:
+///   - slave: the PTY slave fd, still open in both processes.
+///   - master: the PTY master fd — closed here, or the child's EOF never reaches the parent's read.
+///   - cwd: validated by `PTYProcess.resolveCwd` in the parent; `nil` means "inherit".
+///   - path/argv/envp: `strdup`ed / vector-built in the parent.
+///   - sigDefault: `SIG_DFL`, read in the parent (the Darwin overlay exports it as a computed var).
+/// - Returns: never — it either `execve`s away or `_exit`s.
+@inline(never)
+func execInForkedChild(
+    slave: Int32,
+    master: Int32,
+    cwd: UnsafeMutablePointer<CChar>?,
+    path: UnsafeMutablePointer<CChar>?,
+    argv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>,
+    envp: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>,
+    sigDefault: sig_t?,
+) -> Never {
+    // Reset inherited signal state BEFORE exec. A SIG_IGN disposition and a blocked signal mask both
+    // survive fork+execve — so a daemon launched under `nohup` (or a test runner) that ignores
+    // SIGHUP breeds shells that NEVER receive the destroy-path hangup (nohup semantics): zsh then
+    // skips its history save on pane teardown. A terminal emulator hands every child a clean slate;
+    // `sigprocmask`/`signal` are async-signal-safe raw syscalls. (SIGKILL/SIGSTOP reject SIG_DFL —
+    // harmless.) `sigset_t` is a plain `UInt32`, so the empty mask is a constant store, not an init.
+    var emptyMask = sigset_t(0)
+    sigprocmask(SIG_SETMASK, &emptyMask, nil)
+    // A RAW COUNTER, never `for sig in 1...31` — see the metadata story above. `sig += 1` compiles to
+    // an add plus a `brk` on overflow, which is a trap instruction, not a runtime call, and the loop
+    // bound makes it unreachable anyway.
+    var sig: Int32 = 1
+    while sig <= 31 {
+        signal(sig, sigDefault)
+        sig += 1
+    }
+    // login_tty(slave) atomically: setsid(); ioctl(slave, TIOCSCTTY, 0);
+    // dup2(slave → 0,1,2); close(slave) if >2. This is what makes the slave the
+    // controlling terminal (so SIGWINCH / job control reach the shell).
+    if login_tty(slave) != 0 { _exit(127) }
+    // Best-effort chdir: `resolveCwd` already validated the dir in the parent, so this normally
+    // succeeds. A TOCTOU (dir deleted between validate and chdir) must NOT kill the pane — leave the
+    // child in the inherited cwd rather than `_exit 127` (dead pane).
+    if cwd != nil { _ = chdir(cwd) }
+    // The child must never hold the master, or its EOF would never arrive on read.
+    close(master)
+    _ = execve(path, argv, envp)
+    // execve only returns on failure.
+    _exit(127)
 }
 
 /// Host-side errors. Distinct from ``SlopDeskError`` (which is wire-decode only).

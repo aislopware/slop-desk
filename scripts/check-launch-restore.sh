@@ -87,6 +87,16 @@
 # the client's control socket rather than off pixels — so Screen Recording TCC is optional too and
 # the closing desktop grab is a bonus, not evidence.
 #
+# A MISSING SHELL NAMES ITS OWN CAUSE. "3 pane(s) in the layout but 2 live shell(s)" is this gate's
+# most informative red and used to be its most opaque: the host logs `attached for pane` for a pane
+# whose child died between `fork()` and `execve()`, so the daemon's own log says everything went
+# fine. What the missing shell leaves behind is a CRASH REPORT — for `slopdesk-hostd`, not for the
+# app, because the corpse is the forked child and it still carries the parent's name. So every
+# shell-count failure calls `report_missing_shell_cause`, which summarises each
+# `slopdesk-hostd*.ips` newer than this run: the exception, the termination, the `asi` strings (this
+# is where "crashed on child side of fork pre-exec" lives) and the faulting thread's top frames.
+# That is the difference between "two rounds unexplained" and one line naming `PTYProcess.spawn`.
+#
 # USAGE: bash scripts/check-launch-restore.sh
 #
 # EXIT: non-zero if a build fails, the client dies, it never answers its control socket, it projects
@@ -155,6 +165,12 @@ CLIENT_PID=""
 
 mkdir -p "${WORK}"
 
+# A file whose mtime IS this run's start, so the crash-report sweep has something to be `-newer` than
+# (BSD `find` has no `-newermt`). Stamped before anything is built or launched, so a report from an
+# EARLIER run can never be read as this one's.
+RUN_MARKER="${WORK}/run-start.marker"
+: > "${RUN_MARKER}"
+
 # SIGTERM, then VERIFY, then SIGKILL. A gate that leaves a daemon holding :47423 costs the next run
 # its bind.
 REAP_PATIENCE=16
@@ -222,13 +238,84 @@ await() {
 # "not a child of this shell". So it writes a global and the callers interpolate that.
 CLIENT_EXIT=""
 note_client_exit() {
-  local status=0
+  local status=0 signal
   wait "${CLIENT_PID}" 2> /dev/null || status=$?
   if [[ "${status}" -gt 128 ]]; then
-    CLIENT_EXIT="killed by signal $((status - 128))"
+    # NAMED, not numbered. `killed by signal 13` and `killed by SIGPIPE` are the same fact and only
+    # the second one starts an investigation: 13/PIPE is an unguarded `write(2)` inside this app,
+    # 9/KILL is something outside it, 5/TRAP is the Swift runtime.
+    signal=$((status - 128))
+    CLIENT_EXIT="killed by SIG$(kill -l "${signal}" 2> /dev/null || echo "NAL ${signal}")"
   else
     CLIENT_EXIT="exited with status ${status}"
   fi
+}
+
+# One `.ips` crash report, reduced to the four fields that name a cause: the signal/exception pair,
+# the termination namespace, the `asi` diagnostic strings (this is where "crashed on child side of
+# fork pre-exec" and the libplatform lock messages live), and the faulting thread's top frames.
+summarize_crash_report() {
+  python3 - "$1" << 'PY' 2>&1 | sed 's/^/      /'
+import json, sys
+
+raw = open(sys.argv[1], errors="replace").read()
+head, _, body = raw.partition("\n")
+try:
+    meta = json.loads(head)
+except ValueError:
+    meta = {}
+print("app=%s ts=%s" % (meta.get("app_name", "?"), meta.get("timestamp", "?")))
+try:
+    doc = json.loads(body)
+except ValueError:
+    print("(the body is not JSON — read the file itself)")
+    raise SystemExit(0)
+print("pid=%s parent=%s(%s)" % (doc.get("pid"), doc.get("parentProc"), doc.get("parentPid")))
+print("exception=%s" % json.dumps(doc.get("exception")))
+print("termination=%s" % json.dumps(doc.get("termination")))
+print("asi=%s" % json.dumps(doc.get("asi")))
+images = doc.get("usedImages", [])
+faulting = doc.get("faultingThread")
+for index, thread in enumerate(doc.get("threads", [])):
+    if index != faulting:
+        continue
+    for frame in thread.get("frames", [])[:14]:
+        which = frame.get("imageIndex", -1)
+        name = images[which].get("name", "?") if 0 <= which < len(images) else "?"
+        print("  %s +%s %s" % (name, frame.get("imageOffset"), frame.get("symbol", "")))
+PY
+}
+
+# WHY a pane has no shell. Called from every shell-count failure, and it looks where the evidence
+# actually is: a child that dies between `fork()` and `execve()` never becomes a process of its own,
+# so its crash report is filed under the PARENT's name — `slopdesk-hostd`, in the per-user and the
+# system report directories and in the `Retired` sub-directory each rotates into. A report looked for
+# in one place is a cause left unnamed, so all four are swept. Prints to stderr and to a file, because
+# this red is read out of a loop's artefacts as often as off a terminal.
+report_missing_shell_cause() {
+  local dir report found=0
+  {
+    echo "======== A PANE HAS NO SHELL — hostd crash reports since this run started ========"
+    for dir in "${HOME}/Library/Logs/DiagnosticReports" \
+      "${HOME}/Library/Logs/DiagnosticReports/Retired" \
+      /Library/Logs/DiagnosticReports \
+      /Library/Logs/DiagnosticReports/Retired; do
+      [[ -d "${dir}" ]] || continue
+      while IFS= read -r report; do
+        [[ -n "${report}" ]] || continue
+        found=1
+        echo "  ${report}"
+        summarize_crash_report "${report}"
+      done < <(find "${dir}" -maxdepth 1 -name 'slopdesk-hostd*' -newer "${RUN_MARKER}" 2> /dev/null)
+    done
+    if [[ "${found}" -eq 0 ]]; then
+      echo "  (none — the shell is missing for some reason OTHER than a child that died pre-exec)"
+    fi
+    echo "--- the host's own tail (it logs 'attached for pane' even for a child that never exec'd) ---"
+    tail -40 "${HOSTD_LOG}" 2> /dev/null || echo "(missing)"
+    echo "=================================================================================="
+  } > "${WORK}/missing-shell.txt" 2>&1
+  cat "${WORK}/missing-shell.txt" >&2
 }
 
 # ── 0. What the fixture says the launch must restore ────────────────────────────────────────────
@@ -488,6 +575,7 @@ await_spawns() {
     sleep 0.5
   done
   dump_spawns_per_pane
+  report_missing_shell_cause
   fatal "the host must spawn exactly ONE shell for EACH restored pane; it spawned
     $(spawned_shells) across ${PANE_COUNT} pane(s), unevenly. More than one for a pane means that
     pane was torn down and re-dialled — the first PTY left running on the host with nobody attached;
@@ -571,6 +659,7 @@ hold_steady() {
     live="$(wc -w <<< "$(pty_pids_of "${census}")" | tr -d ' ')"
     if [[ "${live}" != "${want}" ]]; then
       dump_children "${census}"
+      report_missing_shell_cause
       fatal "${label}: ${want} pane(s) in the layout but ${live} live shell(s) ${second}s in — the
     panes are still on screen and their terminals are dead"
     fi
@@ -767,6 +856,7 @@ LIVE_PIDS_A="$(pty_pids_of "${CENSUS_A}")"
 LIVE_COUNT_A="$(wc -w <<< "${LIVE_PIDS_A}" | tr -d ' ')"
 if [[ "${LIVE_COUNT_A}" != "${PANE_COUNT}" ]]; then
   dump_children "${CENSUS_A}"
+  report_missing_shell_cause
   fatal "phase A: ${PANE_COUNT} restored panes but ${LIVE_COUNT_A} live shell(s) on the host"
 fi
 echo "==> phase A: ${LIVE_COUNT_A} live shells for ${PANE_COUNT} panes (pids: ${LIVE_PIDS_A}) ✅"
